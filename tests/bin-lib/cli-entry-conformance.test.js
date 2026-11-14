@@ -32,7 +32,6 @@ const NOT_YET = [
   'declined-learning.js',
   'design-detect.js',
   'docs-health.js',
-  'harness-health.js',
   'hooks.js',
   'init-verify-scope.js',
   'install-statusline-wrapper.js',

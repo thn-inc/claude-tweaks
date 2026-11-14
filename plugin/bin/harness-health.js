@@ -5,9 +5,9 @@ const { execFileSync } = require('child_process');
 const path = require('path');
 const { fingerprint } = require('./lib/harness-health/fingerprint');
 const {
-  readCache, writeCache, readDurableState, writeDurableState,
-  writeDurableStateLocal, pushDurableState, buildValidateFindingsUpdate,
+  readCache, writeCache, createDurable, buildValidateFindingsUpdate,
 } = require('./lib/harness-health/cache');
+const { makeExec } = require('./lib/health-core/io');
 const { computeChurn } = require('./lib/health-core/runs');
 const { makeRetryQueueCommands } = require('./lib/health-core/retry-cli');
 const { dedupAndDispatch } = require('./lib/health-core/validate-findings-dispatch');
@@ -36,37 +36,25 @@ const { canonicalRealpath } = require('./lib/path-guard');
 
 const TOOL_NAME = 'harness-health';
 
-const retryQueueCommands = makeRetryQueueCommands({ readDurableState, writeDurableState });
-const cmdChurnReport = makeCmdChurnReport({ readDurableState, computeChurn });
-// readDurableState/writeDurableState wired through so a "declined" mark also
-// persists to the health-state git branch, not just the local gitignored
-// cache — see bin/lib/health-core/mark.js's own header comment. Without
-// this, a declined finding (by definition never filed as a GitHub issue, so
-// there is nothing for dedup to reconstruct from) would silently reappear
-// on a scheduled Routine's next fresh, stateless container despite this
-// skill's own Anti-Patterns table promising it won't.
-const cmdMark = makeCmdMark({
-  readCache, writeCache, readDurableState, writeDurableState, toolName: TOOL_NAME,
-});
-const cmdStatus = makeCmdStatus({ readDurableState });
-
 // Confidence rank: lower number = more urgent (highest priority to file).
 // Mirrors bin/lib/code-health/dedup.js's RISK_RANK convention/shape.
 const CONFIDENCE_RANK = { high: 0, med: 1, low: 2 };
 
-function validateConfidenceArg(value) {
-  if (value === undefined) return;
-  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return;
-  process.stderr.write(
+// Writes its message to `stderr` and returns { ok: false, code: 2 } for an
+// unrecognized value; { ok: true } otherwise (an omitted flag included).
+function validateConfidenceArg(value, stderr) {
+  if (value === undefined) return { ok: true };
+  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return { ok: true };
+  stderr(
     `harness-health.js: validate-findings --min-confidence "${value}" is not a recognized value ` +
     `(must be one of ${Object.keys(CONFIDENCE_RANK).join('|')}) — an unrecognized value silently ` +
     'files every finding regardless of confidence, same as omitting the flag.\n',
   );
-  process.exitCode = 2;
+  return { ok: false, code: 2 };
 }
 
-function parseArgs(argv) {
-  const args = { _: [], root: process.cwd(), dryRun: false, runId: new Date().toISOString() };
+function parseArgs(argv, cwd = process.cwd()) {
+  const args = { _: [], root: cwd, dryRun: false, runId: new Date().toISOString() };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
@@ -86,15 +74,17 @@ function parseArgs(argv) {
   return args;
 }
 
-function cmdNextTarget(args) {
-  const root = args.root || process.cwd();
+function cmdNextTarget(args, ctx) {
+  const root = path.resolve(ctx.cwd(), args.root || '.');
+  const memoryDir = args.memoryDir ? path.resolve(ctx.cwd(), args.memoryDir) : args.memoryDir;
+  const env = ctx.env;
   const now = Date.now();
   // Fetch durable state exactly once and reuse it for both the gap-scan check
   // and the target-selection cursors below, so gapScanDue and cursors answer
   // the same point in time and the CLI doesn't pay for a second git
   // fetch/show round-trip per invocation (mirrors bin/code-health.js's
   // cmdNextSlice, which also reads durable state exactly once).
-  const durableCursors = readDurableState(root).cursors;
+  const durableCursors = ctx.durable.readDurableState(root).cursors;
   const gapScan = durableCursors.__gapScan || { lastScannedSha: null, lastScannedMs: null };
   // --force-gap-scan bypasses the 90-day cursor entirely, mirroring the
   // existing --target manual override for the deep-audit side of next-target
@@ -104,36 +94,35 @@ function cmdNextTarget(args) {
     || gapScan.lastScannedMs == null || (now - gapScan.lastScannedMs) / 86400000 > STALE_DAYS;
 
   if (args.kind === 'memory') {
-    if (!args.memoryDir) {
-      process.stderr.write('harness-health.js: next-target --kind memory requires --memory-dir <path>\n');
-      process.exitCode = 2;
-      return;
+    if (!memoryDir) {
+      ctx.stderr('harness-health.js: next-target --kind memory requires --memory-dir <path>\n');
+      return 2;
     }
     const memCursors = durableCursors;
 
     if (args.target) {
-      const found = listMemory(args.memoryDir).find((t) => t.id === args.target) || null;
+      const found = listMemory(memoryDir).find((t) => t.id === args.target) || null;
       const target = found ? { ...found, why: 'manual' } : null;
-      process.stdout.write(JSON.stringify({ target, gapScanDue }, null, 2) + '\n');
-      return;
+      ctx.stdout(JSON.stringify({ target, gapScanDue }, null, 2) + '\n');
+      return 0;
     }
 
     const memBudget = Number.isFinite(args.budget) && args.budget > 0 ? args.budget : 1;
 
     if (memBudget === 1) {
-      const target = selectMemoryTarget(args.memoryDir, memCursors, { now });
-      process.stdout.write(JSON.stringify({ target, gapScanDue }, null, 2) + '\n');
-      return;
+      const target = selectMemoryTarget(memoryDir, memCursors, { now });
+      ctx.stdout(JSON.stringify({ target, gapScanDue }, null, 2) + '\n');
+      return 0;
     }
 
     // Budget > 1: pick up to `memBudget` distinct memory targets, simulating
     // post-audit cursor state in-memory between picks.
-    const memTargets = selectBudget(memBudget, memCursors, (c) => selectMemoryTarget(args.memoryDir, c, { now }), {
+    const memTargets = selectBudget(memBudget, memCursors, (c) => selectMemoryTarget(memoryDir, c, { now }), {
       getCursorKey: (t) => `${t.kind}:${t.id}`,
       buildCursorPatch: (existing) => ({ ...(existing || {}), lastAuditedMs: now }),
     });
-    process.stdout.write(JSON.stringify({ targets: memTargets, gapScanDue }, null, 2) + '\n');
-    return;
+    ctx.stdout(JSON.stringify({ targets: memTargets, gapScanDue }, null, 2) + '\n');
+    return 0;
   }
 
   if (args.target) {
@@ -141,27 +130,28 @@ function cmdNextTarget(args) {
     // the first match in listTargets' skill->rule->claude-md order wins.
     const found = listTargets(root).find((t) => t.id === args.target && (!args.kind || t.kind === args.kind)) || null;
     const target = found ? { ...found, why: 'manual' } : null;
-    process.stdout.write(JSON.stringify({ target, gapScanDue }, null, 2) + '\n');
-    return;
+    ctx.stdout(JSON.stringify({ target, gapScanDue }, null, 2) + '\n');
+    return 0;
   }
 
   const budget = Number.isFinite(args.budget) && args.budget > 0 ? args.budget : 1;
   const cursors = durableCursors;
 
   if (budget === 1) {
-    const target = selectTarget(root, cursors, { now, kind: args.kind });
-    process.stdout.write(JSON.stringify({ target, gapScanDue }, null, 2) + '\n');
-    return;
+    const target = selectTarget(root, cursors, { now, kind: args.kind, env });
+    ctx.stdout(JSON.stringify({ target, gapScanDue }, null, 2) + '\n');
+    return 0;
   }
 
   // budget > 1: pick up to `budget` distinct targets, simulating post-audit
   // cursor state in-memory between picks (mirrors code-health's next-slice
   // --budget; see bin/lib/health-core/budget.js).
-  const targets = selectBudget(budget, cursors, (c) => selectTarget(root, c, { now, kind: args.kind }), {
+  const targets = selectBudget(budget, cursors, (c) => selectTarget(root, c, { now, kind: args.kind, env }), {
     getCursorKey: (t) => `${t.kind}:${t.id}`,
     buildCursorPatch: (existing) => ({ ...(existing || {}), lastAuditedMs: now }),
   });
-  process.stdout.write(JSON.stringify({ targets, gapScanDue }, null, 2) + '\n');
+  ctx.stdout(JSON.stringify({ targets, gapScanDue }, null, 2) + '\n');
+  return 0;
 }
 
 // The directory a Premise-check: command is composed against and self-checked
@@ -172,11 +162,14 @@ function cmdNextTarget(args) {
 // spelled /var/...) so an in-root target stays in-root. undefined on any
 // failure (not a git repo, git missing, realpath error) — the caller then
 // composes the absolute target path, the fail-safe.
-function resolvePremiseRoot(root) {
+// `runner(cmd, args, opts) -> stdout string` (default execFileSync) and `env`
+// (the child git's environment; omitted = inherited) are injectable; the
+// child's stderr stays ignored.
+function resolvePremiseRoot(root, { env, runner = execFileSync } = {}) {
   try {
-    const gitTop = String(execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
-    })).trim();
+    const options = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true };
+    if (env !== undefined) options.env = env;
+    const gitTop = String(runner('git', ['-C', root, 'rev-parse', '--show-toplevel'], options)).trim();
     const rootReal = canonicalRealpath(root);
     if (!gitTop || !rootReal) return undefined;
     return path.resolve(root, path.relative(rootReal, gitTop));
@@ -185,23 +178,27 @@ function resolvePremiseRoot(root) {
   }
 }
 
-function cmdValidateFindings(args) {
+function cmdValidateFindings(args, ctx) {
+  const { stderr, env } = ctx;
   // Absolute, so a relative --root can't leave the resolved target path
   // relative to this process's cwd while the Premise-check self-check runs
   // (#2633 review follow-up), and because the repo-relative Premise-check
   // path is computed from the git top-level of this absolute root (#2857).
-  const root = path.resolve(args.root || process.cwd());
-  const findingsPath = args._[1];
-  if (!findingsPath) {
-    process.stderr.write(
+  // Relative paths resolve against the injected cwd, never the real one.
+  const root = path.resolve(ctx.cwd(), args.root || '.');
+  const findingsArg = args._[1];
+  if (!findingsArg) {
+    stderr(
       'usage: harness-health.js validate-findings <findings.json> [--root <dir>] [--issues <file>] [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--memory-dir <path>] [--gap-scan] [--min-confidence <low|med|high>] [--run-id <id>] [--dry-run]\n',
     );
-    process.exitCode = 2;
-    return;
+    return 2;
   }
+  const findingsPath = path.resolve(ctx.cwd(), findingsArg);
+  const memoryDir = args.memoryDir ? path.resolve(ctx.cwd(), args.memoryDir) : args.memoryDir;
+  const issuesPath = args.issues ? path.resolve(ctx.cwd(), args.issues) : args.issues;
 
-  validateConfidenceArg(args.minConfidence);
-  if (process.exitCode) return;
+  const confidence = validateConfidenceArg(args.minConfidence, stderr);
+  if (!confidence.ok) return confidence.code;
 
   // buildValidateFindingsUpdate only patches a cursor when both target AND
   // kind are present (see lib/harness-health/cache.js), or when gapScan is
@@ -211,27 +208,25 @@ function cmdValidateFindings(args) {
   // re-selected as stale/overdue on every future run. Mirrors
   // code-health.js's own --slice hard-gate for validate-findings.
   if (!args.dryRun && !((args.target && args.kind) || args.gapScan)) {
-    process.stderr.write(
+    stderr(
       'validate-findings: a real (non-dry-run) run requires --target with --kind, or --gap-scan (or both) — ' +
       'without one of them, no audit cursor advances and rotation state silently drifts. ' +
       'Pass --dry-run to preview without it.\n',
     );
-    process.exitCode = 2;
-    return;
+    return 2;
   }
 
   let raw;
   try {
     raw = JSON.parse(fs.readFileSync(findingsPath, 'utf8'));
   } catch {
-    process.stderr.write(`validate-findings: could not read or parse findings file: ${findingsPath}\n`);
-    process.exitCode = 1;
-    return;
+    // The message names the findings path as the caller gave it, as before.
+    stderr(`validate-findings: could not read or parse findings file: ${findingsArg}\n`);
+    return 1;
   }
   if (!Array.isArray(raw)) {
-    process.stderr.write('validate-findings: findings file must contain a JSON array\n');
-    process.exitCode = 1;
-    return;
+    stderr('validate-findings: findings file must contain a JSON array\n');
+    return 1;
   }
 
   const survivors = [];
@@ -248,11 +243,11 @@ function cmdValidateFindings(args) {
   // undefined here (no --target/--kind, or an unresolvable one, e.g. a
   // --gap-scan-only run) simply means no Premise-check: line gets emitted,
   // never a wrong one.
-  const targetPath = resolveTargetPath(root, args.kind, args.target, args.memoryDir) || undefined;
+  const targetPath = resolveTargetPath(root, args.kind, args.target, memoryDir) || undefined;
   for (const f of raw) {
     const v = validateFinding(f);
     if (!v.ok) {
-      process.stderr.write(
+      stderr(
         `[harness-health] validate-findings: dropped finding for target "${(f && f.target) || '?'}": ${v.errors.join('; ')}\n`,
       );
       continue;
@@ -290,15 +285,16 @@ function cmdValidateFindings(args) {
   // finding declined via `mark ... declined` on a prior firing (possibly a
   // different, since-recycled Routine container) is suppressed here too —
   // not just on the same-container run `mark` itself was tested against.
-  const readCacheWithDeclined = (r) => mergeDeclinedIntoCache(readCache(r), readDurableState(r).declined || {});
+  const readCacheWithDeclined = (r) => mergeDeclinedIntoCache(readCache(r), ctx.durable.readDurableState(r).declined || {});
 
   // Resolved ONCE per run, right before filing — #117's freshness stamp
   // must reflect the commit this sweep actually read, not the moment each
-  // finding's issue happens to be created.
-  const verifiedAsOf = resolveReadCommit(root);
+  // finding's issue happens to be created. makeExec pipes the child's stderr
+  // to ctx.stderr rather than letting it reach the process's own.
+  const verifiedAsOf = resolveReadCommit(root, makeExec({ env, stderr }));
   // #1840: resolved once per run, same non-resolved-in-the-payload-composer
   // convention as verifiedAsOf above.
-  const pluginVersion = resolvePluginVersion();
+  const pluginVersion = resolvePluginVersion(env);
 
   // #2633: run each composed Premise-check: once, from this sweep's own
   // root, before filing — a command that doesn't read "unresolved" right now
@@ -308,14 +304,14 @@ function cmdValidateFindings(args) {
   // this command, so a missing line is diagnosable from the sweep's stderr.
   // #2857: composed against, and self-checked from, the git top-level —
   // where materialize.js runs the command. Resolved once per run.
-  const premiseRoot = resolvePremiseRoot(root);
+  const premiseRoot = resolvePremiseRoot(root, { env });
   const toIssuePayloadSelfChecked = (finding, v, p) => toIssuePayload(finding, v, p, {
     repoRoot: root,
     premiseRoot,
     premiseSelfCheck: (command) => {
-      const keep = premiseReadsUnresolved(command, { root: premiseRoot || root });
+      const keep = premiseReadsUnresolved(command, { root: premiseRoot || root, env });
       if (!keep) {
-        process.stderr.write(
+        stderr(
           `[harness-health] validate-findings: dropped Premise-check: line for finding ${finding.id} — the command does not read "unresolved" at filing time (non-zero exit, timeout, or spawn error)\n`,
         );
       }
@@ -324,7 +320,7 @@ function cmdValidateFindings(args) {
   });
 
   const { cache, payloads, seen, wontfixSuppressed } = dedupAndDispatch({
-    root, issuesPath: args.issues, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload: toIssuePayloadSelfChecked, verifiedAsOf, pluginVersion,
+    root, issuesPath, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload: toIssuePayloadSelfChecked, verifiedAsOf, pluginVersion, stderr,
   });
 
   if (!args.dryRun) {
@@ -346,17 +342,18 @@ function cmdValidateFindings(args) {
     // this once per analysed skill must not push to the remote health-state
     // ref as a side effect of a read/judge step. Accumulates on this
     // namespace's own local branch; `push-cursor` ships it in one push.
-    const result = writeDurableStateLocal(root, (current) => buildValidateFindingsUpdate(current, mutatorInput));
+    const result = ctx.durable.writeDurableStateLocal(root, (current) => buildValidateFindingsUpdate(current, mutatorInput));
     if (!result.ok) {
-      process.stderr.write(`[harness-health] validate-findings: health-state persistence failed after retries: ${result.error}\n`);
+      stderr(`[harness-health] validate-findings: health-state persistence failed after retries: ${result.error}\n`);
     }
   }
 
-  process.stdout.write(JSON.stringify(payloads, null, 2) + '\n');
-  process.stderr.write(
+  ctx.stdout(JSON.stringify(payloads, null, 2) + '\n');
+  stderr(
     `[harness-health] validate-findings: ${survivors.length} valid finding(s), ${payloads.length} payload(s) after dedup` +
     (remembered.length ? `, ${remembered.length} remembered (below --min-confidence floor)` : '') + '\n',
   );
+  return 0;
 }
 
 // #2545: ships every cursor/run-record `validate-findings` has accumulated
@@ -364,39 +361,70 @@ function cmdValidateFindings(args) {
 // push — the controller-side counterpart a Skills curation row calls exactly
 // once, after its per-skill validate-findings calls are done, instead of
 // each of those calls pushing on its own.
-function cmdPushCursor(args) {
-  const root = path.resolve(args.root || process.cwd());
-  const result = pushDurableState(root);
+function cmdPushCursor(args, ctx) {
+  const root = path.resolve(ctx.cwd(), args.root || '.');
+  const result = ctx.durable.pushDurableState(root);
   if (!result.ok) {
-    process.stderr.write(`[harness-health] push-cursor: health-state push failed after retries: ${result.error}\n`);
-    process.exitCode = 1;
-    return;
+    ctx.stderr(`[harness-health] push-cursor: health-state push failed after retries: ${result.error}\n`);
+    return 1;
   }
-  process.stdout.write(JSON.stringify({ pushed: result.pushed }, null, 2) + '\n');
+  ctx.stdout(JSON.stringify({ pushed: result.pushed }, null, 2) + '\n');
+  return 0;
 }
 
-function main(argv) {
-  const args = parseArgs(argv);
+// The in-process entry (#5380): `deps` is { stdout(text), stderr(text), cwd(), env }
+// and nothing here reaches process.* — the exit code is returned, never set.
+// Everything that holds io or env (durable state, the shared sub-command
+// factories) is built per call from `deps`, so an injected stderr/env reaches
+// every child git and every message.
+function run(argv, deps = realDeps) {
+  const stderr = (text) => deps.stderr(text);
+  const durable = createDurable({ env: deps.env, stderr });
+  const io = { stdout: (text) => deps.stdout(text), stderr, cwd: () => deps.cwd() };
+  const { readDurableState, writeDurableState } = durable;
+  // readDurableState/writeDurableState wired through so a "declined" mark also
+  // persists to the health-state git branch, not just the local gitignored
+  // cache — see bin/lib/health-core/mark.js's own header comment. Without
+  // this, a declined finding (by definition never filed as a GitHub issue, so
+  // there is nothing for dedup to reconstruct from) would silently reappear
+  // on a scheduled Routine's next fresh, stateless container despite this
+  // skill's own Anti-Patterns table promising it won't.
+  const ctx = {
+    ...io,
+    env: deps.env,
+    durable,
+    retryQueueCommands: makeRetryQueueCommands({ readDurableState, writeDurableState, io }),
+    cmdChurnReport: makeCmdChurnReport({ readDurableState, computeChurn, io }),
+    cmdMark: makeCmdMark({
+      readCache, writeCache, readDurableState, writeDurableState, toolName: TOOL_NAME, io,
+    }),
+    cmdStatus: makeCmdStatus({ readDurableState, io }),
+  };
+  const args = parseArgs(argv, ctx.cwd());
+  // A relative --root resolves against the injected cwd, never the real one, so the
+  // shared sub-commands (which pass it straight to `git -C` and fs) see an absolute path.
+  args.root = path.resolve(ctx.cwd(), args.root || '.');
   const cmd = args._[0];
-  if (cmd === 'next-target') return cmdNextTarget(args);
-  if (cmd === 'validate-findings') return cmdValidateFindings(args);
-  if (cmd === 'push-cursor') return cmdPushCursor(args);
-  if (cmd === 'churn-report') { const code = cmdChurnReport(args); if (code) process.exitCode = code; return; }
-  if (cmd === 'mark') { const code = cmdMark(args); if (code) process.exitCode = code; return; }
-  if (cmd === 'status') return cmdStatus(args);
+  if (cmd === 'next-target') return cmdNextTarget(args, ctx);
+  if (cmd === 'validate-findings') return cmdValidateFindings(args, ctx);
+  if (cmd === 'push-cursor') return cmdPushCursor(args, ctx);
+  if (cmd === 'churn-report') return ctx.cmdChurnReport(args);
+  if (cmd === 'mark') return ctx.cmdMark(args);
+  if (cmd === 'status') return ctx.cmdStatus(args);
   // args._[0] is always 'retry-queue' itself (parseArgs pushes every positional,
   // including the top-level subcommand, into args._) — the drain/update word
   // right after it is args._[1], the same offset validate-findings uses for its
   // own findings-file positional. retryQueueCommands.update() expects its own
   // args._ re-based so index 1 lands on the results-file path, so slice off
   // the leading 'retry-queue' entry before handing args to it.
-  if (cmd === 'retry-queue' && args._[1] === 'drain') return retryQueueCommands.drain(args);
+  if (cmd === 'retry-queue' && args._[1] === 'drain') return ctx.retryQueueCommands.drain(args);
   if (cmd === 'retry-queue' && args._[1] === 'update') {
-    const code = retryQueueCommands.update({ ...args, _: args._.slice(1) });
-    if (code) process.exitCode = code;
-    return;
+    const rebased = args._.slice(1);
+    // The results file is read by the shared command, so hand it an absolute path.
+    if (rebased[1]) rebased[1] = path.resolve(ctx.cwd(), rebased[1]);
+    return ctx.retryQueueCommands.update({ ...args, _: rebased });
   }
-  process.stderr.write(
+  ctx.stderr(
     'usage: harness-health.js <command> [options]\n' +
     'commands: next-target [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--memory-dir <path>] [--budget <n>] [--force-gap-scan], ' +
     'validate-findings <file> [--target <id>] [--kind <skill|rule|claude-md|design-artifact|memory>] [--memory-dir <path>] [--gap-scan] [--min-confidence <low|med|high>], ' +
@@ -405,11 +433,25 @@ function main(argv) {
     'churn-report [--fail-on-high-churn <r>], mark <fingerprint> <declined>, status, ' +
     'retry-queue drain, retry-queue update <results.json>\n',
   );
-  process.exitCode = 2;
+  return 2;
 }
 
-if (require.main === module) main(process.argv.slice(2));
+const realDeps = {
+  stdout: (text) => process.stdout.write(text),
+  stderr: (text) => process.stderr.write(text),
+  cwd: () => process.cwd(),
+  env: process.env,
+};
+
+// Removal condition: delete once no file under plugin/, tests/, tools/, perf/ or evals/
+// imports it — callers use run(argv, deps) instead. Returns the exit code; never sets
+// process.exitCode.
+function main(argv) {
+  return run(argv, realDeps);
+}
 
 module.exports = {
-  parseArgs, cmdNextTarget, cmdValidateFindings, cmdPushCursor, cmdChurnReport, cmdMark, cmdStatus, CONFIDENCE_RANK, main, resolvePremiseRoot,
+  parseArgs, cmdNextTarget, cmdValidateFindings, cmdPushCursor, CONFIDENCE_RANK, main, resolvePremiseRoot, run, realDeps,
 };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const { seedDurableState } = require('../health-core/seed-durable-state');
+const { runCli, spawnCli } = require('../../helpers/run-cli');
 const { defaultRunner, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('../../../plugin/bin/lib/health-core/premise-self-check');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
@@ -613,4 +614,23 @@ test('validate-findings: a removal finding whose old string is already gone is f
     result.stderr.includes(`dropped Premise-check: line for finding ${payloads[0].id}`),
     `a self-check drop must be logged to stderr, got:\n${result.stderr}`,
   );
+});
+
+// Proves the refusal path's exit code survives the real entry: the same unrecognized
+// --min-confidence goes through run() in-process and through the script as a child, with
+// the same env, and both must refuse with 2 and the same stderr.
+test('validate-findings --min-confidence bogus: the in-process run and the script entry both refuse with 2 and the same stderr', async () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+  const env = { ...process.env };
+  const argv = ['validate-findings', findingsFile, '--root', root, '--min-confidence', 'bogus', '--dry-run'];
+
+  const inProcess = await runCli(CLI, argv, { env, cwd: root });
+  const spawned = spawnCli(CLI, argv, { env, cwd: root });
+
+  assert.strictEqual(inProcess.code, 2);
+  assert.strictEqual(spawned.code, 2);
+  assert.strictEqual(spawned.stderr, inProcess.stderr);
+  assert.match(spawned.stderr, /--min-confidence "bogus" is not a recognized value/);
 });
