@@ -11,6 +11,7 @@ const { execFileSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
 const { run, realDeps, formatPolicyValues } = require('../../../plugin/bin/dispatch-prompt');
 const { spawnCli } = require('../../helpers/run-cli');
+const { POLICY_KEYS: SCHEMA_KEYS } = require('../../../plugin/bin/lib/policy-schema');
 const {
   findUnsubstituted, promptDigest, promptSize, REGISTRY_FILE,
 } = require('../../../plugin/bin/lib/dispatch/task-prompt');
@@ -324,8 +325,29 @@ test('AC5/AC7 dispatch-prompt: an invalid autonomy value still writes the resolv
   const fixture = policyFixture(['autonomy: bogus', 'integration-model: pr-first']);
   const err = [];
   const got = realDeps.resolvePolicyValues(fixture, { env: POLICY_ENV, stderr: (s) => err.push(s) });
-  assert.ok(got.includes('autonomy='), got);
+  const dflt = SCHEMA_KEYS.find((e) => e.key === 'autonomy').default;
+  assert.ok(got.startsWith(`autonomy=${dflt}, `), got);
   assert.ok(err.join('').includes('resolve-policy: warning: autonomy has invalid value "bogus"'), err.join(''));
+});
+
+// POSIX-only: a gh stub is an sh script. Proves env (PATH, the gh timeout) reaches the forge probe and
+// that the degraded-forge line is written through stderr at this call site.
+test('AC7 dispatch-prompt: an unpinned integration-model sees the injected PATH gh stub and writes the degraded line', { skip: process.platform === 'win32' }, () => {
+  const fixture = policyFixture(['autonomy: trusted']);
+  const git = (args) => execFileSync('git', args, { cwd: fixture, stdio: 'ignore', windowsHide: true });
+  git(['init', '-q']);
+  git(['remote', 'add', 'origin', 'https://example.invalid/o/r.git']);
+  const gitDir = path.dirname(execFileSync(process.platform === 'win32' ? 'where' : 'which', ['git'], { encoding: 'utf8', windowsHide: true }).split('\n')[0].trim());
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dp-stub-'));
+  tmpRoots.push(stubDir);
+  const marker = path.join(stubDir, 'gh-calls.txt');
+  fs.writeFileSync(path.join(stubDir, 'gh'), `#!/bin/sh\necho call >> "${marker}"\nexec /bin/sleep 30\n`, { mode: 0o755 });
+  const env = { ...POLICY_ENV, PATH: `${stubDir}${path.delimiter}${gitDir}`, CLAUDE_TWEAKS_GH_TIMEOUT_MS: '1000' };
+  const err = [];
+  const got = realDeps.resolvePolicyValues(fixture, { env, stderr: (x) => err.push(x) });
+  assert.ok(got.includes('integration-model=local-merge'), got);
+  assert.ok(fs.existsSync(marker), 'the gh stub on the injected PATH never ran');
+  assert.match(err.join(''), /resolve-policy: degraded — integration-model: .* resolved local-merge /);
 });
 
 test('a throwing stdout after the append still exits 0 and says so on stderr', () => {
