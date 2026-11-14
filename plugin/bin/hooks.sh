@@ -77,6 +77,88 @@ for c in $cands; do
 done
 IFS=$saved_ifs; set +f
 
-# 4. No node: drain stdin so the writer never sees EPIPE, then exit 0.
+# 4. No node. pre-tool-use under a worktree-always main checkout denies the
+# four write tools; session-start and user-prompt-submit print a warning;
+# every other event prints nothing. Stdin is drained so the writer never sees
+# EPIPE, and the exit is 0 on every path. Output is fixed literals only: no
+# input is ever interpolated.
+
+# policy_verdict <root>: `on` or `off` for <root>/.claude-tweaks/policy.yml,
+# mirroring resolveWorktreeAlways (lib/policy.js) over parseFlatLines
+# (lib/policy-schema.js). ws is JS `\s`: the ASCII members plus the UTF-8
+# bytes of its non-ASCII ones; LC_ALL=C makes awk match bytes.
+policy_verdict() {
+  [ -n "$1" ] && [ -f "$1/.claude-tweaks/policy.yml" ] || { printf '%s\n' off; return 0; }
+  LC_ALL=C awk '
+BEGIN {
+  ws = "([ \t\r\f\v]|\302\240|\341\232\200|\342\200[\200-\212]|\342\200[\250\251\257]|\342\201\237|\343\200\200|\357\273\277)"
+  hc = 0; ha = 0
+}
+{
+  line = $0
+  if (line ~ ("^" ws)) next
+  sub(ws "+$", "", line)
+  if (substr(line, 1, 16) == "worktree-always:") { v = substr(line, 17); k = "c" }
+  else if (substr(line, 1, 16) == "worktree.always:") { v = substr(line, 17); k = "a" }
+  else next
+  sub(/#.*/, "", v)
+  sub("^" ws "+", "", v)
+  sub(ws "+$", "", v)
+  if (v == "") next
+  if (k == "c") { canon = v; hc = 1 } else { alias = v; ha = 1 }
+}
+END {
+  r = "off"
+  if (hc) { if (canon == "true") r = "on" }
+  else if (ha) { if (alias == "true") r = "on" }
+  print r
+}' "$1/.claude-tweaks/policy.yml" 2>/dev/null || printf '%s\n' off
+}
+
+# main_root: the main checkout root of the process cwd, mirroring
+# mainCheckoutRoot (lib/hooks/worktree-detect.js). Returns 1 when unresolved,
+# including a directory it cannot search or a .git file it cannot read, so it
+# never hands back an ancestor's root. The stdin `cwd` is never parsed.
+main_root() {
+  d=$(pwd -P 2>/dev/null) || return 1
+  while [ -n "$d" ]; do
+    [ -x "$d" ] || return 1
+    if [ -d "$d/.git" ]; then printf '%s\n' "$d"; return 0; fi
+    if [ -f "$d/.git" ]; then
+      [ -r "$d/.git" ] || return 1
+      g=$(LC_ALL=C awk '{ if (sub(/^gitdir:[ \t\r\f\v]*/, "")) { sub(/[ \t\r\f\v]+$/, ""); if ($0 != "") { print; exit } } }' "$d/.git" 2>/dev/null) || return 1
+      [ -n "$g" ] || return 1
+      case $g in /*|[A-Za-z]:*) ;; *) g=$d/$g ;; esac
+      case $g in
+        */.git/worktrees/*) (cd "${g%%/.git/worktrees/*}" 2>/dev/null && pwd -P); return ;;
+      esac
+      return 1
+    fi
+    [ "$d" = / ] && return 1
+    d=${d%/*}
+    [ -n "$d" ] || d=/
+  done
+  return 1
+}
+
+# tool_class: reads stdin to EOF; `write` for a Bash, Edit, Write or
+# NotebookEdit tool_name, else `other`.
+tool_class() {
+  LC_ALL=C awk '
+!w && /"tool_name"[ \t\r]*:[ \t\r]*"(Bash|Edit|Write|NotebookEdit)"/ { w = 1 }
+END { print (w ? "write" : "other") }' 2>/dev/null || printf '%s\n' other
+}
+
+deny=
+if [ "$1" = pre-tool-use ]; then
+  root=$(main_root) || root=
+  [ -n "$root" ] || root=$(pwd -P 2>/dev/null)
+  if [ "$(policy_verdict "$root")" = on ] && [ "$(tool_class)" = write ]; then deny=1; fi
+fi
 cat >/dev/null 2>&1
+case $1 in
+  session-start) printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"claude-tweaks: hooks cannot run in this session because no `node` was found: not on the PATH Claude Code started with, not at the path saved by an earlier session, not at a well-known install location. Every claude-tweaks guard is off for this session (the worktree-always deny, the write gate, the commit and push checks, run event logging). Tell the user this in your next reply and stop making repository edits. The fix is to quit and restart Claude Code from a shell where `node` resolves (`command -v node` prints a path)."}}' ;;
+  user-prompt-submit) printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"claude-tweaks: hooks cannot run in this session because no `node` was found: not on the PATH Claude Code started with, not at the path saved by an earlier session, not at a well-known install location. Every claude-tweaks guard is off for this session (the worktree-always deny, the write gate, the commit and push checks, run event logging). Tell the user this in your next reply and stop making repository edits. The fix is to quit and restart Claude Code from a shell where `node` resolves (`command -v node` prints a path)."}}' ;;
+  pre-tool-use) [ -z "$deny" ] || printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"claude-tweaks: no `node` was found for this session, so its hooks cannot check this call, and this project requires an isolated worktree (worktree-always in .claude-tweaks/policy.yml). Every Bash, Edit, Write and NotebookEdit call is denied until restart; asking the user and leaving the worktree still work. Tell the user, then quit and restart Claude Code from a shell where `node` resolves (`command -v node` prints a path)."}}' ;;
+esac
 exit 0
