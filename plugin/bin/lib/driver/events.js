@@ -23,7 +23,7 @@ const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 
 const STEP_NAMES = Object.freeze([
   'policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker',
-  'commit', 'test', 'check', 'review', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci',
+  'commit', 'test', 'check', 'review', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci', 'merge',
 ]);
 const FINAL_STEP = 'final';
 
@@ -47,6 +47,15 @@ const SETTLE_STEP_NAMES = Object.freeze([
   'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close',
 ]);
 
+// The sub-step events merge.js emits (#5226), one per sub-step call. Kept apart from STEP_NAMES
+// for the same reason as SETTLE_STEP_NAMES: the pipeline-step list is pinned.
+const MERGE_STEP_NAMES = Object.freeze([
+  'merge-entry', 'merge-supplier', 'merge-closing-links', 'merge-compose', 'merge-ready',
+  'merge-gate', 'merge-watch', 'merge-park', 'merge-conflict', 'merge-call', 'merge-confirm',
+  'merge-post-merge', 'merge-release-status', 'merge-reconcile', 'merge-teardown',
+  'merge-delete-branch', 'merge-close-run',
+]);
+
 const STEP = Object.freeze(Object.fromEntries(
   STEP_NAMES.map((name) => [name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()), name]),
 ));
@@ -56,6 +65,8 @@ const OUTCOMES = Object.freeze({
   EXPRESS_ESCALATED: 'express-escalated',
   BLOCKED: 'blocked',
   REFUSED: 'refused',
+  MERGED: 'merged',
+  ARMED: 'armed',
 });
 
 const STOP_CLASSES = Object.freeze({
@@ -284,11 +295,17 @@ function createEventSink({ stdout, appendFile }) {
     flush();
   }
 
-  return { emit, bindRunDir, events: () => emitted.slice(), fileError: () => firstError };
+  // Goes stdout-only (the run directory and its archive twin are both gone): held lines stay
+  // queued and are never written, and later lines are only held.
+  function unbind() {
+    eventsFile = null;
+  }
+
+  return { emit, bindRunDir, unbind, events: () => emitted.slice(), fileError: () => firstError };
 }
 
 module.exports = {
   CLI_TIMEOUT_MS, firstLine, errorText,
-  STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
+  STEP_NAMES, SETTLE_STEP_NAMES, MERGE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, yieldToEventLoop, neutralize, normalizeTitle, createEventSink,
 };
