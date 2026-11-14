@@ -99,6 +99,14 @@ The merge step (#5226) runs a procedure with sub-steps of its own, so its body l
 - **No import from `steps.js`.** `steps.js` requires the module, so the reverse import is a require cycle. The module keeps its own copies of the helpers it needs (merge.js's `logDecision` and `bin`, which diverge from `steps.js`'s `logDecisionFile` and `binScript`) and exports its own time constants (see "A step that waits on time").
 - **A result for every stop, never a throw.** `merge()` turns an unexpected throw into `pending-review` / `unclassified` naming the sub-step, so the step never halts and its class (`none`) covers only a throw in the entry itself. `finalEvent` takes the record's outcome from `ctx.merge` when nothing stopped. A wait the module measures goes on its sub-step events (`extra.ciWaitMs` on each `merge-watch` event, summed by `finalEvent`), never on the step's own line, so it is counted once.
 
+## A loop above the record: run-level event lines and record facts
+
+`drive.js --budget` (#5229, `plugin/bin/lib/driver/budget.js`'s `runBudget`) is not a `STEPS` entry: it picks records and drives each one through run.js's `driveRecordFacts`. A caller of this shape owes:
+- **An event name outside every step list.** Its summary line's `step` is `events.js`'s `BUDGET_STEP` (`'budget'`), a constant of its own, as `FINAL_STEP` is. It is in none of `STEP_NAMES` (pinned at 19 names), `SETTLE_STEP_NAMES` or `MERGE_STEP_NAMES`, and the line carries `run: null` and `record: null`. `run.test.js`'s `constants: step vocabulary, camelCase map and frozen shapes` asserts the name is disjoint from all three lists and from `FINAL_STEP`; a new run-level name joins that assertion and the `events.js` header comment that names `FINAL_STEP` and `BUDGET_STEP`.
+- **stdout only.** The loop's event sink is never bound to a run directory, so its lines reach no record's `driver-events.jsonl`. A consumer in another repository (the hub) reads the summary line, so its fields are added and never renamed, and `docs/driver.md` lists them by hand.
+- **The step's own question when it asks one ahead of the step.** The pre-screen calls `deps.evaluateRecordEligibility` with `steps.js`'s exported `eligibilityOptions(policy)`, the builder the eligibility step uses, never a copied options object. A pre-screen may skip a record, never admit one: an input it cannot judge passes through to the full per-record path.
+- **Facts from the record's ctx, never parsed from its event lines.** `driveRecordFacts` returns the final event plus `claimed` and `claimExit`. A fact a step records for the caller (`ctx.claimExit`, set by the claim step) starts as `null` in `newCtx` and gets no `interruptClass` rung: it is a recorded fact, not a side effect. Pin it per value in `run.test.js` (the claim step's exit table there covers 2-7 and a killed claim's `null`).
+
 ## Anti-Patterns
 
 | Pattern | Why it fails here |
