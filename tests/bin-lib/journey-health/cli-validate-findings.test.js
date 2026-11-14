@@ -384,7 +384,8 @@ test('validate-findings returns 0 and prints its payloads while process.exitCode
 });
 
 // Env-only fixture: the effect of the git child the CLI starts for Verified-as-of is observable
-// only when the injected env reaches it. The tests' own process environment holds no GIT_DIR.
+// only when the injected env reaches it. The injected value wins over any ambient GIT_DIR (e.g.
+// one inherited from a git hook); an ambient one would only weaken the mutant's discrimination.
 test('validate-findings stamps Verified-as-of from the injected env: GIT_DIR names the repo, root is not one', () => {
   const root = tmp(); // not a git repo
   const repo = tmp();

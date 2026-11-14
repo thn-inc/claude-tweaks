@@ -283,6 +283,25 @@ test('createNamespacedState with env and no run builds its runner on makeExec: a
   assert.match(err, /health-state: fetch failed/);
 });
 
+test('createNamespacedState with only a stderr (no env, no run) captures a real git failure instead of leaking it', () => {
+  const os = require('os');
+  const fs = require('fs');
+  const path = require('path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-stderr-only-'));
+  let err = '';
+  const ns = createNamespacedState('ns', [{ key: 'a', file: 'a.json', default: { d: 1 } }], {
+    stderr: (t) => { err += t; },
+  });
+  const realWrite = process.stderr.write;
+  const leaked = [];
+  process.stderr.write = (...a) => { leaked.push(a[0]); return true; };
+  let state;
+  try { state = ns.readState(dir); } finally { process.stderr.write = realWrite; }
+  assert.deepStrictEqual(state, { a: { d: 1 } });
+  assert.deepStrictEqual(leaked, [], 'nothing may reach process.stderr when a stderr sink is injected');
+  assert.match(err, /health-state: fetch failed/);
+});
+
 test('readState parses each file via git show, defaulting missing files to {}/[]', () => {
   const { run } = fakeRunner([
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },

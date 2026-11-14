@@ -8,8 +8,10 @@
 //   CLIs' durable-state code runs real `git fetch` and `git push origin`; with
 //   this, any https/ssh fetch or push fails fast. Local bare-repo `file`
 //   remotes, which the fixtures use, keep working.
-// - The real process cwd: moved to an empty throwaway directory outside any
-//   repo for the duration of each call (and put back afterwards). A CLI that
+// - The real process cwd: moved to a fresh empty throwaway directory (created per
+//   call, removed afterwards) outside any repo for the duration of each call (and
+//   put back afterwards). "Outside any repo" holds only while os.tmpdir() is not
+//   itself inside a git repo. A CLI that
 //   ignores its injected cwd then falls back to a non-repo directory, so it can
 //   neither commit to a shared git ref (refs are shared by every worktree, and a
 //   later push-cursor would publish them) nor write .claude-tweaks/ files into
@@ -21,10 +23,8 @@ const os = require('os');
 const path = require('path');
 const { runCliSync } = require('./run-cli');
 
-let emptyCwd;
-
 function sweepCli(cliPath, argv, opts = {}) {
-  if (!emptyCwd) emptyCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'health-sweep-cwd-'));
+  const emptyCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'health-sweep-cwd-'));
   const prev = process.cwd();
   process.chdir(emptyCwd);
   try {
@@ -36,6 +36,8 @@ function sweepCli(cliPath, argv, opts = {}) {
     return { status: res.code, stdout: res.stdout, stderr: res.stderr };
   } finally {
     process.chdir(prev);
+    // After the chdir back: Windows cannot remove the current directory.
+    fs.rmSync(emptyCwd, { recursive: true, force: true });
   }
 }
 

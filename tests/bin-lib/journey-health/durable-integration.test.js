@@ -78,6 +78,9 @@ test('retry-queue update <results.json> dispatches correctly against a repo with
 test('retry-queue update without --root resolves the root and a relative results file against the injected cwd', () => {
   const root = tmpRepo();
   execFileSync('git', ['init', '-q'], { cwd: root });
+  // The push the assertion below names is only reached once the state commit is created, which needs an identity.
+  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
+  execFileSync('git', ['-C', root, 'config', 'user.name', 'test']);
   execFileSync('git', ['remote', 'add', 'origin', 'https://example.invalid/nonexistent.git'], { cwd: root });
   fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify([
     { fingerprint: 'journeyhealth-aaaa0001', payload: { title: 'Stale example journey' }, ok: false, error: 'filing failed: 500' },

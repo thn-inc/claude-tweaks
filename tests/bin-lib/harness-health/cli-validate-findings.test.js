@@ -685,7 +685,8 @@ test('validate-findings returns 0 and prints its payloads while process.exitCode
 });
 
 // ── env-only fixtures: the effect of each child the CLI starts is observable only when the
-// injected env reaches it. The tests' own process environment holds none of these values.
+// injected env reaches it. The injected values win over any ambient ones (e.g. a GIT_DIR
+// inherited from a git hook); an ambient value would only weaken the mutant's discrimination.
 
 function gitRepoWithCommit() {
   const repo = tmp();
