@@ -78,6 +78,8 @@ Moved to `_shared/policy-schema-coverage.md` — its "`merge-verification` deriv
 | `integration-branch` | `policy.yml` only | `/claude-tweaks:routine`, `/claude-tweaks:dispatch`, `/claude-tweaks:wrap-up`, `/claude-tweaks:build`, `/claude-tweaks:flow`, `/claude-tweaks:assess-agent-autonomy`, plus the `SessionStart` worktree reaper (`bin/lib/hooks/worktree-reap.js` — the one non-skill consumer) — all via `_shared/integration-branch.md` | unset (each consumer keeps its own fallback; for the reaper that fallback is to reap nothing) | The branch where finished work lands and new work starts. Set it on any repo whose active development branch isn't its GitHub default — a `dev` → `staging` → `main` model — where the default is the one branch nothing should be measured against |
 | `autonomy` | `policy.yml` | `/claude-tweaks:capture` (born-`ready` filing), `/claude-tweaks:backlog refine` (`refine-mode.md` Step 3's advisory trust consequence lines — the ceiling also decides whether that fetch runs at all, gated to `trusted`+ or `--trust` — and Step 3.6; its headless posture's machine-grant chain, `refine-headless.md`, reached via `--source routine\|sweep` or the deprecated `grant` alias), `/claude-tweaks:ledger`, `/claude-tweaks:wrap-up` (the bookkeeping capabilities below) — all via `_shared/autonomy-ceiling.md` | `supervised` | `supervised`/`trusted`/`unattended` — a **ceiling on autonomous action, not a level**. `bin/lib/issues/trust.js`'s per-class evidence (rendered read-only by `/claude-tweaks:help` and `/claude-tweaks:backlog overview`) moves the level; this lever only ever caps it — a class that has earned trust still cannot exceed the configured ceiling, and lowering the ceiling revokes immediately without destroying the evidence history. Resolved by `bin/lib/issues/autonomy.js` — `resolveCeiling` picks the tier by precedence, `permittedGrants` maps `(ceiling, trust row)` to a concrete permission set, and `bookkeepingPermissions(ceiling)` maps the ceiling alone (no trust row needed) to the bookkeeping capabilities `_shared/autonomy-ceiling.md`'s own table enumerates. `_shared/autonomy-ceiling.md` is the contract for all of this. `trusted` also unlocks born-`ready` filing for classes whose verdict is `clean`; `unattended` additionally unlocks machine-originated grants, gated behind the `grant-origination-enabled` opt-in below — `refine`'s headless posture is the one path that acts on it. At `supervised` — the default — trust is computed and displayed and never acted on, and none of the bookkeeping capabilities are unlocked |
 | `trust-revert-window-days` | `policy.yml` | `bin/lib/issues/trust.js` (evidence engine), consumed by `_shared/trust-table.md`'s Fetch section | `14` | Minimum age in days since a closed record's tracker `closedAt` before its unreverted closing commit(s) count as known-good **operational** evidence in the trust table, alongside acceptance dispositions — see `_shared/autonomy-ceiling.md`. A malformed value (`0`, negative, non-integer) falls back to the default rather than throwing |
+| `trust-evaluation-window-days` | `policy.yml` | `bin/lib/issues/trust.js` (verdict engine) | `30` | Lookback in days for a closed record to count toward its class's verdict. Unset: `30`; set: the integer; malformed (`0`, negative, non-integer): `30` with `invalid: true`. At or below `trust-revert-window-days`, only acceptance dispositions remain as evidence |
+| `trust-follow-up-rate-max-percent` | `policy.yml` | `bin/lib/issues/trust.js` (verdict engine) | `30` | Follow-up share (percent) a class may show and still read clean. Unset: `30`; set: the integer; malformed (outside 0-100, non-integer): `30` with `invalid: true`. `0` restores zero tolerance |
 | `grant-origination-enabled` | `policy.yml` | `/claude-tweaks:backlog refine`'s headless posture (via `bin/lib/issues/grant-gate.js`) | `false` | The reserved second opt-in `_shared/autonomy-ceiling.md` names (read as `grantOriginationEnabled` in `permittedGrants`) — `autonomy: unattended` alone never authorizes a machine-originated grant; this key is the other half. A human sets it deliberately in a project's `policy.yml`; no skill ever writes it |
 | `fleet-daily-grant-cap` | `policy.yml` | `/claude-tweaks:backlog refine`'s headless posture (via `bin/lib/issues/grant-gate.js`) | unset (uncapped) | Positive integer capping how many machine grants the headless posture may issue per UTC day, counted from today-dated audit-comment markers. Absent means no cap — optional-when-absent, not a hard requirement of the machine-grant path |
 | `risk-floor` | `policy.yml` | `/claude-tweaks:backlog refine`'s headless posture (via `bin/lib/issues/grant-gate.js` gate 5), `/claude-tweaks:demo`'s binary gate | `high` | `low`/`medium`/`high`/`always` — the risk tier at or above which `bin/lib/issues/oversight-floor.js`'s `exceedsOversightFloor` denies machine origination and requires a human review. `always` unconditionally denies regardless of the record's own tier. Shared with `size-floor` below — not prefixed `demo-`/`grant-`, since more than one consumer reads the same pair |
@@ -98,8 +100,9 @@ Canonical defaults for the keys in this section also live in `_shared/work-recor
 | `express-lane` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:flow` (`_shared/express-lane.md`) | `false` | Opts a project into the express lane: a small, low-risk singleton record builds, tests and merges-on-green in one agent instead of the full `/flow` frame |
 | `express-review-sample-every` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:flow` (`_shared/express-lane.md`) | `5` | Every Nth express-lane merge is sent through the normal review lenses after it lands, and what they find is filed as records. `0` and negative values are schema-invalid (`min: 1`) |
 | `express-driver` | `policy.yml` | `bin/drive.js` (#5218) | `off` | Routes records to the pipeline driver: `off`, `split` (even record numbers only — a cheap split, not an unbiased one; numbers cluster by filing batch) or `on`. Unset or malformed (`invalid: true`) gives `off`. `policyOnly`: it routes records to autonomous machinery, so a `--run` config never switches it. `split` is temporary — dropped for `on` or `off` once each arm has 20 merged records (Phase 4 parent record) |
-| `express-driver-wall-clock-minutes` | `policy.yml` | `bin/drive.js` (#5218) | `30` | Minutes one record's driver run may take. Unset or malformed gives `30`; `0` is never unlimited (`min: 1`). `policyOnly`: ceilings bound autonomous spend, so a `--run` config never sets it |
-| `express-driver-spend-ceiling-dollars` | `policy.yml` | `bin/drive.js` (#5218) | `10` | Whole dollars one record's driver run may spend. Unset or malformed gives `10`; `0` is never unlimited (`min: 1`). `policyOnly`: it bounds autonomous spend, so a `--run` config never raises it |
+| `express-driver-wall-clock-minutes` | `policy.yml` | `bin/drive.js` (#5218) | `30` | Minutes each driver worker launch may take, not the record: when the review step runs, a record can launch three (reviewer, implementer, fix implementer). Unset or malformed gives `30`; `0` is never unlimited (`min: 1`). `policyOnly`: ceilings bound autonomous spend, so a `--run` config never sets it |
+| `express-driver-spend-ceiling-dollars` | `policy.yml` | `bin/drive.js` (#5218) | `10` | Whole dollars each driver worker launch may spend, not the record (up to three launches when the review step runs). Unset or malformed gives `10`; `0` is never unlimited (`min: 1`). `policyOnly`: it bounds autonomous spend, so a `--run` config never raises it |
+| `express-driver-review` | `policy.yml` | `bin/drive.js` (#5222) | `beyond-express` | The driver's read-only reviewer step: `off`, `on`, or `beyond-express`, which reviews only a record whose size label is missing or not `low`, or with more than `EXPRESS_MAX_KEY_FILES` Key Files. Unset or malformed (`invalid: true`) gives `beyond-express`. `policyOnly`: it decides whether autonomous machinery runs, so a `--run` config never switches it |
 | `auto-merge-max-lines` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:assess-agent-autonomy` | `40` | Auto-merge blast-radius guideline (lines) — a weighted input to the `merge-check` verdict, not a hard cutoff |
 | `auto-merge-max-files` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:assess-agent-autonomy` | `2` | Auto-merge blast-radius guideline (files) — same weighted treatment |
 | `merge-sensitive-paths` | `policy.yml` | `/claude-tweaks:assess-agent-autonomy`, `/claude-tweaks:review` | `[]` (empty) | Comma-separated path globs forcing a hard needs-human floor in the `merge-check` verdict, and feeding `/review`'s diff-heuristic risk proxy |
@@ -198,20 +201,27 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 
 Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. The rest of this section's intro (flat-key list syntax, login and slug entries, quoting rules): moved to `_shared/policy-schema-read-path.md`'s Control mode section (#5216, rail headroom). Cite that file, not this stub.
 
+The canonical-home/owner/default/meaning table for these twelve keys moved to `_shared/policy-schema-read-path.md`'s Control mode section (headroom-forced, #5291). Cite that file, not this stub.
+
+| Key |
+|---|
+| `control-mode` |
+| `acceptance-target` |
+| `deploy-reach` |
+| `deploy-command` |
+| `deploy-live-workflow` |
+| `deploy-version-url` |
+| `dev-base-url` |
+| `dev-test-account` |
+| `deploy-wait-seconds` |
+| `deploy-poll-seconds` |
+| `owned-owners` |
+| `trusted-authors` |
+
+The two risk keys keep their full rows here (`tests/risk-flags-refine-prose.test.js` pins their owner cells):
+
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
-| `control-mode` | `policy.yml` | none yet (#4608) | `off` | `off`/`on` |
-| `acceptance-target` | `policy.yml` | none yet (#4608) | `local` | `local`/`dev` |
-| `deploy-reach` | `policy.yml` | none yet (#4608) | `none` | `on-merge`/`command`/`none` |
-| `deploy-command` | `policy.yml`, base branch only | none yet (#4608) | unset | Executed command; spaces allowed |
-| `deploy-live-workflow` | `policy.yml` | none yet (#4608) | unset | CI workflow name; spaces allowed |
-| `deploy-version-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL, no `user:pw@` |
-| `dev-base-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL, no `user:pw@` |
-| `dev-test-account` | `policy.yml` | none yet (#4608) | unset | Vault entry name, never a credential |
-| `deploy-wait-seconds` | `policy.yml` | none yet (#4608) | `900` | Integer >= 0 |
-| `deploy-poll-seconds` | `policy.yml` | none yet (#4608) | `30` | Integer >= 1 |
-| `owned-owners` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
-| `trusted-authors` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, as `owned-owners` |
 | `risk-categories` | `policy.yml` | `risk-flags.js`, `plan-audit.js` | `[]` | Extra lowercase slugs |
 | `risk-path-globs` | `policy.yml`, block | `risk-flags.js` | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue`: `null` with `invalid` means malformed, never unset |
 

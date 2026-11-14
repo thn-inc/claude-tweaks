@@ -99,9 +99,9 @@ test('the committed durations file parses and names only test files that exist',
 });
 
 test('extractRunFlags pulls --shard and --record-durations out and keeps the roots', () => {
-  assert.deepStrictEqual(extractRunFlags(['--shard', '1/4']), { rest: [], shard: '1/4', recordDurations: null });
-  assert.deepStrictEqual(extractRunFlags(['perf', '--shard=2/3']), { rest: ['perf'], shard: '2/3', recordDurations: null });
-  assert.deepStrictEqual(extractRunFlags(['--record-durations', 'out.json', 'tests']), { rest: ['tests'], shard: null, recordDurations: 'out.json' });
+  assert.deepStrictEqual(extractRunFlags(['--shard', '1/4']), { rest: [], shard: '1/4', recordDurations: null, full: false });
+  assert.deepStrictEqual(extractRunFlags(['perf', '--shard=2/3']), { rest: ['perf'], shard: '2/3', recordDurations: null, full: false });
+  assert.deepStrictEqual(extractRunFlags(['--record-durations', 'out.json', 'tests']), { rest: ['tests'], shard: null, recordDurations: 'out.json', full: false });
   assert.throws(() => extractRunFlags(['--shard']), /--shard needs a value/);
   assert.throws(() => extractRunFlags(['--record-durations', '--shard', '1/2']), /--record-durations needs a value/);
 });

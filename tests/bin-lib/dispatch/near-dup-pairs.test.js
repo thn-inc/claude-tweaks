@@ -24,7 +24,8 @@ const r11 = rec(11, 'Unrelated words entirely here', ['alpha.js', 'beta.js', 'ga
 const r12 = rec(12, 'Rework the queue ordering heuristic', []);
 const r13 = rec(13, 'Something else wholly', ['delta.js']);
 
-// Today's queue-pull-script.md heredoc loop, verbatim, as the reference.
+// The cross-group pairing loop nearDuplicatePairsAcrossGroups replaced, verbatim, as the reference;
+// the queue-pull module's near-dup-pairs pass (plugin/bin/lib/dispatch/queue-pull.js) calls that function.
 function heredocLines(groups) {
   const out = [];
   const seen = new Set();

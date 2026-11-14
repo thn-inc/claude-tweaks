@@ -53,6 +53,36 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.168.0](https://github.com/thn-inc/claude-tweaks/compare/v6.167.0...v6.168.0) (2026-11-14)
+
+
+### Features
+
+* Check spec deliverables that target the PR body against… ([#5340](https://github.com/thn-inc/claude-tweaks/issues/5340)) ([79cd571](https://github.com/thn-inc/claude-tweaks/commit/79cd5710d803946af6d845e8f430fbc9c8ef84f0))
+* Cut /claude-tweaks:dispatch over to the queue-pull CLI ([#5230](https://github.com/thn-inc/claude-tweaks/issues/5230)) ([83a3794](https://github.com/thn-inc/claude-tweaks/commit/83a37940e0cc0c119a33d89e8224fc8a8428893f))
+* Driver reviewer step: one read-only reviewer whose… ([#5222](https://github.com/thn-inc/claude-tweaks/issues/5222)) ([d3962cd](https://github.com/thn-inc/claude-tweaks/commit/d3962cda8a666087572408060b2011d202729c15))
+* Turn on the worker read block and re-open only the test… ([#5268](https://github.com/thn-inc/claude-tweaks/issues/5268)) ([eb764f7](https://github.com/thn-inc/claude-tweaks/commit/eb764f723fc7cf899932f3a3d3309481ae590a14))
+
+
+### Bug Fixes
+
+* drive.js: worker-authored tests run outside the sandbox… ([#5267](https://github.com/thn-inc/claude-tweaks/issues/5267)) ([266feaa](https://github.com/thn-inc/claude-tweaks/commit/266feaa10ec90f88dadf797487b69dea83bddc80))
+* Keep a partial Current-State outcome out of review's… ([#5359](https://github.com/thn-inc/claude-tweaks/issues/5359)) ([5387a66](https://github.com/thn-inc/claude-tweaks/commit/5387a66d1d7714c2ae895edc659b63dcbfc18b11))
+* Keep both PR-body delimiter forms through an MCP… ([#5358](https://github.com/thn-inc/claude-tweaks/issues/5358)) ([82989d4](https://github.com/thn-inc/claude-tweaks/commit/82989d4c4aff9ffc190816d45e4fc20a9a55c8c3))
+* Keep the verb in driver commit titles: strip a closing… ([#5269](https://github.com/thn-inc/claude-tweaks/issues/5269)) ([3503ec8](https://github.com/thn-inc/claude-tweaks/commit/3503ec8f45c92855552d1a05d5defdab03dc7355))
+* Remove www. and bare github.com issue URLs from driver… ([#5352](https://github.com/thn-inc/claude-tweaks/issues/5352)) ([04a19db](https://github.com/thn-inc/claude-tweaks/commit/04a19db59b6fbaabad39390693595ab474a9b4fe))
+
+### Highlights
+* Added a single evidence-based reviewer to the pipeline driver, which accepts a finding only when it comes with a test that fails.
+* Switched `/claude-tweaks:dispatch` to select its queue with a command instead of by reading and running an embedded script.
+* A review whose change does not reach the outcome its record named no longer shows as a clean pass.
+* Driver commit titles, PR bodies and event lines no longer keep issue or PR references from worker text that GitHub would link: www. and bare github.com URLs, and owner/repo/issues/N or /pull/N paths after any host or none.
+* The pipeline driver's implementer worker can no longer read your home directory; only the test command's own toolchain stays readable.
+* PR descriptions edited without the GitHub CLI keep the hidden markers other tools use to find a run's PR.
+* Review now checks deliverables that belong in the PR description against the PR itself, instead of searching the code for them.
+* The pipeline driver no longer passes its credential environment variables to worker-written test code. Credentials stored in the keychain, the git credential helper or files under HOME are still reachable; this is best-effort containment, not a sandbox.
+* Commit titles written by the pipeline driver keep their leading verb, such as Fix or Resolve.
+
 ## [6.167.0](https://github.com/thn-inc/claude-tweaks/compare/v6.166.0...v6.167.0) (2026-11-13)
 
 

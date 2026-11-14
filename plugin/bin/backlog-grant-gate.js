@@ -43,6 +43,7 @@ const {
 } = require('./lib/repo-resolve');
 const { computeOutlook } = require('./lib/backlog-grant-gate/backlog-grant-gate');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { TRUST_POLICY_KEYS } = require('./lib/issues/trust');
 
 const USAGE = 'usage: backlog-grant-gate.js [--repo owner/name] [--limit N] [--help]\n';
 
@@ -128,7 +129,7 @@ function run(argv, deps = realDeps) {
 
   const policyRaw = deps.readPolicyRaw();
   const resolved = resolvePolicyKeys(
-    ['autonomy', 'grant-origination-enabled', 'risk-floor', 'size-floor', 'backlog-fetch-limit', 'trust-revert-window-days', 'work-links', 'integration-branch', 'record-snapshot-ttl-seconds'],
+    ['autonomy', 'grant-origination-enabled', 'risk-floor', 'size-floor', 'backlog-fetch-limit', ...TRUST_POLICY_KEYS, 'work-links', 'integration-branch', 'record-snapshot-ttl-seconds'],
     { policyRaw },
   );
   const ceiling = resolved.autonomy.value;
@@ -138,7 +139,7 @@ function run(argv, deps = realDeps) {
     grantOriginationEnabled,
     riskFloor: resolved['risk-floor'].value,
     sizeFloor: resolved['size-floor'].value,
-    windowDays: resolved['trust-revert-window-days'].value,
+    trust: Object.fromEntries(TRUST_POLICY_KEYS.map((k) => [k, resolved[k].value])),
   };
 
   // Ceiling gate short-circuits before any network call — the ceiling and

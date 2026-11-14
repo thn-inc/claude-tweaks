@@ -38,6 +38,7 @@
 'use strict';
 const { detectIntegrationModel, resolveIntegrationModel, resolvePolicyKeys } = require('./policy-schema');
 const { deriveMergeVerification } = require('./merge-verification');
+const { pickInjected } = require('./repo-resolve');
 
 // The run's integration-model pin (a valid run-config value), else null.
 function runPinnedIntegrationModel(runConfigRaw) {
@@ -49,11 +50,16 @@ function runPinnedIntegrationModel(runConfigRaw) {
 // Mutates `result` in place (same object bin/resolve-policy.js already reads
 // keyed entries out of) and returns it. `keys` is the requested key list;
 // `root` is the resolved repo root passed through to both lookups.
+//
+// deps.env, deps.stderr and deps.homeDir (all optional) are handed on to the lookups that
+// start a git or gh child: to both model lookups and to deriveMergeVerification. A key absent
+// from deps is absent from what is handed on.
 function computeDerivedDefaults(result, keys, root, deps = {}) {
   const detectModel = deps.detectIntegrationModel || detectIntegrationModel;
   const resolveModel = deps.resolveIntegrationModel || resolveIntegrationModel;
   const deriveVerification = deps.deriveMergeVerification || deriveMergeVerification;
   const mcpReachable = deps.mcpReachable === true;
+  const injected = pickInjected(deps);
   const reportDegrade = (key, degrade) => {
     if (typeof deps.onDegrade !== 'function') return;
     try {
@@ -71,7 +77,7 @@ function computeDerivedDefaults(result, keys, root, deps = {}) {
     const entry = result['integration-model'];
     if (entry && entry.source === 'default' && !entry.invalid) {
       let degrade = null;
-      const value = detectModel(root, { mcpReachable, onDegrade: (d) => { degrade = d; } });
+      const value = detectModel(root, { mcpReachable, onDegrade: (d) => { degrade = d; }, ...injected });
       result['integration-model'] = { value, source: 'default' };
       if (degrade) {
         result['integration-model'].degraded = degrade.reason;
@@ -115,8 +121,9 @@ function computeDerivedDefaults(result, keys, root, deps = {}) {
         const pinned = runPinnedIntegrationModel(deps.runConfigRaw);
         mvDeps = pinned !== null
           ? { integrationModel: () => pinned }
-          : { integrationModel: (r) => resolveModel(r, { mcpReachable, onDegrade: (d) => { degrade = d; } }) };
+          : { integrationModel: (r) => resolveModel(r, { mcpReachable, onDegrade: (d) => { degrade = d; }, ...injected }) };
       }
+      Object.assign(mvDeps, injected);
       result['merge-verification'] = { value: deriveVerification(root, mvDeps), source: 'default' };
       if (carried !== undefined) result['merge-verification'].degraded = carried;
       if (degrade) {

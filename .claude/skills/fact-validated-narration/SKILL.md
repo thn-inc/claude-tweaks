@@ -63,6 +63,15 @@ against an input built so that removing it forms the next shape (the `#5269 AC2`
 and `#5269 AC4` comment-opener tests in `tests/bin-lib/driver/run.test.js`), and keep the loop
 linear (`regex-scan-linearity`).
 
+Settle which shapes are live by asking GitHub's renderer, not the autolink spec or memory:
+`gh api markdown -f mode=gfm -F context={owner}/{repo} -f text='…'` (`-F`, not `-f`, fills the
+placeholders from the current repository). #5352's spec said a bare
+`github.com/o/r/issues/5` URL autolinks. The probe showed the host never links, and the reference is
+the `owner/repo/issues/N` path itself, whatever precedes the owner (only `_` stops it), so `neutralize`
+gained `PATH_REF`. Probe against a repository that exists: #5269 pinned
+`xhttps://github.com/o/r/issues/5` as surviving from a probe against one that does not, and #5352
+had to flip that pin.
+
 ## A partial gather is never an empty period
 
 `failures.length === 0` belongs in the "nothing happened in this period" predicate. Without it, a

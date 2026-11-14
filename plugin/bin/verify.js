@@ -19,9 +19,9 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync, execFileSync } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
-const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
+const { parseArgs, UsageError, USAGE, EXIT_NO_VERDICT } = require('./lib/verify/args');
 const { runChecks, runOne, stopTrees } = require('./lib/verify/run');
 const {
   resolveSuiteSlots, chooseLane, holdSlot, SlotUnavailableError,
@@ -49,9 +49,9 @@ const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
-const { gitLocations, loadImpactContext, lazyImpactContext } = require('./lib/verify/impact');
+const { checkoutImpactContext } = require('./lib/verify/impact');
 const { substituteFile, describePath } = require('./lib/verify/file-template');
-const { fetchCiVerdict } = require('./lib/verify/ci-source');
+const { fetchCiVerdict, LOCAL_REQUESTED, NOT_CONSULTED } = require('./lib/verify/ci-source');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -106,21 +106,6 @@ function enrich(result) {
     // only when a count-stamp comparison is actually in play (main() gates
     // this on countStampPath before it reaches composeReport).
     ...(result.name === 'tests' && counts === null ? { countsFamily: family } : {}),
-  };
-}
-
-// #4024: impact.fetch downloads a ready map (never a trace) — at most once per
-// run, bounded, its output ignored (never piped, so no maxBuffer can kill a
-// verbose fetch); the report keeps its exit code, time, timeout and signal.
-function runImpactFetch(command, cwd) {
-  const startedMs = Date.now();
-  const r = spawnSync(command, { shell: true, cwd, timeout: 120000, stdio: 'ignore', windowsHide: true });
-  return {
-    ran: true,
-    exitCode: typeof r.status === 'number' ? r.status : null,
-    durationMs: Date.now() - startedMs,
-    timedOut: Boolean(r.error && r.error.code === 'ETIMEDOUT'),
-    signal: r.signal || null,
   };
 }
 
@@ -205,18 +190,30 @@ function discoverDeclaration(cwd) {
 // named in one stderr line.
 function defaultConcurrency(cwd) {
   const none = { suiteSlots: null, reruns: null, timeoutPatterns: [] };
+  const { decl, error } = readDefaultDeclaration(cwd);
+  if (error) {
+    process.stderr.write(`verify.js: concurrency ignored — ${error}\n`);
+    return none;
+  }
+  return decl ? decl.concurrency : none;
+}
+
+// The default declaration, read once per process and cwd (#5369): the unscoped
+// localRuns refusal and defaultConcurrency both need it. `decl` is null when it
+// is absent, unreadable or invalid; `error` carries the text defaultConcurrency prints.
+const defaultDeclarations = new Map();
+function readDefaultDeclaration(cwd) {
+  if (defaultDeclarations.has(cwd)) return defaultDeclarations.get(cwd);
+  let result;
   const found = discoverDeclaration(cwd);
-  if (found.error) {
-    process.stderr.write(`verify.js: concurrency ignored — ${found.error}\n`);
-    return none;
+  if (found.error) result = { decl: null, error: found.error };
+  else if (found.path === null) result = { decl: null, error: null };
+  else {
+    const read = readDeclaration(found.path, undefined, { selfPath: scopeSelfPath(found.path, cwd) });
+    result = read.ok ? { decl: read.decl || null, error: null } : { decl: null, error: read.errors[0] };
   }
-  if (found.path === null) return none;
-  const read = readDeclaration(found.path, undefined, { selfPath: scopeSelfPath(found.path, cwd) });
-  if (!read.ok) {
-    process.stderr.write(`verify.js: concurrency ignored — ${read.errors[0]}\n`);
-    return none;
-  }
-  return read.decl ? read.decl.concurrency : none;
+  defaultDeclarations.set(cwd, result);
+  return result;
 }
 
 // report.json's `slot` (and baselineAdjudicated.slot) for a held suite slot.
@@ -224,6 +221,41 @@ function slotReport(hold) {
   return {
     lane: hold.lane, index: hold.index, waitedMs: hold.waitedMs, slots: hold.slots, source: hold.source,
   };
+}
+
+// The verify event's `ci` (#5369): one entry per CI-declared suite this run considered.
+function ciEventEntries(ciAttempts) {
+  return ciAttempts.map((a) => ({ suite: a.suite, used: a.used, fallback: a.fallback }));
+}
+
+// The verify event's `impact` subset — absent unless the selection consulted an impact map.
+function impactEventFields(sel) {
+  return sel && sel.impact ? { impact: {
+    suite: sel.impact.suite, fallback: sel.impact.fallback, superseded: sel.impact.superseded,
+    selected: sel.impact.selected, supersedingPaths: sel.impact.supersedingPaths,
+  } } : {};
+}
+
+// The stderr text of a run that ended with no verdict (#5369): CI could not
+// answer a suite the declaration keeps off this machine, and --local was not passed.
+function noVerdictLines(attempt) {
+  return [
+    `verify.js: no verdict yet for suite "${attempt.suite}" — CI could not answer (${attempt.fallback}), and the declaration's localRuns "on-request" keeps it off this machine; no check ran and no pass stamp was written.`,
+    '  Either push the branch (commit first if the tree is dirty) so HEAD is the head of an open PR, then re-run this command,',
+    '  or re-run it with --local to run the suite on this machine.',
+  ];
+}
+
+// Verify event (#1928): resolves --run through the anchored-target guard and appends `fields`.
+// A refused target is reported aloud (never silently, never fatal) and returns null.
+function writeVerifyEvent(runArg, fields) {
+  const target = resolveTarget({ runDir: runArg });
+  if (!target.ok) {
+    process.stderr.write(`verify.js: --run ${runArg} refused (${target.reason}) — not an anchored run directory under the main checkout ([IL-127]); no verify event written\n`);
+    return null;
+  }
+  appendEvent(target.dir, 'verify', fields);
+  return target;
 }
 
 // --stamp-status (#1921): a read of the runner's own artifact. Status is data,
@@ -469,6 +501,20 @@ async function main() {
       return;
     }
   }
+  // #5369: under localRuns "on-request" an unscoped run naming a CI-declared suite is a run on
+  // this machine, so it needs --local (or --scope, which takes the suite from CI). An unreadable
+  // or invalid default declaration has decl null and is never refused.
+  if (!parsed.scope && parsed.local !== true) {
+    const { decl: defaultDecl } = readDefaultDeclaration(parsed.cwd || process.cwd());
+    if (defaultDecl && defaultDecl.localRuns === 'on-request') {
+      const ciCmd = parsed.cmds.find((c) => Object.hasOwn(defaultDecl.ci, c.name));
+      if (ciCmd) {
+        process.stderr.write(`verify.js: ${DECLARATION_PATH} sets localRuns "on-request", so the CI-declared suite "${ciCmd.name}" runs on this machine only when asked: pass --scope ${DECLARATION_PATH} to take it from CI, or --local to run it here.\n${USAGE}\n`);
+        process.exitCode = 2;
+        return;
+      }
+    }
+  }
   const gitDir = parsed.gitDir || ownGitDir;
   const logDir = parsed.logDir
     || (gitDir ? path.join(gitDir, 'claude-tweaks-verify') : fs.mkdtempSync(path.join(os.tmpdir(), 'claude-tweaks-verify-')));
@@ -476,6 +522,11 @@ async function main() {
   // #3043: an unresolvable --baseline is a usage error before any check runs.
   let bgit = null;
   let baseSha = null;
+  const staleWarnings = [];
+  function flushStaleWarnings() {
+    // fs.writeSync, not process.stderr: this may run inside the 'exit' event.
+    for (const line of staleWarnings.splice(0)) fs.writeSync(2, line);
+  }
   if (parsed.baseline) {
     bgit = realGit(parsed.cwd || process.cwd());
     baseSha = bgit.resolveCommit(parsed.baseline);
@@ -485,9 +536,16 @@ async function main() {
       return;
     }
     // Named, never swept — see findStaleBaselineWorktrees (#3064).
+    // #5369: held until the no-verdict decision so an exit-3 run's stderr line 1
+    // is the no-verdict line; a run that ends earlier flushes them at exit.
     for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
-      process.stderr.write(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
+      staleWarnings.push(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
     }
+    // Held only when a --scope declaration may turn out to carry localRuns
+    // "on-request"; any other run prints them now, or right after the
+    // declaration is read, exactly as before.
+    if (!parsed.scope) flushStaleWarnings();
+    else if (staleWarnings.length) process.once('exit', flushStaleWarnings);
   }
   const jsonPath = parsed.json || path.join(logDir, 'report.json');
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
@@ -547,10 +605,12 @@ async function main() {
       selfPath: scopeSelfPath(resolvedScopePath, parsed.cwd || process.cwd()),
     });
     if (!read.ok) {
+      flushStaleWarnings();
       scopeUsageExit(read.errors.join('\n'));
       return;
     }
     if (read.missing) {
+      flushStaleWarnings();
       // #3017: a --scope path that still does not exist after resolving
       // against the checkout root is a usage error, not "no declaration" —
       // the prior silent full-run fallback is exactly how a cwd/typo
@@ -559,6 +619,7 @@ async function main() {
       return;
     }
     decl = read.decl;
+    if (!(decl && decl.localRuns === 'on-request')) flushStaleWarnings();
 
     // AC5 (review L13): the --cmd-name-vs-declaration check only needs decl,
     // so it runs immediately after the declaration is read — before any
@@ -610,6 +671,16 @@ async function main() {
     // in THIS invocation's --cmd list, defeating the whole point of
     // chunking. `cmds` stays `parsed.cmds` unchanged; `sel`/`resolvedBase`/
     // `files` stay at their no-scope defaults.
+    // #5369: under localRuns "on-request" a chunk naming a CI-declared suite is a run on this
+    // machine, so it needs --local; it never consults CI. Before any gh call, check or slot hold.
+    if (parsed.stampSuite && decl && decl.localRuns === 'on-request' && parsed.local !== true) {
+      const ciCmd = parsed.cmds.find((c) => Object.hasOwn(decl.ci, c.name));
+      if (ciCmd) {
+        scopeUsageExit(`verify.js: ${parsed.scope} sets localRuns "on-request", so the --stamp-suite chunk of the CI-declared suite "${ciCmd.name}" is a run on this machine: pass --local to run it here.`);
+        return;
+      }
+    }
+
     if (!parsed.stampSuite) {
       // M5 (review): the anchor always reads THIS checkout's OWN git dir,
       // never an explicit --git-dir — the identical rule stampStatus() applies
@@ -675,12 +746,7 @@ async function main() {
       // so the suite runs its full command. With no usable stamp anchor, the
       // --integration-branch merge-base anchors; an explicit --base never does
       // (it runs full, as before).
-      if (decl.impact) {
-        const where = gitLocations({ cwd: parsed.cwd || process.cwd() });
-        impactCtx = lazyImpactContext(() => (where === null
-          ? { map: null, problem: 'map-unlocatable', headTests: [], driftTests: [], mapPath: null, mapCommit: null, mapDirty: null, distance: null, fetch: null }
-          : loadImpactContext({ decl, ...where, runFetch: (command) => runImpactFetch(command, where.repoRoot) })));
-      }
+      if (decl.impact) impactCtx = checkoutImpactContext({ decl, cwd: parsed.cwd || process.cwd() });
       const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
       const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
       sel = select(impactCtx);
@@ -883,28 +949,78 @@ async function main() {
   // whole suite, so it also stands in for an impact subset — on a tree CI
   // actually saw (clean at start). Every other outcome is a named fallback in
   // report.json's `ci`, and the suite runs locally exactly as selected.
+  // #5369: under a declaration with localRuns "on-request" a CI-declared suite
+  // never falls back to a local run — the first one CI cannot answer stops the
+  // run with no verdict (exit 3, below), the later ones are not consulted, and
+  // --local skips CI for all of them. A red answer's flaky retry is deferred
+  // until every suite answered, so "no verdict yet" is decided before any retry.
+  const onRequest = Boolean(decl && decl.localRuns === 'on-request');
   const ciAttempts = [];
   const ciResults = [];
+  const deferredRetries = new Set();
+  const retryCtx = {
+    logDir, spawnImpl: spawn, now: Date.now, cwd: parsed.cwd, ownSlot: true,
+  };
   if (decl && decl.ci && sel && !parsed.stampSuite && sel.mode !== 'none') {
+    let stopped = false;
     for (const [suite, source] of Object.entries(decl.ci)) {
       if (!cmds.some((c) => c.name === suite)) continue;
       const skipCi = (reason) => ciAttempts.push({
         suite, workflow: source.workflow, job: source.job, used: false, fallback: reason,
         prNumber: null, runId: null, runUrl: null, jobId: null, conclusion: null, waitedMs: 0,
       });
-      if (startGit.dirty !== false) { skipCi(startGit.dirty === null ? 'tree-state-unreadable' : 'dirty-tree'); continue; }
+      if (parsed.local) { skipCi(LOCAL_REQUESTED); continue; }
+      if (stopped) { skipCi(NOT_CONSULTED); continue; }
+      if (startGit.dirty !== false) {
+        skipCi(startGit.dirty === null ? 'tree-state-unreadable' : 'dirty-tree');
+        stopped = onRequest;
+        continue;
+      }
       const verdict = await fetchCiVerdict({
-        suite, source, headSha: startSha, logDir, localRoot: logCwd, cwd: parsed.cwd || process.cwd(),
+        suite, source, headSha: startSha, logDir, localRoot: logCwd, cwd: parsed.cwd || process.cwd(), localRuns: decl.localRuns,
       });
       ciAttempts.push(verdict.ci);
-      if (!verdict.used) continue;
+      if (!verdict.used) { stopped = onRequest; continue; }
       const ciResult = { ...verdict.result, ci: { runId: verdict.ci.runId, runUrl: verdict.ci.runUrl, jobId: verdict.ci.jobId } };
-      ciResults.push(ciResult.exitCode === 0
-        ? ciResult
-        : await retryHook(ciResult, {
-          logDir, spawnImpl: spawn, now: Date.now, cwd: parsed.cwd, ownSlot: true,
-        }));
+      if (ciResult.exitCode === 0) ciResults.push(ciResult);
+      else if (verdict.ci.logUnavailable) ciResults.push({ ...ciResult, retryDecision: { retry: false, reason: 'ci-log-unavailable' } });
+      else if (onRequest) { ciResults.push(ciResult); deferredRetries.add(ciResult); }
+      else ciResults.push(await retryHook(ciResult, retryCtx));
     }
+  }
+  const noVerdict = onRequest
+    ? ciAttempts.find((a) => !a.used && a.fallback !== LOCAL_REQUESTED && a.fallback !== NOT_CONSULTED)
+    : undefined;
+  if (noVerdict) {
+    // No check ran, so no report, no stamp and no slot: a report left by an
+    // earlier run would read as this run's answer.
+    process.stderr.write(`${noVerdictLines(noVerdict).join('\n')}\n`);
+    flushStaleWarnings();
+    fs.rmSync(jsonPath, { force: true });
+    if (parsed.run) {
+      writeVerifyEvent(parsed.run, {
+        mode: sel.mode,
+        suitesRun: [],
+        durationMs: Date.now() - startMs,
+        slotWaitedMs: 0,
+        pass: null,
+        noVerdict: true,
+        baselineAdjudicated: null,
+        preExistingAdjudicated: null,
+        sha: startSha,
+        flakyRetried: [],
+        reportPath: null,
+        ...impactEventFields(sel),
+        ci: ciEventEntries(ciAttempts),
+        local: false,
+      });
+    }
+    process.exitCode = EXIT_NO_VERDICT;
+    return;
+  }
+  flushStaleWarnings();
+  for (let i = 0; i < ciResults.length; i += 1) {
+    if (deferredRetries.has(ciResults[i])) ciResults[i] = await retryHook(ciResults[i], retryCtx);
   }
   const ciSuites = new Set(ciResults.map((r) => r.name));
   const localCmds = cmds.filter((c) => !ciSuites.has(c.name));
@@ -1241,29 +1357,26 @@ async function main() {
   // checkout's pipelines tree (a worktree-local shadow, [IL-127]) is refused
   // aloud — never written silently, never fatal to the run.
   if (parsed.run) {
-    const target = resolveTarget({ runDir: parsed.run });
-    if (!target.ok) {
-      process.stderr.write(`verify.js: --run ${parsed.run} refused (${target.reason}) — not an anchored run directory under the main checkout ([IL-127]); no verify event written\n`);
-    } else {
-      let preExistingVerdict = null;
-      if (preExistingAdjudicated) preExistingVerdict = preExistingPass ? 'pass' : 'ineligible';
-      appendEvent(target.dir, 'verify', {
-        mode: report.scope ? report.scope.mode : 'full',
-        suitesRun: results.filter((c) => !c.skipped).map((c) => c.name),
-        durationMs: report.durationMs,
-        // #5119: the part of durationMs spent queued for a suite slot (0 when none was waited for).
-        slotWaitedMs,
-        pass: report.pass,
-        baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
-        preExistingAdjudicated: preExistingVerdict,
-        sha: git.sha,
-        flakyRetried: retriedFiles,
-        reportPath: jsonPath,
-        ...(sel && sel.impact ? { impact: {
-          suite: sel.impact.suite, fallback: sel.impact.fallback, superseded: sel.impact.superseded,
-          selected: sel.impact.selected, supersedingPaths: sel.impact.supersedingPaths,
-        } } : {}),
-      });
+    let preExistingVerdict = null;
+    if (preExistingAdjudicated) preExistingVerdict = preExistingPass ? 'pass' : 'ineligible';
+    const target = writeVerifyEvent(parsed.run, {
+      mode: report.scope ? report.scope.mode : 'full',
+      suitesRun: results.filter((c) => !c.skipped).map((c) => c.name),
+      durationMs: report.durationMs,
+      // #5119: the part of durationMs spent queued for a suite slot (0 when none was waited for).
+      slotWaitedMs,
+      pass: report.pass,
+      baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
+      preExistingAdjudicated: preExistingVerdict,
+      sha: git.sha,
+      flakyRetried: retriedFiles,
+      reportPath: jsonPath,
+      ...impactEventFields(sel),
+      // #5369: what CI answered per declared suite, and whether --local asked to skip it.
+      ...(ciAttempts.length ? { ci: ciEventEntries(ciAttempts) } : {}),
+      local: parsed.local === true,
+    });
+    if (target) {
       // #3062: a baseline-flaky file that reaches the escalation threshold
       // without being on flaky.files never joins the allowlist silently —
       // stage a proposal for the Review Console instead (the same
@@ -1467,6 +1580,10 @@ async function main() {
     lines.push('');
   }
   for (const a of ciAttempts) {
+    if (a.logUnavailable) {
+      lines.push(`CI: ${a.suite} — taken from ${a.workflow} / ${a.job} run ${a.runId} on HEAD (${a.conclusion}, ${a.runUrl || `run ${a.runId}`}; its log could not be downloaded — pass --local to reproduce the failure here)`);
+      continue;
+    }
     lines.push(a.used
       ? `CI: ${a.suite} — taken from ${a.workflow} / ${a.job} run ${a.runId} on HEAD (${a.conclusion}${a.runUrl ? `, ${a.runUrl}` : ''})`
       : `CI: ${a.suite} — ran locally (${a.fallback})`);

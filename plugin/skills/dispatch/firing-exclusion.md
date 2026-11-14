@@ -46,9 +46,9 @@ rather than rewrite a corrupt, non-array or unreadable `dispatch-exclusions.json
 the append exits non-zero, report its error line and stop the firing — never continue to the next
 iteration: the next queue pull's truncation step reads the file through `readExclusions`, which
 degrades it to `[]`, so no `firing` entry survives and the stuck group is re-selected. This is the
-same stop every `queue-pull-script.md` append site takes.
+same stop every append site in the queue pull (`bin/lib/dispatch/queue-pull.js`) takes.
 
-`next-ranking.md`'s script reads this same file (absent or unreadable treated as `[]`, per
+`queue-pull.js --rank` (the ranking, `bin/lib/dispatch/queue-pull.js`'s `rankNext`) reads this same file (absent or unreadable treated as `[]`, per
 `readExclusions`'s own contract) and, via one `groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])`
 call, excludes any matching group from the candidate pool — the same derivation that already
 excludes an oversized group, not a separate one. `next`'s single-iteration alias never appends
@@ -56,8 +56,10 @@ excludes an oversized group, not a separate one. `next`'s single-iteration alias
 
 **A continuation reads this file before its first pick, not only appends to it afterward.** A
 continuation of an existing firing — a session restart, a `continue` after compaction, any
-resumption that re-enters `SKILL.md` Step 3's Loop — must run `next-ranking.md`'s script verbatim
-(which is what reads this file) for its very first candidate pick of that continuation, and never
+resumption that re-enters `SKILL.md` Step 3's Loop — must run
+`node "${CLAUDE_PLUGIN_ROOT}/bin/queue-pull.js" --rank [--priority <band>]` (`--priority` as
+`SKILL.md`'s `next` bullet says; it is what reads this file) for its very first candidate pick of
+that continuation, and never
 re-derive candidates from the raw `dispatch-groups.json` queue-pull output alone. The file is still
 in place under the same session's temp root (`_shared/session-tmp-root.md`'s "Idempotency and
 resume"), so skipping that read re-dispatches a group this same firing already drove to a stuck

@@ -1,0 +1,210 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Driver Merge Gate</title></head><body>
+<style>
+:root {
+  --graphite-ink: #1c1f24;
+  --graphite-ink-muted: #5b6472;
+  --graphite-surface: #f7f7f5;
+  --graphite-surface-muted: #ececea;
+  --graphite-border: #dcdcda;
+  --signal-amber: #b8720f;
+  --signal-amber-deep: #8f5a0c;
+  --font-body-family: JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+:root[data-theme="dark"] {
+  --graphite-ink: #1c1f24;
+  --graphite-ink-muted: #5b6472;
+  --graphite-surface: #f7f7f5;
+  --graphite-surface-muted: #ececea;
+  --graphite-border: #dcdcda;
+  --signal-amber: #b8720f;
+  --signal-amber-deep: #8f5a0c;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --graphite-ink: #1c1f24;
+    --graphite-ink-muted: #5b6472;
+    --graphite-surface: #f7f7f5;
+    --graphite-surface-muted: #ececea;
+    --graphite-border: #dcdcda;
+    --signal-amber: #b8720f;
+    --signal-amber-deep: #8f5a0c;
+  }
+}
+body { margin: 0; padding: 16px; background: var(--graphite-surface); color: var(--graphite-ink); }
+.vz-dmg-svg { display: block; width: 100%; max-width: 1150px; height: auto; font-family: var(--font-body-family); }
+.vz-dmg-node { fill: var(--graphite-surface-muted); stroke: var(--graphite-border); stroke-width: 1.5; }
+.vz-dmg-gate { fill: var(--graphite-surface-muted); stroke: var(--signal-amber); stroke-width: 2; }
+.vz-dmg-end { fill: var(--graphite-surface); stroke: var(--graphite-ink-muted); stroke-width: 1.5; }
+.vz-dmg-end-good { fill: var(--graphite-surface); stroke: var(--graphite-ink); stroke-width: 2; }
+.vz-dmg-title { fill: var(--graphite-ink); font-size: 14px; font-weight: 600; }
+.vz-dmg-head { fill: var(--graphite-ink); font-size: 18px; font-weight: 600; }
+.vz-dmg-gate-title { fill: var(--signal-amber-deep); font-size: 14px; font-weight: 600; }
+.vz-dmg-text { fill: var(--graphite-ink-muted); font-size: 12px; }
+.vz-dmg-edge { fill: none; stroke: var(--graphite-ink-muted); stroke-width: 1.5; }
+.vz-dmg-stop { fill: none; stroke: var(--graphite-ink-muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.vz-dmg-edge-label { fill: var(--graphite-ink-muted); font-size: 12px; }
+.vz-dmg-arrow { fill: var(--graphite-ink-muted); }
+</style>
+<svg class="vz-dmg-svg" viewBox="0 0 1150 1000" role="img" aria-labelledby="vz-dmg-t vz-dmg-d">
+  <title id="vz-dmg-t">Driver merge step: gate state flow</title>
+  <desc id="vz-dmg-d">The merge step in plugin/bin/lib/driver/merge.js, from entry conditions through the gate read, the merge-verification lever, the bounded watch, the merge call and its confirmation, to the merged, armed and pending-review outcomes.</desc>
+  <defs>
+    <marker id="vz-dmg-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="vz-dmg-arrow" d="M0,0 L10,5 L0,10 z" />
+    </marker>
+  </defs>
+
+  <text class="vz-dmg-head" x="40" y="32">Driver merge step — gate state flow (merge.js)</text>
+
+  <!-- main column -->
+  <rect class="vz-dmg-node" x="40" y="60" width="380" height="80" rx="4" />
+  <text class="vz-dmg-title" x="56" y="84">Entry conditions</text>
+  <text class="vz-dmg-text" x="56" y="105">supplier set · gh present · auto:merge label</text>
+  <text class="vz-dmg-text" x="56" y="124">summary logged · pr-first · lever read</text>
+
+  <rect class="vz-dmg-node" x="40" y="168" width="380" height="80" rx="4" />
+  <text class="vz-dmg-title" x="56" y="192">Judgment supplier</text>
+  <text class="vz-dmg-text" x="56" y="213">verdict auto-merge · acceptance completed</text>
+  <text class="vz-dmg-text" x="56" y="232">latest decisions.md verdict confirms</text>
+
+  <rect class="vz-dmg-node" x="40" y="276" width="380" height="62" rx="4" />
+  <text class="vz-dmg-title" x="56" y="300">Prepare the PR</text>
+  <text class="vz-dmg-text" x="56" y="321">closing links → compose subject → mark ready</text>
+
+  <rect class="vz-dmg-gate" x="40" y="366" width="380" height="84" rx="4" />
+  <text class="vz-dmg-gate-title" x="56" y="390">Gate read</text>
+  <text class="vz-dmg-text" x="56" y="411">OPEN · head = verified sha · not conflicting</text>
+  <text class="vz-dmg-text" x="56" y="430">checks: green · pending · red · draft-skip</text>
+
+  <rect class="vz-dmg-gate" x="40" y="478" width="380" height="100" rx="4" />
+  <text class="vz-dmg-gate-title" x="56" y="502">Route by merge-verification</text>
+  <text class="vz-dmg-text" x="56" y="523">merge-when-green: green or BLOCKED → arm</text>
+  <text class="vz-dmg-text" x="56" y="542">wait: green → fresh re-read → merge now</text>
+  <text class="vz-dmg-text" x="56" y="561">anything still pending → bounded watch</text>
+
+  <rect class="vz-dmg-gate" x="40" y="610" width="380" height="100" rx="4" />
+  <text class="vz-dmg-gate-title" x="56" y="634">Merge call</text>
+  <text class="vz-dmg-text" x="56" y="655">gh pr merge --squash --match-head-commit</text>
+  <text class="vz-dmg-text" x="56" y="674">labels re-read first; --auto refused → wait row</text>
+  <text class="vz-dmg-text" x="56" y="693">conflict → conflict · other refusal → stop</text>
+
+  <rect class="vz-dmg-node" x="40" y="740" width="380" height="84" rx="4" />
+  <text class="vz-dmg-title" x="56" y="764">Confirmation read</text>
+  <text class="vz-dmg-text" x="56" y="785">MERGED → merged · auto-merge request → armed</text>
+  <text class="vz-dmg-text" x="56" y="804">neither → merge-refused · unread twice → stop</text>
+
+  <rect class="vz-dmg-node" x="40" y="854" width="380" height="100" rx="4" />
+  <text class="vz-dmg-title" x="56" y="878">Post-merge sequence</text>
+  <text class="vz-dmg-text" x="56" y="899">post-merge-run · release status · reconcile</text>
+  <text class="vz-dmg-text" x="56" y="918">teardown worktree · delete remote branch</text>
+  <text class="vz-dmg-text" x="56" y="937">a failed step is listed, never un-merges</text>
+
+  <!-- watch -->
+  <rect class="vz-dmg-node" x="470" y="478" width="280" height="132" rx="4" />
+  <text class="vz-dmg-title" x="486" y="502">Bounded watch · 15 min</text>
+  <text class="vz-dmg-text" x="486" y="523">green → re-read, merge now</text>
+  <text class="vz-dmg-text" x="486" y="542">BLOCKED (merge-when-green) → arm</text>
+  <text class="vz-dmg-text" x="486" y="561">red / draft-skip → park</text>
+  <text class="vz-dmg-text" x="486" y="580">pending at the bound → park</text>
+  <text class="vz-dmg-text" x="486" y="599">head moved → re-enter gate once</text>
+
+  <!-- outcomes -->
+  <rect class="vz-dmg-end" x="790" y="60" width="320" height="278" rx="8" />
+  <text class="vz-dmg-title" x="806" y="84">pending-review</text>
+  <text class="vz-dmg-text" x="806" y="104">one reason; nothing merged</text>
+  <text class="vz-dmg-text" x="806" y="130">entry: no-supplier · gh-absent</text>
+  <text class="vz-dmg-text" x="806" y="148">  not-authorized · labels-unreadable</text>
+  <text class="vz-dmg-text" x="806" y="166">  summary-entry-missing</text>
+  <text class="vz-dmg-text" x="806" y="184">  not-pr-first</text>
+  <text class="vz-dmg-text" x="806" y="204">supplier: supplier-failed</text>
+  <text class="vz-dmg-text" x="806" y="222">  verdict-not-confirmed</text>
+  <text class="vz-dmg-text" x="806" y="240">  acceptance-not-completed</text>
+  <text class="vz-dmg-text" x="806" y="260">prepare: compose-refused · ready-failed</text>
+  <text class="vz-dmg-text" x="806" y="280">gate: state-read-failed · pr-not-open</text>
+  <text class="vz-dmg-text" x="806" y="298">  moving-target · checks-read-failed</text>
+  <text class="vz-dmg-text" x="806" y="318">merge: merge-refused · unclassified</text>
+
+  <rect class="vz-dmg-end" x="790" y="358" width="320" height="110" rx="8" />
+  <text class="vz-dmg-title" x="806" y="382">parked (pending-review)</text>
+  <text class="vz-dmg-text" x="806" y="402">bot:parked label + PR comment</text>
+  <text class="vz-dmg-text" x="806" y="421">check-failed:{names}</text>
+  <text class="vz-dmg-text" x="806" y="439">draft-skip-without-ready-trigger</text>
+  <text class="vz-dmg-text" x="806" y="457">checks-pending-timeout</text>
+
+  <rect class="vz-dmg-end" x="790" y="488" width="320" height="66" rx="8" />
+  <text class="vz-dmg-title" x="806" y="512">conflict (pending-review)</text>
+  <text class="vz-dmg-text" x="806" y="533">PR comment names the base</text>
+
+  <rect class="vz-dmg-end-good" x="790" y="740" width="320" height="84" rx="8" />
+  <text class="vz-dmg-title" x="806" y="764">armed</text>
+  <text class="vz-dmg-text" x="806" y="785">the forge holds the merge</text>
+  <text class="vz-dmg-text" x="806" y="804">the reconciler finishes cleanup</text>
+
+  <rect class="vz-dmg-end-good" x="790" y="854" width="320" height="100" rx="8" />
+  <text class="vz-dmg-title" x="806" y="878">merged</text>
+  <text class="vz-dmg-text" x="806" y="899">merge commit + post-merge result</text>
+  <text class="vz-dmg-text" x="806" y="918">record closes via the squash</text>
+
+  <!-- main flow -->
+  <path class="vz-dmg-edge" d="M230,140 V166" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-edge" d="M230,248 V274" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-edge" d="M230,338 V364" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-edge" d="M230,450 V476" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-edge" d="M230,578 V608" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-edge" d="M230,710 V738" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-edge" d="M230,824 V852" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-edge" d="M420,528 H468" marker-end="url(#vz-dmg-m)" />  <path class="vz-dmg-edge" d="M560,610 V660 H422" marker-end="url(#vz-dmg-m)" />
+  <text class="vz-dmg-edge-label" x="566" y="640">merge / arm</text>
+  <path class="vz-dmg-edge" d="M420,782 H788" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-edge" d="M420,904 H788" marker-end="url(#vz-dmg-m)" />
+
+  <!-- stops -->
+  <path class="vz-dmg-stop" d="M420,100 H788" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-stop" d="M420,208 H788" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-stop" d="M420,300 H788" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-stop" d="M420,378 H760 V328 H788" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-stop" d="M420,412 H788" marker-end="url(#vz-dmg-m)" />
+  <text class="vz-dmg-edge-label" x="600" y="406">red / draft-skip</text>
+  <path class="vz-dmg-stop" d="M420,440 H770 V512 H788" marker-end="url(#vz-dmg-m)" />
+  <text class="vz-dmg-edge-label" x="600" y="434">conflicting</text>
+  <path class="vz-dmg-stop" d="M700,478 V450 H788" marker-end="url(#vz-dmg-m)" />
+  <path class="vz-dmg-stop" d="M420,690 H770 V532 H788" marker-end="url(#vz-dmg-m)" />
+  <text class="vz-dmg-edge-label" x="600" y="684">conflict refusal</text>
+
+  <!-- legend -->
+  <rect class="vz-dmg-gate" x="470" y="884" width="22" height="14" rx="2" />
+  <text class="vz-dmg-text" x="500" y="895">gate or routing decision</text>
+  <path class="vz-dmg-edge" d="M470,918 H492" marker-end="url(#vz-dmg-m)" />
+  <text class="vz-dmg-text" x="500" y="922">next step</text>
+  <path class="vz-dmg-stop" d="M470,942 H492" marker-end="url(#vz-dmg-m)" />
+  <text class="vz-dmg-text" x="500" y="946">stop</text>
+</svg>
+<script>
+(function () {
+  if (window.parent === window) return;
+  function reportHeightNow() {
+    window.parent.postMessage(
+      { type: 'height', height: document.documentElement.scrollHeight },
+      window.location.origin
+    );
+  }
+  window.addEventListener('message', function (event) {
+    if (event.origin !== window.location.origin) return;
+    var data = event.data;
+    if (data && data.type === 'theme' && (data.theme === 'dark' || data.theme === 'light')) {
+      document.documentElement.dataset.theme = data.theme;
+      reportHeightNow();
+    }
+  });
+  var heightReportPending = false;
+  new ResizeObserver(function () {
+    if (heightReportPending) return;
+    heightReportPending = true;
+    requestAnimationFrame(function () {
+      heightReportPending = false;
+      reportHeightNow();
+    });
+  }).observe(document.body);
+})();
+</script>
+</body></html>

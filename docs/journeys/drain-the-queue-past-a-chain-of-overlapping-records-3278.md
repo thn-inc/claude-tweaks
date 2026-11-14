@@ -5,9 +5,9 @@ files:
   - plugin/bin/lib/issues/near-duplicate.js
   - plugin/bin/lib/dispatch/queue-order.js
   - plugin/bin/lib/issues/claim-store.js
-  - plugin/skills/dispatch/queue-pull-script.md
+  - plugin/bin/lib/dispatch/queue-pull.js
+  - plugin/bin/queue-pull.js
   - plugin/skills/dispatch/mcp-transport.md
-  - plugin/skills/dispatch/next-ranking.md
   - plugin/skills/dispatch/neighbour-in-flight-report.md
   - plugin/skills/dispatch/SKILL.md
 ---
@@ -22,21 +22,21 @@ files:
 ## Steps
 
 ### 1. Pull the queue into per-record groups
-- **URL:** `plugin/skills/dispatch/queue-pull-script.md` (cache-miss grouping block); `plugin/bin/lib/issues/grouping.js` `buildDispatchGroups`
+- **URL:** `plugin/bin/lib/dispatch/queue-pull.js` (cache-miss grouping, run by Step 2's `bin/queue-pull.js` call); `plugin/bin/lib/issues/grouping.js` `buildDispatchGroups`
 - **Action:** The queue pull groups the eligible records with `buildDispatchGroups`. Each record becomes its own group. Fast-lane singletons are bundled only with records they share no linking file with. A cached `order.json` written before this change carries no `grouping: 'per-record'` stamp, so `cacheUsable` rejects it and the groups are recomputed.
 - **Should feel:** Unremarkable. The queue simply has as many candidate groups as it has eligible records.
 - **Should understand:** Sharing a file with a record that shares a file with a third record no longer joins all three. Only a direct, live conflict holds a record back (step 2).
-- **Red flags:** A group of more than one record that is not a fast-lane bundle. An `oversized` exclusion on a non-bundle group. A stale cached order reused after upgrade (groups of the old transitive shape). A `: No such file or directory` line on stderr during the pull, which means a redirect to a `$DISPATCH_*` variable the script never declared (#3024).
+- **Red flags:** A group of more than one record that is not a fast-lane bundle. An `oversized` exclusion on a non-bundle group. A stale cached order reused after upgrade (groups of the old transitive shape). A `: No such file or directory` line on stderr during the pull (#3024: in the retained script it meant a redirect to an undeclared `$DISPATCH_*` variable).
 
 ### 2. Hold back records whose neighbour is mid-build
-- **URL:** `plugin/skills/dispatch/queue-pull-script.md` (neighbour-in-flight pass); `plugin/skills/dispatch/mcp-transport.md` (its MCP branch); `plugin/bin/lib/dispatch/in-flight-neighbours.js`
-- **Action:** The pass fetches the open `bot:in-progress` records, including their titles. An in-flight record is a neighbour of a candidate when it shares a linking file with it, or when it is a strong near-duplicate of it (`isStrongNearDuplicate`: at least 2 shared `## Current State` anchors, or a near-duplicate score of at least 2, #3520). The second rule catches pairs with no `### Key Files` section, like #3417/#3419. For each neighbour, the pass reads the claim blob once and counts the record as in flight only when the blob reads `live`. Each candidate with a live neighbour gets a `neighbour-in-flight` exclusion naming the neighbour, plus the shared files or the near-duplicate signals and shared anchors. The candidate stays in `dispatch-groups.json`. On the MCP transport the agent does the fetching instead: it lists the pool through `list_issues` and reads only the neighbours' claim blobs from `claims-registry`. Node then computes the same exclusions over the claim map the agent wrote (`claimReaderFromMap`).
+- **URL:** `plugin/bin/lib/dispatch/queue-pull.js` (the `neighbour-in-flight` pass); `plugin/skills/dispatch/mcp-transport.md` (its MCP branch); `plugin/bin/lib/dispatch/in-flight-neighbours.js`
+- **Action:** The pass fetches the open `bot:in-progress` records, including their titles. An in-flight record is a neighbour of a candidate when it shares a linking file with it, or when it is a strong near-duplicate of it (`isStrongNearDuplicate`: at least 2 shared `## Current State` anchors, or a near-duplicate score of at least 2, #3520). The second rule catches pairs with no `### Key Files` section, like #3417/#3419. For each neighbour, the pass reads the claim blob once and counts the record as in flight only when the blob reads `live`. Each candidate with a live neighbour gets a `neighbour-in-flight` exclusion naming the neighbour, plus the shared files or the near-duplicate signals and shared anchors. The candidate stays in `dispatch-groups.json`. On the MCP transport the agent does the fetching instead: it lists the pool through `list_issues`, reads the claim of every record in the pool from `claims-registry`, and passes both files to `bin/queue-pull.js --transport files` (`--in-flight-raw`, `--in-flight-claims`). The CLI then computes the same exclusions over that claim map (`claimReaderFromMap`); a pool record left out of the map counts as a failed claim read.
 - **Should feel:** Conservative only where it matters. A leftover `bot:in-progress` label or an expired claim never blocks anything.
 - **Should understand:** The guard fails open. An unreadable claim prints `AUTO — dispatch: neighbour-in-flight claim read failed …`, and a failed pool fetch prints `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`. Either way the records build, and any real conflict resolves at merge. On a `gh`-absent firing the same guard runs over the MCP transport (`dispatch/mcp-transport.md`, #3392).
 - **Red flags:** A record held back by a neighbour whose claim is expired or absent. A record held back by an in-flight record it shares only one `## Current State` anchor with and nothing else (a weak near-duplicate must only warn). Two records with no Key Files but three shared Current State anchors both building at once. A neighbour whose claim could not be read (an unresolved repo slug with a failed git read included) treated as having no claim, with no `claim read failed` AUTO line. A silent pool-fetch failure with no AUTO line. A bare-directory or hub path reported as the shared file. A `gh`-absent firing that builds a candidate alongside a live-claimed neighbour with no `neighbour-in-flight` exclusion and no AUTO line.
 
 ### 3. Rank, dispatch, and re-pull
-- **URL:** `plugin/skills/dispatch/next-ranking.md`; `plugin/skills/dispatch/SKILL.md` Step 3 Loop
+- **URL:** `plugin/bin/queue-pull.js --rank` (`rankNext` in `plugin/bin/lib/dispatch/queue-pull.js`); `plugin/skills/dispatch/SKILL.md` Step 3 Loop
 - **Action:** Bare drain's ranking skips groups with an `oversized`, `neighbour-in-flight` or this-firing exclusion, picks the best remaining group, and dispatches it. The queue pull then re-runs. A record that was waiting becomes eligible again on the pull after its neighbour's claim ends.
 - **Should feel:** Steady. The firing spends its budget on records it can build now, rather than stopping on a group it may not touch.
 - **Should understand:** Records that share a file but were both idle at the pull can still build one after the other in the same firing. The later one meets the earlier one's changes at merge, through `_shared/pr-first-merge.md`'s Conflict path. That is the accepted trade for not starving records.
@@ -57,4 +57,5 @@ files:
 - Updated during `/claude-tweaks:build` of record #3024 (2026-10-19). Step 1 red flag: the pull prints no `: No such file or directory` noise. The open-PR pass's dead `$DISPATCH_OPEN_PR_EXCLUDED` redirect is gone, and `tests/bin-lib/dispatch/exclusions.test.js` now fails on any undeclared `$DISPATCH_*` reference.
 - Updated during wrap-up of #4899: Step 3's budget-left red flag excepts a Claim permission stop.
 - Updated during build of #5255: the same red flag excepts a Render-failure stop.
+- Updated during #5230 (the dispatch queue-pull cutover): steps 1-3 run in `bin/queue-pull.js` (the module's passes and `--rank`) rather than the embedded scripts; step 2's MCP branch now reads every pool record's claim and hands both files to `--transport files`.
 - Related specs: #1365 (hub-path exclusion), #1420 (bare-directory exclusion), #2066 (fast-lane bundles), #1228 (oversized guard in bare drain)

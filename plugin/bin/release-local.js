@@ -35,7 +35,7 @@ const { precheck } = require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
-const { isPathContained } = require('./lib/shared-primitives.js');
+const { isPathContained, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives.js');
 const { lstatType } = require('./lib/path-guard');
 
 const USAGE = [
@@ -124,8 +124,18 @@ function planLines({ version, part, history, hook, edits, unconventional, releas
   return lines;
 }
 
-function run(argv, deps) {
+function run(argv, deps = {}) {
   const opts = parseArgs(argv);
+  // --root resolves against the injected cwd; a root-bound member the caller did not
+  // supply (git, readFile, ...) is built for that root with the injected env.
+  const baseCwd = (deps.cwd || realDeps.cwd)();
+  const root = opts.root ? path.resolve(baseCwd, opts.root) : baseCwd;
+  const d0 = { ...realDeps, ...deps };
+  let stat;
+  try { stat = fs.statSync(root); } catch { stat = null; }
+  if (!stat || !stat.isDirectory()) { d0.stderr(`root is not a directory: ${root}\n${USAGE}\n`); return 2; }
+  const bound = defaultDeps(root, { env: d0.env });
+  deps = { ...bound, ...d0 };
   if (opts.error) { deps.stderr(`${opts.error}\n${USAGE}\n`); return 2; }
   if (opts.help) { deps.stdout(`${USAGE}\n`); return 0; }
 
@@ -222,7 +232,14 @@ function run(argv, deps) {
       stage = 'pushed';
     }
     if (hook) {
-      const code = deps.runHook(hook);
+      // A real run (the CLI's io is the process's own) hands the hook inherited stdio so
+      // TTY prompts (an npm OTP) work and output streams live; injected io gets the hook's
+      // output captured and routed through deps instead, so in-process callers see it.
+      const live = deps.stdout === realDeps.stdout && deps.stderr === realDeps.stderr;
+      const hookResult = deps.runHook(hook, { cwd: root, env: deps.env, inherit: live });
+      if (hookResult.stdout) deps.stdout(hookResult.stdout);
+      if (hookResult.stderr) deps.stderr(hookResult.stderr);
+      const code = hookResult.status;
       if (code !== 0) {
         deps.stderr(`partial: v${version} is committed, tagged${hasOrigin ? ' and pushed' : ''}; the release-hook exited ${code}. ` +
           `Do NOT re-run release-local (the tag is final). Recover: re-run the hook alone: ${hook}\n`);
@@ -342,10 +359,34 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   }
 }
 
-function defaultDeps(root) {
+// The hook is the project's own shell command (policy release-hook) — a
+// shell string by design; its exit code becomes this CLI's exit 5. With `inherit`
+// (a real run) it gets the process's own stdio, so a TTY prompt works and output
+// streams live. Otherwise output is piped back so `run` routes it through
+// deps.stdout/deps.stderr (inherited stdio would write straight to the host
+// process's fds when called in-process).
+function runHook(cmd, { cwd, env, inherit = false } = {}) {
+  if (inherit) {
+    const r = spawnSync(cmd, { cwd, env, shell: true, stdio: 'inherit', windowsHide: true });
+    return { status: r.status === null ? 1 : r.status, stdout: '', stderr: '' };
+  }
+  const r = spawnSync(cmd, { cwd, env, shell: true, stdio: ['inherit', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
+  return { status: r.status === null ? 1 : r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+}
+
+const realDeps = {
+  cwd: () => process.cwd(),
+  get env() { return process.env; },
+  today: () => new Date().toISOString().slice(0, 10),
+  stdout: (t) => process.stdout.write(t),
+  stderr: (t) => process.stderr.write(t),
+  runHook,
+};
+
+function defaultDeps(root, { env } = {}) {
   const abs = (p) => path.join(root, p);
   return {
-    git: (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
+    git: (args) => execFileSync('git', args, { cwd: root, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     readFile: (p) => { try { return fs.readFileSync(abs(p), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
     writeFile: (p, text) => writeInsideRoot(root, p, text),
     // manifest.js's glob targets (ruby's `*.gemspec`, dotnet's `*.csproj` — the
@@ -376,24 +417,12 @@ function defaultDeps(root) {
       }
       return entries.filter((f) => f.endsWith('.md')).map((f) => `docs/superpowers/plans/${f}`);
     },
-    // The hook is the project's own shell command (policy release-hook) — a
-    // shell string by design; its exit code becomes this CLI's exit 5.
-    runHook: (cmd) => { const r = spawnSync(cmd, { cwd: root, shell: true, stdio: 'inherit', windowsHide: true }); return r.status === null ? 1 : r.status; },
-    today: () => new Date().toISOString().slice(0, 10),
-    stdout: (t) => process.stdout.write(t),
-    stderr: (t) => process.stderr.write(t),
+    today: realDeps.today,
+    stdout: realDeps.stdout,
+    stderr: realDeps.stderr,
   };
 }
 
-function main(argv) {
-  const opts = parseArgs(argv);
-  const root = opts.root ? path.resolve(opts.root) : process.cwd();
-  let stat;
-  try { stat = fs.statSync(root); } catch { stat = null; }
-  if (!stat || !stat.isDirectory()) { process.stderr.write(`root is not a directory: ${root}\n${USAGE}\n`); return 2; }
-  return run(argv, defaultDeps(root));
-}
+module.exports = { run, parseArgs, defaultDeps, realDeps, writeInsideRoot, USAGE };
 
-if (require.main === module) process.exitCode = main(process.argv.slice(2));
-
-module.exports = { run, parseArgs, defaultDeps, writeInsideRoot, USAGE };
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

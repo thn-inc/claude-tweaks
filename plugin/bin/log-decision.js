@@ -61,7 +61,8 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
-function run(argv, deps = realDeps) {
+function run(argv, deps = {}) {
+  deps = { ...realDeps, ...deps };
   const o = parseArgs(argv);
   const usageError = (message) => { deps.stderr(`log-decision.js: ${message}\n` + USAGE); return 2; };
   if (o.error) { deps.stderr(o.error + '\n' + USAGE); return 2; }
@@ -160,6 +161,6 @@ function entryProblem(el) {
   return null;
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
