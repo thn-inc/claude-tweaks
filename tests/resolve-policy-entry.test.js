@@ -344,12 +344,14 @@ test('callerDeps: a git that never exits is killed at gitTimeoutMs and the root 
   const fixture = repo('autonomy: trusted\n');
   const stubDir = tmp('git-stub');
   const stub = path.join(stubDir, 'git');
-  // /bin/sleep is absolute: the injected PATH holds only the stub, so a bare sleep would exit 127 at once.
-  fs.writeFileSync(stub, '#!/bin/sh\nexec /bin/sleep 30\n');
+  // Not a timing check: the stub sleeps, then writes a marker. Killed at gitTimeoutMs it never writes;
+  // with no timeout it would, so the marker's absence is what proves the kill. /bin/sleep is absolute:
+  // the injected PATH holds only the stub, so a bare sleep would exit 127 and write nothing either way.
+  const marker = path.join(tmp('marker'), 'wrote');
+  fs.writeFileSync(stub, '#!/bin/sh\n/bin/sleep 3\necho wrote > "$MARKER"\n');
   fs.chmodSync(stub, 0o755); // root-safe: exec-bit stub, not a denial simulation
-  const started = Date.now();
-  const out = resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd: fixture, env: { PATH: stubDir }, gitTimeoutMs: 300 }));
-  assert.ok(Date.now() - started < 5000);
+  const out = resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd: fixture, env: { PATH: stubDir, MARKER: marker }, gitTimeoutMs: 300 }));
+  assert.equal(fs.existsSync(marker), false, 'the git stub ran to completion: it was not killed at gitTimeoutMs');
   assert.equal(out.code, EXIT_OK);
   assert.equal(out.result.autonomy.value, 'trusted');
 });
