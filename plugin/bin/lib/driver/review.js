@@ -151,7 +151,8 @@
 // detail; after a child that survived its kill, interrupted or not, it touches nothing, since the
 // child may still be writing. A stop's `confirmed` is always empty: a stop hands no evidence on.
 //   Stops, each `fail` with class pre-push: the envelope, the result, the diff read, a dirty tree,
-//   a check-ignore, write, run or remove failure, a child that survived its kill, a tree changed
+//   a check-ignore, write, run or remove failure, a child that survived its kill, a flag newly set
+//   in the index after an evidence run (indexFlagCheck, read before the tree check), a tree changed
 //   outside the evidence files, an interrupt. A stop's detail is fixed text (a dep's error adds at
 //   most its code), the module's own error messages, or text through normalizeEventText; never an
 //   error's `cause` or a foreign message.
@@ -202,7 +203,8 @@
 //   read (before or after it), the worker's `fail`/`timeout`, a rewrite refused or failed,
 //   the commit failing, an evidence file not at HEAD as recorded, a kept path no longer resolving where
 //   it was confirmed or a kept file not in the worktree as recorded before its run, a kept run that throws or survives
-//   its kill, the tree changed during the checks (after the scoped run and each kept run; neither is
+//   its kill, an index flag newly set after a kept run (the launch and test-step flag stops arrive as the
+//   propagated launch and test results), the tree changed during the checks (after the scoped run and each kept run; neither is
 //   singled out), the name-only diff failing (it ends with `--`, so a file named HEAD or after the
 //   sha is never read as a revision). `stop`: the worker's
 //   cannot-complete, the commit step's own stop (no changed files, or the worker's title
@@ -781,8 +783,9 @@ async function launchReviewer(ctx, deps, diff) {
 
 // The reviewer launch and the review pass (see the header). `result` is a StepResult only for a
 // stop; `detail` is the pass's own line either way.
-async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
+async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagCheck } = {}) {
   if (typeof isRunArtifact !== 'function') throw new TypeError('reviewPass needs isRunArtifact');
+  if (typeof indexFlagCheck !== 'function') throw new TypeError('reviewPass needs indexFlagCheck');
   const { shared, wt, runDir } = ctx;
   const counts = { returned: 0, reproduced: 0, discarded: 0 };
   const confirmed = [];
@@ -905,6 +908,8 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
         return stop(why, { keepTree: true });
       }
       if (run.interrupted) return interrupted();
+      const flagged = indexFlagCheck(ctx, deps);
+      if (flagged) return stop(`evidence run: ${flagged.detail}`);
       let changed;
       try { changed = delta(new Set([...gitPaths(), evidencePath])); } catch { return stop('git status failed after an evidence run'); }
       if (changed.length) return stop(`the evidence run changed the tree outside the evidence files: ${normalizeEventText(changed.join(', '))}`);
@@ -1026,7 +1031,7 @@ const codeSuffix = (err) => (err && typeof err.code === 'string' && /^[A-Z0-9_]+
 
 // The one fix round (see the header). Every result carries the pass's counts.
 async function fixRound(ctx, deps, wiring, pass) {
-  const { commit, test, check, launchImplementer, testCommand, isRunArtifact } = wiring;
+  const { commit, test, check, launchImplementer, testCommand, isRunArtifact, indexFlagCheck } = wiring;
   const { shared, wt, runDir } = ctx;
   const { confirmed, extra } = pass;
   const named = (c) => `${normalizeEventText(c.path)}:${c.line} ${normalizeEventText(c.claim)}`;
@@ -1096,6 +1101,8 @@ async function fixRound(ctx, deps, wiring, pass) {
       // The child may still be writing: stop, touching nothing, interrupted or not.
       if (run.survived) return end('fail', run.interrupted ? `interrupted by ${shared.interrupted}; ${run.detail}` : run.detail, { c });
       if (run.interrupted) return interrupted();
+      const flagged = indexFlagCheck(ctx, deps);
+      if (flagged) return end('fail', `fix round evidence run: ${flagged.detail}`, { c });
       let changed;
       try {
         changed = treeDelta({ wt, expected: new Set(), deps, isRunArtifact });
@@ -1138,16 +1145,16 @@ async function fixRound(ctx, deps, wiring, pass) {
 }
 
 // The step (see the header): the wiring object carries what steps.js owns (the steps the fix round
-// reuses, the implementer launch, the test command and run-artifact test), so this module never
+// reuses, the implementer launch, the test command, the run-artifact test and the index-flag check, indexFlagCheck), so this module never
 // requires steps.js. Off, it is a skip: no line, no worker. A stop carries the pass's counts.
 // A confirmed finding takes the one fix round.
 async function reviewRecord(ctx, deps, wiring) {
-  const { testCommand, isRunArtifact } = wiring;
+  const { testCommand, isRunArtifact, indexFlagCheck } = wiring;
   const need = reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: ctx.shared.policy['express-driver-review'].value });
   if (!need.on) return { status: 'ok', skip: true };
   let pass;
   try {
-    pass = await reviewPass(ctx, deps, { testCommand, isRunArtifact });
+    pass = await reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagCheck });
   } catch (err) {
     // A throw before the pass can take anything back (its setup, a missing wiring member) writes nothing: the
     // pass's own catch covers every throw after its first evidence write. The line keeps the seven keys.

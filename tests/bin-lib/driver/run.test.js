@@ -17,7 +17,7 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop,
+  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
 } = require(path.join(LIB, 'driver', 'steps'));
 // Polls taken before the first one at or past the settle window (the harness clock moves 1 per now(), ms per sleep).
 const WINDOW_POLLS = CI_SETTLE_WINDOW_MS / CI_POLL_INTERVAL_MS + 1;
@@ -1928,6 +1928,39 @@ test('AC8.1 (#5415): the happy path reads core.ignoreStat once and the flags at 
   assert.ok(isHeadReadInWt(h.calls[launch + 1]) && isFlagReadInWt(h.calls[launch + 2]), 'a flag read right after the post-launch HEAD read');
   assert.ok(isFlagReadInWt(h.calls[at(isVerify) + 1]), 'a flag read right after verify.js');
   assert.deepEqual(h.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+  assert.deepEqual(withoutFlagReads(h.calls).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_PLAIN);
+  assert.deepEqual(h.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_PLAIN);
+
+  // The review step's run adds the reads after the evidence runs: seven flag reads, one core.ignoreStat read.
+  const fix = fixRig();
+  assert.equal(await run(['#7'], fix.deps), 0);
+  const fc = fix.calls;
+  const fat = (pred) => fc.findIndex(pred);
+  assert.equal(fc.filter(isIgnoreStatReadInWt).length, 1);
+  const frecord = fat((c) => c.kind === 'node' && /hooks\.js$/.test(c.args[0]) && c.args[1] === 'record-worktree');
+  assert.ok(isIgnoreStatReadInWt(fc[frecord + 1]) && isFlagReadInWt(fc[frecord + 2]), 'the refusal read, then the baseline, right after record-worktree');
+  const reads = fc.flatMap((c, i) => (isFlagReadInWt(c) ? [i] : []));
+  assert.equal(reads.length, 7, 'baseline, launch, verify, reviewer run, fix launch, fix verify, direct run');
+  const launches = fc.flatMap((c, i) => (isImplementerLaunch(c) ? [i] : []));
+  const verifies = fc.flatMap((c, i) => (c.kind === 'node' && /verify\.js$/.test(c.args[0]) ? [i] : []));
+  assert.equal(launches.length, 2);
+  assert.equal(verifies.length, 2);
+  assert.equal(reads[0], frecord + 2);
+  assert.ok(isHeadReadInWt(fc[launches[0] + 1]) && reads[1] === launches[0] + 2, "read 2 right after the first launch's HEAD read");
+  assert.equal(reads[2], verifies[0] + 1, 'read 3 right after the first verify.js');
+  assert.ok(isHeadReadInWt(fc[launches[1] + 1]) && reads[4] === launches[1] + 2, "read 5 right after the fix launch's HEAD read");
+  assert.equal(reads[5], verifies[1] + 1, 'read 6 right after the second verify.js');
+  for (const n of [3, 6]) {
+    // After an evidence run: the run's spawn, no git call, the flag read, then the tree check's status read.
+    const i = reads[n];
+    const spawn = fc.map((c, k) => (k < i && c.kind === 'runner' ? k : -1)).filter((k) => k >= 0).at(-1);
+    assert.ok(spawn !== undefined, `read ${n + 1} follows an evidence run`);
+    assert.ok(!fc.slice(spawn + 1, i).some((c) => c.kind === 'git'), `no git call between the run and read ${n + 1}`);
+    assert.ok(fc[i + 1].kind === 'git' && fc[i + 1].args.includes('status'), `a status read follows read ${n + 1}`);
+  }
+  assert.deepEqual(withoutFlagReads(fc).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_FIX);
+  assert.deepEqual(fix.lines().map((l) => [l.step, l.status]), BASE_LINES_FIX);
+  assert.deepEqual(fix.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_FIX);
 });
 
 // A scratch repo whose git ignores the developer's own config, so no config key can reach the fixture.
@@ -3911,6 +3944,75 @@ test('AC9.1 (#5414): docs/driver.md drops the self-commit carry-on and names the
   const rights = docs.slice(start, docs.indexOf('\n## ', start + 1));
   assert.ok(rights.includes('HEAD has moved'), 'the HEAD bullet is in Worker rights');
   assert.ok(rights.includes('`fail`'), 'the HEAD bullet names the fail result');
+});
+
+// Flag read n (1 = the baseline) is the n-th ls-files read of the run; AC8.1 (#5415) pins the order.
+const flaggedStop = (h, detail) => {
+  assert.deepEqual([lastLine(h).stop.step, lastLine(h).status, lastLine(h).stop.class, lastLine(h).outcome], [STEP.review, 'fail', 'pre-push', 'express-escalated']);
+  assert.equal(lastLine(h).stop.detail, detail);
+  assert.equal(reviewLines(h)[0].status, 'fail');
+  assert.equal(pushCalls(h).length, 0);
+};
+
+test('AC3.1 (#5415): a flag set during a reviewer evidence run stops at review', async () => {
+  const h = fixRig({ script: [nthCall(isFlagRead, 4, NEW_FLAG_INDEX)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  flaggedStop(h, `evidence run: ${ONE_NEW}`);
+  assert.equal(implementerCalls(h).length, 1);
+  assert.ok(h.calls.some((c) => c.kind === 'rmFile' && c.args[0] === evidenceAbs(0)), 'the evidence file is taken back');
+});
+
+test('AC3.1 (#5415): a flag set during a fix-round direct run stops at review', async () => {
+  const h = fixRig({ script: [nthCall(isFlagRead, 7, NEW_FLAG_INDEX)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  flaggedStop(h, `fix round evidence run: ${ONE_NEW}: ${FINDING_0}`);
+  assert.equal(checkCalls(h).length, 1);
+  assert.equal(verifyCalls(h).length, 2);
+});
+
+test('(#5415) a flag set during the fix-round launch stops at review', async () => {
+  const h = fixRig({ script: [nthCall(isFlagRead, 5, NEW_FLAG_INDEX)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  flaggedStop(h, `fix round launch: ${ONE_NEW}: ${FINDING_0}`);
+  assert.equal(afterFixLaunch(h).filter((c) => c.kind === 'writeFileExclusive').length, 0);
+  assert.equal(afterFixLaunch(h).filter((c) => c.kind === 'git' && gitSub(c)[0] === 'commit').length, 0);
+});
+
+test('(#5415) a flag set during the fix-round test step stops at review', async () => {
+  const h = fixRig({ script: [nthCall(isFlagRead, 6, NEW_FLAG_INDEX)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  flaggedStop(h, `fix round test: ${ONE_NEW}: ${FINDING_0}`);
+  assert.equal(checkCalls(h).length, 1);
+});
+
+test("AC5.1 (#5415): a sparse baseline passes the review step's checks too", async () => {
+  const h = fixRig({ script: [[isFlagRead, 'H a.js\0S sparse/x.js\0']] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(reviewLines(h)[0].status, 'ok');
+  assert.equal(pushCalls(h).length, 1);
+});
+
+test('(#5415) newIndexFlagStop throws on a missing baseline before it reads', () => {
+  const seen = [];
+  const deps = { git: (...a) => { seen.push(a); throw new Error('git was read'); } };
+  assert.throws(() => newIndexFlagStop({ wt: WT, indexFlags: null }, deps), /index flag baseline missing/);
+  assert.deepEqual(seen, []);
+});
+
+test('AC9.1 (#5415): docs/driver.md names the newly-set-flag stop and the core.ignoreStat refusal', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  const start = docs.indexOf('\n## Worker rights');
+  assert.notEqual(start, -1, 'the Worker rights section exists');
+  const rights = docs.slice(start, docs.indexOf('\n## ', start + 1));
+  const bullet = rights.split('\n').find((l) => l.startsWith('- Index flags:'));
+  assert.ok(bullet, 'the Index flags bullet exists');
+  const sentences = bullet.split('. ');
+  const stops = sentences.find((x) => x.includes('stops the record'));
+  assert.ok(stops && stops.includes('skip-worktree') && stops.includes('`fail`'), 'the stop sentence names skip-worktree and fail');
+  assert.ok(bullet.includes('when the worktree is created'));
+  assert.ok(bullet.includes('CI on push'));
+  const refusal = sentences.find((x) => x.includes('core.ignoreStat'));
+  assert.ok(refusal && refusal.includes('refuses') && refusal.includes('`fail`'), 'the first core.ignoreStat sentence names the refusal and fail');
 });
 
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {

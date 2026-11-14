@@ -1124,6 +1124,7 @@ const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) =>
   launchImplementer: (c, d, extraPrompt) => runImplementer(c, d, { extraPrompt }),
   testCommand: TEST_COMMAND,
   isRunArtifact,
+  indexFlagCheck: newIndexFlagStop,
 }));
 
 // Ports express-lane.md step 9, the merge: entered only when the CI wait ended green, then
@@ -1168,5 +1169,5 @@ const STEPS = Object.freeze([
 
 module.exports = {
   STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
-  VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop,
+  VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
 };
