@@ -5,6 +5,7 @@
 // a go-red proof so a reworded paragraph fails here rather than passing on a coincidental match.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
@@ -210,6 +211,57 @@ test('AC4.1, AC4.3: /claude-tweaks:test full runs the whole suite here, no argum
     [/Under the declaration's `localRuns: "on-request"`, that procedure runs the scoped invocation, standalone too/, 'no argument is scoped under the key'],
     [/A `--local` fallback whose impact selection cannot narrow still runs what selection chose/, 'the named exception'],
   ]);
+});
+
+const AC5_FACTS = [
+  [/`\/claude-tweaks:test full`, `verify\.js --local` with no `--scope`/, 'the rule: by name'],
+  [/run before the version bump/, 'the rule: the release run'],
+  [/Every pipeline verify takes it from the PR's CI job, and runs the impact subset here only when CI cannot answer/, 'the rule: pipelines'],
+  [/The one exception: when CI cannot answer after a push and one re-run, the `--local` re-run runs what selection chose, and that is the whole suite when selection cannot narrow/, 'the rule: the named exception'],
+  [/a missing or stale map, a full-suite rule .{1,60}, or a stale stamp anchor/, 'the exception: its triggers'],
+  [/It is rare, and the run's `AUTO` line names the fallback reason/, 'the exception: rarity and its log line'],
+  [/A test whose result a change affects but which selection leaves out/, 'a miss: definition'],
+  [/`#` imports, a package's self-reference, a native addon's content, a non-node child's reads, a wrapper such as `xargs` or `timeout`/, 'a miss: unseen reads'],
+  [/reads that differ between CI's trace environment and this machine/, 'a miss: trace environment'],
+  [/without the test file itself changing/, 'a miss: reads gained after the trace'],
+  [/trail HEAD by up to/, 'a miss: map age'],
+  [/CI ran the whole suite on that commit, so a miss cannot pass/, 'caught: CI answered'],
+  [/on the same head is red/, 'caught: a local subset passed, CI is red'],
+  [/parks a red PR and waits on a pending one, so the change does not merge/, 'caught: the merge gate'],
+  [/only on macOS, on Node 22 or on Windows and that the map also misses/, 'not caught: platforms'],
+  [/ubuntu on Node 20/, 'not caught: the CI platform'],
+  [/Windows is checked after merge/, 'not caught: Windows after merge'],
+  [/the remaining check before a version ships/, 'not caught: the release run'],
+  [/The merge gate is the plugin's/, 'enforcement: the owner'],
+  [/protects its integration branch with the .{1,40} check required/, 'enforcement: branch protection'],
+];
+
+test('AC5.1-AC5.13: the decision document and impact-selection.md state the rule, a miss, what catches it, what does not, and who enforces the gate (#5370)', () => {
+  pinned(sectionOf(read('docs/decisions/0032-whole-suite-runs-in-ci-local-runs-on-request.md'), '## Decision'), AC5_FACTS);
+  pinned(sectionOf(read('plugin/skills/test/impact-selection.md'), '## Whole suite on request'), AC5_FACTS);
+});
+
+const RETIRED = [
+  'a `ci` block needs HEAD pushed first',
+  '| full (impact-selected via',
+  'passes no `--scope` and is the explicit full mode',
+  'Standalone `/claude-tweaks:test` and a standalone `/build` stay full.',
+  'Otherwise it runs full, as does a standalone `/build`.',
+  'Common Step 5 runs the full suite anyway',
+];
+const retiredIn = (text) => RETIRED.filter((s) => text.includes(s));
+
+test('AC1.1: no shipped doc keeps a retired always-full or push-later sentence (#5370)', () => {
+  const walk = (rel) => fs.readdirSync(path.join(ROOT, rel), { withFileTypes: true }).flatMap((e) => {
+    const child = `${rel}/${e.name}`;
+    if (e.isDirectory()) return walk(child);
+    return e.name.endsWith('.md') ? [child] : [];
+  });
+  const files = [...walk('plugin/skills'), ...walk('.claude/skills'), ...walk('docs/journeys'), 'docs/plugin-structure.md', 'docs/getting-started.md'];
+  assert.ok(files.some((f) => f.startsWith('.claude/skills/')), 'the walk must include .claude/skills/');
+  for (const f of files) assert.deepEqual(retiredIn(read(f)), [], f);
+  const sample = read(VERIFICATION);
+  for (const s of RETIRED) assert.deepEqual(retiredIn(`${sample}\n${s}\n`), [s]);
 });
 
 test('AC4.2: the release runs /claude-tweaks:test full after the tree check and before the review marker (#5370)', () => {
