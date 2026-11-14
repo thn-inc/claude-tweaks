@@ -1189,6 +1189,7 @@ module.exports = {
   runEvidence,
   treeDelta,
   normalizeEventText,
+  truncateUtf8,
   buildReviewerPrompt,
   buildFixPrompt,
   reviewPass,
