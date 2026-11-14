@@ -49,6 +49,9 @@ const PUSH_FACTS = [
   [/ended on the timeout with no check started \(no check rows, no `waiting for a test-suite slot` line\), runs the same command once more/, 'one repeat, and its signal'],
   [/the Foreground rule's one allowed repeat/, 'named as the one allowed repeat'],
   [/A call moved to the background instead of ended ends the unit `BLOCKED`/, 'a backgrounded call is BLOCKED'],
+  [/when that call consults CI \(a scoped call without `--local`, under a declaration with a `ci` block\)/, 'the repeat applies only to a call that consults CI'],
+  [/and so does a `--local` call that ends on its timeout or a repeat that also does/, 'a --local call or a second timeout ends BLOCKED'],
+  [/when a run dir is set \(the Standalone path has none\), log one entry/, 'the AUTO entry needs a run dir'],
   [/A call that times out is never exit 3 and never triggers `--local`/, 'a timeout is not exit 3'],
   [/exits 3, which is never a test failure/, 'exit 3 is not a failure'],
   [/In a `pr-first` worktree run with a run dir set,/, 'push only in a pr-first worktree run'],
@@ -69,6 +72,7 @@ const PUSH_FACTS = [
 const STANDALONE_FACTS = [
   [/\*\*Standalone is always full — without `localRuns`\.\*\*/, 'labeled, keeping the old literal'],
   [/a standalone invocation runs the scoped invocation instead/, 'standalone is scoped under the key'],
+  [/without the baseline flags \(Baseline adjudication below\)/, 'the standalone scoped run carries no baseline flags'],
   [/wherever this file says to run the full procedure for a project with that declaration/, 'the full-procedure override'],
   [/Standalone never pushes: with no open PR at the branch/, 'standalone never pushes'],
   [/`gh pr view --json state --jq \.state` prints no `OPEN`, exits non-zero, or `gh` is absent/, 'the PR probe'],
