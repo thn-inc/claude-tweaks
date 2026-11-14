@@ -13,7 +13,7 @@
 //              the cache after ordinary git activity). null when no `.git`
 //              exists up to the filesystem root.
 //   - content/admin/commondir: for a `.git` file, its full text, the admin dir
-//              it points at (path, ino, or 'missing'), and that admin dir's
+//              it points at (path, ino, uid, or 'missing'), and that admin dir's
 //              `commondir` text. A worktree removed and re-added at one path is
 //              caught by the `.git` file's own ino + ctime (git rewrites it).
 //   - configs: "{mtimeNs}:{size}:{ino}" or 'missing' for the common config,
@@ -30,9 +30,14 @@
 //
 // The memo is keyed on directory + the git-relevant environment (envFingerprint),
 // since the same directory answers differently under another GIT_DIR or HOME.
+// A per-user JSON store (below) carries answers across processes under the same
+// signature check; docs/hooks.md's "repoInfo cache" section has the contract.
 'use strict';
+const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { readJsonFile, writeJsonFile } = require('../json-store');
 
 const MEMO_LIMIT = 500;
 const memo = new Map();
@@ -91,12 +96,14 @@ function globalAndSystemConfigs(env, platform) {
   if (globalOverride !== undefined) {
     out.push(globalOverride);
   } else {
+    // An empty HOME is unset. git for Windows falls back to USERPROFILE for
+    // ~/.gitconfig, and reads $XDG_CONFIG_HOME/git/config whenever it is set.
     const home = envGet(env, 'HOME');
-    if (home !== undefined) {
-      const xdg = envGet(env, 'XDG_CONFIG_HOME');
-      out.push(xdg ? path.join(xdg, 'git', 'config') : path.join(home, '.config', 'git', 'config'));
-      out.push(path.join(home, '.gitconfig'));
-    }
+    const xdg = envGet(env, 'XDG_CONFIG_HOME');
+    if (xdg) out.push(path.join(xdg, 'git', 'config'));
+    else if (home) out.push(path.join(home, '.config', 'git', 'config'));
+    const gitHome = home || envGet(env, 'USERPROFILE');
+    if (gitHome) out.push(path.join(gitHome, '.gitconfig'));
   }
   if (envGet(env, 'GIT_CONFIG_NOSYSTEM') === undefined) {
     const systemOverride = envGet(env, 'GIT_CONFIG_SYSTEM');
@@ -142,7 +149,7 @@ function buildSignature(dir, env, platform) {
       if (m) {
         const admin = path.resolve(d, m[1]);
         const adminStat = statOrMissing(admin);
-        sig.admin = adminStat ? { path: admin, ino: String(adminStat.ino) } : 'missing';
+        sig.admin = adminStat ? { path: admin, ino: String(adminStat.ino), uid: String(adminStat.uid) } : 'missing';
         const commondirRaw = readOrMissing(path.join(admin, 'commondir'));
         sig.commondir = commondirRaw === null ? null : commondirRaw.replace(/[\r\n]+$/, '');
         const common = sig.commondir ? path.resolve(admin, sig.commondir) : admin;
@@ -177,15 +184,104 @@ const memoKey = (dir, env) => `${dir}\0${envFingerprint(env)}`;
 
 const copyAnswer = (a) => ({ repoRoot: a.repoRoot, isLinkedWorktree: a.isLinkedWorktree, indeterminate: false });
 
+function memoSet(key, signature, answer) {
+  memo.delete(key);
+  memo.set(key, { signature, answer: copyAnswer(answer) });
+  if (memo.size > MEMO_LIMIT) memo.delete(memo.keys().next().value);
+}
+
+// ---- Cross-process store (#5294) -------------------------------------------
+// One small per-user JSON file so a fresh hook process skips the git spawn too.
+// Entries are keyed on directory + envFingerprint and validated by the same
+// signature as the memo. Every store error is swallowed: a broken store never
+// breaks a session or changes a verdict, the answer is simply git's own.
+const MAX_STORE_ENTRIES = 200;
+const STORE_VERSION = 1;
+
+// Env names that make git discover a repo by something other than the
+// directory, so a stored answer for the directory would be wrong (or the
+// signature blind to it). Present-even-empty counts; the in-process memo stays.
+const DISCOVERY_ENV_NAMES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM'];
+
+// Read on every call, never captured at load, so a test's env change takes effect.
+function storePath(env = process.env) {
+  const override = envGet(env, 'CT_HOOKS_REPO_INFO_STORE');
+  if (override) return override;
+  return path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json');
+}
+
+function storeBypassed(env = process.env) {
+  return DISCOVERY_ENV_NAMES.some((name) => envGet(env, name) !== undefined);
+}
+
+const storeKey = (dir, env) => crypto.createHash('sha1').update(`${dir}\0${envFingerprint(env)}`).digest('hex');
+
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+function validEntry(e) {
+  return isPlainObject(e)
+    && isPlainObject(e.answer)
+    && (e.answer.repoRoot === null || typeof e.answer.repoRoot === 'string')
+    && typeof e.answer.isLinkedWorktree === 'boolean'
+    && isPlainObject(e.signature)
+    && typeof e.at === 'number' && Number.isFinite(e.at);
+}
+
+// -> the store's entries object, or null when absent/unreadable/not our format.
+function readStoreEntries(env) {
+  const raw = readJsonFile(storePath(env), { fallback: null });
+  if (!isPlainObject(raw) || raw.version !== STORE_VERSION || !isPlainObject(raw.entries)) return null;
+  return raw.entries;
+}
+
+function storeLookup(dir, env, signature) {
+  try {
+    const entries = readStoreEntries(env);
+    const entry = entries && entries[storeKey(dir, env)];
+    if (validEntry(entry) && signatureMatches(entry.signature, signature)) return entry.answer;
+  } catch (_) {
+    // a broken store is a miss
+  }
+  return null;
+}
+
+function storeRemember(dir, env, signature, answer) {
+  try {
+    // Re-read so entries a sibling process wrote meanwhile are kept.
+    const entries = readStoreEntries(env) || {};
+    const key = storeKey(dir, env);
+    delete entries[key]; // delete then set: insertion order tracks recency
+    entries[key] = { answer: { repoRoot: answer.repoRoot, isLinkedWorktree: answer.isLinkedWorktree }, signature, at: Date.now() };
+    const keys = Object.keys(entries);
+    const excess = keys.length - MAX_STORE_ENTRIES;
+    if (excess > 0) {
+      // Lowest `at` first; the sort is stable, so ties go earliest-inserted first.
+      const oldest = keys.slice().sort((a, b) => (Number(entries[a] && entries[a].at) || 0) - (Number(entries[b] && entries[b].at) || 0));
+      for (const k of oldest.slice(0, excess)) delete entries[k];
+    }
+    writeJsonFile(storePath(env), { version: STORE_VERSION, entries });
+  } catch (_) {
+    // the answer returned is the one git gave
+  }
+}
+
 // -> { answer, signature }: `answer` is a fresh copy of the remembered result
 // when the signature still matches, else null; `signature` is the one taken now
 // (null when it could not be computed), for rememberRepoInfo after the spawn.
 function lookupRepoInfo(dir, env = process.env) {
   const signature = repoSignature(dir, env);
   if (!signature) return { answer: null, signature: null };
-  const entry = memo.get(memoKey(dir, env));
+  const key = memoKey(dir, env);
+  const entry = memo.get(key);
   if (entry && signatureMatches(entry.signature, signature)) {
     return { answer: copyAnswer(entry.answer), signature };
+  }
+  if (!storeBypassed(env)) {
+    const stored = storeLookup(dir, env, signature);
+    if (stored) {
+      memoSet(key, signature, stored);
+      return { answer: copyAnswer(stored), signature };
+    }
   }
   return { answer: null, signature };
 }
@@ -193,15 +289,19 @@ function lookupRepoInfo(dir, env = process.env) {
 // No-op for a null signature or an indeterminate answer: neither may be cached.
 function rememberRepoInfo(dir, env, signature, answer) {
   if (!signature || !answer || answer.indeterminate) return;
-  const key = memoKey(dir, env);
-  memo.delete(key);
-  memo.set(key, { signature, answer: copyAnswer(answer) });
-  if (memo.size > MEMO_LIMIT) memo.delete(memo.keys().next().value);
+  memoSet(memoKey(dir, env), signature, answer);
+  if (!storeBypassed(env)) storeRemember(dir, env, signature, answer);
 }
 
-// Tests only.
+// Tests only. A test that fakes git's output or failure (a mocked execFileSync)
+// must isolate the cache first — tests/helpers/repo-info-cache.js's
+// isolateRepoInfoCache(t) — or a remembered answer, in memory or in the store,
+// answers instead of the fake.
 function resetMemo() {
   memo.clear();
 }
 
-module.exports = { repoSignature, signatureMatches, envFingerprint, lookupRepoInfo, rememberRepoInfo, resetMemo };
+module.exports = {
+  repoSignature, signatureMatches, envFingerprint, lookupRepoInfo, rememberRepoInfo, resetMemo,
+  storePath, storeBypassed, MAX_STORE_ENTRIES,
+};

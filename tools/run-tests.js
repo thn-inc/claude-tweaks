@@ -682,7 +682,7 @@ if (require.main === module) {
       stdio: 'inherit',
       // Every fixture git commit/push started `git maintenance run --auto` (391 processes across six
       // heavy test files, #5297); the env-carried config turns that off for the whole child tree.
-      env: { ...gitFixtureConfigEnv(process.env), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1' },
+      env: { ...gitFixtureConfigEnv(process.env), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json') },
     });
   } catch (err) {
     cleanup();

@@ -3,20 +3,28 @@
 // (plugin/bin/lib/hooks/repo-info-cache.js). Each test counts the `git
 // rev-parse` spawns repoInfo makes by wrapping child_process.execFileSync,
 // which git-exec reaches by property access at call time.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// Pinned before the module loads: harmless until the cross-process store
-// lands, and keeps that store out of the real per-user location once it does.
-process.env.CT_HOOKS_REPO_INFO_STORE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ric-store-')), 'store.json');
-
 const cp = require('child_process');
 const { repoInfo } = require('../plugin/bin/lib/hooks/worktree-detect');
 const { resetMemo } = require('../plugin/bin/lib/hooks/repo-info-cache');
 const { gitRepo, linkedWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
+const { isolateRepoInfoCache } = require('./helpers/repo-info-cache');
+
+// Temp dirs this file creates itself (each test's store is the helper's).
+const scratchDirs = [];
+after(() => {
+  for (const d of scratchDirs) fs.rmSync(d, { recursive: true, force: true });
+});
+const scratchDir = (prefix) => {
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  scratchDirs.push(d);
+  return d;
+};
 
 // Installs a counting passthrough over execFileSync. `fail()` returning an
 // error makes every call throw it instead (the indeterminate case).
@@ -41,7 +49,7 @@ function adminDirOf(wt) {
 }
 
 test('AC1.1: repeated repoInfo calls on one directory spawn git once', (t) => {
-  resetMemo();
+  isolateRepoInfoCache(t);
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const counter = countRevParse(t);
@@ -56,7 +64,7 @@ test('AC1.1: repeated repoInfo calls on one directory spawn git once', (t) => {
 });
 
 test('AC3.1: a removed linked worktree is re-asked', (t) => {
-  resetMemo();
+  isolateRepoInfoCache(t);
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const counter = countRevParse(t);
@@ -69,7 +77,7 @@ test('AC3.1: a removed linked worktree is re-asked', (t) => {
 });
 
 test('AC3.2: a worktree removed and re-added at the same path is re-asked', (t) => {
-  resetMemo();
+  isolateRepoInfoCache(t);
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const counter = countRevParse(t);
@@ -82,8 +90,8 @@ test('AC3.2: a worktree removed and re-added at the same path is re-asked', (t) 
 });
 
 test('AC3.3: git init in a directory that was not a repo is re-asked', (t) => {
-  resetMemo();
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ric-nongit-')));
+  isolateRepoInfoCache(t);
+  const dir = scratchDir('ct-ric-nongit-');
   const counter = countRevParse(t);
   assert.deepStrictEqual(repoInfo(dir), { repoRoot: null, isLinkedWorktree: false, indeterminate: false });
   fixtureGit(['init', '-q', dir]);
@@ -93,7 +101,7 @@ test('AC3.3: git init in a directory that was not a repo is re-asked', (t) => {
 });
 
 test('AC3.4: a pruned worktree admin dir with the .git file kept is re-asked', (t) => {
-  resetMemo();
+  isolateRepoInfoCache(t);
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const admin = adminDirOf(wt);
@@ -106,10 +114,10 @@ test('AC3.4: a pruned worktree admin dir with the .git file kept is re-asked', (
 });
 
 test('#5294: an edited global git config is re-asked', (t) => {
-  resetMemo();
+  isolateRepoInfoCache(t);
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
-  const globalCfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ric-gcfg-')), 'gitconfig');
+  const globalCfg = path.join(scratchDir('ct-ric-gcfg-'), 'gitconfig');
   fs.writeFileSync(globalCfg, '');
   const prior = process.env.GIT_CONFIG_GLOBAL;
   process.env.GIT_CONFIG_GLOBAL = globalCfg;
@@ -125,8 +133,35 @@ test('#5294: an edited global git config is re-asked', (t) => {
   }
 });
 
+test('#5294: with HOME unset, an edited USERPROFILE .gitconfig is re-asked', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const profile = scratchDir('ct-ric-profile-');
+  const gitconfig = path.join(profile, '.gitconfig');
+  fs.writeFileSync(gitconfig, '');
+  const names = ['HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'GIT_CONFIG_GLOBAL'];
+  const prior = Object.fromEntries(names.map((n) => [n, process.env[n]]));
+  delete process.env.HOME;
+  delete process.env.XDG_CONFIG_HOME;
+  delete process.env.GIT_CONFIG_GLOBAL;
+  process.env.USERPROFILE = profile;
+  try {
+    const counter = countRevParse(t);
+    repoInfo(wt);
+    fs.appendFileSync(gitconfig, '[user]\n\tname = x\n');
+    repoInfo(wt);
+    assert.strictEqual(counter.n, 2);
+  } finally {
+    for (const n of names) {
+      if (prior[n] === undefined) delete process.env[n];
+      else process.env[n] = prior[n];
+    }
+  }
+});
+
 test('#5294: a written main-checkout config.worktree is re-asked', (t) => {
-  resetMemo();
+  isolateRepoInfoCache(t);
   const main = gitRepo();
   const counter = countRevParse(t);
   repoInfo(main);
@@ -137,7 +172,7 @@ test('#5294: a written main-checkout config.worktree is re-asked', (t) => {
 });
 
 test('AC4.1: an indeterminate answer is never cached and the next call answers definitively', (t) => {
-  resetMemo();
+  isolateRepoInfoCache(t);
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
 
@@ -152,8 +187,10 @@ test('AC4.1: an indeterminate answer is never cached and the next call answers d
   assert.strictEqual(definitive.indeterminate, false);
   assert.ok(counter.n - before >= 1, 'the normal call spawned git');
 
-  // (b) a timeout on the memo path itself is not remembered.
+  // (b) a timeout on the memo path itself is not remembered. (a)'s normal call
+  // was remembered, so empty the memo and this test's store first.
   resetMemo();
+  fs.rmSync(process.env.CT_HOOKS_REPO_INFO_STORE, { force: true });
   failing = true;
   assert.strictEqual(repoInfo(wt).indeterminate, true);
   failing = false;
@@ -164,7 +201,7 @@ test('AC4.1: an indeterminate answer is never cached and the next call answers d
 });
 
 test('#5294: a call with opts bypasses the memo', (t) => {
-  resetMemo();
+  isolateRepoInfoCache(t);
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const counter = countRevParse(t);
@@ -174,7 +211,7 @@ test('#5294: a call with opts bypasses the memo', (t) => {
 });
 
 test('#5294: ordinary git activity keeps the cache warm', (t) => {
-  resetMemo();
+  isolateRepoInfoCache(t);
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const admin = adminDirOf(wt);
