@@ -17,7 +17,19 @@ const {
   elideDiff,
 } = require('../../../plugin/bin/lib/review-context/build');
 
+const { runCliSync } = require('../../helpers/run-cli');
+
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'build-review-context.js');
+
+// In-process CLI call; `env` is the whole environment (git and lsof need PATH). Maps the
+// helper's `code` onto `status`, the field the assertions below read.
+function cliEnv(extra = {}) {
+  return { PATH: process.env.PATH, HOME: process.env.HOME, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...extra };
+}
+function runCli(argv, { cwd, env } = {}) {
+  const r = runCliSync(CLI, argv, { cwd, env: env || cliEnv() });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
+}
 
 function git(repo, args) {
   return execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
@@ -124,18 +136,21 @@ test('buildContext: missing base/branch/dir throw rather than silently building 
 });
 
 test('CLI end-to-end: mint prints a JSON dir that exists', () => {
-  const out = execFileSync('node', [CLI, 'mint'], { encoding: 'utf8' });
-  const parsed = JSON.parse(out);
-  assert.ok(fs.existsSync(parsed.dir));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-mint-parent-'));
+  try {
+    const r = runCli(['mint'], { env: cliEnv({ TMPDIR: tmp, TEMP: tmp }) });
+    assert.strictEqual(r.status, 0);
+    const parsed = JSON.parse(r.stdout);
+    assert.ok(fs.existsSync(parsed.dir));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('CLI end-to-end: build from a fixture checkout writes the bundle and prints its stats', () => {
   const repo = makeFixtureRepo();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-cli-'));
-  const out = execFileSync('node', [CLI, 'build', '--base', 'main', '--branch', 'feature', '--dir', dir], {
-    cwd: repo,
-    encoding: 'utf8',
-  });
+  const out = runCli(['build', '--base', 'main', '--branch', 'feature', '--dir', dir], { cwd: repo }).stdout;
   const parsed = JSON.parse(out);
   assert.strictEqual(parsed.contextPath, path.join(dir, 'context.md'));
   assert.ok(fs.existsSync(parsed.contextPath));
@@ -148,17 +163,16 @@ test('CLI end-to-end: build from a fixture checkout writes the bundle and prints
   assert.ok(fs.existsSync(parsed.baselinePath));
 });
 
-test('CLI end-to-end: build from a subdirectory of the checkout still reads real file content (#3017)', () => {
+test('AC6.1: CLI end-to-end: build from a subdirectory of the checkout still reads real file content (#3017)', () => {
   // Reproduces the reported bug: invoked from <checkout>/sub instead of the
   // repo root, every changed file used to land in emptySections because
   // readFile(f) resolved the repo-root-relative name against process.cwd().
   const repo = makeFixtureRepo();
   fs.mkdirSync(path.join(repo, 'sub'));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-cli-subdir-'));
-  const out = execFileSync('node', [CLI, 'build', '--base', 'main', '--branch', 'feature', '--dir', dir], {
-    cwd: path.join(repo, 'sub'),
-    encoding: 'utf8',
-  });
+  const sub = path.join(repo, 'sub');
+  assert.notStrictEqual(sub, process.cwd());
+  const out = runCli(['build', '--base', 'main', '--branch', 'feature', '--dir', dir], { cwd: sub }).stdout;
   const parsed = JSON.parse(out);
   const bundle = fs.readFileSync(parsed.contextPath, 'utf8');
   assert.match(bundle, /===== kept\.txt =====\nkept line 1\nkept line 2\n/);
@@ -250,10 +264,7 @@ test('3302 AC: build --run writes <run>/review-ctx/pre-dispatch-status.txt match
   const repo = makeFixtureRepo();
   fs.writeFileSync(path.join(repo, 'scratch.txt'), 'x\n');
   const run = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-run-cli-'));
-  const out = execFileSync('node', [CLI, 'build', '--base', 'main', '--branch', 'HEAD', '--run', run], {
-    cwd: repo,
-    encoding: 'utf8',
-  });
+  const out = runCli(['build', '--base', 'main', '--branch', 'HEAD', '--run', run], { cwd: repo }).stdout;
   const parsed = JSON.parse(out);
   assert.strictEqual(parsed.baselinePath, path.join(run, 'review-ctx', 'pre-dispatch-status.txt'));
   assert.strictEqual(
@@ -846,12 +857,7 @@ test('4220: --files-from scope still reports a path outside the list whose hunk 
 
 test('CLI: malformed invocations exit 2 with usage', () => {
   for (const args of [[], ['build'], ['frobnicate']]) {
-    let code = 0;
-    try {
-      execFileSync('node', [CLI, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err) {
-      code = err.status;
-    }
+    const code = runCli(args).status;
     assert.strictEqual(code, 2, `expected exit 2 for args: ${JSON.stringify(args)}`);
   }
 });
