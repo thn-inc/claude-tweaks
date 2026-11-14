@@ -97,7 +97,7 @@ const realDeps = {
     const out = resolvePolicy({ keys: [key], runDir }, callerDeps({ cwd, stderr: () => {} }));
     if (out.code !== EXIT_OK) throw new Error(`resolve-policy: ${out.message}`);
     const entry = out.result[key];
-    if (entry && typeof entry.degraded === 'string') throw new Error(`forge detection degraded (${entry.degraded})`);
+    if (typeof entry.degraded === 'string') throw new Error(`forge detection degraded (${entry.degraded})`);
     return scalarValue(entry);
   },
   hooks: (args, cwd) => execFileSync(process.execPath, [HOOKS_JS, ...args], {

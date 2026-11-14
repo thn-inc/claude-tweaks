@@ -187,7 +187,6 @@ test('bound equal to move is not exceeded', () => {
 test('unreadable lever → failed', () => {
   const cases = [
     ['refused', { code: 1, message: 'boom' }, /^resolve-policy: boom$/],
-    ['entry missing', { code: 0, result: {} }, /missing from the resolver output/],
     ['resolveBound throws (AC5)', THROWS, /kaboom/],
     ['invalid: true', boundOf(2, 'policy', { invalid: true }), /invalid value/],
     ['negative', boundOf(-1), /non-negative integer/],

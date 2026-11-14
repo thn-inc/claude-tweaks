@@ -100,8 +100,6 @@ const RUN_DIR_PATHSPEC = ':!.claude-tweaks/pipelines';
 function readBound(r) {
   if (r.code !== EXIT_OK) return { detail: `resolve-policy: ${r.message}` };
   const entry = r.result['release-tip-moves'];
-  // Boundary check on the injected dependency's return value, not on the core's own contract.
-  if (!entry || typeof entry !== 'object') return { detail: 'release-tip-moves is missing from the resolver output' };
   if (entry.invalid === true) return { detail: 'release-tip-moves holds an invalid value' };
   if (!Number.isInteger(entry.value) || entry.value < 0) return { detail: 'release-tip-moves is not a non-negative integer' };
   return { value: entry.value, source: typeof entry.source === 'string' ? entry.source : null };
