@@ -7,6 +7,7 @@ const path = require('path');
 const {
   formatEntry, resolveTarget, appendEntry, appendEntries, STATUSES, normalizeSection,
 } = require('../../../plugin/bin/lib/log-decision/append');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 
 // The schema line _shared/auto-decision-log.md documents — a test-side parser, so
 // every entry the module emits is proven readable by the documented shape.
@@ -234,18 +235,22 @@ test('appendEntry: concurrent `node bin/log-decision.js` processes against the s
 
   const cliPath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js');
   const WORKERS = 8;
+  // real processes: proves the cross-process lock never drops an entry (#816)
   const spawnOne = (i) => new Promise((resolve, reject) => {
     const p = spawn(process.execPath, [
       cliPath, '--run', runDir, '--status', 'AUTO', '--text', `worker ${i}`,
     ], { cwd: root, env: { ...process.env, CLAUDE_TWEAKS_LOCK_WAIT_MS: '60000' } });
     let stderr = '';
+    let stdout = '';
+    p.stdout.on('data', (d) => { stdout += d; });
     p.stderr.on('data', (d) => { stderr += d; });
     // 'close', not 'exit': only 'close' guarantees stdio has flushed, so a failing worker's stderr is complete.
-    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
+    p.on('close', (code) => (code === 0 ? resolve(stdout) : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
     p.on('error', reject);
   });
 
-  await Promise.all(Array.from({ length: WORKERS }, (_, i) => spawnOne(i)));
+  const outs = await Promise.all(Array.from({ length: WORKERS }, (_, i) => spawnOne(i)));
+  outs.forEach((out, i) => assert.match(out, new RegExp(`^- AUTO \\d{2}:\\d{2}:\\d{2} \u2014 log-decision: worker ${i}\\. Reversibility: n/a\\.\\n$`), `worker ${i} echoes its entry line`));
 
   const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
   for (let i = 0; i < WORKERS; i++) {
@@ -253,4 +258,25 @@ test('appendEntry: concurrent `node bin/log-decision.js` processes against the s
   }
   const lines = text.trim().split('\n').filter(Boolean);
   assert.equal(lines.length, WORKERS, 'every worker\'s line must survive, none clobbered');
+});
+
+test('AC6.1: an in-process append anchors the run dir under the injected cwd', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-inproc-'));
+  fs.mkdirSync(path.join(root, '.git')); // a checkout root outside the real checkout: anchors only under the injected cwd
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-inproc');
+  fs.mkdirSync(runDir, { recursive: true });
+  assert.notEqual(path.resolve(root), path.resolve(process.cwd()));
+  const cliPath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js');
+  const res = runCliSync(cliPath, ['--run', runDir, '--status', 'AUTO', '--text', 'in-process'], { cwd: root, env: {} });
+  assert.equal(res.code, 0, res.stderr);
+  assert.match(res.stdout, /— log-decision: in-process\. Reversibility: n\/a\.\n$/);
+  assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /— log-decision: in-process\. Reversibility: n\/a\.\n$/);
+});
+
+test('refusal: a missing --run exits 2 and names the problem', () => {
+  const cliPath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js');
+  // real process: proves the script entry turns run's return value into the exit code
+  const res = spawnCli(cliPath, ['--status', 'AUTO', '--text', 'x'], { env: { ...process.env } });
+  assert.equal(res.code, 2);
+  assert.match(res.stderr, /--run <run-dir> is required/);
 });
