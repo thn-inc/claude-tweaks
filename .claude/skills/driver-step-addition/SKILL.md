@@ -64,6 +64,15 @@ The ci step polls until a settle window measured from the push has passed (`CI_S
 - The step's time constants are exported from `steps.js` and each is pinned by value in a test, as `CI_WAIT_BOUND_MS`, `CI_POLL_INTERVAL_MS` and `CI_SETTLE_WINDOW_MS` are. Poll and call counts in tests are derived from those constants (`WINDOW_POLLS`), never written as numbers, so a changed window changes the expectation with it.
 - The harness clock advances 1 per `now()` call and `ms` per `sleep(ms)`, and nowhere else. A test that records sleeps wraps the harness's own: `const tick = h.deps.sleep; h.deps.sleep = (ms) => { sleeps.push(ms); return tick(ms); };`. To place time at a point in the run, a scripted reply calls `h.deps.sleep(ms)` itself (the two `the settle window is measured from the push` tests move it inside `gh pr create` and inside `verify.js`).
 
+### A step that re-runs other steps
+
+The review step's fix round (#5222, `plugin/bin/lib/driver/review.js`) is the first step that re-runs others: a second implementer launch, then commit, test and check. A step of this shape follows the same rules:
+- Reach the re-run steps through a wiring object that `steps.js` builds and passes in. The new module never requires `steps.js`.
+- Launch workers through `plugin/bin/lib/driver/launch.js` (`readCeilings`, `launchTracked`, `WIN32_CLAUDE_BIN`). Never copy the launch wiring.
+- Say which `ctx` fields the re-run merges (`ctx.worker`), extends (`ctx.changedFiles`) or overwrites (`ctx.check`). The push guard reads the last check's head.
+- Propagate a re-run step's own status and class unchanged, and list each re-run step's stops in the new module's header.
+- The worker had write access between the steps, so judge its output again before using it: the fix round re-checks each evidence path's canonical location and reads its bytes from disk before running it, never through git status.
+
 ## Adding a settle step
 
 A settle call is not a `STEPS` entry; it is a handler in one of `settle.js`'s `SETTLE_ROWS` rows (#5219). The rules for adding one:
