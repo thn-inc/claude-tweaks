@@ -6,6 +6,7 @@ files:
   - plugin/bin/lib/driver/events.js
   - plugin/bin/lib/driver/settle.js
   - plugin/bin/lib/driver/review.js
+  - plugin/bin/lib/driver/launch.js
 ---
 
 # Drive a Named Record to a Draft PR
