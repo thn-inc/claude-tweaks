@@ -17,9 +17,11 @@ const W = '.github/workflows/ci.yml';
 const review = (texts, ciSources = null) => M.reviewWorkflows({ workflows: Object.entries(texts).map(([n, t]) => wf(n, t)), ciSources });
 
 const READY_TYPES = 'types: [opened, synchronize, reopened, ready_for_review]';
+// Each is written into the fixture's `if:` as is, so the leading-`!` form is quoted: a plain
+// value led by `!` is a YAML tag, and the reader leaves it unread.
 const SPEC_CONDS = [
   'github.event.pull_request.draft == false',
-  '!github.event.pull_request.draft',
+  "'!github.event.pull_request.draft'",
   "github.event.pull_request.draft != true && github.actor != 'bot'",
 ];
 
@@ -29,7 +31,7 @@ test('CHECKS: the five checks in order, frozen, each naming its remedy', () => {
     ['draft-skip-with-ci-source', 'Coexistence with the `ci` verification source'],
     ['paths-filter-no-always-reporting-job', 'Path filters'],
     ['no-cancel-in-progress-concurrency', 'Concurrency'],
-    ['push-all-step-gated', 'see #5152'],
+    ['push-all-step-gated', 'see thn-inc/claude-tweaks#5152'],
   ]);
   assert.ok(Object.isFrozen(M.CHECKS));
   assert.equal(M.GENERATED_TRACKING_WORKFLOW, 'track-issue-fixes.yml');
@@ -101,7 +103,7 @@ test('AC1.2: a draft-only condition (== true) yields no finding', () => {
 });
 
 test('AC1.3: || or contains() around the draft reference is unparsed and nothing else', () => {
-  for (const cond of ['github.event.pull_request.draft == false || always()', "!contains(toJSON(github.event.pull_request.draft), 'true')"]) {
+  for (const cond of ['github.event.pull_request.draft == false || always()', "\"!contains(toJSON(github.event.pull_request.draft), 'true')\""]) {
     const r = review({ 'ci.yml': draftWf({ cond }) });
     assert.deepEqual(checksOf(r, W), [], cond);
     assert.deepEqual(r.unparsed, [{ workflow: W, reason: 'draft condition not understood' }], cond);
@@ -196,12 +198,12 @@ test('an unreadable entry and a reader unparsed reason are unparsed entries, nev
   assert.deepEqual(several.unparsed, [{ workflow: W, reason: 'no on: block; no jobs: key' }]);
 });
 
-// Controller ruling: concurrency, push branches and jobs read the same unparsed
-// as absent, so any reader reason suppresses every check on that workflow. One
-// fixture per unreadable field; the first two would yield check 1 if read.
-test('any reader unparsed reason suppresses that workflow\'s findings: concurrency, push branches, jobs', () => {
+// Controller ruling: push branches and jobs read the same unparsed as absent,
+// so any reader reason suppresses every check on that workflow. One fixture per
+// unreadable field; the first two would yield check 1 if read. The reader's
+// workflow-level concurrency reasons are check 4's alone (the next test).
+test('any other reader unparsed reason suppresses that workflow\'s findings: push branches, jobs, a job if:', () => {
   const cases = [
-    ['concurrency not read', draftWf().replace(CONC, 'concurrency: {group: x\n')],
     ['push branches not read', draftWf().replace('    types: [opened, synchronize]\n', "    types: [opened, synchronize]\n  push:\n    branches: [main, 'x y']\n")],
     // No concurrency key, so check 4 would flag this one if the gate let it through.
     ['jobs: not read', draftWf().replace(CONC, '').replace('    steps:\n      - run: npm test\n', '    steps: run-this\n')],
@@ -280,9 +282,12 @@ test('findings run in workflow input order, then CHECKS order', () => {
   ]);
 });
 
-test('formatRemedy renders a section citation and passes the #5152 pointer through', () => {
+// The pointer prints in the adopting project, so it is qualified: a bare `#5152` there names that
+// repo's own issue. A bare one is no longer the sentinel, so it renders as a section like any other.
+test('formatRemedy renders a section citation and passes the qualified #5152 pointer through', () => {
   assert.equal(M.formatRemedy('Path filters'), '`_shared/ci-skips-drafts.md` § Path filters');
-  assert.equal(M.formatRemedy('see #5152'), 'see #5152');
+  assert.equal(M.formatRemedy('see thn-inc/claude-tweaks#5152'), 'see thn-inc/claude-tweaks#5152');
+  assert.equal(M.formatRemedy('see #5152'), '`_shared/ci-skips-drafts.md` § see #5152');
 });
 
 const JOBS = '  a:\n    runs-on: x\n    steps:\n      - run: t\n';
@@ -354,7 +359,7 @@ test('AC3.3: a second workflow whose every job skips drafts, or whose trigger ha
 test('an unparsed second workflow is not counted, and the detail names it', () => {
   const cases = [
     ['no jobs: key', `on:\n  pull_request:\n${CONC}`],
-    ['concurrency not read', prWf({ conc: 'concurrency: {group: x\n' })],
+    ['push branches not read', prWf({ on: "  pull_request:\n  push:\n    branches: [main, 'x y']\n" })],
   ];
   for (const [reason, other] of cases) {
     const r = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': other });
@@ -487,17 +492,85 @@ test('a cancel-in-progress expression suppresses check 4 only: checks 1, 2, 3 an
   assert.deepEqual(checksOf(counted, W), []);
   assert.deepEqual(counted.unparsed, [{ workflow: OTHER, reason: 'cancel-in-progress expression not evaluated' }]);
 
+  // Both carry a paths filter, and other.yml only the expression: neither reports on every PR,
+  // and other.yml was read, so check 3's detail names no unparsed file, on either workflow.
+  const bothFiltered = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': prWf({ on: PATHS_ON, conc: EXPR_CONC }) });
+  assert.deepEqual(bothFiltered.findings.map((f) => [f.workflow, f.check, f.detail]), [
+    [W, 'paths-filter-no-always-reporting-job', NO_ALWAYS],
+    [OTHER, 'paths-filter-no-always-reporting-job', NO_ALWAYS],
+  ]);
+  assert.deepEqual(bothFiltered.unparsed, [{ workflow: OTHER, reason: 'cancel-in-progress expression not evaluated' }]);
+
   // Beside any other reason it still suppresses every check, and both reasons are named.
   const mixed = review({ 'ci.yml': guarded.replace('draft == false', 'draft == false || always()') });
   assert.deepEqual(mixed.findings, []);
   assert.deepEqual(mixed.unparsed, [{ workflow: W, reason: 'draft condition not understood; cancel-in-progress expression not evaluated' }]);
 });
 
+// The reader's two workflow-level concurrency reasons are check 4's alone, as the expression is:
+// kept as an unparsed entry where check 4 applies (checks 1, 2, 3 and 5 still run), dropped where
+// it does not, since nothing then reads the value.
+test('an unread workflow-level concurrency suppresses check 4 only, and only where check 4 applies', () => {
+  const unread = [
+    ['concurrency not read', 'concurrency: {group: x\n'],
+    ['cancel-in-progress value not read', "concurrency:\n  group: x\n  cancel-in-progress: 'true'\n"],
+  ];
+  for (const [reason, conc] of unread) {
+    const r = review({ 'ci.yml': draftWf().replace(CONC, conc) }, [{ suite: 'tests', workflow: 'ci.yml' }]);
+    assert.deepEqual(checksOf(r, W), ['draft-skip-no-ready-for-review', 'draft-skip-with-ci-source'], reason);
+    assert.deepEqual(r.unparsed, [{ workflow: W, reason }], reason);
+
+    const paths = review({ 'ci.yml': prWf({ on: PATHS_ON, conc }) });
+    assert.deepEqual(checksOf(paths, W), ['paths-filter-no-always-reporting-job'], reason);
+    assert.deepEqual(paths.unparsed, [{ workflow: W, reason }], reason);
+
+    const both = review({ 'ci.yml': `on:\n  pull_request:\n  push:\n${conc}jobs:\n${STEP_GATED}` });
+    assert.deepEqual(checksOf(both, W), ['push-all-step-gated'], reason);
+    assert.deepEqual(both.unparsed, [{ workflow: W, reason }], reason);
+
+    // Check 4 does not apply: a push-only workflow, or types without synchronize.
+    const push = review({ 'ci.yml': pushWf(`on: push\n${conc}`, STEP_GATED) });
+    assert.deepEqual(checksOf(push, W), ['push-all-step-gated'], reason);
+    assert.deepEqual(push.unparsed, [], reason);
+    const closed = review({ 'ci.yml': prWf({ on: '  pull_request:\n    types: [closed]\n', conc }) });
+    assert.deepEqual(closed.findings, [], reason);
+    assert.deepEqual(closed.unparsed, [], reason);
+  }
+
+  // Check 3 reads it as a read workflow: it can be the always-reporting one.
+  const counted = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': prWf({ conc: 'concurrency: {group: x\n' }) });
+  assert.deepEqual(checksOf(counted, W), []);
+  assert.deepEqual(counted.unparsed, [{ workflow: OTHER, reason: 'concurrency not read' }]);
+
+  // Beside any other reason it still suppresses every check, and both reasons are named.
+  const mixed = review({ 'ci.yml': draftWf({ cond: 'github.event.pull_request.draft == false || always()' }).replace(CONC, 'concurrency: {group: x\n') });
+  assert.deepEqual(mixed.findings, []);
+  assert.deepEqual(mixed.unparsed, [{ workflow: W, reason: 'draft condition not understood; concurrency not read' }]);
+});
+
+test('cancel-in-progress: True/TRUE and False/FALSE read as the booleans', () => {
+  const conc = (v) => `concurrency:\n  group: x\n  cancel-in-progress: ${v}\n`;
+  // A push-only step-gated workflow is still check 5's, never unparsed.
+  const push = review({ 'ci.yml': pushWf(`on: push\n${conc('True')}`, STEP_GATED) });
+  assert.deepEqual(checksOf(push, W), ['push-all-step-gated']);
+  assert.deepEqual(push.unparsed, []);
+  for (const v of ['True', 'TRUE']) {
+    const r = review({ 'ci.yml': prWf({ conc: conc(v) }) });
+    assert.deepEqual(r.findings, [], v);
+    assert.deepEqual(r.unparsed, [], v);
+  }
+  for (const v of ['False', 'FALSE']) {
+    const r = review({ 'ci.yml': prWf({ conc: conc(v) }) });
+    assert.deepEqual(r.findings.map((f) => [f.check, f.detail]), [['no-cancel-in-progress-concurrency', 'cancel-in-progress: false']], v);
+    assert.deepEqual(r.unparsed, [], v);
+  }
+});
+
 test('AC5.1: on: push with only a step-level if: yields exactly push-all-step-gated', () => {
   for (const onBlock of ['on: push\n', "on:\n  push:\n    branches: ['**']\n"]) {
     const r = review({ 'ci.yml': pushWf(onBlock, STEP_GATED) });
     assert.deepEqual(checksOf(r, W), ['push-all-step-gated'], onBlock);
-    assert.equal(r.findings[0].remedy, 'see #5152');
+    assert.equal(r.findings[0].remedy, 'see thn-inc/claude-tweaks#5152');
     assert.equal(r.findings[0].detail, 'push on every branch; no job-level if:, 1 step-level if:');
     assert.deepEqual(r.unparsed, [], onBlock);
   }

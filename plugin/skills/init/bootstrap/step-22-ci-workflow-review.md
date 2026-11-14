@@ -12,11 +12,11 @@ Every branch is computable here from `$ARGUMENTS` and Phase 1's existence check 
 
 **Read the result.**
 
-- **Exit 0** — show the printed table and its summary line verbatim. `findings: 0` alone is clean. A summary ending `not clean: {K} workflow(s) unparsed` is never reported as clean: an unparsed workflow got none of the checks, except one unparsed only for `cancel-in-progress expression not evaluated`, which got every check but concurrency. A `skipped … — Step 16 classifies it` line names the plugin's own generated workflow (below).
+- **Exit 0** — show the printed table and its summary line verbatim. `findings: 0` alone is clean. A summary ending `not clean: {K} workflow(s) unparsed` is never reported as clean: an unparsed workflow got none of the checks, except one unparsed only for a concurrency reason (`cancel-in-progress expression not evaluated`, `concurrency not read` or `cancel-in-progress value not read`), which got every check but concurrency. A `skipped … — Step 16 classifies it` line names the plugin's own generated workflow (below).
 - **Exit 1** — the review could not run: show `ci-workflow-review: could not review — {stderr}`. The causes are an invalid `verify-scope.json`, a `.github/workflows` that is not a directory, or either of them or its `.claude-tweaks`/`.github` parent being unreadable (a parent that is a regular file included), a dangling symlink, or resolved outside the checkout. Only an absent workflows directory or declaration is silent. A single workflow file that is unreadable, a dangling symlink, or resolves outside the checkout is not an exit 1: it is an `unparsed` row under exit 0.
 - **Exit 2** — a usage bug in the command line: report it, never as clean.
 
-**The checks**, in report order. Each remedy is a section of `_shared/ci-skips-drafts.md` or the #5152 pointer; read it there, never restate it.
+**The checks**, in report order. Each remedy is a section of `_shared/ci-skips-drafts.md` or the plugin repository's `thn-inc/claude-tweaks#5152` pointer; read it there, never restate it.
 
 | Check | Remedy |
 |---|---|
@@ -24,6 +24,6 @@ Every branch is computable here from `$ARGUMENTS` and Phase 1's existence check 
 | `draft-skip-with-ci-source` | `_shared/ci-skips-drafts.md` § Coexistence with the `ci` verification source |
 | `paths-filter-no-always-reporting-job` | `_shared/ci-skips-drafts.md` § Path filters |
 | `no-cancel-in-progress-concurrency` | `_shared/ci-skips-drafts.md` § Concurrency |
-| `push-all-step-gated` | see #5152 |
+| `push-all-step-gated` | see thn-inc/claude-tweaks#5152 |
 
 **What this step never does.** It never writes, edits or regenerates a workflow or any other file, in any mode, `auto` included. It never reviews the plugin's generated `track-issue-fixes.yml` while it is the current or an earlier generated version (Step 16 classifies it); a hand-modified copy is reviewed like any project workflow. It never reads CI systems other than GitHub Actions, or run history.

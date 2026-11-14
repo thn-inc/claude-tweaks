@@ -12,11 +12,17 @@ function bothEndings(text, fn) { fn(text); fn(text.replace(/\n/g, '\r\n')); }
 const MIN = 'on: push\njobs:\n  a:\n    runs-on: x\n';
 const JOBS = 'jobs:\n  a:\n    runs-on: x\n';
 
-// Every fixture string any test below reads, for the AC6.2 sweep at the end.
-const ALL = [];
-const shape = (t) => { ALL.push(t); return mv.readWorkflowShape(t); };
+// The AC6.2 sweep at the end reads every fixture string the tests below read. Each such test is
+// a fixtureTest: its body takes the reader as `shape` and is kept here, so the sweep re-runs every
+// body with a collecting reader and gets the same strings whichever tests ran before it
+// (`--test-name-pattern 'AC6.2'` alone included).
+const FIXTURE_BODIES = [];
+function fixtureTest(name, body) {
+  FIXTURE_BODIES.push(body);
+  test(name, () => body(mv.readWorkflowShape));
+}
 
-test('readWorkflowShape: every exported field is pinned by name — a rename fails here', () => {
+fixtureTest('readWorkflowShape: every exported field is pinned by name — a rename fails here', (shape) => {
   assert.equal(typeof mv.readWorkflowShape, 'function');
   assert.ok(mv.DRAFT_REF instanceof RegExp);
   assert.deepEqual([...mv.PR_FILTER_KEYS], ['branches', 'branches-ignore', 'paths', 'paths-ignore']);
@@ -42,7 +48,7 @@ test('readWorkflowShape: non-string or empty input is the empty shape with no on
   }
 });
 
-test('name: top-level name in bare, quoted and commented forms', () => {
+fixtureTest('name: top-level name in bare, quoted and commented forms', (shape) => {
   for (const c of ['name: CI\n', "name: 'CI' # x\n", '"name": "CI"\n']) {
     bothEndings(c + MIN, (t) => assert.equal(shape(t).name, 'CI', JSON.stringify(t)));
   }
@@ -74,7 +80,7 @@ test('name: top-level name in bare, quoted and commented forms', () => {
 
 // prFiltersByTrigger keeps each PR trigger's own filter keys (sorted), keyed
 // pull_request then pull_request_target, a trigger with no filter key omitted.
-test('prFilters: block, flow-mapping and pull_request_target forms', () => {
+fixtureTest('prFilters: block, flow-mapping and pull_request_target forms', (shape) => {
   const cases = [
     ["on:\n  pull_request:\n    paths: ['src/**']\n", ['paths'], { pull_request: ['paths'] }],
     ['on: { pull_request: { branches: [main], paths-ignore: [docs/**] } }\n', ['branches', 'paths-ignore'], { pull_request: ['branches', 'paths-ignore'] }],
@@ -97,7 +103,7 @@ test('prFilters: block, flow-mapping and pull_request_target forms', () => {
   }
 });
 
-test('push: absent, all, some, ignore and tags', () => {
+fixtureTest('push: absent, all, some, ignore and tags', (shape) => {
   const read = (on) => {
     let out;
     bothEndings(on + JOBS, (t) => {
@@ -223,7 +229,7 @@ test('push: absent, all, some, ignore and tags', () => {
   assert.equal(none.pushBranches, 'absent');
 });
 
-test('jobs: job-level if in inline, quoted, wrapped, block and folded forms', () => {
+fixtureTest('jobs: job-level if in inline, quoted, wrapped, block and folded forms', (shape) => {
   const cases = [
     ['    if: github.event.pull_request.draft == false\n', 'github.event.pull_request.draft == false'],
     ['    if: "github.event.pull_request.draft == false"\n', 'github.event.pull_request.draft == false'],
@@ -288,7 +294,7 @@ test('jobs: job-level if in inline, quoted, wrapped, block and folded forms', ()
   });
 });
 
-test('jobs: stepIfCount counts step keys only', () => {
+fixtureTest('jobs: stepIfCount counts step keys only', (shape) => {
   const wf = [
     'on: push',
     'jobs:',
@@ -362,7 +368,7 @@ test('jobs: stepIfCount counts step keys only', () => {
   });
 });
 
-test('concurrency: scalar, block and flow forms', () => {
+fixtureTest('concurrency: scalar, block and flow forms', (shape) => {
   const cases = [
     ['', 'absent'],
     ['concurrency: ci-${{ github.ref }}\n', 'no-cancel'],
@@ -392,7 +398,66 @@ test('concurrency: scalar, block and flow forms', () => {
   });
 });
 
-test('unparsed: each reason fires on its own fixture', () => {
+// YAML 1.2's core schema spells each boolean three ways; any other spelling is a string.
+fixtureTest('concurrency: cancel-in-progress reads True/TRUE and False/FALSE as booleans', (shape) => {
+  const cases = [['True', 'cancel-true'], ['TRUE', 'cancel-true'], ['False', 'cancel-false'], ['FALSE', 'cancel-false'], ['tRUE', null], ['yes', null]];
+  for (const [v, want] of cases) {
+    for (const c of [`concurrency:\n  group: x\n  cancel-in-progress: ${v}\n`, `concurrency: {group: x, cancel-in-progress: ${v}}\n`]) {
+      bothEndings(`${MIN}${c}`, (t) => {
+        const s = shape(t);
+        assert.equal(s.concurrency, want || 'absent', JSON.stringify(t));
+        assert.deepEqual(s.unparsed, want ? [] : ['cancel-in-progress value not read'], JSON.stringify(t));
+      });
+    }
+  }
+});
+
+// A plain value led by `!` is a YAML tag (the push-branch item rule), so it is never kept as the
+// job's if: text; a quoted '!x', a ${{ !x }} expression and block-scalar text are read.
+fixtureTest('jobs: a bare `!` job if: is a YAML tag and unread; quoted, ${{ }} and block forms are read', (shape) => {
+  for (const body of ['    if: !github.event.pull_request.draft\n', '    if: ! x\n', '    if: !x # c\n', '    if:\n      !github.event.pull_request.draft\n']) {
+    bothEndings(`on: pull_request\njobs:\n  a:\n${body}    runs-on: x\n`, (t) => {
+      const s = shape(t);
+      assert.deepEqual(s.unparsed, ['job a if: not read'], JSON.stringify(t));
+      assert.equal(s.jobs[0].if, null, JSON.stringify(t));
+    });
+  }
+  const read = [
+    ["    if: '!github.event.pull_request.draft'\n", '!github.event.pull_request.draft'],
+    ['    if: "!x"\n', '!x'],
+    ['    if: ${{ !github.event.pull_request.draft }}\n', '${{ !github.event.pull_request.draft }}'],
+    ['    if: |\n      !x\n', '!x'],
+  ];
+  for (const [body, want] of read) {
+    bothEndings(`on: pull_request\njobs:\n  a:\n${body}    runs-on: x\n`, (t) => {
+      const s = shape(t);
+      assert.equal(s.jobs[0].if, want, JSON.stringify(t));
+      assert.deepEqual(s.unparsed, [], JSON.stringify(t));
+    });
+  }
+});
+
+// flowMappingEntries leaves a colon-less entry (an implicit null value) out of `entries`, so
+// without this check `on: {push, pull_request}` would read as no triggers at all.
+fixtureTest('on: a colon-less flow-mapping entry is unread, at the trigger and at the sub-key level', (shape) => {
+  for (const on of ['on: {push, pull_request}\n', 'on: { push: {}, pull_request }\n', 'on: {push: {branches, tags}}\n', 'on:\n  push: {branches}\n']) {
+    bothEndings(on + JOBS, (t) => {
+      const s = shape(t);
+      assert.ok(s.unparsed.includes('on: block not read'), JSON.stringify([t, s.unparsed]));
+      assert.equal(s.pushTrigger, false, JSON.stringify(t));
+    });
+  }
+  // Controls: an empty map, a trailing comma and a keyed entry are no colon-less entry.
+  for (const on of ['on: {push: {}}\n', 'on: { push: {}, }\n', 'on:\n  push: {branches: [main]}\n']) {
+    bothEndings(on + JOBS, (t) => {
+      const s = shape(t);
+      assert.deepEqual(s.unparsed, [], JSON.stringify(t));
+      assert.equal(s.pushTrigger, true, JSON.stringify(t));
+    });
+  }
+});
+
+fixtureTest('unparsed: each reason fires on its own fixture', (shape) => {
   const cases = [
     ['jobs:\n  a:\n    runs-on: x\n', 'no on: block'],
     ['on: push\n', 'no jobs: key'],
@@ -495,12 +560,12 @@ test('unparsed: each reason fires on its own fixture', () => {
   for (const c of controls) bothEndings(c, (t) => assert.deepEqual(shape(t).unparsed, [], JSON.stringify(t)));
 });
 
-test('unparsed: reasons arrive in detection order, deduped', () => {
+fixtureTest('unparsed: reasons arrive in detection order, deduped', (shape) => {
   bothEndings('on: push\njobs:\n  a:\n    if:\n  a:\n    if:\n', (t) => assert.deepEqual(shape(t).unparsed, ['job a if: not read']));
   bothEndings('concurrency: *c\n', (t) => assert.deepEqual(shape(t).unparsed, ['no on: block', 'no jobs: key', 'anchor or alias in concurrency:']));
 });
 
-test('BOM: a leading BOM reads as its BOM-less twin', () => {
+fixtureTest('BOM: a leading BOM reads as its BOM-less twin', (shape) => {
   const pr = "name: CI\non:\n  pull_request:\n    types: [opened]\n    paths: ['src/**']\njobs:\n  a:\n    if: github.event.pull_request.draft == false\n    steps:\n      - if: x\n        run: y\nconcurrency:\n  cancel-in-progress: true\n";
   const push = "on:\n  push:\n    branches: ['**']\njobs:\n  a:\n    runs-on: x\n";
   for (const f of [pr, push]) {
@@ -548,7 +613,10 @@ const READER_CASES = [
 
 test('AC6.2: readWorkflowShape copies readPullRequestWorkflow\'s four fields unchanged', () => {
   const pick = (r) => ({ prTrigger: r.prTrigger, types: r.types, typesDeclared: r.typesDeclared, draftReference: r.draftReference });
-  // ALL already holds each fixture's LF and CRLF forms (every test above reads both).
+  // Re-run every fixture test's body with a collecting reader; ALL then holds each fixture's LF
+  // and CRLF forms (every fixture test reads both).
+  const ALL = [];
+  for (const body of FIXTURE_BODIES) body((t) => { ALL.push(t); return mv.readWorkflowShape(t); });
   const every = [...new Set([...ALL, ...READER_CASES, ...READER_CASES.map((c) => c.replace(/\n/g, '\r\n'))])];
   assert.ok(ALL.length > 100, 'the fixtures above were collected');
   for (const t of every) {

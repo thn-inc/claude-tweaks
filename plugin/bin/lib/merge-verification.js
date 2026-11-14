@@ -205,8 +205,10 @@ function emptyWorkflowRead() {
 }
 
 // Entries {key, value} sitting directly inside the outer `{ }` of a one-line
-// flow mapping, plus whether the braces balanced on this line. Commas and
-// colons inside nested braces/brackets or quotes never split an entry.
+// flow mapping, plus whether the braces balanced on this line, and `keyless`:
+// how many non-empty entries had no colon (`{a, b}`, implicit null values),
+// which `entries` leaves out. Commas and colons inside nested braces/brackets
+// or quotes never split an entry.
 // Twin: flowMappingKeysAtDepth1 (above) — it feeds workflowHasPullRequestTrigger
 // and fails toward "no PR trigger"; this one's callers fail toward `unparsed`.
 function flowMappingEntries(s) {
@@ -216,8 +218,10 @@ function flowMappingEntries(s) {
   let quote = null;
   let cur = '';
   let key = null;
+  let keyless = 0;
   const flush = () => {
     if (key !== null) entries.push({ key, value: cur.trim() });
+    else if (cur.trim() !== '') keyless++;
     key = null;
     cur = '';
   };
@@ -247,7 +251,7 @@ function flowMappingEntries(s) {
     cur += ch;
   }
   flush();
-  return { entries, balanced: depth === 0 };
+  return { entries, balanced: depth === 0, keyless };
 }
 
 // Items of a one-line `[a, b]`; null when any item is not a plain identifier.
@@ -682,6 +686,9 @@ function regionReasons(lines, start, end, region) {
 //     quote that never closes or an undecodable escape sets `unread`;
 //   - anything else, two quoted scalars or text after a closing quote included:
 //     plain text, its comment-stripped lines joined by one space, as written.
+//     A plain value whose first character is `!` is a YAML tag, not text (the
+//     BRANCH_ITEM rule): it also sets `tagged`, which a caller that must not
+//     read a tag as text checks.
 function readJoinedScalar(lines, i, end, keyIndent, inline) {
   const v = stripCommentQuoteAware(inline);
   if (BLOCK_SCALAR.test(v)) {
@@ -723,7 +730,7 @@ function readJoinedScalar(lines, i, end, keyIndent, inline) {
     if (leadSpaces(lines[i]) <= keyIndent) break;
     parts.push(stripCommentQuoteAware(t));
   }
-  return { text: parts.join(' ').trim(), next: i, unread: false };
+  return { text: parts.join(' ').trim(), next: i, unread: false, tagged: first[0] === '!' };
 }
 
 // Whether a one-line flow mapping `v` is one whole mapping: its outer `{` closes
@@ -754,7 +761,9 @@ function readInlineTriggerKeys(value, line) {
   const v = value.trim();
   if (v === '' || v === 'null' || v === '~') return new Map();
   if (!flowMapSpansValue(v)) return null;
-  return new Map(flowMappingEntries(v).entries.map((e) => [e.key, { rest: e.value, line }]));
+  const map = flowMappingEntries(v);
+  if (map.keyless > 0) return null; // a colon-less sub-key would be dropped, never read
+  return new Map(map.entries.map((e) => [e.key, { rest: e.value, line }]));
 }
 
 // The sub-keys of the push, pull_request and pull_request_target triggers, as
@@ -779,7 +788,11 @@ function readTriggerKeys(lines, onIdx, end) {
     }
     if (rest.startsWith('{')) {
       if (!flowMapSpansValue(rest)) return NOT_READ;
-      for (const e of flowMappingEntries(rest).entries) {
+      const map = flowMappingEntries(rest);
+      // A colon-less entry (`{push, pull_request}`, implicit null values) is in
+      // no `entries`, so it would read as no triggers: fail closed.
+      if (map.keyless > 0) return NOT_READ;
+      for (const e of map.entries) {
         if (!WANTED.has(e.key)) continue;
         const sub = readInlineTriggerKeys(e.value, onIdx);
         if (sub === null) return NOT_READ;
@@ -1001,7 +1014,8 @@ function readJobs(lines, jobsIdx, end, unparsed) {
         const r = readJoinedScalar(lines, i, end, keyIndent, kv.rest);
         i = r.next;
         open = null; // its value, inline or on deeper lines, is read
-        if (r.text === '') unparsed.push(`job ${job.id} if: not read`); // empty or unread
+        // empty, unread, or a bare `!` YAML tag (quoted '!x' and ${{ !x }} are text)
+        if (r.text === '' || r.tagged) unparsed.push(`job ${job.id} if: not read`);
         else job.if = r.text;
       } else if (kv.key === 'concurrency') {
         job.concurrency = true;
@@ -1026,10 +1040,11 @@ function readJobs(lines, jobsIdx, end, unparsed) {
 // 'no-cancel' | 'cancel-true' | 'cancel-false' | 'cancel-expression', or null
 // after pushing the reason it could not be read.
 function readConcurrency(lines, idx, end, unparsed) {
+  // YAML 1.2's core schema reads true/True/TRUE and false/False/FALSE as booleans.
   const cancel = (raw) => {
     const v = stripCommentQuoteAware(raw);
-    if (v === 'true') return 'cancel-true';
-    if (v === 'false') return 'cancel-false';
+    if (['true', 'True', 'TRUE'].includes(v)) return 'cancel-true';
+    if (['false', 'False', 'FALSE'].includes(v)) return 'cancel-false';
     if (v.includes('${{')) return 'cancel-expression';
     unparsed.push('cancel-in-progress value not read');
     return null;

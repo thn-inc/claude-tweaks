@@ -5,7 +5,8 @@
 // never writes. It only classifies a job `if:` expression string
 // (classifyDraftCondition). A workflow the reader could not follow, or whose
 // draft condition is not understood, is reported as `unparsed` and never judged;
-// a `cancel-in-progress` expression is unparsed for check 4 alone.
+// a `cancel-in-progress` expression, or a workflow-level concurrency the reader
+// could not read, is unparsed for check 4 alone, and only where check 4 applies.
 // Remedies are section names in `_shared/ci-skips-drafts.md`, never restated text.
 // readWorkflowSet / readCiSources discover the two inputs by convention under
 // the checkout root; every leaf is realpath-resolved and must stay inside it,
@@ -20,13 +21,18 @@ const { lstatType, resolveLeaf, canonicalRealpath } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
 const { readDeclaration } = require('../verify/declaration');
 
+// Check 5's remedy is an issue pointer, not a section. It is printed in the
+// adopting project, where a bare `#5152` would read as that repo's own issue,
+// so it names the plugin's repository.
+const PUSH_GATING_POINTER = 'see thn-inc/claude-tweaks#5152';
+
 // Check id -> remedy, in report order.
 const CHECKS = Object.freeze({
   'draft-skip-no-ready-for-review': 'Workflow shape',
   'draft-skip-with-ci-source': 'Coexistence with the `ci` verification source',
   'paths-filter-no-always-reporting-job': 'Path filters',
   'no-cancel-in-progress-concurrency': 'Concurrency',
-  'push-all-step-gated': 'see #5152',
+  'push-all-step-gated': PUSH_GATING_POINTER,
 });
 
 // The plugin's own generated issue-tracking workflow (init Step 16): skipped
@@ -142,9 +148,10 @@ function checkPathsFilter({ row, shape, rows }) {
 const concurrencyApplies = (shape) => shape.prTrigger && shape.types.includes('synchronize');
 
 // Check 4: such a workflow without workflow-level `cancel-in-progress: true`.
-// An expression is not evaluated: it is unparsed for this check alone.
-function checkConcurrency({ shape }) {
-  if (!concurrencyApplies(shape) || shape.concurrency === 'cancel-true' || shape.concurrency === 'cancel-expression') return null;
+// An expression is not evaluated, and an unread concurrency is not guessed:
+// either is unparsed for this check alone (the row's concurrencyReasons).
+function checkConcurrency({ shape, row }) {
+  if (!concurrencyApplies(shape) || row.concurrencyReasons.length > 0 || shape.concurrency === 'cancel-true') return null;
   if (shape.concurrency === 'absent') {
     return shape.jobs.some((j) => j.concurrency) ? 'job-level concurrency only' : 'no workflow-level concurrency';
   }
@@ -156,6 +163,8 @@ function checkConcurrency({ shape }) {
 function checkPushStepGated({ shape }) {
   if (!shape.pushTrigger || shape.pushBranchesIgnore) return null;
   if (shape.pushBranches !== 'absent' && shape.pushBranches !== 'all') return null;
+  // GitHub's rule: a push trigger that defines only a tag filter (`tags` or
+  // `tags-ignore`) never runs for branch pushes, so it is no push-all trigger.
   if (shape.pushTags && shape.pushBranches === 'absent') return null;
   if (shape.jobs.some((j) => j.if !== null)) return null;
   const n = shape.jobs.reduce((sum, j) => sum + j.stepIfCount, 0);
@@ -177,15 +186,19 @@ function isGeneratedTrackingWorkflow(entry) {
   return rung === 'current' || rung === 'prior-generated';
 }
 
-// The one unparsed reason that leaves only check 4 unknown: checks 1, 2, 3 and
-// 5 never read concurrency, so they still run on that workflow.
+// The unparsed reasons that leave only check 4 unknown: checks 1, 2, 3 and 5
+// never read concurrency, so they still run on that workflow. The reader's two
+// workflow-level concurrency reasons, plus the expression this module does not
+// evaluate. Where check 4 does not apply they are dropped, since nothing reads
+// the value.
 const CANCEL_EXPRESSION = 'cancel-in-progress expression not evaluated';
+const CONCURRENCY_ONLY = new Set(['concurrency not read', 'cancel-in-progress value not read']);
 
 // `workflows`: `{workflow, text}` or `{workflow, unreadable: reason}` entries,
 // `workflow` the repo-display ID. `ciSources`: the declared `ci` sources, or
 // null when no verify-scope.json was read (check 2 skipped).
 // Every shape is read first: check 3 looks across the whole reviewed set.
-// A row's `reasons` suppress every check; `cancelExpression` only check 4.
+// A row's `reasons` suppress every check; `concurrencyReasons` only check 4.
 function reviewWorkflows({ workflows, ciSources }) {
   const findings = [];
   const unparsed = [];
@@ -193,17 +206,21 @@ function reviewWorkflows({ workflows, ciSources }) {
   const rows = [];
   for (const entry of workflows) {
     if (isGeneratedTrackingWorkflow(entry)) { skipped.push(entry.workflow); continue; }
-    if (typeof entry.text !== 'string') { rows.push({ entry, shape: null, reasons: [entry.unreadable], cancelExpression: false }); continue; }
+    if (typeof entry.text !== 'string') { rows.push({ entry, shape: null, reasons: [entry.unreadable], concurrencyReasons: [] }); continue; }
     const shape = readWorkflowShape(entry.text);
-    const reasons = [...shape.unparsed];
+    const reasons = shape.unparsed.filter((r) => !CONCURRENCY_ONLY.has(r));
     if (shape.prTrigger && shape.jobs.some((j) => j.if !== null && classifyDraftCondition(j.if) === 'unparsed')) {
       reasons.push('draft condition not understood');
     }
-    rows.push({ entry, shape, reasons, cancelExpression: concurrencyApplies(shape) && shape.concurrency === 'cancel-expression' });
+    const concurrencyReasons = !concurrencyApplies(shape) ? [] : [
+      ...shape.unparsed.filter((r) => CONCURRENCY_ONLY.has(r)),
+      ...(shape.concurrency === 'cancel-expression' ? [CANCEL_EXPRESSION] : []),
+    ];
+    rows.push({ entry, shape, reasons, concurrencyReasons });
   }
   for (const row of rows) {
     const { entry, shape, reasons } = row;
-    const named = row.cancelExpression ? [...reasons, CANCEL_EXPRESSION] : reasons;
+    const named = [...reasons, ...row.concurrencyReasons];
     if (named.length > 0) unparsed.push({ workflow: entry.workflow, reason: named.join('; ') });
     if (reasons.length > 0) continue;
     const draftSkipIds = shape.prTrigger
@@ -219,7 +236,7 @@ function reviewWorkflows({ workflows, ciSources }) {
 }
 
 function formatRemedy(remedy) {
-  return remedy === 'see #5152' ? remedy : `\`_shared/ci-skips-drafts.md\` § ${remedy}`;
+  return remedy === PUSH_GATING_POINTER ? remedy : `\`_shared/ci-skips-drafts.md\` § ${remedy}`;
 }
 
 // path-guard options: `realpath` only when the caller injected one.

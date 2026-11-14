@@ -36,11 +36,11 @@ files:
 - **URL:** the summary's `not clean: {K} workflow(s) unparsed` ending, or `ci-workflow-review: could not review — {stderr}`
 - **Action:** For an unparsed row, read its reason and simplify the named construct (tabs, anchors or aliases, an unsupported form of a key a check reads). For exit 1, fix the named path: an invalid `verify-scope.json`, a `.github/workflows` that is not a directory, or a path that is unreadable, dangling or outside the checkout.
 - **Should feel:** Honest — the review says what it could not read instead of guessing.
-- **Should understand:** An unparsed workflow got none of the checks, except one unparsed only for `cancel-in-progress expression not evaluated`, which still got every check but concurrency — so a project using `_shared/ci-skips-drafts.md`'s recommended expression guard keeps its draft-skip findings. Only an absent workflows directory or declaration is silent.
+- **Should understand:** An unparsed workflow got none of the checks, except one unparsed only for a concurrency reason (`cancel-in-progress expression not evaluated`, `concurrency not read` or `cancel-in-progress value not read`), which still got every check but concurrency — so a project using `_shared/ci-skips-drafts.md`'s recommended expression guard keeps its draft-skip findings. Only an absent workflows directory or declaration is silent.
 - **Red flags:** A summary reading clean while any workflow is unparsed; an expression guard hiding a draft-skip finding.
 
 ### 4. Apply a remedy by hand
-- **URL:** `plugin/skills/_shared/ci-skips-drafts.md` (§ Workflow shape, § Coexistence with the `ci` verification source, § Path filters, § Concurrency), or #5152 for the push-gating shape
+- **URL:** `plugin/skills/_shared/ci-skips-drafts.md` (§ Workflow shape, § Coexistence with the `ci` verification source, § Path filters, § Concurrency), or `see thn-inc/claude-tweaks#5152` for the push-gating shape — the plugin's own issue, qualified because a bare `#5152` would name an issue in the project under review
 - **Action:** Edit the workflow per the named section, then re-run `/claude-tweaks:init` (or `ci-review` alone) to confirm the row is gone.
 - **Should feel:** Self-serve — the section has the YAML to copy.
 - **Should understand:** The plugin never writes the fix; the plugin's own generated `track-issue-fixes.yml` is classified by Step 16 instead, unless it was hand-modified.

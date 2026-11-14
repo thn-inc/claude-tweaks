@@ -67,7 +67,8 @@ const ROW_FACTS = [
   [/as its own finding, never as "no drift"/, 'row: exit 1 is its own finding, never "no drift"'],
   [/output unreadable/, 'row: unreadable stdout is its own finding'],
   [/never "no drift" while `unparsed` is non-empty/, 'row: never "no drift" while unparsed is non-empty'],
-  [/\{remedy\} as-is when it is `see #5152`, otherwise `_shared\/ci-skips-drafts\.md` § \{remedy\}/, 'row: the remedy reads as formatRemedy prints it'],
+  [/\{remedy\} as-is when it is `see thn-inc\/claude-tweaks#5152`, otherwise `_shared\/ci-skips-drafts\.md` § \{remedy\}/, 'row: the remedy reads as formatRemedy prints it'],
+  [/is re-run by pushes to the PR \(`types` undeclared or including `synchronize`\) yet lacks workflow-level `cancel-in-progress: true`/, 'row: check 4 applies only to a PR workflow pushes re-run'],
 ];
 const missingRowFacts = missingFactsOf(ROW_FACTS);
 
@@ -120,7 +121,10 @@ const STEP_FACTS = [
   [/never reviews the plugin's generated `track-issue-fixes\.yml` while it is the current or an earlier generated version/, 'step: only the generated tracking workflow is skipped'],
   [/a hand-modified copy is reviewed like any project workflow/, 'step: a hand-modified copy is reviewed'],
   [/A single workflow file that is unreadable, a dangling symlink, or resolves outside the checkout is not an exit 1: it is an `unparsed` row under exit 0/, 'step: a per-file failure is unparsed under exit 0'],
-  [/except one unparsed only for `cancel-in-progress expression not evaluated`, which got every check but concurrency/, 'step: the expression reason suppresses check 4 alone'],
+  [/except one unparsed only for a concurrency reason \(`cancel-in-progress expression not evaluated`, `concurrency not read` or `cancel-in-progress value not read`\), which got every check but concurrency/, 'step: a concurrency reason suppresses check 4 alone'],
+  [/A summary ending `not clean: \{K\} workflow\(s\) unparsed` is never reported as clean/, 'step: exit 0 with unparsed workflows is never reported as clean'],
+  [/\*\*Exit 1\*\* — the review could not run: show `ci-workflow-review: could not review — \{stderr\}`/, 'step: exit 1 shows could not review'],
+  [/\*\*Exit 2\*\* — a usage bug in the command line: report it, never as clean/, 'step: exit 2 is reported, never as clean'],
 ];
 const missingStepFacts = missingFactsOf(STEP_FACTS);
 
@@ -224,12 +228,17 @@ const TOKEN_LINE = /Enhancement filter tokens\*\* — one per Optional Enhanceme
 const GRAMMAR_ROW = /^\| `ci-review` \| Step 22 — /m;
 const hintLeaves = (text) => extractArgumentHint(text).replace(/^\[|\]$/g, '').split('|');
 const cardInitLine = (text) => lineStartingWith(text, '| `/claude-tweaks:init` |');
+// The init row's Takes cell (its third, split on unescaped `|`), as its `\|`-separated leaves.
+const cardTakesLeaves = (text) => {
+  const cells = cardInitLine(text).split(/(?<!\\)\|/).map((c) => c.trim());
+  return (cells[3] || '').replace(/^`\[|\]`$/g, '').split('\\|');
+};
 
 test('ci-review: the Enhancement filter token is listed in SKILL.md\'s token line, input-grammar.md, the argument-hint and the reference card', () => {
   assert.match(SKILL, TOKEN_LINE);
   assert.match(GRAMMAR, GRAMMAR_ROW);
   assert.ok(hintLeaves(SKILL).includes('ci-review'), 'argument-hint carries ci-review');
-  assert.ok(cardInitLine(CARD).includes('\\|ci-review]'), 'reference card Takes cell carries ci-review');
+  assert.ok(cardTakesLeaves(CARD).includes('ci-review'), 'reference card Takes cell carries ci-review');
   // Every Enhancement filter token on SKILL.md's token line is a hint leaf, release included.
   const tokenLine = lineStartingWith(SKILL, '**Enhancement filter tokens**');
   const tokens = [...tokenLine.split('. Each narrows')[0].matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
@@ -242,12 +251,21 @@ test('ci-review: the Enhancement filter token is listed in SKILL.md\'s token lin
   assert.doesNotMatch(skillNoToken, TOKEN_LINE);
   assert.doesNotMatch(GRAMMAR.replace('| `ci-review` |', '| `ci-reviewx` |'), GRAMMAR_ROW);
   assert.ok(!hintLeaves(SKILL.replace('|ci-review]"', ']"')).includes('ci-review'));
-  assert.ok(!cardInitLine(CARD.replace('\\|ci-review]', ']')).includes('\\|ci-review]'));
+  const cardNoToken = CARD.replace('\\|ci-review]', ']');
+  assert.notEqual(cardNoToken, CARD);
+  assert.ok(!cardTakesLeaves(cardNoToken).includes('ci-review'));
+  // Membership, not position: the token moved to the front of the cell still counts, and a
+  // longer token that merely contains it does not.
+  assert.ok(cardTakesLeaves(cardNoToken.replace('`[<path>', '`[ci-review\\|<path>')).includes('ci-review'));
+  assert.ok(!cardTakesLeaves(CARD.replace('\\|ci-review]', '\\|ci-reviewx]')).includes('ci-review'));
+  assert.ok(cardTakesLeaves(CARD).includes('<path>') && cardTakesLeaves(CARD).includes('release'), 'the split reads the whole Takes cell');
 });
 
 // --- the check table and its code twin -------------------------------------------
 
 const REMEDY_PREFIX = '`_shared/ci-skips-drafts.md` § ';
+// Check 5's remedy, qualified: it prints in the adopting project, where a bare #5152 is its own issue.
+const POINTER = 'see thn-inc/claude-tweaks#5152';
 
 function checkTableOf(text) {
   const start = text.indexOf('| Check | Remedy |');
@@ -260,9 +278,9 @@ function checkTableOf(text) {
     const m = /^\| `([^`]+)` \| (.+) \|$/.exec(line);
     if (!m) throw new Error(`check table: malformed row: ${line}`);
     const cell = m[2];
-    if (cell === 'see #5152') rows.push([m[1], cell]);
+    if (cell === POINTER) rows.push([m[1], cell]);
     else if (cell.startsWith(REMEDY_PREFIX)) rows.push([m[1], cell.slice(REMEDY_PREFIX.length)]);
-    else throw new Error(`check table: remedy cell is neither a ci-skips-drafts.md section nor see #5152: ${cell}`);
+    else throw new Error(`check table: remedy cell is neither a ci-skips-drafts.md section nor ${POINTER}: ${cell}`);
   }
   return rows;
 }
@@ -275,12 +293,14 @@ test('step-22\'s check table matches CHECKS row for row', () => {
   const flattened = STEP.replace('Coexistence with the `ci` verification source', 'Coexistence with the ci verification source');
   assert.notEqual(flattened, STEP);
   assert.throws(() => assert.deepEqual(checkTableOf(flattened), Object.entries(CHECKS)));
-  assert.throws(() => checkTableOf(STEP.replace('| see #5152 |', '| see the issue |')), /neither a ci-skips-drafts\.md section nor see #5152/);
+  assert.throws(() => checkTableOf(STEP.replace(`| ${POINTER} |`, '| see the issue |')), /neither a ci-skips-drafts\.md section nor see thn-inc\/claude-tweaks#5152/);
+  // The bare form a consumer project would misread is refused too.
+  assert.throws(() => checkTableOf(STEP.replace(`| ${POINTER} |`, '| see #5152 |')), /neither a ci-skips-drafts\.md section nor/);
 });
 
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const remedyHeadingsMissing = (doc) => Object.values(CHECKS)
-  .filter((r) => r !== 'see #5152')
+  .filter((r) => r !== POINTER)
   .filter((r) => !new RegExp(`^## ${escapeRegExp(r)}$`, 'm').test(doc));
 
 test('every CHECKS remedy except the #5152 pointer is a ## heading in _shared/ci-skips-drafts.md', () => {

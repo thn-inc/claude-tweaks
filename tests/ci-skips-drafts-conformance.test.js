@@ -73,6 +73,9 @@ const SECTIONS = [
     [/A `cancel-in-progress` expression is read as unparsed/, 'concurrency: an expression is unparsed'],
     [/`unparsed` \(`cancel-in-progress expression not evaluated`\), not as a finding/, 'concurrency: the unparsed reason, not a finding'],
     [/that reason leaves only this check unknown: the review's other per-workflow checks still run on that workflow/, 'concurrency: the expression suppresses only this check'],
+    [/on a PR workflow that pushes re-run \(`types` undeclared or including `synchronize`\), the only one this check applies to/, 'concurrency: the expression is unparsed only where this check applies'],
+    [/A workflow-level `concurrency` block or `cancel-in-progress` value the review cannot read is reported the same way, as `concurrency not read` or `cancel-in-progress value not read`/, 'concurrency: an unread concurrency suppresses only this check too'],
+    [/On any other workflow these reasons are dropped, since this check does not read the value there/, 'concurrency: the reasons are dropped where this check does not apply'],
   ]],
   ['## Why projects skip drafts', [
     [/Actions-minute cost of per-phase pushes/, 'why: the Actions-minute cost of per-phase pushes'],
