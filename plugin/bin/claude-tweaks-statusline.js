@@ -248,6 +248,9 @@ function githubRepoUrl(remoteUrl) {
     trimmed.match(/^https:\/\/github\.com\/(.+?)(?:\.git)?\/?$/);
   if (!m) return null;
   const repoPath = m[1];
+  // The URL goes into an OSC 8 link unescaped; a control character would end the
+  // link early and leave the rest of the value on the terminal as raw escapes.
+  if (CONTROL.test(repoPath)) return null;
   if (repoPath.split('/').length !== 2 || repoPath.split('/').some((p) => !p)) return null;
   return `https://github.com/${repoPath}`;
 }

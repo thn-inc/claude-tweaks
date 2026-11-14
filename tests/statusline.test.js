@@ -303,6 +303,16 @@ test('githubRepoUrl rejects a github.com remote whose path is not owner/repo sha
   assert.strictEqual(sl.githubRepoUrl('https://github.com/a/b/c'), null);
 });
 
+// The URL goes into an OSC 8 link unescaped: a BEL would end the link early and
+// whatever follows it would reach the terminal as raw escape sequences.
+test('githubRepoUrl rejects a remote whose path carries a control character', () => {
+  for (const ch of ['\x07', '\x1b', '\x7f', '\x9c']) {
+    assert.strictEqual(sl.githubRepoUrl(`https://github.com/owner/re${ch}po.git`), null, JSON.stringify(ch));
+    assert.strictEqual(sl.githubRepoUrl(`git@github.com:ow${ch}ner/repo`), null, JSON.stringify(ch));
+    assert.strictEqual(sl.githubRepoUrl(`ssh://git@github.com/owner/repo${ch}x`), null, JSON.stringify(ch));
+  }
+});
+
 // Fixture: an init'd repo with one commit and, optionally, an origin remote.
 function withRepo(remoteUrl, fn) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-repo-'));
@@ -377,11 +387,27 @@ test('renderProject: resolves a linked worktree to the main project name', () =>
   }
 });
 
+const NO_SYMLINK = 'this host refuses to create a symlink (EPERM)';
+
+// Creating a symlink needs a privilege on win32 that CI runners hold and a
+// developer machine may not. Returns false on that EPERM, so the caller skips its
+// symlink case instead of failing in setup.
+function trySymlink(target, link) {
+  try {
+    fs.symlinkSync(target, link);
+    return true;
+  } catch (err) {
+    if (err.code === 'EPERM') return false;
+    throw err;
+  }
+}
+
 // Fixture for the spawn-free main-checkout resolution: one mkdtemp base holding
 // a main repo, an absolute linked worktree, a --relative-paths worktree (null
 // when this git lacks the flag) of a second main repo, since the flag writes an
 // [extensions] section into its main repo's config, a submodule checkout and a
-// symlink to the absolute worktree. fn receives { base, main, wt, relWt, sub, link }.
+// symlink to the absolute worktree (null when the host refuses symlinks).
+// fn receives { base, main, wt, relWt, sub, link }.
 function withWorktrees(fn) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-shapes-'));
   const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -415,8 +441,8 @@ function withWorktrees(fn) {
   const innerUrl = inner.split(path.sep).join('/');
   git(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', innerUrl, 'sub'], main);
   const sub = path.join(main, 'sub');
-  const link = path.join(base, 'link-wt');
-  fs.symlinkSync(wt, link);
+  const linkPath = path.join(base, 'link-wt');
+  const link = trySymlink(wt, linkPath) ? linkPath : null;
   try {
     return fn({ base, main, wt, relWt, sub, link });
   } finally {
@@ -447,7 +473,7 @@ function gitCommonMain(dir) {
 // A --relative-paths worktree is left out: its main config carries [extensions],
 // so the reader defers to git for it (pinned in its own test below).
 function shapeDirs(f) {
-  return [f.wt, f.sub, f.link];
+  return [f.wt, f.sub, f.link].filter(Boolean);
 }
 
 // Runs fn(freshModule) with every child_process launcher wrapped by a
@@ -741,18 +767,20 @@ test('resolveMainProjectDir: an unreadable .git file reaches git', chmodDenialSk
 
 // Points f.wt's `.git` at `gitdir: <linkParent>/link/<name>`, where `link` is a
 // directory symlink to main/.git/worktrees and the admin dir's commondir is `../..`.
+// Returns false, changing nothing, when the host refuses the symlink.
 function pointGitdirThroughSymlink(f, linkParent = f.base) {
   const adminRoot = path.join(f.main, '.git', 'worktrees');
   const link = path.join(linkParent, 'link');
-  fs.symlinkSync(adminRoot, link);
+  if (!trySymlink(adminRoot, link)) return false;
   const name = path.basename(fs.readFileSync(path.join(f.wt, '.git'), 'utf8').trim());
   assert.strictEqual(fs.readFileSync(path.join(adminRoot, name, 'commondir'), 'utf8').trim(), '../..');
   overwriteGitFile(path.join(f.wt, '.git'), `gitdir: ${path.join(link, name)}\n`);
+  return true;
 }
 
-test('resolveMainProjectDir: a gitdir reached through a symlink resolves a relative commondir against its realpath', () => {
+test('resolveMainProjectDir: a gitdir reached through a symlink resolves a relative commondir against its realpath', (t) => {
   withWorktrees((f) => {
-    pointGitdirThroughSymlink(f);
+    if (!pointGitdirThroughSymlink(f)) return t.skip(NO_SYMLINK);
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
     if (process.platform === 'win32') {
       // Git for Windows refuses this gitfile (run 43393630819), so the reader defers.
@@ -767,10 +795,10 @@ test('resolveMainProjectDir: a gitdir reached through a symlink resolves a relat
   });
 });
 
-test('commonDirFromFs: on win32, a gitdir path that crosses a symlink defers to git (Git for Windows refuses it)', () => {
+test('commonDirFromFs: on win32, a gitdir path that crosses a symlink defers to git (Git for Windows refuses it)', (t) => {
   withWorktrees((f) => {
     // Built on the real base, so the link is the only symlink on the gitdir path.
-    pointGitdirThroughSymlink(f, fs.realpathSync(f.base));
+    if (!pointGitdirThroughSymlink(f, fs.realpathSync(f.base))) return t.skip(NO_SYMLINK);
     assert.strictEqual(sl.commonDirFromFs(f.wt, undefined, undefined, 'win32'), null);
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { platform: 'win32' }));
     assert.deepStrictEqual(launches, [GIT_LAUNCH]);
@@ -790,13 +818,13 @@ test('commonDirFromFs: on win32, a gitdir path with no symlink still answers fro
 // with no [extensions] in the config it leads to, so the fast path answers it. (A
 // --relative-paths worktree has the same relative gitdir, but its main config
 // carries extensions.relativeWorktrees, so the reader defers on it.)
-test('commonDirFromFs: a symlink at another depth to a checkout with a relative gitdir matches git (physical resolve)', () => {
+test('commonDirFromFs: a symlink at another depth to a checkout with a relative gitdir matches git (physical resolve)', (t) => {
   withWorktrees((f) => {
     assert.strictEqual(fs.readFileSync(path.join(f.sub, '.git'), 'utf8').trim(), 'gitdir: ../.git/modules/sub');
     const deep = path.join(f.base, 'b', 'c');
     fs.mkdirSync(deep, { recursive: true });
     const link = path.join(deep, 'link');
-    fs.symlinkSync(f.sub, link);
+    if (!trySymlink(f.sub, link)) return t.skip(NO_SYMLINK);
     // Decoy at the LEXICALLY resolved gitdir (<deep>/.git/modules/sub), shaped as a git dir.
     makeGitDirShape(path.join(deep, '.git', 'modules', 'sub'));
     assert.strictEqual(path.dirname(sl.commonDirFromFs(link)), gitCommonMain(link));
