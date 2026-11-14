@@ -4,8 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
 const { run } = require('../plugin/bin/risk-flags');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const record = require('../plugin/bin/lib/issues/record');
 const { parseRiskFlags } = record;
 const { gitRepo } = require('./helpers/git-fixtures');
@@ -78,6 +78,9 @@ const settle = (body, args = [], over) => viaFile('settle', body, args, over);
 const classify = (body, args = [], over) => viaFile('classify', body, args, over);
 const confirm = (body, answersFile, extra = [], over) => viaFile('confirm', body, ['--answers-file', answersFile, ...extra], over);
 const runCli = (argv) => exec(argv);
+// The CLI's whole environment: PATH (and SystemRoot on Windows) for the git child, nothing else.
+const CLI_ENV = { PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) };
+const cliSync = (argv, opts = {}) => { const r = runCliSync(BIN, argv, { env: CLI_ENV, ...opts }); return { ...r, status: r.code }; };
 
 const SPEC_WITH_MIGRATIONS_PATH = [
   '# Add the orders table', '', 'Surface: infra', '', '## Overview', '', 'Store orders.', '',
@@ -581,25 +584,48 @@ test('--repo-root defaults to the git top level through deps.execFile, falling b
   assert.deepStrictEqual(seen.map((p) => path.resolve(p)), [path.resolve('/the/top'), path.resolve('/the/cwd'), path.resolve('/explicit')]);
 });
 
-test('a real spawn of the bin returns the JSON envelope on stdout and honours the exit codes', () => {
+test('the bin returns the JSON envelope on stdout and honours the exit codes', () => {
   const f = rawFile(SPEC_WITH_MIGRATIONS_PATH);
-  const stdout = execFileSync(process.execPath, [BIN, 'classify', '--body-file', f, '--repo-root', NO_POLICY_ROOT], { encoding: 'utf8', windowsHide: true });
-  const out = JSON.parse(stdout);
+  const classified = cliSync(['classify', '--body-file', f, '--repo-root', NO_POLICY_ROOT]);
+  const out = JSON.parse(classified.stdout);
   assert.deepStrictEqual([out.flags.map((x) => x.slug), out.kept, out.entry.status], [['migrations'], ['migrations'], 'unclassified']);
-  assert.strictEqual(stdout.trim().split('\n').length, 1);
+  assert.strictEqual(classified.stdout.trim().split('\n').length, 1);
 
-  const settled = spawnSync(process.execPath, [BIN, 'settle', '--body-file', f, '--headless', '--repo-root', NO_POLICY_ROOT], { encoding: 'utf8', windowsHide: true });
+  const settled = cliSync(['settle', '--body-file', f, '--headless', '--repo-root', NO_POLICY_ROOT]);
   assert.strictEqual(settled.status, 0);
   assert.deepStrictEqual(JSON.parse(settled.stdout).flags, ['migrations']);
   assert.match(fs.readFileSync(f, 'utf8'), /^Risk-flags: migrations$/m);
 
-  const bad = spawnSync(process.execPath, [BIN, 'settle', '--body-file', f], { encoding: 'utf8', windowsHide: true });
+  const bad = cliSync(['settle', '--body-file', f]);
   assert.strictEqual(bad.status, 2);
   assert.strictEqual(bad.stdout, '');
   assert.match(bad.stderr, /^risk-flags\.js: /);
 
-  const missing = spawnSync(process.execPath, [BIN, 'classify', '--body-file', path.join(TMP, 'absent.md')], { encoding: 'utf8', windowsHide: true });
+  const missing = cliSync(['classify', '--body-file', path.join(TMP, 'absent.md')]);
   assert.strictEqual(missing.status, 1);
+});
+
+test('a real spawn of the bin refuses a usage error with exit 2, empty stdout and the script-name stderr', () => {
+  // real process: proves the script entry and its non-zero exit code
+  const bad = spawnCli(BIN, ['settle', '--body-file', rawFile(SPEC_WITH_MIGRATIONS_PATH)]);
+  assert.strictEqual(bad.code, 2);
+  assert.strictEqual(bad.stdout, '');
+  assert.match(bad.stderr, /^risk-flags\.js: /);
+});
+
+test('AC6.1: classify with no --repo-root resolves the repo root from the injected cwd and env', () => {
+  const policy = `control-mode: on\n${POLICY_BODY}`;
+  const withPolicyRepo = () => { const repo = gitRepo({ parent: TMP }); fs.mkdirSync(path.join(repo, '.claude-tweaks')); fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), policy); return repo; };
+  const body = rawFile(PII_BY_GLOB);
+  const modeOf = (opts) => JSON.parse(cliSync(['classify', '--body-file', body], opts).stdout).controlMode;
+  const a = gitRepo({ parent: TMP });
+  const b = withPolicyRepo();
+  assert.notStrictEqual(a, process.cwd());
+  // cwd: the injected working directory is the repo whose policy turns control mode on
+  assert.strictEqual(modeOf({ cwd: a }), false);
+  assert.strictEqual(modeOf({ cwd: b }), true);
+  // env: cwd stays in A, GIT_DIR + GIT_WORK_TREE point git at B
+  assert.strictEqual(modeOf({ cwd: a, env: { ...CLI_ENV, GIT_DIR: path.join(b, '.git'), GIT_WORK_TREE: b } }), true);
 });
 
 // ── facts: the producer of the packet gather's --flags and --proofs inputs ──
@@ -755,13 +781,13 @@ test('facts never touches the body-writing seam and the other verbs still print 
   assert.deepStrictEqual(Object.keys(classify(SPEC_WITH_MIGRATIONS_PATH).out), ['flags', 'kept', 'entry', 'missingSections', 'controlMode', 'extraCategories', 'globsInvalid', 'known']);
 });
 
-test('a real spawn of facts honours the exit codes and the stale-output removal', () => {
+test('facts honours the exit codes and the stale-output removal through the bin entry', () => {
   const o = factsOutputs();
   const spec = rawFile(FACTS_SPEC);
-  const ok = spawnSync(process.execPath, [BIN, ...factsArgv(spec, o)], { encoding: 'utf8', windowsHide: true });
+  const ok = cliSync(factsArgv(spec, o));
   assert.strictEqual(ok.status, 0);
   assert.deepStrictEqual(JSON.parse(ok.stdout), { status: 'ok', flags: 1, proofs: 0, plan: 'absent', planParse: null });
-  const bad = spawnSync(process.execPath, [BIN, ...factsArgv(path.join(TMP, 'absent-spec.md'), o)], { encoding: 'utf8', windowsHide: true });
+  const bad = cliSync(factsArgv(path.join(TMP, 'absent-spec.md'), o));
   assert.strictEqual(bad.status, 1);
   assert.deepStrictEqual([fs.existsSync(o.flags), fs.existsSync(o.proofs)], [false, false]);
 });

@@ -199,7 +199,8 @@ const realDeps = {
   cwd: () => process.cwd(),
   now: () => Date.now(),
   mainRoot: undefined,
-  execFile: (file, args, cwd) => execFileSync(file, args, { cwd, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }),
+  get env() { return process.env; },
+  execFile: (file, args, cwd, env) => execFileSync(file, args, { cwd, env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }),
   policy: (repoRoot) => readRiskPolicy(repoRoot, { readFile: fs.readFileSync }),
 };
 
@@ -369,7 +370,7 @@ function resolveRepoRoot(o, deps) {
   const cwd = deps.cwd();
   if (o.repoRoot !== null) return path.resolve(cwd, o.repoRoot);
   try {
-    const top = String(deps.execFile('git', ['rev-parse', '--show-toplevel'], cwd)).trim();
+    const top = String(deps.execFile('git', ['rev-parse', '--show-toplevel'], cwd, deps.env)).trim();
     if (top) return top;
   } catch {
     // Not in a git repo: the cwd is the root the policy is read from.
@@ -557,6 +558,6 @@ function run(argv, overrides = {}) {
   return emit({ flags: final.flags, removed, unconfirmed: final.unconfirmed, status, refused });
 }
 
-module.exports = { run, parseArgs, USAGE };
+module.exports = { run, parseArgs, USAGE, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
