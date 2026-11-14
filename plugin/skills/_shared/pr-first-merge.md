@@ -169,7 +169,7 @@ Classify from the three reads, in this order:
   no change. On `mergeStateStatus: DIRTY` or `mergeable: CONFLICTING` (a conflicting PR gets no run),
   `awaiting` and `draft-skip-without-ready-trigger` take the **Conflict path** first.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
-  → **pending**. A partial rollup (some workflows reported, others not yet registered) is not green.
+  → **pending**.
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
   → **conflict** — take the **Conflict path** below now, under every lever value, with no bounded
   watch. A branch that conflicts with its base gets no `pull_request` workflow runs, so its rollup
@@ -260,7 +260,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    `{resume}`: `Resume once green.`; for draft-skip-without-ready-trigger, `Resume once its workflow is fixed or a post-ready run lands.`
    Compose that body to a temp file and post it with `--body-file` — never inline the names into a
    shell string. Check names come from the PR's own workflow YAML (third-party-controlled on a fork
-   PR), and every other comment site in this file already builds its body the same way:
+   PR):
    ```bash
    printf 'Parked by merge-verification (%s): %s on PR #%s. %s\n' "$VALUE" "$REASON" "$PR" "$RESUME" > "{park-comment-path}"
    gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file "{park-comment-path}"
