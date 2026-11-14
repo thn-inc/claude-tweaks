@@ -1584,6 +1584,188 @@ test('a worker that cannot complete stops at worker; a bad ceiling fails before 
   }
 });
 
+// HEAD reads on the implementer launch (#5414): the one before it and the one after it. The harness
+// answers every HEAD read with HEAD_SHA, so nthCall(isHeadRead, 2, ...) makes the read after the launch differ.
+const isHeadRead = onGit('rev-parse', '--verify', '--end-of-options', 'HEAD');
+const OTHER_SHA = 'e'.repeat(40);
+// The n-th call `match` accepts gets `reply`; every other call falls through to the later entries.
+const nthCall = (match, n, reply) => { let seen = 0; return [(c) => match(c) && (seen += 1) === n, reply]; };
+const UNREADABLE_BEFORE = 'HEAD of the worktree is unreadable before the worker launch';
+const unreadableGit = () => Object.assign(new Error('Command failed'), { stderr: 'fatal: @evil fixes #3\n' });
+const movedDetail = (from, to) => `the worker moved HEAD from ${from} to ${to}`;
+const sig = (c) => (c.kind === 'git' ? `git ${gitSub(c)[0]}` : c.kind);
+const isImplementerLaunch = (c) => !!c && c.kind === 'worker' && c.args[0].role === 'implementer';
+const isHeadReadInWt = (c) => !!c && isHeadRead(c) && c.cwd === WT;
+// A HEAD read on either side of an implementer launch: the reads #5414 added.
+const isLaunchSideRead = (calls, i) => isHeadReadInWt(calls[i]) && (isImplementerLaunch(calls[i - 1]) || isImplementerLaunch(calls[i + 1]));
+
+test('AC1.1, AC1.2 (#5414): a worker launch after which HEAD moved stops at worker', async () => {
+  const h = harness({ script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['worker', 'fail', 'pre-push']);
+  assert.equal(final.stop.detail, movedDetail(HEAD_SHA, OTHER_SHA));
+  assert.equal(commitGit(h).length, 0);
+  assert.equal(calls(h, 'node', /verify\.js$/).length, 0);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('AC2.1 (#5414): a reset to an earlier commit stops the same way', async () => {
+  const h = harness({ script: [nthCall(isHeadRead, 1, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['worker', 'fail', 'pre-push']);
+  assert.equal(final.stop.detail, movedDetail(OTHER_SHA, HEAD_SHA));
+  assert.equal(commitGit(h).length, 0);
+  assert.equal(calls(h, 'node', /verify\.js$/).length, 0);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('AC4.1, AC4.2 (#5414): HEAD unreadable before the launch stops with no worker launched', async () => {
+  const h = harness({ script: [nthCall(isHeadRead, 1, unreadableGit())] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['worker', 'fail', 'pre-push']);
+  assert.equal(final.stop.detail, UNREADABLE_BEFORE);
+  assert.equal(calls(h, 'worker').length, 0);
+});
+
+test('AC4.1 (#5414): an unreadable HEAD after the launch names only the earlier sha', async () => {
+  const h = harness({ script: [nthCall(isHeadRead, 2, unreadableGit())] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], ['worker', 'fail']);
+  assert.equal(final.stop.detail, `HEAD of the worktree is unreadable after the worker launch (it was ${HEAD_SHA})`);
+  assert.ok(!final.stop.detail.includes('@evil') && !final.stop.detail.includes('#3'));
+  assert.equal(calls(h, 'worker').length, 1);
+});
+
+test('(#5414) a HEAD read that is not a full sha is unreadable', async () => {
+  for (const bad of ['abc123\n', `${HEAD_SHA.toUpperCase()}\n`, `${HEAD_SHA} extra\n`]) {
+    const h = harness({ script: [nthCall(isHeadRead, 1, bad)] });
+    await run(['#7'], h.deps);
+    assert.equal(lastLine(h).stop.detail, UNREADABLE_BEFORE, JSON.stringify(bad));
+    assert.equal(calls(h, 'worker').length, 0, JSON.stringify(bad));
+  }
+});
+
+test('AC5.1 (#5414): a failed, timed-out or empty launch that moved HEAD reports the move', async () => {
+  const moved = movedDetail(HEAD_SHA, OTHER_SHA);
+  for (const worker of [
+    { status: 'fail', reason: 'launch-error', result: null, detail: 'boom' },
+    { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: null },
+  ]) {
+    const h = harness({ worker, script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+    await run(['#7'], h.deps);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status], ['worker', 'fail'], worker.status);
+    assert.equal(final.stop.detail, moved, worker.status);
+    assert.equal(final.costUsd, 0.25, 'the cost of the launch is kept');
+  }
+  const empty = harness({ script: [[on('worker'), null], nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+  await run(['#7'], empty.deps);
+  assert.equal(lastLine(empty).stop.detail, moved, 'a launch that returned null');
+  const thrown = harness({ script: [[on('worker'), new Error('launch blew up')], nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+  await run(['#7'], thrown.deps);
+  assert.deepEqual([lastLine(thrown).stop.step, lastLine(thrown).status, lastLine(thrown).stop.detail], ['worker', 'fail', moved]);
+  const unmoved = harness({ script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], unmoved.deps);
+  const { detail } = lastLine(unmoved).stop;
+  assert.notEqual(detail, moved);
+  assert.match(detail, /launch blew up/);
+  assert.ok(!/HEAD/.test(detail), 'a throw with HEAD unchanged carries no HEAD-read text');
+});
+
+test('AC8.1 (#5414): the stop detail carries no worker text', async () => {
+  const h = harness({
+    worker: { result: { status: 'done', title: 'Fix\nfixes #12 @someone', summary: 'fixes #12 @someone' } },
+    script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)],
+  });
+  await run(['#7'], h.deps);
+  const { detail } = lastLine(h).stop;
+  for (const text of ['\n', 'fixes', '#12', '@someone']) assert.ok(!detail.includes(text), text);
+});
+
+// The lines and calls of the plain and fix-round runs before #5414's HEAD reads were added, captured on the
+// unmodified code. The AC7.1 test compares them with the new reads removed.
+const BASE_CALLS_PLAIN = [
+  'policy', 'git symbolic-ref', 'gh', 'eligibility', 'native-deps', 'linked-prs', 'admission',
+  'node', 'resolveRunDir', 'node', 'appendFile', 'appendFile', 'appendFile', 'appendFile',
+  'appendFile', 'appendFile', 'lstatType', 'git rev-parse', 'git ls-remote', 'readdir',
+  'git fetch', 'git worktree', 'git fetch', 'git merge', 'node', 'appendFile', 'mkdirSync',
+  'worker', 'appendFile', 'git --no-optional-locks', 'writeFile', 'git --literal-pathspecs',
+  'git commit', 'appendFile', 'lstatType', 'lstatType', 'git rev-parse', 'git rev-parse',
+  'mkdirSync', 'node', 'appendFile', 'writeFile', 'node', 'appendFile', 'git rev-parse',
+  'git push', 'appendFile', 'writeFile', 'node', 'ghCreate', 'appendFile', 'node', 'appendFile',
+  'node', 'appendFile', 'writeFile', 'node', 'appendFile', 'node', 'node', 'node', 'node', 'node',
+  'node', 'appendFile', 'appendFile', 'appendFile', 'appendFile',
+];
+const BASE_CALLS_FIX = [
+  'policy', 'git symbolic-ref', 'gh', 'eligibility', 'native-deps', 'linked-prs', 'admission',
+  'node', 'resolveRunDir', 'node', 'appendFile', 'appendFile', 'appendFile', 'appendFile',
+  'appendFile', 'appendFile', 'lstatType', 'git rev-parse', 'git ls-remote', 'readdir',
+  'git fetch', 'git worktree', 'git fetch', 'git merge', 'node', 'appendFile', 'mkdirSync',
+  'worker', 'appendFile', 'git --no-optional-locks', 'writeFile', 'git --literal-pathspecs',
+  'git commit', 'appendFile', 'lstatType', 'lstatType', 'git rev-parse', 'git rev-parse',
+  'mkdirSync', 'node', 'appendFile', 'writeFile', 'node', 'appendFile', 'git --no-optional-locks',
+  'mkdirSync', 'worker', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'git --no-optional-locks',
+  'git check-ignore', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'mkdirSync', 'lstatType', 'mkdirSync',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'writeFileExclusive', 'lstatType', 'lstatType', 'lstatType',
+  'mkdirSync', 'mkdirSync', 'runner', 'readFile', 'git --no-optional-locks',
+  'git --no-optional-locks', 'git rev-parse', 'mkdirSync', 'worker', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'rmFile', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'mkdirSync',
+  'lstatType', 'mkdirSync', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'writeFileExclusive',
+  'git --no-optional-locks', 'writeFile', 'git --literal-pathspecs', 'git commit',
+  'git --no-optional-locks', 'lstatType', 'lstatType', 'git rev-parse', 'git rev-parse',
+  'mkdirSync', 'node', 'lstatType', 'lstatType', 'lstatType', 'readFile', 'lstatType', 'mkdirSync',
+  'mkdirSync', 'runner', 'readFile', 'git --no-optional-locks', 'git --no-optional-locks',
+  'writeFile', 'node', 'appendFile', 'git rev-parse', 'git push', 'appendFile', 'writeFile',
+  'node', 'ghCreate', 'appendFile', 'node', 'appendFile', 'node', 'appendFile', 'writeFile',
+  'node', 'appendFile', 'node', 'node', 'node', 'node', 'node', 'node', 'appendFile', 'appendFile',
+  'appendFile', 'appendFile',
+];
+const BASE_LINES_PLAIN = [
+  ['policy', 'ok'], ['fetch', 'ok'], ['eligibility', 'ok'], ['admission', 'ok'], ['claim', 'ok'],
+  ['run-dir', 'ok'], ['worktree', 'ok'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'],
+  ['check', 'ok'], ['push', 'ok'], ['pr', 'ok'], ['record-pr', 'ok'], ['set-config', 'ok'],
+  ['summary', 'ok'], ['ci', 'ok'], ['merge-entry', 'stop'], ['merge', 'ok'], ['final', 'ok'],
+];
+const BASE_LINES_FIX = [
+  ['policy', 'ok'], ['fetch', 'ok'], ['eligibility', 'ok'], ['admission', 'ok'], ['claim', 'ok'],
+  ['run-dir', 'ok'], ['worktree', 'ok'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'],
+  ['check', 'ok'], ['review', 'ok'], ['push', 'ok'], ['pr', 'ok'], ['record-pr', 'ok'],
+  ['set-config', 'ok'], ['summary', 'ok'], ['ci', 'ok'], ['merge-entry', 'stop'], ['merge', 'ok'],
+  ['final', 'ok'],
+];
+
+test('AC7.1 (#5414): the happy path adds exactly one HEAD read on each side of the implementer launch', async () => {
+  const plain = harness();
+  assert.equal(await run(['#7'], plain.deps), 0);
+  assert.equal(plain.calls.filter(isHeadReadInWt).length, 3, 'worker before, worker after, push guard');
+  const at = plain.calls.findIndex(isImplementerLaunch);
+  assert.ok(isHeadReadInWt(plain.calls[at - 1]), 'a HEAD read just before the launch');
+  assert.ok(isHeadReadInWt(plain.calls[at + 1]), 'a HEAD read just after the launch');
+  assert.deepEqual(plain.calls.filter((c, i) => !isLaunchSideRead(plain.calls, i)).map(sig), BASE_CALLS_PLAIN);
+  assert.deepEqual(plain.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+
+  const fix = fixRig();
+  assert.equal(await run(['#7'], fix.deps), 0);
+  assert.equal(fix.calls.filter(isHeadReadInWt).length, 6, 'two per implementer launch, preFixHead, the push guard');
+  const launches = fix.calls.flatMap((c, i) => (isImplementerLaunch(c) ? [i] : []));
+  assert.equal(launches.length, 2);
+  for (const i of launches) {
+    assert.ok(isHeadReadInWt(fix.calls[i - 1]) && isHeadReadInWt(fix.calls[i + 1]), `a HEAD read on each side of the launch at call ${i}`);
+  }
+  assert.deepEqual(fix.calls.filter((c, i) => !isLaunchSideRead(fix.calls, i)).map(sig), BASE_CALLS_FIX);
+  assert.deepEqual(fix.lines().map((l) => [l.step, l.status]), BASE_LINES_FIX);
+});
+
 test('AC14.2: win32 passes bin explicitly', async () => {
   const h = harness({ deps: { platform: 'win32' } });
   await run(['#7'], h.deps);
@@ -2431,12 +2613,13 @@ test('AC2.4: missing, short or non-sha head never passes the guard', async () =>
     const final = lastLine(h);
     assert.deepEqual([final.stop.step, final.status, final.stop.class], ['push', 'stop', 'pre-push'], String(head));
     assert.equal(pushCalls(h).length, 0);
-    assert.equal(gitCalls(h).filter((c) => gitSub(c)[0] === 'rev-parse' && gitSub(c)[3] === 'HEAD').length, 0, 'no HEAD read for a head that cannot match');
+    const checkAt = h.calls.findIndex((c) => c.kind === 'node' && /express-lane\.js$/.test(c.args[0]) && c.args[1] === 'check');
+    assert.equal(h.calls.filter((c, i) => i > checkAt && isHeadRead(c)).length, 0, 'no HEAD read after check for a head that cannot match');
   }
 });
 
 test('AC2.5: a failing rev-parse never passes the guard', async () => {
-  const h = harness({ script: [[onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), Object.assign(new Error('Command failed'), { stderr: 'fatal: Needed a single revision\n' })]] });
+  const h = harness({ script: [nthCall(isHeadRead, 3, Object.assign(new Error('Command failed'), { stderr: 'fatal: Needed a single revision\n' }))] });
   await run(['#7'], h.deps);
   const final = lastLine(h);
   assert.deepEqual([final.stop.step, final.status, final.stop.class], ['push', 'stop', 'pre-push']);
@@ -2558,7 +2741,8 @@ test('AC2.1: happy path calls run in the deliverable order', async () => {
     'node claim-targets.js', 'resolveRunDir', 'node log-decision.js',
     // The leftover check's local and remote branch probes run before the worktree's own fetch.
     'git rev-parse', 'git ls-remote', 'git fetch', 'git worktree add', 'git fetch', 'git merge', 'node hooks.js record-worktree',
-    'worker', 'git status', 'git add', 'git commit',
+    // The HEAD read before and after the worker launch (#5414).
+    'git rev-parse', 'worker', 'git rev-parse', 'git status', 'git add', 'git commit',
     // The test step looks up the scope blob on origin/{ref} (absent here, so the ref check follows) before verify.js.
     'git rev-parse', 'git rev-parse', 'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
     'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
@@ -2889,8 +3073,6 @@ const GREEN = Object.freeze({ code: 0, tap: EVIDENCE_TAP('pass') });
 const implementerCalls = (h) => h.calls.filter((c) => c.kind === 'worker' && c.args[0].role === 'implementer');
 const evidenceAbs = (i) => path.join(WT, 'tests', 'new', `r${i}.test.js`);
 const fixDest = (h, i) => path.join(runDirOf(h), 'review', `fix-evidence-${i}.tap`);
-// The n-th call `match` accepts gets `reply`; every other call falls through to the later entries.
-const nthCall = (match, n, reply) => { let seen = 0; return [(c) => match(c) && (seen += 1) === n, reply]; };
 // Calls after the second implementer launch.
 const afterFixLaunch = (h) => h.calls.slice(h.calls.indexOf(implementerCalls(h)[1]) + 1);
 function fixRig({ findings = [evidenceFinding(0)], fix = {}, effect = () => {}, direct = () => GREEN, script = [], ...over } = {}) {
@@ -3422,7 +3604,8 @@ test('fix round: a kept evidence run that throws or survives its kill fails, and
   await run(['#7'], h.deps);
   assert.deepEqual(h.lines().slice(-2).map((l) => [l.step, l.status]), [[STEP.review, 'fail'], [FINAL_STEP, 'fail']]);
   assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
-  assert.deepEqual(afterFixLaunch(h).filter((c) => ['writeFileExclusive', 'rmFile', 'git'].includes(c.kind)), []);
+  // The one exception is the HEAD read right after the launch (#5414), which runs before the interrupt is seen.
+  assert.deepEqual(afterFixLaunch(h).filter((c) => ['writeFileExclusive', 'rmFile', 'git'].includes(c.kind)).map((c) => [c.kind, isHeadRead(c)]), [['git', true]]);
 });
 
 test('AC12: a discarded finding is counted, its evidence file removed, and the record goes on to the push', async () => {

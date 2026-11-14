@@ -443,6 +443,27 @@ function workerPrompt(ctx, { minutes, dollars, maxLines }) {
   ].join('\n');
 }
 
+// A full commit sha: the only shape the driver compares HEAD against (the push guard uses it too).
+const FULL_SHA_RE = /^[0-9a-f]{40}$/;
+const HEAD_BEFORE_UNREADABLE = 'HEAD of the worktree is unreadable before the worker launch';
+// HEAD of a worktree as a full sha, or null when git gives none (the read throws, or prints other than a full sha).
+function headOf(deps, wt) {
+  try {
+    const head = String(gitIn(deps, wt, ['rev-parse', '--verify', '--end-of-options', 'HEAD'])).trim();
+    return FULL_SHA_RE.test(head) ? head : null;
+  } catch {
+    return null;
+  }
+}
+// The fail for a HEAD that moved or cannot be read after the launch; null when it is the sha from before.
+// The detail names only the shas, so no worker or git text reaches it.
+function headFail(before, after, extra) {
+  const withExtra = extra ? { extra } : {};
+  if (after === null) return { status: 'fail', detail: `HEAD of the worktree is unreadable after the worker launch (it was ${before})`, ...withExtra };
+  if (after !== before) return { status: 'fail', detail: `the worker moved HEAD from ${before} to ${after}`, ...withExtra };
+  return null;
+}
+
 // Ports express-lane.md step 2 (the edit): the headless implementer, launched through
 // worker.js with the run's two ceilings. Every string the worker controls is untrusted:
 // the summary and denial inputs are neutralized here, the title is kept raw only for the
@@ -451,6 +472,8 @@ function workerPrompt(ctx, { minutes, dollars, maxLines }) {
 // forward an interrupt to the worker's process group (headless-worker-launch, "What the
 // consumer owes").
 // The body is shared with the review step's fix round, which appends `extraPrompt` to the same prompt.
+// HEAD is read on both sides of the launch, a launcher throw included: a moved or unreadable
+// HEAD is a `fail` naming only the shas.
 async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   const { shared } = ctx;
   const ceilings = readCeilings(shared.policy);
@@ -465,32 +488,51 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   }
   const settingsDir = path.join(ctx.runDir, 'worker');
   deps.mkdirSync(settingsDir, { recursive: true });
-  const envelope = await launchTracked(shared, deps, { minutes, dollars }, {
-    role: 'implementer',
-    cwd: ctx.wt,
-    prompt: workerPrompt(ctx, { minutes, dollars, maxLines }) + extraPrompt,
-    testCommand: TEST_COMMAND,
-    settingsDir,
-  });
-  if (!envelope || typeof envelope !== 'object') return { status: 'fail', detail: 'worker launch returned no envelope' };
-  const result = envelope.result && typeof envelope.result === 'object' ? envelope.result : null;
-  const denials = (Array.isArray(envelope.denials) ? envelope.denials : []).map((d) => ({
-    tool_name: d && typeof d.tool_name === 'string' ? d.tool_name : null,
-    tool_input: neutralize(JSON.stringify(d && d.tool_input)),
-  }));
-  const orNull = (v) => (v === undefined ? null : v);
-  ctx.worker = {
-    title: result && typeof result.title === 'string' ? result.title : null,
-    summary: result ? neutralize(result.summary) : null,
-    usage: orNull(envelope.usage),
-    turns: orNull(envelope.turns),
-    denials,
-    costUsd: orNull(envelope.costUsd),
-    spendOverrun: envelope.spendOverrun === true,
-  };
-  // spendOverrun: an `ok` launch whose last turn crossed the spend ceiling (worker.js checks it
-  // between turns); present only when the envelope says so.
-  const extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(ctx.worker.spendOverrun ? { spendOverrun: true } : {}) };
+  // The HEAD check (#5414): read immediately before the launch, and again immediately after it settles.
+  const before = headOf(deps, ctx.wt);
+  if (before === null) return { status: 'fail', detail: HEAD_BEFORE_UNREADABLE };
+  let envelope;
+  try {
+    envelope = await launchTracked(shared, deps, { minutes, dollars }, {
+      role: 'implementer',
+      cwd: ctx.wt,
+      prompt: workerPrompt(ctx, { minutes, dollars, maxLines }) + extraPrompt,
+      testCommand: TEST_COMMAND,
+      settingsDir,
+    });
+  } catch (err) {
+    // A launcher that throws may have moved HEAD: that is reported in place of the throw;
+    // otherwise the throw is rethrown as it was.
+    const headStop = headFail(before, headOf(deps, ctx.wt));
+    if (headStop) return headStop;
+    throw err;
+  }
+  const hasEnvelope = !!envelope && typeof envelope === 'object';
+  let result = null;
+  let extra;
+  if (hasEnvelope) {
+    result = envelope.result && typeof envelope.result === 'object' ? envelope.result : null;
+    const denials = (Array.isArray(envelope.denials) ? envelope.denials : []).map((d) => ({
+      tool_name: d && typeof d.tool_name === 'string' ? d.tool_name : null,
+      tool_input: neutralize(JSON.stringify(d && d.tool_input)),
+    }));
+    const orNull = (v) => (v === undefined ? null : v);
+    ctx.worker = {
+      title: result && typeof result.title === 'string' ? result.title : null,
+      summary: result ? neutralize(result.summary) : null,
+      usage: orNull(envelope.usage),
+      turns: orNull(envelope.turns),
+      denials,
+      costUsd: orNull(envelope.costUsd),
+      spendOverrun: envelope.spendOverrun === true,
+    };
+    // spendOverrun: an `ok` launch whose last turn crossed the spend ceiling (worker.js checks it
+    // between turns); present only when the envelope says so.
+    extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(ctx.worker.spendOverrun ? { spendOverrun: true } : {}) };
+  }
+  const headStop = headFail(before, headOf(deps, ctx.wt), extra);
+  if (headStop) return headStop;
+  if (!hasEnvelope) return { status: 'fail', detail: 'worker launch returned no envelope' };
   if (envelope.status !== 'ok') {
     const why = neutralize(envelope.detail);
     const kind = `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}`;
@@ -733,8 +775,6 @@ const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps
   }
   return { status: 'ok' };
 });
-
-const FULL_SHA_RE = /^[0-9a-f]{40}$/;
 
 // Ports express-lane.md step 6 (push): only the commit `check` verified goes out. The guard
 // is closed: a head that is not a full sha, a HEAD that cannot be read, or one that differs
