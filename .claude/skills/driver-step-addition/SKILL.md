@@ -73,6 +73,16 @@ The review step's fix round (#5222, `plugin/bin/lib/driver/review.js`) is the fi
 - Propagate a re-run step's own status and class unchanged, and list each re-run step's stops in the new module's header.
 - The worker had write access between the steps, so judge its output again before using it: the fix round re-checks each evidence path's canonical location and reads its bytes from disk before running it, never through git status.
 
+### A check of git state around a worker launch
+
+The worker step and the review fix round both launch through `steps.js`'s `runImplementer`, which reads HEAD on both sides of the launch (#5414, `headOf` and `headFail`) and then, if HEAD has not moved, the index flags (#5415; the method is `headless-worker-launch`'s "What the consumer owes"). A new check of git state around a launch follows the same shape:
+- Read immediately before `launchTracked` (after the settings directory's `mkdirSync`, so nothing sits between the read and the `worker` call) and again as soon as the launch settles. A before-read that fails stops the step with no launch. A launcher that throws gets the after-read too: a failed check is returned in place of the throw, and a clean one rethrows it.
+- Judge the after-read before the envelope. A moved HEAD outranks a missing or failed envelope, and the envelope's `extra` (usage, turns, denials) still rides on the stop.
+- The stop is `fail`, and its detail names only values the check validated: `headOf` returns a sha only when it matches `FULL_SHA_RE` and `null` otherwise, so neither git nor worker text reaches the detail. A read that cannot be made is its own `fail`, never a pass.
+- An interrupt during the launch is still reported as the interrupt (run.js's handler writes it at once; see "Interrupts at await points"). At an evidence run the order is the interrupt, then the flag check, then the tree check.
+- Never recover by resetting HEAD or clearing a flag. A baseline the check keeps on `ctx` (`ctx.indexFlags`) starts as `null` in `newCtx` and gets no `interruptClass` rung: it is a read, not a side effect. The review module gets the check through the wiring object (`indexFlagCheck`), and `reviewPass` throws without it.
+- Pin each new read's position and leave the rest of the run as it was. Capture the happy path's call signatures, event `[step, status]` pairs and per-line key sets on the unmodified code as literal constants (`BASE_CALLS_PLAIN`, `BASE_CALLS_FIX`, `BASE_LINES_*`, `BASE_KEYS_*` in `run.test.js`). Then assert the new run equals them with the new reads filtered out, and that a read sits right before and right after each launch. Fault the n-th read with `nthCall(isHeadRead, n, reply)`. A later check that reads at the same points filters its own reads first (`withoutFlagReads`) and pins their count and order in its own test, as `AC8.1 (#5415)` does over #5414's captures.
+
 ## Adding a settle step
 
 A settle call is not a `STEPS` entry; it is a handler in one of `settle.js`'s `SETTLE_ROWS` rows (#5219). The rules for adding one:
