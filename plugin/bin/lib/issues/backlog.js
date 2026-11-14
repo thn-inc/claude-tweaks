@@ -22,6 +22,7 @@ const { PRIORITIES, TIERS, parseRecordFacets, parseDependencies, foreignBlockerB
 const { parseCrossRepoRef, crossRepoKey } = require('./cross-repo-refs');
 const { blockersOf } = require('./ranking');
 const { evaluateGrantGate } = require('./grant-gate');
+const { describeMixedReasons } = require('./trust.js');
 const { isBotParked } = require('./record-buckets');
 
 // Urgency order shared by both bands (high first). Values are validated
@@ -309,7 +310,7 @@ function funnelBuckets(records) {
 // counts and the grant chain's own candidate-set size for the same backlog
 // state. Excluded records are counted via `excludedOrigin` rather than
 // folded into `refused`, so a reader can reconcile the funnel header's
-// `specified N` total against `eligible.length + refused-total +
+// `specified N` total against `eligible.length + refusedTotal +
 // excludedOrigin`. Outside that policy shape, every record — human- and
 // agent-filed alike — is refused under `ceiling` or
 // `grant-origination-opt-in` before gates 2/3 ever run, so the
@@ -327,12 +328,14 @@ function funnelBuckets(records) {
 // ({ ceiling, grantOriginationEnabled } suffices for phase 1);
 // trustRowsArray is trustRows() output (bin/lib/issues/trust.js), keyed into
 // the Map shape the gate expects. Returns { eligible: [ids], refused:
-// { [failedKey]: [ids] }, excludedOrigin: count }, ids in input order.
+// { [failedKey]: [ids] }, excludedOrigin: count, trustRefusedClasses:
+// [classKey] (unique, first-seen, from trust denies) }, ids in input order.
 function machineGrantOutlook(records, policy, trustRowsArray) {
   const rows = Array.isArray(trustRowsArray) ? trustRowsArray : [];
   const trustVerdicts = new Map(rows.map((row) => [row.key, row]));
   const eligible = [];
   const refused = {};
+  const trustRefusedClasses = [];
   let excludedOrigin = 0;
   const applyOriginPrefilter =
     policy && policy.ceiling === 'unattended' && policy.grantOriginationEnabled === true;
@@ -352,9 +355,46 @@ function machineGrantOutlook(records, policy, trustRowsArray) {
       eligible.push(id);
     } else {
       (refused[result.failedKey] = refused[result.failedKey] || []).push(id);
+      if (result.failedKey === 'trust') {
+        const classKey = result.snapshot.classKey;
+        if (!trustRefusedClasses.includes(classKey)) trustRefusedClasses.push(classKey);
+      }
     }
   }
-  return { eligible, refused, excludedOrigin };
+  return { eligible, refused, excludedOrigin, trustRefusedClasses };
+}
+
+// machineGrantOutlook's `refused` map ({ failedKey: ids[] }) -> the one home for
+// the refused-key aggregation: [[key, n], ...] sorted descending by count (ties:
+// key ascending) plus the summed total. Shared by allRefusedOutlookLine and the
+// machine-grant-outlook.md fence's live-line JSON.
+function refusedKeyCounts(refused) {
+  const counts = Object.entries(refused || {}).map(([key, ids]) => [key, ids.length]);
+  counts.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return { counts, total: counts.reduce((sum, [, n]) => sum + n, 0) };
+}
+
+// machineGrantOutlook's output + trustRowsArray -> the one-line "why no machine
+// grants" note, or null when any candidate is eligible or nothing was refused.
+// Keys by descending count (ties: key ascending); trust-refused classes append
+// with the reason each failed (describeMixedReasons), so the line explains itself.
+function allRefusedOutlookLine(outlook, trustRowsArray) {
+  const { eligible, refused, trustRefusedClasses } = outlook;
+  const { counts, total } = refusedKeyCounts(refused);
+  if ((eligible || []).length > 0 || counts.length === 0) return null;
+  let line = `# machine grants: none possible — all ${total} candidates refused (${counts.map(([k, n]) => `${k}: ${n}`).join(', ')})`;
+  if (Array.isArray(trustRefusedClasses) && trustRefusedClasses.length > 0) {
+    const rows = new Map((Array.isArray(trustRowsArray) ? trustRowsArray : []).map((row) => [row.key, row]));
+    const parts = trustRefusedClasses.map((classKey) => {
+      const row = rows.get(classKey);
+      if (!row) return `${classKey} no-cell`;
+      if (row.verdict !== 'mixed') return `${classKey} ${row.verdict}`;
+      const reasons = describeMixedReasons(row);
+      return `${classKey} ${reasons ? `mixed (${reasons})` : 'mixed'}`;
+    });
+    line += ` — trust: ${parts.join('; ')}`;
+  }
+  return line;
 }
 
 // ({ allRows, readyRows, priorityBudget, grantBudget }) -> the refine sweep's
@@ -400,6 +440,8 @@ module.exports = {
   deriveCreatedAtFromGit,
   funnelBuckets,
   machineGrantOutlook,
+  allRefusedOutlookLine,
+  refusedKeyCounts,
   readyGrantedSubset,
   attachBodyForeignBlockers,
   foreignLookupSet,

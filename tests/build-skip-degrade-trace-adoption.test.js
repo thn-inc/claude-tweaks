@@ -103,9 +103,9 @@ function assertFoldRule(text) {
     'dispatch.md must keep the trigger keyed on named steps, not on surface');
   assert.match(text, /\*\*Folded verification task \(#3118\)\.\*\*/,
     'dispatch.md must define the label build/SKILL.md Common Step 5 points at');
-  const anchor = text.indexOf('Common Step 5 runs the full suite once');
+  const anchor = text.indexOf("Common Step 5 runs the branch's one verification");
   const rule = text.indexOf('A plan task folded into Common Step 5');
-  assert.ok(anchor !== -1 && rule > anchor, 'the fold rule must follow the "runs the full suite once" sentence');
+  assert.ok(anchor !== -1 && rule > anchor, 'the fold rule must follow the "runs the branch\'s one verification" sentence');
 }
 
 test('AC1.1: build/dispatch.md states the fold rule — runner checks only; every other named step runs or writes a SKIP entry', () => {

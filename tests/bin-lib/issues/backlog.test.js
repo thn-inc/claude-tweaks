@@ -14,9 +14,13 @@ const {
   readyGrantedSubset,
   attachBodyForeignBlockers,
   foreignLookupSet,
+  allRefusedOutlookLine,
+  refusedKeyCounts,
 } = require('../../../plugin/bin/lib/issues/backlog');
 const { parseRecordFacets, foreignBlockerRef } = require('../../../plugin/bin/lib/issues/record');
 const { bodyForeignBlockers } = require('../../../plugin/bin/lib/issues/cross-repo-states');
+
+const range = (n) => Array.from({ length: n }, (_, i) => i + 1);
 
 function record(overrides) {
   return {
@@ -674,6 +678,7 @@ test('machineGrantOutlook: needs:definition refuses ahead of trust (gate order p
     [],
   );
   assert.deepEqual(out.refused, { 'needs-definition': [5] });
+  assert.deepEqual(out.trustRefusedClasses, []);
 });
 
 test('machineGrantOutlook: refused ids aggregate per failedKey in input order alongside eligibles', () => {
@@ -723,4 +728,71 @@ test('machineGrantOutlook: origin pre-filter does not engage under a non-unatten
   assert.deepEqual(out.eligible, []);
   assert.deepEqual(out.refused, { ceiling: [11] });
   assert.strictEqual(out.excludedOrigin, 0);
+});
+
+// --- allRefusedOutlookLine + trustRefusedClasses (#5291) ---
+
+test('machineGrantOutlook reports the classes refused at trust', () => {
+  const out = machineGrantOutlook(
+    [outlookRecord(2, ['by:code-health', 'ready', 'risk:low', 'size:low']), outlookRecord(3, ['by:code-health', 'ready', 'risk:low', 'size:low'])],
+    unattendedPolicy,
+    [{ key: 'producer:code-health|low', verdict: 'mixed' }],
+  );
+  assert.deepEqual(out.trustRefusedClasses, ['producer:code-health|low']);
+  assert.deepEqual(out.refused, { trust: [2, 3] });
+});
+
+test('machineGrantOutlook: trustRefusedClasses is empty when nothing refused at trust', () => {
+  const out = machineGrantOutlook(
+    [outlookRecord(1, ['by:code-health', 'ready', 'risk:low', 'size:low'])],
+    unattendedPolicy,
+    cleanCodeHealthRow,
+  );
+  assert.deepEqual(out.trustRefusedClasses, []);
+});
+
+test('AC9.1: allRefusedOutlookLine renders the all-refused line', () => {
+  const line = allRefusedOutlookLine({ eligible: [], refused: { trust: range(104) }, excludedOrigin: 0, trustRefusedClasses: [] }, []);
+  assert.ok(line.includes('none possible — all 104 candidates refused (trust: 104)'), line);
+  assert.ok(line.startsWith('# machine grants: '), line);
+  assert.doesNotMatch(line, / — trust: /);
+});
+
+test('allRefusedOutlookLine appends each trust-refused class with its reasons', () => {
+  const outlook = { eligible: [], refused: { trust: [1, 2] }, excludedOrigin: 0, trustRefusedClasses: ['producer:capture|elevated'] };
+  const mixed = { key: 'producer:capture|elevated', verdict: 'mixed', mixedReasons: ['follow-up-rate', 'negative-evidence'], followUpRecords: 1, total: 3, followUpRateMaxPercent: 30, negativeEvidence: 2 };
+  const line = allRefusedOutlookLine(outlook, [mixed]);
+  assert.ok(line.includes('trust: producer:capture|elevated mixed (follow-up rate 33.4% > 30%, 2 negative)'), line);
+  const bare = allRefusedOutlookLine(outlook, [{ key: 'producer:capture|elevated', verdict: 'mixed' }]);
+  assert.ok(bare.endsWith(' — trust: producer:capture|elevated mixed'), bare);
+  assert.doesNotMatch(bare, /\(\)/);
+});
+
+test('allRefusedOutlookLine names the verdict of a non-mixed row and no-cell for a missing row', () => {
+  const outlook = { eligible: [], refused: { trust: [1, 2] }, excludedOrigin: 0, trustRefusedClasses: ['a:b|low', 'c:d|low'] };
+  const line = allRefusedOutlookLine(outlook, [{ key: 'a:b|low', verdict: 'insufficient-evidence' }]);
+  assert.ok(line.endsWith(' — trust: a:b|low insufficient-evidence; c:d|low no-cell'), line);
+  assert.equal(allRefusedOutlookLine(outlook, undefined).endsWith(' — trust: a:b|low no-cell; c:d|low no-cell'), true);
+});
+
+test('allRefusedOutlookLine lists every refusing key by count and returns null when any candidate is eligible', () => {
+  const refused = { trust: [1, 2], 'needs-label': [3] };
+  const line = allRefusedOutlookLine({ eligible: [], refused, excludedOrigin: 0, trustRefusedClasses: [] }, []);
+  assert.ok(line.includes('all 3 candidates refused (trust: 2, needs-label: 1)'), line);
+  assert.equal(allRefusedOutlookLine({ eligible: [9], refused, excludedOrigin: 0, trustRefusedClasses: [] }, []), null);
+  assert.equal(allRefusedOutlookLine({ eligible: [], refused: {}, excludedOrigin: 0, trustRefusedClasses: [] }, []), null);
+});
+
+test('allRefusedOutlookLine breaks count ties by key ascending', () => {
+  const line = allRefusedOutlookLine({ eligible: [], refused: { zeta: [1], alpha: [2], mid: [3, 4] }, excludedOrigin: 0, trustRefusedClasses: [] }, []);
+  assert.ok(line.includes('(mid: 2, alpha: 1, zeta: 1)'), line);
+});
+
+test('refusedKeyCounts sorts descending by count, breaks ties by key ascending, and sums the total', () => {
+  assert.deepStrictEqual(
+    refusedKeyCounts({ zeta: [1], alpha: [2], mid: [3, 4], big: [5, 6, 7] }),
+    { counts: [['big', 3], ['mid', 2], ['alpha', 1], ['zeta', 1]], total: 7 },
+  );
+  assert.deepStrictEqual(refusedKeyCounts({}), { counts: [], total: 0 });
+  assert.deepStrictEqual(refusedKeyCounts(undefined), { counts: [], total: 0 });
 });

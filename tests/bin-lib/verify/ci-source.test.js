@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { fetchCiVerdict, normalizeCiLog } = require('../../../plugin/bin/lib/verify/ci-source');
+const { fetchCiVerdict, normalizeCiLog, LOG_TIMEOUT_MS } = require('../../../plugin/bin/lib/verify/ci-source');
 
 const SHA = 'a'.repeat(40);
 const SOURCE = { workflow: 'test.yml', job: 'test', waitSeconds: 60, pollSeconds: 20 };
@@ -17,8 +17,10 @@ function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ci-source-'
 // body, function → called per hit, Error → thrown). Unknown calls throw loudly.
 function fakeGh(routes) {
   const calls = [];
-  const runner = (args) => {
+  const timeouts = [];
+  const runner = (args, opts) => {
     calls.push(args.join(' '));
+    timeouts.push(opts && opts.timeout);
     assert.strictEqual(args[0], 'api');
     for (const [re, resp] of routes) {
       if (re.test(args[1])) {
@@ -29,7 +31,7 @@ function fakeGh(routes) {
     }
     throw new Error(`unexpected gh ${args.join(' ')}`);
   };
-  return { runner, calls };
+  return { runner, calls, timeouts };
 }
 
 function clock() {
@@ -45,6 +47,15 @@ function jobs(conclusion, status = 'completed') {
 }
 const LOG = '2026-10-25T17:27:01.1234567Z ✖ failing tests:\n2026-10-25T17:27:02.0000000Z test at /home/runner/work/claude-tweaks/claude-tweaks/tests/a.test.js:3:1\n';
 
+// gh 2.103.3 refuses a job log carrying terminal escapes unless --allow-escape-sequences is passed (#5369).
+const ESCAPE_REFUSAL = 'the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway';
+function logRoute(body) {
+  return [/\/jobs\/99\/logs$/, (args) => {
+    if (!args.includes('--allow-escape-sequences')) return Object.assign(new Error(ESCAPE_REFUSAL), { stderr: ESCAPE_REFUSAL });
+    return body;
+  }];
+}
+
 function call(over, { runner, clk = clock(), source = SOURCE } = {}) {
   const logDir = tmpDir();
   return fetchCiVerdict({
@@ -53,7 +64,7 @@ function call(over, { runner, clk = clock(), source = SOURCE } = {}) {
 }
 
 test('a green CI job on HEAD is used: exit 0, log written, run id and url recorded (#4347)', async () => {
-  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('success'), [/\/jobs\/99\/logs$/, '2026-10-25T17:30:00.0Z ℹ tests 3\n']]);
+  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('2026-10-25T17:30:00.0Z ℹ tests 3\n')]);
   const { v, logDir } = await call({}, { runner });
   assert.strictEqual(v.used, true);
   assert.strictEqual(v.result.exitCode, 0);
@@ -67,7 +78,7 @@ test('a green CI job on HEAD is used: exit 0, log written, run id and url record
 });
 
 test('a red CI job is used with exit 1 and its log normalized to the local checkout (#4347)', async () => {
-  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, LOG]]);
+  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('failure'), logRoute(LOG)]);
   const { v, logDir } = await call({}, { runner });
   assert.strictEqual(v.used, true);
   assert.strictEqual(v.result.exitCode, 1);
@@ -109,7 +120,7 @@ test('a run still in progress is polled until its job completes (#4347)', async 
   let hits = 0;
   const { runner } = fakeGh([PULLS, PR, RUNS,
     [/\/actions\/runs\/41\/jobs/, () => { hits += 1; return jobs(hits < 3 ? null : 'success', hits < 3 ? 'in_progress' : 'completed')[1]; }],
-    [/\/jobs\/99\/logs$/, 'ok\n']]);
+    logRoute('ok\n')]);
   const { v } = await call({}, { runner });
   assert.strictEqual(v.used, true);
   assert.strictEqual(hits, 3);
@@ -140,13 +151,96 @@ test('a red job whose log cannot be fetched falls back — nothing names its fai
 });
 
 test('only REST endpoints with {owner}/{repo} placeholders are called (#4347)', async () => {
-  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('success'), [/\/jobs\/99\/logs$/, '']]);
+  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('')]);
   await call({}, { runner });
   assert.ok(calls.length >= 4);
   for (const c of calls) assert.match(c, /^api repos\/\{owner\}\/\{repo\}\//);
 });
 
+test('AC9.1: the job-log download passes --allow-escape-sequences after the path, and the escape-refusing fake answers it (#5369)', async () => {
+  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('ok\n')]);
+  const { v } = await call({}, { runner });
+  assert.strictEqual(v.used, true);
+  assert.strictEqual(calls.filter((c) => c.includes('/logs')).length, 1);
+  assert.strictEqual(calls.find((c) => c.includes('/logs')), 'api repos/{owner}/{repo}/actions/jobs/99/logs --allow-escape-sequences');
+});
+
+test('AC9.2: a gh that rejects the flag as unknown gets exactly one retry without it (#5369)', async () => {
+  const unknown = 'unknown flag: --allow-escape-sequences';
+  const { runner, calls, timeouts } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, (args) => (args.includes('--allow-escape-sequences') ? Object.assign(new Error(unknown), { stderr: unknown }) : LOG)]]);
+  const { v, logDir } = await call({}, { runner });
+  assert.deepStrictEqual(calls.filter((c) => c.includes('/logs')), [
+    'api repos/{owner}/{repo}/actions/jobs/99/logs --allow-escape-sequences',
+    'api repos/{owner}/{repo}/actions/jobs/99/logs',
+  ]);
+  assert.deepStrictEqual(timeouts.filter((_, i) => calls[i].includes('/logs')), [LOG_TIMEOUT_MS, LOG_TIMEOUT_MS]);
+  assert.strictEqual(v.used, true);
+  assert.match(fs.readFileSync(path.join(logDir, 'tests.log'), 'utf8'), /\/local\/root\/tests\/a\.test\.js/);
+});
+
+test('#5369: a retry that fails is not retried again — exactly two log calls, then the fallback', async () => {
+  const unknown = 'unknown flag: --allow-escape-sequences';
+  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, (args) => (args.includes('--allow-escape-sequences') ? Object.assign(new Error(unknown), { stderr: unknown }) : new Error('HTTP 410'))]]);
+  const { v } = await call({}, { runner });
+  assert.strictEqual(calls.filter((c) => c.includes('/logs')).length, 2);
+  assert.strictEqual(v.used, false);
+  assert.strictEqual(v.ci.fallback, 'ci-log-unavailable');
+});
+
+test('#5369: a refusal other than the unknown-flag one is not retried', async () => {
+  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, new Error('HTTP 410')]]);
+  await call({}, { runner });
+  assert.strictEqual(calls.filter((c) => c.includes('/logs')).length, 1);
+});
+
+test('AC9.3: under localRuns "on-request" a red job with no downloadable log is a CI failure naming the run URL (#5369)', async () => {
+  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, new Error('HTTP 410')]]);
+  const { v, logDir } = await call({ localRuns: 'on-request' }, { runner });
+  assert.strictEqual(v.used, true);
+  assert.strictEqual(v.ci.logUnavailable, true);
+  assert.strictEqual(v.ci.fallback, null);
+  assert.strictEqual(v.result.exitCode, 1);
+  assert.strictEqual(fs.readFileSync(path.join(logDir, 'tests.log'), 'utf8'),
+    'CI run https://example.test/runs/41 failed (job https://example.test/job/99); its log could not be fetched (HTTP 410). Run verify.js with --local to reproduce the failure on this machine.\n');
+});
+
+test('AC4.1: without the key a red job with no log still falls back, and a green one carries no logUnavailable (#5369)', async () => {
+  const red = await call({}, { runner: fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, new Error('HTTP 410')]]).runner });
+  assert.strictEqual(red.v.ci.fallback, 'ci-log-unavailable');
+  const green = await call({ localRuns: 'on-request' }, { runner: fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('ok\n')]).runner });
+  assert.strictEqual(Object.hasOwn(green.v.ci, 'logUnavailable'), false);
+});
+
+test('#5369: under the key a green job whose log cannot be fetched carries no logUnavailable and keeps the passed body', async () => {
+  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('success'), [/\/jobs\/99\/logs$/, new Error('HTTP 410')]]);
+  const { v, logDir } = await call({ localRuns: 'on-request' }, { runner });
+  assert.strictEqual(v.used, true);
+  assert.strictEqual(v.result.exitCode, 0);
+  assert.strictEqual(Object.hasOwn(v.ci, 'logUnavailable'), false);
+  assert.strictEqual(fs.readFileSync(path.join(logDir, 'tests.log'), 'utf8'), 'CI job https://example.test/job/99 passed; its log could not be fetched.\n');
+});
+
 test('normalizeCiLog strips the timestamp prefix and remaps both runner roots (#4347)', () => {
   const out = normalizeCiLog('2026-10-25T17:27:01.1234567Z at /home/runner/work/x/x/tests/a.js:1\nD:\\a\\x\\x\\tests\\b.js\nplain', '/r/');
   assert.strictEqual(out, 'at /r/tests/a.js:1\n/r\\tests\\b.js\nplain');
+});
+
+test('normalizeCiLog drops every terminal control from a CI log but SGR colour and tabs (#5369)', () => {
+  const ESC = '\x1b';
+  const raw = [
+    `2026-10-25T17:27:01.1234567Z ${ESC}]0;owned title${ESC}\\not ok 1 - a`,
+    `${ESC}]52;c;cGF5bG9hZA==\x07clip`,
+    `${ESC}[2J${ESC}[1Acursor${ESC}[?25l`,
+    `${ESC}[31mred${ESC}[0m\tkept`,
+    `bell\x07 cr\r back \x9b2J c1`,
+    `${ESC}]8;;https://x.test${ESC}\\link${ESC}]8;;${ESC}\\ unterminated ${ESC}]2;tail`,
+  ].join('\n');
+  assert.strictEqual(normalizeCiLog(raw, ''), [
+    'not ok 1 - a',
+    'clip',
+    'cursor',
+    `${ESC}[31mred${ESC}[0m\tkept`,
+    'bell cr back 2J c1',
+    'link unterminated ',
+  ].join('\n'));
 });
