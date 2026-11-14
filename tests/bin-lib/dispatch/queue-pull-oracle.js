@@ -6,10 +6,15 @@
 //   <root>/tmp/run-N  a fresh TMPDIR per run, so session files never leak across runs
 //   <root>/proj       a clone of <root>/origin.git: the cwd, with policy.yml and the pre-minted
 //                     dispatch-standalone run dir
-//   <root>/bin        PATH shims: gh (answers from QP_SHIM_TABLE, never the real gh), git (the
-//                     real git, only inside <root>), mktemp (counter-file names) and node (the real
-//                     node, logging two CLIs' inputs first: nodeShim)
-//   <root>/logs       gh-argv.jsonl, git-argv.jsonl, cli-calls/ and the mktemp counter
+//   <root>/bin        PATH shims (writeShims), each a sh script: gh (the table's exact, effect-free
+//                     answers baked in, never the real gh: ghShimScript), git (exec'ing the real git,
+//                     only inside <root>: gitShimScript), mktemp (counter-file names,
+//                     mktempShimScript) and node (the real node, logging two CLIs' inputs first:
+//                     nodeShim)
+//   <root>/shim       not on PATH: gh-fallback (the node gh shim bin/gh execs for graphql, effects and
+//                     misses, answering from QP_SHIM_TABLE)
+//   <root>/logs       gh-argv.nul, git-argv.nul (NUL-framed records: SHIM_LOGS), cli-calls/ and the
+//                     mktemp counter
 //   <root>/agent      files transport only: what the agent fetched through MCP (QP_AGENT_DIR), which
 //                     filesOracleScript's agent writes copy from, and DISPATCH_FOREIGN_STATES
 //   <root>/sysbin     files transport only: links to the system tools the fence runs, so the PATH
@@ -17,7 +22,7 @@
 // The env is explicit (shell-scanner-bash-differential's escape rules): nothing is inherited
 // except NODE_OPTIONS (the clock stub's --require appended) and CT_TRACE_*, so the test-impact
 // tracer still sees the children. Every run sits inside withEscapeGuard on this checkout.
-// The shim files re-enter this module through shimMain(), so keep its top level cheap.
+// The gh fallback re-enters this module through shimMain(), so keep its top level cheap.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -28,7 +33,7 @@ const { STUB_SKIP_REASON } = require('../../helpers/path-stub');
 const { readText } = require('../../helpers/read-skill');
 const { fixtureGit } = require('../../helpers/git-fixtures');
 const {
-  ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable, agentInputs,
+  ghAnswer, applyEffect, shimTable, agentInputs,
 } = require('./queue-pull-fixtures');
 
 const REPO = path.resolve(__dirname, '..', '..', '..');
@@ -272,20 +277,77 @@ function writeSystemBin(sysbin) {
   }
 }
 
-function writeShims(bin, { gh = true } = {}) {
+// writeShims({ bin, shimDir, root, realGit, table, gh }) writes the PATH shims into `bin`: git
+// (gitShimScript, `table` baked in), mktemp (mktempShimScript), node and, when `gh` is true, gh
+// (ghShimScript). `shimDir` (<root>/shim, not on PATH) holds what bin/gh needs beside it: the node
+// fallback gh-fallback. createSandbox calls this once and setScenario again for each new table, so
+// the baked values follow the scenario.
+function writeShims({ bin, shimDir, root, realGit, table, gh = true }) {
   if (/\s/.test(process.execPath)) {
     throw new Error(`queue-pull oracle: the node path ${process.execPath} holds whitespace, so it cannot stand in a #! line`);
   }
-  for (const kind of gh ? ['gh', 'git', 'mktemp'] : ['git', 'mktemp']) {
-    const src = `#!${process.execPath}\n'use strict';\nrequire(${JSON.stringify(__filename)}).shimMain(${JSON.stringify(kind)});\n`;
-    fs.writeFileSync(path.join(bin, kind), src, { mode: 0o755 });
+  if (gh) {
+    const fallback = `#!${process.execPath}\n'use strict';\nrequire(${JSON.stringify(__filename)}).shimMain('gh');\n`;
+    fs.writeFileSync(path.join(shimDir, 'gh-fallback'), fallback, { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'gh'), ghShimScript({ shimDir, table }), { mode: 0o755 });
   }
+  fs.writeFileSync(path.join(bin, 'git'), gitShimScript({ root, realGit, table }), { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'mktemp'), mktempShimScript(), { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'node'), nodeShim(), { mode: 0o755 });
 }
 
 // POSIX single-quoting: the text stands for itself in bash, whatever it holds.
 function shQuote(text) {
   return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+// bin/mktemp: a POSIX sh script taking no arguments: <TMPDIR>/tmp.qp<8-digit counter>, the counter
+// read from and written back to QP_TMPNAME_COUNTER_FILE -- the name and counter format deps.tmpName
+// (queue-pull.js) emits under the same env var, which also reads an absent or empty counter as 0.
+// Any other counter must be one or more digits (leading zeros are decimal), at most 15 once those
+// are stripped (the module refuses past Number.MAX_SAFE_INTEGER; shell arithmetic overflows past
+// 18). The file is created exclusively with mode 0600 and the counter written only after that; a
+// counter write that fails refuses too, leaving the created file behind. Refuses (exit 97,
+// `mktemp-shim: refused ({why}): {args}`): an argument, a missing TMPDIR or counter path, a counter
+// that is not digits, a next name that already exists (the old node shim died on EEXIST, exit 1).
+// No forks: no $(...), subshell or pipe; dash and macOS /bin/sh alike.
+function mktempShimScript() {
+  return [
+    '#!/bin/sh',
+    '# Generated by tests/bin-lib/dispatch/queue-pull-oracle.js (mktempShimScript).',
+    "IFS=' '",
+    'qp_refuse() {',
+    '  why=$1; shift',
+    '  printf \'mktemp-shim: refused (%s): %s\\n\' "$why" "$*" >&2',
+    '  exit 97',
+    '}',
+    '[ $# -eq 0 ] || qp_refuse \'arguments are not supported\' "$@"',
+    '[ -n "$TMPDIR" ] && [ -n "$QP_TMPNAME_COUNTER_FILE" ] || qp_refuse \'TMPDIR and QP_TMPNAME_COUNTER_FILE are required\'',
+    'n=',
+    'IFS= read -r n 2>/dev/null < "$QP_TMPNAME_COUNTER_FILE"',
+    "IFS=' '",
+    'case "$n" in',
+    '  *[!0-9]*) qp_refuse "counter file holds \\"$n\\"" ;;',
+    'esac',
+    'while :; do',
+    '  case "$n" in 0?*) n=${n#0} ;; *) break ;; esac',
+    'done',
+    '[ ${#n} -le 15 ] || qp_refuse "counter file holds \\"$n\\""',
+    'n=$((${n:-0} + 1))',
+    'p=$n',
+    'while [ ${#p} -lt 8 ]; do p=0$p; done',
+    'f=$TMPDIR/tmp.qp$p',
+    'umask 077',
+    'set -C',
+    'true 2>/dev/null > "$f" || {',
+    '  if [ -e "$f" ]; then qp_refuse "file exists: $f"; fi',
+    '  qp_refuse "cannot create: $f"',
+    '}',
+    'set +C',
+    'printf \'%s\' "$n" 2>/dev/null > "$QP_TMPNAME_COUNTER_FILE" || qp_refuse "cannot write counter: $QP_TMPNAME_COUNTER_FILE"',
+    'printf \'%s\\n\' "$f"',
+    '',
+  ].join('\n');
 }
 
 // bin/node: the real node, exec'd (same pid, stdin, exit and signals), after logging the two CLI
@@ -295,7 +357,7 @@ function shQuote(text) {
 // stdout). The logging is silent: nothing it does reaches the run's own streams.
 function nodeShim() {
   return [
-    '#!/bin/bash',
+    '#!/bin/sh',
     'case "$1" in',
     '  */bin/resolve-policy.js|*/bin/dispatch-unlanded-blockers.js)',
     '    if [ -n "$QP_LOG_DIR" ]; then',
@@ -309,6 +371,276 @@ function nodeShim() {
     '    fi ;;',
     'esac',
     `exec ${shQuote(process.execPath)} "$@"`,
+    '',
+  ].join('\n');
+}
+
+// bin/git: the sandbox's containment guard, a POSIX sh script with root, the real git, the canned
+// origin URL and the injected-failure prefixes baked in. It refuses (exit 97, logged REFUSED) an
+// exported GIT_DIR/GIT_WORK_TREE, config carried in the env (GIT_CONFIG_PARAMETERS, or
+// GIT_CONFIG_COUNT, which git needs before it reads any GIT_CONFIG_KEY_<n>), a repository moved by
+// the env (GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES), a
+// GIT_INDEX_FILE that is absolute and lexically outside root, or relative with a .. segment (git
+// resolves a relative one from the worktree top, so a .. can climb out of the sandbox; the
+// plugin's scratch indexes are absolute, under the sandbox TMPDIR), an unknown leading
+// global option, any -c key but core.quotePath
+// (the one key any plugin call path sets, review-context's; an allow-list, because a deny-list of
+// the keys that run a command or move git's view off the sandbox always misses one: include.path
+// pulls in a config file that can set any of them, remote.<name>.receivepack runs a program on
+// push), and a cwd or -C directory that is unresolvable or physically outside root. Each -C is
+// entered with `cd -P` from where the one before it landed, as git's own chdir does, so a symlink
+// cannot walk it out. A gitFail prefix of the sub-argv exits 128, `remote get-url origin` prints
+// the canned URL, and anything else is logged and exec'd as the real git from the original cwd,
+// PWD and OLDPWD. A log record it cannot write stops the call (exit 97) before git runs.
+// The refused argv is cut at 300 bytes (the sandbox runs LANG=C, and dash always counts bytes),
+// where the old node shim cut at 300 UTF-16 units: the two cuts differ whenever the joined argv is
+// over 300 bytes and holds non-ASCII text before the cut.
+// The shim contains where git acts (directories, repository, config), not which programs git may
+// run: GIT_SSH_COMMAND, GIT_EXTERNAL_DIFF, GIT_ASKPASS, GIT_PAGER/GIT_EDITOR and GIT_EXEC_PATH stay
+// unchecked, and withEscapeGuard backs it up.
+// No forks for its own checks: no $(...), subshell or pipe; dash and macOS /bin/sh alike.
+function gitShimScript({ root, realGit, table }) {
+  const failTests = table.git.fail.map((prefix) => {
+    const tests = [`[ $# -ge ${prefix.length} ]`, ...prefix.map((token, k) => `[ "\${${k + 1}}" = ${shQuote(token)} ]`)];
+    return `  if ${tests.join(' && ')}; then qp_join "$@"; qp_kind=injected; return; fi`;
+  });
+  return [
+    '#!/bin/sh',
+    '# Generated by tests/bin-lib/dispatch/queue-pull-oracle.js (gitShimScript); rewritten by setScenario.',
+    'unset CDPATH',
+    'qp_pwd=$PWD',
+    'qp_oldpwd_set=${OLDPWD+1}',
+    'qp_oldpwd=$OLDPWD',
+    '# The physical cwd; empty (refused below) when it cannot be resolved. In a deleted cwd both',
+    '# shells let `cd -P .` succeed and leave PWD non-absolute (`.` or empty).',
+    'qp_cwd=',
+    'if cd -P . 2>/dev/null; then',
+    '  case $PWD in /*) qp_cwd=$PWD ;; esac',
+    'fi',
+    'if [ -z "$QP_LOG_DIR" ]; then',
+    "  printf 'git-shim: QP_LOG_DIR is required\\n' >&2",
+    '  exit 97',
+    'fi',
+    `qp_root=${shQuote(root)}`,
+    '',
+    '# qp_log TAG WHY ARGV...: one NUL-framed record (SHIM_LOGS) carrying the physical cwd. A write',
+    '# that fails stops the call: an unlogged call would read as one that never happened.',
+    'qp_log() {',
+    '  qp_tag=$1',
+    '  qp_lwhy=$2',
+    '  shift 2',
+    `  { printf '%s\\0' "$qp_tag" "$qp_lwhy" "$qp_cwd" "$#" "$@" >> "$QP_LOG_DIR/git-argv.nul"; } 2>/dev/null && return`,
+    "  printf 'git-shim: cannot write %s\\n' \"$QP_LOG_DIR/git-argv.nul\" >&2",
+    '  exit 97',
+    '}',
+    '',
+    "# qp_join ARGS...: qp_j = the args joined by single spaces (JS argv.join(' ')).",
+    'qp_join() {',
+    '  qp_j=',
+    '  qp_first=1',
+    '  for qp_x in "$@"; do',
+    '    if [ -n "$qp_first" ]; then qp_j=$qp_x; qp_first=; else qp_j="$qp_j $qp_x"; fi',
+    '  done',
+    '}',
+    '',
+    '# qp_refuse WHY ARGV...: log REFUSED, print the argv cut at 300 bytes, exit 97.',
+    'qp_refuse() {',
+    '  qp_why=$1',
+    '  qp_log REFUSED "$@"',
+    '  shift',
+    '  qp_join "$@"',
+    '  if [ "${#qp_j}" -gt 300 ]; then',
+    '    qp_q=?',
+    '    while [ "${#qp_q}" -lt 300 ]; do qp_q="$qp_q?"; done',
+    '    qp_tail=${qp_j#$qp_q}',
+    '    qp_j=${qp_j%"$qp_tail"}',
+    '  fi',
+    "  printf 'git-shim: refused (%s): %s\\n' \"$qp_why\" \"$qp_j\" >&2",
+    '  exit 97',
+    '}',
+    '',
+    '# qp_inside DIR: true when DIR is root or under it.',
+    'qp_inside() {',
+    '  case $1 in "$qp_root"|"$qp_root"/*) return 0 ;; esac',
+    '  return 1',
+    '}',
+    '',
+    '# qp_norm DIR: qp_p = DIR resolved lexically against qp_cur, as path.resolve does.',
+    'qp_norm() {',
+    '  case $1 in /*) qp_r=$1 ;; *) qp_r=$qp_cur/$1 ;; esac',
+    '  qp_p=',
+    '  while [ -n "$qp_r" ]; do',
+    '    qp_s=${qp_r%%/*}',
+    '    case $qp_r in */*) qp_r=${qp_r#*/} ;; *) qp_r= ;; esac',
+    '    case $qp_s in',
+    "      ''|.) ;;",
+    '      ..) qp_p=${qp_p%/*} ;;',
+    '      *) qp_p=$qp_p/$qp_s ;;',
+    '    esac',
+    '  done',
+    '  if [ -z "$qp_p" ]; then qp_p=/; fi',
+    '}',
+    '',
+    '# qp_key SETTING: records the first -c key that is not core.quotepath (any case).',
+    'qp_key() {',
+    '  qp_k=${1%%=*}',
+    '  case $qp_k in',
+    '    [cC][oO][rR][eE].[qQ][uU][oO][tT][eE][pP][aA][tT][hH]) ;;',
+    '    *) if [ -z "$qp_isbad" ]; then qp_isbad=1; qp_badkey=$qp_k; fi ;;',
+    '  esac',
+    '}',
+    '',
+    'if [ -n "$GIT_DIR" ] || [ -n "$GIT_WORK_TREE" ]; then qp_refuse \'GIT_DIR/GIT_WORK_TREE set\' "$@"; fi',
+    'if [ -n "$GIT_CONFIG_COUNT" ] || [ -n "$GIT_CONFIG_PARAMETERS" ]; then qp_refuse \'GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS set\' "$@"; fi',
+    'if [ -n "$GIT_COMMON_DIR" ] || [ -n "$GIT_OBJECT_DIRECTORY" ] || [ -n "$GIT_ALTERNATE_OBJECT_DIRECTORIES" ]; then qp_refuse \'GIT_COMMON_DIR/GIT_OBJECT_DIRECTORY/GIT_ALTERNATE_OBJECT_DIRECTORIES set\' "$@"; fi',
+    '# An absolute GIT_INDEX_FILE, its .. resolved lexically (qp_norm ignores qp_cur for one), must be',
+    '# root or under it. git resolves a relative one from the worktree top, so one with a .. segment',
+    '# is refused outright.',
+    'case $GIT_INDEX_FILE in',
+    '  /*) qp_norm "$GIT_INDEX_FILE"; qp_inside "$qp_p" || qp_refuse "GIT_INDEX_FILE outside the sandbox: $GIT_INDEX_FILE" "$@" ;;',
+    '  ..|../*|*/..|*/../*) qp_refuse "GIT_INDEX_FILE outside the sandbox: $GIT_INDEX_FILE" "$@" ;;',
+    'esac',
+    '',
+    "# The leading global options (queue-pull-fixtures.js's gitSubArgv): qp_n counts their tokens.",
+    'qp_n=0',
+    'qp_want=',
+    'qp_isunknown=',
+    'qp_unknown=',
+    'qp_isbad=',
+    'qp_badkey=',
+    'for qp_a in "$@"; do',
+    '  case $qp_want in',
+    '    C) qp_want=; qp_n=$((qp_n + 1)); continue ;;',
+    '    c) qp_want=; qp_n=$((qp_n + 1)); qp_key "$qp_a"; continue ;;',
+    '  esac',
+    '  case $qp_a in',
+    '    --version) break ;;',
+    '    -C) qp_want=C ;;',
+    '    -c) qp_want=c ;;',
+    '    --no-optional-locks|--no-pager|--literal-pathspecs) ;;',
+    '    -*) qp_isunknown=1; qp_unknown=$qp_a; break ;;',
+    '    *) break ;;',
+    '  esac',
+    '  qp_n=$((qp_n + 1))',
+    'done',
+    '# A trailing -c has an empty value, so an empty key.',
+    'if [ "$qp_want" = c ]; then qp_key \'\'; fi',
+    'if [ -n "$qp_isunknown" ]; then qp_refuse "unknown global option $qp_unknown" "$@"; fi',
+    'if [ -n "$qp_isbad" ]; then qp_refuse "config key not allowed: $qp_badkey" "$@"; fi',
+    '',
+    '# The physical cwd, then each -C entered from where the one before it landed. An empty -C is',
+    '# a no-op (as in git); a relative one gets ./ so `cd -P -- -` cannot mean $OLDPWD.',
+    'if [ -z "$qp_cwd" ]; then qp_refuse \'unresolvable cwd\' "$@"; fi',
+    'qp_inside "$qp_cwd" || qp_refuse "outside the sandbox: $qp_cwd" "$@"',
+    'qp_cur=$qp_cwd',
+    'qp_i=0',
+    'qp_want=',
+    'for qp_a in "$@"; do',
+    '  [ "$qp_i" -lt "$qp_n" ] || break',
+    '  qp_i=$((qp_i + 1))',
+    '  case $qp_want in',
+    '    c) qp_want=; continue ;;',
+    '    C)',
+    '      qp_want=',
+    '      [ -n "$qp_a" ] || continue',
+    '      case $qp_a in /*) qp_d=$qp_a ;; *) qp_d=./$qp_a ;; esac',
+    '      if cd -P -- "$qp_d" 2>/dev/null; then',
+    '        qp_cur=$PWD',
+    '        qp_inside "$qp_cur" || qp_refuse "outside the sandbox: $qp_cur" "$@"',
+    '      else',
+    '        qp_norm "$qp_a"',
+    '        qp_refuse "unresolvable directory $qp_p" "$@"',
+    '      fi',
+    '      continue ;;',
+    '  esac',
+    '  case $qp_a in -C) qp_want=C ;; -c) qp_want=c ;; esac',
+    'done',
+    '# Back to the cwd, PWD and OLDPWD this shim started with (cd moved OLDPWD), which the real',
+    '# git inherits.',
+    'cd -P -- "$qp_cwd" 2>/dev/null || qp_refuse "cannot return to $qp_cwd" "$@"',
+    'PWD=$qp_pwd',
+    'if [ -n "$qp_oldpwd_set" ]; then OLDPWD=$qp_oldpwd; else unset OLDPWD; fi',
+    '',
+    '# qp_route SUB-ARGV: qp_kind = injected (qp_j = the sub-argv joined), canned or delegated.',
+    'qp_route() {',
+    '  shift "$qp_n"',
+    ...failTests,
+    '  if [ $# -eq 3 ] && [ "$1" = remote ] && [ "$2" = get-url ] && [ "$3" = origin ]; then qp_kind=canned; return; fi',
+    '  qp_kind=delegated',
+    '}',
+    'qp_route "$@"',
+    'case $qp_kind in',
+    '  injected)',
+    "    qp_log injected '' \"$@\"",
+    "    printf 'git-shim: injected failure: %s\\n' \"$qp_j\" >&2",
+    '    exit 128 ;;',
+    '  canned)',
+    "    qp_log canned '' \"$@\"",
+    `    printf '%s\\n' ${shQuote(table.git.remoteUrl)}`,
+    '    exit 0 ;;',
+    'esac',
+    "qp_log delegated '' \"$@\"",
+    `exec ${shQuote(realGit)} "$@"`,
+    '',
+  ].join('\n');
+}
+
+// bin/gh: a POSIX sh script answering the table's exact-argv, effect-free entries without a node
+// start, one `if` arm per entry in table order. An entry whose argv an earlier entry already holds
+// gets no arm (ghAnswer never returns it), and an effect entry gets none either, so the calls they
+// would answer fall through. A hit logs one SHIM_LOGS.gh record (tag injected for a non-zero
+// status, else ok; why and cwd empty), writes stdout then stderr and exits with the status, as
+// ghShim does. Every answer is inline (measured: a 277 KB inline answer added ~7 ms to each call
+// that parses past it under macOS /bin/sh, nothing measurable under dash or at fixture sizes).
+// Every other call (api graphql, an effect entry, a miss) execs <shimDir>/gh-fallback, the node
+// shim (ghShim), so ghAnswer still answers it and a miss still exits 97, logged UNHANDLED. An
+// empty QP_LOG_DIR is refused (exit 97) before any arm or the fallback, and a log record it cannot
+// write stops the call (exit 97) before any output. No forks: no $(...), subshell or pipe; dash
+// and macOS /bin/sh alike.
+function ghShimScript({ shimDir, table }) {
+  const arms = [];
+  const held = new Set();
+  table.gh.forEach((entry, i) => {
+    if (!Array.isArray(entry.argv)) return;
+    const key = JSON.stringify(entry.argv);
+    if (held.has(key)) return;
+    held.add(key);
+    if (entry.effect) return;
+    const stdout = entry.stdout || '';
+    const stderr = entry.stderr || '';
+    const status = entry.status || 0;
+    // A sh literal cannot carry a NUL byte, so an answer holding one would be cut short.
+    if (typeof stdout !== 'string' || typeof stderr !== 'string' || /\0/.test(stdout + stderr)
+      || !Number.isInteger(status) || status < 0 || status > 255) {
+      throw new Error(`ghShimScript: scenario.gh[${i}] needs a NUL-free string stdout and stderr and a status in 0..255`);
+    }
+    const writes = [];
+    if (stdout) writes.push(`printf '%s' ${shQuote(stdout)}`);
+    if (stderr) writes.push(`printf '%s' ${shQuote(stderr)} >&2`);
+    const tests = [`[ $# -eq ${entry.argv.length} ]`, ...entry.argv.map((a, k) => `[ "\${${k + 1}}" = ${shQuote(a)} ]`)];
+    arms.push(`if ${tests.join(' && ')}; then`, `  qp_log ${status ? 'injected' : 'ok'} "$@"`, ...writes.map((line) => `  ${line}`), `  exit ${status}`, 'fi');
+  });
+  return [
+    '#!/bin/sh',
+    '# Generated by tests/bin-lib/dispatch/queue-pull-oracle.js (ghShimScript); rewritten by setScenario.',
+    '# An empty QP_LOG_DIR would send the fallback\'s record to a relative gh-argv.nul in the cwd.',
+    'if [ -z "$QP_LOG_DIR" ]; then',
+    "  printf 'gh-shim: QP_LOG_DIR is required\\n' >&2",
+    '  exit 97',
+    'fi',
+    '',
+    '# qp_log TAG ARGV...: one NUL-framed record (SHIM_LOGS), why and cwd empty. A write that fails',
+    '# stops the call: an unlogged answer would read as a call that never happened.',
+    'qp_log() {',
+    '  qp_tag=$1',
+    '  shift',
+    `  { printf '%s\\0' "$qp_tag" '' '' "$#" "$@" >> "$QP_LOG_DIR/gh-argv.nul"; } 2>/dev/null && return`,
+    "  printf 'gh-shim: cannot write %s\\n' \"$QP_LOG_DIR/gh-argv.nul\" >&2",
+    '  exit 97',
+    '}',
+    '',
+    ...arms,
+    `exec ${shQuote(path.join(shimDir, 'gh-fallback'))} "$@"`,
     '',
   ].join('\n');
 }
@@ -366,8 +698,9 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     fs.writeFileSync(path.join(runDir, 'decisions.md'), '');
 
     const onFiles = transport === 'files';
-    writeShims(bin, { gh: !onFiles });
-    fs.writeFileSync(tablePath, JSON.stringify({ ...table, root, realGit }));
+    const shimDir = dir('shim');
+    fs.writeFileSync(tablePath, JSON.stringify(table));
+    writeShims({ bin, shimDir, root, realGit, table, gh: !onFiles });
     const agentDir = dir('agent');
     for (const [file, content] of Object.entries(agent)) fs.writeFileSync(path.join(agentDir, file), content);
     let foreignStates = null;
@@ -411,7 +744,11 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
       // overflow as one).
       return JSON.parse(git(['-C', originDir, 'show', 'health-state:queue-order/order.json'], { maxBuffer: 64 * 1024 * 1024 }));
     };
-    const setScenario = (next) => fs.writeFileSync(tablePath, JSON.stringify({ ...shimTable(next), root, realGit }));
+    const setScenario = (next) => {
+      const nextTable = shimTable(next);
+      fs.writeFileSync(tablePath, JSON.stringify(nextTable));
+      writeShims({ bin, shimDir, root, realGit, table: nextTable, gh: !onFiles });
+    };
     return {
       name, transport, scenario, root, home, proj, bin, logs, agentDir, origin: originDir, runDir, runs: 0, runEnv, orderBlob, cleanup, setScenario,
     };
@@ -476,11 +813,44 @@ const readOrNull = (file) => {
     throw err;
   }
 };
-const readJsonl = (file) => (readOrNull(file) || '').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+// The shim logs (under <root>/logs). One record per shim call, every writer alike: the fields tag,
+// why, cwd, argc (a decimal string) and then each argv element, every one followed by one NUL byte.
+// NUL cannot occur in an argv element, so no escaping is needed and the sh shims can write a record
+// with one `printf '%s\0' "$tag" "$why" "$cwd" "$#" "$@"`.
+const SHIM_LOGS = { gh: 'gh-argv.nul', git: 'git-argv.nul' };
+
+function appendShimRecord(file, { tag, why = '', cwd = '', argv }) {
+  const fields = [tag, why, cwd, String(argv.length), ...argv];
+  fs.appendFileSync(file, fields.map((f) => `${f}\0`).join(''));
+}
+
+// readShimLog(logsDir, kind) -> [{ tag, argv }] for 'gh'; [{ tag, cwd, argv }] for 'git', plus `why`
+// when it is non-empty. An absent log reads as []; a record that is cut short or whose argc is not
+// a decimal integer throws.
+function readShimLog(logsDir, kind) {
+  const file = path.join(logsDir, SHIM_LOGS[kind]);
+  const text = readOrNull(file) || '';
+  const malformed = (detail) => new Error(`readShimLog: malformed record in ${file}: ${detail}`);
+  if (text !== '' && !text.endsWith('\0')) throw malformed('file ends mid-field');
+  const fields = text === '' ? [] : text.slice(0, -1).split('\0');
+  const records = [];
+  for (let i = 0; i < fields.length;) {
+    if (i + 4 > fields.length) throw malformed('file ends mid-record');
+    const [tag, why, cwd, argc] = fields.slice(i, i + 4);
+    if (!/^\d+$/.test(argc)) throw malformed(`argc is not a decimal integer: ${JSON.stringify(argc)}`);
+    const end = i + 4 + Number(argc);
+    if (end > fields.length) throw malformed(`argc ${argc} but the file ends after ${fields.length - i - 4} argument(s)`);
+    const argv = fields.slice(i + 4, end);
+    records.push(kind === 'git' ? { tag, ...(why ? { why } : {}), cwd, argv } : { tag, argv });
+    i = end;
+  }
+  return records;
+}
 
 // The session dir a run's node processes resolve under its TMPDIR: plugin/bin/lib/session-tmp.js's
 // sessionTmpRoot rule, which this test process cannot call directly (its os.tmpdir() differs), over
-// the plugin's own session-id rule (required here, not at the top, as the shims re-enter this file).
+// the plugin's own session-id rule (required here, not at the top, as the gh fallback re-enters this file).
 const sessionDirUnder = (tmpdir, sessionId) => {
   const { resolveSessionId } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'session-tmp.js'));
   return path.join(tmpdir, `ct-session-${resolveSessionId(sessionId)}`);
@@ -500,7 +870,7 @@ async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}`, tm
     fs.mkdirSync(tmpdir, { recursive: true });
     const scriptFile = path.join(sandbox.root, `queue-pull-${sandbox.runs}.sh`);
     fs.writeFileSync(scriptFile, script);
-    for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
+    for (const log of Object.values(SHIM_LOGS)) fs.writeFileSync(path.join(sandbox.logs, log), '');
     fs.rmSync(path.join(sandbox.logs, 'cli-calls'), { recursive: true, force: true });
 
     const run = await spawnBounded(bash, ['--noprofile', '--norc', '-c', 'ulimit -f 4096; exec "$0" --noprofile --norc "$1"', bash, scriptFile],
@@ -521,7 +891,7 @@ async function runModuleCli(sandbox, argv, { sessionId = `qp-${sandbox.name}`, s
     sandbox.runs += 1;
     const tmpdir = path.join(sandbox.root, 'tmp', tmp || `run-${sandbox.runs}`);
     fs.mkdirSync(tmpdir, { recursive: true });
-    for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
+    for (const log of Object.values(SHIM_LOGS)) fs.writeFileSync(path.join(sandbox.logs, log), '');
     fs.rmSync(path.join(sandbox.logs, 'cli-calls'), { recursive: true, force: true });
     if (Object.keys(stage).length) {
       const sessionDir = sessionDirUnder(tmpdir, sessionId);
@@ -554,8 +924,8 @@ function collectResult(sandbox, run, tmpdir, sessionId) {
     staged,
     decisions: readOrNull(path.join(sandbox.runDir, 'decisions.md')),
     orderBlob: sandbox.orderBlob(),
-    ghArgv: readJsonl(path.join(sandbox.logs, 'gh-argv.jsonl')),
-    gitArgv: readJsonl(path.join(sandbox.logs, 'git-argv.jsonl')),
+    ghArgv: readShimLog(sandbox.logs, 'gh'),
+    gitArgv: readShimLog(sandbox.logs, 'git'),
     cliCalls: readCliCalls(path.join(sandbox.logs, 'cli-calls')),
   };
 }
@@ -788,17 +1158,17 @@ async function runPair({ name, scenario, transport = 'gh', origin = null, agent 
   return { oracle: oracle.value, module: module.value };
 }
 
-// --- the shims (each bin/ file re-enters here) -------------------------------------
+// --- the node gh shim (<root>/shim/gh-fallback re-enters here) -------------------------
 
-function shimLog(file, entry) {
-  fs.appendFileSync(path.join(process.env.QP_LOG_DIR, file), JSON.stringify(entry) + '\n');
+function shimLog(kind, entry) {
+  appendShimRecord(path.join(process.env.QP_LOG_DIR, SHIM_LOGS[kind]), entry);
 }
 
 function ghShim(table) {
   const argv = process.argv.slice(2);
   const answer = ghAnswer(table.gh, argv);
   if (!answer) {
-    shimLog('gh-argv.jsonl', { tag: 'UNHANDLED', argv });
+    shimLog('gh', { tag: 'UNHANDLED', argv });
     process.stderr.write(`gh-shim: no canned response for: ${argv.join(' ').slice(0, 300)}\n`);
     process.exitCode = 97;
     return;
@@ -806,94 +1176,21 @@ function ghShim(table) {
   // The plugin's own rule; its os.tmpdir() reads the sandbox TMPDIR this shim runs under.
   const { sessionTmpRoot } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'session-tmp.js'));
   applyEffect(answer.effect, sessionTmpRoot(process.env.CLAUDE_CODE_SESSION_ID));
-  shimLog('gh-argv.jsonl', { tag: answer.status ? 'injected' : 'ok', argv });
+  shimLog('gh', { tag: answer.status ? 'injected' : 'ok', argv });
   process.stdout.write(answer.stdout);
   process.stderr.write(answer.stderr);
   process.exitCode = answer.status;
 }
 
-// The only `-c` key the shim lets through: core.quotePath, the one key any plugin call path sets
-// (review-context's). Every other key is refused, because a deny-list of the keys that run a
-// command or move git's view off the sandbox always misses one (include.path pulls in a config
-// file that can set any of them; remote.<name>.receivepack runs a program on push).
-const ALLOWED_CONFIG_KEYS = new Set(['core.quotepath']);
-const refusedConfig = (setting) => !ALLOWED_CONFIG_KEYS.has(setting.split('=')[0].toLowerCase());
-
-function gitShim(table) {
-  const argv = process.argv.slice(2);
-  const cwd = process.cwd();
-  const refuse = (why) => {
-    shimLog('git-argv.jsonl', { tag: 'REFUSED', why, cwd, argv });
-    process.stderr.write(`git-shim: refused (${why}): ${argv.join(' ').slice(0, 300)}\n`);
-    process.exitCode = 97;
-  };
-  if (process.env.GIT_DIR || process.env.GIT_WORK_TREE) return refuse('GIT_DIR/GIT_WORK_TREE set');
-  const parsed = gitSubArgv(argv);
-  if (parsed.unknown) return refuse(`unknown global option ${parsed.unknown}`);
-  const badConfig = parsed.configs.find(refusedConfig);
-  if (badConfig !== undefined) return refuse(`config key not allowed: ${badConfig.split('=')[0]}`);
-  // Each -C resolves against the one before it, as git does.
-  const dirs = [cwd];
-  for (const dir of parsed.dirs) dirs.push(path.resolve(dirs[dirs.length - 1], dir));
-  for (const dir of dirs) {
-    let real;
-    try {
-      real = fs.realpathSync(dir);
-    } catch {
-      return refuse(`unresolvable directory ${dir}`);
-    }
-    if (real !== table.root && !real.startsWith(table.root + path.sep)) return refuse(`outside the sandbox: ${real}`);
-  }
-  const { sub } = parsed;
-  if (gitFailMatch(table.git.fail, sub)) {
-    shimLog('git-argv.jsonl', { tag: 'injected', cwd, argv });
-    process.stderr.write(`git-shim: injected failure: ${sub.join(' ')}\n`);
-    process.exitCode = 128;
-    return undefined;
-  }
-  if (isGetUrlOrigin(sub)) {
-    shimLog('git-argv.jsonl', { tag: 'canned', cwd, argv });
-    process.stdout.write(table.git.remoteUrl + '\n');
-    return undefined;
-  }
-  const r = spawnSync(table.realGit, argv, { stdio: 'inherit', env: process.env });
-  shimLog('git-argv.jsonl', { tag: 'delegated', status: r.status, cwd, argv });
-  process.exitCode = r.status === null ? 1 : r.status;
-  return undefined;
-}
-
-// No args: <TMPDIR>/tmp.qp<8-digit counter>, the counter read from and written back to
-// QP_TMPNAME_COUNTER_FILE (absent = 0) -- the format deps.tmpName emits under the same env var.
-function mktempShim() {
-  const args = process.argv.slice(2);
-  const { TMPDIR, QP_TMPNAME_COUNTER_FILE: counterFile } = process.env;
-  const refuse = (why) => {
-    process.stderr.write(`mktemp-shim: refused (${why}): ${args.join(' ')}\n`);
-    process.exitCode = 97;
-  };
-  if (args.length) return refuse('arguments are not supported');
-  if (!TMPDIR || !counterFile) return refuse('TMPDIR and QP_TMPNAME_COUNTER_FILE are required');
-  const stored = readOrNull(counterFile);
-  const n = stored === null ? 0 : Number(stored);
-  if (!Number.isSafeInteger(n) || n < 0) return refuse(`counter file holds ${JSON.stringify(stored)}`);
-  const file = path.join(TMPDIR, `tmp.qp${String(n + 1).padStart(8, '0')}`);
-  fs.writeFileSync(file, '', { flag: 'wx', mode: 0o600 });
-  fs.writeFileSync(counterFile, String(n + 1));
-  process.stdout.write(file + '\n');
-  return undefined;
-}
-
 function shimMain(kind) {
-  if (kind === 'mktemp') return mktempShim();
   const table = JSON.parse(fs.readFileSync(process.env.QP_SHIM_TABLE, 'utf8'));
   if (kind === 'gh') return ghShim(table);
-  if (kind === 'git') return gitShim(table);
   throw new Error(`unknown shim ${kind}`);
 }
 
 module.exports = {
   REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
   findBash, oracleSkip, extractFence, fenceSessionFiles, sessionFileNames, filesOracleScript,
-  createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shimMain, shQuote,
-  STREAM_TRUNCATED, TAIL_LINES,
+  createSandbox, writeShims, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shimMain, shQuote,
+  STREAM_TRUNCATED, TAIL_LINES, SHIM_LOGS, appendShimRecord, readShimLog,
 };
