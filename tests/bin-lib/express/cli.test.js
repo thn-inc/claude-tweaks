@@ -751,3 +751,48 @@ test('bin/express-lane.js runs as a process: --help prints USAGE (exit 0), a mal
   assert.strictEqual(bad.status, 2);
   assert.match(bad.stderr, /verify requires --run/);
 });
+
+// --- check --max-lines (#5224) --------------------------------------------------
+
+test('AC4.1: check with --max-lines evaluates the diff bounds with that maxLines', () => {
+  const sixty = numstat([[60, 0, KEY_FILES[0]]]);
+  const config = () => ({ mergeSensitivePaths: [], autoMergeMaxLines: 40, autoMergeMaxFiles: 2 });
+
+  const without = fixture();
+  const w = harness(without, { git: fakeGit(without, sixty), blastRadiusConfig: config });
+  assert.strictEqual(run(checkArgv(without), w.deps), 0);
+  assert.deepStrictEqual(w.json(), { action: 'escalate', reason: 'out-of-bounds', detail: '60 implementation lines > 40' });
+
+  const withFlag = fixture();
+  const f = harness(withFlag, { git: fakeGit(withFlag, sixty), blastRadiusConfig: config });
+  assert.strictEqual(run(checkArgv(withFlag, ['--max-lines', '80']), f.deps), 0);
+  const res = f.json();
+  assert.strictEqual(res.action, 'proceed');
+  assert.strictEqual(res.bounds.implLines, 60);
+
+  const tight = fixture();
+  const t = harness(tight, { git: fakeGit(tight, sixty), blastRadiusConfig: () => ({ ...config(), autoMergeMaxLines: 100 }) });
+  assert.strictEqual(run(checkArgv(tight, ['--max-lines', '50']), t.deps), 0);
+  assert.deepStrictEqual(t.json(), { action: 'escalate', reason: 'out-of-bounds', detail: '60 implementation lines > 50' });
+});
+
+test('AC4.2: a malformed --max-lines is a usage error', () => {
+  for (const v of ['5.0', '-3', '0', 'abc']) {
+    const fx = fixture();
+    const h = harness(fx);
+    assert.strictEqual(run(checkArgv(fx, ['--max-lines', v]), h.deps), 2, v);
+    assert.match(h.err.join(''), /--max-lines/, v);
+    assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false, v);
+    assert.strictEqual(h.out.join(''), '', v);
+  }
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(checkArgv(fx, ['--max-lines']), h.deps), 2);
+  assert.match(h.err.join(''), /--max-lines requires a value/);
+  assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false);
+});
+
+test('AC4.1: the USAGE check line names --max-lines as the driver flag', () => {
+  assert.ok(USAGE.includes('[--repo owner/name] [--max-lines <n>]'));
+  assert.match(USAGE, /--max-lines: the pipeline driver's implementation-line bound/);
+});
