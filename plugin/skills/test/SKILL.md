@@ -120,7 +120,7 @@ Run the shared verification procedure from `verification.md` in this skill's dir
 
 ### Whole suite here (`full`)
 
-Run `verification.md` Step 2's run command with `--local` added and no `--scope`, as the full check set: it is not a targeted scope and never passes `--no-stamp`, so it stamps. Skip-if-recent does not apply, and neither does a `VERIFICATION_PASSED=true` signal: a stamp CI wrote, or one from an impact subset, never stands in for a run here. It passes no baseline flags, with or without `$PIPELINE_RUN_DIR`: a whole suite asked for by name reports every failure, and a baseline at the same code (`origin/{integration-branch}` at the release tip) would adjudicate nothing. QA stories do not run.
+Run `verification.md` Step 2's run command with `--local` added and no `--scope`, as the full check set: it is not a targeted scope and never passes `--no-stamp`, so it stamps. Skip-if-recent does not apply, and neither does a `VERIFICATION_PASSED=true` signal: a stamp CI wrote, or one from an impact subset, never stands in for a run here. It passes no baseline flags, with or without `$PIPELINE_RUN_DIR`: a whole suite asked for by name reports every failure, and a baseline at the same code (`origin/{integration-branch}` at the release tip) would adjudicate nothing. QA stories do not run. It never enters Step 3's fix mode: a red `full` run reports its failures and stops, and the caller decides.
 
 ### Targeted scope (with arguments)
 
@@ -213,7 +213,7 @@ Read `report-templates.md` for the full templates, the `PASS_WITH_CAVEATS` propa
 
 ## Step 3: Fix Mode (Optional)
 
-If tests fail and the failures look straightforward (type errors, lint violations, simple test failures), read `fix-mode.md` in this skill's directory for the full procedure. Auto mode routes per `_shared/auto-mode-contract.md` — auto-fix and re-verify, or stage the fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md`, validated per that file's Staging-time gate (`git apply --check`, then its Stacked check) before logging. Interactive mode asks via `AskUserQuestion`, with reproduce-first debugging for behavioral and QA failures.
+A `full` run never enters this step (it reports and stops). If tests fail and the failures look straightforward (type errors, lint violations, simple test failures), read `fix-mode.md` in this skill's directory for the full procedure. Auto mode routes per `_shared/auto-mode-contract.md` — auto-fix and re-verify, or stage the fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md`, validated per that file's Staging-time gate (`git apply --check`, then its Stacked check) before logging. Interactive mode asks via `AskUserQuestion`, with reproduce-first debugging for behavioral and QA failures.
 
 **Phase exit (any run with a run dir, `_shared/integration-model.md`):** one call, `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --run "$PIPELINE_RUN_DIR" --phase test --worktree "{worktree-path}" --fixes {n}[,{m}...]`, in any model or mode; it pushes only under `pr-first` in `worktree` mode — route its output per `_shared/git-discipline.md`'s Phase exit section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. Skipped under `MULTISPEC_PARALLEL_WAVE=1` (`flow/multispec-parallel-waves.md`): do not call it; write one `SKIP` entry naming the marker.
 

@@ -189,8 +189,12 @@ test('AC4.1, AC4.3: /claude-tweaks:test full runs the whole suite here, no argum
     [/Skip-if-recent does not apply/, 'never skipped'],
     [/a stamp CI wrote, or one from an impact subset, never stands in for a run here/, 'why'],
     [/It passes no baseline flags, with or without `\$PIPELINE_RUN_DIR`/, 'no baseline at the release tip'],
+    [/It never enters Step 3's fix mode: a red `full` run reports its failures and stops, and the caller decides/, 'full never enters fix mode'],
   ];
   pinned(sub(s, '### Whole suite here (`full`)'), WHOLE_FACTS);
+  pinned(sectionOf(s, '## Step 3: Fix Mode (Optional)'), [
+    [/A `full` run never enters this step \(it reports and stops\)/, 'Step 3 excludes full'],
+  ]);
   const bullet = lineStartingWith(s, '- `full` argument →');
   pinned(bullet, [[/none of the skips below apply/, 'full ignores the pipeline skips']]);
   const pipeline = s.slice(s.indexOf('**Pipeline behavior:**'));
