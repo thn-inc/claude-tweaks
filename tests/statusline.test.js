@@ -12,6 +12,7 @@ const sl = require('../plugin/bin/claude-tweaks-statusline.js');
 const color = require('../plugin/bin/lib/color');
 const { readText } = require('./helpers/read-skill');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
+const { chmodDenialSkip } = require('./helpers/root');
 
 // The project segment wraps text in OSC 8 hyperlinks (\x1b]8;;URL\x07text\x1b]8;;\x07).
 // Assertions about segment order/content strip those wrappers first; the link
@@ -374,6 +375,920 @@ test('renderProject: resolves a linked worktree to the main project name', () =>
     git(['worktree', 'remove', '--force', worktreeDir], mainDir);
     fs.rmSync(base, { recursive: true, force: true });
   }
+});
+
+// Fixture for the spawn-free main-checkout resolution: one mkdtemp base holding
+// a main repo, an absolute linked worktree, a --relative-paths worktree (null
+// when this git lacks the flag) of a second main repo, since the flag writes an
+// [extensions] section into its main repo's config, a submodule checkout and a
+// symlink to the absolute worktree. fn receives { base, main, wt, relWt, sub, link }.
+function withWorktrees(fn) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-shapes-'));
+  const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const init = (dir) => {
+    fs.mkdirSync(dir);
+    git(['init', '-q', '-b', 'main'], dir);
+    git(['config', 'user.email', 'test@example.com'], dir);
+    git(['config', 'user.name', 'Test'], dir);
+    fs.writeFileSync(path.join(dir, 'README.md'), 'hi');
+    git(['add', '.'], dir);
+    git(['commit', '-q', '-m', 'init'], dir);
+  };
+  const main = path.join(base, 'main-repo');
+  const inner = path.join(base, 'inner-repo');
+  init(main);
+  init(inner);
+  const wt = path.join(base, 'abs-wt');
+  git(['worktree', 'add', '-q', wt, '-b', 'a'], main);
+  const relMain = path.join(base, 'rel-main');
+  init(relMain);
+  let relWt = null;
+  try {
+    const p = path.join(base, 'rel-wt');
+    git(['worktree', 'add', '-q', '--relative-paths', p, '-b', 'b'], relMain);
+    relWt = p;
+  } catch {
+    relWt = null;
+  }
+  // A forward-slash spelling: Git for Windows writes a backslash path into the main
+  // config as an escaped `url = D:\\a\\...`, and the reader defers to git on any backslash.
+  const innerUrl = inner.split(path.sep).join('/');
+  git(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', innerUrl, 'sub'], main);
+  const sub = path.join(main, 'sub');
+  const link = path.join(base, 'link-wt');
+  fs.symlinkSync(wt, link);
+  try {
+    return fn({ base, main, wt, relWt, sub, link });
+  } finally {
+    try { git(['worktree', 'remove', '--force', wt], main); } catch {}
+    if (relWt) { try { git(['worktree', 'remove', '--force', relWt], relMain); } catch {} }
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
+// Git prints forward slashes on win32 (D:/a/x) where a realpath has backslashes;
+// both name one directory. Folded on win32 only, so a POSIX compare stays byte-exact.
+function dirKey(p) {
+  return path.sep === '\\' ? path.resolve(p) : p;
+}
+
+// Git for Windows marks a linked worktree's .git file hidden, and a plain write
+// (CREATE_ALWAYS) over a hidden file is EPERM: remove it first.
+function overwriteGitFile(p, data) {
+  fs.rmSync(p);
+  fs.writeFileSync(p, data);
+}
+
+function gitCommonMain(dir) {
+  const out = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: dir, encoding: 'utf8' }).trim();
+  return path.dirname(fs.realpathSync(path.resolve(dir, out)));
+}
+
+// A --relative-paths worktree is left out: its main config carries [extensions],
+// so the reader defers to git for it (pinned in its own test below).
+function shapeDirs(f) {
+  return [f.wt, f.sub, f.link];
+}
+
+// Runs fn(freshModule) with every child_process launcher wrapped by a
+// recording call-through, re-requiring the status line so its destructured
+// bindings capture the wrappers. Returns { result, launches }.
+function recordLaunches(fn) {
+  const cp = require('node:child_process');
+  const names = ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync'];
+  const originals = {};
+  const launches = [];
+  const modPath = require.resolve('../plugin/bin/claude-tweaks-statusline.js');
+  const savedEntry = require.cache[modPath];
+  for (const n of names) {
+    originals[n] = cp[n];
+    cp[n] = function (file, args, ...rest) {
+      launches.push({ fn: n, file, args: Array.isArray(args) ? args : [] });
+      return originals[n].call(this, file, args, ...rest);
+    };
+  }
+  try {
+    delete require.cache[modPath];
+    const fresh = require(modPath);
+    return { result: fn(fresh), launches };
+  } finally {
+    for (const n of names) cp[n] = originals[n];
+    delete require.cache[modPath];
+    if (savedEntry) require.cache[modPath] = savedEntry;
+  }
+}
+
+test('commonDirFromFs: matches git rev-parse --git-common-dir for every worktree shape', () => {
+  withWorktrees((f) => {
+    for (const dir of shapeDirs(f)) {
+      assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), gitCommonMain(dir), dir);
+    }
+  });
+});
+
+test('resolveMainProjectDir: equals git\'s answer for every worktree shape', () => {
+  withWorktrees((f) => {
+    for (const dir of shapeDirs(f)) {
+      assert.strictEqual(dirKey(sl.resolveMainProjectDir(dir)), dirKey(gitCommonMain(dir)), dir);
+    }
+  });
+});
+
+test('commonDirFromFs: GIT_DIR or GIT_COMMON_DIR in the env defers to git', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_DIR: '/x' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_COMMON_DIR: '/x' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_DIR: '' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_COMMON_DIR: '' }), null);
+  });
+});
+
+// A temp dir whose `.git` FILE holds `content`; fn receives the dir.
+function withGitFile(content, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-gitfile-'));
+  try {
+    fs.writeFileSync(path.join(dir, '.git'), content);
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A fake gitdir whose `commondir` is a directory (EISDIR on read).
+function withEisdirCommondir(fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-eisdir-'));
+  try {
+    const gitdir = path.join(root, 'admin');
+    fs.mkdirSync(path.join(gitdir, 'commondir'), { recursive: true });
+    // Valid git-dir shape (also what an ENOENT fallback would land on), so only
+    // the EISDIR rule can reject it.
+    makeGitDirShape(gitdir);
+    const dir = path.join(root, 'checkout');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, '.git'), `gitdir: ${gitdir}\n`);
+    return fn(dir);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('commonDirFromFs: an unparseable .git file defers to git', () => {
+  withGitFile('not a gitdir line\n', (dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+// A checkout dir holding a real `admin/` dir whose commondir names a real main
+// .git, plus a `.git` file with the given content. A lax parser that slices the
+// content blindly would land on `admin` and return a WRONG non-null answer.
+function withLaxTrap(content, fn) {
+  withWorktrees((f) => {
+    const dir = path.join(f.base, 'trap-checkout');
+    fs.mkdirSync(path.join(dir, 'admin'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), path.join(f.main, '.git'));
+    fs.writeFileSync(path.join(dir, 'admin', 'HEAD'), 'ref: refs/heads/main\n');
+    fs.writeFileSync(path.join(dir, '.git'), content);
+    fn(dir, f);
+  });
+}
+
+// Marks `root` as a valid git directory (HEAD file, objects/ and refs/ dirs).
+function makeGitDirShape(root) {
+  fs.mkdirSync(path.join(root, 'objects'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'refs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'HEAD'), 'ref: refs/heads/main\n');
+}
+
+const GIT_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] };
+
+test('commonDirFromFs: an empty `gitdir: ` path defers to git (git: no path in gitfile)', () => {
+  withGitFile('gitdir: \n', (dir) => {
+    makeGitDirShape(dir); // without the guard, the checkout itself would pass as a git dir
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: a zero-byte commondir defers to git (git dies on it)', () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    makeGitDirShape(path.join(dir, 'admin')); // without the guard, the admin dir itself would pass
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), '');
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: a gitdir without HEAD is not a repository — defers to git', () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    fs.rmSync(path.join(dir, 'admin', 'HEAD'));
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+for (const missing of ['objects', 'refs']) {
+  test(`commonDirFromFs: a common dir without ${missing}/ is not a repository — defers to git`, () => {
+    withLaxTrap('gitdir: admin\n', (dir) => {
+      const common = path.join(dir, 'common2');
+      makeGitDirShape(common);
+      fs.rmSync(path.join(common, missing), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
+      assert.strictEqual(sl.commonDirFromFs(dir), null);
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(result, dir);
+    });
+  });
+}
+
+test('commonDirFromFs: `gitdir:` without the space defers to git (git rejects it)', () => {
+  // 'gitdir:' is 7 chars; a parser that skips 8 would read `admin` from here.
+  withLaxTrap('gitdir:Xadmin\n', (dir) => {
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches.map((l) => l.file), ['git']);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: `gitdir:` on a second line defers to git (git rejects it)', () => {
+  withLaxTrap('# comment\ngitdir: admin\n', (dir) => {
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+test('commonDirFromFs: a multi-line gitdir value defers to git', { skip: process.platform === 'win32' ? 'win32 paths cannot contain a newline' : false }, () => {
+  withLaxTrap('gitdir: admin\nextra\n', (dir, f) => {
+    // A real directory literally named `admin\nextra`: a reader without the
+    // newline check would resolve to it and answer non-null.
+    const odd = path.join(dir, 'admin\nextra');
+    makeGitDirShape(odd);
+    fs.writeFileSync(path.join(odd, 'commondir'), path.join(f.main, '.git'));
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+for (const [label, setup] of [
+  ['garbage content', (head) => fs.writeFileSync(head, 'garbage\n')],
+  ['empty content', (head) => fs.writeFileSync(head, '')],
+  ['a directory', (head) => fs.mkdirSync(head)],
+  ['a symlink to a valid HEAD', (head) => {
+    fs.writeFileSync(`${head}.real`, 'ref: refs/heads/x\n');
+    fs.symlinkSync(`${head}.real`, head);
+  }],
+]) {
+  test(`commonDirFromFs: a gitdir whose HEAD is ${label} is not a repository — defers to git`, { skip: label === 'a symlink to a valid HEAD' && process.platform === 'win32' ? 'symlinks need privileges on win32' : false }, () => {
+    withLaxTrap('gitdir: admin\n', (dir) => {
+      const head = path.join(dir, 'admin', 'HEAD');
+      fs.rmSync(head);
+      setup(head);
+      assert.strictEqual(sl.commonDirFromFs(dir), null);
+      const { launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    });
+  });
+}
+
+test('commonDirFromFs: a 40- or 64-hex HEAD (detached) is a valid repository', () => {
+  for (const hex of ['a'.repeat(40), 'b'.repeat(64)]) {
+    withLaxTrap('gitdir: admin\n', (dir, f) => {
+      fs.writeFileSync(path.join(dir, 'admin', 'HEAD'), `${hex}\r\n`);
+      assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), fs.realpathSync(f.main));
+    });
+  }
+});
+
+test('commonDirFromFs: an objects entry that is an executable FILE is not a repository — defers to git', { skip: process.platform === 'win32' ? 'win32 has no executable bit' : false }, () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    const common = path.join(dir, 'common2');
+    makeGitDirShape(common);
+    fs.rmSync(path.join(common, 'objects'), { recursive: true });
+    const objectsFile = path.join(common, 'objects');
+    fs.writeFileSync(objectsFile, '', { mode: 0o755 }); // passes X_OK, is not a directory
+    fs.chmodSync(objectsFile, 0o755); // the write mode above is masked by the umask
+    // Fail loudly rather than pass vacuously (restrictive umask, noexec mount).
+    fs.accessSync(objectsFile, fs.constants.X_OK);
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+test('commonDirFromFs: GIT_OBJECT_DIRECTORY in the env defers to git', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_OBJECT_DIRECTORY: '/x' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_OBJECT_DIRECTORY: '' }), null);
+  });
+});
+
+test('commonDirFromFs: an objects/ dir without search permission defers to git (access X_OK)', chmodDenialSkip('root ignores directory permissions'), () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    const common = path.join(dir, 'common2');
+    makeGitDirShape(common);
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
+    fs.chmodSync(path.join(common, 'objects'), 0o600);
+    try {
+      assert.strictEqual(sl.commonDirFromFs(dir), null);
+      const { launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    } finally {
+      fs.chmodSync(path.join(common, 'objects'), 0o755);
+    }
+  });
+});
+
+test('commonDirFromFs: sanity — the trap fixture resolves when the line is well formed', () => {
+  withLaxTrap('gitdir: admin\n', (dir, f) => {
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), fs.realpathSync(f.main));
+  });
+});
+
+test('commonDirFromFs: a commondir with a trailing space is not trimmed (git fails on it too)', () => {
+  withWorktrees((f) => {
+    const admin = fs.readFileSync(path.join(f.wt, '.git'), 'utf8').replace(/^gitdir: /, '').trim();
+    fs.writeFileSync(path.join(admin, 'commondir'), '../.. \n');
+    assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: f.wt, stdio: 'pipe' }));
+    assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+  });
+});
+
+test('resolveMainProjectDir: an env redirect reaches git, not the file read', () => {
+  withWorktrees((f) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { env: { GIT_DIR: '' } }));
+    assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
+  });
+});
+
+test('resolveMainProjectDir: an unreadable .git file reaches git', chmodDenialSkip('root ignores file permissions'), () => {
+  withWorktrees((f) => {
+    // A REAL worktree's gitdir line: readable, it takes the fast path (no spawn).
+    const gitFile = path.join(f.wt, '.git');
+    assert.deepStrictEqual(recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt)).launches, []);
+    fs.chmodSync(gitFile, 0);
+    try {
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(result, f.wt); // git cannot read it either
+    } finally {
+      fs.chmodSync(gitFile, 0o644);
+    }
+  });
+});
+
+// Points f.wt's `.git` at `gitdir: <linkParent>/link/<name>`, where `link` is a
+// directory symlink to main/.git/worktrees and the admin dir's commondir is `../..`.
+function pointGitdirThroughSymlink(f, linkParent = f.base) {
+  const adminRoot = path.join(f.main, '.git', 'worktrees');
+  const link = path.join(linkParent, 'link');
+  fs.symlinkSync(adminRoot, link);
+  const name = path.basename(fs.readFileSync(path.join(f.wt, '.git'), 'utf8').trim());
+  assert.strictEqual(fs.readFileSync(path.join(adminRoot, name, 'commondir'), 'utf8').trim(), '../..');
+  overwriteGitFile(path.join(f.wt, '.git'), `gitdir: ${path.join(link, name)}\n`);
+}
+
+test('resolveMainProjectDir: a gitdir reached through a symlink resolves a relative commondir against its realpath', () => {
+  withWorktrees((f) => {
+    pointGitdirThroughSymlink(f);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    if (process.platform === 'win32') {
+      // Git for Windows refuses this gitfile (run 43393630819), so the reader defers.
+      assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(dirKey(result), dirKey(sl.resolveMainProjectDir(f.wt, { fast: false })));
+      return;
+    }
+    assert.deepStrictEqual(launches, []); // the fast path answered, no spawn
+    assert.strictEqual(result, gitCommonMain(f.wt));
+    assert.strictEqual(result, fs.realpathSync(f.main));
+  });
+});
+
+test('commonDirFromFs: on win32, a gitdir path that crosses a symlink defers to git (Git for Windows refuses it)', () => {
+  withWorktrees((f) => {
+    // Built on the real base, so the link is the only symlink on the gitdir path.
+    pointGitdirThroughSymlink(f, fs.realpathSync(f.base));
+    assert.strictEqual(sl.commonDirFromFs(f.wt, undefined, undefined, 'win32'), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { platform: 'win32' }));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(dirKey(result), dirKey(sl.resolveMainProjectDir(f.wt, { fast: false })));
+  });
+});
+
+test('commonDirFromFs: on win32, a gitdir path with no symlink still answers from the file read', () => {
+  withWorktrees((f) => {
+    const answer = sl.commonDirFromFs(f.wt, undefined, undefined, 'win32');
+    assert.notStrictEqual(answer, null);
+    assert.strictEqual(answer, sl.commonDirFromFs(f.wt));
+  });
+});
+
+// A submodule checkout's `.git` holds a relative `gitdir: ../.git/modules/sub`
+// with no [extensions] in the config it leads to, so the fast path answers it. (A
+// --relative-paths worktree has the same relative gitdir, but its main config
+// carries extensions.relativeWorktrees, so the reader defers on it.)
+test('commonDirFromFs: a symlink at another depth to a checkout with a relative gitdir matches git (physical resolve)', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(fs.readFileSync(path.join(f.sub, '.git'), 'utf8').trim(), 'gitdir: ../.git/modules/sub');
+    const deep = path.join(f.base, 'b', 'c');
+    fs.mkdirSync(deep, { recursive: true });
+    const link = path.join(deep, 'link');
+    fs.symlinkSync(f.sub, link);
+    // Decoy at the LEXICALLY resolved gitdir (<deep>/.git/modules/sub), shaped as a git dir.
+    makeGitDirShape(path.join(deep, '.git', 'modules', 'sub'));
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(link)), gitCommonMain(link));
+    assert.strictEqual(sl.resolveMainProjectDir(link), gitCommonMain(link));
+  });
+});
+
+test('commonDirFromFs: a --relative-paths worktree defers to git (its main config carries extensions.relativeWorktrees)', (t) => {
+  withWorktrees((f) => {
+    if (!f.relWt) return t.skip('git lacks --relative-paths');
+    assert.match(fs.readFileSync(path.join(f.base, 'rel-main', '.git', 'config'), 'utf8'), /\[extensions\]/);
+    assert.strictEqual(sl.commonDirFromFs(f.relWt), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.relWt));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.relWt)));
+  });
+});
+
+test('commonDirFromFs: a gitdir that does not exist defers to git', () => {
+  withGitFile('gitdir: /nonexistent/x/.git/worktrees/y\n', (dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+test('commonDirFromFs: an unreadable commondir defers to git', () => {
+  withEisdirCommondir((dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+test('resolveMainProjectDir: each fallback reaches git', () => {
+  const expectedLaunch = { fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] };
+  const check = (dir) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [expectedLaunch]);
+    assert.strictEqual(result, dir);
+  };
+  withGitFile('not a gitdir line\n', check);
+  withGitFile('gitdir: /nonexistent/x/.git/worktrees/y\n', check);
+  withEisdirCommondir(check);
+  withWorktrees((f) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    assert.deepStrictEqual(launches, []);
+    assert.strictEqual(result, gitCommonMain(f.wt));
+  });
+});
+
+test('resolveMainProjectDir: fast:false skips the filesystem read and asks git', () => {
+  withWorktrees((f) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { fast: false }));
+    assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
+  });
+});
+
+test('commonDirFromFs: CRLF .git and commondir files parse the same', () => {
+  withWorktrees((f) => {
+    const fake = path.join(f.base, 'crlf-admin');
+    fs.mkdirSync(fake);
+    fs.writeFileSync(path.join(fake, 'commondir'), `${path.join(f.main, '.git')}\r\n`);
+    fs.writeFileSync(path.join(fake, 'HEAD'), 'ref: refs/heads/main\n');
+    const dir = path.join(f.base, 'crlf-checkout');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, '.git'), `gitdir: ${fake}\r\n`);
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), gitCommonMain(f.wt));
+  });
+});
+
+// --- originUrlFromConfig / readOriginRemote (spawn-free origin URL) ---
+
+function gitOrigin(dir, env = process.env) {
+  try {
+    return execFileSync('git', ['config', '--get', 'remote.origin.url'], { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+const LOCAL_URL = 'https://github.com/o/local.git';
+const ORIGIN_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['config', '--get', 'remote.origin.url'] };
+// tools/run-tests.js sets GIT_CONFIG_COUNT/KEY_n/VALUE_n for every test process,
+// and any GIT_CONFIG* var makes the origin reader defer to git. The reader calls
+// below take this env so a fallback test proves its own trigger, not the runner's.
+const READER_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_CONFIG/i.test(k)));
+
+// Fast-path case: the reader answers `expected`, equals git, and spawns nothing.
+function assertFastOrigin(dir, expected) {
+  assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), expected);
+  assert.strictEqual(gitOrigin(dir), expected);
+  const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
+  assert.strictEqual(result, expected);
+  assert.deepStrictEqual(launches, []);
+}
+
+// Fallback case: the reader answers null ("ask git"), and readOriginRemote
+// launches exactly one `git config --get remote.origin.url` and equals git.
+function assertFallbackOrigin(dir, env = READER_ENV) {
+  assert.strictEqual(sl.originUrlFromConfig(dir, env), null);
+  const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env }));
+  assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+  assert.strictEqual(result, gitOrigin(dir));
+}
+
+test('originUrlFromConfig: plain origin matches git config --get', () => {
+  withRepo('git@github.com:owner/repo.git', (dir) => assertFastOrigin(dir, 'git@github.com:owner/repo.git'));
+});
+
+test('originUrlFromConfig: several url lines — the last wins, as git config --get does', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.appendFileSync(path.join(dir, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/o/second.git\n');
+    assertFastOrigin(dir, 'https://github.com/o/second.git');
+  });
+});
+
+test('originUrlFromConfig: section and key names are case-insensitive', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const cfg = path.join(dir, '.git', 'config');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf8').replace('[remote "origin"]', '[Remote "origin"]').replace('\turl =', '\tURL ='));
+    assertFastOrigin(dir, LOCAL_URL);
+  });
+});
+
+test('originUrlFromConfig: CRLF config parses the same', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const cfg = path.join(dir, '.git', 'config');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf8').replace(/\n/g, '\r\n'));
+    assertFastOrigin(dir, LOCAL_URL);
+  });
+});
+
+test('originUrlFromConfig: a url in another remote or section is not origin\'s', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.appendFileSync(path.join(dir, '.git', 'config'), '[remote "upstream"]\n\turl = https://github.com/o/up.git\n[core]\n\turl = https://github.com/o/core.git\n');
+    assertFastOrigin(dir, LOCAL_URL);
+  });
+});
+
+test('originUrlFromConfig: no origin section — null, git also answers nothing', () => {
+  withRepo(null, (dir) => {
+    assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, gitOrigin(dir));
+    assert.strictEqual(result, null);
+  });
+});
+
+// Each case: a trigger appended/applied to a repo whose origin is LOCAL_URL.
+// Removing the trigger's check from the reader must make it answer something
+// non-null (usually the local url, which git does NOT answer), so the test goes red.
+const origCfg = (dir) => path.join(dir, '.git', 'config');
+const appendCfg = (dir, text) => fs.appendFileSync(origCfg(dir), text);
+const ORIGIN_FALLBACKS = [
+  ['an [include] after the local origin (git answers the included url)', (dir) => {
+    fs.writeFileSync(path.join(dir, '.git', 'extra'), '[remote "origin"]\n\turl = https://github.com/o/included.git\n');
+    appendCfg(dir, '[include]\n\tpath = extra\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/included.git');
+  }],
+  ['an [includeIf] after the local origin (git answers the included url)', (dir) => {
+    fs.writeFileSync(path.join(dir, '.git', 'extra'), '[remote "origin"]\n\turl = https://github.com/o/included.git\n');
+    appendCfg(dir, '[includeIf "gitdir:**"]\n\tpath = extra\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/included.git');
+  }],
+  ['a value containing ;', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/r.git;x\n')],
+  ['a value containing a backslash', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/r\\.git\n')],
+  ['a quoted value', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = "https://github.com/o/r.git"\n')],
+  ['a value containing #', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/r.git # note\n')],
+  ['an old-style [remote.origin] header (git answers it)', (dir) => {
+    appendCfg(dir, '[remote.origin]\n\turl = https://github.com/o/old.git\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/old.git');
+  }],
+  ['text after a section header (git answers the inline url)', (dir) => {
+    appendCfg(dir, '[remote "origin"] url = https://github.com/o/inline.git\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/inline.git');
+  }],
+  ['a trailing-backslash line that folds the next url line into it (git does not answer it)', (dir) => {
+    appendCfg(dir, '[remote "origin"]\n\tfetch = x \\\n\turl = https://github.com/o/swallowed.git\n');
+    assert.strictEqual(gitOrigin(dir), LOCAL_URL);
+  }],
+  ['an unterminated quote in another section (git rejects the whole file)', (dir) => {
+    appendCfg(dir, '[alias]\n\tx = "a\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['a vertical tab before = (git rejects the line)', (dir) => {
+    appendCfg(dir, '[remote "origin"]\n\turl\v= https://github.com/o/vt.git\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['a line starting with a form feed (git rejects the line)', (dir) => appendCfg(dir, '[core]\n\f\tbar = 1\n')],
+  ['an origin url value with a trailing NBSP (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/nb.git\u00a0\n')],
+  ['an origin url value with a leading U+3000 (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = \u3000https://github.com/o/ideo.git\n')],
+  ['an origin url value with a trailing vertical tab (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/vtab.git\v\n')],
+  ['a line holding only a form feed (git allows only space and tab as blank)', (dir) => appendCfg(dir, '[core]\n\f\n')],
+  ['a comment line preceded by a form feed (not a comment to git)', (dir) => appendCfg(dir, '[core]\n\f# note\n')],
+  ['a section header preceded by a form feed', (dir) => appendCfg(dir, '\f[core]\n')],
+  ['a section header followed by a form feed', (dir) => appendCfg(dir, '[core]\f\n')],
+  ['an origin url value with a trailing form feed (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/ff.git\f\n')],
+  ['a line matching no config shape', (dir) => appendCfg(dir, '!!not config\n')],
+  ['a key line before any section (git accepts it; a conservative fallback)', (dir) => {
+    const cfg = origCfg(dir);
+    fs.writeFileSync(cfg, `url = https://github.com/o/stray.git\n${fs.readFileSync(cfg, 'utf8')}`);
+  }],
+  ['a url key with no = (a valueless boolean)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl\n')],
+  ['a .git/config.worktree that git reads (extensions.worktreeConfig) and that overrides origin', (dir) => {
+    appendCfg(dir, '[core]\n\trepositoryformatversion = 1\n[extensions]\n\tworktreeConfig = true\n');
+    fs.writeFileSync(path.join(dir, '.git', 'config.worktree'), '[remote "origin"]\n\turl = https://github.com/o/wt.git\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/wt.git');
+  }],
+  ['an [extensions] section naming an extension git does not know (git refuses the repo)', (dir) => {
+    appendCfg(dir, '[core]\n\trepositoryformatversion = 1\n[extensions]\n\tnoSuchExtension = true\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['an [extensions] section naming a known extension (git answers; any [extensions] section defers)', (dir) => {
+    appendCfg(dir, '[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectFormat = sha1\n');
+    assert.strictEqual(gitOrigin(dir), LOCAL_URL);
+  }],
+  ['core.repositoryformatversion = 2 (git refuses the repo)', (dir) => {
+    appendCfg(dir, '[core]\n\trepositoryformatversion = 2\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['a non-numeric core.repositoryformatversion (git dies on it)', (dir) => {
+    appendCfg(dir, '[Core]\n\tRepositoryFormatVersion = abc\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['an origin url with an embedded NUL (git cuts the value there)', (dir) => {
+    appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/nul.git\0junk\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/nul.git');
+  }],
+];
+for (const [label, setup] of ORIGIN_FALLBACKS) {
+  test(`originUrlFromConfig: ${label} defers to git`, () => {
+    withRepo(LOCAL_URL, (dir) => {
+      setup(dir);
+      assertFallbackOrigin(dir);
+    });
+  });
+}
+
+test('originUrlFromConfig: an unreadable config (a directory at .git/config) defers to git and never throws', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.rmSync(origCfg(dir));
+    fs.mkdirSync(origCfg(dir));
+    assertFallbackOrigin(dir);
+    assert.strictEqual(gitOrigin(dir), null);
+  });
+});
+
+test('originUrlFromConfig: GIT_CONFIG* in the env defers to git', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assertFallbackOrigin(dir, { GIT_CONFIG_GLOBAL: '/dev/null' });
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_CONFIG_COUNT: '0' }), null);
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_CONFIG_GLOBAL: '' }), null);
+  });
+});
+
+test('originUrlFromConfig: GIT_DIR in the env defers to git (even empty)', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assertFallbackOrigin(dir, { GIT_DIR: '/nonexistent' });
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_DIR: '' }), null);
+  });
+});
+
+test('originUrlFromConfig: GIT_COMMON_DIR in the env defers to git (git reads $GIT_COMMON_DIR/config)', () => {
+  withRepo('https://github.com/o/a.git', (a) => {
+    withRepo('https://github.com/o/b.git', (b) => {
+      const env = { GIT_COMMON_DIR: path.join(a, '.git') };
+      const real = execFileSync('git', ['config', '--get', 'remote.origin.url'], { cwd: b, encoding: 'utf8', env: { ...process.env, ...env } }).trim();
+      assert.strictEqual(real, 'https://github.com/o/a.git'); // git answers A, not B
+      assert.strictEqual(sl.originUrlFromConfig(b, env), null);
+      assert.strictEqual(sl.originUrlFromConfig(b, { GIT_COMMON_DIR: '' }), null);
+    });
+  });
+});
+
+test('originUrlFromConfig: an unrelated env var does not defer', () => {
+  withRepo(LOCAL_URL, (dir) => assert.strictEqual(sl.originUrlFromConfig(dir, { PATH: '/x', GITHUB_TOKEN: 'y' }), LOCAL_URL));
+});
+
+test('originUrlFromConfig: a .git FILE (linked worktree) defers to git', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.originUrlFromConfig(f.wt, READER_ENV), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(f.wt, { env: READER_ENV }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, gitOrigin(f.wt));
+  });
+});
+
+test('readOriginRemote: fast:false skips the filesystem read and asks git', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { fast: false }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, LOCAL_URL);
+  });
+});
+
+test('readOriginRemote: an existing directory that is not a repo answers null (git exits non-zero)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
+  try {
+    assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, null);
+    assert.strictEqual(gitOrigin(dir), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('originUrlFromConfig: a comment line ending in a backslash does not swallow the next line (git agrees)', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    appendCfg(dir, '# note \\\n[remote "origin"]\n\turl = https://github.com/o/after.git\n');
+    assertFastOrigin(dir, 'https://github.com/o/after.git');
+  });
+});
+
+// --- repos git refuses to open, non-regular files, env name case (#5266 review) ---
+
+const OWNER_OPTS = { skip: typeof process.geteuid !== 'function' && 'win32: no geteuid; git compares SIDs there and the readers skip the ownership check' };
+const OTHER_UID = typeof process.geteuid === 'function' ? process.geteuid() + 1 : null;
+// git's own test knob: git treats every repo as owned by someone else and refuses it.
+const DIFFERENT_OWNER_ENV = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' };
+
+test('originUrlFromConfig: a main checkout owned by another user defers to git (ensure_valid_ownership)', OWNER_OPTS, () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assert.strictEqual(gitOrigin(dir, DIFFERENT_OWNER_ENV), null); // git really refuses it
+    assert.strictEqual(sl.originUrlFromConfig(dir, {}, process.geteuid()), LOCAL_URL);
+    assert.strictEqual(sl.originUrlFromConfig(dir, {}, OTHER_UID), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV, currentUid: OTHER_UID }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, gitOrigin(dir));
+  });
+});
+
+test('commonDirFromFs: a linked worktree owned by another user defers to git (ensure_valid_ownership)', OWNER_OPTS, () => {
+  withWorktrees((f) => {
+    assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: f.wt, stdio: 'pipe', env: DIFFERENT_OWNER_ENV }), /dubious ownership/);
+    assert.strictEqual(gitOrigin(f.wt, DIFFERENT_OWNER_ENV), null);
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(f.wt, {}, process.geteuid())), gitCommonMain(f.wt));
+    assert.strictEqual(sl.commonDirFromFs(f.wt, {}, OTHER_UID), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { currentUid: OTHER_UID }));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
+  });
+});
+
+// Under sudo git compares SUDO_UID; both readers defer. On a non-root host this
+// cannot go red alone: with currentUid 0 the fixture's owner differs anyway.
+test('both readers defer to git under sudo (euid 0 with SUDO_UID set)', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { SUDO_UID: '1000' }, 0), null);
+    assert.strictEqual(sl.originUrlFromConfig(f.main, { SUDO_UID: '1000' }, 0), null);
+  });
+});
+
+for (const missing of ['HEAD', 'objects', 'refs']) {
+  test(`originUrlFromConfig: a nested .git without ${missing} is not a repository — git answers the parent's url`, () => {
+    withRepo(LOCAL_URL, (dir) => {
+      const child = path.join(dir, 'child');
+      const childGit = path.join(child, '.git');
+      makeGitDirShape(childGit);
+      fs.writeFileSync(path.join(childGit, 'config'), '[remote "origin"]\n\turl = https://github.com/o/child.git\n');
+      assertFastOrigin(child, 'https://github.com/o/child.git'); // complete, it is the child's repo
+      fs.rmSync(path.join(childGit, missing), { recursive: true });
+      assert.strictEqual(gitOrigin(child), LOCAL_URL);
+      assertFallbackOrigin(child);
+    });
+  });
+}
+
+test('originUrlFromConfig: GIT_OBJECT_DIRECTORY in the env defers to git (is_git_directory checks it instead of .git/objects)', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const env = { GIT_OBJECT_DIRECTORY: path.join(dir, 'nonexistent') };
+    assert.strictEqual(gitOrigin(dir, { ...process.env, ...env }), null); // git no longer sees a repo
+    assertFallbackOrigin(dir, env);
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_OBJECT_DIRECTORY: '' }), null);
+  });
+});
+
+test('commonDirFromFs: a NUL in the .git file defers to git, which reads up to it', () => {
+  withWorktrees((f) => {
+    const gitFile = path.join(f.wt, '.git');
+    overwriteGitFile(gitFile, `${fs.readFileSync(gitFile, 'utf8').trim()}\0junk\n`);
+    assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
+  });
+});
+
+// A read that blocks on a FIFO blocks the whole thread, which node:test's timeout
+// cannot interrupt, so the reader runs in a child with its own timeout.
+const FIFO_OPTS = { timeout: 5000, skip: process.platform === 'win32' && 'win32: no mkfifo' };
+function readerInChild(call, p) {
+  const script = `const sl = require(process.argv[1]); const p = process.argv[2]; process.stdout.write(JSON.stringify(${call}));`;
+  return JSON.parse(execFileSync(process.execPath, ['-e', script, STATUSLINE, p], { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'pipe'] }));
+}
+
+test('commonDirFromFs: a FIFO at .git returns null promptly (git refuses it as not a regular file)', FIFO_OPTS, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-fifo-'));
+  try {
+    execFileSync('mkfifo', [path.join(dir, '.git')]);
+    assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', dir), null);
+    assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: dir, stdio: 'pipe' }), /not a regular file/);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// git itself blocks on these two, so the git fallback is not exercised here.
+test('commonDirFromFs: a FIFO at commondir returns null promptly', FIFO_OPTS, () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    const commondir = path.join(dir, 'admin', 'commondir');
+    fs.rmSync(commondir);
+    execFileSync('mkfifo', [commondir]);
+    assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', dir), null);
+  });
+});
+
+test('originUrlFromConfig: a FIFO at .git/config returns null promptly', FIFO_OPTS, () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.rmSync(origCfg(dir));
+    execFileSync('mkfifo', [origCfg(dir)]);
+    assert.strictEqual(readerInChild('sl.originUrlFromConfig(p, {})', dir), null);
+  });
+});
+
+test('originUrlFromConfig: env names match case-insensitively, as on win32', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assertFallbackOrigin(dir, { git_config_global: '/x' });
+    for (const name of ['git_dir', 'Git_Common_Dir', 'git_object_directory']) assertFallbackOrigin(dir, { [name]: '' });
+  });
+});
+
+// A linked worktree whose main repo config git refuses: git dies, so the fast path
+// must not answer the main dir.
+for (const [label, text, fatal] of [
+  ['version 1 with an unknown extension', '[core]\n\trepositoryformatversion = 1\n[extensions]\n\tnoSuchExtension = true\n', /unknown repository extension/],
+  ['version 2', '[core]\n\trepositoryformatversion = 2\n', /Expected git repo version <= 1, found 2/],
+  ['version 0 with a v1-only extension', '[extensions]\n\tobjectFormat = sha1\n', /repo version is 0, but v1-only extension found/],
+]) {
+  test(`commonDirFromFs: a main config git refuses (${label}) defers to git`, () => {
+    withWorktrees((f) => {
+      assert.deepStrictEqual(recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt)).launches, []); // fast before
+      fs.appendFileSync(path.join(f.main, '.git', 'config'), text);
+      assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: f.wt, stdio: 'pipe' }), fatal);
+      assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(result, f.wt); // git died, so the git path answers the worktree dir
+    });
+  });
+}
+
+test('commonDirFromFs: a missing main config still answers fast (git accepts it and answers the same)', () => {
+  withWorktrees((f) => {
+    fs.rmSync(path.join(f.main, '.git', 'config'));
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    assert.deepStrictEqual(launches, []);
+    assert.strictEqual(result, gitCommonMain(f.wt));
+  });
+});
+
+test('commonDirFromFs: a FIFO main config returns null promptly', FIFO_OPTS, () => {
+  withWorktrees((f) => {
+    const cfg = path.join(f.main, '.git', 'config');
+    fs.rmSync(cfg);
+    execFileSync('mkfifo', [cfg]);
+    try {
+      assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', f.wt), null);
+    } finally {
+      fs.rmSync(cfg); // git blocks on it too, and the fixture's cleanup runs git
+    }
+  });
+});
+
+test('originUrlFromConfig: a .git/commondir in a main checkout defers to git (git reads the config it names)', () => {
+  withRepo('https://github.com/o/other.git', (other) => {
+    withRepo('https://github.com/o/self.git', (self) => {
+      fs.writeFileSync(path.join(self, '.git', 'commondir'), path.join(other, '.git'));
+      assert.strictEqual(gitOrigin(self), 'https://github.com/o/other.git');
+      assertFallbackOrigin(self);
+    });
+  });
+});
+
+test('commonDirFromFs: env names match case-insensitively, as on win32', () => {
+  withWorktrees((f) => {
+    for (const name of ['git_dir', 'Git_Common_Dir', 'git_object_directory']) {
+      assert.strictEqual(sl.commonDirFromFs(f.wt, { [name]: '' }), null, name);
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { env: { [name]: '' } }));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH], name);
+      assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)), name);
+    }
+  });
 });
 
 // Fixture: a fake $HOME with a default `~/.claude/` config dir and, optionally,
@@ -1159,3 +2074,112 @@ test('renderPorts: no toplevel resolvable (no cwd, no ancestor .git) -> empty st
 // directly after renderGit(cwd)) rather than by an end-to-end subprocess
 // spawn: the ordering is a property of main()'s segments array, not of
 // anything a spawned child would add.
+
+// --- one child process per render (#5266) ---
+
+const STATUS_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['--no-optional-locks', 'status', '--porcelain', '-b'] };
+
+test('render launches exactly one child process — git status, no shell — in a main checkout and a linked worktree', () => {
+  withRepo('git@github.com:owner/repo.git', (dir) => {
+    const wt = path.join(path.dirname(dir), 'one-spawn-wt');
+    execFileSync('git', ['worktree', 'add', '-q', wt, '-b', 'feature'], { cwd: dir });
+    for (const where of [dir, wt]) {
+      const { launches } = recordLaunches((fresh) => {
+        fresh.renderProject({ workspace: { project_dir: where } }, where, { env: READER_ENV });
+        return fresh.renderGit(where);
+      });
+      assert.deepStrictEqual(launches, [STATUS_LAUNCH], where);
+    }
+  });
+});
+
+test('renderGit: unborn branch renders its name', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-unborn-'));
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: dir });
+    assert.strictEqual(renderGitPlain(dir), 'trunk');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('renderGit: detached HEAD renders nothing', () => {
+  withRepo(null, (dir) => {
+    execFileSync('git', ['checkout', '-q', '--detach'], { cwd: dir });
+    assert.strictEqual(renderGitPlain(dir), null);
+  });
+});
+
+test('renderGit: a directory that is not a repo renders nothing', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
+  try {
+    assert.strictEqual(renderGitPlain(dir), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rendered project and git segments are byte-identical with the fast paths on and off, and nothing runs through a shell', () => {
+  const GH = 'https://github.com/o/parity.git';
+  const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const inTmp = (prefix, setup) => (run) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    try {
+      setup(dir);
+      return run(dir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const cases = [
+    ['main checkout', (run) => withRepo(GH, run)],
+    ['linked worktree', (run) => withWorktrees((f) => {
+      git(['remote', 'add', 'origin', GH], f.main);
+      return run(f.wt);
+    })],
+    // Pins the name and the link only: the project segment for a submodule checkout resolves to the superproject's .git/modules on both paths.
+    ['submodule checkout', (run) => withWorktrees((f) => run(f.sub))],
+    ['no origin', (run) => withRepo(null, run)],
+    ['non-GitHub origin', (run) => withRepo('git@gitlab.com:o/r.git', run)],
+    ['origin only in an included file', (run) => withRepo(null, (dir) => {
+      fs.writeFileSync(path.join(dir, '.git', 'extra'), `[remote "origin"]\n\turl = ${GH}\n`);
+      // A local non-GitHub url BEFORE the include: git answers the included GitHub url (last wins), a reader that ignores the include would answer this one.
+      // The relative path resolves against .git/; an absolute win32 path would hold backslashes, which git reads as escapes.
+      appendCfg(dir, '[remote "origin"]\n\turl = https://gitlab.com/o/main.git\n[include]\n\tpath = extra\n');
+      return run(dir);
+    })],
+    ['origin with a quoted value', (run) => withRepo(null, (dir) => {
+      appendCfg(dir, '[remote "origin"]\n\turl = "https://github.com/o/q.git"\n');
+      return run(dir);
+    })],
+    ['detached HEAD', (run) => withRepo(GH, (dir) => {
+      git(['checkout', '-q', '--detach'], dir);
+      return run(dir);
+    })],
+    ['unborn branch', inTmp('ct-sl-parity-unborn-', (dir) => {
+      git(['init', '-q', '-b', 'trunk'], dir);
+      git(['remote', 'add', 'origin', GH], dir);
+    })],
+    ['dirty tree', (run) => withRepo(GH, (dir) => {
+      fs.writeFileSync(path.join(dir, 'untracked.txt'), 'x\n');
+      return run(dir);
+    })],
+    ['not a repo', inTmp('ct-sl-parity-norepo-', () => {})],
+  ];
+  const compared = [];
+  const { launches } = recordLaunches((m) => {
+    for (const [label, build] of cases) {
+      build((dir) => {
+        const input = { workspace: { project_dir: dir } };
+        const on = `${m.renderProject(input, dir, { env: READER_ENV })}|${m.renderGit(dir)}`;
+        // The off side runs in its own recording so each case proves it reached git for the origin url.
+        const offRun = recordLaunches((fresh) => `${fresh.renderProject(input, dir, { fast: false })}|${fresh.renderGit(dir)}`);
+        assert.strictEqual(on, offRun.result, label);
+        assert.deepStrictEqual(offRun.launches.filter((l) => l.file === ORIGIN_LAUNCH.file && l.fn === ORIGIN_LAUNCH.fn && l.args.join(' ') === ORIGIN_LAUNCH.args.join(' ')), [ORIGIN_LAUNCH], label);
+        compared.push(label);
+      });
+    }
+  });
+  assert.strictEqual(compared.length, 11);
+  assert.deepStrictEqual(launches.filter((l) => l.fn === 'exec' || l.fn === 'execSync'), []);
+});
