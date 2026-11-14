@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { runCliSync } = require('../../helpers/run-cli');
+const { sweepCli } = require('../../helpers/health-sweep-cli');
 
 // End-to-end coverage for #2545: `validate-findings` must record the
 // health-state cursor locally only (zero remote pushes), and the new
@@ -34,12 +34,8 @@ function remoteHealthStateSha(bareDir) {
   return line ? line.split(/\s+/)[0] : null;
 }
 
-// In-process (#5380): the CLI runs inside the test process through runCliSync; `status` mirrors
-// the spawnSync field the assertions below read. `env` is the complete environment the CLI sees.
-function cli(argv, opts = {}) {
-  const res = runCliSync(CLI, argv, { env: { ...process.env, ...opts.env }, cwd: opts.cwd, fresh: opts.fresh });
-  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
-}
+// In-process (#5380), with the file-protocol-only git guard — see tests/helpers/health-sweep-cli.js.
+const cli = (argv, opts) => sweepCli(CLI, argv, opts);
 
 function runValidateFindings(root, skill) {
   const findingsFile = path.join(root, 'findings.json');

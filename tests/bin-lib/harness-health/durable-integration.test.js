@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const { runCliSync } = require('../../helpers/run-cli');
+const { sweepCli } = require('../../helpers/health-sweep-cli');
 const { seedDurableState } = require('../health-core/seed-durable-state');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
@@ -16,12 +16,9 @@ function tmpRepo() {
   return dir;
 }
 
-// In-process (#5380): the CLI runs inside the test process through runCliSync; `status` mirrors
-// the spawnSync field the assertions below read. `env` is the complete environment the CLI sees.
-function cli(argv, opts = {}) {
-  const res = runCliSync(CLI, argv, { env: { ...process.env, ...opts.env }, cwd: opts.cwd, fresh: opts.fresh });
-  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
-}
+// In-process (#5380), with the file-protocol-only git guard — see tests/helpers/health-sweep-cli.js.
+// The guard also makes the unreachable https remotes below fail at once instead of retrying DNS.
+const cli = (argv, opts) => sweepCli(CLI, argv, opts);
 
 test('retry-queue drain prints [] against a repo with no health-state branch', () => {
   const root = tmpRepo();
@@ -88,6 +85,8 @@ test('retry-queue update without --root resolves the root and a relative results
   ]));
 
   const result = cli(['retry-queue', 'update', 'results.json'], { cwd: root });
+  // The failed durable write's error names the git command it ran, and with it the root it ran against.
+  assert.ok(result.stderr.includes(`git -C ${root} push origin`), `expected the failed push to name the injected cwd as root, got:\n${result.stderr}`);
   assert.deepStrictEqual(JSON.parse(result.stdout), [], 'a single failed attempt has not crossed the 3-attempt escalation threshold');
   assert.notStrictEqual(result.status, 0, 'the durable write against this unreachable remote genuinely fails, so this must not exit 0');
 });

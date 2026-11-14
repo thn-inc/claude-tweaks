@@ -7,7 +7,8 @@ const os = require('os');
 const path = require('path');
 
 const { seedDurableState } = require('../health-core/seed-durable-state');
-const { runCli, runCliSync, spawnCli } = require('../../helpers/run-cli');
+const { runCli, spawnCli } = require('../../helpers/run-cli');
+const { sweepCli } = require('../../helpers/health-sweep-cli');
 const { STUB_SKIP } = require('../../helpers/path-stub');
 const { defaultRunner, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('../../../plugin/bin/lib/health-core/premise-self-check');
 
@@ -15,12 +16,8 @@ const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-vf-')); }
 
-// In-process (#5380): the CLI runs inside the test process through runCliSync; `status` mirrors
-// the spawnSync field the assertions below read. `env` is the complete environment the CLI sees.
-function cli(argv, opts = {}) {
-  const res = runCliSync(CLI, argv, { env: { ...process.env, ...opts.env }, cwd: opts.cwd, fresh: opts.fresh });
-  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
-}
+// In-process (#5380), with the file-protocol-only git guard — see tests/helpers/health-sweep-cli.js.
+const cli = (argv, opts) => sweepCli(CLI, argv, opts);
 
 function runValidateFindings(root, findingsFile, extraArgs = [], opts = {}) {
   return cli(['validate-findings', findingsFile, '--root', root, ...extraArgs], opts);
@@ -757,6 +754,7 @@ test('validate-findings runs the Premise-check self-check under the injected env
   fs.chmodSync(path.join(stubDir, 'grep'), 0o755); // root-safe: exec-bit stub, not a denial simulation
 
   const plain = runValidateFindings(root, findingsFile, ['--dry-run', '--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(plain.status, 0, `stderr: ${plain.stderr}`);
   assert.ok(premiseLineOf(JSON.parse(plain.stdout)[0]), 'control: without the shim the proposed string is absent, so the line is kept');
 
   const shimmed = runValidateFindings(root, findingsFile, ['--dry-run', '--target', 'auth', '--kind', 'skill'], {
