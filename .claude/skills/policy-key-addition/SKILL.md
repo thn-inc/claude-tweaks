@@ -17,6 +17,7 @@ description: Use when adding a key to the policy.yml schema (`POLICY_KEYS` in `p
 6. **A Manifesto-visible lever** also walks `_shared/auto-mode-contract.md`'s "Adding a new policy lever" checklist.
 7. **A key that lands before its consumer** opens its `summary` with `Not yet used. ` or `Not yet used; ` and joins `NOT_YET_USED` in `tests/resolve-policy-control-mode.test.js`. That file pins both directions: every listed key carries the marker, and no unlisted key does. The record that wires a key's first consumer drops the marker and the list entry in the same commit. #4816 marked #4609's fourteen control-mode keys this way, and the comment above `control-mode` in `POLICY_KEYS` names the record that wires each.
 8. **A `policyOnly` key** is also named in the `policyOnly` bullet of `_shared/policy-schema-coverage.md`'s "Canonical read path carve-outs", which lists every key carrying the flag (#5119 moved it there from `_shared/policy-schema.md`, which keeps only a pointer stub).
+9. **A `policyOnly` key** is also named in the step 3 Red flags list of `docs/journeys/resolve-a-policy-key.md`, which lists every `policyOnly` flat key with its record. No test reads that list: #5119's `verify-suite-slots` was missing from it until #5222's review round added it (`259f5da1c`).
 
 ## Decide who may set it
 
