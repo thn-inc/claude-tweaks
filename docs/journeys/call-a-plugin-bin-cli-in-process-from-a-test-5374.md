@@ -54,6 +54,7 @@ files:
   - A CLI whose `realDeps` holds a seam that can start `gh` or an arbitrary command under another name (`execFileSync`, `runPremiseCheck`). Add that name to `FAIL_CLOSED_KEYS` in the helper in the same change, or the test can reach the real tool.
   - A stub on an injected `PATH` that never runs. A child on the CLI's path is started without `env: deps.env`, so it inherits the test runner's environment.
   - `process.cwd() could not be read or restored (…)` in the leak list. The CLI removed its own working directory, or the directory the test started in, so the helper could not put the cwd back. It still restored the env and the listeners. Work from `deps.cwd()` instead of changing or removing the process's directory.
+  - A relative path argument (`--run`, `--body-file`, an input JSON) that the CLI reads or writes against the test runner's directory instead of the injected `cwd`: a `cannot read` failure, or an output file that lands in the checkout. The leak guard stays silent, because nothing about the process changed. Resolve the argument where `run` uses it, `path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)`; #5383 fixed five CLIs this way.
 
 ### 4. Keep the script entry covered by real processes
 - **URL:** the same test file.
