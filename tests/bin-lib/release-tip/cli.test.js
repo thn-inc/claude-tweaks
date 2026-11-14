@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const os = require('node:os');
 const { run } = require('../../../plugin/bin/release-tip-check.js');
+const { spawnCli } = require('../../helpers/run-cli');
 const { originWithTwoClones } = require('../../helpers/git-fixtures.js');
 
 const BRANCH = 'main';
@@ -37,7 +39,7 @@ function pushRunDirUpstream(fx) {
   fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
 }
 
-function cli(argv, { cwd = process.cwd(), mainRoot, spawn } = {}) {
+function cli(argv, { cwd = process.cwd(), mainRoot, spawn, resolvePolicy } = {}) {
   let out = '';
   let err = '';
   const code = run(argv, {
@@ -47,6 +49,7 @@ function cli(argv, { cwd = process.cwd(), mainRoot, spawn } = {}) {
     cwd: () => cwd,
     mainRoot,
     spawn,
+    resolvePolicy,
   });
   return { code, out, err };
 }
@@ -147,9 +150,11 @@ test('run-dir-only advance writes its line under ## /release in decisions.md', (
   });
 });
 
-test('a code move reads the bound through the real resolve-policy.js spawn → delta', () => {
+test('AC2/AC7 a code move reads the bound through the core at --root → delta', () => {
   withFixture((fx) => {
     const tip = originTip(fx);
+    fs.mkdirSync(path.join(fx.work, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(fx.work, '.claude-tweaks', 'policy.yml'), 'release-tip-moves: 3\n');
     fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisions([step3Line(tip)]));
     fs.writeFileSync(path.join(fx.other, 'fix.txt'), 'fix: y');
     fx.run(fx.other, ['add', 'fix.txt']);
@@ -160,9 +165,26 @@ test('a code move reads the bound through the real resolve-policy.js spawn → d
     const v = JSON.parse(r.out);
     assert.strictEqual(v.verdict, 'delta', JSON.stringify(v));
     assert.strictEqual(v.move, 1);
-    assert.strictEqual(v.bound, 2);
-    assert.strictEqual(v.source, 'default');
+    assert.strictEqual(v.bound, 3);
+    assert.strictEqual(v.source, 'policy');
     assert.strictEqual(v.commits, 1);
+  });
+});
+
+test('AC5 a resolvePolicy that throws → failed verdict, exit 0', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisions([step3Line(tip)]));
+    fs.writeFileSync(path.join(fx.other, 'fix.txt'), 'fix: y');
+    fx.run(fx.other, ['add', 'fix.txt']);
+    fx.run(fx.other, ['commit', '-q', '-m', 'fix: y']);
+    fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
+    const r = cli(argsFor(fx), { mainRoot: fx.work, resolvePolicy: () => { throw new Error('kaboom'); } });
+    assert.strictEqual(r.code, 0, r.err);
+    const v = JSON.parse(r.out);
+    assert.strictEqual(v.verdict, 'failed');
+    assert.strictEqual(v.reason, 'release-tip-moves unreadable');
+    assert.match(v.detail, /kaboom/);
   });
 });
 
@@ -195,4 +217,16 @@ test('preMajor read from release-preflight.json', () => {
     const pinned = JSON.parse(cli(argsFor(fx), { mainRoot: fx.work }).out);
     assert.strictEqual(pinned.arrived.part, 'major', 'the pack\'s bumpMinorPreMajor decides the fold, not bumpPart\'s default');
   });
+});
+
+// Real process: the script entry turns run()'s return into the child's exit status — 0 with usage on stdout for --help, 2 with the refusal on stderr for a missing flag (#5384, AC6).
+test('script entry: --help exits 0 with the usage on stdout; a missing --run exits 2 with it on stderr', () => {
+  const entry = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'release-tip-check.js');
+  const env = { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() };
+  const help = spawnCli(entry, ['--help'], { env });
+  assert.equal(help.code, 0);
+  assert.ok(help.stdout.startsWith('usage: release-tip-check.js'));
+  const refused = spawnCli(entry, [], { env });
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, /--run is required/);
 });
