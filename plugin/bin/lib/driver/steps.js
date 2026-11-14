@@ -45,11 +45,11 @@
 // below would stop every record) and reads the flagged paths once as the baseline (ctx.indexFlags). The
 // flags are read again after each implementer launch, after the verify.js call, and after each
 // evidence run (review.js); a path flagged now and not in the baseline is a `fail`, by set difference
-// with the baseline only, so a flag cleared and set again is no stop. The driver never clears a flag.
+// with the baseline only, so a baseline flag cleared and set again is no stop. The driver never clears
+// a flag. A listing past the 64 MiB buffer stops every record (that read throws; it fails closed).
 // Not covered, stated residuals with CI on push as the backstop: a .gitattributes filter, core.fsmonitor,
-// an index listing past the read's buffer (that read throws and stops the record), and a path already
-// flagged when the worktree is created (code the driver runs can rewrite it, git status does not report
-// it, and the commit never stages it).
+// and a path already flagged when the worktree is created (code the driver runs can rewrite it, git
+// status does not report it, and the commit never stages it).
 //
 // Every external call goes through `deps`; nothing here reads process state.
 //

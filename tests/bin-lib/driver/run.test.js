@@ -4136,6 +4136,14 @@ test('AC12: a throw inside the review pass is a pre-push stop whose line keeps t
   assert.equal(res.detail, 'the review pass failed before it started');
 });
 
+test('AC12: a wiring with isRunArtifact but no indexFlagCheck fails the review step before it starts', async () => {
+  const { reviewRecord } = require(path.join(LIB, 'driver', 'review'));
+  const ctx = { issue: issueFor(7), keyFiles: [], shared: { policy: { 'express-driver-review': { value: 'on' } } } };
+  const res = await reviewRecord(ctx, {}, { testCommand: 'npm test', isRunArtifact: () => false });
+  assert.deepEqual([res.status, res.stopClass, res.extra], ['fail', 'pre-push', { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null }]);
+  assert.equal(res.detail, 'the review pass failed before it started');
+});
+
 test('skip: a skipped step emits no line and the loop goes on', async () => {
   const ran = [];
   const table = [

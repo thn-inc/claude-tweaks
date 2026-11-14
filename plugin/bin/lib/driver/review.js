@@ -203,10 +203,10 @@
 //   read (before or after it), the worker's `fail`/`timeout`, a rewrite refused or failed,
 //   the commit failing, an evidence file not at HEAD as recorded, a kept path no longer resolving where
 //   it was confirmed or a kept file not in the worktree as recorded before its run, a kept run that throws or survives
-//   its kill, an index flag newly set after a kept run (the launch and test-step flag stops arrive as the
-//   propagated launch and test results), the tree changed during the checks (after the scoped run and each kept run; neither is
-//   singled out), the name-only diff failing (it ends with `--`, so a file named HEAD or after the
-//   sha is never read as a revision). `stop`: the worker's
+//   its kill, an index flag newly set after a kept run (the launch and test-step flag stops arrive as
+//   the fix-round launch and test results), the tree changed during the checks (after the scoped run
+//   and each kept run; neither is singled out), the name-only diff failing (it ends with `--`, so a
+//   file named HEAD or after the sha is never read as a revision). `stop`: the worker's
 //   cannot-complete, the commit step's own stop (no changed files, or the worker's title
 //   empty once normalized), a kept evidence test that does not pass (reason failing-test), no path outside
 //   the evidence files differing from preFixHead once every run has passed (judged only then), and
@@ -1145,9 +1145,9 @@ async function fixRound(ctx, deps, wiring, pass) {
 }
 
 // The step (see the header): the wiring object carries what steps.js owns (the steps the fix round
-// reuses, the implementer launch, the test command, the run-artifact test and the index-flag check, indexFlagCheck), so this module never
-// requires steps.js. Off, it is a skip: no line, no worker. A stop carries the pass's counts.
-// A confirmed finding takes the one fix round.
+// reuses, the implementer launch, the test command, the run-artifact test and the index-flag check
+// (indexFlagCheck)), so this module never requires steps.js. Off, it is a skip: no line, no worker.
+// A stop carries the pass's counts. A confirmed finding takes the one fix round.
 async function reviewRecord(ctx, deps, wiring) {
   const { testCommand, isRunArtifact, indexFlagCheck } = wiring;
   const need = reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: ctx.shared.policy['express-driver-review'].value });
