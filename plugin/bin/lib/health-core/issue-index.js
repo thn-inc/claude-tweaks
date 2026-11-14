@@ -1,5 +1,6 @@
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { DEFAULT_IO } = require('./io');
 
 // --issues <file> is an array of { number, state, labels, fingerprint }
@@ -9,11 +10,13 @@ const { DEFAULT_IO } = require('./io');
 // duplicated near-verbatim in each (code-health.js, harness-health.js,
 // journey-health.js, docs-health.js), differing only in the bracketed
 // [toolName] prefix on its stderr diagnostics.
-function loadIssueIndex(file, toolName, { stderr = DEFAULT_IO.stderr } = {}) {
+// cwd (optional, () => string): a relative file is read against it while the
+// diagnostics still print the caller's own spelling; omitted = the process cwd.
+function loadIssueIndex(file, toolName, { stderr = DEFAULT_IO.stderr, cwd } = {}) {
   if (!file) return {};
   let arr;
   try {
-    arr = JSON.parse(fs.readFileSync(file, 'utf8'));
+    arr = JSON.parse(fs.readFileSync(cwd ? path.resolve(cwd(), file) : file, 'utf8'));
   } catch {
     stderr(`[${toolName}] validate-findings: could not read or parse --issues file: ${file} — dedup falls back to the local cache only\n`);
     return {};

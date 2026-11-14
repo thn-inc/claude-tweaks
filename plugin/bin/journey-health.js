@@ -66,7 +66,7 @@ function parseArgs(argv, cwd = process.cwd()) {
 }
 
 function cmdNextTarget(args, ctx) {
-  const root = path.resolve(ctx.cwd(), args.root || '.');
+  const root = args.root;
   const env = ctx.env;
   const now = Date.now();
   const tier = args.tier === 'deep' ? 'deep' : 'light';
@@ -115,8 +115,8 @@ function cmdNextTarget(args, ctx) {
 
 function cmdValidateFindings(args, ctx) {
   const { stderr, env } = ctx;
-  // Relative paths resolve against the injected cwd, never the real one.
-  const root = path.resolve(ctx.cwd(), args.root || '.');
+  // `run` already resolved args.root against the injected cwd, never the real one.
+  const root = args.root;
   const findingsArg = args._[1];
   if (!findingsArg) {
     stderr(
@@ -125,7 +125,6 @@ function cmdValidateFindings(args, ctx) {
     return 2;
   }
   const findingsPath = path.resolve(ctx.cwd(), findingsArg);
-  const issuesPath = args.issues ? path.resolve(ctx.cwd(), args.issues) : args.issues;
 
   const confidence = validateConfidenceArg(args['min-confidence'], stderr);
   if (!confidence.ok) return confidence.code;
@@ -209,7 +208,7 @@ function cmdValidateFindings(args, ctx) {
   const verifiedAsOf = resolveReadCommit(root, makeExec({ env, stderr }));
 
   const { cache, payloads, seen, wontfixSuppressed } = dedupAndDispatch({
-    root, issuesPath, toolName: TOOL_NAME, survivors: filtered, readCache: readCacheWithDeclined, decide, toIssuePayload, verifiedAsOf, stderr,
+    root, issuesPath: args.issues, cwd: ctx.cwd, toolName: TOOL_NAME, survivors: filtered, readCache: readCacheWithDeclined, decide, toIssuePayload, verifiedAsOf, stderr,
   });
 
   if (!args.dryRun) {
@@ -308,10 +307,7 @@ function run(argv, deps = realDeps) {
   // the leading 'retry-queue' entry before handing args to it.
   if (cmd === 'retry-queue' && args._[1] === 'drain') return ctx.retryQueueCommands.drain(args);
   if (cmd === 'retry-queue' && args._[1] === 'update') {
-    const rebased = args._.slice(1);
-    // The results file is read by the shared command, so hand it an absolute path.
-    if (rebased[1]) rebased[1] = path.resolve(ctx.cwd(), rebased[1]);
-    return ctx.retryQueueCommands.update({ ...args, _: rebased });
+    return ctx.retryQueueCommands.update({ ...args, _: args._.slice(1) });
   }
   ctx.stderr(
     'usage: journey-health.js <command> [options]\n' +
@@ -339,7 +335,7 @@ function main(argv) {
 }
 
 module.exports = {
-  parseArgs, cmdNextTarget, cmdValidateFindings, cmdQaEvidence, main, run, realDeps,
+  parseArgs, main, run, realDeps,
 };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

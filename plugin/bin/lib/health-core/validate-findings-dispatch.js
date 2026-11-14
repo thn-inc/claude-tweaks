@@ -12,7 +12,7 @@ const { loadIssueIndex } = require('./issue-index');
 // they're injected rather than hardcoded here — this module owns only the
 // dedup/dispatch control flow shared by all three, not the domain logic.
 //
-// opts: { root, issuesPath, toolName, survivors, verifiedAsOf, pluginVersion, stderr? } — survivors is
+// opts: { root, issuesPath, toolName, survivors, verifiedAsOf, pluginVersion, stderr?, cwd? } — survivors is
 // the caller's own array of already-validated, fingerprinted findings.
 // verifiedAsOf (#117, optional): the git sha the caller resolved ONCE at the
 // start of this run (health-core/read-commit.js) — passed straight through
@@ -40,10 +40,10 @@ const { loadIssueIndex } = require('./issue-index');
 // `wontfix` decision silently lapses the moment a firing can't reach GitHub,
 // and the suppressed finding is re-filed as brand new.
 function dedupAndDispatch({
-  root, issuesPath, toolName, survivors, readCache, decide, toIssuePayload, verifiedAsOf, pluginVersion, stderr,
+  root, issuesPath, toolName, survivors, readCache, decide, toIssuePayload, verifiedAsOf, pluginVersion, stderr, cwd,
 }) {
   const cache = readCache(root);
-  const issueIndex = loadIssueIndex(issuesPath, toolName, { stderr });
+  const issueIndex = loadIssueIndex(issuesPath, toolName, { stderr, cwd });
   const payloads = [];
   const seen = new Set();
   const wontfixSuppressed = [];

@@ -32,6 +32,18 @@ test('routes every diagnostic to an injected stderr instead of process.stderr', 
   assert.match(err, /^\[code-health\] loadIssueIndex: skipping malformed issue entry/);
 });
 
+test('a relative file is read against an injected cwd and diagnostics print the caller\'s spelling', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-index-'));
+  fs.writeFileSync(path.join(dir, 'rel-issues.json'), JSON.stringify([{ number: 7, state: 'open', fingerprint: 'fp' }]));
+  assert.deepStrictEqual(loadIssueIndex('rel-issues.json', 'code-health', { cwd: () => dir }), {
+    fp: { number: 7, state: 'open', labels: [] },
+  });
+  let err = '';
+  assert.deepStrictEqual(loadIssueIndex('nope.json', 'code-health', { cwd: () => dir, stderr: (t) => { err += t; } }), {});
+  assert.ok(err.includes('--issues file: nope.json —'), `expected the relative spelling, got: ${err}`);
+  assert.ok(!err.includes(dir), 'must not print the cwd-resolved absolute path');
+});
+
 test('returns {} when no file is given', () => {
   assert.deepStrictEqual(loadIssueIndex(undefined, 'code-health'), {});
   assert.deepStrictEqual(loadIssueIndex('', 'code-health'), {});

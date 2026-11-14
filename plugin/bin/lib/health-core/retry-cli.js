@@ -1,5 +1,6 @@
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { enqueueRetry, dequeueRetry, shouldEscalate, ESCALATE_AFTER_ATTEMPTS } = require('./durable-state');
 const { DEFAULT_IO } = require('./io');
 
@@ -34,10 +35,14 @@ function makeRetryQueueCommands({ readDurableState, writeDurableState, io = DEFA
       return 2;
     }
     let results;
+    const resolvedPath = path.resolve(io.cwd(), resultsPath);
     try {
-      results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+      results = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
     } catch (err) {
-      io.stderr(`retry-queue update: could not read or parse ${resultsPath}: ${err.message}\n`);
+      // A relative path is read against the injected cwd, but the message keeps the
+      // caller's spelling (the fs error text names the resolved path, so swap it back).
+      const detail = err.message.split(resolvedPath).join(resultsPath);
+      io.stderr(`retry-queue update: could not read or parse ${resultsPath}: ${detail}\n`);
       return 1;
     }
     // Declared here but reset to [] on every mutator invocation below: the

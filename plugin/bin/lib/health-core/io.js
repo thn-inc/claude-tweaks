@@ -18,13 +18,19 @@ const DEFAULT_IO = {
 // ...opts, env }): returns the child's stdout, throws on a non-zero exit with
 // the usual err.status/err.stdout/err.stderr (and execFileSync's own
 // `Command failed: ...\n<stderr>` message, which durable-state.js matches on).
-// The difference is the child's stderr: execFileSync with no `stdio` option
-// forwards it straight to the parent's process.stderr, which an in-process
-// caller must not leak, so it is piped here and written to the injected
-// `stderr` — on success, and before rethrowing on failure. spawnSync (not
-// execFileSync) because execFileSync discards a successful child's piped
-// stderr. An explicit `opts.stdio` whose third entry is 'ignore' is honoured
-// (nothing to forward). `env` undefined -> inherited, as today.
+// The difference is where the child's stderr goes. With no `stdio`,
+// execFileSync buffers the child's stderr (maxBuffer included) and writes it to
+// the parent's process.stderr after the child exits, which an in-process caller
+// must not leak; here the same buffered text is handed to the injected
+// `stderr` instead — on success, and before rethrowing on failure — so the
+// output is identical, only the sink differs. spawnSync (not execFileSync)
+// because execFileSync discards a successful child's piped stderr.
+// Accepted `opts.stdio` shapes: omitted (stdin/stdout/stderr all piped); a
+// string (it sets stdin and stdout, stderr stays piped), with 'ignore' meaning
+// all three ignored; or an array [stdin, stdout, stderr], where only a third
+// entry of 'ignore' is honoured (nothing to forward) and any other stderr entry
+// is piped. A non-piped stdout makes the returned stdout null, as with
+// execFileSync. `env` undefined -> inherited, as today.
 function makeExec({ env, stderr = DEFAULT_IO.stderr } = {}) {
   return function exec(cmd, args, opts = {}) {
     let stdio;

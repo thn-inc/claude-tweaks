@@ -147,10 +147,11 @@ test('update prints [] AND sets a failing exit code (not the computed-but-unpers
   ]));
   // update() returns the code (the CLI wires it onto process.exitCode); it
   // must never set process.exitCode itself.
+  const exitCodeBefore = process.exitCode;
   let code;
   const out = captureStdout(() => { code = update({ root: '/repo', _: ['update', resultsPath] }); });
   assert.strictEqual(code, 1, 'a genuinely failed durable write must return a non-zero code, or a calling shell/Routine checking $? sees success and never surfaces the failure');
-  assert.strictEqual(process.exitCode, undefined, 'update must not set process.exitCode');
+  assert.strictEqual(process.exitCode, exitCodeBefore, 'update must not change process.exitCode');
   assert.deepStrictEqual(JSON.parse(out), [], 'must not report an escalation that was never actually persisted to retry-queue.json');
 });
 
@@ -251,5 +252,24 @@ test('update prints [] when nothing crosses the escalation threshold', () => {
   const resultsPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-')), 'results.json');
   fs.writeFileSync(resultsPath, JSON.stringify([{ fingerprint: 'new', payload: { title: 'New' }, ok: false, error: 'timeout' }]));
   const out = captureStdout(() => update({ root: '/repo', _: ['update', resultsPath] }));
+  assert.deepStrictEqual(JSON.parse(out), []);
+});
+
+// A relative results path is read against the injected cwd, and a failure message
+// prints it exactly as the caller spelled it (not an absolute rebased path).
+test('update reads a relative results path against the injected cwd and prints that spelling in its error', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  let out = '';
+  let err = '';
+  const cmds = makeRetryQueueCommands({
+    readDurableState: () => ({ retryQueue: [] }),
+    writeDurableState: (r, mutator) => { mutator({ retryQueue: [] }); return { ok: true }; },
+    io: { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => root },
+  });
+  assert.strictEqual(cmds.update({ _: ['update', 'missing-results.json'] }), 1);
+  assert.match(err, /^retry-queue update: could not read or parse missing-results\.json: /);
+  assert.ok(!err.includes(root), 'the message must not print the cwd-resolved absolute path');
+  fs.writeFileSync(path.join(root, 'results.json'), '[]');
+  assert.strictEqual(cmds.update({ _: ['update', 'results.json'] }), 0);
   assert.deepStrictEqual(JSON.parse(out), []);
 });

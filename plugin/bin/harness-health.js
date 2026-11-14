@@ -75,7 +75,7 @@ function parseArgs(argv, cwd = process.cwd()) {
 }
 
 function cmdNextTarget(args, ctx) {
-  const root = path.resolve(ctx.cwd(), args.root || '.');
+  const root = args.root;
   const memoryDir = args.memoryDir ? path.resolve(ctx.cwd(), args.memoryDir) : args.memoryDir;
   const env = ctx.env;
   const now = Date.now();
@@ -184,8 +184,8 @@ function cmdValidateFindings(args, ctx) {
   // relative to this process's cwd while the Premise-check self-check runs
   // (#2633 review follow-up), and because the repo-relative Premise-check
   // path is computed from the git top-level of this absolute root (#2857).
-  // Relative paths resolve against the injected cwd, never the real one.
-  const root = path.resolve(ctx.cwd(), args.root || '.');
+  // `run` already resolved args.root against the injected cwd, never the real one.
+  const root = args.root;
   const findingsArg = args._[1];
   if (!findingsArg) {
     stderr(
@@ -195,7 +195,6 @@ function cmdValidateFindings(args, ctx) {
   }
   const findingsPath = path.resolve(ctx.cwd(), findingsArg);
   const memoryDir = args.memoryDir ? path.resolve(ctx.cwd(), args.memoryDir) : args.memoryDir;
-  const issuesPath = args.issues ? path.resolve(ctx.cwd(), args.issues) : args.issues;
 
   const confidence = validateConfidenceArg(args.minConfidence, stderr);
   if (!confidence.ok) return confidence.code;
@@ -320,7 +319,7 @@ function cmdValidateFindings(args, ctx) {
   });
 
   const { cache, payloads, seen, wontfixSuppressed } = dedupAndDispatch({
-    root, issuesPath, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload: toIssuePayloadSelfChecked, verifiedAsOf, pluginVersion, stderr,
+    root, issuesPath: args.issues, cwd: ctx.cwd, toolName: TOOL_NAME, survivors, readCache: readCacheWithDeclined, decide, toIssuePayload: toIssuePayloadSelfChecked, verifiedAsOf, pluginVersion, stderr,
   });
 
   if (!args.dryRun) {
@@ -362,7 +361,7 @@ function cmdValidateFindings(args, ctx) {
 // once, after its per-skill validate-findings calls are done, instead of
 // each of those calls pushing on its own.
 function cmdPushCursor(args, ctx) {
-  const root = path.resolve(ctx.cwd(), args.root || '.');
+  const root = args.root;
   const result = ctx.durable.pushDurableState(root);
   if (!result.ok) {
     ctx.stderr(`[harness-health] push-cursor: health-state push failed after retries: ${result.error}\n`);
@@ -419,10 +418,7 @@ function run(argv, deps = realDeps) {
   // the leading 'retry-queue' entry before handing args to it.
   if (cmd === 'retry-queue' && args._[1] === 'drain') return ctx.retryQueueCommands.drain(args);
   if (cmd === 'retry-queue' && args._[1] === 'update') {
-    const rebased = args._.slice(1);
-    // The results file is read by the shared command, so hand it an absolute path.
-    if (rebased[1]) rebased[1] = path.resolve(ctx.cwd(), rebased[1]);
-    return ctx.retryQueueCommands.update({ ...args, _: rebased });
+    return ctx.retryQueueCommands.update({ ...args, _: args._.slice(1) });
   }
   ctx.stderr(
     'usage: harness-health.js <command> [options]\n' +
@@ -451,7 +447,7 @@ function main(argv) {
 }
 
 module.exports = {
-  parseArgs, cmdNextTarget, cmdValidateFindings, cmdPushCursor, CONFIDENCE_RANK, main, resolvePremiseRoot, run, realDeps,
+  parseArgs, CONFIDENCE_RANK, main, resolvePremiseRoot, run, realDeps,
 };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
