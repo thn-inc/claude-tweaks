@@ -14,6 +14,7 @@ Root cause, and Resume sections to reach the content they actually need at merge
 | Caller | Invokes from |
 |---|---|
 | Each phase's skill file (build, test, review, polish, wrap-up) | At its own phase exit — "Phase-checklist update" below |
+| `build/architecture-alignment.md` `## Claims about the PR body` | The **`gh` absent (MCP).** paragraph under "Phase-checklist update" below — its repair and run-id check only, at any build step that logs a PR-body claim |
 | `_shared/pr-first-merge.md` Step 2 | "Pre-merge title/description refresh" below, before Step 2 undrafts the PR |
 | `_shared/pr-first-merge.md` Step 2.5 | "Merge-time gh-absent degrade" below |
 
@@ -73,7 +74,9 @@ after its push (`_shared/git-discipline.md`), as `checklist`. By `run-state.json
   calling it every time costs nothing. When it restores anything (the #2996 shape), use its
   returned body for the rest of this update and log one line naming what came back:
   `AUTO {time} — PR checklist refresh: restored {restored.join(', ')} on PR #{number} (body
-  carried none/some of the expected markers). Reversibility: high (gh pr edit).` This replaces the former best-effort skip on a
+  carried none/some of the expected markers). Reversibility: high (gh pr edit).` `none` only
+  when `restored` names all of `run marker`, `phases block` and `fixes block`; otherwise
+  `some`. This replaces the former best-effort skip on a
   missing delimiter pair — a missing marker is now restored, never silently left absent.
 
   Locate the `[claude-tweaks-phases-start]`/`[claude-tweaks-phases-end]` pair (an MCP read strips
@@ -88,7 +91,8 @@ after its push (`_shared/git-discipline.md`), as `checklist`. By `run-state.json
 
 <!-- when: transport=mcp -->
   `gh`-absent: `mcp__github__update_pull_request` with the same composed body — unsanitized
-  (`_shared/pr-early-run-lifecycle.md`'s Root cause section), so both delimiter pairs survive
+  (`_shared/pr-early-run-lifecycle.md`'s Root cause section), and `repairPrBody` has already
+  put back the HTML-comment forms the MCP read stripped, so both delimiter pairs survive
   regardless of which located the span.
 <!-- /when -->
 

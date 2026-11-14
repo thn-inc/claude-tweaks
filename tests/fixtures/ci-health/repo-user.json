@@ -1,0 +1,8 @@
+{
+  "full_name": "example-user/widgets",
+  "default_branch": "main",
+  "owner": {
+    "login": "example-user",
+    "type": "User"
+  }
+}

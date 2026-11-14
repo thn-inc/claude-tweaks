@@ -35,9 +35,21 @@ The job's log is downloaded into the suite's own `{log-dir}/{suite}.log`. Every 
 
 `types`, `lint` and every suite without a `ci` source run locally as usual.
 
+## Local runs on request
+
+A project that wants CI's verdict or none, never a quiet local full run, adds one top-level key to the declaration. It is valid only together with a `ci` block; any other value, or the key with no `ci` block, fails validation with an error starting `localRuns:`.
+
+```json
+"localRuns": "on-request"
+```
+
+Under it, a `--scope` run takes each selected CI-declared suite from CI. The first suite CI cannot answer exits 3 before any check, retry or slot hold: no `report.json` is written (a stale one is removed) and no pass stamp. stderr names the suite and the reason, then the two ways on: push and re-run, or pass `--local`. Each later selected CI-declared suite is recorded `not-consulted`. Exit 3 is never a test failure; it means no verdict yet. A red job whose log cannot be downloaded fails the suite and names the run URL, so nothing falls back to a local run. The log download passes `--allow-escape-sequences` so the job log arrives intact, retried once without it for a `gh` that rejects the flag. A suite CI answered that then fails still gets its local flaky retry, after the no-verdict decision.
+
+`--local` never consults CI and runs each selected suite here, the impact subset or, when selection falls back, the full command; the run records `local-requested`. It means the same with or without the key. With neither `--scope` nor `--local`, a run naming a CI-declared suite exits 2, because it would run that suite here unasked. A `--stamp-suite` chunk never consults CI either (`stamp-composition.md`): under the key a chunk naming a CI-declared suite is refused (exit 2) without `--local` and runs here with it. `types`, `lint` and every suite with no `ci` source need no flag.
+
 ## Fallback reasons
 
-Every other outcome runs the suite locally, exactly as selected (its impact subset included), and `report.json`'s `ci` entry for that suite names why in `fallback`:
+Without `localRuns`, every other outcome runs the suite locally, exactly as selected (its impact subset included), and `report.json`'s `ci` entry for that suite names why in `fallback`; under it, the run exits 3 (`## Local runs on request`):
 
 | Reason | Cause |
 |--------|-------|
@@ -50,10 +62,12 @@ Every other outcome runs the suite locally, exactly as selected (its impact subs
 | `ci-job-not-found` | The completed run has no job named `job`. |
 | `ci-run-cancelled` | The job was cancelled, for example by a newer push. |
 | `ci-job-{conclusion}` | The job ended `skipped`, `timed_out`, or anything else that is neither success nor failure. |
-| `ci-log-unavailable` | A red job's log could not be downloaded, so nothing names its failures. |
+| `ci-log-unavailable` | A red job's log could not be downloaded, so nothing names its failures (without `localRuns`). |
 | `gh-unavailable` / `gh-error: …` | `gh` is not installed, or a read failed. |
+| `local-requested` | `--local` was passed, so CI was not consulted. |
+| `not-consulted` | Under `localRuns`, an earlier suite already left the run with no verdict, so CI was not asked about this one. |
 
-stdout prints one line per CI-declared suite before the table: `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url})`, or `CI: {suite} — ran locally ({reason})`.
+stdout prints one line per CI-declared suite before the table: `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url})`, or `CI: {suite} — ran locally ({reason})`. Under `localRuns`, a red job with no downloadable log prints `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url}; its log could not be downloaded — pass --local to reproduce the failure here)`.
 
 ## CI that skips draft PRs
 
@@ -61,4 +75,4 @@ The runner reads draft-PR CI, so a project picks one shape (`_shared/ci-skips-dr
 
 ## What the CI pass does not cover
 
-The CI job runs on ubuntu with Node 20. A CI-sourced pass therefore does not cover this machine's platform: macOS, and Node 22. Windows is not covered either; `windows-regression.yml` still checks it after merge. A change whose risk is platform-specific still runs locally: the caller runs verify.js without `--scope`, which never consults `ci`.
+The CI job runs on ubuntu with Node 20. A CI-sourced pass therefore does not cover this machine's platform: macOS, and Node 22. Windows is not covered either; `windows-regression.yml` still checks it after merge. A change whose risk is platform-specific still runs locally: the caller passes `--local`, and CI is not consulted (under `localRuns`, a run without `--scope` that names a CI-declared suite needs `--local` too).

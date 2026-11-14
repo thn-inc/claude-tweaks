@@ -16,7 +16,7 @@ Many surfaces read a record's blockers, and each must reach the same verdict, or
 | Parse | `plugin/bin/lib/issues/cross-repo-refs.js` (`parseCrossRepoDependencies`, `stripCrossRepoRefs`); this repository's `#N` stays with `parseDependencies` | — |
 | Shared verdict | `plugin/bin/lib/issues/record-dependencies.js` (`foreignBlockerBlocks`, `openBlockerRefs`, `openNativeBlockerRefs`, `partitionByOpenBodyBlockers`), re-exported by `record.js` | — |
 | Foreign state lookup | `plugin/bin/lib/issues/cross-repo-states.js` (`bodyForeignBlockers`, `suppliedStates`), `plugin/bin/resolve-foreign-blockers.js`; native links via `plugin/bin/resolve-blockers.js` | — |
-| Dispatch queue pull | the body-text and native passes | `plugin/skills/dispatch/queue-pull-script.md`, `queue-pull-notes.md`, `blocked-exclusion-report.md` |
+| Dispatch queue pull | the body-text and native passes (`plugin/bin/lib/dispatch/queue-pull.js`'s `blocked` pass) | the dispatch skill's Step 2 call to `plugin/bin/queue-pull.js` (retained mirror, until the removal unit: `plugin/skills/dispatch/queue-pull-script.md`), `queue-pull-notes.md`, `blocked-exclusion-report.md` |
 | Queue-order cache | `plugin/bin/lib/dispatch/queue-order.js` (`cacheUsable`) | `queue-pull-notes.md` |
 | Unlanded-blocker pass | `plugin/bin/dispatch-unlanded-blockers.js`, `plugin/bin/lib/dispatch/unlanded-blockers.js` | `queue-pull-notes.md` |
 | Dispatch resume | `plugin/bin/dispatch-resume.js`, `plugin/bin/lib/dispatch/resume-eligibility.js` | — |
@@ -37,7 +37,7 @@ Many surfaces read a record's blockers, and each must reach the same verdict, or
 
 ## Tests
 
-- `tests/cross-repo-blocker-readers-conformance.test.js` (backlog regions, one fact list each), `tests/dispatch-cross-repo-blocker-exclusion-fixture.test.js` (extract-and-run of the queue pass, including the states-file export shape), `tests/flow-cross-repo-header-conformance.test.js`, `tests/flow-blocker-landing-conformance.test.js`, `tests/dispatch-unlanded-blocker-consumers-conformance.test.js`.
+- `tests/cross-repo-blocker-readers-conformance.test.js` (backlog regions, one fact list each), `tests/dispatch-cross-repo-blocker-exclusion-fixture.test.js` (the report and MCP-section facts), `tests/bin-lib/dispatch/queue-pull.test.js` (the queue pass itself, run in process against `bin/lib/dispatch/queue-pull.js`: the `#5230 blocked, native` and `foreign blocker` fixtures, including the `--foreign-states` file), `tests/flow-cross-repo-header-conformance.test.js`, `tests/flow-blocker-landing-conformance.test.js`, `tests/dispatch-unlanded-blocker-consumers-conformance.test.js`.
 - Follow `skill-prose-conformance-tests` for the prose rows and prove each new assertion red.
 
 ## Common Operations

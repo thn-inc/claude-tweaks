@@ -1,0 +1,5 @@
+'use strict';
+const test = require('node:test');
+require('./no-such-module');
+
+test('never registered', () => {});

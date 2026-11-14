@@ -24,9 +24,11 @@ function realGit(args, opts = {}) {
 // and the listing otherwise. Any other failure is null too — including a timeout (lsof can block
 // on a stale network or FUSE mount), which throws with status null. stderr is dropped so lsof
 // warnings do not reach the CLI's own stderr.
-function realLsof({ exec = execFileSync } = {}) {
+function realLsof({ exec = execFileSync, cwd, env } = {}) {
   try {
     return exec('lsof', ['+c', '0', '-nP', '-iTCP', '-sTCP:LISTEN'], {
+      ...(cwd ? { cwd } : {}),
+      ...(env ? { env } : {}),
       encoding: 'utf8',
       maxBuffer: MAX_BUFFER,
       timeout: 10000,
@@ -42,8 +44,23 @@ function realLsof({ exec = execFileSync } = {}) {
 // then a fresh mkdtemp dir (per-invocation unique by construction). Never a fixed
 // shared /tmp name — two concurrent reviews clobbering each other's lens outputs is
 // the defect this module exists to close.
-function resolveDir({ dir, run, tmpdir = os.tmpdir(), mkdtemp = fs.mkdtempSync, mkdir = fs.mkdirSync } = {}) {
+// `cwd` (a relative --dir/--run resolves against it) and `env` (the mkdtemp parent, resolved the
+// way os.tmpdir() does: win32 reads TEMP, TMP, then SystemRoot\temp and ignores TMPDIR; POSIX
+// reads TMPDIR, TMP, TEMP, then /tmp) default to the process's own when absent.
+function envTmpdir(env, platform = process.platform) {
+  if (!env) return os.tmpdir();
+  const win = platform === 'win32';
+  const sysRoot = env.SystemRoot || env.windir;
+  let t = win ? env.TEMP || env.TMP || (sysRoot ? sysRoot + '\\temp' : '') : env.TMPDIR || env.TMP || env.TEMP || '/tmp';
+  if (!t) return os.tmpdir();
+  const sep = win ? '\\' : '/';
+  if (t.length > 1 && t.endsWith(sep) && !(win && t.endsWith(':' + sep))) t = t.slice(0, -1);
+  return t;
+}
+
+function resolveDir({ dir, run, cwd, env, tmpdir = envTmpdir(env), mkdtemp = fs.mkdtempSync, mkdir = fs.mkdirSync } = {}) {
   if (dir) {
+    if (cwd) dir = path.resolve(cwd, dir);
     mkdir(dir, { recursive: true });
     return dir;
   }
@@ -51,7 +68,7 @@ function resolveDir({ dir, run, tmpdir = os.tmpdir(), mkdtemp = fs.mkdtempSync, 
     // No 'tmp' path segment (refs #1213) — a common Read(**/tmp/**) permissions.deny glob
     // matches any tmp/ segment, not only a leading system one, and blocked lens agents from
     // reading this bundle during #316's review.
-    const scoped = path.join(run, 'review-ctx');
+    const scoped = path.join(cwd ? path.resolve(cwd, run) : run, 'review-ctx');
     mkdir(scoped, { recursive: true });
     return scoped;
   }
@@ -202,11 +219,13 @@ function buildContext({
   branch,
   dir,
   filesFrom,
+  cwd,
+  env,
   budgetBytes = TOTAL_CAP_BYTES,
-  git = realGit,
+  git = (a, o) => realGit(a, { ...(cwd ? { cwd } : {}), ...(env ? { env } : {}), ...o }),
   readFile = fs.readFileSync,
   writeFile = fs.writeFileSync,
-  lsof = realLsof,
+  lsof = () => realLsof({ cwd, env }),
 } = {}) {
   if (!base || !branch) throw new Error('buildContext: base and branch are both required');
   if (!dir) throw new Error('buildContext: dir is required (resolve it via resolveDir first)');
@@ -227,7 +246,7 @@ function buildContext({
   // The git list is NUL-delimited (-z) so a path with a newline or a quoted byte survives intact;
   // the hand-written --files-from list stays newline-split and trimmed.
   const files = filesFrom
-    ? readFile(filesFrom, 'utf8')
+    ? readFile(cwd ? path.resolve(cwd, filesFrom) : filesFrom, 'utf8')
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean)
@@ -379,4 +398,4 @@ function buildContext({
   };
 }
 
-module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES, isAlwaysStub, isMarkdown, elideDiff };
+module.exports = { resolveDir, envTmpdir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES, isAlwaysStub, isMarkdown, elideDiff };

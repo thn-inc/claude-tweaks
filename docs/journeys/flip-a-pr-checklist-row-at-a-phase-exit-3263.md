@@ -20,8 +20,8 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-checklist.js" --run "{run-dir}" --phase {phase} --fixes {n}[,{m}...]`
 - **Action:** The agent runs the one command the Phase-checklist update names, passing the bundle's parent run dir (or this run's own) and the run's record numbers. The CLI reads the PR number from `run-state.json`, fetches the body, repairs any missing marker (and logs what it restored to `decisions.md`), flips the one row inside the phases span, runs the Spec-summary check, verifies the body's first line names this run, and writes the body back through `gh pr edit --body-file -`.
 - **Should feel:** Like flipping a switch — no temp file to name, no span to hunt for, no first-line re-read to remember.
-- **Should understand:** The edit is line-exact: a CRLF body keeps its `\r`, a hand-added `- [ ] test-smoke` row is not mistaken for `test`, and rows outside the phases span are never touched. A body last written through MCP (plain-text markers only) still works, because the plain-text pair is used when the HTML-comment pair is gone.
-- **Red flags:** Any byte outside the row changing. A second `gh pr edit` when nothing in the row or summary changed (the call should report `no-op` and write nothing).
+- **Should understand:** The edit is line-exact: a CRLF body keeps its `\r`, a hand-added `- [ ] test-smoke` row is not mistaken for `test`, and rows outside the phases span are never touched. A body last written through MCP (plain-text markers only) still works, because the plain-text pair is used when the HTML-comment pair is gone. Since #5358 the repair also puts each missing `<!-- -->` form back next to its plain companion, filling the blank line the MCP read left where the comment was. `restored` then names `run marker HTML form`, `phases HTML markers` or `fixes HTML markers`, and the log line says the body carried `some` of the expected markers. Only a body missing all three whole pieces logs `none`.
+- **Red flags:** Any byte outside the row changing. A second `gh pr edit` when nothing in the row or summary changed (the call should report `no-op` and write nothing). A body whose plain markers survive but whose `<!-- claude-tweaks-run: … -->` line is still missing after the write. A body that gains a blank line at every phase exit.
 
 ### 2. A wrong body is refused, never overwritten
 - **URL:** `plugin/bin/pr-checklist.js` exit 4; `_shared/pr-checklist-refresh.md` exit-code list
@@ -47,4 +47,5 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #3263 (2026-10-19): `plugin/bin/pr-checklist.js` replaces the hand-composed six-step Phase-checklist update on the `gh`-present path; the MCP path stays documented in `_shared/pr-checklist-refresh.md`.
 - Updated during `/claude-tweaks:build` of record #4026 (2026-10-25): `bin/phase-exit.js` now runs this flip as one sub-step of the single phase-exit call.
+- Updated during `/claude-tweaks:build` of record #5358 (2026-11-13): the repair restores the HTML-comment markers an MCP read strips, so an MCP read-repair-write keeps both forms. The "carried none/some" wording now follows which whole pieces were appended.
 - Related: `docs/journeys/read-an-accurate-spec-summary-after-a-premise-reversal-3050.md` (the Spec-summary refresh this CLI now runs in the same call)
