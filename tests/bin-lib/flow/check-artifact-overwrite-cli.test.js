@@ -191,7 +191,8 @@ test('--run reads the manifest through deps.readFile', () => {
     check: (opts) => ({ clean: true, overwrites: [], ids: opts.manifest.multispec.specs.map((s) => s.id) }),
   });
   assert.strictEqual(io.code, 0);
-  assert.deepStrictEqual(seen, [[path.join('/nowhere', 'manifest.yml'), 'utf8']]);
+  // path.resolve: on win32 a rooted --run gains the cwd's drive letter (D:\nowhere), as the CLI resolves it.
+  assert.deepStrictEqual(seen, [[path.join(path.resolve('/nowhere'), 'manifest.yml'), 'utf8']]);
   assert.deepStrictEqual(JSON.parse(io.out()).ids, [10]);
 });
 
