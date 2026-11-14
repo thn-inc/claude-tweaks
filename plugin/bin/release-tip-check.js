@@ -7,7 +7,7 @@
 // (a missing file is ''), reads the pre-major flags from release-preflight.json's
 // proposedVersion (absent or unparseable → preMajor false, flags undefined),
 // runs git in --root, resolves release-tip-moves
-// through resolve-policy.js, and appends a run-dir-only advance line under
+// through resolve-policy.js's core in-process, and appends a run-dir-only advance line under
 // decisions.md's `## /release` through lib/log-decision/append.js.
 // Exit 0 whenever a verdict was printed (or --help printed the usage line) —
 // `failed` is a verdict the skill routes on, never an exit code. Exit 2 on a malformed invocation (a missing
@@ -21,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { checkReviewedTip } = require('./lib/release-tip/check');
+const { resolvePolicy: coreResolvePolicy, callerDeps } = require('./resolve-policy');
 const { resolveTarget, appendEntry, formatEntry } = require('./lib/log-decision/append');
 
 const USAGE = 'usage: release-tip-check.js --run <run-dir> --root <checkout> --branch <name> [--as]';
@@ -91,6 +92,7 @@ function run(argv, deps = {}) {
   const stderr = deps.stderr || ((s) => process.stderr.write(s));
   const now = deps.now || (() => Date.now());
   const cwd = deps.cwd || (() => process.cwd());
+  const resolvePolicy = deps.resolvePolicy || coreResolvePolicy;
   const spawn = deps.spawn || ((cmd, args, opts) => spawnSync(cmd, args, { ...opts, windowsHide: true }));
   if (argv.includes('--help')) {
     stdout(`${USAGE}\n`);
@@ -119,7 +121,9 @@ function run(argv, deps = {}) {
     { decisionsText, branch: o.branch, asGiven: o.as, ...readPreflightFlags(runDir) },
     {
       git: (args) => normalizeSpawn(spawn('git', args, { cwd: root, encoding: 'utf8', windowsHide: true })),
-      resolveBound: () => normalizeSpawn(spawn(process.execPath, [path.join(__dirname, 'resolve-policy.js'), '--run', runDir, 'release-tip-moves'], { cwd: root, encoding: 'utf8', windowsHide: true })),
+      // In-process through the core, bounded by what it does: the root lookup by callerDeps'
+      // GIT_TIMEOUT_MS, the local policy and config.yml read unbounded, no forge key read (so no probe).
+      resolveBound: () => resolvePolicy({ keys: ['release-tip-moves'], runDir }, callerDeps({ cwd: root })),
       appendLog: (text) => appendEntry({
         runDir,
         section: '/release',

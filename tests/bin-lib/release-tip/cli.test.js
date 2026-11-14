@@ -37,7 +37,7 @@ function pushRunDirUpstream(fx) {
   fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
 }
 
-function cli(argv, { cwd = process.cwd(), mainRoot, spawn } = {}) {
+function cli(argv, { cwd = process.cwd(), mainRoot, spawn, resolvePolicy } = {}) {
   let out = '';
   let err = '';
   const code = run(argv, {
@@ -47,6 +47,7 @@ function cli(argv, { cwd = process.cwd(), mainRoot, spawn } = {}) {
     cwd: () => cwd,
     mainRoot,
     spawn,
+    resolvePolicy,
   });
   return { code, out, err };
 }
@@ -147,9 +148,11 @@ test('run-dir-only advance writes its line under ## /release in decisions.md', (
   });
 });
 
-test('a code move reads the bound through the real resolve-policy.js spawn → delta', () => {
+test('AC2/AC7 a code move reads the bound through the core at --root → delta', () => {
   withFixture((fx) => {
     const tip = originTip(fx);
+    fs.mkdirSync(path.join(fx.work, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(fx.work, '.claude-tweaks', 'policy.yml'), 'release-tip-moves: 3\n');
     fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisions([step3Line(tip)]));
     fs.writeFileSync(path.join(fx.other, 'fix.txt'), 'fix: y');
     fx.run(fx.other, ['add', 'fix.txt']);
@@ -160,9 +163,26 @@ test('a code move reads the bound through the real resolve-policy.js spawn → d
     const v = JSON.parse(r.out);
     assert.strictEqual(v.verdict, 'delta', JSON.stringify(v));
     assert.strictEqual(v.move, 1);
-    assert.strictEqual(v.bound, 2);
-    assert.strictEqual(v.source, 'default');
+    assert.strictEqual(v.bound, 3);
+    assert.strictEqual(v.source, 'policy');
     assert.strictEqual(v.commits, 1);
+  });
+});
+
+test('AC5 a resolvePolicy that throws → failed verdict, exit 0', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisions([step3Line(tip)]));
+    fs.writeFileSync(path.join(fx.other, 'fix.txt'), 'fix: y');
+    fx.run(fx.other, ['add', 'fix.txt']);
+    fx.run(fx.other, ['commit', '-q', '-m', 'fix: y']);
+    fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
+    const r = cli(argsFor(fx), { mainRoot: fx.work, resolvePolicy: () => { throw new Error('kaboom'); } });
+    assert.strictEqual(r.code, 0, r.err);
+    const v = JSON.parse(r.out);
+    assert.strictEqual(v.verdict, 'failed');
+    assert.strictEqual(v.reason, 'release-tip-moves unreadable');
+    assert.match(v.detail, /kaboom/);
   });
 });
 
