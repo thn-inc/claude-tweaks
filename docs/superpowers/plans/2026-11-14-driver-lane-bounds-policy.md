@@ -47,7 +47,7 @@ From `plugin/bin/lib/express/cli.js`'s header (gh-api-module-pattern's CLI wrapp
 
 `prose-code-twin-pin` does not apply: the code twin's prose (`_shared/express-lane.md`) is untouched, and the new options are driver-only (absent for every express caller).
 
-**Derived-default shape for `express-driver-max-lines`:** no static `default` (Shape A's row form), but the derivation is consumer-side, not in `resolve-policy.js`: the resolver returns `{value: null, source: 'default'}` unset and `{value: null, source: 'default', invalid: true}` malformed (probed on `fleet-daily-grant-cap`, the existing no-default integer); the driver treats any `source: 'default'` as "pass no flag", so `check` applies `auto-merge-max-lines`. The doc row states exactly this.
+**Derived-default shape for `express-driver-max-lines`: Shape B** (`_shared/policy-schema-read-path.md`'s Derived-default keys — "Pick B when an existing consumer must keep reading the value as a plain default"). The row keeps a static base `default: 40` (equal to `auto-merge-max-lines`' own default), and `resolvePolicyKeys` derives the value whenever the key resolves `source: 'default'` (unset **and** set-but-invalid; the `invalid: true` flag survives) as the resolved `auto-merge-max-lines` value, read through the same sources with the same invalid handling, mirroring `deriveHousekeepingAutoMerge` (`plugin/bin/lib/policy-schema.js:589-601`, wired at `:699`). `source` stays `default`, which is the attribution the driver reads: any `source: 'default'` means "pass no flag", so `check` itself applies `auto-merge-max-lines`. The resolved value is then the express bound in fact, so `--all` and `/claude-tweaks:help` never show a no-bound `null`. `_shared/policy-schema-read-path.md` names `housekeeping-auto-merge` as its Shape B example and is not edited (AC9.1); the doc row states the shape.
 
 ## Review Focus
 
@@ -72,6 +72,7 @@ From `plugin/bin/lib/express/cli.js`'s header (gh-api-module-pattern's CLI wrapp
 ### Task 1: Eligibility bound options
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/express/eligibility.js:16-34` (constants), `:98-130` (`evaluateRecordEligibility`), `:178-180` (exports)
@@ -179,7 +180,7 @@ git commit -m "Add the driver's --max-lines flag to express-lane.js check — #5
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/bin/lib/policy-schema.js:91-96` (rows after `express-driver-review`, with a `// #5224:` comment line)
+- Modify: `plugin/bin/lib/policy-schema.js:91-96` (rows after `express-driver-review`, with a `// #5224:` comment line), `:577-601` (a `deriveExpressDriverMaxLines(sources)` beside `deriveHousekeepingAutoMerge`), `:699-700` (its wiring in `resolvePolicyKeys`)
 - Modify: `plugin/skills/_shared/policy-schema.md:105` (three rows after `express-driver-review`)
 - Modify: `plugin/skills/_shared/policy-schema-coverage.md:101` (`policyOnly` bullet)
 - Modify: `docs/journeys/resolve-a-policy-key.md:44` (Red flags list: `express-driver-max-size`, `express-driver-max-key-files`, `express-driver-max-lines`, #5224)
@@ -189,35 +190,42 @@ git commit -m "Add the driver's --max-lines flag to express-lane.js check — #5
 - Produces (rows):
   - `{ key: 'express-driver-max-size', type: 'enum', values: ['low', 'medium'], default: 'low', policyOnly: true, summary: …, category: 'merge-safety', tier: 'advanced' }`
   - `{ key: 'express-driver-max-key-files', type: 'integer', min: 1, default: 3, policyOnly: true, … }`
-  - `{ key: 'express-driver-max-lines', type: 'integer', min: 1, policyOnly: true, … }` — no `default` (see Global Constraints' derived-default note).
+  - `{ key: 'express-driver-max-lines', type: 'integer', min: 1, default: 40, policyOnly: true, … }` — Shape B (Global Constraints' derived-default note): a comment above the row names the derivation.
+  - `deriveExpressDriverMaxLines(sources) -> number`: the `auto-merge-max-lines` value the main loop would resolve from `sources` — first source holding the key wins, an invalid value resolves that key's schema default (40) and never the next source's value, exactly as `deriveHousekeepingAutoMerge` reads `autonomy`. Wired in `resolvePolicyKeys` beside the `housekeeping-auto-merge` branch: `if (canonical === 'express-driver-max-lines' && resolved.source === 'default') resolved = { ...resolved, value: deriveExpressDriverMaxLines(sources) };`. The policyOnly skip of the `--run` overlay applies to `express-driver-max-lines` itself only; the derivation reads `auto-merge-max-lines` through every source, as `check` does.
   - Summaries ≤ 140 chars, plain-language, not copied into the doc rows.
-- Doc rows (owner column `bin/drive.js` (#5224)): state unset / set / malformed results from the resolver, `policyOnly` and why ("it bounds what autonomous machinery may take on, so a `--run` config never widens it"), that a record beyond the express bounds is admitted only with the reviewer step on, and for `express-driver-max-lines` that unset or malformed resolves `null` (`source: default`) and the driver then passes no `--max-lines`, so `check` applies `auto-merge-max-lines`; the driver's bound applies only when the key is set and the reviewer is on for the record.
+- Doc rows (owner column `bin/drive.js` (#5224)): state unset / set / malformed results from the resolver, `policyOnly` and why ("it bounds what autonomous machinery may take on, so a `--run` config never widens it"), that a record beyond the express bounds is admitted only with the reviewer step on, and for `express-driver-max-lines` that it is a Shape B derived default: unset or malformed (`invalid: true`) resolves the effective `auto-merge-max-lines` value with `source: default`, the driver then passes no `--max-lines`, and `check` applies `auto-merge-max-lines`; the driver's bound applies only when the key is set and the reviewer is on for the record.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```js
-// count pin comment: 106 -> 109, #5224: express-driver-max-size — enum low|medium, default low; express-driver-max-key-files — integer >= 1, default 3; express-driver-max-lines — integer >= 1, no default (unset = the express bound); all policyOnly
+// count pin comment: 106 -> 109, #5224: express-driver-max-size — enum low|medium, default low; express-driver-max-key-files — integer >= 1, default 3; express-driver-max-lines — integer >= 1, Shape B (base 40, derives auto-merge-max-lines while source is default); all policyOnly
 assert.strictEqual(POLICY_KEYS.length, 109);  // and the Set-size line
 test('AC5.1: the size and Key File keys resolve the express values unset', () => {
   const r = resolvePolicyKeys(['express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines'], { policyRaw: '', runConfigRaw: null });
   assert.deepStrictEqual(r['express-driver-max-size'], { value: 'low', source: 'default' });
   assert.deepStrictEqual(r['express-driver-max-key-files'], { value: 3, source: 'default' });
-  assert.deepStrictEqual(r['express-driver-max-lines'], { value: null, source: 'default' });
+  assert.deepStrictEqual(r['express-driver-max-lines'], { value: 40, source: 'default' });
+});
+test('AC5.5: express-driver-max-lines unset derives whatever auto-merge-max-lines holds', () => {
+  // policyRaw 'auto-merge-max-lines: 77\n' → { value: 77, source: 'default' }
+  // policyRaw 'auto-merge-max-lines: x\n' (invalid there) → { value: 40, source: 'default' }  (its own invalid-value fallback)
+  // runConfigRaw 'auto-merge-max-lines: 55\n' → { value: 55, source: 'default' }  (the overlay reaches the derivation, as it reaches check)
+  // policyRaw 'express-driver-max-lines: 0\nauto-merge-max-lines: 77\n' → { value: 77, source: 'default', invalid: true }
 });
 test('AC5.2: the Key File default equals EXPRESS_MAX_KEY_FILES', () => { /* require express/eligibility; strictEqual(row.default, EXPRESS_MAX_KEY_FILES) */ });
 test('AC5.3: malformed values never widen', () => {
   // max-size: high | Medium | med → { value: 'low', source: 'default', invalid: true }
   // max-key-files: 0 | 2.5 | x → { value: 3, source: 'default', invalid: true }
-  // max-lines: 0 | -1 | x → { value: null, source: 'default', invalid: true }
+  // max-lines: 0 | -1 | x → { value: 40, source: 'default', invalid: true }  (40 derived from an unset auto-merge-max-lines)
 });
 test('AC5.4: set values resolve from policy', () => { /* medium; 5; 120 → source 'policy' */ });
 // AC7.1–AC7.3: one test per key — add rows to the existing #5216 policyOnly table (`:1012-1018`):
 //   { id: 'AC7.1', key: 'express-driver-max-size', def: 'low', other: 'medium', policyVal: 'medium' }  (use a run value distinct from policyVal where the table's shape needs one)
 //   { id: 'AC7.2', key: 'express-driver-max-key-files', def: 3, other: 9, policyVal: 5 }
-//   { id: 'AC7.3', key: 'express-driver-max-lines', def: null, other: 999, policyVal: 120 }
+//   { id: 'AC7.3', key: 'express-driver-max-lines', def: 40, other: 999, policyVal: 120 }
 ```
 
-Read the existing table's loop before adding rows: if it asserts `def` against a `{value, source}` envelope, the `null` row must still fit its assertion shape.
+Read the existing table's loop before adding rows, so each new row fits its assertion shape.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -256,6 +264,7 @@ git commit -m "Register the driver lane bound policy keys — #5224"
   - `evaluateAdmission({ ...existing, keyFiles, bounds: { sizeCeiling, maxKeyFiles }, reviewerOn })`.
   - New `ADMISSION_REASONS` keys: `reviewerOff: 'record is beyond the express bounds and the reviewer step is off for it'`, `reviewerUnreadable: 'reviewer-on answer unreadable'`, `boundsUnreadable: 'lane bounds unreadable'`, `keyFilesUnreadable: 'record Key Files unreadable'`.
   - The rule (appended after the routing gate; every gate still runs): `reviewerOn` not a boolean → `reviewerUnreadable`. `bounds` not an object, `sizeCeiling` not a key of `SIZE_CEILINGS`, or `maxKeyFiles` not a safe integer ≥ 1 → `boundsUnreadable`. `keyFiles` not an array → `keyFilesUnreadable`. When labels, bounds and keyFiles are all readable: `beyond = size !== 'low' || keyFiles.length > EXPRESS_MAX_KEY_FILES`; `inside = SIZE_CEILINGS[sizeCeiling].includes(size) && keyFiles.length <= maxKeyFiles`; `beyond && inside && reviewerOn === false` → `reviewerOff`. `beyond && !inside` adds nothing (eligibility owns that refusal). `size` comes from `parseRecordFacets(labels).size`.
+  - `reviewerGateReason({ labels, keyFiles, bounds, reviewerOn }) -> string | null` (exported; `evaluateAdmission` calls it for its reviewer reason): `ADMISSION_REASONS.reviewerOff` exactly when labels are an array, `keyFiles` an array, `bounds` readable, and `beyond && inside && reviewerOn === false`; `null` in every other case (the unreadable reasons stay `evaluateAdmission`'s). Task 5's eligibility step calls it on an eligibility refusal (the Plan Review Clarification, Reading A).
   - Header comment: add the closed rule's three states (beyond + reviewer on → admitted by this rule; beyond + reviewer not on → `reviewerOff`; inside → rule does not apply) and that any unreadable input refuses with its own reason.
 
 - [ ] **Step 1: Write the failing tests**
@@ -267,9 +276,13 @@ Extend `ADMIT` with `keyFiles: ['a.js'], bounds: { sizeCeiling: 'low', maxKeyFil
 // issue built like eligibility.test.js's record() helper (copy it here: Key Files section, risk:low, type:feature, shaped body).
 function laneVerdict(issue, { sizeCeiling = 'low', maxKeyFiles = 3, review = 'beyond-express' } = {}) {
   const el = evaluateRecordEligibility(issue, { enabled: true, allowAbsentCeremony: true, integrationModel: 'pr-first', sensitivePaths: [], sizeCeiling, maxKeyFiles });
-  if (!el.eligible) return { admitted: false, reasons: el.reasons };
   const reviewer = reviewRequired({ issue, keyFiles: el.keyFiles, policyValue: review });
-  return evaluateAdmission({ ...ADMIT, labels: issue.labels, keyFiles: el.keyFiles, bounds: { sizeCeiling, maxKeyFiles }, reviewerOn: reviewer.on });
+  const facts = { labels: issue.labels, keyFiles: el.keyFiles, bounds: { sizeCeiling, maxKeyFiles }, reviewerOn: reviewer.on };
+  if (!el.eligible) {
+    const extra = reviewerGateReason(facts);
+    return { admitted: false, reasons: extra ? [...el.reasons, extra] : el.reasons };
+  }
+  return evaluateAdmission({ ...ADMIT, ...facts });
 }
 test('AC2.1/AC2.2: with every key unset the lane verdict equals today\'s rules (hand-written table)', () => {
   // EXPECTED: a literal 4 × 6 table keyed `${size}|${count}` (size ∈ low, medium, high, absent; count 0..5),
@@ -284,6 +297,15 @@ test('AC3.2: widened, size:low with 4 Key Files takes the same two outcomes', ()
 test('AC3.5: a record inside the express bounds is admitted the same with the reviewer on or off', () => { /* size:low, 2 Key Files, widened policy, review on/off/beyond-express → admitted */ });
 test('AC3.6/AC3.7: failing an eligibility bound and the reviewer condition reports eligibility reasons only, outside the driver bounds', () => {
   // size:medium, 6 Key Files, maxKeyFiles 5, sizeCeiling medium, review off → reasons deepStrictEqual ['more than 5 Key Files'] (no reviewerOff)
+});
+test('AC3.6 (Plan Review Clarification): inside the driver bounds, another eligibility failure is followed by the reviewer reason', () => {
+  // risk:medium, size:medium, 4 Key Files, sizeCeiling medium, maxKeyFiles 5:
+  //   review off → reasons deepStrictEqual ['risk is not low', R.reviewerOff]
+  //   review on and beyond-express → reasons deepStrictEqual ['risk is not low']
+  // risk:medium, size:low, 2 Key Files (inside the express bounds), review off → ['risk is not low']
+});
+test('reviewerGateReason returns null on unreadable input', () => {
+  // labels null; keyFiles null; bounds { sizeCeiling: 'high', maxKeyFiles: 3 }; reviewerOn 'false' → null each
 });
 test('AC6.2: a missing or non-boolean reviewer-on answer refuses', () => {
   for (const v of [undefined, null, 'true', 1, {}]) assert.ok(reasonsFor({ reviewerOn: v }).includes(R.reviewerUnreadable));
@@ -301,7 +323,7 @@ test('Review Focus 2: a limit below the express limit narrows', () => {
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/driver/admission.test.js`
-Expected: FAIL after Step 1 — `R.reviewerOff` undefined / AC3.7 key list mismatch.
+Expected: FAIL after Step 1 — `R.reviewerOff` undefined / `reviewerGateReason` is not a function / AC3.7 key list mismatch.
 
 - [ ] **Step 3: Implement** per the Interfaces block.
 
@@ -330,13 +352,14 @@ git commit -m "Require the reviewer for driver records beyond the express bounds
 - Modify: `docs/plugin-structure.md` — the `plugin/bin/lib/express/` entry (`:71`: eligibility's two driver options, `check --max-lines`) and the `plugin/bin/lib/driver/` entry (`:77`: admission's reviewer rule and its new facts)
 - Test: `tests/bin-lib/driver/run.test.js`
 - Test: `tests/bin-lib/driver/review.test.js` (its one `reviewRecord` ctx at `:925` gains `reviewer: { on: true, reason: 'test' }`)
+- Test: `tests/bin-lib/driver/run.test.js:4133` and `:4141` — the two direct `reviewRecord` calls (missing wiring member) — their ctx gains `reviewer: { on: true, reason: 'test' }` so they still reach the `the review pass failed before it started` path; `:819` (`assert.deepEqual(reads[0].args, Object.keys(POLICY))`) stays as written and passes because `POLICY` gains all three keys in `POLICY_KEYS` order
 
 **Interfaces:**
 - Consumes: Task 1's options, Task 2's `--max-lines`, Task 3's keys, Task 4's admission facts.
 - Produces:
   - `POLICY_KEYS` gains `'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines'` (so the policy step's unreadable check covers them — AC6.1).
-  - `eligibilityStep` passes `sizeCeiling: policy['express-driver-max-size'].value, maxKeyFiles: policy['express-driver-max-key-files'].value`.
-  - `admissionStep`: `ctx.reviewer = deps.reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: policy['express-driver-review'].value })` — the **one** call per record; admission gets `keyFiles: ctx.keyFiles, bounds: { sizeCeiling, maxKeyFiles }` (same two values eligibility got) and `reviewerOn: ctx.reviewer ? ctx.reviewer.on : undefined` (a non-boolean passes through so admission refuses).
+  - `eligibilityStep` passes `sizeCeiling: policy['express-driver-max-size'].value, maxKeyFiles: policy['express-driver-max-key-files'].value`, then — right after `ctx.keyFiles` is set, before deciding the verdict — makes the **one** reviewer call of the record: `ctx.reviewer = deps.reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: policy['express-driver-review'].value })`. On a refusal (Plan Review Clarification, Reading A) its stop detail is the eligibility reasons followed by `reviewerGateReason({ labels: ctx.issue.labels, keyFiles: ctx.keyFiles, bounds, reviewerOn: ctx.reviewer && ctx.reviewer.on })` when that returns a reason, joined with `; ` as today.
+  - `admissionStep` makes no reviewer call: admission gets `keyFiles: ctx.keyFiles, bounds: { sizeCeiling, maxKeyFiles }` (the same two values eligibility got) and `reviewerOn: ctx.reviewer ? ctx.reviewer.on : undefined` (a non-boolean passes through so admission refuses).
   - `driverLineBound(ctx) -> number | null` (module-private in `steps.js`): the `express-driver-max-lines` value when its envelope's `source !== 'default'` and `ctx.reviewer && ctx.reviewer.on === true`, else `null`.
   - `checkStep` appends `'--max-lines', String(bound)` to the `check` argv only when `driverLineBound(ctx) !== null`.
   - `runImplementer`'s stated `maxLines` = `driverLineBound(ctx) ?? Number(shared.policy['auto-merge-max-lines'].value)` (the existing finite check stays on the `auto-merge-max-lines` branch).
@@ -344,7 +367,7 @@ git commit -m "Require the reviewer for driver records beyond the express bounds
 
 - [ ] **Step 1: Update the harness, then write the failing tests**
 
-Harness: add the three keys to `POLICY` (`'express-driver-max-size': 'low'`, `'express-driver-max-key-files': 3`; leave `express-driver-max-lines` out) and make the policy reply at `:455` return `{ value: null, source: 'default' }` for a key whose `policy[k]` is `undefined`. Add a `reviewRequired` dep that records its call and by default returns the real `reviewRequired(opts)`. Add the default-script reply if the harness routes it through `dispatch`.
+Harness: append the three keys to `POLICY`, after `'express-driver-review'` and in the order `POLICY_KEYS` lists them (`'express-driver-max-size': 'low'`, `'express-driver-max-key-files': 3`, `'express-driver-max-lines': undefined`), and make the policy reply at `:455` return `{ value: policy['auto-merge-max-lines'], source: 'default' }` for `express-driver-max-lines` when `policy[k]` is `undefined` (the Shape B envelope; every other key keeps `{ value: policy[k], source: 'policy' }`). The AC4.8, AC11.1, AC11.2 and AC3.6 run tests script the `eligibility` and `admission` replies to call the real `evaluateRecordEligibility` and `evaluateAdmission` with the options and facts the step passes, over an issue whose body lists the Key Files the row names (shape it like `tests/bin-lib/express/eligibility.test.js`'s `record()` helper); the default fakes return `eligible: true` / `admitted: true` and can never refuse. Add a `reviewRequired` dep that records its call and by default returns the real `reviewRequired(opts)`. Add the default-script reply if the harness routes it through `dispatch`.
 
 ```js
 test('AC12.1: one reviewRequired call per record feeds admission and the check flag', async () => {
@@ -353,8 +376,9 @@ test('AC12.1: one reviewRequired call per record feeds admission and the check f
   // then sentinel { on: false, … } (record inside the express bounds) → check argv has no --max-lines
 });
 test('AC4.3/AC4.4: the flag is passed only when the key is set and the reviewer is on', async () => {
-  // rows: (unset, review on) → no flag; (invalid → { value: null, source: 'default', invalid: true }, on) → no flag;
+  // rows: (unset, review on) → no flag; (invalid, on) → no flag;
   // (120 policy, review off, size:low record) → no flag; (120 policy, review on) → ['--max-lines', '120']
+  // the invalid row's envelope is { value: 200, source: 'default', invalid: true } (Shape B: derived from auto-merge-max-lines)
 });
 test('AC4.5: a record inside the express bounds with the reviewer always on gets the driver bound', async () => { /* size:low, 1 Key File, review on, max-lines 120 → flag present */ });
 test('AC4.6/AC4.7: a diff between the express and driver bounds passes check with the reviewer on and escalates with it off', async () => {
@@ -368,6 +392,10 @@ test('AC4.8/AC11.1: a widened record goes through review before push', async () 
 });
 test('AC11.2: with the reviewer off a widened record is refused at admission and nothing reaches check', async () => {
   // same record, review off → final stop.step 'admission', class refused, detail includes ADMISSION_REASONS.reviewerOff; zero check calls
+});
+test('AC3.6 (Plan Review Clarification): the eligibility stop names the reviewer reason after eligibility\'s own', async () => {
+  // real eligibility + admission; risk:medium, size:medium, 4 Key Files, max-size medium, max-key-files 5, review off
+  // → final stop.step 'eligibility', class refused, detail === 'risk is not low; ' + ADMISSION_REASONS.reviewerOff; reviewRequired called once
 });
 test('AC5.5: with express-driver-max-lines unset the lane bound is auto-merge-max-lines, whatever it holds', async () => {
   // POLICY auto-merge-max-lines: 77, max-lines unset, review on → no --max-lines in check argv; the worker prompt states 77
@@ -405,7 +433,7 @@ git commit -m "Wire the driver lane bounds and one reviewer answer through admis
 
 **Role:** transcription
 
-**Files:** none modified unless a check fails.
+**Files:** none — check-only. A check that fails stops this task and returns to the controller, which sends the fix to the task that owns the file (Task 3 for the rail: the spec Gotcha's pointer-stub section move, per `.claude/skills/policy-key-addition` site 4).
 
 - [ ] **Step 1:** `git diff --name-only origin/main...HEAD -- plugin/skills/` prints only `plugin/skills/_shared/policy-schema-coverage.md` and `plugin/skills/_shared/policy-schema.md` (AC9.1, AC9.2).
 - [ ] **Step 2:** `git diff --stat origin/main...HEAD -- plugin/skills/_shared/express-lane.md` prints nothing (AC9.1).
