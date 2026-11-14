@@ -2078,6 +2078,27 @@ test('AC6.2: the real pinGhHost reads GH_HOST from the injected env, not process
   assert.ok(calls.every((c) => c.ghHost === 'ghe.example'), JSON.stringify(calls.map((c) => c.ghHost)));
 });
 
+test('AC6.3: the real pinGhHost compares the --repo host with the injected cwd\'s origin, not process.cwd()\'s', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const shim = recordingGhShim(ws);
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  // A *.ghe.com origin is a known GitHub host, so resolveGhSpec admits it; this checkout's own origin is github.com.
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://corp.ghe.com/o/r.git'], { env: realGitEnv() });
+  runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--repo', 'github.com/o/r'], {
+    cwd: repo,
+    env: { PATH: shim.dir + path.delimiter + process.env.PATH, HOME: process.env.HOME, TMPDIR: os.tmpdir() },
+    fresh: true,
+    allowRealRunner: true,
+    deps: { ghAvailable: () => true },
+  });
+  const calls = shim.calls();
+  assert.ok(calls.length > 0, 'the post reached gh');
+  // github.com differs from the injected cwd's origin host, so it is pinned; read against process.cwd() it matches and pins nothing.
+  assert.ok(calls.every((c) => c.ghHost === 'github.com'), JSON.stringify(calls.map((c) => c.ghHost)));
+});
+
 test('AC3.1: a relative --scope resolves against the injected working directory, not process.cwd()', (t) => {
   const ws = workspace(t);
   assert.notEqual(ws.root, process.cwd());
