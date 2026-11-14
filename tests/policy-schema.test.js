@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { POLICY_KEYS, RENAMED_KEYS, auditPolicy, resolveValue, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
-const { runCliSync, spawnCli } = require('./helpers/run-cli');
+const { runCliSync } = require('./helpers/run-cli');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-schema-'));
@@ -983,8 +983,8 @@ test('AC6/express-driver: each value resolves; a malformed one falls back', () =
 test('AC16: express-driver-review resolves its default from resolve-policy.js in a fresh project', () => {
   const repo = tmpRepo();
   try {
-    // Real process: the script entry prints the resolved JSON on stdout for a fresh project.
-    const r = spawnCli(DRIVER_CLI, ['express-driver-review'], { cwd: repo, env: { ...process.env } });
+    const r = driverCli(['express-driver-review'], repo);
+    assert.strictEqual(r.status, 0, r.stderr);
     assert.deepStrictEqual(JSON.parse(r.stdout)['express-driver-review'], { value: 'beyond-express', source: 'default' });
   } finally { fs.rmSync(repo, { recursive: true, force: true }); }
 });

@@ -11,7 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
-const { runCliSync, spawnCli } = require('./helpers/run-cli');
+const { runCliSync } = require('./helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 
@@ -37,9 +37,7 @@ test('accept: main-anchored --run from linked-worktree cwd; config overlay still
 // resolve-policy already applied to a genuinely missing value.
 test('reject: empty --run value — "--run requires a value", exit 1', () => {
   const main = gitRepo();
-  // Real process: the script entry turns the rejection into exit status 1 with the message on the child's stderr.
-  const spawned = spawnCli(CLI, ['--run', '', 'autonomy'], { cwd: main });
-  const res = { status: spawned.code, stderr: spawned.stderr };
+  const res = runResolver(['--run', '', 'autonomy'], main);
   assert.strictEqual(res.status, 1);
   assert.match(res.stderr, /--run requires a value/);
 });

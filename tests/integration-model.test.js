@@ -13,7 +13,7 @@ const { readText } = require('./helpers/read-skill');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
-const { runCliSync, spawnCli } = require('./helpers/run-cli');
+const { runCliSync } = require('./helpers/run-cli');
 const { gitRepo, ghAbsentPath, GH_REMOTE, withTimeoutEnv, writePolicy } = require('./helpers/integration-model');
 
 // The other half of the gh timeout ladder tests lives in tests/integration-model-gh-timeout.test.js.
@@ -22,9 +22,8 @@ const RESOLVE_POLICY = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-poli
 const REPO_ROOT = path.join(__dirname, '..');
 
 // In-process (#5384): returns stdout, throwing on a non-zero exit like the execFileSync it replaced.
-// `fresh` resets the forge probe's module-level memos for a case whose gh answer differs from an earlier call.
-function runResolvePolicy(args, { cwd, env = { ...process.env }, fresh = false } = {}) {
-  const r = runCliSync(RESOLVE_POLICY, args, { cwd, env, fresh });
+function runResolvePolicy(args, { cwd, env = { ...process.env } } = {}) {
+  const r = runCliSync(RESOLVE_POLICY, args, { cwd, env });
   if (r.code !== 0) throw Object.assign(new Error(`resolve-policy exited ${r.code}: ${r.stderr}`), { status: r.code, stdout: r.stdout, stderr: r.stderr });
   return r.stdout;
 }
@@ -290,27 +289,27 @@ test('CLI: this repo resolves a valid enum value regardless of policy.yml state 
   assert.ok(['pr-first', 'local-merge'].includes(out.trim()));
 });
 
-test('CLI: this repo pins integration-model: pr-first in policy.yml — resolves without shelling out to git/gh (AC1)', () => {
+test('CLI: this repo pins integration-model: pr-first in policy.yml and the CLI resolves that pin (AC1)', () => {
   const policyPath = path.join(REPO_ROOT, '.claude-tweaks', 'policy.yml');
   const policyRaw = readText(policyPath);
   assert.match(policyRaw, /^integration-model:\s*pr-first\s*$/m, '.claude-tweaks/policy.yml must pin integration-model: pr-first');
-  // Real process: the script entry reads the pinned policy.yml, prints the value and exits 0.
-  const spawned = spawnCli(RESOLVE_POLICY, ['--values', 'integration-model'], { cwd: REPO_ROOT, env: { ...process.env } });
-  assert.strictEqual(spawned.code, 0, spawned.stderr);
-  assert.strictEqual(spawned.stdout.trim(), 'pr-first');
+  const out = runResolvePolicy(['--values', 'integration-model'], { cwd: REPO_ROOT });
+  assert.strictEqual(out.trim(), 'pr-first');
 });
 
-// AC7 (#5384): a `gh` stub on the PATH injected through `env` is what the in-process forge probe runs — the
-// stub's call counter moves and its answer decides the value; a PATH without the stub never reaches it.
+// AC7 (#5384): the injected `env` decides which `gh` the in-process forge probe can run. fakeGh also puts the
+// stub on the real process.env.PATH, so the first call's counter would move even if `run` ignored `env`; only the
+// second call discriminates — its injected PATH excludes the stub, so the counter must not move and the answer
+// must fall open to local-merge.
 test('CLI: the forge probe runs the gh stub on the injected PATH and the stub counter moves (AC7)', { skip: STUB_SKIP }, () => {
   const dir = gitRepo({ remote: GH_REMOTE });
   const gh = fakeGh({ first: 'ok' });
   try {
-    const out = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env: { ...process.env }, fresh: true });
+    const out = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env: { ...process.env } });
     assert.strictEqual(out.trim(), 'pr-first');
     assert.ok(gh.count() >= 1, `the gh stub on the injected PATH must have been called, got ${gh.count()}`);
     const before = gh.count();
-    const absent = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env: { ...process.env, PATH: ghAbsentPath() }, fresh: true });
+    const absent = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env: { ...process.env, PATH: ghAbsentPath() } });
     assert.strictEqual(absent.trim(), 'local-merge');
     assert.strictEqual(gh.count(), before, 'a PATH without the stub must not reach it');
   } finally {
@@ -318,21 +317,35 @@ test('CLI: the forge probe runs the gh stub on the injected PATH and the stub co
   }
 });
 
-test('CLI: --mcp-reachable resolves pr-first when gh is faked absent and a real remote exists (AC4)', () => {
+// The gh-absent cases below install a counting fakeGh on the real PATH and assert it is never reached: the
+// injected PATH excludes it, so a count above 0 means the injected env was ignored.
+test('CLI: --mcp-reachable resolves pr-first when gh is faked absent and a real remote exists (AC4)', { skip: STUB_SKIP }, () => {
   const dir = gitRepo({ remote: 'https://github.com/thomasholknielsen/claude-tweaks.git' });
-  const env = { ...process.env, PATH: ghAbsentPath() };
-  const out = runResolvePolicy(['--values', 'integration-model', '--mcp-reachable'], { cwd: dir, env });
-  assert.strictEqual(out.trim(), 'pr-first');
+  const gh = fakeGh({ first: 'fail' });
+  try {
+    const env = { ...process.env, PATH: ghAbsentPath() };
+    const out = runResolvePolicy(['--values', 'integration-model', '--mcp-reachable'], { cwd: dir, env });
+    assert.strictEqual(out.trim(), 'pr-first');
+    assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+  } finally {
+    gh.restore();
+  }
 });
 
-test('CLI: omitting --mcp-reachable preserves todays local-merge fail-open behavior when gh is absent (AC4)', () => {
+test('CLI: omitting --mcp-reachable preserves todays local-merge fail-open behavior when gh is absent (AC4)', { skip: STUB_SKIP }, () => {
   const dir = gitRepo({ remote: 'https://github.com/thomasholknielsen/claude-tweaks.git' });
-  const env = { ...process.env, PATH: ghAbsentPath() };
-  const out = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env });
-  assert.strictEqual(out.trim(), 'local-merge');
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    const env = { ...process.env, PATH: ghAbsentPath() };
+    const out = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env });
+    assert.strictEqual(out.trim(), 'local-merge');
+    assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+  } finally {
+    gh.restore();
+  }
 });
 
-test('CLI: --mcp-reachable forwards into merge-verification even when integration-model is NOT also requested (#1421 Finding 3)', () => {
+test('CLI: --mcp-reachable forwards into merge-verification even when integration-model is NOT also requested (#1421 Finding 3)', { skip: STUB_SKIP }, () => {
   // A fixture repo that reaches deriveMergeVerification's branch (3)
   // (merge-when-green) only when integration-model resolves pr-first: a
   // real remote, a PR-triggered workflow, and an integration branch equal
@@ -345,19 +358,26 @@ test('CLI: --mcp-reachable forwards into merge-verification even when integratio
   git('symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/origin/${branch}`);
   fs.mkdirSync(path.join(dir, '.github', 'workflows'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.github', 'workflows', 'ci.yml'), 'name: ci\non:\n  push:\n    branches: [main]\n  pull_request:\njobs: {}\n');
-  const env = { ...process.env, PATH: ghAbsentPath() };
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    const env = { ...process.env, PATH: ghAbsentPath() };
 
-  // Without the flag: gh absent -> forge detection falls open to local-merge
-  // -> branch (1) -> off.
-  const withoutFlag = runResolvePolicy(['--values', 'merge-verification'], { cwd: dir, env });
-  assert.strictEqual(withoutFlag.trim(), 'off');
+    // Without the flag: gh absent -> forge detection falls open to local-merge
+    // -> branch (1) -> off.
+    const withoutFlag = runResolvePolicy(['--values', 'merge-verification'], { cwd: dir, env });
+    assert.strictEqual(withoutFlag.trim(), 'off');
+    assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
 
-  // With the flag, requesting ONLY merge-verification (not integration-model
-  // in the same call): before the fix, the flag was silently dropped on this
-  // path and the result matched the line above (off). After the fix, it
-  // forwards through resolveIntegrationModel -> pr-first -> merge-when-green.
-  const withFlag = runResolvePolicy(['--values', 'merge-verification', '--mcp-reachable'], { cwd: dir, env });
-  assert.strictEqual(withFlag.trim(), 'merge-when-green');
+    // With the flag, requesting ONLY merge-verification (not integration-model
+    // in the same call): before the fix, the flag was silently dropped on this
+    // path and the result matched the line above (off). After the fix, it
+    // forwards through resolveIntegrationModel -> pr-first -> merge-when-green.
+    const withFlag = runResolvePolicy(['--values', 'merge-verification', '--mcp-reachable'], { cwd: dir, env });
+    assert.strictEqual(withFlag.trim(), 'merge-when-green');
+    assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+  } finally {
+    gh.restore();
+  }
 });
 
 // --- Consumer conformance ---

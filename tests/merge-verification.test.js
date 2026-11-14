@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { POLICY_KEYS, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
-const { runCliSync, spawnCli } = require('./helpers/run-cli');
+const { runCliSync } = require('./helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const REPO_ROOT = path.join(__dirname, '..');
@@ -555,10 +555,7 @@ test('CLI JSON mode: derived value carries source "default"; explicit carries "p
 });
 
 test('CLI live smoke on this repo resolves a valid enum value (drift-sensitive by nature — the fixtures above are the durable check)', () => {
-  // Real process: the script entry itself prints the resolved value on stdout and exits 0.
-  const spawned = spawnCli(CLI, ['--values', 'merge-verification'], { cwd: REPO_ROOT, env: { ...process.env, GH_REPO: '', GH_HOST: '' } });
-  assert.equal(spawned.code, 0, spawned.stderr);
-  const out = spawned.stdout.trim();
+  const out = cli(['--values', 'merge-verification'], REPO_ROOT).trim();
   assert.ok(VALUES.includes(out), `got ${JSON.stringify(out)}`);
 });
 
