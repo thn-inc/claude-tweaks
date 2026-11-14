@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
@@ -143,4 +143,21 @@ test("this repo's unscoped whole set carries --local (#5370)", () => {
   const snippets = v.split('\n').filter((l) => /^ {4}node ".*bin\/verify\.js".*--baseline /.test(l));
   assert.equal(snippets.length, 1);
   assert.ok(snippets[0].includes(' --local --baseline origin/main'));
+});
+
+test('AC1.1: the pre-push sites and the whole-suite re-run pass --local (#5370)', () => {
+  pinned(lineStartingWith(read('plugin/skills/_shared/express-lane.md'), '4. **Impacted tests.**'), [
+    [/--scope \.claude-tweaks\/verify-scope\.json --local --integration-branch \{ref\}`/, 'the lane passes --local'],
+    [/`--local` because the branch is not pushed until step 6/, 'why: pre-push'],
+  ]);
+  pinned(read('plugin/skills/build/dispatch.md').split('\n').find((l) => l.includes('**Affected-set testing (#5117).**')), [
+    [/--scope \.claude-tweaks\/verify-scope\.json --local --integration-branch \{integration-branch\} --no-stamp`/, 'the affected set passes --local'],
+    [/`--local` because these runs are pre-push/, 'why: pre-push'],
+  ]);
+  pinned(sectionOf(read('plugin/skills/test/flake-handling.md'), '## Whole-suite re-run'), [
+    [/a red the runner took from CI \(its `ci` entry `used: true`\) is not re-run here/, 'a CI red is not re-run here'],
+    [/it stands as a \*\*regression\*\*, since a re-run on this machine would judge CI's verdict on another platform/, 'it stands as a regression'],
+    [/A red from a `--local` run re-runs with `--local` added, inside that same fallback/, 'a local red re-runs with --local'],
+    [/a scoped re-run would ask CI again and an unscoped one exits 2/, 'why --local'],
+  ]);
 });
