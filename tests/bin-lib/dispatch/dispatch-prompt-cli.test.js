@@ -337,7 +337,7 @@ test('AC7 dispatch-prompt: an unpinned integration-model sees the injected PATH 
   const git = (args) => execFileSync('git', args, { cwd: fixture, stdio: 'ignore', windowsHide: true });
   git(['init', '-q']);
   git(['remote', 'add', 'origin', 'https://example.invalid/o/r.git']);
-  const gitDir = path.dirname(execFileSync(process.platform === 'win32' ? 'where' : 'which', ['git'], { encoding: 'utf8', windowsHide: true }).split('\n')[0].trim());
+  const gitDir = path.dirname(execFileSync('which', ['git'], { encoding: 'utf8', windowsHide: true }).split('\n')[0].trim());
   const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dp-stub-'));
   tmpRoots.push(stubDir);
   const marker = path.join(stubDir, 'gh-calls.txt');

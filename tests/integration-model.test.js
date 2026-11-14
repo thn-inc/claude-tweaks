@@ -317,35 +317,37 @@ test('CLI: the forge probe runs the gh stub on the injected PATH and the stub co
   }
 });
 
-// The gh-absent cases below install a counting fakeGh on the real PATH and assert it is never reached: the
-// injected PATH excludes it, so a count above 0 means the injected env was ignored.
-test('CLI: --mcp-reachable resolves pr-first when gh is faked absent and a real remote exists (AC4)', { skip: STUB_SKIP }, () => {
+// The gh-absent cases below install a counting fakeGh on the real PATH. In the two cases without
+// --mcp-reachable the injected PATH excludes it, so a count above 0 means the injected env was ignored; the
+// --mcp-reachable case returns pr-first before any probe, so it pins flag forwarding. The stub is never spawned
+// on win32, so the count assertions run off win32 only and the answers are still checked there.
+test('CLI: --mcp-reachable resolves pr-first when gh is faked absent and a real remote exists (AC4)', () => {
   const dir = gitRepo({ remote: 'https://github.com/thomasholknielsen/claude-tweaks.git' });
   const gh = fakeGh({ first: 'fail' });
   try {
     const env = { ...process.env, PATH: ghAbsentPath() };
     const out = runResolvePolicy(['--values', 'integration-model', '--mcp-reachable'], { cwd: dir, env });
     assert.strictEqual(out.trim(), 'pr-first');
-    assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+    if (!STUB_SKIP) assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
   } finally {
     gh.restore();
   }
 });
 
-test('CLI: omitting --mcp-reachable preserves todays local-merge fail-open behavior when gh is absent (AC4)', { skip: STUB_SKIP }, () => {
+test('CLI: omitting --mcp-reachable preserves todays local-merge fail-open behavior when gh is absent (AC4)', () => {
   const dir = gitRepo({ remote: 'https://github.com/thomasholknielsen/claude-tweaks.git' });
   const gh = fakeGh({ first: 'ok' });
   try {
     const env = { ...process.env, PATH: ghAbsentPath() };
     const out = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env });
     assert.strictEqual(out.trim(), 'local-merge');
-    assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+    if (!STUB_SKIP) assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
   } finally {
     gh.restore();
   }
 });
 
-test('CLI: --mcp-reachable forwards into merge-verification even when integration-model is NOT also requested (#1421 Finding 3)', { skip: STUB_SKIP }, () => {
+test('CLI: --mcp-reachable forwards into merge-verification even when integration-model is NOT also requested (#1421 Finding 3)', () => {
   // A fixture repo that reaches deriveMergeVerification's branch (3)
   // (merge-when-green) only when integration-model resolves pr-first: a
   // real remote, a PR-triggered workflow, and an integration branch equal
@@ -366,7 +368,7 @@ test('CLI: --mcp-reachable forwards into merge-verification even when integratio
     // -> branch (1) -> off.
     const withoutFlag = runResolvePolicy(['--values', 'merge-verification'], { cwd: dir, env });
     assert.strictEqual(withoutFlag.trim(), 'off');
-    assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+    if (!STUB_SKIP) assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
 
     // With the flag, requesting ONLY merge-verification (not integration-model
     // in the same call): before the fix, the flag was silently dropped on this
@@ -374,7 +376,7 @@ test('CLI: --mcp-reachable forwards into merge-verification even when integratio
     // forwards through resolveIntegrationModel -> pr-first -> merge-when-green.
     const withFlag = runResolvePolicy(['--values', 'merge-verification', '--mcp-reachable'], { cwd: dir, env });
     assert.strictEqual(withFlag.trim(), 'merge-when-green');
-    assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+    if (!STUB_SKIP) assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
   } finally {
     gh.restore();
   }

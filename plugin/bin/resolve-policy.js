@@ -212,7 +212,7 @@ function warningLines({ keys, result, invalidRaw, degrades }, { values }) {
 // Deps for an in-process caller of the core: the given cwd and env, a git bounded
 // at gitTimeoutMs (a hung git then falls back to cwd as the repo root instead of
 // hanging the caller), and no stdout — the core never prints. The default bound
-// is read at call time: GIT_TIMEOUT_MS is a lazy getter over the policy file.
+// is resolved lazily, once per process, from the process's own env and cwd (GIT_TIMEOUT_MS is a memoized getter).
 function callerDeps({ cwd, env = process.env, homeDir, stderr, gitTimeoutMs = sharedPrimitives.GIT_TIMEOUT_MS }) {
   return {
     cwd: () => cwd,

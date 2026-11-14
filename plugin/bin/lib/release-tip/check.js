@@ -99,7 +99,8 @@ const RUN_DIR_PATHSPEC = ':!.claude-tweaks/pipelines';
 // was not — the core's refusal message when it gave one.
 function readBound(r) {
   if (r.code !== EXIT_OK) return { detail: `resolve-policy: ${r.message}` };
-  const entry = r.result && typeof r.result === 'object' ? r.result['release-tip-moves'] : null;
+  const entry = r.result['release-tip-moves'];
+  // Boundary check on the injected dependency's return value, not on the core's own contract.
   if (!entry || typeof entry !== 'object') return { detail: 'release-tip-moves is missing from the resolver output' };
   if (entry.invalid === true) return { detail: 'release-tip-moves holds an invalid value' };
   if (!Number.isInteger(entry.value) || entry.value < 0) return { detail: 'release-tip-moves is not a non-negative integer' };
@@ -115,9 +116,9 @@ function readBound(r) {
 // fetch so a git failure stops first; null under `asGiven` or with no delta
 // since Step 3. The skill gates a major on it once per delta. A run-dir-only
 // advance is logged through `appendLog` before the loop re-compares, so a
-// resume reads the advanced tip. `resolveBound()` is the resolve-policy.js core's
-// object ({ code, result, message }) for `release-tip-moves` under the run; a throw from it is a
-// `failed` verdict too. No default is ever substituted for a bound that could not be read.
+// resume reads the advanced tip. `resolveBound()` is the resolve-policy.js core's object
+// ({ code, result, message }) for `release-tip-moves` under the run; a throw from it is a `failed`
+// verdict too. No default is ever substituted for a bound that could not be read.
 function checkReviewedTip({ decisionsText, branch, asGiven, preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor }, { git, resolveBound, appendLog }) {
   const parsed = parseReleaseLog(decisionsText, branch);
   const state = {
