@@ -52,7 +52,7 @@ files:
 - **Should feel:** Specific. Each message names the one thing the CLI did to the process.
 - **Should understand:**
   - `leaked process state: …` names a leak: `process.exitCode changed`, a changed working directory, a `process.env.<KEY> changed`, a listener added or removed, `wrote to process.stdout directly` (or stderr), or an `os.homedir()` call under an injected home. The helper has already put the state back, so later tests are not affected. The fix is in the CLI or a library on its path: send that write or read through `deps`.
-  - `runCli: real <key> reached — pass a fake in deps or allowRealRunner: true` means the CLI called a real seam named `runner`, `gh` or `spawn`. Pass a fake for it in `deps`. A git-only seam (`git`, `gitRunner`) stays real on purpose and runs against the injected `cwd` and `env`.
+  - `runCli: real <key> reached — pass a fake in deps or allowRealRunner: true` means the CLI called a real seam named `runner`, `gh`, `ghAvailable`, `runHook` or `spawn`. Pass a fake for it in `deps`. A git-only seam (`git`, `gitRunner`) stays real on purpose and runs against the injected `cwd` and `env`.
   - A test that gets an earlier test's answer depends on module-level state under `plugin/bin`. Give that call `fresh: true`.
 - **Red flags:**
   - Catching the helper's throw in the test, or loosening an assertion, to get back to green. A leak is a defect in the CLI's path, and the test just found it.
@@ -61,6 +61,7 @@ files:
   - A CLI that commits or pushes (the health sweeps' durable state runs real `git fetch` and `git push origin`) tested in-process from inside a checkout. If it ignores its injected `cwd`, it falls back to the test process's real directory, commits to a git ref every worktree shares, and a later push publishes it: #5380's unguarded mutation runs pushed six real commits to `origin` this way. Run such a CLI through an adapter that moves the real cwd to an empty temp directory outside any repo for the call and sets `GIT_ALLOW_PROTOCOL=file` last in `env`, as `sweepCli` does, and run mutation probes in a `git archive` extract, never a linked worktree.
   - A relative-path error message or output that changed spelling after the conversion. `path.resolve(deps.cwd(), p)` normalizes (`results.json/`, `link/../x`), so it can change the outcome as well as the text. Where the old behavior must stay byte-identical, join without normalizing, as `plugin/bin/lib/health-core/io.js`'s `resolveAgainst` does.
   - `process.cwd() could not be read or restored (…)` in the leak list. The CLI removed its own working directory, or the directory the test started in, so the helper could not put the cwd back. It still restored the env and the listeners. Work from `deps.cwd()` instead of changing or removing the process's directory.
+  - A relative path argument (`--run`, `--body-file`, an input JSON) that the CLI reads or writes against the test runner's directory instead of the injected `cwd`: a `cannot read` failure, or an output file that lands in the checkout. The leak guard stays silent, because nothing about the process changed. Resolve the argument where `run` uses it, `path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)`; #5383 fixed five CLIs this way.
 
 ### 4. Keep the script entry covered by real processes
 - **URL:** the same test file.
@@ -81,4 +82,5 @@ files:
 ## Origin
 - Updated during build of #5380, which converted `plugin/bin/harness-health.js` and `plugin/bin/journey-health.js` and their ten test files: the shared-adapter note in step 2, the git-writing-CLI and path-normalization red flags in step 3, and the second measurement in step 5.
 - Created during build of #5374, which added `tests/helpers/run-cli.js` and `tools/count-node-procs.js`, converted `plugin/bin/resolve-policy.js` to the entry contract and moved `tests/resolve-policy-cli.test.js` and `tests/resolve-policy-control-mode.test.js` onto the helper.
+- Step 3 updated during build of #5383, which added `ghAvailable` (the gh-on-PATH probe) and `runHook` (release-local's hook runner) to the helper's fail-closed seams.
 - Related: `act-on-a-red-cli-entry-conformance-scan-5374.md` (the scan that pins the entry contract), `resolve-a-policy-key.md` (the CLI used as the worked example).

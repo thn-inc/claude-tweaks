@@ -7,13 +7,10 @@ short-circuit, `wrap-up/merge-mode.md`, `flow/worktree-merge.md`'s reconciliatio
 
 **The shape:** ready → merge-verification gate (Step 2.5: state read; red parks; pending waits or
 arms only when the forge holds it) → `gh pr merge --auto` (arm) → degrade to immediate merge →
-degrade to ready+comment. `gh pr merge` needs no local checkout, which is what deletes the two-thread split
-every pr-first caller used to need: the same cwd-pinned Task call that already holds
-authorization, `merge-check`, and acceptance labeling can run the merge itself. No
-`close-run`-before-merge relief, no branch-switch guard, no push-from-worktree rule, no
-scratch-worktree conflict procedure — all four existed only because a *local* `git merge` +
-`git push` needed the main checkout. `local-merge` projects keep all four; see each converted
-file's own local-merge fallback section.
+degrade to ready+comment. `gh pr merge` needs no local checkout, so the same cwd-pinned Task call that
+already holds authorization, `merge-check`, and acceptance labeling runs the merge itself — no
+`close-run`-before-merge relief, branch-switch guard, push-from-worktree rule or scratch-worktree
+conflict procedure.
 
 ## Precondition
 
@@ -31,18 +28,14 @@ Run `wrap-up/verification-brief.md` starting from its **Routing** section, exact
 citing file's own two-layer gate already directs (unchanged from today — this procedure does not
 touch layers 1-2, only execution). **Order is load-bearing**: the merge closes the record(s) via
 its `Fixes` lines, so labeling must land while every record is still open. A caller that merges
-before labeling silently drops acceptance sign-off the same way the pre-#410 fast-lane path once
-did for a different reason (`wrap-up/review-console.md`'s own "console content is not all of
-Phase 4" note) — this procedure states the ordering explicitly so it is never re-dropped.
+before labeling silently drops acceptance sign-off.
 Labeling has not landed when `{run-dir}/verify.json` (each `spec-{N}/` copy, multi-spec) is missing
 or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — the full predicate, live-state tier included, is `_shared/acceptance-labeling-landed.md` — whichever caller reached this merge.
 
 ## Step 1.5: Curation-apply completeness guard (#1465)
 
-Before marking the PR ready, confirm Phase 2's curation-engine apply work has actually landed —
-a defensive assertion against an ordering `wrap-up/curation-engine.md`'s own "Ordering is not
-advisory" note (section 2) states as prose but does not itself mechanically enforce at the merge
-boundary.
+Before marking the PR ready, confirm Phase 2's curation-engine apply work has actually landed
+(the ordering `wrap-up/curation-engine.md` section 2 states, enforced here).
 
 Skip this guard entirely when `$PIPELINE_RUN_DIR/engine-state.json` does not exist — Phase 2 had
 nothing open (every registry row closed), or the run took `curation-engine.md` section 6's prose
@@ -124,14 +117,14 @@ as `wait` for this merge and log `AUTO … Step 2.5: lever unresolved ("{raw}") 
 Never as `off`: an unreadable lever must not become the one value that skips the wait.
 
 **Read state first — never parse stderr first.** Before any merge attempt, regardless of value, resolve this step's scratch paths (`_shared/session-tmp-root.md`)
-and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}`
+and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY`/`GATE_START` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}`/`{gate-start-path}`
 below (`_shared/scratch-worktree.md` §7):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md PR_READY=pr-ready-{n}.json
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md PR_READY=pr-ready-{n}.json GATE_START=gate-start-{n}.txt
 ```
 
-Then read state:
+Then, on entry from the top only, record the pass start (`date +%s > "{gate-start-path}"`; a mid-pass re-read never repeats it) and read state:
 
 ```bash
 gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup
@@ -176,7 +169,7 @@ Classify from the three reads, in this order:
   no change. On `mergeStateStatus: DIRTY` or `mergeable: CONFLICTING` (a conflicting PR gets no run),
   `awaiting` and `draft-skip-without-ready-trigger` take the **Conflict path** first.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
-  → **pending**. A partial rollup (some workflows reported, others not yet registered) is not green.
+  → **pending**.
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
   → **conflict** — take the **Conflict path** below now, under every lever value, with no bounded
   watch. A branch that conflicts with its base gets no `pull_request` workflow runs, so its rollup
@@ -196,11 +189,19 @@ Then, per resolved value:
 | Value | Green | Pending | Red |
 |---|---|---|---|
 | `merge-when-green` | Step 3 as written — arm/merge (identical outcome when checks are already green) | `mergeStateStatus: BLOCKED` → Step 3 as written — arm `--auto` (the forge holds it; outcome `armed`). Any other value (`CLEAN`, `UNSTABLE`, `BEHIND`, `UNKNOWN`, …) → arming would merge immediately: **degrade to the `wait` row** — never to an immediate merge | Red path |
-| `wait` | Re-read (`gh pr view … --json state,mergeStateStatus,headRefOid`); if `headRefOid` changed since the first read or `state` is no longer `OPEN`, re-enter this step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`) — never merge blind; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) | **Bounded watch** below | Red path |
+| `wait` | Re-read (`gh pr view … --json state,mergeStateStatus,headRefOid`); if `headRefOid` changed since the first read or `state` is no longer `OPEN`, re-enter this step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`) — never merge blind; otherwise merge via Step 3's immediate `--squash` form (CI-gate record, then re-run its composer call) | **Bounded watch** below | Red path |
 | `off` | Step 3 as written (today's behavior, unchanged) | Derived `off` → **Bounded watch** below, logged `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): derived off with pending checks on PR #{n} — bounded watch. Reversibility: n/a. [lever: merge-verification=off (default)]` Explicit `off` → Step 3 as written | Derived `off` → **Red path**. Explicit `off` → Step 3 as written; the red read is logged for the summary |
 
+**CI-gate record.** Once per gate pass, before every merge on a gate-decided **green** (Green column, `wait` re-read, `RC=0`), never under an explicit `off`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/ci-gate-record.js" --pr {pr-number} --head-sha {headRefOid} --verdict green --gate-start-epoch "$(cat "{gate-start-path}")" --run "$PIPELINE_RUN_DIR" --repo {owner}/{repo}
+```
+
+`--run` follows the per-merged-run rule above (a multi-spec bundle: `$MULTISPEC_PARENT_DIR`). A non-zero exit logs `SKIP {HH:MM:SS} — Step 2.5 (merge-verification gate): ci-gate not recorded ({error})` and the merge path continues unchanged — the writer never gates a merge. A Red-path resume or moving-target re-entry is a new gate pass with its own call; a Step 3 degrade into the `wait` row is the same pass, no second green call. Dispatch close-out skips this step, so records nothing; so do an explicit `off`, an armed merge on pending checks and a failed read.
+
 **Bounded watch (`wait`, `merge-when-green` when arming would not hold, and a derived `off` with pending checks) — 15 minutes, fixed.**
-(Fixed by design, not a policy key — `pr-first-merge-appendix.md`'s "Rationale notes".) Poll
+(Fixed by design, not a policy key — `pr-first-merge-appendix.md`'s "Rationale notes"; `900` is `MERGE_GATE_WATCH_SECONDS` in `bin/lib/ci-health/constants.js`.) Poll
 `gh pr checks` and key on its exit code — captured (Task 0): `0` all green, `8` at least one check
 still pending, `1` at least one check failed — so a red result at any minute takes the Red path
 immediately:
@@ -238,7 +239,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
   — never merge blind; a failing head run takes the Red path, reason `check-failed:{names}` (names from
-  its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`, as does an `awaiting` ready-run read (`awaitingReadyRun`); any other ready-run state routes per Step 2.5; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
+  its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`, as does an `awaiting` ready-run read (`awaitingReadyRun`); any other ready-run state routes per Step 2.5; otherwise merge via Step 3's immediate `--squash` form (CI-gate record, then re-run its composer call) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
   the `fail` rows of `{pr-checks-path}`).
@@ -259,13 +260,14 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    `{resume}`: `Resume once green.`; for draft-skip-without-ready-trigger, `Resume once its workflow is fixed or a post-ready run lands.`
    Compose that body to a temp file and post it with `--body-file` — never inline the names into a
    shell string. Check names come from the PR's own workflow YAML (third-party-controlled on a fork
-   PR), and every other comment site in this file already builds its body the same way:
+   PR):
    ```bash
    printf 'Parked by merge-verification (%s): %s on PR #%s. %s\n' "$VALUE" "$REASON" "$PR" "$RESUME" > "{park-comment-path}"
    gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file "{park-comment-path}"
    ```
    (`$RESUME` holds `{resume}`; `$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
    head runs' `workflowName`s — or the pending-timeout or draft-skip phrase — passed as a `printf` argument, never expanded inside the format string, never a quoted literal: with file names in it, Write the body to `{park-comment-path}` instead. A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`; `unparsed`: ` ({files} unparsed: _shared/ci-skips-drafts.md)`. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
+   Then the **CI-gate record** call above with `--verdict timeout-park` for `checks-pending-timeout`, else `--verdict red`.
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
    lock the `[pr-unarmed]` sweep (`_shared/github-pr-scan.md`) would honor, so fall back to the one
@@ -446,8 +448,7 @@ git -C "{worktree-path}" merge origin/{integration-branch}
 - **Conflict markers remain**: this is what "unresolvable headlessly" means — stop, do not
   attempt resolution. Leave the PR ready (already undrafted, never re-drafted) with a comment
   explaining the conflict, and report outcome `pending-review`. A human resolves it the ordinary
-  way — check out the branch, resolve, push — no scratch-worktree ceremony needed, since the
-  conflict already surfaced inside the run's own real worktree, not a throwaway one.
+  way — check out the branch, resolve, push — no scratch-worktree ceremony.
 - **Attended branch (merge mode only).** A human-confirmed merge (`/claude-tweaks:wrap-up #{n} merge`)
   resolves instead of stopping — procedure in `wrap-up/merge-mode.md`'s `## Conflict`. Every other
   caller keeps the stop-at-markers bullet above.
@@ -456,9 +457,8 @@ git -C "{worktree-path}" merge origin/{integration-branch}
 
 ## Outcome vocabulary
 
-Replaces `ready-to-merge` (folded into `merged`/`armed` — see Step 3.6) and `pr-opened` (retired
-— under pr-first the PR already exists from run start, so there is no longer a distinct
-"finish reached, PR opened just now" transition to report).
+Replaces `ready-to-merge` (folded into `merged`/`armed`) and `pr-opened` (retired — the PR
+exists from run start).
 
 | Outcome | Meaning | Cleanup owed by this call |
 |---|---|---|

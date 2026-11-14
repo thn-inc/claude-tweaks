@@ -1,4 +1,4 @@
-# Parse-Signal Discipline — fix shape, items 17-28
+# Parse-Signal Discipline — fix shape, items 17-30
 
 Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues that list.
 
@@ -294,3 +294,17 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     states `--proofs input not read` and Risk proofs says `proofs not read`. Pin it end to end,
     producer to rendered line, for both the absent and the unparseable input
     (`tests/risk-flags-packet-e2e.test.js`), not only at each side's unit seam.
+
+30. **A reader that feeds several independent checks owes each could-not-read reason the field it concerns, so a consumer suppresses only the checks that read that field.** A
+    flat list of reason strings makes every consumer guess which check a reason blocks, and a
+    guess by text match fails open in the costly direction: a reason that concerns one check
+    suppresses every check. #5162's `readWorkflowShape` (`plugin/bin/lib/merge-verification.js`)
+    returns one list, and `reviewWorkflows` (`plugin/bin/lib/init/ci-workflow-review.js`) keeps a
+    `CONCURRENCY_ONLY` set of reason texts that block check 4 alone, every other reason blocking
+    every check. Getting that set right took three passes: the SDD final review's I2, the review
+    fix wave, and `28b20f6f4` for the `concurrency:` region's own tab and anchor reasons. Each time,
+    a concurrency-only reason had been suppressing checks 1, 2, 3 and 5. Name the field or region
+    in each reason, let a consumer suppress only the checks that read it, and reserve a whole-input
+    "unparsed" for reasons no check can work around (no `on:`, no `jobs:`). Pin one reason per
+    region against a check that does not read that region: it must still report. Matching reason
+    text is the stopgap; region-tagged reasons from one reader are the structural fix (#5444).

@@ -4,12 +4,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { validateFactsShape, validatePacket } = require('../plugin/bin/lib/wrap-up/packet-validate');
 const { renderPacket } = require('../plugin/bin/lib/wrap-up/packet-render');
 
 // #4618 Task 13: the producer's files through the real gather, the validator and the renderer,
-// every step a real subprocess of the shipped bins in a directory that is not a git checkout.
+// in a directory that is not a git checkout; the first test runs the shipped bins as real subprocesses, the others in-process.
 const RISK_FLAGS_BIN = path.join(__dirname, '..', 'plugin', 'bin', 'risk-flags.js');
 const PACKET_BIN = path.join(__dirname, '..', 'plugin', 'bin', 'acceptance-packet.js');
 
@@ -24,15 +24,32 @@ function writeText(where, name, text) {
   fs.writeFileSync(file, text);
   return file;
 }
-const spawn = (bin, args) => execFileSync(process.execPath, [bin, ...args], { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-const riskFlags = (args) => spawn(RISK_FLAGS_BIN, args);
-const packet = (args) => spawn(PACKET_BIN, args);
+// In-process: the non-checkout condition is injected (git and gitDir report "not a git checkout"),
+// and every cwd the packet hands them is recorded.
+const gitCwds = [];
+const notACheckout = {
+  git: (args, { cwd }) => { gitCwds.push(cwd); throw new Error('not a git repository'); },
+  gitDir: ({ cwd }) => { gitCwds.push(cwd); throw new Error('not a git repository'); },
+};
+const inProcess = (bin, args, deps = {}) => {
+  const res = runCliSync(bin, args, { cwd: dir, env: { PATH: process.env.PATH }, deps });
+  return { ...res, status: res.code };
+};
+const riskFlags = (args) => inProcess(RISK_FLAGS_BIN, args);
+const packet = (args) => inProcess(PACKET_BIN, args, notACheckout);
 
 test('end to end: unconfirmed and a planned proof survive the producer files, the real gather, the validator and the renderer', () => {
   const spec = writeText(dir, 'spec.md', 'Surface: infra\nRisk-flags: auth\nRisk-flags-unconfirmed: true\n\n## Acceptance Criteria\n\n1. x\n');
   const plan = writeText(dir, 'plan.md', '### Task 1: x\n\n- [ ] **Step 1: y**\n\nProof(auth): An unauthenticated request to the route still returns 401.\n');
-  riskFlags(['facts', '--spec-file', spec, '--plan-file', plan, '--flags-out', FLAGS, '--proofs-out', PROOFS, '--repo-root', dir]);
-  packet(['gather', '--record', '4618', '--out', FACTS, '--spec', spec, '--flags', FLAGS, '--proofs', PROOFS]);
+  // real processes: the shipped bins end to end in a directory that is not a git checkout
+  const flagsRun = spawnCli(RISK_FLAGS_BIN, ['facts', '--spec-file', spec, '--plan-file', plan, '--flags-out', FLAGS, '--proofs-out', PROOFS, '--repo-root', dir], { cwd: dir });
+  assert.strictEqual(flagsRun.code, 0, flagsRun.stderr);
+  assert.deepStrictEqual(JSON.parse(flagsRun.stdout), { status: 'ok', flags: 1, proofs: 1, plan: 'read', planParse: 'ok' });
+  const gatherRun = spawnCli(PACKET_BIN, ['gather', '--record', '4618', '--out', FACTS, '--spec', spec, '--flags', FLAGS, '--proofs', PROOFS], { cwd: dir });
+  assert.strictEqual(gatherRun.code, 0, gatherRun.stderr);
+  const gathered = JSON.parse(gatherRun.stdout);
+  assert.strictEqual(gathered.out, FACTS);
+  assert.strictEqual(gathered.facts, 4);
   const facts = JSON.parse(fs.readFileSync(FACTS, 'utf8'));
   assert.deepStrictEqual(facts.facts.find((f) => f.id === 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', unconfirmed: true });
   const proof = facts.facts.find((f) => f.id === 'proof:auth');
@@ -51,8 +68,8 @@ test('end to end: an absent or unparseable plan reaches the packet as proofs not
     const out = path.join(dir, 'facts3.json');
     const flags = path.join(dir, 'flags3.json');
     const proofs = path.join(dir, 'proofs3.json');
-    riskFlags(['facts', '--spec-file', spec, ...extra, '--flags-out', flags, '--proofs-out', proofs, '--repo-root', dir]);
-    packet(['gather', '--record', '4618', '--out', out, '--spec', spec, '--flags', flags, '--proofs', proofs]);
+    assert.strictEqual(riskFlags(['facts', '--spec-file', spec, ...extra, '--flags-out', flags, '--proofs-out', proofs, '--repo-root', dir]).status, 0);
+    assert.strictEqual(packet(['gather', '--record', '4618', '--out', out, '--spec', spec, '--flags', flags, '--proofs', proofs]).status, 0);
     const facts = JSON.parse(fs.readFileSync(out, 'utf8'));
     assert.ok(facts.partial.includes('--proofs input not read — treated as absent'), JSON.stringify(facts.partial));
     assert.ok(!facts.partial.includes('--flags input not read — treated as absent'), JSON.stringify(facts.partial));
@@ -69,14 +86,15 @@ test('end to end: a failed producer makes the gather state the lost input, never
   // An earlier run's outputs are on disk; the failed producer must take them away, not leave them to be read.
   fs.writeFileSync(flags, '[]');
   fs.writeFileSync(proofs, '[]');
-  assert.throws(
-    () => riskFlags(['facts', '--spec-file', path.join(dir, 'absent-spec.md'), '--flags-out', flags, '--proofs-out', proofs, '--repo-root', dir]),
-    (error) => error.status === 1,
-  );
+  assert.strictEqual(riskFlags(['facts', '--spec-file', path.join(dir, 'absent-spec.md'), '--flags-out', flags, '--proofs-out', proofs, '--repo-root', dir]).status, 1);
   assert.strictEqual(fs.existsSync(flags), false);
   assert.strictEqual(fs.existsSync(proofs), false);
 
-  packet(['gather', '--record', '4618', '--out', out, '--spec', spec, '--flags', flags, '--proofs', proofs]);
+  gitCwds.length = 0;
+  assert.strictEqual(packet(['gather', '--record', '4618', '--out', out, '--spec', spec, '--flags', flags, '--proofs', proofs]).status, 0);
+  // AC6.1: the injected cwd reaches the packet's git calls, not the test process's own
+  assert.notEqual(dir, process.cwd());
+  assert.ok(gitCwds.length > 0 && gitCwds.every((cwd) => cwd === dir), JSON.stringify(gitCwds));
   const facts = JSON.parse(fs.readFileSync(out, 'utf8'));
   assert.ok(facts.partial.includes('--flags input not read — treated as absent'), JSON.stringify(facts.partial));
   assert.ok(facts.partial.includes('--proofs input not read — treated as absent'), JSON.stringify(facts.partial));
