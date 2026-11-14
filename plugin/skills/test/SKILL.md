@@ -1,7 +1,7 @@
 ---
 name: test
 description: Use when you need to run verification checks (types, lint, tests) or validate QA stories — the mechanical "does it work?" gate.
-argument-hint: "[types|lint|unit|integration|e2e|affected|qa|all|skip-qa|<path>] [tag=<tag>] [story=<name>] [retry=<path>] [journey=<name>] [dir=<path>] [priority=<level>] [max_parallel=N] [timeout=<ms>] [headless]"
+argument-hint: "[types|lint|unit|integration|e2e|affected|qa|all|full|skip-qa|<path>] [tag=<tag>] [story=<name>] [retry=<path>] [journey=<name>] [dir=<path>] [priority=<level>] [max_parallel=N] [timeout=<ms>] [headless]"
 ---
 
 # Test — Verification Gate
@@ -28,7 +28,7 @@ Lifecycle: `/claude-tweaks:stories` → **`/claude-tweaks:test`** → `/claude-t
 
 | Argument | Behavior |
 |----------|----------|
-| *(none)* | Standard suite — run all checks documented in CLAUDE.md (types + lint + tests) |
+| *(none)* | Standard suite — run all checks documented in CLAUDE.md (types + lint + tests); under the declaration's `localRuns`, the scoped invocation, never `full`'s unscoped run (`verification.md`) |
 | `types` | Type checking only |
 | `lint` | Linting only |
 | `unit` | Unit tests only |
@@ -48,7 +48,8 @@ Lifecycle: `/claude-tweaks:stories` → **`/claude-tweaks:test`** → `/claude-t
 | `qa max_parallel={N}` | QA — max concurrent agents per dependency tier (default `4`) |
 | `qa headless` | QA — run the browser invisibly (default is headed/visible) |
 | `qa timeout={ms}` | QA — override the per-agent timeout in milliseconds (default `300000`, i.e. 5 minutes); e.g. `qa timeout=600000` for a slow staging environment, or `qa timeout=60000` for fast-fail local iteration |
-| `all` | Full suite (types + lint + tests) AND QA story validation |
+| `all` | Standard suite (types + lint + tests, as with no argument) AND QA story validation |
+| `full` | The whole suite here: every suite's full command on this machine (`verify.js --local`, no `--scope`), never skipped by Skip-if-recent. Under the declaration's `localRuns` it is the only way to ask for the whole suite on this machine |
 | `skip-qa` | Run types/lint/tests only. Skip QA story validation **even when stories exist**. (Step 1.5 Design CLI gate still runs — see that step for details.) |
 
 Multiple arguments can be combined: `/claude-tweaks:test types lint` runs both type checking and linting.
@@ -68,12 +69,13 @@ A `VERIFICATION_PASSED=true` bullet below applies its skip only when `VERIFICATI
 
 **Pipeline behavior:**
 
+- `full` argument → none of the skips below apply: run `### Whole suite here (`full`)` whatever `VERIFICATION_PASSED`, `VERIFICATION_SHA` or the runner stamp says
 - `VERIFICATION_PASSED=true` + no stories → skip verification, report "passed in build, no QA stories", set `TEST_PASSED=true`
 - `VERIFICATION_PASSED=true` + stories exist → skip verification, then **select stories by `source_files` ∩ the changed-file set** (`node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --changed-files --ignore-stamp --integration-branch {ref}` — `--ignore-stamp` (#3048) reads the run's whole branch diff — why: `verification.md`; exit 1 means no base resolved: never treat it as an empty set, fall back to the full story set; exact repo-relative path match; a story with no `source_files` field is always included): one or more matches → run only those; zero matches → apply `design-wrapper/frontend-detection.md`'s Layer 3 sniff to the changed-file set, read once, regardless of the record's materialized `surface:` (#2745 — a `surface: web` header does not by itself mean this diff touched a UI file; a loader/route/config-only change on a web-surface record must not skip the sniff) — any UI trigger file → run the full story set (this is also what still covers #808's original concern: a brand-new UI feature whose stories don't carry `source_files` yet always touches at least one Layer-3-recognized file, so it still runs full); none → report `QA: skipped — no affected stories ({n} stories considered, {m} changed files)`, set `TEST_PASSED=true`, and log `AUTO {time} — QA scoped: 0/{n} stories affected by {m} changed file(s); skipped — no UI trigger file in diff. Reversibility: high.`. Every selection logs `AUTO {time} — QA scoped: {k}/{n} stories affected by {m} changed file(s). Reversibility: high.` The Design CLI gate (Step 1.5) still runs on a skip. **QA pass stamp (#3003):** every story run this bullet selects — the scoped match set, the Layer-3 full set, or the exit-1 full-set fallback — first passes this check, then goes through `qa-procedures.md` (Phases 1-5.5), the only path that writes `{RUN_DIR}/report.json`, which the stamp write reads. Before dispatching a selected set (scoped or full), run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-stamp.js" --check --stories <id=file,...> [--stories-dir <dir>]` with the selected stories' ids and source files (relative to `STORIES_DIR`). `skip: true` → do not dispatch: report `QA: skipped — stories already passed at {short-sha}`, set `TEST_PASSED=true`, log `AUTO {time} — QA skipped: {k} selected stories already passed at {short-sha} (QA pass stamp). Reversibility: high.`, and note the Design CLI gate (Step 1.5) still runs on this skip path too, same as the zero-match skip above. `skip: false` → run the selection unchanged; the `reason` (`no-stamp`, `sha-mismatch`, `dirty-tree`, `story-changed: {id}`, …) needs no log line.
 - `VERIFICATION_PASSED=true` + `skip-qa` argument → skip verification AND skip QA, set `TEST_PASSED=true` (used by `/flow`'s polish-phase re-verify gate)
 - No `VERIFICATION_PASSED` + `skip-qa` → run types/lint/tests but skip QA story validation
 - No `VERIFICATION_PASSED` (and no `skip-qa`) + runner stamp verifying `HEAD` (`verify.js --stamp-status` → `verifiedHead: true`, per `verification.md`'s Skip-if-recent artifact branch) → skip verification, report "runner stamp {sha} ({scope}) verifies HEAD", run QA if stories exist (selected and run per bullet 2's rule, including its QA pass stamp check), set `TEST_PASSED=true`
-- No `VERIFICATION_PASSED` (default) → run full suite (and QA if stories exist when mode is `all`)
+- No `VERIFICATION_PASSED` (default) → run the standard suite (`verification.md`'s scoping table) (and QA if stories exist when mode is `all`)
 - **PR-check gate (#3013):** before any bullet above sets `TEST_PASSED=true`, run `_shared/pr-check-gate.md`'s read — a `red` PR check at HEAD fails the gate like a local test failure (`TEST_PASSED` stays unset); `pending`/`stale` pass with a caveat; `inherited-red` (every failing check is also failing at the integration tip) passes with a caveat naming the base sha and checks; every other state fails open with a `SKIP` trace.
 
 ## Step 0: PR-Bookkeeping Precondition Check
@@ -114,7 +116,11 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/check-pr-bookkeeping.js" --run "$PIPELINE_RUN_DI
 
 ### Standard suite (no arguments)
 
-Run the shared verification procedure from `verification.md` in this skill's directory. This resolves commands from CLAUDE.md and runs type checking, linting, and tests.
+Run the shared verification procedure from `verification.md` in this skill's directory. This resolves commands from CLAUDE.md and runs type checking, linting, and tests. Under the declaration's `localRuns: "on-request"`, that procedure runs the scoped invocation, standalone too (`verification.md`'s Standalone rule), and never `full`'s unscoped run. A `--local` fallback whose impact selection cannot narrow still runs what selection chose, which can be the whole suite: the one named exception (`impact-selection.md`'s Whole suite on request).
+
+### Whole suite here (`full`)
+
+Run `verification.md` Step 2's run command with `--local` added and no `--scope`, as the full check set: it is not a targeted scope and never passes `--no-stamp`, so it stamps. Skip-if-recent does not apply, and neither does a `VERIFICATION_PASSED=true` signal: a stamp CI wrote, or one from an impact subset, never stands in for a run here. It passes no baseline flags, with or without `$PIPELINE_RUN_DIR`: a whole suite asked for by name reports every failure, and a baseline at the same code (`origin/{integration-branch}` at the release tip) would adjudicate nothing. QA stories do not run.
 
 ### Targeted scope (with arguments)
 

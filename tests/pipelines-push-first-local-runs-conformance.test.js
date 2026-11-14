@@ -167,3 +167,39 @@ test('AC1.1: the pre-push sites and the whole-suite re-run pass --local (#5370)'
     [/a scoped re-run would ask CI again and an unscoped one exits 2/, 'why --local'],
   ]);
 });
+
+test('AC4.1, AC4.3: /claude-tweaks:test full runs the whole suite here, no argument does not, and the hint and card name full (#5370)', () => {
+  const s = read('plugin/skills/test/SKILL.md');
+  // The text from a `### ` heading to the next `\n### ` (asserts the heading exists).
+  const sub = (text, heading) => {
+    const at = text.indexOf(`\n${heading}\n`);
+    assert.notEqual(at, -1, `heading not found: ${heading}`);
+    const next = text.indexOf('\n### ', at + 1);
+    return next === -1 ? text.slice(at) : text.slice(at, next);
+  };
+  assert.ok(lineStartingWith(s, 'argument-hint:').includes('|all|full|skip-qa|'));
+  assert.ok(lineStartingWith(read('plugin/skills/help/reference-card.md'), '| `/claude-tweaks:test` |').includes('all\\|full\\|skip-qa'));
+  pinned(lineStartingWith(s, '| `full` |'), [
+    [/every suite's full command on this machine \(`verify\.js --local`, no `--scope`\)/, 'full runs every full command here'],
+    [/never skipped by Skip-if-recent/, 'never skipped'],
+  ]);
+  const WHOLE_FACTS = [
+    [/Run `verification\.md` Step 2's run command with `--local` added and no `--scope`/, 'the command'],
+    [/never passes `--no-stamp`/, 'it stamps'],
+    [/Skip-if-recent does not apply/, 'never skipped'],
+    [/a stamp CI wrote, or one from an impact subset, never stands in for a run here/, 'why'],
+    [/It passes no baseline flags, with or without `\$PIPELINE_RUN_DIR`/, 'no baseline at the release tip'],
+  ];
+  pinned(sub(s, '### Whole suite here (`full`)'), WHOLE_FACTS);
+  const bullet = lineStartingWith(s, '- `full` argument →');
+  pinned(bullet, [[/none of the skips below apply/, 'full ignores the pipeline skips']]);
+  const pipeline = s.slice(s.indexOf('**Pipeline behavior:**'));
+  assert.ok(pipeline.indexOf(bullet) !== -1 && pipeline.indexOf(bullet) < pipeline.indexOf('- `VERIFICATION_PASSED=true` + no stories'), 'the full bullet leads the Pipeline behavior list');
+  pinned(sectionOf(read(VERIFICATION), '### Skip-if-recent (for /flow pipelines)'), [
+    [/`\/claude-tweaks:test full` never takes this skip, by signal or by stamp/, 'Skip-if-recent excludes full'],
+  ]);
+  pinned(sub(s, '### Standard suite (no arguments)'), [
+    [/Under the declaration's `localRuns: "on-request"`, that procedure runs the scoped invocation, standalone too/, 'no argument is scoped under the key'],
+    [/A `--local` fallback whose impact selection cannot narrow still runs what selection chose/, 'the named exception'],
+  ]);
+});

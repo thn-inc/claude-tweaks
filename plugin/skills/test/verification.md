@@ -19,6 +19,8 @@ If CLAUDE.md doesn't document verification commands, scan `package.json` scripts
 
 ### Skip-if-recent (for /flow pipelines)
 
+`/claude-tweaks:test full` never takes this skip, by signal or by stamp (`test/SKILL.md`'s Whole suite here).
+
 When running inside a `/claude-tweaks:flow` pipeline and the previous step already ran verification successfully (indicated by `VERIFICATION_PASSED=true` in the pipeline context), check the accompanying `VERIFICATION_SHA` (set by `build/SKILL.md` Common Step 5) against the current `git rev-parse HEAD`:
 
 - **Match** — `skip this procedure entirely` and note: "Verification skipped — passed in previous pipeline step." This prevents redundant type check + lint + test runs when `/flow` chains build → test. It is the expected branch after a moved base too: build's Pre-verification catch-up (`_shared/pre-verification-catchup.md`) merges the integration branch in before its own run, so `VERIFICATION_SHA` already names the merged HEAD, and a later bookkeeping-only commit takes the Mismatch branch below, which runs no suite either.
