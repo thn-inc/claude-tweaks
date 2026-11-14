@@ -1,7 +1,7 @@
 'use strict';
 // The pipeline driver's step table (drive.js, record #5218).
 //
-// Ports plugin/skills/_shared/express-lane.md Procedure steps 1–8 and 10 (step 9, merge, omitted by design); each step function names the step it ports. No test reads that prose — keep the two in step by hand.
+// Ports plugin/skills/_shared/express-lane.md Procedure steps 1–10 (step 9's merge lives in merge.js and runs as the `merge` entry); each step function names the step it ports. No test reads that prose — keep the two in step by hand.
 //
 // STEPS is a frozen, ordered array of { name, run }. run.js walks it once per record and
 // owns only event emission and stop handling between steps, so a later unit adds a step
@@ -9,7 +9,7 @@
 //
 //   defineStep(name, stopClass, fn) -> { name, run }
 //     fn(ctx, deps) -> Promise<StepResult>, where
-//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra? }
+//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra?, skip? }
 //   - `stop` means a gate said no; `fail` means a call failed.
 //   - `halt` defaults to `status !== 'ok'`; a step that must never end the record (a
 //     failed summary entry) returns `halt: false`.
@@ -17,6 +17,7 @@
 //   - `reason` defaults to the status; it is the final line's `stop.reason`, except that
 //     run.js's finalEvent maps a pre-push stop's reason through settle's toEscalationReason.
 //   - `extra` fields merge into the step's event line (never over its core fields).
+//   - `skip: true` (an ok result of a step that did not apply) emits no event line and does not halt.
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // The test step runs worker-authored code (the worker's test files) through verify.js. Containment
@@ -58,10 +59,13 @@ const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { buildEnv } = require('./worker');
+const { WIN32_CLAUDE_BIN, readCeilings, launchTracked } = require('./launch');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
+const { merge } = require('./merge');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
+const { reviewRecord } = require('./review');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
 
 // The worker's test command and the full verify invocation's `--cmd tests=…` value.
@@ -77,16 +81,13 @@ const CI_WAIT_BOUND_MS = 30 * 60 * 1000;
 const CI_POLL_INTERVAL_MS = 30 * 1000;
 // No ci read may end the step earlier than this after the push (see the header paragraph).
 const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
-// On win32 the worker launcher's default `bin` (`claude`) does not find an npm-installed
-// `claude.cmd`, so a win32 caller passes this explicitly.
-const WIN32_CLAUDE_BIN = 'claude.cmd';
 
 // Read once per run, in the policy step.
 // `auto-merge-max-lines` is the express diff bound check enforces; the worker's prompt states it.
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars',
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
-  'auto-merge-max-lines',
+  'auto-merge-max-lines', 'express-driver-review',
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.
 const ISSUE_JSON_FIELDS = 'number,title,body,labels,state,comments';
@@ -117,6 +118,7 @@ function defineStep(name, stopClass, fn) {
       stopClass: result.stopClass || stopClass,
       reason: result.reason || result.status,
       extra: result.extra || {},
+      skip: result.skip === true && result.status === 'ok',
     };
   }
   return Object.freeze({ name, run: runStep });
@@ -413,13 +415,6 @@ const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx
   return { status: 'ok' };
 });
 
-// A positive finite number from a policy value (a number, or a numeric string); else NaN.
-// `Number('')` and `Number(null)` are 0, so neither passes.
-function positiveNumber(value) {
-  const n = typeof value === 'number' ? value : (typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN);
-  return Number.isFinite(n) && n > 0 ? n : NaN;
-}
-
 // The implementer's prompt. It goes to the worker's standard input, never its argv. The
 // record body comes last, fenced and labelled as data: the worker's narrow rights and
 // check's diff bounds are what contain it, so nothing here relies on the worker's trust.
@@ -451,20 +446,16 @@ function workerPrompt(ctx, { minutes, dollars, maxLines }) {
 // Ports express-lane.md step 2 (the edit): the headless implementer, launched through
 // worker.js with the run's two ceilings. Every string the worker controls is untrusted:
 // the summary and denial inputs are neutralized here, the title is kept raw only for the
-// commit step's normalizeTitle, and none of it ever enters argv. The wrapping runner makes
-// the worker's handle shared.activeWorker for the launch, so run.js's signal handler can
+// commit step's normalizeTitle, and none of it ever enters argv. launch.js's launchTracked
+// makes the worker's handle shared.activeWorker for the launch, so run.js's signal handler can
 // forward an interrupt to the worker's process group (headless-worker-launch, "What the
 // consumer owes").
-const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+// The body is shared with the review step's fix round, which appends `extraPrompt` to the same prompt.
+async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   const { shared } = ctx;
-  const minutesKey = 'express-driver-wall-clock-minutes';
-  const dollarsKey = 'express-driver-spend-ceiling-dollars';
-  const minutes = positiveNumber(shared.policy[minutesKey].value);
-  const dollars = positiveNumber(shared.policy[dollarsKey].value);
-  const bad = [[minutesKey, minutes], [dollarsKey, dollars]].filter(([, v]) => Number.isNaN(v)).map(([k]) => k);
-  if (bad.length) {
-    return { status: 'fail', detail: `worker ceiling not a positive number: ${bad.map((k) => `${k} (${JSON.stringify(shared.policy[k].value)})`).join(', ')}` };
-  }
+  const ceilings = readCeilings(shared.policy);
+  if (ceilings.bad) return { status: 'fail', detail: `worker ceiling not a positive number: ${ceilings.bad}` };
+  const { minutes, dollars } = ceilings;
   // The bound as check reads it (blast-radius-cli.js's resolveBlastRadiusConfig: Number()
   // of the same policy value), so the prompt states the number check enforces.
   const linesKey = 'auto-merge-max-lines';
@@ -474,33 +465,13 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
   }
   const settingsDir = path.join(ctx.runDir, 'worker');
   deps.mkdirSync(settingsDir, { recursive: true });
-  // Only the first runner call is the worker: on win32 the launcher's ceiling kill runs
-  // taskkill through the same runner, and that handle must not replace the worker's.
-  let captured = false;
-  const runner = (call) => {
-    const handle = deps.runner(call);
-    if (!captured) {
-      captured = true;
-      shared.activeWorker = handle;
-    }
-    return handle;
-  };
-  let envelope;
-  try {
-    envelope = await deps.launchWorker({
-      role: 'implementer',
-      cwd: ctx.wt,
-      prompt: workerPrompt(ctx, { minutes, dollars, maxLines }),
-      ceilings: { wallClockMs: minutes * 60000, spendCeiling: dollars },
-      testCommand: TEST_COMMAND,
-      settingsDir,
-      platform: deps.platform,
-      env: deps.env,
-      ...(deps.platform === 'win32' ? { bin: WIN32_CLAUDE_BIN } : {}),
-    }, { runner });
-  } finally {
-    shared.activeWorker = null;
-  }
+  const envelope = await launchTracked(shared, deps, { minutes, dollars }, {
+    role: 'implementer',
+    cwd: ctx.wt,
+    prompt: workerPrompt(ctx, { minutes, dollars, maxLines }) + extraPrompt,
+    testCommand: TEST_COMMAND,
+    settingsDir,
+  });
   if (!envelope || typeof envelope !== 'object') return { status: 'fail', detail: 'worker launch returned no envelope' };
   const result = envelope.result && typeof envelope.result === 'object' ? envelope.result : null;
   const denials = (Array.isArray(envelope.denials) ? envelope.denials : []).map((d) => ({
@@ -536,7 +507,8 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     return { status: 'fail', detail: `worker result status is neither done nor cannot-complete: ${neutralize(String(result && result.status))}`, extra };
   }
   return { status: 'ok', extra };
-});
+}
+const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, (ctx, deps) => runImplementer(ctx, deps, {}));
 
 // Run artifacts the worktree may hold; never committed.
 const PIPELINES_DIR = '.claude-tweaks/pipelines';
@@ -639,6 +611,9 @@ function scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel) {
 // Ports express-lane.md step 4 (test): the runner pass stamp `check` reads is written by
 // verify.js, run in the worktree. A regular verify-scope.json scopes the run; an absent one
 // runs the full suite; anything else (a symlink, a directory) is refused, never followed.
+// The step runs before the push and before any PR exists (STEPS order), so CI cannot answer;
+// the scoped call passes `--local` so verify.js never exits 3 ("no verdict yet") under a
+// declaration's localRuns, and it is harmless without one (#5370). express-lane.md step 4 says the same.
 const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const { wt, runDir } = ctx;
   const { policy, ref } = ctx.shared;
@@ -671,7 +646,7 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   let detail;
   if (state.type === 'file') {
     ctx.testMode = 'scoped';
-    args = [...base, '--scope', scopeRel, '--integration-branch', ref];
+    args = [...base, '--scope', scopeRel, '--local', '--integration-branch', ref];
     detail = 'scoped';
   } else if (state.type === 'missing') {
     ctx.testMode = 'full';
@@ -919,10 +894,13 @@ const summaryStep = defineStep(STEP.summary, STOP_CLASSES.NONE, async (ctx, deps
     const text = `#${ctx.record} built on the express lane: ${files}; tests ${ctx.testMode}; PR #${ctx.pr.number}.`;
     const log = logDecisionFile(ctx, deps, 'summary.txt', text, 'Express lane', []);
     if (log.code !== 0) {
+      ctx.summaryLogged = false;
       return { status: 'fail', halt: false, detail: `summary line not logged: log-decision.js exited ${log.code} (${neutralize(firstLine(log.stderr)) || 'no output'})` };
     }
+    ctx.summaryLogged = true;
     return { status: 'ok' };
   } catch (err) {
+    ctx.summaryLogged = false;
     return { status: 'fail', halt: false, detail: `summary line not logged: ${neutralize(errorText(err))}` };
   }
 });
@@ -1017,9 +995,55 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   return { status: 'ok', detail: state, extra: { ciWaitMs: Math.max(0, deps.now() - started) } };
 });
 
+// The reviewer step (#5222, review.js): between check and push. `isRunArtifact` reaches it through this
+// wiring only. Its skip result (reviewRequired off) emits no event line.
+const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) => reviewRecord(ctx, deps, {
+  commit: commitStep,
+  test: testStep,
+  check: checkStep,
+  launchImplementer: (c, d, extraPrompt) => runImplementer(c, d, { extraPrompt }),
+  testCommand: TEST_COMMAND,
+  isRunArtifact,
+}));
+
+// Ports express-lane.md step 9, the merge: entered only when the CI wait ended green, then
+// merge.js owns every decision (no supplier configured, no merge). The result rides on ctx.merge
+// for the final line. The step never halts: merge() reports every stop as a result, so the
+// record's outcome comes from it (finalEvent), not from a stop class. Class `none` is for a throw
+// in this entry itself. There is no interruptClass rung for it: ctx.configWritten is already true
+// whenever this step runs, so an interrupt here is class `none`. The consequence: a signal that
+// arrives after a merge landed reports pending-review, and the reconciler's merged-evidence
+// checks complete the run. The watch's wait is reported on each merge-watch sub-event
+// (extra.ciWaitMs, summed by finalEvent), never on this step's own line, so it is counted once.
+const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) => {
+  if (ctx.ci !== 'green') return { status: 'ok', detail: `not entered: ci ${ctx.ci}` };
+  const mctx = {
+    record: ctx.record, pr: ctx.pr.number, repo: ctx.shared.ghRepo, branch: ctx.branch, base: ctx.shared.ref,
+    head: ctx.check.head, runDir: ctx.runDir, runRoot: ctx.shared.mainRoot, mainCheckout: ctx.shared.mainRoot,
+    worktree: ctx.wt, summaryLogged: ctx.summaryLogged,
+  };
+  const mdeps = {
+    ...deps,
+    emit: ctx.events.emit,
+    rebindEvents: ctx.events.rebind,
+    interrupted: () => ctx.shared.interrupted,
+    watchClock: (t) => { ctx.ciWaitStartedAt = t; },
+  };
+  const r = await merge(mctx, mdeps);
+  ctx.merge = r;
+  if (r.runDir !== ctx.runDir) ctx.runDir = r.runDir;
+  if (r.eventsStdoutOnly) ctx.eventsStdoutOnly = true;
+  // The result's own detail rides along (the spec's closed rule: an unclassified stop names the
+  // failing sub-step in the event detail, and that detail is carried only here).
+  // A reason-less result's detail (merged, armed) already opens with the outcome word, so the head is dropped then.
+  const opensWithOutcome = !r.reason && typeof r.detail === 'string' && r.detail.startsWith(r.outcome) && !/^[\w-]/.test(r.detail.slice(r.outcome.length));
+  const head = opensWithOutcome ? '' : r.outcome + (r.reason ? `: ${r.reason}` : '');
+  return { status: 'ok', detail: neutralize([head, r.detail].filter(Boolean).join(' — ')), extra: {} };
+});
+
 const STEPS = Object.freeze([
   policyStep, fetchStep, eligibilityStep, admissionStep, claimStep, runDirStep, worktreeStep, workerStep, commitStep,
-  testStep, checkStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep,
+  testStep, checkStep, reviewStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep, mergeStep,
 ]);
 
 module.exports = {

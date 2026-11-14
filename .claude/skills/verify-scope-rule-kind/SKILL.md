@@ -65,6 +65,32 @@ source tree (#4321 added `.claude/**`, `.github/workflows/**`, `perf/**`) owes t
    the new path and assert `mode: 'scoped'`, no `unmatched`, and `superseded: false`
    (`selectTracedBy` in `tests/verify-scope-declaration.test.js`).
 
+## Adding a top-level behavior key
+
+A top-level scalar that changes how `verify.js` behaves rather than which suites a delta selects
+(#5369's `localRuns: "on-request"`) leaves `scope.js` alone but owes a different site list:
+
+1. **`declaration.js` validates the value and any key it depends on.** `localRuns` accepts only
+   `"on-request"` and is an error without a `ci` block; the parsed declaration always carries the
+   key (`null` when absent), pinned in `tests/bin-lib/verify/declaration.test.js`. A top-level key
+   needs no compatibility value, since an older reader ignores it.
+2. **Every reader of the parsed declaration, not only `verify.js`.** `git grep -l readDeclaration -- plugin/bin tools`
+   lists them; `localRuns` reached `plugin/bin/residue.js` (`localRunsSkip` in
+   `plugin/bin/lib/residue/probes/suite.js`) and `plugin/bin/lib/verify/ci-source.js` (passed in
+   as an argument) as well as `verify.js`'s refusal checks.
+3. **A new outcome is visible end to end.** `localRuns` added exit 2 (refused without `--local`)
+   and exit 3 (no CI verdict): name each in `plugin/bin/lib/verify/args.js`'s usage note, put the
+   flags on the `verify` event (`local`, `noVerdict`), and copy them in
+   `plugin/bin/lib/timing/derive.js` (`tests/bin-lib/timing/derive.test.js`).
+4. **Every skill instruction that runs `verify.js`, when the key accepts or refuses invocations.**
+   `localRuns` refuses an unscoped run without `--local`. #5370 migrated the sites its plan named,
+   but review found three more that still ran an unscoped verify: `plugin/skills/test/SKILL.md`
+   (targeted runs), `plugin/skills/wrap-up/merge-mode.md` (conflict path) and
+   `plugin/skills/_shared/pre-review-catchup.md` (fixed in 48006040e). In the same build, grep
+   `plugin/skills` and `.claude/skills` for `verify.js`, "full suite" and "whole set", and decide
+   each site's flags. A conformance test's retirement sweep pins retired phrases. It cannot find a
+   site that never used one.
+
 ## Anti-Patterns
 
 | Pattern | Why It Fails |

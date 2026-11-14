@@ -67,9 +67,11 @@ const LOCK_REL = path.join('.claude-tweaks', 'declined-learning', '.store.lock')
 // load, so the anchor follows the process's current cwd. A null root (no repo, or a .git that
 // can't be parsed) and a deleted cwd (process.cwd() throws) both give null, and `anchored` then
 // keeps the relative path: the store degrades open on read rather than throwing.
-function anchorRoot() {
-  let cwd;
-  try { cwd = process.cwd(); } catch { return null; }
+function anchorRoot(from) {
+  let cwd = from;
+  if (cwd === undefined) {
+    try { cwd = process.cwd(); } catch { return null; }
+  }
   return mainCheckoutRoot(cwd) || null;
 }
 
@@ -119,8 +121,8 @@ function truncateSubject(subject) {
 // One on-disk location per checkout: the main checkout's, resolved from cwd (#4360, see anchored()),
 // with no per-transcript/per-consumer derivation. Outside a git repository it is the cwd-relative
 // path.
-function storePath() {
-  return anchored(STORE_REL);
+function storePath(cwd) {
+  return anchored(STORE_REL, anchorRoot(cwd));
 }
 
 // Returns the parsed store object, or {} when none exists (ENOENT), the file is present but not
@@ -166,8 +168,10 @@ function recordDecline(fingerprint, {
 // degrades open. Exact-hash lookup only — a byte-identical (or near-identical, per the caller's
 // own normalization) re-fingerprint. See listDeclined below for the subject-scan alternative this
 // can't cover.
-function lookupDecline(fingerprint, deps = {}) {
-  const current = readStore(deps);
+// `deps.cwd` anchors the store from that directory instead of the process's (a CLI that was handed
+// its working directory); absent, the lookup resolves from process.cwd() as before.
+function lookupDecline(fingerprint, { cwd, ...deps } = {}) {
+  const current = readStore({ ...deps, storeFile: deps.storeFile === undefined ? storePath(cwd) : deps.storeFile });
   return Object.prototype.hasOwnProperty.call(current, fingerprint) ? current[fingerprint] : null;
 }
 

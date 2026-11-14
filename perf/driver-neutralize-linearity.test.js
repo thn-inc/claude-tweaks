@@ -32,19 +32,25 @@
 //     this case also guards a whitespace search restarted per keyword.
 //   - `www.` runs, `_www.` runs, `www.g/o/r/issues/5` chains and `fix:www.` / `fix:` runs: the
 //     `www\.[^\s/]+` URL alternative was quadratic (40k chars 1.0-1.5s, 200k 145s), also through the
-//     keyword lookahead (`fix:www.` x25k, 75s); those alternatives and the lookahead are gone.
+//     keyword lookahead (`fix:www.` x25k, 75s); the lookahead is gone. #5352 brought back the
+//     `www.` and bare-host alternatives and added PATH_REF, each with a guard that keeps it linear.
+//     Time with the guard reverted, measured in one session under heavy machine load (so an idle
+//     machine runs faster; each still blows its 500-1000ms budget by a wide margin):
+//       - no `[\d_](?!www\.)` guard: `'_www.'.repeat(40000)` ~74s, `'1www.'.repeat(40000)` ~71s,
+//         `'_www.a'.repeat(35000)` ~37s;
+//       - no digit in the `www.`/bare-host boundary: `'www.g/o/r/issues/5'.repeat(11000)` ~16s,
+//         `'github.com/o/r/issues/5'.repeat(9000)` ~12.5s;
+//       - no PATH_REF length bounds: `'a-'.repeat(100000)` ~17.5s, `'1'.repeat(200000)` ~32s;
+//       - no digit in the PATH_REF boundary: the verdict breaks rather than the time, leaving
+//         96,000 characters of `'o/r/issues/5'.repeat(16000)`.
 //   - back-to-back scheme URLs (`https://g/o/r/issues/5`*9000): with a `(?<![A-Za-z0-9])` boundary
 //     each URL follows a digit and was refused until the previous removal left a space, peeling one
 //     URL per loop pass (200k chars ~10.5s); the boundary is now letters-only.
-//   - a keyword chain before a marker token that survives the reference passes
-//     (`fix `*k + `www.g/o/r/issues/5`): only the last keyword's token carried the marker, so each
-//     loop pass removed one keyword and exposed the next (100k chars ~81s); the chain is now decided
-//     right to left in one pass.
+//   - a keyword chain before a marker token (`fix `*k + `www.g/o/r/issues/5`): only the last
+//     keyword's token carried the marker, so each loop pass removed one keyword and exposed the next
+//     (100k chars ~81s); the chain is now decided right to left in one pass.
 //   - `h#1`*5k collapsing to `h`*5k: only a time budget for many bare-reference removals; it
 //     catches none of the mutants above and has no pre-fix time.
-// Dropped as no longer testing anything: the widened-host case (`www.` + 200k `a`, `_https://` +
-// 200k `a`, `github.com/` + `a/`*100k) belonged to the `www.`/`github.com` URL alternatives, which
-// no longer exist.
 // Lives outside tests/ for the same reason the other perf/ files do: a wall-clock assertion flakes
 // under sibling-suite load.
 'use strict';
@@ -96,7 +102,7 @@ test('neutralize: a long digit run stays linear', () => {
   const input = '1'.repeat(200000);
   const { value, elapsed } = timed(input);
   assert.ok(value === input, `verdict changed (length ${value.length})`);
-  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the #N scan-back must not run at every digit`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the #N scan-back must not run at every digit, and PATH_REF's owner length bound must hold`);
 });
 
 test('neutralize: a hash, a long digit run and a letter stays linear', () => {
@@ -138,9 +144,18 @@ test('neutralize: www. and keyword runs that match nothing stay linear and uncha
   const shapes = {
     'www.': 'www.'.repeat(50000),
     '_www.': '_www.'.repeat(40000),
-    'www.g/o/r/issues/5': 'www.g/o/r/issues/5'.repeat(11000),
     'fix:www.': 'fix:www.'.repeat(25000),
     'fix:': 'fix:'.repeat(50000),
+    '1www.': '1www.'.repeat(40000),
+    '_www.a': '_www.a'.repeat(35000),
+    '_www.a:1': '_www.a:1'.repeat(25000),
+    'www. + a run': `www.${'a'.repeat(200000)}`,
+    'github.com/ + a/ run': `github.com/${'a/'.repeat(100000)}`,
+    '_www.g/o/r/': '_www.g/o/r/'.repeat(20000),
+    '_github.com/o/r/': '_github.com/o/r/'.repeat(15000),
+    'a-': 'a-'.repeat(100000),
+    'a/': 'a/'.repeat(100000),
+    'o/r/issues/': 'o/r/issues/'.repeat(18000),
   };
   for (const [name, input] of Object.entries(shapes)) {
     const { value, elapsed } = timed(input);
@@ -149,9 +164,9 @@ test('neutralize: www. and keyword runs that match nothing stay linear and uncha
   }
 });
 
-test('neutralize: a keyword chain before a surviving marker token goes in one pass', () => {
+test('neutralize: a keyword chain before a marker token goes in one pass', () => {
   const { value, elapsed } = timed(`${'fix '.repeat(25000)}www.g/o/r/issues/5`);
-  assert.ok(value === 'www.g/o/r/issues/5', `verdict changed (length ${value.length})`);
+  assert.ok(value === '', `verdict changed (length ${value.length})`);
   assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — a keyword chain must be decided in one pass, not one keyword per loop pass`);
 });
 
@@ -159,4 +174,17 @@ test('neutralize: back-to-back scheme URLs are all removed without a loop pass e
   const { value, elapsed } = timed('https://g/o/r/issues/5'.repeat(9000));
   assert.ok(value === '', `verdict changed (length ${value.length})`);
   assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the URL boundary must admit a digit before the scheme`);
+});
+
+test('neutralize: back-to-back www., bare github.com and host-free references are all removed in one pass', () => {
+  const shapes = {
+    'www.g/o/r/issues/5': 'www.g/o/r/issues/5'.repeat(11000),
+    'github.com/o/r/issues/5': 'github.com/o/r/issues/5'.repeat(9000),
+    'o/r/issues/5': 'o/r/issues/5'.repeat(16000),
+  };
+  for (const [name, input] of Object.entries(shapes)) {
+    const { value, elapsed } = timed(input);
+    assert.ok(value === '', `verdict changed on ${name} (length ${value.length})`);
+    assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms on ${name} — the boundary must admit a digit where the previous reference ended`);
+  }
 });

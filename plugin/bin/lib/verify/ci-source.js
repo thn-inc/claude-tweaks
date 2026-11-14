@@ -12,6 +12,9 @@
 // `used: false` with a named `fallback` reason, and verify.js runs the suite
 // locally as before. Every unknown falls back; nothing here ever reports a
 // pass it did not read from a completed, successful CI job at exactly HEAD.
+// The one exception to "every unknown falls back": under the declaration's
+// `localRuns: "on-request"`, a red job whose log cannot be fetched is CI's
+// verdict (`used: true`, exit 1, `ci.logUnavailable`), not a fallback (#5369).
 'use strict';
 
 const fs = require('fs');
@@ -24,6 +27,28 @@ const { ghOptions } = require('../repo-resolve');
 // bound on purpose, so a slow log fetch is not misread as "unavailable".
 const LOG_TIMEOUT_MS = 30000;
 const SHA_RE = /^[0-9a-f]{40}$/;
+// gh 2.103.3 refuses a job log carrying terminal escapes without this flag (#5369).
+const LOG_ESCAPE_FLAG = '--allow-escape-sequences';
+const UNKNOWN_ESCAPE_FLAG_RE = /unknown flag: --allow-escape-sequences/;
+// Reasons verify.js records for a CI-declared suite it did not run locally under
+// `localRuns: "on-request"` (#5369).
+const LOCAL_REQUESTED = 'local-requested';
+const NOT_CONSULTED = 'not-consulted';
+
+// LOG_ESCAPE_FLAG hands over the job log's raw bytes, and a PR's test output is
+// text this tool did not write: every terminal control sequence except SGR
+// colour (which extract.js's stripAnsi removes before a region is read) is
+// dropped, so an OSC title or clipboard write, a cursor move or a screen clear
+// in a CI log never reaches the terminal through the printed failing region.
+// Each pattern is linear: ESC is outside every repeated class, so no two
+// attempts rescan the same run (perf/ci-log-controls-linearity.test.js).
+const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
+const NON_SGR_CSI_RE = /\x1b\[[0-?]*[ -/]*[@-ln-~]/g;
+const CONTROL_RE = /[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f\u0080-\u009f]|\x1b(?!\[[0-9;]*m)/g;
+
+function stripTerminalControls(line) {
+  return line.replace(OSC_RE, '').replace(NON_SGR_CSI_RE, '').replace(CONTROL_RE, '');
+}
 
 function defaultRunner(args, { cwd = null, timeout = GH_TIMEOUT_MS } = {}) {
   return execFileSync('gh', args, ghOptions(args, {
@@ -41,6 +66,7 @@ function normalizeCiLog(text, localRoot) {
   const root = String(localRoot || '').replace(/[\\/]+$/, '');
   return String(text)
     .split(/\r?\n/)
+    .map(stripTerminalControls)
     .map((line) => line.replace(/^\uFEFF?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/, ''))
     .map((line) => (root
       ? line
@@ -65,7 +91,7 @@ class CiFallback extends Error {
 }
 
 async function fetchCiVerdict({
-  suite, source, headSha, logDir, localRoot, cwd = null,
+  suite, source, headSha, logDir, localRoot, cwd = null, localRuns = null,
   runner = defaultRunner, sleep = defaultSleep, now = Date.now,
 }) {
   const startedMs = now();
@@ -148,17 +174,36 @@ async function fetchCiVerdict({
 
     const logPath = path.join(logDir, `${suite}.log`);
     let logText = null;
+    let logErr = null;
+    const logArgs = ['api', `repos/{owner}/{repo}/actions/jobs/${Number(job.id)}/logs`];
     try {
-      logText = gh(['api', `repos/{owner}/{repo}/actions/jobs/${Number(job.id)}/logs`], LOG_TIMEOUT_MS);
+      try {
+        logText = gh([...logArgs, LOG_ESCAPE_FLAG], LOG_TIMEOUT_MS);
+      } catch (err) {
+        // A gh older than the flag rejects it as unknown: one retry without it.
+        if (!(err instanceof CiFallback) && UNKNOWN_ESCAPE_FLAG_RE.test(String((err && (err.stderr || err.message)) || ''))) {
+          logText = gh(logArgs, LOG_TIMEOUT_MS);
+        } else {
+          throw err;
+        }
+      }
     } catch (err) {
       if (err instanceof CiFallback && err.reason === 'gh-unavailable') throw err;
       // A red job with no log names no failing test — never adjudicable, so
-      // the suite runs here instead. A green job's verdict stands without it.
-      if (job.conclusion === 'failure') return fallback('ci-log-unavailable');
+      // the suite runs here instead, unless the declaration asked for CI's
+      // verdict on request: then the red job itself stands. A green job's
+      // verdict stands without a log.
+      if (job.conclusion === 'failure') {
+        if (localRuns !== 'on-request') return fallback('ci-log-unavailable');
+        ci.logUnavailable = true;
+      }
+      logErr = err;
     }
-    const body = logText === null
-      ? `CI job ${job.html_url || job.id} passed; its log could not be fetched.\n`
-      : `${normalizeCiLog(logText, localRoot)}\n`;
+    let body;
+    if (logText !== null) body = `${normalizeCiLog(logText, localRoot)}\n`;
+    else if (ci.logUnavailable) {
+      body = `CI run ${ci.runUrl || run.id} failed (job ${job.html_url || job.id}); its log could not be fetched (${errText(logErr)}). Run verify.js with --local to reproduce the failure on this machine.\n`;
+    } else body = `CI job ${job.html_url || job.id} passed; its log could not be fetched.\n`;
     fs.writeFileSync(logPath, body);
     const started = Date.parse(job.started_at);
     const completed = Date.parse(job.completed_at);
@@ -181,4 +226,6 @@ async function fetchCiVerdict({
   }
 }
 
-module.exports = { fetchCiVerdict, normalizeCiLog, defaultRunner, LOG_TIMEOUT_MS };
+module.exports = {
+  fetchCiVerdict, normalizeCiLog, defaultRunner, LOG_TIMEOUT_MS, LOG_ESCAPE_FLAG, LOCAL_REQUESTED, NOT_CONSULTED,
+};

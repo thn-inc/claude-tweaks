@@ -42,9 +42,23 @@ const realDeps = {
   buildContext,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  get env() {
+    return process.env;
+  },
 };
 
-function run(argv, deps = realDeps) {
+function run(argv, deps = {}) {
+  deps = { ...realDeps, ...deps };
+  try {
+    return runCommand(argv, deps);
+  } catch (err) {
+    deps.stderr(`build-review-context.js: ${err.message}\n`);
+    return 1;
+  }
+}
+
+function runCommand(argv, deps) {
   const o = parseArgs(argv);
   if (o.error) {
     deps.stderr(o.error + '\n' + USAGE);
@@ -55,7 +69,7 @@ function run(argv, deps = realDeps) {
     return 0;
   }
   if (o.command === 'mint') {
-    const dir = deps.resolveDir({ run: o.run });
+    const dir = deps.resolveDir({ run: o.run, cwd: deps.cwd(), env: deps.env });
     if (o.printDir) {
       deps.stdout(dir + '\n');
     } else {
@@ -72,8 +86,8 @@ function run(argv, deps = realDeps) {
       deps.stderr('build-review-context.js: build requires --base and --branch\n' + USAGE);
       return 2;
     }
-    const dir = deps.resolveDir({ dir: o.dir, run: o.run });
-    const result = deps.buildContext({ base: o.base, branch: o.branch, dir, filesFrom: o.filesFrom });
+    const dir = deps.resolveDir({ dir: o.dir, run: o.run, cwd: deps.cwd(), env: deps.env });
+    const result = deps.buildContext({ base: o.base, branch: o.branch, dir, filesFrom: o.filesFrom, cwd: deps.cwd(), env: deps.env });
     deps.stdout(JSON.stringify(result) + '\n');
     return 0;
   }
@@ -81,13 +95,6 @@ function run(argv, deps = realDeps) {
   return 2;
 }
 
-if (require.main === module) {
-  try {
-    process.exitCode = run(process.argv.slice(2));
-  } catch (err) {
-    process.stderr.write(`build-review-context.js: ${err.message}\n`);
-    process.exitCode = 1;
-  }
-}
+module.exports = { run, parseArgs, realDeps };
 
-module.exports = { run, parseArgs };
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

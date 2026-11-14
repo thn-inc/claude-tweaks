@@ -15,7 +15,8 @@ const { hasTestScript } = require('./lib/residue/detect-test-script');
 const { probeWorktrees } = require('./lib/residue/probes/worktrees');
 const { probeBranches } = require('./lib/residue/probes/branches');
 const { probeForge } = require('./lib/residue/probes/forge');
-const { probeSuite } = require('./lib/residue/probes/suite');
+const { probeSuite, localRunsSkip } = require('./lib/residue/probes/suite');
+const { readDeclaration, DECLARATION_PATH } = require('./lib/verify/declaration');
 const { probeRelease } = require('./lib/residue/probes/release');
 const { probePipelineRuns } = require('./lib/residue/probes/pipeline-runs');
 const { probeArtifacts } = require('./lib/residue/probes/artifacts');
@@ -113,9 +114,17 @@ function main() {
   // code, so check the script exists BEFORE ever invoking npm — verified
   // live: a directory with no package.json used to report a fabricated
   // "test suite exit 254" finding instead of `unknown`.
+  // Under `localRuns` the suite is CI's and a bare `npm test` here may run a
+  // subset or nothing (#5319), so its exit 0 is no green suite (#5370).
+  const gitRoot = git(['rev-parse', '--show-toplevel']);
+  const root = gitRoot || cwd;
+  const read = readDeclaration(path.join(root, DECLARATION_PATH));
+  const skip = localRunsSkip(read.ok ? read.decl : null);
   let suiteResult;
   if (opts.noSuite) {
     suiteResult = { ran: false, reason: 'skipped via --no-suite', findings: [] };
+  } else if (skip) {
+    suiteResult = skip;
   } else if (!hasTestScript(cwd)) {
     suiteResult = { ran: false, reason: 'no test command detected', findings: [] };
   } else {
@@ -148,7 +157,7 @@ function main() {
       // The invoking run's identity, when one is threaded (wrap-up runs
       // inside a pipeline run; standalone invocations have none) — #1118.
       runId: pipelineRunId,
-      worktreeRoot: git(['rev-parse', '--show-toplevel']),
+      worktreeRoot: gitRoot,
       // #1328: lets the probe cross-check a status: clean finding's
       // recorded worktree against the already-resolved locked-worktree
       // list, instead of re-invoking git from inside the probe itself.

@@ -10,6 +10,10 @@ const {
   computeOutlook,
 } = require('../../../plugin/bin/lib/backlog-grant-gate/backlog-grant-gate');
 
+// computeOutlook grades trust on the real clock, so a closed fixture must sit
+// inside trustRows' default 30-day evaluation window to form a cell.
+const CLOSED_20_DAYS_AGO = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+
 function issue(number, overrides = {}) {
   return {
     number, title: 'untitled', body: '', labels: [], createdAt: '2026-01-01T00:00:00Z', ...overrides,
@@ -191,7 +195,7 @@ test('computeOutlook: ceiling clears but zero candidates are eligible -> zero-el
   const runner = ghRunner({ candidates });
   const gitRunner = () => '';
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     { limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner, gitRunner },
   );
   assert.strictEqual(out.shortcut, 'zero-eligible');
@@ -204,12 +208,12 @@ test('computeOutlook: a clean-trust class produces an eligible candidate (matche
   // 8 closed, approved, non-batch records in the same class -> clean cell
   // (trust.js: MIN_SAMPLES=8, MIN_VERDICTS=5, no changesRequested/negativeEvidence/followUps).
   const records = Array.from({ length: 8 }, (_, i) => issue(100 + i, {
-    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: '2026-01-01T00:00:00Z',
+    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: CLOSED_20_DAYS_AGO,
   }));
   const runner = ghRunner({ candidates, records });
   const gitRunner = () => '';
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     { limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner, gitRunner },
   );
   assert.strictEqual(out.shortcut, null);
@@ -224,15 +228,15 @@ test('computeOutlook: a sub-issue is excluded from trustRows\' cell totals (neve
   // 8 real closed+approved records, plus one decomposed sub-issue that would
   // otherwise dilute/undercount the same cell if it weren't excluded.
   const graded = Array.from({ length: 8 }, (_, i) => issue(100 + i, {
-    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: '2026-01-01T00:00:00Z',
+    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: CLOSED_20_DAYS_AGO,
   }));
-  const subIssue = issue(200, { labels: ['by:code-health', 'risk:low'], state: 'CLOSED', closedAt: '2026-01-01T00:00:00Z' });
+  const subIssue = issue(200, { labels: ['by:code-health', 'risk:low'], state: 'CLOSED', closedAt: CLOSED_20_DAYS_AGO });
   const records = [...graded, subIssue];
   const parents = [{ number: 300, body: '- [ ] #200' }];
   const runner = ghRunner({ candidates, records, parents });
   const gitRunner = () => '';
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     { limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner, gitRunner },
   );
   const row = out.trustRows.find((r) => r.key === 'producer:code-health|low');
@@ -276,7 +280,7 @@ test('#4793: a foreign blocker never collides with this repository\'s same bare 
 
 function foreignOutlook(candidates, foreignDeps) {
   return computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     {
       limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner: ghRunner({ candidates }), gitRunner: () => '', foreignDeps,
     },
@@ -321,7 +325,7 @@ test('#4793: computeOutlook looks up only the foreign refs of candidates that su
 test('#4793: a candidate already blocked by an open this-repository #N makes no foreign lookup, even when its body also declares a foreign ref', () => {
   const spawned = [];
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     {
       limit: 100,
       workLinks: 'body-text',

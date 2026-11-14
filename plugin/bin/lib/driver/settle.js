@@ -362,5 +362,5 @@ async function settle(input, deps) {
 
 module.exports = {
   DRIVER_ESCALATION_MARKER, reduceDetail, commentFor, escalateDetailText, hasDriverEscalationMarker,
-  toEscalationReason, selectRow, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle,
+  toEscalationReason, selectRow, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle, canonicalWorktreePath,
 };

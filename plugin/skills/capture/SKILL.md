@@ -82,16 +82,18 @@ bug. File plain (no chain) and proceed straight to Backend Selection's filing st
 
 Resolve it as a **single decision, before filing**, and only under `work-backend: github-issues`
 (the trust table reads acceptance labels, which do not exist on the `local-files` driver). Resolve
-both policy values in ONE call — `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days`
+all four policy values in ONE call — `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days trust-evaluation-window-days trust-follow-up-rate-max-percent`
 (one value per line, in request order) — and substitute the first line's literal value for
 `{resolved-ceiling}`. When it resolves to `supervised`, skip
 this block entirely rather than fetching anything.
 
-Substitute the second line's literal value (the resolved `trust-revert-window-days`) for
-`{resolved-window}` below. If the `gh` call, the `git log`
+Substitute the second, third and fourth lines' literal values (the resolved
+`trust-revert-window-days`, `trust-evaluation-window-days` and `trust-follow-up-rate-max-percent`)
+for `{resolved-window}`, `{resolved-eval-window}` and `{resolved-follow-up-rate}` below. If the
+`gh` call, the `git log`
 call, or the node block fails for any reason, skip the chain — the record stays a plain capture:
-this path fails toward the default, never toward the grant (unchanged from before this sub-issue). `{resolved-window}` reaches the
-script as a `process.argv` arg after `--`, never spliced into the JS source — a value containing a
+this path fails toward the default, never toward the grant (unchanged from before this sub-issue). The three values reach the
+script as `process.argv` args after `--`, never spliced into the JS source — a value containing a
 quote character would otherwise break out of the string literal, the same reason
 `code-health/focus-mode.md`'s F1 block passes its own values that way.
 
@@ -146,11 +148,11 @@ CAPTURE_TRUST_COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.
 node -e "
   const fs = require('fs');
   const root = '${CLAUDE_PLUGIN_ROOT}';
-  const { trustRows, parseGitLog } = require(root + '/bin/lib/issues/trust.js');
+  const { trustRows, parseGitLog, TRUST_POLICY_KEYS } = require(root + '/bin/lib/issues/trust.js');
   const { resolveCeiling, permittedGrants } = require(root + '/bin/lib/issues/autonomy.js');
   const issues = require('$CAPTURE_TRUST_RECORDS').map((i) => ({ ...i, labels: i.labels.map((l) => l.name) }));
   const gitLog = parseGitLog(fs.readFileSync('$CAPTURE_TRUST_COMMIT_LOG', 'utf8'));
-  const policy = { 'trust-revert-window-days': process.argv[1] };
+  const policy = Object.fromEntries(TRUST_POLICY_KEYS.map((k, i) => [k, process.argv[1 + i]]));
   // This skill's own class. A fresh capture carries by:capture and no risk
   // score, and riskBand() bands an unscored record 'elevated' — so that is the
   // cell the record about to be filed will land in, and the only one that may
@@ -161,7 +163,7 @@ node -e "
   const permitted = permittedGrants({ ceiling, row });
   const g = permitted.grants.bornReady;
   console.log(JSON.stringify({ bornReady: g.granted, reason: g.reason, verdict: row ? row.verdict : 'no-cell' }));
-" -- "{resolved-window}"
+" -- "{resolved-window}" "{resolved-eval-window}" "{resolved-follow-up-rate}"
 ```
 
 Never add `ready` to the label set below — a capture files plain at every ceiling. When

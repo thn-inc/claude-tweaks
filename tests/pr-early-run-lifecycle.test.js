@@ -309,6 +309,16 @@ test('#2997: pr-checklist-refresh.md\'s Phase-checklist update repairs a body ca
   assert.match(CHECKLIST_REFRESH, /This replaces the former best-effort skip on a\s*\n\s*missing delimiter pair/);
 });
 
+// #5358: the gh-absent MCP path words "carried none/some" from this prose rule, while
+// bin/pr-checklist.js reads WHOLE_PIECE_RESTORES — pin the prose's name list to the code's.
+test('#5358: pr-checklist-refresh.md\'s carried none/some rule names exactly the code\'s whole-piece restores', () => {
+  const { WHOLE_PIECE_RESTORES } = require('../plugin/bin/lib/flow/pr-body');
+  const rule = CHECKLIST_REFRESH.match(/`none` only\s+when `restored` names all of ([\s\S]*?); otherwise\s+`some`/);
+  assert.ok(rule, 'carried none/some rule not found');
+  const named = [...rule[1].matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  assert.deepEqual(named, WHOLE_PIECE_RESTORES);
+});
+
 // #2997 follow-up (found during /claude-tweaks:wrap-up's Skills curation row): Step 3's
 // "Composed shape" fence is a prose/code twin of composePrEarlyBody's actual output — a
 // fenced template, not a table, which is exactly the shape prose-code-twin-pin's own

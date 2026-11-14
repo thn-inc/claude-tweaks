@@ -251,6 +251,25 @@ test('AC2.1: a reused PR whose body field is absent cannot be judged: no gh pr e
   }
 });
 
+test('#5358: a reused PR whose MCP-stripped body names this run is adopted, not rebound; naming another run it is still rebound', async () => {
+  const stripped = (b) => b.replace(/<!--[\s\S]*?-->/g, '');
+  const isEdit = (c) => c[0] === 'gh' && c[2] === 'edit';
+  const paths = (body) => [
+    harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body }] }),
+    harness({ runState: { pr: { number: 9, url: URL7 } }, view: { state: 'OPEN', url: URL7, body } }),
+  ];
+  for (const h of paths(stripped(bodyFor(RUN_ID)))) {
+    await openPrEarly(OPTS, h.deps);
+    assert.equal(h.calls.find(isEdit), undefined, 'no edit for this run');
+    assert.ok(!h.lines.some((l) => l.includes('rebound') || l.includes('rebind')));
+  }
+  for (const h of paths(stripped(bodyFor(OTHER_RUN)))) {
+    await openPrEarly(OPTS, h.deps);
+    assert.equal(h.calls.filter(isEdit).length, 1, 'one edit for another run');
+    assert.ok(h.lines.some((l) => l.includes('rebound reused PR')));
+  }
+});
+
 test('AC4.1: a failing gh pr edit on a reused PR logs the SKIP degrade and still returns the reused PR, recorded', async () => {
   const h = harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }], edit: new Error('HTTP 422') });
   const res = await openPrEarly(OPTS, h.deps);

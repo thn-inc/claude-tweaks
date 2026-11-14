@@ -3,13 +3,14 @@
 // #5227: the module port of dispatch's queue-pull script -- the ```bash fence in
 // plugin/skills/dispatch/queue-pull-script.md that starts at the `DISPATCH_QUEUE_RAW=` line.
 // This file holds the registry, the session paths, the pass loop and every pass runner.
+// Since #5230 dispatch runs this module (bin/queue-pull.js), not the fence: the module is the
+// live queue pull, and the retained fence is its revert path and parity oracle until #5231
+// removes it. Fix a defect here and mirror the change into the fence, never the other way round.
 //
 // R6, step-for-step port: each fence step is one function. A throw inside a step is caught and
 // printed to stderr as `queue-pull: <step>: <message>`, and the run then continues or stops
 // exactly where the fence has an RC check or a `grep -q 'appendExclusion:'` check. Stop and
-// Warning texts are copied from the fence byte for byte. The module reproduces the fence's
-// behavior, including behavior that looks wrong; a defect found while porting goes to the run
-// ledger and is never fixed here.
+// Warning texts match the fence byte for byte, and the two must keep the same behavior.
 //   The fence's own calls are unbounded; the default deps bound every one (shared-primitives.js),
 // so a call that hangs, or outlasts its bound, is where the two can differ. GH_BATCH_TIMEOUT_MS
 // bounds an aliased GraphQL batch and every paginated list call (`issue list` / `pr list` with
