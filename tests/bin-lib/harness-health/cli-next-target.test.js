@@ -7,8 +7,9 @@ const path = require('path');
 
 const { seedDurableState } = require('../health-core/seed-durable-state');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
+const { spawnCli } = require('../../helpers/run-cli');
 
-const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
+const CLI =path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-nt-')); }
 function runNextTarget(args, root) {
@@ -231,4 +232,39 @@ test('next-target --kind memory fetches durable state exactly once, not twice', 
     1,
     'the --kind memory path must also call readDurableState exactly once per invocation',
   );
+});
+
+// Proves the script entry's stdout, stderr and exit code are unchanged by the in-process
+// entry conversion (#5380): a bare `next-target` in a non-git fixture, run as a real child,
+// with the fixture's temp path (both spellings — macOS resolves /var to /private/var) replaced
+// by a placeholder on both sides of the stderr comparison.
+test('next-target script entry: exit code, stdout and stderr of a bare run in a non-git fixture', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth');
+  const real = fs.realpathSync(root);
+  const normalize = (text) => text.split(real).join('<ROOT>').split(root).join('<ROOT>');
+
+  const res = spawnCli(CLI, ['next-target'], { env: { ...process.env }, cwd: root });
+
+  assert.strictEqual(res.code, 0);
+  const expectedStdout = JSON.stringify({
+    target: {
+      kind: 'skill',
+      id: 'auth',
+      path: path.join(real, '.claude', 'skills', 'auth.md'),
+      why: 'stale',
+      daysSinceLastAudit: null,
+    },
+    gapScanDue: true,
+  }, null, 2) + '\n';
+  assert.strictEqual(res.stdout, expectedStdout);
+  const expectedStderr = [
+    'fatal: not a git repository (or any of the parent directories): .git',
+    'health-state: fetch failed, treating as empty state: Command failed: git -C <ROOT> fetch origin health-state',
+    'fatal: not a git repository (or any of the parent directories): .git',
+    '',
+    '',
+  ].join('\n');
+  assert.strictEqual(normalize(res.stderr), expectedStderr);
 });
