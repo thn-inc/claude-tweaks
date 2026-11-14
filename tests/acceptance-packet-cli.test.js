@@ -2055,6 +2055,7 @@ test('AC6.2: the real gh member starts gh in the injected cwd with the injected 
   }));
   assert.equal(result.code, 0, result.stderr);
   const [call] = shim.calls();
+  assert.ok(call, 'the injected PATH reached the gh spawn');
   assert.deepEqual(call.args, ['repo', 'view', '--json', 'isPrivate']);
   assert.equal(call.cwd, ws.root, 'gh starts in the injected cwd');
   assert.equal(call.marker, 'injected', 'gh gets the injected env, not process.env');
