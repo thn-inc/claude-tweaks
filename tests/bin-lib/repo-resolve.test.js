@@ -52,6 +52,19 @@ test('ghAvailable: injected runner succeeds -> true', () => {
   assert.ok(calls[0][2].timeout > 0);
 });
 
+test('ghAvailable: env and cwd reach the probe options; absent, the options carry neither key', () => {
+  const seen = [];
+  const execFileSync = (cmd, args, opts) => { seen.push(opts); return ''; };
+  const env = { PATH: '/injected' };
+  ghAvailable({ execFileSync, env, cwd: '/injected/cwd' });
+  assert.equal(seen[0].env, env);
+  assert.equal(seen[0].cwd, '/injected/cwd');
+  ghAvailable({ execFileSync });
+  assert.equal(Object.hasOwn(seen[1], 'env'), false);
+  assert.equal(Object.hasOwn(seen[1], 'cwd'), false);
+  assert.equal(seen[1].windowsHide, true);
+});
+
 test('ghAvailable: injected runner throws ENOENT (gh absent) -> false', () => {
   const result = ghAvailable({
     execFileSync: () => { const e = new Error('spawnSync gh ENOENT'); e.code = 'ENOENT'; throw e; },

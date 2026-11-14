@@ -44,7 +44,12 @@ function parseRepo(url) {
 function ghAvailable(deps = {}) {
   const exec = deps.execFileSync || execFileSync;
   try {
-    exec('gh', ['--version'], { stdio: 'ignore', timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true });
+    const options = { stdio: 'ignore', timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true };
+    // A caller that injects its environment or working directory (an in-process CLI) gets the
+    // probe looked up on that PATH; absent, the options are what they always were.
+    if (deps.env !== undefined) options.env = deps.env;
+    if (deps.cwd !== undefined) options.cwd = deps.cwd;
+    exec('gh', ['--version'], options);
     return true;
   } catch (err) {
     return isTimeoutError(err);
