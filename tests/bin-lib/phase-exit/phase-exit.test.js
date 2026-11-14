@@ -5,10 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { runPhaseExit, realDeps, policyReadTimeoutMs, policyEntryValue } = require('../../../plugin/bin/lib/phase-exit/phase-exit');
-const { GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS } = require('../../../plugin/bin/lib/policy-schema');
-const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
-const { readText } = require('../../helpers/read-skill');
+const phaseExit = require('../../../plugin/bin/lib/phase-exit/phase-exit');
+const { runPhaseExit, realDeps } = phaseExit;
 const { run } = require('../../../plugin/bin/phase-exit');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const { GIT_PUSH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
@@ -772,7 +770,7 @@ function forgeFixture(runConfig = null) {
   return { repo, runDir };
 }
 
-// The child resolve-policy.js inherits process.env at spawn time, so set the env per test (never at load).
+// The in-process core reads process.env at call time (callerDeps), so set the env per test (never at load).
 function withForgeEnv(fn) {
   const vars = { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '1000', GH_REPO: '', GH_HOST: '' };
   const saved = {};
@@ -834,23 +832,12 @@ test('realDeps.resolvePolicy: a pinned run returns the pin with no gh call, and 
   }
 });
 
-test('policyEntryValue: JSON with no entry for the key throws instead of reading as an empty value', () => {
-  assert.throws(() => policyEntryValue(JSON.stringify({ 'integration-branch': { value: 'main' } }), 'integration-model'),
-    /resolve-policy\.js printed no entry for integration-model/);
-});
-
-test('policyEntryValue: a null or error entry reads as empty, a valued entry as its string', () => {
-  assert.equal(policyEntryValue(JSON.stringify({ k: { value: null } }), 'k'), '');
-  assert.equal(policyEntryValue(JSON.stringify({ k: { value: 'x', error: 'bad' } }), 'k'), '');
-  assert.equal(policyEntryValue(JSON.stringify({ k: { value: 3 } }), 'k'), '3');
-});
-
 test('realDeps.resolvePolicy: a run-pinned integration-branch returns its string value', () => {
   const { repo, runDir } = forgeFixture('integration-branch: develop\n');
   assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', repo), 'develop');
 });
 
-test('runPhaseExit: a degraded resolve logs the unresolved SKIP naming the degrade and pushes nothing (#4578 plan review)', () => {
+test('AC5 phase-exit: a degraded resolve logs the unresolved SKIP naming the degrade and pushes nothing (#4578 plan review)', () => {
   const { main, runDir, wt } = fixture();
   const h = makeDeps(main, wt, {
     resolvePolicy: (r, key) => {
@@ -864,115 +851,43 @@ test('runPhaseExit: a degraded resolve logs the unresolved SKIP naming the degra
   assert.equal(pushCalls(h.calls).length, 0);
 });
 
-test('policyReadTimeoutMs: only integration-model gets the ladder-sized timeout; every other key keeps GIT_TIMEOUT_MS (#4578 plan review)', () => {
-  const { repo } = forgeFixture();
-  const saved = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-  delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+test('AC3 phase-exit: a config.yml pinning local-merge resolves local-merge through the core, with no gh call', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture('integration-model: local-merge\n');
+  const gh = fakeGh({ first: 'hang' });
   try {
-    assert.equal(policyReadTimeoutMs('integration-model', repo), GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * 5000 + GIT_TIMEOUT_MS);
-    assert.equal(policyReadTimeoutMs('integration-branch', repo), GIT_TIMEOUT_MS);
-    assert.equal(policyReadTimeoutMs('merge-verification', repo), GIT_TIMEOUT_MS);
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'local-merge');
+    });
+    assert.equal(gh.count(), 0);
   } finally {
-    if (saved !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = saved;
+    gh.restore();
   }
 });
 
-test('policyReadTimeoutMs: a subdirectory cwd is sized from the checkout toplevel the child resolves from, not from the subdirectory (#4578 fix round 1)', () => {
+test('AC3 phase-exit: a missing run dir reports the same detail line as the subprocess did', () => {
   const { repo } = forgeFixture();
+  const missing = path.join(os.tmpdir(), 'ct-pe-missing-run-dir-none');
+  const want = `resolve-policy: --run dir does not exist or is not a directory: ${missing}`;
+  assert.throws(() => realDeps.resolvePolicy(missing, 'integration-model', repo), (e) => e.message === want);
+  const { main, runDir, wt } = fixture();
+  const h = makeDeps(main, wt, { resolvePolicy: (r, key) => realDeps.resolvePolicy(missing, key, repo) });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.ok(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8').includes(`integration-model unresolved (${want})`));
+});
+
+test("AC7 phase-exit: a subdirectory worktree resolves the checkout's pinned integration-branch", () => {
+  const { repo, runDir } = forgeFixture();
   fs.mkdirSync(path.join(repo, '.claude-tweaks'));
-  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'gh-timeout-ms: 20000\n');
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'integration-branch: develop\n');
   const sub = path.join(repo, 'packages', 'app');
   fs.mkdirSync(sub, { recursive: true });
-  const saved = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-  delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-  try {
-    const want = GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * 20000 + GIT_TIMEOUT_MS;
-    assert.equal(policyReadTimeoutMs('integration-model', repo), want);
-    assert.equal(policyReadTimeoutMs('integration-model', sub), want);
-  } finally {
-    if (saved !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = saved;
-  }
+  assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', sub), 'develop');
 });
 
-test('policyReadTimeoutMs: a cwd that is not a git checkout falls back to sizing from cwd itself', () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-nogit-')));
-  created.push(dir);
-  fs.mkdirSync(path.join(dir, '.claude-tweaks'));
-  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'gh-timeout-ms: 20000\n');
-  const saved = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-  delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-  try {
-    assert.equal(policyReadTimeoutMs('integration-model', dir), GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * 20000 + GIT_TIMEOUT_MS);
-  } finally {
-    if (saved !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = saved;
-  }
-});
-
-// The wiring scan: reads the module as text, comments stripped (a mention in a comment must not
-// satisfy it), the stripper verdict reported rather than trusted.
-const PHASE_EXIT_SRC = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'phase-exit', 'phase-exit.js');
-const LADDER_RE = /GIT_REMOTE_PROBE_TIMEOUT_MS\s*\+\s*FORGE_PROBE_ATTEMPTS\s*\*\s*resolveForgeProbeTimeoutMs\(/;
-const GUARD_RE = /if\s*\(\s*key\s*!==\s*'integration-model'\s*\)\s*return\s+GIT_TIMEOUT_MS\s*;/;
-const WIRING_RE = /timeout:\s*policyReadTimeoutMs\(\s*key\s*,\s*cwd\s*\)/;
-
-// The text from `function policyReadTimeoutMs` through its closing brace, or null when the function is
-// absent or unbalanced. Braces are counted over blank-mode text (a brace in a string or regex is not
-// code); blank mode keeps offsets, so the same range slices the literal-keeping text the regexes read.
-function policyReadTimeoutMsBody(stripped, blanked) {
-  const start = blanked.search(/function\s+policyReadTimeoutMs\s*\(/);
-  if (start < 0) return null;
-  const open = blanked.indexOf('{', start);
-  if (open < 0) return null;
-  let depth = 0;
-  for (let i = open; i < blanked.length; i += 1) {
-    if (blanked[i] === '{') depth += 1;
-    else if (blanked[i] === '}' && (depth -= 1) === 0) return stripped.slice(start, i + 1);
-  }
-  return null;
-}
-
-function wiringFindings(raw) {
-  const stripped = stripComments(raw);
-  const blanked = stripComments(raw, { literals: 'blank' });
-  for (const text of [stripped, blanked]) {
-    const verdict = stripperVerdict(raw, text);
-    if (verdict !== 'ok') return [STRIPPER_VERDICT_MESSAGES[verdict]];
-  }
-  const findings = [];
-  const body = policyReadTimeoutMsBody(stripped, blanked);
-  if (body === null) return ['no function policyReadTimeoutMs(...) { ... } body found to scan'];
-  // The guard-before-ladder order is checked inside policyReadTimeoutMs only: a same-text guard in
-  // another function does not protect the ladder expression here.
-  const ladder = body.search(LADDER_RE);
-  const guard = body.search(GUARD_RE);
-  if (ladder < 0) findings.push('no ladder-sized timeout (GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * resolveForgeProbeTimeoutMs(...))');
-  if (guard < 0) findings.push("the ladder timeout is not guarded to the integration-model key (if (key !== 'integration-model') return GIT_TIMEOUT_MS;)");
-  if (ladder >= 0 && guard >= 0 && guard > ladder) findings.push('the integration-model guard must precede the ladder expression');
-  if (!WIRING_RE.test(stripped)) findings.push('realDeps.resolvePolicy does not pass timeout: policyReadTimeoutMs(key, cwd)');
-  return findings;
-}
-
-test('phase-exit.js sizes the integration-model resolve timeout from the forge ladder, for that key only (#4578 plan review)', () => {
-  assert.deepEqual(wiringFindings(readText(PHASE_EXIT_SRC)), []);
-});
-
-test('go-red: the wiring scan flags the ladder applied to every key, a comment-only guard, and an unparseable file', () => {
-  const good = readText(PHASE_EXIT_SRC);
-  const unguarded = good.replace(GUARD_RE.exec(good)[0], '');
-  assert.notEqual(unguarded, good, 'the control must actually remove the guard');
-  assert.match(wiringFindings(unguarded).join('\n'), /not guarded to the integration-model key/);
-  const hiddenInComment = `${unguarded}\n// if (key !== 'integration-model') return GIT_TIMEOUT_MS;\n`;
-  assert.match(wiringFindings(hiddenInComment).join('\n'), /not guarded to the integration-model key/);
-  assert.match(wiringFindings('const a = (;').join('\n'), /does not compile/);
-  // The guard text living in a different function does not satisfy the scan for policyReadTimeoutMs.
-  const elsewhere = `${unguarded}\nfunction otherKeyGuard(key) {\n  if (key !== 'integration-model') return GIT_TIMEOUT_MS;\n  return 0;\n}\n`;
-  assert.match(wiringFindings(elsewhere).join('\n'), /not guarded to the integration-model key/);
-  // The guard placed after the ladder inside the function is flagged as misordered.
-  const reordered = good.replace(GUARD_RE.exec(good)[0], '').replace(/(return GIT_REMOTE_PROBE_TIMEOUT_MS[^\n]*\n)/, `$1  if (key !== 'integration-model') return GIT_TIMEOUT_MS;\n`);
-  assert.notEqual(reordered, unguarded, 'the control must actually move the guard');
-  assert.match(wiringFindings(reordered).join('\n'), /must precede the ladder expression/);
-  // A file with no policyReadTimeoutMs function has nothing to scan.
-  assert.match(wiringFindings(good.replace(/function\s+policyReadTimeoutMs/, 'function renamedAway')).join('\n'), /no function policyReadTimeoutMs/);
+test('phase-exit.js no longer exports the retired child-process helpers', () => {
+  assert.equal(phaseExit.policyReadTimeoutMs, undefined);
+  assert.equal(phaseExit.policyEntryValue, undefined);
 });
 
 // ---- checklist ----

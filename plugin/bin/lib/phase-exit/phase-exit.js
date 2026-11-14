@@ -6,7 +6,7 @@
 //
 //   1. Route. `git rev-parse --git-dir --git-common-dir` equal -> current-branch
 //      (no worktree branch: no bookkeeping, no push). Else integration-model via
-//      resolve-policy.js --run: local-merge -> no push, no gh; pr-first -> on.
+//      resolve-policy.js's core, in-process: local-merge -> no push, no gh; pr-first -> on.
 //      Either skip writes git-discipline.md's SKIP line at build only.
 //      An unresolvable model pushes nothing and writes one SKIP degrade trace.
 //   2. Branch guard (pr-first). A detached HEAD or the integration branch
@@ -58,46 +58,20 @@ const { formatEntry, appendEntry } = require('../log-decision/append');
 const { readRunStateWithParent, appendEvent, readEventLines } = require('../hooks/context');
 const { prStampReleased, hasNoUpstreamYet } = require('../hooks/pre-tool-use');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, isTimeoutError } = require('../shared-primitives');
-const { GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, resolveForgeProbeTimeoutMs } = require('../policy-schema');
 const { canonicalRealpath } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
 const { parseStatusPorcelainZ } = require('../git-z');
 const prChecklist = require('../../pr-checklist');
 const prMergeState = require('../../pr-merge-state');
+const { resolvePolicy, callerDeps, scalarValue, EXIT_OK } = require('../../resolve-policy');
 
 const { PHASE_SECTIONS } = prMergeState;
 const BIN = path.resolve(__dirname, '..', '..');
-const RESOLVE_POLICY_JS = path.join(BIN, 'resolve-policy.js');
 const HOOKS_JS = path.join(BIN, 'hooks.js');
 
 // The Common Step 7 phase-exit push SKIP text callers hand-logged before #4026 (this
 // module is now its only home; git-discipline.md's Phase exit section names the SKIP only).
 const SKIP_TEXT = 'condition: integration-model=local-merge or current-branch mode → fallback: no phase-exit push, one push at finish';
-
-// The kill timeout for realDeps.resolvePolicy's resolve-policy.js child. Only `integration-model` can
-// reach the forge ladder; it is sized from the same root the child resolves from (`git rev-parse
-// --show-toplevel` of cwd -- a --worktree naming a subdirectory must not size from the default
-// 5000 ms and kill the child mid-ladder), falling back to cwd when that git call fails.
-function policyReadTimeoutMs(key, cwd) {
-  if (key !== 'integration-model') return GIT_TIMEOUT_MS;
-  let root = cwd;
-  try {
-    root = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
-    }).trim() || cwd;
-  } catch { /* not a checkout, or git unavailable: the child's own root is unknown, size from cwd */ }
-  return GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * resolveForgeProbeTimeoutMs(root) + GIT_TIMEOUT_MS;
-}
-
-// resolve-policy.js's JSON output -> what --values would print for `key`: the entry's value, or ''
-// for a null/error entry. A missing entry or a degraded forge detection throws, which runPhaseExit's
-// unresolved branch logs (record #4578 plan review).
-function policyEntryValue(out, key) {
-  const entry = JSON.parse(out)[key];
-  if (!entry) throw new Error(`resolve-policy.js printed no entry for ${key}`);
-  if (typeof entry.degraded === 'string') throw new Error(`forge detection degraded (${entry.degraded})`);
-  return entry.error === undefined && entry.value != null ? String(entry.value) : '';
-}
 
 const realDeps = {
   cwd: () => process.cwd(),
@@ -111,16 +85,19 @@ const realDeps = {
   gh: (args, cwd) => execFileSync('gh', args, ghOptions(args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
   })),
-  // JSON mode (not --values) so a degraded forge detection is visible: a Q10-unpinned run re-detects
-  // `integration-model` here, so that read must outlast the ladder (remote probe + two gh attempts,
-  // plus the old bound as margin) and must not route a degraded `local-merge` -- a degraded entry
-  // throws, which runPhaseExit's unresolved branch logs (record #4578 plan review). policyEntryValue
-  // reads the entry.
+  // In-process through resolve-policy.js's core: a degraded forge detection stays visible on the entry
+  // (a Q10-unpinned run re-detects `integration-model` here) and must not route a degraded `local-merge` --
+  // a degraded entry throws, which runPhaseExit's unresolved branch logs (record #4578 plan review).
+  // No kill timeout is kept: forge detection is bounded by gh-timeout-ms x FORGE_PROBE_ATTEMPTS plus
+  // GIT_REMOTE_PROBE_TIMEOUT_MS, the root lookup by callerDeps' GIT_TIMEOUT_MS, and the local
+  // policy.yml/config.yml read is unbounded by decision (spec `## Plan Review Clarifications`, Reading A).
+  // A non-OK result throws `resolve-policy: <message>`, the detail line the child's stderr used to give.
   resolvePolicy: (runDir, key, cwd) => {
-    const out = execFileSync(process.execPath, [RESOLVE_POLICY_JS, '--run', runDir, key], {
-      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: policyReadTimeoutMs(key, cwd), windowsHide: true,
-    });
-    return policyEntryValue(out, key);
+    const out = resolvePolicy({ keys: [key], runDir }, callerDeps({ cwd }));
+    if (out.code !== EXIT_OK) throw new Error(`resolve-policy: ${out.message}`);
+    const entry = out.result[key];
+    if (entry && typeof entry.degraded === 'string') throw new Error(`forge detection degraded (${entry.degraded})`);
+    return scalarValue(entry);
   },
   hooks: (args, cwd) => execFileSync(process.execPath, [HOOKS_JS, ...args], {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
@@ -457,4 +434,4 @@ function backfillPr({ deps, runDir, wt, branch, step, log, result, details }) {
   }
 }
 
-module.exports = { runPhaseExit, prPushReleased, realDeps, policyReadTimeoutMs, policyEntryValue, checklistFlags, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };
+module.exports = { runPhaseExit, prPushReleased, realDeps, checklistFlags, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };
