@@ -72,6 +72,17 @@ Three conventions follow from how this repo works, and all are visible below:
 * Keep the verb in driver commit titles: strip a closing… ([#5269](https://github.com/thn-inc/claude-tweaks/issues/5269)) ([3503ec8](https://github.com/thn-inc/claude-tweaks/commit/3503ec8f45c92855552d1a05d5defdab03dc7355))
 * Remove www. and bare github.com issue URLs from driver… ([#5352](https://github.com/thn-inc/claude-tweaks/issues/5352)) ([04a19db](https://github.com/thn-inc/claude-tweaks/commit/04a19db59b6fbaabad39390693595ab474a9b4fe))
 
+### Highlights
+* Added a single evidence-based reviewer to the pipeline driver, which accepts a finding only when it comes with a test that fails.
+* Switched `/claude-tweaks:dispatch` to select its queue with a command instead of by reading and running an embedded script.
+* A review whose change does not reach the outcome its record named no longer shows as a clean pass.
+* Driver commit titles, PR bodies and event lines no longer keep issue or PR references from worker text that GitHub would link: www. and bare github.com URLs, and owner/repo/issues/N or /pull/N paths after any host or none.
+* The pipeline driver's implementer worker can no longer read your home directory; only the test command's own toolchain stays readable.
+* PR descriptions edited without the GitHub CLI keep the hidden markers other tools use to find a run's PR.
+* Review now checks deliverables that belong in the PR description against the PR itself, instead of searching the code for them.
+* The pipeline driver no longer passes its credential environment variables to worker-written test code. Credentials stored in the keychain, the git credential helper or files under HOME are still reachable; this is best-effort containment, not a sandbox.
+* Commit titles written by the pipeline driver keep their leading verb, such as Fix or Resolve.
+
 ## [6.167.0](https://github.com/thn-inc/claude-tweaks/compare/v6.166.0...v6.167.0) (2026-11-13)
 
 
