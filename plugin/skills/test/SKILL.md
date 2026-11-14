@@ -213,7 +213,7 @@ Read `report-templates.md` for the full templates, the `PASS_WITH_CAVEATS` propa
 
 ## Step 3: Fix Mode (Optional)
 
-A `full` run never enters this step (it reports and stops). If tests fail and the failures look straightforward (type errors, lint violations, simple test failures), read `fix-mode.md` in this skill's directory for the full procedure. Auto mode routes per `_shared/auto-mode-contract.md` — auto-fix and re-verify, or stage the fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md`, validated per that file's Staging-time gate (`git apply --check`, then its Stacked check) before logging. Interactive mode asks via `AskUserQuestion`, with reproduce-first debugging for behavioral and QA failures.
+A `full` run never enters fix mode (it reports and stops); the Phase exit paragraph below still applies to it. If tests fail and the failures look straightforward (type errors, lint violations, simple test failures), read `fix-mode.md` in this skill's directory for the full procedure. Auto mode routes per `_shared/auto-mode-contract.md` — auto-fix and re-verify, or stage the fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md`, validated per that file's Staging-time gate (`git apply --check`, then its Stacked check) before logging. Interactive mode asks via `AskUserQuestion`, with reproduce-first debugging for behavioral and QA failures.
 
 **Phase exit (any run with a run dir, `_shared/integration-model.md`):** one call, `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --run "$PIPELINE_RUN_DIR" --phase test --worktree "{worktree-path}" --fixes {n}[,{m}...]`, in any model or mode; it pushes only under `pr-first` in `worktree` mode — route its output per `_shared/git-discipline.md`'s Phase exit section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. Skipped under `MULTISPEC_PARALLEL_WAVE=1` (`flow/multispec-parallel-waves.md`): do not call it; write one `SKIP` entry naming the marker.
 
@@ -224,7 +224,7 @@ Pick the row matching the mode just completed:
 | Mode + outcome | Next |
 |---|---|
 | Standard / All / Full / QA passed (or PASS_WITH_CAVEATS) | Genuine choice — see below |
-| Verification failed (types/lint/tests) | Fix the failures, then re-run `/claude-tweaks:test` |
+| Verification failed (types/lint/tests) | Fix the failures, then re-run `/claude-tweaks:test` (`/claude-tweaks:test full` after a `full` run) |
 | QA failed | Investigate failures (Fix Mode option 1), then `/claude-tweaks:test qa retry={RUN_DIR}` |
 
 **On any pass outcome** (the first row), the "plain code review" and "code + visual review" rows are not two separate situations — they're two alternative commands for the same outcome. Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention), bolding whichever matches the current run's actual signal and suffixing it `(recommended)` — UI files changed AND browser available → the full-review line; otherwise → the plain-review line:

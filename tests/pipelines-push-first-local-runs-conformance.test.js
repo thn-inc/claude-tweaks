@@ -193,7 +193,10 @@ test('AC4.1, AC4.3: /claude-tweaks:test full runs the whole suite here, no argum
   ];
   pinned(sub(s, '### Whole suite here (`full`)'), WHOLE_FACTS);
   pinned(sectionOf(s, '## Step 3: Fix Mode (Optional)'), [
-    [/A `full` run never enters this step \(it reports and stops\)/, 'Step 3 excludes full'],
+    [/A `full` run never enters fix mode \(it reports and stops\); the Phase exit paragraph below still applies to it/, 'Step 3 excludes full from fix mode only'],
+  ]);
+  pinned(lineStartingWith(s, '| Verification failed (types/lint/tests) |'), [
+    [/re-run `\/claude-tweaks:test` \(`\/claude-tweaks:test full` after a `full` run\)/, 'the failure Next Action re-runs the same form'],
   ]);
   const bullet = lineStartingWith(s, '- `full` argument →');
   pinned(bullet, [[/none of the skips below apply/, 'full ignores the pipeline skips']]);
