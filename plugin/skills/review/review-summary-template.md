@@ -8,6 +8,7 @@ When **all** of the following hold, render the compact block below instead of th
 
 - Verdict is PASS
 - Every deliverable is `done` and every criterion `met` — a `partial`, `missing` or `unverifiable` item (Step 1 item 6) needs the full template's Spec Compliance tables
+- Step 1 item 5's Current-State outcome is not `partial` — a diff that does not reach the outcome its record named needs the full template, even when every deliverable is `done` and every criterion `met`
 - Zero findings in every category (code review, hindsight, visual, design quality, coverage, docs) and zero unresolved QA ledger entries. A non-empty skill load delta (3j) is informational and does not disqualify the compact form. A Coverage caveat (`step3-tier-variants.md`'s partner-died single-read degrade) is informational and does not disqualify the compact form either. An **Independence: degraded** line is informational the same way.
 - Zero tradeoffs accepted, zero autonomous actions performed (no fixes, no simplifier changes, no ledger resolutions)
 - No manual steps required

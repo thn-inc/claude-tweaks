@@ -3,7 +3,6 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { expressQueuePolicy } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'express', 'queue.js'));
@@ -99,12 +98,6 @@ test('loading queue.js does not load the express CLI module (the queue-pull path
   assert.equal(out.trim(), 'false');
 });
 
-test('queue-pull-script.md passes expressQueuePolicy() into the cache check, the write-back and the grouping pass', () => {
-  const script = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
-  const call = '/bin/lib/express/queue.js\').expressQueuePolicy()';
-  const lineWith = (needle) => script.split('\n').filter((l) => l.includes(needle));
-  assert.deepStrictEqual(lineWith('cacheUsable(persisted, current').map((l) => l.includes(`${call}.grouping`)), [true]);
-  assert.deepStrictEqual(lineWith('buildDispatchGroups(finalEligible').map((l) => l.includes(`keepSingleton: require(`) && l.includes(`${call}.keepSingleton`)), [true]);
-  const writeBack = script.slice(script.indexOf('const blob = composeOrderBlob({'), script.indexOf('const result = writeOrder(root, blob);'));
-  assert.ok(writeBack.includes(`grouping: require(`) && writeBack.includes(`${call}.grouping`), 'the write-back must stamp expressQueuePolicy().grouping');
-});
+// #5230: the queue pull's three consumers of expressQueuePolicy() (the cache check's grouping, the
+// grouping pass's keepSingleton and the write-back blob's grouping) are pinned through an injected
+// recording policy in tests/bin-lib/dispatch/queue-pull.test.js ("#5230 express: …").

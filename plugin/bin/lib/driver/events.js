@@ -111,10 +111,27 @@ const QUALIFIED_REF = /(?:(?<![A-Za-z0-9_.-])|(?!\d)(?<=#\d+))[A-Za-z0-9_.-]+\/[
 const BARE_REF = /#\d+/g;
 // An issue or PR URL on any host, with any tail (`/files`, `#issuecomment-…`): it backlinks like
 // `#N`. The left boundary rewinds over letters only, as GitHub's autolinker does: `1https://…` and
-// `_https://…` link and are removed, `xhttps://…` does not link and stays. The tail stops before
-// trailing punctuation (`)`, `.`, `,` …), which belongs to the sentence. Other URL forms
-// (`www.…`, bare `github.com/…`) are not removed here; their closing keyword still is, below.
-const URL_REF = /(?<![A-Za-z])https?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+(?:[/#?]\S*[^\s)\].,;:!?'">])?/gi;
+// `_https://…` link and are removed, `xhttps://…` does not link and stays (its
+// `owner/repo/issues/N` path still goes, in the PATH_REF pass below). The tail stops before
+// trailing punctuation (`)`, `.`, `,` …), which belongs to the sentence.
+// A `www.` URL (any host, optional port) and a bare `github.com` URL start where GitHub's
+// www-autolink does: at the start, after whitespace, or after `*`, `_`, `~` or `(`. A digit is
+// admitted too, as for the scheme: it is where the previous reference ended, so back-to-back
+// references go in one pass instead of one per loop pass.
+// A `www.` domain cannot run across a later `www.` start (`[\d_](?!www\.)`). Without that guard,
+// every `_www.` or `1www.` in a long run rescans the run to its end.
+// Each alternative scans at most its host and the path segments that follow it.
+const URL_REF = /(?:(?<![A-Za-z])https?:\/\/[^\s/]+|(?<![^\s*_~(\d])(?:www\.(?:[A-Za-z.-]|[\d_](?!www\.))+(?::\d+)?|github\.com))\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+(?:[/#?]\S*[^\s)\].,;:!?'">])?/gi;
+// GitHub renders `owner/repo/issues/N` (or `/pull/N`) as a reference whatever precedes it: no host,
+// any host, or a scheme URL it does not autolink. It refuses only a word character before the owner.
+// The boundary refuses letters and `_` but admits a digit, for the back-to-back reason above.
+// The owner (at most 39 characters) and the repo (at most 100) are bounded at GitHub's own limits,
+// so a long `a-a-…` or digit run is scanned a bounded span from each start.
+// It runs once, after the loop. Inside the loop it would take the path out of a rebuilt URL that the
+// next pass removes whole. Its replacement is a space, which no pattern spans, so it splices
+// nothing; but GH_REF's `\b` can newly match next to the space (`…/issues/5GH-1`), so GH_REF runs
+// once more after it. The comment opener is escaped after that.
+const PATH_REF = /(?<![A-Za-z_])[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}\/(?:issues|pull)\/\d+/gi;
 const GH_REF = /\bGH-\d+\b/gi;
 // An HTML comment opener hides the rest of a rendered body; `<\!--` renders as the text `<!--`.
 const COMMENT_OPENER = /<!--/g;
@@ -181,11 +198,11 @@ function removeKeywordsBeforeReferences(text, replacement) {
 // the loop each removal leaves a single space, which no reference, keyword or URL pattern can span,
 // so a removal cannot splice again across the gap and a nested splice settles in a few passes (a
 // plain deletion would peel one nesting layer per pass, quadratic); back-to-back URLs do not peel
-// either, as the URL boundary admits a digit before the scheme, and nor do keyword chains, which
-// removeKeywordsBeforeReferences decides whole in one pass. The final whitespace collapse
-// normalizes the spaces. Every removed match is at least two characters and is replaced by one, so
-// each changing pass strictly shortens the text and the loop terminates. Only removals loop: the
-// `@` transform is not idempotent, so it runs once, before the loop.
+// either, as the URL boundary admits a digit before the scheme, `www.` and `github.com`, and nor
+// do keyword chains, which removeKeywordsBeforeReferences decides whole in one pass. The final
+// whitespace collapse normalizes the spaces. Every removed match is at least two characters and is
+// replaced by one, so each changing pass strictly shortens the text and the loop terminates. Only
+// removals loop: the `@` transform is not idempotent, so it runs once, before the loop.
 function removeReferencesToFixedPoint(text) {
   let out = text;
   for (;;) {
@@ -210,6 +227,8 @@ function neutralize(text) {
     .replace(BARE_REF, '');
   // The comment opener is escaped after the loop: a removal can splice `<!` and `--` together.
   return removeReferencesToFixedPoint(firstPass)
+    .replace(PATH_REF, ' ')
+    .replace(GH_REF, ' ')
     .replace(COMMENT_OPENER, '<\\!--')
     .replace(/\s+/g, ' ')
     .trim();

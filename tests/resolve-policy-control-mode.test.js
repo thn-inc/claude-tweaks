@@ -18,6 +18,7 @@ const path = require('node:path');
 
 const { POLICY_KEYS, resolvePolicyKeys, resolveValue, auditPolicy, BUILTIN_RISK_CATEGORIES } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { parseRiskPathGlobs } = require('../plugin/bin/lib/risk-path-globs');
 const { isControlModeOn, readRiskPolicy } = require('../plugin/bin/lib/policy');
 
@@ -39,13 +40,18 @@ function makeRepo(policy) {
   return tmp;
 }
 
+function runPolicy(args, cwd, env) {
+  const res = runCliSync(CLI, args, { cwd, env: { ...(env || process.env) } });
+  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
+}
+
 function values(policy, ...keys) {
-  const res = spawnSync(process.execPath, [CLI, '--values', ...keys], { cwd: makeRepo(policy), encoding: 'utf8' });
+  const res = runPolicy(['--values', ...keys], makeRepo(policy));
   return { stdout: res.stdout, stderr: res.stderr, status: res.status };
 }
 
 function cliJson(policy, ...keys) {
-  const res = spawnSync(process.execPath, [CLI, ...keys], { cwd: makeRepo(policy), encoding: 'utf8' });
+  const res = runPolicy(keys, makeRepo(policy));
   assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
   return JSON.parse(res.stdout);
 }
@@ -83,9 +89,9 @@ test('the in-process json() helper matches the CLI JSON output', () => {
   }
 });
 
-test('the in-process json() helper matches the CLI for every other schema key', () => {
-  const res = spawnSync(process.execPath, [CLI, '--all'], { cwd: makeRepo(undefined), encoding: 'utf8' });
-  assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
+test('smoke (real process): the in-process json() helper matches the CLI for every other schema key', () => {
+  const res = spawnCli(CLI, ['--all'], { cwd: makeRepo(undefined), env: { ...process.env } });
+  assert.strictEqual(res.code, 0, `expected exit 0, got ${res.code}; stderr: ${res.stderr}`);
   const viaCli = JSON.parse(res.stdout);
   const keys = POLICY_KEYS.map((row) => row.key).filter((key) => !CLI_SPECIAL_KEYS.includes(key));
   const inProcess = json(undefined, ...keys);
@@ -707,7 +713,7 @@ test('risk-path-globs ignores the --run config overlay', () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-policy-control-run-'));
   tempDirs.push(runDir);
   fs.writeFileSync(path.join(runDir, 'config.yml'), runConfig);
-  const res = spawnSync(process.execPath, [CLI, '--run', runDir, 'risk-path-globs'], { cwd: makeRepo(undefined), encoding: 'utf8' });
+  const res = runPolicy(['--run', runDir, 'risk-path-globs'], makeRepo(undefined));
   assert.strictEqual(res.status, 0, res.stderr);
   assert.deepStrictEqual(JSON.parse(res.stdout)['risk-path-globs'], { value: {}, source: 'default' });
 });

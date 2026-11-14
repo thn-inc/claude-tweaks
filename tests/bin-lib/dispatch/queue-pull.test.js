@@ -54,14 +54,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, execFileSync } = require('node:child_process');
 
 const { readText } = require('../../helpers/read-skill');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
-  REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
+  REPO, SCRIPT_MD, MCP_MD, MCP_TARGETS_FIRST_LINE, MCP_EXCLUSIONS_FIRST_LINE, FENCE_FIRST_LINE, RUN_DIR_NAME,
   oracleSkip, extractFence, fenceSessionFiles, filesOracleScript, createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shQuote,
-  STREAM_TRUNCATED, TAIL_LINES,
+  STREAM_TRUNCATED, TAIL_LINES, readShimLog,
 } = require('./queue-pull-oracle');
 const {
   S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghAnswer, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
@@ -169,7 +169,7 @@ test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exp
       const allowed = git(['-c', setting, 'rev-parse', '--show-toplevel']);
       assert.equal(allowed.status, 0, `${setting}: ${allowed.stderr}`);
     }
-    const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const log = readShimLog(sb.logs, 'git');
     assert.equal(log.filter((e) => e.tag === 'REFUSED').length, 2 + refusedSettings.length);
   } finally {
     sb.cleanup();
@@ -200,7 +200,7 @@ test('#5227 oracle: the git shim fails a gitFail prefix with exit 128 (after the
     const unknown = git(['--bare', 'status']);
     assert.equal(unknown.status, 97);
     assert.equal(unknown.stderr, 'git-shim: refused (unknown global option --bare): --bare status\n');
-    const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const log = readShimLog(sb.logs, 'git');
     assert.deepEqual(log.map((e) => e.tag), ['injected', 'injected', 'delegated', 'REFUSED', 'REFUSED']);
     assert.deepEqual(log.filter((e) => e.tag === 'REFUSED').map((e) => e.why), [`unresolvable directory ${path.join(sb.root, 'no-such-dir')}`, 'unknown global option --bare']);
   } finally {
@@ -233,7 +233,7 @@ test('#5227 oracle: the gh shim exits 97 and logs UNHANDLED for an unanswered ar
     const effect = gh(['effect-probe']);
     assert.equal(effect.status, 0, effect.stderr);
     assert.equal(fs.existsSync(probe), false);
-    const log = fs.readFileSync(path.join(sb.logs, 'gh-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const log = readShimLog(sb.logs, 'gh');
     assert.deepEqual(log.map((e) => e.tag), ['UNHANDLED', 'UNHANDLED', 'ok', 'ok']);
     assert.deepEqual(log[0].argv, ['issue', 'view', '1']);
   } finally {
@@ -2521,7 +2521,9 @@ test('AC9.3: the header comment and USAGE each state exit codes 0, 1, 2, 3 and 4
     assert.match(cli.USAGE, new RegExp(`^\\s+${n}\\s{2}\\S`, 'm'), `USAGE states exit ${n}`);
   }
   assert.deepEqual(cli.EXIT, { OK: 0, USAGE: 1, MISSING_DEPENDENCY: 2, REMOTE_FAILED: 3, STOPPED: 4 });
-  assert.match(header, /Reopen\s+\/\/ when the cutover has landed/, "R4's decision comment names its reopen condition");
+  // #5230 final review M5: the reopen condition was met, and the comment records the outcome.
+  assert.match(header, /Decision \(R4\), settled by #5230:[\s\S]*?4 stays\s+\/\/ distinct from 1\./, "R4's decision comment records that exit 4 stays distinct from 1");
+  assert.doesNotMatch(header, /Reopen\s+\/\/ when the cutover has landed/, "R4's decision comment no longer states a reopen condition");
   assert.match(header, /Departure \(R5\)/);
   assert.match(header, /omits `--priority`/, 'the header states the omit-on-empty caller rule');
   assert.match(cli.USAGE, /Omit --priority when no\s+filter is set/, 'USAGE states it too');
@@ -2774,6 +2776,16 @@ test('#5227 filesOracleScript: every gh fetch becomes the agent write, the neigh
   assert.throws(() => filesOracleScript(FENCE, mcp.replace('"$DISPATCH_IN_FLIGHT_RAW" <<NODE_EVAL_EOF', '"$X" <<NODE_EVAL_EOF')), /anchor not found/);
 });
 
+test('#5230 oracle: the frozen MCP section equals mcp-transport.md at the pre-cutover commit', () => {
+  const PRE_CUTOVER = '61ec59285c112cbd8c5953855af108d63a03883b';
+  const frozen = fs.readFileSync(path.join(REPO, 'tests', 'fixtures', 'dispatch', 'mcp-transport-step2-pre-cutover-5230.md'), 'utf8');
+  const pre = execFileSync('git', ['show', `${PRE_CUTOVER}:plugin/skills/dispatch/mcp-transport.md`], { cwd: REPO, encoding: 'utf8' });
+  for (const firstLine of [MCP_TARGETS_FIRST_LINE, MCP_EXCLUSIONS_FIRST_LINE]) {
+    assert.equal(extractFence(frozen, firstLine), extractFence(pre, firstLine), firstLine);
+  }
+  assert.equal(MCP_MD, path.join(REPO, 'tests', 'fixtures', 'dispatch', 'mcp-transport-step2-pre-cutover-5230.md'), 'the oracle reads the frozen fixture');
+});
+
 test('#5227 oracle: the git shim answers `remote get-url origin` with the scenario remote URL (canned and logged); any other remote call reaches the real git', { skip: oracleSkip() }, () => {
   const sb = createSandbox(SPortable());
   try {
@@ -2784,7 +2796,7 @@ test('#5227 oracle: the git shim answers `remote get-url origin` with the scenar
     assert.equal(canned.stdout, `https://github.com/${PORTABLE_SLUG}.git\n`, 'the scenario URL, not the sandbox origin.git');
     const near = git(['remote', 'get-url', '--all', 'origin']);
     assert.equal(near.stdout, `${sb.origin}\n`, 'a different argv is delegated');
-    const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const log = readShimLog(sb.logs, 'git');
     assert.deepEqual(log.map((e) => e.tag), ['canned', 'delegated']);
   } finally {
     sb.cleanup();
@@ -3512,4 +3524,205 @@ test('the oracle shim quotes the node path for bash: $, a backtick, a backslash,
   const out = spawnSync('bash', ['-c', `printf %s ${shQuote(awkward)}`], { encoding: 'utf8', windowsHide: true });
   assert.equal(out.status, 0, out.stderr);
   assert.equal(out.stdout, awkward);
+});
+
+// ---- #5230: assertions moved here from the single-pass script-text tests (in-process) ----
+// Each test below carries an assertion that a script-extracting test used to pin and no #5227
+// test above covered; the old test now has the module as its subject or is dropped (the run's
+// test-mapping.md names each one).
+
+// Runs only the not-spec-shaped pass over `groups`, written as given: a multi-member group, which
+// per-record grouping builds only as a fast-lane bundle, reaches the pass directly.
+function shapePass(groups) {
+  return inOwnTmp(() => {
+    const errs = [];
+    const ctx = makeContext({ sessionId: 'qp-5230-shape' }, { stderr: (s) => errs.push(s) });
+    fs.mkdirSync(path.dirname(ctx.paths['dispatch-groups.json']), { recursive: true });
+    fs.writeFileSync(ctx.paths['dispatch-groups.json'], JSON.stringify(groups));
+    runPasses(PASSES.filter((p) => p.id === 'not-spec-shaped'), ctx);
+    const file = ctx.paths['dispatch-exclusions.json'];
+    const entries = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
+    return { errs, groups: JSON.parse(fs.readFileSync(ctx.paths['dispatch-groups.json'], 'utf8')), entries: entries.filter((e) => e.reason === 'not-spec-shaped') };
+  });
+}
+const specShaped = ({ deliverables = 'Some deliverables.' } = {}) => [
+  '## Current State', '', 'Some current state.', '',
+  '## Deliverables', '', deliverables, '',
+  '## Acceptance Criteria', '', '- [ ] Some criterion.', '',
+  '## Release Note', '', 'Some release note.', '',
+].join('\n');
+
+test('#5230 not-spec-shaped: an unresolved placeholder in authored prose is flagged; the same marker in a code span or under ## Original request is exempt (#2829 AC2)', () => {
+  const r = shapePass([
+    [{ number: 201, body: specShaped({ deliverables: 'TODO: figure this out.' }) }],
+    [{ number: 202, body: `${specShaped({ deliverables: 'Use the `TODO` marker as a literal example in code.' })}\n\n## Original request\n\nThe user wrote TBD in their original ask.` }],
+  ]);
+  assert.deepEqual(r.errs, []);
+  assert.deepEqual(r.entries.map((e) => e.records[0]), [201]);
+  assert.ok(r.entries[0].detail.missing.includes('unresolved-placeholder'), JSON.stringify(r.entries[0]));
+  assert.deepEqual(r.groups.flat().map((c) => c.number), [202], 'the code-span / Original-request marker is exempt');
+});
+
+test('#5230 not-spec-shaped: a mixed group keeps its conforming member and an all-non-conforming group drops out (#2829 AC3, AC5)', () => {
+  const r = shapePass([
+    [{ number: 301, body: specShaped() }, { number: 302, body: 'Just a sentence, no sections at all.' }],
+    [{ number: 401, body: 'Nothing here.' }, { number: 402, body: 'Also nothing here.' }],
+    [{ number: 501, body: '' }],
+  ]);
+  assert.deepEqual(r.errs, []);
+  assert.deepEqual(r.entries.map((e) => e.records[0]), [302, 401, 402, 501]);
+  assert.deepEqual(r.entries.find((e) => e.records[0] === 501).detail.missing, ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'], 'an empty body misses all four');
+  assert.deepEqual(r.groups.map((g) => g.map((c) => c.number)), [[301]], 'the mixed group keeps only its conforming member; the emptied groups are dropped');
+});
+
+// work-links native: five candidates, each blocked (or not) only through resolve-blockers.js.
+function nativeForeignScenario() {
+  const records = [11, 12, 13, 14, 15].map((n) => ghRecord(n, { body: withBody(n) }));
+  return {
+    name: 'SNativeForeign',
+    policy: { 'work-links': 'native' },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(records.map((r) => ({ number: r.number }))) + '\n' },
+    ],
+  };
+}
+const NATIVE_FOREIGN = {
+  11: { blockedBy: [5], openBlocker: true, openBlockerIds: [5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] },
+  12: { blockedBy: [6], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 6, repository: 'other/repo', state: null }] },
+  13: { blockedBy: [7], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 7, repository: 'other/repo', state: 'CLOSED' }] },
+  14: { blockedBy: [8], openBlocker: true, openBlockerIds: [8] },
+  15: { blockedBy: [4, 5], openBlocker: true, openBlockerIds: [4, 5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] },
+};
+
+test('#5230 blocked, native: a foreign crossRepoBlockers entry that is OPEN excludes as owner/name#N, a null state as owner/name#N (state unreadable), and a CLOSED one keeps the record (#4793)', () => {
+  const r = pull(nativeForeignScenario(), { spawn: { 'resolve-blockers.js': { status: 0, stdout: JSON.stringify(NATIVE_FOREIGN), stderr: '' } } });
+  assert.deepEqual(r.cliCalls.filter(([n]) => n === 'resolve-blockers.js'), [['resolve-blockers.js', '11,12,13,14,15']]);
+  assert.deepEqual(entriesOf(r, 'blocked'), [
+    { reason: 'blocked', records: [11], detail: { blockedBy: ['other/repo#5'] } },
+    { reason: 'blocked', records: [12], detail: { blockedBy: ['other/repo#6 (state unreadable)'] } },
+    { reason: 'blocked', records: [14], detail: { blockedBy: [8] } },
+    { reason: 'blocked', records: [15], detail: { blockedBy: [4, 'other/repo#5'] } },
+  ]);
+  assert.deepEqual(groupNumbers(r), [[13]], 'only the record whose foreign blocker is CLOSED stays eligible');
+});
+
+// body-text: three body-declared foreign blockers, two of them answered by a supplied states file.
+function foreignCaseScenario() {
+  const lines = { 31: 'Blocked by other/repo#5', 32: 'Blocked by Other/Repo#6', 33: 'Blocked by other/repo#7', 34: null };
+  const records = Object.entries(lines).map(([n, line]) => ghRecord(Number(n), { body: line ? `${line}\n\n${withBody(n)}` : withBody(n) }));
+  return {
+    name: 'SForeignCase',
+    policy: { 'work-links': 'body-text' },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(records.map((r) => ({ number: r.number }))) + '\n' },
+    ],
+  };
+}
+
+test('#5230 foreign blocker: a supplied states key matches a body ref in another case, a CLOSED one groups, and a ref left out of the file is asked of the CLI and fails closed (#4793)', () => {
+  // The CLI's answer with no gh on PATH (exit 2), as resolve-foreign-blockers.js prints it.
+  const noGh = { 'resolve-foreign-blockers.js': { status: 2, stdout: '', stderr: 'resolve-foreign-blockers.js: `gh` is required' } };
+  const r = pull(foreignCaseScenario(), {
+    spawn: noGh,
+    prepare: (own) => ({ inputs: { foreignStates: writeInput(own, 'states.json', JSON.stringify({ 'other/repo#5': 'closed', 'OTHER/REPO#6': 'open' })) } }),
+  });
+  assert.deepEqual(entriesOf(r, 'blocked'), [
+    { reason: 'blocked', records: [32], detail: { blockedBy: ['Other/Repo#6'] } },
+    { reason: 'blocked', records: [33], detail: { blockedBy: ['other/repo#7 (state unreadable)'] } },
+  ]);
+  assert.deepEqual(groupNumbers(r), [[31], [34]]);
+  assert.deepEqual(r.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), [['resolve-foreign-blockers.js', 'other/repo#7']], 'only the left-out ref is asked');
+  const warnings = r.errs.filter((e) => e.startsWith('Warning:'));
+  assert.equal(warnings.length, 1, r.stderr);
+  assert.match(warnings[0], /foreign blocker state lookup failed \(exit 2: resolve-foreign-blockers\.js: `gh` is required\)/);
+});
+
+test('#5230 near-dup: a stale dispatch-near-dup-pairs.json from an earlier pull is rewritten to [] when no strong pair remains', () => {
+  const stale = JSON.stringify([{ records: [8, 9], signals: [], sharedAnchors: [] }]);
+  const seed = (ctx) => fs.writeFileSync(ctx.paths['dispatch-near-dup-pairs.json'], stale);
+  assert.equal(pull5(S1(), { before: seed }).text['dispatch-near-dup-pairs.json'], '[]');
+  // Control: with the pass omitted the seeded file survives the pull, so the rewrite above is the pass's.
+  assert.equal(pull5(S1(), { before: seed, omit: ['near-dup-pairs'] }).text['dispatch-near-dup-pairs.json'], stale);
+});
+
+test('#5230 neighbour: an in-flight strong near-duplicate with no Key Files is a neighbour, and its detail element carries sharedAnchors (#3520 AC8)', () => {
+  const nearDup = {
+    number: 7002, title: 'Tidy the release notes generator', labels: [{ name: 'bot:in-progress' }],
+    body: '## Current State\n\nThe `WidgetScheduler.flush` path and `schedulerCache.evict` disagree on ordering.\n',
+  };
+  const r = pull5(withGh(PIPE(), IN_FLIGHT_ARGV, { stdout: JSON.stringify([IN_FLIGHT_7001, nearDup]) + '\n' }), { claims: { 7001: LIVE_CLAIM, 7002: LIVE_CLAIM } });
+  const byRecord = Object.fromEntries(entriesOf(r, 'neighbour-in-flight').map((e) => [e.records[0], e.detail.neighbours]));
+  for (const n of [9014, 9015]) {
+    assert.deepEqual(byRecord[n], [{ number: 7002, files: [], signals: ['body-anchor-overlap'], sharedAnchors: ['WidgetScheduler.flush', 'schedulerCache.evict'] }], `#${n}`);
+  }
+  assert.deepEqual(byRecord[9013], [{ number: 7001, files: ['plugin/bin/fixture-9013.js'] }], 'a Key-File neighbour keeps the file form');
+});
+
+test('#5230 blocker-landing: the argv the module hands dispatch-unlanded-blockers.js passes that CLI\'s own parseArgs and names the session groups and exclusions files', () => {
+  let paths = null;
+  const r = pull5(PIPE(), { before: (ctx) => { paths = ctx.paths; } });
+  assert.equal(r.landing.length, 1);
+  const [args] = r.landing;
+  const { parseArgs } = require('../../../plugin/bin/dispatch-unlanded-blockers');
+  const parsed = parseArgs(args);
+  assert.equal(parsed.error, undefined, `the shipped CLI's parseArgs rejects the module's argv: ${parsed.error}`);
+  assert.equal(flagValue(args, '--groups'), paths['dispatch-groups.json']);
+  assert.equal(flagValue(args, '--exclusions'), paths['dispatch-exclusions.json']);
+});
+
+// #5230 (moved from tests/bin-lib/express/queue.test.js, which read the script's three call sites):
+// a recording expressQueuePolicy whose grouping no default produces and whose keepSingleton keeps
+// #9101 out of the fast-lane bundle. Each of the three sites goes red on its own if it reads
+// anything but the injected policy.
+function recordingExpress() {
+  const seen = { calls: 0, kept: [] };
+  const dep = () => {
+    seen.calls += 1;
+    return { enabled: true, grouping: 'recorded-grouping', keepSingleton: (c) => { seen.kept.push(c.number); return c.number === 9101; } };
+  };
+  return { seen, dep };
+}
+
+test('#5230 express: the grouping pass, the write-back blob and the cache check each consume the injected expressQueuePolicy', () => {
+  const off = pull(SFast());
+  assert.deepEqual(groupNumbers(off), [[9101, 9102, 9103]], 'control: with the policy off the three singletons bundle');
+
+  const express = recordingExpress();
+  const miss = pull(SFast(), { deps: { expressQueuePolicy: express.dep } });
+  assert.deepEqual(groupNumbers(miss), [[9101], [9102, 9103]], 'buildDispatchGroups takes keepSingleton from the policy');
+  assert.ok(express.seen.kept.includes(9101), 'keepSingleton was asked about #9101');
+  assert.equal(miss.store.written.length, 1);
+  assert.equal(miss.store.written[0].blob.grouping, 'recorded-grouping', 'the write-back blob stamps the policy grouping');
+
+  const blob = miss.store.written[0].blob;
+  const hit = pull(SFast(), { persisted: blob, deps: { expressQueuePolicy: recordingExpress().dep } });
+  assert.equal(hit.state.cacheHit, true, 'the cache check compares the blob against the policy grouping');
+  assert.deepEqual(groupNumbers(hit), [[9101], [9102, 9103]]);
+  const otherMode = pull(SFast(), { persisted: blob });
+  assert.equal(otherMode.state.cacheHit, false, 'a blob stamped under another grouping is never reused');
+});
+
+// #5230 (moved from tests/bin-lib/stage-item/cli.test.js, #3488): the shipped Close proposal's
+// stage-item.js call drops its stdout but forwards its stderr, so a staging failure reaches the
+// firing's log. And the pass only stages the Close (moved from dispatch-shipped-candidate-prose,
+// #1984): no gh call closes the record directly, even when staging fails.
+test('#5230 shipped: the stage-item.js stderr of a shipped Close proposal reaches deps.stderr; its stdout does not reach deps.stdout; nothing closes the record directly', () => {
+  const spawn = {
+    'stage-item.js': (args) => {
+      const id = args[args.indexOf('--id') + 1];
+      return { status: 1, stdout: `staged ${id}\n`, stderr: `stage-item: refused ${id}\n` };
+    },
+  };
+  const r = pull4(FULL(), { spawn });
+  assert.ok(r.errs.includes('stage-item: refused shipped-close-9010\n'), r.stderr);
+  assert.ok(!r.cap.stdout.includes('staged shipped-close-9010\n'), 'the shipped stage-item stdout is dropped');
+  assert.ok(r.cap.stdout.includes('staged dispatch-target-missing-9009\n'), 'control: the target-missing call forwards its stdout');
+  assert.equal(r.thrown, null, 'a failed staging call does not stop the pull');
+  // ghCalls records every argv the runner was handed, answered or not: `gh issue close`, or a
+  // `gh api` call on an issue path that sets state=closed.
+  const closes = r.ghCalls.filter((a) => (a[0] === 'issue' && a[1] === 'close')
+    || (a[0] === 'api' && a.some((x) => /\/issues\/\d+$/.test(x)) && a.some((x) => /^state=closed$/.test(x))));
+  assert.deepEqual(closes, [], 'the pass stages a Close proposal, never a direct close');
 });

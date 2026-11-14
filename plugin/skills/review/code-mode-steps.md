@@ -382,7 +382,7 @@ This pass never replays Step 3.5 (each source's findings have no peers to debate
 
 ## Step 7: Present Review Summary
 
-Present a structured summary covering spec compliance, test results (from `/claude-tweaks:test`), code review findings, browser review (if run), implementation hindsight, tradeoffs, simplification, and a verdict (PASS or BLOCKED). The summary must include an Actions Performed table (when autonomous fixes were applied) and a Next Actions block (always). For the complete template, the context-signal rules, and the **compact clean-PASS form** (rendered instead of the full template when the verdict is PASS with zero findings, zero actions, and zero manual steps), read `review-summary-template.md` in this skill's directory.
+Present a structured summary covering spec compliance, test results (from `/claude-tweaks:test`), code review findings, browser review (if run), implementation hindsight, tradeoffs, simplification, and a verdict (PASS or BLOCKED). The summary must include an Actions Performed table (when autonomous fixes were applied) and a Next Actions block (always). For the complete template, the context-signal rules, and the **compact clean-PASS form** (rendered instead of the full template only when every condition that file lists holds, spec compliance and the Current-State outcome included), read `review-summary-template.md` in this skill's directory.
 
 **Not run by /build (#3767).** When `$PIPELINE_RUN_DIR` is set, collect the plan steps `/build` logged as not run from its `decisions.md` per `review-summary-template.md`'s "Not run by /build" section, before choosing the compact or full form.
 
