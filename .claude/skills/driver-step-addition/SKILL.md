@@ -17,7 +17,7 @@ Not all of it, though. The loop classifies an interrupted record by the side eff
 |---|---|
 | `plugin/bin/lib/driver/events.js` `STEP_NAMES` | The step's name, at its table position. This list is the event vocabulary. Event fields may be added but never renamed, because the settle unit reads the final line's `stop` |
 | `plugin/bin/lib/driver/steps.js` | A `defineStep(STEP.{camelName}, STOP_CLASSES.{X}, fn)` entry, placed in `STEPS` at the same index as its name. A step that ports a section of `plugin/skills/_shared/express-lane.md` names that section in its comment. No test reads that prose, so the two are kept in step by hand |
-| `plugin/bin/lib/driver/run.js` `newCtx` and `interruptClass` | Needed only for a new durable side effect. Initialize its flag in `newCtx`, and set it in the step once the effect exists. Then add a rung to `interruptClass` where its class falls in the ladder (`configWritten`, then `pushed`, then `runDir`, then `claimed`, else refused). Never add a step-name literal: `AC13.1` scans run.js's comment-stripped code for one |
+| `plugin/bin/lib/driver/run.js` `newCtx` and `interruptClass` | Needed only for a new durable side effect. Initialize its flag in `newCtx`, and set it in the step once the effect exists. Then add a rung to `interruptClass` where its class falls in the ladder (`configWritten`, then `pushed`, then `runDir`, then `claimed`, else refused). Never add a step-name literal: `AC13.1` scans run.js's comment-stripped code for one. A step whose result is `skip: true` emits no event line and does not halt; use it for a step a policy turns off, so an off step leaves the event stream as it was |
 | `realDeps` in `run.js` | Each new external call, as a `deps` member with its own bound (see `gh-api-module-pattern`). A new gh-shaped kind states its reason beside it, as `ghBatch` and `ghCreate` do |
 | `tests/bin-lib/driver/run.test.js` | A happy-path reply in `defaultScript` for every call the step makes, because the harness throws `unexpected {kind} …` on anything else. A new gh-shaped dep kind joins the kind list in `dispatch` that refuses `pr merge` and `pr ready` (AC8). Add a `SCENARIOS` entry and a row in `AC7.1, AC7.7: outcome and stop class for every stop (table-driven)` for each new stop. A new flag also gets a case in `interruptClass keys on the side effect held` |
 | `plugin/bin/lib/driver/settle.js` `selectRow`, `SETTLE_ROWS`, `CLASS_BY_ROW` | Needed for a new stop class: a `selectRow` case, a `SETTLE_ROWS` row and a `CLASS_BY_ROW` entry. Without the case, `selectRow`'s default settles the stop by the `blocked` row and flags it `unclassified`, and no test fails, because `selectRow`'s test lists the known classes by hand. A new pre-push `reason` must be one of `ESCALATION_REASONS`: `stopObject` passes it through `toEscalationReason`, which turns anything else into `express-error`. A new durable side effect that a pre-push stop must undo also needs a field in `stopObject`'s `created` and a settle call on the `pre-push` row |
@@ -46,6 +46,10 @@ The loop yields to the event loop before every step and then checks `ctx.shared.
 
 The worker can shape strings such as its summary, a path it named, or CLI stderr that may echo either. Each such string goes through `events.js`'s `neutralize` before it reaches an event `detail`, a commit message, a PR body or a log line (AC14.3). The rule itself is `headless-worker-launch`'s "What the consumer owes"; this is where each step applies it.
 
+### A step that runs worker-authored code passes an allow-listed env
+
+The test step runs the worker's test files through `verify.js`. It spawns that child with `buildEnv(deps.env, deps.platform)` from `worker.js` plus `GH_CONFIG_DIR` set to an empty directory, never bare `deps.env`, so the driver's `GH_TOKEN` and `GITHUB_TOKEN` stay out of the child (#5267). A new step that spawns a child which executes worker-written code does the same. The containment is best effort, and the header comment in `steps.js` lists what it does not cover (the git credential helper, a keyring under `HOME`, client hooks in the commit and push steps).
+
 ### One retry, and only after a read-back
 
 `AC6.6: no other step is retried` pins that the claim, push, record-pr and set-config calls each run once. Only the pr step retries. A new retry follows the same shape:
@@ -59,6 +63,15 @@ The ci step polls until a settle window measured from the push has passed (`CI_S
 - A start time set by an earlier step travels on `ctx` (the push step sets `ctx.pushedAt = deps.now()`), starts as `null` in `newCtx`, and the reading step falls back when it is unset (`ctx.pushedAt ?? started`). A timestamp is not a side effect, so it gets no `interruptClass` rung.
 - The step's time constants are exported from `steps.js` and each is pinned by value in a test, as `CI_WAIT_BOUND_MS`, `CI_POLL_INTERVAL_MS` and `CI_SETTLE_WINDOW_MS` are. Poll and call counts in tests are derived from those constants (`WINDOW_POLLS`), never written as numbers, so a changed window changes the expectation with it.
 - The harness clock advances 1 per `now()` call and `ms` per `sleep(ms)`, and nowhere else. A test that records sleeps wraps the harness's own: `const tick = h.deps.sleep; h.deps.sleep = (ms) => { sleeps.push(ms); return tick(ms); };`. To place time at a point in the run, a scripted reply calls `h.deps.sleep(ms)` itself (the two `the settle window is measured from the push` tests move it inside `gh pr create` and inside `verify.js`).
+
+### A step that re-runs other steps
+
+The review step's fix round (#5222, `plugin/bin/lib/driver/review.js`) is the first step that re-runs others: a second implementer launch, then commit, test and check. A step of this shape follows the same rules:
+- Reach the re-run steps through a wiring object that `steps.js` builds and passes in. The new module never requires `steps.js`.
+- Launch workers through `plugin/bin/lib/driver/launch.js` (`readCeilings`, `launchTracked`, `WIN32_CLAUDE_BIN`). Never copy the launch wiring.
+- Say which `ctx` fields the re-run merges (`ctx.worker`), extends (`ctx.changedFiles`) or overwrites (`ctx.check`). The push guard reads the last check's head.
+- Propagate a re-run step's own status and class unchanged, and list each re-run step's stops in the new module's header.
+- The worker had write access between the steps, so judge its output again before using it: the fix round re-checks each evidence path's canonical location and reads its bytes from disk before running it, never through git status.
 
 ## Adding a settle step
 

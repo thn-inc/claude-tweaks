@@ -9,7 +9,7 @@
 //
 //   defineStep(name, stopClass, fn) -> { name, run }
 //     fn(ctx, deps) -> Promise<StepResult>, where
-//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra? }
+//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra?, skip? }
 //   - `stop` means a gate said no; `fail` means a call failed.
 //   - `halt` defaults to `status !== 'ok'`; a step that must never end the record (a
 //     failed summary entry) returns `halt: false`.
@@ -17,7 +17,26 @@
 //   - `reason` defaults to the status; it is the final line's `stop.reason`, except that
 //     run.js's finalEvent maps a pre-push stop's reason through settle's toEscalationReason.
 //   - `extra` fields merge into the step's event line (never over its core fields).
+//   - `skip: true` (an ok result of a step that did not apply) emits no event line and does not halt.
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
+//
+// The test step runs worker-authored code (the worker's test files) through verify.js. Containment
+// (#5267), the allow-listed-environment option, best effort: the verify.js child gets worker.js's
+// allow-listed environment, not the driver's, plus GH_CONFIG_DIR pointing at an empty directory; and
+// a verify-scope.json whose bytes are not equal to origin/{ref}'s blob (line endings, CRLF vs LF,
+// ignored; no git filter ever applied) is refused before any command runs. That keeps the driver's
+// credential env vars (GH_TOKEN, GITHUB_TOKEN, ...) and the config-file auth of a plain `gh` call
+// (the config file itself stays readable under HOME) away from the child, and stops the worker
+// choosing the command line verify.js runs through its scope file. It does not stop the worker's
+// code from running in the child: `npm test`, package.json scripts and worker-written test files
+// still run there. It does not contain: the gh keyring entry reachable under HOME on a desktop
+// setup, the git credential helper (git credential fill, osxkeychain), the macOS `security` CLI, or
+// any file the user can read. There is no sandbox profile. Also uncontained: `git commit` and
+// `git push` in the commit and push steps run client hooks (husky, lefthook, pre-commit) that can
+// be worker-authored, with the driver's env; a known residual, with a follow-up record proposed at
+// the Review Console. Cost: a project test command needing a variable outside the allow-list
+// (JAVA_HOME, NODE_OPTIONS, CI, HTTPS_PROXY, NODE_EXTRA_CA_CERTS, LC_ALL, XDG_*) fails at the test
+// step; it fails closed (red, escalate).
 //
 // Every external call goes through `deps`; nothing here reads process state.
 //
@@ -39,10 +58,13 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
+const { buildEnv } = require('./worker');
+const { WIN32_CLAUDE_BIN, readCeilings, launchTracked } = require('./launch');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
+const { reviewRecord } = require('./review');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
 
 // The worker's test command and the full verify invocation's `--cmd tests=…` value.
@@ -58,16 +80,13 @@ const CI_WAIT_BOUND_MS = 30 * 60 * 1000;
 const CI_POLL_INTERVAL_MS = 30 * 1000;
 // No ci read may end the step earlier than this after the push (see the header paragraph).
 const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
-// On win32 the worker launcher's default `bin` (`claude`) does not find an npm-installed
-// `claude.cmd`, so a win32 caller passes this explicitly.
-const WIN32_CLAUDE_BIN = 'claude.cmd';
 
 // Read once per run, in the policy step.
 // `auto-merge-max-lines` is the express diff bound check enforces; the worker's prompt states it.
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars',
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
-  'auto-merge-max-lines',
+  'auto-merge-max-lines', 'express-driver-review',
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.
 const ISSUE_JSON_FIELDS = 'number,title,body,labels,state,comments';
@@ -98,6 +117,7 @@ function defineStep(name, stopClass, fn) {
       stopClass: result.stopClass || stopClass,
       reason: result.reason || result.status,
       extra: result.extra || {},
+      skip: result.skip === true && result.status === 'ok',
     };
   }
   return Object.freeze({ name, run: runStep });
@@ -394,13 +414,6 @@ const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx
   return { status: 'ok' };
 });
 
-// A positive finite number from a policy value (a number, or a numeric string); else NaN.
-// `Number('')` and `Number(null)` are 0, so neither passes.
-function positiveNumber(value) {
-  const n = typeof value === 'number' ? value : (typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN);
-  return Number.isFinite(n) && n > 0 ? n : NaN;
-}
-
 // The implementer's prompt. It goes to the worker's standard input, never its argv. The
 // record body comes last, fenced and labelled as data: the worker's narrow rights and
 // check's diff bounds are what contain it, so nothing here relies on the worker's trust.
@@ -432,20 +445,16 @@ function workerPrompt(ctx, { minutes, dollars, maxLines }) {
 // Ports express-lane.md step 2 (the edit): the headless implementer, launched through
 // worker.js with the run's two ceilings. Every string the worker controls is untrusted:
 // the summary and denial inputs are neutralized here, the title is kept raw only for the
-// commit step's normalizeTitle, and none of it ever enters argv. The wrapping runner makes
-// the worker's handle shared.activeWorker for the launch, so run.js's signal handler can
+// commit step's normalizeTitle, and none of it ever enters argv. launch.js's launchTracked
+// makes the worker's handle shared.activeWorker for the launch, so run.js's signal handler can
 // forward an interrupt to the worker's process group (headless-worker-launch, "What the
 // consumer owes").
-const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+// The body is shared with the review step's fix round, which appends `extraPrompt` to the same prompt.
+async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   const { shared } = ctx;
-  const minutesKey = 'express-driver-wall-clock-minutes';
-  const dollarsKey = 'express-driver-spend-ceiling-dollars';
-  const minutes = positiveNumber(shared.policy[minutesKey].value);
-  const dollars = positiveNumber(shared.policy[dollarsKey].value);
-  const bad = [[minutesKey, minutes], [dollarsKey, dollars]].filter(([, v]) => Number.isNaN(v)).map(([k]) => k);
-  if (bad.length) {
-    return { status: 'fail', detail: `worker ceiling not a positive number: ${bad.map((k) => `${k} (${JSON.stringify(shared.policy[k].value)})`).join(', ')}` };
-  }
+  const ceilings = readCeilings(shared.policy);
+  if (ceilings.bad) return { status: 'fail', detail: `worker ceiling not a positive number: ${ceilings.bad}` };
+  const { minutes, dollars } = ceilings;
   // The bound as check reads it (blast-radius-cli.js's resolveBlastRadiusConfig: Number()
   // of the same policy value), so the prompt states the number check enforces.
   const linesKey = 'auto-merge-max-lines';
@@ -455,33 +464,13 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
   }
   const settingsDir = path.join(ctx.runDir, 'worker');
   deps.mkdirSync(settingsDir, { recursive: true });
-  // Only the first runner call is the worker: on win32 the launcher's ceiling kill runs
-  // taskkill through the same runner, and that handle must not replace the worker's.
-  let captured = false;
-  const runner = (call) => {
-    const handle = deps.runner(call);
-    if (!captured) {
-      captured = true;
-      shared.activeWorker = handle;
-    }
-    return handle;
-  };
-  let envelope;
-  try {
-    envelope = await deps.launchWorker({
-      role: 'implementer',
-      cwd: ctx.wt,
-      prompt: workerPrompt(ctx, { minutes, dollars, maxLines }),
-      ceilings: { wallClockMs: minutes * 60000, spendCeiling: dollars },
-      testCommand: TEST_COMMAND,
-      settingsDir,
-      platform: deps.platform,
-      env: deps.env,
-      ...(deps.platform === 'win32' ? { bin: WIN32_CLAUDE_BIN } : {}),
-    }, { runner });
-  } finally {
-    shared.activeWorker = null;
-  }
+  const envelope = await launchTracked(shared, deps, { minutes, dollars }, {
+    role: 'implementer',
+    cwd: ctx.wt,
+    prompt: workerPrompt(ctx, { minutes, dollars, maxLines }) + extraPrompt,
+    testCommand: TEST_COMMAND,
+    settingsDir,
+  });
   if (!envelope || typeof envelope !== 'object') return { status: 'fail', detail: 'worker launch returned no envelope' };
   const result = envelope.result && typeof envelope.result === 'object' ? envelope.result : null;
   const denials = (Array.isArray(envelope.denials) ? envelope.denials : []).map((d) => ({
@@ -517,7 +506,8 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     return { status: 'fail', detail: `worker result status is neither done nor cannot-complete: ${neutralize(String(result && result.status))}`, extra };
   }
   return { status: 'ok', extra };
-});
+}
+const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, (ctx, deps) => runImplementer(ctx, deps, {}));
 
 // Run artifacts the worktree may hold; never committed.
 const PIPELINES_DIR = '.claude-tweaks/pipelines';
@@ -566,6 +556,57 @@ const commitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async (ctx, de
   return { status: 'ok', detail: `${paths.length} file(s)` };
 });
 
+// The blob sha of the scope file on origin/{ref}, or null when the path is absent there. The
+// scope file is compared by bytes, never through the index: a worker's `git update-index
+// --assume-unchanged` / `--skip-worktree` makes `git diff` and `cat-file` report an edited file as
+// unchanged. `rev-parse --verify --quiet` exits 1 with no output for an absent path, but also for an
+// unresolvable ref, so an absent answer is only accepted once origin/{ref} itself resolves; any
+// other failure means the lookup failed.
+function scopeBaseBlob(deps, wt, ref, scopeRel) {
+  try {
+    return String(gitIn(deps, wt, ['rev-parse', '--verify', '--quiet', '--end-of-options', `origin/${ref}:${scopeRel}`])).trim();
+  } catch (err) {
+    if (!err || err.status !== 1) throw new Error(`could not read ${scopeRel} on origin/${ref}: ${errorText(err)}`);
+  }
+  try {
+    gitIn(deps, wt, ['rev-parse', '--verify', '--quiet', '--end-of-options', `origin/${ref}^{commit}`]);
+  } catch (err) {
+    throw new Error(`could not resolve origin/${ref}: ${errorText(err)}`);
+  }
+  return null;
+}
+
+// The sha git would store for the worktree's bytes of the scope file; --no-filters so a clean
+// filter or autocrlf cannot make the hash differ from the committed blob.
+function scopeWorktreeBlob(deps, wt, scopeRel) {
+  try {
+    return String(gitIn(deps, wt, ['hash-object', '--no-filters', '--', scopeRel])).trim();
+  } catch (err) {
+    throw new Error(`could not hash ${scopeRel}: ${errorText(err)}`);
+  }
+}
+
+// True when the worktree scope file differs from the base blob only in line endings. Read raw
+// (cat-file, readFile), never through a git filter: the worker controls .gitattributes and the shared
+// .git/config, so a filter-applying comparison could be told "unchanged". Only \r\n -> \n is
+// normalized, on both sides: a lone \r, a BOM, trailing whitespace or any other byte still differs.
+function scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel) {
+  const crlf = (t) => String(t).replace(/\r\n/g, '\n');
+  let base;
+  try {
+    base = gitIn(deps, wt, ['cat-file', 'blob', baseBlob]);
+  } catch (err) {
+    throw new Error(`could not read ${scopeRel} on the base: ${errorText(err)}`);
+  }
+  let current;
+  try {
+    current = deps.readFile(path.join(wt, scopeRel));
+  } catch (err) {
+    throw new Error(`could not read ${scopeRel}: ${errorText(err)}`);
+  }
+  return crlf(base) === crlf(current);
+}
+
 // Ports express-lane.md step 4 (test): the runner pass stamp `check` reads is written by
 // verify.js, run in the worktree. A regular verify-scope.json scopes the run; an absent one
 // runs the full suite; anything else (a symlink, a directory) is refused, never followed.
@@ -580,6 +621,22 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
     return { status: 'stop', detail: `.claude-tweaks is not a directory (${parent.type}), so ${scopeRel} is refused; verify.js was not run` };
   }
   const state = deps.lstatType(path.join(wt, '.claude-tweaks', 'verify-scope.json'));
+  // The scope file names commands verify.js runs, so a worker-authored copy is never read: the
+  // worktree file's bytes must equal origin/{ref}'s blob (an edit, a created file, a deleted file,
+  // index flags included; CRLF vs LF ignored, a checkout may rewrite it) before any test command runs.
+  if (state.type === 'file' || state.type === 'missing') {
+    const baseBlob = scopeBaseBlob(deps, wt, ref, scopeRel);
+    if (state.type === 'file' && baseBlob === null) {
+      return { status: 'stop', detail: `${scopeRel} is not on origin/${ref}; the worker's copy is never read, verify.js was not run` };
+    }
+    if (state.type === 'missing' && baseBlob !== null) {
+      return { status: 'stop', detail: `${scopeRel} differs from origin/${ref} (deleted); the worker's copy is never read, verify.js was not run` };
+    }
+    if (state.type === 'file' && scopeWorktreeBlob(deps, wt, scopeRel) !== baseBlob
+        && !scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel)) {
+      return { status: 'stop', detail: `${scopeRel} differs from origin/${ref}; the worker's copy is never read, verify.js was not run` };
+    }
+  }
   const base = ['--run', runDir, '--default-suite-slots', String(policy['verify-suite-slots'].value)];
   let args;
   let detail;
@@ -594,7 +651,11 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   } else {
     return { status: 'stop', detail: `${scopeRel} is not a regular file (${state.type}); verify.js was not run` };
   }
-  const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env: deps.env });
+  // An empty gh config dir: a worker test calling `gh` finds no config-file auth.
+  const ghConfigDir = path.join(runDir, 'gh-config-empty');
+  deps.mkdirSync(ghConfigDir, { recursive: true });
+  const env = { ...buildEnv(deps.env, deps.platform), GH_CONFIG_DIR: ghConfigDir };
+  const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env });
   // A null code is no exit at all (a timeout, a spawn error): the suite never gave a verdict.
   if (r.code === null || r.code === undefined) {
     return { status: 'fail', detail: `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}` };
@@ -927,9 +988,20 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   return { status: 'ok', detail: state, extra: { ciWaitMs: Math.max(0, deps.now() - started) } };
 });
 
+// The reviewer step (#5222, review.js): between check and push. `isRunArtifact` reaches it through this
+// wiring only. Its skip result (reviewRequired off) emits no event line.
+const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) => reviewRecord(ctx, deps, {
+  commit: commitStep,
+  test: testStep,
+  check: checkStep,
+  launchImplementer: (c, d, extraPrompt) => runImplementer(c, d, { extraPrompt }),
+  testCommand: TEST_COMMAND,
+  isRunArtifact,
+}));
+
 const STEPS = Object.freeze([
   policyStep, fetchStep, eligibilityStep, admissionStep, claimStep, runDirStep, worktreeStep, workerStep, commitStep,
-  testStep, checkStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep,
+  testStep, checkStep, reviewStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep,
 ]);
 
 module.exports = {

@@ -453,19 +453,19 @@ test('AC2.1 go-red: a dropped fact or an exit list without the stop fails its ow
   assert.throws(() => assertSkillStop(negatedSkill), { message: /SKILL\.md exit list negates the render-failure stop/ });
 });
 
-// firing-exclusion.md, sequential-execution.md, next-ranking.md: each names the stop where it
-// names the Claim permission stop as ending the firing.
+// firing-exclusion.md, sequential-execution.md: each names the stop where it names the Claim
+// permission stop as ending the firing. next-ranking.md is not pinned: since #5230 dispatch ranks
+// through `queue-pull.js --rank`, and the retained file is off the live path (AC6, #5230), so the
+// live stop is the one firing-exclusion.md carries.
 const FIRING_EXCLUSION_STOP = 'A render-failure stop ends the firing too (`SKILL.md`\'s Render-failure stop, #5255), so no next iteration runs after it either.';
 const SEQUENTIAL_STOP = '(none after a Claim permission stop or a render-failure stop: the firing ends, `SKILL.md`)';
-const NEXT_RANKING_STOP = 'or a render-failure stop never reaches this filter: each ends the firing';
 function assertSiblingStops(files) {
   assert.ok(files.exclusion.includes(FIRING_EXCLUSION_STOP), 'firing-exclusion.md: render-failure stop missing');
   assert.ok(files.sequential.includes(SEQUENTIAL_STOP), 'sequential-execution.md: render-failure stop missing');
-  assert.ok(files.ranking.includes(NEXT_RANKING_STOP), 'next-ranking.md: render-failure stop missing');
 }
-const SIBLINGS = { exclusion: read('firing-exclusion.md'), sequential: read('sequential-execution.md'), ranking: read('next-ranking.md') };
+const SIBLINGS = { exclusion: read('firing-exclusion.md'), sequential: read('sequential-execution.md') };
 
-test('AC3.1: firing-exclusion.md, sequential-execution.md and next-ranking.md name the render-failure stop (#5255)', () => {
+test('AC3.1: firing-exclusion.md and sequential-execution.md name the render-failure stop (#5255)', () => {
   assertSiblingStops(SIBLINGS);
 });
 
@@ -473,7 +473,6 @@ test('AC3.1 go-red: each file without its sentence fails its own assertion (#525
   for (const [key, needle, message] of [
     ['exclusion', FIRING_EXCLUSION_STOP, 'firing-exclusion.md: render-failure stop missing'],
     ['sequential', SEQUENTIAL_STOP, 'sequential-execution.md: render-failure stop missing'],
-    ['ranking', NEXT_RANKING_STOP, 'next-ranking.md: render-failure stop missing'],
   ]) {
     const mutated = { ...SIBLINGS, [key]: SIBLINGS[key].replace(needle, 'x') };
     assert.notStrictEqual(mutated[key], SIBLINGS[key]);

@@ -82,18 +82,33 @@ function repoResolutionNote(repoSpec) {
 // every such call went to the wrong host. ghOptions wraps a gh spawn's options
 // object; every key of `deps` is optional and defaults to the real thing.
 const ghHostSpecs = new Map(); // path.resolve(cwd) -> { host, owner, repo } | null
+// #5374: an injected deps.env is an input to the lookup (the origin read and the gh config dir),
+// so a call that injects one memoizes per env object, and a second in-process call for the same
+// cwd with a different env never gets the first env's answer. One env object (a process's own
+// process.env) keeps the per-cwd memo.
+let ghHostSpecsByEnv = new WeakMap(); // deps.env -> Map(path.resolve(cwd) -> spec)
 const notedGhHosts = new Set(); // hosts whose repoResolutionNote this process printed
 let explicitRepoHost = null; // the host pinExplicitRepoHost recorded for this process's explicit --repo (#4795)
 
+function ghHostSpecMemo(env) {
+  if (!env || typeof env !== 'object') return ghHostSpecs;
+  let memo = ghHostSpecsByEnv.get(env);
+  if (!memo) { memo = new Map(); ghHostSpecsByEnv.set(env, memo); }
+  return memo;
+}
+
 function _resetGhHostCache() {
   ghHostSpecs.clear();
+  ghHostSpecsByEnv = new WeakMap();
   notedGhHosts.clear();
   explicitRepoHost = null;
 }
 
-function originUrl(cwd) {
+// `env` (optional) is the environment the git child runs in; absent, the inherited one.
+function originUrl(cwd, env) {
   return execFileSync('git', ['remote', 'get-url', 'origin'], {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GIT_TIMEOUT_MS, windowsHide: true,
+    ...(env ? { env } : {}),
   });
 }
 
@@ -193,12 +208,15 @@ function originSpecOf(remote) {
   return parsed && { ...parsed, host: normalizeHost(parsed.host) };
 }
 
+// `deps.env` (optional) is the environment the origin read runs in and the one gh's config dir
+// is looked up from; absent, the inherited one.
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
-  if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
+  const memo = ghHostSpecMemo(deps.env);
+  if (memo.has(key)) return memo.get(key);
   let spec = null;
   try {
-    const url = (deps.remoteUrl || originUrl)(key);
+    const url = deps.remoteUrl ? deps.remoteUrl(key) : originUrl(key, deps.env);
     const parsed = originSpecOf(url);
     if (parsed && parsed.host && parsed.host !== 'github.com') {
       // Positive signals only. Any other host stays silent (no note), token or not,
@@ -219,7 +237,7 @@ function resolveGhSpec(cwd, deps = {}) {
       return null;
     }
   }
-  ghHostSpecs.set(key, spec);
+  memo.set(key, spec);
   return spec;
 }
 
@@ -290,6 +308,28 @@ function ghOptions(args, opts, deps = {}) {
   return { ...o, env: { ...base, GH_HOST: spec.host } };
 }
 
+// The ghOptions deps for a caller running gh against an injected environment (#5374):
+// `{ env, stderr, homeDir }` (each optional) -> a deps object holding `env` and `stderr` only
+// when given, and a `homedir` getter only when `homeDir` is a function, so `homeDir()` runs
+// only if ghConfigDir falls through to the home directory. With none given it is `{}`, which
+// ghOptions reads exactly as its own default.
+function injectedGhDeps({ env, stderr, homeDir } = {}) {
+  const deps = { ...(env ? { env } : {}), ...(stderr ? { stderr } : {}) };
+  if (typeof homeDir === 'function') Object.defineProperty(deps, 'homedir', { get() { return homeDir(); }, enumerable: true });
+  return deps;
+}
+
+// The injected-environment keys of a `deps` object (#5374): `env`, `homeDir` and `stderr`, each
+// only when truthy, so a key absent from deps is absent from the result. The one list a caller
+// handing them on to another lookup reads, so a future injected key is added here.
+function pickInjected(deps = {}) {
+  return {
+    ...(deps.env ? { env: deps.env } : {}),
+    ...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
+    ...(deps.stderr ? { stderr: deps.stderr } : {}),
+  };
+}
+
 // #4794: the exported GH_HOST as a normalized host, or null when it is unset or normalizes to
 // nothing (empty, whitespace-only, all dots). The one GH_HOST reader: gateOriginRepo, ghOptions,
 // explicitRepoGhHost, resolveRepoTarget and every caller comparing a host against it.
@@ -338,6 +378,6 @@ function pinExplicitRepoHost(repoSpec, deps = {}) {
 
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
-  ghOptions, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
+  ghOptions, injectedGhDeps, pickInjected, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
   isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget, hostPathOf, originSpecOf,
 };

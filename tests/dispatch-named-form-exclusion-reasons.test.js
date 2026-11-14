@@ -1,7 +1,7 @@
 // tests/dispatch-named-form-exclusion-reasons.test.js — #3084.
 //
 // Anchored prose-conformance: dispatch/SKILL.md's `#N` and `#N[,#M,#O...]` bullets must explain a
-// record missing from dispatch-groups.json by EVERY reason queue-pull-script.md removes candidates
+// record missing from dispatch-groups.json by EVERY reason the queue pull removes candidates
 // for — not only `open-pr`. Before #3084 both bullets filtered dispatch-exclusions.json to
 // `reason: 'open-pr'`, so a record #3073's not-spec-shaped pass dropped was misreported as having an
 // open PR (or not explained at all). Sibling: tests/dispatch-not-spec-shaped-exclusion-fixture.test.js
@@ -23,21 +23,19 @@ const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
 const OPEN_PR_REPORT = readText(path.join(DISPATCH, 'open-pr-exclusion-report.md'));
 const BLOCKED_REPORT = readText(path.join(DISPATCH, 'blocked-exclusion-report.md'));
 
-const QUEUE_PULL = readText(path.join(DISPATCH, 'queue-pull-script.md'));
+const { PASSES } = require('../plugin/bin/lib/dispatch/queue-pull');
 const NOT_SPEC_SHAPED_REPORT = readText(path.join(DISPATCH, 'not-spec-shaped-exclusion-report.md'));
 const MATERIALIZE_GATE = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'materialize.md'));
 
-// Every reason queue-pull-script.md's passes drop a candidate from dispatch-groups.json for, read from
-// its own `- \`reason: '...'\`` bullets (#3087): a bullet whose entries stay IN dispatch-groups.json
-// (today `oversized`) is not a removing reason. A reason added to the script is checked here unedited.
-const REMOVING_REASONS = QUEUE_PULL.split('\n')
-  .map((line) => ({ line, m: line.match(/^- `reason: '([a-z-]+)'`/) }))
-  .filter(({ m }) => m)
-  .filter(({ line }) => !line.includes('stay IN `dispatch-groups.json`'))
-  .map(({ m }) => m[1]);
+// Every reason the queue pull drops a candidate from dispatch-groups.json for, read from the
+// queue-pull module's PASSES registry (#5230; before it, from queue-pull-script.md's reason bullets,
+// #3087): an exclusion whose entries stay IN dispatch-groups.json (`removes: false`, today
+// `oversized` and `neighbour-in-flight`) is not a removing reason. A reason added to the registry is
+// checked here unedited.
+const REMOVING_REASONS = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && p.removes).map((p) => p.reason))];
 
-test('REMOVING_REASONS is derived from queue-pull-script.md, non-empty, and excludes oversized (#3087)', () => {
-  assert.ok(REMOVING_REASONS.length >= 5, `derived only ${JSON.stringify(REMOVING_REASONS)} -- the bullet pattern no longer matches queue-pull-script.md`);
+test('REMOVING_REASONS is derived from the PASSES registry, non-empty, and excludes oversized (#3087)', () => {
+  assert.ok(REMOVING_REASONS.length >= 5, `derived only ${JSON.stringify(REMOVING_REASONS)} -- the PASSES filter no longer matches the registry`);
   assert.ok(REMOVING_REASONS.includes('not-spec-shaped'));
   assert.ok(!REMOVING_REASONS.includes('oversized'), 'oversized groups stay in dispatch-groups.json; it is not a removing reason');
 });
@@ -195,6 +193,6 @@ test('the unreadable-exclusions report maps absent to the reason-unknown line, o
 });
 
 test('AC5.3: neighbour-in-flight is a queue-pull reason that is not removing (#3278)', () => {
-  assert.ok(QUEUE_PULL.includes("- `reason: 'neighbour-in-flight'`"), 'queue-pull-script.md has no neighbour-in-flight reason bullet');
+  assert.ok(PASSES.some((p) => p.kind === 'exclusion' && p.reason === 'neighbour-in-flight'), 'PASSES has no neighbour-in-flight exclusion row');
   assert.ok(!REMOVING_REASONS.includes('neighbour-in-flight'), 'neighbour-in-flight records stay in dispatch-groups.json');
 });

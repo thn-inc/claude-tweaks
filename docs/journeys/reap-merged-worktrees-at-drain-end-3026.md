@@ -10,7 +10,7 @@ files:
 
 **Persona:** A maintainer of a large claude-tweaks-managed repo (dozens of worktrees, run dirs, and local/remote branches) who fires a bare `/claude-tweaks:dispatch --budget {n}` drain, or has a Routine fire it, and expects the firing to clean up after the groups it merged.
 **Goal:** When the drain ends, every worktree whose PR merged during this firing is reaped and its run dir archived by the firing itself — not left for a future session's SessionStart hook.
-**Entry point:** The drain loop in `plugin/skills/dispatch/SKILL.md` Step 3 reaches termination (`{budget}` attempts spent, the ranking returns `null`, or a Claim permission stop or Render-failure stop).
+**Entry point:** The drain loop in `plugin/skills/dispatch/SKILL.md` Step 3 reaches termination (`{budget}` attempts spent, the ranking returns `null`, or a Claim permission stop, Render-failure stop or queue-pull/`--rank` stop).
 **Success state:** The termination reconcile's JSON result, logged to `decisions.md`, shows `reap` (and `release`/`archive`) ran — no `budget-exceeded` skip naming `reap` — and the merged groups' worktrees are gone from `git worktree list`.
 
 ## Steps

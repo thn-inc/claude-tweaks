@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { rankNext } = require('../plugin/bin/lib/dispatch/queue-pull');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
@@ -20,7 +21,6 @@ const SKILL = read('plugin/skills/dispatch/SKILL.md');
 const PAIRS = read('plugin/skills/dispatch/near-duplicate-pairs.md');
 const REPORT = read('plugin/skills/dispatch/neighbour-in-flight-report.md');
 const REPORTING = read('plugin/skills/dispatch/reporting.md');
-const NEXT_RANKING = read('plugin/skills/dispatch/next-ranking.md');
 const DOCS = read('docs/plugin-structure.md');
 
 const PREDICTED_LINE = '`#{A} / #{B} predicted to conflict (near-duplicate: {signals}; shared: {sharedAnchors}); dispatch order #{A} then #{B}, merge #{A} first`';
@@ -56,7 +56,10 @@ test('near-duplicate-pairs.md carries both predicted-conflict templates verbatim
   assert.ok(flat.includes(collapse(DECISION_LINE)), 'decisions.md line template');
   assert.match(PAIRS, /predictedConflicts/);
   assert.match(PAIRS, /dispatch-near-dup-pairs\.json/);
-  assert.match(PAIRS, /DISPATCH_NEAR_DUP_PAIRS/);
+  // #5230: the path comes from session-tmp-resolve.js directly; the CLI pull sets no
+  // $DISPATCH_NEAR_DUP_PAIRS and the session never reads queue-pull-script.md for it.
+  assert.ok(PAIRS.includes('`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-near-dup-pairs.json`'), 'the path resolve');
+  assert.doesNotMatch(PAIRS, /queue-pull-script\.md|DISPATCH_NEAR_DUP_PAIRS/);
 });
 
 test('neighbour-in-flight-report.md renders a near-duplicate neighbour and keeps the file form', () => {
@@ -68,9 +71,15 @@ test('reporting.md carries the group predicted-conflict line', () => {
   assert.ok(collapse(REPORTING).includes('predicted conflict with #{partner} (PR #{pr}) — merge #{first} first'));
 });
 
-test('next-ranking.md names the strong near-duplicate neighbour and keeps the reason token', () => {
-  assert.match(collapse(NEXT_RANKING), /a direct file-sharing or strong near-duplicate neighbour \(#3520\)/);
-  assert.match(NEXT_RANKING, /reason: 'neighbour-in-flight'/);
+// #5230: the `next` ranking is the queue-pull module's rankNext; it filters by reason only, so
+// the entry's detail is not read and is left empty.
+test('the next ranking skips any group carrying a neighbour-in-flight entry (#3520)', () => {
+  const rec = (number, priority, createdAt) => ({ number, createdAt, facets: { priority } });
+  const highOld = [rec(2, 'high', '2026-02-01T00:00:00Z')];
+  const med = [rec(3, 'medium', '2026-01-01T00:00:00Z')];
+  const neighbourEntry = { reason: 'neighbour-in-flight', records: [2], detail: {} };
+  assert.deepEqual(rankNext([highOld, med], [], {}), highOld, 'control: with no entry the high group is picked');
+  assert.deepEqual(rankNext([highOld, med], [neighbourEntry], {}), med);
 });
 
 test('docs/plugin-structure.md names the new module and sub-file', () => {
