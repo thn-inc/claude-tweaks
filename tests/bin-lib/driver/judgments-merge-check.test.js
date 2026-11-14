@@ -252,6 +252,26 @@ describe('merge-check path', () => {
     assert.deepStrictEqual(r, { mergeCheck: { verdict: 'auto-merge' }, acceptance: { completed: true } });
   });
 
+  test('createJudgments: a needs-human verdict returns as-is and never runs acceptance', async () => {
+    const h = harness({ envelope: OK_ENVELOPE('needs-human') });
+    let ran = 0;
+    const r = await supplierOf(h, async () => { ran += 1; return { completed: true }; })(h.ctx);
+    assert.strictEqual(ran, 0);
+    assert.deepStrictEqual(r, { mergeCheck: { verdict: 'needs-human' }, acceptance: { completed: false } });
+  });
+
+  test('a needs-human verdict whose log write fails is unconfirmed', async () => {
+    const h = harness({ envelope: OK_ENVELOPE('needs-human'), logExit: 1 });
+    assert.strictEqual((await judgeMergeCheck(h.env, h.ctx)).verdict, 'unconfirmed');
+  });
+
+  test('a blast-radius exit 1 with otherwise valid stdout is still the failed floor', async () => {
+    const h = harness({ blast: { code: 1, stdout: JSON.stringify({ summary: { sensitiveFilesTouched: [] } }), stderr: '' } });
+    const r = await judgeMergeCheck(h.env, h.ctx);
+    assert.strictEqual(r.floor, 'blast-radius-failed');
+    assert.strictEqual(h.launches().length, 0);
+  });
+
   test('createJudgments: a throw anywhere is unconfirmed', async () => {
     const h = harness();
     const r = await supplierOf(h, async () => { throw new Error('boom'); })(h.ctx);
