@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -10,6 +10,16 @@ const { spawnCli } = require('../../helpers/run-cli');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'journey-health.js');
+
+// In-process (#5380), with the file-protocol-only git guard — see tests/helpers/health-sweep-cli.js.
+const cli = (argv, opts) => sweepCli(CLI, argv, opts);
+
+// An in-process call that must exit 0; returns its stdout.
+function cliOut(argv, opts) {
+  const res = cli(argv, opts);
+  assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
+  return res.stdout;
+}
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-cli-validate-')); }
 
@@ -53,7 +63,7 @@ test('validate-findings files a brand-new valid finding and succeeds when durabl
   const root = tmp();
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
-  const result = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--tier', 'light', '--root', root], { encoding: 'utf8' });
+  const result = cli(['validate-findings', findingsFile, '--target', 'checkout-flow', '--tier', 'light', '--root', root]);
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   const payloads = JSON.parse(result.stdout);
   assert.strictEqual(payloads.length, 1);
@@ -76,7 +86,7 @@ test('validate-findings drops an invalid finding and reports 0 payloads', () => 
   const root = tmp();
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding({ category: 'bogus' })]));
-  const raw = execFileSync('node', [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root], { encoding: 'utf8' });
+  const raw = cliOut(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root]);
   assert.deepStrictEqual(JSON.parse(raw), []);
 });
 
@@ -84,7 +94,7 @@ test('validate-findings --dry-run does not write cursor or cache state', () => {
   const root = tmp();
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
-  execFileSync('node', [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--dry-run', '--root', root], { encoding: 'utf8' });
+  cliOut(['validate-findings', findingsFile, '--target', 'checkout-flow', '--dry-run', '--root', root]);
   assert.strictEqual(fs.existsSync(path.join(root, '.claude-tweaks', 'journey-health', 'cursors.json')), false);
   assert.strictEqual(fs.existsSync(path.join(root, '.claude-tweaks', 'journey-health', 'cache.json')), false);
 });
@@ -103,7 +113,7 @@ test('validate-findings --coverage-scan still succeeds when durable persistence 
   const root = tmp();
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding({ category: 'coverage', section: 'coverage' })]));
-  const result = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--coverage-scan', '--root', root], { encoding: 'utf8' });
+  const result = cli(['validate-findings', findingsFile, '--coverage-scan', '--root', root]);
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.strictEqual(
     fs.existsSync(path.join(root, '.claude-tweaks', 'journey-health', 'cursors.json')),
@@ -116,17 +126,17 @@ test('a finding marked declined is suppressed by a later validate-findings run o
   const root = tmp();
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
-  const first = JSON.parse(execFileSync('node', [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root], { encoding: 'utf8' }));
+  const first = JSON.parse(cliOut(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root]));
   assert.strictEqual(first.length, 1, 'first run must file the finding');
   const fp = first[0].id;
-  execFileSync('node', [CLI, 'mark', fp, 'declined', '--root', root], { encoding: 'utf8' });
-  const second = JSON.parse(execFileSync('node', [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root], { encoding: 'utf8' }));
+  cliOut(['mark', fp, 'declined', '--root', root]);
+  const second = JSON.parse(cliOut(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root]));
   assert.strictEqual(second.length, 0, 'declined finding must be suppressed on the next run');
 });
 
 test('validate-findings exits non-zero for a missing findings file argument', () => {
   const root = tmp();
-  const result = spawnSync('node', [CLI, 'validate-findings', '--root', root], { encoding: 'utf8' });
+  const result = cli(['validate-findings', '--root', root]);
   assert.notStrictEqual(result.status, 0);
 });
 
@@ -146,7 +156,7 @@ test('validate-findings: exits 2 when neither --target nor --coverage-scan is gi
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([]));
 
-  const result = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--root', root], { encoding: 'utf8' });
+  const result = cli(['validate-findings', findingsFile, '--root', root]);
   assert.strictEqual(result.status, 2, `expected exit 2, got ${result.status}. stderr: ${result.stderr}`);
   assert.ok(result.stderr.includes('--target') && result.stderr.includes('--coverage-scan'),
     `expected the gate message in stderr: ${result.stderr}`);
@@ -157,7 +167,7 @@ test('validate-findings: --dry-run without --target/--coverage-scan still succee
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
 
-  const result = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--dry-run', '--root', root], { encoding: 'utf8' });
+  const result = cli(['validate-findings', findingsFile, '--dry-run', '--root', root]);
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.strictEqual(JSON.parse(result.stdout).length, 1);
 });
@@ -167,14 +177,14 @@ test('validate-findings: a finding matching a closed non-wontfix issue is reopen
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
 
-  const first = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root], { encoding: 'utf8' });
+  const first = cli(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root]);
   const firstPayloads = JSON.parse(first.stdout);
   const fp = firstPayloads[0].body.match(/<!--\s*work-fingerprint:\s*(journeyhealth-[0-9a-f]{8})\s*-->/)[1];
 
   const issuesFile = path.join(root, 'issues.json');
   fs.writeFileSync(issuesFile, JSON.stringify([{ number: 9, state: 'closed', labels: ['by:journey-health'], fingerprint: fp }]));
 
-  const second = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--issues', issuesFile], { encoding: 'utf8' });
+  const second = cli(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--issues', issuesFile]);
   assert.strictEqual(second.status, 0, `stderr: ${second.stderr}`);
   const payloads = JSON.parse(second.stdout);
   assert.strictEqual(payloads.length, 1, 'a regressed finding must still emit a payload, not be silently dropped');
@@ -191,7 +201,7 @@ test('validate-findings: a malformed --issues array element (e.g. null) is skipp
   const issuesFile = path.join(root, 'issues-with-null.json');
   fs.writeFileSync(issuesFile, JSON.stringify([null, { number: 1, state: 'open', labels: [], fingerprint: 'zzz' }]));
 
-  const result = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--issues', issuesFile], { encoding: 'utf8' });
+  const result = cli(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--issues', issuesFile]);
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.ok(result.stderr.includes('skipping malformed issue entry'), `expected a skip warning in stderr: ${result.stderr}`);
   const payloads = JSON.parse(result.stdout);
@@ -208,7 +218,7 @@ test('validate-findings: a real run still succeeds and emits its payload when du
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
 
-  const result = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--run-id', 'test-run-1'], { encoding: 'utf8' });
+  const result = cli(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--run-id', 'test-run-1']);
   assert.strictEqual(result.status, 0, `expected non-fatal exit, got stderr: ${result.stderr}`);
   const payloads = JSON.parse(result.stdout);
   assert.strictEqual(payloads.length, 1, 'payload must still emit despite the persistence failure');
@@ -234,11 +244,7 @@ test('validate-findings --min-confidence high: a med-confidence finding is held 
   const root = tmp();
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding({ confidence: 'med' })]));
-  const result = spawnSync(
-    'node',
-    [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--min-confidence', 'high'],
-    { encoding: 'utf8' },
-  );
+  const result = cli(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--min-confidence', 'high']);
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.deepStrictEqual(JSON.parse(result.stdout), []);
   assert.ok(result.stderr.includes('held back'), `expected a held-back notice in stderr: ${result.stderr}`);
@@ -248,11 +254,7 @@ test('validate-findings --min-confidence med: a high-confidence finding still fi
   const root = tmp();
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding({ confidence: 'high' })]));
-  const result = spawnSync(
-    'node',
-    [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--min-confidence', 'med'],
-    { encoding: 'utf8' },
-  );
+  const result = cli(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--min-confidence', 'med']);
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.strictEqual(JSON.parse(result.stdout).length, 1);
 });
@@ -261,18 +263,14 @@ test('validate-findings: an unrecognized --min-confidence value exits 2', () => 
   const root = tmp();
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
-  const result = spawnSync(
-    'node',
-    [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--min-confidence', 'bogus'],
-    { encoding: 'utf8' },
-  );
+  const result = cli(['validate-findings', findingsFile, '--target', 'checkout-flow', '--root', root, '--min-confidence', 'bogus']);
   assert.strictEqual(result.status, 2, `expected exit 2, got ${result.status}. stderr: ${result.stderr}`);
   assert.ok(result.stderr.includes('--min-confidence'), `expected the flag named in stderr: ${result.stderr}`);
 });
 
 test('churn-report: prints "no run logs found" when no runs exist', () => {
   const root = tmp();
-  const result = spawnSync('node', [CLI, 'churn-report', '--root', root], { encoding: 'utf8' });
+  const result = cli(['churn-report', '--root', root]);
   assert.strictEqual(result.status, 0);
   assert.ok(result.stdout.includes('no run logs found'));
 });
@@ -287,7 +285,7 @@ test('churn-report: a seeded durable run history prints a table row', () => {
     { runId: 'run-1', runAt: '2026-01-01T00:00:00.000Z', fingerprints: ['journeyhealth-aaaa0001'] },
   ]);
 
-  const result = spawnSync('node', [CLI, 'churn-report', '--root', root], { encoding: 'utf8' });
+  const result = cli(['churn-report', '--root', root]);
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.ok(result.stdout.includes('run-1'));
 });
@@ -312,20 +310,12 @@ test('validate-findings: a fingerprint declined only on the durable health-state
 
   // Compute the real fingerprint the same way a first run would, without
   // touching git at all yet (bare tmp root => no remote, dry-run writes nothing).
-  const first = spawnSync(
-    'node',
-    [CLI, 'validate-findings', findingsFile, '--dry-run', '--target', 'checkout-flow', '--tier', 'light', '--root', root],
-    { encoding: 'utf8' },
-  );
+  const first = cli(['validate-findings', findingsFile, '--dry-run', '--target', 'checkout-flow', '--tier', 'light', '--root', root]);
   const fp = JSON.parse(first.stdout)[0].body.match(/<!--\s*work-fingerprint:\s*(journeyhealth-[0-9a-f]{8})\s*-->/)[1];
 
   seedDurableState(root, 'journey-health', 'declined.json', { [fp]: { lastSeenMs: Date.now() } }, 'journey-health-vf-declined');
 
-  const second = spawnSync(
-    'node',
-    [CLI, 'validate-findings', findingsFile, '--target', 'checkout-flow', '--tier', 'light', '--root', root],
-    { encoding: 'utf8' },
-  );
+  const second = cli(['validate-findings', findingsFile, '--target', 'checkout-flow', '--tier', 'light', '--root', root]);
   assert.strictEqual(second.status, 0, `stderr: ${second.stderr}`);
   assert.strictEqual(
     JSON.parse(second.stdout).length,
@@ -353,4 +343,59 @@ test('validate-findings --min-confidence bogus: the in-process run and the scrip
   assert.strictEqual(spawned.code, 2);
   assert.strictEqual(spawned.stderr, inProcess.stderr);
   assert.match(spawned.stderr, /--min-confidence "bogus" is not a recognized confidence tier/);
+});
+
+// ── in-process entry (#5380) ────────────────────────────────────────────────
+
+// No --root, and a findings path relative to the injected cwd: the root and the findings file
+// both resolve against it. A real (non-dry-run) run writes its dedup cache under the root, so
+// the cache appearing under the injected cwd is what shows the root was that cwd.
+test('validate-findings without --root and with a relative findings path reads and writes under the injected cwd', () => {
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'findings.json'), JSON.stringify([finding()]));
+
+  const result = cli(['validate-findings', 'findings.json', '--target', 'checkout-flow'], { cwd: root });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  assert.strictEqual(JSON.parse(result.stdout).length, 1);
+  assert.ok(
+    fs.existsSync(path.join(root, '.claude-tweaks', 'journey-health', 'cache.json')),
+    'the dedup cache must land under the injected cwd',
+  );
+});
+
+// AC2.1 / AC2.2: the exit code is returned, never read from or written to process.exitCode.
+test('validate-findings returns 0 and prints its payloads while process.exitCode is already non-zero', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
+
+  const prior = process.exitCode;
+  process.exitCode = 1;
+  let result;
+  try {
+    result = cli(['validate-findings', findingsFile, '--root', root, '--dry-run']);
+  } finally {
+    process.exitCode = prior;
+  }
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.ok(Array.isArray(payloads));
+  assert.strictEqual(payloads.length, 1);
+});
+
+// Env-only fixture: the effect of the git child the CLI starts for Verified-as-of is observable
+// only when the injected env reaches it. The tests' own process environment holds no GIT_DIR.
+test('validate-findings stamps Verified-as-of from the injected env: GIT_DIR names the repo, root is not one', () => {
+  const root = tmp(); // not a git repo
+  const repo = tmp();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['-C', repo, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '--allow-empty', '-m', 'seed']);
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
+
+  const result = cli(['validate-findings', findingsFile, '--root', root, '--dry-run'], { env: { GIT_DIR: path.join(repo, '.git') } });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  assert.ok(payload.body.includes(`Verified-as-of: ${sha}`), `expected the injected repo's HEAD ${sha}, got body:\n${payload.body}`);
 });
