@@ -1,7 +1,8 @@
 // tests/digest-rollover-cli.test.js — bin/digest-rollover.js (#4848). In-process tests pin the CLI's own
 // decisions over run(argv, deps): which exit code each failure lands on, the exact gh argv, and that a
 // refused read never prints. The planner has its own suite (tests/bin-lib/health-core/materiality-digest.test.js).
-// The spawned tests run the commands the three readers document, as written, against a stub `gh` on PATH.
+// The documented-command tests run each reader's line in-process (argv extracted from the line, the session
+// paths from resolvePrinted); two lines run as written through bash against a stub `gh` on PATH.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,8 +13,11 @@ const { spawnSync } = require('child_process');
 const { run, realDeps } = require('../plugin/bin/digest-rollover');
 const { digestReplacementMarker, materialityEntryLine } = require('../plugin/bin/lib/health-core/materiality-digest');
 const { readText } = require('./helpers/read-skill');
+const { runCliSync } = require('./helpers/run-cli');
+const { resolvePrinted } = require('../plugin/bin/session-tmp-resolve');
 
 const REPO_ROOT = path.join(__dirname, '..');
+const CLI_PATH = path.join(REPO_ROOT, 'plugin/bin/digest-rollover.js');
 const NOT_ON_WIN32 = { skip: process.platform === 'win32' ? 'a bare executable stub is not a launchable gh on win32' : false };
 
 const marker = (n) => digestReplacementMarker(n);
@@ -417,9 +421,46 @@ const noGh = (dir) => {
   fs.symlinkSync(process.execPath, path.join(bin, 'node'));
   return { ...sessionEnv(dir), PATH: bin };
 };
-const resolved = (dir, name) => spawnSync(process.execPath, [path.join(REPO_ROOT, 'plugin/bin/session-tmp-resolve.js'), '--value', name], {
-  env: { ...process.env, ...sessionEnv(dir) }, encoding: 'utf8',
-}).stdout.trim();
+// resolvePrinted reads the process environment (carryDir does too, until #5385), so the session id and
+// tmp dir are set around each call and put back right after, never inside a runCliSync call's window.
+function withSession(dir, fn) {
+  const keys = Object.keys(sessionEnv(dir));
+  const saved = keys.map((k) => [k, process.env[k]]);
+  Object.assign(process.env, sessionEnv(dir));
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+}
+const resolved = (dir, name) => withSession(dir, () => resolvePrinted(name));
+// A documented line's argv: what follows digest-rollover.js, each "$(node … session-tmp-resolve.js --value X)"
+// replaced by the path resolvePrinted prints for X.
+const argvFromLine = (line, dir) => {
+  const rest = line.slice(line.indexOf('digest-rollover.js"') + 'digest-rollover.js"'.length);
+  return [...rest.matchAll(/"\$\(node "[^"]*session-tmp-resolve\.js" --value (\S+?)\)"|(\S+)/g)]
+    .map((m) => (m[1] !== undefined ? resolved(dir, m[1]) : m[2]));
+};
+// The stub gh's answers from the same table: --version, a string or JSON, and a 404 for a missing or null key.
+const fakeGh = (table) => (args) => {
+  const key = args.join(' ');
+  if (key === '--version') return 'gh version 2.0.0';
+  if (!(key in table) || table[key] === null) {
+    throw Object.assign(new Error(`HTTP 404: Not Found (${key})`), { stderr: `HTTP 404: Not Found (${key})\n`, status: 1 });
+  }
+  return typeof table[key] === 'string' ? table[key] : JSON.stringify(table[key]);
+};
+// The documented line in-process; the helper's `code` is mapped onto `status`. ghAvailable is faked
+// (present unless `gh: false`), as the helper fails the real probe closed.
+const runDoc = (line, dir, table, { gh = true } = {}) => withSession(dir, () => {
+  const r = runCliSync(CLI_PATH, argvFromLine(line, dir), {
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...sessionEnv(dir) },
+    deps: { gh: fakeGh(table || {}), ghAvailable: () => gh },
+  });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
+});
 
 test('every reader documents both verdict commands, the gh form and one file form under its own temp names', () => {
   const names = [];
@@ -437,7 +478,7 @@ test('every reader documents both verdict commands, the gh form and one file for
   assert.strictEqual(new Set(names).size, names.length, `a temp name is shared between readers: ${names}`);
 });
 
-test('each reader\'s documented gh verdict runs as written, and a refused read prints no verdict', NOT_ON_WIN32, (t) => {
+test('each reader\'s documented gh verdict runs, and a refused read prints no verdict', (t) => {
   for (const [rel, prefix] of Object.entries(READERS)) {
     const line = documented(skillText(rel), GH_LINE, rel);
     const filled = (reps) => line.replace('{old}', '10').replace('{n},{n}', reps.join(','));
@@ -448,27 +489,52 @@ test('each reader\'s documented gh verdict runs as written, and a refused read p
       [`api ${issuePath(25)}`]: issue(25),
     };
     const dir = scratch(t);
-    const env = withGh(dir, table);
     for (const [reps, want] of [
       [[20], resume20],
       [[15, 20], resume20],
       [[25, 20], { state: 'resume', replacement: 20, extras: [25] }],
       [[15], none],
     ]) {
-      const r = runLine(filled(reps), env);
+      const r = runDoc(filled(reps), dir, table);
       assert.strictEqual(r.status, 0, `${rel} ${reps}: ${r.stderr}`);
       assert.deepStrictEqual(JSON.parse(r.stdout), want, `${rel} ${reps}`);
     }
-    const unreadable = runLine(filled([20, 99]), env);
+    const unreadable = runDoc(filled([20, 99]), dir, table);
     assert.strictEqual(unreadable.status, 3, `${prefix}: ${unreadable.stderr}`);
     assert.strictEqual(unreadable.stdout, '');
     assert.match(unreadable.stderr, /issue #99/);
-    const absent = runLine(filled([20]), noGh(dir));
+    const absent = runDoc(filled([20]), dir, table, { gh: false });
     assert.strictEqual(absent.status, 2, `${prefix} ${absent.stderr}`);
   }
 });
 
-test('each reader\'s documented file-form verdict runs as written with gh absent', NOT_ON_WIN32, (t) => {
+test('the documented gh verdict line runs as written through bash, gh found by PATH, and exits 2 without gh', NOT_ON_WIN32, (t) => {
+  const line = documented(skillText('tidy/digest-sweep.md'), GH_LINE, 'tidy/digest-sweep.md').replace('{old}', '10').replace('{n},{n}', '20');
+  const dir = scratch(t);
+  // real process: the documented line runs as written through bash, gh found by PATH
+  const ok = runLine(line, withGh(dir, { [`api ${issuePath(10)}`]: oldIssue(), [`api ${issuePath(20)}`]: issue(20) }));
+  assert.strictEqual(ok.status, 0, ok.stderr);
+  assert.deepStrictEqual(JSON.parse(ok.stdout), resume20);
+  // real process: the same line with gh absent from PATH exits 2 on stderr
+  const absent = runLine(line, noGh(dir));
+  assert.strictEqual(absent.status, 2, absent.stderr);
+  assert.match(absent.stderr, /gh CLI not found on PATH/);
+});
+
+test('AC6.1: the gh probe looks for gh on the injected env PATH, not the real one', NOT_ON_WIN32, (t) => {
+  const table = { [`api ${issuePath(10)}`]: oldIssue(), [`api ${issuePath(20)}`]: issue(20) };
+  const dir = scratch(t);
+  const argv = ['verdict', '--old', '10', '--candidates', '20'];
+  const call = (env) => runCliSync(CLI_PATH, argv, { env: { HOME: process.env.HOME, ...env }, deps: { gh: fakeGh(table) }, allowRealRunner: true });
+  const absent = call(noGh(dir));
+  assert.strictEqual(absent.code, 2, absent.stderr);
+  assert.match(absent.stderr, /gh CLI not found on PATH/);
+  const present = call(withGh(dir, table));
+  assert.strictEqual(present.code, 0, present.stderr);
+  assert.deepStrictEqual(JSON.parse(present.stdout), resume20);
+});
+
+test('each reader\'s documented file-form verdict runs with gh absent', (t) => {
   for (const rel of Object.keys(READERS)) {
     const src = skillText(rel);
     const line = documented(src, FILE_LINE, rel);
@@ -476,23 +542,23 @@ test('each reader\'s documented file-form verdict runs as written with gh absent
     const dir = scratch(t);
     fs.writeFileSync(resolved(dir, oldName), JSON.stringify(oldIssue(), null, 2));
     fs.writeFileSync(resolved(dir, candName), JSON.stringify([planted(15), issue(20)], null, 2));
-    const r = runLine(line, noGh(dir));
+    const r = runDoc(line, dir, {}, { gh: false });
     assert.strictEqual(r.status, 0, `${rel}: ${r.stderr}`);
     assert.deepStrictEqual(JSON.parse(r.stdout), resume20, rel);
     // An unreadable candidate: an MCP error the agent wrote as data.
     fs.writeFileSync(resolved(dir, candName), JSON.stringify([issue(20), { message: 'Not Found' }]));
-    const bad = runLine(line, noGh(dir));
+    const bad = runDoc(line, dir, {}, { gh: false });
     assert.strictEqual(bad.status, 3, `${rel}: ${bad.stderr}`);
     assert.strictEqual(bad.stdout, '');
   }
 });
 
-test('step 2\'s documented carry runs as written against a stubbed gh, posts converge, and a refused read exits 3', NOT_ON_WIN32, (t) => {
+test('step 2\'s documented carry runs against a stubbed gh, posts converge, and a refused read exits 3', (t) => {
   const SWEEP = skillText('tidy/digest-sweep.md');
   const line = documented(SWEEP, 'carry --old {old} --new {replacement}', 'gh carry', { whole: true }).replace('{old}', '10').replace('{replacement}', '20');
   const dir = scratch(t);
   const live = entry('one');
-  const r = runLine(line, withGh(dir, { [countArgs(10)]: '1', [viewArgs(10)]: [comment(live)], [viewArgs(20)]: [] }));
+  const r = runDoc(line, dir, { [countArgs(10)]: '1', [viewArgs(10)]: [comment(live)], [viewArgs(20)]: [] });
   assert.strictEqual(r.status, 0, r.stderr);
   const plan = JSON.parse(r.stdout);
   assert.strictEqual(plan.verified, false);
@@ -500,20 +566,20 @@ test('step 2\'s documented carry runs as written against a stubbed gh, posts con
   const body = fs.readFileSync(plan.paths[0], 'utf8');
   assert.ok(body.startsWith(live), body);
   assert.ok(plan.paths[0].includes('digest-carry-10'), 'each old issue gets its own dir');
-  const again = runLine(line, withGh(dir, { [countArgs(10)]: '1', [viewArgs(10)]: [comment(live)], [viewArgs(20)]: [comment(body, 5)] }));
+  const again = runDoc(line, dir, { [countArgs(10)]: '1', [viewArgs(10)]: [comment(live)], [viewArgs(20)]: [comment(body, 5)] });
   assert.strictEqual(again.status, 0, again.stderr);
   assert.strictEqual(JSON.parse(again.stdout).verified, true);
-  const short = runLine(line, withGh(dir, { [countArgs(10)]: '2', [viewArgs(10)]: [comment(live)], [viewArgs(20)]: [] }));
+  const short = runDoc(line, dir, { [countArgs(10)]: '2', [viewArgs(10)]: [comment(live)], [viewArgs(20)]: [] });
   assert.strictEqual(short.status, 3, short.stderr);
   assert.strictEqual(short.stdout, '');
   assert.match(short.stderr, /truncated or partial read/);
-  const failed = runLine(line, withGh(dir, { [countArgs(10)]: '1', [viewArgs(10)]: null }));
+  const failed = runDoc(line, dir, { [countArgs(10)]: '1', [viewArgs(10)]: null });
   assert.strictEqual(failed.status, 3, failed.stderr);
   assert.strictEqual(failed.stdout, '');
-  assert.strictEqual(runLine(line, noGh(dir)).status, 2);
+  assert.strictEqual(runDoc(line, dir, {}, { gh: false }).status, 2);
 });
 
-test('step 2\'s documented file-form carry runs as written with gh absent', NOT_ON_WIN32, (t) => {
+test('step 2\'s documented file-form carry runs with gh absent', (t) => {
   const SWEEP = skillText('tidy/digest-sweep.md');
   const line = documented(SWEEP, 'carry --old {old} --new {replacement} --count {count}', 'file carry')
     .replace('{old}', '10').replace('{replacement}', '20');
@@ -523,13 +589,13 @@ test('step 2\'s documented file-form carry runs as written with gh absent', NOT_
   fs.writeFileSync(resolved(dir, oldName), JSON.stringify([comment(entry('one'))]));
   fs.writeFileSync(resolved(dir, newName), '[]');
   assert.ok(line.includes('--new-count {newCount}'), line);
-  const r = runLine(line.replace('{count}', '1').replace('{newCount}', '0'), noGh(dir));
+  const r = runDoc(line.replace('{count}', '1').replace('{newCount}', '0'), dir, {}, { gh: false });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(JSON.parse(r.stdout).live, 1);
-  const short = runLine(line.replace('{count}', '2').replace('{newCount}', '0'), noGh(dir));
+  const short = runDoc(line.replace('{count}', '2').replace('{newCount}', '0'), dir, {}, { gh: false });
   assert.strictEqual(short.status, 3, short.stderr);
   assert.strictEqual(short.stdout, '');
-  const shortNew = runLine(line.replace('{count}', '1').replace('{newCount}', '3'), noGh(dir));
+  const shortNew = runDoc(line.replace('{count}', '1').replace('{newCount}', '3'), dir, {}, { gh: false });
   assert.strictEqual(shortNew.status, 3, shortNew.stderr);
   assert.strictEqual(shortNew.stdout, '');
 });

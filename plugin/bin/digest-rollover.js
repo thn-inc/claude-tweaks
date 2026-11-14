@@ -132,6 +132,8 @@ const realDeps = {
   },
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  get env() { return process.env; },
 };
 
 // A read that failed: mapped to exit 3. Anything else that throws is a bug and stays loud.
@@ -238,13 +240,14 @@ function runCarry(opts, deps) {
   return 0;
 }
 
-function run(argv, deps) {
+function run(argv, callerDeps = {}) {
+  const deps = { ...realDeps, ...callerDeps };
   const opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return 0; }
   if (opts.error) { deps.stderr(`digest-rollover.js: ${opts.error}\n${USAGE}`); return 1; }
   if (!opts.fileForm) {
     let available = false;
-    try { available = deps.ghAvailable(); } catch { /* a probe that throws reads as absent */ }
+    try { available = deps.ghAvailable({ env: deps.env, cwd: deps.cwd() }); } catch { /* a probe that throws reads as absent */ }
     if (!available) {
       deps.stderr('digest-rollover.js: gh CLI not found on PATH — fetch through MCP and use the file form\n');
       return 2;
