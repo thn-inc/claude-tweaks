@@ -36,12 +36,14 @@ files:
 - **Should understand:**
   - The pre-screen calls the eligibility function with the per-record path's own options. It can skip a record but never admit one: an admitted record still goes through fetch, eligibility, admission and claim.
   - A record whose pulled data the pre-screen cannot read takes the full path, and stderr says `drive.js: pre-screen could not read #N (…); taking the full path`.
+  - Each counted pre-screen skip writes `drive.js: pre-screen skipped #N (…); no live fetch` to stderr, naming the eligibility reasons. A skipped record leaves no event line, so this line is where to learn which records the summary's `skipped` counted and why.
   - A group the pull excluded as `oversized` or `neighbour-in-flight` is never pre-screened or counted.
   - The queue pull's own side effects are the ones dispatch's pull has: decision lines and Close proposals in the newest `dispatch-standalone` run directory, and a rewrite of the queue-order cache. Its stdout chatter goes to the driver's stderr, so stdout stays JSON lines only.
 - **Red flags:**
   - A record driven out of the ranking's order, or driven twice in one invocation.
   - A non-JSON line on stdout.
   - A record skipped that the full path would have admitted.
+  - A counted pre-screen skip with no `pre-screen skipped #N` line on stderr.
 
 ### 3. Spend the budget — per-record runs
 - **URL:** each driven record's event lines (`policy` … `final`) on stdout and in its own `{run-dir}/driver-events.jsonl`
@@ -49,12 +51,14 @@ files:
 - **Should feel:** like a named run, repeated. Nothing about a driven record differs from naming it by hand.
 - **Should understand:**
   - Only a record whose claim was obtained and run directory minted consumes budget (`driven`), whatever its outcome.
+  - A driven record takes the whole per-record path, its `review` and `merge` steps included wherever the policy turns them on, so its final line can carry `merged` or `armed` as well as `pending-review`, `express-escalated` or `blocked`. Every one of them counts `driven`: the summary has no per-outcome counter, so each record's final line is where its outcome is read.
   - A refusal, a pre-screen skip, a contested claim (`claim-targets.js` exit 3) and any other per-record claim failure cost nothing, and the loop goes on. The other failures are exits 4 and 5, an exit 0 that claimed nothing, a killed claim and a failed mint.
   - A claim stop ends the whole run, because every later claim would meet the same cause: exit 7 is `permission-stop`, and exits 2 and 6 are `claim-stop`. That record gets the claim row's settle, and the rest of the budget goes unused.
 - **Red flags:**
   - A refused or contested record that consumed budget.
   - The loop continuing after a claim-targets exit 2, 6 or 7.
   - A pre-screened record that triggered a live fetch.
+  - A `merged` or `armed` record counted anywhere but `driven`.
 
 ### 4. Read the summary — the last line
 - **URL:** the final stdout line `{ ts, run: null, record: null, step: "budget", status, ms, detail?, budget, driven, refused, skipped, contested, claimFailed, permissionStopped, ended }`
@@ -89,3 +93,4 @@ files:
 ## Origin
 - Created during the build of #5229 (run `2026-11-13T061542-spec-5229`). The record adds `drive.js --budget <n|all>`, so the driver picks its own records through the dispatch queue-pull module, `rankNext` and the express eligibility pre-screen, and closes with one run-level `budget` summary line.
 - The plan review settled three questions (PRC1–3 in the spec): claim exits 2 and 6 end the run (`claim-stop`); the queue pull's side effects are accepted as dispatch has them; and no summary line is written on the exit-1 and interrupt paths.
+- Updated at the wrap-up of #5229. Step 2 now names the `pre-screen skipped #N` stderr line the review fix added (b73613a45). Step 3 now says a driven record can also end `merged` or `armed`, since the driver's `review` and `merge` steps landed upstream after this journey was written.
