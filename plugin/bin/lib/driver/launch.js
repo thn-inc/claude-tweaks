@@ -57,4 +57,4 @@ async function launchTracked(shared, deps, { minutes, dollars }, opts) {
   }
 }
 
-module.exports = { WIN32_CLAUDE_BIN, positiveNumber, readCeilings, launchTracked };
+module.exports = { WIN32_CLAUDE_BIN, readCeilings, launchTracked };
