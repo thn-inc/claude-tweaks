@@ -61,6 +61,33 @@ test('AC3.4: normalizeTitle keeps first line, drops period and keyword-reference
   assert.equal(normalizeTitle(null), '');
 });
 
+// The trailing-dot pattern normalizeTitle's hand scan replaced (#5222), kept as the oracle.
+const titleOracle = (raw) => (typeof raw !== 'string' ? '' : neutralize(raw.split(/\r\n|\r|\n/)[0]).replace(/(?:\s*\.)+\s*$/, '').trim());
+
+test('#5222: normalizeTitle gives what the trailing-dot regex gave, over every short string', () => {
+  const alphabet = ['a', '.', ' ', '\t', ' ', '　', 'x'];
+  const corpus = [''];
+  let layer = [''];
+  for (let len = 1; len <= 5; len += 1) {
+    layer = layer.flatMap((s) => alphabet.map((c) => s + c));
+    corpus.push(...layer);
+  }
+  // Text neutralize rewrites: a reference or mention it removes or marks, a comment opener it escapes.
+  corpus.push('Fix it. Closes #4 .', 'a #12 .', 'a . owner/repo#3 . ', 'a <!-- .', 'a <!--. .', 'a @. .', 'GH-7 . .',
+    'https://github.com/o/r/issues/5 .', 'a​. .', 'a.\n. b', 'a .\r\nb .');
+  const diverged = corpus.filter((s) => normalizeTitle(s) !== titleOracle(s));
+  assert.deepEqual(diverged.slice(0, 5).map((s) => JSON.stringify(s)), []);
+});
+
+test('#5222: normalizeTitle on a long run of dots or ". " pairs', () => {
+  // The shape, from the oracle on a short version: the pairs before a letter are no trailing run.
+  assert.equal(titleOracle('a. . x'), 'a. . x');
+  const pairs = `a${'. '.repeat(100000)}x`;
+  assert.ok(normalizeTitle(pairs) === pairs, 'a run of ". " pairs before a letter is not kept whole');
+  assert.equal(normalizeTitle(`a${'.'.repeat(100000)}`), 'a');
+  assert.equal(normalizeTitle(`a${' .'.repeat(100000)}`), 'a');
+});
+
 test('#5269 AC1: normalizeTitle keeps a leading closing keyword with no reference after it', () => {
   assert.equal(normalizeTitle('Fix the loop'), 'Fix the loop');
   assert.equal(normalizeTitle('Resolves the race in the sink'), 'Resolves the race in the sink');

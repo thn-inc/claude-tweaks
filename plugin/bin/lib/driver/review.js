@@ -157,8 +157,8 @@
 //   error's `cause` or a foreign message.
 //   normalizeEventText  reviewer text for an event or detail: line breaks become spaces, the result
 //                       is cut to EVENT_TEXT_INPUT_MAX_CHARS (4 x EVENT_TEXT_MAX_CHARS) before
-//                       normalizeTitle, whose trailing-dot pattern is quadratic on a long run of
-//                       dots, so it only ever sees bounded text; then normalizeTitle, then a cut to
+//                       normalizeTitle, so the normalization only ever works on text a small
+//                       multiple of the event-text cap; then normalizeTitle, then a cut to
 //                       EVENT_TEXT_MAX_CHARS that leaves neither half a surrogate pair nor a bare
 //                       `@` at the end.
 //
@@ -661,7 +661,7 @@ function treeDelta({ wt, expected, deps, isRunArtifact }) {
 
 // Reviewer text for an event line or a stop detail (see the header).
 function normalizeEventText(s) {
-  // Bounded before normalizeTitle: its trailing-dot pattern is quadratic on a long run of dots.
+  // Bounded for the event-text cap before normalizeTitle: only a small multiple of it is normalized.
   const text = normalizeTitle(String(s).replace(/\r\n|\r|\n/g, ' ').slice(0, EVENT_TEXT_INPUT_MAX_CHARS));
   let cut = text.length > EVENT_TEXT_MAX_CHARS ? text.slice(0, EVENT_TEXT_MAX_CHARS) : text;
   if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
