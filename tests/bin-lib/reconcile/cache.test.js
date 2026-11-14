@@ -659,6 +659,26 @@ test('#5393 AC1.2 AC3.1: a resolve runner failure records gh stderr', () => {
   assert.ok(!reason.includes('xxxx'), reason);
 });
 
+test('#5393: an escalate that throws an exec failure records gh stderr and the short command', () => {
+  const root = almostEscalatedRoot();
+  trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, { escalate: () => { throw ghExecErr('HTTP 403: secondary rate limit\n'); } });
+  assert.equal(listResidueFailures(root)[0].lastResidueError.reason, 'HTTP 403: secondary rate limit (gh issue create)');
+});
+
+test('#5393: a resolve that throws an exec failure records gh stderr and the short command', () => {
+  const root = escalatedStuckRoot();
+  clearResidue(root, 'o/r', 'structurally-stuck', '/x/p', { resolve: () => { throw ghExecErr('HTTP 403: secondary rate limit\n', 'gh issue comment'); } });
+  assert.equal(listResidueFailures(root)[0].lastResidueError.reason, 'HTTP 403: secondary rate limit (gh issue comment)');
+});
+
+test('#5393: a prune resolve that throws an exec failure records gh stderr and the short command', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', gonePath, { lastError: 'x' });
+  const out = pruneResidueFailures(root, 'o/r', { resolve: () => { throw ghExecErr('HTTP 403: secondary rate limit\n', 'gh issue comment'); } });
+  assert.deepEqual(out, { failures: [{ reason: 'move-failed', path: gonePath, op: 'resolve', error: 'HTTP 403: secondary rate limit (gh issue comment)' }] });
+});
+
 test('#4180 pruneResidueFailures: returns resolve failures for gone escalated paths and still drops the entries', () => {
   const root = tmpRoot();
   const gonePath = path.join(root, 'gone');
