@@ -90,7 +90,8 @@ function isTopLevel(ev) {
   return n !== null && (ev.source === 'user' ? (n === 'flow' || PHASES.includes(n)) : !(n in NESTED_PARENT));
 }
 
-// { events, manifest?, runState?, now? } -> { phases, totals }
+// { events, manifest?, runState?, now? } -> { phases, totals }, plus `ciGate` (and
+// totals.ciWallMinutes) when a ci-gate event exists (#5160)
 function derivePhases({ events, manifest = null, runState = null, now = new Date() } = {}) {
   const evs = (Array.isArray(events) ? events : [])
     .filter((e) => e && typeof e === 'object' && ms(e.ts) !== null)
@@ -292,7 +293,30 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
     verifyMinutes: Math.round(verifies.reduce((sum, v) => sum + verifyWorkMs(v), 0) / 6000) / 10,
     verifyModes: [...new Set(verifies.map((v) => v.mode).filter((m) => typeof m === 'string'))],
   };
-  return { phases, totals };
+  // ci-gate events (#5160), in file order — not the ts-sorted evs, so an event
+  // without a valid ts still counts. Each PR contributes its latest event's
+  // ciWallMs; with no event, neither key is added.
+  // An absent ci-gate event means CI time was not recorded, never that CI was fast (#5160).
+  const ciGate = (Array.isArray(events) ? events : [])
+    .filter((e) => e && typeof e === 'object' && e.type === 'ci-gate')
+    .map((e) => ({ ...e }));
+  if (!ciGate.length) return { phases, totals };
+  const ciMs = latestCiGatePerPr(ciGate).reduce((sum, e) => sum + (Number.isFinite(e.ciWallMs) ? e.ciWallMs : 0), 0);
+  totals.ciWallMinutes = Math.round(ciMs / 6000) / 10;
+  return { phases, totals, ciGate };
+}
+
+// ci-gate events -> each PR's latest event (by file order), in first-appearance
+// order. Latest, not a sum (#5160 AC5): every gate pass on a PR writes its own
+// event (a Red-path resume is a new pass, _shared/pr-first-merge.md Step 2.5),
+// and passes over one head re-read overlapping runs, so a sum would count that
+// CI time twice. The cost: an earlier head's CI, superseded by a re-push, is
+// left out of the total (its event stays in ciGate[]). The one rule both
+// totals.ciWallMinutes and phase-timing.js's CI gate lines read.
+function latestCiGatePerPr(ciGate) {
+  const latest = new Map();
+  for (const e of ciGate) latest.set(e.pr, e);
+  return [...latest.values()];
 }
 
 const ZERO_TOKENS = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 });
@@ -469,4 +493,5 @@ function aggregateDispatches(items) {
 module.exports = {
   derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents,
   unionMinutes, resolveTier, TIERS, ROLE_PATTERNS, roleOf, aggregateDispatches,
+  latestCiGatePerPr,
 };

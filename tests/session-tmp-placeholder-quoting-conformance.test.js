@@ -35,6 +35,8 @@ const NAMED_TARGETS = [
   '{tmp}', '{path-A}', '{path-B}', '{path-F}', '{path-U}',
   // tidy/release-note-repair.md and _shared/pr-checklist-refresh.md name these as session-tmp files.
   '{live-json}', '{line-file}', '{repaired-body}', '{after-json}', '{snapshot}', '{body-file}',
+  // _shared/pr-first-merge.md Step 2.5 names these as session-tmp files (bin/session-tmp-resolve.js).
+  '{pr-checks-path}', '{pr-runs-path}', '{park-comment-path}', '{pr-ready-path}', '{gate-start-path}',
 ];
 // A variable-name placeholder (`{tmp-var}=$(...)` in _shared/session-tmp-root.md), never a path.
 const EXEMPT = ['{tmp-var}'];
