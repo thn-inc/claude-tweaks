@@ -9,7 +9,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
-const { run, realDeps, parsePolicyValues } = require('../../../plugin/bin/dispatch-prompt');
+const { run, realDeps, formatPolicyValues } = require('../../../plugin/bin/dispatch-prompt');
+const { spawnCli } = require('../../helpers/run-cli');
 const {
   findUnsubstituted, promptDigest, promptSize, REGISTRY_FILE,
 } = require('../../../plugin/bin/lib/dispatch/task-prompt');
@@ -212,7 +213,7 @@ test('a refused --run exits 2 and writes nothing', () => {
   assertNothingWritten(h.log);
 });
 
-test('a failing resolver or unreadable template exits 1 and writes nothing', () => {
+test('AC5 dispatch-prompt: a failing resolver or unreadable template exits 1 and writes nothing', () => {
   const runDir = mkRun();
   const boom = () => { throw new Error('boom'); };
   for (const over of [
@@ -277,12 +278,54 @@ test('a stale part that cannot be removed exits 1 before the registry append', (
   assert.ok(log.err.startsWith('dispatch-prompt.js: cannot remove a stale part of'), log.err);
 });
 
-test('resolvePolicyValues parsing counts lines after the trailing newline', () => {
-  assert.strictEqual(parsePolicyValues('unattended\npr-first\nmerge-when-green\nhigh\nhigh\n'),
-    'autonomy=unattended, integration-model=pr-first, merge-verification=merge-when-green, risk-floor=high, size-floor=high');
-  assert.ok(parsePolicyValues('a\n\nc\nd\ne\n').includes('integration-model=(unset)'));
-  assert.throws(() => parsePolicyValues('a\nb\nc\nd\n'), /4 line/);
-  assert.throws(() => parsePolicyValues(''), /line/);
+test('formatPolicyValues: unset and error entries print (unset)', () => {
+  const text = formatPolicyValues({
+    autonomy: { value: 'unattended' },
+    'integration-model': { value: null },
+    'merge-verification': { error: 'unknown-key' },
+    'risk-floor': { value: 'high' },
+    'size-floor': { value: 'low' },
+  });
+  assert.strictEqual(text,
+    'autonomy=unattended, integration-model=(unset), merge-verification=(unset), risk-floor=high, size-floor=low');
+});
+
+const POLICY_KEYS = ['autonomy', 'integration-model', 'merge-verification', 'risk-floor', 'size-floor'];
+const RESOLVE_POLICY = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'resolve-policy.js');
+const POLICY_ENV = {
+  PATH: process.env.PATH, HOME: os.tmpdir(), USERPROFILE: os.tmpdir(), TMPDIR: os.tmpdir(),
+  ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+};
+
+function policyFixture(lines) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dp-policy-'));
+  tmpRoots.push(root);
+  fs.mkdirSync(path.join(root, '.claude-tweaks'));
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), `${lines.join('\n')}\n`);
+  return root;
+}
+
+test('AC4/AC7 dispatch-prompt: real resolvePolicyValues reads the fixture policy.yml at the given cwd', () => {
+  const fixture = policyFixture([
+    'autonomy: trusted', 'integration-model: pr-first', 'merge-verification: wait', 'risk-floor: low', 'size-floor: medium',
+  ]);
+  const err = [];
+  const got = realDeps.resolvePolicyValues(fixture, { env: POLICY_ENV, stderr: (s) => err.push(s) });
+  // The subprocess is the oracle: the script entry still prints what the CLI used to parse.
+  const child = spawnCli(RESOLVE_POLICY, ['--values', POLICY_KEYS.join(',')], { env: POLICY_ENV, cwd: fixture });
+  assert.strictEqual(child.code, 0, child.stderr);
+  const expected = POLICY_KEYS.map((k, i) => `${k}=${child.stdout.split('\n')[i].trim() || '(unset)'}`).join(', ');
+  assert.strictEqual(got, expected);
+  assert.strictEqual(got, 'autonomy=trusted, integration-model=pr-first, merge-verification=wait, risk-floor=low, size-floor=medium');
+  assert.deepStrictEqual(err, []);
+});
+
+test('AC5/AC7 dispatch-prompt: an invalid autonomy value still writes the resolve-policy warning line to stderr', () => {
+  const fixture = policyFixture(['autonomy: bogus', 'integration-model: pr-first']);
+  const err = [];
+  const got = realDeps.resolvePolicyValues(fixture, { env: POLICY_ENV, stderr: (s) => err.push(s) });
+  assert.ok(got.includes('autonomy='), got);
+  assert.ok(err.join('').includes('resolve-policy: warning: autonomy has invalid value "bogus"'), err.join(''));
 });
 
 test('a throwing stdout after the append still exits 0 and says so on stderr', () => {

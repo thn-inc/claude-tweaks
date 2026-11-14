@@ -39,9 +39,9 @@ const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
 const { sessionTmpRoot, sessionTmpPath } = require('./lib/session-tmp');
 const { parseNextSteps, FIRST_CALL_STEPS, SECOND_CALL_STEPS } = require('./lib/dispatch/first-call-artifact-check');
 const { GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
-// POLICY_KEYS includes integration-model, which can reach the forge ladder: size its child's kill
-// timeout the way phase-exit does, so a slow healthy detection is not killed mid-ladder.
-const { policyReadTimeoutMs } = require('./lib/phase-exit/phase-exit');
+const {
+  resolvePolicy, callerDeps, scalarValue, warningLines,
+} = require('./resolve-policy');
 const {
   renderDispatchPrompt, profileForCall, REGISTRY_FILE, partPath, registryLine,
 } = require('./lib/dispatch/task-prompt');
@@ -92,14 +92,9 @@ function parseIssues(raw) {
   return { issues };
 }
 
-// resolve-policy.js --values prints one newline-terminated line per key; an empty line is an unset key.
-function parsePolicyValues(out) {
-  const lines = out.split('\n');
-  if (lines[lines.length - 1] === '') lines.pop();
-  if (lines.length !== POLICY_KEYS.length) {
-    throw new Error(`resolve-policy.js printed ${lines.length} line(s) for ${POLICY_KEYS.length} keys`);
-  }
-  return POLICY_KEYS.map((k, i) => `${k}=${lines[i].trim() || '(unset)'}`).join(', ');
+// resolve-policy's --values rule per key: an unset or error entry reads as (unset).
+function formatPolicyValues(result) {
+  return POLICY_KEYS.map((k) => `${k}=${scalarValue(result[k]).trim() || '(unset)'}`).join(', ');
 }
 
 const realDeps = {
@@ -110,11 +105,15 @@ const realDeps = {
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   writeFile: (p, s) => fs.writeFileSync(p, s),
   appendFile: (p, s) => fs.appendFileSync(p, s),
-  resolvePolicyValues: (cwd) => {
-    const out = execFileSync(process.execPath,
-      [path.join(PLUGIN_ROOT, 'bin', 'resolve-policy.js'), '--values', POLICY_KEYS.join(',')],
-      { cwd, encoding: 'utf8', timeout: policyReadTimeoutMs('integration-model', cwd), windowsHide: true });
-    return parsePolicyValues(out);
+  // In-process through resolve-policy's core. No runDir is passed, so the core cannot return a non-zero
+  // code; a throw propagates to run's catch (exit 1). Bounded by: the root lookup by callerDeps'
+  // GIT_TIMEOUT_MS, forge detection by gh-timeout-ms x FORGE_PROBE_ATTEMPTS plus GIT_REMOTE_PROBE_TIMEOUT_MS,
+  // the local policy read unbounded. The invalid-value and degraded lines the child printed on the
+  // inherited stderr are written through stderr.
+  resolvePolicyValues: (cwd, { env = process.env, stderr = (s) => process.stderr.write(s) } = {}) => {
+    const out = resolvePolicy({ keys: POLICY_KEYS }, callerDeps({ cwd, env, stderr }));
+    for (const line of warningLines({ keys: POLICY_KEYS, ...out }, { values: true })) stderr(line);
+    return formatPolicyValues(out.result);
   },
   resolveProfile: (name, { unattended, cwd }) => {
     const args = [path.join(PLUGIN_ROOT, 'bin', 'resolve-profile.js'), name];
@@ -203,7 +202,7 @@ function run(argv, deps = {}) {
   let selectedAt;
   try {
     profileName = profileForCall(text, call);
-    const policyValues = d.resolvePolicyValues(cwd);
+    const policyValues = d.resolvePolicyValues(cwd, { env: d.env, stderr: d.stderr });
     profile = d.resolveProfile(profileName, { unattended: o.headless, cwd });
     selectedAt = o.selectedAt !== null ? o.selectedAt : d.selectedAt(d.env);
     rendered = renderDispatchPrompt(text, {
@@ -254,4 +253,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { run, parseArgs, parsePolicyValues, realDeps };
+module.exports = { run, parseArgs, formatPolicyValues, realDeps };
