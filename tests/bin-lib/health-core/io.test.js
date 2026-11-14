@@ -4,7 +4,19 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { DEFAULT_IO, makeExec } = require('../../../plugin/bin/lib/health-core/io');
+const { DEFAULT_IO, makeExec, resolveAgainst } = require('../../../plugin/bin/lib/health-core/io');
+
+test('resolveAgainst leaves a win32 drive-relative path unchanged (fs resolves it per drive)', () => {
+  assert.strictEqual(resolveAgainst('D:\\work', 'C:foo', path.win32), 'C:foo');
+  assert.strictEqual(resolveAgainst('D:\\work', 'C:\\abs\\x', path.win32), 'C:\\abs\\x');
+  assert.strictEqual(resolveAgainst('D:\\work', '\\rooted', path.win32), '\\rooted');
+  assert.strictEqual(resolveAgainst('D:\\work', 'rel\\x', path.win32), 'D:\\work\\rel\\x');
+});
+
+test('resolveAgainst joins a POSIX relative path without normalizing it', () => {
+  assert.strictEqual(resolveAgainst('/work', 'a/../b/', path.posix), '/work/a/../b/');
+  assert.strictEqual(resolveAgainst('/work', '/abs/x', path.posix), '/abs/x');
+});
 
 test('makeExec writes a failing child\'s stderr to the injected stderr, never to process.stderr', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'health-core-io-'));

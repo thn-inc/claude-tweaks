@@ -17,9 +17,12 @@ const DEFAULT_IO = {
 // relative p joined onto cwd WITHOUT textual normalization (no path.resolve), so
 // the kernel still sees a trailing slash or a `..` after a symlink exactly as
 // the caller wrote it — with cwd === process.cwd() that is what a bare relative
-// read does.
-function resolveAgainst(cwd, p) {
-  return path.isAbsolute(p) ? p : cwd + path.sep + p;
+// read does. A p carrying any root is left unchanged too: on win32 a
+// drive-relative `C:foo` is not absolute, but fs resolves it against drive C's
+// own cwd, so joining it onto cwd would build `D:\work\C:foo`. pathImpl is the
+// test seam for that win32 case (path.win32); callers pass nothing.
+function resolveAgainst(cwd, p, pathImpl = path) {
+  return pathImpl.parse(p).root ? p : cwd + pathImpl.sep + p;
 }
 
 // makeExec({ env, stderr }) -> exec(cmd, args, opts = {}) -> string
