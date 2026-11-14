@@ -168,7 +168,8 @@
 // claim fenced, its evidence path, its content fenced), then each kept evidence file is rewritten
 // from the content recorded when it was confirmed, then wiring.commit, wiring.test, a direct run of
 // each kept file (its TAP at {runDir}/review/fix-evidence-{i}.tap, i: its index among the confirmed)
-// each followed by a tree check that expects nothing (the evidence is committed by then), then the
+// each preceded by a byte check of that file and followed by a tree check that expects nothing (the
+// evidence is committed by then), then the
 // "changed nothing" judgement, then wiring.check. Nothing launches a third implementer.
 //   rewrite   the fix worker had write access, so each path is judged again before anything is
 //             touched: the PATH_RULES chain but `exists` (the file may still be there), and the path
@@ -189,9 +190,15 @@
 //   tracked at HEAD with its recorded bytes, CRLF vs LF aside (cat-file of HEAD:{evidencePath}; autocrlf
 //   stores a CRLF file as LF, and only the CR-LF pair is normalized), which catches one the
 //   worker gitignored, deleted or changed, and passes one it committed itself unchanged.
+//   byte check  before each kept run its file must be a regular file at the leaf holding the
+//               recorded bytes, compared as at HEAD (lstatType, readFile), never through the index:
+//               worker code has run since the rewrite (a commit hook, the scoped run, an earlier kept
+//               run), and after a `git update-index --skip-worktree` / `--assume-unchanged` git status
+//               no longer reports an edit to the file, so the tree check alone would run the edited one.
 //   Stops, each class pre-push but a propagated test or check result, which keeps its own class
 //   and reason. `fail`: HEAD unreadable, the worker's `fail`/`timeout`, a rewrite refused or failed,
-//   the commit failing, an evidence file not at HEAD as recorded, a kept run that throws or survives
+//   the commit failing, an evidence file not at HEAD as recorded, a kept file not in the worktree as
+//   recorded before its run, a kept run that throws or survives
 //   its kill, the tree changed during the checks (after the scoped run and each kept run; neither is
 //   singled out), the name-only diff failing (it ends with `--`, so a file named HEAD or after the
 //   sha is never read as a revision). `stop`: the worker's
@@ -989,9 +996,26 @@ function atHeadAsRecorded(wt, c, deps) {
   } catch {
     return false;
   }
+  return sameAsRecorded(blob, c);
+}
+
+// Whether text read back holds the recorded bytes, CRLF and LF aside (see atHeadAsRecorded).
+function sameAsRecorded(text, c) {
   // As written: a lone surrogate in the recorded string is written, and read back, as U+FFFD.
   const lf = (t) => t.replace(/\r\n/g, '\n');
-  return lf(blob) === lf(Buffer.from(c.content, 'utf8').toString('utf8'));
+  return lf(text) === lf(Buffer.from(c.content, 'utf8').toString('utf8'));
+}
+
+// Whether the kept evidence file in the worktree is a regular file with the recorded bytes, compared
+// as at HEAD. Read raw, never through the index: a worker's `git update-index --skip-worktree` /
+// `--assume-unchanged` keeps git status from reporting an edit to it, so the tree check alone cannot
+// show that the file about to run is the file at HEAD. Any read failure reads as not.
+function inWorktreeAsRecorded(c, deps) {
+  try {
+    return deps.lstatType(c.abs).type === 'file' && sameAsRecorded(String(deps.readFile(c.abs)), c);
+  } catch {
+    return false;
+  }
 }
 
 const FULL_SHA_RE = /^[0-9a-f]{40}$/;
@@ -1057,6 +1081,9 @@ async function fixRound(ctx, deps, wiring, pass) {
     if (tested.status !== 'ok') return propagate('test', tested);
 
     for (const [i, c] of confirmed.entries()) {
+      // Worker code has run since the rewrite (a commit hook, the scoped run, an earlier kept run), and
+      // git status cannot see an edit an index flag hides: the bytes are read just before this run.
+      if (!inWorktreeAsRecorded(c, deps)) return end('fail', 'the kept evidence file is not in the worktree with its recorded content', { c });
       const dest = path.join(runDir, 'review', `fix-evidence-${i}.tap`);
       let run;
       try {

@@ -2878,9 +2878,12 @@ function fixRig({ findings = [evidenceFinding(0)], fix = {}, effect = () => {}, 
         if (implementerCalls(h).length === 1) return { ...ENVELOPE };
         h.fx.dirty = ' M a.js\0';
         effect(h.fx);
+        // An evidence file the effect took out of fx.files is gone from the disk too.
+        for (const p of [...h.fx.disk.keys()]) if (!h.fx.files.has(p)) h.fx.disk.delete(p);
         return { ...ENVELOPE, result: FIX_RESULT, ...pick(fix, c) };
       }],
-      [(c) => c.kind === 'lstatType' && h.fx.files.has(c.args[0]), { type: 'file', code: null }],
+      [(c) => c.kind === 'lstatType' && h.fx.disk.has(c.args[0]), { type: 'file', code: null }],
+      [(c) => c.kind === 'readFile' && h.fx.disk.has(c.args[0]), (c) => h.fx.disk.get(c.args[0])],
       [onGit('--literal-pathspecs', 'add'), (c) => { staged = c.args.slice(c.args.indexOf('--') + 1); return ''; }],
       [onGit('commit'), () => {
         commits += 1;
@@ -2908,9 +2911,15 @@ function fixRig({ findings = [evidenceFinding(0)], fix = {}, effect = () => {}, 
     ],
   });
   h.fx.atHead = new Map();
+  // The bytes on disk of each evidence file the step wrote: unlike fx.files (what git status lists as
+  // untracked), the second commit leaves them in place.
+  h.fx.disk = new Map();
+  const { writeFileExclusive, rmFile } = h.deps;
+  h.deps.writeFileExclusive = (p, s) => { writeFileExclusive(p, s); h.fx.disk.set(p, s); };
+  h.deps.rmFile = (p) => { rmFile(p); h.fx.disk.delete(p); };
   return h;
 }
-const FINDING_0 = `${normalizeEventText('src/a.js')}:1 ${normalizeEventText(evidenceFinding(0).claim)}`;
+const FINDING_0 =`${normalizeEventText('src/a.js')}:1 ${normalizeEventText(evidenceFinding(0).claim)}`;
 
 test('AC8: one fix round, in order', async () => {
   const h = fixRig();
@@ -3227,6 +3236,78 @@ test('fix round: the HEAD check sets CRLF against LF aside, and nothing else', a
       await run(['#7'], h.deps);
       assert.deepEqual([lastLine(h).stop.detail, reviewLines(h)[0].status], [NOT_AT_HEAD, 'fail'], `${name} (${content === CRLF_CONTENT ? 'CRLF' : 'LF'} recorded)`);
     }
+  }
+});
+
+// The fix round's second scoped run (worker code) acts on fx, then passes. After the second commit git
+// status lists no evidence file and fx.dirty is empty: an edit an index flag hides (skip-worktree,
+// assume-unchanged) is invisible to the tree check, and HEAD still holds the recorded bytes.
+const scopedRunDoes = (act) => nthCall(on('node', /verify\.js$/), 2, () => { act(); return { code: 0, stdout: '', stderr: '' }; });
+const NOT_IN_WORKTREE = 'the kept evidence file is not in the worktree with its recorded content';
+const PASSING_TEST = "require('node:test')('ok', () => {});\n";
+
+test('fix round: a kept evidence file changed behind git status is caught by its bytes before it runs', async () => {
+  const cases = [
+    ['edited into a passing test', (fx) => { fx.disk.set(evidenceAbs(0), PASSING_TEST); }],
+    ['deleted', (fx) => { fx.disk.delete(evidenceAbs(0)); }],
+    // Same bytes through a symlink: node would resolve the test's requires from the target's directory.
+    ['a symlink to the same bytes', (fx) => { fx.symlinked = true; }],
+  ];
+  for (const [name, act] of cases) {
+    let h = null;
+    h = fixRig({ script: [
+      scopedRunDoes(() => act(h.fx)),
+      [(c) => h.fx.symlinked === true && c.kind === 'lstatType' && c.args[0] === evidenceAbs(0), { type: 'symlink', code: null }],
+    ] });
+    assert.equal(await run(['#7'], h.deps), 0, name);
+    const { stop } = lastLine(h);
+    assert.deepEqual([stop.step, stop.class, reviewLines(h)[0].status], [STEP.review, 'pre-push', 'fail'], name);
+    assert.equal(stop.detail, `${NOT_IN_WORKTREE}: ${FINDING_0}`, name);
+    assert.equal(verifyCalls(h).length, 2, `${name}: the scoped run ran`);
+    assert.equal(evidenceRuns(h).length, 1, `${name}: the kept file never runs`);
+    assert.equal(pushCalls(h).length, 0, name);
+  }
+  // An earlier kept run's worker code edits a later kept file: that file stops before its own run.
+  let two = null;
+  two = fixRig({ findings: [evidenceFinding(0), evidenceFinding(1)], direct: (i) => { if (i === 0) two.fx.disk.set(evidenceAbs(1), PASSING_TEST); return GREEN; } });
+  await run(['#7'], two.deps);
+  const finding1 = `${normalizeEventText('src/a.js')}:2 ${normalizeEventText(evidenceFinding(1).claim)}`;
+  assert.equal(lastLine(two).stop.detail, `${NOT_IN_WORKTREE}: ${finding1}`);
+  assert.equal(evidenceRuns(two).length, 3, 'two pass runs and the first kept run');
+  assert.equal(pushCalls(two).length, 0);
+});
+
+test('fix round: an unchanged kept evidence file is read from disk once, after the scoped run and before its own run', async () => {
+  const h = fixRig();
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual([reviewLines(h)[0].status, pushCalls(h).length, lastLine(h).outcome], ['ok', 1, 'pending-review']);
+  const reads = afterFixLaunch(h).filter((c) => c.kind === 'readFile' && c.args[0] === evidenceAbs(0));
+  assert.equal(reads.length, 1);
+  const at = h.calls.indexOf(reads[0]);
+  assert.ok(at > h.calls.indexOf(verifyCalls(h)[1]), 'after the scoped run');
+  assert.ok(at < h.calls.indexOf(evidenceRuns(h)[1]), 'before the kept run');
+});
+
+test('fix round: the byte check sets CRLF against LF aside, as the HEAD check does, and nothing else', async () => {
+  const CRLF_CONTENT = EVIDENCE_CONTENT.replace(/\n/g, '\r\n');
+  assert.notEqual(CRLF_CONTENT, EVIDENCE_CONTENT);
+  const rigFor = (recorded, onDisk) => {
+    let h = null;
+    const finding = evidenceFinding(0, { evidence: { path: 'tests/new/r0.test.js', content: recorded } });
+    h = fixRig({ findings: [finding], script: [scopedRunDoes(() => h.fx.disk.set(evidenceAbs(0), onDisk))] });
+    return h;
+  };
+  for (const [recorded, onDisk, name] of [[EVIDENCE_CONTENT, CRLF_CONTENT, 'LF recorded, CRLF on disk'], [CRLF_CONTENT, EVIDENCE_CONTENT, 'CRLF recorded, LF on disk']]) {
+    const h = rigFor(recorded, onDisk);
+    await run(['#7'], h.deps);
+    assert.deepEqual([reviewLines(h)[0].status, pushCalls(h).length], ['ok', 1], name);
+  }
+  // A lone CR, or a one-character edit, still differs.
+  for (const [name, onDisk] of [['a lone CR in place of a LF', EVIDENCE_CONTENT.replace('\n', '\r')], ['a one-character edit', EVIDENCE_CONTENT.replace('1 - 1', '1 + 1')]]) {
+    assert.notEqual(onDisk, EVIDENCE_CONTENT, name);
+    const h = rigFor(EVIDENCE_CONTENT, onDisk);
+    await run(['#7'], h.deps);
+    assert.deepEqual([lastLine(h).stop.detail, reviewLines(h)[0].status], [`${NOT_IN_WORKTREE}: ${FINDING_0}`, 'fail'], name);
   }
 });
 

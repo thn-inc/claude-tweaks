@@ -1771,7 +1771,10 @@ async function fixOnDisk(t, swap) {
   });
   Object.assign(rig.ctx, { wt, runDir, shared: { ...rig.ctx.shared, policy: { ...POLICY, 'express-driver-review': { value: 'on' } } } });
   const git = rig.deps.git;
+  const readTap = rig.deps.readFile;
   Object.assign(rig.deps, fsDeps(), {
+    // The kept file's byte check reads the real tree; a TAP destination is the rig's.
+    readFile: (p) => (p.startsWith(wt + path.sep) ? fs.readFileSync(p, 'utf8') : readTap(p)),
     git: (args, opts) => {
       if (args.includes('status')) return untracked().map((p) => `?? ${p}\0`).join('');
       if (args.includes('rev-parse')) return `${HEAD_SHA}\n`;
