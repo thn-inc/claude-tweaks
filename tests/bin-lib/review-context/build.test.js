@@ -24,7 +24,7 @@ const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'build-revie
 // In-process CLI call; `env` is the whole environment (git and lsof need PATH). Maps the
 // helper's `code` onto `status`, the field the assertions below read.
 function cliEnv(extra = {}) {
-  return { PATH: process.env.PATH, HOME: process.env.HOME, ...extra };
+  return { PATH: process.env.PATH, HOME: process.env.HOME, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...extra };
 }
 function runCli(argv, { cwd, env } = {}) {
   const r = runCliSync(CLI, argv, { cwd, env: env || cliEnv() });

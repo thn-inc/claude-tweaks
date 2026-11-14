@@ -261,8 +261,9 @@ test('appendEntry: concurrent `node bin/log-decision.js` processes against the s
   assert.equal(lines.length, WORKERS, 'every worker\'s line must survive, none clobbered');
 });
 
-test('AC6.1: an in-process append anchors the run dir under the injected cwd', () => {
+test('AC6.1: an in-process append anchors the run dir under the injected cwd', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-inproc-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git')); // a checkout root outside the real checkout: anchors only under the injected cwd
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-inproc');
   fs.mkdirSync(runDir, { recursive: true });

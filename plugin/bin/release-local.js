@@ -35,7 +35,7 @@ const { precheck } = require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
-const { isPathContained, LARGE_MAX_BUFFER_BYTES } =require('./lib/shared-primitives.js');
+const { isPathContained, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives.js');
 const { lstatType } = require('./lib/path-guard');
 
 const USAGE = [
@@ -367,7 +367,7 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
 // back so `run` routes it through deps.stdout/deps.stderr (inherited stdio would
 // write straight to the host process's fds when called in-process).
 function runHook(cmd, { cwd, env } = {}) {
-  const r = spawnSync(cmd, { cwd, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
+  const r = spawnSync(cmd, { cwd, env, shell: true, stdio: ['inherit', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
   return { status: r.status === null ? 1 : r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 

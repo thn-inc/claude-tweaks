@@ -190,8 +190,10 @@ test('a first-parent merge keeps branch commits out of the plan (design stance 3
   assert.ok(!r.stdout.includes('unconventional'));
 });
 
-test('--root naming a file is refused with exit 2', () => {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rootfile-')), 'f.txt');
+test('--root naming a file is refused with exit 2', (t) => {
+  const fileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rootfile-'));
+  t.after(() => fs.rmSync(fileDir, { recursive: true, force: true }));
+  const file = path.join(fileDir, 'f.txt');
   fs.writeFileSync(file, 'x');
   // real process: proves the refusal's exit code and stderr through the script entry
   const r = spawnCli(CLI, ['--root', file]);

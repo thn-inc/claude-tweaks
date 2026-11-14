@@ -581,7 +581,7 @@ test('step 2\'s documented carry runs against a stubbed gh, posts converge, and 
   const body = fs.readFileSync(plan.paths[0], 'utf8');
   assert.ok(body.startsWith(live), body);
   assert.ok(plan.paths[0].includes('digest-carry-10'), 'each old issue gets its own dir');
-  assert.ok(plan.paths[0].startsWith(dir), `the carry dir is under the scratch tmp dir: ${plan.paths[0]}`);
+  assert.ok(path.resolve(plan.paths[0]).startsWith(path.resolve(dir) + path.sep), `the carry dir is under the scratch tmp dir: ${plan.paths[0]}`);
   const again = runDoc(line, dir, { [countArgs(10)]: '1', [viewArgs(10)]: [comment(live)], [viewArgs(20)]: [comment(body, 5)] });
   assert.strictEqual(again.status, 0, again.stderr);
   assert.strictEqual(JSON.parse(again.stdout).verified, true);

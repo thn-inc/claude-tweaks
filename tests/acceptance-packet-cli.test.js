@@ -123,7 +123,7 @@ test('--help after a subcommand prints usage with nothing else run', (t) => {
   assert.match(h.stdout(), /usage:/);
 });
 
-test('the script entry answers --help, in-process', () => {
+test('run answers --help through the in-process runner', () => {
   const result = runCliSync(BIN, ['--help'], { fresh: true });
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /usage:/);
@@ -2016,6 +2016,65 @@ test('AC6.1: the gh probe runs on the injected env PATH, not the real one', { sk
   assert.equal(absent.code, 4, absent.stderr);
   const present = post(withGh);
   assert.equal(present.code, 0, present.stderr);
+});
+
+// A `gh` that logs the cwd and the env it was started with, then answers a visibility probe.
+function recordingGhShim(ws) {
+  const dir = path.join(ws.root, 'gh-shim');
+  const log = path.join(ws.root, 'gh-calls.jsonl');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'gh'), `#!${process.execPath}\n`
+    + `require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify({ cwd: process.cwd(), marker: process.env.CT_MARKER_5383, ghHost: process.env.GH_HOST, args: process.argv.slice(2) }) + '\\n');\n`
+    + 'console.log(JSON.stringify({ isPrivate: true }));\n');
+  fs.chmodSync(path.join(dir, 'gh'), 0o755); // root-safe: makes the stub runnable
+  const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
+  return { dir, calls };
+}
+
+function withAmbient(vars, fn) {
+  const saved = {};
+  for (const [k, v] of Object.entries(vars)) { saved[k] = process.env[k]; process.env[k] = v; }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+test('AC6.2: the real gh member starts gh in the injected cwd with the injected env', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const shim = recordingGhShim(ws);
+  assert.notEqual(ws.root, process.cwd());
+  const result = withAmbient({ CT_MARKER_5383: 'ambient' }, () => runCliSync(BIN, ['snapshot', '--run', ws.runDir, '--base', 'B'], {
+    cwd: ws.root,
+    env: { PATH: shim.dir + path.delimiter + process.env.PATH, HOME: process.env.HOME, TMPDIR: os.tmpdir(), CT_MARKER_5383: 'injected', GH_HOST: 'github.com' },
+    fresh: true,
+    allowRealRunner: true,
+    deps: { git: AHEAD(), gitDir: () => ws.gitDir, mainRoot: ws.root, encodeWalkthrough: encoderStub().encodeWalkthrough },
+  }));
+  assert.equal(result.code, 0, result.stderr);
+  const [call] = shim.calls();
+  assert.deepEqual(call.args, ['repo', 'view', '--json', 'isPrivate']);
+  assert.equal(call.cwd, ws.root, 'gh starts in the injected cwd');
+  assert.equal(call.marker, 'injected', 'gh gets the injected env, not process.env');
+});
+
+test('AC6.2: the real pinGhHost reads GH_HOST from the injected env, not process.env', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const shim = recordingGhShim(ws);
+  withAmbient({ GH_HOST: 'ambient.example' }, () => runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--repo', 'ghe.example/o/r'], {
+    cwd: ws.root,
+    env: { PATH: shim.dir + path.delimiter + process.env.PATH, HOME: process.env.HOME, TMPDIR: os.tmpdir() },
+    fresh: true,
+    allowRealRunner: true,
+    deps: { ghAvailable: () => true },
+  }));
+  const calls = shim.calls();
+  assert.ok(calls.length > 0, 'the post reached gh');
+  // The injected env holds no GH_HOST, so the typed --repo host is pinned; an ambient one read in its place would pin nothing.
+  assert.ok(calls.every((c) => c.ghHost === 'ghe.example'), JSON.stringify(calls.map((c) => c.ghHost)));
 });
 
 test('AC3.1: a relative --scope resolves against the injected working directory, not process.cwd()', (t) => {
