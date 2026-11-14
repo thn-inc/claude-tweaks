@@ -41,7 +41,8 @@ Each line names the probe that settled it.
 
   | File | Now | Planned growth | After | Headroom |
   |---|---|---|---|---|
-  | `plugin/skills/test/verification.md` | 46,991 | about +2,230 (Push first paragraph 1,494 B, Standalone +500, rows +160, two `--local` clauses +70) | about 49,220 | about 3,280 |
+  | `plugin/skills/test/verification.md` | 46,991 | about +2,950 (Push first paragraph about 1,960 B with the subagent clause, Standalone about +760 with the PR probe, rows +160, two `--local` clauses +70) | about 49,940 | about 2,560 |
+  | `plugin/skills/_shared/pre-verification-catchup.md` | 7,975 | about +40 | far | far |
   | `plugin/skills/build/SKILL.md` | 49,167 | +171 (a 258 B sentence replaces an 87 B one) | 49,338 | 3,162 |
   | `plugin/skills/release/SKILL.md` | 48,878 | +650 | 49,528 | 2,972 |
   | `plugin/skills/test/SKILL.md` | 24,779 | about +900 | about 25,700 | far |
@@ -72,20 +73,30 @@ Each line names the probe that settled it.
 
 ## Decisions this plan makes where the spec leaves a choice
 
-1. **Standalone never pushes.** A standalone session runs the scoped invocation and, on exit 3, re-runs with `--local` and reports the no-verdict line. Pushing a person's branch unasked is a side effect no standalone `/test` has today. Push-first applies to pipeline sites in a `pr-first` worktree run (a run dir is set). The spec's "a standalone session on a branch without a PR passes `--local` on its first call" is met through the runner: its exit 3 on `head-not-pushed`/`no-open-pr-at-head` is the PR probe, and an agent-side `gh` lookup would duplicate `ci-source.js`'s check. That costs one `gh` round trip and no check run.
+1. **Standalone never pushes** (replaced by the record's first Decision, below). A standalone session never pushes: pushing a person's branch unasked is a side effect no standalone `/test` has today. Push-first applies to pipeline sites in a `pr-first` worktree run (a run dir is set). With no open PR at the branch, the standalone's first call passes `--local`; with one, it runs the scoped invocation, and on exit 3 it re-runs once with `--local` and prints the reason and the hint `push the branch and re-run to take the suite from CI`. It never stops without a verdict. The PR probe is one plain `gh pr view --json state --jq .state` (no output, a non-`OPEN` state, a non-zero exit or no `gh` all mean no open PR); the earlier reading, which used the runner's own exit 3 as the probe, is retired.
 2. **The four pre-push sites pass `--local` unconditionally**, with or without the key. These are the express lane, an implementer's affected set, the driver's `testStep` and a parallel-wave member. Before a push CI cannot answer for any project. Without the key, `--local` changes only the recorded reason (`local-requested` instead of `head-not-pushed`/`dirty-tree`) and skips a `gh` call. The skill prose and `verify.js` ship in one plugin, so no installed build lacks the flag. The driver does not read the declaration to decide, which keeps the worker-adjacent scope file out of a second reader.
 3. **`full` is never skipped** by Skip-if-recent or by a `VERIFICATION_PASSED=true` signal. A CI-written or subset stamp verifies HEAD, but the release asks for this machine's run on macOS and Node 22, which no stamp proves. `full` stamps as a full set and runs no QA stories.
 4. **The release runs `/claude-tweaks:test full` in Step 3**, after the review-tree check passes and before the `## /review` marker. Its full stamp makes review's Step 1.5 read `verifiedHead: true`, so the review runs no second subset. A red run stops the release before Step 4 with reason `whole-suite run failed`.
 5. **The residue probe skips the whole `npm test` under the key,** including suites with no `ci` source (`journeys` here). `npm test` cannot run one suite of a declaration. The pass stamp the pipeline already wrote holds this run's suite state (`wrap-up/residue-sweep.md:22`). The skip reason names every `ci` entry as `{suite} ({workflow} / {job})`.
 6. **`all` keeps meaning "the standard suite plus QA".** Under the key the standard suite is scoped, so the `all` row and the three "full suite + QA" restatements say "standard suite".
 
+## Decisions recorded on the record (2026-11-14, answered round)
+
+The record's body (materialized at commit 2ffd005c5) carries four `**Decision**` paragraphs that answer the first plan review's two questions. This plan follows them as written:
+
+- **Standalone `/claude-tweaks:test`** — Decision 1 above, rewritten to match. Task 1's Standalone paragraph and Task 4's Standard suite sentence carry it.
+- **A `--local` fallback whose selection resolves to the whole suite** is the one named exception to "the whole suite runs here only when asked". Its trigger: CI cannot answer after a push and one re-run, and selection cannot narrow (a missing or stale map, a full-suite rule such as a change to `tools/run-tests.js`, a stale stamp anchor). It is rare, the run's `AUTO` line names the fallback reason, and `verify.js` is not changed for it. Task 7 states it under "The rule" in the decision document and in `impact-selection.md`.
+- **The CI wait inside a dispatched subagent.** A dispatched subagent cannot hold a Bash call past 600 s, and `ci.tests.waitSeconds` is 900. There the `verify.js` call runs with a 600 s timeout, and when it ends while still waiting on CI the same command runs once more: the CI run keeps going, so the second call finds it finished or nearly finished. A call that times out is never treated as exit 3 and never triggers `--local`. `waitSeconds` stays 900 for interactive and top-level sessions. Task 1's Push first paragraph carries it, beside the Foreground rule. `verify.js` waits on CI before it takes a suite slot or starts any check (`plugin/bin/verify.js`, the `fetchCiVerdict` loop runs before `holdFor`), so the second call repeats no local check the first one started.
+- **Anything else the record leaves open** is settled by plan review without asking: the reading that keeps every acceptance criterion and recorded decision as written and runs nothing on this machine that the PR's CI job can answer, logged as one `AUTO` entry.
+
 ## Review Focus
 
-1. **A push-first re-run that outlives the foreground ceiling.** After a push, verify.js polls CI for up to `waitSeconds` (900 by default), which is past the Bash tool's 600 s foreground cap. A reasonable person expects the run to be waited on, not demoted to a silent background run. Task 1's paragraph sends it through the Foreground rule's exception, pinned by the fact `takes the Foreground rule's exception above`.
+1. **A push-first re-run that outlives the foreground ceiling.** After a push, verify.js polls CI for up to `waitSeconds` (900 by default), which is past the Bash tool's 600 s foreground cap. A reasonable person expects the run to be waited on, not demoted to a silent background run, and a dispatched subagent cannot take the background exception at all. Task 1's paragraph sends the orchestrating session through the Foreground rule's exception and gives a dispatched subagent a 600 s call plus one repeat of the same command, never read as exit 3 and never a `--local` trigger (the record's third Decision), pinned by the facts `the orchestrating session takes the Foreground rule's exception above` and `A call that times out is never exit 3 and never triggers \`--local\``.
 2. **A parallel-wave member under the key.** Members never push (`multispec-parallel-waves.md:107`), so a member's scoped verify must not try. Pinned in Task 1 (fact `a parallel-wave member, which never pushes`).
 3. **This repo's own post-merge Windows job after the opt-in.** Its unscoped verify would exit 2, and the filer would report an unreadable report, on every push to main. Pinned in Task 8, plus a `workflow_dispatch` proof run on the branch.
 4. **A declaration with several `ci` suites in the residue reason.** Each must be named. Pinned in Task 6 (`two ci suites are both named`).
 5. **The release's red whole-suite run.** It must stop the release, not stage a finding and carry on. Pinned in Task 5 (fact `Step 8's summary reads \`failed\` with reason \`whole-suite run failed\``).
+6. **The standalone PR probe.** A standalone `/claude-tweaks:test` with no open PR must pass `--local` first and never push; with one, it must re-run once with `--local` on exit 3 and print the push hint. Pinned in Task 1 (`STANDALONE_FACTS`).
 
 ## Out of scope (stated, not deferred silently)
 
@@ -100,9 +111,12 @@ Waived tests/build-verify-after-doc-steps.test.js: read and run as a sibling pin
 
 ### Task 1: The scoping table, Push first and exit 3, and the Standalone rule
 
+**Review risk:** high (decision logic: which reason and context maps to push, re-run, `--local` or a repeat call; the one rule every site cites)
+
 **Files:**
 - Modify: `plugin/skills/test/verification.md:80` (Build row), `:86-87` (Standalone and review rows), `:54` (this repo's whole set), insert the Push first paragraph after `:100` (CI source), `:106` (Standalone paragraph), `:153` (baseline snippet)
 - Modify: `plugin/skills/build/SKILL.md:281` (the last sentence of Common Step 5's first paragraph)
+- Modify: `plugin/skills/_shared/pre-verification-catchup.md:5` (the "runs the full suite anyway" sentence) and `docs/journeys/verify-a-build-once-after-the-base-moved-4343.md:36` (its restatement)
 - Modify: `tests/test-skill-affected-conformance.test.js:49`
 - Create: `tests/pipelines-push-first-local-runs-conformance.test.js`
 - Test: `tests/bin-lib/verify/snippet-conformance.test.js`, `tests/build-verify-after-doc-steps.test.js`, `tests/verification-skip-before-execute.test.js`, `tests/build-pre-verify-catchup-conformance.test.js`, `tests/bin-lib/skill-audit/context-cost.test.js`
@@ -117,15 +131,17 @@ The exact text to write (checked with a scratch inline self-consistency run: eve
 - **Row 87:** `| \`/claude-tweaks:review\` Step 1.5 standalone auto-trigger | scoped when it passes \`--source review\`, else as standalone \`/claude-tweaks:test\` |`
 - **New paragraph after the CI source (#4347) paragraph:**
 
-  > **Push first, and exit 3 (#5370).** With a `ci` block, a `pr-first` worktree run pushes its branch immediately before each scoped invocation, after any commit or catch-up merge that moves HEAD: `git -C "{worktree-path}" push origin {branch}` (`_shared/pr-early-run-lifecycle.md`'s Step 2 push form). CI answers only for the open PR's head, and its wait (`waitSeconds`) can outlast the 600 s foreground ceiling, so the run takes the Foreground rule's exception above. Under the declaration's `localRuns: "on-request"` a scoped run CI cannot answer exits 3, which is never a test failure: stderr's first line names the suite and the reason (`no verdict yet for suite "{suite}" — CI could not answer ({reason})`). On `head-not-pushed` push and re-run once; on `no-open-pr-at-head` open or record the PR (`_shared/pr-early-run-lifecycle.md`'s Run start) and re-run once. On a second exit 3, or any other reason, re-run with `--local` and log one entry under the calling skill's section: `AUTO {time} — Verification: no CI verdict for suite "{suite}" ({reason}); re-ran with --local on this machine. Reversibility: high.` This adds no stop in `auto` mode, and fix mode never reads exit 3 as a failure. A run with no PR to push to passes `--local` on its first call: `local-merge`, `current-branch` (`_shared/integration-model.md`'s resolution), a parallel-wave member, which never pushes (`flow/multispec-parallel-waves.md`), and a pre-push run (an implementer's affected set, the express lane).
+  > **Push first, and exit 3 (#5370).** With a `ci` block, a `pr-first` worktree run pushes its branch immediately before each scoped invocation, after any commit or catch-up merge that moves HEAD: `git -C "{worktree-path}" push origin {branch}` (`_shared/pr-early-run-lifecycle.md`'s Step 2 push form). CI answers only for the open PR's head, and its wait (`waitSeconds`, 900 s by default) can outlast the 600 s foreground ceiling: the orchestrating session takes the Foreground rule's exception above, and a dispatched subagent, which cannot hold a Bash call past 600 s, runs the call with a 600 s timeout and, when it ends still waiting on CI, runs the same command once more. The CI run keeps going, and `verify.js` waits on CI before it takes a suite slot or starts a check, so the second call finds it finished or nearly finished. A call that times out is never exit 3 and never triggers `--local`. Under the declaration's `localRuns: "on-request"` a scoped run CI cannot answer exits 3, which is never a test failure: stderr's first line names the suite and the reason (`no verdict yet for suite "{suite}" — CI could not answer ({reason})`). On `head-not-pushed` push and re-run once; on `no-open-pr-at-head` open or record the PR (`_shared/pr-early-run-lifecycle.md`'s Run start) and re-run once. On a second exit 3, or any other reason, re-run with `--local` and log one entry under the calling skill's section: `AUTO {time} — Verification: no CI verdict for suite "{suite}" ({reason}); re-ran with --local on this machine. Reversibility: high.` This adds no stop in `auto` mode, and fix mode never reads exit 3 as a failure. A run with no PR to push to passes `--local` on its first call: `local-merge`, `current-branch` (`_shared/integration-model.md`'s resolution), a parallel-wave member, which never pushes (`flow/multispec-parallel-waves.md`), a standalone run on a branch with no open PR (the Standalone rule below), and a pre-push run (an implementer's affected set, the express lane).
 
 - **Paragraph `:106` becomes:**
 
-  > **Standalone is always full — without `localRuns`.** A site is scoped-eligible only when `$PIPELINE_RUN_DIR` is set (or a parent passed `--source {parent}`, the fallback signal for a caller with no run dir — `/claude-tweaks:flow` sets the run dir and never passes `--source`); with neither signal the invocation is standalone — a human asked for the suite and gets the suite; without `localRuns`, never pass `--scope` there. Under the declaration's `localRuns: "on-request"` a standalone invocation runs the scoped invocation instead, and wherever this file says to run the full procedure for a project with that declaration, the scoped invocation is what runs. Standalone never pushes: on exit 3 it re-runs with `--local` and reports the no-verdict line in Step 3's report. The whole suite runs on this machine only when someone asks for it by name: `/claude-tweaks:test full` (`verify.js --local`, no `--scope`).
+  > **Standalone is always full — without `localRuns`.** A site is scoped-eligible only when `$PIPELINE_RUN_DIR` is set (or a parent passed `--source {parent}`, the fallback signal for a caller with no run dir — `/claude-tweaks:flow` sets the run dir and never passes `--source`); with neither signal the invocation is standalone — a human asked for the suite and gets the suite; without `localRuns`, never pass `--scope` there. Under the declaration's `localRuns: "on-request"` a standalone invocation runs the scoped invocation instead, and wherever this file says to run the full procedure for a project with that declaration, the scoped invocation is what runs. Standalone never pushes: with no open PR at the branch (`gh pr view --json state --jq .state` prints no `OPEN`, exits non-zero, or `gh` is absent) its first call passes `--local`; with one, on exit 3 it re-runs once with `--local` and prints the reason and the hint `push the branch and re-run to take the suite from CI`. It never stops without a verdict. The whole suite runs on this machine only when someone asks for it by name: `/claude-tweaks:test full` (`verify.js --local`, no `--scope`).
 
 - **`:54`:** `in this repo the whole set is \`npm test -- --full\`)` becomes `in this repo the whole set is \`npm test -- --full\`, run with \`--local\` since the repo declares \`localRuns\`)`.
 - **`:153`:** insert ` --local` immediately before ` --baseline origin/main` in the indented snippet.
 - **`build/SKILL.md:281`:** `**CI source (#4347):** a \`ci\` block needs HEAD pushed first (\`test/ci-source.md\`).` becomes `**Scoped, push first (#5370):** with a declaration this run is \`verification.md\`'s scoped invocation; with a \`ci\` block a \`pr-first\` worktree run pushes immediately before it, after the catch-up below, and handles exit 3 per that file's Push first paragraph.`
+- **`_shared/pre-verification-catchup.md:5`:** `Common Step 5 runs the full suite anyway, so the merge adds no run.` becomes `Common Step 5 runs its one verification (\`test/verification.md\`'s scoping table) after it anyway, so the merge adds no run.` Under a declaration that run is the scoped invocation, not the full suite.
+- **Journey 4343, `:36`:** `Common Step 5 runs the full suite anyway, and now runs it once, on the merged tree.` becomes `Common Step 5 runs its one verification anyway, and now runs it once, on the merged tree.`
 
 - [ ] **Step 1: Write the failing tests.** Create `tests/pipelines-push-first-local-runs-conformance.test.js`. Put its header comment first: it pins #5370's pipeline verify rule in the prose that states it, reads live prose deliberately, and gives each fact list a go-red proof. Then write:
 
@@ -179,7 +195,10 @@ const PUSH_FACTS = [
   [/\*\*Push first, and exit 3 \(#5370\)\.\*\*/, 'labeled'],
   [/a `pr-first` worktree run pushes its branch immediately before each scoped invocation/, 'push before each scoped invocation'],
   [/`git -C "\{worktree-path\}" push origin \{branch\}`/, 'the push command'],
-  [/takes the Foreground rule's exception above/, 'the CI wait follows the Foreground exception'],
+  [/the orchestrating session takes the Foreground rule's exception above/, 'the orchestrator\'s CI wait follows the Foreground exception'],
+  [/a dispatched subagent, which cannot hold a Bash call past 600 s, runs the call with a 600 s timeout/, 'a subagent\'s 600 s call'],
+  [/when it ends still waiting on CI, runs the same command once more/, 'one repeat of the same command'],
+  [/A call that times out is never exit 3 and never triggers `--local`/, 'a timeout is not exit 3'],
   [/exits 3, which is never a test failure/, 'exit 3 is not a failure'],
   [/On `head-not-pushed` push and re-run once/, 'head-not-pushed: push, re-run once'],
   [/on `no-open-pr-at-head` open or record the PR/, 'no-open-pr-at-head: open or record the PR'],
@@ -189,6 +208,7 @@ const PUSH_FACTS = [
   [/passes `--local` on its first call/, 'a run with no PR passes --local first'],
   [/`local-merge`, `current-branch`/, 'the no-PR integration models'],
   [/a parallel-wave member, which never pushes/, 'parallel-wave members'],
+  [/a standalone run on a branch with no open PR/, 'standalone without an open PR'],
   [/a pre-push run/, 'pre-push runs'],
 ];
 ```
@@ -200,7 +220,11 @@ const STANDALONE_FACTS = [
   [/\*\*Standalone is always full — without `localRuns`\.\*\*/, 'labeled, keeping the old literal'],
   [/a standalone invocation runs the scoped invocation instead/, 'standalone is scoped under the key'],
   [/wherever this file says to run the full procedure for a project with that declaration/, 'the full-procedure override'],
-  [/Standalone never pushes: on exit 3 it re-runs with `--local`/, 'standalone never pushes'],
+  [/Standalone never pushes: with no open PR at the branch/, 'standalone never pushes'],
+  [/`gh pr view --json state --jq \.state` prints no `OPEN`, exits non-zero, or `gh` is absent/, 'the PR probe'],
+  [/its first call passes `--local`; with one, on exit 3 it re-runs once with `--local`/, 'no PR: --local first; a PR: one --local re-run'],
+  [/`push the branch and re-run to take the suite from CI`/, 'the push hint'],
+  [/It never stops without a verdict/, 'always a verdict'],
   [/`\/claude-tweaks:test full` \(`verify\.js --local`, no `--scope`\)/, 'the whole suite by name'],
 ];
 ```
@@ -224,7 +248,7 @@ const BUILD_FACTS = [
 Run: `node --test tests/pipelines-push-first-local-runs-conformance.test.js tests/test-skill-affected-conformance.test.js`
 Expected: FAIL after Step 1. This run is the revert proof: the tree is still the pre-change text. `scopingProblems` names `Build Common Step 5: full (impact-selected via …`, the Push first and Standalone paragraphs are absent (facts missing), Common Step 5 still says `needs HEAD pushed first`, and `test-skill-affected-conformance`'s row check fails on `| scoped (the impact subset via`.
 
-- [ ] **Step 3: Edit `verification.md` and `build/SKILL.md`** with the exact text above. The Push first paragraph goes after the `**CI source (#4347).**` paragraph and before `**Baseline on the same invocation (#3511).**`, so "the Foreground rule's exception above" points back to Step 2's Foreground rule. Add no fenced block.
+- [ ] **Step 3: Edit `verification.md`, `build/SKILL.md`, `_shared/pre-verification-catchup.md` and journey 4343** with the exact text above. The Push first paragraph goes after the `**CI source (#4347).**` paragraph and before `**Baseline on the same invocation (#3511).**`, so "the Foreground rule's exception above" points back to Step 2's Foreground rule. Add no fenced block.
 
 - [ ] **Step 4: Run the tests to verify they pass, with the sibling pins**
 
@@ -232,12 +256,12 @@ Run: `node --test tests/pipelines-push-first-local-runs-conformance.test.js test
 Expected: PASS, including `context-cost`'s `rail:` tests (AC2.1's rail clause: `build/SKILL.md` and every composed bundle fit one Read call).
 
 Run: `wc -c plugin/skills/test/verification.md plugin/skills/build/SKILL.md`
-Expected: `verification.md` under 49,500 B, `build/SKILL.md` under 49,400 B.
+Expected: `verification.md` under 50,300 B, `build/SKILL.md` under 49,400 B.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/test/verification.md plugin/skills/build/SKILL.md tests/pipelines-push-first-local-runs-conformance.test.js tests/test-skill-affected-conformance.test.js
+git add plugin/skills/test/verification.md plugin/skills/build/SKILL.md plugin/skills/_shared/pre-verification-catchup.md docs/journeys/verify-a-build-once-after-the-base-moved-4343.md tests/pipelines-push-first-local-runs-conformance.test.js tests/test-skill-affected-conformance.test.js
 git commit -m "Scope Build Common Step 5 and push before each scoped verify — exit 3 re-runs once or with --local, standalone keeps full without localRuns, refs #5370"
 ```
 
@@ -344,6 +368,8 @@ git commit -m "Pass --local from the driver's pre-push test step — no PR exist
 
 ### Task 4: `/claude-tweaks:test full` and the standalone rule in the test skill
 
+**Review risk:** high (decision logic: which argument and declaration state runs the whole suite here, and which skip signals `full` ignores)
+
 **Files:**
 - Modify: `plugin/skills/test/SKILL.md:4` (argument-hint), `:31` (`(none)` row), `:51` (`all` row, plus a new `full` row after it), `:76` (default bullet), `### Standard suite (no arguments)` (one sentence), new `### Whole suite here (\`full\`)` subsection between it and `### Targeted scope (with arguments)`
 - Modify: `plugin/skills/help/reference-card.md:16` (Takes cell), `:121` (usage line, plus a new `full` usage line after it)
@@ -358,11 +384,11 @@ Mirror surfaces, from `docs/skill-authoring.md`'s Argument-hint mirror surfaces 
 
 Exact text:
 - **argument-hint:** `[types|lint|unit|integration|e2e|affected|qa|all|full|skip-qa|<path>] [tag=<tag>] …` (insert `full|` after `all|`, rest unchanged). The card's Takes cell gets the same insertion, `all\|full\|skip-qa`.
-- **`(none)` row:** `| *(none)* | Standard suite — run all checks documented in CLAUDE.md (types + lint + tests); under the declaration's \`localRuns\`, the scoped invocation, never the whole suite (\`verification.md\`) |`
+- **`(none)` row:** `| *(none)* | Standard suite — run all checks documented in CLAUDE.md (types + lint + tests); under the declaration's \`localRuns\`, the scoped invocation, never \`full\`'s unscoped run (\`verification.md\`) |`
 - **`all` row:** `| \`all\` | Standard suite (types + lint + tests, as with no argument) AND QA story validation |`
 - **`full` row, after `all`:** `| \`full\` | The whole suite here: every suite's full command on this machine (\`verify.js --local\`, no \`--scope\`), never skipped by Skip-if-recent. Under the declaration's \`localRuns\` it is the only way to ask for the whole suite on this machine |`
 - **`:76`:** `- No \`VERIFICATION_PASSED\` (default) → run full suite (and QA …)` becomes `- No \`VERIFICATION_PASSED\` (default) → run the standard suite (\`verification.md\`'s scoping table) (and QA …)`, rest unchanged.
-- **Standard suite subsection, appended sentence:** `Under the declaration's \`localRuns: "on-request"\`, that procedure runs the scoped invocation, standalone too (\`verification.md\`'s Standalone rule), and never the whole suite.`
+- **Standard suite subsection, appended sentence:** `Under the declaration's \`localRuns: "on-request"\`, that procedure runs the scoped invocation, standalone too (\`verification.md\`'s Standalone rule), and never \`full\`'s unscoped run. A \`--local\` fallback whose impact selection cannot narrow still runs what selection chose, which can be the whole suite: the one named exception (\`impact-selection.md\`'s Whole suite on request).`
 - **New subsection:**
 
   > ### Whole suite here (`full`)
@@ -376,7 +402,7 @@ Exact text:
   - `lineStartingWith(read('plugin/skills/help/reference-card.md'), '| \`/claude-tweaks:test\` |').includes('all\\|full\\|skip-qa')`.
   - `pinned(lineStartingWith(s, '| \`full\` |'), [[/every suite's full command on this machine \(`verify\.js --local`, no `--scope`\)/, 'full runs every full command here'], [/never skipped by Skip-if-recent/, 'never skipped']])`.
   - `pinned(sub(s, '### Whole suite here (\`full\`)'), WHOLE_FACTS)`, where `sub(text, heading)` slices from the heading to the next `\n### ` (assert the heading exists) and `WHOLE_FACTS` is `[[/Run `verification\.md` Step 2's run command with `--local` added and no `--scope`/, 'the command'], [/never passes `--no-stamp`/, 'it stamps'], [/Skip-if-recent does not apply/, 'never skipped'], [/a stamp CI wrote, or one from an impact subset, never stands in for a run here/, 'why']]`.
-  - `pinned(sub(s, '### Standard suite (no arguments)'), [[/Under the declaration's `localRuns: "on-request"`, that procedure runs the scoped invocation, standalone too/, 'no argument is scoped under the key']])`.
+  - `pinned(sub(s, '### Standard suite (no arguments)'), [[/Under the declaration's `localRuns: "on-request"`, that procedure runs the scoped invocation, standalone too/, 'no argument is scoped under the key'], [/A `--local` fallback whose impact selection cannot narrow still runs what selection chose/, 'the named exception']])`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -451,6 +477,8 @@ git commit -m "Run /claude-tweaks:test full in the release before the whole-bran
 ```
 
 ### Task 6: The close-time suite probe under the key
+
+**Review risk:** high (decision logic: the declaration state decides whether the probe runs `npm test` or reports not run, and an unreadable declaration must read as no key)
 
 **Files:**
 - Modify: `plugin/bin/lib/residue/probes/suite.js` (add and export `localRunsSkip`)
@@ -550,7 +578,7 @@ Exact text:
   >
   > This section applies under the declaration's `localRuns: "on-request"` (`ci-source.md`).
   >
-  > - **The rule.** On a developer machine a CI-declared suite runs as the whole suite only when someone asks for it by name: `/claude-tweaks:test full`, `verify.js --local` with no `--scope`, or `/claude-tweaks:release`'s run before the version bump. Every pipeline verify takes it from the PR's CI job, and runs the impact subset here only when CI cannot answer.
+  > - **The rule.** On a developer machine a CI-declared suite runs as the whole suite only when someone asks for it by name: `/claude-tweaks:test full`, `verify.js --local` with no `--scope`, or `/claude-tweaks:release`'s run before the version bump. Every pipeline verify takes it from the PR's CI job, and runs the impact subset here only when CI cannot answer. The one exception: when CI cannot answer after a push and one re-run, the `--local` re-run runs what selection chose, and that is the whole suite when selection cannot narrow (a missing or stale map, a full-suite rule in the declaration, or a stale stamp anchor). It is rare, and the run's `AUTO` line names the fallback reason.
   > - **What a miss is.** A test whose result a change affects but which selection leaves out. Its causes are reads the tracer cannot see (`#` imports, a package's self-reference, a native addon's content, a non-node child's reads, a wrapper such as `xargs` or `timeout`; Known limits above), reads that differ between CI's trace environment and this machine, and reads a test gained after the map was traced without the test file itself changing, since the map may trail HEAD by up to `maxAgeCommits` commits.
   > - **How CI catches it.** When CI answers a pipeline's verify, CI ran the whole suite on that commit, so a miss cannot pass. When `--local` ran the subset, the miss passes on this machine and the declared CI job on the same head is red. The merge gate (`_shared/pr-first-merge.md` Step 2.5) reads the PR's check rollup and its head workflow runs, parks a red PR and waits on a pending one, so the change does not merge.
   > - **What CI does not catch.** A failure that happens only on macOS, on Node 22 or on Windows and that the map also misses. The plugin's own CI runs ubuntu on Node 20, and Windows is checked after merge. The release's whole-suite run on the developer machine is the remaining check before a version ships.
@@ -564,7 +592,7 @@ Exact text:
 
   The `## Decision` items, verbatim (scratch-checked against `AC5_FACTS`):
 
-  > 1. **The rule.** On a developer machine a CI-declared suite runs as the whole suite only when someone asks for it by name: `/claude-tweaks:test full`, `verify.js --local` with no `--scope`, or `/claude-tweaks:release`'s run before the version bump. Every pipeline verify takes it from the PR's CI job, and runs the impact subset here only when CI cannot answer.
+  > 1. **The rule.** On a developer machine a CI-declared suite runs as the whole suite only when someone asks for it by name: `/claude-tweaks:test full`, `verify.js --local` with no `--scope`, or `/claude-tweaks:release`'s run before the version bump. Every pipeline verify takes it from the PR's CI job, and runs the impact subset here only when CI cannot answer. The one exception: when CI cannot answer after a push and one re-run, the `--local` re-run runs what selection chose, and that is the whole suite when selection cannot narrow (a missing or stale map, a full-suite rule such as a change to `tools/run-tests.js`, or a stale stamp anchor). It is rare, and the run's `AUTO` line names the fallback reason. `verify.js` is not changed for it.
   > 2. **What a miss is.** A test whose result a change affects but which selection leaves out. Its causes are reads the tracer cannot see (`#` imports, a package's self-reference, a native addon's content, a non-node child's reads, a wrapper such as `xargs` or `timeout`), reads that differ between CI's trace environment and this machine, and reads a test gained after the map was traced without the test file itself changing: the map may trail HEAD by up to 200 commits (`maxAgeCommits`).
   > 3. **How CI catches it.** When CI answers a pipeline's verify, CI ran the whole suite on that commit, so a miss cannot pass. When `--local` ran the subset, the miss passes on this machine and the PR's `test` job on the same head is red. The merge gate (`plugin/skills/_shared/pr-first-merge.md` Step 2.5) reads the PR's check rollup and its head workflow runs, parks a red PR and waits on a pending one, so the change does not merge.
   > 4. **What CI does not catch.** A failure that happens only on macOS, on Node 22 or on Windows and that the map also misses. CI runs ubuntu on Node 20 (`.github/workflows/test.yml`), and Windows is checked after merge (`windows-regression.yml`). The release's whole-suite run on the developer machine is the remaining check before a version ships.
@@ -583,6 +611,9 @@ const AC5_FACTS = [
   [/`\/claude-tweaks:test full`, `verify\.js --local` with no `--scope`/, 'the rule: by name'],
   [/run before the version bump/, 'the rule: the release run'],
   [/Every pipeline verify takes it from the PR's CI job, and runs the impact subset here only when CI cannot answer/, 'the rule: pipelines'],
+  [/The one exception: when CI cannot answer after a push and one re-run, the `--local` re-run runs what selection chose, and that is the whole suite when selection cannot narrow/, 'the rule: the named exception'],
+  [/a missing or stale map, a full-suite rule .{1,60}, or a stale stamp anchor/, 'the exception: its triggers'],
+  [/It is rare, and the run's `AUTO` line names the fallback reason/, 'the exception: rarity and its log line'],
   [/A test whose result a change affects but which selection leaves out/, 'a miss: definition'],
   [/`#` imports, a package's self-reference, a native addon's content, a non-node child's reads, a wrapper such as `xargs` or `timeout`/, 'a miss: unseen reads'],
   [/reads that differ between CI's trace environment and this machine/, 'a miss: trace environment'],
@@ -609,17 +640,18 @@ const RETIRED = [
   'passes no `--scope` and is the explicit full mode',
   'Standalone `/claude-tweaks:test` and a standalone `/build` stay full.',
   'Otherwise it runs full, as does a standalone `/build`.',
+  'Common Step 5 runs the full suite anyway',
 ];
 ```
 
   For the control, plant each `RETIRED` string in a copy of one walked file's text and assert the same check (factored as `retiredIn(text) -> string[]`) returns it.
 
-  Absence-grep control, run while authoring against HEAD: `git grep -n -F` for all five strings over `plugin .claude/skills docs/plugin-structure.md docs/getting-started.md docs/journeys` matches `build/SKILL.md:281`, `impact-selection.md:98` and `:102`, `verification.md:80` and journey 4024 `:76`. So the sweep can see each of its targets. The walk names its paths and stays outside `.claude-tweaks/` and `docs/superpowers/plans`, so the #4579 exclusions are not needed.
+  Absence-grep control, run while authoring against HEAD: `git grep -n -F` for all six strings over `plugin .claude/skills docs/plugin-structure.md docs/getting-started.md docs/journeys` matches `build/SKILL.md:281`, `impact-selection.md:98` and `:102`, `verification.md:80`, journey 4024 `:76`, `_shared/pre-verification-catchup.md:5` and journey 4343 `:36`. So the sweep can see each of its targets. `build/dispatch.md`'s `Common Step 5 runs the full suite once` (the whole-branch reviewer instruction) is deliberately not retired: `tests/build-skip-degrade-trace-adoption.test.js:106` anchors on it, and under the key that run is still the branch's one whole-suite verdict, taken from CI. The walk names its paths and stays outside `.claude-tweaks/` and `docs/superpowers/plans`, so the #4579 exclusions are not needed.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test tests/pipelines-push-first-local-runs-conformance.test.js`
-Expected: FAIL after Step 1 (the revert proof). `sectionOf` throws on the missing decision file and the missing `## Whole suite on request` heading. The sweep finds `passes no \`--scope\` and is the explicit full mode`, `Otherwise it runs full, as does a standalone \`/build\`.` and the journey line. Tasks 1 and 4 already retired the other two.
+Expected: FAIL after Step 1 (the revert proof). `sectionOf` throws on the missing decision file and the missing `## Whole suite on request` heading. The sweep finds `passes no \`--scope\` and is the explicit full mode`, `Otherwise it runs full, as does a standalone \`/build\`.` and the journey line. Task 1 already retired the other three, so the planted-string control is their go-red proof.
 
 - [ ] **Step 3: Write the decision document and the four edits above.**
 
@@ -708,7 +740,7 @@ Expected: once `completed`, `conclusion: success`. A `failure` whose `file` job 
 
 This build's own Final Verification is AC3's real input. Follow Task 1's Push first paragraph:
 1. Push the branch: `git -C "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-5319-5369-5370" push origin worktree-flow+spec-5319-5369-5370`.
-2. Run the scoped invocation through this worktree's own runner: `node plugin/bin/verify.js --run "$PIPELINE_RUN_DIR" --default-suite-slots {slots} --scope .claude-tweaks/verify-scope.json --integration-branch main --baseline origin/main`. The installed 6.167.0 build predates `localRuns`, so use the worktree's runner. Give the Bash call a 600 s timeout, under the Foreground rule's exception.
+2. Run the scoped invocation through this worktree's own runner: `node plugin/bin/verify.js --run "$PIPELINE_RUN_DIR" --default-suite-slots {slots} --scope .claude-tweaks/verify-scope.json --integration-branch main --baseline origin/main`. The installed 6.167.0 build predates `localRuns`, so use the worktree's runner. Give the Bash call a 600 s timeout; this build runs in a dispatched subagent, so per the record's third Decision a call that ends still waiting on CI runs the same command once more, and a timed-out call is never read as exit 3 or a `--local` trigger.
 3. Read `report.json`'s `ci` entry for `tests`: it must show `used: true`.
 4. On exit 3, follow the paragraph (push or `--local`) and log its `AUTO` entry.
 5. Write the full stdout to `$PIPELINE_RUN_DIR/evidence/ac3-push-first-verify.txt` (after `mkdir -p "$PIPELINE_RUN_DIR/evidence"`), and log one `AC evidence` entry: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/build" --status AUTO --step "AC evidence" --text-file "{text-file}"`. Its single line names AC3.1, the command shape, the `ci[0].used` value and the evidence path.
@@ -727,7 +759,10 @@ Waived AC3.1 (as a committed test): it describes a live pipeline run against Git
 | AC4.1: under the key `test full` runs the whole suite here, no argument does not | 1, 4 | `AC4.1, AC4.3: /claude-tweaks:test full …`; the Standalone rule facts |
 | AC4.2: the release's pre-bump verification runs the whole suite here | 5 | `AC4.2: the release runs /claude-tweaks:test full …` |
 | AC4.3: `full` in the argument hint and `/help`'s reference card | 4 | `AC4.1, AC4.3: …`; `tests/argument-hint-mirrors.test.js` |
-| AC5 (every clause): the rule, a miss, how CI catches it, what it does not, who enforces it | 7 | `AC5.1-AC5.13: the decision document and impact-selection.md state …` (17 facts per slice, each with a go-red proof) |
+| AC5 (every clause): the rule, a miss, how CI catches it, what it does not, who enforces it | 7 | `AC5.1-AC5.13: the decision document and impact-selection.md state …` (20 facts per slice, each with a go-red proof; three of them pin the record's second Decision, the named `--local` exception) |
+| Record Decision 1: standalone never pushes; no open PR → `--local` first; a PR → one `--local` re-run with the push hint; always a verdict | 1, 4 | `the Standalone rule …` (`STANDALONE_FACTS`); `AC4.1, AC4.3: …`'s Standard suite facts |
+| Record Decision 2: a `--local` fallback resolving full is the named exception | 4, 7 | `AC5.1-AC5.13: …`'s three exception facts; Task 4's `the named exception` fact |
+| Record Decision 3: a dispatched subagent's 600 s call, repeated once, never exit 3 | 1 | `AC1.1, AC3.2: the Push first paragraph …` (`PUSH_FACTS`'s three subagent facts) |
 | AC6.1: the committed declaration with the key is accepted, and `verify.js --scope` reads it with no validation error | 8 | `AC6.1: this repo declares localRuns …`; `AC6.1: verify.js --stamp-status --scope reads …` |
 | AC7.1: with the key, the probe is not run, names the CI job, never starts `npm test` | 6 | `AC7.1: under localRuns the suite probe is not run …`; `AC7.1, AC7.3: with localRuns the probe never starts npm test …` |
 | AC7.2: without the key it runs `npm test` as before | 6 | `AC7.2: without the key, or with no declaration …`; `AC7.2, AC7.3: without the key the probe runs npm test as before` |
