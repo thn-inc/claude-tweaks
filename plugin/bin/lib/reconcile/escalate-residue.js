@@ -49,6 +49,32 @@ const { defaultRunner, errorText } = require('../feedback/file-feedback');
 // caller.
 const { findByMarker } = require('../issues/dedup-lookup');
 
+// #5393: the failure text a residue escalate/resolve records. errorText leads with
+// execFileSync's `Command failed: <full argv>` line, which buries gh's stderr and
+// carries a `--body` value. Here stderr leads, the command is cut to its first four
+// words before any flag, and an exec failure with no stderr keeps that short command.
+// Not capped here — boundedError (cache.js) does that.
+function residueErrorText(err) {
+  if (typeof err !== 'object' || err === null) return errorText(err);
+  const stderr = String(err.stderr ?? '').trim();
+  const firstLine = String(err.message).split('\n')[0];
+  const words = [];
+  if (firstLine.startsWith('Command failed: ')) {
+    for (const tok of firstLine.slice('Command failed: '.length).split(/\s+/).filter(Boolean)) {
+      if (tok.startsWith('-') || words.length === 4) break;
+      words.push(tok);
+    }
+  }
+  const short = words.length ? words.join(' ') : null;
+  if (stderr) {
+    if (short) return `${stderr} (${short})`;
+    // A spawn-level failure (ETIMEDOUT, ENOBUFS) carries a string `code`; its message is the cause.
+    return typeof err.code === 'string' ? `${stderr} (${firstLine.trim()})` : stderr;
+  }
+  if (short) return `Command failed: ${short}`;
+  return errorText(err);
+}
+
 // #1811 Deliverable 4: `structurally-stuck` escalates as ONE shared record
 // per sweep pass covering every stuck path, not one per directory — the
 // symptom that produced seven near-identical records (#1811-#1817) for what
@@ -267,7 +293,7 @@ function findOrCreateIssue({
   try {
     hit = findResidueDuplicate({ repo, marker, runner });
   } catch (err) {
-    return { status: 'escalation-failed', reason: errorText(err) };
+    return { status: 'escalation-failed', reason: residueErrorText(err) };
   }
   if (!hit) {
     try {
@@ -275,7 +301,7 @@ function findOrCreateIssue({
       const m = /\/issues\/(\d+)/.exec(String(out));
       return { status: 'filed', number: m ? Number(m[1]) : null };
     } catch (err) {
-      return { status: 'escalation-failed', reason: errorText(err) };
+      return { status: 'escalation-failed', reason: residueErrorText(err) };
     }
   }
   return onHit(hit);
@@ -295,7 +321,7 @@ function findHitForResolve({
   try {
     hit = findResidueDuplicate({ repo, marker, runner });
   } catch (err) {
-    return { status: 'resolution-failed', reason: errorText(err) };
+    return { status: 'resolution-failed', reason: residueErrorText(err) };
   }
   if (!hit) return { status: 'not-found' };
   return onHit(hit);
@@ -362,7 +388,7 @@ function escalateStructurallyStuck({
         }
         return { status: 'appended', number: hit.number };
       } catch (err) {
-        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+        return { status: 'escalation-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -394,7 +420,7 @@ function escalateResidue({
         runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
         return { status: 'reopened', number: hit.number };
       } catch (err) {
-        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+        return { status: 'escalation-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -440,7 +466,7 @@ function resolveStructurallyStuck({
           runner(['issue', 'close', String(hit.number), '--repo', repo]);
           return { status: 'closed', number: hit.number };
         } catch (err) {
-          return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+          return { status: 'resolution-failed', reason: residueErrorText(err), number: hit.number };
         }
       }
       if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
@@ -462,7 +488,7 @@ function resolveStructurallyStuck({
           + `(${remaining.length} path(s) still stuck)${note}.`]);
         return { status: 'path-removed', number: hit.number };
       } catch (err) {
-        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+        return { status: 'resolution-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -489,7 +515,7 @@ function resolveResidue({
         runner(['issue', 'close', String(hit.number), '--repo', repo]);
         return { status: 'closed', number: hit.number };
       } catch (err) {
-        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+        return { status: 'resolution-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -498,5 +524,5 @@ function resolveResidue({
 module.exports = {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, findResidueDuplicate, defaultRunner, errorText,
   parseStuckPaths, renderStuckPathsBlock, withStuckPaths, structurallyStuckBody, structurallyStuckMarker,
-  capDirtyFiles, DIRTY_FILES_CAP, residueRepoOf,
+  capDirtyFiles, DIRTY_FILES_CAP, residueRepoOf, residueErrorText,
 };
