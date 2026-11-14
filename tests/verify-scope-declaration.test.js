@@ -19,7 +19,33 @@ const { selectScope } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 've
 const { encodeImpactMap, parseImpactMap } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { BOOKKEEPING_RULES } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'init', 'verify-scope-starter.js'));
 const { readText } = require('./helpers/read-skill');
-const STAMP = { sha: 'a'.repeat(40), fullSha: 'a'.repeat(40), scope: 'full' };
+const VERIFY_JS = path.join(REPO_ROOT, 'plugin', 'bin', 'verify.js');
+const STAMP = { sha:'a'.repeat(40), fullSha: 'a'.repeat(40), scope: 'full' };
+
+test('AC6.1: this repo declares localRuns "on-request" beside its ci block (#5370)', () => {
+  const r = readDeclaration(DECL);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.strictEqual(r.decl.localRuns, 'on-request');
+  assert.deepStrictEqual(Object.keys(r.decl.ci), ['tests']);
+});
+
+test('AC6.1: verify.js --stamp-status --scope reads this checkout\'s declaration with no validation error (#5370)', () => {
+  const out = execFileSync(process.execPath, [VERIFY_JS, '--stamp-status', '--scope', '.claude-tweaks/verify-scope.json'],
+    { cwd: REPO_ROOT, encoding: 'utf8', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' } });
+  assert.strictEqual(JSON.parse(out).scopeError, null);
+  // Control: the same file with its ci block removed fails on the key, so this check can go red.
+  const raw = JSON.parse(fs.readFileSync(DECL, 'utf8'));
+  delete raw.ci;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'decl-5370-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'verify-scope.json'), JSON.stringify(raw));
+    const bad = readDeclaration(path.join(dir, 'verify-scope.json'));
+    assert.strictEqual(bad.ok, false);
+    assert.match(bad.errors[0], /^localRuns: needs a ci block/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('this repo declares its own verify scope and it passes readDeclaration (#1924 AC5, #3337)', () => {
   assert.ok(fs.existsSync(DECL), 'missing .claude-tweaks/verify-scope.json');
