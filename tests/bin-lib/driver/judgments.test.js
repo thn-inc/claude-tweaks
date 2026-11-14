@@ -127,8 +127,49 @@ describe('judgment-prompts', () => {
     });
 
     test('a diff cannot close its own fence', () => {
-      const p = buildMergeCheckPrompt(mergeArgs({ diff: 'a\n```\nb' }));
-      assert.ok(p.includes('````'));
+      const diff = 'a\n```\nb\n`````\nc';
+      const lines = buildMergeCheckPrompt(mergeArgs({ diff })).split('\n');
+      const start = lines.indexOf('a');
+      const end = lines.indexOf('c');
+      assert.ok(start > 0 && end > start);
+      const open = lines[start - 1];
+      assert.strictEqual(lines[end + 1], open);
+      assert.match(open, /^`+$/);
+      assert.ok(open.length > 5);
+    });
+
+    test('the floor statement depends on whether review findings are stated', () => {
+      const none = buildMergeCheckPrompt(mergeArgs({ reviewFindings: [] }));
+      assert.ok(none.includes('The review-findings floor and the `Independence: degraded` floor were decided by the driver before this launch and do not fire'));
+      assert.ok(none.includes('decisions.md'));
+      const some = buildMergeCheckPrompt(mergeArgs({ reviewFindings: [{ severity: 'High', text: 'bad' }] }));
+      assert.ok(some.includes('The `Independence: degraded` floor was decided by the driver before this launch and does not fire'));
+      assert.ok(!some.includes('review-findings floor'));
+      assert.ok(some.includes('hard input per the rules above'));
+      assert.ok(some.includes('decisions.md'));
+      assert.ok(!none.includes('hard input'));
+    });
+
+    test('a structured check state is rendered as JSON inside a fence', () => {
+      const checks = [{ name: 'test', bucket: 'pass' }];
+      const lines = buildMergeCheckPrompt(mergeArgs({ checks })).split('\n');
+      const i = lines.indexOf(JSON.stringify(checks));
+      assert.ok(i > 0);
+      assert.match(lines[i - 1], /^`{3,}$/);
+      assert.strictEqual(lines[i + 1], lines[i - 1]);
+      assert.ok(!lines.join('\n').includes('[object Object]'));
+      const fencedString = buildMergeCheckPrompt(mergeArgs({ checks: 'all green\n```\nx' })).split('\n');
+      const j = fencedString.indexOf('all green');
+      assert.ok(fencedString[j - 1].length > 3);
+    });
+
+    test('the real merge-check rules do not make the judge an auditor of a past run', () => {
+      const rules = loadMergeCheckRules(read);
+      assert.strictEqual(rules.ok, true);
+      const p = buildMergeCheckPrompt(mergeArgs({ rules: rules.text }));
+      assert.ok(p.includes('### Calibration'));
+      assert.doesNotMatch(p, /past run|recorded verdict/i);
+      assert.doesNotMatch(p, /audit(ing)? (a|this) (past|previous|recorded)/i);
     });
   });
 
@@ -136,6 +177,32 @@ describe('judgment-prompts', () => {
     const args = (route, over = {}) => ({
       route, record: 7, title: 'T', body: 'BODY', diff: 'DIFFTEXT', changedFiles: ['a.js', 'b.js'],
       facts: { 'F1': { kind: 'file' } }, parent: { title: 'PT', body: 'PBODY' }, subIssues: [{ number: 8 }], rules: 'RULES', ...over,
+    });
+
+    test('states each used field\'s JSON keys and enums, and {} or [] for the rest', () => {
+      const TRY = ['name', 'precondition', 'access', 'entryPoint', 'steps', 'expected', '`none`'];
+      const OBS = ['kind', 'entryPoint', 'prepare', 'inspect', 'cli', 'flow', 'diff', 'app-route', 'rendered-page'];
+      const CLAIMS = ['section', 'text', 'refs', 'what-changed', 'test-guide', 'tried-to-break', 'least-confident', 'risk-proofs'];
+      const PARENT = ['ask', 'whatShipped', 'tryItEndToEnd', '(#N)'];
+      const has = (p, words) => words.forEach((w) => assert.ok(p.includes(w), w));
+      const tryOnly = buildAcceptancePrompt(args('try-it-only'));
+      has(tryOnly, TRY);
+      assert.match(tryOnly, /`observationPlan`: return `\{\}`/);
+      assert.match(tryOnly, /`claims`: return `\[\]`/);
+      assert.match(tryOnly, /`parentBrief`: return `\{\}`/);
+      for (const route of ['no-parent-exempt', 'no-parent-gated']) {
+        const p = buildAcceptancePrompt(args(route));
+        has(p, TRY);
+        has(p, OBS);
+        has(p, CLAIMS);
+        assert.match(p, /`parentBrief`: return `\{\}`/);
+        assert.ok(!p.includes('tryItEndToEnd'));
+      }
+      const due = buildAcceptancePrompt(args('due-exceeds'));
+      has(due, TRY);
+      has(due, PARENT);
+      assert.match(due, /`observationPlan`: return `\{\}`/);
+      assert.match(due, /`claims`: return `\[\]`/);
     });
 
     test('names exactly the fields the route needs', () => {
