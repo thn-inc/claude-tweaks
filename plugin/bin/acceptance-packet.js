@@ -43,7 +43,7 @@ const { writeFileAtomic } = require('./lib/atomic-write');
 const { findingItems } = require('./lib/console/resolve');
 const { readRecord, writeRecord } = require('./lib/issues/local-store');
 const {
-  parseRepo, ghAvailable, ghOptions, pinExplicitRepoHost,
+  parseRepo, ghAvailable, ghOptions, injectedGhDeps, pinExplicitRepoHost,
 } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
 const {
@@ -198,13 +198,16 @@ const realDeps = {
   git: (args, { cwd, env } = {}) => execFileSync('git', args, {
     cwd, env, encoding: 'utf8', windowsHide: true, stdio: QUIET, timeout: GIT_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
   }),
-  gh: (args) => execFileSync('gh', args, ghOptions(args, {
+  // `{ cwd, env, stderr }` is the caller's injected process context; absent, gh inherits the real one.
+  gh: (args, { cwd, env, stderr } = {}) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', windowsHide: true, stdio: QUIET, timeout: GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
-  })),
+    ...(cwd ? { cwd } : {}),
+    ...(env ? { env } : {}),
+  }, injectedGhDeps({ env, stderr }))),
   ghAvailable,
   gitDir: ({ cwd, env } = {}) => gitDir(undefined, cwd, env),
   // An explicit --repo's host reaches every call publishPacket makes, the graphql edit included.
-  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
+  pinGhHost: (repoSpec, { env, cwd } = {}) => pinExplicitRepoHost(repoSpec, { env, cwd }),
   tmpPath: (name, env = process.env) => {
     try {
       return sessionTmpPath(env.CLAUDE_CODE_SESSION_ID, name) || path.join(os.tmpdir(), name);
@@ -809,11 +812,11 @@ function runPost(opts, deps) {
   // which clears a pending label, and the MCP path would post from the same missing file.
   const { code } = readPacketBody(opts, deps);
   if (code !== undefined) return code;
-  if (!deps.ghAvailable()) {
+  if (!deps.ghAvailable({ env: deps.env, cwd: deps.cwd() })) {
     deps.stderr(`acceptance-packet.js: ${GH_ABSENT}\n`);
     return 4;
   }
-  if (repoSpec) deps.pinGhHost(repoSpec);
+  if (repoSpec) deps.pinGhHost(repoSpec, { env: deps.env, cwd: deps.cwd() });
 
   const tmpPath = opts.pr === undefined ? null : deps.tmpPath(`acceptance-packet-pr-${opts.pr}-${process.pid}.md`, deps.env);
   let result;
@@ -863,6 +866,8 @@ const HANDLERS = Object.freeze({
 
 function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
+  const gh = deps.gh;
+  deps.gh = (args) => gh(args, { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr });
   const parsed = parseArgs(argv);
   if (parsed.error) {
     deps.stderr(`acceptance-packet.js: ${parsed.error}\n${USAGE}`);

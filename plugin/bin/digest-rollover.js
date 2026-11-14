@@ -52,7 +52,7 @@ const { execFileSync } = require('child_process');
 const {
   CarryOverInputError, classifyRolloverResume, planCarryOver,
 } = require('./lib/health-core/materiality-digest');
-const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
+const { ghAvailable, ghOptions, injectedGhDeps } = require('./lib/repo-resolve');
 const { GH_BATCH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { resolvePrinted } = require('./session-tmp-resolve');
 
@@ -110,7 +110,8 @@ function parseArgs(argv) {
   return o;
 }
 
-function defaultGh(args) {
+// `{ cwd, env, stderr }` is the caller's injected process context; absent, gh inherits the real one.
+function defaultGh(args, { cwd, env, stderr } = {}) {
   return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -118,7 +119,9 @@ function defaultGh(args) {
     timeout: GH_BATCH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES,
     windowsHide: true,
-  }));
+    ...(cwd ? { cwd } : {}),
+    ...(env ? { env } : {}),
+  }, injectedGhDeps({ env, stderr })));
 }
 
 const realDeps = {
@@ -242,6 +245,8 @@ function runCarry(opts, deps) {
 
 function run(argv, callerDeps = {}) {
   const deps = { ...realDeps, ...callerDeps };
+  const gh = deps.gh;
+  deps.gh = (args) => gh(args, { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr });
   const opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return 0; }
   if (opts.error) { deps.stderr(`digest-rollover.js: ${opts.error}\n${USAGE}`); return 1; }

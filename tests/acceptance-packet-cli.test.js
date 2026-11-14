@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
+const { STUB_SKIP } = require('./helpers/path-stub');
 const { chmodDenialSkip } = require('./helpers/root');
 const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { QA_STAMP_NAME } = require('../plugin/bin/lib/verify/qa-stamp');
@@ -1991,6 +1992,30 @@ test('AC3.1: tmpPath follows the injected CLAUDE_CODE_SESSION_ID and cwd, not pr
   assert.equal(result.code, 0, result.stderr);
   assert.equal(bodyFiles.length, 1);
   assert.equal(path.basename(path.dirname(bodyFiles[0])), `ct-session-${injected}`);
+});
+
+test('AC6.1: the gh probe runs on the injected env PATH, not the real one', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const withGh = path.join(ws.root, 'with-gh');
+  const noGh = path.join(ws.root, 'no-gh');
+  fs.mkdirSync(withGh);
+  fs.mkdirSync(noGh);
+  fs.writeFileSync(path.join(withGh, 'gh'), `#!${process.execPath}\nconsole.log('gh version 2.0.0');\n`);
+  fs.chmodSync(path.join(withGh, 'gh'), 0o755); // root-safe: makes the stub runnable
+  fs.symlinkSync(process.execPath, path.join(noGh, 'node'));
+  const { gh } = fakeGh();
+  const post = (bin) => runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--pr', '9'], {
+    cwd: ws.root,
+    env: { PATH: bin, HOME: process.env.HOME, TMPDIR: os.tmpdir() },
+    fresh: true,
+    allowRealRunner: true,
+    deps: { gh, pinGhHost: () => {} },
+  });
+  const absent = post(noGh);
+  assert.equal(absent.code, 4, absent.stderr);
+  const present = post(withGh);
+  assert.equal(present.code, 0, present.stderr);
 });
 
 test('AC3.1: a relative --scope resolves against the injected working directory, not process.cwd()', (t) => {

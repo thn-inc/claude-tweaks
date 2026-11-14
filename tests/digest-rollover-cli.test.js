@@ -525,13 +525,28 @@ test('AC6.1: the gh probe looks for gh on the injected env PATH, not the real on
   const table = { [`api ${issuePath(10)}`]: oldIssue(), [`api ${issuePath(20)}`]: issue(20) };
   const dir = scratch(t);
   const argv = ['verdict', '--old', '10', '--candidates', '20'];
-  const call = (env) => runCliSync(CLI_PATH, argv, { env: { HOME: process.env.HOME, ...env }, deps: { gh: fakeGh(table) }, allowRealRunner: true });
+  const call = (env) => withSession(dir, () => runCliSync(CLI_PATH, argv, { env: { HOME: process.env.HOME, ...env }, deps: { gh: fakeGh(table) }, allowRealRunner: true }));
   const absent = call(noGh(dir));
   assert.strictEqual(absent.code, 2, absent.stderr);
   assert.match(absent.stderr, /gh CLI not found on PATH/);
   const present = call(withGh(dir, table));
   assert.strictEqual(present.code, 0, present.stderr);
   assert.deepStrictEqual(JSON.parse(present.stdout), resume20);
+});
+
+test('AC6.1: the real gh data call runs against the injected env PATH and cwd', NOT_ON_WIN32, (t) => {
+  const table = { [`api ${issuePath(10)}`]: oldIssue(), [`api ${issuePath(20)}`]: issue(20) };
+  const dir = scratch(t);
+  assert.notEqual(dir, process.cwd());
+  // Only the stub gh on the injected PATH can answer; the real gh, if any, reads another repo.
+  const r = withSession(dir, () => runCliSync(CLI_PATH, ['verdict', '--old', '10', '--candidates', '20'], {
+    cwd: dir,
+    env: { HOME: process.env.HOME, ...withGh(dir, table) },
+    fresh: true,
+    allowRealRunner: true,
+  }));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(r.stdout), resume20);
 });
 
 test('each reader\'s documented file-form verdict runs with gh absent', (t) => {
@@ -566,6 +581,7 @@ test('step 2\'s documented carry runs against a stubbed gh, posts converge, and 
   const body = fs.readFileSync(plan.paths[0], 'utf8');
   assert.ok(body.startsWith(live), body);
   assert.ok(plan.paths[0].includes('digest-carry-10'), 'each old issue gets its own dir');
+  assert.ok(plan.paths[0].startsWith(dir), `the carry dir is under the scratch tmp dir: ${plan.paths[0]}`);
   const again = runDoc(line, dir, { [countArgs(10)]: '1', [viewArgs(10)]: [comment(live)], [viewArgs(20)]: [comment(body, 5)] });
   assert.strictEqual(again.status, 0, again.stderr);
   assert.strictEqual(JSON.parse(again.stdout).verified, true);
