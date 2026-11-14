@@ -71,7 +71,7 @@ When a parent `/claude-tweaks:flow` already materialized the file (`$PIPELINE_RU
 
 ### Spec Step 2: Check for Existing Plan
 
-**Premise-check routing first (#1829).** Read `premise.satisfiedAtBase` from the materialize envelope (`skills/flow/materialize.md`'s "Premise check" paragraph) before searching for a plan. When `true` — the record's own `Premise-check:` command exited non-zero at this checkout's base, meaning the Current State claim it named no longer holds — do not search for a plan or proceed to Spec Step 3: route directly to the Wrap-Up Review Console's staged-close surface (the `staged/premise-satisfied-{n}.md` proposal materialize.js already wrote) rather than planning a build against a premise that is already gone. When `premise` is `null` (no `Premise-check:` line, or the check itself couldn't run), this paragraph is a no-op — proceed below exactly as before.
+**Premise-check routing first (#1829).** Read `premise.satisfiedAtBase` from the materialize envelope (`skills/flow/materialize.md`'s "Premise check" paragraph) before searching for a plan. When `true` — the record's own `Premise-check:` command exited non-zero at this checkout's base — do not search for a plan or proceed to Spec Step 3: route directly to the Wrap-Up Review Console's staged-close surface (the `staged/premise-satisfied-{n}.md` proposal materialize.js already wrote). When `premise` is `null` (no `Premise-check:` line, or the check itself couldn't run), proceed below.
 
 **Already-shipped assessment (#2502).** Before searching for a plan, check whether every Deliverable and Acceptance Criterion is already satisfied on the base branch with zero implementation diff required. Read `already-shipped-assessment.md` in this skill's directory for the full check and its stop procedure (`OUTCOME: already-shipped`, stage a Close proposal, close any draft PR, release the claim, skip the bookkeeping-only commit). When even one item still needs real work, however small, this is a normal build: proceed below exactly as before.
 
@@ -156,6 +156,8 @@ Proceed to **Common Step 1.5**.
 ---
 
 ## Common Steps (both modes)
+
+**PR-body claims, any step.** A decision line that says the PR body carries something follows `architecture-alignment.md`'s `## Claims about the PR body` first, whether or not Common Step 4.5 runs.
 
 ### Common Step 1: Set Up Worktree (worktree strategy only)
 
@@ -282,7 +284,7 @@ After Common Steps 6 and 6.5, so the verified tree includes the journeys and syn
 
 **Catch up before verifying (#4343).** Immediately before that run and after any Category A fix commit, run `_shared/pre-verification-catchup.md`: a single-spec `pr-first` worktree run, in every mode, merges in a moved base, so `VERIFICATION_SHA` is then the post-merge HEAD; any other run logs its `SKIP`. It is not repeated before a re-run after a fix, and a conflict it cannot resolve confidently aborts the merge, and the run verifies the un-merged tree.
 
-**Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation instead of trusting a bare boolean.
+**Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation.
 
 If anything fails, fix it and commit the fix. If a fix changes behavior, re-check, before re-running verification, any journey or doc Common Steps 6/6.5 wrote that the fix now contradicts. **When a failure is a behavioral bug — not a mechanical type/lint error — follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` before changing code** (reproduce on command, fix the confirmed cause, escalate rather than guess if it can't be reproduced; once green, walk the causal-depth chain per the discipline's step 3) — see `failure-recovery.md` for the fuller recovery table this step falls back to.
 

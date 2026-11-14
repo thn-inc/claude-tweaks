@@ -1,0 +1,45 @@
+TAP version 13
+# Subtest: widget
+    # Subtest: runs after setup
+    not ok 1 - runs after setup
+      ---
+      duration_ms: 0.460084
+      type: 'test'
+      location: '<DIR>/hook-require.test.js:8:3'
+      failureType: 'hookFailed'
+      error: |-
+        Cannot find module './no-such-module'
+        Require stack:
+        - <DIR>/hook-require.test.js
+      code: 'MODULE_NOT_FOUND'
+      stack: |-
+        Function._resolveFilename (node:internal/modules/cjs/loader:1430:15)
+        defaultResolveImpl (node:internal/modules/cjs/loader:1040:19)
+        resolveForCJSWithHooks (node:internal/modules/cjs/loader:1045:22)
+        Function._load (node:internal/modules/cjs/loader:1216:25)
+        wrapModuleLoad (node:internal/modules/cjs/loader:254:19)
+        Module.require (node:internal/modules/cjs/loader:1527:12)
+        require (node:internal/modules/helpers:147:16)
+        TestContext.<anonymous> (<DIR>/hook-require.test.js:6:5)
+        TestHook.runInAsyncScope (node:async_hooks:214:14)
+        TestHook.run (node:internal/test_runner/test:1047:25)
+      ...
+    1..1
+not ok 1 - widget
+  ---
+  duration_ms: 0.826042
+  type: 'suite'
+  location: '<DIR>/hook-require.test.js:4:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..1
+# tests 1
+# suites 1
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 43.376125

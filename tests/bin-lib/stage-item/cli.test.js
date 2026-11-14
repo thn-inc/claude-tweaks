@@ -5,7 +5,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/stage-item');
-const { readText } = require('../../helpers/read-skill');
 const { classifyStagedItem } = require('../../../plugin/bin/lib/console/resolve');
 const { specShapedBody } = require('../../../plugin/bin/lib/issues/record');
 
@@ -289,22 +288,9 @@ for (const [id, why, titlePrefix] of [
   });
 }
 
-// #3488: the shipped-close staging call in queue-pull-script.md must not redirect stderr —
-// `2>&1` silencing hid a real staging failure from the firing's log.
-function assertShippedCloseStderrVisible(text) {
-  const line = text.split('\n').find((l) => /--id "shipped-close-/.test(l));
-  assert.ok(line, 'no shipped-close- stage-item line found');
-  assert.doesNotMatch(line, /2>/);
-}
-
-test('queue-pull-script.md: the shipped-close- stage-item line does not silence stderr (#3488)', () => {
-  const text = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
-  assertShippedCloseStderrVisible(text);
-});
-
-test('queue-pull-script.md pin control: the original 2>&1 line is rejected (#3488)', () => {
-  assert.throws(() => assertShippedCloseStderrVisible('... --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true'));
-});
+// #3488: the shipped-close staging call must not silence stderr (`2>&1` hid a real staging failure
+// from the firing's log). #5230: that call is the queue-pull module's; the stderr forwarding is
+// pinned in tests/bin-lib/dispatch/queue-pull.test.js ("#5230 shipped: … stage-item.js stderr …").
 
 test('AC4.1: cli: --run naming an archived (no longer present) run dir is refused (exit 3), nothing recreated (#5280)', () => {
   const { main, runDir, sourceFile } = fixture();

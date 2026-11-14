@@ -89,9 +89,11 @@ const POLICY_KEYS = [
   { key: 'express-lane', type: 'boolean', default: false, summary: "Opts into the express lane: a small, low-risk singleton record builds, tests and merges-on-green in one agent, not the full /flow frame.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-review-sample-every', type: 'integer', min: 1, default: 5, summary: "Sends every Nth express-lane merge through the normal review lenses after merge, filing what they find as records.", category: 'merge-safety', tier: 'advanced' },
   // #5216: the pipeline driver's admission lane (express-lane's driver design). policyOnly: the ceilings bound autonomous spend and express-driver routes records to autonomous machinery, so a --run config must never loosen them.
+  // #5222: express-driver-review — whether the driver runs its read-only evidence reviewer; policyOnly for the same reason.
   { key: 'express-driver', type: 'enum', values: ['off', 'split', 'on'], default: 'off', policyOnly: true, summary: "Routes admitted records to the pipeline driver: off, on, or split by record-number parity.", category: 'merge-safety', tier: 'advanced' },
-  { key: 'express-driver-wall-clock-minutes', type: 'integer', min: 1, default: 30, policyOnly: true, summary: "Per-record wall-clock ceiling in minutes before the driver stops.", category: 'merge-safety', tier: 'advanced' },
-  { key: 'express-driver-spend-ceiling-dollars', type: 'integer', min: 1, default: 10, policyOnly: true, summary: "Per-record spend ceiling in whole dollars before the driver stops.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-wall-clock-minutes', type: 'integer', min: 1, default: 30, policyOnly: true, summary: "Wall-clock ceiling in minutes for each driver worker launch, not the whole record.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-spend-ceiling-dollars', type: 'integer', min: 1, default: 10, policyOnly: true, summary: "Spend ceiling in whole dollars for each driver worker launch, not the whole record.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-review', type: 'enum', values: ['off', 'on', 'beyond-express'], default: 'beyond-express', policyOnly: true, summary: "Whether the pipeline driver runs its evidence reviewer: off, on, or only for records beyond the express bounds.", category: 'merge-safety', tier: 'advanced' },
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
@@ -781,11 +783,12 @@ const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
 // {repoRoot}/.claude-tweaks/policy.yml (resolveValue: out of range -> 5000) >
 // 5000. Reads from repoRoot rather than shared-primitives' cwd-anchored
 // GH_TIMEOUT_MS getter: a require cycle, and the wrong root for a caller
-// probing a repo other than the cwd's.
+// probing a repo other than the cwd's. `opts.env` (optional) replaces process.env
+// as the place the env var is read from.
 function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   const explicit = opts && opts.timeoutMs;
   if (Number.isInteger(explicit) && explicit > 0) return explicit;
-  const raw = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  const raw = (opts && opts.env ? opts.env : process.env).CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
   // A non-string repoRoot has no policy.yml to read: skip to the default instead of letting
   // path.join throw, which would break detectIntegrationModel's never-throws contract.
@@ -843,14 +846,21 @@ function formatForgeDegrade(degrade) {
 // agent turn) is documented in that file; pre-tool-use.js's hook call site
 // runs with no agent turn active and can never supply it (see
 // resolveRunPinnedIntegrationModel's own comment).
+//
+// `opts.env`, `opts.stderr` and `opts.homeDir` (all optional) let a caller run this
+// against an environment that is not the process's own: `env` is handed to both children
+// and to ghOptions, `stderr` receives ghOptions' GitHub Enterprise note, and `homeDir`
+// (a function) is read only if gh's hosts.yml lookup falls through to the home directory.
 function detectIntegrationModel(repoRoot, opts = {}) {
-  const { mcpReachable, onDegrade } = opts;
+  const { mcpReachable, onDegrade, env, stderr, homeDir } = opts;
   // Required here, not at the top: repo-resolve -> shared-primitives lazily requires
   // policy-schema and policy back, so a load-time edge from this file would close a cycle.
-  const { ghOptions } = require('./repo-resolve');
+  const { ghOptions, injectedGhDeps } = require('./repo-resolve');
+  const ghDeps = injectedGhDeps({ env, stderr, homeDir });
   try {
     execFileSync('git', ['remote', 'get-url', 'origin'], {
       cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_REMOTE_PROBE_TIMEOUT_MS, encoding: 'utf8', windowsHide: true,
+      ...(env ? { env } : {}),
     });
   } catch {
     return 'local-merge';
@@ -864,7 +874,8 @@ function detectIntegrationModel(repoRoot, opts = {}) {
       // options object, never one wrapped in ghOptions (#4505's GH_HOST seam).
       execFileSync('gh', args, ghOptions(args, {
         cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: ghTimeoutMs, encoding: 'utf8', windowsHide: true,
-      }));
+        ...(env ? { env } : {}),
+      }, ghDeps));
       return 'ok';
     } catch (err) {
       // execFileSync's `timeout` kills the child, so a timed-out probe surfaces as ETIMEDOUT or
@@ -925,12 +936,13 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 // rethrows the rest) — only the orchestration around them is shared. `root`
 // is returned too since a caller such as resolve-policy.js's
 // integration-model default needs it independent of any resolved key.
-function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid }) {
+// `cwd` (optional) replaces `process.cwd()` as that fallback root.
+function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cwd }) {
   let root;
   try {
     root = git(['rev-parse', '--show-toplevel']).trim();
   } catch {
-    root = process.cwd();
+    root = cwd || process.cwd();
   }
   const policyRaw = readFile(path.join(root, '.claude-tweaks', 'policy.yml'));
   const runConfigRaw = runDir ? readFile(path.join(runDir, 'config.yml')) : null;

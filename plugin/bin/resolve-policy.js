@@ -8,6 +8,9 @@
 // bin/lib/model-profiles/policy-fragment.js#parsePolicyModelConfig (the
 // model-profiles nested-block key; risk-path-globs, the other, resolves inside
 // resolvePolicyKeys). No resolution logic lives here. Zero runtime npm deps.
+// Exports { resolvePolicy, run, realDeps }: resolvePolicy is the core and returns an
+// object (it prints nothing), run parses argv and prints, realDeps is the production
+// deps map. The entry contract is .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md.
 //
 // Usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]
 // Output: one JSON object on stdout keyed by requested name — or, with
@@ -36,7 +39,8 @@
 // non-degraded entry keeps exactly { value, source }. merge-verification's
 // own detection honours a valid --run config.yml integration-model pin first.
 // Repo root comes from `git rev-parse --show-toplevel` at the
-// process cwd (cwd itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
+// injected cwd (`deps.cwd()`, the process cwd when run as a script; that cwd
+// itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
 // (observed unset in Bash tool environments, #170) and never from a
 // positional path argument.
 // --mcp-reachable asserts the caller has already confirmed GitHub
@@ -47,22 +51,22 @@
 // merge-verification too whenever that key is derived in the same call.
 'use strict';
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { execFileSync } = require('child_process');
 const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade } = require('./lib/policy-schema');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
+const { pickInjected } = require('./lib/repo-resolve');
 const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
 
 // The nested-block keys: no scalar form under --values.
 const BLOCK_KEYS = POLICY_KEYS.filter((row) => row.type === 'map').map((row) => row.key);
 
-function fail(msg) {
-  process.stderr.write(`resolve-policy: ${msg}\n`);
-  process.exitCode = 1;
-}
-
-function gitRoot(args) {
+function gitRoot(args, { cwd, env } = {}) {
   return execFileSync('git', args, {
+    cwd,
+    env,
     stdio: ['ignore', 'pipe', 'ignore'],
     encoding: 'utf8',
     windowsHide: true,
@@ -77,79 +81,30 @@ function readFileSafe(filePath) {
   }
 }
 
-function main(argv) {
-  const args = argv.slice(2);
-  let runDir = null;
-  let valuesMode = false;
-  let allMode = false;
-  let mcpReachable = false;
-  const keys = [];
-  while (args.length) {
-    const arg = args.shift();
-    if (arg === '--run') {
-      const value = args.shift();
-      // A blank or whitespace-only value (the shape an unset
-      // $PIPELINE_RUN_DIR expands to in shell) is rejected the same as a
-      // genuinely missing one — it must never reach the --run anchoring
-      // check below as a blank string (#1138).
-      if (value === undefined || value.startsWith('--') || value.trim() === '') {
-        fail('--run requires a value');
-        return;
-      }
-      runDir = value;
-    } else if (arg === '--values') {
-      valuesMode = true;
-    } else if (arg === '--all') {
-      allMode = true;
-    } else if (arg === '--mcp-reachable') {
-      mcpReachable = true;
-    } else {
-      // A key argument may be a single lever or a comma-joined list
-      // (`--values a,b,c`) — both shapes collect into the same flat key list,
-      // so the two output modes share one parse (#1248). Empty segments (a
-      // trailing or doubled comma) are dropped rather than becoming an
-      // unknown-key entry.
-      keys.push(...arg.split(',').filter(Boolean));
-    }
-  }
-  if (allMode && valuesMode) {
-    fail('--all and --values are mutually exclusive — --all always emits the JSON object');
-    return;
-  }
-  if (allMode && keys.length > 0) {
-    fail('--all takes no key arguments — it already emits every schema key');
-    return;
-  }
-  if (allMode) keys.push(...POLICY_KEYS.map((row) => row.key));
-  if (keys.length === 0) {
-    fail('usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]');
-    return;
-  }
-  const blockKey = BLOCK_KEYS.find((key) => keys.includes(key));
-  if (valuesMode && blockKey) {
-    // A nested-block key has no scalar form.
-    fail(`--values does not support ${blockKey} (no scalar form) — use the JSON output`);
-    return;
-  }
-  // #1065: anchored-or-outside guard — runs after the flag-conflict checks
-  // (their precedence is unchanged) and before the existence check and any
-  // config.yml read. The raw runDir string is kept downstream, so the
-  // pre-existing "does not exist" message echoes the value as given; the
-  // reject message here names the realpath-resolved candidate instead.
+// The core: resolves `keys` against policy.yml, the optional run config and forge
+// detection, and returns { code: 0, result, invalidRaw, degrades } or
+// { code: 1, message } (message is the text after `resolve-policy: `). It prints
+// nothing. deps: cwd(), env, git(args, { cwd, env }), readFile(path), and optional
+// stderr(text) and homeDir() that the library lookups receive.
+function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
+  const cwd = deps.cwd();
+  // #1065: anchored-or-outside guard — runs before the existence check and any
+  // config.yml read. The raw runDir string is kept for the "does not exist"
+  // message, which echoes the value as given; the reject message here names the
+  // realpath-resolved candidate instead.
+  let runDirPath = null;
   if (runDir !== null) {
-    const message = anchoredOrOutsideMessage(runDir, process.cwd(), '--run');
-    if (message) { fail(message); return; }
-  }
-  if (runDir !== null) {
+    const message = anchoredOrOutsideMessage(runDir, cwd, '--run');
+    if (message) return { code: 1, message };
+    runDirPath = path.resolve(cwd, runDir);
     let isDirectory = false;
     try {
-      isDirectory = fs.statSync(runDir).isDirectory();
+      isDirectory = fs.statSync(runDirPath).isDirectory();
     } catch {}
     if (!isDirectory) {
       // A file path (e.g. the config.yml itself) must fail loud here, not
       // degrade to a silent no-overlay with policy-source answers.
-      fail(`--run dir does not exist or is not a directory: ${runDir}`);
-      return;
+      return { code: 1, message: `--run dir does not exist or is not a directory: ${runDir}` };
     }
   }
 
@@ -159,11 +114,12 @@ function main(argv) {
   // stays exactly as the JSON output documents it.
   const invalidRaw = new Map();
   const { root, policyRaw, runConfigRaw, result } = resolvePolicyConfig({
-    git: gitRoot,
-    readFile: readFileSafe,
-    runDir,
+    git: (args) => deps.git(args, { cwd, env: deps.env }),
+    readFile: deps.readFile,
+    runDir: runDirPath,
     keys,
     onInvalid: (key, raw) => invalidRaw.set(key, raw),
+    cwd,
   });
 
   // integration-model / merge-verification have no static schema default
@@ -185,12 +141,8 @@ function main(argv) {
     mcpReachable,
     runConfigRaw,
     onDegrade: (key, degrade) => degrades.set(key, degrade),
+    ...pickInjected(deps),
   });
-  // One stderr line per degraded key, in every output mode; stdout is unchanged.
-  for (const key of ['integration-model', 'merge-verification']) {
-    if (!degrades.has(key)) continue;
-    process.stderr.write(`resolve-policy: degraded — ${key}: ${formatForgeDegrade(degrades.get(key))}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms\n`);
-  }
 
   // model-profiles is a block-style key — policy-only (the --run
   // overlay never applies; run configs hold flat lever lines, not nested
@@ -212,6 +164,73 @@ function main(argv) {
     }
   }
 
+  return { code: 0, result, invalidRaw, degrades };
+}
+
+function run(argv, deps = realDeps) {
+  const fail = (msg) => {
+    deps.stderr(`resolve-policy: ${msg}\n`);
+    return 1;
+  };
+  const args = [...argv];
+  let runDir = null;
+  let valuesMode = false;
+  let allMode = false;
+  let mcpReachable = false;
+  const keys = [];
+  while (args.length) {
+    const arg = args.shift();
+    if (arg === '--run') {
+      const value = args.shift();
+      // A blank or whitespace-only value (the shape an unset
+      // $PIPELINE_RUN_DIR expands to in shell) is rejected the same as a
+      // genuinely missing one — it must never reach the --run anchoring
+      // check as a blank string (#1138).
+      if (value === undefined || value.startsWith('--') || value.trim() === '') {
+        return fail('--run requires a value');
+      }
+      runDir = value;
+    } else if (arg === '--values') {
+      valuesMode = true;
+    } else if (arg === '--all') {
+      allMode = true;
+    } else if (arg === '--mcp-reachable') {
+      mcpReachable = true;
+    } else {
+      // A key argument may be a single lever or a comma-joined list
+      // (`--values a,b,c`) — both shapes collect into the same flat key list,
+      // so the two output modes share one parse (#1248). Empty segments (a
+      // trailing or doubled comma) are dropped rather than becoming an
+      // unknown-key entry.
+      keys.push(...arg.split(',').filter(Boolean));
+    }
+  }
+  if (allMode && valuesMode) {
+    return fail('--all and --values are mutually exclusive — --all always emits the JSON object');
+  }
+  if (allMode && keys.length > 0) {
+    return fail('--all takes no key arguments — it already emits every schema key');
+  }
+  if (allMode) keys.push(...POLICY_KEYS.map((row) => row.key));
+  if (keys.length === 0) {
+    return fail('usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]');
+  }
+  const blockKey = BLOCK_KEYS.find((key) => keys.includes(key));
+  if (valuesMode && blockKey) {
+    // A nested-block key has no scalar form.
+    return fail(`--values does not support ${blockKey} (no scalar form) — use the JSON output`);
+  }
+
+  const out = resolvePolicy({ keys, runDir, mcpReachable }, deps);
+  if (out.code !== 0) return fail(out.message);
+  const { result, invalidRaw, degrades } = out;
+
+  // One stderr line per degraded key, in every output mode; stdout is unchanged.
+  for (const key of ['integration-model', 'merge-verification']) {
+    if (!degrades.has(key)) continue;
+    deps.stderr(`resolve-policy: degraded — ${key}: ${formatForgeDegrade(degrades.get(key))}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms\n`);
+  }
+
   if (valuesMode) {
     // #4141: a rejected value still prints its schema default on stdout, so
     // name each rejected key on stderr — the caller otherwise cannot tell a
@@ -222,7 +241,7 @@ function main(argv) {
       const entry = result[key];
       if (!entry || !entry.invalid) continue;
       const shownDefault = entry.value ?? '(none)';
-      process.stderr.write(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}" — using default "${shownDefault}"\n`);
+      deps.stderr(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}" — using default "${shownDefault}"\n`);
     }
     // Scalar mode for shell-variable capture at prose read sites: one value
     // per line, request order. An {error} entry and a null value (no-default
@@ -233,8 +252,8 @@ function main(argv) {
       if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) return '';
       return String(entry.value);
     });
-    process.stdout.write(`${lines.join('\n')}\n`);
-    return;
+    deps.stdout(`${lines.join('\n')}\n`);
+    return 0;
   }
 
   if (allMode) {
@@ -249,11 +268,24 @@ function main(argv) {
         default: row.default ?? null,
       };
     }
-    process.stdout.write(`${JSON.stringify(decorated)}\n`);
-    return;
+    deps.stdout(`${JSON.stringify(decorated)}\n`);
+    return 0;
   }
 
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  deps.stdout(`${JSON.stringify(result)}\n`);
+  return 0;
 }
 
-main(process.argv);
+const realDeps = {
+  cwd: () => process.cwd(),
+  env: process.env,
+  homeDir: () => os.homedir(),
+  git: gitRoot,
+  readFile: readFileSafe,
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+};
+
+module.exports = { resolvePolicy, run, realDeps };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

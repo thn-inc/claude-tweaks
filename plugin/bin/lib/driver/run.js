@@ -9,8 +9,9 @@
 // Per record: one event line per step ({ ts, run, record, step, status, ms, ...extra,
 // detail? }) on stdout, held in memory until a step first sets ctx.runDir and from then
 // on appended to {run-dir}/driver-events.jsonl as well (events.js's sink). A step whose
-// result halts ends the record. Every record ends with a final line carrying the outcome
-// word for the stop's class (events.js's outcomeFor; `none` when nothing stopped), the
+// result halts ends the record; an ok result with skip: true (a step that did not apply)
+// emits no line. Every record ends with a final line carrying the outcome word for the
+// stop's class (events.js's outcomeFor; `none` when nothing stopped), the
 // totals with and without the CI wait, the PR, the CI word, the worker's cost, turns and
 // denial count, and the structured stop. A halted record is then settled by settle.js
 // (comment, label, release the claim, remove what this run created), unless the run was
@@ -64,7 +65,7 @@ const { createEventSink, outcomeFor, yieldToEventLoop, FINAL_STEP, STOP_CLASSES,
 const { STEPS } = require('./steps');
 const { toEscalationReason, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
-const { lstatType } = require('../path-guard');
+const { lstatType, canonicalRealpath } = require('../path-guard');
 const { defaultResolvePolicy } = require('../express/policy');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
@@ -310,7 +311,7 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
         sink.bindRunDir(ctx.runDir);
         bound = true;
       }
-      sink.emit(eventFor(ctx, step.name, result, ms, deps));
+      if (result.skip !== true) sink.emit(eventFor(ctx, step.name, result, ms, deps));
       if (result.halt) {
         stop = { name: step.name, result };
         break;
@@ -460,6 +461,13 @@ const realDeps = {
   writeFile: (p, s) => fs.writeFileSync(p, s),
   appendFile: (p, s) => fs.appendFileSync(p, s),
   mkdirSync: (p, opts) => fs.mkdirSync(p, opts),
+  // The review step's evidence files (review.js): created exclusively, removed one by one.
+  writeFileExclusive: (p, s) => fs.writeFileSync(p, s, { flag: 'wx' }),
+  rmFile: (p) => fs.unlinkSync(p),
+  rmdir: (p) => fs.rmdirSync(p),
+  canonicalRealpath: (p) => canonicalRealpath(p),
+  execPath: process.execPath,
+  timers: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (timer) => clearTimeout(timer) },
   platform: process.platform,
   env: process.env,
   pid: process.pid,

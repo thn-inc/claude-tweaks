@@ -9,12 +9,12 @@
 'use strict';
 const { test, after } = require('node:test');
 const assert = require('node:assert');
-const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
 const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const FIXTURES = path.join(__dirname, 'fixtures', 'resolve-policy');
@@ -44,14 +44,15 @@ function makeFixtureRepo({ policy, runConfig } = {}) {
   return { tmp, runDir };
 }
 
-function runCli(args, cwd, env = process.env) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env });
+function runPolicy(args, cwd, env) {
+  const res = runCliSync(CLI, args, { cwd, env: { ...(env || process.env) } });
+  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
 }
 
 // Success-path invariants asserted in one place: exit 0, silent stderr, and
 // stdout that is exactly one JSON object line.
 function runOk(args, cwd, env) {
-  const res = runCli(args, cwd, env);
+  const res = runPolicy(args, cwd, env);
   assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
   assert.strictEqual(res.stderr, '', 'success paths write nothing to stderr');
   assert.strictEqual(res.stdout, `${res.stdout.trim()}\n`, 'stdout is one JSON line, no trailing prose');
@@ -148,10 +149,19 @@ test('model-profiles malformed block resolves to null/default with invalid: true
 });
 
 test('AC 10: CLAUDE_PLUGIN_ROOT is never read — deleted env and decoy env both resolve the fixture', () => {
+  // A real process: in-process this would only prove the CLI reads the injected env, since the
+  // leak guard catches env writes, not reads of process.env.
+  const spawnOk = (args, cwd, env) => {
+    const res = spawnCli(CLI, args, { cwd, env });
+    assert.strictEqual(res.code, 0, `expected exit 0, got ${res.code}; stderr: ${res.stderr}`);
+    assert.strictEqual(res.stderr, '', 'success paths write nothing to stderr');
+    assert.strictEqual(res.stdout, `${res.stdout.trim()}\n`, 'stdout is one JSON line, no trailing prose');
+    return JSON.parse(res.stdout);
+  };
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
   const deleted = { ...process.env };
   delete deleted.CLAUDE_PLUGIN_ROOT;
-  const out = runOk(['autonomy'], tmp, deleted);
+  const out = spawnOk(['autonomy'], tmp, deleted);
   assert.deepStrictEqual(out, { autonomy: { value: 'unattended', source: 'policy' } });
 
   // Discriminating half: point the var at a decoy repo whose policy.yml holds
@@ -161,13 +171,13 @@ test('AC 10: CLAUDE_PLUGIN_ROOT is never read — deleted env and decoy env both
   tempDirs.push(decoy);
   fs.mkdirSync(path.join(decoy, '.claude-tweaks'));
   fs.writeFileSync(path.join(decoy, '.claude-tweaks', 'policy.yml'), 'autonomy: trusted\n');
-  const out2 = runOk(['autonomy'], tmp, { ...process.env, CLAUDE_PLUGIN_ROOT: decoy });
+  const out2 = spawnOk(['autonomy'], tmp, { ...process.env, CLAUDE_PLUGIN_ROOT: decoy });
   assert.deepStrictEqual(out2, { autonomy: { value: 'unattended', source: 'policy' } });
 });
 
 test('--run pointing at a FILE (not a dir): exit 1, stderr message, no JSON', () => {
   const { tmp, runDir } = makeFixtureRepo({ policy: 'policy-basic.yml', runConfig: 'run-config-override.yml' });
-  const res = runCli(['--run', path.join(runDir, 'config.yml'), 'autonomy'], tmp);
+  const res = runPolicy(['--run', path.join(runDir, 'config.yml'), 'autonomy'], tmp);
   assert.strictEqual(res.status, 1);
   assert.match(res.stderr, /does not exist or is not a directory/);
   assert.strictEqual(res.stdout, '');
@@ -175,7 +185,7 @@ test('--run pointing at a FILE (not a dir): exit 1, stderr message, no JSON', ()
 
 test('--values: one plain value per line in request order, native rendering', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
-  const res = runCli(['--values', 'autonomy', 'dispatch-retry-ceiling', 'worktree-always', 'tidy-aggressiveness'], tmp);
+  const res = runPolicy(['--values', 'autonomy', 'dispatch-retry-ceiling', 'worktree-always', 'tidy-aggressiveness'], tmp);
   assert.strictEqual(res.status, 0);
   assert.strictEqual(res.stderr, '');
   assert.strictEqual(res.stdout, 'unattended\n5\ntrue\nmoderate\n');
@@ -183,37 +193,37 @@ test('--values: one plain value per line in request order, native rendering', ()
 
 test('--values: unknown key and unset no-default key each print an empty line', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-empty.yml' });
-  const res = runCli(['--values', 'no-such-key', 'integration-branch', 'autonomy'], tmp);
+  const res = runPolicy(['--values', 'no-such-key', 'integration-branch', 'autonomy'], tmp);
   assert.strictEqual(res.status, 0);
   assert.strictEqual(res.stdout, '\n\nsupervised\n');
 });
 
 test('--values: unset list-typed key ([] default) prints an empty line — empty-means-none preserved', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-empty.yml' });
-  const res = runCli(['--values', 'merge-sensitive-paths', 'autonomy'], tmp);
+  const res = runPolicy(['--values', 'merge-sensitive-paths', 'autonomy'], tmp);
   assert.strictEqual(res.status, 0);
   assert.strictEqual(res.stdout, '\nsupervised\n');
 });
 
 test('--values with model-profiles: exit 1, stderr message, no output', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-model-profiles.yml' });
-  const res = runCli(['--values', 'model-profiles'], tmp);
+  const res = runPolicy(['--values', 'model-profiles'], tmp);
   assert.strictEqual(res.status, 1);
   assert.match(res.stderr, /no scalar form/);
   assert.strictEqual(res.stdout, '');
 });
 
-test('zero positional keys: exit 1, stderr usage message, no JSON on stdout', () => {
+test('smoke (real process): zero positional keys: exit 1, stderr usage message, no JSON on stdout', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
-  const res = runCli([], tmp);
-  assert.strictEqual(res.status, 1);
+  const res = spawnCli(CLI, [], { cwd: tmp, env: { ...process.env } });
+  assert.strictEqual(res.code, 1);
   assert.match(res.stderr, /usage/);
   assert.strictEqual(res.stdout, '');
 });
 
 test('nonexistent --run dir: exit 1, stderr message, no JSON on stdout', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
-  const res = runCli(['--run', path.join(tmp, 'no-such-run'), 'autonomy'], tmp);
+  const res = runPolicy(['--run', path.join(tmp, 'no-such-run'), 'autonomy'], tmp);
   assert.strictEqual(res.status, 1);
   assert.match(res.stderr, /does not exist/);
   assert.strictEqual(res.stdout, '');
@@ -246,14 +256,14 @@ test('--all: emits every schema key, decorated with all seven metadata fields', 
 
 test('--all --values: mutually exclusive, exit non-zero, stderr message', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
-  const res = runCli(['--all', '--values'], tmp);
+  const res = runPolicy(['--all', '--values'], tmp);
   assert.notStrictEqual(res.status, 0);
   assert.match(res.stderr, /resolve-policy:/);
 });
 
 test('--all with a key argument: rejected, exit non-zero, stderr message', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
-  const res = runCli(['--all', 'some-key'], tmp);
+  const res = runPolicy(['--all', 'some-key'], tmp);
   assert.notStrictEqual(res.status, 0);
   assert.match(res.stderr, /resolve-policy:/);
 });
@@ -277,8 +287,8 @@ test('--all spot-check: scope-creep entry matches a plain single-key invocation 
 
 test('comma-joined --values resolves identically to the space-separated multi-key form', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
-  const commaJoined = runCli(['--values', 'autonomy,dispatch-retry-ceiling,worktree-always'], tmp);
-  const spaceSeparated = runCli(['--values', 'autonomy', 'dispatch-retry-ceiling', 'worktree-always'], tmp);
+  const commaJoined = runPolicy(['--values', 'autonomy,dispatch-retry-ceiling,worktree-always'], tmp);
+  const spaceSeparated = runPolicy(['--values', 'autonomy', 'dispatch-retry-ceiling', 'worktree-always'], tmp);
   assert.strictEqual(commaJoined.status, 0);
   assert.strictEqual(commaJoined.stderr, '');
   assert.strictEqual(commaJoined.stdout, spaceSeparated.stdout);
@@ -305,7 +315,7 @@ test('comma-joined list with one unknown key: that key still errors, siblings st
 
 test('--all rejects a comma-joined key argument the same as a plain one', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
-  const res = runCli(['--all', 'autonomy,worktree-always'], tmp);
+  const res = runPolicy(['--all', 'autonomy,worktree-always'], tmp);
   assert.notStrictEqual(res.status, 0);
   assert.match(res.stderr, /resolve-policy:/);
   assert.strictEqual(res.stdout, '');
@@ -313,7 +323,7 @@ test('--all rejects a comma-joined key argument the same as a plain one', () => 
 
 test('--values with a comma-joined list containing model-profiles still trips the no-scalar-form rejection', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
-  const res = runCli(['--values', 'autonomy,model-profiles'], tmp);
+  const res = runPolicy(['--values', 'autonomy,model-profiles'], tmp);
   assert.strictEqual(res.status, 1);
   assert.match(res.stderr, /no scalar form/);
   assert.strictEqual(res.stdout, '');
@@ -321,7 +331,7 @@ test('--values with a comma-joined list containing model-profiles still trips th
 
 test('--values: an invalid --run value warns on stderr naming key, rejected value and default; stdout and exit unchanged', () => {
   const { tmp, runDir } = makeFixtureRepo({ runConfig: 'run-config-invalid.yml' });
-  const res = runCli(['--values', '--run', runDir, 'trust-revert-window-days', 'autonomy'], tmp);
+  const res = runPolicy(['--values', '--run', runDir, 'trust-revert-window-days', 'autonomy'], tmp);
   assert.strictEqual(res.status, 0);
   assert.strictEqual(res.stdout, '14\nsupervised\n');
   assert.strictEqual(
@@ -332,7 +342,7 @@ test('--values: an invalid --run value warns on stderr naming key, rejected valu
 
 test('--values with only valid keys (run-config overlay + policy): stderr is empty', () => {
   const { tmp, runDir } = makeFixtureRepo({ policy: 'policy-basic.yml', runConfig: 'run-config-override.yml' });
-  const res = runCli(['--values', '--run', runDir, 'dispatch-retry-ceiling', 'autonomy'], tmp);
+  const res = runPolicy(['--values', '--run', runDir, 'dispatch-retry-ceiling', 'autonomy'], tmp);
   assert.strictEqual(res.status, 0);
   assert.strictEqual(res.stdout, '7\nunattended\n');
   assert.strictEqual(res.stderr, '');
@@ -340,7 +350,7 @@ test('--values with only valid keys (run-config overlay + policy): stderr is emp
 
 test('--values: a key requested twice warns once per request, in request order', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-invalid.yml' });
-  const res = runCli(['--values', 'trust-revert-window-days', 'trust-revert-window-days'], tmp);
+  const res = runPolicy(['--values', 'trust-revert-window-days', 'trust-revert-window-days'], tmp);
   assert.strictEqual(res.status, 0);
   assert.strictEqual(res.stdout, '14\n14\n');
   const line = 'resolve-policy: warning: trust-revert-window-days has invalid value "banana" — using default "14"\n';
@@ -349,7 +359,7 @@ test('--values: a key requested twice warns once per request, in request order',
 
 test('--values: an invalid derived-default key names the derived default, not the schema literal', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-invalid-derived.yml' });
-  const res = runCli(['--values', 'housekeeping-auto-merge'], tmp);
+  const res = runPolicy(['--values', 'housekeeping-auto-merge'], tmp);
   assert.strictEqual(res.status, 0);
   assert.strictEqual(res.stdout, 'true\n');
   assert.strictEqual(res.stderr, 'resolve-policy: warning: housekeeping-auto-merge has invalid value "maybe" — using default "true"\n');
@@ -357,7 +367,7 @@ test('--values: an invalid derived-default key names the derived default, not th
 
 test('--all with an invalid value writes nothing to stderr (the flag carries it)', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-invalid.yml' });
-  const res = runCli(['--all'], tmp);
+  const res = runPolicy(['--all'], tmp);
   assert.strictEqual(res.status, 0);
   assert.strictEqual(res.stderr, '');
   assert.strictEqual(JSON.parse(res.stdout)['trust-revert-window-days'].invalid, true);
@@ -413,7 +423,7 @@ test('degraded detection: JSON mode prints local-merge, source default, a degrad
   const repo = forgeRepo();
   const gh = fakeGh({ first: 'hang' });
   try {
-    const res = runCli(['integration-model'], repo, timeoutEnv());
+    const res = runPolicy(['integration-model'], repo, timeoutEnv());
     assert.strictEqual(res.status, 0, res.stderr);
     assert.deepStrictEqual(JSON.parse(res.stdout)['integration-model'], { value: 'local-merge', source: 'default', degraded: 'timeout' });
     assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('integration-model', TEXT_X2)]);
@@ -427,7 +437,7 @@ test('degraded detection: --values prints only local-merge on stdout (AC6.2)', {
   const repo = forgeRepo();
   const gh = fakeGh({ first: 'hang' });
   try {
-    const res = runCli(['--values', 'integration-model'], repo, timeoutEnv());
+    const res = runPolicy(['--values', 'integration-model'], repo, timeoutEnv());
     assert.strictEqual(res.status, 0, res.stderr);
     assert.strictEqual(res.stdout, 'local-merge\n');
     assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('integration-model', TEXT_X2)]);
@@ -440,7 +450,7 @@ test('degraded detection: --all prints the one integration-model degraded line (
   const repo = forgeRepo();
   const gh = fakeGh({ first: 'hang' });
   try {
-    const res = runCli(['--all'], repo, timeoutEnv());
+    const res = runPolicy(['--all'], repo, timeoutEnv());
     assert.strictEqual(res.status, 0, res.stderr);
     const parsed = JSON.parse(res.stdout);
     assert.strictEqual(parsed['integration-model'].degraded, 'timeout');
@@ -456,7 +466,7 @@ test('degraded detection: a key requested twice still prints one degraded line',
   const repo = forgeRepo();
   const gh = fakeGh({ first: 'hang' });
   try {
-    const res = runCli(['integration-model', 'integration-model'], repo, timeoutEnv());
+    const res = runPolicy(['integration-model', 'integration-model'], repo, timeoutEnv());
     assert.strictEqual(res.status, 0, res.stderr);
     assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('integration-model', TEXT_X2)]);
   } finally {
@@ -468,7 +478,7 @@ test('degraded detection: timeout then a failed retry prints its own text (Q6, A
   const repo = forgeRepo();
   const gh = fakeGh({ first: 'hang', rest: 'fail' });
   try {
-    const res = runCli(['integration-model'], repo, timeoutEnv());
+    const res = runPolicy(['integration-model'], repo, timeoutEnv());
     assert.strictEqual(res.status, 0, res.stderr);
     assert.strictEqual(JSON.parse(res.stdout)['integration-model'].degraded, 'timeout-then-exit');
     assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('integration-model', TEXT_THEN_EXIT)]);
@@ -482,7 +492,7 @@ test('degraded detection: a merge-verification-only request prints its own degra
   const repo = forgeRepo();
   const gh = fakeGh({ first: 'hang' });
   try {
-    const res = runCli(['merge-verification'], repo, timeoutEnv());
+    const res = runPolicy(['merge-verification'], repo, timeoutEnv());
     assert.strictEqual(res.status, 0, res.stderr);
     assert.deepStrictEqual(JSON.parse(res.stdout)['merge-verification'], { value: 'off', source: 'default', degraded: 'timeout' });
     assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('merge-verification', TEXT_X2)]);
@@ -499,7 +509,7 @@ test('degraded detection: merge-verification timeout then a failed retry prints 
   const repo = forgeRepo();
   const gh = fakeGh({ first: 'hang', rest: 'fail' });
   try {
-    const res = runCli(['merge-verification'], repo, timeoutEnv());
+    const res = runPolicy(['merge-verification'], repo, timeoutEnv());
     assert.strictEqual(res.status, 0, res.stderr);
     assert.strictEqual(JSON.parse(res.stdout)['merge-verification'].degraded, 'timeout-then-exit');
     assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('merge-verification', TEXT_THEN_EXIT)]);
@@ -514,14 +524,14 @@ test('a policy.yml pin or a --run config.yml pin never invokes gh (AC7.1)', { sk
   const gh = fakeGh({ first: 'hang' });
   try {
     const policyRepo = forgeRepo({ policy: 'integration-model: pr-first\n' });
-    const viaPolicy = runCli(['--values', 'integration-model'], policyRepo, timeoutEnv());
+    const viaPolicy = runPolicy(['--values', 'integration-model'], policyRepo, timeoutEnv());
     assert.strictEqual(viaPolicy.status, 0, viaPolicy.stderr);
     assert.strictEqual(viaPolicy.stdout, 'pr-first\n');
     assert.strictEqual(gh.count(), 0);
 
     const runRepo = forgeRepo();
     const runDir = runDirWith('integration-model: pr-first\n');
-    const viaRun = runCli(['--values', '--run', runDir, 'integration-model'], runRepo, timeoutEnv());
+    const viaRun = runPolicy(['--values', '--run', runDir, 'integration-model'], runRepo, timeoutEnv());
     assert.strictEqual(viaRun.status, 0, viaRun.stderr);
     assert.strictEqual(viaRun.stdout, 'pr-first\n');
     assert.strictEqual(gh.count(), 0);
@@ -540,7 +550,7 @@ test('merge-verification-only request: a --run config.yml integration-model pin 
       const repo = forgeRepo();
       const runDir = runDirWith(`integration-model: ${pin}\n`);
       const before = gh.count();
-      const res = runCli(['--run', runDir, 'merge-verification'], repo, timeoutEnv());
+      const res = runPolicy(['--run', runDir, 'merge-verification'], repo, timeoutEnv());
       assert.strictEqual(res.status, 0, res.stderr);
       assert.deepStrictEqual(JSON.parse(res.stdout)['merge-verification'], { value: 'off', source: 'default' }, pin);
       assert.deepStrictEqual(degradedLines(res.stderr), [], pin);
@@ -550,7 +560,7 @@ test('merge-verification-only request: a --run config.yml integration-model pin 
     // — a timeout and its retry) and degrades, so the pinned zero is not vacuous.
     const repo = forgeRepo();
     const before = gh.count();
-    const res = runCli(['merge-verification'], repo, timeoutEnv());
+    const res = runPolicy(['merge-verification'], repo, timeoutEnv());
     assert.strictEqual(res.status, 0, res.stderr);
     assert.strictEqual(gh.count() - before, 2);
     assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('merge-verification', TEXT_X2)]);
