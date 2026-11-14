@@ -10,8 +10,7 @@ const c = require('../../../plugin/bin/lib/coordination');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'review-coordination.js');
 
 function cli(args, opts = {}) {
-  const { code, stdout, stderr } = runCliSync(CLI, args, opts);
-  return { code, stdout, stderr };
+  return runCliSync(CLI, args, opts);
 }
 
 function writeFixture(name, value) {

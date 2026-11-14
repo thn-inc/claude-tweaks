@@ -1908,7 +1908,7 @@ test('in-process over a real repo: snapshot then gather, real git and git dir', 
   fs.mkdirSync(runDir, { recursive: true });
 
   const cli = (...args) => {
-    const r = runCliSync(BIN, args, { cwd: repo, env, fresh: true, deps: { gh: () => { throw new Error('unexpected gh'); } } });
+    const r = runCliSync(BIN, args, { cwd: repo, env, fresh: true, deps: { gh: unexpectedGh } });
     return { ...r, status: r.code };
   };
   const snap = cli('snapshot', '--run', runDir, '--base', mergeBase);
@@ -1956,7 +1956,7 @@ test('AC6.1: snapshot reads the git dir from the injected env', (t) => {
   // cwd is a different repo; only the injected env points git at `repo`.
   assert.notEqual(other, repo);
   const result = runCliSync(BIN, ['snapshot', '--run', runDir, '--base', base], {
-    cwd: other, env: { ...env, GIT_DIR: repoGitDir }, fresh: true, deps: { gh: () => { throw new Error('unexpected gh'); } },
+    cwd: other, env: { ...env, GIT_DIR: repoGitDir }, fresh: true, deps: { gh: unexpectedGh },
   });
   assert.equal(result.code, 0, result.stderr);
   const manifest = JSON.parse(result.stdout);
@@ -2031,6 +2031,15 @@ function recordingGhShim(ws) {
   return { dir, calls };
 }
 
+// The environment an in-process call sees with the recording gh first on PATH.
+function shimEnv(shim) {
+  return { PATH: shim.dir + path.delimiter + process.env.PATH, HOME: process.env.HOME, TMPDIR: os.tmpdir() };
+}
+
+function unexpectedGh() {
+  throw new Error('unexpected gh');
+}
+
 function withAmbient(vars, fn) {
   const saved = {};
   for (const [k, v] of Object.entries(vars)) { saved[k] = process.env[k]; process.env[k] = v; }
@@ -2048,7 +2057,7 @@ test('AC6.2: the real gh member starts gh in the injected cwd with the injected 
   assert.notEqual(ws.root, process.cwd());
   const result = withAmbient({ CT_MARKER_5383: 'ambient' }, () => runCliSync(BIN, ['snapshot', '--run', ws.runDir, '--base', 'B'], {
     cwd: ws.root,
-    env: { PATH: shim.dir + path.delimiter + process.env.PATH, HOME: process.env.HOME, TMPDIR: os.tmpdir(), CT_MARKER_5383: 'injected', GH_HOST: 'github.com' },
+    env: { ...shimEnv(shim), CT_MARKER_5383: 'injected', GH_HOST: 'github.com' },
     fresh: true,
     allowRealRunner: true,
     deps: { git: AHEAD(), gitDir: () => ws.gitDir, mainRoot: ws.root, encodeWalkthrough: encoderStub().encodeWalkthrough },
@@ -2067,7 +2076,7 @@ test('AC6.2: the real pinGhHost reads GH_HOST from the injected env, not process
   const shim = recordingGhShim(ws);
   withAmbient({ GH_HOST: 'ambient.example' }, () => runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--repo', 'ghe.example/o/r'], {
     cwd: ws.root,
-    env: { PATH: shim.dir + path.delimiter + process.env.PATH, HOME: process.env.HOME, TMPDIR: os.tmpdir() },
+    env: shimEnv(shim),
     fresh: true,
     allowRealRunner: true,
     deps: { ghAvailable: () => true },
@@ -2088,7 +2097,7 @@ test('AC6.3: the real pinGhHost compares the --repo host with the injected cwd\'
   fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://corp.ghe.com/o/r.git'], { env: realGitEnv() });
   runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--repo', 'github.com/o/r'], {
     cwd: repo,
-    env: { PATH: shim.dir + path.delimiter + process.env.PATH, HOME: process.env.HOME, TMPDIR: os.tmpdir() },
+    env: shimEnv(shim),
     fresh: true,
     allowRealRunner: true,
     deps: { ghAvailable: () => true },
@@ -2109,7 +2118,7 @@ test('AC3.1: a relative --scope resolves against the injected working directory,
     cwd: ws.root,
     env: { PATH: process.env.PATH },
     fresh: true,
-    deps: { git: fakeGit().git, gitDir: () => ws.gitDir, mainRoot: ws.root, gh: () => { throw new Error('unexpected gh'); } },
+    deps: { git: fakeGit().git, gitDir: () => ws.gitDir, mainRoot: ws.root, gh: unexpectedGh },
   });
   assert.equal(result.code, 0, result.stderr);
   const facts = readJson(out);

@@ -22,8 +22,7 @@ const ENV_PLAIN = {
 };
 
 function runCli(root, args = [], opts = {}) {
-  const r = runCliSync(CLI, ['--root', root, ...args], { env: ENV_PLAIN, ...opts });
-  return { code: r.code, stdout: r.stdout, stderr: r.stderr };
+  return runCliSync(CLI, ['--root', root, ...args], { env: ENV_PLAIN, ...opts });
 }
 
 function commit(root, subject, files = {}) {
