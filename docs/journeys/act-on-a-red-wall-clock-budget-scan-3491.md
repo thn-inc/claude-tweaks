@@ -59,10 +59,11 @@ files:
 - **URL:** the scan and the edited test's own suite.
 - **Action:** Run `node --test tests/wall-clock-budget-conformance.test.js` and the edited file's suite. If you moved a budget, also run `npm run test:perf`.
 - **Should feel:** Mechanical. All three are green.
-- **Should understand:** The scan walks exactly the files `npm test` runs. A budget in a newly added `tools/upstream-drift/tests/` file is caught the same way.
+- **Should understand:** The scan walks exactly the files the whole suite (`npm test -- --full`) runs. A budget in a newly added `tools/upstream-drift/tests/` file is caught the same way.
 - **Red flags:** A green scan after the matcher stopped seeing a `perf/` site. The conformance suite's `MOVED_TO_PERF` map pins the moved budgets' comparison texts in their `perf/` files, so a blinded matcher fails there. Editing the map to match, when no budget was deliberately changed, means the matcher went blind, not that the budget left.
 
 ## Origin
 - Created during build of #3491. That build added the conformance scan and the stripper's opt-in `literals: 'blank'` mode it reads. It pinned the 12 pre-existing budgets in 9 `tests/` files on the allow-list. #3939 then moved those 12 to `perf/`, emptied `ALLOWLIST`, and added the `MOVED_TO_PERF` map as the scan's floor.
 - Updated during build of #3903. That build added a budget straight into `perf/scale-readiness-linearity.test.js` and listed it in `MOVED_TO_PERF`. Step 2 now says a budget added to a file the map already lists must be added to the map too.
+- Updated during build of #5319: step 4 now names `npm test -- --full` as the set the scan walks, since a plain `npm test` runs only the impact-selected subset.
 - Related: `act-on-a-red-path-containment-scan-3498.md` and `act-on-a-red-path-guard-lint-3417.md` (sibling source-scan conformance tests over the same shared stripper).

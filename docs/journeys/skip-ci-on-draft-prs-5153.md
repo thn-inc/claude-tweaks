@@ -28,9 +28,9 @@ files:
 
 ### 2. Decide about the `ci` verification source
 - **URL:** `plugin/skills/test/ci-source.md` § CI that skips draft PRs
-- **Action:** If `.claude-tweaks/verify-scope.json` declares a `ci` block, remove it: verification runs locally during the pipeline, and CI runs once at ready.
+- **Action:** If `.claude-tweaks/verify-scope.json` declares a `ci` block, remove it, and remove a top-level `"localRuns": "on-request"` with it: verification runs locally during the pipeline, and CI runs once at ready.
 - **Should feel:** A clear either/or, not a tuning puzzle.
-- **Should understand:** Declaring both is a misconfiguration. With a job-level skip every verify falls back on `ci-job-skipped` after one poll; with a workflow-level gate each verify stalls for `waitSeconds`.
+- **Should understand:** Declaring both is a misconfiguration. With a job-level skip every verify falls back on `ci-job-skipped` after one poll; with a workflow-level gate each verify stalls for `waitSeconds`. Under `localRuns: "on-request"` neither falls back quietly: each such verify exits 3 ("no verdict yet"), and a pipeline site re-runs it once with `--local` and logs one `AUTO` line (#5370). `localRuns` is valid only beside a `ci` block, so a declaration that drops `ci` and keeps the key fails validation with an error starting `localRuns:`.
 - **Red flags:** Verify stalling 15 minutes per phase with no hint that the `ci` declaration and the draft skip conflict.
 
 ### 3. Watch a run reach its merge gate — the run's PR
@@ -50,4 +50,5 @@ files:
 ## Origin
 - Created during build of #5153 (the merge gate reads checks right after `gh pr ready`, so a project whose CI skips draft PRs is read green): Steps 1-4 built in this session.
 - Updated during wrap-up of #5153: step 3 now says a skipped or cancelled post-ready run does not count and that close-out stops pending instead of waiting; step 4 explains a `(no run since ready: …)` timeout.
+- Step 2 updated at wrap-up of #5370: removing the `ci` block also removes `localRuns`, which is invalid without it, and under `localRuns` the misconfiguration ends each verify on exit 3 and a `--local` re-run.
 - Related specs: #5152 (the generated tracking workflow's runner cost), #5154 / #5159 (CI-cost visibility), #5162 (init's CI-workflow review, which will detect the `ci`-source conflict), #4347 (CI as the verification source).

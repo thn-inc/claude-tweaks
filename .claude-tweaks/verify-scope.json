@@ -1,8 +1,8 @@
 {
   "checks": {
     "tests": {
-      "tests": "npm test",
-      "journeys": "node --test tests/argument-hint-mirrors.test.js tests/close-out-ready-run-conformance.test.js tests/dispatch-named-form-exclusion-reasons.test.js tests/impeccable-retired-scripts-sweep.test.js tests/plan-citations-resolve.test.js tests/settle-blocker-landing-stop-conformance.test.js tests/tidy-release-note-repair-conformance.test.js tests/tidy-report-rules.test.js tests/timing-prose-conformance.test.js"
+      "tests": "node tools/run-tests.js --full",
+      "journeys": "node --test tests/argument-hint-mirrors.test.js tests/close-out-ready-run-conformance.test.js tests/dispatch-named-form-exclusion-reasons.test.js tests/impeccable-retired-scripts-sweep.test.js tests/pipelines-push-first-local-runs-conformance.test.js tests/plan-citations-resolve.test.js tests/settle-blocker-landing-stop-conformance.test.js tests/tidy-release-note-repair-conformance.test.js tests/tidy-report-rules.test.js tests/timing-prose-conformance.test.js"
     }
   },
   "retry": { "tests": "node --test {file}", "journeys": "node --test {file}" },
@@ -11,6 +11,7 @@
     "maxRetries": 1
   },
   "ci": { "tests": { "workflow": "test.yml", "job": "test" } },
+  "localRuns": "on-request",
   "impact": {
     "suite": "tests",
     "command": "node tools/run-tests.js --files-from {files}",

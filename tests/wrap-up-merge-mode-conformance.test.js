@@ -314,7 +314,7 @@ const ATTENDED_FACTS = {
   renumber: /renumbers the branch's own entry and every citation the branch added, never the integration branch's/,
   'line-per-file-reported': /each file's line goes into the commit message and the closing report/,
   suite: /Stage the result and run the full suite through `verify\.js`/,
-  cwd: /with `--cwd "\{worktree-path\}"`, so it checks the resolved merge/,
+  cwd: /with `--cwd "\{worktree-path\}"`, and with `--local` \(the resolved merge is not pushed, so the PR's CI cannot answer for it, and under `localRuns` an unscoped run needs `--local`\), so it checks the resolved merge/,
   'green-gate': /Green: commit, push/,
   reenter: /re-enter Step 2\.5 from the top/,
   'push-failed': /A failed push reports `pending-review`, reason `push-failed`/,
