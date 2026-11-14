@@ -1619,8 +1619,7 @@ test('normalizeEventText bounds its input before normalizeTitle (EVENT_TEXT_INPU
   // The quadratic shapes for normalizeTitle's trailing-dot pattern, uncapped reviewer text; the time
   // budget is perf/driver-review-event-text-linearity.test.js's.
   for (const [input, want] of [[`a${'. '.repeat(100000)}x`, 'a'], [`${'.'.repeat(80000)}x`, '']]) {
-    const out = normalizeEventText(input);
-    assert.ok(out === want && out.length <= EVENT_TEXT_MAX_CHARS, `length ${out.length}`);
+    assert.strictEqual(normalizeEventText(input), want);
   }
 });
 
