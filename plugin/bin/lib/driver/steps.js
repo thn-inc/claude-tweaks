@@ -38,6 +38,19 @@
 // (JAVA_HOME, NODE_OPTIONS, CI, HTTPS_PROXY, NODE_EXTRA_CA_CERTS, LC_ALL, XDG_*) fails at the test
 // step; it fails closed (red, escalate).
 //
+// Index flags (#5415): worker code can set skip-worktree or assume-unchanged on a path, so git status
+// never reports it and the commit step never stages it, while the worker's tests and the evidence runs
+// read bytes that are never committed. The worktree step therefore refuses a worktree whose
+// core.ignoreStat is true (git would mark every path the driver stages assume-unchanged, so the check
+// below would stop every record) and reads the flagged paths once as the baseline (ctx.indexFlags). The
+// flags are read again after each implementer launch, after the verify.js call, and after each
+// evidence run (review.js); a path flagged now and not in the baseline is a `fail`, by set difference
+// with the baseline only, so a flag cleared and set again is no stop. The driver never clears a flag.
+// Not covered, stated residuals with CI on push as the backstop: a .gitattributes filter, core.fsmonitor,
+// an index listing past the read's buffer (that read throws and stops the record), and a path already
+// flagged when the worktree is created (code the driver runs can rewrite it, git status does not report
+// it, and the commit never stages it).
+//
 // Every external call goes through `deps`; nothing here reads process state.
 //
 // The ci step holds every read other than `pending` or `stale` to a settle window of 2 minutes,
@@ -412,6 +425,11 @@ const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx
   if (stamped.code !== 0 || !String(stamped.stdout).split(/\r?\n/).some((l) => l.trim() === recorded)) {
     return { status: 'fail', detail: `worktree not recorded in the run state: ${firstLine(stamped.stdout) || firstLine(stamped.stderr) || 'no output'}` };
   }
+  const refused = ignoreStatStop(deps, wt);
+  if (refused) return refused;
+  const flags = readIndexFlags(deps, wt);
+  if (flags === null) return { status: 'fail', detail: INDEX_FLAGS_BASELINE_UNREADABLE };
+  ctx.indexFlags = flags;
   return { status: 'ok' };
 });
 
@@ -464,6 +482,60 @@ function headFail(before, after, extra) {
   return null;
 }
 
+const IGNORE_STAT_REFUSED = 'core.ignoreStat is true for the new worktree, so git would mark every path the driver stages assume-unchanged; the driver refuses such a worktree';
+const IGNORE_STAT_UNREADABLE = 'core.ignoreStat of the new worktree is unreadable';
+const INDEX_FLAG_PATHS_SHOWN = 5;
+const INDEX_FLAGS_BASELINE_UNREADABLE = 'the index flags of the new worktree are unreadable';
+const INDEX_FLAGS_UNREADABLE = 'the index flags of the worktree are unreadable';
+
+// The refusal of a worktree whose core.ignoreStat is true: null when it may be used. Only git's "not
+// set" exit (1) passes a failed read; the details carry no git text.
+function ignoreStatStop(deps, wt) {
+  let out;
+  try {
+    out = String(gitIn(deps, wt, ['config', '--bool', 'core.ignoreStat'])).trim();
+  } catch (err) {
+    return err && err.status === 1 ? null : { status: 'fail', detail: IGNORE_STAT_UNREADABLE };
+  }
+  if (out === 'true') return { status: 'fail', detail: IGNORE_STAT_REFUSED };
+  if (out === 'false') return null;
+  return { status: 'fail', detail: IGNORE_STAT_UNREADABLE };
+}
+
+// The paths whose `ls-files -v` tag is S (skip-worktree) or a lowercase letter (assume-unchanged), in
+// listing order, as a Set; null when the read throws or its output is not NUL-terminated
+// `{tag} {path}` entries. The output is never trimmed: a path may end in whitespace or hold a newline.
+function readIndexFlags(deps, wt) {
+  let out;
+  try {
+    out = String(gitIn(deps, wt, ['--no-optional-locks', 'ls-files', '-v', '-z']));
+  } catch {
+    return null;
+  }
+  const flagged = new Set();
+  if (out === '') return flagged;
+  if (!out.endsWith('\0')) return null;
+  for (const entry of out.slice(0, -1).split('\0')) {
+    if (entry.length < 3 || entry[1] !== ' ') return null;
+    const tag = entry[0];
+    if (tag === 'S' || (tag >= 'a' && tag <= 'z')) flagged.add(entry.slice(2));
+  }
+  return flagged;
+}
+
+// The fail for a path flagged since the worktree was created; null when there is none. Paths are
+// worker-shaped, so each goes through neutralize.
+function newIndexFlagStop(ctx, deps) {
+  const now = readIndexFlags(deps, ctx.wt);
+  if (now === null) return { status: 'fail', detail: INDEX_FLAGS_UNREADABLE };
+  if (!(ctx.indexFlags instanceof Set)) throw new Error('index flag baseline missing');
+  const added = [...now].filter((p) => !ctx.indexFlags.has(p));
+  if (added.length === 0) return null;
+  const shown = added.slice(0, INDEX_FLAG_PATHS_SHOWN).map(neutralize).join(', ');
+  const more = added.length > INDEX_FLAG_PATHS_SHOWN ? `, and ${added.length - INDEX_FLAG_PATHS_SHOWN} more` : '';
+  return { status: 'fail', detail: `skip-worktree or assume-unchanged newly set on ${added.length} path(s) since the worktree was created: ${shown}${more}` };
+}
+
 // Ports express-lane.md step 2 (the edit): the headless implementer, launched through
 // worker.js with the run's two ceilings. Every string the worker controls is untrusted:
 // the summary and denial inputs are neutralized here, the title is kept raw only for the
@@ -473,7 +545,8 @@ function headFail(before, after, extra) {
 // consumer owes").
 // The body is shared with the review step's fix round, which appends `extraPrompt` to the same prompt.
 // HEAD is read on both sides of the launch, a launcher throw included: a moved or unreadable
-// HEAD is a `fail` naming only the shas.
+// HEAD is a `fail` naming only the shas. After an unmoved HEAD the index flags are checked, on the
+// throw path too.
 async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   const { shared } = ctx;
   const ceilings = readCeilings(shared.policy);
@@ -505,6 +578,8 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
     // otherwise the throw is rethrown as it was.
     const headStop = headFail(before, headOf(deps, ctx.wt));
     if (headStop) return headStop;
+    const flagStop = newIndexFlagStop(ctx, deps);
+    if (flagStop) return flagStop;
     throw err;
   }
   const hasEnvelope = !!envelope && typeof envelope === 'object';
@@ -532,6 +607,8 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   }
   const headStop = headFail(before, headOf(deps, ctx.wt), extra);
   if (headStop) return headStop;
+  const flagStop = newIndexFlagStop(ctx, deps);
+  if (flagStop) return extra ? { ...flagStop, extra } : flagStop;
   if (!hasEnvelope) return { status: 'fail', detail: 'worker launch returned no envelope' };
   if (envelope.status !== 'ok') {
     const why = neutralize(envelope.detail);
@@ -702,6 +779,9 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   deps.mkdirSync(ghConfigDir, { recursive: true });
   const env = { ...buildEnv(deps.env, deps.platform), GH_CONFIG_DIR: ghConfigDir };
   const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env });
+  // The run executed worker code: a flag it set outranks the verdict.
+  const flagStop = newIndexFlagStop(ctx, deps);
+  if (flagStop) return flagStop;
   // A null code is no exit at all (a timeout, a spawn error): the suite never gave a verdict.
   if (r.code === null || r.code === undefined) {
     return { status: 'fail', detail: `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}` };
@@ -1088,5 +1168,5 @@ const STEPS = Object.freeze([
 
 module.exports = {
   STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
-  VERIFY_TIMEOUT_MS,
+  VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop,
 };
