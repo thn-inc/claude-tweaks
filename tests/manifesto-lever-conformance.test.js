@@ -79,8 +79,8 @@ function parseConfigKeys(manifestoText) {
     if (!line) continue;
     const m = /^([a-z0-9-]+):/.exec(line);
     if (!m) continue;
-    if (m[1] === 'spec' || m[1] === 'created') break; // trailing bookkeeping keys, not levers
-    if (RUN_PINS.includes(m[1])) continue; // run pins (integration-model) sit in this block but are not levers
+    if (m[1] === 'spec' || m[1] === 'created') break; // `spec` (a run pin) / `created:` trail the block, not levers
+    if (RUN_PINS.includes(m[1])) continue; // run pins (`RUN_PINS`) sit in this block but are not levers
     keys.push(m[1]);
   }
   return keys;

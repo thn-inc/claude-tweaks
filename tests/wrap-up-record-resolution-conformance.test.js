@@ -294,9 +294,9 @@ test('Per-issue label cleanup uses the captured value, not a fresh header read',
 // auto-merge short-circuit stays header-only — all three gates test
 // inputs.closingRecords, never inputs.records.
 const SHORT_CIRCUIT_GATES = [
-  ['plugin/skills/wrap-up/review-console.md', 'has a materialized header (`{run-dir}/wrap-up-pack.json`'],
-  ['plugin/skills/wrap-up/auto-merge-short-circuit.md', 'has a materialized header (`{run-dir}/wrap-up-pack.json`'],
-  ['plugin/skills/wrap-up/SKILL.md', 'This run resolves a materialized header ('],
+  ['plugin/skills/wrap-up/review-console.md', 'has a materialized header (`{run-dir}/wrap-up-pack.json`', /`inputs\.closingRecords` is non-empty/],
+  ['plugin/skills/wrap-up/auto-merge-short-circuit.md', 'has a materialized header (`{run-dir}/wrap-up-pack.json`', /`inputs\.closingRecords` is non-empty/],
+  ['plugin/skills/wrap-up/SKILL.md', 'This run resolves a materialized header (', /\(`inputs\.closingRecords`\)/],
 ];
 function gatePassage(rel, anchor) {
   const flat = collapse(read(rel));
@@ -305,9 +305,9 @@ function gatePassage(rel, anchor) {
   return flat.slice(at, at + 200);
 }
 test('Reading A: the auto-merge short-circuit gates on inputs.closingRecords at all three sites, never inputs.records', () => {
-  for (const [rel, anchor] of SHORT_CIRCUIT_GATES) {
+  for (const [rel, anchor, gate] of SHORT_CIRCUIT_GATES) {
     const passage = gatePassage(rel, anchor);
-    assert.match(passage, /inputs\.closingRecords/, rel);
+    assert.match(passage, gate, rel);
     assert.doesNotMatch(passage, /inputs\.records`/, rel);
   }
 });

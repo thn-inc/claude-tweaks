@@ -19,7 +19,7 @@ const { DEFER_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issue
 const { stagedDiffPaths, referenceRepairFloorReason, referenceRepairFloorHits, REFERENCE_REPAIR_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'reference-repair'));
 
 function fixture({
-  decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
+  decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {}, config = null,
 } = {}) {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
@@ -30,6 +30,7 @@ function fixture({
   if (pack) fs.writeFileSync(path.join(runDir, 'wrap-up-pack.json'), JSON.stringify(pack));
   for (const n of headers) fs.writeFileSync(path.join(runDir, 'work', `${n}-spec.md`), `---\nrecord: ${n}\n---\n`);
   if (manifest) fs.writeFileSync(path.join(runDir, 'manifest.yml'), manifest);
+  if (config) fs.writeFileSync(path.join(runDir, 'config.yml'), config);
   for (const [specId, nums] of Object.entries(specHeaders)) {
     const specWork = path.join(runDir, `spec-${specId}`, 'work');
     fs.mkdirSync(specWork, { recursive: true });
@@ -918,6 +919,22 @@ test('no drain-overlap hold line means checkPrState is never consulted (#2299)',
 test('no resolvable members resolves the merge half to leave-open with reason members-unresolved (#1932 decision 2)', () => {
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' } }), policy: 'console-auto', deps: deps() });
   assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
+});
+
+test('a run dir holding only config.yml spec: N resolves the merge half to leave-open members-unresolved, never a config-rung member (Reading A, #5347)', () => {
+  const calls = [];
+  const runDir = fixture({ staged: { 'reflect-1.md': 'x' }, config: 'spec: 7\n' });
+  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return deps().readGrants(n); } }) });
+  assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
+  assert.deepStrictEqual(calls, []);
+});
+
+test('a wrap-up-pack.json whose records came from the config rung yields no members, same members-unresolved (Reading A, #5347)', () => {
+  const calls = [];
+  const runDir = fixture({ staged: { 'reflect-1.md': 'x' }, config: 'spec: 7\n', pack: { inputs: { records: [7], sources: { records: 'config' } } } });
+  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return deps().readGrants(n); } }) });
+  assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
+  assert.deepStrictEqual(calls, []);
 });
 
 test('members come from wrap-up-pack.json inputs.records when present (#1932 decision 2)', () => {

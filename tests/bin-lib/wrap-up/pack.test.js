@@ -396,6 +396,22 @@ test('the config rung is last: a header wins over config.yml spec:', () => {
   assert.strictEqual(inputs.sources.records, 'headers');
 });
 
+test('the config rung is last: a worktree-mirror header wins over config.yml spec:', () => {
+  const { runDir } = mirrorFixture();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'spec: 9999\n');
+  const inputs = resolveInputs({ runDir, cwd: '/nowhere', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1930]);
+  assert.strictEqual(inputs.sources.records, 'worktree-headers');
+});
+
+test('the config rung never runs when the run dir holds a manifest.yml, even an empty one', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), '');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.deepStrictEqual(inputs.records, []);
+});
+
 test('the config rung is last: a manifest wins and closingRecords stays empty', () => {
   const runDir = configOnlyRunDir('spec: 1930\n');
   fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  parent: 1904\n  specs:\n    - id: 1930\n      status: complete\n      subdir: spec-1930\n    - id: 1931\n      status: pending\n      subdir: spec-1931\n');

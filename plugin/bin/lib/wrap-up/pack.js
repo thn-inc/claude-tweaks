@@ -242,7 +242,8 @@ function configRecords(deps, dir) {
 // on a real pr-first dispatch group it exists only in the worktree, never in
 // the main-checkout run dir --run anchors to, same reason rung (b) mirrors
 // rung (a)); (e) last, the run dir's config.yml `spec:` pin (#5347, the express
-// lane — skipped for a spec-* subdirectory); else none.
+// lane — skipped for a spec-* subdirectory or a run dir holding a manifest.yml);
+// else none.
 function resolveRecords(deps, runDir, worktree) {
   // `parkedAtShaping` (record number -> boolean) is populated for the two
   // header rungs only; the manifest rungs and `unavailable` carry `{}`.
@@ -272,7 +273,9 @@ function resolveRecords(deps, runDir, worktree) {
   // (e) the run dir's config.yml `spec:` pin (#5347) — an express run writes no
   // header or manifest. Never for a spec-* subdirectory: its config.yml is a
   // byte copy of the parent's, so `spec:` names the parent's lowest record.
-  if (!/^spec-/.test(path.basename(runDir))) {
+  // Nor when a manifest.yml is present: an empty or unparseable one is a broken
+  // multi-spec parent, which the pin would hide behind its lowest record.
+  if (!/^spec-/.test(path.basename(runDir)) && readText(deps, path.join(runDir, 'manifest.yml')) === null) {
     const pinned = configRecords(deps, runDir);
     if (pinned.length) return { records: pinned, source: 'config', parkedAtShaping: {} };
   }

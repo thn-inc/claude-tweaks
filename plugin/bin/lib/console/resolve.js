@@ -295,15 +295,18 @@ function readJson(deps, file) {
 // Members: the fact pack's resolved record list when a pack exists (#1930
 // gathers it before the console), else pack.js's shared resolveRecords
 // ladder (run dir's own headers, the worktree mirror, a parent multi-spec
-// run's manifest.yml + spec-*/work/ headers, then the run dir's config.yml
-// `spec:` — #2028, #5347).
+// run's manifest.yml + spec-*/work/ headers — #2028). Members never come from
+// the config rung: it names only the run's lowest record and carries no
+// header-stated closing intent (Reading A, #5347), so it yields [].
 function readMembers(deps, runDir) {
   const pack = readJson(deps, path.join(runDir, 'wrap-up-pack.json'));
+  if (pack && pack.inputs && pack.inputs.sources && pack.inputs.sources.records === 'config') return [];
   const fromPack = pack && pack.inputs && Array.isArray(pack.inputs.records) ? pack.inputs.records.map(Number).filter(Number.isFinite) : [];
   if (fromPack.length) return fromPack;
   const state = readJson(deps, path.join(runDir, 'run-state.json'));
   const worktree = state && typeof state.worktree === 'string' ? state.worktree : null;
-  return resolveRecords(deps, runDir, worktree).records;
+  const resolved = resolveRecords(deps, runDir, worktree);
+  return resolved.source === 'config' ? [] : resolved.records;
 }
 
 function parseInvariant(patchText) {
