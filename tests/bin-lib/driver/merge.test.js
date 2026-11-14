@@ -1794,13 +1794,13 @@ test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest
   assert.match(hr.detail, /^merged, .* concluded SUCCESS$/);
   assert.doesNotMatch(hr.detail, /@|`|#/);
   // reduceDetail has already removed the `#`, so `closes 5` links nothing and neutralize keeps the
-  // bare keyword (it strips one only before a `#N` or issue/PR path); the same keyword before an
-  // issue path is a link marker and goes.
+  // bare keyword (it strips one only before a `#N` or issue/PR path); the same keyword before a
+  // host-free issue path is a link marker, and since #5352 the path itself goes with it.
   assert.equal(hr.detail, 'merged, at octo x closes 5 concluded SUCCESS');
   const linking = mergeHarness({ confirm: { statusCheckRollup: [{ ...GREEN_CHECK, name: 'closes o/r/issues/5' }] } });
   const lr = await merge(CTX, linking.deps);
-  assert.equal(lr.detail, 'merged, o/r/issues/5 concluded SUCCESS');
-  assert.doesNotMatch(lr.detail, /closes/i);
+  assert.equal(lr.detail, 'merged, concluded SUCCESS');
+  assert.doesNotMatch(lr.detail, /closes|issues\/5/i);
   for (const mergeCommit of [null, {}, { oid: '' }, 'abc']) {
     const m = mergeHarness({ confirm: { mergeCommit } });
     // No merge commit to describe: the release status is unavailable, the merge is still merged.
