@@ -469,8 +469,10 @@ test('--help exits 0 before any probe; the real binary prints usage', () => {
   const { deps, log } = harness({ isDirectory: () => { throw new Error('probed'); }, cwd: () => { throw new Error('probed'); } });
   assert.strictEqual(run(['--help'], deps), 0);
   assert.ok(log.out.startsWith('usage: dispatch-prompt.js'));
-  const real = execFileSync(process.execPath, [CLI, '--help'], { encoding: 'utf8', windowsHide: true });
-  assert.ok(real.startsWith('usage: dispatch-prompt.js'));
+  // Real process: the script entry exits 0 and prints the usage on stdout for --help.
+  const real = spawnCli(CLI, ['--help'], { env: { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() } });
+  assert.strictEqual(real.code, 0);
+  assert.ok(real.stdout.startsWith('usage: dispatch-prompt.js'));
 });
 
 // Real process: the script entry turns run()'s return 2 into the child's exit status, with the refusal on stderr and nothing on stdout (#5384, AC6).
