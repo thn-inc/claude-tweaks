@@ -143,6 +143,21 @@ test('two ci suites naming one workflow give one finding listing both', () => {
   assert.equal(same.findings[0].detail, 'ci source tests names this workflow; job(s) test skip drafts');
 });
 
+// Check 2 still fires on any skipping job; the detail names the declared job so
+// a skip on some other job reads as what it is.
+test('check 2\'s detail names each source\'s declared job beside the skipping job ids', () => {
+  // The declared job `test` runs on drafts; only `preview` skips them.
+  const text = `name: CI\non:\n  pull_request:\n    ${READY_TYPES}\n${CONC}jobs:\n  test:\n    runs-on: x\n    steps:\n      - run: t\n`
+    + '  preview:\n    if: github.event.pull_request.draft == false\n    runs-on: x\n    steps:\n      - run: p\n';
+  const r = review({ 'ci.yml': text }, [{ suite: 'tests', workflow: 'ci.yml', job: 'test' }]);
+  assert.deepEqual(checksOf(r, W), ['draft-skip-with-ci-source']);
+  assert.equal(r.findings[0].detail, 'ci source tests (job test) names this workflow; job(s) preview skip drafts');
+  const both = review({ 'ci.yml': draftWf({ types: READY_TYPES }) }, [
+    { suite: 'tests', workflow: 'ci.yml', job: 'test' }, { suite: 'e2e', workflow: 'CI', job: 'Browser' }, { suite: 'tests', workflow: 'CI', job: 'test' },
+  ]);
+  assert.equal(both.findings[0].detail, 'ci source tests (job test), e2e (job Browser) names this workflow; job(s) test skip drafts');
+});
+
 test('a draft skip without a pull_request trigger counts for neither check', () => {
   const text = draftWf().replace('  pull_request:\n    types: [opened, synchronize]\n', '  push:\n    branches: [main]\n');
   const r = review({ 'ci.yml': text }, [{ suite: 'tests', workflow: 'ci.yml' }]);
@@ -335,12 +350,11 @@ test('AC3.3: a second workflow whose every job skips drafts, or whose trigger ha
 });
 
 // G6: an unparsed workflow never counts as the always-reporting one. The last
-// two would count if read as clean (pull_request, no filter, an if:-free job).
+// one would count if read as clean (pull_request, no filter, an if:-free job).
 test('an unparsed second workflow is not counted, and the detail names it', () => {
   const cases = [
     ['no jobs: key', `on:\n  pull_request:\n${CONC}`],
     ['concurrency not read', prWf({ conc: 'concurrency: {group: x\n' })],
-    ['cancel-in-progress expression not evaluated', prWf({ conc: EXPR_CONC })],
   ];
   for (const [reason, other] of cases) {
     const r = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': other });
@@ -417,10 +431,66 @@ test('AC4.4: a cancel-in-progress expression is unparsed', () => {
   const r = review({ 'ci.yml': prWf({ conc: EXPR_CONC }) });
   assert.deepEqual(r.findings, []);
   assert.deepEqual(r.unparsed, [{ workflow: W, reason: 'cancel-in-progress expression not evaluated' }]);
-  // Check 4 applies to PR workflows only, so a push-only one is not unparsed.
+  // Check 4 applies to PR workflows a push re-runs only, so a push-only one, or
+  // one whose types omit synchronize, is not unparsed.
   const push = review({ 'ci.yml': pushWf(`on:\n  push:\n    branches: [main]\n${EXPR_CONC}`, JOBS) });
   assert.deepEqual(push.findings, []);
   assert.deepEqual(push.unparsed, []);
+  const closed = review({ 'ci.yml': prWf({ on: '  pull_request:\n    types: [closed]\n', conc: EXPR_CONC }) });
+  assert.deepEqual(closed.findings, []);
+  assert.deepEqual(closed.unparsed, []);
+});
+
+// Check 4's rationale is superseded runs, which only a push to the PR
+// (synchronize) makes; undeclared types read as the default set, which has it.
+test('check 4 reports only when the pull_request types are undeclared or include synchronize', () => {
+  for (const types of ['[closed]', '[labeled]', '[opened, edited]']) {
+    const r = review({ 'ci.yml': prWf({ on: `  pull_request:\n    types: ${types}\n`, conc: '' }) });
+    assert.deepEqual(r.findings, [], types);
+    assert.deepEqual(r.unparsed, [], types);
+  }
+  for (const on of ['  pull_request:\n    types: [opened, synchronize]\n', '  pull_request:\n    types: [synchronize]\n', '  pull_request:\n',
+    '  pull_request:\n    types: [closed]\n  pull_request_target:\n']) {
+    const r = review({ 'ci.yml': prWf({ on, conc: '' }) });
+    assert.deepEqual(checksOf(r, W), ['no-cancel-in-progress-concurrency'], on);
+    assert.equal(r.findings[0].detail, 'no workflow-level concurrency', on);
+  }
+});
+
+// Ruling (a) on the final review's I2: the expression's unknown is check 4's
+// alone. The workflow keeps its unparsed entry, and checks 1, 2, 3 and 5,
+// none of which reads concurrency, still run on it.
+test('a cancel-in-progress expression suppresses check 4 only: checks 1, 2, 3 and 5 still run, and the unparsed entry stays', () => {
+  const EXPR = { workflow: W, reason: 'cancel-in-progress expression not evaluated' };
+  const guarded = `name: CI\non:\n  pull_request:\n    types: [opened, synchronize]\n  push:\n    branches: [main]\n${EXPR_CONC}jobs:\n`
+    + '  test:\n    if: github.event.pull_request.draft == false\n    runs-on: x\n    steps:\n      - run: t\n';
+  const r = review({ 'ci.yml': guarded });
+  assert.deepEqual(checksOf(r, W), ['draft-skip-no-ready-for-review']);
+  assert.equal(r.findings[0].detail, 'job(s) test skip drafts; types: opened, synchronize');
+  assert.deepEqual(r.unparsed, [EXPR]);
+
+  const withSource = review({ 'ci.yml': guarded }, [{ suite: 'tests', workflow: 'ci.yml', job: 'test' }]);
+  assert.deepEqual(checksOf(withSource, W), ['draft-skip-no-ready-for-review', 'draft-skip-with-ci-source']);
+  assert.deepEqual(withSource.unparsed, [EXPR]);
+
+  const paths = review({ 'ci.yml': prWf({ on: PATHS_ON, conc: EXPR_CONC }) });
+  assert.deepEqual(checksOf(paths, W), ['paths-filter-no-always-reporting-job']);
+  assert.equal(paths.findings[0].detail, NO_ALWAYS);
+  assert.deepEqual(paths.unparsed, [EXPR]);
+
+  const push = review({ 'ci.yml': `on:\n  pull_request:\n  push:\n${EXPR_CONC}jobs:\n${STEP_GATED}` });
+  assert.deepEqual(checksOf(push, W), ['push-all-step-gated']);
+  assert.deepEqual(push.unparsed, [EXPR]);
+
+  // Check 3 reads it as a read workflow: it can be the always-reporting one.
+  const counted = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': prWf({ conc: EXPR_CONC }) });
+  assert.deepEqual(checksOf(counted, W), []);
+  assert.deepEqual(counted.unparsed, [{ workflow: OTHER, reason: 'cancel-in-progress expression not evaluated' }]);
+
+  // Beside any other reason it still suppresses every check, and both reasons are named.
+  const mixed = review({ 'ci.yml': guarded.replace('draft == false', 'draft == false || always()') });
+  assert.deepEqual(mixed.findings, []);
+  assert.deepEqual(mixed.unparsed, [{ workflow: W, reason: 'draft condition not understood; cancel-in-progress expression not evaluated' }]);
 });
 
 test('AC5.1: on: push with only a step-level if: yields exactly push-all-step-gated', () => {
@@ -484,5 +554,5 @@ test('readCiSources: null with no verify-scope.json, [] when declared without ci
   fs.writeFileSync(declPath, JSON.stringify(base));
   assert.deepEqual(M.readCiSources(root), { ok: true, ciSources: [] });
   fs.writeFileSync(declPath, JSON.stringify({ ...base, ci: { tests: { workflow: 'ci.yml', job: 'test' } } }));
-  assert.deepEqual(M.readCiSources(root), { ok: true, ciSources: [{ suite: 'tests', workflow: 'ci.yml' }] });
+  assert.deepEqual(M.readCiSources(root), { ok: true, ciSources: [{ suite: 'tests', workflow: 'ci.yml', job: 'test' }] });
 });

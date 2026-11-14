@@ -4,7 +4,8 @@
 // the one place workflow text is parsed); this module never parses YAML and
 // never writes. It only classifies a job `if:` expression string
 // (classifyDraftCondition). A workflow the reader could not follow, or whose
-// draft condition is not understood, is reported as `unparsed` and never judged.
+// draft condition is not understood, is reported as `unparsed` and never judged;
+// a `cancel-in-progress` expression is unparsed for check 4 alone.
 // Remedies are section names in `_shared/ci-skips-drafts.md`, never restated text.
 // readWorkflowSet / readCiSources discover the two inputs by convention under
 // the checkout root; every leaf is realpath-resolved and must stay inside it,
@@ -92,12 +93,14 @@ function checkNoReadyForReview({ shape, draftSkipIds }) {
   return `job(s) ${draftSkipIds.join(', ')} skip drafts; types: ${shape.types.join(', ')}${shape.typesDeclared ? '' : ' (default)'}`;
 }
 
-// Check 2: a `ci` verification source names a workflow that skips drafts.
+// Check 2: a `ci` verification source names a workflow in which any job skips
+// drafts. The detail names each source's declared job beside the skipping ids.
 function checkCiSource({ entry, shape, draftSkipIds, ciSources }) {
   if (ciSources === null || draftSkipIds.length === 0) return null;
   const names = new Set([basenameOf(entry.workflow), entry.workflow]);
   if (shape.name !== null) names.add(shape.name);
-  const suites = [...new Set(ciSources.filter((s) => names.has(s.workflow)).map((s) => s.suite))];
+  const suites = [...new Set(ciSources.filter((s) => names.has(s.workflow))
+    .map((s) => (typeof s.job === 'string' ? `${s.suite} (job ${s.job})` : s.suite)))];
   if (suites.length === 0) return null;
   return `ci source ${suites.join(', ')} names this workflow; job(s) ${draftSkipIds.join(', ')} skip drafts`;
 }
@@ -134,10 +137,14 @@ function checkPathsFilter({ row, shape, rows }) {
   return `${carried.join('; ')}; no always-reporting workflow${files.length > 0 ? ` (unparsed, not counted: ${files.join(', ')})` : ''}`;
 }
 
-// Check 4: a PR workflow without workflow-level `cancel-in-progress: true`
-// (an expression never reaches here: it is unparsed).
+// Check 4 applies to a PR workflow a push to the PR re-runs: types undeclared
+// (the default set) or including `synchronize`. Only those runs get superseded.
+const concurrencyApplies = (shape) => shape.prTrigger && shape.types.includes('synchronize');
+
+// Check 4: such a workflow without workflow-level `cancel-in-progress: true`.
+// An expression is not evaluated: it is unparsed for this check alone.
 function checkConcurrency({ shape }) {
-  if (!shape.prTrigger || shape.concurrency === 'cancel-true') return null;
+  if (!concurrencyApplies(shape) || shape.concurrency === 'cancel-true' || shape.concurrency === 'cancel-expression') return null;
   if (shape.concurrency === 'absent') {
     return shape.jobs.some((j) => j.concurrency) ? 'job-level concurrency only' : 'no workflow-level concurrency';
   }
@@ -170,10 +177,15 @@ function isGeneratedTrackingWorkflow(entry) {
   return rung === 'current' || rung === 'prior-generated';
 }
 
+// The one unparsed reason that leaves only check 4 unknown: checks 1, 2, 3 and
+// 5 never read concurrency, so they still run on that workflow.
+const CANCEL_EXPRESSION = 'cancel-in-progress expression not evaluated';
+
 // `workflows`: `{workflow, text}` or `{workflow, unreadable: reason}` entries,
 // `workflow` the repo-display ID. `ciSources`: the declared `ci` sources, or
 // null when no verify-scope.json was read (check 2 skipped).
 // Every shape is read first: check 3 looks across the whole reviewed set.
+// A row's `reasons` suppress every check; `cancelExpression` only check 4.
 function reviewWorkflows({ workflows, ciSources }) {
   const findings = [];
   const unparsed = [];
@@ -181,18 +193,19 @@ function reviewWorkflows({ workflows, ciSources }) {
   const rows = [];
   for (const entry of workflows) {
     if (isGeneratedTrackingWorkflow(entry)) { skipped.push(entry.workflow); continue; }
-    if (typeof entry.text !== 'string') { rows.push({ entry, shape: null, reasons: [entry.unreadable] }); continue; }
+    if (typeof entry.text !== 'string') { rows.push({ entry, shape: null, reasons: [entry.unreadable], cancelExpression: false }); continue; }
     const shape = readWorkflowShape(entry.text);
     const reasons = [...shape.unparsed];
     if (shape.prTrigger && shape.jobs.some((j) => j.if !== null && classifyDraftCondition(j.if) === 'unparsed')) {
       reasons.push('draft condition not understood');
     }
-    if (shape.prTrigger && shape.concurrency === 'cancel-expression') reasons.push('cancel-in-progress expression not evaluated');
-    rows.push({ entry, shape, reasons });
+    rows.push({ entry, shape, reasons, cancelExpression: concurrencyApplies(shape) && shape.concurrency === 'cancel-expression' });
   }
   for (const row of rows) {
     const { entry, shape, reasons } = row;
-    if (reasons.length > 0) { unparsed.push({ workflow: entry.workflow, reason: reasons.join('; ') }); continue; }
+    const named = row.cancelExpression ? [...reasons, CANCEL_EXPRESSION] : reasons;
+    if (named.length > 0) unparsed.push({ workflow: entry.workflow, reason: named.join('; ') });
+    if (reasons.length > 0) continue;
     const draftSkipIds = shape.prTrigger
       ? shape.jobs.filter((j) => j.if !== null && classifyDraftCondition(j.if) === 'skip').map((j) => j.id)
       : [];
@@ -309,7 +322,7 @@ function readCiSources(root, { fsImpl = fs, realpath } = {}) {
   if (!parsed.ok) return { ok: false, errors: parsed.errors };
   if (parsed.missing) return { ok: true, ciSources: null };
   if (parsed.decl.ci === null) return { ok: true, ciSources: [] };
-  return { ok: true, ciSources: Object.entries(parsed.decl.ci).map(([suite, s]) => ({ suite, workflow: s.workflow })) };
+  return { ok: true, ciSources: Object.entries(parsed.decl.ci).map(([suite, s]) => ({ suite, workflow: s.workflow, job: s.job })) };
 }
 
 module.exports = {
