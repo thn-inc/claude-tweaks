@@ -526,9 +526,9 @@ function readIndexFlags(deps, wt) {
 // The fail for a path flagged since the worktree was created; null when there is none. Paths are
 // worker-shaped, so each goes through neutralize.
 function newIndexFlagStop(ctx, deps) {
+  if (!(ctx.indexFlags instanceof Set)) throw new Error('index flag baseline missing');
   const now = readIndexFlags(deps, ctx.wt);
   if (now === null) return { status: 'fail', detail: INDEX_FLAGS_UNREADABLE };
-  if (!(ctx.indexFlags instanceof Set)) throw new Error('index flag baseline missing');
   const added = [...now].filter((p) => !ctx.indexFlags.has(p));
   if (added.length === 0) return null;
   const shown = added.slice(0, INDEX_FLAG_PATHS_SHOWN).map(neutralize).join(', ');

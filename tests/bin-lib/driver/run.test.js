@@ -1750,6 +1750,9 @@ test('AC1.1 (#5415): a skip-worktree flag set during the implementer launch stop
   assert.equal(commitGit(h).length, 0);
   assert.ok(noStatusRead(h), 'no status read after the stop');
   assert.equal(pushCalls(h).length, 0);
+  // The worker line keeps the launch's usage and turns, as a moved-HEAD stop does.
+  const workerLine = h.lines().find((l) => l.step === 'worker');
+  assert.deepEqual([workerLine.turns, workerLine.usage], [ENVELOPE.turns, ENVELOPE.usage]);
 });
 
 test('AC2.1 (#5415): a flag set during the test step stops at test, ahead of its verdict', async () => {
@@ -1773,6 +1776,7 @@ test('AC4.1 (#5415): an assume-unchanged flag stops the same way', async () => {
     assert.deepEqual(stopOf(h), ['worker', 'fail', 'pre-push', 'express-escalated'], JSON.stringify(index));
     assert.equal(lastLine(h).stop.detail, ONE_NEW, JSON.stringify(index));
     assert.equal(commitGit(h).length, 0);
+    assert.ok(noStatusRead(h), 'no status read after the stop');
     assert.equal(pushCalls(h).length, 0);
   }
 });
@@ -1933,6 +1937,8 @@ function withRealRepo(body) {
     const empty = path.join(dir, 'empty-gitconfig');
     fs.writeFileSync(empty, '');
     const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: empty };
+    // An inherited repo pointer would send git init, add and update-index to the outer repository.
+    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[key];
     const repo = path.join(dir, 'repo');
     fs.mkdirSync(repo);
     const git = (...args) => {
