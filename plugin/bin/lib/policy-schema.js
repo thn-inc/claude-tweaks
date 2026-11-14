@@ -89,16 +89,18 @@ const POLICY_KEYS = [
   { key: 'express-lane', type: 'boolean', default: false, summary: "Opts into the express lane: a small, low-risk singleton record builds, tests and merges-on-green in one agent, not the full /flow frame.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-review-sample-every', type: 'integer', min: 1, default: 5, summary: "Sends every Nth express-lane merge through the normal review lenses after merge, filing what they find as records.", category: 'merge-safety', tier: 'advanced' },
   // #5216: the pipeline driver's admission lane (express-lane's driver design). policyOnly: the ceilings bound autonomous spend and express-driver routes records to autonomous machinery, so a --run config must never loosen them.
+  // #5222: express-driver-review — whether the driver runs its read-only evidence reviewer; policyOnly for the same reason.
   { key: 'express-driver', type: 'enum', values: ['off', 'split', 'on'], default: 'off', policyOnly: true, summary: "Routes admitted records to the pipeline driver: off, on, or split by record-number parity.", category: 'merge-safety', tier: 'advanced' },
-  { key: 'express-driver-wall-clock-minutes', type: 'integer', min: 1, default: 30, policyOnly: true, summary: "Per-record wall-clock ceiling in minutes before the driver stops.", category: 'merge-safety', tier: 'advanced' },
-  { key: 'express-driver-spend-ceiling-dollars', type: 'integer', min: 1, default: 10, policyOnly: true, summary: "Per-record spend ceiling in whole dollars before the driver stops.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-wall-clock-minutes', type: 'integer', min: 1, default: 30, policyOnly: true, summary: "Wall-clock ceiling in minutes for each driver worker launch, not the whole record.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-spend-ceiling-dollars', type: 'integer', min: 1, default: 10, policyOnly: true, summary: "Spend ceiling in whole dollars for each driver worker launch, not the whole record.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-review', type: 'enum', values: ['off', 'on', 'beyond-express'], default: 'beyond-express', policyOnly: true, summary: "Whether the pipeline driver runs its evidence reviewer: off, on, or only for records beyond the express bounds.", category: 'merge-safety', tier: 'advanced' },
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
   // risk-categories (#4609): project-added invisible-risk slugs, beside the four BUILTIN_RISK_CATEGORIES. `element: 'slug'` validates each comma-separated entry. policyOnly: risk-path-globs validates against it from policy.yml, so the two can never disagree.
-  { key: 'risk-categories', type: 'list', default: [], element: 'slug', policyOnly: true, summary: "Not yet used; control mode only: extra risk categories added to the four built-in ones; pairs with risk-path-globs.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'risk-categories', type: 'list', default: [], element: 'slug', policyOnly: true, summary: "Read only with control mode on: extra risk categories added to the four built-in ones; pairs with risk-path-globs.", category: 'merge-safety', tier: 'advanced' },
   // risk-path-globs (#4609): the second block-style key. A slug -> glob-list map, read by parseRiskPathGlobs (not parseFlatLines, which ignores indented lines); `keys` names the built-in slugs, and risk-categories adds more at resolve time.
-  { key: 'risk-path-globs', type: 'map', keys: BUILTIN_RISK_CATEGORIES, default: {}, summary: "Not yet used; control mode only: maps each risk category to its signal path globs, as an indented block; pairs with risk-categories.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'risk-path-globs', type: 'map', keys: BUILTIN_RISK_CATEGORIES, default: {}, summary: "Read only with control mode on: maps each risk category to its signal path globs, as an indented block; pairs with risk-categories.", category: 'merge-safety', tier: 'advanced' },
   // commit-scope / commit-scope-paths (#3298): the merge-subject scope source bin/compose-subject.js resolves when --scope is absent — explicit flag > a commit-scope-paths match over the changed files > commit-scope > unscoped. Both advanced: the core tier is at its cap.
   { key: 'commit-scope', type: 'string', summary: "Names the one Conventional-Commits scope every merge subject carries, and the fallback when a path rule is ambiguous.", category: 'merge-safety', tier: 'advanced' },
   { key: 'commit-scope-paths', type: 'list', default: [], summary: "Maps changed-path prefixes to the Conventional-Commits scope a merge subject carries when the matched files all agree on one scope.", category: 'merge-safety', tier: 'advanced' },
@@ -181,7 +183,7 @@ const POLICY_KEYS = [
   // semantics live in _shared/record-batch-input.md, not restated here.
   { key: 'specify-budget', type: 'integer', default: 5, summary: "Caps how many eligible backlog records one bare /specify drain attempts before stopping.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'autonomy', type: 'enum', values: ['supervised', 'trusted', 'unattended'], default: 'supervised', summary: "Caps how much the pipeline may do without a human — trust that classes earn can never exceed this ceiling.", category: 'autonomy-trust', tier: 'core' },
-  // Control mode (#4609, human-in-control #4608): twelve flat keys here, plus `risk-categories` and `risk-path-globs` in the merge-safety group above. No plugin code acts on them yet, so each summary opens "Not yet used". The #4608 leaves wire them: control-mode -> #4624, and every control-mode-gated leaf through isControlModeOn (bin/lib/policy.js); acceptance-target -> #4615; deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds -> #4616; owned-owners -> #4621; trusted-authors -> #4622; risk-categories, risk-path-globs -> #4618, #4619. The record that wires a key drops its marker and its entry in tests/resolve-policy-control-mode.test.js's NOT_YET_USED. All but `control-mode` itself are consulted only with control mode on. All advanced — the core tier is at its cap.
+  // Control mode (#4609, human-in-control #4608): twelve flat keys here, plus `risk-categories` and `risk-path-globs` in the merge-safety group above. A summary opens "Not yet used" until a record wires its key; #4618 wired `risk-categories` and `risk-path-globs` (bin/lib/policy.js's readRiskPolicy, which reads `control-mode` only as their gate), so those two carry no marker. The #4608 leaves wire them: control-mode -> #4624, and every control-mode-gated leaf through isControlModeOn (bin/lib/policy.js); acceptance-target -> #4615; deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds -> #4616; owned-owners -> #4621; trusted-authors -> #4622; risk-categories, risk-path-globs -> #4618, #4619. The record that wires a key drops its marker and its entry in tests/resolve-policy-control-mode.test.js's NOT_YET_USED. All but `control-mode` itself are consulted only with control mode on. All advanced — the core tier is at its cap.
   { key: 'control-mode', type: 'enum', values: ['off', 'on'], default: 'off', summary: "Not yet used. The single human-in-control switch; implied levers default at skill-default precedence, so any explicitly set lever wins.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'acceptance-target', type: 'enum', values: ['local', 'dev'], default: 'local', summary: "Not yet used; control mode only: where a human accepts work, locally or on the dev environment; pairs with deploy-reach when dev.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'deploy-reach', type: 'enum', values: ['on-merge', 'command', 'none'], default: 'none', summary: "Not yet used; control mode only: how a merge reaches the dev environment, if at all; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
@@ -781,11 +783,12 @@ const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
 // {repoRoot}/.claude-tweaks/policy.yml (resolveValue: out of range -> 5000) >
 // 5000. Reads from repoRoot rather than shared-primitives' cwd-anchored
 // GH_TIMEOUT_MS getter: a require cycle, and the wrong root for a caller
-// probing a repo other than the cwd's.
+// probing a repo other than the cwd's. `opts.env` (optional) replaces process.env
+// as the place the env var is read from.
 function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   const explicit = opts && opts.timeoutMs;
   if (Number.isInteger(explicit) && explicit > 0) return explicit;
-  const raw = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  const raw = (opts && opts.env ? opts.env : process.env).CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
   // A non-string repoRoot has no policy.yml to read: skip to the default instead of letting
   // path.join throw, which would break detectIntegrationModel's never-throws contract.
@@ -843,14 +846,21 @@ function formatForgeDegrade(degrade) {
 // agent turn) is documented in that file; pre-tool-use.js's hook call site
 // runs with no agent turn active and can never supply it (see
 // resolveRunPinnedIntegrationModel's own comment).
+//
+// `opts.env`, `opts.stderr` and `opts.homeDir` (all optional) let a caller run this
+// against an environment that is not the process's own: `env` is handed to both children
+// and to ghOptions, `stderr` receives ghOptions' GitHub Enterprise note, and `homeDir`
+// (a function) is read only if gh's hosts.yml lookup falls through to the home directory.
 function detectIntegrationModel(repoRoot, opts = {}) {
-  const { mcpReachable, onDegrade } = opts;
+  const { mcpReachable, onDegrade, env, stderr, homeDir } = opts;
   // Required here, not at the top: repo-resolve -> shared-primitives lazily requires
   // policy-schema and policy back, so a load-time edge from this file would close a cycle.
-  const { ghOptions } = require('./repo-resolve');
+  const { ghOptions, injectedGhDeps } = require('./repo-resolve');
+  const ghDeps = injectedGhDeps({ env, stderr, homeDir });
   try {
     execFileSync('git', ['remote', 'get-url', 'origin'], {
       cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_REMOTE_PROBE_TIMEOUT_MS, encoding: 'utf8', windowsHide: true,
+      ...(env ? { env } : {}),
     });
   } catch {
     return 'local-merge';
@@ -864,7 +874,8 @@ function detectIntegrationModel(repoRoot, opts = {}) {
       // options object, never one wrapped in ghOptions (#4505's GH_HOST seam).
       execFileSync('gh', args, ghOptions(args, {
         cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: ghTimeoutMs, encoding: 'utf8', windowsHide: true,
-      }));
+        ...(env ? { env } : {}),
+      }, ghDeps));
       return 'ok';
     } catch (err) {
       // execFileSync's `timeout` kills the child, so a timed-out probe surfaces as ETIMEDOUT or
@@ -925,12 +936,13 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 // rethrows the rest) — only the orchestration around them is shared. `root`
 // is returned too since a caller such as resolve-policy.js's
 // integration-model default needs it independent of any resolved key.
-function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid }) {
+// `cwd` (optional) replaces `process.cwd()` as that fallback root.
+function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cwd }) {
   let root;
   try {
     root = git(['rev-parse', '--show-toplevel']).trim();
   } catch {
-    root = process.cwd();
+    root = cwd || process.cwd();
   }
   const policyRaw = readFile(path.join(root, '.claude-tweaks', 'policy.yml'));
   const runConfigRaw = runDir ? readFile(path.join(runDir, 'config.yml')) : null;
@@ -1023,7 +1035,7 @@ function auditPolicy(repoRoot) {
 }
 
 module.exports = {
-  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
+  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
   GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
   FORGE_DEGRADE_REASONS, FORGE_DEGRADE_MEMO_TTL_MS,

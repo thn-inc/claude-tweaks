@@ -334,7 +334,9 @@ on either form — use the HTML-comment form for compatibility with every existi
 read going through `pull_request_read` (or `update_pull_request`'s own re-fetch) has every
 `<!-- ... -->` span stripped from what it returns — key on the plain-text companion form
 instead. Neither form is ever removed once written, so a run that starts `gh`-absent and
-later gains `gh` (or vice versa) never loses recognition.
+later gains `gh` (or vice versa) never loses recognition. A repair after an MCP read
+(`repairPrBody`) puts back the HTML-comment form the read stripped, so an MCP write-back keeps
+both forms (#5358).
 
 **Phase checklist rows are delimited by `<!-- phases-start -->`/`<!-- phases-end -->` HTML
 comments** so `_shared/pr-checklist-refresh.md`'s phase-checklist update procedure can re-compose reliably (read body,

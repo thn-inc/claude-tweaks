@@ -1,6 +1,6 @@
 // tests/resolve-policy-control-mode.test.js — #4609: the thirteen flat
 // control-mode policy keys, the `element` list validation they introduced,
-// isControlModeOn, and the `risk-path-globs` block key. JSON-shape checks run
+// isControlModeOn, readRiskPolicy (#4618), and the `risk-path-globs` block key. JSON-shape checks run
 // resolvePolicyKeys in-process via json() (pinned equal to the CLI by the parity
 // test; json()'s own comment says which keys need cliJson() instead);
 // --values output, stderr warnings and invocation errors still build a
@@ -18,8 +18,9 @@ const path = require('node:path');
 
 const { POLICY_KEYS, resolvePolicyKeys, resolveValue, auditPolicy, BUILTIN_RISK_CATEGORIES } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { parseRiskPathGlobs } = require('../plugin/bin/lib/risk-path-globs');
-const { isControlModeOn } = require('../plugin/bin/lib/policy');
+const { isControlModeOn, readRiskPolicy } = require('../plugin/bin/lib/policy');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 
@@ -39,13 +40,18 @@ function makeRepo(policy) {
   return tmp;
 }
 
+function runPolicy(args, cwd, env) {
+  const res = runCliSync(CLI, args, { cwd, env: { ...(env || process.env) } });
+  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
+}
+
 function values(policy, ...keys) {
-  const res = spawnSync(process.execPath, [CLI, '--values', ...keys], { cwd: makeRepo(policy), encoding: 'utf8' });
+  const res = runPolicy(['--values', ...keys], makeRepo(policy));
   return { stdout: res.stdout, stderr: res.stderr, status: res.status };
 }
 
 function cliJson(policy, ...keys) {
-  const res = spawnSync(process.execPath, [CLI, ...keys], { cwd: makeRepo(policy), encoding: 'utf8' });
+  const res = runPolicy(keys, makeRepo(policy));
   assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
   return JSON.parse(res.stdout);
 }
@@ -83,9 +89,9 @@ test('the in-process json() helper matches the CLI JSON output', () => {
   }
 });
 
-test('the in-process json() helper matches the CLI for every other schema key', () => {
-  const res = spawnSync(process.execPath, [CLI, '--all'], { cwd: makeRepo(undefined), encoding: 'utf8' });
-  assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
+test('smoke (real process): the in-process json() helper matches the CLI for every other schema key', () => {
+  const res = spawnCli(CLI, ['--all'], { cwd: makeRepo(undefined), env: { ...process.env } });
+  assert.strictEqual(res.code, 0, `expected exit 0, got ${res.code}; stderr: ${res.stderr}`);
   const viaCli = JSON.parse(res.stdout);
   const keys = POLICY_KEYS.map((row) => row.key).filter((key) => !CLI_SPECIAL_KEYS.includes(key));
   const inProcess = json(undefined, ...keys);
@@ -291,7 +297,7 @@ test('AC4.8: isControlModeOn is true only for the exact string on', () => {
 // Control-mode keys no plugin code acts on yet; the #4608 leaves wire them
 // (policy-schema.js's Control mode comment names which). The record that wires
 // a key removes it from this list and drops "Not yet used" from its summary.
-const NOT_YET_USED = ['control-mode', 'acceptance-target', 'deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'owned-owners', 'trusted-authors', 'risk-categories', 'risk-path-globs'];
+const NOT_YET_USED = ['control-mode', 'acceptance-target', 'deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'owned-owners', 'trusted-authors'];
 
 test('every control-mode key nothing consumes yet says so in its summary (#4816)', () => {
   for (const key of NOT_YET_USED) {
@@ -304,6 +310,24 @@ test('every control-mode key nothing consumes yet says so in its summary (#4816)
 test('no key outside NOT_YET_USED opens its summary with "Not yet used" (#4816)', () => {
   const marked = POLICY_KEYS.filter((r) => /^Not yet used\b/.test(r.summary)).map((r) => r.key);
   assert.deepStrictEqual(marked.sort(), [...NOT_YET_USED].sort());
+});
+
+test('readRiskPolicy: control mode off consults neither extra key', () => {
+  const read = () => 'risk-categories: pii\nrisk-path-globs:\n  auth: [a/**]\n';
+  assert.deepStrictEqual(readRiskPolicy('/r', { readFile: read }), { controlMode: false, extraCategories: [], pathGlobs: {}, globsInvalid: false });
+});
+
+test('readRiskPolicy: control mode on resolves both, a malformed block is flagged', () => {
+  const on = (rest) => () => `control-mode: on\n${rest}`;
+  assert.deepStrictEqual(readRiskPolicy('/r', { readFile: on('risk-categories: pii\nrisk-path-globs:\n  pii: [a/**]\n') }), { controlMode: true, extraCategories: ['pii'], pathGlobs: { pii: ['a/**'] }, globsInvalid: false });
+  assert.strictEqual(readRiskPolicy('/r', { readFile: on('risk-path-globs: x\n') }).globsInvalid, true);
+});
+
+test('readRiskPolicy: an absent file is control mode off, another error throws', () => {
+  const err = (code) => () => { throw Object.assign(new Error(code), { code }); };
+  assert.strictEqual(readRiskPolicy('/r', { readFile: err('ENOENT') }).controlMode, false);
+  assert.strictEqual(readRiskPolicy('/r', { readFile: err('ENOTDIR') }).controlMode, false);
+  assert.throws(() => readRiskPolicy('/r', { readFile: err('EACCES') }), /EACCES/);
 });
 
 test('risk-categories accepts extra slugs and rejects a non-slug', () => {
@@ -689,7 +713,7 @@ test('risk-path-globs ignores the --run config overlay', () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-policy-control-run-'));
   tempDirs.push(runDir);
   fs.writeFileSync(path.join(runDir, 'config.yml'), runConfig);
-  const res = spawnSync(process.execPath, [CLI, '--run', runDir, 'risk-path-globs'], { cwd: makeRepo(undefined), encoding: 'utf8' });
+  const res = runPolicy(['--run', runDir, 'risk-path-globs'], makeRepo(undefined));
   assert.strictEqual(res.status, 0, res.stderr);
   assert.deepStrictEqual(JSON.parse(res.stdout)['risk-path-globs'], { value: {}, source: 'default' });
 });

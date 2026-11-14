@@ -10,7 +10,7 @@ files:
 
 **Persona:** A maintainer of a large claude-tweaks-managed repo (dozens of worktrees, run dirs, and local/remote branches) who fires a bare `/claude-tweaks:dispatch --budget {n}` drain, or has a Routine fire it, and expects the firing to clean up after the groups it merged.
 **Goal:** When the drain ends, every worktree whose PR merged during this firing is reaped and its run dir archived by the firing itself — not left for a future session's SessionStart hook.
-**Entry point:** The drain loop in `plugin/skills/dispatch/SKILL.md` Step 3 reaches termination (`{budget}` attempts spent, the ranking returns `null`, or a Claim permission stop).
+**Entry point:** The drain loop in `plugin/skills/dispatch/SKILL.md` Step 3 reaches termination (`{budget}` attempts spent, the ranking returns `null`, or a Claim permission stop, Render-failure stop or queue-pull/`--rank` stop).
 **Success state:** The termination reconcile's JSON result, logged to `decisions.md`, shows `reap` (and `release`/`archive`) ran — no `budget-exceeded` skip naming `reap` — and the merged groups' worktrees are gone from `git worktree list`.
 
 ## Steps
@@ -41,4 +41,4 @@ files:
 
 A drain on a large repo reaps the worktrees it merged before it exits, because an explicit `--checks` subset is never starved by the SessionStart budget and the termination call fetches just enough for `archive` to recognize late merges.
 
-_Origin: record #3026 (reconcile's 18 s budget starved `reap` even under an explicit `--checks` subset), built 2026-10-19. Updated by record #3630, built 2026-10-22: an explicit subset is now expanded with its prerequisites, so naming `archive` without `mirror` no longer skips async-merged PRs as `local-behind-merge`. Updated by record #4032, built 2026-10-24: the unscoped call defers three janitorial checks to the background pass, which gained its own 120 s ceiling. Updated by record #4899, built 2026-11-02: a Claim permission stop is a third way the drain terminates._
+_Origin: record #3026 (reconcile's 18 s budget starved `reap` even under an explicit `--checks` subset), built 2026-10-19. Updated by record #3630, built 2026-10-22: an explicit subset is now expanded with its prerequisites, so naming `archive` without `mirror` no longer skips async-merged PRs as `local-behind-merge`. Updated by record #4032, built 2026-10-24: the unscoped call defers three janitorial checks to the background pass, which gained its own 120 s ceiling. Updated by record #4899, built 2026-11-02: a Claim permission stop is a third way the drain terminates. Updated by record #5255, built 2026-11-13: a Render-failure stop (`dispatch-prompt.js` exiting non-zero) is a fourth._

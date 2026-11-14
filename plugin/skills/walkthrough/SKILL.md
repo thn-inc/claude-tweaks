@@ -18,6 +18,10 @@ Not `/claude-tweaks:demo` — that name means human acceptance sign-off on a bui
 
 Not for: acceptance sign-off (`/claude-tweaks:demo`), authoring a new story (`/claude-tweaks:stories`, which this skill offers and stops when no story matches), true motion capture (cursor travel, scroll, CSS transitions — Playwright CLI exposes no screencast operation).
 
+## Automatic path
+
+The acceptance packet's Recording does not come from this skill: wrap-up's `snapshot` builds that GIF through `encodeWalkthrough` from the pipeline's own happy-path screenshots, never through this skill and never with a browser run, and the GIF is stored in the run's local directory and never uploaded. Its exposure and redaction rules live in `_shared/acceptance-packet.md`'s `## Recording`. This standalone path applies no redaction: the human choosing the destination owns what it shows.
+
 ## Input
 
 `$ARGUMENTS` is parsed as `[<story-path>|--story <name>|#N] --base <url> [--budget-mb <n>] [--width <px>] [--delay-ms <n>] [--settle-ms <n>]`:

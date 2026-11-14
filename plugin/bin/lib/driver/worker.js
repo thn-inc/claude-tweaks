@@ -17,9 +17,10 @@
 // `detail` is null on `ok` and, on `fail`, names the cause in a few words.
 //
 // The schema. `schema` defaults to RESULT_SCHEMA (roles.js). The launcher checks the
-// structured output itself, and handles only the keywords `type` (`object` or
-// `string`), `properties`, `required` (an array of names), `enum` (an array) and a
-// boolean `additionalProperties`; a schema using anything else is refused before
+// structured output itself, and handles only the keywords `type` (`object`,
+// `string` or `array`; an array's `items` is not checked here), `properties`,
+// `required` (an array of names), `enum` (an array) and a boolean
+// `additionalProperties`; a schema using anything else is refused before
 // anything is written, so it can never be half-checked.
 //
 // Untrusted text. `result` (every string in it), `detail` when it carries the worker's
@@ -125,12 +126,13 @@
 // interrupted or dies. Whoever calls the launcher must forward termination to it.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
-const { isAncestorOrSelf, resolveTarget } = require('../path-guard');
-const { ROLES, RESULT_SCHEMA, implementerSettings, composeArgs, assertSpendCeiling } = require('./roles');
+const { isAncestorOrSelf, resolveTarget, canonicalRealpath } = require('../path-guard');
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
@@ -172,7 +174,7 @@ function assertSupportedSchema(schema) {
   if (schema.additionalProperties !== undefined && typeof schema.additionalProperties !== 'boolean') {
     throw new Error('unsupported schema keyword: additionalProperties (only a boolean is handled)');
   }
-  if (schema.type !== undefined && schema.type !== 'object' && schema.type !== 'string') {
+  if (schema.type !== undefined && schema.type !== 'object' && schema.type !== 'string' && schema.type !== 'array') {
     throw new Error('unsupported schema keyword: type ' + JSON.stringify(schema.type));
   }
   if (schema.enum !== undefined && !Array.isArray(schema.enum)) {
@@ -193,6 +195,7 @@ function conformsTo(schema, value) {
   assertSupportedSchema(schema);
   if (schema.type === 'object' && !isPlainObject(value)) return false;
   if (schema.type === 'string' && typeof value !== 'string') return false;
+  if (schema.type === 'array' && !Array.isArray(value)) return false;
   if (schema.enum !== undefined && !schema.enum.includes(value)) return false;
   if (schema.required !== undefined) {
     if (!isPlainObject(value)) return false;
@@ -422,6 +425,65 @@ function defaultDeps() {
   return { runner: defaultRunner, timers: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (timer) => clearTimeout(timer) } };
 }
 
+// The account's home from the passwd database, or undefined when it cannot be read.
+function passwdHome() {
+  try {
+    return os.userInfo().homedir;
+  } catch {
+    return undefined;
+  }
+}
+
+// The real file-system seams for toolchainReadPaths (roles.js stays free of the file
+// system). `lookup` walks `env.PATH`, skipping empty and relative entries (POSIX reads an
+// empty entry as the working directory, which a worker controls), and returns the first
+// executable regular file; any error moves to the next entry. `home` lists both `HOME` and
+// the passwd home (`userHome`, a seam for tests), so an unset or wrong `HOME` still guards
+// the real one. Not deps.js's findOnPath: that one searches relative entries and checks no
+// execute bit, and either would let the working directory pick the toolchain. The ':' split
+// and X_OK are POSIX-only on purpose — launchWorker derives only on SANDBOX_PROBED_PLATFORMS
+// (darwin), so a win32 entry there must rework this lookup (';', PATHEXT, .cmd launchers).
+function realToolchainDeps(env, { userHome = passwdHome() } = {}) {
+  const source = env || {};
+  const dirs = typeof source.PATH === 'string' ? source.PATH.split(':') : [];
+  const isExecutable = (file) => {
+    try {
+      if (!fs.statSync(file).isFile()) return false;
+      fs.accessSync(file, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const lookup = (name) => {
+    for (const dir of dirs) {
+      if (!path.isAbsolute(dir)) continue;
+      const candidate = path.join(dir, name);
+      if (isExecutable(candidate)) return candidate;
+    }
+    return null;
+  };
+  // path-guard's canonical form (links followed, OS casing); a path that cannot be resolved throws, which the derivation tolerates.
+  const realpath = (p) => {
+    const real = canonicalRealpath(p);
+    if (real === null) throw new Error('cannot resolve ' + p);
+    return real;
+  };
+  // At most the first 256 bytes, cut at the first line break.
+  const readFirstLine = (file) => {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(256);
+      const n = fs.readSync(fd, buf, 0, 256, 0);
+      return buf.toString('utf8', 0, n).split('\n')[0];
+    } finally {
+      fs.closeSync(fd);
+    }
+  };
+  const home = [source.HOME, userHome].filter((h) => typeof h === 'string' && h !== '');
+  return { lookup, realpath, firstLine: readFirstLine, isExecutable, home };
+}
+
 async function launchWorker(opts, deps = defaultDeps()) {
   const {
     role, cwd, prompt, ceilings = {}, testCommand, claudeMdText, settingsDir,
@@ -447,7 +509,24 @@ async function launchWorker(opts, deps = defaultDeps()) {
   if (isAncestorOrSelf(cwd, settingsDir) || isAncestorOrSelf(canonicalTarget(cwd, 'cwd'), canonicalTarget(settingsDir, 'settingsDir'))) {
     throw new Error('settingsDir must lie outside the working directory: ' + settingsDir + ' is not outside ' + cwd);
   }
-  const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform }), null, 2) : null;
+  // Derived before the settings are built, so a bad testCommand or readPaths is refused
+  // before anything is written. A caller's readPaths is used as given.
+  let { readPaths } = opts;
+  if (spec.settings && readPaths === undefined && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
+    readPaths = toolchainReadPaths(testCommand, deps.toolchain || realToolchainDeps(env));
+  }
+  const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform, readPaths }), null, 2) : null;
+  // A caller's readPaths may not re-open the home directory the read block exists to close:
+  // an entry that is HOME, the passwd home, or an ancestor of either, lexically or through a
+  // link, is refused by the same reopensHome rule toolchainRoot applies on the derived side.
+  if (spec.settings && opts.readPaths !== undefined && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
+    const homeDeps = realToolchainDeps(env);
+    for (const entry of readPaths) {
+      if (reopensHome(entry, homeDeps) || reopensHome(canonicalRealpath(entry) || entry, homeDeps)) {
+        throw new TypeError('readPaths entry ' + JSON.stringify(entry) + ' would re-open the home directory');
+      }
+    }
+  }
   const withAppend = typeof claudeMdText === 'string' && claudeMdText !== '';
 
   const written = [];
@@ -486,4 +565,4 @@ async function launchWorker(opts, deps = defaultDeps()) {
   }
 }
 
-module.exports = { ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32, KILL_GRACE_MS, REAP_DEADLINE_MS, buildEnv, conformsTo, defaultRunner, launchWorker };
+module.exports = { ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32, KILL_GRACE_MS, REAP_DEADLINE_MS, buildEnv, conformsTo, defaultRunner, launchWorker, superviseChild, realToolchainDeps };

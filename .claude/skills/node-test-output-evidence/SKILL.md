@@ -1,6 +1,6 @@
 ---
 name: node-test-output-evidence
-description: Use when writing or reviewing code that reads `node --test` spec or TAP reporter output as evidence for a verdict, not just as a summary to display. Covers which test a failure belongs to, which failures are a parent's own, counting a log's failures against its summary, YAML diagnostic blocks, and the runner-level diagnostics Node never counts. The shipped consumers are `plugin/bin/lib/verify/`'s baseline adjudicator and its flaky-retry hook. Keywords - node --test, spec reporter, TAP, test identity, suite path, failing tests, ℹ fail, failureType, subtestsFailed, YAML block, ℹ Error, baseline adjudication, flaky retry, unattributed failures, testTree.
+description: Use when writing or reviewing code that reads `node --test` spec or TAP reporter output as evidence for a verdict, not just as a summary to display, or that runs `node --test` on a path it does not control. Covers which test a failure belongs to, which failures are a parent's own, counting a log's failures against its summary, YAML diagnostic blocks, the runner-level diagnostics Node never counts, and a file argument Node reads as a glob. The shipped consumers are `plugin/bin/lib/verify/`'s baseline adjudicator and its flaky-retry hook, and the pipeline driver's reviewer evidence check (`plugin/bin/lib/driver/review.js`). Keywords - node --test, spec reporter, TAP, test identity, suite path, failing tests, ℹ fail, failureType, subtestsFailed, YAML block, ℹ Error, baseline adjudication, flaky retry, unattributed failures, testTree, glob, glob-char, file argument, classifyEvidenceRun.
 ---
 
 # Reading `node --test` output as evidence
@@ -41,6 +41,12 @@ Inside the block, only the point's own top-level `location:` and `stack:` keys n
 ### A path the log names is untrusted input
 
 A log can name any path: a quoted child's temp dir, another checkout, `tests/../../x` verbatim. `adjudicate` reads each log against the checkout it ran in — the HEAD log against the real checkout, the base log against the scratch worktree — through `at(dir)`, which passes `git.inCheckout` to the extractors as their `exists` predicate. A path absent from that checkout never names a failing file. A failure whose entries name only such paths refuses with `absent-from-checkout: …`, kept distinct from `unclassified failure(s)` (an entry naming no test file at all). `realGit().inCheckout` rejects an absolute path, a drive-letter path, and a `..` segment anywhere in the path. `relativize()` never produces an embedded `..`, but the guard answers to what the log says, not to what the producer emits (#3153, `626ec972b`).
+
+### A `node --test` file argument is a glob on Node 21 and later
+
+From Node 21, `node --test` reads each file argument as a glob, so the file it runs is whatever the pattern matches, not the file the argument names. In a directory holding `a.test.js` and a literal `[ab].test.js`, `node --test '[ab].test.js'` runs `a.test.js`. With a literal `[c].test.js` and no `c.test.js`, it runs nothing and exits 1 with `Could not find '[c].test.js'`. Node 20, the version CI runs, runs the literal file in both cases (probed on v20.12.0, v21.7.1 and v26.13.1). The log is then evidence about another file, or about none. The argument list reaches the runner with no shell, so quoting does not help: the runner expands the pattern itself.
+
+A caller that runs `node --test` on a path it does not control refuses, before it spawns, every character that makes a path match anything but itself: `[ ] { } ( ) ! + @`, plus `*`, `?` and `\`. `plugin/bin/lib/driver/review.js`'s `PATH_RULES` does this with its `glob-char` rule, after `reserved-char` (`*` `?`) and `backslash`. Its comment records the probe over every printable ASCII character (#5222).
 
 ### Reconcile the failing list against an independent count
 
@@ -127,6 +133,7 @@ node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture
 | Returning the "accounted" value for a family the accounting cannot check | #3066's `unattributedFailureCount` returned 0 for every family but spec/tap, so `planRetry` retried a jest/pytest/vitest log's named files unguarded. It now returns `null` and `planRetry` refuses with `no-accounting-guard: {family}` (#3204); jest and vitest have since gained real accounting (#3480), so only pytest and an ambiguous summary log still return `null`. Give "cannot check" its own value |
 | Reading `tapLines`' `owner` as "this line is inside the failure" | Ownership outlives the YAML terminator so `tapBlocks` stays byte-identical. A stderr line after one test's closed block then reads as that test's, and an excerpt opens at the wrong `not ok` (#3404) |
 | Normalizing or matching only the spec form of a run-specific line (`ℹ duration_ms`) | Node writes TAP whenever stdout is not a TTY, so every child run `verify.js` spawns is TAP. `normalizeLog` stripped spec's `ℹ duration_ms` and the YAML `duration_ms:` key but not TAP's `# duration_ms` summary line, so a whole-file failure never matched its base log, on any platform, and came back attributable (#3316, `7a49b742f`). Give every reporter-specific rule its TAP twin and a TAP fixture |
+| Passing a path the caller does not control to `node --test` without refusing glob characters | On Node 21 and later the argument is a glob: `tests/[ab].test.js` runs `tests/a.test.js`, and `{..,x}/` reaches outside the worktree, so the verdict is read from a file nobody named. CI runs Node 20, which runs the literal file, so CI never sees it (`glob-char` in `review.js`, #5222) |
 
 ## Reference
 
@@ -135,3 +142,4 @@ node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture
 - Contract: `plugin/skills/test/verification.md`'s Baseline adjudication; `plugin/skills/test/flake-handling.md`
 - Related skills: `parse-signal-discipline` (couldn't parse versus doesn't apply; reconciling a list against an independent count), `windows-checkout-test-parity` (the Windows failure baseline this adjudicator exists for)
 - Origin: #3043; the flaky-retry consumer: #3066; the `preExisting` consumer: #3481; the shared `tapLines` classifier and the Windows filer's reuse of it: #3404
+- The pipeline driver's reviewer evidence check (#5222): `plugin/bin/lib/driver/review.js` (`PATH_RULES`' `glob-char`, `evidenceArgs`, and its own one-pass TAP reader `parseTap` behind `classifyEvidenceRun`, which does not use `tapLines`), with the captured TAP runs it was written from in `tests/bin-lib/driver/fixtures/review-evidence/`
