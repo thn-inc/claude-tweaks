@@ -674,3 +674,59 @@ perShell('hooks.sh AC3.1 round trip: the path session-start saves is the one the
   assert.ok(ctx.includes(INTERACTION_STYLE_DIRECTIVE));
   assert.ok(!ctx.includes('restart Claude Code'));
 });
+
+// #5392 Task 5: docs/hooks.md's Node launcher bullet and its sub-bullets.
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
+
+const LAUNCHER_DOC_PATTERNS = [
+  [/`sh "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.sh" <event>`/, 'registration form'],
+  [/`exec`s it on `hooks\.js <event>` with stdin passed through/, 'exec pass-through'],
+  [/`command -v node`; the path saved in `~\/\.claude-tweaks\/node-path`/, 'resolution order'],
+  [/`lts\/\*`, `node` or a partial version such as `22` is skipped/, 'nvm literal only'],
+  [/replaced by `CLAUDE_TWEAKS_NODE_CANDIDATES`/, 'test seam'],
+  [/writes `process\.execPath` to `~\/\.claude-tweaks\/node-path`/, 'saved path'],
+  [/reads stdin to EOF, always exits 0, and prints only fixed JSON literals/, 'no-node invariant'],
+  [/`session-start` and `user-prompt-submit` print one `hookSpecificOutput\.additionalContext`/, 'warn events'],
+  [/`pre-tool-use` prints a `permissionDecision: "deny"`/, 'deny event'],
+  [/The deny covers Bash, Edit, Write and NotebookEdit only, matched on the payload's `tool_name`/, 'deny tool scope'],
+  [/AskUserQuestion, Agent, Task and ExitWorktree get nothing/, 'silent tools'],
+  [/never parses `cwd` out of the stdin JSON/, 'process cwd'],
+  [/The accepted risk: after a `cd` into a different repository/, 'accepted cwd risk'],
+  [/A hit that cannot run `hooks\.js`/, 'unrunnable hit'],
+  [/`session-end`, `pre-compact`, `post-tool-use`, `post-tool-use-failure` and `subagent-stop` print nothing/, 'silent events'],
+  [/"`sh -c` on macOS and Linux, Git Bash on Windows, or PowerShell when Git Bash isn't installed"/, 'Windows shells'],
+  [/code\.claude\.com\/docs\/en\/hooks\.md, "Exec form and shell form"/, 'Windows source'],
+  [/Under the PowerShell fallback there is no `sh`/, 'PowerShell consequence'],
+];
+
+function launcherBulletOf(text) {
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => l.startsWith('- **Node launcher (#5392):**'));
+  assert.notEqual(start, -1, 'anchor not found: - **Node launcher (#5392):**');
+  let end = lines.findIndex((l, i) => i > start && /^- /.test(l));
+  if (end === -1) end = lines.length;
+  return lines.slice(start, end).join('\n');
+}
+
+const HOOKS_DOC = path.join(ROOT, 'docs', 'hooks.md');
+const assertLauncherFacts = (slice) => {
+  const missing = missingFactsOf(LAUNCHER_DOC_PATTERNS)(slice);
+  assert.deepEqual(missing, [], `missing facts: ${missing.join(', ')}`);
+};
+
+test('hooks.sh AC11.1 + AC12.1: docs/hooks.md documents the launcher, the saved path, the no-node behavior per event and Windows', () => {
+  const slice = launcherBulletOf(readText(HOOKS_DOC));
+  assertLauncherFacts(slice);
+  assertEachPatternGoesRed(slice, LAUNCHER_DOC_PATTERNS, missingFactsOf(LAUNCHER_DOC_PATTERNS));
+});
+
+test('hooks.sh AC11.1 move-out control: the Windows sentence counts only inside the launcher bullet', () => {
+  const text = readText(HOOKS_DOC);
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => l.startsWith('  - **Windows:**'));
+  assert.notEqual(at, -1, 'anchor not found: **Windows:** sub-bullet');
+  const [windowsLine] = lines.splice(at, 1);
+  const moved = lines.join('\n') + '\n' + windowsLine;
+  assert.notEqual(moved, text);
+  assert.throws(() => assertLauncherFacts(launcherBulletOf(moved)), /Windows shells/);
+});
