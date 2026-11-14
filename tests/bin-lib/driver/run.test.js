@@ -1638,6 +1638,34 @@ test('AC4.1 (#5414): an unreadable HEAD after the launch names only the earlier 
   assert.equal(final.stop.detail, `HEAD of the worktree is unreadable after the worker launch (it was ${HEAD_SHA})`);
   assert.ok(!final.stop.detail.includes('@evil') && !final.stop.detail.includes('#3'));
   assert.equal(calls(h, 'worker').length, 1);
+  assert.equal(final.stop.class, 'pre-push');
+  assert.equal(commitGit(h).length, 0);
+  assert.equal(calls(h, 'node', /verify\.js$/).length, 0);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('(#5414) a launch that returned no envelope, HEAD unchanged, stops at worker', async () => {
+  const h = harness({ script: [[on('worker'), null]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.detail], ['worker', 'fail', 'worker launch returned no envelope']);
+});
+
+test('(#5414) a worker result with an unknown status, HEAD unchanged, stops at worker', async () => {
+  const h = harness({ worker: { result: { status: 'weird', title: 't', summary: 's' } } });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], ['worker', 'fail']);
+  assert.ok(final.stop.detail.startsWith('worker result status is neither done nor cannot-complete'), final.stop.detail);
+});
+
+test('(#5414) a launcher throw with an unreadable HEAD after it names only the earlier sha', async () => {
+  const h = harness({ script: [[on('worker'), new Error('launch blew up')], nthCall(isHeadRead, 2, unreadableGit())] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], ['worker', 'fail']);
+  assert.equal(final.stop.detail, `HEAD of the worktree is unreadable after the worker launch (it was ${HEAD_SHA})`);
+  assert.ok(!final.stop.detail.includes('@evil') && !final.stop.detail.includes('#3'));
 });
 
 test('(#5414) a HEAD read that is not a full sha is unreadable', async () => {
@@ -1744,6 +1772,27 @@ const BASE_LINES_FIX = [
   ['final', 'ok'],
 ];
 
+// The sorted key set of every event line of the same two runs, captured on the same unmodified code: "event lines
+// unchanged" then catches an added or removed field without pinning volatile values.
+const K0 = ['ms', 'record', 'run', 'status', 'step', 'ts'];
+const K1 = ['denials', 'ms', 'record', 'run', 'status', 'step', 'ts', 'turns', 'usage'];
+const K2 = ['detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
+const K3 = ['ciWaitMs', 'detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
+const K4 = ['ci', 'costUsd', 'denialCount', 'merge', 'ms', 'msTotal', 'msWithoutCi', 'outcome', 'pr', 'record', 'run', 'settle', 'settleFailed', 'settleRow', 'status', 'step', 'stop', 'ts', 'turns'];
+const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reproduced', 'returned', 'run', 'status', 'step', 'ts', 'turns', 'usage'];
+const BASE_KEYS_PLAIN = [
+  K0, K0, K0, K0, K0, K0,
+  K0, K1, K2, K2, K0, K0,
+  K2, K0, K0, K0, K3, K2,
+  K2, K4,
+];
+const BASE_KEYS_FIX = [
+  K0, K0, K0, K0, K0, K0,
+  K0, K1, K2, K2, K0, K5,
+  K0, K2, K0, K0, K0, K3,
+  K2, K2, K4,
+];
+
 test('AC7.1 (#5414): the happy path adds exactly one HEAD read on each side of the implementer launch', async () => {
   const plain = harness();
   assert.equal(await run(['#7'], plain.deps), 0);
@@ -1753,6 +1802,7 @@ test('AC7.1 (#5414): the happy path adds exactly one HEAD read on each side of t
   assert.ok(isHeadReadInWt(plain.calls[at + 1]), 'a HEAD read just after the launch');
   assert.deepEqual(plain.calls.filter((c, i) => !isLaunchSideRead(plain.calls, i)).map(sig), BASE_CALLS_PLAIN);
   assert.deepEqual(plain.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+  assert.deepEqual(plain.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_PLAIN);
 
   const fix = fixRig();
   assert.equal(await run(['#7'], fix.deps), 0);
@@ -1764,6 +1814,7 @@ test('AC7.1 (#5414): the happy path adds exactly one HEAD read on each side of t
   }
   assert.deepEqual(fix.calls.filter((c, i) => !isLaunchSideRead(fix.calls, i)).map(sig), BASE_CALLS_FIX);
   assert.deepEqual(fix.lines().map((l) => [l.step, l.status]), BASE_LINES_FIX);
+  assert.deepEqual(fix.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_FIX);
 });
 
 test('AC14.2: win32 passes bin explicitly', async () => {
@@ -3401,7 +3452,7 @@ const hideEvidence = (h) => {
 };
 const NOT_AT_HEAD = `the evidence file is not at HEAD with its recorded content: ${FINDING_0}`;
 
-test('fix round: every evidence file must be at HEAD with its recorded content, whoever committed it', async () => {
+test('fix round: every evidence file must be at HEAD with its recorded content', async () => {
   // Gitignored, with a code change: the commit holds the code only.
   const ignored = hideEvidence(fixRig({ effect: (fx) => { fx.dirty = ' M a.js\0 M .gitignore\0'; fx.hidden = true; } }));
   await run(['#7'], ignored.deps);
@@ -3553,14 +3604,9 @@ test('fix round: the byte check sets CRLF against LF aside, as the HEAD check do
 });
 
 test('AC6.1 (#5414): a fix-round commit that finds nothing to commit stops the round', async () => {
-  const selfCommit = (fx) => {
-    fx.hidden = true;
-    fx.atHead.set('tests/new/r0.test.js', EVIDENCE_CONTENT);
-    fx.diff = ['a.js', 'tests/new/r0.test.js'];
-    fx.dirty = '';
-  };
+  const nothingLeft = (fx) => { fx.hidden = true; fx.dirty = ''; };
   // Everything already committed: the commit step finds nothing to commit, and that stop ends the round with no second commit.
-  const wholly = hideEvidence(fixRig({ effect: selfCommit }));
+  const wholly = hideEvidence(fixRig({ effect: nothingLeft }));
   await run(['#7'], wholly.deps);
   assert.equal(lastLine(wholly).stop.detail, `fix round commit: no changed files: ${FINDING_0}`);
   assert.equal(reviewLines(wholly)[0].status, 'stop');

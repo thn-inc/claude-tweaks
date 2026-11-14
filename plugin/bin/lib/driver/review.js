@@ -204,7 +204,7 @@
 //   its kill, the tree changed during the checks (after the scoped run and each kept run; neither is
 //   singled out), the name-only diff failing (it ends with `--`, so a file named HEAD or after the
 //   sha is never read as a revision). `stop`: the worker's
-//   cannot-complete, the commit step's own stop when the tree held changes (the worker's title
+//   cannot-complete, the commit step's own stop (no changed files, or the worker's title
 //   empty once normalized), a kept evidence test that does not pass (reason failing-test), no path outside
 //   the evidence files differing from preFixHead once every run has passed (judged only then), and
 //   check's escalate. An interrupt after any await yields. Every detail is `{cause}: {path}:{line}
