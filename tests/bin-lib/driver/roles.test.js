@@ -223,9 +223,9 @@ test('AC1: every role but the implementer launches with no Bash, Edit or Write',
       assert.deepEqual(toolsFor(role, p).filter((t) => ['Bash', 'Edit', 'Write'].includes(t)), [], role + ' on ' + p);
     }
   }
-  for (const role of ['merge-check', 'acceptance']) {
+  for (const [role, schema] of [['merge-check', MERGE_CHECK_RESULT_SCHEMA], ['acceptance', ACCEPTANCE_RESULT_SCHEMA]]) {
     assert.deepEqual(ROLES[role], { tools: ['Read', 'Grep', 'Glob'], settings: false });
-    const args = composeArgs({ role, schema: MERGE_CHECK_RESULT_SCHEMA, platform: 'darwin' });
+    const args = composeArgs({ role, schema, platform: 'darwin' });
     assert.ok(args.includes('--restricted'), role);
     assert.equal(args[args.indexOf('--tools') + 1], 'Read,Grep,Glob', role);
     assert.ok(!args.includes('--settings'), role);
