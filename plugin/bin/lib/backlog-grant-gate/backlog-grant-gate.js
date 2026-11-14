@@ -19,7 +19,7 @@
 
 const { parseRecordFacets, parseDependencies, parseSubIssues } = require('../issues/record');
 const { evaluateGrantGate } = require('../issues/grant-gate');
-const { trustRows, parseGitLog } = require('../issues/trust');
+const { trustRows, parseGitLog, TRUST_POLICY_KEYS } = require('../issues/trust');
 const { machineGrantOutlook } = require('../issues/backlog');
 const { fetchNativeSubIssues } = require('../issues/native-dependencies');
 const { probeSchemaStrict } = require('../issues/capabilities-probe');
@@ -164,7 +164,8 @@ function computePhaseA({ candidates, policy, trustRowsArray }) {
 }
 
 // The full Step 0 -> Step 2 Phase A pipeline, one call. `policy` is
-// { ceiling, grantOriginationEnabled, riskFloor, sizeFloor, windowDays } —
+// { ceiling, grantOriginationEnabled, riskFloor, sizeFloor, trust } — `trust`
+// maps each of trust.js's TRUST_POLICY_KEYS to its resolved value —
 // already resolved by the caller (the CLI resolves it from
 // .claude-tweaks/policy.yml before calling in). `fetch` bundles every
 // injectable I/O dependency: { limit, workLinks, integrationBranch, owner,
@@ -230,7 +231,7 @@ function computeOutlook(policy, fetch) {
     labels: r.labels.map((l) => (typeof l === 'string' ? l : l.name)),
     hasParent: subIssueNumbers.has(r.number),
   }));
-  const rows = trustRows(records, gitLog, Date.now(), { 'trust-revert-window-days': pol.windowDays });
+  const rows = trustRows(records, gitLog, Date.now(), Object.fromEntries(TRUST_POLICY_KEYS.map((k) => [k, (pol.trust || {})[k]])));
 
   const phaseA = computePhaseA({ candidates, policy: pol, trustRowsArray: rows });
   const { eligible, refused } = machineGrantOutlook(candidates, pol, rows);
