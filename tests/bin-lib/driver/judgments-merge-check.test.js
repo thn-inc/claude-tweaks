@@ -105,7 +105,7 @@ describe('merge-check path', () => {
   });
 
   test('AC4: a sensitive path touched is a needs-human floor, no launch', async () => {
-    const h = harness({ blast: { code: 0, stdout: JSON.stringify({ summary: { sensitiveFilesTouched: ['package.json'] } }), stderr: '' } });
+    const h = harness({ blast: { code: 0, stdout: JSON.stringify({ config: { autoMergeMaxLines: 200, autoMergeMaxFiles: 12 }, summary: { sensitiveFilesTouched: ['package.json'] } }), stderr: '' } });
     const r = await judgeMergeCheck(h.env, h.ctx);
     assert.strictEqual(r.verdict, 'needs-human');
     assert.strictEqual(r.floor, 'sensitive-path');
@@ -290,7 +290,7 @@ describe('merge-check path', () => {
 
   test('MINOR 4: floor events are stop with the floor name and verdict needs-human', async () => {
     const cases = [
-      ['sensitive-path', { code: 0, stdout: JSON.stringify({ summary: { sensitiveFilesTouched: ['package.json'] } }), stderr: '' }],
+      ['sensitive-path', { code: 0, stdout: JSON.stringify({ config: { autoMergeMaxLines: 200, autoMergeMaxFiles: 12 }, summary: { sensitiveFilesTouched: ['package.json'] } }), stderr: '' }],
       ['blast-radius-failed', { code: 1, stdout: '', stderr: 'x' }],
     ];
     for (const [floor, blast] of cases) {
@@ -332,7 +332,7 @@ describe('merge-check path', () => {
   });
 
   test('a blast-radius exit 1 with otherwise valid stdout is still the failed floor', async () => {
-    const h = harness({ blast: { code: 1, stdout: JSON.stringify({ summary: { sensitiveFilesTouched: [] } }), stderr: '' } });
+    const h = harness({ blast: { code: 1, stdout: JSON.stringify({ config: { autoMergeMaxLines: 200, autoMergeMaxFiles: 12 }, summary: { sensitiveFilesTouched: [] } }), stderr: '' } });
     const r = await judgeMergeCheck(h.env, h.ctx);
     assert.strictEqual(r.floor, 'blast-radius-failed');
     assert.strictEqual(h.launches().length, 0);
