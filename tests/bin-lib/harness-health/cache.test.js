@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const {
   cachePath, readCache, writeCache, createDurable,
 } = require('../../../plugin/bin/lib/harness-health/cache');
@@ -66,8 +67,12 @@ test('readDurableState/writeDurableState are exported and bound to harness-healt
 test('createDurable returns the durable accessors and routes git stderr to the injected sink', () => {
   let err = '';
   const root = tmp();
-  const durable = createDurable({ env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(root) }, stderr: (t) => { err += t; } });
+  // GIT_DIR names an empty repo with no origin remote: the fetch then fails with
+  // a remote-specific message that a non-repo root (env ignored) never produces.
+  const repo = tmp();
+  execFileSync('git', ['init', '-q', repo]);
+  const durable = createDurable({ env: { ...process.env, GIT_DIR: path.join(repo, '.git') }, stderr: (t) => { err += t; } });
   assert.deepStrictEqual(Object.keys(durable).sort(), ["pushDurableState","readDurableState","writeDurableState","writeDurableStateLocal"]);
   assert.deepStrictEqual(durable.readDurableState(root), { cursors: {}, retryQueue: [], runs: [], remembered: {}, declined: {} });
-  assert.match(err, /health-state: fetch failed/);
+  assert.match(err, /health-state: fetch failed.*does not appear to be a git repository/s);
 });
