@@ -90,6 +90,8 @@ Each line names the probe that settled it.
 ## Out of scope (stated, not deferred silently)
 
 - `tests/build-verify-after-doc-steps.test.js` is in the spec's Key Files but pins nothing this plan changes (#3060's step order and #3489's Category A paragraph). It is run in Task 1 Step 4 as a sibling pin, unchanged.
+
+Waived tests/build-verify-after-doc-steps.test.js: read and run as a sibling pin only; this build does not modify it.
 - `plugin/skills/release/execute.md:202`'s delta review keeps review's own Step 1.5 as its test gate. Under the key that gate runs the delta scoped, which is the intended subset for a delta. No change.
 - `plugin/skills/review/code-mode-steps.md:86`'s "scoped when a declaration exists" already matches. Only its "(full suite + QA)" parenthetical changes (Task 4).
 - `residue.js` spawning `npm` without a shell fails on win32 (`could not run the project test command`). That is a pre-existing defect, outside this record. File it at wrap-up as a follow-up with its probe: `execFileSync('npm', ['test'])` on win32 throws ENOENT because npm is `npm.cmd`.
@@ -574,7 +576,7 @@ Exact text:
 - **`docs/getting-started.md:11`,** after "…and the suite runs here only with `verify.js --local`.": ` Pipelines then push before each scoped verify, and \`/claude-tweaks:test full\` asks for the whole suite on this machine by name.`
 
 - [ ] **Step 1: Write the failing tests.** Append two tests.
-  - `'AC5.1-AC5.6: the decision document and impact-selection.md state the rule, a miss, what catches it, what does not, and who enforces the gate (#5370)'`: run `pinned(sectionOf(read('docs/decisions/0032-whole-suite-runs-in-ci-local-runs-on-request.md'), '## Decision'), AC5_FACTS)` and `pinned(sectionOf(read('plugin/skills/test/impact-selection.md'), '## Whole suite on request'), AC5_FACTS)` with:
+  - `'AC5.1-AC5.13: the decision document and impact-selection.md state the rule, a miss, what catches it, what does not, and who enforces the gate (#5370)'` (it covers AC5.1, AC5.2, AC5.3, AC5.4, AC5.5, AC5.6, AC5.7, AC5.8, AC5.9, AC5.10, AC5.11, AC5.12 and AC5.13, each clause one or more `AC5_FACTS` rows): run `pinned(sectionOf(read('docs/decisions/0032-whole-suite-runs-in-ci-local-runs-on-request.md'), '## Decision'), AC5_FACTS)` and `pinned(sectionOf(read('plugin/skills/test/impact-selection.md'), '## Whole suite on request'), AC5_FACTS)` with:
 
 ```js
 const AC5_FACTS = [
@@ -725,7 +727,7 @@ Waived AC3.1 (as a committed test): it describes a live pipeline run against Git
 | AC4.1: under the key `test full` runs the whole suite here, no argument does not | 1, 4 | `AC4.1, AC4.3: /claude-tweaks:test full …`; the Standalone rule facts |
 | AC4.2: the release's pre-bump verification runs the whole suite here | 5 | `AC4.2: the release runs /claude-tweaks:test full …` |
 | AC4.3: `full` in the argument hint and `/help`'s reference card | 4 | `AC4.1, AC4.3: …`; `tests/argument-hint-mirrors.test.js` |
-| AC5 (every clause): the rule, a miss, how CI catches it, what it does not, who enforces it | 7 | `AC5.1-AC5.6: the decision document and impact-selection.md state …` (17 facts per slice, each with a go-red proof) |
+| AC5 (every clause): the rule, a miss, how CI catches it, what it does not, who enforces it | 7 | `AC5.1-AC5.13: the decision document and impact-selection.md state …` (17 facts per slice, each with a go-red proof) |
 | AC6.1: the committed declaration with the key is accepted, and `verify.js --scope` reads it with no validation error | 8 | `AC6.1: this repo declares localRuns …`; `AC6.1: verify.js --stamp-status --scope reads …` |
 | AC7.1: with the key, the probe is not run, names the CI job, never starts `npm test` | 6 | `AC7.1: under localRuns the suite probe is not run …`; `AC7.1, AC7.3: with localRuns the probe never starts npm test …` |
 | AC7.2: without the key it runs `npm test` as before | 6 | `AC7.2: without the key, or with no declaration …`; `AC7.2, AC7.3: without the key the probe runs npm test as before` |
