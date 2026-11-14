@@ -48,7 +48,7 @@ A project picks one of two shapes (`test/ci-source.md`):
 - **CI on drafts plus a `ci` declaration:** full-suite verdicts come from draft-PR CI, there are no local full-suite runs, and every phase push costs Actions minutes.
 - **CI skips drafts and no `ci` declaration:** verification runs locally during the pipeline, and CI runs once at ready, which the gate waits for.
 
-Declaring both is a misconfiguration. With a job-level skip it degrades harmlessly: every verify falls back on `ci-job-skipped` after one poll. With a workflow-level gate it costs a `waitSeconds` stall per verify. Detecting the conflict is #5162's, at init's CI-workflow review. Under `localRuns: "on-request"` (`test/ci-source.md`) neither shape degrades quietly: each of those verifies stops with exit 3 instead of running the suite here.
+Declaring both is a misconfiguration. With a job-level skip it degrades harmlessly: every verify falls back on `ci-job-skipped` after one poll. With a workflow-level gate it costs a `waitSeconds` stall per verify. Detecting the conflict is #5162's, at init's CI-workflow review. Under `localRuns: "on-request"` (`test/ci-source.md`) neither shape degrades quietly: each of those verifies exits 3, and a pipeline site then re-runs once with `--local`, logging one `AUTO` line (`test/verification.md`'s Push first paragraph).
 
 ## Why projects skip drafts
 

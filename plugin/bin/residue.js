@@ -116,7 +116,8 @@ function main() {
   // "test suite exit 254" finding instead of `unknown`.
   // Under `localRuns` the suite is CI's and a bare `npm test` here may run a
   // subset or nothing (#5319), so its exit 0 is no green suite (#5370).
-  const root = git(['rev-parse', '--show-toplevel']) || cwd;
+  const gitRoot = git(['rev-parse', '--show-toplevel']);
+  const root = gitRoot || cwd;
   const read = readDeclaration(path.join(root, DECLARATION_PATH));
   const skip = localRunsSkip(read.ok ? read.decl : null);
   let suiteResult;
@@ -156,7 +157,7 @@ function main() {
       // The invoking run's identity, when one is threaded (wrap-up runs
       // inside a pipeline run; standalone invocations have none) — #1118.
       runId: pipelineRunId,
-      worktreeRoot: root,
+      worktreeRoot: gitRoot,
       // #1328: lets the probe cross-check a status: clean finding's
       // recorded worktree against the already-resolved locked-worktree
       // list, instead of re-invoking git from inside the probe itself.

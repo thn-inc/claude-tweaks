@@ -18,7 +18,7 @@ A multi-spec run skips even under `pr-first` because `flow/multispec-freshness.m
 
 A `pr-first` worktree run catches up in every mode — `auto`, `confirm`, `interactive` and `hybrid` alike, and a standalone `/claude-tweaks:build` — and adds no stop. Run `_shared/git-discipline.md`'s Catch-up (`auto`) steps 1-4 (in its Post-push merge-state check) with `{worktree-path}` the build's worktree and `{integration-branch}` resolved at this call site per `_shared/integration-branch.md` — merge, never rebase, with the same conflict resolution and `merge --abort` — with these differences. In this file, "Catch-up step N" is that list's own numbering and "difference N" is this list's.
 
-1. Nothing is pushed: the build phase exit pushes the merged branch.
+1. This procedure pushes nothing: with a `ci` block, Common Step 5's push-first pushes the merged branch, otherwise the build phase exit does.
 2. There is no PR conflict line to surface. Catch-up step 1's dirty tree logs `--status SKIP
    --reversibility n/a --text "condition: uncommitted changes in the worktree → fallback: catch-up
    not run; verifying the un-merged tree"`; a failed fetch logs the same with `--text "condition:

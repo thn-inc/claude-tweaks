@@ -162,7 +162,7 @@ test('AC1.1: the pre-push sites and the whole-suite re-run pass --local (#5370)'
     [/That binds the agent's re-run only; the runner's own allowlisted flaky retry still re-runs locally and is unchanged/, 'the runner retry is unchanged'],
   ]);
   pinned(sectionOf(flake, '## Whole-suite re-run'), [
-    [/the one local run the declaration allows is the `--local` fallback/, 'the --local fallback is the one local run'],
+    [/the one agent-initiated local run the declaration allows is the `--local` fallback/, 'the --local fallback is the one local run'],
     [/a red from such a run is not a CI red, so the CI-red rule above does not apply to it/, 'a --local red is outside the CI-red rule'],
     [/A red from a `--local` run re-runs with `--local` added, inside that same fallback/, 'a local red re-runs with --local'],
     [/a scoped re-run would ask CI again and an unscoped one exits 2/, 'why --local'],
@@ -210,6 +210,16 @@ test('AC4.1, AC4.3: /claude-tweaks:test full runs the whole suite here, no argum
   pinned(sub(s, '### Standard suite (no arguments)'), [
     [/Under the declaration's `localRuns: "on-request"`, that procedure runs the scoped invocation, standalone too/, 'no argument is scoped under the key'],
     [/A `--local` fallback whose impact selection cannot narrow still runs what selection chose/, 'the named exception'],
+  ]);
+});
+
+test("close-out's update verify passes --local with its whole-suite run (#5370)", () => {
+  const body = read('plugin/skills/dispatch/close-out-update.md');
+  const at = body.indexOf('4. **Verify.**');
+  assert.notEqual(at, -1);
+  pinned(body.slice(at, body.indexOf('5. **Push.**', at)), [
+    [/bin\/verify\.js" --local` with the project's full command set/, 'the update verify passes --local'],
+    [/under `localRuns` an unscoped run needs `--local`/, 'why'],
   ]);
 });
 
@@ -269,7 +279,7 @@ test('AC4.2: the release runs /claude-tweaks:test full after the tree check and 
     [/run `\/claude-tweaks:test full` from `\$RUN_ROOT` with `\$PIPELINE_RUN_DIR=\{run-dir\}` set/, 'runs test full from RUN_ROOT'],
     [/before the marker below/, 'before the review marker'],
     [/one deliberate whole-suite run on a developer machine per version/, 'once per version'],
-    [/the only one on macOS and Node 22 before the tag/, 'the only macOS and Node 22 run'],
+    [/the only run on this machine's platform before the tag — for this plugin, macOS and Node 22 where CI is ubuntu and Node 20/, 'the only run on this platform'],
     [/reads `verifiedHead: true` and does not re-run a subset/, 'the review gate reads the full stamp'],
     [/Step 8's summary reads `failed` with reason `whole-suite run failed`/, 'a red run stops the release'],
   ];

@@ -32,5 +32,6 @@ Pipelines push first and handle exit 3 per `plugin/skills/test/verification.md`,
 
 - `windows-regression.yml` passes `--local`; the residue probe reports not run.
 - The express lane, implementer affected sets and the driver pass `--local`.
+- `/claude-tweaks:dispatch`'s close-out update runs its whole-suite verify with `--local`, since the human accepted a run of the full suite.
 - Installed builds older than #5369 ignore the `localRuns` key, and so still run locally. That is the version floor.
 - Revisit if the plugin's CI gains macOS or Node 22: the release's whole-suite run is then no longer the only check there.
