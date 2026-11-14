@@ -40,17 +40,17 @@ const TOOL_NAME = 'harness-health';
 // Mirrors bin/lib/code-health/dedup.js's RISK_RANK convention/shape.
 const CONFIDENCE_RANK = { high: 0, med: 1, low: 2 };
 
-// Returns true for a recognized value (an omitted flag included); otherwise
-// writes its message to `stderr` and returns false.
+// Writes its message to `stderr` and returns { ok: false, code: 2 } for an
+// unrecognized value; { ok: true } otherwise (an omitted flag included).
 function validateConfidenceArg(value, stderr) {
-  if (value === undefined) return true;
-  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return true;
+  if (value === undefined) return { ok: true };
+  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return { ok: true };
   stderr(
     `harness-health.js: validate-findings --min-confidence "${value}" is not a recognized value ` +
     `(must be one of ${Object.keys(CONFIDENCE_RANK).join('|')}) — an unrecognized value silently ` +
     'files every finding regardless of confidence, same as omitting the flag.\n',
   );
-  return false;
+  return { ok: false, code: 2 };
 }
 
 function parseArgs(argv, cwd = process.cwd()) {
@@ -194,7 +194,8 @@ function cmdValidateFindings(args, ctx) {
   }
   const findingsPath = path.resolve(ctx.cwd(), findingsArg);
 
-  if (!validateConfidenceArg(args.minConfidence, stderr)) return 2;
+  const confidence = validateConfidenceArg(args.minConfidence, stderr);
+  if (!confidence.ok) return confidence.code;
 
   // buildValidateFindingsUpdate only patches a cursor when both target AND
   // kind are present (see lib/harness-health/cache.js), or when gapScan is
