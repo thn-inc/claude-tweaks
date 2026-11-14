@@ -23,7 +23,7 @@ const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 
 const STEP_NAMES = Object.freeze([
   'policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker',
-  'commit', 'test', 'check', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci',
+  'commit', 'test', 'check', 'review', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci',
 ]);
 const FINAL_STEP = 'final';
 
@@ -223,11 +223,29 @@ function neutralize(text) {
     .trim();
 }
 
+// The text without its trailing run of whitespace and dots, when that run holds a dot: what
+// `.replace(/(?:\s*\.)+\s*$/, '')` gives (its leftmost match starts where the maximal trailing
+// run of `\s` and `.` starts, and exists only when the run holds a dot), in one backward pass.
+// The regex is quadratic on a long run of dots or `. ` pairs, and a worker's title is unbounded
+// (#5222). Each character is judged by `\s` itself, so the whitespace set is the regex's.
+const WS_CHAR_RE = /\s/;
+function dropTrailingDots(text) {
+  let start = text.length;
+  let sawDot = false;
+  while (start > 0) {
+    const ch = text[start - 1];
+    if (ch === '.') sawDot = true;
+    else if (!WS_CHAR_RE.test(ch)) break;
+    start -= 1;
+  }
+  return sawDot ? text.slice(0, start) : text;
+}
+
 function normalizeTitle(raw) {
   if (typeof raw !== 'string') return '';
   const firstLine = raw.split(/\r\n|\r|\n/)[0];
   // A removed trailing reference can leave a stranded " ." behind, so drop the whole tail.
-  return neutralize(firstLine).replace(/(?:\s*\.)+\s*$/, '').trim();
+  return dropTrailingDots(neutralize(firstLine)).trim();
 }
 
 // Every line reaches stdout at once. The file side is a queue: lines are held until the

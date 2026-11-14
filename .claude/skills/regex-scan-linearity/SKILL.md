@@ -54,6 +54,13 @@ A scan that re-reads the input once per match is the same cost without a regex: 
 - **Unbounded segments retried from every start.** `[A-Za-z0-9-]+\/[^/]+` rescans a long `a-a-` or digit run from each position (`'a-'.repeat(100000)` about 17.5 s, `'1'.repeat(200000)` about 32 s). Fix: bound each segment by the renderer's own limit, owner `{0,38}` after its first character and repo `{1,100}` (GitHub's limits), so every start scans a fixed span.
 - **A later pass that opens a boundary for an earlier one.** `PATH_REF` runs once, after the fixed-point loop, so it cannot eat a rebuilt URL's path. The space it leaves can still open a `\b` before a glued `GH-N`, so one more `GH_REF` pass follows it. When a pass runs outside the loop, check what its replacement text exposes to the patterns that ran before it.
 
+### A cap after the call does not bound the call
+
+A length cap applied to a regex's output (a slice, a truncate, a max-chars) does not bound the regex. #5222's `normalizeEventText` cut reviewer text to `EVENT_TEXT_MAX_CHARS` only after calling `normalizeTitle`, whose `/(?:\s*\.)+\s*$/` is shape 1: 80,000 dots took about 25 s. The commit step ran the same helper on the implementer's unbounded title. The bug got through build and two rounds of review, and only the high-tier reproduction lens caught it.
+- Cut the input before the call.
+- When the regex lives in a shared helper, make the helper linear at its source (`dropTrailingDots` in `plugin/bin/lib/driver/events.js`, a hand scan). Pin it with a differential test against the old expression over every short string, plus a `perf/` budget file.
+- Grep every caller of the helper: another caller may pass it unbounded text.
+
 ### A line under `m` is JS's line, not git's
 
 This one is a wrong answer, not a slow one. A commit body's line ends at LF, but JS `^` and `$` under `m` also break on U+2028 and U+2029, so `Release-Note: A Fixes #99` read as a `Fixes #99` footer and booked #99 (#4634, a review probe, one fix wave). Split on `'\n'` and match each line without `m`, as `parseCommit` in `plugin/bin/lib/release-local/commits.js` and `extractReleaseNotes` in `plugin/bin/lib/release-notes.js` do. Three details come with the split:
@@ -107,6 +114,7 @@ Run the perf suite: `npm run test:perf`.
 - `perf/recording-redact-linearity.test.js`
 - `perf/driver-settle-reduce-detail-linearity.test.js`
 - `perf/driver-neutralize-linearity.test.js`
+- `perf/driver-normalize-title-linearity.test.js`, `perf/driver-review-event-text-linearity.test.js`
 - `perf/cross-repo-dependency-linearity.test.js`, `perf/ledger-row-linearity.test.js`, `perf/process-kill-linearity.test.js`
 - `plugin/bin/lib/console/finding-path.js`, `plugin/bin/lib/log-decision/aggregate-reproduction.js`
 - Domain detail stays in `code-health-focus-vertical` (item 6, generators) and `shell-scanner-bash-differential` (the write gate's caps)
