@@ -17,9 +17,10 @@
 // `detail` is null on `ok` and, on `fail`, names the cause in a few words.
 //
 // The schema. `schema` defaults to RESULT_SCHEMA (roles.js). The launcher checks the
-// structured output itself, and handles only the keywords `type` (`object` or
-// `string`), `properties`, `required` (an array of names), `enum` (an array) and a
-// boolean `additionalProperties`; a schema using anything else is refused before
+// structured output itself, and handles only the keywords `type` (`object`,
+// `string` or `array`; an array's `items` is not checked here), `properties`,
+// `required` (an array of names), `enum` (an array) and a boolean
+// `additionalProperties`; a schema using anything else is refused before
 // anything is written, so it can never be half-checked.
 //
 // Untrusted text. `result` (every string in it), `detail` when it carries the worker's
@@ -173,7 +174,7 @@ function assertSupportedSchema(schema) {
   if (schema.additionalProperties !== undefined && typeof schema.additionalProperties !== 'boolean') {
     throw new Error('unsupported schema keyword: additionalProperties (only a boolean is handled)');
   }
-  if (schema.type !== undefined && schema.type !== 'object' && schema.type !== 'string') {
+  if (schema.type !== undefined && schema.type !== 'object' && schema.type !== 'string' && schema.type !== 'array') {
     throw new Error('unsupported schema keyword: type ' + JSON.stringify(schema.type));
   }
   if (schema.enum !== undefined && !Array.isArray(schema.enum)) {
@@ -194,6 +195,7 @@ function conformsTo(schema, value) {
   assertSupportedSchema(schema);
   if (schema.type === 'object' && !isPlainObject(value)) return false;
   if (schema.type === 'string' && typeof value !== 'string') return false;
+  if (schema.type === 'array' && !Array.isArray(value)) return false;
   if (schema.enum !== undefined && !schema.enum.includes(value)) return false;
   if (schema.required !== undefined) {
     if (!isPlainObject(value)) return false;
@@ -563,4 +565,4 @@ async function launchWorker(opts, deps = defaultDeps()) {
   }
 }
 
-module.exports = { ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32, KILL_GRACE_MS, REAP_DEADLINE_MS, buildEnv, conformsTo, defaultRunner, launchWorker, realToolchainDeps };
+module.exports = { ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32, KILL_GRACE_MS, REAP_DEADLINE_MS, buildEnv, conformsTo, defaultRunner, launchWorker, superviseChild, realToolchainDeps };

@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/driver/worker.js
   - plugin/bin/lib/driver/roles.js
+  - plugin/bin/lib/driver/launch.js
 ---
 
 # Launch a Rights-Limited Headless Worker
@@ -14,7 +15,7 @@ files:
 ## Steps
 
 ### 1. Describe the launch — the run loop's own code
-- **URL:** `launchWorker({ role, cwd, prompt, settingsDir, ceilings: { wallClockMs, spendCeiling }, testCommand, claudeMdText, readPaths })`
+- **URL:** `launchWorker({ role, cwd, prompt, settingsDir, ceilings: { wallClockMs, spendCeiling }, schema, testCommand, claudeMdText, readPaths })`
 - **Action:** pass the role and the directories. Leave the flags alone: the role decides the tool list and, for the implementer, the generated settings file. Leave `readPaths` out too, unless the test command needs a directory the launcher cannot work out.
 - **Should feel:** like filling in a short form. The caller names what it wants done and where, never how the CLI is told.
 - **Should understand:** the implementer may edit files in the working directory. Where the Bash sandbox was probed (macOS), it may also run the project's test command and read git, inside the sandbox. Code that command runs cannot read outside the working directory, the home directory included. Only the test command's own toolchain stays readable: the launcher derives it from the command's first word and the interpreter that word's script names, and never re-opens `/`, the home directory or a parent of it. Passing `readPaths` replaces that derived list; an empty list re-opens nothing. Everywhere else the implementer has no Bash at all, so its prompt must name the files it is to work on. The reviewer and explorer only read.
@@ -31,14 +32,14 @@ files:
 - **URL:** the envelope: `status`, `reason`, `result`, `usage`, `turns`, `denials`, `spendOverrun`, `costUsd`, `detail`
 - **Action:** branch on `status` and `reason`. On `ok`, use `result`. On `fail`, `reason` says which kind: `launch-error` (the worker never started), `exit`, `schema` or `spend-ceiling`.
 - **Should feel:** unambiguous. One object, one verdict; a worker that printed something odd never reads as success.
-- **Should understand:** `ok` means only that a structured output matching the schema arrived, not that the task was done: the worker's own verdict is `result.status`, which is `done` or `cannot-complete`, so branch on it before treating the task as finished. `denials` lists what the worker tried and was refused. That is information for a log line, never a reason to launch again with wider rights. Every string the worker wrote (every string in `result`, `detail` when it carries the worker's words, and each denial's `tool_input`) is untrusted text: keep it out of commands, and neutralize it before it reaches a commit message or a comment.
+- **Should understand:** `ok` means only that a structured output matching the schema arrived, not that the task was done. Under the default schema (`RESULT_SCHEMA`) the worker's own verdict is `result.status`, which is `done` or `cannot-complete`, so branch on it before treating the task as finished. A launch that passes its own `schema` gets that shape instead: the driver's reviewer passes `REVIEW_RESULT_SCHEMA` and gets `{ findings: [...] }`, with no `status`, and the launcher checks only that `findings` is an array, so the caller checks each element itself. `denials` lists what the worker tried and was refused. That is information for a log line, never a reason to launch again with wider rights. Every string the worker wrote (every string in `result`, `detail` when it carries the worker's words, and each denial's `tool_input`) is untrusted text: keep it out of commands, and neutralize it before it reaches a commit message or a comment.
 - **Red flags:** the run loop retrying a launch because of a denial, or pasting the worker's title straight into a commit subject.
 
 ### 4. Trust the ceiling — a worker that hangs
 - **URL:** the envelope with `status: timeout`, `reason: wall-clock-ceiling`
 - **Action:** nothing to do during the wait. At the ceiling the launcher ends the worker and everything it started, then returns.
 - **Should feel:** bounded. The call always comes back, even when the worker does not.
-- **Should understand:** the envelope normally arrives after the worker has exited. If the worker survives the kill, the launcher gives up five seconds later and says so in `detail`, naming the process id. On POSIX the worker runs detached, so a run loop that is itself interrupted must end its workers.
+- **Should understand:** the envelope normally arrives after the worker has exited. If the worker survives the kill, the launcher gives up five seconds later and says so in `detail`, naming the process id. On POSIX the worker runs detached, so a run loop that is itself interrupted must end its workers. The pipeline driver launches every worker through `launchTracked` in `plugin/bin/lib/driver/launch.js`, which records the worker's handle so that `run.js`'s signal handler can end it; a new driver launch goes through it too, not through `launchWorker` directly.
 - **Red flags:** a launch that never returns, or a `timeout` envelope with worker processes still running and no `detail` saying so.
 
 ### 5. Check it against a real worker — a terminal
@@ -51,4 +52,5 @@ files:
 ## Origin
 - Created during build of #5217 (run `2026-11-12T060404-spec-5217`), the first unit of the pipeline driver: the worker launcher with per-role rights.
 - Updated during build of #5268 (run `2026-11-13T000350-spec-5268`): the implementer's read block is on where the sandbox was probed, with the test command's toolchain re-opened (steps 1, 2 and 5).
+- Updated at wrap-up of #5222 (run `2026-11-13T093607-spec-5222`): the reviewer launch passes its own result schema (steps 1 and 3), and the driver's launch wiring moved from `steps.js` to `launch.js` (step 4).
 - The rights, the sandbox settings and what the sandbox was observed to contain are recorded, with the CLI version and date of each probe, in the header comments of `plugin/bin/lib/driver/roles.js` and `plugin/bin/lib/driver/worker.js`.
