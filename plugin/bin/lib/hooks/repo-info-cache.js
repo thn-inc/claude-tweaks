@@ -17,7 +17,8 @@
 //              `commondir` text. A worktree removed and re-added at one path is
 //              caught by the `.git` file's own ino + ctime (git rewrites it).
 //   - configs: "{mtimeNs}:{size}:{ino}" or 'missing' for the common config,
-//              the admin dir's config.worktree, the global config(s) and the
+//              config.worktree (the admin dir's for a linked worktree, the
+//              `.git` directory's own for a main checkout), the global config(s) and the
 //              system config git would read.
 // Anything that cannot be looked at (an error other than ENOENT) makes the
 // signature null, meaning "do not cache".
@@ -148,10 +149,11 @@ function buildSignature(dir, env, platform) {
         configFiles.push(path.join(common, 'config'), path.join(admin, 'config.worktree'));
       }
     } else if (kind === 'dir') {
-      configFiles.push(path.join(gitPath, 'config'));
+      configFiles.push(path.join(gitPath, 'config'), path.join(gitPath, 'config.worktree'));
     }
   }
   configFiles.push(...globalAndSystemConfigs(env, platform));
+  // Files reached through [include]/[includeIf] are not tracked (an accepted divergence).
   sig.configs = configFiles.map((p) => [p, configKey(p)]);
   return sig;
 }

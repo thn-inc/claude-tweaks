@@ -125,6 +125,17 @@ test('#5294: an edited global git config is re-asked', (t) => {
   }
 });
 
+test('#5294: a written main-checkout config.worktree is re-asked', (t) => {
+  resetMemo();
+  const main = gitRepo();
+  const counter = countRevParse(t);
+  repoInfo(main);
+  fs.writeFileSync(path.join(main, '.git', 'config.worktree'), '[core]\n\tbare = false\n');
+  const after = repoInfo(main);
+  assert.strictEqual(counter.n, 2);
+  assert.deepStrictEqual(after, fresh(main));
+});
+
 test('AC4.1: an indeterminate answer is never cached and the next call answers definitively', (t) => {
   resetMemo();
   const main = gitRepo();
