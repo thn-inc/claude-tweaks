@@ -676,6 +676,10 @@ test('residueErrorText: caps the command at 4 tokens', () => {
   assert.equal(residueErrorText(Object.assign(new Error('Command failed: gh api graphql repos o r'), { stderr: 'x' })), 'x (gh api graphql repos)');
 });
 
+test('residueErrorText: stops the command at the first flag, before the 4-token cap', () => {
+  assert.equal(residueErrorText(Object.assign(new Error('Command failed: gh api --method POST repos/o/r'), { stderr: 'x' })), 'x (gh api)');
+});
+
 test('residueErrorText: a multi-line --body leaks no body line', () => {
   const withStderr = Object.assign(new Error('Command failed: gh issue comment 1 --body line-one\nSECRET-BODY-LINE\nHTTP 403: x'), { stderr: 'HTTP 403: x\n' });
   assert.equal(residueErrorText(withStderr), 'HTTP 403: x (gh issue comment 1)');
