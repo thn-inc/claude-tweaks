@@ -310,7 +310,7 @@ test('AC5 facts: a resolvePolicy that throws falls back to the 30/150 schema def
   }
 });
 
-test('AC2 facts: gatherFacts resolves budgets through the injected resolvePolicy', () => {
+test('AC2 facts (injected-resolver half; the no-child half is Task 7\'s count-node-procs measurement): gatherFacts resolves budgets through the injected resolvePolicy', () => {
   const { dir, sha } = budgetFixture('wrapup-facts-budget-inject-');
   try {
     const calls = [];
@@ -326,6 +326,29 @@ test('AC2 facts: gatherFacts resolves budgets through the injected resolvePolicy
     assert.strictEqual(target.budget, 5);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC7 facts: the injected env reaches the core — GIT_DIR/GIT_WORK_TREE only in env move the root lookup to another repo', () => {
+  // cwd is repo A (no policy.yml: budget 150). The env-only GIT_DIR/GIT_WORK_TREE
+  // point `git rev-parse --show-toplevel` at repo B, whose policy.yml sets 5.
+  // A 6-line CLAUDE.md in A is over budget only if env reached the core's git.
+  const gitEnv = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete gitEnv[k];
+  const b = budgetFixture('wrapup-facts-budget-env-b-');
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-env-a-'));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: a, env: gitEnv });
+    fs.writeFileSync(path.join(a, 'CLAUDE.md'), 'line\n'.repeat(6));
+    const base = b.sha;
+    const env = { ...gitEnv, GIT_DIR: path.join(b.dir, '.git'), GIT_WORK_TREE: b.dir };
+    const f = gatherFacts({ cwd: a, base, env });
+    const target = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md'));
+    assert.ok(target);
+    assert.strictEqual(target.budget, 5, "B's policy.yml budget is read only if the injected env reached the root lookup");
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
   }
 });
 
