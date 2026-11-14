@@ -120,6 +120,7 @@ const STEP_FACTS = [
   [/never reviews the plugin's generated `track-issue-fixes\.yml` while it is the current or an earlier generated version/, 'step: only the generated tracking workflow is skipped'],
   [/a hand-modified copy is reviewed like any project workflow/, 'step: a hand-modified copy is reviewed'],
   [/A single workflow file that is unreadable, a dangling symlink, or resolves outside the checkout is not an exit 1: it is an `unparsed` row under exit 0/, 'step: a per-file failure is unparsed under exit 0'],
+  [/except one unparsed only for `cancel-in-progress expression not evaluated`, which got every check but concurrency/, 'step: the expression reason suppresses check 4 alone'],
 ];
 const missingStepFacts = missingFactsOf(STEP_FACTS);
 
@@ -199,7 +200,7 @@ const QUICK_AUDIT_FACTS = [
   [/preliminary gap signals \(below threshold\)\. CI workflow review — report-only, not counted as drift:"/, 'quick audit: its own heading line'],
   [/Never print "No drift detected\." while the CI Workflow Review row surfaced any line/, 'quick audit: never "No drift detected."'],
   [/first present every line the CI Workflow Review row surfaced \(Phase 1u\.5\), verbatim/, 'full pass: presents the lines first'],
-  [/under the header line `CI workflow review — report-only, not counted as drift:` printed on its own \(the Quick Audit's phrase without its "Config is current\." lead, which a full pass cannot claim\)/, 'full pass: names its exact header line'],
+  [/under the header line `CI workflow review — report-only, not counted as drift:` printed on its own \(the Quick Audit's phrase without its "Config is current\. \{N\} preliminary gap signals \(below threshold\)\." lead, since a full pass prints no Quick Audit block\)/, 'full pass: names its exact header line'],
   [/as its own report-only block outside the drift count/, 'full pass: report-only, not drift'],
   [/still presenting the CI Workflow Review row's lines first/, 'full pass: --full presents them too'],
 ];
@@ -308,7 +309,7 @@ const missingGraphRows = (section) => GRAPH_ROWS
   .filter(([prefix, fact]) => !section.split('\n').some((l) => l.startsWith(prefix) && l.includes(fact)))
   .map(([prefix]) => prefix);
 
-test('docs/skill-graph.md\'s init section carries the ci-skips-drafts edge', () => {
+test('docs/skill-graph.md\'s init section carries the ci-skips-drafts and ci-workflow-review.js edges', () => {
   const section = sectionOf(GRAPH, '## init');
   assert.deepEqual(missingGraphRows(section), []);
   // Control: each row removed from the section turns exactly its own check red.
@@ -329,7 +330,7 @@ const STRUCTURE_FACTS = [
   [INIT_LIB_LINE, /; consumed by plugin\/bin\/ci-workflow-review\.js/, 'module: its consumer'],
   [READER_LINE, /→ Three line-based GitHub Actions workflow readers \(no YAML library\); the first fails toward off, the other two toward unparsed\./, 'reader: three readers'],
   [READER_LINE, /readWorkflowShape\(text\) → \{name, prTrigger, types, typesDeclared, draftReference, prFilters, prFiltersByTrigger, pushTrigger, pushBranches, pushBranchesIgnore, pushTags, jobs\[\{id, if, stepIfCount, concurrency\}\], concurrency, unparsed\[reason\]\}/, 'reader: the shape fields'],
-  [READER_LINE, /Tests in tests\/merge-verification-workflow-shape\.test\.js\./, 'reader: its test suite'],
+  [READER_LINE, /Tests in tests\/merge-verification\.test\.js and tests\/merge-verification-workflow-shape\.test\.js/, 'reader: its test suites'],
   // With CLI_LINE as the line's prefix, this completes the command `node plugin/bin/ci-workflow-review.js --root <dir> [--drift] [--json]`.
   [CLI_LINE, /--root <dir> \[--drift\] \[--json\] {3}# Init's CI-workflow review \(#5162\)/, 'cli: the command'],
   [CLI_LINE, /reads \.github\/workflows\/\*\.yml and \*\.yaml \(extension matched case-insensitively\)/, 'cli: workflow discovery'],
