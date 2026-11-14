@@ -77,6 +77,8 @@ URL *path* placeholders (`repos/{owner}/{repo}/…`) are a fourth thing: always 
 
 **A `--repo` *consumer* must accept both shapes.** Once producers emit host-qualified slugs, a CLI taking `--repo` receives either form, so the `github.com/` prefix `parseRepo` needs for a bare value is conditional, not unconditional — `plugin/bin/lib/number-list-cli.js` branches on `opts.repo.split('/').length >= 3` (#2425), because prefixing an already-qualified value builds a 4-segment string that `parseRepo`'s 3-segment regex rejects outright, turning a valid GHE invocation into "could not resolve owner/repo". A new `--repo`-taking CLI copies that branch; a fake-runner test asserting the exact argv for both a bare and a host-qualified `--repo` value pins it, the same way the end-of-options rule above is pinned.
 
+**Third-party text from gh is stripped before it prints.** See `terminal-controls.md` in this skill's directory when gh output that someone else wrote reaches stdout or stderr.
+
 ## Batching and failure posture
 
 See `batching-failure-posture.md` in this skill's directory before writing a module that makes more than one call or turns a failed call into a verdict: alias-query chunking and the pure query builders, cursor-pagination direction, the two partial-result postures, bulk reads that never authorize a destructive act alone, per-write `{ok, failed}` batching, full error-status enumeration, rate-limit recognition and pacing (classified per `plugin/skills/_shared/github-rate-limit.md`'s taxonomy before any retry), dedup-safe retries of non-idempotent writes, listing caps and paged totals, and the corroborating-read and classifier failure rules.

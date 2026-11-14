@@ -82,6 +82,14 @@ A top-level scalar that changes how `verify.js` behaves rather than which suites
    and exit 3 (no CI verdict): name each in `plugin/bin/lib/verify/args.js`'s usage note, put the
    flags on the `verify` event (`local`, `noVerdict`), and copy them in
    `plugin/bin/lib/timing/derive.js` (`tests/bin-lib/timing/derive.test.js`).
+4. **Every skill instruction that runs `verify.js`, when the key accepts or refuses invocations.**
+   `localRuns` refuses an unscoped run without `--local`. #5370 migrated the sites its plan named,
+   but review found three more that still ran an unscoped verify: `plugin/skills/test/SKILL.md`
+   (targeted runs), `plugin/skills/wrap-up/merge-mode.md` (conflict path) and
+   `plugin/skills/_shared/pre-review-catchup.md` (fixed in 48006040e). In the same build, grep
+   `plugin/skills` and `.claude/skills` for `verify.js`, "full suite" and "whole set", and decide
+   each site's flags. A conformance test's retirement sweep pins retired phrases. It cannot find a
+   site that never used one.
 
 ## Anti-Patterns
 

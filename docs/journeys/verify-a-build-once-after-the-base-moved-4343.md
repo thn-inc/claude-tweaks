@@ -14,7 +14,7 @@ files:
 **Entry point:** `/claude-tweaks:build` Common Step 5 (Final Verification), immediately after any Category A fix commit and before the verification run, per `plugin/skills/_shared/pre-verification-catchup.md`.
 **Success state:**
 - A branch that fell behind gets one merge commit and one `AUTO` line in `decisions.md` naming `{before short} → {after short}`, then the suite runs once on that merged tree and `VERIFICATION_SHA` is the post-merge HEAD.
-- `/test` Step 1 runs no suite when the base did not move again: the Match branch, or a bookkeeping-only Mismatch that re-stamps HEAD.
+- `/test` Step 1 runs no second verification when the base did not move again: the Match branch skips it. A later bookkeeping-only commit takes the Mismatch branch: after a full Common Step 5 run it resolves to `none` and re-stamps HEAD; after a scoped one (Common Step 5 runs the scoped invocation under a declaration, #5370) it re-selects from the stamp's `fullSha`, the earlier full pass, so the build's mapped suites run again, from the PR's CI job when the suite has a `ci` source.
 - Every run that does not catch up leaves exactly one `SKIP` line saying why, and the build's Step 7 handoff names the outcome on its Verification list.
 
 ## Steps
@@ -51,8 +51,8 @@ files:
 
 ### 4. `/test` runs no second suite
 - **URL:** `plugin/skills/test/verification.md` "Skip-if-recent (for /flow pipelines)" Match and Mismatch bullets
-- **Action:** `/test` Step 1 compares `VERIFICATION_SHA` with HEAD. Equal → the Match branch skips verification. A later ledger or other bookkeeping-only commit → the Mismatch branch's scoped run resolves to `none` and re-stamps HEAD. At the build phase exit the Post-push merge-state check normally reads `no-conflict`.
-- **Should feel:** Fast — the test phase finishes in seconds instead of re-running the full suite.
+- **Action:** `/test` Step 1 compares `VERIFICATION_SHA` with HEAD. Equal → the Match branch skips verification. A later ledger or other bookkeeping-only commit → the Mismatch branch's scoped run: after a full Common Step 5 run it resolves to `none` and re-stamps HEAD; after a scoped one the stamp's `fullSha` still names the earlier full pass, so the build's own changes are in the delta and their mapped suites run again, and the `scoped` stamp it writes verifies HEAD. At the build phase exit the Post-push merge-state check normally reads `no-conflict`.
+- **Should feel:** Fast — on the Match branch the test phase finishes in seconds instead of re-running the full suite.
 - **Should understand:** A base that moves during verification is the residual case: the build phase exit's Post-push merge-state check still catches it, as before.
 - **Red flags:**
   - `/test` re-running the full suite on an unchanged base.
@@ -60,5 +60,6 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #4343 (2026-10-31). Build's Common Step 5 now runs a pre-verification catch-up for single-spec `pr-first` worktree runs, so a run whose base moved during the build runs its full suite once instead of twice.
+- Success state and step 4 updated at wrap-up of #5370: under a declaration Common Step 5 is a scoped run, so a later bookkeeping-only commit re-selects the build's mapped suites from the stamp's earlier full-pass anchor instead of resolving to `none`.
 - Related:
   - `docs/journeys/notice-a-run-pr-gone-conflicting-at-phase-exit-2986.md`: the post-push merge-state check that still covers a base moving during verification.
