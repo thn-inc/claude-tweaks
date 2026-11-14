@@ -185,6 +185,17 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     }
   }
 
+  // localRuns (#5369): "on-request" keeps CI-declared suites off this machine
+  // unless verify.js is given --local. Top-level so a reader that predates the
+  // key ignores it (same expand-contract note as ci); valid only beside a ci
+  // block. Always present on a parsed declaration: 'on-request' or null.
+  let localRuns = null;
+  if (raw.localRuns !== undefined) {
+    if (raw.localRuns !== 'on-request') errors.push(`localRuns: must be "on-request" when present, got ${JSON.stringify(raw.localRuns)}`);
+    else if (raw.ci === undefined) errors.push('localRuns: needs a ci block — "on-request" keeps CI-declared suites off this machine, and no suite declares a ci source');
+    else localRuns = raw.localRuns;
+  }
+
   // concurrency (#5119): how many machine-wide suite slots this project's runs
   // may hold at once. A reader that predates the key ignores it. Always present
   // on a parsed declaration; suiteSlots null means "not declared".
@@ -326,7 +337,7 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     ok: true,
     decl: {
       checks: { types: typeof checks.types === 'string' ? checks.types : null, lint: typeof checks.lint === 'string' ? checks.lint : null, tests },
-      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact, ci, concurrency,
+      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact, ci, localRuns, concurrency,
     },
   };
 }

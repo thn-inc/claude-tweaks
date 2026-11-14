@@ -149,8 +149,9 @@ test('POLICY_KEYS entries are unique', () => {
   // 99 -> 100, #5119: verify-suite-slots — integer >= 1, default 1 — the project-wide default for verify.js's machine-wide suite slots
   // 100 -> 103, #5216 (pipeline driver admission): express-driver — enum off|split|on, default off; express-driver-wall-clock-minutes, express-driver-spend-ceiling-dollars — integer >= 1, ceilings
   // 103 -> 104, #5222: express-driver-review — enum off|on|beyond-express, default beyond-express, policyOnly
-  assert.strictEqual(POLICY_KEYS.length, 104);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 104);
+  // 104 -> 106, #5291 (trust verdict window bridge): trust-evaluation-window-days — integer >= 1, default 30; trust-follow-up-rate-max-percent — integer 0..100, default 30
+  assert.strictEqual(POLICY_KEYS.length, 106);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 106);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -660,6 +661,64 @@ test('trust-revert-window-days is a recognized integer key with a floor of 1, de
   const negative = tmpRepo();
   writePolicy(negative, 'trust-revert-window-days: -5\n');
   assert.strictEqual(auditPolicy(negative).invalidValues.length, 1, 'a negative value must be flagged too');
+});
+
+test('AC6.1: trust-evaluation-window-days is a recognized integer key with a floor of 1, defaulting to 30', () => {
+  const key = POLICY_KEYS.find((k) => k.key === 'trust-evaluation-window-days');
+  assert.ok(key, 'trust-evaluation-window-days missing from POLICY_KEYS');
+  assert.strictEqual(key.type, 'integer');
+  assert.strictEqual(key.min, 1);
+  assert.strictEqual(key.default, 30);
+
+  const repo = tmpRepo();
+  writePolicy(repo, 'trust-evaluation-window-days: 45\n');
+  assert.deepStrictEqual(auditPolicy(repo).invalidValues, []);
+
+  for (const bad of ['0', '-5']) {
+    const dir = tmpRepo();
+    writePolicy(dir, `trust-evaluation-window-days: ${bad}\n`);
+    const result = auditPolicy(dir);
+    assert.strictEqual(result.invalidValues.length, 1, `${bad} is below the floor of 1 and must be flagged`);
+    assert.strictEqual(result.invalidValues[0].key, 'trust-evaluation-window-days');
+  }
+});
+
+test('AC6.1: trust-follow-up-rate-max-percent is an integer key bounded 0..100, defaulting to 30', () => {
+  const key = POLICY_KEYS.find((k) => k.key === 'trust-follow-up-rate-max-percent');
+  assert.ok(key, 'trust-follow-up-rate-max-percent missing from POLICY_KEYS');
+  assert.strictEqual(key.type, 'integer');
+  assert.strictEqual(key.min, 0);
+  assert.strictEqual(key.max, 100);
+  assert.strictEqual(key.default, 30);
+
+  for (const ok of ['0', '100']) {
+    const dir = tmpRepo();
+    writePolicy(dir, `trust-follow-up-rate-max-percent: ${ok}\n`);
+    assert.deepStrictEqual(auditPolicy(dir).invalidValues, [], `${ok} is inside 0..100`);
+  }
+  for (const bad of ['101', '-1', 'banana']) {
+    const dir = tmpRepo();
+    writePolicy(dir, `trust-follow-up-rate-max-percent: ${bad}\n`);
+    const result = auditPolicy(dir);
+    assert.strictEqual(result.invalidValues.length, 1, `${bad} must be flagged`);
+    assert.strictEqual(result.invalidValues[0].key, 'trust-follow-up-rate-max-percent');
+  }
+  assert.strictEqual(resolveValue('trust-follow-up-rate-max-percent', '101'), 30);
+});
+
+test('AC6.1: resolvePolicyKeys flags a malformed trust window and rate and resolves their defaults', () => {
+  const keys = ['trust-evaluation-window-days', 'trust-follow-up-rate-max-percent'];
+  const bad = resolvePolicyKeys(keys, { policyRaw: 'trust-evaluation-window-days: 0\ntrust-follow-up-rate-max-percent: 101\n' });
+  assert.strictEqual(bad['trust-evaluation-window-days'].value, 30);
+  assert.strictEqual(bad['trust-evaluation-window-days'].invalid, true);
+  assert.strictEqual(bad['trust-follow-up-rate-max-percent'].value, 30);
+  assert.strictEqual(bad['trust-follow-up-rate-max-percent'].invalid, true);
+
+  const good = resolvePolicyKeys(keys, { policyRaw: 'trust-evaluation-window-days: 45\ntrust-follow-up-rate-max-percent: 20\n' });
+  assert.strictEqual(good['trust-evaluation-window-days'].value, 45);
+  assert.strictEqual(good['trust-follow-up-rate-max-percent'].value, 20);
+  assert.strictEqual(good['trust-evaluation-window-days'].invalid, undefined);
+  assert.strictEqual(good['trust-follow-up-rate-max-percent'].invalid, undefined);
 });
 
 test('grant-veto-window-hours is a recognized integer key with a floor of 1, defaulting to 24', () => {

@@ -237,7 +237,7 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
       // `impact` (#4321) is present only when the run had an impact declaration:
       // report.json is overwritten per run, so this is the one durable record of
       // why an impact run ran full, measurable across runs.
-      best.row.verify.push({ mode: v.mode ?? null, suitesRun: Array.isArray(v.suitesRun) ? v.suitesRun : [], durationMs: v.durationMs ?? null, pass: v.pass ?? null, baselineAdjudicated: v.baselineAdjudicated ?? null, at: v.ts, ...(v.impact && typeof v.impact === 'object' && !Array.isArray(v.impact) ? { impact: v.impact } : {}) });
+      best.row.verify.push({ mode: v.mode ?? null, suitesRun: Array.isArray(v.suitesRun) ? v.suitesRun : [], durationMs: v.durationMs ?? null, pass: v.pass ?? null, baselineAdjudicated: v.baselineAdjudicated ?? null, at: v.ts, ...(v.impact && typeof v.impact === 'object' && !Array.isArray(v.impact) ? { impact: v.impact } : {}), ...(Array.isArray(v.ci) ? { ci: v.ci } : {}), ...(typeof v.local === 'boolean' ? { local: v.local } : {}), ...(v.noVerdict === true ? { noVerdict: true } : {}) });
     }
   }
 

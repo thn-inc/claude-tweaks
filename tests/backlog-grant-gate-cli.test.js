@@ -180,3 +180,74 @@ test('native work-links with no --repo and no resolvable remote exits 2', () => 
   assert.strictEqual(run([], d), 2);
   assert.match(d.err.join(''), /could not resolve owner\/repo/);
 });
+
+// --- Trust policy plumbing: policy.yml -> resolvePolicyKeys -> computeOutlook -> trustRows (#5291) ---
+// The CLI reads every trust key from the project policy and hands them to trustRows.
+// Each case runs on the same closed records and flips one policy line.
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const CLASS_KEY = 'producer:code-health|low';
+const UNATTENDED = 'autonomy: unattended\ngrant-origination-enabled: true\nwork-links: body-text\nintegration-branch: main\n';
+
+function closedRecord(number, { daysAgo, labels = ['by:code-health', 'risk:low'] }) {
+  return {
+    number, title: 't', body: '', labels: labels.map((name) => ({ name })), state: 'CLOSED',
+    closedAt: new Date(Date.now() - daysAgo * DAY_MS).toISOString(),
+  };
+}
+
+// The record snapshot is keyed on CLAUDE_CODE_SESSION_ID; a fresh one on this
+// machine would answer the `--state all` fetch before the stub does.
+function trustRowOf(policyLines, records, gitLog = '') {
+  const saved = process.env.CLAUDE_CODE_SESSION_ID;
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+  try {
+    const d = deps({
+      readPolicyRaw: () => UNATTENDED + policyLines,
+      runner: (args) => {
+        if (args[3] === 'ready') return JSON.stringify([{ number: 1, title: 'c', body: '', labels: [{ name: 'by:code-health' }, { name: 'ready' }, { name: 'risk:low' }], createdAt: '2026-01-01T00:00:00Z' }]);
+        if (args[3] === 'all') return JSON.stringify(records);
+        return JSON.stringify([]);
+      },
+      gitRunner: () => gitLog,
+    });
+    assert.strictEqual(run([], d), 0, d.err.join(''));
+    return JSON.parse(d.out.join('')).trustRows.find((r) => r.key === CLASS_KEY) || null;
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = saved;
+  }
+}
+
+const UNDISPOSITIONED = Array.from({ length: 8 }, (_, i) => closedRecord(100 + i, { daysAgo: 20 }));
+const CLOSING_LOG = UNDISPOSITIONED.map((r, i) => `sha${i}\x1fShip it\n\nrefs #${r.number}\x1e`).join('\n');
+
+test('trust-revert-window-days from policy.yml reaches trustRows: a closing commit ages into operational evidence only past the window', () => {
+  assert.strictEqual(trustRowOf('', UNDISPOSITIONED, CLOSING_LOG).verdict, 'clean');
+  assert.strictEqual(trustRowOf('trust-revert-window-days: 14\n', UNDISPOSITIONED, CLOSING_LOG).verdict, 'clean');
+  const longer = trustRowOf('trust-revert-window-days: 30\n', UNDISPOSITIONED, CLOSING_LOG);
+  assert.strictEqual(longer.verdict, 'insufficient-evidence');
+  assert.strictEqual(longer.operationalGood, 0);
+});
+
+test('trust-evaluation-window-days from policy.yml reaches trustRows: records older than the window form no cell', () => {
+  assert.strictEqual(trustRowOf('', UNDISPOSITIONED, CLOSING_LOG).total, 8);
+  assert.strictEqual(trustRowOf('trust-evaluation-window-days: 25\n', UNDISPOSITIONED, CLOSING_LOG).total, 8);
+  assert.strictEqual(trustRowOf('trust-evaluation-window-days: 10\n', UNDISPOSITIONED, CLOSING_LOG), null);
+});
+
+test('trust-follow-up-rate-max-percent from policy.yml reaches trustRows: 2 of 8 records drew a follow-up', () => {
+  const approved = Array.from({ length: 8 }, (_, i) => closedRecord(200 + i, { daysAgo: 5, labels: ['by:code-health', 'risk:low', 'demo:approved'] }));
+  const followUps = [200, 201].map((n, i) => ({
+    number: 300 + i, title: 'f', body: `Origin: demo changes-requested from #${n}`, labels: [], state: 'OPEN', closedAt: null,
+  }));
+  const records = [...approved, ...followUps];
+  const atDefault = trustRowOf('', records);
+  assert.strictEqual(atDefault.verdict, 'clean');
+  assert.strictEqual(atDefault.followUpRateMaxPercent, 30);
+  assert.strictEqual(trustRowOf('trust-follow-up-rate-max-percent: 25\n', records).verdict, 'clean');
+  const strict = trustRowOf('trust-follow-up-rate-max-percent: 24\n', records);
+  assert.strictEqual(strict.verdict, 'mixed');
+  assert.deepStrictEqual(strict.mixedReasons, ['follow-up-rate']);
+  assert.strictEqual(strict.followUpRateMaxPercent, 24);
+});

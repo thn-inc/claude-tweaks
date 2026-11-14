@@ -29,6 +29,10 @@ A test that waits on a slot-holding child bounds it with the spawn's own `timeou
 
 A `verify.js --baseline` child that holds a slot checks the base out at `<os tmpdir>/ct-verify-base/<repo-key>/slot-<index>/wt`, keyed by the repository and the slot's lock dir, and the `slot-<index>/` directory outlives the run (`slotScratchPath` and `addWorktree` in `plugin/bin/lib/verify/baseline.js`, #5150). `slotEnv` leaves the child's temp dir alone. Under `tools/run-tests.js` every test file in the run shares one `TMPDIR`, so a test that asserts the scratch path, or that the temp dir holds no `ct-verify-base-*` path, passes a private one in `extra`: `slotEnv(dir, { TMPDIR: t, TMP: t, TEMP: t })` (`os.tmpdir()` reads `TEMP`/`TMP` on Windows), as the AC5.1 `--baseline` test in `cli.test.js` does. Without it, a direct `node --test` of the file also leaves a `ct-verify-base/<repo-key>/` directory in the real temp dir on every run.
 
+## A bare `tools/run-tests.js` child runs the whole set under the runner
+
+Since #5319 a bare `tools/run-tests.js` (no arguments) selects test files by impact, except when `resolveRunMode` sees `CI` set to any non-empty value or `CT_TEST_SUITE_SLOT_HELD=1`; then it runs the whole set. A test child inherits HELD=1 from `npm test` and `CI` from a CI job, so it never reaches the selection path by default. A test of that path strips both: `withSandbox` (or `slotEnv`) for HELD, plus `delete env.CI` (neither helper removes it), as AC3.7 in `tests/run-tests-isolation.test.js` does. A caller that wants the whole set passes `--full` rather than relying on the inherited variable: `tools/test-impact.js trace` spawns `run-tests.js --full` (`tests/test-impact-cli.test.js`).
+
 ## Anti-patterns
 
 | Pattern | Why it fails |

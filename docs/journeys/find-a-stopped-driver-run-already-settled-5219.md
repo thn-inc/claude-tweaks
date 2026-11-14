@@ -11,7 +11,7 @@ files:
 
 **Persona:** a maintainer who left `drive.js` running on a few records and comes back to read the results. They don't want to hunt for a stale claim, a locked worktree, or an escalated record that silently drops back into the queue. They also have no time to clean up by hand after every stop.
 **Goal:** each record that stopped is already in a settled, explainable state when they look: a comment on the record says what happened, the claim is released when the driver held one, escalated work is cleared away, and blocked work is kept for a human.
-**Entry point:** the final event line `drive.js` printed for a stopped record (`outcome` other than `pending-review`), then the record on GitHub.
+**Entry point:** the final event line `drive.js` printed for a stopped record (`outcome` other than `pending-review`, `merged` or `armed`), then the record on GitHub.
 **Success state:**
 - The final line's `settle` reads `done` and `settleFailed` is empty.
 - The record carries exactly one driver comment.
@@ -26,7 +26,7 @@ files:
 - **Should feel:** like a receipt. Every settle call was its own named step line, and the final line sums them up.
 - **Should understand:**
   - `settle: done` means the row had calls and they ran.
-  - `none` means the row has nothing to do: a refusal, a claim held by another run, or a `pending-review` PR waiting for a human.
+  - `none` means the row has nothing to do: a refusal, a claim held by another run, a `pending-review` PR waiting for a human, or a record the merge step left `merged` or `armed`.
   - A failed call is never retried, and the calls after it still run.
   - `outcome` is the class the settle actually used. For example, a failed escalate reads `blocked`, because no escalation line landed.
 - **Red flags:**

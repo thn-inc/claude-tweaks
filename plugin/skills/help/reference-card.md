@@ -13,7 +13,7 @@ Quick reference for all claude-tweaks skills. For full details, run `/claude-twe
 | `/claude-tweaks:specify` | Shape a work record to spec-shape, or decompose a design doc into ready sub-issue records | `[#N[,#M...]\|#A-#B\|record-id[,id...]\|design-doc-path\|topic\|backlog-title] [--budget <n\|all>] [--priority high\|medium\|low] [phase-N] [--surface <web\|mobile\|desktop\|backend\|infra\|terminal>] [--granularity <fine\|standard\|coarse>]` |
 | `/claude-tweaks:build` | Implement a work record, spec, or design doc | `[#<n>\|<design-doc-path>\|<topic>] [subagent\|batched] [auto] [worktree\|current-branch] [profile=<fast\|standard\|capable\|frontier>] [ops=confirm]` |
 | `/claude-tweaks:stories` | Generate or update QA story YAML files (journey-aware) | `[<url>] [persona=<name>] [dir=<path>] [focus=<area>] [pages=<n>] [refine=false] [negative=false] [journey=<name>]` |
-| `/claude-tweaks:test` | Verification gate — types, lint, tests, QA stories | `[types\|lint\|unit\|integration\|e2e\|affected\|qa\|all\|skip-qa\|<path>] [tag=<tag>] [story=<name>] [retry=<path>] [journey=<name>] [dir=<path>] [priority=<level>] [max_parallel=N] [timeout=<ms>] [headless]` |
+| `/claude-tweaks:test` | Verification gate — types, lint, tests, QA stories | `[types\|lint\|unit\|integration\|e2e\|affected\|qa\|all\|full\|skip-qa\|<path>] [tag=<tag>] [story=<name>] [retry=<path>] [journey=<name>] [dir=<path>] [priority=<level>] [max_parallel=N] [timeout=<ms>] [headless]` |
 | `/claude-tweaks:review` | Analytical quality gate: code review, UX analysis (when QA data available), visual + creative ideas (default in `/claude-tweaks:flow`). Gates on `/claude-tweaks:test`. | `[<spec-number>\|<file-path>...\|base:<ref>\|visual <url-or-description>\|journey:<name>\|discover] [full] [low\|medium\|high\|xhigh\|max]` |
 | `/claude-tweaks:wrap-up` | Reflect, capture learnings, clean up | `[#N\|<spec>\|<context>\|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only] [merge]` |
 | `/claude-tweaks:release` | Drive a release — preflight pack, pre-bump whole-branch review, one console, release-please merge or the local engine, verify, bookkeeping; `--train` for the unattended tier | `[--dry-run] [--train] [--as <version>] [--allow-blocking]` |
@@ -118,7 +118,8 @@ or standalone:
 /claude-tweaks:stories journey=checkout               → generate/update stories scoped to the checkout journey
 /claude-tweaks:test qa                                → validate stories standalone
 /claude-tweaks:test qa journey=profile-settings       → validate only stories for the profile-settings journey
-/claude-tweaks:test all                               → full suite + QA stories
+/claude-tweaks:test all                               → standard suite + QA stories
+/claude-tweaks:test full                              → the whole suite on this machine, asked for by name
 ```
 
 ### Brownfield onboarding
