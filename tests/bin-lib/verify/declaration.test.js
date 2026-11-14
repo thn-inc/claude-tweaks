@@ -430,3 +430,27 @@ test('a ci source on a tool-scoped tests command is refused (#4347)', () => {
   assert.strictEqual(r.ok, false);
   assert.match(r.errors.join('\n'), /ci\.tests: .*\{base\}/);
 });
+
+const LOCAL_RUNS_CI = { api: { workflow: 'test.yml', job: 'test' } };
+
+test('AC5: localRuns "on-request" with a ci block parses; no key parses to null (#5369)', () => {
+  assert.strictEqual(readJson({ ...EXAMPLE, ci: LOCAL_RUNS_CI, localRuns: 'on-request' }).decl.localRuns, 'on-request');
+  assert.strictEqual(readJson({ ...EXAMPLE, ci: LOCAL_RUNS_CI }).decl.localRuns, null);
+  assert.strictEqual(readJson(EXAMPLE).decl.localRuns, null);
+});
+
+test('AC5.1: localRuns with no ci block fails validation, naming the key (#5369)', () => {
+  const r = readJson({ ...EXAMPLE, localRuns: 'on-request' });
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(r.errors, ['localRuns: needs a ci block — "on-request" keeps CI-declared suites off this machine, and no suite declares a ci source']);
+});
+
+test('AC5.2: any localRuns value other than "on-request" fails validation, naming the key (#5369)', () => {
+  for (const bad of ['always', 'On-Request', '', true, 1, null, ['on-request'], {}]) {
+    const r = readJson({ ...EXAMPLE, ci: LOCAL_RUNS_CI, localRuns: bad });
+    assert.strictEqual(r.ok, false, JSON.stringify(bad));
+    assert.deepStrictEqual(r.errors, [`localRuns: must be "on-request" when present, got ${JSON.stringify(bad)}`], JSON.stringify(bad));
+  }
+  // A wrong value beside no ci block reports only the value error.
+  assert.deepStrictEqual(readJson({ ...EXAMPLE, localRuns: 'always' }).errors, ['localRuns: must be "on-request" when present, got "always"']);
+});

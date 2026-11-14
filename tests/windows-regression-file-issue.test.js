@@ -964,6 +964,10 @@ test('F2b: verify opts out of the base full run — nothing here reads `fixed`, 
   assert.match(windows, /--baseline-cmd tests="node --test \{file\}"\s+--no-baseline-fixed/);
 });
 
+test('#5370: the windows job passes --local, so the declaration\'s localRuns never refuses its unscoped run', () => {
+  assert.match(stepContaining(jobBlock('windows'), 'id: verify'), /--cmd tests="npm test -- --full"\s+--local\s/);
+});
+
 test('F2: verify compares against "$BASE"; the base step reads PUSH_BEFORE and falls back to HEAD^1', () => {
   const windows = jobBlock('windows');
   assert.match(windows, /--baseline "\$BASE"/);

@@ -611,6 +611,9 @@ function scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel) {
 // Ports express-lane.md step 4 (test): the runner pass stamp `check` reads is written by
 // verify.js, run in the worktree. A regular verify-scope.json scopes the run; an absent one
 // runs the full suite; anything else (a symlink, a directory) is refused, never followed.
+// The step runs before the push and before any PR exists (STEPS order), so CI cannot answer;
+// the scoped call passes `--local` so verify.js never exits 3 ("no verdict yet") under a
+// declaration's localRuns, and it is harmless without one (#5370). express-lane.md step 4 says the same.
 const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const { wt, runDir } = ctx;
   const { policy, ref } = ctx.shared;
@@ -643,7 +646,7 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   let detail;
   if (state.type === 'file') {
     ctx.testMode = 'scoped';
-    args = [...base, '--scope', scopeRel, '--integration-branch', ref];
+    args = [...base, '--scope', scopeRel, '--local', '--integration-branch', ref];
     detail = 'scoped';
   } else if (state.type === 'missing') {
     ctx.testMode = 'full';

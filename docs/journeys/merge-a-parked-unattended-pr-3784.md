@@ -108,6 +108,7 @@ When it merges a run another session parked while run-liveness still reads that 
   - **One attempt only.** A second `DIRTY` after the push reports `pending-review` (`moving-target`).
   - **When it stops.** A conflict needing a judgment between the two intents, or a red suite, runs `git merge --abort`, leaves the PR ready, and names the files.
   - **Other callers.** Headless callers still stop at the first conflict marker.
+  - **On this machine, on purpose.** The suite run passes `--cwd "{worktree-path}"` and `--local`: the resolved merge is not pushed yet, so the PR's CI job cannot answer for it, and under a declaration's `"localRuns": "on-request"` an unscoped run naming a CI-declared suite exits 2 without `--local` (#5370).
 - **Red flags:**
   - A resolution that drops one side's change.
   - A renumbered integration-branch incident entry.
@@ -142,3 +143,4 @@ When it merges a run another session parked while run-liveness still reads that 
 - Updated during wrap-up of #4798 (run `2026-11-03T201056-record-4798`). Step 3 now covers a failed marker write that names the parents Step 4.0b left open, and a step-wide Step 4.0b skip with nothing left to close, which reads `ran` with a note instead of a failure.
 - Updated during build of #4797 (run `2026-11-04T064811-record-4797`). Step 3's **In flight.** case now names all three takeovers a re-run makes (a dead holder at once, a live holder idle past `CLAIM_MAX_IDLE_MS`, an ownerless claim past the 10-minute stale window) and states the GitHub changes this invocation's own pass made before another pass took its claim over.
 - Updated during build of #5293 (run `2026-11-13T003948-spec-5293`). Step 6 now covers a run parked by another session: `teardown-run --merged` tears it down from the later session when run-liveness reads the owner `dead`, unlocking its orphaned worktree lock first, and otherwise refuses with the verdict named. Observed on PRs #4948 and #4963, where both merges landed but each left its worktree, local branch, remote branch and run directory behind.
+- Updated at wrap-up of #5370: Step 5 notes that the Conflict path's suite run passes `--local`, since the resolved merge is unpushed and a declaration's `localRuns` refuses an unscoped run without it.

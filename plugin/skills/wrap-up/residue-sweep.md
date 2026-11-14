@@ -45,7 +45,7 @@ resolution the Review Console's auto-merge short-circuit already performs.
 Add `--no-suite` when the project's full test command already ran earlier in this same wrap-up
 (e.g. via `/claude-tweaks:test`) and re-running it would only cost time without new information —
 the CLI reports `unknown: skipped via --no-suite` for that probe rather than silently treating a
-skip as a pass. Add `--json` when reading the findings programmatically instead of parsing the
+skip as a pass. Under the declaration's `localRuns: "on-request"` (`test/ci-source.md`) the probe never runs the suite either: it reports `unknown: not run on this machine — …` naming the declared CI job, and this run's suite state comes from the pass stamp, as for a pack-fed residue. Add `--json` when reading the findings programmatically instead of parsing the
 CLI's own markdown table.
 
 ### Resolving `{base}`
