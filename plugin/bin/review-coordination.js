@@ -285,8 +285,6 @@ function run(argv, overrides = {}) {
   return 2;
 }
 
-if (require.main === module) {
-  process.exitCode = run(process.argv.slice(2));
-}
+module.exports = { run, realDeps };
 
-module.exports = { run };
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
