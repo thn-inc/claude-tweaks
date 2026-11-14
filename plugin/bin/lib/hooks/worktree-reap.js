@@ -366,17 +366,20 @@ function reapWorktrees({
 // few lines below is deliberately left as the bare name it has always
 // returned -- it is already the freshest signal available (origin/HEAD's own
 // target), and existing callers/tests depend on that exact bare-name shape.
-function preferRemoteTrackingRef(repoRoot, name) {
-  const { failure } = runGit(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`], repoRoot);
+//
+// `opts.env` (optional) is the environment its git child runs in; absent, the inherited one.
+function preferRemoteTrackingRef(repoRoot, name, opts = {}) {
+  const { failure } = runGit(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`], repoRoot, opts.env ? { env: opts.env } : {});
   return failure ? name : `origin/${name}`;
 }
 
-function resolveIntegrationBranch(repoRoot, cache) {
+// `opts.env` (optional) is likewise the environment of its git children.
+function resolveIntegrationBranch(repoRoot, cache, opts = {}) {
   if (!repoRoot) return null;
   const fromPolicy = policy.readIntegrationBranch(repoRoot);
-  if (fromPolicy) return preferRemoteTrackingRef(repoRoot, fromPolicy);
+  if (fromPolicy) return preferRemoteTrackingRef(repoRoot, fromPolicy, opts);
   if (cache && cache.integrationBranch.has(repoRoot)) return cache.integrationBranch.get(repoRoot);
-  const { stdout, failure } = runGit(['rev-parse', '--abbrev-ref', 'origin/HEAD'], repoRoot);
+  const { stdout, failure } = runGit(['rev-parse', '--abbrev-ref', 'origin/HEAD'], repoRoot, opts.env ? { env: opts.env } : {});
   const name = failure || !stdout ? null : stdout.trim().replace(/^origin\//, '') || null;
   if (cache) cache.integrationBranch.set(repoRoot, name);
   return name;

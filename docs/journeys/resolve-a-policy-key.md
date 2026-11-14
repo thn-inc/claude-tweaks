@@ -65,6 +65,7 @@ files:
 - **Red flags:** A malformed block resolving `{}`, which would silently switch off a safety check; a key after the block (`autonomy: trusted`) swallowed into it.
 
 ## Origin
+- No step change during build of #5374 — `plugin/bin/resolve-policy.js` now exports `resolvePolicy`, `run` and `realDeps` behind a `require.main` guard so tests can call it in-process; run as a script it prints the same stdout, stderr and exit code for every command in these steps. The in-process side is in `call-a-plugin-bin-cli-in-process-from-a-test-5374.md`
 - Step 3 updated during build of #5216 (driver lane admission) — three new `policyOnly` keys join the red flag's list of flat keys the `--run` overlay must never reach; the Canonical read path citation and `files:` now name `_shared/policy-schema-read-path.md`, where #5216 moved that text for Read-rail headroom. The keys are "Not yet used" until #5218 wires the driver, so no step demonstrates their effect
 - Step 4 updated during build of #4816 (settle 3 policy digest findings): the control-mode key summaries now carry a "Not yet used" marker; `plugin/bin/lib/model-profiles/policy-fragment.js` joins `files:` because `auditPolicy`'s `model-profiles` view now shares its `stripComment`
 - Step 1 updated during build of #4578 (forge detection honours `gh-timeout-ms`). A computed integration-model entry can now carry an additive `degraded` reason code and a stderr degrade line. The full flow is in `resolve-the-integration-model-on-a-slow-gh-host-4578.md`.
