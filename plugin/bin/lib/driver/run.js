@@ -148,7 +148,7 @@ function newShared() {
 
 function newCtx(record, shared) {
   return {
-    record, runId: null, runDir: null, wt: null, branch: null, claimed: false, claimExit: null,
+    record, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
     summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false,
