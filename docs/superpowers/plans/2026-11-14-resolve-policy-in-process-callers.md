@@ -100,16 +100,15 @@ Expected: PASS (the pre-existing script-entry cases unchanged).
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/wrap-up/facts.test.js`:
   - `test('AC5 facts: a resolvePolicy that throws falls back to the 30/150 schema defaults', …)` — fixture repo whose 6-line `CLAUDE.md` sits over a configured `harness-health-always-loaded-budget: 5`; `gatherFacts({ cwd, base, resolvePolicy: () => { throw new Error('boom'); } })` → the CLAUDE.md target's `budget === 150` and `claudeMdOverBudget === false`.
-  - `test('AC5 facts: a non-EXIT_OK core result falls back to the defaults', …)` — same fixture, `resolvePolicy: () => ({ code: EXIT_INVOCATION, message: 'x' })` → `budget === 150`.
-  - `test('AC2 facts: gatherFacts starts no resolve-policy.js process', …)` — run `gatherFacts` on the budget fixture with `child_process.execFileSync` and `spawnSync` wrapped (restored in `finally`) to record every argv; assert no recorded argv contains `resolve-policy.js`, and the budget equals the configured `5`.
+  - `test('AC2 facts: gatherFacts resolves budgets through the injected resolvePolicy', …)` — a counting `resolvePolicy` fake (records each call's `keys` and returns `{ code: 0, result: { 'harness-health-scoped-rule-budget': { value: 30 }, 'harness-health-always-loaded-budget': { value: 5 } } }`) is called exactly once with both budget keys, and the CLAUDE.md target's `budget === 5`. The process-level half of AC2 (no `resolve-policy.js` child for `wrap-up-engine.js plan`) is Task 7's `count-node-procs.js` measurement, one of the spec's two sanctioned forms. Do not monkeypatch `child_process`: `facts.js` destructures `execFileSync` at load, so a wrapper installed later never sees its calls.
   - Relabel the existing `gatherFacts claudeMdOverBudget honors a policy.yml budget …` test `AC7 facts: …` — it is the non-default-`cwd` proof (the fixture's `policy.yml` is read only when `cwd` reaches the core).
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/wrap-up/facts.test.js`
-Expected: FAIL — the throwing `resolvePolicy` is ignored (budget 5) and AC2 records a `resolve-policy.js` argv.
+Expected: FAIL — the injected `resolvePolicy` is ignored (`gatherFacts` takes no such option yet).
 
-- [ ] **Step 3: Implement** `resolveBudgets(cwd, { env = process.env, resolvePolicy = core } = {})`: call `resolvePolicy({ keys: ['harness-health-scoped-rule-budget', 'harness-health-always-loaded-budget'] }, callerDeps({ cwd, env }))` inside the existing `try`; on `code !== EXIT_OK` return the defaults; else `Number(scalarValue(result[key]))` for each. Rewrite the comment above it to say it reads the core in-process (keep the "never a second budget constant" and fallback sentences).
+- [ ] **Step 3: Implement** `resolveBudgets(cwd, { env = process.env, resolvePolicy = core } = {})`: call `resolvePolicy({ keys: ['harness-health-scoped-rule-budget', 'harness-health-always-loaded-budget'] }, callerDeps({ cwd, env }))` inside the existing `try`, then `Number(scalarValue(result[key]))` for each; a throw returns the defaults. No `code` check: with no `runDir` the core never returns a non-zero code (its only `code: 1` sources are the `--run` guard and existence check, `resolve-policy.js:96-108`) — say so in one comment line. Rewrite the comment above it to say it reads the core in-process, keep the "never a second budget constant" and fallback sentences, and add the bound sentence: the root lookup is bounded by `callerDeps`' `GIT_TIMEOUT_MS`, and nothing else on this path is bounded (no forge key is read).
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -130,7 +129,7 @@ Expected: PASS.
 
 **Interfaces:**
 - Consumes: `resolvePolicy`, `callerDeps`, `scalarValue`, `warningLines`, `EXIT_OK` (Task 1).
-- Produces: `realDeps.resolvePolicyValues(cwd, { env, stderr })` — same return string as today (`POLICY_KEYS.map(k => \`${k}=${value.trim() || '(unset)'}\`).join(', ')`), now from the core; it writes `warningLines(out, { values: true })` through `stderr` before returning (the lines the child printed on the inherited stderr). On `code !== EXIT_OK` it throws `new Error(\`resolve-policy: ${out.message}\`)`. `run` calls `d.resolvePolicyValues(cwd, { env: d.env, stderr: d.stderr })`. `formatPolicyValues(result) -> string` replaces `parsePolicyValues(out)` in the exports. The `policyReadTimeoutMs` import is deleted.
+- Produces: `realDeps.resolvePolicyValues(cwd, { env, stderr })` — same return string as today (`POLICY_KEYS.map(k => \`${k}=${value.trim() || '(unset)'}\`).join(', ')`), now from the core; it writes `warningLines(out, { values: true })` through `stderr` before returning (the lines the child printed on the inherited stderr). No `code` check — it passes no `runDir`, so the core cannot return non-zero; a throw propagates to `run`'s existing `catch` (exit 1). The call-site comment states the bound: the root lookup by `callerDeps`' `GIT_TIMEOUT_MS`, forge detection by `gh-timeout-ms` × `FORGE_PROBE_ATTEMPTS` plus `GIT_REMOTE_PROBE_TIMEOUT_MS`, the local policy read unbounded. `run` calls `d.resolvePolicyValues(cwd, { env: d.env, stderr: d.stderr })`. `formatPolicyValues(result) -> string` replaces `parsePolicyValues(out)` in the exports. The `policyReadTimeoutMs` import is deleted.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/dispatch/dispatch-prompt-cli.test.js`:
   - Replace `resolvePolicyValues parsing counts lines after the trailing newline` (a line-count state the core cannot produce) with `test('formatPolicyValues: unset and error entries print (unset)', …)` — `formatPolicyValues({ autonomy: { value: 'unattended' }, 'integration-model': { value: null }, … })` includes `autonomy=unattended` and `integration-model=(unset)`; an `{ error: 'unknown-key' }` entry prints `(unset)`.
@@ -151,6 +150,8 @@ Expected: FAIL — `formatPolicyValues is not a function`.
 Run: `node --test tests/bin-lib/dispatch/dispatch-prompt-cli.test.js tests/dispatch-prompt-cli-prose.test.js tests/bin-lib/cli-entry-conformance.test.js`
 Expected: PASS.
 
+- [ ] **Step 4b: Revert-to-red proof (AC7)** — temporarily pass `callerDeps({ cwd: process.cwd(), env })` in `resolvePolicyValues`, re-run the AC4/AC7 fixture test, confirm FAIL, restore; then temporarily drop the `env` thread (`callerDeps({ cwd })`) and confirm a test injecting an env-only value fails — if no test reads an env-only value, say so and name `dispatch-prompt.js` as reading `env` only for forge detection in the task report.
+
 - [ ] **Step 5: Commit** — `git add plugin/bin/dispatch-prompt.js tests/bin-lib/dispatch/dispatch-prompt-cli.test.js` then `git commit -m "Resolve dispatch-prompt policy keys in-process — keep the resolver's warning lines on stderr"`
 
 ### Task 4: `phase-exit.js` resolves through the core; retire the kill-timeout
@@ -165,20 +166,20 @@ Expected: PASS.
 
 **Interfaces:**
 - Consumes: `resolvePolicy`, `callerDeps`, `scalarValue`, `EXIT_OK` (Task 1). Task 3 already removed `dispatch-prompt.js`'s `policyReadTimeoutMs` import.
-- Produces: `realDeps.resolvePolicy(runDir, key, cwd) -> string` — unchanged signature and contract: calls the core with `callerDeps({ cwd })` (bounded git, inherited env); `code !== EXIT_OK` throws `new Error(\`resolve-policy: ${out.message}\`)` (so `errLine` gives the same detail line the child's stderr gave); a `degraded` entry throws `forge detection degraded (${entry.degraded})`; else returns `scalarValue(entry)`. `policyReadTimeoutMs` and `policyEntryValue` are removed from the module and its exports. A comment at the call site states: forge detection is bounded by `gh-timeout-ms` × `FORGE_PROBE_ATTEMPTS` plus `GIT_REMOTE_PROBE_TIMEOUT_MS`, and the root lookup by `callerDeps`' `GIT_TIMEOUT_MS`, so no kill timeout is needed in-process.
+- Produces: `realDeps.resolvePolicy(runDir, key, cwd) -> string` — unchanged signature and contract: calls the core with `callerDeps({ cwd })` (bounded git, inherited env); `code !== EXIT_OK` throws `new Error(\`resolve-policy: ${out.message}\`)` (so `errLine` gives the same detail line the child's stderr gave); a `degraded` entry throws `forge detection degraded (${entry.degraded})`; else returns `scalarValue(entry)`. `policyReadTimeoutMs` and `policyEntryValue` are removed from the module and its exports. A comment at the call site states: forge detection is bounded by `gh-timeout-ms` × `FORGE_PROBE_ATTEMPTS` plus `GIT_REMOTE_PROBE_TIMEOUT_MS`, the root lookup by `callerDeps`' `GIT_TIMEOUT_MS`, and the local `policy.yml`/`config.yml` read is unbounded by decision (spec `## Plan Review Clarifications`, Reading A), so no kill timeout is kept.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/phase-exit/phase-exit.test.js`:
   - `test('AC3 phase-exit: a config.yml pinning local-merge resolves local-merge through the core, with no gh call', { skip: STUB_SKIP }, …)` — `forgeFixture('integration-model: local-merge\n')` with `fakeGh({ first: 'hang' })`; `realDeps.resolvePolicy(runDir, 'integration-model', repo) === 'local-merge'`, `gh.count() === 0`.
   - `test('AC3 phase-exit: a missing run dir reports the same detail line as the subprocess did', …)` — expected string `resolve-policy: --run dir does not exist or is not a directory: ${missing}`; assert `realDeps.resolvePolicy(missing, 'integration-model', repo)` throws with exactly that message, and `runPhaseExit` given that resolver logs `integration-model unresolved (resolve-policy: --run dir does not exist or is not a directory: …)`.
   - `test('AC7 phase-exit: a subdirectory worktree resolves the checkout\'s pinned integration-branch', …)` — `policy.yml` `integration-branch: develop` in the fixture repo, `cwd` = a subdirectory; returns `develop`.
-  - `test('AC2 phase-exit: realDeps.resolvePolicy starts no child process for a non-forge key', …)` — wrap `child_process.execFileSync` (restore in `finally`); call for `integration-branch`; no recorded argv names `resolve-policy.js` or `process.execPath`.
+  - `test('phase-exit.js no longer exports the retired child-process helpers', …)` — `require(phase-exit).policyReadTimeoutMs === undefined` and `.policyEntryValue === undefined` (the retirement pin; the process count itself is Task 7's measurement — do not monkeypatch `child_process`, which `phase-exit.js` destructures at load).
   - Relabel the existing `a degraded resolve logs the unresolved SKIP …` test `AC5 phase-exit: …`.
   - Delete (states the core cannot produce, or the retired kill-timeout): the two `policyEntryValue:` tests, the three `policyReadTimeoutMs:` tests, the wiring scan (`PHASE_EXIT_SRC`/`LADDER_RE`/`GUARD_RE`/`WIRING_RE`/`policyReadTimeoutMsBody`/`wiringFindings`) and both its tests. Record each deleted test's name and reason for the PR body. Keep the four `realDeps.resolvePolicy:` forge tests and `a run-pinned integration-branch returns its string value` unchanged (they now run in-process; `withForgeEnv` still works because `callerDeps` reads `process.env` at call time).
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/phase-exit/phase-exit.test.js`
-Expected: FAIL — AC2 records a `resolve-policy.js` argv. The AC3 and AC7 tests are characterization pins of today's behaviour and may already pass; they must stay green after Step 3.
+Expected: FAIL — the retirement pin finds both exports still defined. The AC3 and AC7 tests are characterization pins of today's behaviour and may already pass; they must stay green after Step 3.
 
 - [ ] **Step 3: Implement** per Interfaces; drop the now-unused imports (`GIT_REMOTE_PROBE_TIMEOUT_MS`, `FORGE_PROBE_ATTEMPTS`, `resolveForgeProbeTimeoutMs`, `RESOLVE_POLICY_JS`) only where nothing else in the file uses them; update the header line 9 comment.
 
@@ -186,6 +187,8 @@ Expected: FAIL — AC2 records a `resolve-policy.js` argv. The AC3 and AC7 tests
 
 Run: `node --test tests/bin-lib/phase-exit/phase-exit.test.js tests/phase-exit-call-sites-conformance.test.js tests/bin-lib/dispatch/dispatch-prompt-cli.test.js`
 Expected: PASS.
+
+- [ ] **Step 4b: Revert-to-red proof (AC7)** — temporarily pass `callerDeps({ cwd: process.cwd() })` in `realDeps.resolvePolicy`, re-run the AC7 subdirectory test, confirm FAIL, restore; then temporarily pass `callerDeps({ cwd, env: {} })` and confirm a `realDeps.resolvePolicy` forge test (which relies on `CLAUDE_TWEAKS_GH_TIMEOUT_MS` and the `fakeGh` `PATH` in `process.env`) fails, restore.
 
 - [ ] **Step 5: Retirement sweep** — Run: `git grep -n -e policyReadTimeoutMs -e policyEntryValue -e RESOLVE_POLICY_JS -e 'printed no entry for' -- . ':!.claude-tweaks/pipelines' ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md' ':!CHANGELOG.md'`. Control (run once, record the match in the task report): `git grep -n -F policyReadTimeoutMs d3962cda8 -- plugin/bin/lib/phase-exit/phase-exit.js` matches. Expected after the fix: no output; fix or delete every hit.
 
@@ -203,10 +206,10 @@ Expected: PASS.
 
 **Interfaces:**
 - Consumes: `resolvePolicy`, `callerDeps`, `EXIT_OK` (Task 1).
-- Produces: `run(argv, deps)` accepts optional `deps.resolvePolicy` (default: the core). `resolveBound()` now returns the core's object `{ code, result, message }` = `resolvePolicy({ keys: ['release-tip-moves'], runDir }, callerDeps({ cwd: root }))`. `checkReviewedTip` calls it inside `try`; a throw → `out('failed', 'release-tip-moves unreadable', err.message)`. `readBound(r)`: `!r` → `resolve-policy.js produced no result`; `r.code !== EXIT_OK` → detail `r.message`; then the existing entry checks against `r.result['release-tip-moves']`. The `not JSON` branch and the `exited N` branch are deleted (states the core cannot produce).
+- Produces: `run(argv, deps)` accepts optional `deps.resolvePolicy` (default: the core). `resolveBound()` now returns the core's object `{ code, result, message }` = `resolvePolicy({ keys: ['release-tip-moves'], runDir }, callerDeps({ cwd: root }))`. `checkReviewedTip` calls it inside `try`; a throw → `out('failed', 'release-tip-moves unreadable', err.message)`. `readBound(r)`: `r.code !== EXIT_OK` → detail `` `resolve-policy: ${r.message}` `` (the line the child's stderr carried today); then the existing entry checks against `r.result['release-tip-moves']`. The `!r` (`produced no result`), `not JSON` and `exited N` branches are deleted (states the core cannot produce). The call-site comment in `release-tip-check.js` states the bound: the root lookup by `callerDeps`' `GIT_TIMEOUT_MS`, the local policy and `config.yml` read unbounded, no forge key read.
 
 - [ ] **Step 1: Write the failing tests**:
-  - `tests/bin-lib/release-tip/check.test.js` `unreadable lever → failed`: replace the three spawn-shaped rows with core-shaped ones — `['refused', { code: 1, message: 'boom' }, /^boom$/]`, `['entry missing', { code: 0, result: {} }, /missing from the resolver output/]`; add `['resolveBound throws (AC5)', THROWS, /kaboom/]` where the harness makes `resolveBound` throw `new Error('kaboom')`; `boundOf` returns `{ code: 0, result: { 'release-tip-moves': … } }`. Delete the `not JSON` row (record it for the PR body).
+  - `tests/bin-lib/release-tip/check.test.js` `unreadable lever → failed`: replace the three spawn-shaped rows with core-shaped ones — `['refused', { code: 1, message: 'boom' }, /^resolve-policy: boom$/]`, `['entry missing', { code: 0, result: {} }, /missing from the resolver output/]`; add `['resolveBound throws (AC5)', THROWS, /kaboom/]` where the harness makes `resolveBound` throw `new Error('kaboom')`; `boundOf` returns `{ code: 0, result: { 'release-tip-moves': … } }`. Delete the `not JSON` row (record it for the PR body).
   - `tests/bin-lib/release-tip/cli.test.js`: rename `a code move reads the bound through the real resolve-policy.js spawn → delta` to `AC2/AC7 a code move reads the bound through the core at --root → delta` and add a `policy.yml` `release-tip-moves: 3` in `fx.work` asserting `v.bound === 3`, `v.source === 'policy'` (proves `root` reached the core; fails when `cwd` is ignored). Add `test('AC5 a resolvePolicy that throws → failed verdict, exit 0', …)` passing `resolvePolicy: () => { throw new Error('kaboom'); }` through `cli`'s deps.
 
 - [ ] **Step 2: Run to verify they fail**
@@ -228,6 +231,7 @@ Expected: PASS.
 ### Task 6: Convert the six direct test files to `runCli`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/merge-verification.test.js`
@@ -243,6 +247,7 @@ Expected: PASS.
 - [ ] **Step 1: Convert each file's local spawn helper** to `runCliSync(CLI, args, { cwd, env })`, mapping the result onto the field its assertions already read (`status`/`stdout`/`stderr`, or the thrown-on-non-zero shape `execFileSync` gave — throw an `Error` carrying `status`/`stdout`/`stderr` on `code !== 0`). In `tests/resolve-policy-run-dir-anchoring.test.js` rename the local `runCli` helper to `runResolver` to avoid shadowing the import. Pass a complete `env` (`{ PATH, HOME, TMPDIR, … }` plus each test's own stub vars); where a test relied on inheriting `process.env` (e.g. `CLAUDE_TWEAKS_GH_TIMEOUT_MS`, `GH_*`), put those keys in the explicit `env`.
 - [ ] **Step 2: Keep at most four real processes across the six files.** Keep one `spawnCli` smoke test for the script entry where a file's subject is the process (a closed stderr, exit-code shape); each carries a one-line comment naming the property it proves. Use `fresh: true` on any `integration-model`/`merge-verification` case whose `gh` stub or forge answer differs from an earlier call in the file (the forge probe memo in `repo-resolve.js`).
 - [ ] **Step 3: AC7 per file** — each file keeps or gains one in-process test that passes a non-default `cwd` (a fixture repo) or `env` (a `PATH` stub) and asserts a value only that `cwd`/`env` yields; for the `PATH`-stub cases in `integration-model.test.js`/`merge-verification.test.js`, assert the stub's call counter moved (Review Focus 5).
+- [ ] **Step 3b: Revert-to-red proof (AC7)** — for each file's AC7 test, temporarily drop the injected value it covers (pass the real repo as `cwd`, or omit the stub `PATH` from `env`), confirm the test FAILs, restore. Record one line per file in the task report.
 - [ ] **Step 4: Run**
 
 Run: `node --test tests/merge-verification.test.js tests/integration-model.test.js tests/resolve-policy-run-dir-anchoring.test.js tests/declare-claude-tweaks-opt-out.test.js tests/policy-verify-suite-slots.test.js tests/policy-schema.test.js`
