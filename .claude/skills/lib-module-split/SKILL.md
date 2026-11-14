@@ -397,5 +397,5 @@ found later, by the review. Treat this update as the easy part, not the whole sw
 2. Each of the four shape commands has been run against the head tree, and every hit is either
    repointed or classified as an import-path reference and kept.
 3. `docs/plugin-structure.md` names the facade and each sub-module.
-4. The full suite is green (`npm test`, redirected to a file), because conformance tests pin
+4. The full suite is green (`npm test -- --full`, redirected to a file), because conformance tests pin
    prose and a repointed sentence can trip one.

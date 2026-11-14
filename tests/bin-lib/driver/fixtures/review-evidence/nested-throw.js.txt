@@ -1,0 +1,9 @@
+'use strict';
+const { describe, it } = require('node:test');
+
+describe('widget', () => {
+  it('reads a property of null', () => {
+    const value = null;
+    return value.length;
+  });
+});

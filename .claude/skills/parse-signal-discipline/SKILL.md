@@ -321,9 +321,9 @@ When mechanizing a prose heuristic into a deterministic check:
     transform that mis-parses produces a clean scan. `stripComments` (implemented in
     `plugin/bin/lib/strip-comments.js`, re-exported by `tests/helpers/strip-comments.js`)
     blanks comments to spaces before its callers' scans count tokens. Its
-    callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `below-floor-parent-close`, `cli`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`,
-    `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
-    `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `risk-flags-writer`, `run`, `run-liveness-callers`, `settle`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget`,
+    callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `below-floor-parent-close`, `cli`, `cli-entry`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`,
+    `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `merge`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
+    `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `risk-flags-writer`, `run`, `run-liveness-callers`, `settle`, `staged-id-producers`, `subprocess-timing`, `trust-policy-keys`, `wall-clock-budget`,
     `windows-hide-spawn` and `wrap-up-learned-skills-pr`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
@@ -376,7 +376,7 @@ When mechanizing a prose heuristic into a deterministic check:
     arm, classified by the thrown error's shape, and pin "main probe times out, precondition probe
     succeeds" with its own assertion (`tests/verify-run-bookends.test.js`'s
     `catFileTimeoutRevParseOk`).
-Items 17-28 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
+Items 17-30 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
 kept. Read it when your case matches one of these:
 
 17. **A start/end snapshot guard sees only the window between its two reads, and each value it records has an unsafe direction.**
@@ -392,6 +392,7 @@ kept. Read it when your case matches one of these:
 27. **A parse problem that hides content owes its own report, found by a second read under the relaxed reading and credited only to a cause the author can edit.**
 28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its gaps cost only on inputs that could hold the signal.**
 29. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.**
+30. **A reader that feeds several independent checks owes each could-not-read reason the field it concerns, so a consumer suppresses only the checks that read that field.**
 
 ## When to use
 

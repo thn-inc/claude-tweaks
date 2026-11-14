@@ -11,13 +11,12 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
-const { spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const { readText } = require('./helpers/read-skill');
+const { PASSES, makeContext, runPasses } = require('../plugin/bin/lib/dispatch/queue-pull');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
-const QUEUE_PULL = readText(path.join(DISPATCH, 'queue-pull-script.md'));
 const REPORT_PATH = path.join(DISPATCH, 'neighbour-in-flight-report.md');
 
 function line(anchor) {
@@ -78,7 +77,6 @@ test('oversized-group-report.md says a group over the guard needs a bundle cap a
 
 const SHARED = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
 const ROOT = path.join(__dirname, '..');
-const PLUGIN_DIR = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
 test('AC8.1: issue-claims Group claiming says groups are single records or fast-lane bundles and all-members claiming applies to bundles', () => {
   const claims = readText(path.join(SHARED, 'issue-claims.md'));
@@ -117,88 +115,63 @@ test('design-notes.md records the per-record decision and names the hub-exclusio
   }
 });
 
-test('AC1.1: the neighbour-in-flight pass reads claims through createClaimReader (#3393)', () => {
-  const start = QUEUE_PULL.indexOf('# #3278: neighbour-in-flight pass');
-  assert.ok(start !== -1, 'neighbour-in-flight anchor must exist');
-  const block = QUEUE_PULL.slice(start, QUEUE_PULL.indexOf('NEIGHBOUR_RC=$?', start));
-  assert.match(block, /readClaimContent: createClaimReader\(\)\.read/);
-  assert.doesNotMatch(block, /readClaimBlob\(/);
-  assert.doesNotMatch(block, /'repo', 'view'/);
-});
-
-function neighbourHeredocCode() {
-  const open = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF\n';
-  const close = '\nNODE_EVAL_EOF\nNEIGHBOUR_RC';
-  const start = QUEUE_PULL.indexOf(open);
-  const end = QUEUE_PULL.indexOf(close, start);
-  assert.ok(start !== -1 && end !== -1, 'neighbour-in-flight heredoc anchors must exist');
-  return QUEUE_PULL.slice(start + open.length, end).split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
-}
-
-// Runs the heredoc with PATH pointing at an empty dir, so gh and git are unavailable and nothing
-// reaches the network. Returns the process result and the neighbour-in-flight exclusions written.
-function runNeighbourPass(groups, inFlight) {
-  const code = neighbourHeredocCode();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neighbour-pass-'));
-  const groupsPath = path.join(dir, 'groups.json');
-  const inFlightPath = path.join(dir, 'in-flight.json');
-  const exclusionsPath = path.join(dir, 'exclusions.json');
-  try {
-    fs.writeFileSync(groupsPath, JSON.stringify(groups));
-    fs.writeFileSync(inFlightPath, JSON.stringify(inFlight));
-    const result = spawnSync(process.execPath, ['-e', code, groupsPath, inFlightPath, exclusionsPath], { encoding: 'utf8', env: { ...process.env, PATH: dir } });
-    const exclusions = fs.existsSync(exclusionsPath) ? JSON.parse(fs.readFileSync(exclusionsPath, 'utf8')) : [];
-    return { result, neighbourExclusions: exclusions.filter((e) => e.reason === 'neighbour-in-flight') };
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+// #5230: the neighbour-in-flight pass is the queue-pull module's (plugin/bin/lib/dispatch/
+// queue-pull.js), run alone here on the gh transport: `pool` answers its one `gh issue list` call
+// (null fails it) and `claim(n)` the claim reads, which go through deps.createClaimReader. Returns
+// the stderr, the pool file it wrote, the neighbour-in-flight entries and the claims it read.
+// An unexpected call is recorded and asserted after the pass: the pass catches a throw from `run`
+// as a failed fetch, so an assertion thrown inside it would never fail the test.
+function runNeighbourPass(t, groups, pool, claim = () => ({ content: null })) {
+  const errs = [];
+  const read = [];
+  const unexpected = [];
+  const ctx = makeContext({ sessionId: `per-record-neighbour-${crypto.randomBytes(6).toString('hex')}` }, {
+    stderr: (s) => errs.push(s),
+    run: (cmd, args) => {
+      if (cmd !== 'gh' || args[0] !== 'issue' || args[1] !== 'list' || args[3] !== 'bot:in-progress') {
+        unexpected.push(`${cmd} ${args.join(' ')}`);
+        throw new Error(`unexpected call ${cmd} ${args.join(' ')}`);
+      }
+      if (pool === null) throw Object.assign(new Error('gh: not found'), { stdout: '' });
+      return JSON.stringify(pool);
+    },
+    createClaimReader: () => ({ read: (n) => { read.push(n); return claim(n); } }),
+  });
+  t.after(() => fs.rmSync(path.dirname(ctx.paths['dispatch-groups.json']), { recursive: true, force: true }));
+  fs.writeFileSync(ctx.paths['dispatch-groups.json'], JSON.stringify(groups));
+  fs.writeFileSync(ctx.paths['dispatch-exclusions.json'], '[]');
+  runPasses(PASSES.filter((p) => p.id === 'neighbour-in-flight'), ctx);
+  assert.deepEqual(unexpected, [], 'the neighbour-in-flight pass made a call other than its one gh issue list');
+  return {
+    stderr: errs.join(''),
+    raw: JSON.parse(fs.readFileSync(ctx.paths['dispatch-in-flight-raw.json'], 'utf8')),
+    neighbourExclusions: JSON.parse(fs.readFileSync(ctx.paths['dispatch-exclusions.json'], 'utf8')).filter((e) => e.reason === 'neighbour-in-flight'),
+    read,
+  };
 }
 
 const CANDIDATE_GROUPS = [[{ number: 1, body: '### Key Files\n\n- `a.js`\n', labels: [] }]];
+const IN_FLIGHT_NEIGHBOUR = [{ number: 2, body: '### Key Files\n\n- `a.js`\n', labels: [{ name: 'bot:in-progress' }] }];
 
-test('AC2.1: the neighbour-in-flight heredoc runs offline and excludes nothing when no in-flight record neighbours a candidate (#3393)', () => {
-  // No neighbour means no claim read.
-  const { result, neighbourExclusions } = runNeighbourPass(CANDIDATE_GROUPS, []);
-  assert.equal(result.status, 0, result.stderr);
+test('AC2.1: the neighbour-in-flight pass reads no claim and excludes nothing when no in-flight record neighbours a candidate (#3393)', (t) => {
+  const { neighbourExclusions, read } = runNeighbourPass(t, CANDIDATE_GROUPS, []);
+  assert.deepEqual(read, [], 'no neighbour means no claim read');
   assert.deepEqual(neighbourExclusions, []);
 });
 
-test('AC1.1: the neighbour-in-flight heredoc reports a failed claim read and writes no exclusion when the repo slug is unresolved (#3393)', () => {
-  // Candidate #1 and in-flight #2 share a Key File, so the pass reads #2's claim. With gh and git
-  // unavailable the slug is unresolved and the git leg fails, so the read is a failure
-  // (repo-slug-unresolved), never an absent claim, and #2 is treated as not in flight.
-  const inFlight = [{ number: 2, body: '### Key Files\n\n- `a.js`\n', labels: [{ name: 'bot:in-progress' }] }];
-  const { result, neighbourExclusions } = runNeighbourPass(CANDIDATE_GROUPS, inFlight);
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, /neighbour-in-flight claim read failed for #2/);
+test('AC1.1: the neighbour-in-flight pass reads a neighbour\'s claim through createClaimReader, and a failed read is reported and excludes nothing (#3393)', (t) => {
+  // Candidate #1 and in-flight #2 share a Key File, so the pass reads #2's claim. A failed read is
+  // never an absent claim: #2 is reported and treated as not in flight.
+  const { stderr, neighbourExclusions, read } = runNeighbourPass(t, CANDIDATE_GROUPS, IN_FLIGHT_NEIGHBOUR, () => ({ failure: 'repo-slug-unresolved' }));
+  assert.deepEqual(read, [2]);
+  assert.match(stderr, /neighbour-in-flight claim read failed for #2/);
   assert.deepEqual(neighbourExclusions, []);
 });
 
-function poolFetchBlock() {
-  const close = '\nfi\n';
-  const start = QUEUE_PULL.indexOf('if ! gh issue list --label bot:in-progress');
-  const end = QUEUE_PULL.indexOf(close, start);
-  assert.ok(start !== -1 && end !== -1, 'neighbour-in-flight pool fetch anchors must exist');
-  return QUEUE_PULL.slice(start, end + close.length);
-}
-
-test('a failed neighbour-in-flight pool fetch writes an empty pool and says so, so nothing is excluded (#3278)', () => {
-  // The script's first line points PATH at an empty dir, so gh is not found and the fetch fails.
-  // PATH is set inside the script, not in the spawn env: Node finds `bash` through the spawn
-  // env's PATH, and Windows has no portable absolute shell path (no /bin/sh).
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neighbour-pool-'));
-  const rawPath = path.join(dir, 'in-flight-raw.json');
-  try {
-    const script = 'PATH="$EMPTY_PATH"\n' + poolFetchBlock();
-    const result = spawnSync('bash', ['-c', script], {
-      encoding: 'utf8',
-      env: { ...process.env, EMPTY_PATH: dir, DISPATCH_IN_FLIGHT_RAW: rawPath },
-    });
-    assert.equal(result.error, undefined, `bash spawn failed: ${result.error}`);
-    assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(JSON.parse(fs.readFileSync(rawPath, 'utf8')), []);
-    assert.match(result.stderr, /AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull/);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+test('a failed neighbour-in-flight pool fetch writes an empty pool and says so, so nothing is excluded (#3278)', (t) => {
+  const { stderr, raw, neighbourExclusions, read } = runNeighbourPass(t, CANDIDATE_GROUPS, null);
+  assert.deepEqual(raw, []);
+  assert.match(stderr, /AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull/);
+  assert.deepEqual(neighbourExclusions, []);
+  assert.deepEqual(read, []);
 });

@@ -16,15 +16,23 @@
 // same silent-approval hazard blast-radius.js guards against. Any other thrown
 // error is rethrown (stack trace on stderr) and still exits 1 with NO stdout.
 'use strict';
-const { gatherDiffFiles, BlastRadiusError } = require('./lib/blast-radius-cli.js');
+const { gatherDiffFiles, BlastRadiusError, defaultGit } = require('./lib/blast-radius-cli.js');
 const { computeDiffFacts } = require('./lib/dispatch/ceremony-derive.js');
 
 const USAGE = 'usage: diff-facts.js (--base <ref> | --integration-branch <branch>)';
 const VALUE_FLAGS = new Set(['--base', '--integration-branch']);
 
-function run(argv, deps = {}) {
-  const stdout = deps.stdout || ((s) => process.stdout.write(s));
-  const stderr = deps.stderr || ((s) => process.stderr.write(s));
+const realDeps = {
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  get env() { return process.env; },
+  git: (args, { cwd, env } = {}) => defaultGit(args, { cwd, env }),
+};
+
+function run(argv, overrides = {}) {
+  const deps = { ...realDeps, ...overrides };
+  const { stdout, stderr } = deps;
   const fail = (msg) => {
     stderr(`diff-facts: ${msg}\n`);
     return 1;
@@ -44,7 +52,7 @@ function run(argv, deps = {}) {
 
   let gathered;
   try {
-    gathered = gatherDiffFiles(opts, { git: deps.git });
+    gathered = gatherDiffFiles(opts, { git: (args) => deps.git(args, { cwd: deps.cwd(), env: deps.env }) });
   } catch (err) {
     if (err instanceof BlastRadiusError) return fail(String(err.message).split('\n')[0]);
     throw err;
@@ -53,6 +61,6 @@ function run(argv, deps = {}) {
   return 0;
 }
 
-module.exports = { run };
+module.exports = { run, realDeps };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2));
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

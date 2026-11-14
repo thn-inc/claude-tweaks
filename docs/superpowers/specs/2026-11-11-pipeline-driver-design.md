@@ -107,7 +107,7 @@ The implementer may read, edit and write inside the worktree, run the project's 
 
 **Structured result, never trusted.** The implementer is given the record body, the Key Files and its limits, and returns a small JSON object (`--json-schema`): a status, a one-line change title, a one-to-two-sentence summary. The driver takes the changed files from git, not from the worker, and applies the diff bounds to what is actually on disk.
 
-The record body is untrusted input. The narrow rights and the bounds check are what contain it.
+The record body is untrusted input. The narrow rights and the bounds check contain the worker; worker-authored code at the test step is contained separately (an allow-listed environment, an empty gh config dir, a refused scope file), with a named residual risk (record #5267; see the header comment at the top of `plugin/bin/lib/driver/steps.js`).
 
 These rules bind every worker in every phase, including the Phase 2 judgment workers: no worker runs `gh`, writes a label, posts a comment or merges. A judgment worker reads and returns a verdict or a text; the driver acts on it.
 
@@ -239,7 +239,7 @@ The scoreboard is a view in the dispatch hub, designed and built in the dispatch
 Each came out of a record's red-team pass and is written into the record named.
 
 1. `split` ends at 20 merged records per arm; the Phase 4 parent (#5221) owns removing it (#5216).
-2. The implementer keeps its test command and its Bash runs under Claude Code's sandbox, subject to an escape probe; if a test can still reach `curl`, `gh` or `git push`, the test command is dropped from its allow list. Stated residual: the driver's own test step runs worker-written code with the driver's rights, as every lane does today (#5217).
+2. The implementer keeps its test command and its Bash runs under Claude Code's sandbox, subject to an escape probe; if a test can still reach `curl`, `gh` or `git push`, the test command is dropped from its allow list. Stated residual: the driver's own test step runs worker-written code with the driver's rights, as every lane does today (#5217); #5267 later narrowed that residual by running the test step under an allow-listed environment, an empty gh config dir and a refused scope file.
 3. An escalation comment carries a marker and admission refuses a record that has one, so an escalated record is not driven again until a human removes the comment (#5219).
 4. The judgment-parity criterion needs at least 30 recorded verdicts, at least 10 of them not `auto-merge`, or a recorded waiver; a later change to a judgment prompt, its source skill file or the role's model re-runs it (#5228).
 5. Acceptance labels are derived by driver code from the parent gate and the oversight-floor gate; the acceptance worker returns text only (#5228).

@@ -19,14 +19,40 @@ const { selectScope } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 've
 const { encodeImpactMap, parseImpactMap } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { BOOKKEEPING_RULES } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'init', 'verify-scope-starter.js'));
 const { readText } = require('./helpers/read-skill');
+const VERIFY_JS = path.join(REPO_ROOT, 'plugin', 'bin', 'verify.js');
 const STAMP = { sha: 'a'.repeat(40), fullSha: 'a'.repeat(40), scope: 'full' };
+
+test('AC6.1: this repo declares localRuns "on-request" beside its ci block (#5370)', () => {
+  const r = readDeclaration(DECL);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.strictEqual(r.decl.localRuns, 'on-request');
+  assert.deepStrictEqual(Object.keys(r.decl.ci), ['tests']);
+});
+
+test('AC6.1: verify.js --stamp-status --scope reads this checkout\'s declaration with no validation error (#5370)', () => {
+  const out = execFileSync(process.execPath, [VERIFY_JS, '--stamp-status', '--scope', '.claude-tweaks/verify-scope.json'],
+    { cwd: REPO_ROOT, encoding: 'utf8', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' } });
+  assert.strictEqual(JSON.parse(out).scopeError, null);
+  // Control: the same file with its ci block removed fails on the key, so this check can go red.
+  const raw = JSON.parse(fs.readFileSync(DECL, 'utf8'));
+  delete raw.ci;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'decl-5370-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'verify-scope.json'), JSON.stringify(raw));
+    const bad = readDeclaration(path.join(dir, 'verify-scope.json'));
+    assert.strictEqual(bad.ok, false);
+    assert.match(bad.errors[0], /^localRuns: needs a ci block/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('this repo declares its own verify scope and it passes readDeclaration (#1924 AC5, #3337)', () => {
   assert.ok(fs.existsSync(DECL), 'missing .claude-tweaks/verify-scope.json');
   const r = readDeclaration(DECL);
   assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
   assert.deepStrictEqual(r.decl.suites, ['tests', 'journeys']);
-  assert.strictEqual(r.decl.checks.tests.tests, 'npm test');
+  assert.strictEqual(r.decl.checks.tests.tests, 'node tools/run-tests.js --full');
   for (const rule of r.decl.rules) {
     if (rule.match === 'docs/journeys/**') {
       assert.deepStrictEqual(rule.suites, ['journeys'], 'docs/journeys/** maps to the journeys suite only');
@@ -87,7 +113,9 @@ test('the tests suite declares test.yml\'s test job as its CI source, and that j
   assert.deepStrictEqual(Object.keys(r.decl.ci), ['tests']);
   assert.strictEqual(r.decl.ci.tests.workflow, 'test.yml');
   assert.strictEqual(r.decl.ci.tests.job, 'test');
-  assert.strictEqual(r.decl.checks.tests.tests, 'npm test', 'the shards run the suite the declaration names');
+  assert.strictEqual(r.decl.checks.tests.tests, 'node tools/run-tests.js --full', 'the shards run the suite the declaration names');
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+  assert.strictEqual(pkg.scripts.test, 'node tools/run-tests.js', 'npm test (the shards) and the declaration run the same runner');
   const workflow = readText(TEST_WORKFLOW);
   assert.deepStrictEqual(missingShardFacts(workflow), []);
   // The shard count is written twice; a mismatch drops a slice or waits on one that never ran.
@@ -103,6 +131,63 @@ test('the tests suite declares test.yml\'s test job as its CI source, and that j
     assert.notStrictEqual(doctored, workflow, fact);
     assert.deepStrictEqual(missingShardFacts(doctored), [fact]);
   }
+});
+
+// #5319: a bare local `npm test` runs only the impact-selected files, so every caller that needs the whole
+// suite must say so (--shard, --record-durations or --full) or rely on CI being set. Scans the live workflows.
+const WORKFLOW_DIR = path.join(REPO_ROOT, '.github', 'workflows');
+const SUITE_RUN = /\bnpm test\b(?!:)|\bnode\s+\S*run-tests\.js/;
+const TRACER_RUN = /\bnode\s+\S*test-impact\.js\s+trace\b/;
+const WHOLE_SUITE_FLAG = /--(shard|full|record-durations)\b/;
+function workflowSuiteLines() {
+  const found = [];
+  for (const name of fs.readdirSync(WORKFLOW_DIR).filter((f) => f.endsWith('.yml')).sort()) {
+    const text = readText(path.join(WORKFLOW_DIR, name));
+    for (const line of text.split(/\r?\n/)) {
+      if (/^\s*#/.test(line)) continue;
+      if (SUITE_RUN.test(line)) found.push({ name, line, kind: 'suite' });
+      else if (TRACER_RUN.test(line)) found.push({ name, line, kind: 'tracer' });
+    }
+  }
+  return found;
+}
+
+test('AC6.1: every workflow that runs the suite asks for the whole suite (#5319)', () => {
+  const found = workflowSuiteLines();
+  assert.ok(found.length > 0, 'the scan matched no suite-running line');
+  assert.ok(found.some((f) => f.name === 'test.yml' && f.kind === 'suite' && /--shard\b/.test(f.line)), 'test.yml shard line not found');
+  assert.ok(found.some((f) => f.name === 'windows-regression.yml' && f.kind === 'suite'), 'windows-regression.yml npm test line not found');
+  assert.ok(found.some((f) => f.name === 'test-impact-map.yml' && f.kind === 'tracer'), 'test-impact-map.yml tracer line not found');
+  for (const f of found.filter((x) => x.kind === 'suite')) {
+    assert.match(f.line, WHOLE_SUITE_FLAG, `${f.name} runs the suite without --shard, --full or --record-durations: ${f.line.trim()}`);
+  }
+  // The tracer's whole-suite guarantee is its own spawn of run-tests.js, not the workflow line.
+  const tracer = readText(path.join(REPO_ROOT, 'tools', 'test-impact.js'));
+  assert.match(tracer, /'run-tests\.js'\)\s*,\s*'--full'\s*\]/, "tools/test-impact.js must spawn run-tests.js with '--full'");
+  // The remaining whole-suite callers rely on CI being set.
+  for (const name of fs.readdirSync(WORKFLOW_DIR).filter((f) => f.endsWith('.yml'))) {
+    const text = readText(path.join(WORKFLOW_DIR, name));
+    assert.doesNotMatch(text, /^\s*CI:\s*(''|""|false)?\s*$/m, `${name} blanks CI`);
+    assert.doesNotMatch(text, /\bunset CI\b/, `${name} unsets CI`);
+  }
+});
+
+test('AC5.1: verify.js\'s selection still picks a test that reads a changed module, and the tests check\'s full command ends with --full (run-tests.js\'s whole-suite flag, pinned by tests/run-tests-default-run.test.js) (#5319)', () => {
+  const { decl } = readDeclaration(DECL);
+  const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
+    commit: 'b'.repeat(40), tracedAt: '2026-11-13T00:00:00Z', exitCode: 0, node: 'v20.0.0',
+    tests: {
+      'tests/bin-lib/dispatch/queue-pull.test.js': { f: ['plugin/bin/lib/dispatch/queue-pull.js'] },
+      'tests/other.test.js': { f: ['plugin/bin/verify.js'] },
+    },
+  })));
+  assert.strictEqual(parsed.ok, true);
+  const ctx = { map: parsed.map, problem: null, headTests: ['tests/bin-lib/dispatch/queue-pull.test.js', 'tests/other.test.js'] };
+  const sel = (files) => selectScope({ decl, files, stamp: STAMP, impact: ctx });
+  assert.ok(sel(['plugin/bin/lib/dispatch/queue-pull.js']).impact.files.includes('tests/bin-lib/dispatch/queue-pull.test.js'));
+  assert.ok(!sel(['plugin/bin/verify.js']).impact.files.includes('tests/bin-lib/dispatch/queue-pull.test.js'));
+  assert.ok(decl.checks.tests.tests.endsWith('--full'), decl.checks.tests.tests);
+  assert.ok(decl.impact.command.includes('--files-from {files}'), decl.impact.command);
 });
 
 // #4024 expand-contract: the installed plugin build reads this committed file with code that predates

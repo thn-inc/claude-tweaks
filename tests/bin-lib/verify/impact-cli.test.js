@@ -614,3 +614,28 @@ test('an untraced changed path records its named reason in the timing entry (#43
   assert.strictEqual(run.code, 0, run.stderr + run.stdout);
   assert.deepStrictEqual(timingEntry(runDir).impact, { suite: 'tests', fallback: 'untraced-path: src/z.js', superseded: false, selected: null, supersedingPaths: [] });
 });
+
+// #5369: --local under localRuns "on-request" never spawns gh, so these run on every platform.
+const KEYED = () => declOf({}, { ci: { tests: { workflow: 'test.yml', job: 'test', waitSeconds: 5, pollSeconds: 1 } }, localRuns: 'on-request' });
+
+test('AC2.1: under the key --local runs the impact subset here and never consults CI (#5369)', async () => {
+  const r = impactRepo(KEYED());
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli([...ARGS, '--local'], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'tests/a.test.js\n');
+  assert.deepStrictEqual(r.report().ci, [{
+    suite: 'tests', workflow: 'test.yml', job: 'test', used: false, fallback: 'local-requested',
+    prNumber: null, runId: null, runUrl: null, jobId: null, conclusion: null, waitedMs: 0,
+  }]);
+});
+
+test('AC2.2: under the key --local runs the full command here when selection falls back (#5369)', async () => {
+  const r = impactRepo(KEYED());
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli([...ARGS, '--local'], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'FULL');
+  assert.strictEqual(r.report().scope.impact.fallback, 'map-missing');
+});

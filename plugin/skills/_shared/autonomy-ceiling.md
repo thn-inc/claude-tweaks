@@ -68,10 +68,10 @@ action, unconditionally at **every** ceiling tier, not just `unattended`:
 
 Either source is read as `trustRows`' `negativeEvidence` count on the cell. A cell with
 `negativeEvidence > 0` cannot read `clean` regardless of how many positive (approved/operational)
-outcomes it also holds — one known-bad outcome in the sample is disqualifying, the same precedence
-`changesRequested`/`followUps` already had. Negative evidence counts toward `dispositioned` (and
-therefore `MIN_VERDICTS`) exactly like every other real outcome signal — a known-bad record is not
-an unknown one.
+outcomes it also holds — one known-bad outcome in the evaluation window is disqualifying, the
+same zero tolerance `changesRequested` has (corrective follow-ups are a rate, below). Negative
+evidence counts toward `dispositioned` (and therefore `MIN_VERDICTS`) exactly like every other real
+outcome signal — a known-bad record is not an unknown one.
 
 **Scope: applies only where no acceptance disposition already exists on the record** (the same
 `disposition === 'none'` branch the operational-good path already used) — a record that reached
@@ -81,17 +81,34 @@ retry ceilings, or its `auto:merge` revocation-on-retry is out of scope here —
 in full in `dispatch/settle-and-merge.md` and unchanged; this section only makes that classification
 durably visible to the trust table.
 
-**Not currently time-windowed.** `_shared/trust-table.md`'s "Known limitation: no time window"
-section applies here too: `trust.js` has no sample-size cap or aging mechanism today — every count,
-positive or negative, is all-time. A class carrying negative evidence therefore stays pinned below
-`clean` indefinitely under the shipped module, not until it "ages out" — there is no expiry
-machinery to age it out with. A future trailing-evaluation window (see that section's own note) would
-apply uniformly to every count trust.js keeps, negative evidence included, without any change here —
-but until one ships, do not read a class's current `clean` verdict as proof it has never had a
-negative outcome; read it only as "no negative outcome inside its current all-time evidence sample."
 The marker's *absence* on a record means "no correctness/ambiguous failure since this shipped,"
 never "no failures ever" — records built before this sub-issue landed carry no marker regardless of
 their actual build history.
+
+**Evaluation window and follow-up rate (#5291).** A class's evidence is graded over a trailing
+window, not all time. A closed record counts toward a cell only when its `closedAt` falls inside
+`trust-evaluation-window-days` (integer ≥ 1, default 30; the boundary is inclusive, a future
+`closedAt` counts, and a closed record with no parseable `closedAt` is out of window). A record
+outside the window forms no cell, but it is still scanned as a follow-up source. Corrective
+follow-ups are judged as a rate — the share of the class's in-window records that shipped
+(NOT_PLANNED closes excluded) which drew a corrective follow-up, where `followUpRecords` counts the
+distinct such records — against `trust-follow-up-rate-max-percent`
+(integer 0-100, default 30; `0` restores zero tolerance). `changesRequested` and `negativeEvidence`
+keep zero tolerance inside the window: one of either still pins the cell below `clean`. That makes
+recovery real — once the rejected or failed record ages out of the window, and the follow-up rate
+is at or under the maximum, the class can read `clean` again. Gate 2's deny reason for a `mixed`
+class names the failing conditions and the rate, so a refusal reads in plain words
+(`plugin/bin/lib/issues/grant-gate.js`). `_shared/trust-table.md`'s "Evaluation window" section
+carries the render and the fetch-limit bound. Read a `clean` verdict as "no negative outcome inside
+the window", never as proof the class never had one.
+
+**What this does not loosen.** `grant-origination-enabled` still gates every machine-originated
+grant, and `fleet-daily-grant-cap` still bounds how many grants one calendar day can mint: a class
+that reads `clean` earns eligibility for gate 2 only, not a grant.
+
+**Removal condition.** The window-and-rate rule is a bridge: it exists so machine-originated grants
+are reachable before the control mode of record #4623 lands. Re-decide it — retire it or keep it —
+when #4623 ships.
 
 ## Revocation: the global merge-lane circuit breaker (#311)
 
@@ -289,7 +306,8 @@ A class earns nothing unless `permittedGrants` says so, which requires **all** o
 - The class's verdict is `clean`. That in turn requires `total >= MIN_SAMPLES`, **and**
   `dispositioned >= MIN_VERDICTS` — a floor counted on real outcome evidence (an acceptance
   disposition, or a merged-and-unreverted operational close), not on how many records the class has
-  closed — **and** no `changes-requested` and no corrective follow-ups. A `mixed` verdict earns
+  closed — **and** no `changes-requested`, no negative evidence, and a corrective follow-up rate
+  within `trust-follow-up-rate-max-percent`. A `mixed` verdict earns
   nothing; neither does `insufficient-evidence`.
 
 Read `_shared/trust-table.md` for what those columns mean and for the Coverage figure that says

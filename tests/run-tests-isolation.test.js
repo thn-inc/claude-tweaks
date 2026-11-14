@@ -892,6 +892,29 @@ test('run-tests.js --files-from runs exactly the listed files, resolved against 
   });
 });
 
+// A bare run selects by impact (#5319). In this layout the verify modules the selector loads are absent,
+// so its failure path runs for real: the whole suite runs, with one stderr line saying why.
+test('AC3.7: a bare run that cannot select runs the whole suite and prints why', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const root = path.join(sb.suiteRoot, 'repo');
+    fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'tests'));
+    copyRunner(root);
+    fs.copyFileSync(path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
+    const env = { ...sb.env };
+    delete env.CI;
+    const result = spawnSync(process.execPath, [path.join(root, 'tools', 'run-tests.js')], {
+      cwd: root, env, encoding: 'utf8', timeout: 120000,
+    });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.ok(fs.existsSync(sb.probeOut), 'the probe ran');
+    const lines = result.stderr.split('\n').filter((l) => l.startsWith('run-tests.js: running the whole suite'));
+    assert.strictEqual(lines.length, 1, result.stderr);
+    assert.match(lines[0], /^run-tests\.js: running the whole suite — impact selection could not narrow it: /);
+    assert.deepStrictEqual(SLOT_LOCKS(sb.slotDir), []);
+  });
+});
+
 // A live full-suite holder (this process) owns the base lane's only slot: a --files-from subset must
 // run anyway from its own subset/ lane, leave the holder's lock untouched and free its own after.
 // Were it queued in the base lane it would wait until the spawnSync timeout and fail on status null.

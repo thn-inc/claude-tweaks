@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/flow/pr-early-open.js
+  - plugin/bin/lib/flow/pr-body.js
   - plugin/bin/pr-checklist.js
   - plugin/skills/_shared/pr-early-run-lifecycle.md
 ---
@@ -18,7 +19,7 @@ files:
 - **URL:** `https://github.com/{owner}/{repo}/pull/{pr}`
 - **Action:** `pr-early-open.js` lists PRs for the branch, with `body` in the `--json` fields, and finds the OPEN one. It logs `reusing open PR #{pr} for {branch}`. Because the body's first line names another run, even after pr-checklist's own marker repair, it composes this run's body and writes it with `gh pr edit {pr} --body-file`. It logs `rebound reused PR #{pr} to run {run-id}`, records the PR, and pushes.
 - **Should feel:** Silent and automatic, with no card and no prompt. It is one extra decision line in the log.
-- **Should understand:** Only a body that names a different run is rewritten. A body that already names this run, or one with no run marker at all (pr-checklist adds this run's), is left untouched. The rewrite starts a fresh phase checklist for this run, as the reopened-PR rebind (#3887) does.
+- **Should understand:** Only a body that names a different run is rewritten. A body that already names this run, or one with no run marker at all (pr-checklist adds this run's), is left untouched. Since #5358 that includes a body an MCP write-back left with only plain-text markers: the repair puts its `<!-- claude-tweaks-run: … -->` line back with the plain line's id, so a body naming this run is adopted with its checked rows kept, and one naming another run is still rebound. The rewrite starts a fresh phase checklist for this run, as the reopened-PR rebind (#3887) does.
 - **Red flags:** A `reusing open PR` line with no `rebound reused PR` line while the PR body still names the earlier run. A `gh pr edit` on a PR whose body already named this run.
 
 ### 2. A resumed run re-verifies its recorded PR — `_shared/pr-early-run-lifecycle.md` "Resume: reconcile a recorded PR"
@@ -45,4 +46,5 @@ files:
 ## Origin
 - Created during build of #4580 (Rebind the run PR body when a resumed run reuses a still-open PR)
 - Steps 1-4 built in this session
+- Updated during `/claude-tweaks:build` of record #5358 (2026-11-13): an MCP-stripped body naming this run is now adopted, not rebound (`plugin/bin/lib/flow/pr-body.js`'s HTML-form repair)
 - Related: `retry-a-record-whose-first-attempt-left-a-branch-3887.md` (the CLOSED/reopen counterpart), `flip-a-pr-checklist-row-at-a-phase-exit-3263.md` (the checklist CLI), #3903 (the incident run)

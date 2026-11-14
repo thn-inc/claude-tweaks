@@ -84,7 +84,7 @@ How to execute any task here. These apply project-wide unless a more specific ru
 ## Commands
 
 ```bash
-npm test                            # Full suite — tests/ (includes every tests/bin-lib/{module} suite) and tools/upstream-drift/tests/ — a recursive glob, not a fixed list; new tests/bin-lib/{x} directories are picked up automatically
+npm test                            # Locally runs only the impact-selected test files for this checkout's changes; CI runs the whole suite (tests/, tools/upstream-drift/tests/ — recursive, no registration); `npm test -- --full` runs it all here
 npm run test:perf                   # Timing budgets (perf/) — deliberately excluded from npm test, see docs/plugin-structure.md
 claude --plugin-dir ./plugin        # Local development — load the payload subtree from this checkout
 ```
