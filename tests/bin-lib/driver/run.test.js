@@ -1947,10 +1947,34 @@ test('AC12.1: a regular verify-scope.json runs the scoped invocation', async () 
   const h = harness({ script: [scopeIs('file'), scopeSame()] });
   const { ctx } = await driveCapturing(h);
   const [v] = verifyCalls(h);
-  assert.deepEqual(v.args.slice(1), ['--run', runDirOf(h), '--default-suite-slots', '1', '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', 'main']);
+  assert.deepEqual(v.args.slice(1), ['--run', runDirOf(h), '--default-suite-slots', '1', '--scope', '.claude-tweaks/verify-scope.json', '--local', '--integration-branch', 'main']);
   assert.equal(v.cwd, WT);
   assert.equal(ctx.testMode, 'scoped');
   assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok');
+});
+
+const NO_VERDICT = 'verify.js: no verdict yet for suite "tests" — CI could not answer (head-not-pushed), and the declaration\'s localRuns "on-request" keeps it off this machine; no check ran and no pass stamp was written.';
+
+test('AC8.1: under the key the test step passes --local, so a verify that exits 3 without it never fails the run (#5370)', async () => {
+  const h = harness({ script: [scopeIs('file'), scopeSame(),
+    [on('node', /verify\.js$/), (c) => (c.args.includes('--local')
+      ? { code: 0, stdout: '', stderr: '' }
+      : { code: 3, stdout: '', stderr: `${NO_VERDICT}\n  Either push the branch …\n  or re-run it with --local …\n` })]] });
+  await run(['#7'], h.deps);
+  const calls = verifyCalls(h);
+  assert.equal(calls.length, 1, 'one verify call, carrying --local');
+  assert.ok(calls[0].args.includes('--local'));
+  assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok');
+  assert.notEqual(lastLine(h).stop && lastLine(h).stop.reason, 'failing-test');
+});
+
+test('AC8.1: an exit 3 that still reaches the test step is a failed call, never a failing-test stop (#5370)', async () => {
+  const h = harness({ script: [scopeIs('file'), scopeSame(), [on('node', /verify\.js$/), { code: 3, stdout: '', stderr: `${NO_VERDICT}\n` }]] });
+  await run(['#7'], h.deps);
+  const testLine = h.lines().find((l) => l.step === 'test');
+  assert.equal(testLine.status, 'fail');
+  assert.equal(testLine.detail, NO_VERDICT);
+  assert.deepEqual([lastLine(h).stop.step, lastLine(h).stop.reason], ['test', 'express-error']);
 });
 
 test('AC12.2: absent scope file runs the full invocation, detail says so', async () => {
