@@ -212,7 +212,7 @@ test('the decline fingerprint is the one declined-learning.js lookup computes', 
 function planRepo({ old = 0, recent = 0, untracked = 0, modifyOld = false }) {
   const repo = gitRepo();
   const env = {
-    ...process.env,
+    ...cleanEnv(),
     GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
     GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
     GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
@@ -243,7 +243,13 @@ function planRepo({ old = 0, recent = 0, untracked = 0, modifyOld = false }) {
 }
 
 // The CLI in-process with the fixture as its working directory; returns the parsed output line.
-function cliJson(repo, args, env = { ...process.env }) {
+function cleanEnv(extra = {}) {
+  const env = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
+  return { ...env, ...extra };
+}
+
+function cliJson(repo, args, env = cleanEnv()) {
   const r = runCliSync(CLI, args, { cwd: repo, env });
   assert.equal(r.code, 0, r.stderr);
   return JSON.parse(r.stdout);
@@ -253,7 +259,7 @@ test('AC1.1: 30 past-cutoff plans and 1 within-cutoff plan under keep-forever', 
   const { repo, oldPlans, recentPlans } = planRepo({ old: 30, recent: 1 });
   try {
     // real process: proves the script entry, exit 0 and the JSON line on stdout
-    const res = spawnCli(CLI, ['--retention', 'keep-forever', ...oldPlans, ...recentPlans], { cwd: repo });
+    const res = spawnCli(CLI, ['--retention', 'keep-forever', ...oldPlans, ...recentPlans], { cwd: repo, env: cleanEnv() });
     assert.equal(res.code, 0, res.stderr);
     const parsed = JSON.parse(res.stdout);
     assert.equal(parsed.plans.filter((row) => row.route === 'prune-archive').length, 30);
@@ -348,7 +354,7 @@ test('AC3.1: plan-retention reads the working directory and its git child\'s env
     // injected env: the cwd is repo `other` (no old plans), GIT_DIR names `old`'s repository, so
     // the first-add dates follow `old`
     assert.equal(archived(cliJson(other.repo, args)), 0, 'without GIT_DIR the plans read as uncommitted');
-    const viaEnv = cliJson(other.repo, args, { ...process.env, GIT_DIR: path.join(old.repo, '.git') });
+    const viaEnv = cliJson(other.repo, args, cleanEnv({ GIT_DIR: path.join(old.repo, '.git') }));
     assert.equal(archived(viaEnv), 30, 'the git child read the injected GIT_DIR');
     assert.ok(viaEnv.plans.every((row) => row.firstAdded !== 'uncommitted'));
 
