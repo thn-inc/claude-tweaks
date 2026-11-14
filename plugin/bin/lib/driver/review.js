@@ -11,9 +11,10 @@
 //   EVIDENCE_RUN_TIMEOUT_MS    45000   one evidence run's wall clock (below the 1-minute minimum
 //                                      of express-driver-wall-clock-minutes)
 //   EVENT_TEXT_MAX_CHARS       200     reviewer text in an event line or stop detail
+//   EVENT_TEXT_INPUT_MAX_CHARS 800     the text normalizeEventText normalizes (4 x the above)
 //   DIFF_PROMPT_MAX_BYTES      100000  the diff quoted in the reviewer prompt
 //
-// Evidence runs (Task 0 capture). Each source in tests/bin-lib/driver/fixtures/review-evidence/
+// Evidence runs (captured for #5222 before the rule was written). Each source in tests/bin-lib/driver/fixtures/review-evidence/
 // was written to a temp dir as {name}.test.js and run there as
 // `node --test --test-reporter=tap --test-reporter-destination={dir}/{name}.tap {name}.test.js`
 // (`hang` killed, with its process group, after 3 s). process.version v22.23.2. The TAP of each
@@ -105,7 +106,8 @@
 //                  symlink at the leaf). Any failure throws, after taking back the directories it
 //                  made; the caller stops the record.
 //   removeEvidence removes the file, then each directory writeEvidence made, deepest first; a
-//                  directory something else now holds a file in stays (ENOTEMPTY / EEXIST).
+//                  directory something else now holds a file in stays (ENOTEMPTY / EEXIST). It is
+//                  removeTracked over a fresh tracker, the one removal body the pass uses too.
 //   Their error messages are fixed text (a rule name, `evidence write failed (CODE)`, `evidence
 //   remove failed (CODE)`) and never carry the path: a file-system error is rethrown with its code,
 //   and the original, which names the path, only as `cause`.
@@ -125,9 +127,10 @@
 //                  report as untracked.
 //
 // The review pass (reviewPass; no fix round here). The reviewer launches through deps.launchWorker
-// with role `reviewer`, REVIEW_RESULT_SCHEMA and the implementer's two policy ceilings, read as the
-// worker step reads them; the first runner handle is shared.activeWorker for the launch, and an
-// interrupt that landed during it stops the pass before anything is written. Its prompt
+// with role `reviewer`, REVIEW_RESULT_SCHEMA and the implementer's two policy ceilings, through the
+// launch wiring the worker step uses (launch.js: readCeilings, launchTracked); the first runner
+// handle is shared.activeWorker for the launch, and an interrupt that landed during it stops the
+// pass before anything is written. Its prompt
 // (buildReviewerPrompt) fences the Key Files and changed-file lists (a name can hold a line break),
 // quotes the diff against origin/{ref}, fenced and cut to DIFF_PROMPT_MAX_BYTES at a character
 // boundary, and ends with the record body, fenced, as untrusted data. An envelope that
@@ -149,14 +152,18 @@
 // child may still be writing. A stop's `confirmed` is always empty: a stop hands no evidence on.
 //   Stops, each `fail` with class pre-push: the envelope, the result, the diff read, a dirty tree,
 //   a check-ignore, write, run or remove failure, a child that survived its kill, a tree changed
-//   outside the evidence files, an interrupt. A stop's detail is fixed text, the module's own error
-//   messages, or text through normalizeEventText; never an error's `cause` or a foreign message.
-//   normalizeEventText  reviewer text for an event or detail: line breaks become spaces, then
-//                       normalizeTitle, then a cut to EVENT_TEXT_MAX_CHARS that leaves neither half
-//                       a surrogate pair nor a bare `@` at the end.
+//   outside the evidence files, an interrupt. A stop's detail is fixed text (a dep's error adds at
+//   most its code), the module's own error messages, or text through normalizeEventText; never an
+//   error's `cause` or a foreign message.
+//   normalizeEventText  reviewer text for an event or detail: line breaks become spaces, the result
+//                       is cut to EVENT_TEXT_INPUT_MAX_CHARS (4 x EVENT_TEXT_MAX_CHARS) before
+//                       normalizeTitle, whose trailing-dot pattern is quadratic on a long run of
+//                       dots, so it only ever sees bounded text; then normalizeTitle, then a cut to
+//                       EVENT_TEXT_MAX_CHARS that leaves neither half a surrogate pair nor a bare
+//                       `@` at the end.
 //
 // The fix round (fixRound; at least one confirmed finding). Exactly one, shared by every confirmed
-// finding, in AC8's order: HEAD is read (preFixHead), the implementer launches once more through
+// finding, in this order (#5222): HEAD is read (preFixHead), the implementer launches once more through
 // wiring.launchImplementer with the first prompt plus buildFixPrompt (each finding's location and
 // claim fenced, its evidence path, its content fenced), then each kept evidence file is rewritten
 // from the content recorded when it was confirmed, then wiring.commit, wiring.test, a direct run of
@@ -188,7 +195,8 @@
 //   its kill, the tree changed during the checks (after the scoped run and each kept run; neither is
 //   singled out), the name-only diff failing (it ends with `--`, so a file named HEAD or after the
 //   sha is never read as a revision). `stop`: the worker's
-//   cannot-complete, a kept evidence test that does not pass (reason failing-test), no path outside
+//   cannot-complete, the commit step's own stop when the tree held changes (the worker's title
+//   empty once normalized), a kept evidence test that does not pass (reason failing-test), no path outside
 //   the evidence files differing from preFixHead once every run has passed (judged only then), and
 //   check's escalate. An interrupt after any await yields. Every detail is `{cause}: {path}:{line}
 //   {claim}` with the path and claim through normalizeEventText (each confirmed finding, `; `-joined,
@@ -203,7 +211,8 @@ const { isAncestorOrSelf } = require('../path-guard');
 const { relativeDisplayId } = require('../shared-primitives');
 const { parseStatusPorcelainZ } = require('../git-z');
 const { buildEnv, superviseChild } = require('./worker');
-const { STOP_CLASSES, neutralize, normalizeTitle, errorText } = require('./events');
+const { readCeilings, launchTracked } = require('./launch');
+const { STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
 const { fenceFor } = require('../markdown-blocks');
 const { REVIEW_RESULT_SCHEMA } = require('./roles');
 const { sensitivePathsOf } = require('../express/policy');
@@ -213,6 +222,7 @@ const EVIDENCE_PATH_MAX_CHARS = 200;
 const EVIDENCE_CONTENT_MAX_BYTES = 65536;
 const EVIDENCE_RUN_TIMEOUT_MS = 45000;
 const EVENT_TEXT_MAX_CHARS = 200;
+const EVENT_TEXT_INPUT_MAX_CHARS = 4 * EVENT_TEXT_MAX_CHARS;
 const DIFF_PROMPT_MAX_BYTES = 100000;
 
 // The test-command shapes the classification rule covers, keyed on the driver's testCommand.
@@ -564,14 +574,9 @@ function removeMadeDir(dir, deps) {
     if (!(err && RMDIR_NOT_EMPTY.includes(err.code))) throw fsError('remove', err);
   }
 }
-function removeEvidence({ abs, createdDirs, deps }) {
-  fsCall('remove', () => deps.rmFile(abs));
-  for (const dir of [...createdDirs].reverse()) removeMadeDir(dir, deps);
-}
-
-// removeEvidence for the review pass, which may retry after a failure: `tracked` ({ abs, fileGone,
-// dirsLeft }) records what is already gone, so a second call starts where the first one stopped
-// rather than failing on the file it already removed.
+// The one removal body. `tracked` ({ abs, fileGone, dirsLeft }) records what is already gone, so
+// the review pass, which may retry after a failure, starts a second call where the first one
+// stopped rather than failing on the file it already removed.
 function removeTracked(tracked, deps) {
   if (!tracked.fileGone) {
     fsCall('remove', () => deps.rmFile(tracked.abs));
@@ -583,6 +588,10 @@ function removeTracked(tracked, deps) {
   }
 }
 const trackerFor = ({ abs, createdDirs }) => ({ abs, fileGone: false, dirsLeft: [...createdDirs] });
+// Removes what one writeEvidence made (see the header).
+function removeEvidence({ abs, createdDirs, deps }) {
+  removeTracked(trackerFor({ abs, createdDirs }), deps);
+}
 
 const SURVIVED_DETAIL = 'the evidence run did not exit after its kill';
 
@@ -652,7 +661,8 @@ function treeDelta({ wt, expected, deps, isRunArtifact }) {
 
 // Reviewer text for an event line or a stop detail (see the header).
 function normalizeEventText(s) {
-  const text = normalizeTitle(String(s).replace(/\r\n|\r|\n/g, ' '));
+  // Bounded before normalizeTitle: its trailing-dot pattern is quadratic on a long run of dots.
+  const text = normalizeTitle(String(s).replace(/\r\n|\r|\n/g, ' ').slice(0, EVENT_TEXT_INPUT_MAX_CHARS));
   let cut = text.length > EVENT_TEXT_MAX_CHARS ? text.slice(0, EVENT_TEXT_MAX_CHARS) : text;
   if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
   // neutralize writes `@` as `@` + U+200B; a cut between the two would leave a live `@`.
@@ -718,13 +728,6 @@ function buildReviewerPrompt(ctx, { diff, changedFiles } = {}) {
   ].join('\n');
 }
 
-// steps.js's own values: review.js never requires steps.js.
-const WIN32_CLAUDE_BIN = 'claude.cmd';
-function positiveNumber(value) {
-  const n = typeof value === 'number' ? value : (typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN);
-  return Number.isFinite(n) && n > 0 ? n : NaN;
-}
-
 // The messages this module's own throws carry: fixed text, no path. Anything else (a raw fs or
 // spawn error from deps) is replaced by the caller's fixed fallback.
 const OWN_ERROR_RES = [
@@ -745,44 +748,23 @@ function ownErrorText(err, fallback) {
 
 // Launches the reviewer (see the header). Returns { envelope } or { stop: detail }.
 async function launchReviewer(ctx, deps, diff) {
-  const { shared } = ctx;
-  const minutesKey = 'express-driver-wall-clock-minutes';
-  const dollarsKey = 'express-driver-spend-ceiling-dollars';
-  const minutes = positiveNumber(shared.policy[minutesKey].value);
-  const dollars = positiveNumber(shared.policy[dollarsKey].value);
-  const bad = [[minutesKey, minutes], [dollarsKey, dollars]].filter(([, v]) => Number.isNaN(v)).map(([k]) => k);
-  if (bad.length) {
-    return { stop: `reviewer ceiling not a positive number: ${bad.map((k) => `${k} (${JSON.stringify(shared.policy[k].value)})`).join(', ')}` };
-  }
+  const ceilings = readCeilings(ctx.shared.policy);
+  if (ceilings.bad) return { stop: `reviewer ceiling not a positive number: ${ceilings.bad}` };
+  const { minutes, dollars } = ceilings;
   const settingsDir = path.join(ctx.runDir, 'reviewer');
   deps.mkdirSync(settingsDir, { recursive: true });
-  // Only the first runner call is the reviewer (on win32 the ceiling kill's taskkill comes next).
-  let captured = false;
-  const runner = (call) => {
-    const handle = deps.runner(call);
-    if (!captured) {
-      captured = true;
-      shared.activeWorker = handle;
-    }
-    return handle;
-  };
   let envelope;
   try {
-    envelope = await deps.launchWorker({
+    envelope = await launchTracked(ctx.shared, deps, { minutes, dollars }, {
       role: 'reviewer',
       cwd: ctx.wt,
       prompt: buildReviewerPrompt(ctx, { diff, changedFiles: ctx.changedFiles }),
-      ceilings: { wallClockMs: minutes * 60000, spendCeiling: dollars },
       schema: REVIEW_RESULT_SCHEMA,
       settingsDir,
-      platform: deps.platform,
-      env: deps.env,
-      ...(deps.platform === 'win32' ? { bin: WIN32_CLAUDE_BIN } : {}),
-    }, { runner });
+    });
   } catch (err) {
-    return { stop: `reviewer launch failed: ${neutralize(errorText(err))}` };
-  } finally {
-    shared.activeWorker = null;
+    // The launcher's or the runner's own message can name a path: fixed text and at most the code.
+    return { stop: `reviewer launch failed${codeSuffix(err)}` };
   }
   return { envelope, minutes, dollars };
 }
@@ -827,7 +809,8 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
       diff = String(deps.git(['-C', wt, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv',
         '--end-of-options', `origin/${shared.ref}...HEAD`, '--'], { cwd: wt }));
     } catch (err) {
-      return stop(`git diff failed: ${neutralize(errorText(err))}`);
+      // git's stderr can name a worker-made file or ref: fixed text and at most the code.
+      return stop(`git diff failed${codeSuffix(err)}`);
     }
     const launch = await launchReviewer(ctx, deps, diff);
     if (shared.interrupted) return interrupted();
@@ -1095,7 +1078,10 @@ async function fixRound(ctx, deps, wiring, pass) {
       if (run.verdict !== 'passed') return end('stop', `the kept evidence test did not pass (${run.verdict})`, { c, reason: 'failing-test' });
     }
 
-    // Judged only now (the plan review's Reading A): every rerun has passed.
+    // Judged only now, once every rerun has passed (#5222): a fix that only deleted or emptied an
+    // evidence file has had it rewritten from the recorded content, still red, so it ends at the
+    // at-HEAD check (one the worker gitignored) or at a failing-test stop (the scoped test or the
+    // kept run), never reported as a fix that changed nothing.
     let diffed;
     try {
       const args = ['-C', wt, '--no-optional-locks', 'diff', '--name-only', '-z', '--no-renames', '--end-of-options', preFixHead, 'HEAD', '--'];
@@ -1150,6 +1136,7 @@ module.exports = {
   EVIDENCE_CONTENT_MAX_BYTES,
   EVIDENCE_RUN_TIMEOUT_MS,
   EVENT_TEXT_MAX_CHARS,
+  EVENT_TEXT_INPUT_MAX_CHARS,
   DIFF_PROMPT_MAX_BYTES,
   EVIDENCE_COMMANDS,
   evidenceArgs,

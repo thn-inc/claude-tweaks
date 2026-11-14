@@ -2960,8 +2960,9 @@ test('AC9: the evidence file is rewritten from the recorded content before the c
   assert.deepEqual([lastLine(deleted).stop.step, lastLine(deleted).stop.reason, reviewLines(deleted)[0].status], [STEP.review, 'failing-test', 'stop']);
   assert.equal(lastLine(deleted).stop.detail, `the kept evidence test did not pass (reproduced): ${FINDING_0}`);
   assert.equal(pushCalls(deleted).length, 0);
-  // The fix worker edits it into a passing test: the edited file is removed and the recorded bytes written.
-  const edited = fixRig({ effect: (fx) => { fx.edited = 'passing'; } });
+  // The file is still there after the fix worker (edited or not: the fake tree holds no bytes, and
+  // the rewrite never reads them): the file at the leaf is removed and the recorded bytes written.
+  const edited = fixRig();
   await run(['#7'], edited.deps);
   const steps = afterFixLaunch(edited).filter((c) => ['rmFile', 'writeFileExclusive'].includes(c.kind) || (c.kind === 'git' && gitSub(c)[0] === 'commit'));
   assert.deepEqual(steps.map((c) => [c.kind, c.args[0] === evidenceAbs(0) || c.kind === 'git']), [['rmFile', true], ['writeFileExclusive', true], ['git', true]]);

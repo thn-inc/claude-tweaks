@@ -10,7 +10,7 @@ const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
   classifyEvidenceRun, evidenceArgs, EVIDENCE_COMMANDS, reviewRequired, findingShapeViolation, evidenceShapeViolation,
   pathRuleViolation, contentViolation, PATH_RULES, MAX_FINDINGS, EVIDENCE_PATH_MAX_CHARS, EVIDENCE_CONTENT_MAX_BYTES,
-  EVIDENCE_RUN_TIMEOUT_MS, EVENT_TEXT_MAX_CHARS, runEvidence, writeEvidence, removeEvidence, treeDelta, isIgnored,
+  EVIDENCE_RUN_TIMEOUT_MS, EVENT_TEXT_MAX_CHARS, EVENT_TEXT_INPUT_MAX_CHARS, runEvidence, writeEvidence, removeEvidence, treeDelta, isIgnored,
   DIFF_PROMPT_MAX_BYTES, normalizeEventText, buildReviewerPrompt, reviewPass, reviewRecord,
 } = require(path.join(LIB, 'driver', 'review.js'));
 const { lstatType, canonicalRealpath } = require(path.join(LIB, 'path-guard'));
@@ -143,10 +143,17 @@ test('Task0: evidenceArgs covers npm test only', () => {
   assert.ok(Object.isFrozen(EVIDENCE_COMMANDS));
 });
 
+test('evidenceArgs covers the driver\'s own test command (steps.js TEST_COMMAND)', () => {
+  // A rename of either side would discard every finding unrun.
+  const { TEST_COMMAND } = require(path.join(LIB, 'driver', 'steps.js'));
+  assert.notStrictEqual(evidenceArgs(TEST_COMMAND, 'tests/x.test.js', '/tmp/d.tap'), null, TEST_COMMAND);
+});
+
 test('AC1: the reviewer launch has --restricted, no Bash, no bypass flag and no settings file', () => {
   for (const platform of ['darwin', 'linux', 'win32']) {
     const args = composeArgs({ role: 'reviewer', schema: REVIEW_RESULT_SCHEMA, platform });
     assert.ok(args.includes('--restricted'), platform);
+    assert.notStrictEqual(args.indexOf('--tools'), -1, `${platform}: no --tools`);
     assert.ok(!args[args.indexOf('--tools') + 1].split(',').includes('Bash'), platform);
     assert.ok(!args.some((a) => /dangerously-skip-permissions|bypassPermissions/.test(a)), platform);
     assert.ok(!args.includes('--settings'), platform);
@@ -1051,6 +1058,7 @@ test('AC1: the recorded reviewer launch, through the real launcher and roles.js,
     assert.strictEqual(spawned.length, 1, platform);
     const { args } = spawned[0];
     assert.ok(args.includes('--restricted'), platform);
+    assert.notStrictEqual(args.indexOf('--tools'), -1, `${platform}: no --tools`);
     assert.ok(!args[args.indexOf('--tools') + 1].split(',').includes('Bash'), platform);
     assert.ok(!args.some((a) => /dangerously-skip-permissions|bypassPermissions/.test(a)), platform);
     assert.ok(!args.includes('--settings'), platform);
@@ -1088,12 +1096,30 @@ test('AC1: a ceiling that is not a positive number, or a diff git cannot read, s
   assert.strictEqual(out.result.status, 'fail');
   assert.match(out.result.detail, /^reviewer ceiling not a positive number: express-driver-wall-clock-minutes \("soon"\)$/);
   assert.strictEqual(ofKind(rig.calls, 'launchWorker').length, 0);
+  // git's own words never reach the detail (they can name a worker-made file); its code may.
   const noDiff = passRig();
-  noDiff.deps.git = () => { throw Object.assign(new Error('Command failed'), { stderr: 'fatal: bad revision fixes #9' }); };
+  noDiff.deps.git = () => { throw Object.assign(new Error('Command failed: git diff /private/wt/secret-name'), { stderr: 'fatal: bad revision /private/wt/secret-name' }); };
   const res = await noDiff.run();
   assert.strictEqual(res.result.status, 'fail');
-  assert.strictEqual(res.result.detail, 'git diff failed: fatal: bad revision');
+  assert.strictEqual(res.result.detail, 'git diff failed');
   assert.strictEqual(ofKind(noDiff.calls, 'launchWorker').length, 0);
+  const slowDiff = passRig();
+  slowDiff.deps.git = () => { throw Object.assign(new Error('spawnSync git ETIMEDOUT /private/wt'), { code: 'ETIMEDOUT' }); };
+  assert.strictEqual((await slowDiff.run()).result.detail, 'git diff failed (ETIMEDOUT)');
+});
+
+test('AC1: a reviewer launch that throws stops with fixed text and at most the error\'s code', async () => {
+  for (const [err, detail] of [
+    [new TypeError('launchWorker: settingsDir /private/run/reviewer is inside cwd /private/wt'), 'reviewer launch failed'],
+    [Object.assign(new Error('spawn /usr/local/bin/claude EACCES'), { code: 'EACCES' }), 'reviewer launch failed (EACCES)'],
+  ]) {
+    const rig = passRig({ findings: [reviewFinding(0)] });
+    rig.deps.launchWorker = async () => { throw err; };
+    const out = await rig.run();
+    assert.deepStrictEqual([out.result.status, out.result.stopClass, out.result.detail], ['fail', 'pre-push', detail]);
+    assert.strictEqual(rig.ctx.shared.activeWorker, null);
+    assert.strictEqual(ofKind(rig.calls, 'writeFileExclusive').length, 0);
+  }
 });
 
 test('AC2: an envelope fail, timeout or unparseable result stops at the review step', async () => {
@@ -1131,7 +1157,8 @@ test('AC2: one invalid finding is discarded and counted, the rest still run', as
   const out = await rig.run();
   assert.strictEqual(out.result, null);
   assert.strictEqual(out.counts.returned, 3);
-  assert.ok(out.counts.discarded >= 1);
+  // The invalid one, plus the two valid ones whose runs pass (the rig's default verdict).
+  assert.strictEqual(out.counts.discarded, 3);
   assert.deepStrictEqual(destsOf(rig.calls), [reviewDest(0), reviewDest(2)]);
 });
 
@@ -1449,13 +1476,15 @@ test('AC4: the run\'s merge-sensitive paths reach the path rules', async () => {
   assert.strictEqual(evidenceSpawns(open.calls).length, 1);
 });
 
-test('Task5: review.js\'s copies of steps.js\'s win32 bin and ceiling rule stay equal to steps.js\'s', async () => {
+test('Task5: the reviewer launch and the worker step share one win32 bin and one ceiling rule (launch.js)', async () => {
   const steps = require(path.join(LIB, 'driver', 'steps.js'));
+  const launch = require(path.join(LIB, 'driver', 'launch.js'));
+  assert.strictEqual(steps.WIN32_CLAUDE_BIN, launch.WIN32_CLAUDE_BIN);
   const win = passRig({ platform: 'win32' });
   await win.run();
   assert.strictEqual(ofKind(win.calls, 'launchWorker')[0].opts.bin, steps.WIN32_CLAUDE_BIN);
-  // steps.js does not export positiveNumber, so the rule is compared through the two steps that
-  // apply it: the worker step and the reviewer launch must accept and refuse the same ceilings.
+  // The rule is compared through the two steps that apply it: the worker step and the reviewer
+  // launch must accept and refuse the same ceilings.
   const worker = steps.STEPS.find((s) => s.name === 'worker');
   const values = [20, '20', ' 20 ', 0.5, '1e1', 0, -1, '', '  ', null, undefined, 'x', NaN, Infinity, '20 minutes', true, []];
   for (const value of values) {
@@ -1578,6 +1607,21 @@ test('AC5: EVENT_TEXT_MAX_CHARS at its edge', () => {
   assert.strictEqual(normalizeEventText(`${'a'.repeat(max - 1)}@b`), 'a'.repeat(max - 1));
   assert.strictEqual(normalizeEventText(`${'a'.repeat(max - 2)}@b`), `${'a'.repeat(max - 2)}@​`);
   assert.strictEqual(normalizeEventText(42), '42');
+});
+
+test('normalizeEventText bounds its input before normalizeTitle (EVENT_TEXT_INPUT_MAX_CHARS at its edge)', () => {
+  const inMax = EVENT_TEXT_INPUT_MAX_CHARS;
+  assert.strictEqual(inMax, 4 * EVENT_TEXT_MAX_CHARS);
+  // Only the first inMax characters are normalized: a space run that fills them leaves nothing, one
+  // character shorter lets the character after it in.
+  assert.strictEqual(normalizeEventText(`${' '.repeat(inMax)}b`), '');
+  assert.strictEqual(normalizeEventText(`${' '.repeat(inMax - 1)}b`), 'b');
+  // The quadratic shapes for normalizeTitle's trailing-dot pattern, uncapped reviewer text; the time
+  // budget is perf/driver-review-event-text-linearity.test.js's.
+  for (const [input, want] of [[`a${'. '.repeat(100000)}x`, 'a'], [`${'.'.repeat(80000)}x`, '']]) {
+    const out = normalizeEventText(input);
+    assert.ok(out === want && out.length <= EVENT_TEXT_MAX_CHARS, `length ${out.length}`);
+  }
 });
 
 test('AC12: counts add up', async () => {
