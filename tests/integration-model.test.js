@@ -13,6 +13,7 @@ const { readText } = require('./helpers/read-skill');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { gitRepo, ghAbsentPath, GH_REMOTE, withTimeoutEnv, writePolicy } = require('./helpers/integration-model');
 
 // The other half of the gh timeout ladder tests lives in tests/integration-model-gh-timeout.test.js.
@@ -20,8 +21,12 @@ const { gitRepo, ghAbsentPath, GH_REMOTE, withTimeoutEnv, writePolicy } = requir
 const RESOLVE_POLICY = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const REPO_ROOT = path.join(__dirname, '..');
 
-function runResolvePolicy(args, { cwd, env } = {}) {
-  return execFileSync(process.execPath, [RESOLVE_POLICY, ...args], { cwd, env, encoding: 'utf8' });
+// In-process (#5384): returns stdout, throwing on a non-zero exit like the execFileSync it replaced.
+// `fresh` resets the forge probe's module-level memos for a case whose gh answer differs from an earlier call.
+function runResolvePolicy(args, { cwd, env = { ...process.env }, fresh = false } = {}) {
+  const r = runCliSync(RESOLVE_POLICY, args, { cwd, env, fresh });
+  if (r.code !== 0) throw Object.assign(new Error(`resolve-policy exited ${r.code}: ${r.stderr}`), { status: r.code, stdout: r.stdout, stderr: r.stderr });
+  return r.stdout;
 }
 
 // --- Schema shape ---
@@ -289,8 +294,28 @@ test('CLI: this repo pins integration-model: pr-first in policy.yml — resolves
   const policyPath = path.join(REPO_ROOT, '.claude-tweaks', 'policy.yml');
   const policyRaw = readText(policyPath);
   assert.match(policyRaw, /^integration-model:\s*pr-first\s*$/m, '.claude-tweaks/policy.yml must pin integration-model: pr-first');
-  const out = runResolvePolicy(['--values', 'integration-model'], { cwd: REPO_ROOT });
-  assert.strictEqual(out.trim(), 'pr-first');
+  // Real process: the script entry reads the pinned policy.yml, prints the value and exits 0.
+  const spawned = spawnCli(RESOLVE_POLICY, ['--values', 'integration-model'], { cwd: REPO_ROOT, env: { ...process.env } });
+  assert.strictEqual(spawned.code, 0, spawned.stderr);
+  assert.strictEqual(spawned.stdout.trim(), 'pr-first');
+});
+
+// AC7 (#5384): a `gh` stub on the PATH injected through `env` is what the in-process forge probe runs — the
+// stub's call counter moves and its answer decides the value; a PATH without the stub never reaches it.
+test('CLI: the forge probe runs the gh stub on the injected PATH and the stub counter moves (AC7)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    const out = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env: { ...process.env }, fresh: true });
+    assert.strictEqual(out.trim(), 'pr-first');
+    assert.ok(gh.count() >= 1, `the gh stub on the injected PATH must have been called, got ${gh.count()}`);
+    const before = gh.count();
+    const absent = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env: { ...process.env, PATH: ghAbsentPath() }, fresh: true });
+    assert.strictEqual(absent.trim(), 'local-merge');
+    assert.strictEqual(gh.count(), before, 'a PATH without the stub must not reach it');
+  } finally {
+    gh.restore();
+  }
 });
 
 test('CLI: --mcp-reachable resolves pr-first when gh is faked absent and a real remote exists (AC4)', () => {

@@ -4,9 +4,9 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
 const { POLICY_KEYS, RENAMED_KEYS, auditPolicy, resolveValue, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-schema-'));
@@ -952,6 +952,11 @@ test('#4029 M4: the procedure-kb ceiling summaries say a run may read its proced
 
 // #5216: the express-driver keys — all policyOnly, so a --run config never sets them.
 const DRIVER_CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
+// In-process (#5384): the child's stdout is what the assertions parse; the cwd is the fixture repo.
+function driverCli(args, cwd) {
+  const r = runCliSync(DRIVER_CLI, args, { cwd, env: { ...process.env } });
+  return { stdout: r.stdout, stderr: r.stderr, status: r.code };
+}
 const DRIVER_KEYS = [
   { id: 'AC11.1', key: 'express-driver', def: 'off', other: 'on', policyVal: 'split' },
   { id: 'AC11.2', key: 'express-driver-wall-clock-minutes', def: 30, other: 99, policyVal: 5 },
@@ -959,10 +964,11 @@ const DRIVER_KEYS = [
   { id: 'AC16.1', key: 'express-driver-review', def: 'beyond-express', other: 'on', policyVal: 'off' },
 ];
 
+// AC7 (#5384): the fresh-project cwd is the only input that yields `off` — this repo's own policy.yml pins `on`.
 test('AC7.1: express-driver resolves off from the default in a fresh project', () => {
   const repo = tmpRepo();
   try {
-    const r = spawnSync(process.execPath, [DRIVER_CLI, 'express-driver'], { cwd: repo, encoding: 'utf8' });
+    const r = driverCli(['express-driver'], repo);
     assert.deepStrictEqual(JSON.parse(r.stdout)['express-driver'], { value: 'off', source: 'default' });
   } finally { fs.rmSync(repo, { recursive: true, force: true }); }
 });
@@ -977,7 +983,8 @@ test('AC6/express-driver: each value resolves; a malformed one falls back', () =
 test('AC16: express-driver-review resolves its default from resolve-policy.js in a fresh project', () => {
   const repo = tmpRepo();
   try {
-    const r = spawnSync(process.execPath, [DRIVER_CLI, 'express-driver-review'], { cwd: repo, encoding: 'utf8' });
+    // Real process: the script entry prints the resolved JSON on stdout for a fresh project.
+    const r = spawnCli(DRIVER_CLI, ['express-driver-review'], { cwd: repo, env: { ...process.env } });
     assert.deepStrictEqual(JSON.parse(r.stdout)['express-driver-review'], { value: 'beyond-express', source: 'default' });
   } finally { fs.rmSync(repo, { recursive: true, force: true }); }
 });
@@ -1019,7 +1026,7 @@ for (const { id, key, def, other, policyVal } of DRIVER_KEYS) {
     const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-driver-run-'));
     try {
       fs.writeFileSync(path.join(runDir, 'config.yml'), `${key}: ${other}\n`);
-      const r = spawnSync(process.execPath, [DRIVER_CLI, '--run', runDir, key], { cwd: repo, encoding: 'utf8' });
+      const r = driverCli(['--run', runDir, key], repo);
       assert.deepStrictEqual(JSON.parse(r.stdout)[key], { value: def, source: 'default' });
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });

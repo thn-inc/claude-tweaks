@@ -4,8 +4,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { runCliSync } = require('./helpers/run-cli');
 const { POLICY_KEYS, resolveValue } = require('../plugin/bin/lib/policy-schema');
 
 const ROOT = path.join(__dirname, '..');
@@ -18,7 +18,10 @@ function resolveIn(policyText) {
       fs.mkdirSync(path.join(dir, '.claude-tweaks'));
       fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), policyText);
     }
-    return execFileSync(process.execPath, [RESOLVER, '--values', 'declare-claude-tweaks'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // In-process (#5384); the fixture dir is the cwd the key is resolved from.
+    const r = runCliSync(RESOLVER, ['--values', 'declare-claude-tweaks'], { cwd: dir, env: { ...process.env } });
+    if (r.code !== 0) throw new Error(`resolve-policy exited ${r.code}: ${r.stderr}`);
+    return r.stdout.trim();
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

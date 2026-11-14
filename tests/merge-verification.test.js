@@ -6,12 +6,13 @@
 'use strict';
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
 const { POLICY_KEYS, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const REPO_ROOT = path.join(__dirname, '..');
@@ -505,8 +506,8 @@ function cli(args, cwd) {
   // sandbox that exports GH_REPO/GH_HOST would make `gh` resolve a different,
   // real repo instead and silently break the fixture's assumption.
   const env = { ...process.env, GH_REPO: '', GH_HOST: '' };
-  const r = spawnSync('node', [CLI, ...args], { cwd, env, encoding: 'utf8' });
-  assert.equal(r.status, 0, r.stderr);
+  const r = runCliSync(CLI, args, { cwd, env });
+  assert.equal(r.code, 0, r.stderr);
   return r.stdout;
 }
 
@@ -520,6 +521,7 @@ test('CLI AC2: explicit merge-verification: off wins over the derivation', () =>
   assert.equal(cli(['--values', 'merge-verification'], dir).trim(), 'off');
 });
 
+// AC7 (#5384): the fixture cwd is the only input that yields `off` here — this repo's own cwd resolves merge-when-green.
 test('CLI AC3: integration-model local-merge -> off even with a PR workflow present', () => {
   const dir = fixtureRepo({ policy: 'integration-model: local-merge\n', workflow: 'on: pull_request\n' });
   assert.equal(cli(['--values', 'merge-verification'], dir).trim(), 'off');
@@ -553,7 +555,10 @@ test('CLI JSON mode: derived value carries source "default"; explicit carries "p
 });
 
 test('CLI live smoke on this repo resolves a valid enum value (drift-sensitive by nature — the fixtures above are the durable check)', () => {
-  const out = cli(['--values', 'merge-verification'], REPO_ROOT).trim();
+  // Real process: the script entry itself prints the resolved value on stdout and exits 0.
+  const spawned = spawnCli(CLI, ['--values', 'merge-verification'], { cwd: REPO_ROOT, env: { ...process.env, GH_REPO: '', GH_HOST: '' } });
+  assert.equal(spawned.code, 0, spawned.stderr);
+  const out = spawned.stdout.trim();
   assert.ok(VALUES.includes(out), `got ${JSON.stringify(out)}`);
 });
 
