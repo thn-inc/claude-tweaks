@@ -557,3 +557,29 @@ perShell('hooks.sh: an unreadable worktree .git falls back to the worktree (R12)
     }
   }
 }, chmodDenialSkip('root reads a mode-000 file'));
+
+const HOOKS_JSON_ROWS = [
+  ['SessionStart', null, 'session-start'],
+  ['UserPromptSubmit', null, 'user-prompt-submit'],
+  ['SessionEnd', null, 'session-end'],
+  ['PreCompact', null, 'pre-compact'],
+  ...['Bash', 'Edit', 'Write', 'NotebookEdit', 'ExitWorktree', 'AskUserQuestion', 'Agent', 'Task']
+    .map((m) => ['PreToolUse', m, 'pre-tool-use']),
+  ...['Bash', 'Write', 'Skill', 'AskUserQuestion', 'EnterWorktree', 'ExitWorktree']
+    .map((m) => ['PostToolUse', m, 'post-tool-use']),
+  ['PostToolUseFailure', 'Bash', 'post-tool-use-failure'],
+  ['SubagentStop', null, 'subagent-stop'],
+].map(([event, matcher, verb]) => [event, matcher, `sh "\${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh" ${verb}`, ['command', 'type']]);
+
+test('hooks.sh AC1.1: every hooks.json registration is the launcher form with its old event verb', () => {
+  const json = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugin', 'hooks', 'hooks.json'), 'utf8'));
+  const rows = [];
+  for (const [event, groups] of Object.entries(json.hooks)) {
+    for (const group of groups) {
+      assert.equal(group.hooks.length, 1, `${event}/${group.matcher}: one hook per group`);
+      const [hook] = group.hooks;
+      rows.push([event, group.matcher === undefined ? null : group.matcher, hook.command, Object.keys(hook).sort()]);
+    }
+  }
+  assert.deepEqual(rows, HOOKS_JSON_ROWS);
+});
