@@ -117,8 +117,6 @@ git -C "<worktree>" commit -m "Memoize repoInfo per process behind a filesystem 
 - Modify: `docs/hooks.md` (new `## repoInfo cache (#5294)` section after `## Ownership`)
 - Test: `tests/hooks-repo-info-store.test.js` (new), `tests/run-tests-isolation.test.js` (extend the test at ~line 760, `run-tests.js runs the suite under a ct-testrun-* TMPDIR it removes on exit`), `tests/fixtures/run-tests/tmpdir-probe.fixture.js` (record `repoInfoStore: process.env.CT_HOOKS_REPO_INFO_STORE` beside its `tmpdir`, so the assertion has a value to read)
 - Create: `tests/helpers/repo-info-cache.js` — `isolateRepoInfoCache(t)`: points `process.env.CT_HOOKS_REPO_INFO_STORE` at a fresh temp file, calls `resetMemo()`, and restores the env in `t.after`
-- Modify: every test file Task 1 Step 6 touched — swap its `resetMemo()` call for `isolateRepoInfoCache(t)`
-
 **Interfaces:**
 - Consumes: Task 1's `lookupRepoInfo`, `rememberRepoInfo`, `repoSignature`, `signatureMatches`, `envFingerprint`, `resetMemo`.
 - Produces: `storePath(env = process.env) -> string` (`CT_HOOKS_REPO_INFO_STORE` when set and non-empty, else `path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json')`; read on every call, never captured at load, so a test's env change takes effect); `storeBypassed(env) -> boolean`; `MAX_STORE_ENTRIES = 200`; `isolateRepoInfoCache(t)` in `tests/helpers/repo-info-cache.js`.
