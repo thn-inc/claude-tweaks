@@ -44,11 +44,18 @@ function realLsof({ exec = execFileSync, cwd, env } = {}) {
 // then a fresh mkdtemp dir (per-invocation unique by construction). Never a fixed
 // shared /tmp name — two concurrent reviews clobbering each other's lens outputs is
 // the defect this module exists to close.
-// `cwd` (a relative --dir/--run resolves against it) and `env` (its TMPDIR picks the mkdtemp
-// parent; TEMP/TMP on win32) default to the process's own when absent.
+// `cwd` (a relative --dir/--run resolves against it) and `env` (the mkdtemp parent, resolved the
+// way os.tmpdir() does: win32 reads TEMP, TMP, then SystemRoot\temp and ignores TMPDIR; POSIX
+// reads TMPDIR, TMP, TEMP, then /tmp) default to the process's own when absent.
 function envTmpdir(env, platform = process.platform) {
-  const t = env && (env.TMPDIR || (platform === 'win32' ? env.TEMP || env.TMP : undefined));
-  return t || os.tmpdir();
+  if (!env) return os.tmpdir();
+  const win = platform === 'win32';
+  const sysRoot = env.SystemRoot || env.windir;
+  let t = win ? env.TEMP || env.TMP || (sysRoot ? sysRoot + '\\temp' : '') : env.TMPDIR || env.TMP || env.TEMP || '/tmp';
+  if (!t) return os.tmpdir();
+  const sep = win ? '\\' : '/';
+  if (t.length > 1 && t.endsWith(sep) && !(win && t.endsWith(':' + sep))) t = t.slice(0, -1);
+  return t;
 }
 
 function resolveDir({ dir, run, cwd, env, tmpdir = envTmpdir(env), mkdtemp = fs.mkdtempSync, mkdir = fs.mkdirSync } = {}) {
@@ -391,4 +398,4 @@ function buildContext({
   };
 }
 
-module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES, isAlwaysStub, isMarkdown, elideDiff };
+module.exports = { resolveDir, envTmpdir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES, isAlwaysStub, isMarkdown, elideDiff };

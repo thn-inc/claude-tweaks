@@ -14,7 +14,8 @@ const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'build-revie
 function inProcess(t, argv) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-exit-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
-  const r = runCliSync(CLI, argv, { env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: tmp } });
+  // Both variables, so the platform's own os.tmpdir() order (TMPDIR on POSIX, TEMP on win32) reads tmp.
+  const r = runCliSync(CLI, argv, { env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: tmp, TEMP: tmp } });
   return { status: r.code, stdout: r.stdout, stderr: r.stderr, tmp };
 }
 
@@ -62,6 +63,19 @@ test('AC6.1: mint with no --run creates its dir under the injected TMPDIR', (t) 
   const { dir } = JSON.parse(result.stdout.trim());
   assert.notEqual(result.tmp, os.tmpdir());
   assert.equal(path.dirname(dir), result.tmp);
+});
+
+test('envTmpdir resolves the way os.tmpdir does, per platform', () => {
+  const { envTmpdir } = require('../../../plugin/bin/lib/review-context/build');
+  assert.equal(envTmpdir({ TMPDIR: '/p/tmp', TEMP: 'C:\\t' }, 'win32'), 'C:\\t', 'win32 ignores TMPDIR');
+  assert.equal(envTmpdir({ TMP: 'C:\\m\\' }, 'win32'), 'C:\\m', 'win32 strips one trailing backslash');
+  assert.equal(envTmpdir({ TEMP: 'C:\\' }, 'win32'), 'C:\\', 'win32 keeps a drive root');
+  assert.equal(envTmpdir({ SystemRoot: 'C:\\Windows' }, 'win32'), 'C:\\Windows\\temp');
+  assert.equal(envTmpdir({ TMPDIR: '/p/tmp/', TEMP: '/x' }, 'linux'), '/p/tmp', 'POSIX strips a trailing slash');
+  assert.equal(envTmpdir({ TMP: '/m', TEMP: '/x' }, 'linux'), '/m');
+  assert.equal(envTmpdir({}, 'linux'), '/tmp');
+  assert.equal(envTmpdir({ TMPDIR: '/' }, 'linux'), '/', 'a root is not stripped');
+  assert.equal(envTmpdir(undefined, 'linux'), os.tmpdir());
 });
 
 test('a throw inside build maps to exit 1 with a build-review-context.js: stderr line', (t) => {

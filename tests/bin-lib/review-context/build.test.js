@@ -138,7 +138,7 @@ test('buildContext: missing base/branch/dir throw rather than silently building 
 test('CLI end-to-end: mint prints a JSON dir that exists', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-mint-parent-'));
   try {
-    const r = runCli(['mint'], { env: cliEnv({ TMPDIR: tmp }) });
+    const r = runCli(['mint'], { env: cliEnv({ TMPDIR: tmp, TEMP: tmp }) });
     assert.strictEqual(r.status, 0);
     const parsed = JSON.parse(r.stdout);
     assert.ok(fs.existsSync(parsed.dir));
