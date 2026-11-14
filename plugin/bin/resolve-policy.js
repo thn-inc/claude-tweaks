@@ -12,7 +12,8 @@
 // warningLines, callerDeps }: resolvePolicy is the core and returns an object (it
 // prints nothing), run parses argv and prints, realDeps is the production deps map;
 // the rest are the in-process caller surface — the exit codes, the --values scalar
-// rule, the stderr warning lines run writes, and a bounded-git deps builder (#5384). The entry contract is .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md.
+// rule, the stderr warning lines run writes, and a bounded-git deps builder (#5384).
+// The entry contract is .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md.
 //
 // Usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]
 // Output: one JSON object on stdout keyed by requested name — or, with

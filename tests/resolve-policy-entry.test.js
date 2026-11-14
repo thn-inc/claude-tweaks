@@ -333,19 +333,19 @@ test('warningLines equals what run prints on stderr, in --values and JSON mode',
 
 test('callerDeps: the core resolves the given cwd, not the process cwd (AC7)', () => {
   const fixture = repo('autonomy: trusted\n');
-  assert.equal(resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd: fixture, env: ENV })).result.autonomy.value, 'trusted');
-  assert.notEqual(
-    runCliSync(CLI, ['--values', 'autonomy'], { cwd: process.cwd(), env: ENV }).stdout,
-    'trusted\n',
-    'this repo resolves autonomy to the fixture value: pick another fixture value',
-  );
+  const here = path.join(__dirname, '..');
+  const fromFixture = resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd: fixture, env: ENV })).result.autonomy.value;
+  const fromRepo = resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd: here, env: ENV })).result.autonomy.value;
+  assert.equal(fromFixture, 'trusted');
+  assert.notEqual(fromRepo, fromFixture, 'this repo resolves autonomy to the fixture value: pick another fixture value');
 });
 
-test('callerDeps: a git that never exits is killed at gitTimeoutMs and the root falls back to cwd', { skip: STUB_SKIP }, () => {
+test('callerDeps: a git that never exits is killed at gitTimeoutMs and the root falls back to cwd', { skip: STUB_SKIP, timeout: 10000 }, () => {
   const fixture = repo('autonomy: trusted\n');
   const stubDir = tmp('git-stub');
   const stub = path.join(stubDir, 'git');
-  fs.writeFileSync(stub, '#!/bin/sh\nsleep 30\n');
+  // /bin/sleep is absolute: the injected PATH holds only the stub, so a bare sleep would exit 127 at once.
+  fs.writeFileSync(stub, '#!/bin/sh\nexec /bin/sleep 30\n');
   fs.chmodSync(stub, 0o755); // root-safe: exec-bit stub, not a denial simulation
   const started = Date.now();
   const out = resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd: fixture, env: { PATH: stubDir }, gitTimeoutMs: 300 }));
