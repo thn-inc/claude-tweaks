@@ -816,8 +816,9 @@ function readTriggerKeys(lines, onIdx, end) {
     const kv = splitKey(line.slice(indent));
     if (!kv) return NOT_READ;
     if (!WANTED.has(kv.key)) continue;
-    if (stripCommentQuoteAware(kv.rest) !== '') {
-      const sub = readInlineTriggerKeys(stripCommentQuoteAware(kv.rest), j);
+    const inline = stripCommentQuoteAware(kv.rest);
+    if (inline !== '') {
+      const sub = readInlineTriggerKeys(inline, j);
       if (sub === null) return NOT_READ;
       out.set(kv.key, sub);
       continue;
@@ -949,8 +950,10 @@ function walkSteps(lines, i, end, keyIndent) {
 // a persistent index: never a rescan from `jobs:` per job.
 function readJobs(lines, jobsIdx, end, unparsed) {
   const NOT_READ = 'jobs: not read';
+  // Any shape this walk cannot follow drops every job read so far.
+  const notRead = () => { unparsed.push(NOT_READ); return []; };
   const inline = stripCommentQuoteAware(afterColon(lines[jobsIdx]));
-  if (inline !== '') { unparsed.push(NOT_READ); return []; }
+  if (inline !== '') return notRead();
   const jobs = [];
   let jobIndent = null;
   let i = jobsIdx + 1;
@@ -960,7 +963,7 @@ function readJobs(lines, jobsIdx, end, unparsed) {
     const ind = leadSpaces(line);
     if (jobIndent === null) jobIndent = ind;
     const m = ind === jobIndent ? JOB_ID.exec(line.slice(ind)) : null;
-    if (!m || stripCommentQuoteAware(m[4]) !== '') { unparsed.push(NOT_READ); return []; }
+    if (!m || stripCommentQuoteAware(m[4]) !== '') return notRead();
     const job = { id: m[1] || m[2] || m[3], if: null, stepIfCount: 0, concurrency: false };
     jobs.push(job);
     i++;
@@ -974,7 +977,7 @@ function readJobs(lines, jobsIdx, end, unparsed) {
       const kind = leadSpaces(l);
       if (kind <= jobIndent) break;
       if (keyIndent === null) keyIndent = kind;
-      if (kind < keyIndent) { unparsed.push(NOT_READ); return []; }
+      if (kind < keyIndent) return notRead();
       if (kind > keyIndent) { // a deeper line of a key not read here
         if (open === 'key') open = null; // the empty key's value is a nested node
         i++;
@@ -984,14 +987,15 @@ function readJobs(lines, jobsIdx, end, unparsed) {
         // An indentless sequence value of the key above when that key's value is
         // empty; before any key, after a key with a scalar value, or after a
         // deeper value, unreadable.
-        if (open === null) { unparsed.push(NOT_READ); return []; }
+        if (open === null) return notRead();
         open = 'seq';
         i++;
         continue;
       }
       const kv = splitKey(l.slice(kind));
-      if (!kv) { unparsed.push(NOT_READ); return []; }
-      open = stripCommentQuoteAware(kv.rest) === '' ? 'key' : null;
+      if (!kv) return notRead();
+      const value = stripCommentQuoteAware(kv.rest);
+      open = value === '' ? 'key' : null;
       i++;
       if (kv.key === 'if') {
         const r = readJoinedScalar(lines, i, end, keyIndent, kv.rest);
@@ -1002,16 +1006,14 @@ function readJobs(lines, jobsIdx, end, unparsed) {
       } else if (kv.key === 'concurrency') {
         job.concurrency = true;
       } else if (kv.key === 'steps') {
-        const v = stripCommentQuoteAware(kv.rest);
-        if (v === '') {
+        if (value === '') {
           const r = walkSteps(lines, i, end, keyIndent);
-          if (r === null) { unparsed.push(NOT_READ); return []; }
+          if (r === null) return notRead();
           job.stepIfCount = r.count;
           i = r.next;
           open = null; // the step list, deeper or indentless, is read
-        } else if (v !== '[]') {
-          unparsed.push(NOT_READ);
-          return [];
+        } else if (value !== '[]') {
+          return notRead();
         }
       }
     }
@@ -1081,50 +1083,49 @@ function readWorkflowShape(text) {
   const jobsR = region(/^(?:jobs|'jobs'|"jobs")[ \t]*:/, false);
   const concR = region(/^(?:concurrency|'concurrency'|"concurrency")[ \t]*:/, false);
   const nameR = region(/^(?:name|'name'|"name")[ \t]*:/, false);
+  // Pushes a region's tab and anchor-or-alias reasons; true when there are none,
+  // so the region may be read.
+  const regionClear = (r, label) => {
+    const reasons = regionReasons(lines, r.start, r.end, label);
+    unparsed.push(...reasons);
+    return reasons.length === 0;
+  };
 
   // A name: region with a tab or an anchor/alias leaves `name` null, never a
   // literal like '*n', and reports the region reason like the other regions. A
   // quoted name that never closes or holds an undecodable escape is `name: not
   // read`; an empty name is simply absent.
-  if (nameR) {
-    const checks = regionReasons(lines, nameR.start, nameR.end, 'name:');
-    unparsed.push(...checks);
-    if (checks.length === 0) {
-      const r = readJoinedScalar(lines, nameR.start + 1, nameR.end, 0, afterColon(lines[nameR.start]));
-      if (r.unread) unparsed.push('name: not read');
-      out.name = r.text === '' ? null : r.text;
-    }
+  if (nameR && regionClear(nameR, 'name:')) {
+    const r = readJoinedScalar(lines, nameR.start + 1, nameR.end, 0, afterColon(lines[nameR.start]));
+    if (r.unread) unparsed.push('name: not read');
+    out.name = r.text === '' ? null : r.text;
   }
 
   if (!onR) {
     unparsed.push('no on: block');
-  } else {
-    const checks = regionReasons(lines, onR.start, onR.end, 'on:');
-    unparsed.push(...checks);
-    if (checks.length === 0) {
-      const triggers = readTriggerKeys(lines, onR.start, onR.end);
-      if (typeof triggers === 'string') {
-        unparsed.push(triggers);
-      } else {
-        // prFilters merges both PR triggers' filter keys; prFiltersByTrigger keeps
-        // each trigger's own, so a report can name the trigger carrying a filter.
-        const filters = new Set();
-        for (const t of ['pull_request', 'pull_request_target']) {
-          const own = [...(triggers.get(t) || new Map()).keys()].filter((k) => PR_FILTER_KEYS.includes(k)).sort();
-          for (const k of own) filters.add(k);
-          if (own.length > 0) out.prFiltersByTrigger[t] = own;
-        }
-        out.prFilters = [...filters].sort();
-        const push = triggers.get('push');
-        if (push) {
-          out.pushTrigger = true;
-          out.pushBranchesIgnore = push.has('branches-ignore');
-          out.pushTags = push.has('tags') || push.has('tags-ignore');
-          if (push.has('branches')) {
-            const items = readBranchItems(lines, push.get('branches'), onR.end);
-            if (items === null) unparsed.push('push branches not read');
-            else out.pushBranches = items.length === 1 && items[0] === '**' ? 'all' : 'some';
-          }
+  } else if (regionClear(onR, 'on:')) {
+    const triggers = readTriggerKeys(lines, onR.start, onR.end);
+    if (typeof triggers === 'string') {
+      unparsed.push(triggers);
+    } else {
+      // prFilters merges both PR triggers' filter keys; prFiltersByTrigger keeps
+      // each trigger's own, so a report can name the trigger carrying a filter.
+      const filters = new Set();
+      for (const t of ['pull_request', 'pull_request_target']) {
+        const own = [...(triggers.get(t) || new Map()).keys()].filter((k) => PR_FILTER_KEYS.includes(k)).sort();
+        for (const k of own) filters.add(k);
+        if (own.length > 0) out.prFiltersByTrigger[t] = own;
+      }
+      out.prFilters = [...filters].sort();
+      const push = triggers.get('push');
+      if (push) {
+        out.pushTrigger = true;
+        out.pushBranchesIgnore = push.has('branches-ignore');
+        out.pushTags = push.has('tags') || push.has('tags-ignore');
+        if (push.has('branches')) {
+          const items = readBranchItems(lines, push.get('branches'), onR.end);
+          if (items === null) unparsed.push('push branches not read');
+          else out.pushBranches = items.length === 1 && items[0] === '**' ? 'all' : 'some';
         }
       }
     }
@@ -1146,19 +1147,13 @@ function readWorkflowShape(text) {
 
   if (!jobsR) {
     unparsed.push('no jobs: key');
-  } else {
-    const checks = regionReasons(lines, jobsR.start, jobsR.end, 'jobs:');
-    unparsed.push(...checks);
-    if (checks.length === 0) out.jobs = readJobs(lines, jobsR.start, jobsR.end, unparsed);
+  } else if (regionClear(jobsR, 'jobs:')) {
+    out.jobs = readJobs(lines, jobsR.start, jobsR.end, unparsed);
   }
 
-  if (concR) {
-    const checks = regionReasons(lines, concR.start, concR.end, 'concurrency:');
-    unparsed.push(...checks);
-    if (checks.length === 0) {
-      const c = readConcurrency(lines, concR.start, concR.end, unparsed);
-      if (c !== null) out.concurrency = c;
-    }
+  if (concR && regionClear(concR, 'concurrency:')) {
+    const c = readConcurrency(lines, concR.start, concR.end, unparsed);
+    if (c !== null) out.concurrency = c;
   }
 
   out.unparsed = [...new Set(unparsed)];
