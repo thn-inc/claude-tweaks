@@ -1,4 +1,4 @@
-# Trust Table — Shared Procedure
+﻿# Trust Table — Shared Procedure
 
 Single source of truth for rendering `bin/lib/issues/trust.js`'s per-class trust table. Consumed
 by `/claude-tweaks:help` (`status-scan.md` Stage 4.8), `/claude-tweaks:backlog overview`
@@ -122,8 +122,8 @@ node -e "
   const { parseSubIssues } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const fs = require('fs');
   const parents = require('{tmp-parent-issues}');
-  if (parents.length === Number(process.env.FETCH_LIMIT)) {
-    console.error('WARNING: fetched exactly ' + parents.length + ' parent-issue records (the configured backlog-fetch-limit) — older parent issues were dropped, so their sub-issues may silently re-enter cell totals as ungraded evidence. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before reading any verdict.');
+  if (parents.length >= Math.min(Number(process.env.FETCH_LIMIT), 1000)) {
+    console.error('WARNING: fetched exactly ' + parents.length + ' parent-issue records (the configured backlog-fetch-limit or GitHub's 1000-result ceiling) — older parent issues were dropped, so their sub-issues may silently re-enter cell totals as ungraded evidence. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before reading any verdict.');
   }
   const subIssueNumbers = parents.flatMap((p) => parseSubIssues(p.body));
   fs.writeFileSync('{tmp-sub-issues}', JSON.stringify(subIssueNumbers));
@@ -146,8 +146,8 @@ LIMIT="{resolved-limit}"
 export FETCH_LIMIT="$LIMIT"
 node -e "
   const parents = require('{tmp-parent-issues}');
-  if (parents.length === Number(process.env.FETCH_LIMIT)) {
-    console.error('WARNING: fetched exactly ' + parents.length + ' parent-issue records (the configured backlog-fetch-limit) — older parent issues were dropped, so their sub-issues may silently re-enter cell totals as ungraded evidence. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before reading any verdict.');
+  if (parents.length >= Math.min(Number(process.env.FETCH_LIMIT), 1000)) {
+    console.error('WARNING: fetched exactly ' + parents.length + ' parent-issue records (the configured backlog-fetch-limit or GitHub's 1000-result ceiling) — older parent issues were dropped, so their sub-issues may silently re-enter cell totals as ungraded evidence. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before reading any verdict.');
   }
 "
 ```
@@ -232,8 +232,8 @@ node -e "
     throw new Error('sub-issue REST fallback failed for parent(s): ' + failures.join(', ') + ' — refusing to write {tmp-sub-issues} or the session snapshot on an undercounted set');
   }
   const parents = require('{tmp-parent-issues}');
-  if (parents.length === Number(process.env.FETCH_LIMIT)) {
-    console.error('WARNING: fetched exactly ' + parents.length + ' parent-issue records (the configured backlog-fetch-limit) — older parent issues were dropped, so their sub-issues may silently re-enter cell totals as ungraded evidence. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before reading any verdict.');
+  if (parents.length >= Math.min(Number(process.env.FETCH_LIMIT), 1000)) {
+    console.error('WARNING: fetched exactly ' + parents.length + ' parent-issue records (the configured backlog-fetch-limit or GitHub's 1000-result ceiling) — older parent issues were dropped, so their sub-issues may silently re-enter cell totals as ungraded evidence. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before reading any verdict.');
   }
   const raw = fs.readFileSync('{tmp-sub-issue-numbers}', 'utf8').trim().split('\n').filter(Boolean).map(Number);
   const subIssueNumbers = Array.from(new Set(raw)).sort((a, b) => a - b);
