@@ -20,7 +20,7 @@ const { encodeImpactMap, parseImpactMap } = require(path.join(REPO_ROOT, 'plugin
 const { BOOKKEEPING_RULES } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'init', 'verify-scope-starter.js'));
 const { readText } = require('./helpers/read-skill');
 const VERIFY_JS = path.join(REPO_ROOT, 'plugin', 'bin', 'verify.js');
-const STAMP = { sha:'a'.repeat(40), fullSha: 'a'.repeat(40), scope: 'full' };
+const STAMP = { sha: 'a'.repeat(40), fullSha: 'a'.repeat(40), scope: 'full' };
 
 test('AC6.1: this repo declares localRuns "on-request" beside its ci block (#5370)', () => {
   const r = readDeclaration(DECL);
