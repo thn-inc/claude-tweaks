@@ -49,7 +49,18 @@ function parseArgs(argv) {
   return { root, drift, json };
 }
 
-const cell = (s) => String(s).replace(/\|/g, '\\|');
+// Every repo-supplied value a text line prints (a workflow file name, a job id,
+// a verify-scope.json suite or job) goes through `oneLine` first: a control
+// character (C0, DEL or C1, NEL included) or U+2028/U+2029 is printed as an
+// escape, so a value carrying a line break can never forge another report line
+// (a fake `findings: 0`). --json is already escaped by JSON.stringify.
+const oneLine = (s) => String(s).replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, (c) => {
+  if (c === '\n') return '\\n';
+  if (c === '\r') return '\\r';
+  if (c === '\t') return '\\t';
+  return `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`;
+});
+const cell = (s) => oneLine(s).replace(/\|/g, '\\|');
 
 function summaryLine(findings, unparsed) {
   return unparsed.length === 0
@@ -73,16 +84,23 @@ function textReport({ reviewed, findings, unparsed, skipped }) {
 
 function driftReport({ findings, unparsed }) {
   return [
-    ...findings.map((f) => `ci-workflow-review: ${f.workflow} — ${f.check}: ${f.detail} (remedy: ${formatRemedy(f.remedy)})`),
-    ...unparsed.map((u) => `ci-workflow-review: ${u.workflow} unparsed — ${u.reason}`),
+    ...findings.map((f) => `ci-workflow-review: ${oneLine(f.workflow)} — ${f.check}: ${oneLine(f.detail)} (remedy: ${formatRemedy(f.remedy)})`),
+    ...unparsed.map((u) => `ci-workflow-review: ${oneLine(u.workflow)} unparsed — ${oneLine(u.reason)}`),
     summaryLine(findings, unparsed),
   ];
 }
 
-function run(argv, deps = {}) {
-  const stdout = deps.stdout || ((s) => process.stdout.write(s));
-  const stderr = deps.stderr || ((s) => process.stderr.write(s));
-  const fsImpl = deps.fsImpl || fs;
+// `realpath` is absent here: path-guard then uses its own default, and a test
+// injects one to reach it.
+const realDeps = {
+  cwd: () => process.cwd(),
+  fsImpl: fs,
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+};
+
+function run(argv, deps = realDeps) {
+  const { stdout, stderr, fsImpl } = deps;
   const guard = guardOpts(fsImpl, deps.realpath);
 
   if (argv.includes('--help')) {
@@ -99,7 +117,8 @@ function run(argv, deps = {}) {
       return 2;
     }
 
-    const root = path.resolve(parsed.root);
+    // A relative --root resolves against the injected cwd, never the process's.
+    const root = path.resolve(deps.cwd(), parsed.root);
     const leaf = resolveLeaf(root, guard);
     if (lstatType(leaf.state === 'resolved' ? leaf.path : root, { fsImpl }).type !== 'directory') {
       stderr(`ci-workflow-review.js: --root is not a directory: ${parsed.root}\n${USAGE}\n`);
@@ -128,6 +147,6 @@ function run(argv, deps = {}) {
   }
 }
 
-module.exports = { run, USAGE };
+module.exports = { run, realDeps, USAGE };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2));
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

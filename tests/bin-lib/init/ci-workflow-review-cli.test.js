@@ -1,9 +1,10 @@
 // tests/bin-lib/init/ci-workflow-review-cli.test.js — plugin/bin/ci-workflow-review.js
 // (#5162), the report-only CLI over plugin/bin/lib/init/ci-workflow-review.js.
 // Spawns the real binary against temp fixtures under os.tmpdir(), never this
-// checkout, and calls run() in-process for the injected-fs cases. Every call
-// goes through runCli / runInProcess, which snapshot the fixture before and
-// after and require the two to match: AC9.1 holds for every invocation here.
+// checkout, and calls run() in-process through tests/helpers/run-cli.js's
+// runCliSync for the injected-fs cases. Every call goes through runCli /
+// runInProcess, which snapshot the fixture before and after and require the two
+// to match: AC9.1 holds for every invocation here.
 'use strict';
 
 const { test } = require('node:test');
@@ -18,6 +19,7 @@ const CLI = path.join(REPO, 'plugin', 'bin', 'ci-workflow-review.js');
 const { toPosix, isPathContained } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'shared-primitives.js'));
 const { generateWorkflowYaml } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'issue-branch-tracking.js'));
 const { chmodDenialSkip } = require('../../helpers/root');
+const { runCliSync } = require('../../helpers/run-cli');
 
 const loadCli = () => require(CLI);
 const NO_SYMLINKS = process.platform === 'win32';
@@ -114,13 +116,12 @@ function runCli(root, args = [], { afterSpawn } = {}) {
   return res;
 }
 
-function runInProcess(root, args, deps = {}) {
-  const out = [];
-  const err = [];
+// `cwd` is the injected deps.cwd() (runCliSync's default is the test's own).
+function runInProcess(root, args, deps = {}, { cwd } = {}) {
   const before = snapshot(root);
-  const status = loadCli().run(['--root', root, ...args], { stdout: (s) => out.push(s), stderr: (s) => err.push(s), ...deps });
+  const res = runCliSync(CLI, ['--root', root, ...args], { deps, ...(cwd ? { cwd } : {}) });
   assertSameSnapshot(before, snapshot(root));
-  return { status, stdout: out.join(''), stderr: err.join('') };
+  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
 }
 
 const linesOf = (s) => s.trimEnd().split('\n');
@@ -875,11 +876,75 @@ test('an injected realpath reaches path-guard, and an unexpected deps throw is e
   assert.equal(noResolve.stdout, '');
   assert.equal(noResolve.stderr, 'ci-workflow-review.js: could not resolve --root\n');
 
-  const err = [];
-  const status = loadCli().run(['--root', root, '--drift', '--json'], {
-    stdout: () => { throw new Error('EPIPE: broken pipe'); },
-    stderr: (s) => err.push(s),
+  const broken = runInProcess(root, ['--drift', '--json'], { stdout: () => { throw new Error('EPIPE: broken pipe'); } });
+  assert.equal(broken.status, 1);
+  assert.match(broken.stderr, /^ci-workflow-review\.js: EPIPE: broken pipe\n$/);
+});
+
+test('the entry contract: run and realDeps are exported, and a relative --root resolves against deps.cwd(), never the process cwd', () => {
+  const cli = loadCli();
+  assert.equal(typeof cli.run, 'function');
+  assert.equal(typeof cli.realDeps.cwd, 'function');
+  const holder = tmpRoot();
+  write(holder, 'proj/.github/workflows/ci.yml', NO_READY);
+  assert.notEqual(fs.realpathSync.native(process.cwd()), fs.realpathSync.native(holder), 'the test needs a process cwd other than the holder');
+  const before = snapshot(holder);
+  const res = runCliSync(CLI, ['--root', 'proj', '--drift', '--json'], { cwd: holder });
+  assertSameSnapshot(before, snapshot(holder));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(JSON.parse(res.stdout).findings.map((f) => [f.workflow, f.check]), [['.github/workflows/ci.yml', 'draft-skip-no-ready-for-review']]);
+  // Control: the same relative --root under a cwd with no `proj` is not a directory.
+  const elsewhere = runCliSync(CLI, ['--root', 'proj', '--drift', '--json'], { cwd: tmpRoot() });
+  assert.equal(elsewhere.code, 2);
+  assert.match(elsewhere.stderr, /--root is not a directory: proj/);
+});
+
+test('AC8.5: a workflow file whose leaf path-guard cannot resolve or lstat is an unparsed entry with exit 0 (injected EIO)', () => {
+  const root = tmpRoot();
+  write(root, '.github/workflows/a.yml', CLEAN);
+  write(root, '.github/workflows/b.yml', CLEAN);
+  const res = runInProcess(root, ['--drift', '--json'], leafError(`${path.sep}b.yml`, 'EIO'));
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(JSON.parse(res.stdout), {
+    reviewed: 2, findings: [], unparsed: [{ workflow: '.github/workflows/b.yml', reason: 'unreadable: EIO' }],
   });
-  assert.equal(status, 1);
-  assert.match(err.join(''), /^ci-workflow-review\.js: EPIPE: broken pipe\n$/);
+});
+
+// A value the text and --drift reports print can carry a line break: a POSIX file name, or a
+// verify-scope.json `ci.<suite>.job` string reaching check 2's detail. Escaped, it can never forge
+// another report line, such as a clean summary.
+const FORGED = 'findings: 0';
+const LS = String.fromCharCode(0x2028); // U+2028 LINE SEPARATOR, built so no source line holds it
+const assertNoForgedLine = (stdout) => {
+  const lines = linesOf(stdout);
+  assert.ok(!lines.includes(FORGED), stdout);
+  assert.equal(lines.filter((l) => l.startsWith('findings: ')).length, 1, stdout);
+};
+
+test('a newline in a workflow file name never forges a report line (text and --drift)', { skip: process.platform === 'win32' && 'a file name cannot carry a newline on win32' }, () => {
+  const root = tmpRoot();
+  const name = `x\n${FORGED}\ny.yml`;
+  write(root, `.github/workflows/${name}`, NO_READY);
+  for (const args of [[], ['--drift']]) {
+    const res = runCli(root, args);
+    assert.equal(res.status, 0, res.stderr);
+    assertNoForgedLine(res.stdout);
+    assert.ok(res.stdout.includes(`x\\n${FORGED}\\ny.yml`), res.stdout);
+    assert.match(linesOf(res.stdout).at(-1), /^findings: 1$/);
+  }
+  const json = runCli(root, ['--json']);
+  assert.equal(JSON.parse(json.stdout).findings[0].workflow, `.github/workflows/${name}`);
+});
+
+test('a newline or other control character in a declared ci job never forges a report line (text and --drift)', () => {
+  const root = tmpRoot();
+  write(root, '.github/workflows/ci.yml', NO_READY);
+  write(root, '.claude-tweaks/verify-scope.json', decl({ tests: { workflow: 'ci.yml', job: `t\r\n${FORGED}${LS}\u0007` } }));
+  for (const args of [[], ['--drift']]) {
+    const res = runCli(root, args);
+    assert.equal(res.status, 0, res.stderr);
+    assertNoForgedLine(res.stdout);
+    assert.ok(res.stdout.includes(`ci source tests (job t\\r\\n${FORGED}\\u2028\\u0007) names this workflow`), res.stdout);
+    assert.match(linesOf(res.stdout).at(-1), /^findings: 2$/);
+  }
 });
