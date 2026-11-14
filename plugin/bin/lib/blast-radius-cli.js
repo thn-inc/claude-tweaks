@@ -27,8 +27,9 @@ class BlastRadiusError extends Error {
   }
 }
 
-function defaultGit(args) {
-  return execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', windowsHide: true });
+// cwd/env are optional: left undefined, the child inherits the process's, as before.
+function defaultGit(args, { cwd, env } = {}) {
+  return execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', windowsHide: true });
 }
 
 function defaultReadFile(filePath) {
@@ -141,5 +142,5 @@ function computeBlastRadius(opts = {}, deps = {}) {
 }
 
 module.exports = {
-  computeBlastRadius, gatherDiffFiles, BlastRadiusError, preferOriginRef, resolveBlastRadiusConfig,
+  computeBlastRadius, gatherDiffFiles, BlastRadiusError, preferOriginRef, resolveBlastRadiusConfig, defaultGit,
 };

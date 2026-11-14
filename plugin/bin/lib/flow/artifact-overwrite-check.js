@@ -111,10 +111,11 @@ class ArtifactOverwriteCheckError extends Error {
   }
 }
 
-function defaultGit(args, cwd) {
+function defaultGit(args, cwd, env) {
   try {
     return execFileSync('git', args, {
       cwd,
+      env,
       encoding: 'utf8',
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: 64 * 1024 * 1024,
@@ -441,6 +442,7 @@ function blameShas(git, cwd, rev, path) {
  * @param {string} [opts.head] - inclusive upper bound (default 'HEAD')
  * @param {string[]} [opts.paths] - pathspecs to scope the walk (default docs/journeys/ stories/)
  * @param {string} [opts.cwd] - repo root (default process.cwd())
+ * @param {object} [opts.env] - environment for the default git runner (default: inherited)
  * @param {function} [opts.git] - injectable runner: (argv, cwd) => stdout string, throws on failure
  * @param {object} [opts.manifest] - parsed manifest.yml (parseManifestYaml's shape) for window attribution
  * @param {string} [opts.integrationRef] - commit-ish whose history is not the run's own (the integration branch a
@@ -453,7 +455,8 @@ function checkArtifactOverwrite(opts) {
     head = 'HEAD',
     paths: rawPaths,
     cwd = process.cwd(),
-    git = defaultGit,
+    env,
+    git = (args, dir) => defaultGit(args, dir, env),
     manifest,
     integrationRef,
   } = opts;

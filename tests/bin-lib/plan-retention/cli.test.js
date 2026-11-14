@@ -1,7 +1,7 @@
 'use strict';
 // plan-retention.js (#4594): in-process run(argv, deps) tests for the argument
-// contract and the deps seam, plus spawned fixture-repo tests for the real git
-// first-add probe.
+// contract and the deps seam, fixture-repo tests for the real git first-add probe
+// (in-process, cwd and env injected), and two spawned smokes for the script entry.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 const { run } = require('../../../plugin/bin/plan-retention');
 const {
   DECLINE_SOURCE, DECLINE_DESCRIPTION, archiveDeclineFingerprint, firstAddedDate,
@@ -31,8 +32,8 @@ function fakeDeps(overrides = {}) {
     git: () => '2026-09-01',
     lookupDecline: () => null,
     today: () => '2026-10-31',
-    stdout: { write: (s) => out.push(s) },
-    stderr: { write: (s) => err.push(s) },
+    stdout: (s) => out.push(s),
+    stderr: (s) => err.push(s),
     ...overrides,
   };
   return { deps, stdout: () => out.join(''), stderr: () => err.join('') };
@@ -87,8 +88,8 @@ test('--help prints usage and calls no deps', () => {
   const out = [];
   const code = run(['--help'], {
     git: boom, lookupDecline: boom, today: boom,
-    stdout: { write: (s) => out.push(s) },
-    stderr: { write: boom },
+    stdout: (s) => out.push(s),
+    stderr: boom,
   });
   assert.equal(code, 0);
   assert.match(out.join(''), /usage: plan-retention\.js/);
@@ -211,7 +212,7 @@ test('the decline fingerprint is the one declined-learning.js lookup computes', 
 function planRepo({ old = 0, recent = 0, untracked = 0, modifyOld = false }) {
   const repo = gitRepo();
   const env = {
-    ...process.env,
+    ...cleanEnv(),
     GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
     GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
     GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
@@ -241,14 +242,26 @@ function planRepo({ old = 0, recent = 0, untracked = 0, modifyOld = false }) {
   return { repo, oldPlans, recentPlans, untrackedPlans };
 }
 
-function spawnCli(repo, args) {
-  return JSON.parse(execFileSync(process.execPath, [CLI, ...args], { cwd: repo, encoding: 'utf8' }));
+// The CLI in-process with the fixture as its working directory; returns the parsed output line.
+function cleanEnv(extra = {}) {
+  const env = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
+  return { ...env, ...extra };
+}
+
+function cliJson(repo, args, env = cleanEnv()) {
+  const r = runCliSync(CLI, args, { cwd: repo, env });
+  assert.equal(r.code, 0, r.stderr);
+  return JSON.parse(r.stdout);
 }
 
 test('AC1.1: 30 past-cutoff plans and 1 within-cutoff plan under keep-forever', () => {
   const { repo, oldPlans, recentPlans } = planRepo({ old: 30, recent: 1 });
   try {
-    const parsed = spawnCli(repo, ['--retention', 'keep-forever', ...oldPlans, ...recentPlans]);
+    // real process: proves the script entry, exit 0 and the JSON line on stdout
+    const res = spawnCli(CLI, ['--retention', 'keep-forever', ...oldPlans, ...recentPlans], { cwd: repo, env: cleanEnv() });
+    assert.equal(res.code, 0, res.stderr);
+    const parsed = JSON.parse(res.stdout);
     assert.equal(parsed.plans.filter((row) => row.route === 'prune-archive').length, 30);
     for (const plan of oldPlans) assert.equal(parsed.plans.find((row) => row.plan === plan).route, 'prune-archive');
     assert.equal(parsed.plans.find((row) => row.plan === recentPlans[0]).route, 'keep');
@@ -259,20 +272,20 @@ test('AC1.1: 30 past-cutoff plans and 1 within-cutoff plan under keep-forever', 
   }
 });
 
-// The only test that runs realDeps.lookupDecline against a store on disk: record-decline writes the entry
-// into the fixture repo's own store (the main checkout's, resolved from the cwd), and the spawned CLI
-// must read it back.
+// The only test that runs realDeps.lookupDecline against a store on disk: record-decline (still a real
+// process: declined-learning.js has no run until #5385) writes the entry into the fixture repo's own
+// store (the main checkout's, resolved from the cwd), and the in-process CLI, given that cwd, must read it back.
 test('a decline recorded in the real store keeps all 30 past-cutoff plans, and an empty store archives them', () => {
   const { repo, oldPlans } = planRepo({ old: 30 });
   try {
-    const before = spawnCli(repo, ['--retention', 'keep-forever', ...oldPlans]);
+    const before = cliJson(repo, ['--retention', 'keep-forever', ...oldPlans]);
     assert.deepEqual(before.decline, { live: false, error: null });
     assert.equal(before.plans.filter((row) => row.route === 'prune-archive').length, 30);
 
     execFileSync(process.execPath, [DECLINED_LEARNING, 'record-decline', '--source', DECLINE_SOURCE], {
       cwd: repo, encoding: 'utf8', input: JSON.stringify({ description: DECLINE_DESCRIPTION, reason: 'noise' }),
     });
-    const after = spawnCli(repo, ['--retention', 'keep-forever', ...oldPlans]);
+    const after = cliJson(repo, ['--retention', 'keep-forever', ...oldPlans]);
     assert.deepEqual(after.decline, { live: true, error: null });
     assert.ok(after.plans.every((row) => row.route === 'keep'));
     assert.equal(after.citationCheck, true, 'the citation check is still requested while a decline is live');
@@ -284,7 +297,7 @@ test('a decline recorded in the real store keeps all 30 past-cutoff plans, and a
 test('AC2.1: 29 past-cutoff plans all keep and report citationCheck false', () => {
   const { repo, oldPlans } = planRepo({ old: 29 });
   try {
-    const parsed = spawnCli(repo, ['--retention', 'keep-forever', ...oldPlans]);
+    const parsed = cliJson(repo, ['--retention', 'keep-forever', ...oldPlans]);
     assert.equal(parsed.plans.length, 29);
     assert.ok(parsed.plans.every((row) => row.pastCutoff === true && row.firstAdded !== 'uncommitted'));
     assert.ok(parsed.plans.every((row) => row.route === 'keep'));
@@ -297,7 +310,7 @@ test('AC2.1: 29 past-cutoff plans all keep and report citationCheck false', () =
 test('a plan modified after it was added still reads its first-add date (--diff-filter=A)', () => {
   const { repo, oldPlans, recentPlans } = planRepo({ old: 30, recent: 1, modifyOld: true });
   try {
-    const parsed = spawnCli(repo, ['--retention', 'keep-forever', ...oldPlans, ...recentPlans]);
+    const parsed = cliJson(repo, ['--retention', 'keep-forever', ...oldPlans, ...recentPlans]);
     const modified = parsed.plans.find((row) => row.plan === oldPlans[0]);
     assert.equal(modified.firstAdded, new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
     assert.equal(modified.pastCutoff, true);
@@ -311,7 +324,7 @@ test('AC3.1: an uncommitted plan keeps under keep-forever and ask', () => {
   const { repo, recentPlans, untrackedPlans } = planRepo({ recent: 1, untracked: 1 });
   try {
     for (const retention of ['keep-forever', 'ask']) {
-      const parsed = spawnCli(repo, ['--retention', retention, ...recentPlans, ...untrackedPlans]);
+      const parsed = cliJson(repo, ['--retention', retention, ...recentPlans, ...untrackedPlans]);
       const untracked = parsed.plans.find((row) => row.plan === untrackedPlans[0]);
       assert.equal(untracked.firstAdded, 'uncommitted', retention);
       assert.equal(untracked.route, 'keep', retention);
@@ -320,5 +333,36 @@ test('AC3.1: an uncommitted plan keeps under keep-forever and ask', () => {
     }
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('a malformed invocation exits 2 with usage on stderr and nothing on stdout', () => {
+  // real process: proves the script entry's non-zero exit code and stderr
+  const res = spawnCli(CLI, ['--retention', 'sometimes']);
+  assert.equal(res.code, 2);
+  assert.match(res.stderr, /unknown retention value: sometimes/);
+  assert.match(res.stderr, /usage: plan-retention\.js/);
+  assert.equal(res.stdout, '');
+});
+
+test('AC3.1: plan-retention reads the working directory and its git child\'s env from the injected cwd and env', () => {
+  const old = planRepo({ old: 30 });
+  const other = planRepo({ recent: 1 });
+  const args = ['--retention', 'keep-forever', ...old.oldPlans];
+  const archived = (parsed) => parsed.plans.filter((row) => row.route === 'prune-archive').length;
+  try {
+    // injected env: the cwd is repo `other` (no old plans), GIT_DIR names `old`'s repository, so
+    // the first-add dates follow `old`
+    assert.equal(archived(cliJson(other.repo, args)), 0, 'without GIT_DIR the plans read as uncommitted');
+    const viaEnv = cliJson(other.repo, args, cleanEnv({ GIT_DIR: path.join(old.repo, '.git') }));
+    assert.equal(archived(viaEnv), 30, 'the git child read the injected GIT_DIR');
+    assert.ok(viaEnv.plans.every((row) => row.firstAdded !== 'uncommitted'));
+
+    // injected cwd: the test process stays in the checkout, the output follows the fixture
+    assert.notEqual(old.repo, process.cwd());
+    assert.equal(archived(cliJson(old.repo, args)), 30, 'the git child ran in the injected cwd');
+  } finally {
+    fs.rmSync(old.repo, { recursive: true, force: true });
+    fs.rmSync(other.repo, { recursive: true, force: true });
   }
 });

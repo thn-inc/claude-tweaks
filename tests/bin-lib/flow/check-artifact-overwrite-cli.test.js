@@ -9,89 +9,76 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync } = require('child_process');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli.js');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'check-artifact-overwrite.js');
-const { run } = require(CLI);
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'artifact-overwrite-check.js');
 const { ArtifactOverwriteCheckError } = require(LIB);
 
-function fakeIo() {
-  let out = '';
-  let err = '';
-  return {
-    stdout: { write: (s) => { out += s; } },
-    stderr: { write: (s) => { err += s; } },
-    out: () => out,
-    err: () => err,
-  };
+// The ambient env, minus the GIT_* variables the module-level cleanup below removes: real git needs PATH.
+function runCheck(argv, deps = {}, cwd = process.cwd(), env = { ...process.env }) {
+  const res = runCliSync(CLI, argv, { env, cwd, deps });
+  return { code: res.code, out: () => res.stdout, err: () => res.stderr };
 }
 
 test('--help prints usage and exits 0', () => {
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--help'], io);
-  assert.strictEqual(code, 0);
+  const io = runCheck(['--help']);
+  assert.strictEqual(io.code, 0);
   assert.match(io.out(), /usage: check-artifact-overwrite\.js/);
 });
 
 test('missing --base is a malformed invocation (exit 2)', () => {
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js'], io);
-  assert.strictEqual(code, 2);
+  const io = runCheck([]);
+  assert.strictEqual(io.code, 2);
   assert.match(io.err(), /--base is required/);
 });
 
 test('unknown flag is a malformed invocation (exit 2)', () => {
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'HEAD~1', '--wat', 'x'], io);
-  assert.strictEqual(code, 2);
+  const io = runCheck(['--base', 'HEAD~1', '--wat', 'x']);
+  assert.strictEqual(io.code, 2);
   assert.match(io.err(), /unknown argument/);
 });
 
 test('a flag with no value is a malformed invocation (exit 2)', () => {
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base'], io);
-  assert.strictEqual(code, 2);
+  const io = runCheck(['--base']);
+  assert.strictEqual(io.code, 2);
   assert.match(io.err(), /requires a value/);
 });
 
 test('clean walk -> exit 0, JSON on stdout', () => {
-  const io = fakeIo();
-  const code = run(
-    ['node', 'check-artifact-overwrite.js', '--base', 'a'],
-    { ...io, check: () => ({ clean: true, overwrites: [] }) },
+  const io = runCheck(
+    ['--base', 'a'],
+    { check: () => ({ clean: true, overwrites: [] }) },
   );
-  assert.strictEqual(code, 0);
+  assert.strictEqual(io.code, 0);
   assert.deepStrictEqual(JSON.parse(io.out()), { clean: true, overwrites: [] });
 });
 
 test('overwrite detected -> exit 1, JSON on stdout names the offender', () => {
-  const io = fakeIo();
-  const code = run(
-    ['node', 'check-artifact-overwrite.js', '--base', 'a', '--path', 'docs/journeys/'],
-    { ...io, check: () => ({ clean: false, overwrites: [{ path: 'docs/journeys/x.md', commit: 'deadbeef', reason: 'r' }] }) },
+  const io = runCheck(
+    ['--base', 'a', '--path', 'docs/journeys/'],
+    { check: () => ({ clean: false, overwrites: [{ path: 'docs/journeys/x.md', commit: 'deadbeef', reason: 'r' }] }) },
   );
-  assert.strictEqual(code, 1);
+  assert.strictEqual(io.code, 1);
   assert.strictEqual(JSON.parse(io.out()).overwrites.length, 1);
 });
 
 test('a walk failure (unresolvable ref) -> exit 3, stderr names it, nothing on stdout', () => {
-  const io = fakeIo();
-  const code = run(
-    ['node', 'check-artifact-overwrite.js', '--base', 'not-a-ref'],
-    { ...io, check: () => { throw new ArtifactOverwriteCheckError('unknown revision or path not in the working tree'); } },
+  const io = runCheck(
+    ['--base', 'not-a-ref'],
+    { check: () => { throw new ArtifactOverwriteCheckError('unknown revision or path not in the working tree'); } },
   );
-  assert.strictEqual(code, 3);
+  assert.strictEqual(io.code, 3);
   assert.match(io.err(), /unknown revision/);
   assert.strictEqual(io.out(), '');
 });
 
 test('a bug in the check itself (not an ArtifactOverwriteCheckError) crashes loud, never reported as exit 3', () => {
-  const io = fakeIo();
   assert.throws(
-    () => run(
-      ['node', 'check-artifact-overwrite.js', '--base', 'HEAD~1'],
-      { ...io, check: () => { throw new TypeError("Cannot read properties of undefined (reading 'lineNo')"); } },
+    () => runCheck(
+      ['--base', 'HEAD~1'],
+      { check: () => { throw new TypeError("Cannot read properties of undefined (reading 'lineNo')"); } },
     ),
     TypeError,
   );
@@ -110,11 +97,10 @@ test('end-to-end against a real repo (no fake check) — clean walk exits 0', ()
   git('add', '-A');
   git('commit', '-q', '-m', 'Add demo journey (refs #10)');
 
-  // checkArtifactOverwrite's own default reads process.cwd(); spawn the real
-  // CLI (rather than calling run() in-process) so cwd is honored exactly the
-  // way a caller invoking this binary would see it.
-  const spawned = execFileSync('node', [CLI, '--base', base, '--path', 'docs/journeys/'], { cwd: dir, encoding: 'utf8' });
-  assert.deepStrictEqual(JSON.parse(spawned), { clean: true, overwrites: [] });
+  // real process: proves the script entry (argv slice, realDeps wiring) and exit 0 with the default cwd.
+  const spawned = spawnCli(CLI, ['--base', base, '--path', 'docs/journeys/'], { cwd: dir });
+  assert.strictEqual(spawned.code, 0, spawned.stderr);
+  assert.deepStrictEqual(JSON.parse(spawned.stdout), { clean: true, overwrites: [] });
 });
 
 // --- --run <dir>: manifest-window attribution (refs #4593) ---
@@ -179,26 +165,20 @@ const STORY_PATH = 'stories/x-10.yaml';
 const STORY_OLD = 'name: x\nsteps:\n  locator: old-a\n  other: keep\n';
 const STORY_NEW = 'name: x\nsteps:\n  locator: new-a\n  other: keep\n';
 
-function spawnCli(dir, args) {
-  return spawnSync('node', [CLI, ...args], { cwd: dir, encoding: 'utf8', timeout: 30000 });
-}
-
 test('AC6.1: --run naming a dir with no manifest.yml exits 3 and stderr names the missing manifest', () => {
   const dir = runDirWith();
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--run', dir],
-    { ...io, check: () => { throw new Error('check must not run'); } });
-  assert.strictEqual(code, 3);
+  const io = runCheck(['--base', 'a', '--run', dir],
+    { check: () => { throw new Error('check must not run'); } });
+  assert.strictEqual(io.code, 3);
   assert.ok(io.err().includes(path.join(dir, 'manifest.yml')), io.err());
   assert.strictEqual(io.out(), '');
 });
 
 test('--run naming a manifest.yml that does not parse exits 3 naming it', () => {
   const dir = runDirWith('not: a manifest\n');
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--run', dir],
-    { ...io, check: () => { throw new Error('check must not run'); } });
-  assert.strictEqual(code, 3);
+  const io = runCheck(['--base', 'a', '--run', dir],
+    { check: () => { throw new Error('check must not run'); } });
+  assert.strictEqual(io.code, 3);
   assert.ok(io.err().includes(path.join(dir, 'manifest.yml')), io.err());
   assert.match(io.err(), /does not parse/);
   assert.strictEqual(io.out(), '');
@@ -206,22 +186,32 @@ test('--run naming a manifest.yml that does not parse exits 3 naming it', () => 
 
 test('--run reads the manifest through deps.readFile', () => {
   const seen = [];
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--run', '/nowhere'], {
-    ...io,
+  const io = runCheck(['--base', 'a', '--run', '/nowhere'], {
     readFile: (file, enc) => { seen.push([file, enc]); return 'multispec:\n  parent: p/\n  specs:\n    - id: 10\n      status: pending\n'; },
     check: (opts) => ({ clean: true, overwrites: [], ids: opts.manifest.multispec.specs.map((s) => s.id) }),
   });
-  assert.strictEqual(code, 0);
+  assert.strictEqual(io.code, 0);
   assert.deepStrictEqual(seen, [[path.join('/nowhere', 'manifest.yml'), 'utf8']]);
+  assert.deepStrictEqual(JSON.parse(io.out()).ids, [10]);
+});
+
+test('a relative --run resolves against the injected cwd', () => {
+  const cwdDir = runDirWith();
+  fs.mkdirSync(path.join(cwdDir, 'run'));
+  fs.writeFileSync(path.join(cwdDir, 'run', 'manifest.yml'),
+    'multispec:\n  parent: p/\n  specs:\n    - id: 10\n      status: pending\n');
+  assert.notEqual(cwdDir, process.cwd());
+  const io = runCheck(['--base', 'a', '--run', 'run'], {
+    check: (opts) => ({ clean: true, overwrites: [], ids: opts.manifest.multispec.specs.map((s) => s.id) }),
+  }, cwdDir);
+  assert.strictEqual(io.code, 0, io.err());
   assert.deepStrictEqual(JSON.parse(io.out()).ids, [10]);
 });
 
 test('Q5: --run naming a manifest that parses but lists no specs exits 3 naming the field', () => {
   const dir = runDirWith('multispec:\n  parent: p/\n  specs:\n');
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--run', dir], io);
-  assert.strictEqual(code, 3);
+  const io = runCheck(['--base', 'a', '--run', dir]);
+  assert.strictEqual(io.code, 3);
   assert.match(io.err(), /manifest unusable: manifest names no specs/);
   assert.strictEqual(io.out(), '');
 });
@@ -229,9 +219,8 @@ test('Q5: --run naming a manifest that parses but lists no specs exits 3 naming 
 test('Q9: --run naming a manifest with an unparseable phases[].at exits 3 naming the field', () => {
   const dir = writtenManifestRun([[10, 'running', 'build', '2026-01-01T10:00:00.000Z']], [10]);
   rewriteManifest(dir, '          at: 2026-01-01T10:00:00.000Z', '          at: garbage');
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--run', dir], io);
-  assert.strictEqual(code, 3);
+  const io = runCheck(['--base', 'a', '--run', dir]);
+  assert.strictEqual(io.code, 3);
   assert.match(io.err(), /spec #10 phases\[0\]\.at is not a valid date \(garbage\)/);
   assert.strictEqual(io.out(), '');
 });
@@ -246,9 +235,10 @@ test('Q8: --run naming a manifest whose spec has no recorded transition is a ver
   ]);
   // Spec 11 reads `complete` with no startedAt and no phases (a `pending` spec would take the status-off branch first).
   rewriteManifest(runDir, '      status: pending', '      status: complete');
-  const spawned = spawnCli(fx.dir, ['--base', fx.base, '--path', 'stories/', '--run', runDir]);
-  assert.strictEqual(spawned.status, 1, spawned.stderr);
-  const result = JSON.parse(spawned.stdout);
+  assert.notEqual(fx.dir, process.cwd());
+  const spawned = runCheck(['--base', fx.base, '--path', 'stories/', '--run', runDir], {}, fx.dir);
+  assert.strictEqual(spawned.code, 1, spawned.err());
+  const result = JSON.parse(spawned.out());
   assert.strictEqual(result.overwrites.length, 1);
   assert.ok(result.overwrites[0].reason.includes('manifest windows off: spec #11 has no recorded transition'), result.overwrites[0].reason);
 });
@@ -259,10 +249,9 @@ test('--run with an empty value, a trailing bare --run, or a flag as its value i
     [['--base', 'a', '--run'], /requires a value/],
     [['--base', 'a', '--run', '--path'], /--run requires a directory/],
   ]) {
-    const io = fakeIo();
-    const code = run(['node', 'check-artifact-overwrite.js', ...argv],
-      { ...io, check: () => { throw new Error('check must not run'); } });
-    assert.strictEqual(code, 2, `argv ${JSON.stringify(argv)}`);
+    const io = runCheck(argv,
+      { check: () => { throw new Error('check must not run'); } });
+    assert.strictEqual(io.code, 2, `argv ${JSON.stringify(argv)}`);
     assert.match(io.err(), pattern);
     assert.strictEqual(io.out(), '');
   }
@@ -271,56 +260,54 @@ test('--run with an empty value, a trailing bare --run, or a flag as its value i
 test('--run forwards the parsed manifest into the check', () => {
   const dir = writtenManifestRun(SEQUENTIAL_TRANSITIONS);
   let seen;
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--run', dir],
-    { ...io, check: (opts) => { seen = opts; return { clean: true, overwrites: [] }; } });
-  assert.strictEqual(code, 0);
+  const io = runCheck(['--base', 'a', '--run', dir],
+    { check: (opts) => { seen = opts; return { clean: true, overwrites: [] }; } });
+  assert.strictEqual(io.code, 0);
   assert.deepStrictEqual(seen.manifest.multispec.specs.map((s) => s.id), [10, 11]);
   assert.ok(!('run' in seen), 'opts must not carry the raw --run value into the check');
 });
 
-test('end-to-end: an untrailered self-edit exits 0 with --run and 1 without it', () => {
+test('AC6.1: end-to-end: an untrailered self-edit exits 0 with --run and 1 without it', () => {
   const fx = storyRepo();
   fx.commitAt('Add story', '2026-01-01T10:30:00Z', STORY_PATH, STORY_OLD);
   fx.commitAt('Review fix: locator', '2026-01-01T11:30:00Z', STORY_PATH, STORY_NEW);
   const runDir = writtenManifestRun(SEQUENTIAL_TRANSITIONS);
 
-  const withRun = spawnCli(fx.dir, ['--base', fx.base, '--path', 'stories/', '--run', runDir]);
-  assert.strictEqual(withRun.status, 0, withRun.stderr);
-  assert.deepStrictEqual(JSON.parse(withRun.stdout), { clean: true, overwrites: [] });
+  // The real check runs in-process against fx.dir: the injected cwd, not process.cwd(), picks the repo.
+  assert.notEqual(fx.dir, process.cwd());
+  const withRun = runCheck(['--base', fx.base, '--path', 'stories/', '--run', runDir], {}, fx.dir);
+  assert.strictEqual(withRun.code, 0, withRun.err());
+  assert.deepStrictEqual(JSON.parse(withRun.out()), { clean: true, overwrites: [] });
 
-  const withoutRun = spawnCli(fx.dir, ['--base', fx.base, '--path', 'stories/']);
-  assert.strictEqual(withoutRun.status, 1, withoutRun.stderr);
-  assert.match(JSON.parse(withoutRun.stdout).overwrites[0].reason, /unattributable/);
+  const withoutRun = runCheck(['--base', fx.base, '--path', 'stories/'], {}, fx.dir);
+  assert.strictEqual(withoutRun.code, 1, withoutRun.err());
+  assert.match(JSON.parse(withoutRun.out()).overwrites[0].reason, /unattributable/);
 });
 
 // --- --integration-ref <ref>: integration-branch history leaves the walk (refs #4845) ---
 
 test('--integration-ref is forwarded to the check as integrationRef', () => {
   let seen;
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--integration-ref', 'origin/main'],
-    { ...io, check: (o) => { seen = o; return { clean: true, overwrites: [] }; } });
-  assert.strictEqual(code, 0);
+  const io = runCheck(['--base', 'a', '--integration-ref', 'origin/main'],
+    { check: (o) => { seen = o; return { clean: true, overwrites: [] }; } });
+  assert.strictEqual(io.code, 0);
   assert.strictEqual(seen.integrationRef, 'origin/main');
 });
 
 test('--integration-ref rejects an empty, a whitespace-only and a dash-leading value (exit 2)', () => {
   for (const value of ['', '  ', '-x', '--upload-pack=evil']) {
-    const io = fakeIo();
-    const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--integration-ref', value],
-      { ...io, check: () => { throw new Error('check must not run'); } });
-    assert.strictEqual(code, 2, `value ${JSON.stringify(value)}`);
+    const io = runCheck(['--base', 'a', '--integration-ref', value],
+      { check: () => { throw new Error('check must not run'); } });
+    assert.strictEqual(io.code, 2, `value ${JSON.stringify(value)}`);
     assert.match(io.err(), /--integration-ref requires a ref/);
     assert.strictEqual(io.out(), '');
   }
 });
 
 test('a trailing bare --integration-ref is a malformed invocation (exit 2)', () => {
-  const io = fakeIo();
-  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--integration-ref'],
-    { ...io, check: () => { throw new Error('check must not run'); } });
-  assert.strictEqual(code, 2);
+  const io = runCheck(['--base', 'a', '--integration-ref'],
+    { check: () => { throw new Error('check must not run'); } });
+  assert.strictEqual(io.code, 2);
   assert.match(io.err(), /requires a value/);
   assert.strictEqual(io.out(), '');
 });
@@ -351,14 +338,53 @@ test('end-to-end: a catch-up merge of upstream\'s journey exits 0 with --integra
   write('docs/journeys/up.md', '# Up\nline 1 changed\nline 2\n');
   commit('Spec B edits the upstream journey (refs #2)');
 
-  const withRef = spawnCli(dir, ['--base', base, '--path', 'docs/journeys/', '--integration-ref', 'up']);
-  assert.strictEqual(withRef.status, 0, withRef.stderr);
-  assert.strictEqual(withRef.stdout.trim(), '{"clean":true,"overwrites":[]}');
+  const withRef = runCheck(['--base', base, '--path', 'docs/journeys/', '--integration-ref', 'up'], {}, dir);
+  assert.strictEqual(withRef.code, 0, withRef.err());
+  assert.strictEqual(withRef.out().trim(), '{"clean":true,"overwrites":[]}');
 
-  const without = spawnCli(dir, ['--base', base, '--path', 'docs/journeys/']);
-  assert.strictEqual(without.status, 1, without.stderr);
+  const without = runCheck(['--base', base, '--path', 'docs/journeys/'], {}, dir);
+  assert.strictEqual(without.code, 1, without.err());
 
-  const unresolvable = spawnCli(dir, ['--base', base, '--path', 'docs/journeys/', '--integration-ref', 'no-such-ref']);
-  assert.strictEqual(unresolvable.status, 3, unresolvable.stderr);
+  // real process: proves the script entry's exit 3 and stderr on a refusal (unresolvable ref), nothing on stdout.
+  const unresolvable = spawnCli(CLI, ['--base', base, '--path', 'docs/journeys/', '--integration-ref', 'no-such-ref'], { cwd: dir });
+  assert.strictEqual(unresolvable.code, 3, unresolvable.stderr);
+  assert.match(unresolvable.stderr, /check-artifact-overwrite:/);
   assert.strictEqual(unresolvable.stdout, '');
+});
+
+test('AC6.1: the check\'s git child takes the injected env — GIT_DIR in env aims it at repo B while cwd is repo A', (t) => {
+  const mk = (prefix) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const a = mk('ct-cao-env-a-');
+  const b = mk('ct-cao-env-b-');
+  t.after(() => { fs.rmSync(a, { recursive: true, force: true }); fs.rmSync(b, { recursive: true, force: true }); });
+  // Setup git calls take the cleaned process.env (no GIT_* — stripped at module load), so each aims at its own cwd.
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
+  const commit = (cwd, rel, content, message) => {
+    fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true });
+    fs.writeFileSync(path.join(cwd, rel), content);
+    git(cwd, 'add', '-A');
+    git(cwd, 'commit', '-q', '-m', message);
+  };
+  git(a, 'init', '-q');
+  git(a, 'config', 'user.email', 't@example.invalid');
+  git(a, 'config', 'user.name', 'Test');
+  git(a, 'commit', '-q', '--allow-empty', '-m', 'base');
+  const base = git(a, 'rev-parse', 'HEAD').trim();
+  git(b, 'clone', '-q', a, '.');
+  git(b, 'config', 'user.email', 't@example.invalid');
+  git(b, 'config', 'user.name', 'Test');
+  // A: a journey added only. B: the same journey, then another spec edits its line (an overwrite).
+  commit(a, 'docs/journeys/demo.md', '# Demo\nFirst.\n', 'Add demo journey (refs #10)');
+  commit(b, 'docs/journeys/demo.md', '# Demo\nFirst.\n', 'Add demo journey (refs #10)');
+  commit(b, 'docs/journeys/demo.md', '# Demo\nChanged.\n', 'Edit demo journey (refs #11)');
+  const argv = ['--base', base, '--path', 'docs/journeys/'];
+
+  const own = runCheck(argv, {}, a);
+  assert.strictEqual(own.code, 0, own.err());
+
+  const env = { ...process.env, GIT_DIR: path.join(b, '.git') };
+  assert.notEqual(env.GIT_DIR, process.env.GIT_DIR);
+  const aimed = runCheck(argv, {}, a, env);
+  assert.strictEqual(aimed.code, 1, aimed.err());
+  assert.strictEqual(JSON.parse(aimed.out()).overwrites[0].path, 'docs/journeys/demo.md');
 });

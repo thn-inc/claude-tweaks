@@ -4,8 +4,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
+const { STUB_SKIP } = require('./helpers/path-stub');
 const { chmodDenialSkip } = require('./helpers/root');
 const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { QA_STAMP_NAME } = require('../plugin/bin/lib/verify/qa-stamp');
@@ -122,10 +123,17 @@ test('--help after a subcommand prints usage with nothing else run', (t) => {
   assert.match(h.stdout(), /usage:/);
 });
 
-test('a real subprocess answers --help', () => {
-  const result = spawnSync(process.execPath, [BIN, '--help'], { windowsHide: true, encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr);
+test('run answers --help through the in-process runner', () => {
+  const result = runCliSync(BIN, ['--help'], { fresh: true });
+  assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /usage:/);
+});
+
+test('a real subprocess refuses an unknown subcommand with exit 2 and the usage on stderr', () => {
+  // real process: proves the script entry's exit code and stderr
+  const result = spawnCli(BIN, ['frobnicate']);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /acceptance-packet\.js: .*\n[\s\S]*usage:/);
 });
 
 for (const [name, argv] of [
@@ -1879,7 +1887,7 @@ function realGitEnv() {
   };
 }
 
-test('real subprocess: snapshot then gather over a real repo', (t) => {
+test('in-process over a real repo: snapshot then gather, real git and git dir', (t) => {
   const repo = gitRepo();
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const env = realGitEnv();
@@ -1899,7 +1907,10 @@ test('real subprocess: snapshot then gather over a real repo', (t) => {
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', 'run-1');
   fs.mkdirSync(runDir, { recursive: true });
 
-  const cli = (...args) => spawnSync(process.execPath, [BIN, ...args], { windowsHide: true, encoding: 'utf8', cwd: repo, env });
+  const cli = (...args) => {
+    const r = runCliSync(BIN, args, { cwd: repo, env, fresh: true, deps: { gh: unexpectedGh } });
+    return { ...r, status: r.code };
+  };
   const snap = cli('snapshot', '--run', runDir, '--base', mergeBase);
   assert.equal(snap.status, 0, snap.stderr);
   const manifest = JSON.parse(snap.stdout);
@@ -1926,6 +1937,207 @@ test('real subprocess: snapshot then gather over a real repo', (t) => {
   assert.equal(rerun.status, 0, rerun.stderr);
   assert.deepEqual(JSON.parse(rerun.stdout), MAIN_RERUN);
   assert.equal(readJson(path.join(runDir, 'packet-inputs', 'manifest.json')).head, head);
+});
+
+test('AC6.1: snapshot reads the git dir from the injected env', (t) => {
+  const repo = gitRepo();
+  const other = gitRepo();
+  t.after(() => { fs.rmSync(repo, { recursive: true, force: true }); fs.rmSync(other, { recursive: true, force: true }); });
+  const env = realGitEnv();
+  const base = fixtureGit(['-C', repo, 'rev-parse', 'HEAD'], { env, encoding: 'utf8' }).trim();
+  writeText(path.join(repo, 'a.txt'), 'a\n');
+  fixtureGit(['-C', repo, 'add', '.'], { env });
+  fixtureGit(['-C', repo, 'commit', '-q', '-m', 'a'], { env });
+  const head = fixtureGit(['-C', repo, 'rev-parse', 'HEAD'], { env, encoding: 'utf8' }).trim();
+  const repoGitDir = fixtureGit(['-C', repo, 'rev-parse', '--absolute-git-dir'], { env, encoding: 'utf8' }).trim();
+  writeJson(path.join(repoGitDir, 'claude-tweaks-verify', 'report.json'), REPORT);
+  const runDir = path.join(other, '.claude-tweaks', 'pipelines', 'run-1');
+  fs.mkdirSync(runDir, { recursive: true });
+  // cwd is a different repo; only the injected env points git at `repo`.
+  assert.notEqual(other, repo);
+  const result = runCliSync(BIN, ['snapshot', '--run', runDir, '--base', base], {
+    cwd: other, env: { ...env, GIT_DIR: repoGitDir }, fresh: true, deps: { gh: unexpectedGh },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const manifest = JSON.parse(result.stdout);
+  assert.equal(manifest.head, head);
+  assert.equal(manifest.files.verifyReport, 'copied');
+});
+
+test('AC3.1: tmpPath follows the injected CLAUDE_CODE_SESSION_ID and cwd, not process.env', (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const bodyFiles = [];
+  const { gh } = fakeGh();
+  const spyGh = (args) => {
+    if (args[0] === 'pr' && args[1] === 'edit') bodyFiles.push(args[args.indexOf('--body-file') + 1]);
+    return gh(args);
+  };
+  const injected = 'injected-session-5383';
+  t.after(() => fs.rmSync(path.join(os.tmpdir(), `ct-session-${injected}`), { recursive: true, force: true }));
+  const saved = process.env.CLAUDE_CODE_SESSION_ID;
+  process.env.CLAUDE_CODE_SESSION_ID = 'ambient-session-5383';
+  let result;
+  try {
+    result = runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--pr', '9'], {
+      cwd: ws.root,
+      env: { PATH: process.env.PATH, TMPDIR: os.tmpdir(), CLAUDE_CODE_SESSION_ID: injected },
+      fresh: true,
+      deps: { gh: spyGh, ghAvailable: () => true, pinGhHost: () => {} },
+    });
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = saved;
+  }
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(bodyFiles.length, 1);
+  assert.equal(path.basename(path.dirname(bodyFiles[0])), `ct-session-${injected}`);
+});
+
+test('AC6.1: the gh probe runs on the injected env PATH, not the real one', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const withGh = path.join(ws.root, 'with-gh');
+  const noGh = path.join(ws.root, 'no-gh');
+  fs.mkdirSync(withGh);
+  fs.mkdirSync(noGh);
+  fs.writeFileSync(path.join(withGh, 'gh'), `#!${process.execPath}\nconsole.log('gh version 2.0.0');\n`);
+  fs.chmodSync(path.join(withGh, 'gh'), 0o755); // root-safe: makes the stub runnable
+  fs.symlinkSync(process.execPath, path.join(noGh, 'node'));
+  const { gh } = fakeGh();
+  const post = (bin) => runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--pr', '9'], {
+    cwd: ws.root,
+    env: { PATH: bin, HOME: process.env.HOME, TMPDIR: os.tmpdir() },
+    fresh: true,
+    allowRealRunner: true,
+    deps: { gh, pinGhHost: () => {} },
+  });
+  const absent = post(noGh);
+  assert.equal(absent.code, 4, absent.stderr);
+  const present = post(withGh);
+  assert.equal(present.code, 0, present.stderr);
+});
+
+// A `gh` that logs the cwd and the env it was started with, then answers a visibility probe.
+function recordingGhShim(ws) {
+  const dir = path.join(ws.root, 'gh-shim');
+  const log = path.join(ws.root, 'gh-calls.jsonl');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'gh'), `#!${process.execPath}\n`
+    + `require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify({ cwd: process.cwd(), marker: process.env.CT_MARKER_5383, ghHost: process.env.GH_HOST, args: process.argv.slice(2) }) + '\\n');\n`
+    + 'console.log(JSON.stringify({ isPrivate: true }));\n');
+  fs.chmodSync(path.join(dir, 'gh'), 0o755); // root-safe: makes the stub runnable
+  const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
+  return { dir, calls };
+}
+
+// The environment an in-process call sees with the recording gh first on PATH.
+function shimEnv(shim) {
+  return { PATH: shim.dir + path.delimiter + process.env.PATH, HOME: process.env.HOME, TMPDIR: os.tmpdir() };
+}
+
+function unexpectedGh() {
+  throw new Error('unexpected gh');
+}
+
+function withAmbient(vars, fn) {
+  const saved = {};
+  for (const [k, v] of Object.entries(vars)) { saved[k] = process.env[k]; process.env[k] = v; }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+test('AC6.2: the real gh member starts gh in the injected cwd with the injected env', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const shim = recordingGhShim(ws);
+  assert.notEqual(ws.root, process.cwd());
+  const result = withAmbient({ CT_MARKER_5383: 'ambient' }, () => runCliSync(BIN, ['snapshot', '--run', ws.runDir, '--base', 'B'], {
+    cwd: ws.root,
+    env: { ...shimEnv(shim), CT_MARKER_5383: 'injected', GH_HOST: 'github.com' },
+    fresh: true,
+    allowRealRunner: true,
+    deps: { git: AHEAD(), gitDir: () => ws.gitDir, mainRoot: ws.root, encodeWalkthrough: encoderStub().encodeWalkthrough },
+  }));
+  assert.equal(result.code, 0, result.stderr);
+  const [call] = shim.calls();
+  assert.ok(call, 'the injected PATH reached the gh spawn');
+  assert.deepEqual(call.args, ['repo', 'view', '--json', 'isPrivate']);
+  assert.equal(call.cwd, ws.root, 'gh starts in the injected cwd');
+  assert.equal(call.marker, 'injected', 'gh gets the injected env, not process.env');
+});
+
+test('AC6.2: the real pinGhHost reads GH_HOST from the injected env, not process.env', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const shim = recordingGhShim(ws);
+  withAmbient({ GH_HOST: 'ambient.example' }, () => runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--repo', 'ghe.example/o/r'], {
+    cwd: ws.root,
+    env: shimEnv(shim),
+    fresh: true,
+    allowRealRunner: true,
+    deps: { ghAvailable: () => true },
+  }));
+  const calls = shim.calls();
+  assert.ok(calls.length > 0, 'the post reached gh');
+  // The injected env holds no GH_HOST, so the typed --repo host is pinned; an ambient one read in its place would pin nothing.
+  assert.ok(calls.every((c) => c.ghHost === 'ghe.example'), JSON.stringify(calls.map((c) => c.ghHost)));
+});
+
+test('AC6.3: the real pinGhHost compares the --repo host with the injected cwd\'s origin, not process.cwd()\'s', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const shim = recordingGhShim(ws);
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  // A *.ghe.com origin is a known GitHub host, so resolveGhSpec admits it; this checkout's own origin is github.com.
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://corp.ghe.com/o/r.git'], { env: realGitEnv() });
+  runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--repo', 'github.com/o/r'], {
+    cwd: repo,
+    env: shimEnv(shim),
+    fresh: true,
+    allowRealRunner: true,
+    deps: { ghAvailable: () => true },
+  });
+  const calls = shim.calls();
+  assert.ok(calls.length > 0, 'the post reached gh');
+  // github.com differs from the injected cwd's origin host, so it is pinned; read against process.cwd() it matches and pins nothing.
+  assert.ok(calls.every((c) => c.ghHost === 'github.com'), JSON.stringify(calls.map((c) => c.ghHost)));
+});
+
+test('AC3.1: a relative --scope resolves against the injected working directory, not process.cwd()', (t) => {
+  const ws = workspace(t);
+  assert.notEqual(ws.root, process.cwd());
+  writeJson(path.join(ws.root, 'scope.json'), { checks: { lint: 'y' }, rules: [] });
+  const out = ws.file('facts.json');
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  const result = runCliSync(BIN, ['gather', '--record', '7', '--out', out, '--scope', 'scope.json'], {
+    cwd: ws.root,
+    env: { PATH: process.env.PATH },
+    fresh: true,
+    deps: { git: fakeGit().git, gitDir: () => ws.gitDir, mainRoot: ws.root, gh: unexpectedGh },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const facts = readJson(out);
+  assert.equal(factOf(facts, 'check:lint').status, 'not-run');
+  assert.ok(!facts.partial.includes(SCOPE_NOTE));
+});
+
+test('a relative --body-file resolves against the injected working directory, not process.cwd()', (t) => {
+  const ws = workspace(t);
+  assert.notEqual(ws.root, process.cwd());
+  writeText(path.join(ws.root, 'rel-body.md'), BODY);
+  const result = runCliSync(BIN, ['post', '--record', '7', '--body-file', 'rel-body.md'], {
+    cwd: ws.root,
+    env: { PATH: process.env.PATH },
+    fresh: true,
+    deps: { ghAvailable: () => false },
+  });
+  // Exit 4 (gh absent) is reached only once the body read: an unresolved relative path exits 1 first.
+  assert.equal(result.code, 4, result.stderr);
 });
 
 // ---- risk facts: unconfirmed flags, planned proofs, the plan copy ----

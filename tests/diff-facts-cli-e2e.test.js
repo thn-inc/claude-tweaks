@@ -4,16 +4,35 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'diff-facts.js');
 
+// Fixture git runs without the ambient repo-pointing variables.
+const ambient = { ...process.env };
+for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete ambient[k];
+
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', args, { cwd, env: ambient, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-function runCli(cwd, args) {
-  return spawnSync('node', [CLI, ...args], { cwd, encoding: 'utf8' });
+// The whole environment the in-process CLI sees: PATH/HOME (+ SystemRoot on Windows), no GIT_*.
+const GIT_ENV = {
+  PATH: ambient.PATH,
+  ...(ambient.HOME ? { HOME: ambient.HOME } : {}),
+  ...(ambient.USERPROFILE ? { USERPROFILE: ambient.USERPROFILE } : {}),
+  ...(ambient.SystemRoot ? { SystemRoot: ambient.SystemRoot } : {}),
+};
+
+function runCli(cwd, args, env = GIT_ENV) {
+  const r = runCliSync(CLI, args, { cwd, env });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
+}
+
+function spawnReal(cwd, args) {
+  const r = spawnCli(CLI, args, { cwd, env: ambient });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 const fixtureDirs = [];
@@ -51,7 +70,8 @@ function makeFixtureRepo({ withImpl = true } = {}) {
 
 test('AC1.1: --integration-branch main prints the diff-facts JSON', () => {
   const dir = makeFixtureRepo();
-  const res = runCli(dir, ['--integration-branch', 'main']);
+  // real process: proves the script entry, the stdout JSON and exit 0
+  const res = spawnReal(dir, ['--integration-branch', 'main']);
   assert.strictEqual(res.status, 0, res.stderr);
   assert.deepStrictEqual(JSON.parse(res.stdout), {
     fileCount: 3, testFiles: 1, docsFiles: 1, implFiles: 1, totalLines: 6,
@@ -89,6 +109,18 @@ test('--base <sha> uses the given commit', () => {
   assert.deepStrictEqual(JSON.parse(viaBase.stdout), JSON.parse(viaBranch.stdout));
 });
 
+test('AC6.1: git runs in the injected cwd and env, not the process cwd', () => {
+  const a = makeFixtureRepo({ withImpl: false });
+  const b = makeFixtureRepo();
+  assert.notStrictEqual(a, process.cwd());
+  // cwd: the injected working directory is the repo whose diff is counted
+  assert.strictEqual(JSON.parse(runCli(a, ['--integration-branch', 'main']).stdout).fileCount, 2);
+  assert.strictEqual(JSON.parse(runCli(b, ['--integration-branch', 'main']).stdout).fileCount, 3);
+  // env: cwd stays in A, GIT_DIR points git at B
+  const viaEnv = runCli(a, ['--integration-branch', 'main'], { ...GIT_ENV, GIT_DIR: path.join(b, '.git') });
+  assert.strictEqual(JSON.parse(viaEnv.stdout).fileCount, 3, viaEnv.stderr);
+});
+
 test('unresolvable integration branch exits 1 with stderr and NO stdout', () => {
   const dir = makeFixtureRepo();
   const res = runCli(dir, ['--integration-branch', 'no-such-branch']);
@@ -123,7 +155,8 @@ test('a flag whose value is another flag exits 1 with requires-a-value, never a 
 
 test('unknown flag exits 1', () => {
   const dir = makeFixtureRepo();
-  const res = runCli(dir, ['--bogus', 'x']);
+  // real process: proves the script entry maps a refusal onto exit 1
+  const res = spawnReal(dir, ['--bogus', 'x']);
   assert.strictEqual(res.status, 1);
   assert.match(res.stderr, /^diff-facts: unknown argument: --bogus/);
   assert.strictEqual(res.stdout, '');

@@ -43,7 +43,7 @@ const { writeFileAtomic } = require('./lib/atomic-write');
 const { findingItems } = require('./lib/console/resolve');
 const { readRecord, writeRecord } = require('./lib/issues/local-store');
 const {
-  parseRepo, ghAvailable, ghOptions, pinExplicitRepoHost,
+  parseRepo, ghAvailable, ghOptions, injectedGhDeps, pinExplicitRepoHost,
 } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
 const {
@@ -171,6 +171,8 @@ const QUIET = ['ignore', 'pipe', 'pipe'];
 
 const realDeps = {
   cwd: () => process.cwd(),
+  get env() { return process.env; },
+  homeDir: () => os.homedir(),
   mainRoot: undefined,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   // findingItems' seam: a missing directory is an empty one. Any other failure stays a
@@ -194,19 +196,22 @@ const realDeps = {
   readRecord,
   writeRecord,
   // A range's output grows with the branch, and a comment list with the record.
-  git: (args) => execFileSync('git', args, {
-    encoding: 'utf8', windowsHide: true, stdio: QUIET, timeout: GIT_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
+  git: (args, { cwd, env } = {}) => execFileSync('git', args, {
+    cwd, env, encoding: 'utf8', windowsHide: true, stdio: QUIET, timeout: GIT_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
   }),
-  gh: (args) => execFileSync('gh', args, ghOptions(args, {
+  // `{ cwd, env, stderr, homeDir }` is the caller's injected process context; absent, gh inherits the real one.
+  gh: (args, { cwd, env, stderr, homeDir } = {}) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', windowsHide: true, stdio: QUIET, timeout: GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
-  })),
+    ...(cwd ? { cwd } : {}),
+    ...(env ? { env } : {}),
+  }, injectedGhDeps({ env, stderr, homeDir }))),
   ghAvailable,
-  gitDir: () => gitDir(),
+  gitDir: ({ cwd, env } = {}) => gitDir(undefined, cwd, env),
   // An explicit --repo's host reaches every call publishPacket makes, the graphql edit included.
-  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
-  tmpPath: (name) => {
+  pinGhHost: (repoSpec, { env, cwd } = {}) => pinExplicitRepoHost(repoSpec, { env, cwd }),
+  tmpPath: (name, env = process.env) => {
     try {
-      return sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, name) || path.join(os.tmpdir(), name);
+      return sessionTmpPath(env.CLAUDE_CODE_SESSION_ID, name) || path.join(os.tmpdir(), name);
     } catch {
       return path.join(os.tmpdir(), name);
     }
@@ -234,9 +239,12 @@ function readTextOrNull(deps, file) {
   }
 }
 
+// Every git child starts in the injected cwd with the injected env.
+const gitIn = (deps, args) => deps.git(args, { cwd: deps.cwd(), env: deps.env });
+
 function gitOrNull(deps, args) {
   try {
-    return deps.git(args).trim() || null;
+    return gitIn(deps, args).trim() || null;
   } catch {
     return null;
   }
@@ -379,7 +387,7 @@ function recordingFailure(err, framePaths) {
 function destinationHold(dir, deps) {
   const shown = () => relativeDisplayId(findGitRoot(dir).dir, path.join(dir, RECORDING_FILE));
   try {
-    deps.git(['-C', dir, 'check-ignore', '-q', '--', RECORDING_FILE]);
+    gitIn(deps, ['-C', dir, 'check-ignore', '-q', '--', RECORDING_FILE]);
     return null;
   } catch (err) {
     if (err?.status === CHECK_IGNORE_NOT_IGNORED) return `${shown()} is not ignored by git, so the GIF was not written`;
@@ -556,7 +564,7 @@ function readStoryIndex(storiesDir, listsStories, deps, notes) {
 function readStampStories(head, snapshot, deps) {
   let stories = null;
   try {
-    const sha = deps.git(['rev-parse', '--verify', '--end-of-options', head]).trim();
+    const sha = gitIn(deps, ['rev-parse', '--verify', '--end-of-options', head]).trim();
     stories = storiesFromQaStamp(readQaStamp(deps.gitDir(), readerOf(deps)), sha);
   } catch {
     // Falls through to the snapshot's copy of the stamp.
@@ -580,8 +588,8 @@ function readChanges(base, head, deps) {
   if (!base) return { changes: null, commits: null };
   try {
     return {
-      changes: parseChanges(deps.git(['diff', '--name-status', '-z', '--end-of-options', `${base}...${head}`])),
-      commits: parseCommits(deps.git(['log', '--format=%H%x09%s', '--end-of-options', `${base}..${head}`])),
+      changes: parseChanges(gitIn(deps, ['diff', '--name-status', '-z', '--end-of-options', `${base}...${head}`])),
+      commits: parseCommits(gitIn(deps, ['log', '--format=%H%x09%s', '--end-of-options', `${base}..${head}`])),
     };
   } catch {
     return { changes: null, commits: null };
@@ -853,12 +861,28 @@ function runLocal(opts, deps) {
   return 0;
 }
 
+// The deps members whose first argument is a file path: a relative one is the caller's, so it
+// resolves against deps.cwd() rather than the real working directory.
+const PATH_SEAMS = ['readFile', 'readdir', 'listDir', 'writeFile', 'writeAtomic', 'removeFile', 'mkdir', 'readRecord', 'writeRecord'];
+
 const HANDLERS = Object.freeze({
   snapshot: runSnapshot, gather: runGather, render: runRender, post: runPost, local: runLocal,
 });
 
 function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
+  // The single place the injected process context (cwd, env, stderr, homeDir) reaches the gh, git-dir,
+  // gh-probe, host-pin and tmp-path seams, and a relative file path resolves against deps.cwd(): call sites pass neither.
+  const { gh, gitDir: gitDirIn, ghAvailable: ghAvailableIn, pinGhHost: pinGhHostIn, tmpPath: tmpPathIn } = deps;
+  deps.gh = (args) => gh(args, { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir });
+  deps.gitDir = () => gitDirIn({ cwd: deps.cwd(), env: deps.env });
+  deps.ghAvailable = () => ghAvailableIn({ env: deps.env, cwd: deps.cwd() });
+  deps.pinGhHost = (repoSpec) => pinGhHostIn(repoSpec, { env: deps.env, cwd: deps.cwd() });
+  deps.tmpPath = (name) => tmpPathIn(name, deps.env);
+  for (const seam of PATH_SEAMS) {
+    const inner = deps[seam];
+    deps[seam] = (p, ...rest) => inner(typeof p === 'string' && !path.isAbsolute(p) ? path.resolve(deps.cwd(), p) : p, ...rest);
+  }
   const parsed = parseArgs(argv);
   if (parsed.error) {
     deps.stderr(`acceptance-packet.js: ${parsed.error}\n${USAGE}`);
@@ -871,6 +895,6 @@ function run(argv, overrides = {}) {
   return HANDLERS[parsed.command](parsed.opts, deps);
 }
 
-module.exports = { run, parseArgs, droppedEntry };
+module.exports = { run, parseArgs, droppedEntry, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

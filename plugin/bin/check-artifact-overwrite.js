@@ -53,12 +53,21 @@ const { parseManifestYaml } = require('./lib/flow/manifest.js');
 
 const USAGE = 'usage: check-artifact-overwrite.js --base <ref> [--head <ref>] [--path <pathspec>]... [--run <dir>] [--integration-ref <ref>]';
 
-function run(argv, deps = {}) {
-  const {
-    stdout = process.stdout, stderr = process.stderr, check = checkArtifactOverwrite,
-    readFile = fs.readFileSync,
-  } = deps;
-  const args = argv.slice(2);
+const realDeps = {
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  get env() { return process.env; },
+  check: (opts) => checkArtifactOverwrite(opts),
+  readFile: (file, enc) => fs.readFileSync(file, enc),
+};
+
+function run(argv, overrides = {}) {
+  const deps = { ...realDeps, ...overrides };
+  const { check, readFile } = deps;
+  const stdout = { write: deps.stdout };
+  const stderr = { write: deps.stderr };
+  const args = [...argv];
   const opts = { paths: [] };
   while (args.length) {
     const arg = args.shift();
@@ -100,9 +109,11 @@ function run(argv, deps = {}) {
   }
 
   const { run: runDir, ...checkOpts } = opts;
+  checkOpts.cwd = deps.cwd();
+  checkOpts.env = deps.env;
   if (runDir) {
     // Read directly, no existence pre-check; any read failure is exit 3.
-    const file = path.join(runDir, 'manifest.yml');
+    const file = path.join(path.resolve(checkOpts.cwd, runDir), 'manifest.yml');
     let text;
     try {
       text = readFile(file, 'utf8');
@@ -134,8 +145,6 @@ function run(argv, deps = {}) {
   return result.clean ? 0 : 1;
 }
 
-if (require.main === module) {
-  process.exitCode = run(process.argv);
-}
+module.exports = { run, realDeps };
 
-module.exports = { run };
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
