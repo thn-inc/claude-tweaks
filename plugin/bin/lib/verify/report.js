@@ -60,7 +60,7 @@ function gitInfo(execImpl = execFileSync) {
 // stamp location from this; null means "not inside a checkout" and the CLI
 // falls back to its tmpdir behavior.
 // `env` (optional) is the child's environment; absent, the child inherits process.env.
-function gitDir(execImpl = execFileSync, cwd = process.cwd(), env = undefined) {
+function gitDir(execImpl = execFileSync, cwd = process.cwd(), env) {
   try {
     const out = String(execImpl('git', ['rev-parse', '--git-dir'], { encoding: 'utf8', cwd, env, windowsHide: true })).trim();
     if (out === '') return null;

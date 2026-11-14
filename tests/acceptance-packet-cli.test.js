@@ -1973,6 +1973,7 @@ test('AC3.1: tmpPath follows the injected CLAUDE_CODE_SESSION_ID and cwd, not pr
     return gh(args);
   };
   const injected = 'injected-session-5383';
+  t.after(() => fs.rmSync(path.join(os.tmpdir(), `ct-session-${injected}`), { recursive: true, force: true }));
   const saved = process.env.CLAUDE_CODE_SESSION_ID;
   process.env.CLAUDE_CODE_SESSION_ID = 'ambient-session-5383';
   let result;
@@ -1990,6 +1991,24 @@ test('AC3.1: tmpPath follows the injected CLAUDE_CODE_SESSION_ID and cwd, not pr
   assert.equal(result.code, 0, result.stderr);
   assert.equal(bodyFiles.length, 1);
   assert.equal(path.basename(path.dirname(bodyFiles[0])), `ct-session-${injected}`);
+});
+
+test('AC3.1: a relative --scope resolves against the injected working directory, not process.cwd()', (t) => {
+  const ws = workspace(t);
+  assert.notEqual(ws.root, process.cwd());
+  writeJson(path.join(ws.root, 'scope.json'), { checks: { lint: 'y' }, rules: [] });
+  const out = ws.file('facts.json');
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  const result = runCliSync(BIN, ['gather', '--record', '7', '--out', out, '--scope', 'scope.json'], {
+    cwd: ws.root,
+    env: { PATH: process.env.PATH },
+    fresh: true,
+    deps: { git: fakeGit().git, gitDir: () => ws.gitDir, mainRoot: ws.root, gh: () => { throw new Error('unexpected gh'); } },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const facts = readJson(out);
+  assert.equal(factOf(facts, 'check:lint').status, 'not-run');
+  assert.ok(!facts.partial.includes(SCOPE_NOTE));
 });
 
 // ---- risk facts: unconfirmed flags, planned proofs, the plan copy ----
