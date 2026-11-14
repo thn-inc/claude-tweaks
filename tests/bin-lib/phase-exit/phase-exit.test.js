@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { runCliSync } = require('../../helpers/run-cli');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 const phaseExit = require('../../../plugin/bin/lib/phase-exit/phase-exit');
 const { runPhaseExit, realDeps } = phaseExit;
 const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
@@ -1150,4 +1150,16 @@ test('CLI: an archived wrap-up run dir resolves', () => {
   const env = JSON.parse(h.out.join(''));
   assert.equal(env.push.state, 'pushed');
   assert.deepEqual(env.bookkeeping, { worktree: 'n/a', pr: 'n/a' });
+});
+
+// Real process: the script entry turns run()'s return into the child's exit status and puts usage on the right stream (#5384, AC6).
+test('script entry: --help exits 0 with the usage on stdout; a malformed call exits 2 with it on stderr', () => {
+  const entry = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-exit.js');
+  const env = { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() };
+  const help = spawnCli(entry, ['--help'], { env });
+  assert.equal(help.code, 0);
+  assert.ok(help.stdout.startsWith('usage: phase-exit.js'));
+  const refused = spawnCli(entry, [], { env });
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, /--run <run-dir> is required/);
 });

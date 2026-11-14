@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const os = require('node:os');
 const { run } = require('../../../plugin/bin/release-tip-check.js');
+const { spawnCli } = require('../../helpers/run-cli');
 const { originWithTwoClones } = require('../../helpers/git-fixtures.js');
 
 const BRANCH = 'main';
@@ -215,4 +217,16 @@ test('preMajor read from release-preflight.json', () => {
     const pinned = JSON.parse(cli(argsFor(fx), { mainRoot: fx.work }).out);
     assert.strictEqual(pinned.arrived.part, 'major', 'the pack\'s bumpMinorPreMajor decides the fold, not bumpPart\'s default');
   });
+});
+
+// Real process: the script entry turns run()'s return into the child's exit status — 0 with usage on stdout for --help, 2 with the refusal on stderr for a missing flag (#5384, AC6).
+test('script entry: --help exits 0 with the usage on stdout; a missing --run exits 2 with it on stderr', () => {
+  const entry = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'release-tip-check.js');
+  const env = { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() };
+  const help = spawnCli(entry, ['--help'], { env });
+  assert.equal(help.code, 0);
+  assert.ok(help.stdout.startsWith('usage: release-tip-check.js'));
+  const refused = spawnCli(entry, [], { env });
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, /--run is required/);
 });

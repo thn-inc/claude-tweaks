@@ -472,3 +472,11 @@ test('--help exits 0 before any probe; the real binary prints usage', () => {
   const real = execFileSync(process.execPath, [CLI, '--help'], { encoding: 'utf8', windowsHide: true });
   assert.ok(real.startsWith('usage: dispatch-prompt.js'));
 });
+
+// Real process: the script entry turns run()'s return 2 into the child's exit status, with the refusal on stderr and nothing on stdout (#5384, AC6).
+test('script entry: a call with no arguments exits 2 with the refusal on stderr and nothing on stdout', () => {
+  const res = spawnCli(CLI, [], { env: { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() } });
+  assert.equal(res.code, 2);
+  assert.equal(res.stdout, '');
+  assert.match(res.stderr, /--call first\|second is required/);
+});
