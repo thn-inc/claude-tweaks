@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "fingerprint": "harnesshealth-aaaa0001",
+    "payload": {
+      "title": "Stale example path"
+    },
+    "firstFailedAt": "2026-11-14T11:03:42.273Z",
+    "attempts": 1,
+    "lastError": "filing failed: 500"
+  }
+]
