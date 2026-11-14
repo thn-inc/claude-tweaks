@@ -96,16 +96,19 @@ test('a sampled record given demo:changes-requested is graded by the unmodified 
 
   // Build a cell large enough to clear both floors (MIN_SAMPLES, MIN_VERDICTS)
   // so the verdict isn't masked by 'insufficient-evidence' regardless of the
-  // one changes-requested outcome sampling produced.
+  // one changes-requested outcome sampling produced. Closed a day ago, inside
+  // trustRows' default evaluation window on the default clock.
+  const closedAt = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const records = Array.from({ length: MIN_SAMPLES }, (_, i) => ({
     number: 100 + i,
     labels: ['by:capture', 'risk:low', i < MIN_VERDICTS - 1 ? 'demo:approved' : undefined].filter(Boolean),
     body: '',
     state: 'CLOSED',
+    closedAt,
   }));
   // Record #2 is the sampled one from above; give it exactly the verdict a
   // human recording changes-requested on a sampled record would produce.
-  records.push({ number: flagged[0].number, labels: ['by:capture', 'risk:low', 'demo:changes-requested'], body: '', state: 'CLOSED' });
+  records.push({ number: flagged[0].number, labels: ['by:capture', 'risk:low', 'demo:changes-requested'], body: '', state: 'CLOSED', closedAt });
 
   const rows = trustRows(records);
   const row = rows.find((r) => r.key === 'producer:capture|low');

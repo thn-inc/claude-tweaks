@@ -21,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const { globToRegExp } = require('../issues/blast-radius');
 const { GIT_COMMON_DIR_TOKEN } = require('./declaration');
 const { lstatType } = require('../path-guard');
@@ -300,8 +300,34 @@ function lazyImpactContext(load) {
   };
 }
 
+// impact.fetch downloads a ready map (never a trace): at most once per run, bounded, its output
+// ignored (never piped, so no maxBuffer can kill a verbose fetch). The result keeps its exit code,
+// time, timeout and signal for the report.
+function runImpactFetch(command, cwd, { spawnImpl = spawnSync } = {}) {
+  const startedMs = Date.now();
+  const r = spawnImpl(command, { shell: true, cwd, timeout: 120000, stdio: 'ignore', windowsHide: true });
+  return {
+    ran: true,
+    exitCode: typeof r.status === 'number' ? r.status : null,
+    durationMs: Date.now() - startedMs,
+    timedOut: Boolean(r.error && r.error.code === 'ETIMEDOUT'),
+    signal: r.signal || null,
+  };
+}
+
+// The lazily loaded impact context for the checkout at `cwd`. `verify.js --scope` and a plain local
+// `npm test` (tools/run-tests.js, #5319) both build it here, so the two always select alike. A cwd
+// outside any git checkout reads as the `map-unlocatable` problem, which fails selection closed.
+// `runFetch(command, repoRoot)` runs impact.fetch; `locate` and `load` are seams for tests.
+function checkoutImpactContext({ decl, cwd, runFetch = runImpactFetch, locate = gitLocations, load = loadImpactContext }) {
+  const where = locate({ cwd });
+  return lazyImpactContext(() => (where === null
+    ? { map: null, problem: 'map-unlocatable', headTests: [], driftTests: [], mapPath: null, mapCommit: null, mapDirty: null, distance: null, fetch: null }
+    : load({ decl, ...where, runFetch: (command) => runFetch(command, where.repoRoot) })));
+}
+
 module.exports = {
   IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS,
   encodeImpactMap, parseImpactMap, under, selectImpactTests, mapProblem,
-  gitLocations, resolveMapPath, loadImpactContext, lazyImpactContext,
+  gitLocations, resolveMapPath, loadImpactContext, lazyImpactContext, runImpactFetch, checkoutImpactContext,
 };

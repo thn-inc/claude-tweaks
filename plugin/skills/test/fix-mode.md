@@ -4,7 +4,7 @@ Fix Mode (Auto + Interactive) — invocation and reporting for `/claude-tweaks:t
 
 ## Re-verification
 
-Once a fix is committed, re-verify through the runner over the **complete** resolved check set per `verification.md` Step 2 — in a pipeline (`$PIPELINE_RUN_DIR` set), the scoped invocation from its Re-verify scoping section — so the pass stamp lands on the fix commit (#3284); a dispatched group's second call trusts the first call's result only through that stamp. Iterating on just the failed check while fixing is fine, but a narrowed run passes `--no-stamp` and never counts as the re-verification.
+Once a fix is committed, re-verify through the runner over the **complete** resolved check set per `verification.md` Step 2 — in a pipeline (`$PIPELINE_RUN_DIR` set), the scoped invocation from its Re-verify scoping section — so the pass stamp lands on the fix commit (#3284); a dispatched group's second call trusts the first call's result only through that stamp. Iterating on just the failed check while fixing is fine, but a narrowed run passes `--no-stamp` (and `--local` under `localRuns`, per `verification.md`'s "A targeted run never stamps") and never counts as the re-verification.
 
 ## Auto mode
 

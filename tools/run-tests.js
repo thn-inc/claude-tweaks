@@ -16,6 +16,17 @@
 // whatever the caller's cwd) — verify.js's impact-selected subset (#4024). An empty list, a
 // missing file or a non-`*.test.js` entry exits 1, never handing `node --test` zero files.
 //
+// A bare local run (no arguments, `CI` unset or empty) selects by impact (#5319): it reads the
+// test-impact map for the changes since the integration base (the selection `bin/verify.js` makes
+// for a scoped run) and runs only the test files that read a changed path, printing one stderr line
+// that names the count and the base. Whatever keeps it from narrowing — a missing map, a path a
+// full-suite rule matches, an unreadable declaration, an unresolvable base, any error — runs the
+// whole suite with the one-line reason on stderr, never a smaller run and never an exception. No
+// selected file exits 0 with one line. `--full` runs the whole suite here; `CI` set (any non-empty
+// value), `--shard`, `--record-durations`, root arguments and `--files-from` never consult the map,
+// and neither does a run that is a child of `verify.js` or of another run (CT_TEST_SUITE_SLOT_HELD=1):
+// it does what its parent asked, so only a top-level plain run selects.
+//
 // `--shard <i>/<n>` runs only the i-th of n disjoint slices of the root set, so CI can spread the suite
 // across parallel jobs (`.github/workflows/test.yml`). Every shard computes the same partition from the
 // same checkout: files are weighted by `tools/test-durations.json` (an unmeasured file weighs the median
@@ -50,7 +61,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const {
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, slotLane, resolveSlots, defaultSlotBase, SLOT_DIR_VAR,
 } = require('../plugin/bin/lib/suite-slot');
@@ -307,15 +318,19 @@ function finishRecording(out, pid, { signalled }) {
   return `run-tests.js: ${out} left unchanged — ${signalled ? 'the run was interrupted' : 'the durations reporter wrote nothing'}`;
 }
 
-// Pulls `--shard <v>` / `--shard=<v>` and `--record-durations <path>` out of argv. Returns the
-// remaining arguments with the two values (null when absent). Throws on a flag with no value.
+// Pulls `--shard <v>` / `--shard=<v>`, `--record-durations <path>` and `--full` out of argv. Returns
+// the remaining arguments with the two values (null when absent) and `full` (a boolean). Throws on a
+// flag with no value.
 function extractRunFlags(argv) {
   const rest = [];
   let shard = null;
   let recordDurations = null;
+  let full = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg.startsWith('--shard=')) {
+    if (arg === '--full') {
+      full = true;
+    } else if (arg.startsWith('--shard=')) {
       shard = arg.slice('--shard='.length);
     } else if (arg === '--shard' || arg === '--record-durations') {
       const value = argv[i + 1];
@@ -327,7 +342,113 @@ function extractRunFlags(argv) {
       rest.push(arg);
     }
   }
-  return { rest, shard, recordDurations };
+  return { rest, shard, recordDurations, full };
+}
+
+// What a run does about impact selection (#5319), from the arguments and the environment alone:
+// 'listed' (a `--files-from` list names the files), 'whole' (`--full`, a shard, a recording, explicit
+// roots, CI set — any non-empty value, as resolveConcurrency reads it — or a held suite slot,
+// CT_TEST_SUITE_SLOT_HELD=1) or 'select' (consult the impact map). `--full` and `--files-from` together
+// are contradictory and throw. Pure: `env` is a parameter, never read from `process`.
+function resolveRunMode({ rest, shard, recordDurations, full, env }) {
+  if (rest.includes('--files-from')) {
+    if (full) throw new Error('--full cannot be combined with --files-from');
+    return 'listed';
+  }
+  if (full || shard || recordDurations !== null || rest.length > 0 || (typeof env.CI === 'string' && env.CI !== '')) return 'whole';
+  // A bare run under a held slot is a child of verify.js or of another run: it does what its parent asked.
+  if (env.CT_TEST_SUITE_SLOT_HELD === '1') return 'whole';
+  return 'select';
+}
+
+// The text up to the first line break, trimmed: a reason is always one stderr line.
+const oneLine = (text) => String(text).split(/\r?\n/)[0].trim();
+
+// The test files a plain local run would run, from the impact map and the changes since the
+// integration base. `files === null` means "run the whole suite" and `reason` says why; otherwise
+// `files` is the sorted, repo-relative, on-disk selection (possibly empty). Never throws: any error
+// becomes a `selection failed: ...` reason, so a failure can only widen the run. The verify modules
+// load lazily, so a checkout without them degrades to that reason instead of failing at require time.
+function selectChangedTests({ repoRoot, deps = {} }) {
+  const none = (reason, base = null) => ({ files: null, reason: oneLine(reason), base, total: 0, otherSuites: [] });
+  try {
+    const d = { ...realSelectionDeps(repoRoot), ...deps };
+    const read = d.readDeclaration(path.join(repoRoot, '.claude-tweaks', 'verify-scope.json'));
+    if (!read.ok) return none(read.errors[0]);
+    if (!read.decl) return none('no declaration');
+    const decl = read.decl;
+    if (!decl.impact) return none('the declaration has no impact block');
+    const execImpl = (cmd, args, options) => execFileSync(cmd, args, { ...options, cwd: repoRoot });
+    const base = d.resolveBase({ integrationBranch: 'main', execImpl });
+    const changed = d.changedFiles({ base, execImpl, withStatus: true });
+    // The context verify.js --scope builds, from the same helper, so the two select alike.
+    const impact = d.checkoutImpactContext({ decl, cwd: repoRoot, runFetch: d.runFetch, locate: d.gitLocations, load: d.loadImpactContext });
+    const sel = d.selectScope({ decl, files: changed.files, stamp: null, statuses: changed.statuses || null, impact, fallbackBase: base });
+    const imp = sel.impact;
+    if (!imp) return none('the declaration has no impact block', base);
+    if (imp.superseded) return none(`superseded by a full-suite rule (${imp.supersedingPaths.slice(0, 3).join(', ')})`, base);
+    if (imp.files === null) return none(imp.fallback || 'impact selection returned no file list', base);
+    // Suites besides the impact suite that the changes select (this repo's `journeys`): not run here, so named.
+    const otherSuites = Array.isArray(sel.suites) ? sel.suites.filter((s) => s !== decl.impact.suite).sort(byPath) : [];
+    return { files: imp.files.filter((f) => d.exists(f)).sort(byPath), reason: null, base, total: d.countTests(), otherSuites };
+  } catch (err) {
+    // A ChangedFilesError (an unresolvable base or diff) already names its own problem: bare, from either call.
+    if (err && err.name === 'ChangedFilesError') return none(err.message);
+    return none(`selection failed: ${err.message}`);
+  }
+}
+
+// The real collaborators `selectChangedTests` uses unless a test injects its own.
+function realSelectionDeps(repoRoot) {
+  const verifyLib = (name) => require(`../plugin/bin/lib/verify/${name}`);
+  const { readDeclaration } = verifyLib('declaration');
+  const { resolveBase, changedFiles } = verifyLib('changed-files');
+  const { gitLocations, loadImpactContext, checkoutImpactContext, runImpactFetch } = verifyLib('impact');
+  const { selectScope } = verifyLib('scope');
+  return {
+    readDeclaration, resolveBase, changedFiles, gitLocations, loadImpactContext, checkoutImpactContext, selectScope,
+    // verify.js's bounded fetch, announced first: a fetch can take up to 120 s of a plain run.
+    runFetch: (command, cwd) => {
+      console.error('run-tests.js: fetching the test-impact map (up to 120 s)');
+      return runImpactFetch(command, cwd);
+    },
+    exists: (entry) => {
+      try {
+        return fs.statSync(path.resolve(repoRoot, entry)).isFile();
+      } catch (_) {
+        return false;
+      }
+    },
+    countTests: () => listTestFiles(repoRoot, DEFAULT_ROOTS).length,
+  };
+}
+
+// What to do with a selection and the one stderr line that says so: 'whole' (no narrowing — run
+// everything, naming why), 'none' (nothing selected — exit 0 before taking a slot) or 'subset'.
+// Pure: a function of the selection result alone.
+function planDefaultRun({ files, reason, base, total, otherSuites = [] }) {
+  const base9 = base === null ? '' : String(base).slice(0, 9);
+  const also = otherSuites.length ? ` — also selected: ${otherSuites.join(', ')} (not run here; \`node plugin/bin/verify.js --scope .claude-tweaks/verify-scope.json --integration-branch main\` runs them)` : '';
+  if (files === null) {
+    return { action: 'whole', files: null, line: `run-tests.js: running the whole suite — impact selection could not narrow it: ${oneLine(reason)}` };
+  }
+  if (files.length === 0) {
+    return { action: 'none', files, line: `run-tests.js: no test file selected for changes since ${base9} — nothing to run; \`npm test -- --full\` runs the whole suite here${also}` };
+  }
+  return {
+    action: 'subset',
+    files,
+    line: `run-tests.js: impact-selected ${files.length} of ${total} test files for changes since ${base9} — \`npm test -- --full\` runs the whole suite here; CI runs it on every PR${also}`,
+  };
+}
+
+// The bare run's selection step (#5319): prints the plan's one line, exits 0 when nothing is selected
+// (before the caller takes any slot), and returns the subset to run, or null for the whole suite.
+function applyDefaultSelection({ select, log, exit }) {
+  const plan = planDefaultRun(select());
+  log(plan.line);
+  if (plan.action === 'none') exit(0);
+  return plan.action === 'subset' ? plan.files : null;
 }
 
 // Returns a new env with git's auto-maintenance switched off, via env-carried config (appended after
@@ -350,6 +471,7 @@ module.exports = {
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
+  resolveRunMode, selectChangedTests, realSelectionDeps, planDefaultRun, applyDefaultSelection,
   DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS,
 };
 
@@ -357,11 +479,13 @@ if (require.main === module) {
   let argv;
   let shard = null;
   let recordDurations = null;
+  let mode;
   try {
     const flags = extractRunFlags(process.argv.slice(2));
     argv = flags.rest;
     shard = flags.shard === null ? null : parseShard(flags.shard);
     recordDurations = flags.recordDurations;
+    mode = resolveRunMode({ ...flags, env: process.env });
     // A partial run must never overwrite the committed durations, and a subset has no shards.
     if (shard && argv.includes('--files-from')) throw new Error('--shard cannot be combined with --files-from');
     if (recordDurations !== null && (shard || argv.includes('--files-from'))) {
@@ -373,7 +497,20 @@ if (require.main === module) {
   }
   let roots;
   let files;
-  if (argv.includes('--files-from')) {
+  // A bare run selects by impact (#5319): the selection runs before any slot is taken, so a no-op
+  // run never queues and the subset and whole-suite lanes are chosen after it.
+  let impactSubset = null;
+  if (mode === 'select') {
+    impactSubset = applyDefaultSelection({
+      select: () => selectChangedTests({ repoRoot: REPO_ROOT }),
+      log: (line) => console.error(line),
+      exit: (code) => process.exit(code),
+    });
+  }
+  if (impactSubset !== null) {
+    roots = null;
+    files = impactSubset;
+  } else if (argv.includes('--files-from')) {
     // A subset plus roots would be ambiguous (which wins?), so the flag stands alone.
     if (argv.length !== 2 || argv[0] !== '--files-from') {
       console.error('run-tests.js: --files-from <list> takes exactly one list file and no root arguments.');
@@ -466,7 +603,8 @@ if (require.main === module) {
     // full suite (and takes the full-suite slot lane below) rather than failing to spawn (#4134).
     const reason = roots === null ? subsetFallbackReason(process.execPath, testArgs, { platform: process.platform }) : null;
     if (reason) {
-      console.error(`run-tests.js: --files-from ${argv[1]}: ${reason} — running the full suite instead.`);
+      const what = impactSubset !== null ? 'the impact-selected subset' : `--files-from ${argv[1]}`;
+      console.error(`run-tests.js: ${what}: ${reason} — running the full suite instead.`);
       roots = DEFAULT_ROOTS;
       files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
       testArgs = buildTestArgs(files, roots, argOptions);
