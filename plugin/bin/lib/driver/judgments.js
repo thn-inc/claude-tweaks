@@ -32,7 +32,7 @@ function isPlainObject(v) {
 
 function clock(deps) {
   try {
-    return typeof deps.now === 'function' ? deps.now() : 0;
+    return deps && typeof deps.now === 'function' ? deps.now() : 0;
   } catch {
     return 0;
   }
@@ -40,8 +40,8 @@ function clock(deps) {
 
 // One merge-check event. An emit that throws never changes the verdict it reports.
 function emitEvent(deps, startedAt, verdict, floor, detail) {
-  if (typeof deps.emit !== 'function') return;
   try {
+    if (!deps || typeof deps.emit !== 'function') return;
     const text = neutralize(String(detail || '')).slice(0, EVENT_DETAIL_MAX);
     deps.emit('merge-check', verdict === 'auto-merge' ? 'ok' : 'stop', clock(deps) - startedAt, text, { verdict, floor });
   } catch {
@@ -73,11 +73,16 @@ function readBlastRadius({ deps }, ctx) {
   if (summary.sensitiveFilesTouched.length > 0) {
     return { floor: 'sensitive-path', detail: 'the change touches a sensitive path' };
   }
-  return { floor: null, summary };
+  const cfg = isPlainObject(parsed.config) ? parsed.config : {};
+  const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+  if (!finite(cfg.autoMergeMaxLines) || !finite(cfg.autoMergeMaxFiles)) {
+    return { floor: 'blast-radius-failed', detail: 'blast radius reported no size ceilings' };
+  }
+  return { floor: null, summary, limits: { lines: cfg.autoMergeMaxLines, files: cfg.autoMergeMaxFiles } };
 }
 
 // Step 3: the record, the diff and the check state. { stop } on a failed record or diff read.
-function gatherInputs({ deps, shared }, ctx) {
+function gatherInputs({ deps }, ctx) {
   let title;
   let body;
   try {
@@ -101,12 +106,7 @@ function gatherInputs({ deps, shared }, ctx) {
   } catch {
     checks = 'checks: unreadable';
   }
-  const policy = {};
-  for (const key of ['auto-merge-max-lines', 'auto-merge-max-files']) {
-    const entry = shared.policy && shared.policy[key];
-    policy[key] = entry && typeof entry === 'object' ? entry.value : undefined;
-  }
-  return { title, body, diff, checks, policy };
+  return { title, body, diff, checks };
 }
 
 // Steps 4 and 5: launch, then validate. { verdict, rationale } or { stop }. Only the exact string
@@ -146,12 +146,14 @@ function logVerdict({ deps }, ctx, verdict) {
 
 // The merge-check half: { verdict: 'auto-merge' | 'needs-human' | 'unconfirmed', floor, detail }.
 async function judgeMergeCheck(env, ctx) {
-  const { deps, readFile } = env;
-  const startedAt = clock(deps);
+  let deps;
+  const startedAt = clock(env && env.deps);
   let verdict = 'unconfirmed';
   let floor = 'none';
   let detail = '';
   try {
+    deps = env.deps;
+    const { readFile } = env;
     let reached = null;
     const blast = readBlastRadius(env, ctx);
     if (blast.floor) {
@@ -169,7 +171,7 @@ async function judgeMergeCheck(env, ctx) {
       }
       const prompt = buildMergeCheckPrompt({
         record: ctx.record, title: inputs.title, body: inputs.body, diff: inputs.diff, summary: blast.summary,
-        policy: inputs.policy, checks: inputs.checks, reviewFindings: [], rules: rules.text,
+        policy: { 'auto-merge-max-lines': blast.limits.lines, 'auto-merge-max-files': blast.limits.files }, checks: inputs.checks, reviewFindings: [], rules: rules.text,
       });
       const judged = await launchAndValidate(env, ctx, prompt);
       if (judged.stop) {
