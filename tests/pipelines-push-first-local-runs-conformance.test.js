@@ -154,9 +154,14 @@ test('AC1.1: the pre-push sites and the whole-suite re-run pass --local (#5370)'
     [/--scope \.claude-tweaks\/verify-scope\.json --local --integration-branch \{integration-branch\} --no-stamp`/, 'the affected set passes --local'],
     [/`--local` because these runs are pre-push/, 'why: pre-push'],
   ]);
-  pinned(sectionOf(read('plugin/skills/test/flake-handling.md'), '## Whole-suite re-run'), [
-    [/a red the runner took from CI \(its `ci` entry `used: true`\) is not re-run here/, 'a CI red is not re-run here'],
-    [/it stands as a \*\*regression\*\*, since a re-run on this machine would judge CI's verdict on another platform/, 'it stands as a regression'],
+  const flake = read('plugin/skills/test/flake-handling.md');
+  pinned(lineStartingWith(flake, 'When a `tests`-family failure is not resolved by the runner'), [
+    [/a red the runner took from CI \(`report\.json`'s top-level `ci` entry for that suite reads `used: true`\) skips both paths/, 'a CI red skips both re-run paths'],
+    [/it stands as a \*\*regression\*\*, since an isolation pass on this machine would judge CI's verdict on another platform/, 'it stands as a regression'],
+    [/That binds the agent's re-run only; the runner's own allowlisted flaky retry still re-runs locally and is unchanged/, 'the runner retry is unchanged'],
+  ]);
+  pinned(sectionOf(flake, '## Whole-suite re-run'), [
+    [/the one local exception to the CI-red rule above is the `--local` fallback/, 'the --local exception'],
     [/A red from a `--local` run re-runs with `--local` added, inside that same fallback/, 'a local red re-runs with --local'],
     [/a scoped re-run would ask CI again and an unscoped one exits 2/, 'why --local'],
   ]);
