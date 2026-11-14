@@ -66,7 +66,11 @@ function residueErrorText(err) {
     }
   }
   const short = words.length ? words.join(' ') : null;
-  if (stderr) return short ? `${stderr} (${short})` : stderr;
+  if (stderr) {
+    if (short) return `${stderr} (${short})`;
+    // A spawn-level failure (ETIMEDOUT, ENOBUFS) carries a string `code`; its message is the cause.
+    return typeof err.code === 'string' ? `${stderr} (${firstLine.trim()})` : stderr;
+  }
   if (short) return `Command failed: ${short}`;
   return errorText(err);
 }
