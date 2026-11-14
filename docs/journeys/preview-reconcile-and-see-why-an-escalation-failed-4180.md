@@ -3,6 +3,7 @@ files:
   - plugin/bin/hooks.js
   - plugin/bin/lib/reconcile/index.js
   - plugin/bin/lib/reconcile/cache.js
+  - plugin/bin/lib/reconcile/escalate-residue.js
   - plugin/bin/lib/reconcile/archive-merged.js
   - plugin/bin/lib/reconcile/origin-head.js
   - plugin/bin/lib/reconcile/residue-summary.js
@@ -55,8 +56,10 @@ files:
   - Tracked failures live on the cache entry as `lastResidueError` and survive later failing passes on the same path.
   - They disappear only when the entry itself is dropped: the path recovered or got archived, or a later resolve succeeded.
   - `residueErrors` is filled on every pass that resolved a repo root, over-budget passes included.
+  - A failed `gh` call's `error` leads with what `gh` said, then a short form of the command: `HTTP 403: secondary rate limit (gh issue comment 2724)`. With no stderr it reads `Command failed: gh issue comment 2724`; a timeout or buffer overflow keeps its cause (`warning: … (spawnSync gh ETIMEDOUT)`). It never carries the command's flags or a `--body` text (#5393).
 - **Red flags:**
   - `residueErrors` is `[]` while an issue you expected to close is still open with its path listed. Check whether the resolve ran at all.
+  - An `error` that starts `Command failed: gh … --repo …` or quotes comment text. That is the pre-#5393 argv echo, cut at 200 characters before `gh`'s answer: an entry recorded by an older build, or a call site that bypasses `residueErrorText`.
 
 ### 4. See it without running anything
 - **URL:** the residue summary line (`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" reconcile-summary`, `/claude-tweaks:flow`'s closing report) and the next session's start-up context
@@ -70,6 +73,7 @@ files:
 ## Origin
 - Created during build of #4180 (reconcile: make `--dry-run` write nothing, and record why an escalate or resolve failed).
 - All steps were built in this session.
+- Updated by #5393: step 3's `error` text leads with `gh`'s stderr and a short command, and never carries a flag value.
 - Related records:
   - #2724 (first dry-run guard on the exempt clear)
   - #4202 (checkout-scoped gone-path predicate)
