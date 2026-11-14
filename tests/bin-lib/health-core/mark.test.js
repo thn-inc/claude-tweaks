@@ -19,6 +19,24 @@ function fakeCacheStore(initial = {}) {
   };
 }
 
+test('writes through an injected io, defaults root to io.cwd(), and returns 0 on success / 2 on bad usage', () => {
+  const store = fakeCacheStore();
+  const roots = [];
+  let out = '';
+  let err = '';
+  const cmdMark = makeCmdMark({
+    readCache: (r) => { roots.push(r); return store.readCache(r); },
+    writeCache: store.writeCache,
+    toolName: 'journey-health',
+    io: { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => '/injected/cwd' },
+  });
+  assert.strictEqual(cmdMark({ _: ['mark', 'fp-1', 'declined'] }), 0);
+  assert.deepStrictEqual(roots, ['/injected/cwd']);
+  assert.strictEqual(JSON.parse(out).status, 'declined');
+  assert.strictEqual(cmdMark({ _: ['mark', 'fp-1', 'bogus'] }), 2);
+  assert.match(err, /^usage: journey-health\.js mark <fingerprint> <declined>/);
+});
+
 test('MARK_STATUSES only allows "declined"', () => {
   assert.deepStrictEqual([...MARK_STATUSES], ['declined']);
 });

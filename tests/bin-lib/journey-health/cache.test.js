@@ -3,7 +3,9 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { cachePath, readCache, writeCache } = require('../../../plugin/bin/lib/journey-health/cache');
+const {
+  cachePath, readCache, writeCache, createDurable,
+} = require('../../../plugin/bin/lib/journey-health/cache');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-cache-')); }
 
@@ -61,4 +63,13 @@ test('readDurableState/writeDurableState are exported and bound to journey-healt
   // that here.
   assert.strictEqual(typeof readDurableState, 'function');
   assert.strictEqual(typeof writeDurableState, 'function');
+});
+
+test('createDurable returns the durable accessors and routes git stderr to the injected sink', () => {
+  let err = '';
+  const root = tmp();
+  const durable = createDurable({ env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(root) }, stderr: (t) => { err += t; } });
+  assert.deepStrictEqual(Object.keys(durable).sort(), ["readDurableState","writeDurableState"]);
+  assert.deepStrictEqual(durable.readDurableState(root), { cursors: {}, retryQueue: [], runs: [], declined: {} });
+  assert.match(err, /health-state: fetch failed/);
 });

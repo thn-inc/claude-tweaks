@@ -19,6 +19,19 @@ function tmpFile(content) {
   return file;
 }
 
+test('routes every diagnostic to an injected stderr instead of process.stderr', () => {
+  let err = '';
+  const stderr = (t) => { err += t; };
+  assert.deepStrictEqual(loadIssueIndex('/nonexistent/issues.json', 'code-health', { stderr }), {});
+  assert.match(err, /^\[code-health\] validate-findings: could not read or parse --issues file/);
+  err = '';
+  assert.deepStrictEqual(loadIssueIndex(tmpFile('{}'), 'code-health', { stderr }), {});
+  assert.match(err, /must contain a JSON array/);
+  err = '';
+  loadIssueIndex(tmpFile(JSON.stringify([null])), 'code-health', { stderr });
+  assert.match(err, /^\[code-health\] loadIssueIndex: skipping malformed issue entry/);
+});
+
 test('returns {} when no file is given', () => {
   assert.deepStrictEqual(loadIssueIndex(undefined, 'code-health'), {});
   assert.deepStrictEqual(loadIssueIndex('', 'code-health'), {});

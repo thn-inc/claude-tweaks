@@ -145,24 +145,47 @@ test('update prints [] AND sets a failing exit code (not the computed-but-unpers
   fs.writeFileSync(resultsPath, JSON.stringify([
     { fingerprint: 'stuck', payload: { title: 'Stuck' }, ok: false, error: 'still failing' },
   ]));
-  // Save/restore process.exitCode around the call: update() sets it as a
-  // real side effect (the fix under test), and leaving it set to 1 would
-  // leak into this whole test FILE's own eventual exit code once node
-  // finishes running it, unrelated to whether every assertion here passes.
-  const originalExitCode = process.exitCode;
-  process.exitCode = undefined;
-  let out;
-  try {
-    out = captureStdout(() => update({ root: '/repo', _: ['update', resultsPath] }));
-    assert.strictEqual(
-      process.exitCode,
-      1,
-      'a genuinely failed durable write must set a non-zero exit code, or a calling shell/Routine checking $? sees success and never surfaces the failure',
-    );
-  } finally {
-    process.exitCode = originalExitCode;
-  }
+  // update() returns the code (the CLI wires it onto process.exitCode); it
+  // must never set process.exitCode itself.
+  let code;
+  const out = captureStdout(() => { code = update({ root: '/repo', _: ['update', resultsPath] }); });
+  assert.strictEqual(code, 1, 'a genuinely failed durable write must return a non-zero code, or a calling shell/Routine checking $? sees success and never surfaces the failure');
+  assert.strictEqual(process.exitCode, undefined, 'update must not set process.exitCode');
   assert.deepStrictEqual(JSON.parse(out), [], 'must not report an escalation that was never actually persisted to retry-queue.json');
+});
+
+test('drain returns 0 and writes through an injected io', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  let out = '';
+  let err = '';
+  const seen = [];
+  const cmds = makeRetryQueueCommands({
+    readDurableState: (r) => { seen.push(r); return { retryQueue: [{ payload: { a: 1 } }] }; },
+    writeDurableState: () => ({ ok: true }),
+    io: { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => root },
+  });
+  const code = cmds.drain({ _: [] });
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(JSON.parse(out), [{ a: 1 }]);
+  assert.strictEqual(err, '');
+  assert.deepStrictEqual(seen, [root]);
+});
+
+test('update returns 0 on success and 2 on a missing results path, writing through an injected io', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  let out = '';
+  let err = '';
+  const cmds = makeRetryQueueCommands({
+    readDurableState: () => ({ retryQueue: [] }),
+    writeDurableState: (r, mutator) => { mutator({ retryQueue: [] }); return { ok: true }; },
+    io: { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => root },
+  });
+  assert.strictEqual(cmds.update({ _: ['update'] }), 2);
+  assert.match(err, /^usage: <cli>\.js retry-queue update/);
+  const resultsPath = path.join(root, 'results.json');
+  fs.writeFileSync(resultsPath, '[]');
+  assert.strictEqual(cmds.update({ _: ['update', resultsPath] }), 0);
+  assert.deepStrictEqual(JSON.parse(out), []);
 });
 
 test('update skips a malformed (e.g. null) results entry instead of crashing, and still processes well-formed siblings in the same batch', () => {

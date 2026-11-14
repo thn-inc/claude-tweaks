@@ -258,7 +258,8 @@ function extractDomainPaths(content) {
 // docs-health/scope.js — see the require at the top of this file.
 
 // ─── selectTarget ────────────────────────────────────────────────────────────
-// opts: { now?: number, signals?: { [kind:id]: number }, kind?: string }
+// opts: { now?: number, signals?: { [kind:id]: number }, kind?: string, env?: object }
+// (env: the child git's environment for the churn lookup; omitted = inherited)
 // Returns { kind, id, path, why: 'stale' | 'hotspot' } or null. Cursor and
 // signal lookups are namespaced as `${kind}:${id}` so a skill and a rule that
 // happen to share a bare id never collide.
@@ -294,7 +295,7 @@ function selectTarget(root, cursors, opts = {}) {
         // recently is itself a drift risk, independent of what it
         // references).
         const relCandidatePath = toPosix(path.relative(root, candidate.path));
-        churn = domainChurn(root, [relCandidatePath, ...domainPaths], sinceMs);
+        churn = domainChurn(root, [relCandidatePath, ...domainPaths], sinceMs, { env: opts.env });
       }
       return churn > 0 ? churn : null;
     },
