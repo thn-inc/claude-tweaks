@@ -8,9 +8,11 @@
 // bin/lib/model-profiles/policy-fragment.js#parsePolicyModelConfig (the
 // model-profiles nested-block key; risk-path-globs, the other, resolves inside
 // resolvePolicyKeys). No resolution logic lives here. Zero runtime npm deps.
-// Exports { resolvePolicy, run, realDeps }: resolvePolicy is the core and returns an
-// object (it prints nothing), run parses argv and prints, realDeps is the production
-// deps map. The entry contract is .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md.
+// Exports { resolvePolicy, run, realDeps, EXIT_OK, EXIT_INVOCATION, scalarValue,
+// warningLines, callerDeps }: resolvePolicy is the core and returns an object (it
+// prints nothing), run parses argv and prints, realDeps is the production deps map;
+// the rest are the in-process caller surface — the exit codes, the --values scalar
+// rule, the stderr warning lines run writes, and a bounded-git deps builder (#5384). The entry contract is .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md.
 //
 // Usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]
 // Output: one JSON object on stdout keyed by requested name — or, with
@@ -59,14 +61,19 @@ const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
 const { pickInjected } = require('./lib/repo-resolve');
 const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
+const sharedPrimitives = require('./lib/shared-primitives');
+
+const EXIT_OK = 0;
+const EXIT_INVOCATION = 1;
 
 // The nested-block keys: no scalar form under --values.
 const BLOCK_KEYS = POLICY_KEYS.filter((row) => row.type === 'map').map((row) => row.key);
 
-function gitRoot(args, { cwd, env } = {}) {
+function gitRoot(args, { cwd, env, timeout } = {}) {
   return execFileSync('git', args, {
     cwd,
     env,
+    ...(timeout === undefined ? {} : { timeout }),
     stdio: ['ignore', 'pipe', 'ignore'],
     encoding: 'utf8',
     windowsHide: true,
@@ -95,7 +102,7 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   let runDirPath = null;
   if (runDir !== null) {
     const message = anchoredOrOutsideMessage(runDir, cwd, '--run');
-    if (message) return { code: 1, message };
+    if (message) return { code: EXIT_INVOCATION, message };
     runDirPath = path.resolve(cwd, runDir);
     let isDirectory = false;
     try {
@@ -104,7 +111,7 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
     if (!isDirectory) {
       // A file path (e.g. the config.yml itself) must fail loud here, not
       // degrade to a silent no-overlay with policy-source answers.
-      return { code: 1, message: `--run dir does not exist or is not a directory: ${runDir}` };
+      return { code: EXIT_INVOCATION, message: `--run dir does not exist or is not a directory: ${runDir}` };
     }
   }
 
@@ -164,13 +171,62 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
     }
   }
 
-  return { code: 0, result, invalidRaw, degrades };
+  return { code: EXIT_OK, result, invalidRaw, degrades };
+}
+
+// The --values rule: an {error} entry and a null/undefined value (no-default key
+// unset) both read as an empty string — mirroring the empty string the retired
+// grep-pipeline idiom produced for an absent key.
+function scalarValue(entry) {
+  if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) return '';
+  return String(entry.value);
+}
+
+// The stderr lines run writes for a successful core call, newline-terminated:
+// the degraded-forge lines in every mode, then (values only) one invalid-value
+// warning per requested key. out is { keys, result, invalidRaw, degrades }.
+function warningLines({ keys, result, invalidRaw, degrades }, { values }) {
+  const lines = [];
+  // One stderr line per degraded key, in every output mode; stdout is unchanged.
+  for (const key of ['integration-model', 'merge-verification']) {
+    if (!degrades.has(key)) continue;
+    lines.push(`resolve-policy: degraded — ${key}: ${formatForgeDegrade(degrades.get(key))}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms\n`);
+  }
+  if (values) {
+    // #4141: a rejected value still prints its schema default on stdout, so
+    // name each rejected key on stderr — the caller otherwise cannot tell a
+    // typo from an intentional default. Every `invalid` entry reaching here
+    // came through resolvePolicyKeys's invalid branch, so its raw value is
+    // recorded (the block keys are rejected before the core in --values mode).
+    for (const key of keys) {
+      const entry = result[key];
+      if (!entry || !entry.invalid) continue;
+      const shownDefault = entry.value ?? '(none)';
+      lines.push(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}" — using default "${shownDefault}"\n`);
+    }
+  }
+  return lines;
+}
+
+// Deps for an in-process caller of the core: the given cwd and env, a git bounded
+// at gitTimeoutMs (a hung git then falls back to cwd as the repo root instead of
+// hanging the caller), and no stdout — the core never prints. The default bound
+// is read at call time: GIT_TIMEOUT_MS is a lazy getter over the policy file.
+function callerDeps({ cwd, env = process.env, homeDir, stderr, gitTimeoutMs = sharedPrimitives.GIT_TIMEOUT_MS }) {
+  return {
+    cwd: () => cwd,
+    env,
+    git: (args, opts) => gitRoot(args, { ...opts, timeout: gitTimeoutMs }),
+    readFile: readFileSafe,
+    ...(homeDir === undefined ? {} : { homeDir }),
+    ...(stderr === undefined ? {} : { stderr }),
+  };
 }
 
 function run(argv, deps = realDeps) {
   const fail = (msg) => {
     deps.stderr(`resolve-policy: ${msg}\n`);
-    return 1;
+    return EXIT_INVOCATION;
   };
   const args = [...argv];
   let runDir = null;
@@ -222,38 +278,16 @@ function run(argv, deps = realDeps) {
   }
 
   const out = resolvePolicy({ keys, runDir, mcpReachable }, deps);
-  if (out.code !== 0) return fail(out.message);
-  const { result, invalidRaw, degrades } = out;
+  if (out.code !== EXIT_OK) return fail(out.message);
+  const { result } = out;
 
-  // One stderr line per degraded key, in every output mode; stdout is unchanged.
-  for (const key of ['integration-model', 'merge-verification']) {
-    if (!degrades.has(key)) continue;
-    deps.stderr(`resolve-policy: degraded — ${key}: ${formatForgeDegrade(degrades.get(key))}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms\n`);
-  }
+  for (const line of warningLines({ keys, ...out }, { values: valuesMode })) deps.stderr(line);
 
   if (valuesMode) {
-    // #4141: a rejected value still prints its schema default on stdout, so
-    // name each rejected key on stderr — the caller otherwise cannot tell a
-    // typo from an intentional default. Every `invalid` entry reaching here
-    // came through resolvePolicyKeys's invalid branch, so its raw value is
-    // recorded (the block keys are rejected above in --values mode).
-    for (const key of keys) {
-      const entry = result[key];
-      if (!entry || !entry.invalid) continue;
-      const shownDefault = entry.value ?? '(none)';
-      deps.stderr(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}" — using default "${shownDefault}"\n`);
-    }
     // Scalar mode for shell-variable capture at prose read sites: one value
-    // per line, request order. An {error} entry and a null value (no-default
-    // key unset) both print an empty line — mirroring the empty string the
-    // retired grep-pipeline idiom produced for an absent key.
-    const lines = keys.map((key) => {
-      const entry = result[key];
-      if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) return '';
-      return String(entry.value);
-    });
-    deps.stdout(`${lines.join('\n')}\n`);
-    return 0;
+    // per line, request order.
+    deps.stdout(`${keys.map((key) => scalarValue(result[key])).join('\n')}\n`);
+    return EXIT_OK;
   }
 
   if (allMode) {
@@ -269,11 +303,11 @@ function run(argv, deps = realDeps) {
       };
     }
     deps.stdout(`${JSON.stringify(decorated)}\n`);
-    return 0;
+    return EXIT_OK;
   }
 
   deps.stdout(`${JSON.stringify(result)}\n`);
-  return 0;
+  return EXIT_OK;
 }
 
 const realDeps = {
@@ -286,6 +320,6 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
-module.exports = { resolvePolicy, run, realDeps };
+module.exports = { resolvePolicy, run, realDeps, EXIT_OK, EXIT_INVOCATION, scalarValue, warningLines, callerDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
