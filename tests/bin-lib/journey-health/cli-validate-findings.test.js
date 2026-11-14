@@ -6,6 +6,8 @@ const os = require('os');
 const path = require('path');
 
 const { seedDurableState } = require('../health-core/seed-durable-state');
+const { spawnCli } = require('../../helpers/run-cli');
+const { sweepCli } = require('../../helpers/health-sweep-cli');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'journey-health.js');
 
@@ -330,4 +332,25 @@ test('validate-findings: a fingerprint declined only on the durable health-state
     0,
     'a durably-declined finding must be suppressed even though this root has no local cache.json for it',
   );
+});
+
+// Proves the refusal path's exit code survives the real entry: the same unrecognized
+// --min-confidence goes through run() in-process and through the script as a child, with
+// the same env, and both must refuse with 2 and the same stderr (#5380).
+test('validate-findings --min-confidence bogus: the in-process run and the script entry both refuse with 2 and the same stderr', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([finding()]));
+  // The same env for both halves, with the file-protocol-only git guard sweepCli also applies
+  // (tests/helpers/health-sweep-cli.js); this refusal returns before any git call.
+  const env = { ...process.env, GIT_ALLOW_PROTOCOL: 'file' };
+  const argv = ['validate-findings', findingsFile, '--root', root, '--min-confidence', 'bogus', '--dry-run'];
+
+  const inProcess = sweepCli(CLI, argv, { env, cwd: root });
+  const spawned = spawnCli(CLI, argv, { env, cwd: root });
+
+  assert.strictEqual(inProcess.status, 2);
+  assert.strictEqual(spawned.code, 2);
+  assert.strictEqual(spawned.stderr, inProcess.stderr);
+  assert.match(spawned.stderr, /--min-confidence "bogus" is not a recognized confidence tier/);
 });

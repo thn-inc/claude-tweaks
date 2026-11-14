@@ -84,8 +84,9 @@ function captureStdio(fn) {
   }
 }
 
-// harness-health.js is on the entry contract (#5380): main() returns the exit code and never
-// sets process.exitCode, so its rows assert the return value and that process.exitCode is untouched.
+// harness-health.js and journey-health.js are on the entry contract (#5380): main() returns the
+// exit code and never sets process.exitCode, so their rows assert the return value and that
+// process.exitCode is untouched.
 function returnedCode(fn) {
   const original = process.exitCode;
   process.exitCode = undefined;
@@ -104,9 +105,14 @@ test('harness-health.js main(): churn-report --fail-on-high-churn with a non-num
   assert.strictEqual(code, 2);
 });
 
+test('journey-health.js main(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
+  const root = tmpGitRootWithOneRun('journey-health-churn-', 'journey-health');
+  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
 const CHURN_REPORT_CLIS = [
   ['code-health', codeHealth],
-  ['journey-health', journeyHealth],
   ['docs-health', docsHealth],
 ];
 
@@ -126,8 +132,13 @@ test('harness-health.js main(): mark <fingerprint> <bad-status> returns 2', () =
   assert.strictEqual(code, 2);
 });
 
+test('journey-health.js main(): mark <fingerprint> <bad-status> returns 2', () => {
+  const root = tmpRoot('journey-health-mark-');
+  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
 const MARK_CLIS = [
-  ['journey-health', journeyHealth],
   ['docs-health', docsHealth],
   // code-health.js has no `mark` command (confirmed: cmdMark is not
   // required/dispatched there) -- deliberately excluded, per the record's
@@ -158,9 +169,22 @@ test('harness-health.js main(): retry-queue update with an unparseable results f
   assert.strictEqual(code, 1);
 });
 
+test('journey-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
+  const root = tmpRoot('journey-health-retryq-missing-');
+  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['retry-queue', 'update', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
+test('journey-health.js main(): retry-queue update with an unparseable results file returns 1', () => {
+  const root = tmpRoot('journey-health-retryq-malformed-');
+  const resultsPath = path.join(root, 'results.json');
+  fs.writeFileSync(resultsPath, 'not valid json {{{');
+  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['retry-queue', 'update', resultsPath, '--root', root])));
+  assert.strictEqual(code, 1);
+});
+
 const ALL_CLIS = [
   ['code-health', codeHealth],
-  ['journey-health', journeyHealth],
   ['docs-health', docsHealth],
 ];
 
