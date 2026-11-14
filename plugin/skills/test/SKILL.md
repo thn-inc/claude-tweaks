@@ -124,7 +124,7 @@ Run `verification.md` Step 2's run command with `--local` added and no `--scope`
 
 ### Targeted scope (with arguments)
 
-When `$ARGUMENTS` specifies a targeted scope, resolve commands from CLAUDE.md (see `verification.md` Step 1), then run only the requested checks, passing `--no-stamp` (a partial set must never stamp — `verification.md` Step 2):
+When `$ARGUMENTS` specifies a targeted scope, resolve commands from CLAUDE.md (see `verification.md` Step 1), then run only the requested checks, passing `--no-stamp` (a partial set must never stamp — `verification.md` Step 2) and, under a declaration that sets `localRuns`, `--local` too (`verification.md`'s "A targeted run never stamps"):
 
 - **By check type** (`types`, `lint`, `unit`, etc.) — run only the specified checks
 - **By path** — scope test commands to the given file or directory

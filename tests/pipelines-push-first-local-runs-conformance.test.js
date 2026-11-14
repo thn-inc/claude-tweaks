@@ -34,7 +34,7 @@ function scopingProblems(text) {
   const cells = rows.map((l) => l.split(' | ').map((c) => c.replace(/^\| |\s*\|$/g, '')));
   const problems = [];
   const pipeline = cells.filter(([site]) => !NOT_PIPELINE.includes(site));
-  if (pipeline.length !== 6) problems.push(`expected 6 pipeline rows, found ${pipeline.length}`);
+  if (pipeline.length !== 7) problems.push(`expected 7 pipeline rows, found ${pipeline.length}`);
   for (const [site, mode] of pipeline) if (!mode.startsWith('scoped')) problems.push(`${site}: ${mode}`);
   const standalone = cells.find(([site]) => site === NOT_PIPELINE[0]);
   if (!standalone || !standalone[1].includes('full without `localRuns`; scoped under it')) problems.push('Standalone row must read full without `localRuns`; scoped under it');
@@ -109,7 +109,12 @@ test('AC1.2: reverting the Build row to full makes the scoping assertion name it
 });
 
 test('AC1.1, AC3.2: the Push first paragraph states the push, exit 3 handling and the --local fallback (#5370)', () => {
-  pinned(para(read(VERIFICATION), '**Push first, and exit 3 (#5370).**'), PUSH_FACTS);
+  // The rule is a lead line plus labeled sub-paragraphs and bullet lists: read from the lead line to the next unrelated paragraph.
+  const v = read(VERIFICATION);
+  const at = v.indexOf('**Push first, and exit 3 (#5370).**');
+  const end = v.indexOf('**Baseline on the same invocation', at);
+  assert.ok(at !== -1 && end > at, 'the Push first block and the Baseline paragraph after it must exist');
+  pinned(v.slice(at, end), PUSH_FACTS);
 });
 
 test('the Standalone rule keeps "always full" for a project without the key and scopes it under the key (#5370)', () => {
@@ -258,6 +263,7 @@ const RETIRED = [
   'Standalone `/claude-tweaks:test` and a standalone `/build` stay full.',
   'Otherwise it runs full, as does a standalone `/build`.',
   'Common Step 5 runs the full suite anyway',
+  'Re-run the full suite on the merged tree',
 ];
 const retiredIn = (text) => RETIRED.filter((s) => text.includes(s));
 

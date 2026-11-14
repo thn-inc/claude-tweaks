@@ -172,7 +172,7 @@ test('AC6.1: every workflow that runs the suite asks for the whole suite (#5319)
   }
 });
 
-test('AC5.1: verify.js\'s selection still picks a test that reads a changed module, and its full command runs every file (#5319)', () => {
+test('AC5.1: verify.js\'s selection still picks a test that reads a changed module, and the tests check\'s full command ends with --full (run-tests.js\'s whole-suite flag, pinned by tests/run-tests-default-run.test.js) (#5319)', () => {
   const { decl } = readDeclaration(DECL);
   const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
     commit: 'b'.repeat(40), tracedAt: '2026-11-13T00:00:00Z', exitCode: 0, node: 'v20.0.0',
