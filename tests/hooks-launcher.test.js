@@ -49,7 +49,7 @@ function perShell(title, fn, extra = {}) {
   for (const sh of SHELLS) {
     const missing = !sh.file;
     if (missing && sh.name === 'sh') throw new Error('sh not found on PATH');
-    test(`${title} [${sh.name}]`, { skip: (missing && NOT_ON_PATH(sh.name)) || extra.skip }, () => fn(sh));
+    test(`${title} [${sh.name}]`, { skip: (missing && NOT_ON_PATH(sh.name)) || extra.skip }, (t) => fn(sh, t));
   }
 }
 
@@ -645,30 +645,50 @@ perShell('hooks.sh: an unreadable worktree .git falls back to the worktree (R12)
 }, chmodDenialSkip('root reads a mode-000 file'));
 
 // main_root stops at a directory it cannot search: walking past A would reach
-// the policy-on main above it and deny. The cd and chmod run inside sh -c,
-// since spawnSync's own chdir into B fails once A is unsearchable.
-perShell('hooks.sh: an unsearchable directory above the cwd falls back to the cwd', (sh) => {
+// the policy-on main above it and deny. Two rows: the cwd B under A, and the
+// cwd A itself. The cd and chmod run inside sh -c, since spawnSync's own chdir
+// into B fails once A is unsearchable. The walk is reached only where a fresh
+// shell's `pwd -P` still answers under the unsearchable A: Linux (getcwd is a
+// syscall) answers for both rows; macOS getcwd fails for both, so there the
+// test still checks the verdict and then skips by name.
+perShell('hooks.sh: an unsearchable directory above the cwd falls back to the cwd', (sh, t) => {
   const main = gitRepo();
   writePolicy(main, 'worktree-always: true\n');
   const a = path.join(main, 'locked');
   const b = path.join(a, 'b');
   fs.mkdirSync(b, { recursive: true });
   const env = noNodeEnv(tmp('hl-home-'), { PATH: pathWithOnly(['sh', 'cat', 'awk', 'chmod'], { exclude: ['node'] }) });
-  const script = 'cd "$1" || exit 9; chmod 0600 "$2"; exec "$3" "$4" pre-tool-use';
-  let r;
-  let oracle;
-  try {
-    r = spawnSync(sh.file, ['-c', script, 'hooks-sh-test', b, a, sh.file, LAUNCHER_ARG], {
-      input: toolPayload('Bash', { command: 'echo hi' }, b), cwd: os.tmpdir(), env, encoding: 'utf8', windowsHide: true,
-    });
-    assert.equal(mainCheckoutRoot(b), null, 'oracle: mainCheckoutRoot(B) is unresolved while A is unsearchable');
-    oracle = resolveWorktreeAlways(b).on ? 'on' : 'off';
-  } finally {
-    fs.chmodSync(a, 0o755);
+  const pwdAnswers = (cwd) => {
+    try {
+      // A fresh process, as the launcher is: a shell that did the cd itself can
+      // answer pwd -P from its own record of the path where getcwd fails.
+      const p = spawnSync(sh.file, ['-c', 'cd "$1" || exit 9; chmod 0600 "$2"; exec "$3" -c "pwd -P"', 'hooks-sh-test', cwd, a, sh.file], {
+        cwd: os.tmpdir(), env, encoding: 'utf8', windowsHide: true,
+      });
+      return p.status === 0 && p.stdout.trim() !== '';
+    } finally {
+      fs.chmodSync(a, 0o755);
+    }
+  };
+  let reached = 0;
+  for (const [id, cwd] of [['cwd under A', b], ['cwd is A', a]]) {
+    if (pwdAnswers(cwd)) reached += 1;
+    let r;
+    let oracle;
+    try {
+      r = spawnSync(sh.file, ['-c', 'cd "$1" || exit 9; chmod 0600 "$2"; exec "$3" "$4" pre-tool-use', 'hooks-sh-test', cwd, a, sh.file, LAUNCHER_ARG], {
+        input: toolPayload('Bash', { command: 'echo hi' }, cwd), cwd: os.tmpdir(), env, encoding: 'utf8', windowsHide: true,
+      });
+      assert.equal(mainCheckoutRoot(cwd), null, `${id}: oracle: mainCheckoutRoot is unresolved while A is unsearchable`);
+      oracle = resolveWorktreeAlways(cwd).on ? 'on' : 'off';
+    } finally {
+      fs.chmodSync(a, 0o755);
+    }
+    assert.equal(r.status, 0, `${id}: status=${r.status} stderr=${r.stderr}`);
+    assert.equal(oracle, 'off', `${id}: oracle: the cwd fallback has no policy`);
+    assert.equal(r.stdout, '', `${id}: shell: off (silent)`);
   }
-  assert.equal(r.status, 0, `status=${r.status} stderr=${r.stderr}`);
-  assert.equal(oracle, 'off', 'oracle: the cwd fallback has no policy');
-  assert.equal(r.stdout, '', 'shell: off (silent)');
+  if (reached === 0) t.skip(`${sh.name}: pwd -P fails under an unsearchable directory here (macOS getcwd), so the root walk is never reached`);
 }, chmodDenialSkip('root searches a mode-0600 directory'));
 
 const HOOKS_JSON_ROWS = [
