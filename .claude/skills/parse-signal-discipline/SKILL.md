@@ -376,7 +376,7 @@ When mechanizing a prose heuristic into a deterministic check:
     arm, classified by the thrown error's shape, and pin "main probe times out, precondition probe
     succeeds" with its own assertion (`tests/verify-run-bookends.test.js`'s
     `catFileTimeoutRevParseOk`).
-Items 17-28 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
+Items 17-30 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
 kept. Read it when your case matches one of these:
 
 17. **A start/end snapshot guard sees only the window between its two reads, and each value it records has an unsafe direction.**
@@ -392,6 +392,7 @@ kept. Read it when your case matches one of these:
 27. **A parse problem that hides content owes its own report, found by a second read under the relaxed reading and credited only to a cause the author can edit.**
 28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its gaps cost only on inputs that could hold the signal.**
 29. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.**
+30. **A reader that feeds several independent checks owes each could-not-read reason the field it concerns, so a consumer suppresses only the checks that read that field.**
 
 ## When to use
 
