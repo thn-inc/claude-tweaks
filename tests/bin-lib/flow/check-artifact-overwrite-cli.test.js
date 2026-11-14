@@ -17,8 +17,8 @@ const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow
 const { ArtifactOverwriteCheckError } = require(LIB);
 
 // The ambient env, minus the GIT_* variables the module-level cleanup below removes: real git needs PATH.
-function runCheck(argv, deps = {}, cwd = process.cwd()) {
-  const res = runCliSync(CLI, argv, { env: { ...process.env }, cwd, deps });
+function runCheck(argv, deps = {}, cwd = process.cwd(), env = { ...process.env }) {
+  const res = runCliSync(CLI, argv, { env, cwd, deps });
   return { code: res.code, out: () => res.stdout, err: () => res.stderr };
 }
 
@@ -283,7 +283,7 @@ test('--integration-ref is forwarded to the check as integrationRef', () => {
 
 test('--integration-ref rejects an empty, a whitespace-only and a dash-leading value (exit 2)', () => {
   for (const value of ['', '  ', '-x', '--upload-pack=evil']) {
-      const io = runCheck(['--base', 'a', '--integration-ref', value],
+    const io = runCheck(['--base', 'a', '--integration-ref', value],
       { check: () => { throw new Error('check must not run'); } });
     assert.strictEqual(io.code, 2, `value ${JSON.stringify(value)}`);
     assert.match(io.err(), /--integration-ref requires a ref/);
@@ -337,4 +337,41 @@ test('end-to-end: a catch-up merge of upstream\'s journey exits 0 with --integra
   assert.strictEqual(unresolvable.code, 3, unresolvable.stderr);
   assert.match(unresolvable.stderr, /check-artifact-overwrite:/);
   assert.strictEqual(unresolvable.stdout, '');
+});
+
+test('AC6.1: the check\'s git child takes the injected env — GIT_DIR in env aims it at repo B while cwd is repo A', (t) => {
+  const mk = (prefix) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const a = mk('ct-cao-env-a-');
+  const b = mk('ct-cao-env-b-');
+  t.after(() => { fs.rmSync(a, { recursive: true, force: true }); fs.rmSync(b, { recursive: true, force: true }); });
+  // Setup git calls take the cleaned process.env (no GIT_* — stripped at module load), so each aims at its own cwd.
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
+  const commit = (cwd, rel, content, message) => {
+    fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true });
+    fs.writeFileSync(path.join(cwd, rel), content);
+    git(cwd, 'add', '-A');
+    git(cwd, 'commit', '-q', '-m', message);
+  };
+  git(a, 'init', '-q');
+  git(a, 'config', 'user.email', 't@example.invalid');
+  git(a, 'config', 'user.name', 'Test');
+  git(a, 'commit', '-q', '--allow-empty', '-m', 'base');
+  const base = git(a, 'rev-parse', 'HEAD').trim();
+  git(b, 'clone', '-q', a, '.');
+  git(b, 'config', 'user.email', 't@example.invalid');
+  git(b, 'config', 'user.name', 'Test');
+  // A: a journey added only. B: the same journey, then another spec edits its line (an overwrite).
+  commit(a, 'docs/journeys/demo.md', '# Demo\nFirst.\n', 'Add demo journey (refs #10)');
+  commit(b, 'docs/journeys/demo.md', '# Demo\nFirst.\n', 'Add demo journey (refs #10)');
+  commit(b, 'docs/journeys/demo.md', '# Demo\nChanged.\n', 'Edit demo journey (refs #11)');
+  const argv = ['--base', base, '--path', 'docs/journeys/'];
+
+  const own = runCheck(argv, {}, a);
+  assert.strictEqual(own.code, 0, own.err());
+
+  const env = { ...process.env, GIT_DIR: path.join(b, '.git') };
+  assert.notEqual(env.GIT_DIR, process.env.GIT_DIR);
+  const aimed = runCheck(argv, {}, a, env);
+  assert.strictEqual(aimed.code, 1, aimed.err());
+  assert.strictEqual(JSON.parse(aimed.out()).overwrites[0].path, 'docs/journeys/demo.md');
 });
