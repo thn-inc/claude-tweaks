@@ -1,7 +1,7 @@
 ---
 files:
   - plugin/skills/dispatch/SKILL.md
-  - plugin/skills/dispatch/queue-pull-script.md
+  - plugin/bin/lib/dispatch/queue-pull.js
   - plugin/skills/dispatch/not-spec-shaped-exclusion-report.md
   - plugin/skills/dispatch/open-pr-exclusion-report.md
   - plugin/skills/dispatch/blocked-exclusion-report.md
@@ -61,7 +61,7 @@ files:
 - **Red flags:** `#4135`, or another follow-up from a still-open PR's build, reported as `shipped` by the PR whose build filed it. A Close proposal staged for it. A record genuinely shipped by a later PR now dispatching.
 
 ### 2e. A partly shipped record you released is not "shipped"
-- **URL:** `plugin/skills/dispatch/SKILL.md` False-positive posture (#1984, #4432); `plugin/skills/dispatch/queue-pull-script.md` shipped-candidate section; `plugin/bin/lib/dispatch/shipped-releases.js` `writeReleaseTimes`; `plugin/bin/lib/issues/shipped-candidate.js` `classifyShipped` (`lastReleasedAt`)
+- **URL:** `plugin/skills/dispatch/SKILL.md` False-positive posture (#1984, #4432); `plugin/bin/lib/dispatch/queue-pull.js` `shipped` pass (run by Step 2's `bin/queue-pull.js` call); `plugin/bin/lib/dispatch/shipped-releases.js` `writeReleaseTimes`; `plugin/bin/lib/issues/shipped-candidate.js` `classifyShipped` (`lastReleasedAt`)
 - **Action:** Name a record that a pipeline built only half of: an earlier PR matching its title merged, the run released the claim to finish the rest, and the record stayed open. The queue pull reads the record's latest claim release time and sees that the PR merged before it. The record is kept and dispatches, and the firing prints `AUTO — dispatch: #N kept: merged PR #pr predates claim release at {time} — remaining work assumed`. No Close proposal is staged.
 - **Should feel:** Trusted. A record you released to finish keeps its place in the queue, and you no longer drop a false Close proposal by hand at every firing.
 - **Should understand:** The release time comes from the record's claim tombstone. A missing or unreadable one never downgrades, so the record is judged exactly as before. Any release after a merge downgrades, whatever its reason: a shaping-only release, or the wrap-up release of a run whose own merge left the record open. That is the safe direction: the record builds, and the build's already-shipped exit finds work that is truly done. A PR that merged after the release and matches the title or covers the Key Files still marks the record `shipped` (#4432).
@@ -78,6 +78,7 @@ files:
 - Created during `/claude-tweaks:build` of record #3084 (2026-10-10): the `#N` and `#N,#M` forms now name every exclusion reason that removes a record from `dispatch-groups.json`, including #2829's `not-spec-shaped`.
 - Related specs: #2829/#3073 (not-spec-shaped queue-pull exclusion), #1224 (open-PR exclusion), #1983 (target-missing), #1984 (shipped)
 - Updated during build of #3103: names `blocked`, the fifth removing exclusion, in Step 1 and the Success state; `blocked-exclusion-report.md` added to `files:`
+- Updated during #5230 (the dispatch queue-pull cutover): the exclusion passes run in `bin/queue-pull.js`'s module; `files:` and step 2e point there instead of the embedded script.
 - Updated during build of #3104: Step 2b covers an unreadable or missing `dispatch-exclusions.json`, reported as reason unknown and never as absent; `exclusions-unreadable-report.md` and `exclusions.js` added to `files:`
 - Updated during wrap-up of the #3101-#3104 run: Step 2b names the failed-probe branch (#3104 review); Step 2 names the `blocked` report line and visits `blocked-exclusion-report.md` and `open-pr-exclusion-report.md`
 - Updated during build of #3278: Step 2c covers the non-removing `neighbour-in-flight` reason. `#N` prints the waits line and still dispatches. `neighbour-in-flight-report.md` added to `files:`

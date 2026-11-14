@@ -10,8 +10,8 @@ the list proceeds.
 `readExclusions` returns `[]` both when the file is missing and when it is corrupt, unreadable or
 not a JSON array. An empty read therefore cannot tell "nothing excluded this record" from "the
 list that would say why could not be read". Probe the file's status first, as one line. It resolves
-the session-scoped path itself (the shell variable `queue-pull-script.md` set does not survive into
-this call) and prints one JSON object `{path, status, entries, error}`:
+the session-scoped path itself (the queue pull wrote the file at that path, and no shell variable
+carries the path into this call) and prints one JSON object `{path, status, entries, error}`:
 
 ```bash
 node -e "const r=process.argv[1];const {sessionTmpPath}=require(r+'/bin/lib/session-tmp.js');const os=require('os'),path=require('path');const p=sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID,'dispatch-exclusions.json')||path.join(os.tmpdir(),'dispatch-exclusions.json');console.log(JSON.stringify(Object.assign({path:p},require(r+'/bin/lib/dispatch/exclusions.js').readExclusionsStatus(p))))" "${CLAUDE_PLUGIN_ROOT}"

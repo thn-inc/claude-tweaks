@@ -11,7 +11,7 @@ files:
 
 # Select the Dispatch Queue with the queue-pull CLI
 
-**Persona:** the maintainer building the cutover unit after #5227, who wants a program, not a model reading a 52 KB script, to produce `/claude-tweaks:dispatch`'s queue. Also the pipeline driver (`drive.js`) that will call the CLI once that cutover lands, and the agent in a `gh`-absent cloud sandbox that has to feed it MCP-fetched files.
+**Persona:** the maintainer of `/claude-tweaks:dispatch`'s queue, which since #5230 a program produces, not a model reading a 52 KB script. Also the pipeline driver (`drive.js`) once it calls the CLI, and the agent in a `gh`-absent cloud sandbox that has to feed it MCP-fetched files.
 **Goal:** get the same `dispatch-groups.json`, `dispatch-exclusions.json` and next pick that the embedded `queue-pull-script.md` and `next-ranking.md` scripts produce, from one command with a fixed exit-code contract.
 **Entry point:** `node plugin/bin/queue-pull.js --transport gh` (or `--transport files` with the agent's input files), then `node plugin/bin/queue-pull.js --rank`, under the session whose `CLAUDE_CODE_SESSION_ID` the session-scoped files belong to.
 **Success state:** the session-scoped files match what the scripts would have written for the same inputs, including every exclusion entry in order, the fast-lane bundles, the near-duplicate pairs, the cross-PR overlap file, the staged Close proposals and the `AUTO`/`Warning:` lines on the script's own streams. `dispatch-next-pick.json` holds the group the ranking script would pick, or `null`. The CLI exits 0, and its stdout carries only what the script prints.
@@ -34,9 +34,9 @@ files:
 
 ### 3. Pull from a gh-absent sandbox
 - **URL:** `plugin/bin/queue-pull.js --transport files --queue-raw … --dep-freshness … --open-numbers … --verified-open-deps … --in-flight-raw … --in-flight-claims … --foreign-states …`; `plugin/skills/dispatch/mcp-transport.md`
-- **Action:** The **agent** fetches the records through MCP tools and writes each input file (the flags default to the session-scoped paths). The claims file covers the claim of every record in the in-flight pool file. It then runs the CLI with `--transport files`. The module copies the queue file into the session file before aliasing its timestamps, so the agent's own file is left as written.
+- **Action:** The **agent** fetches the records through MCP tools and writes each input file (each flag but `--foreign-states` defaults to its session-scoped path; `--foreign-states` has no default, so the agent passes it whenever it wrote a states file). The claims file covers the claim of every record in the in-flight pool file. It then runs the CLI with `--transport files`. The module copies the queue file into the session file before aliasing its timestamps, so the agent's own file is left as written.
 - **Should feel:** Like the gh path, with the agent doing the fetching and Node doing the computing.
-- **Should understand:** The documented MCP gaps are behaviour. `dispatch-crosspr-overlap.json` is `[]`, `dispatch-linked-prs.json` stays `{}`, and `open-pr`, `shipped` and `unlanded-blocker` cannot fire on this transport. A missing or malformed in-flight pool or claims file stops the pull (exit 4). A bad `DISPATCH_FOREIGN_STATES` file excludes each foreign-blocked record as `owner/name#N (state unreadable)`, with fail-closed `Warning:` lines.
+- **Should understand:** The documented MCP gaps are behaviour. `dispatch-crosspr-overlap.json` is `[]`, `dispatch-linked-prs.json` stays `{}`, and `open-pr`, `shipped` and `unlanded-blocker` cannot fire on this transport. A missing or malformed in-flight pool or claims file stops the pull (exit 4). A bad `--foreign-states` file (the states file the MCP path passes on the call) excludes each foreign-blocked record as `owner/name#N (state unreadable)`, with fail-closed `Warning:` lines.
 - **Red flags:** `--transport gh` silently falling back to files. With `gh` absent it must exit 2 and name the files transport. A claims file covering only the queue's targets, which leaves in-flight neighbours read as not in flight.
 
 ### 4. Read a stop and recover
@@ -55,4 +55,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #5227 (2026-11-12), step 1 of 3 of the queue-selection strangler-fig in `docs/superpowers/specs/2026-11-11-pipeline-driver-design.md`, "Phase 5 — Queue selection in the driver". `/claude-tweaks:dispatch` still runs the embedded scripts; the cutover and the scripts' removal are later records.
+- Updated during #5230 (the cutover): `/claude-tweaks:dispatch` now runs this CLI, and step 3's MCP path passes the foreign states as `--foreign-states` rather than `DISPATCH_FOREIGN_STATES`.
 - Related journeys: `dispatch-the-oldest-record-from-a-gh-absent-sandbox-3691.md` (the MCP timestamp alias this module reproduces), `drain-the-queue-past-a-chain-of-overlapping-records-3278.md`.

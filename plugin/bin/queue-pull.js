@@ -15,14 +15,15 @@
 // $PRIORITY_FILTER, this CLI's empty-value rule exits 1. A repeated value flag exits 1 too.
 //
 // Transports. `gh` pulls through the gh CLI. `files` makes zero gh calls: the calling skill fetched
-// the records (mcp-transport.md) and the input-path flags name its files; each defaults to the
-// session path the script reads. The input-path flags are valid only with `--transport files`.
+// the records (mcp-transport.md) and the input-path flags name its files; each but --foreign-states
+// defaults to the session path the script reads (--foreign-states falls back only to
+// DISPATCH_FOREIGN_STATES). The input-path flags are valid only with `--transport files`.
 // `--transport` is always explicit: with `gh` and no gh on PATH the CLI exits 2 and names the
 // `files` transport. It never falls back to it silently.
 //   The claims file (--in-flight-claims, default DISPATCH_IN_FLIGHT_CLAIMS) must hold an entry for
 // every claim the neighbour-in-flight pass reads: each record in the pool file (--in-flight-raw,
-// DISPATCH_IN_FLIGHT_RAW) that neighbours a candidate, the set mcp-transport.md's Step 2 prints
-// with neighbourClaimTargets over the groups left at that pass. Unlike the script, this CLI prints
+// DISPATCH_IN_FLIGHT_RAW) that neighbours a candidate, the set the script's MCP path printed with
+// neighbourClaimTargets over the groups left at that pass. Unlike the script, this CLI prints
 // no targets list, and the caller writes the file before the pull has built those groups, so it
 // reads the claim of every record in the pool file. That set covers any targets list, and a list
 // computed over the queue instead is not safe: a queued record that an earlier pass drops becomes a
@@ -48,11 +49,11 @@
 // --help (or -h) prints the usage on stdout and exits 0 before anything is probed (gh, git, policy)
 // and before any other argument is read; it wins over every mode.
 //
-// Decision (R4): 3 stays in the vocabulary but nothing produces it, and 4 is the only code above
-// the base. The caller that branches on 4 is the cutover unit's Step 2 prose (the dispatch skill's
-// queue pull), which stops and reports on 4 and switches to `--transport files` on 2. Reopen
-// when the cutover has landed: nothing then branches on 4 differently from 1, so 4 folds into the
-// base codes unless a caller wants a stop reported apart from a bad call.
+// Decision (R4), settled by #5230: 3 stays in the vocabulary but nothing produces it, and 4 stays
+// distinct from 1. The dispatch skill's Step 2 and Step 3 prose branch on them differently: exit 4
+// stops the firing (quoting the stop and its cause, then the close-out runs), exit 1 is a
+// malformed call to fix and re-run, and exit 2 switches to `--transport files`. Folding 4 into 1
+// would turn a pull that stopped over a corrupt file or an internal throw into a retried call.
 //
 // Departure (R5) from .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md's "gh-absent
 // caller hands the CLI already-fetched records" rules (1) and (2): on `files` the module makes
@@ -77,11 +78,12 @@ const USAGE = `usage:
   queue-pull.js --rank [--priority ${PRIORITIES.join('|')}]
   queue-pull.js --help
 --transport gh pulls through gh; --transport files reads the files the agent fetched through MCP
-(the input-path flags, valid only with it, default to the session-scoped paths). --rank picks the
+(the input-path flags, valid only with it, default to the session-scoped paths, except
+--foreign-states, which has no default: pass it whenever the agent wrote one). --rank picks the
 next group and writes dispatch-next-pick.json (stdout stays empty). Omit --priority when no
 filter is set: an empty value exits 1. A value flag may be given only once.
 The --in-flight-claims file must cover the claim of every record in the --in-flight-raw file:
-the pull prints no claim-targets list (mcp-transport.md Step 2's neighbourClaimTargets), and a
+the pull prints no claim-targets list (mcp-transport.md Step 2's Claim reads), and a
 number left out reads as a failed claim read (an AUTO line; that record counts as not in flight).
 exit codes:
   0  success
