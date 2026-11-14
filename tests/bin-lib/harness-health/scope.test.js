@@ -447,6 +447,28 @@ test('selectTarget picks the highest-churn skill among fresh candidates (via sig
   assert.strictEqual(result.why, 'hotspot');
 });
 
+test('selectTarget passes opts.env to the churn lookup (a fresh skill is a hotspot only through the injected GIT_DIR)', (t) => {
+  const relSkill = path.join('.claude', 'skills', 'auth.md');
+  const repo = tmp(t);
+  fs.mkdirSync(path.join(repo, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(repo, relSkill), '# auth');
+  initGitRepo(repo);
+  commit(repo, 'first');
+  const root = tmp(t);
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, relSkill), '# auth');
+  const cursors = { 'skill:auth': { lastAuditedMs: Date.now() - 86400000 } };
+  const now = Date.now();
+  const env = { ...process.env, GIT_DIR: path.join(repo, '.git') };
+  const picked = selectTarget(root, cursors, { now, env });
+  assert.ok(picked !== null, 'the commit visible only through env must register as churn');
+  assert.strictEqual(picked.why, 'hotspot');
+  const other = tmp(t);
+  fs.mkdirSync(path.join(other, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(other, relSkill), '# auth');
+  assert.strictEqual(selectTarget(other, cursors, { now }), null, 'without env the non-repo root has no churn');
+});
+
 test('selectTarget does not collide when a skill and a rule share the same bare id', (t) => {
   const root = tmp(t);
   fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });

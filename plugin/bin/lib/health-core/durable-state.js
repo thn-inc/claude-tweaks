@@ -1,6 +1,7 @@
 'use strict';
 const { execFileSync } = require('child_process');
 const { parseLsTreeZ } = require('../git-z');
+const { DEFAULT_IO, makeExec } = require('./io');
 
 // Durable cross-firing state for the health skills, backed by a dedicated
 // git branch (never merged into main) instead of local gitignored disk —
@@ -146,8 +147,28 @@ function defaultRun(cmd, args, opts = {}) {
 // failure — merge-lane-breaker.js's Fail-closed read requirement — can react
 // to that distinction; readState itself always degrades to defaults, same as
 // before this extraction.
-function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep = defaultSleep } = {}) {
+//
+// Optional injection (#5380), every default unchanged: `env` is the child
+// environment for every git call (undefined = inherited); `stderr` receives the
+// child git's stderr and the read-failure trace instead of process.stderr. With
+// neither and no `run`, the runner is defaultRun exactly as before; with env or
+// stderr and no `run`, it is makeExec (stderr piped to the injected sink) with
+// defaultRun's 30 s timeout; with a caller `run` and an `env`, every call
+// receives that env (a per-call opts.env still wins).
+function createNamespacedState(namespace, fileSpecs, {
+  run: callerRun, sleep = defaultSleep, env, stderr,
+} = {}) {
   const specs = Array.isArray(fileSpecs) ? fileSpecs : [];
+  const writeStderr = stderr || DEFAULT_IO.stderr;
+  let run;
+  if (callerRun) {
+    run = env === undefined ? callerRun : (cmd, args, opts = {}) => callerRun(cmd, args, { env, ...opts });
+  } else if (env !== undefined || stderr !== undefined) {
+    const exec = makeExec({ env, stderr: writeStderr });
+    run = (cmd, args, opts = {}) => exec(cmd, args, { timeout: DEFAULT_RUN_TIMEOUT_MS, ...opts });
+  } else {
+    run = defaultRun;
+  }
 
   // `git show <ref>:<path>` works identically whether <ref> is a branch ref
   // (origin/<branch>) or a bare commit sha (LOCAL_REF's tip), so the
@@ -250,7 +271,7 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
       // Distinguish a genuine first run (the branch simply doesn't exist yet)
       // from a real fetch failure (network/auth/timeout) — both degrade to
       // the same defaults, but only the latter is worth a trace.
-      process.stderr.write(`health-state: fetch failed, treating as empty state: ${meta.error.message}\n`);
+      writeStderr(`health-state: fetch failed, treating as empty state: ${meta.error.message}\n`);
     }
     return meta.values;
   }
@@ -493,7 +514,7 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
 // cursors/retryQueue/runs(/remembered)(/declined) shape — see the header
 // comment above for why the generic primitive lives separately.
 function createDurableState(skillName, {
-  run = defaultRun, sleep = defaultSleep, includeRemembered = false, includeDeclined = false,
+  run, sleep = defaultSleep, includeRemembered = false, includeDeclined = false, env, stderr,
 } = {}) {
   const fileSpecs = [
     { key: 'cursors', file: 'cursors.json', default: {} },
@@ -516,7 +537,9 @@ function createDurableState(skillName, {
 
   const {
     readState, writeState, writeStateLocal, pushState,
-  } = createNamespacedState(skillName, fileSpecs, { run, sleep });
+  } = createNamespacedState(skillName, fileSpecs, {
+    run, sleep, env, stderr,
+  });
   return {
     readState, writeState, writeStateLocal, pushState,
   };

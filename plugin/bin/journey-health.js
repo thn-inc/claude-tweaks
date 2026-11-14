@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { fingerprint } = require('./lib/journey-health/fingerprint');
 const {
-  readCache, writeCache, readDurableState, writeDurableState, buildValidateFindingsUpdate,
+  readCache, writeCache, createDurable, buildValidateFindingsUpdate,
 } = require('./lib/journey-health/cache');
+const { makeExec, resolveAgainst } = require('./lib/health-core/io');
 const { computeChurn } = require('./lib/health-core/runs');
 const { makeRetryQueueCommands } = require('./lib/health-core/retry-cli');
 const { dedupAndDispatch } = require('./lib/health-core/validate-findings-dispatch');
@@ -20,17 +22,6 @@ const { STALE_DAYS_LIGHT } = require('./lib/journey-health/score');
 const { evaluateQaEvidence } = require('./lib/journey-health/qa-evidence');
 
 const TOOL_NAME = 'journey-health';
-const retryQueueCommands = makeRetryQueueCommands({ readDurableState, writeDurableState });
-const cmdChurnReport = makeCmdChurnReport({ readDurableState, computeChurn });
-// readDurableState/writeDurableState wired through so a "declined" mark also
-// persists to the health-state git branch, not just the local gitignored
-// cache — see bin/lib/health-core/mark.js's own header comment. Without
-// this, a declined finding (by definition never filed as a GitHub issue, so
-// there is nothing for dedup to reconstruct from) would silently reappear
-// on a scheduled Routine's next fresh, stateless container.
-const cmdMark = makeCmdMark({
-  readCache, writeCache, readDurableState, writeDurableState, toolName: TOOL_NAME,
-});
 
 // Mirrors code-health's RISK_RANK/validateRiskArg shape (bin/code-health.js)
 // for the analogous --min-confidence floor, scoped to journey-health's own
@@ -41,18 +32,20 @@ const cmdMark = makeCmdMark({
 // explicitly documents having no `remembered` tier.
 const CONFIDENCE_RANK = { low: 0, med: 1, high: 2 };
 
-function validateConfidenceArg(value) {
-  if (value == null) return;
-  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return;
-  process.stderr.write(
+// Writes its message to `stderr` and returns { ok: false, code: 2 } for an
+// unrecognized value; { ok: true } otherwise (an omitted flag included).
+function validateConfidenceArg(value, stderr) {
+  if (value == null) return { ok: true };
+  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return { ok: true };
+  stderr(
     `validate-findings: --min-confidence "${value}" is not a recognized confidence tier ` +
     `(must be one of ${Object.keys(CONFIDENCE_RANK).join('|')}) — an unrecognized value silently files every finding instead of applying the floor.\n`,
   );
-  process.exitCode = 2;
+  return { ok: false, code: 2 };
 }
 
-function parseArgs(argv) {
-  const args = { _: [], root: process.cwd(), dryRun: false, runId: new Date().toISOString(), tier: 'light' };
+function parseArgs(argv, cwd = process.cwd()) {
+  const args = { _: [], root: cwd, dryRun: false, runId: new Date().toISOString(), tier: 'light' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
@@ -72,8 +65,9 @@ function parseArgs(argv) {
   return args;
 }
 
-function cmdNextTarget(args) {
-  const root = args.root || process.cwd();
+function cmdNextTarget(args, ctx) {
+  const root = args.root;
+  const env = ctx.env;
   const now = Date.now();
   const tier = args.tier === 'deep' ? 'deep' : 'light';
   // Fetch durable state exactly once and reuse it for both the coverage-scan
@@ -81,24 +75,24 @@ function cmdNextTarget(args) {
   // cursors answer the same point in time and the CLI doesn't pay for a
   // second git fetch/show round-trip per invocation (mirrors
   // bin/harness-health.js's cmdNextTarget).
-  const durableCursors = readDurableState(root).cursors;
+  const durableCursors = ctx.durable.readDurableState(root).cursors;
   const coverageScan = durableCursors.__coverageScan || { lastScannedMs: null };
   const coverageScanDue = coverageScan.lastScannedMs == null || (now - coverageScan.lastScannedMs) / 86400000 > STALE_DAYS_LIGHT;
 
   if (args.target) {
     const found = listJourneys(root).find((t) => t.id === args.target) || null;
     const target = found ? { ...found, why: 'manual' } : null;
-    process.stdout.write(JSON.stringify({ target, coverageScanDue }, null, 2) + '\n');
-    return;
+    ctx.stdout(JSON.stringify({ target, coverageScanDue }, null, 2) + '\n');
+    return 0;
   }
 
   const budget = Number.isFinite(args.budget) && args.budget > 0 ? args.budget : 1;
   const cursors = durableCursors;
 
   if (budget === 1) {
-    const target = selectTarget(root, cursors, { now, tier });
-    process.stdout.write(JSON.stringify({ target, coverageScanDue }, null, 2) + '\n');
-    return;
+    const target = selectTarget(root, cursors, { now, tier, env });
+    ctx.stdout(JSON.stringify({ target, coverageScanDue }, null, 2) + '\n');
+    return 0;
   }
 
   // budget > 1: pick up to `budget` distinct journeys, simulating post-audit
@@ -110,27 +104,30 @@ function cmdNextTarget(args) {
   // stop the same pick repeating on every slot of this batch.
   const alreadyPicked = new Set();
   const auditField = tier === 'deep' ? 'lastDeepAuditMs' : 'lastLightAuditMs';
-  const targets = selectBudget(budget, cursors, (c) => selectTarget(root, c, { now, tier, alreadyPicked }), {
+  const targets = selectBudget(budget, cursors, (c) => selectTarget(root, c, { now, tier, alreadyPicked, env }), {
     getCursorKey: (t) => t.id,
     buildCursorPatch: (existing) => ({ ...(existing || {}), [auditField]: now }),
     onPick: (t) => alreadyPicked.add(t.id),
   });
-  process.stdout.write(JSON.stringify({ targets, coverageScanDue }, null, 2) + '\n');
+  ctx.stdout(JSON.stringify({ targets, coverageScanDue }, null, 2) + '\n');
+  return 0;
 }
 
-function cmdValidateFindings(args) {
-  const root = args.root || process.cwd();
-  const findingsPath = args._[1];
-  if (!findingsPath) {
-    process.stderr.write(
+function cmdValidateFindings(args, ctx) {
+  const { stderr, env } = ctx;
+  // `run` already resolved args.root against the injected cwd, never the real one.
+  const root = args.root;
+  const findingsArg = args._[1];
+  if (!findingsArg) {
+    stderr(
       'usage: journey-health.js validate-findings <findings.json> [--root <dir>] [--issues <file>] [--target <id>] [--tier light|deep] [--coverage-scan] [--run-id <id>] [--min-confidence <level>] [--dry-run]\n',
     );
-    process.exitCode = 2;
-    return;
+    return 2;
   }
+  const findingsPath = resolveAgainst(ctx.cwd(), findingsArg);
 
-  validateConfidenceArg(args['min-confidence']);
-  if (process.exitCode) return;
+  const confidence = validateConfidenceArg(args['min-confidence'], stderr);
+  if (!confidence.ok) return confidence.code;
 
   // buildValidateFindingsUpdate only patches a cursor when target is present,
   // or sets __coverageScan when coverageScan is set (see
@@ -141,34 +138,32 @@ function cmdValidateFindings(args) {
   // as stale/overdue on every future run. Mirrors bin/harness-health.js's own
   // hard-gate for validate-findings.
   if (!args.dryRun && !(args.target || args.coverageScan)) {
-    process.stderr.write(
+    stderr(
       'validate-findings: a real (non-dry-run) run requires --target, or --coverage-scan (or both) — ' +
       'without one of them, no audit cursor advances and rotation state silently drifts. ' +
       'Pass --dry-run to preview without it.\n',
     );
-    process.exitCode = 2;
-    return;
+    return 2;
   }
 
   let raw;
   try {
     raw = JSON.parse(fs.readFileSync(findingsPath, 'utf8'));
   } catch {
-    process.stderr.write(`validate-findings: could not read or parse findings file: ${findingsPath}\n`);
-    process.exitCode = 1;
-    return;
+    // The message names the findings path as the caller gave it, as before.
+    stderr(`validate-findings: could not read or parse findings file: ${findingsArg}\n`);
+    return 1;
   }
   if (!Array.isArray(raw)) {
-    process.stderr.write('validate-findings: findings file must contain a JSON array\n');
-    process.exitCode = 1;
-    return;
+    stderr('validate-findings: findings file must contain a JSON array\n');
+    return 1;
   }
 
   const survivors = [];
   for (const f of raw) {
     const v = validateFinding(f);
     if (!v.ok) {
-      process.stderr.write(
+      stderr(
         `[journey-health] validate-findings: dropped finding for journey "${(f && f.journey) || '?'}": ${v.errors.join('; ')}\n`,
       );
       continue;
@@ -192,7 +187,7 @@ function cmdValidateFindings(args) {
     filtered = survivors.filter((f) => {
       const keep = CONFIDENCE_RANK[f.confidence] >= threshold;
       if (!keep) {
-        process.stderr.write(
+        stderr(
           `[journey-health] validate-findings: held back "${f.description}" (confidence: ${f.confidence}) below --min-confidence ${args['min-confidence']}\n`,
         );
       }
@@ -204,15 +199,16 @@ function cmdValidateFindings(args) {
   // finding declined via `mark ... declined` on a prior firing (possibly a
   // different, since-recycled Routine container) is suppressed here too —
   // not just on the same-container run `mark` itself was tested against.
-  const readCacheWithDeclined = (r) => mergeDeclinedIntoCache(readCache(r), readDurableState(r).declined || {});
+  const readCacheWithDeclined = (r) => mergeDeclinedIntoCache(readCache(r), ctx.durable.readDurableState(r).declined || {});
 
   // Resolved ONCE per run, right before filing — #117's freshness stamp
   // must reflect the commit this sweep actually read, not the moment each
-  // finding's issue happens to be created.
-  const verifiedAsOf = resolveReadCommit(root);
+  // finding's issue happens to be created. makeExec pipes the child's stderr
+  // to ctx.stderr rather than letting it reach the process's own.
+  const verifiedAsOf = resolveReadCommit(root, makeExec({ env, stderr }));
 
   const { cache, payloads, seen, wontfixSuppressed } = dedupAndDispatch({
-    root, issuesPath: args.issues, toolName: TOOL_NAME, survivors: filtered, readCache: readCacheWithDeclined, decide, toIssuePayload, verifiedAsOf,
+    root, issuesPath: args.issues, cwd: ctx.cwd, toolName: TOOL_NAME, survivors: filtered, readCache: readCacheWithDeclined, decide, toIssuePayload, verifiedAsOf, stderr,
   });
 
   if (!args.dryRun) {
@@ -234,60 +230,90 @@ function cmdValidateFindings(args) {
       target: args.target, tier: args.tier, coverageScan: args.coverageScan, runRecord, deletedFileSig,
       wontfixSuppressed,
     };
-    const result = writeDurableState(root, (current) => buildValidateFindingsUpdate(current, mutatorInput));
+    const result = ctx.durable.writeDurableState(root, (current) => buildValidateFindingsUpdate(current, mutatorInput));
     if (!result.ok) {
-      process.stderr.write(`[journey-health] validate-findings: health-state persistence failed after retries: ${result.error}\n`);
+      stderr(`[journey-health] validate-findings: health-state persistence failed after retries: ${result.error}\n`);
     }
   }
 
-  process.stdout.write(JSON.stringify(payloads, null, 2) + '\n');
-  process.stderr.write(
+  ctx.stdout(JSON.stringify(payloads, null, 2) + '\n');
+  stderr(
     `[journey-health] validate-findings: ${survivors.length} valid finding(s), ${payloads.length} payload(s) after dedup\n`,
   );
+  return 0;
 }
 
-function cmdQaEvidence(args) {
-  const reportPath = args._[1];
-  if (!reportPath) {
-    process.stderr.write('usage: journey-health.js qa-evidence <report.json> --story-ids <id1,id2,...> [--now <ms>]\n');
-    process.exitCode = 2;
-    return;
+function cmdQaEvidence(args, ctx) {
+  const reportArg = args._[1];
+  if (!reportArg) {
+    ctx.stderr('usage: journey-health.js qa-evidence <report.json> --story-ids <id1,id2,...> [--now <ms>]\n');
+    return 2;
   }
   let report;
   try {
-    report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+    report = JSON.parse(fs.readFileSync(resolveAgainst(ctx.cwd(), reportArg), 'utf8'));
   } catch {
-    process.stderr.write(`qa-evidence: could not read or parse report file: ${reportPath}\n`);
-    process.exitCode = 1;
-    return;
+    ctx.stderr(`qa-evidence: could not read or parse report file: ${reportArg}\n`);
+    return 1;
   }
   const storyIds = args.storyIds ? args.storyIds.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const now = args.now != null ? args.now : Date.now();
   const result = evaluateQaEvidence(storyIds, report, { now });
-  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  ctx.stdout(JSON.stringify(result, null, 2) + '\n');
+  return 0;
 }
 
-function main(argv) {
-  const args = parseArgs(argv);
+// The in-process entry (#5380): `deps` is { stdout(text), stderr(text), cwd(), env }
+// and nothing here reaches process.* — the exit code is returned, never set.
+// Everything that holds io or env (durable state, the shared sub-command
+// factories) is built per call from `deps`, so an injected stderr/env reaches
+// every child git and every message.
+function run(argv, deps = realDeps) {
+  const stderr = (text) => deps.stderr(text);
+  const durable = createDurable({ env: deps.env, stderr });
+  const io = { stdout: (text) => deps.stdout(text), stderr, cwd: () => deps.cwd() };
+  const { readDurableState, writeDurableState } = durable;
+  // readDurableState/writeDurableState wired through so a "declined" mark also
+  // persists to the health-state git branch, not just the local gitignored
+  // cache — see bin/lib/health-core/mark.js's own header comment. Without
+  // this, a declined finding (by definition never filed as a GitHub issue, so
+  // there is nothing for dedup to reconstruct from) would silently reappear
+  // on a scheduled Routine's next fresh, stateless container.
+  const ctx = {
+    ...io,
+    env: deps.env,
+    durable,
+    retryQueueCommands: makeRetryQueueCommands({ readDurableState, writeDurableState, io }),
+    cmdChurnReport: makeCmdChurnReport({ readDurableState, computeChurn, io }),
+    cmdMark: makeCmdMark({
+      readCache, writeCache, readDurableState, writeDurableState, toolName: TOOL_NAME, io,
+    }),
+  };
+  const args = parseArgs(argv, ctx.cwd());
+  // A relative --root resolves against the injected cwd, never the real one, so the
+  // shared sub-commands (which pass it straight to `git -C` and fs) see an absolute path.
+  // Root normalizes (file paths use resolveAgainst) because `git -C` and the durable-state
+  // paths need an absolute root, and harness-health's validate-findings/push-cursor already
+  // path.resolve'd theirs, so every sub-command keys its state on one normalized root; a
+  // directory is unaffected by a trailing slash.
+  args.root = path.resolve(ctx.cwd(), args.root || '.');
   const cmd = args._[0];
-  if (cmd === 'next-target') return cmdNextTarget(args);
-  if (cmd === 'validate-findings') return cmdValidateFindings(args);
-  if (cmd === 'churn-report') { const code = cmdChurnReport(args); if (code) process.exitCode = code; return; }
-  if (cmd === 'mark') { const code = cmdMark(args); if (code) process.exitCode = code; return; }
-  if (cmd === 'qa-evidence') return cmdQaEvidence(args);
+  if (cmd === 'next-target') return cmdNextTarget(args, ctx);
+  if (cmd === 'validate-findings') return cmdValidateFindings(args, ctx);
+  if (cmd === 'churn-report') return ctx.cmdChurnReport(args);
+  if (cmd === 'mark') return ctx.cmdMark(args);
+  if (cmd === 'qa-evidence') return cmdQaEvidence(args, ctx);
   // args._[0] is always 'retry-queue' itself (parseArgs pushes every positional,
   // including the top-level subcommand, into args._) — the drain/update word
   // right after it is args._[1], the same offset validate-findings uses for its
   // own findings-file positional. retryQueueCommands.update() expects its own
   // args._ re-based so index 1 lands on the results-file path, so slice off
   // the leading 'retry-queue' entry before handing args to it.
-  if (cmd === 'retry-queue' && args._[1] === 'drain') return retryQueueCommands.drain(args);
+  if (cmd === 'retry-queue' && args._[1] === 'drain') return ctx.retryQueueCommands.drain(args);
   if (cmd === 'retry-queue' && args._[1] === 'update') {
-    const code = retryQueueCommands.update({ ...args, _: args._.slice(1) });
-    if (code) process.exitCode = code;
-    return;
+    return ctx.retryQueueCommands.update({ ...args, _: args._.slice(1) });
   }
-  process.stderr.write(
+  ctx.stderr(
     'usage: journey-health.js <command> [options]\n' +
     'commands: next-target [--target <id>] [--tier light|deep] [--budget <n>], ' +
     'validate-findings <file> [--target <id>] [--tier light|deep] [--coverage-scan] [--min-confidence low|med|high], ' +
@@ -295,9 +321,25 @@ function main(argv) {
     'churn-report [--fail-on-high-churn <r>], mark <fingerprint> <declined>, ' +
     'retry-queue drain, retry-queue update <results.json>\n',
   );
-  process.exitCode = 2;
+  return 2;
 }
 
-if (require.main === module) main(process.argv.slice(2));
+const realDeps = {
+  stdout: (text) => process.stdout.write(text),
+  stderr: (text) => process.stderr.write(text),
+  cwd: () => process.cwd(),
+  env: process.env,
+};
 
-module.exports = { parseArgs, cmdNextTarget, cmdValidateFindings, cmdChurnReport, cmdMark, cmdQaEvidence, main };
+// Removal condition: delete once no file under plugin/, tests/, tools/, perf/ or evals/
+// imports it — callers use run(argv, deps) instead. Returns the exit code; never sets
+// process.exitCode.
+function main(argv) {
+  return run(argv, realDeps);
+}
+
+module.exports = {
+  parseArgs, main, run, realDeps,
+};
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

@@ -7,14 +7,20 @@ const os = require('os');
 const path = require('path');
 
 const { seedDurableState } = require('../health-core/seed-durable-state');
+const { runCli, spawnCli } = require('../../helpers/run-cli');
+const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { STUB_SKIP } = require('../../helpers/path-stub');
 const { defaultRunner, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('../../../plugin/bin/lib/health-core/premise-self-check');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-vf-')); }
 
-function runValidateFindings(root, findingsFile, extraArgs = []) {
-  return spawnSync('node', [CLI, 'validate-findings', findingsFile, '--root', root, ...extraArgs], { encoding: 'utf8' });
+// In-process (#5380), with the file-protocol-only git guard — see tests/helpers/health-sweep-cli.js.
+const cli = (argv, opts) => sweepCli(CLI, argv, opts);
+
+function runValidateFindings(root, findingsFile, extraArgs = [], opts = {}) {
+  return cli(['validate-findings', findingsFile, '--root', root, ...extraArgs], opts);
 }
 
 // recordRun/readRuns (local-disk run-log persistence) were removed by the
@@ -319,7 +325,7 @@ test('validate-findings: exits 2 for an unrecognized --min-confidence value', ()
 
 test('churn-report: prints "no run logs found" when no runs exist', () => {
   const root = tmp();
-  const result = spawnSync('node', [CLI, 'churn-report', '--root', root], { encoding: 'utf8' });
+  const result = cli(['churn-report', '--root', root]);
   assert.strictEqual(result.status, 0);
   assert.ok(result.stdout.includes('no run logs found'));
 });
@@ -337,7 +343,7 @@ test('churn-report: a seeded durable run history prints a table row', () => {
     { runId: 'run-1', runAt: '2026-01-01T00:00:00.000Z', fingerprints: ['harnesshealth-aaaa0001'] },
   ]);
 
-  const result = spawnSync('node', [CLI, 'churn-report', '--root', root], { encoding: 'utf8' });
+  const result = cli(['churn-report', '--root', root]);
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.ok(result.stdout.includes('run-1'));
 });
@@ -584,8 +590,8 @@ test('validate-findings: a RELATIVE --root still anchors the Premise-check on th
   // --root relative to the CLI's own cwd: before the fix the target path stayed
   // relative, the self-check (run with cwd: --root) resolved it one level too
   // deep, read "unresolved", and kept a line that should have been dropped.
-  const result = spawnSync('node', [CLI, 'validate-findings', findingsFile, '--root', path.basename(root), '--target', 'auth', '--kind', 'skill'],
-    { encoding: 'utf8', cwd: path.dirname(root) });
+  const result = cli(['validate-findings', findingsFile, '--root', path.basename(root), '--target', 'auth', '--kind', 'skill'],
+    { cwd: path.dirname(root) });
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   const payloads = JSON.parse(result.stdout);
   assert.strictEqual(payloads.length, 1);
@@ -613,4 +619,152 @@ test('validate-findings: a removal finding whose old string is already gone is f
     result.stderr.includes(`dropped Premise-check: line for finding ${payloads[0].id}`),
     `a self-check drop must be logged to stderr, got:\n${result.stderr}`,
   );
+});
+
+// Proves the refusal path's exit code survives the real entry: the same unrecognized
+// --min-confidence goes through run() in-process and through the script as a child, with
+// the same env, and both must refuse with 2 and the same stderr.
+test('validate-findings --min-confidence bogus: the in-process run and the script entry both refuse with 2 and the same stderr', async () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+  // The same env for both halves, with the file-protocol-only git guard (see tests/helpers/health-sweep-cli.js);
+  // this refusal returns before any git call, so the async runCli needs no cwd move.
+  const env = { ...process.env, GIT_ALLOW_PROTOCOL: 'file' };
+  const argv = ['validate-findings', findingsFile, '--root', root, '--min-confidence', 'bogus', '--dry-run'];
+
+  const inProcess = await runCli(CLI, argv, { env, cwd: root });
+  const spawned = spawnCli(CLI, argv, { env, cwd: root });
+
+  assert.strictEqual(inProcess.code, 2);
+  assert.strictEqual(spawned.code, 2);
+  assert.strictEqual(spawned.stderr, inProcess.stderr);
+  assert.match(spawned.stderr, /--min-confidence "bogus" is not a recognized value/);
+});
+
+// ── in-process entry (#5380) ────────────────────────────────────────────────
+
+// No --root, and a findings path relative to the injected cwd: the root and the findings file
+// both resolve against it (a non-git root, so the Premise-check path stays the absolute one
+// under that root — which is how the test sees the root was the injected cwd).
+test('validate-findings without --root and with a relative findings path reads both from the injected cwd', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\n');
+  fs.writeFileSync(path.join(root, 'findings.json'), JSON.stringify([validFinding()]));
+
+  const result = cli(['validate-findings', 'findings.json', '--target', 'auth', '--kind', 'skill', '--dry-run'], { cwd: root });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.strictEqual(payloads.length, 1);
+  const line = premiseLineOf(payloads[0]);
+  assert.ok(
+    line && line.includes(path.join(root, '.claude', 'skills', 'auth.md')),
+    `the target must resolve under the injected cwd, got: ${line}`,
+  );
+});
+
+// AC2.1 / AC2.2: the exit code is returned, never read from or written to process.exitCode.
+test('validate-findings returns 0 and prints its payloads while process.exitCode is already non-zero', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  const prior = process.exitCode;
+  process.exitCode = 1;
+  let result;
+  try {
+    result = runValidateFindings(root, findingsFile, ['--dry-run']);
+  } finally {
+    process.exitCode = prior;
+  }
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.ok(Array.isArray(payloads));
+  assert.strictEqual(payloads.length, 1);
+});
+
+// ── env-only fixtures: the effect of each child the CLI starts is observable only when the
+// injected env reaches it. The injected values win over any ambient ones (e.g. a GIT_DIR
+// inherited from a git hook); an ambient value would only weaken the mutant's discrimination.
+
+function gitRepoWithCommit() {
+  const repo = tmp();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['-C', repo, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '--allow-empty', '-m', 'seed']);
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  return { repo, sha };
+}
+
+test('validate-findings stamps Verified-as-of from the injected env: GIT_DIR names the repo, root is not one', () => {
+  const root = tmp(); // not a git repo
+  const { repo, sha } = gitRepoWithCommit();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  const result = runValidateFindings(root, findingsFile, ['--dry-run'], { env: { GIT_DIR: path.join(repo, '.git') } });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  assert.ok(payload.body.includes(`Verified-as-of: ${sha}`), `expected the injected repo's HEAD ${sha}, got body:\n${payload.body}`);
+});
+
+test('validate-findings stamps the Template: line with the plugin version read under the injected CLAUDE_PLUGIN_ROOT', () => {
+  const root = tmp();
+  const pluginRoot = tmp();
+  fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'fixture', version: '9.9.9-test' }));
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({
+    assetType: 'claude-md', target: 'CLAUDE', category: 'template-conformance', templateSource: 'skills/init/claude-md-template.md',
+  })]));
+
+  const result = runValidateFindings(root, findingsFile, ['--dry-run'], { env: { CLAUDE_PLUGIN_ROOT: pluginRoot } });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  assert.ok(
+    payload.body.includes('Template: skills/init/claude-md-template.md @ 9.9.9-test'),
+    `expected the injected plugin root's version in the Template: line, got body:\n${payload.body}`,
+  );
+});
+
+test('validate-findings composes the Premise-check: path against the git top-level found under the injected env (GIT_DIR; root is not a repo)', () => {
+  const root = tmp(); // not a git repo
+  const { repo } = gitRepoWithCommit();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  const result = runValidateFindings(root, findingsFile, ['--dry-run', '--target', 'auth', '--kind', 'skill'], { env: { GIT_DIR: path.join(repo, '.git') } });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  const line = premiseLineOf(payload);
+  assert.ok(line, `expected a Premise-check: line, got body:\n${payload.body}`);
+  assert.ok(line.includes("'.claude/skills/auth.md'"), `expected the top-level-relative path, got: ${line}`);
+  assert.ok(!line.includes(root), `the line must not carry the absolute root, got: ${line}`);
+});
+
+// The Premise-check self-check runs its command under the injected env too: a `grep` that only
+// exists ahead of PATH in that env reports "found", so the line reads resolved and is dropped.
+test('validate-findings runs the Premise-check self-check under the injected env (a grep shim only on the injected PATH)', { skip: STUB_SKIP }, () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+  const stubDir = tmp();
+  fs.writeFileSync(path.join(stubDir, 'grep'), '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(path.join(stubDir, 'grep'), 0o755); // root-safe: exec-bit stub, not a denial simulation
+
+  const plain = runValidateFindings(root, findingsFile, ['--dry-run', '--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(plain.status, 0, `stderr: ${plain.stderr}`);
+  assert.ok(premiseLineOf(JSON.parse(plain.stdout)[0]), 'control: without the shim the proposed string is absent, so the line is kept');
+
+  const shimmed = runValidateFindings(root, findingsFile, ['--dry-run', '--target', 'auth', '--kind', 'skill'], {
+    env: { PATH: stubDir + path.delimiter + process.env.PATH },
+  });
+  assert.strictEqual(shimmed.status, 0, `stderr: ${shimmed.stderr}`);
+  const [payload] = JSON.parse(shimmed.stdout);
+  assert.ok(!payload.body.includes('Premise-check:'), `expected the shimmed self-check to drop the line, got:\n${payload.body}`);
+  assert.ok(shimmed.stderr.includes('dropped Premise-check: line'), `a self-check drop must be logged, got:\n${shimmed.stderr}`);
 });

@@ -97,6 +97,20 @@ for (const [label, anchor] of QUOTING_ANCHORS) {
   });
 }
 
+test('premiseReadsUnresolved runs the command with the injected env', () => {
+  const dir = tmpWithSpace();
+  const command = 'test "$CT_MARK" = 1';
+  assert.strictEqual(premiseReadsUnresolved(command, { root: dir, env: { ...process.env, CT_MARK: '1' } }), true);
+  const { CT_MARK, ...without } = process.env;
+  assert.strictEqual(premiseReadsUnresolved(command, { root: dir, env: without }), false);
+});
+
+test('premiseReadsUnresolved hands the runner no env key when none was injected', () => {
+  const calls = [];
+  premiseReadsUnresolved('cmd', { root: '/r', runner: (c, o) => { calls.push(o); return 0; } });
+  assert.deepStrictEqual(calls, [{ cwd: '/r', timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS }]);
+});
+
 test('defaultRunner returns the exit code of a command that ran', () => {
   assert.strictEqual(defaultRunner('exit 0', { cwd: os.tmpdir(), timeoutMs: 5000 }), 0);
   assert.strictEqual(defaultRunner('exit 3', { cwd: os.tmpdir(), timeoutMs: 5000 }), 3);

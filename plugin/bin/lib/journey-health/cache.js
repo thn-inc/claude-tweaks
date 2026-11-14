@@ -17,7 +17,17 @@ const core = createCache('journey-health');
 // fresh, stateless container. See bin/lib/health-core/mark.js's own header
 // comment and bin/journey-health.js's cmdMark wiring. No includeRemembered
 // here — journey-health has no `remembered` tier, see comment below.
-const durable = createDurableState('journey-health', { includeDeclined: true });
+
+// createDurable({ env, stderr }) builds the durable-state accessors with an
+// injected child-git environment and stderr sink (#5380); the module-level
+// exports below are bound to createDurable() (inherited env, process.stderr),
+// exactly as before.
+function createDurable({ env, stderr } = {}) {
+  const state = createDurableState('journey-health', { includeDeclined: true, env, stderr });
+  return { readDurableState: state.readState, writeDurableState: state.writeState };
+}
+
+const durable = createDurable();
 
 // Pure: computes the next durable-state object for a validate-findings run.
 // current: { cursors, retryQueue, runs } — the current durable health-state
@@ -85,7 +95,8 @@ module.exports = {
   cachePath: core.cachePath,
   readCache: core.readCache,
   writeCache: core.writeCache,
-  readDurableState: durable.readState,
-  writeDurableState: durable.writeState,
+  createDurable,
+  readDurableState: durable.readDurableState,
+  writeDurableState: durable.writeDurableState,
   buildValidateFindingsUpdate,
 };

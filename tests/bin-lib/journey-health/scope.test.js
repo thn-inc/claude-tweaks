@@ -102,6 +102,27 @@ test('selectTarget picks the highest-churn journey via the signals injection hoo
   assert.strictEqual(result.churnCount, 5);
 });
 
+test('selectTarget passes opts.env to the churn lookup (a fresh journey is a hotspot only through the injected GIT_DIR)', () => {
+  const repo = tmp();
+  writeJourney(repo, 'checkout-flow', ['src/checkout/Cart.tsx']);
+  execFileSync('git', ['-C', repo, 'init', '-q']);
+  execFileSync('git', ['-C', repo, 'config', 'user.email', 'test@example.com']);
+  execFileSync('git', ['-C', repo, 'config', 'user.name', 'test']);
+  execFileSync('git', ['-C', repo, 'add', '.']);
+  execFileSync('git', ['-C', repo, 'commit', '-q', '-m', 'first']);
+  const root = tmp();
+  writeJourney(root, 'checkout-flow', ['src/checkout/Cart.tsx']);
+  const other = tmp();
+  writeJourney(other, 'checkout-flow', ['src/checkout/Cart.tsx']);
+  const now = Date.now();
+  const cursors = { 'checkout-flow': { lastLightAuditMs: now - 86400000 } };
+  const env = { ...process.env, GIT_DIR: path.join(repo, '.git') };
+  const picked = selectTarget(root, cursors, { now, tier: 'light', env });
+  assert.ok(picked !== null, 'the commit visible only through env must register as churn');
+  assert.strictEqual(picked.why, 'hotspot');
+  assert.strictEqual(selectTarget(other, cursors, { now, tier: 'light' }), null, 'without env the non-repo root has no churn');
+});
+
 test('selectTarget returns null when no candidate is stale and none has churn', () => {
   const root = tmp();
   writeJourney(root, 'checkout-flow', ['src/checkout/Cart.tsx']);

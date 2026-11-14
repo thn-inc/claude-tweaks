@@ -4,6 +4,10 @@ files:
   - tools/count-node-procs.js
   - tools/count-node-procs-preload.js
   - plugin/bin/resolve-policy.js
+  - plugin/bin/harness-health.js
+  - plugin/bin/journey-health.js
+  - plugin/bin/lib/health-core/io.js
+  - tests/helpers/health-sweep-cli.js
   - .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md
 ---
 
@@ -37,6 +41,7 @@ files:
   - `cliPath` must be absolute.
   - `env` is the complete environment the CLI sees and defaults to `{}`. A CLI that starts `git` or `gh` needs `PATH` (and `SystemRoot` on Windows) in it, so a test that relied on the inherited environment passes `{ ...process.env }`.
   - The helper merges `{ ...realDeps, ...fakes, ...deps }`. The fakes collect stdout and stderr and supply `cwd`, a frozen `env`, `stdin` and `homeDir`.
+  - When several test files drive the same family of CLIs, give them one shared adapter instead of a copy per file. The health sweeps' ten files (#5380) all call `sweepCli` from `tests/helpers/health-sweep-cli.js`.
 - **Red flags:**
   - `runCli: … exports no realDeps` or `exports no run`. The CLI does not meet the entry contract yet. Convert the CLI first; that is a change to `plugin/bin`, with its own script-output tests.
   - A failure that reads `git not found`. The test passed a partial `env` without `PATH`.
@@ -53,6 +58,8 @@ files:
   - Catching the helper's throw in the test, or loosening an assertion, to get back to green. A leak is a defect in the CLI's path, and the test just found it.
   - A CLI whose `realDeps` holds a seam that can start `gh` or an arbitrary command under another name (`execFileSync`, `runPremiseCheck`). Add that name to `FAIL_CLOSED_KEYS` in the helper in the same change, or the test can reach the real tool.
   - A stub on an injected `PATH` that never runs. A child on the CLI's path is started without `env: deps.env`, so it inherits the test runner's environment.
+  - A CLI that commits or pushes (the health sweeps' durable state runs real `git fetch` and `git push origin`) tested in-process from inside a checkout. If it ignores its injected `cwd`, it falls back to the test process's real directory, commits to a git ref every worktree shares, and a later push publishes it: #5380's unguarded mutation runs pushed six real commits to `origin` this way. Run such a CLI through an adapter that moves the real cwd to an empty temp directory outside any repo for the call and sets `GIT_ALLOW_PROTOCOL=file` last in `env`, as `sweepCli` does, and run mutation probes in a `git archive` extract, never a linked worktree.
+  - A relative-path error message or output that changed spelling after the conversion. `path.resolve(deps.cwd(), p)` normalizes (`results.json/`, `link/../x`), so it can change the outcome as well as the text. Where the old behavior must stay byte-identical, join without normalizing, as `plugin/bin/lib/health-core/io.js`'s `resolveAgainst` does.
   - `process.cwd() could not be read or restored (…)` in the leak list. The CLI removed its own working directory, or the directory the test started in, so the helper could not put the cwd back. It still restored the env and the listeners. Work from `deps.cwd()` instead of changing or removing the process's directory.
 
 ### 4. Keep the script entry covered by real processes
@@ -65,12 +72,13 @@ files:
 ### 5. Measure again and report the difference
 - **URL:** `node tools/count-node-procs.js --files-from <list> --json <after.json>`
 - **Action:** Run it at the converted commit and put the two tables side by side in the pull request.
-- **Should feel:** Like the receipt from step 1 with smaller numbers. For `plugin/bin/resolve-policy.js` (#5374) the two converted files went from 87 CLI processes to 4.
+- **Should feel:** Like the receipt from step 1 with smaller numbers. For `plugin/bin/resolve-policy.js` (#5374) the two converted files went from 87 CLI processes to 4. For `harness-health.js` and `journey-health.js` (#5380) the ten converted files went from 120 to 5.
 - **Should understand:** Wall time falls by the process starts saved, not by time the tests spend waiting. A test that waits on a stubbed tool's timeout takes just as long in-process.
 - **Red flags:**
   - The same CLI count as before. The adapter still spawns, or a second local helper in the file was missed.
   - A different test count from step 1. A test was dropped or skipped during the conversion.
 
 ## Origin
+- Updated during build of #5380, which converted `plugin/bin/harness-health.js` and `plugin/bin/journey-health.js` and their ten test files: the shared-adapter note in step 2, the git-writing-CLI and path-normalization red flags in step 3, and the second measurement in step 5.
 - Created during build of #5374, which added `tests/helpers/run-cli.js` and `tools/count-node-procs.js`, converted `plugin/bin/resolve-policy.js` to the entry contract and moved `tests/resolve-policy-cli.test.js` and `tests/resolve-policy-control-mode.test.js` onto the helper.
 - Related: `act-on-a-red-cli-entry-conformance-scan-5374.md` (the scan that pins the entry contract), `resolve-a-policy-key.md` (the CLI used as the worked example).

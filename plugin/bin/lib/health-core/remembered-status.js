@@ -1,4 +1,5 @@
 'use strict';
+const { DEFAULT_IO } = require('./io');
 
 // Minimal `status` command for a health-sweep CLI that writes the durable
 // `remembered` cache tier (sub-threshold findings held back rather than
@@ -14,11 +15,12 @@
 // the *local* gitignored cache's per-fingerprint `status` field, which is a
 // code-health-specific vocabulary this module has no business assuming.
 // This command only ever reports the durable `remembered` count.
-function makeCmdStatus({ readDurableState }) {
+function makeCmdStatus({ readDurableState, io = DEFAULT_IO }) {
   return function cmdStatus(args) {
-    const root = (args && args.root) || process.cwd();
+    const root = (args && args.root) || io.cwd();
     const remembered = Object.keys(readDurableState(root).remembered).length;
-    process.stdout.write(`remembered:${remembered}\n`);
+    io.stdout(`remembered:${remembered}\n`);
+    return 0;
   };
 }
 

@@ -217,6 +217,91 @@ test('readState writes a stderr trace on a genuine fetch failure, distinguishing
   assert.ok(stderrOut.includes('fetch failed'), `expected a fetch-failure trace in stderr: ${stderrOut}`);
 });
 
+test('createNamespacedState threads env into every git call and routes the fetch-failure trace to the injected stderr', () => {
+  const env = { MARKER: '1' };
+  const envs = [];
+  const run = (cmd, args, opts = {}) => {
+    envs.push(opts.env);
+    if (args.includes('fetch')) throw new Error('fatal: unable to access');
+    return '';
+  };
+  let err = '';
+  const ns = createNamespacedState('ns', [{ key: 'a', file: 'a.json', default: {} }], { run, env, stderr: (t) => { err += t; } });
+  ns.readState('/repo');
+  assert.ok(envs.length > 0, 'the fake run must have been called');
+  for (const e of envs) assert.strictEqual(e, env);
+  assert.match(err, /^health-state: fetch failed/);
+});
+
+test('createNamespacedState with an injected env also wraps the write path (every git call carries env)', () => {
+  const env = { MARKER: '2' };
+  const envs = [];
+  const run = (cmd, args, opts = {}) => {
+    envs.push(opts.env);
+    if (args.includes('rev-parse')) return `${'a'.repeat(40)}\n${'b'.repeat(40)}\n`;
+    return `${'c'.repeat(40)}\n`;
+  };
+  const ns = createNamespacedState('ns', [{ key: 'a', file: 'a.json', default: {} }], { run, sleep: () => {}, env });
+  ns.writeState('/repo', (current) => current);
+  assert.ok(envs.length > 5);
+  for (const e of envs) assert.strictEqual(e, env);
+});
+
+test('createNamespacedState without env leaves a caller-supplied run untouched (no env key added)', () => {
+  const seen = [];
+  const run = (cmd, args, opts) => { seen.push(opts); return ''; };
+  createNamespacedState('ns', [{ key: 'a', file: 'a.json', default: {} }], { run }).readState('/repo');
+  assert.ok(seen.length > 0);
+  for (const o of seen) assert.ok(o === undefined || !('env' in o), 'no env key may appear when none was injected');
+});
+
+test('createDurableState passes env through to its git calls', () => {
+  const env = { MARKER: '3' };
+  const envs = [];
+  const run = (cmd, args, opts = {}) => { envs.push(opts.env); return ''; };
+  createDurableState('code-health', { run, sleep: () => {}, env }).readState('/repo');
+  assert.ok(envs.length > 0);
+  for (const e of envs) assert.strictEqual(e, env);
+});
+
+test('createNamespacedState with env and no run builds its runner on makeExec: a real git failure is captured, not leaked', () => {
+  const os = require('os');
+  const fs = require('fs');
+  const path = require('path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-exec-'));
+  let err = '';
+  const ns = createNamespacedState('ns', [{ key: 'a', file: 'a.json', default: { d: 1 } }], {
+    env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(dir) }, stderr: (t) => { err += t; },
+  });
+  const realWrite = process.stderr.write;
+  const leaked = [];
+  process.stderr.write = (...a) => { leaked.push(a[0]); return true; };
+  let state;
+  try { state = ns.readState(dir); } finally { process.stderr.write = realWrite; }
+  assert.deepStrictEqual(state, { a: { d: 1 } });
+  assert.deepStrictEqual(leaked, []);
+  assert.match(err, /health-state: fetch failed/);
+});
+
+test('createNamespacedState with only a stderr (no env, no run) captures a real git failure instead of leaking it', () => {
+  const os = require('os');
+  const fs = require('fs');
+  const path = require('path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-stderr-only-'));
+  let err = '';
+  const ns = createNamespacedState('ns', [{ key: 'a', file: 'a.json', default: { d: 1 } }], {
+    stderr: (t) => { err += t; },
+  });
+  const realWrite = process.stderr.write;
+  const leaked = [];
+  process.stderr.write = (...a) => { leaked.push(a[0]); return true; };
+  let state;
+  try { state = ns.readState(dir); } finally { process.stderr.write = realWrite; }
+  assert.deepStrictEqual(state, { a: { d: 1 } });
+  assert.deepStrictEqual(leaked, [], 'nothing may reach process.stderr when a stderr sink is injected');
+  assert.match(err, /health-state: fetch failed/);
+});
+
 test('readState parses each file via git show, defaulting missing files to {}/[]', () => {
   const { run } = fakeRunner([
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },
