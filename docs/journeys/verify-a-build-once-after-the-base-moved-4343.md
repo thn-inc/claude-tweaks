@@ -33,7 +33,7 @@ files:
 - **URL:** `plugin/skills/_shared/pre-verification-catchup.md` "Procedure", citing `plugin/skills/_shared/git-discipline.md`'s Catch-up (`auto`) steps 1-4
 - **Action:** in every mode (`auto`, `confirm`, `interactive`, `hybrid`, standalone), build fetches the integration branch, records the pre-merge HEAD, and runs `merge --no-edit origin/{integration-branch}`. A conflict it can resolve confidently is committed before HEAD is compared; one it cannot is aborted (`merge --abort`) and logged `AUTO`, and the suite runs on the un-merged tree. A merge git refuses to start (untracked files it would overwrite) is aborted and logged `SKIP`.
 - **Should feel:** Like the base was always current. No question is asked, and nothing is pushed — the build phase exit pushes the merged branch.
-- **Should understand:** The merge adds no suite run: Common Step 5 runs the full suite anyway, and now runs it once, on the merged tree. It runs once per build — a re-run after a fix does not repeat it.
+- **Should understand:** The merge adds no suite run: Common Step 5 runs its one verification anyway, and now runs it once, on the merged tree. It runs once per build — a re-run after a fix does not repeat it.
 - **Red flags:**
   - A rebase or force push.
   - The suite starting with `MERGE_HEAD` set or conflict markers in the tree.
