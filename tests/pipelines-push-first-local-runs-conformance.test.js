@@ -218,7 +218,7 @@ const AC5_FACTS = [
   [/run before the version bump/, 'the rule: the release run'],
   [/Every pipeline verify takes it from the PR's CI job, and runs the impact subset here only when CI cannot answer/, 'the rule: pipelines'],
   [/The one exception: when CI cannot answer after a push and one re-run, the `--local` re-run runs what selection chose, and that is the whole suite when selection cannot narrow/, 'the rule: the named exception'],
-  [/a missing or stale map, a full-suite rule .{1,60}, or a stale stamp anchor/, 'the exception: its triggers'],
+  [/a missing or stale map, a full-suite rule .{1,60}, a stale stamp anchor on a suite without `impact` rules, or, under `impact`, `no-anchor`: no usable anchor and no merge-base/, 'the exception: its triggers'],
   [/It is rare, and the run's `AUTO` line names the fallback reason/, 'the exception: rarity and its log line'],
   [/A test whose result a change affects but which selection leaves out/, 'a miss: definition'],
   [/`#` imports, a package's self-reference, a native addon's content, a non-node child's reads, a wrapper such as `xargs` or `timeout`/, 'a miss: unseen reads'],
