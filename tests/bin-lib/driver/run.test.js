@@ -1610,6 +1610,15 @@ test('AC1.1, AC1.2 (#5414): a worker launch after which HEAD moved stops at work
   assert.equal(pushCalls(h).length, 0);
 });
 
+test('(#5414) an interrupt during the implementer launch that also moved HEAD is reported as the interrupt', async () => {
+  let h = null;
+  h = harness({ script: [[isImplementerLaunch, () => { h.signals[0]('SIGTERM'); return ENVELOPE; }], nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(h.lines().slice(-2).map((l) => [l.step, l.status]), [['worker', 'fail'], [FINAL_STEP, 'fail']]);
+  assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
+  assert.ok(h.lines().every((l) => !String(l.detail ?? '').includes('moved HEAD')));
+});
+
 test('AC2.1 (#5414): a reset to an earlier commit stops the same way', async () => {
   const h = harness({ script: [nthCall(isHeadRead, 1, `${OTHER_SHA}\n`)] });
   await run(['#7'], h.deps);
@@ -3334,7 +3343,7 @@ test('Review Focus 5: a fix worker that deletes the evidence and fixes the code 
 // The first `check` answers HEAD_SHA, the second 'c' x 40: the second overwrites ctx.check, and the push compares HEAD with it.
 const SECOND_HEAD = 'c'.repeat(40);
 const checkNth = (n, head) => nthCall((c) => c.kind === 'node' && /express-lane\.js$/.test(c.args[0]) && c.args[1] === 'check', n, { code: 0, stderr: '', stdout: JSON.stringify(checkProceed({ head })) });
-const headRead = (headSha) => [onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${headSha}\n`];
+const headRead = (headSha) => [isHeadRead, `${headSha}\n`];
 
 test('AC15: after a fix round the push guard compares HEAD with the second check\'s head', async () => {
   const h = fixRig({ script: [checkNth(2, SECOND_HEAD), headRead(SECOND_HEAD)] });

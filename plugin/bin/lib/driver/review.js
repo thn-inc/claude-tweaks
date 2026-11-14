@@ -198,7 +198,8 @@
 //               update-index --skip-worktree` / `--assume-unchanged` git status no longer reports an
 //               edit to the file or its moving, so the tree check alone would run the changed one.
 //   Stops, each class pre-push but a propagated test or check result, which keeps its own class
-//   and reason. `fail`: HEAD unreadable, the worker's `fail`/`timeout`, a rewrite refused or failed,
+//   and reason. `fail`: HEAD unreadable, the fix worker's launch after which HEAD moved or could not be
+//   read (before or after it), the worker's `fail`/`timeout`, a rewrite refused or failed,
 //   the commit failing, an evidence file not at HEAD as recorded, a kept path no longer resolving where
 //   it was confirmed or a kept file not in the worktree as recorded before its run, a kept run that throws or survives
 //   its kill, the tree changed during the checks (after the scoped run and each kept run; neither is
