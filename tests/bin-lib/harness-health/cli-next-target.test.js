@@ -6,15 +6,24 @@ const os = require('os');
 const path = require('path');
 
 const { seedDurableState } = require('../health-core/seed-durable-state');
-const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
-const { spawnCli } = require('../../helpers/run-cli');
+const { STUB_SKIP } = require('../../helpers/path-stub');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 
-const CLI =path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
+const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-nt-')); }
-function runNextTarget(args, root) {
-  const raw = execFileSync('node', [CLI, 'next-target', '--root', root, ...args], { encoding: 'utf8' });
-  return JSON.parse(raw);
+
+// In-process (#5380): the CLI runs inside the test process through runCliSync; `status` mirrors
+// the spawnSync field the assertions below read. `env` is the complete environment the CLI sees.
+function cli(argv, opts = {}) {
+  const res = runCliSync(CLI, argv, { env: { ...process.env, ...opts.env }, cwd: opts.cwd, fresh: opts.fresh });
+  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
+}
+
+function runNextTarget(args, root, opts = {}) {
+  const res = cli(['next-target', '--root', root, ...args], opts);
+  assert.strictEqual(res.status, 0, res.stderr);
+  return JSON.parse(res.stdout);
 }
 
 // writeCursors (local-disk cursor persistence) was removed by the
@@ -102,8 +111,7 @@ test('next-target --budget 2 returns an array of up to 2 unique targets', () => 
   fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth');
   fs.writeFileSync(path.join(root, '.claude', 'skills', 'billing.md'), '# billing');
-  const raw = execFileSync('node', [CLI, 'next-target', '--root', root, '--budget', '2'], { encoding: 'utf8' });
-  const result = JSON.parse(raw);
+  const result = runNextTarget(['--budget', '2'], root);
   assert.ok(Array.isArray(result.targets), 'must return a targets array when --budget > 1');
   assert.ok(result.targets.length >= 1 && result.targets.length <= 2);
   const ids = result.targets.map((t) => t.id);
@@ -161,14 +169,9 @@ test('next-target --kind memory --target <id> --memory-dir <dir> bypasses select
 
 test('next-target --kind memory without --memory-dir exits 2 with a clear usage error', () => {
   const root = tmp();
-  assert.throws(
-    () => execFileSync('node', [CLI, 'next-target', '--root', root, '--kind', 'memory'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
-    (err) => {
-      assert.strictEqual(err.status, 2);
-      assert.match(err.stderr.toString(), /--memory-dir/);
-      return true;
-    },
-  );
+  const res = cli(['next-target', '--root', root, '--kind', 'memory']);
+  assert.strictEqual(res.status, 2);
+  assert.match(res.stderr, /--memory-dir/);
 });
 
 test('next-target (bare, no --kind) never surfaces a memory target even when MEMORY.md exists at --root', () => {
@@ -182,16 +185,21 @@ test('next-target (bare, no --kind) never surfaces a memory target even when MEM
 
 // Wraps the real `git` binary with a logging shim so a CLI-level invocation's
 // actual subprocess calls can be counted — this is the only way to observe
-// readDurableState's call count from outside the process boundary (the CLI
-// spawns via execFileSync, so there is no in-process mock seam). Returns the
-// path to a log file that accumulates one line per invocation of the shim,
-// and the restore() that takes the shim back off PATH.
+// readDurableState's call count from outside the CLI (every git call is a
+// child process). Returns the path to a log file that accumulates one line per
+// invocation of the shim, and the `env` to hand the in-process call: the shim's
+// dir ahead of the real PATH, in the injected env only. The test process's own
+// process.env.PATH is never touched (installStub would), so a CLI that ignored
+// its injected env would run the real git and log nothing — the test would fail.
 function makeGitSpy() {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-nt-gitspy-'));
   const logFile = path.join(logDir, 'git-calls.log');
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  const restore = installStub('git', `#!/bin/sh\necho "$@" >> "${logFile}"\nexec "${realGit}" "$@"\n`);
-  return { logFile, restore };
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-nt-gitstub-'));
+  const shim = path.join(stubDir, 'git');
+  fs.writeFileSync(shim, `#!/bin/sh\necho "$@" >> "${logFile}"\nexec "${realGit}" "$@"\n`);
+  fs.chmodSync(shim, 0o755); // root-safe: exec-bit stub, not a denial simulation
+  return { logFile, env: { ...process.env, PATH: stubDir + path.delimiter + process.env.PATH } };
 }
 
 test('next-target (default no --target path) fetches durable state exactly once, not twice', { skip: STUB_SKIP }, () => {
@@ -199,12 +207,9 @@ test('next-target (default no --target path) fetches durable state exactly once,
   fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth');
   seedDurableCursors(root, {});
-  const { logFile, restore } = makeGitSpy();
-  try {
-    execFileSync('node', [CLI, 'next-target', '--root', root], { encoding: 'utf8' });
-  } finally {
-    restore();
-  }
+  const { logFile, env } = makeGitSpy();
+  const res = cli(['next-target', '--root', root], { env });
+  assert.strictEqual(res.status, 0, res.stderr);
   const log = fs.readFileSync(logFile, 'utf8');
   const fetchCalls = log.split('\n').filter((line) => /(^|\s)fetch(\s|$)/.test(line)).length;
   assert.strictEqual(
@@ -219,12 +224,9 @@ test('next-target --kind memory fetches durable state exactly once, not twice', 
   const memoryDir = tmp();
   fs.writeFileSync(path.join(memoryDir, 'MEMORY.md'), '- [Only entry](only-entry.md) — hook\n');
   seedDurableCursors(root, {});
-  const { logFile, restore } = makeGitSpy();
-  try {
-    execFileSync('node', [CLI, 'next-target', '--root', root, '--kind', 'memory', '--memory-dir', memoryDir], { encoding: 'utf8' });
-  } finally {
-    restore();
-  }
+  const { logFile, env } = makeGitSpy();
+  const res = cli(['next-target', '--root', root, '--kind', 'memory', '--memory-dir', memoryDir], { env });
+  assert.strictEqual(res.status, 0, res.stderr);
   const log = fs.readFileSync(logFile, 'utf8');
   const fetchCalls = log.split('\n').filter((line) => /(^|\s)fetch(\s|$)/.test(line)).length;
   assert.strictEqual(
@@ -234,18 +236,93 @@ test('next-target --kind memory fetches durable state exactly once, not twice', 
   );
 });
 
+// No --root: the root defaults to the cwd the call was given (the injected one, never the test process's).
+test('next-target without --root selects from the injected cwd', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth');
+  const res = cli(['next-target'], { cwd: root });
+  assert.strictEqual(res.status, 0, res.stderr);
+  const result = JSON.parse(res.stdout);
+  assert.strictEqual(result.target.id, 'auth');
+  assert.strictEqual(result.target.why, 'stale');
+});
+
+// Two sequential in-process calls against two different fixture roots: nothing the first call
+// left in the process (cwd, env, module state) leaks into the second one's answer.
+test('two sequential in-process next-target calls on different roots each answer for their own root', () => {
+  const fixture = (skill) => {
+    const root = tmp();
+    fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude', 'skills', `${skill}.md`), `# ${skill}`);
+    return root;
+  };
+  const first = runNextTarget([], fixture('alpha'));
+  const second = runNextTarget([], fixture('beta'));
+  assert.strictEqual(first.target.id, 'alpha');
+  assert.strictEqual(second.target.id, 'beta');
+});
+
+// A root rewritten in place between two calls needs `fresh: true` on the second: domainChurn
+// memoizes per (root, paths, since) for the life of the module, and a CLI process used to start
+// with an empty memo every time. Both skills carry a recent cursor, so selection is by churn.
+test('a root rewritten in place between two in-process next-target calls is read fresh with fresh: true', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'alpha.md'), '# alpha');
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'beta.md'), '# beta');
+  const audited = Date.now() - 86400000;
+  seedDurableCursors(root, { 'skill:alpha': { lastAuditedMs: audited }, 'skill:beta': { lastAuditedMs: audited } });
+
+  const before = runNextTarget([], root);
+  assert.strictEqual(before.target, null, 'no commits yet, so no churn and nothing is stale');
+
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'alpha.md'), '# alpha, edited');
+  execFileSync('git', ['-C', root, 'add', '.claude/skills/alpha.md']);
+  execFileSync('git', ['-C', root, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '-m', 'edit alpha']);
+
+  const after = runNextTarget([], root, { fresh: true });
+  assert.strictEqual(after.target.id, 'alpha');
+  assert.strictEqual(after.target.why, 'hotspot');
+});
+
+// Env-only fixture: `root` is not a git repo at all and nothing in the test process's own
+// environment points git anywhere — only the injected env carries GIT_DIR=<B>/.git. The churn
+// lookup (`git log`, via selectTarget's env) and the durable-state reads both have to run
+// under that env for beta, the only skill with a commit in B, to be picked as a hotspot.
+test('next-target runs its child git under the injected env only (GIT_DIR names the repo, root is not one)', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'alpha.md'), '# alpha');
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'beta.md'), '# beta');
+
+  const repoB = tmp();
+  const audited = Date.now() - 86400000;
+  seedDurableCursors(repoB, { 'skill:alpha': { lastAuditedMs: audited }, 'skill:beta': { lastAuditedMs: audited } });
+  fs.mkdirSync(path.join(repoB, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(repoB, '.claude', 'skills', 'beta.md'), '# beta in B');
+  execFileSync('git', ['-C', repoB, 'add', '.claude/skills/beta.md']);
+  execFileSync('git', ['-C', repoB, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '-m', 'beta']);
+
+  const result = runNextTarget([], root, { env: { GIT_DIR: path.join(repoB, '.git') } });
+  assert.strictEqual(result.target.id, 'beta');
+  assert.strictEqual(result.target.why, 'hotspot');
+});
+
 // Proves the script entry's stdout, stderr and exit code are unchanged by the in-process
 // entry conversion (#5380): a bare `next-target` in a non-git fixture, run as a real child,
 // with the fixture's temp path (both spellings — macOS resolves /var to /private/var) replaced
-// by a placeholder on both sides of the stderr comparison.
+// by a placeholder, and OS path separators folded to '/', on the stderr being compared. git's own
+// wording is pinned in the C locale (LC_ALL/LANG), where its messages are the untranslated English
+// ones, so the full text is asserted rather than only its shape.
 test('next-target script entry: exit code, stdout and stderr of a bare run in a non-git fixture', () => {
   const root = tmp();
   fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth');
   const real = fs.realpathSync(root);
-  const normalize = (text) => text.split(real).join('<ROOT>').split(root).join('<ROOT>');
+  const normalize = (text) => text.split(real).join('<ROOT>').split(root).join('<ROOT>').replace(/\\/g, '/');
 
-  const res = spawnCli(CLI, ['next-target'], { env: { ...process.env }, cwd: root });
+  const res = spawnCli(CLI, ['next-target'], { env: { ...process.env, LC_ALL: 'C', LANG: 'C' }, cwd: root });
 
   assert.strictEqual(res.code, 0);
   const expectedStdout = JSON.stringify({

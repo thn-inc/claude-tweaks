@@ -1,10 +1,12 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+const { runCliSync } = require('../../helpers/run-cli');
 
 // End-to-end coverage for #2545: `validate-findings` must record the
 // health-state cursor locally only (zero remote pushes), and the new
@@ -32,20 +34,44 @@ function remoteHealthStateSha(bareDir) {
   return line ? line.split(/\s+/)[0] : null;
 }
 
+// In-process (#5380): the CLI runs inside the test process through runCliSync; `status` mirrors
+// the spawnSync field the assertions below read. `env` is the complete environment the CLI sees.
+function cli(argv, opts = {}) {
+  const res = runCliSync(CLI, argv, { env: { ...process.env, ...opts.env }, cwd: opts.cwd, fresh: opts.fresh });
+  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
+}
+
 function runValidateFindings(root, skill) {
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([]));
-  return spawnSync('node', [CLI, 'validate-findings', findingsFile, '--root', root, '--target', skill, '--kind', 'skill'], { encoding: 'utf8' });
+  return cli(['validate-findings', findingsFile, '--root', root, '--target', skill, '--kind', 'skill']);
 }
 
 function runPushCursor(root) {
-  return spawnSync('node', [CLI, 'push-cursor', '--root', root], { encoding: 'utf8' });
+  return cli(['push-cursor', '--root', root]);
 }
 
 function cursorsAtRemote(bareDir) {
   const out = execFileSync('git', ['--git-dir', bareDir, 'show', 'health-state:harness-health/cursors.json'], { encoding: 'utf8' });
   return JSON.parse(out);
 }
+
+// No --root: both commands take the cwd the call was given (the injected one, never the test
+// process's) as the root; a relative findings path resolves against it too.
+test('validate-findings then push-cursor without --root use the injected cwd, and health-state lands on the remote', () => {
+  const { root, bareDir } = tmpRepoWithOrigin();
+  fs.writeFileSync(path.join(root, 'findings.json'), JSON.stringify([]));
+
+  const recorded = cli(['validate-findings', 'findings.json', '--target', 'skill-a', '--kind', 'skill'], { cwd: root });
+  assert.strictEqual(recorded.status, 0, `stderr: ${recorded.stderr}`);
+  assert.strictEqual(remoteHealthStateSha(bareDir), null, 'precondition: a local-only write pushes nothing');
+
+  const pushed = cli(['push-cursor'], { cwd: root });
+  assert.strictEqual(pushed.status, 0, `stderr: ${pushed.stderr}`);
+  assert.deepStrictEqual(JSON.parse(pushed.stdout), { pushed: true });
+  assert.ok(remoteHealthStateSha(bareDir), 'origin must now carry the health-state ref pushed from the injected cwd');
+  assert.ok(cursorsAtRemote(bareDir)['skill:skill-a'], 'the pushed cursors.json must carry the cursor recorded from the injected cwd');
+});
 
 test('validate-findings records the cursor locally and pushes nothing to origin', () => {
   const { root, bareDir } = tmpRepoWithOrigin();
