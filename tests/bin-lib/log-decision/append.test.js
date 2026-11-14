@@ -13,6 +13,8 @@ const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 // every entry the module emits is proven readable by the documented shape.
 const SCHEMA = /^- (AUTO|STAGED|KEPT-PROMPT|SCANNED|SKIP) (\d{2}:\d{2}:\d{2}) — (.+?): (.+)\. Reversibility: (high|med|low|n\/a)(?:[^\[]*)?( \[lever: .+\])?$/;
 
+const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js');
+
 const NOW = new Date(2026, 7, 16, 14, 32, 14).getTime(); // local 14:32:14
 
 test('formatEntry: AUTO line with step + spec matches the documented schema', () => {
@@ -233,12 +235,11 @@ test('appendEntry: concurrent `node bin/log-decision.js` processes against the s
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-concurrent');
   fs.mkdirSync(runDir, { recursive: true });
 
-  const cliPath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js');
   const WORKERS = 8;
   // real processes: proves the cross-process lock never drops an entry (#816)
   const spawnOne = (i) => new Promise((resolve, reject) => {
     const p = spawn(process.execPath, [
-      cliPath, '--run', runDir, '--status', 'AUTO', '--text', `worker ${i}`,
+      CLI, '--run', runDir, '--status', 'AUTO', '--text', `worker ${i}`,
     ], { cwd: root, env: { ...process.env, CLAUDE_TWEAKS_LOCK_WAIT_MS: '60000' } });
     let stderr = '';
     let stdout = '';
@@ -266,17 +267,15 @@ test('AC6.1: an in-process append anchors the run dir under the injected cwd', (
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-inproc');
   fs.mkdirSync(runDir, { recursive: true });
   assert.notEqual(path.resolve(root), path.resolve(process.cwd()));
-  const cliPath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js');
-  const res = runCliSync(cliPath, ['--run', runDir, '--status', 'AUTO', '--text', 'in-process'], { cwd: root, env: {} });
+  const res = runCliSync(CLI, ['--run', runDir, '--status', 'AUTO', '--text', 'in-process'], { cwd: root, env: {} });
   assert.equal(res.code, 0, res.stderr);
   assert.match(res.stdout, /— log-decision: in-process\. Reversibility: n\/a\.\n$/);
   assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /— log-decision: in-process\. Reversibility: n\/a\.\n$/);
 });
 
 test('refusal: a missing --run exits 2 and names the problem', () => {
-  const cliPath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js');
   // real process: proves the script entry turns run's return value into the exit code
-  const res = spawnCli(cliPath, ['--status', 'AUTO', '--text', 'x'], { env: { ...process.env } });
+  const res = spawnCli(CLI, ['--status', 'AUTO', '--text', 'x']);
   assert.equal(res.code, 2);
   assert.match(res.stderr, /--run <run-dir> is required/);
 });
