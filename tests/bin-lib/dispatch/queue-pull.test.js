@@ -61,7 +61,7 @@ const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
   REPO, SCRIPT_MD, MCP_MD, MCP_TARGETS_FIRST_LINE, MCP_EXCLUSIONS_FIRST_LINE, FENCE_FIRST_LINE, RUN_DIR_NAME,
   oracleSkip, extractFence, fenceSessionFiles, filesOracleScript, createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shQuote,
-  STREAM_TRUNCATED, TAIL_LINES,
+  STREAM_TRUNCATED, TAIL_LINES, readShimLog,
 } = require('./queue-pull-oracle');
 const {
   S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghAnswer, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
@@ -169,7 +169,7 @@ test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exp
       const allowed = git(['-c', setting, 'rev-parse', '--show-toplevel']);
       assert.equal(allowed.status, 0, `${setting}: ${allowed.stderr}`);
     }
-    const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const log = readShimLog(sb.logs, 'git');
     assert.equal(log.filter((e) => e.tag === 'REFUSED').length, 2 + refusedSettings.length);
   } finally {
     sb.cleanup();
@@ -200,7 +200,7 @@ test('#5227 oracle: the git shim fails a gitFail prefix with exit 128 (after the
     const unknown = git(['--bare', 'status']);
     assert.equal(unknown.status, 97);
     assert.equal(unknown.stderr, 'git-shim: refused (unknown global option --bare): --bare status\n');
-    const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const log = readShimLog(sb.logs, 'git');
     assert.deepEqual(log.map((e) => e.tag), ['injected', 'injected', 'delegated', 'REFUSED', 'REFUSED']);
     assert.deepEqual(log.filter((e) => e.tag === 'REFUSED').map((e) => e.why), [`unresolvable directory ${path.join(sb.root, 'no-such-dir')}`, 'unknown global option --bare']);
   } finally {
@@ -233,7 +233,7 @@ test('#5227 oracle: the gh shim exits 97 and logs UNHANDLED for an unanswered ar
     const effect = gh(['effect-probe']);
     assert.equal(effect.status, 0, effect.stderr);
     assert.equal(fs.existsSync(probe), false);
-    const log = fs.readFileSync(path.join(sb.logs, 'gh-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const log = readShimLog(sb.logs, 'gh');
     assert.deepEqual(log.map((e) => e.tag), ['UNHANDLED', 'UNHANDLED', 'ok', 'ok']);
     assert.deepEqual(log[0].argv, ['issue', 'view', '1']);
   } finally {
@@ -2796,7 +2796,7 @@ test('#5227 oracle: the git shim answers `remote get-url origin` with the scenar
     assert.equal(canned.stdout, `https://github.com/${PORTABLE_SLUG}.git\n`, 'the scenario URL, not the sandbox origin.git');
     const near = git(['remote', 'get-url', '--all', 'origin']);
     assert.equal(near.stdout, `${sb.origin}\n`, 'a different argv is delegated');
-    const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const log = readShimLog(sb.logs, 'git');
     assert.deepEqual(log.map((e) => e.tag), ['canned', 'delegated']);
   } finally {
     sb.cleanup();
