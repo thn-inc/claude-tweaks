@@ -216,3 +216,22 @@ test('runHook output reaches deps.stdout, not the inherited stdio', () => {
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /hook-said/);
 });
+
+test('a hook printing more than 1 MiB still reports its real exit status', () => {
+  const root = tagged('1.2.0');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'release-hook: "node big.js"\n');
+  commit(root, 'feat: one', { 'big.js': "process.stdout.write('x'.repeat(2 * 1024 * 1024));\n" });
+  const r = runCli(root, [], { allowRealRunner: true });
+  assert.strictEqual(r.code, 0, r.stderr);
+});
+
+test('a relative --root resolves against the injected cwd, not the process cwd', () => {
+  const root = tagged('1.2.0');
+  commit(root, 'fix: one');
+  const parent = path.dirname(root);
+  assert.notEqual(parent, process.cwd());
+  const r = runCliSync(CLI, ['--root', path.basename(root), '--dry-run'], { env: ENV_PLAIN, cwd: parent });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /v1\.2\.1 \(patch\)/);
+});

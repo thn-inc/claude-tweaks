@@ -35,7 +35,7 @@ const { precheck } = require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
-const { isPathContained } = require('./lib/shared-primitives.js');
+const { isPathContained, LARGE_MAX_BUFFER_BYTES } =require('./lib/shared-primitives.js');
 const { lstatType } = require('./lib/path-guard');
 
 const USAGE = [
@@ -237,11 +237,12 @@ function run(argv, deps = {}) {
       // A fake may return the bare exit code; the real hook returns { status, stdout, stderr }
       // so its output goes through deps rather than the inherited stdio.
       const hookResult = deps.runHook(hook, { cwd: root, env: deps.env });
-      if (typeof hookResult !== 'number') {
+      const isResult = hookResult && typeof hookResult === 'object';
+      if (isResult) {
         if (hookResult.stdout) deps.stdout(hookResult.stdout);
         if (hookResult.stderr) deps.stderr(hookResult.stderr);
       }
-      const code = typeof hookResult === 'number' ? hookResult : hookResult.status;
+      const code = isResult ? hookResult.status : hookResult;
       if (code !== 0) {
         deps.stderr(`partial: v${version} is committed, tagged${hasOrigin ? ' and pushed' : ''}; the release-hook exited ${code}. ` +
           `Do NOT re-run release-local (the tag is final). Recover: re-run the hook alone: ${hook}\n`);
@@ -366,7 +367,7 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
 // back so `run` routes it through deps.stdout/deps.stderr (inherited stdio would
 // write straight to the host process's fds when called in-process).
 function runHook(cmd, { cwd, env } = {}) {
-  const r = spawnSync(cmd, { cwd, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(cmd, { cwd, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
   return { status: r.status === null ? 1 : r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
@@ -420,6 +421,6 @@ function defaultDeps(root, { env } = {}) {
   };
 }
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
-
 module.exports = { run, parseArgs, defaultDeps, realDeps, writeInsideRoot, USAGE };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
