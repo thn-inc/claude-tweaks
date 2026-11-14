@@ -44,16 +44,17 @@ test('a relative file is read against an injected cwd and diagnostics print the 
   assert.ok(!err.includes(dir), 'must not print the cwd-resolved absolute path');
 });
 
-test('a relative file keeps a \`..\` after a symlink for the kernel (not collapsed as text)', (t) => {
+// Win32 collapses `..` as text before the filesystem sees a path, for a bare
+// relative read and the joined path alike, so there is no kernel behavior to pin.
+const POSIX_KERNEL_ONLY = process.platform === 'win32'
+  ? 'Win32 resolves `..` lexically, so there is no kernel behavior to preserve'
+  : false;
+
+test('a relative file keeps a \`..\` after a symlink for the kernel (not collapsed as text)', { skip: POSIX_KERNEL_ONLY }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-index-'));
   fs.mkdirSync(path.join(root, 'other', 'deep'), { recursive: true });
   fs.writeFileSync(path.join(root, 'other', 'only-there.json'), JSON.stringify([{ number: 1, state: 'open', fingerprint: 'fp' }]));
-  try {
-    fs.symlinkSync(path.join(root, 'other', 'deep'), path.join(root, 'link'), 'dir');
-  } catch (e) {
-    if (process.platform === 'win32') return t.skip('symlink creation is not permitted here');
-    throw e;
-  }
+  fs.symlinkSync(path.join(root, 'other', 'deep'), path.join(root, 'link'), 'dir');
   assert.deepStrictEqual(loadIssueIndex('link/../only-there.json', 'code-health', { cwd: () => root }), {
     fp: { number: 1, state: 'open', labels: [] },
   });

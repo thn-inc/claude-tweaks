@@ -288,7 +288,14 @@ function updateAgainst(cwd, resultsArg) {
   return { code, out, err };
 }
 
-test('update keeps a trailing slash on a file path for the kernel: still exit 1 (ENOTDIR), not a silent []', () => {
+// Win32 strips trailing separators and collapses `..` as text before the
+// filesystem sees a path, for a bare relative read and the joined path alike,
+// so the POSIX kernel behavior the next two tests pin does not exist there.
+const POSIX_KERNEL_ONLY = process.platform === 'win32'
+  ? 'Win32 resolves trailing separators and `..` lexically, so there is no kernel behavior to preserve'
+  : false;
+
+test('update keeps a trailing slash on a file path for the kernel: still exit 1 (ENOTDIR), not a silent []', { skip: POSIX_KERNEL_ONLY }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
   fs.writeFileSync(path.join(root, 'results.json'), '[]');
   const r = updateAgainst(root, 'results.json/');
@@ -297,16 +304,11 @@ test('update keeps a trailing slash on a file path for the kernel: still exit 1 
   assert.strictEqual(r.out, '');
 });
 
-test('update leaves a `..` after a symlink to the kernel: link/../x resolves through the link target', (t) => {
+test('update leaves a `..` after a symlink to the kernel: link/../x resolves through the link target', { skip: POSIX_KERNEL_ONLY }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
   fs.mkdirSync(path.join(root, 'other', 'deep'), { recursive: true });
   fs.writeFileSync(path.join(root, 'other', 'only-there.json'), '[]');
-  try {
-    fs.symlinkSync(path.join(root, 'other', 'deep'), path.join(root, 'link'), 'dir');
-  } catch (e) {
-    if (process.platform === 'win32') return t.skip('symlink creation is not permitted here');
-    throw e;
-  }
+  fs.symlinkSync(path.join(root, 'other', 'deep'), path.join(root, 'link'), 'dir');
   const r = updateAgainst(root, 'link/../only-there.json');
   assert.strictEqual(r.code, 0, r.err);
   assert.deepStrictEqual(JSON.parse(r.out), []);
