@@ -189,9 +189,10 @@ test('next-target without --root selects from the injected cwd', () => {
   assert.strictEqual(result.target.why, 'stale');
 });
 
-// Two sequential in-process calls against two different fixture roots: nothing the first call
-// left in the process (cwd, env, module state) leaks into the second one's answer.
-test('two sequential in-process next-target calls on different roots each answer for their own root', () => {
+// AC4: two sequential in-process calls against two different fixture roots each return their own
+// root's target. The roots differ (and the churn memo is keyed by root), so this does not detect a
+// module-state leak between calls.
+test('two sequential in-process next-target calls against two different roots each return their own root\'s target', () => {
   const fixture = (journey) => {
     const root = tmp();
     writeJourney(root, journey);

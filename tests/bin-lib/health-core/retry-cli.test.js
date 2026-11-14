@@ -134,7 +134,7 @@ test('update reports each escalated fingerprint exactly once even when the mutat
   assert.strictEqual(escalated[0].fingerprint, 'stuck');
 });
 
-test('update prints [] AND sets a failing exit code (not the computed-but-unpersisted escalation, and never a silent exit 0) when health-state persistence fails after retries', () => {
+test('update prints [] AND returns exit code 1, leaving process.exitCode untouched (not the computed-but-unpersisted escalation, and never a silent exit 0) when health-state persistence fails after retries', () => {
   const ds = fakeDurableStateThatFailsToPersist({
     retryQueue: [
       { fingerprint: 'stuck', payload: { title: 'Stuck' }, firstFailedAt: 'x', attempts: 2, lastError: 'timeout' },

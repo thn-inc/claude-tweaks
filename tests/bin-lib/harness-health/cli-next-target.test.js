@@ -164,6 +164,20 @@ test('next-target --kind memory --target <id> --memory-dir <dir> bypasses select
   assert.strictEqual(result.target.why, 'manual');
 });
 
+// A relative --memory-dir resolves against the injected cwd: sweepCli moves the real process cwd to
+// an empty throwaway dir, so resolving it against process.cwd() would find no MEMORY.md.
+test('next-target --kind memory with a relative --memory-dir resolves it against the injected cwd', () => {
+  const root = tmp();
+  const parent = tmp();
+  fs.mkdirSync(path.join(parent, 'mem'));
+  fs.writeFileSync(path.join(parent, 'mem', 'MEMORY.md'), '- [Only entry](only-entry.md) — hook\n');
+  const result = runNextTarget(['--kind', 'memory', '--memory-dir', 'mem'], root, { cwd: parent });
+  assert.ok(result.target, 'a relative --memory-dir must be found under the injected cwd');
+  assert.strictEqual(result.target.kind, 'memory');
+  assert.strictEqual(result.target.id, 'only-entry');
+  assert.strictEqual(result.target.why, 'stale');
+});
+
 test('next-target --kind memory without --memory-dir exits 2 with a clear usage error', () => {
   const root = tmp();
   const res = cli(['next-target', '--root', root, '--kind', 'memory']);
@@ -245,9 +259,10 @@ test('next-target without --root selects from the injected cwd', () => {
   assert.strictEqual(result.target.why, 'stale');
 });
 
-// Two sequential in-process calls against two different fixture roots: nothing the first call
-// left in the process (cwd, env, module state) leaks into the second one's answer.
-test('two sequential in-process next-target calls on different roots each answer for their own root', () => {
+// AC4: two sequential in-process calls against two different fixture roots each return their own
+// root's target. The roots differ (and the churn memo is keyed by root), so this does not detect a
+// module-state leak between calls.
+test('two sequential in-process next-target calls against two different roots each return their own root\'s target', () => {
   const fixture = (skill) => {
     const root = tmp();
     fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });

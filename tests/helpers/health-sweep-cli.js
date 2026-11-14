@@ -3,7 +3,10 @@
 //
 // `sweepCli` runs a CLI through runCliSync, with two guards against a cwd or
 // --root thread-through regression reaching anything real:
-// - Network transports: the ambient environment plus GIT_ALLOW_PROTOCOL=file
+// - Network transports: the ambient environment (minus any inherited GIT_DIR,
+//   GIT_WORK_TREE and GIT_INDEX_FILE, e.g. from a git hook, which would point the
+//   CLI's git at the real repo; a caller's own opts.env may still set them) plus
+//   GIT_ALLOW_PROTOCOL=file
 //   (spread last, so a caller's own env cannot restore a looser value). The
 //   CLIs' durable-state code runs real `git fetch` and `git push origin`; with
 //   this, any https/ssh fetch or push fails fast. Local bare-repo `file`
@@ -28,8 +31,12 @@ function sweepCli(cliPath, argv, opts = {}) {
   const prev = process.cwd();
   process.chdir(emptyCwd);
   try {
+    const ambient = { ...process.env };
+    delete ambient.GIT_DIR;
+    delete ambient.GIT_WORK_TREE;
+    delete ambient.GIT_INDEX_FILE;
     const res = runCliSync(cliPath, argv, {
-      env: { ...process.env, ...opts.env, GIT_ALLOW_PROTOCOL: 'file' },
+      env: { ...ambient, ...opts.env, GIT_ALLOW_PROTOCOL: 'file' },
       cwd: opts.cwd,
       fresh: opts.fresh,
     });

@@ -6,7 +6,7 @@ const { fingerprint } = require('./lib/journey-health/fingerprint');
 const {
   readCache, writeCache, createDurable, buildValidateFindingsUpdate,
 } = require('./lib/journey-health/cache');
-const { makeExec } = require('./lib/health-core/io');
+const { makeExec, resolveAgainst } = require('./lib/health-core/io');
 const { computeChurn } = require('./lib/health-core/runs');
 const { makeRetryQueueCommands } = require('./lib/health-core/retry-cli');
 const { dedupAndDispatch } = require('./lib/health-core/validate-findings-dispatch');
@@ -124,7 +124,7 @@ function cmdValidateFindings(args, ctx) {
     );
     return 2;
   }
-  const findingsPath = path.resolve(ctx.cwd(), findingsArg);
+  const findingsPath = resolveAgainst(ctx.cwd(), findingsArg);
 
   const confidence = validateConfidenceArg(args['min-confidence'], stderr);
   if (!confidence.ok) return confidence.code;
@@ -251,7 +251,7 @@ function cmdQaEvidence(args, ctx) {
   }
   let report;
   try {
-    report = JSON.parse(fs.readFileSync(path.resolve(ctx.cwd(), reportArg), 'utf8'));
+    report = JSON.parse(fs.readFileSync(resolveAgainst(ctx.cwd(), reportArg), 'utf8'));
   } catch {
     ctx.stderr(`qa-evidence: could not read or parse report file: ${reportArg}\n`);
     return 1;
@@ -292,6 +292,10 @@ function run(argv, deps = realDeps) {
   const args = parseArgs(argv, ctx.cwd());
   // A relative --root resolves against the injected cwd, never the real one, so the
   // shared sub-commands (which pass it straight to `git -C` and fs) see an absolute path.
+  // Root normalizes (file paths use resolveAgainst) because `git -C` and the durable-state
+  // paths need an absolute root, and harness-health's validate-findings/push-cursor already
+  // path.resolve'd theirs, so every sub-command keys its state on one normalized root; a
+  // directory is unaffected by a trailing slash.
   args.root = path.resolve(ctx.cwd(), args.root || '.');
   const cmd = args._[0];
   if (cmd === 'next-target') return cmdNextTarget(args, ctx);

@@ -96,6 +96,22 @@ test('push-cursor against nothing locally recorded is a successful no-op', () =>
   assert.strictEqual(remoteHealthStateSha(bareDir), null);
 });
 
+// A locally-recorded cursor whose push cannot land (origin repointed at a local path that does not
+// exist — file protocol, no network) exits 1 after the CAS retries (two real backoff sleeps,
+// ~0.3-0.5s total) rather than reporting success.
+test('push-cursor exits 1 with the push-failed line when the health-state push fails after retries', () => {
+  const { root } = tmpRepoWithOrigin();
+  const recorded = runValidateFindings(root, 'skill-a');
+  assert.strictEqual(recorded.status, 0, `stderr: ${recorded.stderr}`);
+  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-push-cursor-gone-')), 'no-such-repo');
+  execFileSync('git', ['remote', 'set-url', 'origin', missing], { cwd: root });
+
+  const result = runPushCursor(root);
+  assert.strictEqual(result.status, 1, `stderr: ${result.stderr}`);
+  assert.match(result.stderr, /push-cursor: health-state push failed after retries/);
+  assert.strictEqual(result.stdout, '', 'a failed push must not print a { pushed } result');
+});
+
 test('push-cursor ships every locally-accumulated skill in exactly one remote push, carrying all of their cursor data', () => {
   const { root, bareDir } = tmpRepoWithOrigin();
 

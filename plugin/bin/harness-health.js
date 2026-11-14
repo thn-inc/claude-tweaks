@@ -7,7 +7,7 @@ const { fingerprint } = require('./lib/harness-health/fingerprint');
 const {
   readCache, writeCache, createDurable, buildValidateFindingsUpdate,
 } = require('./lib/harness-health/cache');
-const { makeExec } = require('./lib/health-core/io');
+const { makeExec, resolveAgainst } = require('./lib/health-core/io');
 const { computeChurn } = require('./lib/health-core/runs');
 const { makeRetryQueueCommands } = require('./lib/health-core/retry-cli');
 const { dedupAndDispatch } = require('./lib/health-core/validate-findings-dispatch');
@@ -192,7 +192,7 @@ function cmdValidateFindings(args, ctx) {
     );
     return 2;
   }
-  const findingsPath = path.resolve(ctx.cwd(), findingsArg);
+  const findingsPath = resolveAgainst(ctx.cwd(), findingsArg);
 
   const confidence = validateConfidenceArg(args.minConfidence, stderr);
   if (!confidence.ok) return confidence.code;
@@ -400,8 +400,12 @@ function run(argv, deps = realDeps) {
   const args = parseArgs(argv, ctx.cwd());
   // A relative --root resolves against the injected cwd, never the real one, so the
   // shared sub-commands (which pass it straight to `git -C` and fs) see an absolute path.
+  // Root normalizes (file paths use resolveAgainst) because `git -C` and the durable-state
+  // and premise paths need an absolute root, and validate-findings/push-cursor already
+  // path.resolve'd it, so every sub-command keys its state on one normalized root; a
+  // directory is unaffected by a trailing slash.
   args.root = path.resolve(ctx.cwd(), args.root || '.');
-  if (args.memoryDir) args.memoryDir = path.resolve(ctx.cwd(), args.memoryDir);
+  if (args.memoryDir) args.memoryDir = resolveAgainst(ctx.cwd(), args.memoryDir);
   const cmd = args._[0];
   if (cmd === 'next-target') return cmdNextTarget(args, ctx);
   if (cmd === 'validate-findings') return cmdValidateFindings(args, ctx);
