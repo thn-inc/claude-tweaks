@@ -665,6 +665,10 @@ test('residueErrorText: stderr without a Command failed prefix is stderr alone',
   assert.equal(residueErrorText(Object.assign(new Error('boom'), { stderr: 'denied' })), 'denied');
 });
 
+test('residueErrorText: a thrown object with a string code and stderr but no message is stderr alone', () => {
+  assert.equal(residueErrorText({ code: 'E', stderr: 'denied' }), 'denied');
+});
+
 test('residueErrorText: non-exec errors keep errorText', () => {
   assert.equal(residueErrorText(new Error('HTTP 502')), 'HTTP 502');
   assert.equal(residueErrorText('gh: not found'), 'gh: not found');

@@ -57,7 +57,7 @@ const { findByMarker } = require('../issues/dedup-lookup');
 function residueErrorText(err) {
   if (typeof err !== 'object' || err === null) return errorText(err);
   const stderr = String(err.stderr ?? '').trim();
-  const firstLine = String(err.message).split('\n')[0];
+  const firstLine = String(err.message ?? '').split('\n')[0];
   const words = [];
   if (firstLine.startsWith('Command failed: ')) {
     for (const tok of firstLine.slice('Command failed: '.length).split(/\s+/).filter(Boolean)) {
@@ -69,7 +69,8 @@ function residueErrorText(err) {
   if (stderr) {
     if (short) return `${stderr} (${short})`;
     // A spawn-level failure (ETIMEDOUT, ENOBUFS) carries a string `code`; its message is the cause.
-    return typeof err.code === 'string' ? `${stderr} (${firstLine.trim()})` : stderr;
+    // A thrown object with no message (an injected runner) has no cause to append.
+    return typeof err.code === 'string' && firstLine.trim() ? `${stderr} (${firstLine.trim()})` : stderr;
   }
   if (short) return `Command failed: ${short}`;
   return errorText(err);
