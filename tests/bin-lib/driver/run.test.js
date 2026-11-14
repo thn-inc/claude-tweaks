@@ -3277,6 +3277,35 @@ test('fix round: a kept evidence file changed behind git status is caught by its
   assert.equal(pushCalls(two).length, 0);
 });
 
+test('fix round: a parent swapped for a symlink to an identical copy after the commit stops before the kept run', async () => {
+  // Worker code in the scoped run moves tests/new away and puts a symlink to a directory holding an
+  // identical copy in its place: the bytes read through it match, git status (index flags) lists nothing.
+  const parent = path.join(WT, 'tests', 'new');
+  const cases = [
+    ['the parent itself a symlink', (swapped) => ({ script: [[(c) => swapped.on && c.kind === 'lstatType' && c.args[0] === parent, { type: 'symlink', code: null }]] })],
+    ['an ancestor symlinked to another test directory', (swapped) => ({
+      script: [[(c) => swapped.on && c.kind === 'lstatType' && c.args[0] === parent, { type: 'directory', code: null }]],
+      deps: { canonicalRealpath: (p) => (swapped.on && p === parent ? path.join(WT, 'tests', 'other') : p) },
+    })],
+    ['an ancestor symlinked out of the worktree', (swapped) => ({
+      script: [[(c) => swapped.on && c.kind === 'lstatType' && c.args[0] === parent, { type: 'directory', code: null }]],
+      deps: { canonicalRealpath: (p) => (swapped.on && p === parent ? path.join(MAIN, 'outside') : p) },
+    })],
+  ];
+  for (const [name, overFor] of cases) {
+    const swapped = { on: false };
+    const over = overFor(swapped);
+    const h = fixRig({ ...over, script: [scopedRunDoes(() => { swapped.on = true; }), ...over.script] });
+    assert.equal(await run(['#7'], h.deps), 0, name);
+    const { stop } = lastLine(h);
+    assert.deepEqual([stop.step, stop.class, reviewLines(h)[0].status], [STEP.review, 'pre-push', 'fail'], name);
+    assert.equal(stop.detail, `the kept evidence path no longer resolves where it was confirmed: ${FINDING_0}`, name);
+    assert.equal(h.fx.disk.get(evidenceAbs(0)), EVIDENCE_CONTENT, `${name}: the copy holds the recorded bytes`);
+    assert.equal(evidenceRuns(h).length, 1, `${name}: the kept file never runs`);
+    assert.equal(pushCalls(h).length, 0, name);
+  }
+});
+
 test('fix round: an unchanged kept evidence file is read from disk once, after the scoped run and before its own run', async () => {
   const h = fixRig();
   assert.equal(await run(['#7'], h.deps), 0);

@@ -190,15 +190,17 @@
 //   tracked at HEAD with its recorded bytes, CRLF vs LF aside (cat-file of HEAD:{evidencePath}; autocrlf
 //   stores a CRLF file as LF, and only the CR-LF pair is normalized), which catches one the
 //   worker gitignored, deleted or changed, and passes one it committed itself unchanged.
-//   byte check  before each kept run its file must be a regular file at the leaf holding the
-//               recorded bytes, compared as at HEAD (lstatType, readFile), never through the index:
-//               worker code has run since the rewrite (a commit hook, the scoped run, an earlier kept
-//               run), and after a `git update-index --skip-worktree` / `--assume-unchanged` git status
-//               no longer reports an edit to the file, so the tree check alone would run the edited one.
+//   byte check  before each kept run its path must still resolve to the spelling git reported when it
+//               was confirmed (the rewrite's check, so no parent is now a symlink to a copy elsewhere)
+//               and its file must be a regular file at the leaf holding the recorded bytes, compared
+//               as at HEAD (lstatType, readFile), never through the index: worker code has run since
+//               the rewrite (a commit hook, the scoped run, an earlier kept run), and after a `git
+//               update-index --skip-worktree` / `--assume-unchanged` git status no longer reports an
+//               edit to the file or its moving, so the tree check alone would run the changed one.
 //   Stops, each class pre-push but a propagated test or check result, which keeps its own class
 //   and reason. `fail`: HEAD unreadable, the worker's `fail`/`timeout`, a rewrite refused or failed,
-//   the commit failing, an evidence file not at HEAD as recorded, a kept file not in the worktree as
-//   recorded before its run, a kept run that throws or survives
+//   the commit failing, an evidence file not at HEAD as recorded, a kept path no longer resolving where
+//   it was confirmed or a kept file not in the worktree as recorded before its run, a kept run that throws or survives
 //   its kill, the tree changed during the checks (after the scoped run and each kept run; neither is
 //   singled out), the name-only diff failing (it ends with `--`, so a file named HEAD or after the
 //   sha is never read as a revision). `stop`: the worker's
@@ -1082,7 +1084,9 @@ async function fixRound(ctx, deps, wiring, pass) {
 
     for (const [i, c] of confirmed.entries()) {
       // Worker code has run since the rewrite (a commit hook, the scoped run, an earlier kept run), and
-      // git status cannot see an edit an index flag hides: the bytes are read just before this run.
+      // git status cannot see an edit an index flag hides: the path is resolved again (a parent swapped
+      // for a symlink to a copy) and the bytes read just before this run.
+      if (resolveCanonical(c.rel, { wt, deps }) !== c.evidencePath) return end('fail', 'the kept evidence path no longer resolves where it was confirmed', { c });
       if (!inWorktreeAsRecorded(c, deps)) return end('fail', 'the kept evidence file is not in the worktree with its recorded content', { c });
       const dest = path.join(runDir, 'review', `fix-evidence-${i}.tap`);
       let run;
