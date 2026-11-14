@@ -53,6 +53,14 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.169.0](https://github.com/thn-inc/claude-tweaks/compare/v6.168.0...v6.169.0) (2026-11-14)
+
+
+### Features
+
+* Driver merge step: mark ready, read the checks, merge… ([#5226](https://github.com/thn-inc/claude-tweaks/issues/5226)) ([27b8bef](https://github.com/thn-inc/claude-tweaks/commit/27b8befd1fcd0f6c3a4c628817f43a4004c59b9c))
+* Run the impact-selected subset on a plain local npm… ([#5319](https://github.com/thn-inc/claude-tweaks/issues/5319)) ([1b89593](https://github.com/thn-inc/claude-tweaks/commit/1b89593324b6d662455c21f485b17a32bfdb2f6f)), closes [#5369](https://github.com/thn-inc/claude-tweaks/issues/5369) [#5370](https://github.com/thn-inc/claude-tweaks/issues/5370)
+
 ## [6.168.0](https://github.com/thn-inc/claude-tweaks/compare/v6.167.0...v6.168.0) (2026-11-14)
 
 
