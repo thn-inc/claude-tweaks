@@ -4,9 +4,11 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const phaseExit = require('../../../plugin/bin/lib/phase-exit/phase-exit');
 const { runPhaseExit, realDeps } = phaseExit;
+const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+const RESOLVE_POLICY_CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'resolve-policy.js');
 const { run } = require('../../../plugin/bin/phase-exit');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const { GIT_PUSH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
@@ -866,7 +868,9 @@ test('AC3 phase-exit: a config.yml pinning local-merge resolves local-merge thro
 
 test('AC3 phase-exit: a missing run dir reports the same detail line as the subprocess did', () => {
   const { repo } = forgeFixture();
-  const missing = path.join(os.tmpdir(), 'ct-pe-missing-run-dir-none');
+  const missingBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-missing-'));
+  created.push(missingBase);
+  const missing = path.join(missingBase, 'never-created');
   const want = `resolve-policy: --run dir does not exist or is not a directory: ${missing}`;
   assert.throws(() => realDeps.resolvePolicy(missing, 'integration-model', repo), (e) => e.message === want);
   const { main, runDir, wt } = fixture();
@@ -874,6 +878,38 @@ test('AC3 phase-exit: a missing run dir reports the same detail line as the subp
   const env = runPhaseExit(opts(runDir, wt), h.deps);
   assert.equal(env.push.state, 'skipped');
   assert.ok(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8').includes(`integration-model unresolved (${want})`));
+});
+
+test('AC3 phase-exit: a --run inside a foreign checkout throws the anchoring line the CLI prints', () => {
+  const { repo } = forgeFixture();
+  const inside = path.join(forgeFixture().repo, 'plain-run-dir');
+  fs.mkdirSync(inside);
+  const cli = spawnSync(process.execPath, [RESOLVE_POLICY_CLI, '--run', inside, 'integration-model'], { cwd: repo, encoding: 'utf8', windowsHide: true });
+  assert.notEqual(cli.status, 0, 'the CLI must refuse the unanchored run dir');
+  const want = cli.stderr.replace(/\r?\n$/, '');
+  assert.match(want, /^resolve-policy: /);
+  assert.throws(() => realDeps.resolvePolicy(inside, 'integration-model', repo), (e) => e.message === want);
+});
+
+// Seam: process.stderr.write is spied around the real call (the forge probe's GHE note goes through repo-resolve's default writer).
+test("AC3 phase-exit: the forge probe's GHE origin note stays off this process's stderr", { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  execFileSync('git', ['-C', repo, 'remote', 'set-url', 'origin', 'https://acme.ghe.com/o/n.git'], { windowsHide: true });
+  const gh = fakeGh({ first: 'ok' });
+  const realWrite = process.stderr.write;
+  const writes = [];
+  _resetGhHostCache();
+  process.stderr.write = (chunk, ...rest) => { writes.push(String(chunk)); return true; };
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'pr-first');
+    });
+  } finally {
+    process.stderr.write = realWrite;
+    gh.restore();
+    _resetGhHostCache();
+  }
+  assert.deepEqual(writes.filter((w) => w.includes('claude-tweaks:')), []);
 });
 
 test("AC7 phase-exit: a subdirectory worktree resolves the checkout's pinned integration-branch", () => {

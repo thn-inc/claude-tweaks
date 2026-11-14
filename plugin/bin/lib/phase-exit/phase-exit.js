@@ -93,7 +93,8 @@ const realDeps = {
   // policy.yml/config.yml read is unbounded by decision (spec `## Plan Review Clarifications`, Reading A).
   // A non-OK result throws `resolve-policy: <message>`, the detail line the child's stderr used to give.
   resolvePolicy: (runDir, key, cwd) => {
-    const out = resolvePolicy({ keys: [key], runDir }, callerDeps({ cwd }));
+    // stderr discarded: the child's piped stderr was never forwarded, so the forge probe's GHE/origin notes stay off this process's stderr.
+    const out = resolvePolicy({ keys: [key], runDir }, callerDeps({ cwd, stderr: () => {} }));
     if (out.code !== EXIT_OK) throw new Error(`resolve-policy: ${out.message}`);
     const entry = out.result[key];
     if (entry && typeof entry.degraded === 'string') throw new Error(`forge detection degraded (${entry.degraded})`);
