@@ -32,16 +32,16 @@ const TOOL_NAME = 'journey-health';
 // explicitly documents having no `remembered` tier.
 const CONFIDENCE_RANK = { low: 0, med: 1, high: 2 };
 
-// Writes its message to `stderr` and returns { ok: false, code: 2 } for an
-// unrecognized value; { ok: true } otherwise (an omitted flag included).
+// Returns true for a recognized value (an omitted flag included); otherwise
+// writes its message to `stderr` and returns false.
 function validateConfidenceArg(value, stderr) {
-  if (value == null) return { ok: true };
-  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return { ok: true };
+  if (value == null) return true;
+  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return true;
   stderr(
     `validate-findings: --min-confidence "${value}" is not a recognized confidence tier ` +
     `(must be one of ${Object.keys(CONFIDENCE_RANK).join('|')}) — an unrecognized value silently files every finding instead of applying the floor.\n`,
   );
-  return { ok: false, code: 2 };
+  return false;
 }
 
 function parseArgs(argv, cwd = process.cwd()) {
@@ -126,8 +126,7 @@ function cmdValidateFindings(args, ctx) {
   }
   const findingsPath = path.resolve(ctx.cwd(), findingsArg);
 
-  const confidence = validateConfidenceArg(args['min-confidence'], stderr);
-  if (!confidence.ok) return confidence.code;
+  if (!validateConfidenceArg(args['min-confidence'], stderr)) return 2;
 
   // buildValidateFindingsUpdate only patches a cursor when target is present,
   // or sets __coverageScan when coverageScan is set (see

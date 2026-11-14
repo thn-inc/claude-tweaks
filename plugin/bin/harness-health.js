@@ -40,17 +40,17 @@ const TOOL_NAME = 'harness-health';
 // Mirrors bin/lib/code-health/dedup.js's RISK_RANK convention/shape.
 const CONFIDENCE_RANK = { high: 0, med: 1, low: 2 };
 
-// Writes its message to `stderr` and returns { ok: false, code: 2 } for an
-// unrecognized value; { ok: true } otherwise (an omitted flag included).
+// Returns true for a recognized value (an omitted flag included); otherwise
+// writes its message to `stderr` and returns false.
 function validateConfidenceArg(value, stderr) {
-  if (value === undefined) return { ok: true };
-  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return { ok: true };
+  if (value === undefined) return true;
+  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return true;
   stderr(
     `harness-health.js: validate-findings --min-confidence "${value}" is not a recognized value ` +
     `(must be one of ${Object.keys(CONFIDENCE_RANK).join('|')}) — an unrecognized value silently ` +
     'files every finding regardless of confidence, same as omitting the flag.\n',
   );
-  return { ok: false, code: 2 };
+  return false;
 }
 
 function parseArgs(argv, cwd = process.cwd()) {
@@ -75,8 +75,7 @@ function parseArgs(argv, cwd = process.cwd()) {
 }
 
 function cmdNextTarget(args, ctx) {
-  const root = args.root;
-  const memoryDir = args.memoryDir ? path.resolve(ctx.cwd(), args.memoryDir) : args.memoryDir;
+  const { root, memoryDir } = args;
   const env = ctx.env;
   const now = Date.now();
   // Fetch durable state exactly once and reuse it for both the gap-scan check
@@ -185,7 +184,7 @@ function cmdValidateFindings(args, ctx) {
   // (#2633 review follow-up), and because the repo-relative Premise-check
   // path is computed from the git top-level of this absolute root (#2857).
   // `run` already resolved args.root against the injected cwd, never the real one.
-  const root = args.root;
+  const { root, memoryDir } = args;
   const findingsArg = args._[1];
   if (!findingsArg) {
     stderr(
@@ -194,10 +193,8 @@ function cmdValidateFindings(args, ctx) {
     return 2;
   }
   const findingsPath = path.resolve(ctx.cwd(), findingsArg);
-  const memoryDir = args.memoryDir ? path.resolve(ctx.cwd(), args.memoryDir) : args.memoryDir;
 
-  const confidence = validateConfidenceArg(args.minConfidence, stderr);
-  if (!confidence.ok) return confidence.code;
+  if (!validateConfidenceArg(args.minConfidence, stderr)) return 2;
 
   // buildValidateFindingsUpdate only patches a cursor when both target AND
   // kind are present (see lib/harness-health/cache.js), or when gapScan is
@@ -403,6 +400,7 @@ function run(argv, deps = realDeps) {
   // A relative --root resolves against the injected cwd, never the real one, so the
   // shared sub-commands (which pass it straight to `git -C` and fs) see an absolute path.
   args.root = path.resolve(ctx.cwd(), args.root || '.');
+  if (args.memoryDir) args.memoryDir = path.resolve(ctx.cwd(), args.memoryDir);
   const cmd = args._[0];
   if (cmd === 'next-target') return cmdNextTarget(args, ctx);
   if (cmd === 'validate-findings') return cmdValidateFindings(args, ctx);
