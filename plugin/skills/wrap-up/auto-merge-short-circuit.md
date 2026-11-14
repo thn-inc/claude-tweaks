@@ -251,7 +251,9 @@ resolution it fixed). Still generate this console's full content (Auto-applied /
 Configuration updates sections, per `review-console-interactive.md`'s "Present the console", plus the finding sections `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --fyi` prints — Low-confidence, Contested, Dropped by tiebreak) and
 attach it to a
 `PushNotification` as a non-blocking FYI — nothing this console would have shown is discarded,
-only the wait for a live approval is skipped. Log to `decisions.md`:
+only the wait for a live approval is skipped. When a Skills-row edit rode a learned-skills PR
+(`learned-skills-pr.md`), the FYI names that PR's URL: the Skill updates section's engine-rendered
+disposition carries it. Log to `decisions.md`:
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome {merged|armed|pending-review}. {Merge commit: {sha}. Reversibility: high (git revert). | Reversibility: n/a (nothing merged yet).} [lever: auto-merge-max-lines={value} ({source}); auto-merge-max-files={value} ({source}); merge-sensitive-paths={value} ({source})]`
 
 **Why no `console.json` (#3297):** writing a minimal `console.json` here was evaluated and rejected.
