@@ -1,6 +1,7 @@
 // tests/close-out-marker-cli.test.js — bin/close-out-marker.js (#4331), the CLI
 // over lib/dispatch/close-out-marker.js. In-process via run(argv, deps) with
-// fake deps, plus real subprocess runs against tmp files.
+// fake deps, and against tmp files through runCliSync, with two real-process
+// spawnCli smokes (one success, one refusal).
 'use strict';
 
 const { test } = require('node:test');
@@ -648,9 +649,9 @@ test('parseArgs: a bare inherited key is not a known verb or flag', () => {
   assert.ok(parseArgs(['read', '--comments-file', 'f', '--comments-file', 'g']).error);
 });
 
-// ---- subprocess ----
+// ---- CLI against tmp files: in-process via runCliSync; two real-process spawnCli smokes ----
 
-test('subprocess: read prints one JSON line and exits 0', () => {
+test('in-process: read prints one JSON line and exits 0', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'com-'));
   try {
     const file = path.join(dir, 'comments.json');
@@ -668,7 +669,7 @@ test('subprocess: read prints one JSON line and exits 0', () => {
   }
 });
 
-test('subprocess: write creates the --out file and an unwritable --out exits 3', () => {
+test('in-process: write creates the --out file and an unwritable --out exits 3', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'com-'));
   try {
     const file = path.join(dir, 'comments.json');
