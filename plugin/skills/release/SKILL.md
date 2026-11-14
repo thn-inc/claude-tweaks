@@ -172,6 +172,8 @@ Any non-zero exit stops the run here, before Step 4: nothing has moved. A failed
 
 Step 8's summary reads `failed` with that same reason.
 
+**The whole suite on this machine, by name (#5370).** Once the tree check exits 0, and before the marker below, run `/claude-tweaks:test full` from `$RUN_ROOT` with `$PIPELINE_RUN_DIR={run-dir}` set. It is the one deliberate whole-suite run on a developer machine per version, and the only one on macOS and Node 22 before the tag (`test/impact-selection.md`'s Whole suite on request). Its full pass stamp verifies the tip, so the review's Step 1.5 test gate reads `verifiedHead: true` and does not re-run a subset. A failing run stops here, before Step 4: nothing has moved, and Step 8's summary reads `failed` with reason `whole-suite run failed`.
+
 **This review stages; it never commits.** Whatever `review-auto-apply-ceiling` resolves to — Step 0 pins `none` on a created run directory, and an inherited one keeps the parent's value — this review's auto-apply tier is off at every ceiling: every finding is staged for a human, none is applied and committed. The range under review ends at `origin/{branch}`, the exact tip about to be tagged, so an auto-applied fix would ship inside the release it was meant to gate.
 
 **Mark the `## /review` block before invoking.** `log-decision.js` appends each entry at the **end of its section**, so an inherited (or re-adopted) run directory's prior `## /review` lines sit above this run's inside the same block — and a prior run's `critical finding` line would otherwise be read as this run's verdict. Count that block's existing lines first (`0` when the block is absent) and log the count as this step's marker:

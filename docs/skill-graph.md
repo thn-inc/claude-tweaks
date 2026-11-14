@@ -493,6 +493,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `bin/release-preflight.js` | Step 1's fact pack (#2255): engine, last tag, unreleased commits, proposed version, release PR, CI on the tip, human-edited release PR, hook presence — read from `{run-dir}/release-preflight.json`. |
 | `bin/release-tip-check.js` | Step 5's reviewed-tip comparison (#4152): one JSON verdict (`merge`/`delta`/`held`/`failed`) `execute.md` routes on. |
 | `bin/release-local.js` | Step 5's local-merge engine (#2254); its exit codes 0/1/3/4/5 are the skill's verdicts. |
+| `/test` | Step 3 runs `/claude-tweaks:test full` after the review-tree check and before the whole-branch review (#5370): the one deliberate whole-suite run on the developer machine per version, whose full pass stamp review's Step 1.5 test gate then reads; a red run stops the release before Step 4. |
 | `_shared/staged-patch.md` | Step 3's review findings stage through it, never a bespoke mechanism. |
 | `_shared/auto-decision-log.md` | Every Step 5–7 action writes one entry under `## /release`. |
 | `_shared/github-write-transport.md` | Step 7's record comments and closes (pr-first), and Step 8 disposition's filings, digest comments and covered-by lookup, MCP-mapped for gh-absent sandboxes; Step 5's merge has no MCP row — the skill stops at the console with a paste-ready command there. |

@@ -204,3 +204,29 @@ test('AC4.1, AC4.3: /claude-tweaks:test full runs the whole suite here, no argum
     [/A `--local` fallback whose impact selection cannot narrow still runs what selection chose/, 'the named exception'],
   ]);
 });
+
+test('AC4.2: the release runs /claude-tweaks:test full after the tree check and before the review marker (#5370)', () => {
+  const RELEASE_FACTS = [
+    [/run `\/claude-tweaks:test full` from `\$RUN_ROOT` with `\$PIPELINE_RUN_DIR=\{run-dir\}` set/, 'runs test full from RUN_ROOT'],
+    [/before the marker below/, 'before the review marker'],
+    [/one deliberate whole-suite run on a developer machine per version/, 'once per version'],
+    [/the only one on macOS and Node 22 before the tag/, 'the only macOS and Node 22 run'],
+    [/reads `verifiedHead: true` and does not re-run a subset/, 'the review gate reads the full stamp'],
+    [/Step 8's summary reads `failed` with reason `whole-suite run failed`/, 'a red run stops the release'],
+  ];
+  const r = read('plugin/skills/release/SKILL.md');
+  const p = para(r, '**The whole suite on this machine, by name (#5370).**');
+  assert.notEqual(p, '');
+  pinned(p, RELEASE_FACTS);
+  const treeCheck = '&& git -C "$RUN_ROOT" diff --quiet {tip-sha} HEAD';
+  const markHeading = '**Mark the `## /review` block before invoking.**';
+  const assertOrder = (text) => {
+    assert.ok(text.indexOf(p) > text.indexOf(treeCheck), 'the paragraph comes after the tree check');
+    assert.ok(text.indexOf(p) < text.indexOf(markHeading), 'the paragraph comes before the review marker');
+  };
+  assertOrder(r);
+  // The control: the same paragraph moved to the end of the file, after the Mark heading.
+  const mutated = `${r.replace(`${p}\n\n`, '')}\n\n${p}`;
+  assert.notEqual(mutated, r);
+  assert.throws(() => assertOrder(mutated), /before the review marker/);
+});
