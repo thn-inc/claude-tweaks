@@ -354,9 +354,11 @@ git -C "{wt}" commit -m "Save the session's node path at session start — the l
 - Modify: `docs/hooks.md:3` (intro sentence) and a new bullet directly after line 5's never-break-a-session bullet
 - Modify: `docs/plugin-structure.md:16` (tail), plus a new line after `:17`
 - Modify: `docs/REGISTRY.md:20` (append `plugin/bin/hooks.sh` to `docs/hooks.md`'s governed paths)
+- Modify: `README.md` `## Dependencies` table (new Git Bash row after the `Node 18+` row, line 184 at plan time)
 - Test: `tests/hooks-launcher.test.js`
 
 **Interfaces:**
+- **User ruling (2026-11-14, after plan writing):** accept the PowerShell-fallback regression and state Git Bash as a Windows requirement. The README Dependencies row and the `docs/hooks.md` Windows bullet's last sentence below carry it; no init check is added.
 - Behavior-change prose sweep. The grep was `git grep -n -I -E 'hooks\.json|hooks\.sh|All hook registrations route through|all via plugin/bin/hooks.js' -- docs tools README.md CLAUDE.md plugin/skills ':!docs/superpowers' ':!docs/incident-log.md'`. Each hit, classified:
   - `docs/hooks.md:3`: modify.
   - `docs/plugin-structure.md:16`: modify.
@@ -401,7 +403,7 @@ Expected: FAIL with `heading not found` or `anchor not found: - **Node launcher 
   - **Resolution order, first hit wins:** `command -v node`; the path saved in `~/.claude-tweaks/node-path` when it names an executable file; the nvm default alias when it names a literal version directory under `$NVM_DIR` (default `~/.nvm`; `lts/*`, `node` or a partial version such as `22` is skipped, never guessed); `~/.volta/bin/node`; `/opt/homebrew/bin/node`; `/usr/local/bin/node`; fnm's default alias. The well-known list (every rung after the saved path) is replaced by `CLAUDE_TWEAKS_NODE_CANDIDATES` when that variable is set, one absolute path per line, empty meaning no candidates: a test seam, since CI runners have a node at `/usr/local/bin`.
   - **Saved node path:** `session-start`, when it runs under node, writes `process.execPath` to `~/.claude-tweaks/node-path` (the directory `ports.json` lives in) only when the stored value differs, so a later session whose PATH lost `node` still finds the one this machine last ran. The write is best-effort: a failure never changes the hook's stdout or exit status.
   - **No node found:** the launcher reads stdin to EOF, always exits 0, and prints only fixed JSON literals. `session-start` and `user-prompt-submit` print one `hookSpecificOutput.additionalContext` telling the model that every claude-tweaks guard is off, to tell the user and stop repository edits, and that the fix is to restart Claude Code from a shell where `node` resolves. `pre-tool-use` prints a `permissionDecision: "deny"` naming the same fix when the main checkout's `.claude-tweaks/policy.yml` turns `worktree-always` on, read from the root `wtDetect.mainCheckoutRoot` gives (the hook's cwd when that is unresolved), with no worktree-isolation check, so it denies inside a linked worktree too, and for every matcher this event registers; otherwise it prints nothing. `session-end`, `pre-compact`, `post-tool-use`, `post-tool-use-failure` and `subagent-stop` print nothing. A project without that policy is warned, never blocked, because the plugin is often enabled user-wide. The shell policy check mirrors `parseFlatLines` and `resolveWorktreeAlways`, and `tests/hooks-launcher.test.js`'s differential test pins the two to the same verdict (`[IL-133]`).
-  - **Windows:** Claude Code passes a hook's command string to "`sh -c` on macOS and Linux, Git Bash on Windows, or PowerShell when Git Bash isn't installed" (code.claude.com/docs/en/hooks.md, "Exec form and shell form"). Git Bash ships `sh`, so the launcher runs there. Under the PowerShell fallback there is no `sh`, and every claude-tweaks hook fails as a non-blocking error where the old plain `node` registration ran: a Windows install without Git Bash runs with every guard off. `plugin/.gitattributes` keeps `hooks.sh` LF on a `core.autocrlf` checkout, since `sh` cannot run a CRLF script.
+  - **Windows:** Claude Code passes a hook's command string to "`sh -c` on macOS and Linux, Git Bash on Windows, or PowerShell when Git Bash isn't installed" (code.claude.com/docs/en/hooks.md, "Exec form and shell form"). Git Bash ships `sh`, so the launcher runs there. Under the PowerShell fallback there is no `sh`, and every claude-tweaks hook fails as a non-blocking error where the old plain `node` registration ran: a Windows install without Git Bash runs with every guard off. `plugin/.gitattributes` keeps `hooks.sh` LF on a `core.autocrlf` checkout, since `sh` cannot run a CRLF script. claude-tweaks therefore requires Git Bash on Windows (README's Dependencies table).
   - **Working directory:** the launcher resolves the main checkout from its own process cwd and never parses the stdin JSON; Claude Code runs a command hook "in the current directory" (same page, "Handler fields"). {PROBE SENTENCE}
 ```
 
@@ -412,6 +414,7 @@ Expected: FAIL with `heading not found` or `anchor not found: - **Node launcher 
 
   - `docs/plugin-structure.md:16`: change the tail `all via plugin/bin/hooks.js)` to `all via plugin/bin/hooks.sh → plugin/bin/hooks.js)`. After line 17 add `plugin/bin/hooks.sh               → POSIX sh launcher every hooks.json registration runs: finds node (PATH, ~/.claude-tweaks/node-path, well-known installs; CLAUDE_TWEAKS_NODE_CANDIDATES test seam) and execs hooks.js; with none, warns at SessionStart/UserPromptSubmit and denies PreToolUse under worktree-always (#5392, docs/hooks.md)`.
   - `docs/REGISTRY.md:20`: add `` `plugin/bin/hooks.sh`, `` before `` `plugin/hooks/hooks.json` `` in the governed-paths cell.
+  - `README.md` `## Dependencies`: insert directly after the `Node 18+` row, verbatim: `| Git Bash (Windows only) | Git for Windows (`winget install Git.Git`) | Yes on Windows — every hook runs through `sh` (#5392). Without Git Bash, Claude Code runs hooks under PowerShell, every claude-tweaks hook fails, and no guard runs. |`
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -421,7 +424,7 @@ Expected: PASS. These are the suites that read `docs/hooks.md`, from the plan-ti
 - [ ] **Step 5: Commit**
 
 ```bash
-git -C "{wt}" add docs/hooks.md docs/plugin-structure.md docs/REGISTRY.md tests/hooks-launcher.test.js
+git -C "{wt}" add docs/hooks.md docs/plugin-structure.md docs/REGISTRY.md README.md tests/hooks-launcher.test.js
 git -C "{wt}" commit -m "Document the hooks launcher — resolution order, saved path, no-node behavior, Windows shells" -m "refs #5392"
 ```
 
