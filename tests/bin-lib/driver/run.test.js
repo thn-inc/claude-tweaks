@@ -1965,7 +1965,7 @@ test('AC8.1: under the key the test step passes --local, so a verify that exits 
   assert.equal(calls.length, 1, 'one verify call, carrying --local');
   assert.ok(calls[0].args.includes('--local'));
   assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok');
-  assert.notEqual(lastLine(h).stop && lastLine(h).stop.reason, 'failing-test');
+  assert.ok(h.lines().some((l) => l.step === 'check'), 'the run continues past test to the check step');
 });
 
 test('AC8.1: an exit 3 that still reaches the test step is a failed call, never a failing-test stop (#5370)', async () => {
