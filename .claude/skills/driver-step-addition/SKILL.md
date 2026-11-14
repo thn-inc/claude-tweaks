@@ -7,7 +7,7 @@ description: Use when adding a step to the pipeline driver's table (`STEPS` in `
 
 ## Overview
 
-`plugin/bin/drive.js` takes each named record from admission to a draft PR. It walks `plugin/bin/lib/driver/steps.js`'s frozen `STEPS` table once per record. `run.js` owns only event emission, stop handling and interrupts, and it names no step, so most of a new step is one table entry.
+`plugin/bin/drive.js` takes each named record from admission to a draft PR, and, when a judgment supplier is configured (none is by default), on through the merge step (`plugin/bin/lib/driver/merge.js`) to a merged or auto-merge-armed PR. It walks `plugin/bin/lib/driver/steps.js`'s frozen `STEPS` table once per record. `run.js` owns only event emission, stop handling and interrupts, and it names no step, so most of a new step is one table entry.
 
 Not all of it, though. The loop classifies an interrupted record by the side effects the record holds, and it sees only the effects a step records on `ctx`. #5218 shipped with run.js's header saying "adding a step is a table entry, never a change here". Review then found that `interruptClass`, `finalEvent` and `reportInterrupt` read flags that steps set. A step with a new durable side effect would therefore get the wrong interrupt class, and the header was narrowed (`8bcc7eef5`).
 
@@ -61,7 +61,7 @@ The test step runs the worker's test files through `verify.js`. It spawns that c
 
 The ci step polls until a settle window measured from the push has passed (`CI_SETTLE_WINDOW_MS`, #5277), and until a bound measured from its own start. A step that measures time follows the same shape:
 - A start time set by an earlier step travels on `ctx` (the push step sets `ctx.pushedAt = deps.now()`), starts as `null` in `newCtx`, and the reading step falls back when it is unset (`ctx.pushedAt ?? started`). A timestamp is not a side effect, so it gets no `interruptClass` rung.
-- The step's time constants are exported from `steps.js` and each is pinned by value in a test, as `CI_WAIT_BOUND_MS`, `CI_POLL_INTERVAL_MS` and `CI_SETTLE_WINDOW_MS` are. Poll and call counts in tests are derived from those constants (`WINDOW_POLLS`), never written as numbers, so a changed window changes the expectation with it.
+- The step's time constants are exported from the module that defines the step, and each is pinned by value in a test. For a step defined in `steps.js` that is `steps.js`, as `CI_WAIT_BOUND_MS`, `CI_POLL_INTERVAL_MS` and `CI_SETTLE_WINDOW_MS` are. A step implemented in its own module exports them from that module, because `steps.js` requires it and the reverse import would be a require cycle: `merge.js` exports `MERGE_WATCH_BOUND_MS` and `MERGE_WATCH_POLL_MS`, pinned in `tests/bin-lib/driver/merge.test.js`. Poll and call counts in tests are derived from those constants (`WINDOW_POLLS`, `WATCH_POLLS`), never written as numbers, so a changed window changes the expectation with it.
 - The harness clock advances 1 per `now()` call and `ms` per `sleep(ms)`, and nowhere else. A test that records sleeps wraps the harness's own: `const tick = h.deps.sleep; h.deps.sleep = (ms) => { sleeps.push(ms); return tick(ms); };`. To place time at a point in the run, a scripted reply calls `h.deps.sleep(ms)` itself (the two `the settle window is measured from the push` tests move it inside `gh pr create` and inside `verify.js`).
 
 ## Adding a settle step

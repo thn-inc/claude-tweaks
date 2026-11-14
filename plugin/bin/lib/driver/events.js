@@ -53,7 +53,7 @@ const MERGE_STEP_NAMES = Object.freeze([
   'merge-entry', 'merge-supplier', 'merge-closing-links', 'merge-compose', 'merge-ready',
   'merge-gate', 'merge-watch', 'merge-park', 'merge-conflict', 'merge-call', 'merge-confirm',
   'merge-post-merge', 'merge-release-status', 'merge-reconcile', 'merge-teardown',
-  'merge-delete-branch',
+  'merge-delete-branch', 'merge-close-run',
 ]);
 
 const STEP = Object.freeze(Object.fromEntries(

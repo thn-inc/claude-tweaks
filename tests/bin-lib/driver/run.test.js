@@ -3675,7 +3675,7 @@ test('merge step, run level: the merge call, teardown and event file come from t
   assert.deepEqual(h.calls.filter(onGit('worktree', 'remove')).map((c) => gitSub(c).at(-1)), [WT]);
   assert.deepEqual(h.calls.filter(onGit('worktree', 'unlock')).map((c) => gitSub(c).at(-1)), [WT]);
   assert.ok(h.calls.some((c) => onGit('branch', '-D')(c) && gitSub(c).at(-1) === 'drive-record-7'));
-  assert.ok(h.calls.some((c) => onGit('fetch', 'origin', 'main')(c)));
+  assert.ok(h.calls.some((c) => onGit('fetch', '--end-of-options', 'origin', 'main')(c)));
   assert.ok(h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'api' && c.args.includes('repos/acme/widgets/git/refs/heads/drive-record-7')));
   // The run directory moved: the step after merge sees the archive, and the final line is in it.
   assert.deepEqual(seen, [MERGE_ARCHIVE]);
@@ -3753,10 +3753,20 @@ test('merge step, run level: the merge line for each outcome reads the outcome w
 });
 
 test('merge step, run level: an unclassified stop names the failing sub-step on the merge line', async () => {
-  const h = mergeHarness({ script: [[(c) => c.kind === 'node' && path.basename(c.args[0]) === 'closing-links.js', null]] });
+  // A deliberate throw from the merge watch, which rethrows its own failure so merge's run-level
+  // catch classifies the step (every other sub-step catches its own calls).
+  const h = mergeHarness({ rollup: PENDING_CHECK });
+  const tick = h.deps.sleep;
+  h.deps.sleep = async (ms) => {
+    await tick(ms);
+    // The CI wait sleeps too: only a sleep after the merge gate's GATE_FIELDS read is the watch's.
+    const inMerge = h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(GATE_FIELDS));
+    if (inMerge) throw new Error('watch sleep failed');
+  };
   const final = await driveRecord(7, newShared(), h.deps, STEPS);
   const line = h.lines().find((l) => l.step === 'merge');
-  assert.match(line.detail, /^pending-review: unclassified — merge-closing-links: /);
+  assert.equal(line.detail, 'pending-review: unclassified — merge-watch: watch sleep failed');
   assert.equal(final.merge.reason, 'unclassified');
   assert.equal(final.outcome, 'pending-review');
+  assert.ok(!h.calls.some((c) => c.kind === 'ghCreate' && c.args[1] === 'merge'), 'nothing merged');
 });

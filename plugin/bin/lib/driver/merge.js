@@ -119,10 +119,16 @@ function isPositiveInteger(n) {
 // Ports pr-first-merge.md Step 2's entry condition: the run resolves `integration-model` to
 // `pr-first` and run-state.json carries the PR the run opened. Any failure of this read is a
 // stop (`not-pr-first`); the lever read below is a separate call so it never decides this one.
+// A resolver that throws (a spawn failure) is such a failure too, never the run-level catch's.
 function readIntegrationModel(s) {
   const { ctx, deps } = s;
-  const r = deps.node(bin('resolve-policy.js'), ['--run', s.runDir, '--values', 'integration-model'],
-    { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  let r;
+  try {
+    r = deps.node(bin('resolve-policy.js'), ['--run', s.runDir, '--values', 'integration-model'],
+      { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  } catch (err) {
+    return `integration-model read failed: ${errorText(err)}`;
+  }
   if (r.code !== 0 || String(r.stdout).trim() !== 'pr-first') {
     return `integration-model did not resolve pr-first (${r.code === 0 ? neutralize(String(r.stdout).trim()) || 'empty' : `exit ${r.code}`})`;
   }
@@ -140,11 +146,17 @@ function readIntegrationModel(s) {
 
 // Ports pr-first-merge.md Step 3's lever read (merge-verification). Never a stop: every failure
 // of the read, and the value `off`, runs as `wait`. The JSON form of the `--values` read, so the
-// source rides along for the `--lever` log field.
+// source rides along for the `--lever` log field. A resolver that throws is a failed read
+// (AC8: "a resolver error … run as wait"), so it reads as unresolved like a non-zero exit.
 function readLever(s) {
   const { ctx, deps } = s;
-  const r = deps.node(bin('resolve-policy.js'), ['--run', s.runDir, 'merge-verification'],
-    { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  let r;
+  try {
+    r = deps.node(bin('resolve-policy.js'), ['--run', s.runDir, 'merge-verification'],
+      { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  } catch {
+    r = { code: null, stdout: '', stderr: '' };
+  }
   let raw = '';
   let source = 'unresolved';
   if (r.code === 0) {
@@ -799,6 +811,16 @@ function classifyMergeFailure(stderr) {
   return 'unrecognized';
 }
 
+// The kill signature of a call cut off by its bound or a signal: execFileSync's ETIMEDOUT code, a
+// `killed` flag, or the signal name. Null for any other throw. The word is reduced: it reaches a detail.
+function timeoutSignature(err) {
+  if (!err) return null;
+  if (err.code === 'ETIMEDOUT') return 'ETIMEDOUT';
+  if (typeof err.signal === 'string' && err.signal) return reduceDetail(err.signal);
+  if (err.killed) return 'killed';
+  return null;
+}
+
 // Ports Step 3's `gh pr merge` call. `mode` is 'auto' (merge-when-green: arm, or merge when GitHub
 // can now) or 'immediate' (the `wait` row). The labels are read again right before every call, so
 // an `auto:merge` removed since entry (during the supplier call or the watch) is honored. The
@@ -818,6 +840,14 @@ async function mergeCall(s, mode) {
       '-t', s.subject.title, '--body-file', s.subject.bodyFile, '--match-head-commit', ctx.head]);
   } catch (err) {
     const stderr = String((err && err.stderr) || '');
+    // A call killed by its bound (or a signal) before saying anything may already have merged or
+    // armed on the forge: its outcome is unknown, never a refusal. It takes Step 3 item 6's
+    // confirmation read, exactly as an exit 0 does, so a landed merge is not reported as refused.
+    const cut = timeoutSignature(err);
+    if (!stderr.trim() && cut) {
+      emit(s, 'merge-call', 'ok', `gh pr merge timed out with no stderr (mode ${mode}, ${cut}); reading the state`);
+      return confirm(s, `merge call timed out (${cut}); state unconfirmed`);
+    }
     const cls = classifyMergeFailure(stderr);
     // A hand-off is an `ok` event; the step it hands to emits the real stop (the gate's convention).
     if (cls === 'conflict') {
@@ -872,12 +902,13 @@ function readConfirmation(s) {
 // Ports Step 3 item 6: a merge call that exited 0 either merged or armed, and only this read says
 // which; exit 0 alone is never `merged`. A failed read is retried once; a second failure is
 // state-read-failed with no post-merge call (the reconciler completes a merge that did land).
-// mergeCommit rides on the same read so the merge sha needs no second call.
-async function confirm(s) {
+// mergeCommit rides on the same read so the merge sha needs no second call. A merge call that
+// timed out routes here too; `unreadDetail` then names the timeout instead of the exit 0.
+async function confirm(s, unreadDetail = 'merge call exited 0; state unconfirmed') {
   const { ctx } = s;
   s.stage = 'merge-confirm';
   const read = readConfirmation(s) || readConfirmation(s);
-  if (!read) return stop(s, 'merge-confirm', 'state-read-failed', 'merge call exited 0; state unconfirmed');
+  if (!read) return stop(s, 'merge-confirm', 'state-read-failed', unreadDetail);
   if (read.state === 'MERGED') {
     const mc = read.mergeCommit;
     // Only a full hex object id counts: the sha becomes a `git describe` argument, so anything
@@ -912,12 +943,12 @@ const RECONCILE_TIMEOUT_MS = 150000;
 const NOT_LOCKED = /not locked/i;
 
 // The ONLY git call site in this module: every git argv is a literal array passed here (the
-// source scan relies on it). settle.js's gitIn shape; `remoteWrite` is for the fetch alone, and
-// `env` for a call whose stderr is classified (the describe, pinned to the C locale).
-function runGit(s, args, { remoteWrite = false, env = null } = {}) {
+// source scan relies on it). settle.js's gitIn shape. No call here writes to the remote, so none
+// passes `remoteWrite` and every one takes deps.git's ordinary GIT_TIMEOUT_MS bound; `env` is for
+// a call whose stderr is classified (the describe, pinned to the C locale).
+function runGit(s, args, { env = null } = {}) {
   const { ctx, deps } = s;
   const opts = { cwd: ctx.mainCheckout };
-  if (remoteWrite) opts.remoteWrite = true;
   if (env) opts.env = env;
   return deps.git(['-C', ctx.mainCheckout, ...args], opts);
 }
@@ -991,7 +1022,9 @@ function releaseStatus(s) {
   };
   if (!s.mergeCommit) return unavailable('no merge commit was reported');
   try {
-    runGit(s, ['fetch', 'origin', ctx.base], { remoteWrite: true });
+    // A read of the base, as steps.js fetches the same ref: the ordinary git bound, and
+    // `--end-of-options` so a base named like an option is never read as one.
+    runGit(s, ['fetch', '--end-of-options', 'origin', ctx.base]);
   } catch (err) {
     return unavailable(`fetch failed: ${errorText(err)}`);
   }
@@ -999,7 +1032,7 @@ function releaseStatus(s) {
   try {
     // The "not yet tagged" answer is read off git's English stderr, so the call runs in the C
     // locale (LC_ALL also overrides LANGUAGE there), as run-liveness/process-probe.js pins ps.
-    const out = runGit(s, ['describe', '--tags', '--contains', '--first-parent', '--match', 'v*', s.mergeCommit],
+    const out = runGit(s, ['describe', '--tags', '--contains', '--first-parent', '--match', 'v*', '--end-of-options', s.mergeCommit],
       { env: { ...(deps.env || process.env), LC_ALL: 'C' } });
     // `git describe` suffixes every ancestor of the tagged commit with ~N or ^N.
     const tag = firstLine(out).replace(/(?:[~^]\d*)+$/, '');
@@ -1177,7 +1210,26 @@ function deleteRemoteBranch(s, worktreeGone) {
   return undefined;
 }
 
-// The sequence, in the spec's order (AC12). It never throws and never changes the outcome.
+// Ports settle.js's `settle-close` row: a run reconcile kept in place, once teardown removed its
+// worktree, is left non-terminal (status active, naming a worktree that is gone), so close it.
+// --run is explicit, so close-run does not refuse the driver-owned run as foreign. No call when
+// reconcile archived the run (s.runDir moved to the archive twin), when the run directory is gone
+// (events stdout-only), or when the worktree was kept (close-run refuses a live worktree).
+function closeRun(s, worktreeGone) {
+  const { ctx, deps } = s;
+  if (!worktreeGone || s.eventsStdoutOnly || s.runDir !== ctx.runDir) return undefined;
+  s.stage = 'merge-close-run';
+  const r = deps.node(bin('hooks.js'), ['close-run', '--run', s.runDir], { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  if (r.code !== 0) {
+    return postFail(s, 'merge-close-run', 'close-run',
+      r.code === null || r.code === undefined ? 'hooks.js close-run did not finish (timed out or killed)' : `hooks.js close-run exited ${r.code}`);
+  }
+  emit(s, 'merge-close-run', 'ok', 'run closed (reconcile kept it in place)');
+  return undefined;
+}
+
+// The sequence, in the spec's order (AC12), then the run's close. It never throws and never
+// changes the outcome.
 async function postMerge(s) {
   const out = { verdict: null, failedSteps: [] };
   s.pmFailures = [];
@@ -1187,6 +1239,7 @@ async function postMerge(s) {
   let gone = false;
   guarded(s, 'merge-teardown', 'teardown-worktree', () => { gone = teardown(s); });
   guarded(s, 'merge-delete-branch', 'delete-branch', () => deleteRemoteBranch(s, gone));
+  guarded(s, 'merge-close-run', 'close-run', () => closeRun(s, gone));
   return { verdict: out.verdict, failedSteps: out.failedSteps, failures: [...s.pmFailures] };
 }
 

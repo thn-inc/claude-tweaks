@@ -214,6 +214,12 @@ function defaultMergeScript(over, files, logs, applied) {
       if (d instanceof Error) throw d;
       return d === undefined ? 'v6.170.0~2\n' : d;
     }],
+    // The run's close (settle-close's port) is a hooks.js call too: matched first, its own knob.
+    [(c) => isNode('hooks.js')(c) && c.args[1] === 'close-run', () => {
+      const r = knob(over.closeRun);
+      if (r instanceof Error) throw r;
+      return r || { code: 0, stdout: '', stderr: '' };
+    }],
     [isNode('hooks.js'), (c) => {
       const r = knob(over.reconcile);
       if (r instanceof Error) throw r;
@@ -250,7 +256,8 @@ function defaultMergeScript(over, files, logs, applied) {
 // confirm (the confirmation read: an object merged over the MERGED default, a raw string or an Error).
 // Post-merge knobs (each may be a function): fx (a fixture other than the module's, whose decisions.md
 // is written and whose worktree the default listing names), postMergeRun / reconcile (full CLI replies;
-// a reconcile function runs real fs moves and returns the reply), fetch / unlock / remove / revParse /
+// a reconcile function runs real fs moves and returns the reply), closeRun (the hooks.js close-run
+// reply, or an Error), fetch / unlock / remove / revParse /
 // branchDelete / deleteBranch (an Error throws), describe (stdout or an Error), worktreeList (stdout or Error).
 function mergeHarness(over = {}) {
   const calls = [];
@@ -528,6 +535,36 @@ test('AC8.1: a failed merge-verification read never stops entry; a failed integr
   assert.ok(!kindsOf(model).includes('judgments'));
 });
 
+const isLeverRead = (c) => isNode('resolve-policy.js')(c) && !c.args.includes('--values');
+const isModelRead = (c) => isNode('resolve-policy.js')(c) && c.args.includes('--values');
+const resolverThrow = () => Object.assign(new Error('Command failed: node resolve-policy.js --run /x'), { stderr: 'spawn exploded\n' });
+
+test('AC2: a throwing integration-model resolver is not-pr-first, never unclassified, and reads no lever', async () => {
+  const h = mergeHarness({ script: [[isModelRead, resolverThrow()]] });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'not-pr-first', mergeCommit: null, postMerge: null });
+  assert.equal(r.detail, 'integration-model read failed: spawn exploded');
+  assert.doesNotMatch(r.detail, /Command failed|--run/);
+  assert.ok(!h.calls.some(isLeverRead), 'no merge-verification read');
+  assert.ok(!kindsOf(h).includes('judgments'));
+  assert.deepEqual([h.events[h.events.length - 1].step, h.events[h.events.length - 1].status], ['merge-entry', 'stop']);
+});
+
+test('AC8.1: a throwing merge-verification resolver runs as wait: state reads before an immediate merge', async () => {
+  const h = mergeHarness({ script: [[isLeverRead, resolverThrow()]] });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(unresolved\)/);
+  assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5').map((l) => l.text), ['lever unresolved ("") — proceeding as wait']);
+  const merges = h.calls.filter(isMergeCall);
+  assert.equal(merges.length, 1);
+  assert.ok(!merges[0].args.includes('--auto'), 'the wait row merges immediately, never arms');
+  const first = h.calls.indexOf(merges[0]);
+  const reads = h.calls.filter((c) => isGh('pr', 'view')(c) && (c.args.includes(GATE_FIELDS) || c.args.includes(REREAD_FIELDS)));
+  assert.equal(reads.length, 2, 'the gate read and the wait row re-read');
+  assert.ok(reads.every((c) => h.calls.indexOf(c) < first), 'both state reads precede the merge call');
+});
+
 test('AC8.1: a lever log that fails never stops entry; it is named in the entry event detail', async () => {
   const h = mergeHarness({ verification: leverReply({ value: 'off', source: 'run-config' }), logReply: { code: 1, stdout: '', stderr: 'x' } });
   const r = await merge(CTX, h.deps);
@@ -536,20 +573,24 @@ test('AC8.1: a lever log that fails never stops entry; it is named in the entry 
   assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /log:Step 2\.5/);
 });
 
+// The run-level catch is reached by a throw from a sub-step that does not catch its own errors:
+// the supplier step's post-await interrupt check (deps.interrupted) is such a call.
 test('a thrown error is classified on its stderr, never on the argv-bearing message', async () => {
   const err = Object.assign(new Error('Command failed: node resolve-policy.js --run /x --values integration-model'), { stderr: 'HTTP 502 bad gateway\n' });
-  const h = mergeHarness({ script: [[isNode('resolve-policy.js'), err]] });
+  const h = mergeHarness({ deps: { interrupted: () => { throw err; } } });
   const r = await merge(CTX, h.deps);
   assert.equal(r.reason, 'unclassified');
-  assert.equal(r.detail, 'merge-entry: HTTP 502 bad gateway');
+  assert.equal(r.detail, 'merge-supplier: HTTP 502 bad gateway');
   assert.doesNotMatch(r.detail, /Command failed|--values/);
 });
 
 test('merge never throws: a throw inside a step is unclassified naming the sub-step; a throwing emit is swallowed', async () => {
-  const h = mergeHarness({ script: [[isNode('resolve-policy.js'), new Error('spawn exploded')]] });
+  const h = mergeHarness({ deps: { interrupted: () => { throw new Error('spawn exploded'); } } });
   const r = await merge(CTX, h.deps);
   assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'unclassified', mergeCommit: null, postMerge: null });
-  assert.match(r.detail, /^merge-entry: spawn exploded/);
+  assert.match(r.detail, /^merge-supplier: spawn exploded/);
+  assert.ok(kindsOf(h).includes('judgments'), 'the throw came after the supplier call');
+  assert.ok(!h.calls.some(isNode('closing-links.js')), 'no later sub-step ran');
   const h2 = mergeHarness({ deps: { emit: () => { throw new Error('emit broke'); } } });
   const r2 = await merge(CTX, h2.deps);
   assert.equal(r2.outcome, 'merged');
@@ -1656,12 +1697,62 @@ test('a failed merge call is classified on its stderr, never on the argv-bearing
   assert.equal(r.reason, 'merge-refused');
   assert.equal(r.detail, 'merge-refused (unrecognized): some brand new failure');
   assert.equal(mergeCalls(h).length, 1);
-  // A throw with no stderr at all (a timeout kill) is unrecognized and names no argv either.
-  const t = mergeHarness({ prMerge: Object.assign(new Error('Command failed: gh pr merge 9 -t x'), { code: 'ETIMEDOUT' }) });
+  // A throw with no stderr and no kill signature is unrecognized and names no argv either.
+  const t = mergeHarness({ prMerge: Object.assign(new Error('Command failed: gh pr merge 9 -t x'), { code: 'ENOENT' }) });
   const tr = await merge(CTX, t.deps);
   assert.equal(tr.reason, 'merge-refused');
-  assert.match(tr.detail, /^merge-refused \(unrecognized\): .*ETIMEDOUT/);
+  assert.match(tr.detail, /^merge-refused \(unrecognized\): .*ENOENT/);
   assert.doesNotMatch(tr.detail, /Command failed/);
+  // A timeout kill is no refusal: its outcome is unknown, so the confirmation read decides it.
+  const k = mergeHarness({ prMerge: Object.assign(new Error('Command failed: gh pr merge 9 -t x'), { code: 'ETIMEDOUT' }) });
+  assert.equal((await merge(CTX, k.deps)).outcome, 'merged');
+});
+
+const timedOut = (over = {}) => Object.assign(new Error('Command failed: gh pr merge 9 -t x'), { stderr: '', ...over });
+
+test('a timed-out or killed merge call with no stderr takes the confirmation read: MERGED is merged with the post-merge', async () => {
+  for (const [name, over] of [['ETIMEDOUT', { code: 'ETIMEDOUT', signal: 'SIGTERM' }], ['signal', { signal: 'SIGKILL' }], ['killed', { killed: true }]]) {
+    const h = mergeHarness({ prMerge: timedOut(over) });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB }, name);
+    assert.equal(mergeCalls(h).length, 1, `${name}: never a second merge call`);
+    const reads = h.calls.filter(isConfirmRead);
+    assert.equal(reads.length, 1, name);
+    assert.ok(h.calls.indexOf(reads[0]) > h.calls.indexOf(mergeCalls(h)[0]), `${name}: the read follows the merge call`);
+    // The post-merge release-status comment is expected; a refusal comment is not.
+    assert.ok(!h.calls.some((c) => describeArgs(c.args).includes('Merge stopped')), `${name}: no refusal comment`);
+    const handoff = h.events.find((e) => e.step === 'merge-call');
+    assert.equal(handoff.status, 'ok', name);
+    assert.match(handoff.detail, /timed out with no stderr .*reading the state/, name);
+    assert.doesNotMatch(handoff.detail, /Command failed/, name);
+  }
+  // Armed on the forge before the kill: armed, exactly as the exit-0 path routes it.
+  const a = mergeHarness({ prState: BLOCKED_PENDING, confirm: ARMED, prMerge: timedOut({ code: 'ETIMEDOUT' }) });
+  assert.equal((await merge(CTX, a.deps)).outcome, 'armed');
+  // Neither merged nor armed: the exit-0 path's own unconfirmed refusal.
+  const o = mergeHarness({ confirm: { state: 'OPEN', autoMergeRequest: null }, prMerge: timedOut({ code: 'ETIMEDOUT' }) });
+  const or = await merge(CTX, o.deps);
+  assert.deepEqual(pick(or), { outcome: 'pending-review', reason: 'merge-refused', mergeCommit: null, postMerge: null });
+  assert.equal(or.detail, 'confirmation read state OPEN');
+  // A timeout signature with stderr present keeps the stderr classification.
+  const w = mergeHarness({ prMerge: timedOut({ code: 'ETIMEDOUT', stderr: `${SIG.permission}\n` }) });
+  const wr = await merge(CTX, w.deps);
+  assert.equal(wr.reason, 'merge-refused');
+  assert.match(wr.detail, /^merge-refused \(permission\): /);
+  assert.equal(w.calls.filter(isConfirmRead).length, 0, 'a classified refusal reads no state');
+});
+
+test('a timed-out merge call whose confirmation read fails twice is state-read-failed, says it timed out, and posts no refusal comment', async () => {
+  const h = mergeHarness({ prMerge: timedOut({ code: 'ETIMEDOUT' }), confirm: new Error('HTTP 502') });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'state-read-failed', mergeCommit: null, postMerge: null });
+  assert.equal(r.detail, 'merge call timed out (ETIMEDOUT); state unconfirmed');
+  const reads = h.calls.filter(isConfirmRead);
+  assert.equal(reads.length, 2, 'retried once');
+  assert.deepEqual(afterAll(h, (c) => c === reads[1]), [], 'no call after the second read: no comment, no post-merge');
+  assert.ok(!h.calls.some(isGh('pr', 'comment')), 'no refusal comment');
+  assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-confirm', 'stop']);
+  assert.match(lastEvent(h).detail, /^state-read-failed: merge call timed out/);
 });
 
 test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest is armed; anything else merge-refused', async () => {
@@ -1902,17 +1993,17 @@ test('AC4.1, AC4.2: the happy path calls happen in this order', async () => {
     'gh pr view state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup', 'gh run list --commit', 'ready-run.js --pr 9',
     'gh issue view 7 labels', 'ghCreate pr merge 9 --auto --squash',
     'gh pr view state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit',
-    'post-merge-run.js --run', 'git fetch origin main', `git describe --tags --contains --first-parent --match v* ${MERGE_SHA}`,
+    'post-merge-run.js --run', 'git fetch --end-of-options origin main', `git describe --tags --contains --first-parent --match v* --end-of-options ${MERGE_SHA}`,
     'gh pr comment --body-file', 'hooks.js reconcile', `lstatType ${CTX.runDir}`,
     'git worktree list --porcelain', `git worktree unlock ${CTX.worktree}`, `git worktree remove ${CTX.worktree}`,
     'git rev-parse --verify --quiet --end-of-options refs/heads/drive-7', 'git branch -D --end-of-options drive-7',
-    'gh api -X DELETE repos/o/r/git/refs/heads/drive-7',
+    'gh api -X DELETE repos/o/r/git/refs/heads/drive-7', 'hooks.js close-run',
   ]);
   const m = h.calls.find(isMergeCall);
   assert.deepEqual(argAfter(m, ['-t', '--body-file', '--match-head-commit']), [TITLE, path.join(CTX.runDir, 'merge-subject', 'body.md'), CTX.head]);
-  assert.deepEqual(h.events.slice(-7).map((e) => [e.step, e.status]), [
+  assert.deepEqual(h.events.slice(-8).map((e) => [e.step, e.status]), [
     ['merge-call', 'ok'], ['merge-confirm', 'ok'], ['merge-post-merge', 'ok'], ['merge-release-status', 'ok'],
-    ['merge-reconcile', 'ok'], ['merge-teardown', 'ok'], ['merge-delete-branch', 'ok'],
+    ['merge-reconcile', 'ok'], ['merge-teardown', 'ok'], ['merge-delete-branch', 'ok'], ['merge-close-run', 'ok'],
   ]);
 });
 
@@ -1921,10 +2012,10 @@ test('AC4.1, AC4.2: the happy path calls happen in this order', async () => {
 const postCalls = (h) => afterAll(h, isConfirmRead).filter((c) => !isNode('log-decision.js')(c));
 const failureEvents = (h) => h.events.filter((e) => e.status === 'fail');
 const SEQ_AFTER_CONFIRM = [
-  'post-merge-run.js --run', 'git fetch origin main', `git describe --tags --contains --first-parent --match v* ${MERGE_SHA}`,
+  'post-merge-run.js --run', 'git fetch --end-of-options origin main', `git describe --tags --contains --first-parent --match v* --end-of-options ${MERGE_SHA}`,
   'gh pr comment --body-file', 'hooks.js reconcile', `lstatType ${CTX.runDir}`, 'git worktree list --porcelain', `git worktree unlock ${CTX.worktree}`,
   `git worktree remove ${CTX.worktree}`, 'git rev-parse --verify --quiet --end-of-options refs/heads/drive-7',
-  'git branch -D --end-of-options drive-7', 'gh api -X DELETE repos/o/r/git/refs/heads/drive-7',
+  'git branch -D --end-of-options drive-7', 'gh api -X DELETE repos/o/r/git/refs/heads/drive-7', 'hooks.js close-run',
 ];
 
 test('AC12.1: on merged the post-merge sequence runs in order', async () => {
@@ -1939,14 +2030,18 @@ test('AC12.1: on merged the post-merge sequence runs in order', async () => {
   assert.ok(rc.timeout >= 150000, `reconcile timeout ${rc.timeout}`);
   assert.equal(rc.cwd, CTX.mainCheckout);
   assert.equal(RECONCILE_TIMEOUT_MS, 150000);
-  // Every git call is `git -C {main} …` run in the main checkout; only the fetch writes to the remote.
+  // Every git call is `git -C {main} …` run in the main checkout. None writes to the remote, so none
+  // asks for the push bound: the fetch is a read and takes the ordinary git bound, as steps.js's does.
   const gits = postCalls(h).filter((c) => c.kind === 'git');
   assert.equal(gits.length, 7);
   for (const g of gits) {
     assert.deepEqual(g.args.slice(0, 2), ['-C', CTX.mainCheckout]);
     assert.equal(g.cwd, CTX.mainCheckout);
-    assert.equal(g.remoteWrite === true, g.args[2] === 'fetch', g.args.join(' '));
+    assert.equal(g.remoteWrite, undefined, g.args.join(' '));
   }
+  // The fetch's ref and the describe's commit sit behind --end-of-options.
+  assert.deepEqual(gits.find((g) => g.args[2] === 'fetch').args.slice(2), ['fetch', '--end-of-options', 'origin', 'main']);
+  assert.deepEqual(gits.find((g) => g.args[2] === 'describe').args.slice(-2), ['--end-of-options', MERGE_SHA]);
   // The worktree is removed without a force flag, and the branch deleted behind --end-of-options.
   assert.ok(!gits.some((g) => g.args.includes('--force') || g.args.includes('-f')));
   assert.deepEqual(failureEvents(h), []);
@@ -2213,6 +2308,64 @@ test('AC12.8: a failed or timed-out reconcile keeps the original path', async ()
     assert.ok(logRunArgs(h, reconcileAt(h)).every((p) => p === CTX.runDir));
     // The teardown still ran after the failed reconcile.
     assert.ok(h.calls.some(isGit('worktree', 'remove')));
+  }
+});
+
+// settle.js's settle-close row, ported: the run reconcile kept in place is closed last.
+const isCloseRun = (c) => isNode('hooks.js')(c) && c.args[1] === 'close-run';
+const isRemoteDelete = (c) => isGh('api')(c) && c.args[1] === '-X' && c.args[2] === 'DELETE';
+
+test('close-run: a run reconcile kept in place is closed with --run {runDir}, after the remote delete, as the last call', async () => {
+  const h = mergeHarness();
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
+  const closes = h.calls.filter(isCloseRun);
+  assert.equal(closes.length, 1);
+  assert.deepEqual(closes[0].args.slice(1), ['close-run', '--run', CTX.runDir]);
+  assert.equal(closes[0].cwd, CTX.mainCheckout);
+  assert.equal(closes[0].timeout, 120000);
+  assert.deepEqual(closes[0].env, { HARNESS: '1' });
+  const del = h.calls.findIndex(isRemoteDelete);
+  assert.ok(del !== -1 && h.calls.indexOf(closes[0]) > del, 'after the remote branch delete');
+  assert.deepEqual(afterAll(h, isCloseRun), [], 'the last post-merge call');
+  assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-close-run', 'ok']);
+});
+
+test('close-run: no call when reconcile archived the run, the run dir is gone, or the worktree was kept', async () => {
+  const archived = movingFixture((fx2, arch) => {
+    fs.mkdirSync(path.dirname(arch), { recursive: true });
+    fs.renameSync(fx2.runDir, arch);
+  });
+  const ar = await merge(archived.f.ctx, archived.h.deps);
+  assert.deepEqual([ar.outcome, ar.runDir], ['merged', archived.archive]);
+  assert.ok(!archived.h.calls.some(isCloseRun), 'archived: archiving closes the run');
+  assert.deepEqual(ar.postMerge, POST_MERGE_STUB);
+  const gone = movingFixture((fx2) => { fs.rmSync(fx2.runDir, { recursive: true, force: true }); });
+  const gr = await merge(gone.f.ctx, gone.h.deps);
+  assert.deepEqual([gr.outcome, gr.eventsStdoutOnly], ['merged', true]);
+  assert.ok(!gone.h.calls.some(isCloseRun), 'stdout-only: no run directory to close');
+  const kept = mergeHarness({ remove: Object.assign(new Error('Command failed: git -C x worktree remove'),
+    { stderr: 'fatal: contains modified or untracked files, use --force to delete it\n', status: 128 }) });
+  const kr = await merge(CTX, kept.deps);
+  assert.equal(kr.outcome, 'merged');
+  assert.ok(!kept.calls.some(isCloseRun), 'worktree kept: close-run would refuse a live worktree');
+  assert.ok(!kr.postMerge.failures.includes('close-run'));
+});
+
+test('close-run: a non-zero, timed-out or throwing close-run stays merged and is listed as a post-merge failure', async () => {
+  const rows = [
+    ['exit 1', { code: 1, stdout: '', stderr: 'claude-tweaks: close-run: refused\n' }, /^close-run: hooks\.js close-run exited 1$/],
+    ['timed out', { code: null, stdout: '', stderr: '' }, /^close-run: hooks\.js close-run did not finish \(timed out or killed\)$/],
+    ['throws', new Error('spawn failed'), /^close-run: threw: spawn failed$/],
+  ];
+  for (const [name, closeRun, detail] of rows) {
+    const h = mergeHarness({ closeRun });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual([r.outcome, r.reason, r.mergeCommit], ['merged', null, MERGE_SHA], name);
+    assert.deepEqual(r.postMerge.failures, ['close-run'], name);
+    const ev = lastEvent(h);
+    assert.deepEqual([ev.step, ev.status], ['merge-close-run', 'fail'], name);
+    assert.match(ev.detail, detail, name);
   }
 });
 

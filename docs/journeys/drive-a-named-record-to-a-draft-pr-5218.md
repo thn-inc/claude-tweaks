@@ -99,7 +99,7 @@ files:
 
 ### 7. Merge it — when a judgment supplier is configured
 - **URL:** the `merge-entry` … `merge-*` sub-step event lines, the `merge` event line, and the final line's `merge: { outcome, reason, mergeCommit, postMerge }` field
-- **Action:** read the `merge` field. With no supplier configured it reads `pending-review` / `no-supplier`, and the merge step made no call at all. With one, the step runs only after the CI wait ended `green`. The driver then:
+- **Action:** read the `merge` field. After a green CI wait with no supplier configured, it reads `pending-review` / `no-supplier`, and the merge step made no call at all. With one, the step runs only after the CI wait ended `green`. The driver then:
   - re-reads the record's live labels for `auto:merge`;
   - takes the supplier's verdict and confirms the verdict line in `decisions.md`;
   - checks closing links and composes the subject;
@@ -107,6 +107,7 @@ files:
   - reads the merge state and checks, then merges, arms or stops.
 - **Should feel:** guarded. Every refusal that can be decided before the costly mark-ready is decided before it, and a merge goes out only against the head the driver's own checks covered.
 - **Should understand:**
+  - A CI wait that ended in any word other than `green` skips the step, with or without a supplier. The `merge` event line then reads `not entered: ci {word}`, the final line carries no `merge` field, and nothing is called.
   - The outcome is `merged`, `armed` or `pending-review`.
     - `armed` means the forge holds the merge, and the reconciler finishes cleanup on merged evidence.
     - `pending-review` carries one closed-set reason: `not-authorized`, `check-failed:{names}`, `checks-pending-timeout`, `conflict`, `moving-target`, `merge-refused` and so on, or `unclassified` naming the failing sub-step.
