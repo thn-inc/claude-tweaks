@@ -59,9 +59,10 @@ function gitInfo(execImpl = execFileSync) {
 // bin/verify.js resolves its default --log-dir/--count-stamp and the #1921
 // stamp location from this; null means "not inside a checkout" and the CLI
 // falls back to its tmpdir behavior.
-function gitDir(execImpl = execFileSync, cwd = process.cwd()) {
+// `env` (optional) is the child's environment; absent, the child inherits process.env.
+function gitDir(execImpl = execFileSync, cwd = process.cwd(), env = undefined) {
   try {
-    const out = String(execImpl('git', ['rev-parse', '--git-dir'], { encoding: 'utf8', cwd, windowsHide: true })).trim();
+    const out = String(execImpl('git', ['rev-parse', '--git-dir'], { encoding: 'utf8', cwd, env, windowsHide: true })).trim();
     if (out === '') return null;
     return path.resolve(cwd, out);
   } catch {

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
 const { chmodDenialSkip } = require('./helpers/root');
 const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
@@ -122,10 +122,17 @@ test('--help after a subcommand prints usage with nothing else run', (t) => {
   assert.match(h.stdout(), /usage:/);
 });
 
-test('a real subprocess answers --help', () => {
-  const result = spawnSync(process.execPath, [BIN, '--help'], { windowsHide: true, encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr);
+test('the script entry answers --help, in-process', () => {
+  const result = runCliSync(BIN, ['--help'], { fresh: true });
+  assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /usage:/);
+});
+
+test('a real subprocess refuses an unknown subcommand with exit 2 and the usage on stderr', () => {
+  // real process: proves the script entry's exit code and stderr
+  const result = spawnCli(BIN, ['frobnicate']);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /acceptance-packet\.js: .*\n[\s\S]*usage:/);
 });
 
 for (const [name, argv] of [
@@ -1879,7 +1886,7 @@ function realGitEnv() {
   };
 }
 
-test('real subprocess: snapshot then gather over a real repo', (t) => {
+test('in-process over a real repo: snapshot then gather, real git and git dir', (t) => {
   const repo = gitRepo();
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const env = realGitEnv();
@@ -1899,7 +1906,10 @@ test('real subprocess: snapshot then gather over a real repo', (t) => {
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', 'run-1');
   fs.mkdirSync(runDir, { recursive: true });
 
-  const cli = (...args) => spawnSync(process.execPath, [BIN, ...args], { windowsHide: true, encoding: 'utf8', cwd: repo, env });
+  const cli = (...args) => {
+    const r = runCliSync(BIN, args, { cwd: repo, env, fresh: true, deps: { gh: () => { throw new Error('unexpected gh'); } } });
+    return { ...r, status: r.code };
+  };
   const snap = cli('snapshot', '--run', runDir, '--base', mergeBase);
   assert.equal(snap.status, 0, snap.stderr);
   const manifest = JSON.parse(snap.stdout);
@@ -1926,6 +1936,60 @@ test('real subprocess: snapshot then gather over a real repo', (t) => {
   assert.equal(rerun.status, 0, rerun.stderr);
   assert.deepEqual(JSON.parse(rerun.stdout), MAIN_RERUN);
   assert.equal(readJson(path.join(runDir, 'packet-inputs', 'manifest.json')).head, head);
+});
+
+test('AC6.1: snapshot reads the git dir from the injected env', (t) => {
+  const repo = gitRepo();
+  const other = gitRepo();
+  t.after(() => { fs.rmSync(repo, { recursive: true, force: true }); fs.rmSync(other, { recursive: true, force: true }); });
+  const env = realGitEnv();
+  const base = fixtureGit(['-C', repo, 'rev-parse', 'HEAD'], { env, encoding: 'utf8' }).trim();
+  writeText(path.join(repo, 'a.txt'), 'a\n');
+  fixtureGit(['-C', repo, 'add', '.'], { env });
+  fixtureGit(['-C', repo, 'commit', '-q', '-m', 'a'], { env });
+  const head = fixtureGit(['-C', repo, 'rev-parse', 'HEAD'], { env, encoding: 'utf8' }).trim();
+  const repoGitDir = fixtureGit(['-C', repo, 'rev-parse', '--absolute-git-dir'], { env, encoding: 'utf8' }).trim();
+  writeJson(path.join(repoGitDir, 'claude-tweaks-verify', 'report.json'), REPORT);
+  const runDir = path.join(other, '.claude-tweaks', 'pipelines', 'run-1');
+  fs.mkdirSync(runDir, { recursive: true });
+  // cwd is a different repo; only the injected env points git at `repo`.
+  assert.notEqual(other, repo);
+  const result = runCliSync(BIN, ['snapshot', '--run', runDir, '--base', base], {
+    cwd: other, env: { ...env, GIT_DIR: repoGitDir }, fresh: true, deps: { gh: () => { throw new Error('unexpected gh'); } },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const manifest = JSON.parse(result.stdout);
+  assert.equal(manifest.head, head);
+  assert.equal(manifest.files.verifyReport, 'copied');
+});
+
+test('AC3.1: tmpPath follows the injected CLAUDE_CODE_SESSION_ID and cwd, not process.env', (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const bodyFiles = [];
+  const { gh } = fakeGh();
+  const spyGh = (args) => {
+    if (args[0] === 'pr' && args[1] === 'edit') bodyFiles.push(args[args.indexOf('--body-file') + 1]);
+    return gh(args);
+  };
+  const injected = 'injected-session-5383';
+  const saved = process.env.CLAUDE_CODE_SESSION_ID;
+  process.env.CLAUDE_CODE_SESSION_ID = 'ambient-session-5383';
+  let result;
+  try {
+    result = runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--pr', '9'], {
+      cwd: ws.root,
+      env: { PATH: process.env.PATH, TMPDIR: os.tmpdir(), CLAUDE_CODE_SESSION_ID: injected },
+      fresh: true,
+      deps: { gh: spyGh, ghAvailable: () => true, pinGhHost: () => {} },
+    });
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = saved;
+  }
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(bodyFiles.length, 1);
+  assert.equal(path.basename(path.dirname(bodyFiles[0])), `ct-session-${injected}`);
 });
 
 // ---- risk facts: unconfirmed flags, planned proofs, the plan copy ----
