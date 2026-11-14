@@ -583,3 +583,94 @@ test('hooks.sh AC1.1: every hooks.json registration is the launcher form with it
   }
   assert.deepEqual(rows, HOOKS_JSON_ROWS);
 });
+
+// AC10.1: session-start saves process.execPath where the launcher's second
+// rung reads it. All runs use a fresh non-repo cwd and a fixture home.
+const SESSION_START_INPUT = '{"session_id":"s","source":"startup"}';
+
+function sessionStartRun(env) {
+  return nodeRun(['session-start'], { input: SESSION_START_INPUT, cwd: tmp('hl-ss-cwd-'), env });
+}
+
+function nodePathFile(home) {
+  return path.join(home, '.claude-tweaks', 'node-path');
+}
+
+test('hooks.sh AC10.1: session-start writes process.execPath when node-path is absent', () => {
+  const home = tmp('hl-ss-home-');
+  const r = sessionStartRun(fixtureHomeEnv(home));
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.readFileSync(nodePathFile(home), 'utf8'), process.execPath + '\n');
+});
+
+test('hooks.sh AC10.1: session-start rewrites a different stored path', () => {
+  const home = tmp('hl-ss-home-');
+  fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(nodePathFile(home), '/nonexistent/node\n');
+  const r = sessionStartRun(fixtureHomeEnv(home));
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.readFileSync(nodePathFile(home), 'utf8'), process.execPath + '\n');
+});
+
+test('hooks.sh AC10.1: session-start leaves an up-to-date node-path untouched', () => {
+  const home = tmp('hl-ss-home-');
+  fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(nodePathFile(home), process.execPath + '\n');
+  const old = new Date('2001-01-01T00:00:00Z');
+  fs.utimesSync(nodePathFile(home), old, old);
+  const before = fs.statSync(nodePathFile(home)).mtimeMs;
+  const r = sessionStartRun(fixtureHomeEnv(home));
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.statSync(nodePathFile(home)).mtimeMs, before);
+  assert.equal(fs.readFileSync(nodePathFile(home), 'utf8'), process.execPath + '\n');
+});
+
+test('hooks.sh AC10.1: an unwritable ~/.claude-tweaks (a regular file) keeps stdout and exit 0', () => {
+  const a = sessionStartRun(fixtureHomeEnv(tmp('hl-ss-home-')));
+  const homeB = tmp('hl-ss-home-');
+  fs.writeFileSync(path.join(homeB, '.claude-tweaks'), 'not a directory');
+  const b = sessionStartRun(fixtureHomeEnv(homeB));
+  assert.equal(a.status, 0, a.stderr);
+  assert.equal(b.status, 0, b.stderr);
+  assert.ok(a.stdout.length > 0);
+  assert.equal(b.stdout, a.stdout);
+});
+
+test('hooks.sh AC10.1: an unwritable ~/.claude-tweaks (a 0o500 directory) keeps stdout and exit 0', chmodDenialSkip('root bypasses directory modes'), () => {
+  const a = sessionStartRun(fixtureHomeEnv(tmp('hl-ss-home-')));
+  const homeB = tmp('hl-ss-home-');
+  const dir = path.join(homeB, '.claude-tweaks');
+  fs.mkdirSync(dir);
+  fs.chmodSync(dir, 0o500);
+  try {
+    const b = sessionStartRun(fixtureHomeEnv(homeB));
+    assert.equal(a.status, 0, a.stderr);
+    assert.equal(b.status, 0, b.stderr);
+    assert.equal(b.stdout, a.stdout);
+    assert.deepEqual(fs.readdirSync(dir), []);
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+});
+
+test('hooks.sh AC10.1: session-start writes under HOME when HOME and USERPROFILE differ', () => {
+  const a = tmp('hl-ss-home-');
+  const b = tmp('hl-ss-other-');
+  const env = { ...fixtureHomeEnv(a), USERPROFILE: b };
+  const r = sessionStartRun(env);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.readFileSync(nodePathFile(a), 'utf8'), process.execPath + '\n');
+  assert.ok(!fs.existsSync(nodePathFile(b)));
+});
+
+perShell('hooks.sh AC3.1 round trip: the path session-start saves is the one the launcher reads', (sh) => {
+  const home = path.join(tmp('hl-ss-rt-'), 'home with space');
+  fs.mkdirSync(home, { recursive: true });
+  const saved = sessionStartRun(fixtureHomeEnv(home));
+  assert.equal(saved.status, 0, saved.stderr);
+  const r = runLauncher(sh, ['session-start'], { input: SESSION_START_INPUT, env: noNodeEnv(home) });
+  assert.equal(r.status, 0, r.stderr);
+  const ctx = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+  assert.ok(ctx.includes(INTERACTION_STYLE_DIRECTIVE));
+  assert.ok(!ctx.includes('restart Claude Code'));
+});
