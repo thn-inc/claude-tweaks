@@ -204,7 +204,8 @@ const realDeps = {
 
 const errMsg = (e) => (e && (e.code || e.message)) || 'unknown';
 
-function run(argv, deps = realDeps) {
+function run(argv, deps = {}) {
+  deps = { ...realDeps, ...deps };
   const o = parseArgs(argv);
   const usageError = (message) => { deps.stderr(`close-out-marker.js: ${message}\n${USAGE}`); return 2; };
   const fail = (code, message) => { deps.stderr(`close-out-marker.js: ${message}\n`); return code; };
@@ -288,6 +289,6 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

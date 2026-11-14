@@ -8,11 +8,13 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { run, parseArgs } = require('../plugin/bin/close-out-marker.js');
 const { parseMarker, serializeMarker } = require('../plugin/bin/lib/dispatch/close-out-marker.js');
 
 const BIN = path.join(__dirname, '..', 'plugin', 'bin', 'close-out-marker.js');
+// In-process call; maps the helper's `code` onto the `status` field the assertions use.
+const inProc = (argv) => { const r = runCliSync(BIN, argv); return { status: r.code, stdout: r.stdout, stderr: r.stderr }; };
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
@@ -653,7 +655,7 @@ test('subprocess: read prints one JSON line and exits 0', () => {
   try {
     const file = path.join(dir, 'comments.json');
     fs.writeFileSync(file, JSON.stringify(P(comment('IC_1', markerBody(pendingFields)))));
-    const r = spawnSync(process.execPath, [BIN, 'read', '--comments-file', file], { encoding: 'utf8' });
+    const r = inProc(['read', '--comments-file', file]);
     assert.equal(r.status, 0, r.stderr);
     const lines = r.stdout.split('\n').filter(Boolean);
     assert.equal(lines.length, 1);
@@ -677,13 +679,13 @@ test('subprocess: write creates the --out file and an unwritable --out exits 3',
     const argv = writeArgv('--comments-file', file);
     argv[argv.indexOf('--out') + 1] = target;
     argv[argv.indexOf('--conflicted-files-file') + 1] = pathsFile;
-    const ok = spawnSync(process.execPath, [BIN, ...argv], { encoding: 'utf8' });
+    const ok = inProc(argv);
     assert.equal(ok.status, 0, ok.stderr);
     assert.deepEqual(parseMarker(fs.readFileSync(target, 'utf8')).conflictedFiles, ['a.js', 'app/routes/posts.$slug.tsx']);
 
     const bad = [...argv];
     bad[bad.indexOf('--out') + 1] = path.join(dir, 'no-such-dir', 'marker.md');
-    const fail = spawnSync(process.execPath, [BIN, ...bad], { encoding: 'utf8' });
+    const fail = inProc(bad);
     assert.equal(fail.status, 3, fail.stderr);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -697,21 +699,24 @@ test('subprocess: read --body-out saves the raw body byte for byte and an unwrit
     const file = path.join(dir, 'comments.json');
     fs.writeFileSync(file, JSON.stringify(P(comment('IC_1', crlf))));
     const target = path.join(dir, 'prior.md');
-    const ok = spawnSync(process.execPath, [BIN, 'read', '--comments-file', file, '--body-out', target], { encoding: 'utf8' });
-    assert.equal(ok.status, 0, ok.stderr);
+    // real process: proves the script entry and exit code
+    const ok = spawnCli(BIN, ['read', '--comments-file', file, '--body-out', target]);
+    assert.equal(ok.code, 0, ok.stderr);
     assert.deepEqual(fs.readFileSync(target), Buffer.from(crlf, 'utf8'));
     assert.equal(JSON.parse(ok.stdout).bodyWritten, target);
 
     const none = path.join(dir, 'none.json');
     fs.writeFileSync(none, JSON.stringify(P()));
     const absent = path.join(dir, 'absent.md');
-    const noMarker = spawnSync(process.execPath, [BIN, 'read', '--comments-file', none, '--body-out', absent], { encoding: 'utf8' });
+    const noMarker = inProc(['read', '--comments-file', none, '--body-out', absent]);
     assert.equal(noMarker.status, 0, noMarker.stderr);
     assert.equal(fs.existsSync(absent), false);
     assert.equal(JSON.parse(noMarker.stdout).bodyWritten, null);
 
-    const fail = spawnSync(process.execPath, [BIN, 'read', '--comments-file', file, '--body-out', path.join(dir, 'no-such-dir', 'prior.md')], { encoding: 'utf8' });
-    assert.equal(fail.status, 3, fail.stderr);
+    // real process: proves the script entry and exit code
+    const fail = spawnCli(BIN, ['read', '--comments-file', file, '--body-out', path.join(dir, 'no-such-dir', 'prior.md')]);
+    assert.equal(fail.code, 3, fail.stderr);
+    assert.match(fail.stderr, /out-unwritable/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
