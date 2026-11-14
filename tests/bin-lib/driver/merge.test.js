@@ -20,7 +20,7 @@ const { aggregateReproductionProblem } = require(path.join(LIB, 'log-decision', 
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
-const { resolvePolicy } = require(path.join(LIB, '..', 'resolve-policy'));
+const { realDeps } = require(path.join(LIB, 'driver', 'run'));
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
 const CLOCK_START = 1000;
@@ -633,10 +633,12 @@ test('AC8.1: a core reply with no result runs merge-verification as wait (unreso
   assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5').map((l) => l.text), ['lever unresolved ("") — proceeding as wait']);
 });
 
-test('real core: both reads resolve through resolvePolicy from the run dir config.yml', async () => {
+// The production seam (run.js realDeps.resolvePolicyCore), not a fake: a broken wiring there
+// fails this test instead of shipping green behind every harness's injected core.
+test('real core: both reads resolve through realDeps.resolvePolicyCore from the run dir config.yml', async () => {
   const f = fixture();
   fs.writeFileSync(path.join(f.runDir, 'config.yml'), 'integration-model: pr-first\nmerge-verification: wait\n');
-  const h = mergeHarness({ fx: f, deps: { resolvePolicyCore: resolvePolicy } });
+  const h = mergeHarness({ fx: f, deps: { resolvePolicyCore: realDeps.resolvePolicyCore } });
   const r = await merge(f.ctx, h.deps);
   assert.equal(r.outcome, 'merged');
   assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(run-config\)/);
