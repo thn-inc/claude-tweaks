@@ -425,8 +425,9 @@ fixtureTest('concurrency: cancel-in-progress reads True/TRUE and False/FALSE as 
 // A plain value led by `!` is a YAML tag (the push-branch item rule), so it is never kept as the
 // job's if: text; a quoted '!x', a ${{ !x }} expression and block-scalar text are read.
 fixtureTest('jobs: a bare `!` job if: is a YAML tag and unread; quoted, ${{ }} and block forms are read', (shape) => {
+  const prJob = (body) => `on: pull_request\njobs:\n  a:\n${body}    runs-on: x\n`;
   for (const body of ['    if: !github.event.pull_request.draft\n', '    if: ! x\n', '    if: !x # c\n', '    if:\n      !github.event.pull_request.draft\n']) {
-    bothEndings(`on: pull_request\njobs:\n  a:\n${body}    runs-on: x\n`, (t) => {
+    bothEndings(prJob(body), (t) => {
       const s = shape(t);
       assert.deepEqual(s.unparsed, ['job a if: not read'], JSON.stringify(t));
       assert.equal(s.jobs[0].if, null, JSON.stringify(t));
@@ -439,7 +440,7 @@ fixtureTest('jobs: a bare `!` job if: is a YAML tag and unread; quoted, ${{ }} a
     ['    if: |\n      !x\n', '!x'],
   ];
   for (const [body, want] of read) {
-    bothEndings(`on: pull_request\njobs:\n  a:\n${body}    runs-on: x\n`, (t) => {
+    bothEndings(prJob(body), (t) => {
       const s = shape(t);
       assert.equal(s.jobs[0].if, want, JSON.stringify(t));
       assert.deepEqual(s.unparsed, [], JSON.stringify(t));

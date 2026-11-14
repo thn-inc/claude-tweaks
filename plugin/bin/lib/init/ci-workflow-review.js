@@ -217,10 +217,10 @@ function reviewWorkflows({ workflows, ciSources }) {
     if (shape.prTrigger && shape.jobs.some((j) => j.if !== null && classifyDraftCondition(j.if) === 'unparsed')) {
       reasons.push('draft condition not understood');
     }
-    const concurrencyReasons = !concurrencyApplies(shape) ? [] : [
+    const concurrencyReasons = concurrencyApplies(shape) ? [
       ...shape.unparsed.filter((r) => CONCURRENCY_ONLY.has(r)),
       ...(shape.concurrency === 'cancel-expression' ? [CANCEL_EXPRESSION] : []),
-    ];
+    ] : [];
     rows.push({ entry, shape, reasons, concurrencyReasons });
   }
   for (const row of rows) {
