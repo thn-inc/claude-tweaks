@@ -140,7 +140,9 @@ async function run(ctx) {
   // plain string push that cannot throw, and every session gets it regardless
   // of what else this hook finds to report.
   parts.push(INTERACTION_STYLE_DIRECTIVE);
-  try { saveNodePath(); } catch { /* best-effort */ }
+  // `nodePathHome` is a test-only seam (undefined falls through to
+  // saveNodePath's own default home); bin/hooks.js never sets it.
+  try { saveNodePath({ home: ctx && ctx.nodePathHome }); } catch { /* best-effort */ }
   // #2070: single upstream read of CLAUDE_PLUGIN_ROOT, threaded into both
   // resolveBuildLine (below) and the stale-runs report line's fallback
   // (further down) — one place for a future normalization/validation fix to

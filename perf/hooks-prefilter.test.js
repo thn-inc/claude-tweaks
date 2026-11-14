@@ -80,9 +80,10 @@ test('bin/hooks.js skip path is a thin layer: well under the full path, under an
   // min of per-attempt differences would let one slow control sample go negative). If the
   // early exit is disabled, skip pays the heavy requires too and skip ~ full, which
   // fails the ratio. The absolute ceiling (60ms) only catches a gross regression.
-  // Through the launcher (#5392; macOS darwin, Node v26.13.1, idle, best of 15):
+  // Through the launcher (#5392; measured once, separate run; macOS darwin, Node v26.13.1, idle, best of 15):
   // control 26.4ms, skip 35.6ms, full 51.5ms, direct (node hooks.js, no launcher)
   // 33.2ms, so the launcher's own share is ~2.4ms and skipCost 9.2 < fullCost 25.1 / 2.
+  assert.ok(SH, 'sh not found on PATH: the launcher timing spawns sh bin/hooks.sh');
   let control = Infinity;
   let skip = Infinity;
   let full = Infinity;
