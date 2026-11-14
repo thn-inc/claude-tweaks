@@ -61,10 +61,26 @@ test('decideRoute', async (t) => {
   });
 
   await t.test('code 0, no-parent, out-of-vocabulary risk -> no-parent-gated', () => {
-    assert.strictEqual(exceedsOversightFloor({ risk: 'extreme', size: 'low' }, FLOORS).exceeds, true);
-    const r = decideRoute({ gate: gate('no-parent'), facets: { risk: 'extreme', size: 'low' }, floors: FLOORS });
+    const facets = { risk: 'extreme', size: 'low' };
+    const f = exceedsOversightFloor(facets, FLOORS);
+    assert.strictEqual(f.exceeds, true);
+    assert.strictEqual(f.reason, 'unscored');
+    const r = decideRoute({ gate: gate('no-parent'), facets, floors: FLOORS });
     assert.strictEqual(r.route, 'no-parent-gated');
+    assert.deepStrictEqual(r.labels, [{ on: 'record', label: 'demo:pending' }]);
   });
+
+  for (const [name, size] of [['missing', undefined], ['out-of-vocabulary', 'huge']]) {
+    await t.test(`code 0, no-parent, ${name} size -> unscored -> no-parent-gated`, () => {
+      assert.strictEqual(exceedsOversightFloor({ risk: 'low', size: 'low' }, FLOORS).exceeds, false);
+      const facets = { risk: 'low', size };
+      const f = exceedsOversightFloor(facets, FLOORS);
+      assert.strictEqual(f.exceeds, true);
+      assert.strictEqual(f.reason, 'unscored');
+      const r = decideRoute({ gate: gate('no-parent'), facets, floors: FLOORS });
+      assert.deepStrictEqual(r, { route: 'no-parent-gated', labels: [{ on: 'record', label: 'demo:pending' }] });
+    });
+  }
 
   await t.test('code 0, no-parent, size over its floor -> no-parent-gated', () => {
     const facets = { risk: 'low', size: 'high' };
@@ -102,6 +118,16 @@ test('decideRoute', async (t) => {
     assert.strictEqual(r.route, 'no-parent-exempt');
     assert.strictEqual(r.fallback, 'parent-gate failed');
   });
+
+  for (const [name, verdict] of [['a string', 'due'], ['a number', 5], ['an array', []], ['an object with no state', {}]]) {
+    await t.test(`code 0 with ${name} as the parsed verdict -> route null, never the fallback`, () => {
+      const r = decideRoute({ gate: { code: 0, verdict }, facets: LOW, floors: FLOORS });
+      assert.strictEqual(r.route, null);
+      assert.ok(r.error);
+      assert.strictEqual('fallback' in r, false);
+      assert.strictEqual('labels' in r, false);
+    });
+  }
 
   for (const code of [1, 2, 3]) {
     await t.test(`AC8: exit ${code} falls back to the floor, never null, never a skip`, () => {

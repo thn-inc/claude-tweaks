@@ -30,7 +30,7 @@ function noParentRoute(facets, floors) {
 function decideRoute({ gate, facets, floors }) {
   const code = gate ? gate.code : null;
   const verdict = gate ? gate.verdict : null;
-  if (code !== 0 || verdict === null || typeof verdict !== 'object') {
+  if (code !== 0 || verdict == null) {
     return { ...noParentRoute(facets, floors), fallback: 'parent-gate failed' };
   }
   const { state, exceeds } = verdict;
