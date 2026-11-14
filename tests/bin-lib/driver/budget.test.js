@@ -35,6 +35,10 @@ function policyStepWith(policy) {
   });
 }
 
+// A loop that stops terminating would otherwise hang its test: past this many pulls the fake
+// pull throws, so the run ends `pull-failed` and the test's assertions go red instead.
+const MAX_PULLS = 100;
+
 // pulls: returned in turn, the last one forever; an Error entry is thrown. Calls are recorded
 // inside the fakes and asserted after the run returns.
 function fake({ pulls = [EMPTY_PULL], eligibility = () => ({ eligible: true, reasons: [] }), facts = () => undefined, queuePull = null, steps = null } = {}) {
@@ -52,6 +56,7 @@ function fake({ pulls = [EMPTY_PULL], eligibility = () => ({ eligible: true, rea
     env: { FAKE_ENV: '1' },
     queuePull: (options, moduleDeps) => {
       calls.queuePull.push({ options, moduleDeps });
+      if (calls.queuePull.length > MAX_PULLS) throw new Error(`pull bound exceeded: more than ${MAX_PULLS} pulls`);
       if (queuePull) return queuePull(options, moduleDeps);
       const p = pulls[Math.min(pullIndex, pulls.length - 1)];
       pullIndex += 1;
@@ -188,6 +193,8 @@ test('AC6.4: a top record the pre-screen rules out is skipped once and the run r
   assert.deepEqual(f.driven(), [2, 3]);
   const summary = summaryOf(f);
   assert.deepEqual([summary.skipped, summary.driven, summary.ended], [1, 2, 'exhausted']);
+  assert.match(f.err, /drive\.js: pre-screen skipped #1 \(no\); no live fetch/);
+  assert.doesNotMatch(f.err, /pre-screen skipped #[23]/);
   // The all-skip group joins firing at the pull that screened it, so it never costs a pull of
   // its own: one pull each for #2 and #3, and one that ranks nothing.
   assert.equal(f.calls.queuePull.length, 3);

@@ -161,6 +161,12 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
   // The ranking's in-memory `firing` set, and each record's pre-screen verdict by number.
   const attempted = new Set();
   const verdicts = new Map();
+  // A skipped record costs no live fetch and leaves no event line, so its reasons go to stderr
+  // where it is counted: the summary's `skipped` says how many, this line says which and why.
+  const countSkipped = (n) => {
+    counters.skipped += 1;
+    deps.stderr(`drive.js: pre-screen skipped #${n} (${verdicts.get(n).reasons.join('; ') || 'not eligible'}); no live fetch\n`);
+  };
   // Pre-screens each member not yet attempted, once per record per invocation, in the groups the
   // ranking could select: a group the pull excluded for a UNSELECTABLE_REASONS reason is
   // never screened, counted or added to `firing`. A screened group whose members are all `skip`
@@ -180,7 +186,7 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
       if (fresh.length > 0 && group.every((r) => verdicts.get(r.number).verdict === 'skip')) {
         for (const r of fresh) {
           attempted.add(r.number);
-          counters.skipped += 1;
+          countSkipped(r.number);
         }
       }
     }
@@ -213,7 +219,7 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
     for (const r of top) {
       const n = r.number;
       if (verdicts.get(n).verdict === 'skip') {
-        counters.skipped += 1;
+        countSkipped(n);
         continue;
       }
       const facts = await driveOne(n);
