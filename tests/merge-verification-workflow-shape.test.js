@@ -69,6 +69,16 @@ fixtureTest('name: top-level name in bare, quoted and commented forms', (shape) 
   }
   // a value is quoted only when one quoted scalar spans all of it; otherwise it is plain text
   bothEndings(`name: 'a' b\n${MIN}`, (t) => assert.equal(shape(t).name, "'a' b"));
+  // a plain value led by `!` is a YAML tag, never the literal name; quoted, `!` is text
+  for (const c of ['name: !x\n', 'name: !!str CI\n', 'name: ! CI # c\n', 'name:\n  !x\n']) {
+    bothEndings(c + MIN, (t) => {
+      const s = shape(t);
+      assert.equal(s.name, null, JSON.stringify(t));
+      assert.deepEqual(s.unparsed, ['name: not read'], JSON.stringify(t));
+    });
+  }
+  bothEndings(`name: '!x'\n${MIN}`, (t) => assert.equal(shape(t).name, '!x'));
+  bothEndings(`name: CI!\n${MIN}`, (t) => assert.equal(shape(t).name, 'CI!'));
   for (const [c, reason] of [['name: *n\n', 'anchor or alias in name:'], ['name: CI\n\tmore\n', 'tab indentation in name:']]) {
     bothEndings(c + MIN, (t) => {
       const s = shape(t);
@@ -542,6 +552,9 @@ fixtureTest('unparsed: each reason fires on its own fixture', (shape) => {
     [`${MIN}concurrency: {group: {x: y}\n`, 'concurrency not read'],
     // a brace inside a quoted value is text: here the outer map closes before the value ends
     [`${MIN}concurrency: {group: '{'}}\n`, 'concurrency not read'],
+    // a colon-less flow entry (an implicit null value) is unread, never "no cancel-in-progress"
+    [`${MIN}concurrency: {group, cancel-in-progress}\n`, 'concurrency not read'],
+    [`${MIN}concurrency: {group: x, cancel-in-progress}\n`, 'concurrency not read'],
     [`name: "C\\qI"\n${MIN}`, 'name: not read'],
     [`${MIN}concurrency:\n    group: x\n  cancel-in-progress: true\n`, 'concurrency not read'],
     [`${MIN}concurrency:\n  group: x\n  cancel-in-progress: 'true'\n`, 'cancel-in-progress value not read'],

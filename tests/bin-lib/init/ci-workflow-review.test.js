@@ -209,6 +209,10 @@ test('any other reader unparsed reason suppresses that workflow\'s findings: pus
     ['jobs: not read', draftWf().replace(CONC, '').replace('    steps:\n      - run: npm test\n', '    steps: run-this\n')],
     // A per-job reason keeps the other jobs, so job test's draft skip is still read.
     ['job b if: not read', `${draftWf()}  b:\n    if:\n    runs-on: ubuntu-latest\n`],
+    // Only the concurrency: region's own tab and anchor reasons are check 4's; the other
+    // regions' still suppress every check.
+    ['anchor or alias in jobs:', draftWf().replace('    runs-on: ubuntu-latest\n', '    runs-on: *r\n')],
+    ['tab indentation in name:', draftWf().replace('name: CI\n', 'name: CI\n\tmore\n')],
   ];
   for (const [reason, text] of cases) {
     const r = review({ 'ci.yml': text, 'other.yml': draftWf() }, [{ suite: 'tests', workflow: 'ci.yml' }]);
@@ -507,13 +511,18 @@ test('a cancel-in-progress expression suppresses check 4 only: checks 1, 2, 3 an
   assert.deepEqual(mixed.unparsed, [{ workflow: W, reason: 'draft condition not understood; cancel-in-progress expression not evaluated' }]);
 });
 
-// The reader's two workflow-level concurrency reasons are check 4's alone, as the expression is:
-// kept as an unparsed entry where check 4 applies (checks 1, 2, 3 and 5 still run), dropped where
-// it does not, since nothing then reads the value.
+// The reader's workflow-level concurrency reasons, the concurrency: region's own tab and
+// anchor-or-alias reasons included, are check 4's alone, as the expression is: kept as an unparsed
+// entry where check 4 applies (checks 1, 2, 3 and 5 still run), dropped where it does not, since
+// nothing then reads the value.
 test('an unread workflow-level concurrency suppresses check 4 only, and only where check 4 applies', () => {
   const unread = [
     ['concurrency not read', 'concurrency: {group: x\n'],
+    // A colon-less flow entry (an implicit null value) is unread, never "no cancel-in-progress".
+    ['concurrency not read', 'concurrency: {group, cancel-in-progress}\n'],
     ['cancel-in-progress value not read', "concurrency:\n  group: x\n  cancel-in-progress: 'true'\n"],
+    ['tab indentation in concurrency:', 'concurrency:\n\tgroup: x\n'],
+    ['anchor or alias in concurrency:', 'concurrency: *c\n'],
   ];
   for (const [reason, conc] of unread) {
     const r = review({ 'ci.yml': draftWf().replace(CONC, conc) }, [{ suite: 'tests', workflow: 'ci.yml' }]);

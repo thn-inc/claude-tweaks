@@ -121,7 +121,7 @@ const STEP_FACTS = [
   [/never reviews the plugin's generated `track-issue-fixes\.yml` while it is the current or an earlier generated version/, 'step: only the generated tracking workflow is skipped'],
   [/a hand-modified copy is reviewed like any project workflow/, 'step: a hand-modified copy is reviewed'],
   [/A single workflow file that is unreadable, a dangling symlink, or resolves outside the checkout is not an exit 1: it is an `unparsed` row under exit 0/, 'step: a per-file failure is unparsed under exit 0'],
-  [/except one unparsed only for a concurrency reason \(`cancel-in-progress expression not evaluated`, `concurrency not read` or `cancel-in-progress value not read`\), which got every check but concurrency/, 'step: a concurrency reason suppresses check 4 alone'],
+  [/except one unparsed only for a concurrency reason \(`cancel-in-progress expression not evaluated`, or a workflow-level `concurrency:` block it could not read\), which got every check but concurrency/, 'step: a concurrency reason suppresses check 4 alone'],
   [/A summary ending `not clean: \{K\} workflow\(s\) unparsed` is never reported as clean/, 'step: exit 0 with unparsed workflows is never reported as clean'],
   [/\*\*Exit 1\*\* — the review could not run: show `ci-workflow-review: could not review — \{stderr\}`/, 'step: exit 1 shows could not review'],
   [/\*\*Exit 2\*\* — a usage bug in the command line: report it, never as clean/, 'step: exit 2 is reported, never as clean'],

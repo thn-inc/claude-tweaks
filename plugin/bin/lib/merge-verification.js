@@ -1052,7 +1052,10 @@ function readConcurrency(lines, idx, end, unparsed) {
   const inline = stripCommentQuoteAware(afterColon(lines[idx]));
   if (inline.startsWith('{')) {
     if (!flowMapSpansValue(inline)) { unparsed.push('concurrency not read'); return null; }
-    const e = flowMappingEntries(inline).entries.find((x) => x.key === 'cancel-in-progress');
+    const map = flowMappingEntries(inline);
+    // A colon-less entry (`{group, cancel-in-progress}`) is in no `entries`: unread, never no-cancel.
+    if (map.keyless > 0) { unparsed.push('concurrency not read'); return null; }
+    const e = map.entries.find((x) => x.key === 'cancel-in-progress');
     return e ? cancel(e.value) : 'no-cancel';
   }
   if (inline !== '') return 'no-cancel';
@@ -1108,12 +1111,13 @@ function readWorkflowShape(text) {
 
   // A name: region with a tab or an anchor/alias leaves `name` null, never a
   // literal like '*n', and reports the region reason like the other regions. A
-  // quoted name that never closes or holds an undecodable escape is `name: not
-  // read`; an empty name is simply absent.
+  // quoted name that never closes or holds an undecodable escape, or a plain
+  // value led by `!` (a YAML tag), is `name: not read`; an empty name is simply
+  // absent.
   if (nameR && regionClear(nameR, 'name:')) {
     const r = readJoinedScalar(lines, nameR.start + 1, nameR.end, 0, afterColon(lines[nameR.start]));
-    if (r.unread) unparsed.push('name: not read');
-    out.name = r.text === '' ? null : r.text;
+    if (r.unread || r.tagged) unparsed.push('name: not read');
+    out.name = r.text === '' || r.tagged ? null : r.text;
   }
 
   if (!onR) {

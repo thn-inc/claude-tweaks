@@ -187,12 +187,17 @@ function isGeneratedTrackingWorkflow(entry) {
 }
 
 // The unparsed reasons that leave only check 4 unknown: checks 1, 2, 3 and 5
-// never read concurrency, so they still run on that workflow. The reader's two
-// workflow-level concurrency reasons, plus the expression this module does not
-// evaluate. Where check 4 does not apply they are dropped, since nothing reads
-// the value.
+// never read concurrency, so they still run on that workflow. The reader's
+// workflow-level concurrency reasons, the concurrency: region's own tab and
+// anchor-or-alias reasons among them, plus the expression this module does not
+// evaluate. Every other region's tab and anchor reasons still suppress every
+// check. Where check 4 does not apply they are dropped, since nothing reads the
+// value.
 const CANCEL_EXPRESSION = 'cancel-in-progress expression not evaluated';
-const CONCURRENCY_ONLY = new Set(['concurrency not read', 'cancel-in-progress value not read']);
+const CONCURRENCY_ONLY = new Set([
+  'concurrency not read', 'cancel-in-progress value not read',
+  'tab indentation in concurrency:', 'anchor or alias in concurrency:',
+]);
 
 // `workflows`: `{workflow, text}` or `{workflow, unreadable: reason}` entries,
 // `workflow` the repo-display ID. `ciSources`: the declared `ci` sources, or

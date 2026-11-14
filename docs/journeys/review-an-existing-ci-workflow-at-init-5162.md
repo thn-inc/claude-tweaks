@@ -36,7 +36,7 @@ files:
 - **URL:** the summary's `not clean: {K} workflow(s) unparsed` ending, or `ci-workflow-review: could not review — {stderr}`
 - **Action:** For an unparsed row, read its reason and simplify the named construct (tabs, anchors or aliases, an unsupported form of a key a check reads). For exit 1, fix the named path: an invalid `verify-scope.json`, a `.github/workflows` that is not a directory, or a path that is unreadable, dangling or outside the checkout.
 - **Should feel:** Honest — the review says what it could not read instead of guessing.
-- **Should understand:** An unparsed workflow got none of the checks, except one unparsed only for a concurrency reason (`cancel-in-progress expression not evaluated`, `concurrency not read` or `cancel-in-progress value not read`), which still got every check but concurrency — so a project using `_shared/ci-skips-drafts.md`'s recommended expression guard keeps its draft-skip findings. Only an absent workflows directory or declaration is silent.
+- **Should understand:** An unparsed workflow got none of the checks, except one unparsed only for a concurrency reason (`cancel-in-progress expression not evaluated`, or a workflow-level `concurrency:` block it could not read), which still got every check but concurrency — so a project using `_shared/ci-skips-drafts.md`'s recommended expression guard keeps its draft-skip findings. Only an absent workflows directory or declaration is silent.
 - **Red flags:** A summary reading clean while any workflow is unparsed; an expression guard hiding a draft-skip finding.
 
 ### 4. Apply a remedy by hand
