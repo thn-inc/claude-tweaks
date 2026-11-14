@@ -52,6 +52,7 @@ Each line names the probe that settled it.
   | `plugin/skills/test/flake-handling.md` | 11,506 | about +230 | far | far |
   | `plugin/skills/wrap-up/residue-sweep.md` | 16,948 | about +260 | far | far |
   | `plugin/skills/help/reference-card.md` | 21,098 | about +110 | far | far |
+  | `plugin/skills/review/code-mode-steps.md` | 52,354 | +4 (`full` → `standard` in one parenthetical, Task 4) | 52,358 | 142: add nothing else to this file |
 
   The remedy for `build/SKILL.md` is the spec's own: the push-first detail lives in `test/verification.md`, and Common Step 5 carries one 258 B pointer sentence. If an edit to `verification.md` ever pushes it past 51,500 B, move the Push first paragraph into `ci-source.md` (7,928 B) and leave a one-line pointer. No file here needs that today.
 - Never add a fenced ` ```bash ` block containing `bin/verify.js` to `verification.md`. `tests/bin-lib/verify/snippet-conformance.test.js` asserts exactly one unscoped and exactly one `--scope` fenced invocation. Write the push command as inline code.
