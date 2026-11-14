@@ -35,10 +35,10 @@ files:
 
 ### 3. Land it — the live run
 - **URL:** `node plugin/bin/release-local.js`
-- **Action:** The manifest token(s) and the CHANGELOG are spliced, one `chore(release): v1.3.0` commit lands, `v1.3.0` is created as an annotated tag, the branch and the tag are pushed after a fetch-and-ancestry re-check, and the `release-hook` policy command runs. The last line reads `released v1.3.0`.
+- **Action:** The manifest token(s) and the CHANGELOG are spliced, one `chore(release): v1.3.0` commit lands, `v1.3.0` is created as an annotated tag, the branch and the tag are pushed after a fetch-and-ancestry re-check, and the `release-hook` policy command runs. The hook reads the terminal's stdin, so an interactive publish prompt (an npm OTP) still works; its output prints when the hook exits — all of its stdout, then all of its stderr — rather than live (#5383). The last line reads `released v1.3.0`.
 - **Should feel:** Like release-please did it — the same tag scheme, the same CHANGELOG grammar, the same manifest handling — so the history has no format seam if the project later moves to `pr-first`.
 - **Should understand:** The tag is the version of record; the manifest follows it. A `manifest-drift` line in the plan means the manifest had wandered away from the last tag and the tag won. `--release-as X.Y.Z` replaces the derived bump with an explicit version (#2326) — the plan line then reads `(<part> — --release-as override)`, and a value that is not ahead of the current base is a usage error, exit `2`, naming both versions and writing nothing. Every file the run writes comes from committed repo content, so a manifest or CHANGELOG that is a symlink is refused (`refusing to write CHANGELOG.md: it is a symlink`) on Windows exactly as on Linux and macOS; on Windows, which has no `O_NOFOLLOW`, a leaf that appears or vanishes between the pre-open check and the open is refused as `… it changed between the check and the open`, and a leaf whose type cannot be read fails closed as `refusing to write CHANGELOG.md: cannot inspect it (EACCES)`, never written as if it were absent (#4282).
-- **Red flags:** A reformatted `Cargo.toml` (keys reordered, indentation changed) — only the version token may differ; a CHANGELOG bullet carrying a PR link under local-merge; a lightweight tag; on Windows, a release that "succeeds" through a symlinked manifest and edits a file outside the repository.
+- **Red flags:** A reformatted `Cargo.toml` (keys reordered, indentation changed) — only the version token may differ; a CHANGELOG bullet carrying a PR link under local-merge; a lightweight tag; on Windows, a release that "succeeds" through a symlinked manifest and edits a file outside the repository; a hook that waits on input it never received (stdin closed); the hook's output missing from above the `released v1.3.0` line.
 
 ### 4. Something failed part-way — a named partial state
 - **URL:** any non-zero exit after Step 3 began writing
@@ -56,3 +56,4 @@ files:
 - Step 1 updated during build of #4634 (a bundled merge carries one `Release-Note:` line per record; the Highlights block drops `No user-visible change` notes and exact duplicates)
 - Step 3 updated during build of #4282 (the symlink refusal holds on Windows, where `O_NOFOLLOW` does not exist)
 - Step 4 updated during build of #4288 (a plan claimant's path prints with `/` on Windows too)
+- Step 3 updated during build of #5383 (the hook's output is captured and printed through the CLI's own output after the hook exits, so `run` can be tested in-process; stdin stays inherited)
