@@ -61,7 +61,7 @@
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794599440899
+    "lastAuditedMs": 1794651465032
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -153,7 +153,7 @@
   },
   "skill:prose-code-twin-pin": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794592370666
+    "lastAuditedMs": 1794651463629
   },
   "skill:code-health-focus-vertical": {
     "lastAuditedSha": null,
@@ -197,11 +197,11 @@
   },
   "skill:single-source-constant-guard": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793728661481
+    "lastAuditedMs": 1794651462114
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794590535276
+    "lastAuditedMs": 1794651466438
   },
   "skill:post-merge-workflow-live-probe": {
     "lastAuditedSha": null,
@@ -209,7 +209,7 @@
   },
   "skill:bin-source-scan-conformance": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794600075525
+    "lastAuditedMs": 1794651459120
   },
   "skill:hooks-js-verb-registration": {
     "lastAuditedSha": null,
@@ -249,7 +249,7 @@
   },
   "skill:policy-key-addition": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794639000551
+    "lastAuditedMs": 1794651460583
   },
   "skill:regex-scan-linearity": {
     "lastAuditedSha": null,
