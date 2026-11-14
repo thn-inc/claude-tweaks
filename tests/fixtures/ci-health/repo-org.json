@@ -1,0 +1,8 @@
+{
+  "full_name": "example-org/widgets",
+  "default_branch": "main",
+  "owner": {
+    "login": "example-org",
+    "type": "Organization"
+  }
+}
