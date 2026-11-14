@@ -307,3 +307,71 @@ test('allowAbsentCeremony: gh {name} label objects take the same ceremony rule a
     assert.deepStrictEqual(out.reasons, [REASONS.ceremony], bad);
   }
 });
+
+// Driver lane bounds (#5224): sizeCeiling / maxKeyFiles options; absent options keep every express verdict.
+const { BOUND_REASONS, SIZE_CEILINGS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
+const nonSize = (labels) => labels.filter((l) => !l.startsWith('size:'));
+const keyFilesN = (n) => Array.from({ length: n }, (_, i) => `docs/k${i}.md`);
+
+test('AC3.3: size:high is refused under every ceiling, naming the ceiling', () => {
+  for (const ceiling of ['low', 'medium']) {
+    const out = evaluateRecordEligibility(record(['size:high', ...nonSize(ELIGIBLE_LABELS)], ['a.js']), { ...OPTS, sizeCeiling: ceiling });
+    assert.ok(out.reasons.includes(BOUND_REASONS.size(ceiling)), ceiling);
+  }
+  assert.strictEqual(BOUND_REASONS.size('medium'), 'size is not low or medium');
+  assert.strictEqual(BOUND_REASONS.size('low'), REASONS.size);
+  assert.deepStrictEqual(SIZE_CEILINGS.medium, ['low', 'medium']);
+});
+
+test('medium ceiling accepts size:medium and size:low', () => {
+  for (const s of ['size:low', 'size:medium']) {
+    const out = evaluateRecordEligibility(record([s, ...nonSize(ELIGIBLE_LABELS)]), { ...OPTS, sizeCeiling: 'medium' });
+    assert.strictEqual(out.eligible, true, s);
+  }
+});
+
+test('AC3.4: more Key Files than the widened limit names that limit', () => {
+  const over = evaluateRecordEligibility(record(ELIGIBLE_LABELS, keyFilesN(6)), { ...OPTS, maxKeyFiles: 5 });
+  assert.ok(over.reasons.includes('more than 5 Key Files'));
+  assert.strictEqual(BOUND_REASONS.tooManyKeyFiles(3), REASONS.tooManyKeyFiles);
+  const at = evaluateRecordEligibility(record(ELIGIBLE_LABELS, keyFilesN(5)), { ...OPTS, maxKeyFiles: 5 });
+  assert.ok(!at.reasons.includes('more than 5 Key Files'));
+  assert.strictEqual(at.eligible, true);
+});
+
+test('AC6.4: absent size label still refused with size is not low under the default', () => {
+  const issue = record(nonSize(ELIGIBLE_LABELS));
+  assert.ok(evaluateRecordEligibility(issue, { ...OPTS, sizeCeiling: 'low' }).reasons.includes('size is not low'));
+  assert.ok(evaluateRecordEligibility(issue, OPTS).reasons.includes('size is not low'));
+});
+
+test('AC6.3: an empty Key File list is still refused with no Key Files', () => {
+  const out = evaluateRecordEligibility(record(ELIGIBLE_LABELS, []), { ...OPTS, maxKeyFiles: 5 });
+  assert.ok(out.reasons.includes(REASONS.noKeyFiles));
+});
+
+test('AC6.2: a malformed bound refuses, never accepts', () => {
+  for (const v of ['high', null, 'Medium']) {
+    const out = evaluateRecordEligibility(record(), { ...OPTS, sizeCeiling: v });
+    assert.strictEqual(out.eligible, false, String(v));
+    assert.ok(out.reasons.includes(BOUND_REASONS.sizeCeilingUnreadable(v)), String(v));
+  }
+  for (const v of [0, 2.5, '4', null, -1, Infinity, NaN]) {
+    const out = evaluateRecordEligibility(record(), { ...OPTS, maxKeyFiles: v });
+    assert.strictEqual(out.eligible, false, String(v));
+    assert.ok(out.reasons.includes(BOUND_REASONS.keyFileLimitUnreadable(v)), String(v));
+  }
+});
+
+test('defaults spelled explicitly give byte-identical verdicts to absent options', () => {
+  for (const sizeLabels of [['size:low'], ['size:medium'], ['size:high'], []]) {
+    for (let n = 0; n <= 5; n++) {
+      const r = record([...sizeLabels, ...nonSize(ELIGIBLE_LABELS)], keyFilesN(n));
+      assert.deepStrictEqual(
+        evaluateRecordEligibility(r, { ...OPTS, sizeCeiling: 'low', maxKeyFiles: 3 }),
+        evaluateRecordEligibility(r, OPTS),
+        `${sizeLabels} x ${n}`,
+      );
+    }
+  }
+});
