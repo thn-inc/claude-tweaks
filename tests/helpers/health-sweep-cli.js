@@ -1,26 +1,42 @@
 'use strict';
 // In-process runner for the health-sweep CLIs' tests (#5380).
 //
-// `sweepCli` runs a CLI through runCliSync with the ambient environment plus
-// GIT_ALLOW_PROTOCOL=file. The CLIs' durable-state code runs real `git fetch`
-// and `git push origin` against whatever root the call resolves; if a cwd or
-// --root thread-through regresses, that root silently becomes the test process's
-// own checkout, whose origin is the real GitHub remote. The guard makes any
-// https/ssh fetch or push fail fast, so such a regression can never reach the
-// real remote (and a fixture pointing at an unreachable https URL fails at once
-// instead of retrying DNS). Local bare-repo `file` remotes, which the fixtures
-// use, keep working. `env` is merged over that base, so a test can still override
-// any key; `code` is mapped to `status` to match the spawnSync shape.
+// `sweepCli` runs a CLI through runCliSync, with two guards against a cwd or
+// --root thread-through regression reaching anything real:
+// - Network transports: the ambient environment plus GIT_ALLOW_PROTOCOL=file
+//   (spread last, so a caller's own env cannot restore a looser value). The
+//   CLIs' durable-state code runs real `git fetch` and `git push origin`; with
+//   this, any https/ssh fetch or push fails fast. Local bare-repo `file`
+//   remotes, which the fixtures use, keep working.
+// - The real process cwd: moved to an empty throwaway directory outside any
+//   repo for the duration of each call (and put back afterwards). A CLI that
+//   ignores its injected cwd then falls back to a non-repo directory, so it can
+//   neither commit to a shared git ref (refs are shared by every worktree, and a
+//   later push-cursor would publish them) nor write .claude-tweaks/ files into
+//   whichever checkout the test happens to run from.
+// `code` is mapped to `status` to match the spawnSync shape.
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { runCliSync } = require('./run-cli');
 
+let emptyCwd;
+
 function sweepCli(cliPath, argv, opts = {}) {
-  const res = runCliSync(cliPath, argv, {
-    env: { ...process.env, GIT_ALLOW_PROTOCOL: 'file', ...opts.env },
-    cwd: opts.cwd,
-    fresh: opts.fresh,
-  });
-  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
+  if (!emptyCwd) emptyCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'health-sweep-cwd-'));
+  const prev = process.cwd();
+  process.chdir(emptyCwd);
+  try {
+    const res = runCliSync(cliPath, argv, {
+      env: { ...process.env, ...opts.env, GIT_ALLOW_PROTOCOL: 'file' },
+      cwd: opts.cwd,
+      fresh: opts.fresh,
+    });
+    return { status: res.code, stdout: res.stdout, stderr: res.stderr };
+  } finally {
+    process.chdir(prev);
+  }
 }
 
 module.exports = { sweepCli };

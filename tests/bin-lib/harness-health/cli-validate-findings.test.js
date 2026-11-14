@@ -628,7 +628,9 @@ test('validate-findings --min-confidence bogus: the in-process run and the scrip
   const root = tmp();
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
-  const env = { ...process.env };
+  // The same env for both halves, with the file-protocol-only git guard (see tests/helpers/health-sweep-cli.js);
+  // this refusal returns before any git call, so the async runCli needs no cwd move.
+  const env = { ...process.env, GIT_ALLOW_PROTOCOL: 'file' };
   const argv = ['validate-findings', findingsFile, '--root', root, '--min-confidence', 'bogus', '--dry-run'];
 
   const inProcess = await runCli(CLI, argv, { env, cwd: root });
