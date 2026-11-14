@@ -35,4 +35,18 @@ function probeSuite({ scope, run } = {}) {
   };
 }
 
-module.exports = { probeSuite };
+// Under a declaration's `localRuns: "on-request"` the suite is the PR's CI job's
+// to run, and a bare `npm test` here may run a subset or nothing (#5319), so its
+// exit 0 would be no green suite. Pure: the caller reads the declaration, and an
+// unreadable one reads as no key (#5370).
+function localRunsSkip(decl) {
+  if (!(decl && decl.localRuns === 'on-request' && decl.ci)) return null;
+  const jobs = Object.entries(decl.ci).map(([suite, c]) => `${suite} (${c.workflow} / ${c.job})`).join(', ');
+  return {
+    ran: false,
+    reason: `not run on this machine — the declaration's localRuns "on-request" takes ${jobs} from the PR's CI job; /claude-tweaks:test full runs it here`,
+    findings: [],
+  };
+}
+
+module.exports = { probeSuite, localRunsSkip };

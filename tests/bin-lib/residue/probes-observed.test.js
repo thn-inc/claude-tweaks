@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { probeSuite } = require('../../../plugin/bin/lib/residue/probes/suite');
+const { probeSuite, localRunsSkip } = require('../../../plugin/bin/lib/residue/probes/suite');
 const { probeRelease } = require('../../../plugin/bin/lib/residue/probes/release');
 
 const SCOPE = { ran: true, reason: null, base: 'a1b2c3d', headBranch: 'worktree-feat', branches: [], worktrees: [] };
@@ -247,4 +247,19 @@ test('AC3: when remote read fails, probe runs on local tags with reason naming t
   assert.strictEqual(ran, true, 'probe should still run when remote read fails');
   assert.ok(reason && reason.length > 0, 'reason should name the fallback');
   assert.ok(findings.some((f) => f.evidence.includes('no matching v1.1.0 tag')), 'probe should still report missing tags using local list');
+});
+
+const CI1 = { tests: { workflow: 'test.yml', job: 'test', waitSeconds: 900, pollSeconds: 20 } };
+test('AC7.1: under localRuns the suite probe is not run, naming the declared CI job (#5370)', () => {
+  assert.deepStrictEqual(localRunsSkip({ localRuns: 'on-request', ci: CI1 }), {
+    ran: false, findings: [],
+    reason: 'not run on this machine — the declaration\'s localRuns "on-request" takes tests (test.yml / test) from the PR\'s CI job; /claude-tweaks:test full runs it here',
+  });
+});
+test('#5370: two ci suites are both named in the skip reason', () => {
+  const r = localRunsSkip({ localRuns: 'on-request', ci: { ...CI1, e2e: { workflow: 'e2e.yml', job: 'browser' } } });
+  assert.match(r.reason, /takes tests \(test\.yml \/ test\), e2e \(e2e\.yml \/ browser\) from the PR's CI job/);
+});
+test('AC7.2: without the key, or with no declaration, the probe is not skipped (#5370)', () => {
+  for (const decl of [null, { localRuns: null, ci: CI1 }, { localRuns: null, ci: null }]) assert.strictEqual(localRunsSkip(decl), null, JSON.stringify(decl));
 });
