@@ -1309,6 +1309,18 @@ test('AC3.1 (#5415): a newly set flag after an evidence run stops the pass befor
   assert.strictEqual(evidenceSpawns(rig.calls).length, 1);
 });
 
+test('AC3.1 (#5415): an evidence run that is interrupted and leaves a newly set flag reports the interrupt, not the flag stop', async () => {
+  const rig = passRig({
+    findings: [reviewFinding(0), reviewFinding(1)],
+    onRun: (n, { ctx }) => { ctx.shared.interrupted = 'SIGTERM'; },
+    flags: (k) => (k === 0 ? { status: 'fail', detail: 'FLAGGED' } : null),
+  });
+  const out = await rig.run();
+  assert.strictEqual(out.result.status, 'fail');
+  assert.strictEqual(out.result.detail, 'interrupted by SIGTERM');
+  assert.strictEqual(evidenceSpawns(rig.calls).length, 1);
+});
+
 test('(#5415) reviewPass needs indexFlagCheck', async () => {
   const rig = passRig({ findings: [reviewFinding(0)] });
   await assert.rejects(rig.run({ indexFlagCheck: undefined }), { name: 'TypeError', message: 'reviewPass needs indexFlagCheck' });
