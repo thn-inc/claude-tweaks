@@ -96,7 +96,7 @@ Fixture edits, in the same step:
 - [ ] **Step 2: Run the new tests and confirm they fail**
 
 Run: `node --test --test-name-pattern="#5415" tests/bin-lib/driver/run.test.js`
-Expected: FAIL. `readIndexFlags` is not exported and nothing reads the flags yet, so AC1/AC2/AC4/AC6/AC7 reach later steps.
+Expected: FAIL after Step 1. `readIndexFlags` is not exported and nothing reads the flags yet, so AC1/AC2/AC4/AC6/AC7 reach later steps.
 
 - [ ] **Step 3: Implement** in `steps.js` and `run.js`
 
@@ -155,7 +155,7 @@ In `run.test.js`, `fixRig`'s flag reads are numbered in order: 1 baseline, 2 aft
 - [ ] **Step 2: Run them and confirm the failure**
 
 Run: `node --test --test-name-pattern="#5415" tests/bin-lib/driver/review.test.js tests/bin-lib/driver/run.test.js`
-Expected: FAIL. `reviewPass` never calls the helper (no `flagChecks`, no TypeError), the evidence-run reads are missing (AC3, and AC8's count of 5 instead of 7), and the docs bullet is absent. The fix-launch and fix-test tests fail too. On Task 1 alone, read 4 follows the fix launch and read 5 follows the fix round's `verify.js`, so read 5 lands on the test step, and read 6 does not exist.
+Expected: FAIL after Step 1. `reviewPass` never calls the helper (no `flagChecks`, no TypeError), the evidence-run reads are missing (AC3, and AC8's count of 5 instead of 7), and the docs bullet is absent. The fix-launch and fix-test tests fail too. On Task 1 alone, read 4 follows the fix launch and read 5 follows the fix round's `verify.js`, so read 5 lands on the test step, and read 6 does not exist.
 
 - [ ] **Step 3: Implement** in `steps.js` and `review.js`
 
