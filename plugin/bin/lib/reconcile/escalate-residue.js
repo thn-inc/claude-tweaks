@@ -289,7 +289,7 @@ function findOrCreateIssue({
   try {
     hit = findResidueDuplicate({ repo, marker, runner });
   } catch (err) {
-    return { status: 'escalation-failed', reason: errorText(err) };
+    return { status: 'escalation-failed', reason: residueErrorText(err) };
   }
   if (!hit) {
     try {
@@ -297,7 +297,7 @@ function findOrCreateIssue({
       const m = /\/issues\/(\d+)/.exec(String(out));
       return { status: 'filed', number: m ? Number(m[1]) : null };
     } catch (err) {
-      return { status: 'escalation-failed', reason: errorText(err) };
+      return { status: 'escalation-failed', reason: residueErrorText(err) };
     }
   }
   return onHit(hit);
@@ -317,7 +317,7 @@ function findHitForResolve({
   try {
     hit = findResidueDuplicate({ repo, marker, runner });
   } catch (err) {
-    return { status: 'resolution-failed', reason: errorText(err) };
+    return { status: 'resolution-failed', reason: residueErrorText(err) };
   }
   if (!hit) return { status: 'not-found' };
   return onHit(hit);
@@ -384,7 +384,7 @@ function escalateStructurallyStuck({
         }
         return { status: 'appended', number: hit.number };
       } catch (err) {
-        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+        return { status: 'escalation-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -416,7 +416,7 @@ function escalateResidue({
         runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
         return { status: 'reopened', number: hit.number };
       } catch (err) {
-        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+        return { status: 'escalation-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -462,7 +462,7 @@ function resolveStructurallyStuck({
           runner(['issue', 'close', String(hit.number), '--repo', repo]);
           return { status: 'closed', number: hit.number };
         } catch (err) {
-          return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+          return { status: 'resolution-failed', reason: residueErrorText(err), number: hit.number };
         }
       }
       if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
@@ -484,7 +484,7 @@ function resolveStructurallyStuck({
           + `(${remaining.length} path(s) still stuck)${note}.`]);
         return { status: 'path-removed', number: hit.number };
       } catch (err) {
-        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+        return { status: 'resolution-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -511,7 +511,7 @@ function resolveResidue({
         runner(['issue', 'close', String(hit.number), '--repo', repo]);
         return { status: 'closed', number: hit.number };
       } catch (err) {
-        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+        return { status: 'resolution-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });

@@ -622,6 +622,43 @@ test('#4180 a later success drops the entry and its lastResidueError together', 
   assert.deepEqual(listResidueFailures(root), []);
 });
 
+// #5393: a gh failure's recorded reason leads with gh's stderr and never carries a flag value.
+function ghExecErr(stderr, cmd = 'gh issue create') {
+  return Object.assign(new Error(`Command failed: ${cmd} --repo o/r --body ${'x'.repeat(300)}\n${stderr}`), { status: 1, stderr, stdout: '' });
+}
+
+test('#5393 AC1.1 AC1.2 AC3.1: an escalation runner failure records gh stderr, capped, without the --body', () => {
+  const root = almostEscalatedRoot();
+  const runner = (argv) => { if (argv[1] === 'list') return '[]'; throw ghExecErr('HTTP 403: secondary rate limit\n'); };
+  trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, { runner });
+  const [e] = listResidueFailures(root);
+  assert.equal(e.lastResidueError.op, 'escalate');
+  const { reason } = e.lastResidueError;
+  assert.ok(reason.includes('HTTP 403: secondary rate limit'), reason);
+  assert.ok(reason.length <= 200, reason);
+  assert.ok(!reason.includes('xxxx'), reason);
+});
+
+test('#5393 AC2.1 AC3.1: an escalation failure with empty stderr records Command failed: and the short command', () => {
+  const root = almostEscalatedRoot();
+  const runner = (argv) => { if (argv[1] === 'list') return '[]'; throw ghExecErr(''); };
+  trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, { runner });
+  const { reason } = listResidueFailures(root)[0].lastResidueError;
+  assert.ok(reason.startsWith('Command failed:'), reason);
+  assert.ok(!reason.includes('xxxx'), reason);
+});
+
+test('#5393 AC1.2 AC3.1: a resolve runner failure records gh stderr', () => {
+  const root = escalatedStuckRoot();
+  clearResidue(root, 'o/r', 'structurally-stuck', '/x/p', { runner: () => { throw ghExecErr('HTTP 403: secondary rate limit\n', 'gh issue list'); } });
+  const [e] = listResidueFailures(root);
+  assert.equal(e.lastResidueError.op, 'resolve');
+  const { reason } = e.lastResidueError;
+  assert.ok(reason.includes('HTTP 403: secondary rate limit'), reason);
+  assert.ok(reason.length <= 200, reason);
+  assert.ok(!reason.includes('xxxx'), reason);
+});
+
 test('#4180 pruneResidueFailures: returns resolve failures for gone escalated paths and still drops the entries', () => {
   const root = tmpRoot();
   const gonePath = path.join(root, 'gone');
