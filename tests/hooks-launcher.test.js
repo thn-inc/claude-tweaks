@@ -427,24 +427,39 @@ test('hooks.sh: policy edge cases agree with resolveWorktreeAlways', () => {
 });
 
 const UNICODE_FIXTURES = [
-  ['U1', 'worktree-always: true\n', 'on'],
-  ['U2', 'worktree-always: true \n', 'on'],
-  ['U3', ' worktree-always: true\n', 'off'],
-  ['U4', '﻿worktree-always: true\n', 'off'],
-  ['U5', 'worktree-always: true　\n', 'on'],
-  ['U6', 'worktree-always: true\n', 'on'],
-  ['U7', 'worktree-always: true \n', 'on'],
-  ['U8', 'worktree-always: true # c\n', 'on'],
-  ['U9', 'worktree-always: true \n', 'on'],
-  ['U10', 'worktree-always: true \n', 'on'],
-  ['U11', 'worktree-always: true \n', 'on'],
-  ['U12', 'worktree-always: true​\n', 'off'],
-  ['U13', 'worktree-always: trué\n', 'off'],
+  ['U1', 'worktree-always:\u00a0true\n', 'on'],
+  ['U2', 'worktree-always: true\u00a0\n', 'on'],
+  ['U3', '\u00a0worktree-always: true\n', 'off'],
+  ['U4', '\ufeffworktree-always: true\n', 'off'],
+  ['U5', 'worktree-always: true\u3000\n', 'on'],
+  ['U6', 'worktree-always:\u2003true\n', 'on'],
+  ['U7', 'worktree-always: true\u2028\n', 'on'],
+  ['U8', 'worktree-always: true\u202f# c\n', 'on'],
+  ['U9', 'worktree-always: true\u205f\n', 'on'],
+  ['U10', 'worktree-always: true\u1680\n', 'on'],
+  ['U11', 'worktree-always: true\u200a\n', 'on'],
+  ['U12', 'worktree-always: true\u200b\n', 'off'],
+  ['U13', 'worktree-always: tru\u00e9\n', 'off'],
   ['U14', 'worktree-always: true\u0085\n', 'off'],
 ];
 
 test('hooks.sh: Unicode whitespace in policy.yml agrees with resolveWorktreeAlways', () => {
   assertPolicyParity(UNICODE_FIXTURES);
+});
+
+// The fixtures must stay escapes: a raw invisible character normalized to an
+// ASCII space by an editor turns a Unicode row into a passing ASCII duplicate.
+function nonAsciiFixtureLines(text) {
+  const start = text.indexOf('const UNICODE_FIXTURES = [');
+  const end = text.indexOf('];', start);
+  if (start === -1 || end === -1) throw new Error('UNICODE_FIXTURES block not found');
+  const lines = text.slice(start, end).split('\n');
+  if (lines.length !== UNICODE_FIXTURES.length + 2) throw new Error(`UNICODE_FIXTURES block has ${lines.length} lines`);
+  return lines.filter((line) => [...line].some((c) => c.codePointAt(0) > 0x7e));
+}
+
+test('hooks.sh: the UNICODE_FIXTURES source lines are pure ASCII', () => {
+  assert.deepEqual(nonAsciiFixtureLines(readText(__filename)), []);
 });
 
 test('hooks.sh go-red: dropping NBSP from the whitespace class flips U1', () => {
