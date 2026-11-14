@@ -161,7 +161,8 @@ test('AC1.1: the pre-push sites and the whole-suite re-run pass --local (#5370)'
     [/That binds the agent's re-run only; the runner's own allowlisted flaky retry still re-runs locally and is unchanged/, 'the runner retry is unchanged'],
   ]);
   pinned(sectionOf(flake, '## Whole-suite re-run'), [
-    [/the one local exception to the CI-red rule above is the `--local` fallback/, 'the --local exception'],
+    [/the one local run the declaration allows is the `--local` fallback/, 'the --local fallback is the one local run'],
+    [/a red from such a run is not a CI red, so the CI-red rule above does not apply to it/, 'a --local red is outside the CI-red rule'],
     [/A red from a `--local` run re-runs with `--local` added, inside that same fallback/, 'a local red re-runs with --local'],
     [/a scoped re-run would ask CI again and an unscoped one exits 2/, 'why --local'],
   ]);
