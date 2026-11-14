@@ -138,7 +138,7 @@ function readIntegrationModel(s) {
     return `integration-model read failed: ${errorText(err)}`;
   }
   if (out.code !== EXIT_OK) return `integration-model did not resolve pr-first (exit ${out.code})`;
-  const v = scalarValue(out.result['integration-model']).trim();
+  const v = scalarValue(out.result && out.result['integration-model']).trim();
   if (v !== 'pr-first') return `integration-model did not resolve pr-first (${neutralize(v) || 'empty'})`;
   let state;
   try {
@@ -165,7 +165,7 @@ function readLever(s) {
   }
   let raw = '';
   let source = 'unresolved';
-  if (out.code === EXIT_OK) {
+  if (out.code === EXIT_OK && out.result) {
     const entry = out.result['merge-verification'];
     if (entry && typeof entry === 'object' && !entry.error && typeof entry.value === 'string') {
       raw = entry.value;

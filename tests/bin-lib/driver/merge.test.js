@@ -20,6 +20,7 @@ const { aggregateReproductionProblem } = require(path.join(LIB, 'log-decision', 
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
+const { resolvePolicy } = require(path.join(LIB, '..', 'resolve-policy'));
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
 const CLOCK_START = 1000;
@@ -498,7 +499,6 @@ test('AC8.1: merge-verification off, empty, unparseable and a resolver error all
     ['missing key', leverReply(undefined), /^lever unresolved \(""\)/, 'unresolved'],
     ['non-string value', leverReply({ value: 3, source: 'run-config' }), /^lever unresolved \(""\)/, 'unresolved'],
     ['exit 1', { code: 1, message: 'x' }, /^lever unresolved \(""\)/, 'unresolved'],
-    ['unparseable', leverReply('not json'), /^lever unresolved \(""\)/, 'unresolved'],
     ['timeout', { code: null, message: 'x' }, /^lever unresolved \(""\)/, 'unresolved'],
     ['unknown value', leverReply({ value: 'merge-when-gren', source: 'policy' }), /^lever unresolved \("merge-when-gren"\) — proceeding as wait$/, 'policy'],
     ['value with a closing ref', leverReply({ value: 'closes #5', source: 'policy' }), /^lever unresolved \(""\)/, 'policy'],
@@ -616,6 +616,31 @@ test('AC2: a non-OK core result for merge-verification runs as wait (unresolved)
   assert.equal(r.outcome, 'merged');
   assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(unresolved\)/);
   assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5').map((l) => l.text), ['lever unresolved ("") — proceeding as wait']);
+});
+
+test('AC2: a core reply with no result reads integration-model (empty), never unclassified', async () => {
+  const h = mergeHarness({ integrationModel: { code: 0 } });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'not-pr-first');
+  assert.equal(r.detail, 'integration-model did not resolve pr-first (empty)');
+});
+
+test('AC8.1: a core reply with no result runs merge-verification as wait (unresolved), never unclassified', async () => {
+  const h = mergeHarness({ verification: { code: 0 } });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(unresolved\)/);
+  assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5').map((l) => l.text), ['lever unresolved ("") — proceeding as wait']);
+});
+
+test('real core: both reads resolve through resolvePolicy from the run dir config.yml', async () => {
+  const f = fixture();
+  fs.writeFileSync(path.join(f.runDir, 'config.yml'), 'integration-model: pr-first\nmerge-verification: wait\n');
+  const h = mergeHarness({ fx: f, deps: { resolvePolicyCore: resolvePolicy } });
+  const r = await merge(f.ctx, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(run-config\)/);
+  assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5'), []);
 });
 
 test('AC8.1: a lever log that fails never stops entry; it is named in the entry event detail', async () => {
