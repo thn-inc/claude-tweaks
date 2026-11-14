@@ -7,19 +7,23 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures.js');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli.js');
 
 const CLI = path.join(__dirname, '../../../plugin/bin/release-local.js');
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
 
-function runCli(root, args = []) {
-  try {
-    const stdout = execFileSync('node', [CLI, '--root', root, ...args], { encoding: 'utf8', env: ENV, stdio: ['ignore', 'pipe', 'pipe'] });
-    return { code: 0, stdout, stderr: '' };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
+const GIT_IDENT = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
+// The whole environment an in-process call sees: no ambient GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE.
+const ENV_PLAIN = {
+  PATH: process.env.PATH, HOME: process.env.HOME,
+  ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot, USERPROFILE: process.env.USERPROFILE } : {}),
+  ...GIT_IDENT,
+};
+
+function runCli(root, args = [], opts = {}) {
+  const r = runCliSync(CLI, ['--root', root, ...args], { env: ENV_PLAIN, ...opts });
+  return { code: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 function commit(root, subject, files = {}) {
@@ -148,7 +152,8 @@ test('AC 7: no prior v* tag → the full first-parent history, base from the see
 
 test('origin exists but main was never pushed: the first release pushes branch + tag and runs the release-hook', () => {
   const root = withOriginAndHook();
-  const r = runCli(root);
+  // real process: proves the script entry, the exit code and the real release-hook shell
+  const r = spawnCli(CLI, ['--root', root], { env: { ...process.env, ...GIT_IDENT } });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /origin: main is not on origin yet — first push/);
   assert.match(r.stdout, /hook: touch hook-ran\.txt/);
@@ -160,9 +165,9 @@ test('origin exists but main was never pushed: the first release pushes branch +
 
 test('a second release on the same repo advances both refs on the remote (the ancestry-checked path)', () => {
   const root = withOriginAndHook();
-  assert.strictEqual(runCli(root).code, 0);
+  assert.strictEqual(runCli(root, [], { allowRealRunner: true }).code, 0);
   commit(root, 'fix: two');
-  const r = runCli(root);
+  const r = runCli(root, [], { allowRealRunner: true });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.ok(!r.stdout.includes('is not on origin yet'), r.stdout);
   const head = fixtureGit(['-C', root, 'rev-parse', 'HEAD']).toString().trim();
@@ -183,4 +188,31 @@ test('a first-parent merge keeps branch commits out of the plan (design stance 3
   assert.match(r.stdout, /v1\.2\.1 \(patch\)/);
   assert.ok(!r.stdout.includes('branch-only breaking'));
   assert.ok(!r.stdout.includes('unconventional'));
+});
+
+test('--root naming a file is refused with exit 2', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rootfile-')), 'f.txt');
+  fs.writeFileSync(file, 'x');
+  // real process: proves the refusal's exit code and stderr through the script entry
+  const r = spawnCli(CLI, ['--root', file]);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /root is not a directory/);
+});
+
+test('AC6.1: the release commit takes its identity from the injected env', () => {
+  const root = tagged('1.2.0');
+  commit(root, 'fix: one');
+  const r = runCli(root, [], { env: { ...ENV_PLAIN, GIT_AUTHOR_NAME: 'injected-author' } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(fixtureGit(['-C', root, 'log', '-1', '--format=%an']).toString().trim(), 'injected-author');
+});
+
+test('runHook output reaches deps.stdout, not the inherited stdio', () => {
+  const root = tagged('1.2.0');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'release-hook: "echo hook-said"\n');
+  commit(root, 'feat: one');
+  const r = runCli(root, [], { allowRealRunner: true });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /hook-said/);
 });

@@ -59,7 +59,7 @@ const CONTRACT = '.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md';
 // holds such a seam under another name (for example `execFileSync`, `runPremiseCheck`) adds that
 // name here in the same change. A git-only seam (`git`, `gitRunner`) is deliberately not on the
 // list: it runs real git against the injected `cwd` and `env`, which is the behaviour under test.
-const FAIL_CLOSED_KEYS = ['runner', 'gh', 'ghAvailable', 'spawn'];
+const FAIL_CLOSED_KEYS = ['runner', 'gh', 'ghAvailable', 'runHook', 'spawn'];
 const LISTENER_EVENTS = ['exit', 'SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException'];
 
 const storage = new AsyncLocalStorage();
