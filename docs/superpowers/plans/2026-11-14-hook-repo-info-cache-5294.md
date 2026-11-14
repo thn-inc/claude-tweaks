@@ -33,7 +33,7 @@ Scope keywords: repo-info-cache, CT_HOOKS_REPO_INFO_STORE
 ## Review Focus
 
 1. An existing in-process test that mocks `child_process.execFileSync` to make git fail for a path the same process already answered: the memo now answers first. Expected: the test still sees its forced failure — fix by calling `resetMemo()` in that test, never by weakening the cache. Task 1 Step 6 sweeps for these.
-2. Inode reuse when a worktree is removed and re-added at the same path: the signature carries `ctimeNs` beside `ino` (bigint stat), so a reused inode number still mismatches (Task 1, AC3.2 test).
+2. Inode reuse when a worktree is removed and re-added at the same path: the `.git` file's signature carries `ctimeNs` beside `ino` (bigint stat), so a reused inode number still mismatches (Task 1, AC3.2 test); directories carry no ctime, so ordinary git activity keeps the cache warm (Task 1 test).
 3. A different `git` on `PATH` (test fake-git shims, a user's second install) answering differently for the same directory: `PATH` is in the env fingerprint, so one git's answer is never served to another (Task 2 test).
 4. A user editing global git config (`safe.directory`) after an answer was cached: the global and system config files' stats are in the signature (Task 1 test with a `GIT_CONFIG_GLOBAL` file).
 5. A store entry of the wrong shape (hand-edited, older version, `indeterminate: true`): ignored, git asked, answer unchanged (Task 2 corrupt-store test covers a wrong-shape entry too).
@@ -63,8 +63,8 @@ Scope keywords: repo-info-cache, CT_HOOKS_REPO_INFO_STORE
 
 **Signature algorithm** (not determined by the tests — implement as stated):
 1. Walk up from `dir`: `fs.statSync(path.join(d, '.git'), { bigint: true })`. ENOENT → parent; any other error → return null; reached the root with nothing → `git: null`.
-2. Record `root: { path: d, uid, ino, ctime }` for the directory holding `.git` (strings for bigint fields) and `git: { path, kind: 'file'|'dir'|'other', ino, ctime, uid }`.
-3. `.git` file: record its full `content` (read error → null). Parse with the same `/^gitdir:\s*(.+?)\s*$/m` as `mainCheckoutRoot`; `admin = path.resolve(d, m[1])`. Record `admin: { path, ino, ctime }` or `'missing'` on ENOENT (other error → null), and `commondir` = admin's `commondir` file content minus trailing CR/LF, or null on ENOENT. Common dir = `path.resolve(admin, commondir)` when set, else `admin`. `.git` directory: common dir = that directory.
+2. Record `root: { path: d, uid, ino }` for the directory holding `.git` (strings for bigint fields) and `git: { path, kind: 'file'|'dir'|'other', ino, uid }`, plus `ctime` **only when `.git` is a file**. Never record a directory's ctime: it moves on every entry created or renamed inside it (`index.lock`, a new `out.txt`), which would miss the cache after ordinary git activity.
+3. `.git` file: record its full `content` (read error → null). Parse with the same `/^gitdir:\s*(.+?)\s*$/m` as `mainCheckoutRoot`; `admin = path.resolve(d, m[1])`. Record `admin: { path, ino }` or `'missing'` on ENOENT (other error → null), and `commondir` = admin's `commondir` file content minus trailing CR/LF, or null on ENOENT. Common dir = `path.resolve(admin, commondir)` when set, else `admin`. `.git` directory: common dir = that directory. Inode reuse on a worktree removed and re-added at one path is caught by the `.git` file's own ino + ctime (git rewrites it on `worktree add`).
 4. `configs`: stat key `"{mtimeNs}:{size}:{ino}"` or `'missing'` (ENOENT; other error → null) for, in order: `{common}/config`; `{admin}/config.worktree` when there is an admin dir; global = `GIT_CONFIG_GLOBAL` alone when set, else `$XDG_CONFIG_HOME/git/config` (or `$HOME/.config/git/config`) and `$HOME/.gitconfig` (skip both when `HOME` is unset); system = nothing when `GIT_CONFIG_NOSYSTEM` is set, else `GIT_CONFIG_SYSTEM` or `/etc/gitconfig` (nothing on win32, whose install path is not knowable — document as an accepted divergence in Task 2's docs).
 
 **Memo:** a `Map` keyed on `dir + '\0' + envFingerprint(env)`; at most 500 entries (delete the oldest insertion). `envFingerprint`: every env entry whose upper-cased name starts with `GIT_` or is `PATH`, `HOME`, `XDG_CONFIG_HOME` or `USERPROFILE`, as `NAME=value`, sorted by name, joined with `\0`.
@@ -80,6 +80,7 @@ Scope keywords: repo-info-cache, CT_HOOKS_REPO_INFO_STORE
   - `#5294: an edited global git config is re-asked` — env `GIT_CONFIG_GLOBAL` set (via `process.env`, restored in `finally`) to a temp file; warm; append `[user]\n\tname = x\n` to that file; next call: count `=== 2`.
   - `AC4.1: an indeterminate answer is never cached and the next call answers definitively` — (a) `repoInfo(wt, { timeoutMs: 1 })` then `repoInfo(wt)`: the second is `indeterminate: false` with count `>= 1` for it; (b) mock `execFileSync` to throw `Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' })` for every call while a flag is set (runClassified retries a timeout once) → `indeterminate: true`; clear the flag → next call definitive and spawned.
   - `#5294: a call with opts bypasses the memo` — warm; `repoInfo(wt, { timeoutMs: 10000 })` spawns again.
+  - `#5294: ordinary git activity keeps the cache warm` — warm on `wt` and on `main`; create and rename an `index.lock` inside the admin dir and inside `main/.git`, and write a new top-level file in `wt` and in `main`; next calls on both: count unchanged.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -114,13 +115,15 @@ git -C "<worktree>" commit -m "Memoize repoInfo per process behind a filesystem 
 - Modify: `plugin/bin/lib/hooks/repo-info-cache.js`
 - Modify: `tools/run-tests.js:685` (child env)
 - Modify: `docs/hooks.md` (new `## repoInfo cache (#5294)` section after `## Ownership`)
-- Test: `tests/hooks-repo-info-store.test.js` (new), `tests/run-tests-isolation.test.js` (extend the test at ~line 760, `run-tests.js runs the suite under a ct-testrun-* TMPDIR it removes on exit`, or its sibling that reads the child env)
+- Test: `tests/hooks-repo-info-store.test.js` (new), `tests/run-tests-isolation.test.js` (extend the test at ~line 760, `run-tests.js runs the suite under a ct-testrun-* TMPDIR it removes on exit`), `tests/fixtures/run-tests/tmpdir-probe.fixture.js` (record `repoInfoStore: process.env.CT_HOOKS_REPO_INFO_STORE` beside its `tmpdir`, so the assertion has a value to read)
+- Create: `tests/helpers/repo-info-cache.js` — `isolateRepoInfoCache(t)`: points `process.env.CT_HOOKS_REPO_INFO_STORE` at a fresh temp file, calls `resetMemo()`, and restores the env in `t.after`
+- Modify: every test file Task 1 Step 6 touched — swap its `resetMemo()` call for `isolateRepoInfoCache(t)`
 
 **Interfaces:**
 - Consumes: Task 1's `lookupRepoInfo`, `rememberRepoInfo`, `repoSignature`, `signatureMatches`, `envFingerprint`, `resetMemo`.
-- Produces: `storePath(env = process.env) -> string` (`CT_HOOKS_REPO_INFO_STORE` when set and non-empty, else `path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json')`); `storeBypassed(env) -> boolean`; `MAX_STORE_ENTRIES = 200`.
+- Produces: `storePath(env = process.env) -> string` (`CT_HOOKS_REPO_INFO_STORE` when set and non-empty, else `path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json')`; read on every call, never captured at load, so a test's env change takes effect); `storeBypassed(env) -> boolean`; `MAX_STORE_ENTRIES = 200`; `isolateRepoInfoCache(t)` in `tests/helpers/repo-info-cache.js`.
 
-**Store behaviour:** format `{ version: 1, entries: { [key]: { answer: { repoRoot: string|null, isLinkedWorktree: boolean }, signature, at: <ms> } } }`, `key` = sha1 hex of `dir + '\0' + envFingerprint(env)`. `lookupRepoInfo`: memo miss and not `storeBypassed` → read the store (`readJsonFile`, inside try/catch), validate version and the entry's shape (anything else is a miss), compare its signature with the current one, and on a match seed the memo and return a copy with `indeterminate: false`. `rememberRepoInfo`: after the memo write, unless bypassed: re-read the store from disk (merge siblings' entries), set the entry, evict lowest `at` while over `MAX_STORE_ENTRIES`, `writeJsonFile` (atomic). Every store error is swallowed; the answer returned is the one git gave.
+**Store behaviour:** format `{ version: 1, entries: { [key]: { answer: { repoRoot: string|null, isLinkedWorktree: boolean }, signature, at: <ms> } } }`, `key` = sha1 hex of `dir + '\0' + envFingerprint(env)`. `lookupRepoInfo`: memo miss and not `storeBypassed` → read the store (`readJsonFile`, inside try/catch), validate version and the entry's shape (anything else is a miss), compare its signature with the current one, and on a match seed the memo and return a copy with `indeterminate: false`. `rememberRepoInfo`: after the memo write, unless bypassed: re-read the store from disk (merge siblings' entries), delete then set the entry (so object insertion order tracks recency), evict lowest `at` while over `MAX_STORE_ENTRIES` with ties broken by insertion order (earliest first — a stable sort), `writeJsonFile` (atomic). Every store error is swallowed; the answer returned is the one git gave.
 
 - [ ] **Step 1: Write the failing tests** in `tests/hooks-repo-info-store.test.js`. Each test gets its own store file under its own mkdtemp dir and runs `repoInfo` in a **fresh child process**: `execFileSync(process.execPath, ['-e', CHILD, modulePath, dir], { env })` where `CHILD` wraps `require('child_process').execFileSync` with a rev-parse counter, requires `worktree-detect`, calls `repoInfo(process.argv[2])` and prints `JSON.stringify({ info, spawns })`. `env` is built explicitly: `{ ...process.env, CT_HOOKS_REPO_INFO_STORE: file }` minus the five discovery variables (delete them), so the result is the same under bare `node --test` and under the runner.
   - `AC2.1: a warm store answers repoInfo in a fresh process with zero git spawns` — child 1 on a linked worktree: `spawns === 1`; child 2: `spawns === 0` and `info` `deepStrictEqual` child 1's `info`.
@@ -130,7 +133,7 @@ git -C "<worktree>" commit -m "Memoize repoInfo per process behind a filesystem 
   - `AC5.1: an unwritable store leaves repoInfo's answer unchanged` — the store path's parent is a regular file (ENOTDIR on write; works as root too): answer equals the cold answer, exit 0, and a second child still spawns (nothing was stored).
   - `#5294: a git discovery variable bypasses the store` — for each of the five names, env sets it (`GIT_CEILING_DIRECTORIES` to an unrelated temp dir; the others to values that keep git answering for `dir`, e.g. `GIT_DISCOVERY_ACROSS_FILESYSTEM=1`; for `GIT_DIR`/`GIT_WORK_TREE`/`GIT_COMMON_DIR` use the fixture's own real values): after the child, the store file does not exist.
   - `#5294: a different PATH does not reuse another git's answer` — warm with child 1; child 2 with `PATH` prefixed by an extra empty temp dir: `spawns === 1`.
-  - `#5294: the store keeps at most MAX_STORE_ENTRIES entries, evicting the oldest` — in-process: call `rememberRepoInfo` 201 times with distinct dirs and increasing time; read the file: 200 entries, the first one gone.
+  - `#5294: the store keeps at most MAX_STORE_ENTRIES entries, evicting the oldest` — in-process: call `rememberRepoInfo` 201 times with distinct dirs (many share one wall-clock ms; the insertion-order tie-break decides); read the file: 200 entries, the first one gone, the 201st present.
   - In `tests/run-tests-isolation.test.js`: assert the runner's child env carries `CT_HOOKS_REPO_INFO_STORE` and that it resolves inside the child's `ct-testrun-*` run root (read it the way the existing TMPDIR assertion reads the child's `TMPDIR`).
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -149,12 +152,12 @@ Expected: PASS; the runner command: PASS.
 
 - [ ] **Step 6: Prove the store's signature check red** — temporarily make the store path skip `signatureMatches` (treat any entry as a match), run `node --test tests/hooks-repo-info-store.test.js`, quote the FAIL line for the signature test, restore.
 
-- [ ] **Step 7: Re-run the verdict suites** `node --test tests/hooks-pre-tool-use.test.js tests/hooks-gate-coverage.test.js tests/bin-lib/hooks/classify-ownership.test.js` — Expected: PASS (AC6.2).
+- [ ] **Step 7: Re-run the verdict suites and the Step 6 sweep set** — first add `isolateRepoInfoCache(t)` to every test Task 1 Step 6 fixed (a store answers a forced-failure test from another test's or process's answer once the store exists), then run `node --test tests/hooks-pre-tool-use.test.js tests/hooks-gate-coverage.test.js tests/bin-lib/hooks/classify-ownership.test.js` plus every Step 6 file, bare and under the runner — Expected: PASS (AC6.2).
 
 - [ ] **Step 8: Commit**
 
 ```
-git -C "<worktree>" add plugin/bin/lib/hooks/repo-info-cache.js tools/run-tests.js docs/hooks.md tests/hooks-repo-info-store.test.js tests/run-tests-isolation.test.js
+git -C "<worktree>" add plugin/bin/lib/hooks/repo-info-cache.js tools/run-tests.js docs/hooks.md tests/hooks-repo-info-store.test.js tests/run-tests-isolation.test.js tests/fixtures/run-tests/tmpdir-probe.fixture.js tests/helpers/repo-info-cache.js
 git -C "<worktree>" commit -m "Persist validated repoInfo answers per user — #5294 cross-process store" -m "Claude-Session: https://claude.ai/code/session_01Ngy9oXUKhrjRB2sLvemdfQ"
 ```
 
