@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { runGit, isIndeterminate } = require('./git-exec');
+const { lookupRepoInfo, rememberRepoInfo } = require('./repo-info-cache');
 
 // Returns null (not the original, unresolved path) on failure. This
 // project's fail-open invariant ("a recorded worktree whose path no longer
@@ -108,11 +109,21 @@ function mainCheckoutRoot(p) {
 //                           unanswered; it carries NO information either way
 // opts is forwarded verbatim to runGit — tests use { timeoutMs } to force the
 // indeterminate branch deterministically. Production callers omit it.
+//
+// #5294: a call with no opts keys is answered from repo-info-cache.js's memo
+// while the directory's filesystem signature is unchanged; a call passing any
+// opts key bypasses the memo entirely. Only definitive answers are remembered.
 function repoInfo(p, opts = {}) {
   const dir = nearestExistingDir(p);
   // A path with no existing ancestor is a definitive negative, not a failure to
   // look: there is nothing on disk to be a repo.
   if (!dir) return { repoRoot: null, isLinkedWorktree: false, indeterminate: false };
+  let signature = null;
+  if (Object.keys(opts).length === 0) {
+    const hit = lookupRepoInfo(dir, process.env);
+    if (hit.answer) return hit.answer;
+    signature = hit.signature;
+  }
   const { stdout: out, failure } = runGit(
     ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir', '--show-superproject-working-tree'],
     dir,
@@ -121,7 +132,9 @@ function repoInfo(p, opts = {}) {
   if (failure) {
     // git-error == git ran and said "not a git repository": a real answer.
     // timeout/spawn/no-git == we never got one.
-    return { repoRoot: null, isLinkedWorktree: false, indeterminate: isIndeterminate(failure) };
+    const result = { repoRoot: null, isLinkedWorktree: false, indeterminate: isIndeterminate(failure) };
+    if (!result.indeterminate) rememberRepoInfo(dir, process.env, signature, result);
+    return result;
   }
   const [top, gitDir, gitCommon, superproject] = out.split('\n');
   // Exit 0 but missing lines: git answered something we cannot parse. Treat as
@@ -137,7 +150,9 @@ function repoInfo(p, opts = {}) {
   // realpath on its answer failed (the directory went away between the two
   // calls). Also a failure to determine, not a negative.
   if (!repoRoot) return { repoRoot: null, isLinkedWorktree: false, indeterminate: true };
-  return { repoRoot, isLinkedWorktree: isLinked, indeterminate: false };
+  const result = { repoRoot, isLinkedWorktree: isLinked, indeterminate: false };
+  rememberRepoInfo(dir, process.env, signature, result);
+  return result;
 }
 
 // fs-only walk-up looking for a .claude-tweaks/policy.yml, so callers can
