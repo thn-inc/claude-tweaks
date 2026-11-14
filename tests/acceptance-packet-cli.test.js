@@ -2126,6 +2126,20 @@ test('AC3.1: a relative --scope resolves against the injected working directory,
   assert.ok(!facts.partial.includes(SCOPE_NOTE));
 });
 
+test('a relative --body-file resolves against the injected working directory, not process.cwd()', (t) => {
+  const ws = workspace(t);
+  assert.notEqual(ws.root, process.cwd());
+  writeText(path.join(ws.root, 'rel-body.md'), BODY);
+  const result = runCliSync(BIN, ['post', '--record', '7', '--body-file', 'rel-body.md'], {
+    cwd: ws.root,
+    env: { PATH: process.env.PATH },
+    fresh: true,
+    deps: { ghAvailable: () => false },
+  });
+  // Exit 4 (gh absent) is reached only once the body read: an unresolved relative path exits 1 first.
+  assert.equal(result.code, 4, result.stderr);
+});
+
 // ---- risk facts: unconfirmed flags, planned proofs, the plan copy ----
 
 test('--flags keeps unconfirmed: true on the flag fact and no other flag gains the field', (t) => {

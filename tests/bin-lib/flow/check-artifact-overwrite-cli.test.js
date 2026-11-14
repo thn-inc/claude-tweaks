@@ -195,6 +195,19 @@ test('--run reads the manifest through deps.readFile', () => {
   assert.deepStrictEqual(JSON.parse(io.out()).ids, [10]);
 });
 
+test('a relative --run resolves against the injected cwd', () => {
+  const cwdDir = runDirWith();
+  fs.mkdirSync(path.join(cwdDir, 'run'));
+  fs.writeFileSync(path.join(cwdDir, 'run', 'manifest.yml'),
+    'multispec:\n  parent: p/\n  specs:\n    - id: 10\n      status: pending\n');
+  assert.notEqual(cwdDir, process.cwd());
+  const io = runCheck(['--base', 'a', '--run', 'run'], {
+    check: (opts) => ({ clean: true, overwrites: [], ids: opts.manifest.multispec.specs.map((s) => s.id) }),
+  }, cwdDir);
+  assert.strictEqual(io.code, 0, io.err());
+  assert.deepStrictEqual(JSON.parse(io.out()).ids, [10]);
+});
+
 test('Q5: --run naming a manifest that parses but lists no specs exits 3 naming the field', () => {
   const dir = runDirWith('multispec:\n  parent: p/\n  specs:\n');
   const io = runCheck(['--base', 'a', '--run', dir]);

@@ -63,10 +63,14 @@ const USAGE =
   '       review-coordination.js write-findings <run-dir> <findings.json>\n' +
   '       review-coordination.js check-coverage <run-dir>\n';
 
-function readJson(file, stderr) {
+// A relative path argument resolves against deps.cwd(), never the process's real working directory.
+const at = (deps, file) => (path.isAbsolute(file) ? file : path.resolve(deps.cwd(), file));
+
+function readJson(file, deps) {
+  const stderr = deps.stderr;
   let raw;
   try {
-    raw = fs.readFileSync(file, 'utf8');
+    raw = fs.readFileSync(at(deps, file), 'utf8');
   } catch (err) {
     stderr(`review-coordination.js: cannot read ${file}: ${err.message}\n`);
     return { failed: true };
@@ -120,9 +124,9 @@ function run(argv, overrides = {}) {
       deps.stderr('review-coordination.js: categorise-reproduction takes exactly 2 JSON file paths\n' + USAGE);
       return 2;
     }
-    const a = readJson(rest[0], deps.stderr);
+    const a = readJson(rest[0], deps);
     if (a.failed) return 2;
-    const b = readJson(rest[1], deps.stderr);
+    const b = readJson(rest[1], deps);
     if (b.failed) return 2;
     if (!Array.isArray(a.value) || !Array.isArray(b.value)) {
       deps.stderr('review-coordination.js: both inputs must be JSON arrays of findings\n');
@@ -136,7 +140,7 @@ function run(argv, overrides = {}) {
       deps.stderr('review-coordination.js: detect-overlap takes exactly 1 JSON file path\n' + USAGE);
       return 2;
     }
-    const input = readJson(rest[0], deps.stderr);
+    const input = readJson(rest[0], deps);
     if (input.failed) return 2;
     if (!input.value || typeof input.value !== 'object' || Array.isArray(input.value)) {
       deps.stderr('review-coordination.js: input must be a JSON object mapping lens name to findings array\n');
@@ -150,7 +154,7 @@ function run(argv, overrides = {}) {
       deps.stderr('review-coordination.js: corroborate-cross-lens takes exactly 1 JSON file path\n' + USAGE);
       return 2;
     }
-    const input = readJson(rest[0], deps.stderr);
+    const input = readJson(rest[0], deps);
     if (input.failed) return 2;
     if (!input.value || typeof input.value !== 'object' || Array.isArray(input.value)) {
       deps.stderr('review-coordination.js: input must be a JSON object mapping lens name to findings array\n');
@@ -194,7 +198,7 @@ function run(argv, overrides = {}) {
           deps.stderr(`review-coordination.js: ${rest[i]} needs a directory\n` + USAGE);
           return 2;
         }
-        if (rest[i] === '--root') root = rest[++i];
+        if (rest[i] === '--root') root = at(deps, rest[++i]);
         else runDir = rest[++i];
       } else positional.push(rest[i]);
     }
@@ -202,7 +206,7 @@ function run(argv, overrides = {}) {
       deps.stderr('review-coordination.js: resolve-tiebreak takes <finding.json> <reply-file> [--root <dir>] [--run <dir>]\n' + USAGE);
       return 2;
     }
-    const input = readJson(positional[0], deps.stderr);
+    const input = readJson(positional[0], deps);
     if (input.failed) return 2;
     try {
       buildFindingsArtifact([input.value]);
@@ -212,7 +216,7 @@ function run(argv, overrides = {}) {
     }
     let reply;
     try {
-      reply = fs.readFileSync(positional[1], 'utf8');
+      reply = fs.readFileSync(at(deps, positional[1]), 'utf8');
     } catch (err) {
       deps.stderr(`review-coordination.js: cannot read ${positional[1]}: ${err.message}\n`);
       return 2;
@@ -248,7 +252,7 @@ function run(argv, overrides = {}) {
       deps.stderr('review-coordination.js: write-findings takes <run-dir> <findings.json>\n' + USAGE);
       return 2;
     }
-    const input = readJson(rest[1], deps.stderr);
+    const input = readJson(rest[1], deps);
     if (input.failed) return 2;
     let artifact;
     try {

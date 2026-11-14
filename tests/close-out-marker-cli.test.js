@@ -669,6 +669,20 @@ test('in-process: read prints one JSON line and exits 0', () => {
   }
 });
 
+test('in-process: relative --comments-file and --out resolve against the injected cwd', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'com-')));
+  try {
+    fs.writeFileSync(path.join(dir, 'comments.json'), JSON.stringify(P(comment('IC_1', markerBody(pendingFields)))));
+    assert.notEqual(dir, process.cwd());
+    const read = runCliSync(BIN, ['read', '--comments-file', 'comments.json', '--body-out', 'prior.md'], { cwd: dir });
+    assert.equal(read.code, 0, read.stderr);
+    assert.equal(JSON.parse(read.stdout).status, 'pending');
+    assert.equal(fs.readFileSync(path.join(dir, 'prior.md'), 'utf8'), markerBody(pendingFields));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('in-process: write creates the --out file and an unwritable --out exits 3', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'com-'));
   try {

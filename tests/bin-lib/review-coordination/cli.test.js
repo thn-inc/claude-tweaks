@@ -36,6 +36,18 @@ test('categorise-reproduction matches the library result exactly', () => {
   assert.deepStrictEqual(JSON.parse(stdout), c.categoriseReproduction(FINDINGS_A, FINDINGS_B));
 });
 
+test('a relative input file resolves against the injected cwd', () => {
+  const a = writeFixture('a.json', FINDINGS_A);
+  const b = writeFixture('b.json', FINDINGS_B);
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'review-coord-cwd-')));
+  fs.copyFileSync(a, path.join(dir, 'a.json'));
+  fs.copyFileSync(b, path.join(dir, 'b.json'));
+  assert.notStrictEqual(dir, process.cwd());
+  const { code, stdout, stderr } = cli(['categorise-reproduction', 'a.json', 'b.json'], { cwd: dir });
+  assert.strictEqual(code, 0, stderr);
+  assert.deepStrictEqual(JSON.parse(stdout), c.categoriseReproduction(FINDINGS_A, FINDINGS_B));
+});
+
 // real process: proves the script entry, the exit code and stdout
 test('smoke: categorise-reproduction runs as a real process and prints the library result', () => {
   const a = writeFixture('a.json', FINDINGS_A);

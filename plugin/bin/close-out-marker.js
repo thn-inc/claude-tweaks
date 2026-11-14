@@ -64,6 +64,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { findRunComments, firstTrustedMarkerComment } = require('./find-run-comment');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const {
@@ -180,7 +181,7 @@ function validate(o) {
 // rather than altered.
 function readPathsFile(file, deps) {
   let text;
-  try { text = deps.readFile(file); } catch (e) {
+  try { text = deps.readFile(file, deps.cwd()); } catch (e) {
     return { error: `could not read --conflicted-files-file: ${file} (${errMsg(e)})` };
   }
   const files = String(text).split(/\r?\n/).filter((l) => l.trim() !== '');
@@ -195,9 +196,12 @@ function readPathsFile(file, deps) {
   return { files };
 }
 
+// readFile / writeFile take the caller's cwd as a trailing argument: a relative path resolves
+// against deps.cwd(), never the process's real working directory.
 const realDeps = {
-  readFile: (p) => fs.readFileSync(p, 'utf8'),
-  writeFile: (p, content) => writeFileAtomic(p, content),
+  cwd: () => process.cwd(),
+  readFile: (p, cwd = process.cwd()) => fs.readFileSync(path.resolve(cwd, p), 'utf8'),
+  writeFile: (p, content, cwd = process.cwd()) => writeFileAtomic(path.resolve(cwd, p), content),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -215,7 +219,7 @@ function run(argv, deps = {}) {
   if (invalid) return usageError(invalid);
 
   let payload;
-  try { payload = JSON.parse(deps.readFile(o.commentsFile)); } catch (e) {
+  try { payload = JSON.parse(deps.readFile(o.commentsFile, deps.cwd())); } catch (e) {
     return fail(1, `could not read or parse --comments-file: ${o.commentsFile} (${errMsg(e)})`);
   }
   const found = findRunComments(payload, KIND);
@@ -229,7 +233,7 @@ function run(argv, deps = {}) {
   if (o.verb === 'read') {
     let bodyWritten = null;
     if (Object.hasOwn(o, 'bodyOut') && rawBody !== null) {
-      try { deps.writeFile(o.bodyOut, rawBody); } catch (e) {
+      try { deps.writeFile(o.bodyOut, rawBody, deps.cwd()); } catch (e) {
         return fail(3, `out-unwritable: ${o.bodyOut} (${errMsg(e)})`);
       }
       bodyWritten = o.bodyOut;
@@ -282,7 +286,7 @@ function run(argv, deps = {}) {
   }
 
   const body = serializeMarker(next);
-  try { deps.writeFile(o.out, body); } catch (e) {
+  try { deps.writeFile(o.out, body, deps.cwd()); } catch (e) {
     return fail(3, `out-unwritable: ${o.out} (${errMsg(e)})`);
   }
   deps.stdout(`${JSON.stringify({ written: o.out, accumulated, marker: parseMarker(body) })}\n`);

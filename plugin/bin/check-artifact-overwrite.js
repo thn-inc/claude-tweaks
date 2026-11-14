@@ -113,7 +113,7 @@ function run(argv, overrides = {}) {
   checkOpts.env = deps.env;
   if (runDir) {
     // Read directly, no existence pre-check; any read failure is exit 3.
-    const file = path.join(runDir, 'manifest.yml');
+    const file = path.join(path.resolve(checkOpts.cwd, runDir), 'manifest.yml');
     let text;
     try {
       text = readFile(file, 'utf8');

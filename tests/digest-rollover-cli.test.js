@@ -401,6 +401,7 @@ function ghStubDir(dir, table) {
 const table = JSON.parse(require('fs').readFileSync(${JSON.stringify(path.join(dir, 'table.json'))}, 'utf8'));
 const key = process.argv.slice(2).join(' ');
 if (key === '--version') { console.log('gh version 2.0.0'); process.exit(0); }
+require('fs').appendFileSync(${JSON.stringify(path.join(dir, 'gh-cwd.txt'))}, process.cwd() + '\\n');
 if (!(key in table) || table[key] === null) { process.stderr.write('HTTP 404: Not Found (' + key + ')\\n'); process.exit(1); }
 process.stdout.write(typeof table[key] === 'string' ? table[key] : JSON.stringify(table[key]));
 `);
@@ -547,6 +548,11 @@ test('AC6.1: the real gh data call runs against the injected env PATH and cwd', 
   }));
   assert.strictEqual(r.code, 0, r.stderr);
   assert.deepStrictEqual(JSON.parse(r.stdout), resume20);
+  // The stub records the working directory each data call ran in: it must be the injected dir, not ours.
+  const seen = fs.readFileSync(path.join(dir, 'gh-cwd.txt'), 'utf8').split('\n').filter(Boolean);
+  assert.ok(seen.length >= 2, `the stub gh recorded its data calls: ${seen}`);
+  const want = path.resolve(fs.realpathSync(dir));
+  for (const c of seen) assert.strictEqual(path.resolve(fs.realpathSync(c)), want);
 });
 
 test('each reader\'s documented file-form verdict runs with gh absent', (t) => {

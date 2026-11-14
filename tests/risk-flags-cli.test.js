@@ -107,6 +107,17 @@ test('AC3.1: headless never removes a prior flag the new text no longer implies'
   assert.match(body, /^Risk-flags-unconfirmed: true$/m);
 });
 
+test('a relative --body-file and --answers-file resolve against the injected cwd', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(TMP, 'cwd-')));
+  assert.notStrictEqual(dir, process.cwd());
+  fs.writeFileSync(path.join(dir, 'body.md'), SPEC_WITH_MIGRATIONS_PATH);
+  fs.writeFileSync(path.join(dir, 'answers.json'), JSON.stringify({ migrations: 'remove' }));
+  const r = cliSync(['settle', '--body-file', 'body.md', '--answers-file', 'answers.json', '--repo-root', NO_POLICY_ROOT], { cwd: dir });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(r.stdout).removed, ['migrations']);
+  assert.match(fs.readFileSync(path.join(dir, 'body.md'), 'utf8'), /^Risk-flags: none$/m);
+});
+
 // Final review finding 3: a removal is logged only once the record write landed, by the
 // log-removals verb the skill runs after it; settle and confirm never log.
 const logRemovals = (runDir, site, removed) => exec(['log-removals', '--run', runDir, '--site', site, ...(removed === undefined ? [] : ['--removed', removed])]);

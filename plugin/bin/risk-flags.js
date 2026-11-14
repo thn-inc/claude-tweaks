@@ -204,6 +204,10 @@ const realDeps = {
   policy: (repoRoot) => readRiskPolicy(repoRoot, { readFile: fs.readFileSync }),
 };
 
+// A relative path argument resolves against deps.cwd(), never the process's real working directory;
+// an absolute one is used as given, without reading cwd (a cwd failure stays the repo-root failure).
+const at = (deps, file) => (path.isAbsolute(file) ? file : path.resolve(deps.cwd(), file));
+
 const errMsg = (err) => String((err && (err.code || err.message)) || 'unknown').replace(/\s+/g, ' ');
 const unique = (items) => [...new Set(items)];
 
@@ -230,7 +234,7 @@ function keptSet({ body, priorBody, add, floor, extraCategories }) {
 function readAnswers(deps, file) {
   let text;
   try {
-    text = deps.readFile(file);
+    text = deps.readFile(at(deps, file));
   } catch (err) {
     return { answers: null, problem: `answers file ${file} is unreadable (${errMsg(err)})` };
   }
@@ -381,7 +385,7 @@ function resolveRepoRoot(o, deps) {
 // A file already gone is the goal; any other failure is stated, because the file is still there.
 function removeOutput(deps, file) {
   try {
-    deps.removeFile(file);
+    deps.removeFile(at(deps, file));
   } catch (err) {
     if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) deps.stderr(`risk-flags.js: could not remove ${file} (${errMsg(err)})\n`);
   }
@@ -391,7 +395,7 @@ function removeOutput(deps, file) {
 // file that exists; for one that does not (an output yet to be written), its directory resolved
 // the same way plus its own name. Fail-open to path.resolve, so an unresolvable name still compares.
 function canonicalName(deps, file) {
-  const abs = path.resolve(file);
+  const abs = at(deps, file);
   const real = deps.realpath(abs);
   if (typeof real === 'string') return real;
   const dir = path.dirname(abs);
@@ -459,7 +463,7 @@ function factsVerb(o, deps, read, fail) {
   const proofsUnread = flags.length > 0 && (planText === null || planParse === 'could-not-parse');
   const outputs = proofsUnread ? [[o.flagsOut, flags]] : [[o.flagsOut, flags], [o.proofsOut, proofs]];
   for (const [file, entries] of outputs) {
-    try { deps.writeFile(file, `${JSON.stringify(entries)}\n`); } catch (err) { return fail(3, `output-unwritable: ${file} (${errMsg(err)})`); }
+    try { deps.writeFile(at(deps, file), `${JSON.stringify(entries)}\n`); } catch (err) { return fail(3, `output-unwritable: ${file} (${errMsg(err)})`); }
   }
   if (proofsUnread) removeOutput(deps, o.proofsOut);
   deps.stdout(`${JSON.stringify({
@@ -485,7 +489,7 @@ function run(argv, overrides = {}) {
   const warn = (message) => deps.stderr(`risk-flags.js: ${message}\n`);
 
   const read = (file) => {
-    const text = deps.readFile(file);
+    const text = deps.readFile(at(deps, file));
     if (typeof text !== 'string') throw new TypeError('not text');
     return text;
   };
@@ -552,7 +556,7 @@ function run(argv, overrides = {}) {
   else if (problem !== null) warn(`${problem}; every flag without a valid answer is kept and marked unconfirmed`);
 
   if (next !== body) {
-    try { deps.writeFile(o.bodyFile, next); } catch (err) { return fail(3, `body-unwritable: ${o.bodyFile} (${errMsg(err)})`); }
+    try { deps.writeFile(at(deps, o.bodyFile), next); } catch (err) { return fail(3, `body-unwritable: ${o.bodyFile} (${errMsg(err)})`); }
   }
   const final = record.parseRiskFlags(next, { extraCategories });
   return emit({ flags: final.flags, removed, unconfirmed: final.unconfirmed, status, refused });

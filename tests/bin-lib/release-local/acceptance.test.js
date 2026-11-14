@@ -218,6 +218,36 @@ test('runHook output reaches deps.stdout, not the inherited stdio', () => {
   assert.match(r.stdout, /hook-said/);
 });
 
+function hookRepo() {
+  const root = tagged('1.2.0');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'release-hook: "echo hook-said"\n');
+  commit(root, 'feat: one');
+  return root;
+}
+
+test('the release-hook gets inherited stdio when the CLI io is the real process io, a capture when io is injected', () => {
+  const { run, realDeps } = require(CLI);
+  const seen = [];
+  const runHook = (cmd, o) => { seen.push(o.inherit); return { status: 0, stdout: '', stderr: '' }; };
+
+  // Real io: the plan lines would hit the process streams, so swallow them for this synchronous call.
+  const realOut = process.stdout.write;
+  process.stdout.write = () => true;
+  let code;
+  try {
+    code = run(['--root', hookRepo()], { ...realDeps, env: ENV_PLAIN, runHook });
+  } finally {
+    process.stdout.write = realOut;
+  }
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(seen, [true]);
+
+  const r = runCli(hookRepo(), [], { deps: { runHook } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(seen, [true, false]);
+});
+
 test('a hook printing more than 1 MiB still reports its real exit status', () => {
   const root = tagged('1.2.0');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });

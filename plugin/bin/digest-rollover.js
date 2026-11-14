@@ -47,6 +47,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
@@ -110,8 +111,8 @@ function parseArgs(argv) {
   return o;
 }
 
-// `{ cwd, env, stderr }` is the caller's injected process context; absent, gh inherits the real one.
-function defaultGh(args, { cwd, env, stderr } = {}) {
+// `{ cwd, env, stderr, homeDir }` is the caller's injected process context; absent, gh inherits the real one.
+function defaultGh(args, { cwd, env, stderr, homeDir } = {}) {
   return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -121,7 +122,7 @@ function defaultGh(args, { cwd, env, stderr } = {}) {
     windowsHide: true,
     ...(cwd ? { cwd } : {}),
     ...(env ? { env } : {}),
-  }, injectedGhDeps({ env, stderr })));
+  }, injectedGhDeps({ env, stderr, homeDir })));
 }
 
 const realDeps = {
@@ -136,6 +137,7 @@ const realDeps = {
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
   cwd: () => process.cwd(),
+  homeDir: () => os.homedir(),
   get env() { return process.env; },
 };
 
@@ -246,7 +248,7 @@ function runCarry(opts, deps) {
 function run(argv, callerDeps = {}) {
   const deps = { ...realDeps, ...callerDeps };
   const gh = deps.gh;
-  deps.gh = (args) => gh(args, { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr });
+  deps.gh = (args) => gh(args, { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir });
   const opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return 0; }
   if (opts.error) { deps.stderr(`digest-rollover.js: ${opts.error}\n${USAGE}`); return 1; }

@@ -135,9 +135,7 @@ function run(argv, deps = {}) {
   try { stat = fs.statSync(root); } catch { stat = null; }
   if (!stat || !stat.isDirectory()) { d0.stderr(`root is not a directory: ${root}\n${USAGE}\n`); return 2; }
   const bound = defaultDeps(root, { env: d0.env });
-  const d = { ...bound, ...d0 };
-  for (const k of ['git', 'readFile', 'writeFile', 'listRoot', 'listPlanFiles']) if (!deps[k]) d[k] = bound[k];
-  deps = d;
+  deps = { ...bound, ...d0 };
   if (opts.error) { deps.stderr(`${opts.error}\n${USAGE}\n`); return 2; }
   if (opts.help) { deps.stdout(`${USAGE}\n`); return 0; }
 
@@ -234,15 +232,14 @@ function run(argv, deps = {}) {
       stage = 'pushed';
     }
     if (hook) {
-      // A fake may return the bare exit code; the real hook returns { status, stdout, stderr }
-      // so its output goes through deps rather than the inherited stdio.
-      const hookResult = deps.runHook(hook, { cwd: root, env: deps.env });
-      const isResult = hookResult && typeof hookResult === 'object';
-      if (isResult) {
-        if (hookResult.stdout) deps.stdout(hookResult.stdout);
-        if (hookResult.stderr) deps.stderr(hookResult.stderr);
-      }
-      const code = isResult ? hookResult.status : hookResult;
+      // A real run (the CLI's io is the process's own) hands the hook inherited stdio so
+      // TTY prompts (an npm OTP) work and output streams live; injected io gets the hook's
+      // output captured and routed through deps instead, so in-process callers see it.
+      const live = deps.stdout === realDeps.stdout && deps.stderr === realDeps.stderr;
+      const hookResult = deps.runHook(hook, { cwd: root, env: deps.env, inherit: live });
+      if (hookResult.stdout) deps.stdout(hookResult.stdout);
+      if (hookResult.stderr) deps.stderr(hookResult.stderr);
+      const code = hookResult.status;
       if (code !== 0) {
         deps.stderr(`partial: v${version} is committed, tagged${hasOrigin ? ' and pushed' : ''}; the release-hook exited ${code}. ` +
           `Do NOT re-run release-local (the tag is final). Recover: re-run the hook alone: ${hook}\n`);
@@ -363,10 +360,16 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
 }
 
 // The hook is the project's own shell command (policy release-hook) — a
-// shell string by design; its exit code becomes this CLI's exit 5. Output is piped
-// back so `run` routes it through deps.stdout/deps.stderr (inherited stdio would
-// write straight to the host process's fds when called in-process).
-function runHook(cmd, { cwd, env } = {}) {
+// shell string by design; its exit code becomes this CLI's exit 5. With `inherit`
+// (a real run) it gets the process's own stdio, so a TTY prompt works and output
+// streams live. Otherwise output is piped back so `run` routes it through
+// deps.stdout/deps.stderr (inherited stdio would write straight to the host
+// process's fds when called in-process).
+function runHook(cmd, { cwd, env, inherit = false } = {}) {
+  if (inherit) {
+    const r = spawnSync(cmd, { cwd, env, shell: true, stdio: 'inherit', windowsHide: true });
+    return { status: r.status === null ? 1 : r.status, stdout: '', stderr: '' };
+  }
   const r = spawnSync(cmd, { cwd, env, shell: true, stdio: ['inherit', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
   return { status: r.status === null ? 1 : r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
@@ -414,7 +417,6 @@ function defaultDeps(root, { env } = {}) {
       }
       return entries.filter((f) => f.endsWith('.md')).map((f) => `docs/superpowers/plans/${f}`);
     },
-    runHook: (cmd) => runHook(cmd, { cwd: root, env }),
     today: realDeps.today,
     stdout: realDeps.stdout,
     stderr: realDeps.stderr,

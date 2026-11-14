@@ -172,6 +172,7 @@ const QUIET = ['ignore', 'pipe', 'pipe'];
 const realDeps = {
   cwd: () => process.cwd(),
   get env() { return process.env; },
+  homeDir: () => os.homedir(),
   mainRoot: undefined,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   // findingItems' seam: a missing directory is an empty one. Any other failure stays a
@@ -198,12 +199,12 @@ const realDeps = {
   git: (args, { cwd, env } = {}) => execFileSync('git', args, {
     cwd, env, encoding: 'utf8', windowsHide: true, stdio: QUIET, timeout: GIT_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
   }),
-  // `{ cwd, env, stderr }` is the caller's injected process context; absent, gh inherits the real one.
-  gh: (args, { cwd, env, stderr } = {}) => execFileSync('gh', args, ghOptions(args, {
+  // `{ cwd, env, stderr, homeDir }` is the caller's injected process context; absent, gh inherits the real one.
+  gh: (args, { cwd, env, stderr, homeDir } = {}) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', windowsHide: true, stdio: QUIET, timeout: GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
     ...(cwd ? { cwd } : {}),
     ...(env ? { env } : {}),
-  }, injectedGhDeps({ env, stderr }))),
+  }, injectedGhDeps({ env, stderr, homeDir }))),
   ghAvailable,
   gitDir: ({ cwd, env } = {}) => gitDir(undefined, cwd, env),
   // An explicit --repo's host reaches every call publishPacket makes, the graphql edit included.
@@ -446,7 +447,7 @@ function runSnapshot(opts, deps) {
 
   let gitDirPath = null;
   try {
-    gitDirPath = deps.gitDir({ cwd: deps.cwd(), env: deps.env });
+    gitDirPath = deps.gitDir();
   } catch {
     // No git dir: the git-dir sources below read as absent.
   }
@@ -564,7 +565,7 @@ function readStampStories(head, snapshot, deps) {
   let stories = null;
   try {
     const sha = gitIn(deps, ['rev-parse', '--verify', '--end-of-options', head]).trim();
-    stories = storiesFromQaStamp(readQaStamp(deps.gitDir({ cwd: deps.cwd(), env: deps.env }), readerOf(deps)), sha);
+    stories = storiesFromQaStamp(readQaStamp(deps.gitDir(), readerOf(deps)), sha);
   } catch {
     // Falls through to the snapshot's copy of the stamp.
   }
@@ -812,13 +813,13 @@ function runPost(opts, deps) {
   // which clears a pending label, and the MCP path would post from the same missing file.
   const { code } = readPacketBody(opts, deps);
   if (code !== undefined) return code;
-  if (!deps.ghAvailable({ env: deps.env, cwd: deps.cwd() })) {
+  if (!deps.ghAvailable()) {
     deps.stderr(`acceptance-packet.js: ${GH_ABSENT}\n`);
     return 4;
   }
-  if (repoSpec) deps.pinGhHost(repoSpec, { env: deps.env, cwd: deps.cwd() });
+  if (repoSpec) deps.pinGhHost(repoSpec);
 
-  const tmpPath = opts.pr === undefined ? null : deps.tmpPath(`acceptance-packet-pr-${opts.pr}-${process.pid}.md`, deps.env);
+  const tmpPath = opts.pr === undefined ? null : deps.tmpPath(`acceptance-packet-pr-${opts.pr}-${process.pid}.md`);
   let result;
   try {
     result = publishPacket({
@@ -860,14 +861,28 @@ function runLocal(opts, deps) {
   return 0;
 }
 
+// The deps members whose first argument is a file path: a relative one is the caller's, so it
+// resolves against deps.cwd() rather than the real working directory.
+const PATH_SEAMS = ['readFile', 'readdir', 'listDir', 'writeFile', 'writeAtomic', 'removeFile', 'mkdir', 'readRecord', 'writeRecord'];
+
 const HANDLERS = Object.freeze({
   snapshot: runSnapshot, gather: runGather, render: runRender, post: runPost, local: runLocal,
 });
 
 function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
-  const gh = deps.gh;
-  deps.gh = (args) => gh(args, { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr });
+  // The single place the injected process context (cwd, env, stderr, homeDir) reaches the gh, git-dir,
+  // gh-probe, host-pin and tmp-path seams, and a relative file path resolves against deps.cwd(): call sites pass neither.
+  const { gh, gitDir: gitDirIn, ghAvailable: ghAvailableIn, pinGhHost: pinGhHostIn, tmpPath: tmpPathIn } = deps;
+  deps.gh = (args) => gh(args, { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir });
+  deps.gitDir = () => gitDirIn({ cwd: deps.cwd(), env: deps.env });
+  deps.ghAvailable = () => ghAvailableIn({ env: deps.env, cwd: deps.cwd() });
+  deps.pinGhHost = (repoSpec) => pinGhHostIn(repoSpec, { env: deps.env, cwd: deps.cwd() });
+  deps.tmpPath = (name) => tmpPathIn(name, deps.env);
+  for (const seam of PATH_SEAMS) {
+    const inner = deps[seam];
+    deps[seam] = (p, ...rest) => inner(typeof p === 'string' && !path.isAbsolute(p) ? path.resolve(deps.cwd(), p) : p, ...rest);
+  }
   const parsed = parseArgs(argv);
   if (parsed.error) {
     deps.stderr(`acceptance-packet.js: ${parsed.error}\n${USAGE}`);
