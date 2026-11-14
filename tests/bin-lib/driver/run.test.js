@@ -3408,10 +3408,10 @@ test('fix round: every evidence file must be at HEAD with its recorded content, 
   assert.deepEqual([lastLine(ignored).stop.step, lastLine(ignored).stop.class, reviewLines(ignored)[0].status], [STEP.review, 'pre-push', 'fail']);
   assert.equal(lastLine(ignored).stop.detail, NOT_AT_HEAD);
   assert.equal(verifyCalls(ignored).length, 1, 'no second scoped run');
-  // Gitignored and nothing else: the commit step finds nothing to commit, and the same check stops it.
+  // Gitignored and nothing else: the commit step finds nothing to commit, and that stop ends the round before the check (AC6.1).
   const ignoredOnly = hideEvidence(fixRig({ effect: (fx) => { fx.dirty = ''; fx.hidden = true; } }));
   await run(['#7'], ignoredOnly.deps);
-  assert.deepEqual([lastLine(ignoredOnly).stop.detail, reviewLines(ignoredOnly)[0].status], [NOT_AT_HEAD, 'fail']);
+  assert.deepEqual([lastLine(ignoredOnly).stop.detail, reviewLines(ignoredOnly)[0].status], [`fix round commit: no changed files: ${FINDING_0}`, 'stop']);
   // Committed by the worker with other bytes, the change in the worktree hidden by an index flag.
   const edited = hideEvidence(fixRig({ effect: (fx) => { fx.hidden = true; fx.atHead.set('tests/new/r0.test.js', "require('node:test')('ok', () => {});\n"); } }));
   await run(['#7'], edited.deps);
@@ -3552,30 +3552,48 @@ test('fix round: the byte check sets CRLF against LF aside, as the HEAD check do
   }
 });
 
-test('fix round: an evidence file the worker committed itself, unchanged, passes', async () => {
-  const selfCommit = (fx, rest) => {
+test('AC6.1 (#5414): a fix-round commit that finds nothing to commit stops the round', async () => {
+  const selfCommit = (fx) => {
     fx.hidden = true;
     fx.atHead.set('tests/new/r0.test.js', EVIDENCE_CONTENT);
     fx.diff = ['a.js', 'tests/new/r0.test.js'];
-    if (!rest) fx.dirty = '';
+    fx.dirty = '';
   };
-  // The evidence committed, the code change left for the driver's commit.
-  const partly = hideEvidence(fixRig({ effect: (fx) => selfCommit(fx, true) }));
-  await run(['#7'], partly.deps);
-  assert.deepEqual([reviewLines(partly)[0].status, pushCalls(partly).length, lastLine(partly).outcome], ['ok', 1, 'pending-review']);
-  assert.equal(commitGit(partly).filter((c) => gitSub(c)[0] === 'commit').length, 2);
-  // Everything committed: the commit step finds nothing to commit and the round goes on, with no second commit.
-  const wholly = hideEvidence(fixRig({ effect: (fx) => selfCommit(fx, false) }));
+  // Everything already committed: the commit step finds nothing to commit, and that stop ends the round with no second commit.
+  const wholly = hideEvidence(fixRig({ effect: selfCommit }));
   await run(['#7'], wholly.deps);
-  assert.deepEqual([reviewLines(wholly)[0].status, pushCalls(wholly).length, lastLine(wholly).outcome], ['ok', 1, 'pending-review']);
+  assert.equal(lastLine(wholly).stop.detail, `fix round commit: no changed files: ${FINDING_0}`);
+  assert.equal(reviewLines(wholly)[0].status, 'stop');
+  assert.equal(pushCalls(wholly).length, 0);
   assert.equal(commitGit(wholly).filter((c) => gitSub(c)[0] === 'commit').length, 1);
-  assert.equal(verifyCalls(wholly).length, 2);
-  // The summary still lists what the round changed, read from the diff against preFixHead.
-  assert.equal(wholly.files[wholly.calls.filter(logsSummary)[0].args.at(-1)], '#7 built on the express lane: a.js, tests/new/r0.test.js; tests full; PR #9.\n');
   // A commit-step stop that names a path (an empty title) is still the commit's own stop.
   const untitled = fixRig({ fix: { result: { ...FIX_RESULT, title: '   ' } } });
   await run(['#7'], untitled.deps);
   assert.equal(lastLine(untitled).stop.detail, `fix round commit: the worker's title is empty once normalized: ${FINDING_0}`);
+});
+
+test('AC3.1 (#5414): a fix-round worker that moves HEAD stops at review', async () => {
+  // Index 5 is the HEAD read right after the fix launch (see the AC7 adjacency test).
+  const h = fixRig({ script: [nthCall(isHeadRead, 5, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).stop.step, 'review');
+  assert.equal(reviewLines(h)[0].status, 'fail');
+  assert.equal(lastLine(h).stop.detail, `fix round launch: the worker moved HEAD from ${HEAD_SHA} to ${OTHER_SHA}: ${FINDING_0}`);
+  assert.equal(afterFixLaunch(h).filter((c) => c.kind === 'writeFileExclusive').length, 0);
+  assert.equal(afterFixLaunch(h).filter((c) => c.kind === 'git' && gitSub(c)[0] === 'commit').length, 0);
+  assert.equal(verifyCalls(h).length, 1, 'only the pre-review verify ran');
+  assert.equal(checkCalls(h).length, 1, 'only the first express-lane check ran');
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('AC9.1 (#5414): docs/driver.md drops the self-commit carry-on and names the moved-HEAD stop', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  assert.equal(docs.includes('committed everything itself'), false);
+  const start = docs.indexOf('\n## Worker rights');
+  assert.notEqual(start, -1, 'the Worker rights section exists');
+  const rights = docs.slice(start, docs.indexOf('\n## ', start + 1));
+  assert.ok(rights.includes('HEAD has moved'), 'the HEAD bullet is in Worker rights');
+  assert.ok(rights.includes('`fail`'), 'the HEAD bullet names the fail result');
 });
 
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {
@@ -3606,6 +3624,14 @@ test('fix round: a kept evidence run that throws or survives its kill fails, and
   assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
   // The one exception is the HEAD read right after the launch (#5414), which runs before the interrupt is seen.
   assert.deepEqual(afterFixLaunch(h).filter((c) => ['writeFileExclusive', 'rmFile', 'git'].includes(c.kind)).map((c) => [c.kind, isHeadRead(c)]), [['git', true]]);
+});
+
+test('(#5414) an interrupt during a fix launch that also moved HEAD is reported as the interrupt', async () => {
+  let h = null;
+  h = fixRig({ effect: () => { h.signals[0]('SIGTERM'); }, script: [nthCall(isHeadRead, 5, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
+  assert.ok(h.lines().every((l) => !String(l.detail ?? '').includes('moved HEAD')));
 });
 
 test('AC12: a discarded finding is counted, its evidence file removed, and the record goes on to the push', async () => {

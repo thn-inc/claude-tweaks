@@ -185,11 +185,11 @@
 //             the review line alone, null when it never returned an envelope); once the name-only diff is read, ctx.changedFiles
 //             becomes the first commit's paths plus every path differing from preFixHead, first seen
 //             first; the second check overwrites ctx.check, whose head the push guard reads.
-//   The commit step's "nothing to commit" stop (a stop that names no path) does not end the round:
-//   what the round changed is then already at HEAD. Either way every evidence file must then be
-//   tracked at HEAD with its recorded bytes, CRLF vs LF aside (cat-file of HEAD:{evidencePath}; autocrlf
+//   Any commit-step result other than `ok` ends the round, a nothing-to-commit stop included: a worker
+//   that moved HEAD has already stopped at the launch (runImplementer's HEAD check). Every evidence file
+//   must be tracked at HEAD with its recorded bytes, CRLF vs LF aside (cat-file of HEAD:{evidencePath}; autocrlf
 //   stores a CRLF file as LF, and only the CR-LF pair is normalized), which catches one the
-//   worker gitignored, deleted or changed, and passes one it committed itself unchanged.
+//   worker gitignored, deleted or changed.
 //   byte check  before each kept run its path must still resolve to the spelling git reported when it
 //               was confirmed (the rewrite's check, so no parent is now a symlink to a copy elsewhere)
 //               and its file must be a regular file at the leaf holding the recorded bytes, compared
@@ -1069,11 +1069,8 @@ async function fixRound(ctx, deps, wiring, pass) {
 
     const committed = await commit.run(ctx, deps);
     if (shared.interrupted) return interrupted();
-    // The commit step names what it found before it stops: a stop with no path is "nothing to commit"
-    // (everything the round changed is already at HEAD), which the evidence check below then judges.
-    const nothingToCommit = committed.status === 'stop' && Array.isArray(ctx.changedFiles) && ctx.changedFiles.length === 0;
-    if (committed.status !== 'ok' && !nothingToCommit) return end(committed.status, `fix round commit: ${committed.detail}`);
-    // Every evidence file must be at HEAD with its recorded bytes, whoever committed it: one git does not
+    if (committed.status !== 'ok') return end(committed.status, `fix round commit: ${committed.detail}`);
+    // Every evidence file must be at HEAD with its recorded bytes: one git does not
     // report (ignored by a .gitignore the worker wrote) is not, and neither is one changed after the rewrite.
     const notAtHead = confirmed.find((c) => !atHeadAsRecorded(wt, c, deps));
     if (notAtHead) return end('fail', 'the evidence file is not at HEAD with its recorded content', { c: notAtHead });
@@ -1125,7 +1122,7 @@ async function fixRound(ctx, deps, wiring, pass) {
     if (!fixPaths.some((p) => !evidence.has(p))) {
       return end('stop', 'the fix round changed nothing outside the evidence files');
     }
-    // Both commits' paths, first seen first: the round's are what differs from preFixHead, whoever committed it.
+    // Both commits' paths, first seen first: the round's are what differs from preFixHead.
     const union = [...(Array.isArray(first.changedFiles) ? first.changedFiles : [])];
     for (const p of fixPaths) if (!union.includes(p)) union.push(p);
     ctx.changedFiles = union;
