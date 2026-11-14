@@ -107,6 +107,7 @@ Run the perf suite: `npm run test:perf`.
 - `perf/recording-redact-linearity.test.js`
 - `perf/driver-settle-reduce-detail-linearity.test.js`
 - `perf/driver-neutralize-linearity.test.js`
+- `perf/driver-normalize-title-linearity.test.js`, `perf/driver-review-event-text-linearity.test.js`
 - `perf/cross-repo-dependency-linearity.test.js`, `perf/ledger-row-linearity.test.js`, `perf/process-kill-linearity.test.js`
 - `plugin/bin/lib/console/finding-path.js`, `plugin/bin/lib/log-decision/aggregate-reproduction.js`
 - Domain detail stays in `code-health-focus-vertical` (item 6, generators) and `shell-scanner-bash-differential` (the write gate's caps)
