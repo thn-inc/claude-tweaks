@@ -12,16 +12,17 @@ files:
 
 **Persona:** A claude-tweaks maintainer with several Claude sessions open on this repo. Each session's pipeline runs `npm test` through `plugin/bin/verify.js`, and the maintainer also runs it by hand.
 **Goal:** Every session gets a trustworthy suite result without the machine becoming unusable or `$TMPDIR` filling with leaked fixtures.
-**Entry point:** `npm test` (`node tools/run-tests.js`), run directly or as a `verify.js --cmd tests="npm test"` check.
+**Entry point:** `npm test -- --full` (`node tools/run-tests.js --full`), run directly, or as a `verify.js --cmd tests="npm test"` check. A plain `npm test` typed at the top level now runs only the impact-selected subset (`run-a-plain-npm-test-on-the-impact-subset-5319.md`). It takes the same slot as described below, from the subset lane instead of the whole-suite lane.
 **Success state:** One full suite runs at a time machine-wide, at about half the cores. Any other run says plainly that it is waiting and for whom, then runs in the order it arrived. Each run's temp files live under one per-run directory that is gone when the run ends, whether by exit, Ctrl-C, or a kill.
 
 ## Steps
 
 ### 1. Start a run while no other suite is running
 - **URL:** the terminal or the verify.js check log.
-- **Action:** Run `npm test`.
+- **Action:** Run `npm test -- --full`.
 - **Should feel:** Like before, just slower to saturate the machine. No new prompts and no new output on the happy path.
 - **Should understand:**
+  - A plain `npm test` with no arguments prints its one impact-selection line first and runs only the selected files. The slot, the per-run temp directory and the concurrency below are unchanged. Only the lane differs: a subset takes the subset lane (`CT_TEST_SUBSET_SLOTS`), so it does not queue behind a sibling's whole-suite run, and a run with nothing selected takes no slot.
   - The run holds a lock in `<tmpdir>/ct-test-suite-slots/` for its duration.
   - Its tests see `TMPDIR` pointing at `<tmpdir>/ct-test-runs/ct-testrun-<pid>-XXXXXX/`.
   - `node --test` runs with `--test-concurrency` set to half the cores, or cores minus 1 when `CI` is set.
@@ -34,7 +35,7 @@ files:
 
 ### 2. Start a second run while one is already running
 - **URL:** the second session's output.
-- **Action:** Run `npm test` again from another session or terminal.
+- **Action:** Run `npm test -- --full` again from another session or terminal.
 - **Should feel:** Told, not stuck. One line explains the wait.
 - **Should understand:**
   - When it is first in line, the line reads `run-tests.js: waiting for a test-suite slot — held by pid N (cwd …) since …; set CT_TEST_SUITE_SLOTS to raise the limit`, followed by the lock path.
@@ -63,7 +64,7 @@ files:
 - **Should feel:** Like an override, not a requirement. The defaults are meant for a shared developer machine.
 - **Should understand:**
   - An invalid `CT_TEST_SUITE_SLOTS` falls back to 1 and prints one line naming it.
-  - Nested runs (a test that itself spawns `run-tests.js`) skip the slot via `CT_TEST_SUITE_SLOT_HELD=1`, so they never deadlock on the parent's lock.
+  - Nested runs (a test that itself spawns `run-tests.js`) skip the slot via `CT_TEST_SUITE_SLOT_HELD=1`, so they never deadlock on the parent's lock. A bare nested run, and a bare `npm test` that `verify.js` spawns, also run the whole set and never consult the impact map, because a child does what its parent asked.
   - Under a pipeline, `verify.js` now takes the slot itself and runs `npm test` with `CT_TEST_SUITE_SLOT_HELD=1`, so that child skips the lock. An exported `CT_TEST_SUITE_SLOTS` then governs only direct `npm test` runs. verify.js's own count comes from `concurrency.suiteSlots` or the `verify-suite-slots` policy key (`queue-verify-runs-behind-a-machine-wide-slot-5119.md`).
   - The suite's own slot tests still pass with a raised knob. Their sandboxed runner children start without `CT_TEST_SUITE_SLOTS` or `CT_TEST_SUBSET_SLOTS`, so they always measure the default of one slot.
 - **Red flags:**
@@ -89,4 +90,5 @@ files:
 - Updated during build of #4333: step 2 now covers arrival-order waiting and the queued form of the wait line. A waiter stopped with Ctrl-C leaves only its ticket, and the next waiter removes it once the pid is gone. A `run-tests.js` checkout older than this change ignores tickets and can still jump the queue until it catches up.
 - Updated during build of #5119: the lock moved into `plugin/bin/lib/suite-slot.js`, shared with `verify.js`. Step 4 now covers a verify.js-driven `npm test` skipping the lock, with verify.js's own slot count governing instead of `CT_TEST_SUITE_SLOTS`.
 - Updated during build of #5297: step 1 now covers git auto-maintenance turned off for the suite and template-copied fixture repos. Step 5 covers the spawn-free git check and its macOS shim rule. The trigger was one run spawning 1,300–2,100 processes per second.
+- Updated during build of #5319: a plain top-level `npm test` now runs the impact-selected subset from the subset lane. The entry point and steps 1 and 2 name `npm test -- --full` for the whole-suite run these steps describe, and step 4 says a bare child of `verify.js` or of another run also runs the whole set.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).

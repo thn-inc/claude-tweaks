@@ -212,10 +212,10 @@ const ESCALATED_BODY = commentFor('escalated', { step: 'test', outcome: 'express
 const blockedRecord = (over) => commentFor('blocked-record', { step: 'test', outcome: 'blocked', detail: 'red tests', ...over });
 const noThrow = (fn) => assert.doesNotReject(fn);
 
-test('SETTLE_STEP_NAMES is the eight settle calls and STEP_NAMES holds the eighteen steps', async () => {
+test('SETTLE_STEP_NAMES is the eight settle calls and STEP_NAMES holds the nineteen steps', async () => {
   assert.deepStrictEqual([...SETTLE_STEP_NAMES], ['settle-escalate', 'settle-comment-pr', 'settle-comment-record', 'settle-label', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close']);
   assert.ok(Object.isFrozen(SETTLE_STEP_NAMES));
-  assert.equal(STEP_NAMES.length, 18);
+  assert.equal(STEP_NAMES.length, 19);
   for (const rows of Object.values(SETTLE_ROWS)) for (const s of rows) assert.ok(SETTLE_STEP_NAMES.includes(s), s);
 });
 

@@ -107,6 +107,18 @@ Include negative cases:
 
 Assert the exact flagged line numbers, not just a count, because the right count can come from the wrong lines. Run each new assertion against the code it guards with the guard removed, and watch it go red.
 
+### A convention that also binds `node -e` fences under `plugin/skills`
+
+Some calls are made both from `plugin/bin` code and from `node -e` snippets in skill prose that the reader runs. A scan of `plugin/bin` alone then passes while a fence breaks the rule. `tests/trust-policy-keys-conformance.test.js` (#5291) requires every `trustRows(` call to build its policy from `TRUST_POLICY_KEYS`, and it walks both trees in one suite:
+
+- **The granularity differs by tree.** A `plugin/bin` file is judged as a whole, over its `stripComments` text with `stripperVerdict` as an offender, because a module builds its policy once. A markdown file is judged fence by fence, because each snippet runs on its own and its reader never sees the other fences. A planted case puts the key list in one fence and the call in the next, and asserts the call is flagged.
+- **Fence text is read raw.** It is shell-wrapped JS, so the JS stripper does not apply, and a mention anywhere inside the fence satisfies the check. Name that limit in the test header.
+- **Anchor the fence regex on `\r?\n`**, and plant a CRLF copy of the markdown fixture built with `.replace(/\n/g, '\r\n')` (`skill-prose-conformance-tests` has the reason).
+- **Use an exact roster of site files across both trees as the floor**, beside the `>=` count. A new caller in either tree then fails until someone classifies it, and a matcher that stops matching in one tree cannot be hidden by sites in the other.
+- **Pin the positional chain that feeds a fence.** A fence that maps a constant onto `process.argv[1 + i]` reads its values from a hand-written `-- "{resolved-…}"` arg list, which a hand-listed `resolve-policy.js --values` line fills. Appending a key to the constant leaves both lists short, the new key reads `undefined`, and it falls back to its default without an error. The suite asserts that each such fence passes exactly the constant's length in placeholders, and that every feeding `--values` line lists the constant's keys in order. Both checks have go-red rows: one placeholder too few, and two keys swapped or one dropped. Review found this chain unpinned, and the fix (`331bbc12e`) added both checks.
+
+A suite like this imports the stripper, so it joins both caller lists named under "Import the shared stripper".
+
 ### A shrink-only allowlist pins a ceiling
 
 A scan that lands with a list of files not yet converted (`NOT_YET` in `tests/bin-lib/cli-entry-conformance.test.js`, #5374) is shrunk by several records, often in parallel. Pin its size as a ceiling (`length <= N`, N the landing size), never an exact count: an exact count makes every converting record edit one shared line, and two of them conflict. Keep one entry per line, sorted, so each record deletes only its own lines. Fail a listed file that now conforms, so the list cannot hold a stale entry. Build the list's go-red self-tests from inline fixtures and match the failure message; never borrow a file that is on the list, because the record that converts it turns the self-test red. The first version of that scan pinned `length === 27` and borrowed `verify.js`, and review replaced both (c40ea0f13).

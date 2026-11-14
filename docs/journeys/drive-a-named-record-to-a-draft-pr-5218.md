@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/driver/steps.js
   - plugin/bin/lib/driver/events.js
   - plugin/bin/lib/driver/settle.js
+  - plugin/bin/lib/driver/merge.js
   - plugin/bin/lib/driver/review.js
   - plugin/bin/lib/driver/launch.js
 ---
@@ -12,9 +13,9 @@ files:
 # Drive a Named Record to a Draft PR
 
 **Persona:** a maintainer who has an eligible, express-sized record. They want it built and opened as a draft PR with CI read, with no model session in charge of the steps, and they will judge the cost and wall clock from the report afterwards.
-**Goal:** name one or more records on the command line and get back, for each, a draft PR (or a clear reason there is none) and a one-line outcome. Nothing merges, and no step runs twice.
+**Goal:** name one or more records on the command line and get back, for each, a draft PR (or a clear reason there is none) and a one-line outcome. Nothing merges unless a judgment supplier is configured (none is by default), and no step runs twice.
 **Entry point:** `node plugin/bin/drive.js #N [#M…]` in the main checkout of a repository whose `.claude-tweaks/policy.yml` enables `express-driver`.
-**Success state:** each record's final event line reads `pending-review` with a PR number and a `ci` word, and `{run-dir}/driver-events.jsonl` holds the same lines that stdout showed. The draft PR waits for a human; the driver has merged and marked ready nothing.
+**Success state:** each record's final event line reads `pending-review` with a PR number and a `ci` word, and `{run-dir}/driver-events.jsonl` holds the same lines that stdout showed. With no supplier configured (the default), the draft PR waits for a human and the driver has merged and marked ready nothing; step 7 covers a run with a supplier.
 
 ## Steps
 
@@ -69,7 +70,7 @@ files:
 - **Should understand:**
   - Once the branch is pushed, a failure of `gh pr create` (after its one retry, which first looks for an open PR on the branch), `record-pr` or `set-config` ends the record `blocked`, because a pushed branch cannot escalate. So does a `git push` that reported a failure while `origin/drive-record-{n}` already holds the checked HEAD.
   - A failed summary entry still ends the record `pending-review`.
-- **Red flags:** two PRs for one record after a transient `gh` failure; a PR that is not a draft; a ready-for-review flip or a merge call anywhere.
+- **Red flags:** two PRs for one record after a transient `gh` failure; a PR that is not a draft at this step; a ready-for-review flip or a merge call before step 7, or at all when no supplier is configured.
 
 ### 5. Read the outcome — the CI wait and the final line
 - **URL:** the `ci` event line and the final line `{ outcome, msTotal, msWithoutCi, pr, ci, stop, … }`
@@ -103,6 +104,39 @@ files:
   An interrupt inside the settle window reports `ci: pending`, never the unsettled read that came just before it.
 - **Red flags:** a worker process still running after the driver exited; an interrupt during the CI wait reported `blocked`, or reported with a `green` read taken before the window passed.
 
+### 7. Merge it — when a judgment supplier is configured
+- **URL:** the `merge-entry` … `merge-*` sub-step event lines, the `merge` event line, and the final line's `merge: { outcome, reason, mergeCommit, postMerge }` field
+- **Action:** read the `merge` field. After a green CI wait with no supplier configured, it reads `pending-review` / `no-supplier`, and the merge step made no call at all. With one, the step runs only after the CI wait ended `green`. The driver then:
+  - re-reads the record's live labels for `auto:merge`;
+  - takes the supplier's verdict and confirms the verdict line in `decisions.md`;
+  - checks closing links and composes the subject;
+  - marks the PR ready;
+  - reads the merge state and checks, then merges, arms or stops.
+- **Should feel:** guarded. Every refusal that can be decided before the costly mark-ready is decided before it, and a merge goes out only against the head the driver's own checks covered.
+- **Should understand:**
+  - A CI wait that ended in any word other than `green` skips the step, with or without a supplier. The `merge` event line then reads `not entered: ci {word}`, the final line carries no `merge` field, and nothing is called.
+  - The outcome is `merged`, `armed` or `pending-review`.
+    - `armed` means the forge holds the merge, and the reconciler finishes cleanup on merged evidence.
+    - `pending-review` carries one closed-set reason: `not-authorized`, `check-failed:{names}`, `checks-pending-timeout`, `conflict`, `moving-target`, `merge-refused` and so on, or `unclassified` naming the failing sub-step.
+  - What each stop leaves behind:
+    - A red check, a draft-skip workflow, or checks still pending after the 15-minute watch park the record: `bot:parked` on the record and one fixed-template comment.
+    - A conflict leaves one PR comment.
+    - A refused merge leaves one PR comment and parks nothing.
+  - On `merged`, post-merge runs in this order. A failure at any point is listed in `merge.postMerge.failures` and never changes `merged`.
+    1. `post-merge-run.js`.
+    2. The release-status comment.
+    3. `hooks.js reconcile`, which archives the run directory. Later events follow it to `archive/{run-id}/`, or go to stdout only and say `eventsFile: stdout-only`.
+    4. Worktree and local branch removal.
+    5. The remote branch delete.
+  - Watch time counts as CI wait, so `msWithoutCi` still excludes it. A signal during the supplier call or the watch makes no further call.
+- **Red flags:**
+  - A merge or ready call with no supplier configured.
+  - A merge after a red or pending read.
+  - A `--match-head-commit` other than the checked head.
+  - `--admin` or `--delete-branch` anywhere.
+  - A remote delete of the integration branch.
+  - `merged` reported from a merge call's exit code without the confirmation read.
+
 ## Origin
 - Created during the build of #5218 (run `2026-11-12T104316-spec-5218`), the pipeline driver's second unit. It drives the express lane's steps 1–8 and 10 as code over the #5217 worker launcher; step 9 (merge) is deliberately absent.
 - Settling a stopped record belongs to the settle unit (#5219), documented in journey `find-a-stopped-driver-run-already-settled-5219`. It removes the locked worktree with `git worktree remove --force --force`, and it closes no PR.
@@ -110,5 +144,6 @@ files:
 - Updated during the build of #5219: Steps 5 and 6 hand off to the driver's own settle and its `settle: interrupted` final line.
 - Updated during the build of #5277 (run `2026-11-13T000412-spec-5277`). Step 5 now covers the CI step's settle window, the GitHub Actions run requirement and the `no-ci` rule with its exemptions. Step 6 now covers what an interrupt inside the window reports.
 - Updated during the build of #5269 (run `2026-11-13T000404-record-5269`): step 3 now says the commit subject keeps its leading verb, and that a closing keyword goes only when an issue reference follows it.
+- Updated during the build of #5226 (run `2026-11-13T071151-spec-5226`): step 7 documents the merge step a configured judgment supplier enables. The goal, success state and step 4 red flags now say nothing merges only when no supplier is configured.
 - Updated during the build of #5352 (run `2026-11-13T093429-spec-5352`). Step 3 now says that `www.` and bare `github.com/` issue URLs and host-free `owner/repo/issues/N` paths are dropped too, and that the summary's changed-file list is filtered the same way. A matching red flag was added.
 - Updated during the build of #5222 (run `2026-11-13T093607-spec-5222`). Step 3 now covers the `review` step: when the policy runs it, what its line carries, the red-test rule and the one fix round, with matching red flags.

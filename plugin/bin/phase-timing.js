@@ -32,6 +32,11 @@
 // aggregated by tier and role, clipped to the run's event window, and printed
 // after the phase table; the key is absent without a transcript flag.
 //
+// When events.jsonl holds a `ci-gate` event (#5160, bin/ci-gate-record.js),
+// timing.json also gains `ciGate` (those events, in file order) and
+// `totals.ciWallMinutes`, and --markdown prints one `CI gate: ...` line per PR
+// after the phase table; with no such event both keys and the line are absent.
+//
 // --check-budgets (#4029) compares the run's totals with the efficiency
 // ceilings for its {run-dir}/config.yml `ceremony-profile` (absent or invalid
 // reads as `standard`, with a stderr note) from the checkout's policy.yml, found
@@ -54,7 +59,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS } = require('./lib/timing/derive');
+const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS, latestCiGatePerPr } = require('./lib/timing/derive');
 const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
 const { readManifest } = require('./lib/flow/manifest');
 const { TURN_CLASSES, CEREMONY_CLASSES } = require('./lib/timing/turn-class');
@@ -243,6 +248,18 @@ function renderDispatches(dispatches) {
   return lines.join('\n') + '\n';
 }
 
+// ciGate: the timing.json `ciGate` list (#5160), or undefined -> ''. One line
+// per distinct pr in first-appearance order, from that PR's latest event
+// (derive.js's latestCiGatePerPr, the rule totals.ciWallMinutes uses); a
+// missing or non-numeric duration renders `n/a`, never NaN.
+function renderCiGate(ciGate) {
+  if (!Array.isArray(ciGate) || ciGate.length === 0) return '';
+  const min = (x) => (Number.isFinite(x) ? Math.round(x / 6000) / 10 : 'n/a');
+  const lines = latestCiGatePerPr(ciGate).map((e) =>
+    `CI gate: ${e.verdict}, ${min(e.ciWallMs)} min wall${e.pendingAtBound === true ? ' (lower bound)' : ''}, gate waited ${min(e.gateWaitMs)} min (PR #${e.pr})`);
+  return lines.join('\n') + '\n';
+}
+
 // paths: the resolved transcript paths; events: parsed events.jsonl rows. The
 // window is the earliest..latest event ts (no event with a ts -> the whole
 // session), leaving out worktree-reaped: it fires hours after the session
@@ -346,6 +363,7 @@ async function main(argv) {
   const guard = wantTokens ? countGuardEvents(events.events) : null;
 
   const timing = { runDir, generatedAt: new Date().toISOString(), phases: tokens ? tokens.phases : out.phases, totals: { ...out.totals } };
+  if (out.ciGate) timing.ciGate = out.ciGate;
   if (tokens) {
     timing.unattributed = tokens.unattributed;
     timing.totals.tokens = tokens.totals.tokens;
@@ -375,7 +393,7 @@ async function main(argv) {
     if (previous && typeof previous === 'object' && Object.hasOwn(previous, 'budget')) timing.budget = previous.budget;
   }
   fs.writeFileSync(timingPath, JSON.stringify(timing, null, 2) + '\n');
-  if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes) + renderDispatches(timing.dispatches));
+  if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes) + renderCiGate(timing.ciGate) + renderDispatches(timing.dispatches));
   else if (o.json) process.stdout.write(JSON.stringify(timing, null, 2) + '\n');
   else process.stdout.write(`timing: wrote ${timingPath}\n`);
   // Under --json stdout stays one JSON document; the budget rides in its `budget` key.
@@ -389,4 +407,4 @@ if (require.main === module) {
     process.exitCode = 2;
   });
 }
-module.exports = { main, parseArgs, renderMarkdown, renderDispatches };
+module.exports = { main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };

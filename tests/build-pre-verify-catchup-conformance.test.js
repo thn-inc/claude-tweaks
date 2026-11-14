@@ -69,7 +69,7 @@ const PVC_FACTS = [
   { name: 'cites Catch-up steps 1-4', needle: "Run `_shared/git-discipline.md`'s Catch-up (`auto`) steps 1-4" },
   { name: 'merge never rebase', needle: 'merge, never rebase' },
   { name: 'logs under its own step', needle: '--step "Pre-verification catch-up"' },
-  { name: 'no push', needle: 'Nothing is pushed: the build phase exit pushes the merged branch' },
+  { name: 'no push', needle: "This procedure pushes nothing: with a `ci` block, Common Step 5's push-first pushes the merged branch, otherwise the build phase exit does." },
   { name: 'no conflict line', needle: 'There is no PR conflict line to surface' },
   { name: 'dirty tree SKIP', needle: 'condition: uncommitted changes in the worktree → fallback: catch-up not run; verifying the un-merged tree' },
   { name: 'fetch failure fails open', needle: 'condition: fetch failed → fallback: catch-up not run; verifying the un-merged tree' },
@@ -328,7 +328,7 @@ function assertHandoffLine(text) {
 
 const MATCH_NOTE = "build's Pre-verification catch-up (`_shared/pre-verification-catchup.md`) merges the integration branch in before its own run";
 const MATCH_SHA_NOTE = '`VERIFICATION_SHA` already names the merged HEAD';
-const MISMATCH_NOTE = 'a later bookkeeping-only commit takes the Mismatch branch below, which runs no suite either';
+const MISMATCH_NOTE = 'a later bookkeeping-only commit takes the Mismatch branch below, which re-selects from the stamp\'s anchor';
 
 function assertMatchBullet(text) {
   const from = text.indexOf('### Skip-if-recent (for /flow pipelines)');

@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { parseArgs, UsageError, USAGE } = require(path.join(
+const { parseArgs, UsageError, USAGE, EXIT_NO_VERDICT } = require(path.join(
   __dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'args.js'));
 
 test('parses repeatable --cmd plus --json, --log-dir, and --count-stamp', () => {
@@ -511,4 +511,26 @@ test('--stamp-suite is rejected in the two read-only modes', () => {
 
 test('USAGE names --stamp-suite (#3002)', () => {
   assert.ok(USAGE.includes('--stamp-suite'));
+});
+
+test('#5369: --local parses to local: true on a check run, scoped or not', () => {
+  assert.strictEqual(parseArgs(['--cmd', 'tests=npm test', '--local']).local, true);
+  assert.strictEqual(parseArgs(['--scope', 'v.json', '--local']).local, true);
+});
+
+test('AC4.2: without --local the parsed result carries no local key (#5369)', () => {
+  assert.strictEqual(Object.hasOwn(parseArgs(['--cmd', 'tests=npm test']), 'local'), false);
+});
+
+test('#5369: --local is a usage error in the read-only modes', () => {
+  const conflict = (err) => err instanceof UsageError
+    && err.message === '--local applies to a check run — not to --stamp-status or --changed-files';
+  assert.throws(() => parseArgs(['--stamp-status', '--local']), conflict);
+  assert.throws(() => parseArgs(['--changed-files', '--local']), conflict);
+});
+
+test('#5369: USAGE names --local and EXIT_NO_VERDICT is 3', () => {
+  assert.ok(USAGE.includes('[--local]'));
+  assert.ok(USAGE.includes('note: --local runs every selected suite on this machine and never consults a declared ci source; under a declaration with localRuns "on-request" a CI-declared suite runs here only with it, a --scope run CI cannot answer exits 3 (no verdict yet, never a test failure), and a run naming a CI-declared suite with neither --scope nor --local exits 2 (#5369).'));
+  assert.strictEqual(EXIT_NO_VERDICT, 3);
 });
