@@ -6,12 +6,14 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
+const { VERDICT_STEPS, verdictMarker } = require('../../../plugin/bin/lib/dispatch/merge-verdict');
+const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const DRIVE = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'drive.js');
 const {
   STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
-  outcomeFor, neutralize, normalizeTitle, createEventSink,
+  outcomeFor, neutralize, normalizeTitle, createEventSink, MERGE_STEP_NAMES,
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
@@ -234,9 +236,9 @@ test('AC7: outcomeFor maps every stop class', () => {
 });
 
 test('constants: step vocabulary, camelCase map and frozen shapes', () => {
-  assert.equal(STEP_NAMES.length, 18);
+  assert.equal(STEP_NAMES.length, 19);
   assert.equal(STEP_NAMES[0], 'policy');
-  assert.equal(STEP_NAMES[STEP_NAMES.length - 1], 'ci');
+  assert.equal(STEP_NAMES[STEP_NAMES.length - 1], 'merge');
   assert.equal(STEP_NAMES.indexOf('review'), STEP_NAMES.indexOf('check') + 1, 'the reviewer sits right after check');
   assert.equal(FINAL_STEP, 'final');
   assert.equal(STEP.runDir, 'run-dir');
@@ -246,7 +248,7 @@ test('constants: step vocabulary, camelCase map and frozen shapes', () => {
   assert.equal(Object.keys(STEP).length, STEP_NAMES.length);
   for (const o of [STEP_NAMES, STEP, OUTCOMES, STOP_CLASSES]) assert.ok(Object.isFrozen(o));
   assert.deepEqual(Object.values(OUTCOMES).sort(),
-    ['blocked', 'express-escalated', 'pending-review', 'refused']);
+    ['armed', 'blocked', 'express-escalated', 'merged', 'pending-review', 'refused']);
 });
 
 test('AC5.2: sink holds pre-run-dir lines and flushes them first', () => {
@@ -471,7 +473,8 @@ function harness(over = {}) {
     const call = { kind, args, cwd, env, timeout, ...extra };
     calls.push(call);
     // AC8: nothing merges, in any test. A gh argv with `pr` followed by `merge` or `ready` is never answered.
-    if (['gh', 'ghBatch', 'ghCreate'].includes(kind)) {
+    // `over.allowMerge`: the merge-step tests below answer the forge writes themselves.
+    if (!over.allowMerge && ['gh', 'ghBatch', 'ghCreate'].includes(kind)) {
       const at = args.indexOf('pr');
       if (at !== -1 && ['merge', 'ready'].includes(args[at + 1])) throw new Error(`forbidden ${kind} call: ${describeArgs(args)}`);
     }
@@ -871,7 +874,7 @@ test('every step emits one event line with the core fields; the final line carri
   assert.equal(await run(['7'], h.deps), 0);
   const lines = h.lines();
   // The review step does not apply to a size:low record inside the express bounds: it emits no line.
-  assert.deepEqual(lines.map((l) => l.step), [...STEPS.map((s) => s.name).filter((n) => n !== STEP.review), FINAL_STEP]);
+  assert.deepEqual(lines.map((l) => l.step).filter((n) => !MERGE_STEP_NAMES.includes(n)), [...STEPS.map((s) => s.name).filter((n) => n !== STEP.review), FINAL_STEP]);
   for (const l of lines) {
     assert.deepEqual(Object.keys(l).slice(0, 6), ['ts', 'run', 'record', 'step', 'status', 'ms']);
     assert.ok(!Number.isNaN(Date.parse(l.ts)));
@@ -1090,7 +1093,7 @@ test('AC5.1, AC5.3: pre-run-dir events carry run:null; the jsonl holds them firs
   const runId = mintedRunId(h);
   const lines = h.lines();
   const order = lines.map((l) => l.step);
-  assert.deepEqual(order, ['policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker', 'commit', 'test', 'check', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci', FINAL_STEP]);
+  assert.deepEqual(order, ['policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker', 'commit', 'test', 'check', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci', 'merge-entry', 'merge', FINAL_STEP]);
   for (const l of lines) assert.equal(l.run, order.indexOf(l.step) <= order.indexOf('claim') ? null : runId, l.step);
   assert.equal(h.files[path.join(MAIN, '.claude-tweaks', 'pipelines', runId, 'driver-events.jsonl')], h.out.join(''));
   assert.equal(lines.at(-1).outcome, 'pending-review');
@@ -1416,11 +1419,14 @@ test('realDeps.git runs under the shared git bound, and under the push bound onl
     const fresh = require(runPath);
     fresh.realDeps.git(['status'], { cwd: '/x' });
     fresh.realDeps.git(['push', 'origin', 'b'], { cwd: '/x', remoteWrite: true });
+    fresh.realDeps.git(['describe'], { cwd: '/x', env: { ONLY: '1', LC_ALL: 'C' } });
   } finally {
     cp.execFileSync = original;
     delete require.cache[runPath];
   }
-  assert.deepEqual(seen.map((s) => [s.bin, s.args[0]]), [['git', 'status'], ['git', 'push']]);
+  assert.deepEqual(seen.map((s) => [s.bin, s.args[0]]), [['git', 'status'], ['git', 'push'], ['git', 'describe']]);
+  // A caller env (the merge step's C-locale describe) is forwarded; a call without one inherits process.env.
+  assert.deepEqual(seen.map((s) => s.options.env), [undefined, undefined, { ONLY: '1', LC_ALL: 'C' }]);
   assert.equal(seen[0].options.timeout, primitives.GIT_TIMEOUT_MS);
   assert.equal(seen[1].options.timeout, primitives.GIT_PUSH_TIMEOUT_MS);
   assert.ok(seen.every((s) => s.options.maxBuffer === primitives.LARGE_MAX_BUFFER_BYTES && s.options.windowsHide === true));
@@ -2786,7 +2792,7 @@ test('AC13: with the default and a record inside the express bounds, the review 
   assert.equal(await run(['#7'], h.deps), 0);
   assert.deepEqual(rolesOf(h), ['implementer']);
   assert.equal(evidenceRuns(h).length, 0);
-  assert.deepEqual(h.lines().map((l) => l.step), [...STEP_NAMES.filter((n) => n !== STEP.review), FINAL_STEP]);
+  assert.deepEqual(h.lines().map((l) => l.step).filter((n) => !MERGE_STEP_NAMES.includes(n)), [...STEP_NAMES.filter((n) => n !== STEP.review), FINAL_STEP]);
   assert.equal(lastLine(h).outcome, 'pending-review');
 });
 
@@ -3516,7 +3522,8 @@ test('summary: the line is logged from a file with the changed files, test mode 
   const lines = bad.lines();
   const ev = lines.find((l) => l.step === 'summary');
   assert.deepEqual([ev.status, lines.at(-1).outcome, lines.at(-1).ci], ['fail', 'pending-review', 'green']);
-  assert.equal(lines.at(-2).step, 'ci', 'the ci step still runs');
+  assert.equal(lines.find((l) => l.step === 'ci').status, 'ok', 'the ci step still runs');
+  assert.equal(lines.at(-1).merge.reason, 'no-supplier');
   const thrown = harness({ script: [[logsSummary, new Error('spawn EAGAIN')]] });
   await run(['#7'], thrown.deps);
   assert.equal(lastLine(thrown).outcome, 'pending-review');
@@ -4309,4 +4316,313 @@ test('settle notes ride the final line: a claim that may lapse by TTL', async ()
   const killed = harness({ script: [[on('node', /claim-targets\.js$/), { code: null, stdout: '', stderr: '' }]] });
   await run(['#7'], killed.deps);
   assert.match(lastLine(killed).settleNote, /lapses by its TTL/);
+});
+
+// --- the merge step (#5226, Task 7) ---------------------------------------------------
+
+const ghMergeCalls = (h) => h.calls.some((c) => ['gh', 'ghBatch', 'ghCreate'].includes(c.kind) && c.args.includes('pr') && (c.args.includes('merge') || c.args.includes('ready')));
+
+test('AC15.1: with no supplier the green path records no gh pr merge or gh pr ready and the final line names no-supplier', async () => {
+  const h = harness();
+  await run(['7'], h.deps);
+  const final = h.lines().at(-1);
+  assert.equal(final.outcome, 'pending-review');
+  assert.deepEqual(final.merge, { outcome: 'pending-review', reason: 'no-supplier', mergeCommit: null, postMerge: null });
+  assert.ok(!ghMergeCalls(h));
+});
+
+test('AC1.2: with no supplier, no call is recorded after the last ci read', async () => {
+  const h = harness();
+  await run(['7'], h.deps);
+  const sinkOnly = (c) => c.kind === 'appendFile' || c.kind === 'terminate';
+  const last = h.calls.map((c, i) => (c.kind === 'node' && /pr-checks\.js$/.test(String(c.args[0])) ? i : -1)).reduce((a, b) => Math.max(a, b), -1);
+  assert.ok(last > 0);
+  assert.deepEqual(h.calls.slice(last + 1).filter((c) => !sinkOnly(c)), []);
+});
+
+test('merge is not entered unless the CI wait ended green', async () => {
+  for (const ci of ['pending', 'red', 'no-ci', 'timeout', 'read-failed']) {
+    const judged = [];
+    const h = harness({ deps: { judgments: async () => { judged.push(1); } } });
+    const fakeCi = defineStep('ci', 'none', async (ctx) => { ctx.ci = ci; return { status: 'ok', detail: ci }; });
+    await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, -2), fakeCi, STEPS.at(-1)]);
+    assert.deepEqual(judged, [], ci);
+    assert.equal(h.lines().find((l) => l.step === 'merge').detail, `not entered: ci ${ci}`);
+    assert.equal('merge' in h.lines().at(-1), false, ci);
+    assert.ok(!ghMergeCalls(h), ci);
+  }
+});
+
+test('merge is entered on green: with a supplier, the live label read comes first and an unauthorized record stops there', async () => {
+  const judged = [];
+  const h = harness({
+    deps: { judgments: async () => { judged.push(1); } },
+    script: [[on('gh', 'issue', 'view'), (c) => JSON.stringify(c.args.at(-1) === 'labels' ? { labels: [] } : issueFor(7))]],
+  });
+  await run(['7'], h.deps);
+  const final = h.lines().at(-1);
+  assert.equal(final.merge.reason, 'not-authorized');
+  assert.equal(final.outcome, 'pending-review');
+  assert.deepEqual(judged, []);
+  assert.ok(!ghMergeCalls(h));
+});
+
+test('the summary step sets ctx.summaryLogged: true on the ok path, false when its log entry fails', async () => {
+  const seen = async (script) => {
+    const ctxs = [];
+    const h = harness({ script });
+    await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, -2), defineStep('look', 'none', async (ctx) => { ctxs.push(ctx); return { status: 'ok' }; })]);
+    return ctxs[0].summaryLogged;
+  };
+  assert.equal(await seen([]), true);
+  const summaryLog = (c) => c.kind === 'node' && /log-decision\.js$/.test(String(c.args[0])) && c.args.some((a) => /summary/.test(String(a)));
+  assert.equal(await seen([[summaryLog, { code: 1, stdout: '', stderr: 'no' }]]), false);
+});
+
+test('AC4.11, AC10.3, AC12.10: the final line takes the merge outcome, excludes watch time from msWithoutCi, and says stdout-only', async () => {
+  const h = harness();
+  const fake = defineStep('merge', 'none', async (ctx) => {
+    ctx.events.emit('merge-watch', 'ok', 5000, null, { ciWaitMs: 5000 });
+    ctx.events.rebind(null);
+    ctx.merge = { outcome: 'merged', reason: null, detail: null, mergeCommit: 'c'.repeat(40), runDir: ctx.runDir, eventsStdoutOnly: true, ciWaitMs: 5000, postMerge: { verdict: 'clean', failedSteps: [], failures: [] } };
+    return { status: 'ok' };
+  });
+  const final = await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, -1), fake]);
+  const ciEvent = h.lines().find((l) => l.step === 'ci');
+  assert.equal(final.outcome, 'merged');
+  assert.equal(final.merge.mergeCommit, 'c'.repeat(40));
+  assert.deepEqual(final.merge.postMerge, { verdict: 'clean', failedSteps: [], failures: [] });
+  assert.equal(final.msWithoutCi, final.msTotal - ciEvent.ciWaitMs - 5000);
+  assert.equal(final.eventsFile, 'stdout-only');
+});
+
+test('the merge step carries the watch time on its sub-events only, never on its own line', async () => {
+  const h = harness();
+  const fake = defineStep('merge', 'none', async (ctx) => {
+    ctx.merge = { outcome: 'armed', reason: null, detail: '', mergeCommit: null, runDir: ctx.runDir, eventsStdoutOnly: false, ciWaitMs: 7, postMerge: null };
+    return { status: 'ok', detail: 'armed', extra: {} };
+  });
+  const final = await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, -1), fake]);
+  assert.equal(final.outcome, 'armed');
+  assert.equal('ciWaitMs' in h.lines().find((l) => l.step === 'merge'), false);
+  assert.equal('eventsFile' in final, false);
+});
+
+test('the event sink follows a rebind, accepts the same path again, and goes stdout-only on unbind', () => {
+  const out = []; const files = {}; let appends = 0;
+  const sink = createEventSink({ stdout: (s) => out.push(s), appendFile: (p, s) => { appends += 1; files[p] = (files[p] || '') + s; } });
+  const a = path.join('/a', 'driver-events.jsonl');
+  const b = path.join('/b', 'driver-events.jsonl');
+  sink.bindRunDir('/a'); sink.emit({ step: 'one' });
+  sink.bindRunDir('/a'); sink.emit({ step: 'two' });
+  assert.equal(files[a], out.join(''), 'a same-path rebind neither duplicates nor drops');
+  sink.bindRunDir('/b'); sink.emit({ step: 'three' });
+  assert.equal(files[b], out[2]);
+  assert.equal(files[a], out.slice(0, 2).join(''));
+  const before = appends;
+  sink.unbind(); sink.emit({ step: 'four' });
+  assert.equal(appends, before, 'no further append after unbind');
+  assert.equal(out.length, 4, 'stdout still receives the line');
+  assert.equal(sink.events().length, 4);
+});
+
+// --- the merge step, run level: the seams steps.js and run.js add (#5226, Task 7 fix round 1) ---
+//
+// These drive the real STEPS through run() with the merge phase's forge and CLI replies scripted
+// on the run harness, so a wrong ctx field handed to merge(), a dead event rebind or a dead
+// watch clock fails here and not only in merge.test.js (which builds its own ctx).
+
+const MERGE_RUN_ID = '2026-11-12T100000-drive-7';
+const MERGE_RUN = path.join(MAIN, '.claude-tweaks', 'pipelines', MERGE_RUN_ID);
+const MERGE_ARCHIVE = path.join(MAIN, '.claude-tweaks', 'pipelines', 'archive', MERGE_RUN_ID);
+const MERGE_SHA = 'f'.repeat(40);
+const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup';
+const REREAD_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid';
+const CONFIRM_FIELDS = 'state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit';
+const GREEN_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'u' };
+const PENDING_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'IN_PROGRESS', conclusion: '', detailsUrl: 'u' };
+const GREEN_RUN = { name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'success', url: 'u' };
+const realLstatType = (p) => {
+  try {
+    const st = fs.lstatSync(p);
+    return { type: st.isDirectory() ? 'directory' : st.isFile() ? 'file' : 'other', code: null };
+  } catch (err) {
+    return { type: err.code === 'ENOENT' ? 'missing' : 'unreadable', code: err.code };
+  }
+};
+
+// A real run directory holding the confirmed merge-check verdict merge.js reads from disk itself.
+function freshMergeRunDir() {
+  fs.rmSync(MERGE_RUN, { recursive: true, force: true });
+  fs.rmSync(MERGE_ARCHIVE, { recursive: true, force: true });
+  fs.mkdirSync(MERGE_RUN, { recursive: true });
+  const marker = verdictMarker(VERDICT_STEPS.gate, 7, undefined);
+  const [step, ...rest] = marker.split(': ');
+  fs.writeFileSync(path.join(MERGE_RUN, 'decisions.md'),
+    `${formatEntry({ status: 'AUTO', now: new Date(2026, 10, 13, 9, 0, 0), step, text: rest.join(': '), reversibility: 'high' })}\n`);
+}
+
+// The merge phase's replies. `over.rollup` is the PR's check rollup; `over.reconcile` runs real
+// fs moves and returns the CLI reply; `over.script` entries come first.
+function mergeHarness(over = {}) {
+  freshMergeRunDir();
+  const post = { started: false };
+  const worktreeListing = `worktree ${MAIN}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n\n`
+    + `worktree ${WT}\nHEAD ${'2'.repeat(40)}\nbranch refs/heads/drive-record-7\nlocked\n`;
+  const isNode = (name, sub) => (c) => c.kind === 'node' && path.basename(c.args[0]) === name && (sub === undefined || c.args[1] === sub);
+  const isPrView = (fields) => (c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(fields);
+  return harness({
+    allowMerge: true,
+    deps: { judgments: async () => ({ mergeCheck: { verdict: 'auto-merge' }, acceptance: { completed: true } }), ...(over.deps || {}) },
+    script: [
+      ...(over.script || []),
+      [on('resolveRunDir'), { ok: true, created: true, reason: null, message: '', path: MERGE_RUN }],
+      [(c) => c.kind === 'lstatType' && c.args[0].startsWith(path.join(MAIN, '.claude-tweaks')), (c) => realLstatType(c.args[0])],
+      [(c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args[1] === 'view' && c.args.at(-1) === 'labels', JSON.stringify({ labels: [{ name: 'auto:merge' }] })],
+      [(c) => isNode('resolve-policy.js')(c) && c.args.includes('--values'), { code: 0, stdout: 'pr-first\n', stderr: '' }],
+      [isNode('resolve-policy.js'), { code: 0, stdout: JSON.stringify({ 'merge-verification': { value: 'wait', source: 'run-config' } }), stderr: '' }],
+      [(c) => c.kind === 'readFile' && path.basename(c.args[0]) === 'run-state.json', JSON.stringify({ pr: { number: 9 } })],
+      [isNode('closing-links.js'), { code: 0, stdout: JSON.stringify({ action: 'clean', keepOpen: [] }), stderr: '' }],
+      [isNode('compose-subject.js'), { code: 0, stdout: "SUBJECT_TITLE='x'\n", stderr: '' }],
+      [(c) => c.kind === 'readFile' && path.basename(c.args[0]) === 'title.txt', 'feat: composed title'],
+      [(c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes('isDraft'), JSON.stringify({ isDraft: true })],
+      [on('gh', 'pr', 'ready'), ''],
+      [isPrView(GATE_FIELDS), () => JSON.stringify({
+        state: 'OPEN', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA, statusCheckRollup: [over.rollup || GREEN_CHECK],
+      })],
+      [isPrView(REREAD_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA })],
+      [on('gh', 'run', 'list'), JSON.stringify([GREEN_RUN])],
+      [isNode('ready-run.js'), { code: 0, stdout: `${JSON.stringify({ state: 'met', failing: [], draftSkipWithoutReadyTrigger: [] })}\n`, stderr: '' }],
+      [on('ghCreate', 'pr', 'merge'), ''],
+      [isPrView(CONFIRM_FIELDS), JSON.stringify({
+        state: 'MERGED', mergedAt: '2026-11-13T09:30:00Z', autoMergeRequest: null, statusCheckRollup: [GREEN_CHECK], mergeCommit: { oid: MERGE_SHA },
+      })],
+      [isNode('post-merge-run.js'), () => { post.started = true; return { code: 0, stdout: `${JSON.stringify({ verdict: 'clean', next: 'none' })}\n`, stderr: '' }; }],
+      // The teardown's branch lookup (the worktree step's leftover probe must still find nothing).
+      [(c) => post.started && onGit('rev-parse')(c) && c.args.includes('--quiet'), `${'3'.repeat(40)}\n`],
+      [onGit('describe'), 'v6.170.0~2\n'],
+      [isNode('hooks.js', 'reconcile'), (c) => (over.reconcile ? over.reconcile(c) : { code: 0, stdout: '', stderr: '' })],
+      [onGit('worktree', 'list'), worktreeListing],
+      [onGit('worktree', 'unlock'), ''],
+      [on('gh', 'api'), ''],
+    ],
+  });
+}
+const archiveRunDir = () => {
+  fs.mkdirSync(path.dirname(MERGE_ARCHIVE), { recursive: true });
+  fs.renameSync(MERGE_RUN, MERGE_ARCHIVE);
+  return { code: 0, stdout: '', stderr: '' };
+};
+
+test('merge step, run level: the merge call, teardown and event file come from the run, and the final line follows the archive', async () => {
+  const h = mergeHarness({ reconcile: archiveRunDir });
+  const seen = [];
+  const look = defineStep('look', 'none', async (ctx) => { seen.push(ctx.runDir); return { status: 'ok' }; });
+  const final = await driveRecord(7, newShared(), h.deps, [...STEPS, look]);
+  assert.equal(final.outcome, 'merged');
+  assert.equal(final.merge.mergeCommit, MERGE_SHA);
+  assert.deepEqual(final.merge.postMerge, { verdict: 'clean', failedSteps: [], failures: [] });
+  const mergeCall = h.calls.find((c) => c.kind === 'ghCreate' && c.args[1] === 'merge');
+  assert.ok(mergeCall, 'a gh pr merge was made');
+  assert.equal(mergeCall.args[2], '9', 'the PR number comes from ctx.pr');
+  assert.equal(mergeCall.args[mergeCall.args.indexOf('--repo') + 1], 'acme/widgets', 'the repo comes from the run');
+  assert.equal(mergeCall.args[mergeCall.args.indexOf('--match-head-commit') + 1], HEAD_SHA, 'the head is the one check verified');
+  // The teardown targets the run's own worktree and branch, and the fetch names the integration branch.
+  assert.deepEqual(h.calls.filter(onGit('worktree', 'remove')).map((c) => gitSub(c).at(-1)), [WT]);
+  assert.deepEqual(h.calls.filter(onGit('worktree', 'unlock')).map((c) => gitSub(c).at(-1)), [WT]);
+  assert.ok(h.calls.some((c) => onGit('branch', '-D')(c) && gitSub(c).at(-1) === 'drive-record-7'));
+  assert.ok(h.calls.some((c) => onGit('fetch', '--end-of-options', 'origin', 'main')(c)));
+  assert.ok(h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'api' && c.args.includes('repos/acme/widgets/git/refs/heads/drive-record-7')));
+  // The run directory moved: the step after merge sees the archive, and the final line is in it.
+  assert.deepEqual(seen, [MERGE_ARCHIVE]);
+  const file = h.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')];
+  assert.ok(file, 'the archive holds the events file');
+  const inArchive = file.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(inArchive.at(-1).step, FINAL_STEP);
+  assert.equal(inArchive.at(-1).outcome, 'merged');
+  assert.ok(inArchive.some((l) => l.step === 'merge-reconcile'), 'the reconcile event landed in the archive');
+  assert.equal('eventsFile' in final, false);
+});
+
+test('merge step, run level: a signal during the merge watch reports the wait so far', async () => {
+  const h = mergeHarness({ rollup: PENDING_CHECK });
+  const tick = h.deps.sleep;
+  let fired = false;
+  h.deps.sleep = async (ms) => {
+    await tick(ms);
+    // The first sleep inside the merge step (the CI wait sleeps too): only the merge gate reads a PR's
+    // state with GATE_FIELDS, so a sleep after that read is the merge watch's own.
+    const inMerge = h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(GATE_FIELDS));
+    if (inMerge && !fired) { fired = true; h.signals[0]('SIGTERM'); }
+  };
+  await run(['7'], h.deps);
+  const final = finals(h)[0];
+  const stopLine = h.lines().find((l) => l.step === 'merge' && l.status === 'fail');
+  assert.ok(stopLine, 'the interrupt is reported at the merge step');
+  assert.ok(stopLine.ciWaitMs > 0, `the watch time so far is reported: ${stopLine.ciWaitMs}`);
+  assert.equal(final.stop.step, 'merge');
+  assert.equal(final.outcome, 'pending-review');
+  assert.ok(!h.calls.some((c) => c.kind === 'ghCreate' && c.args[1] === 'merge'), 'nothing merged');
+  const ci = h.lines().find((l) => l.step === 'ci').ciWaitMs;
+  assert.equal(final.msWithoutCi, final.msTotal - ci - stopLine.ciWaitMs);
+});
+
+test('merge step, run level: a signal after the events went stdout-only writes nothing to the file and reports no file error', async () => {
+  let h;
+  let fired = false;
+  h = mergeHarness({
+    reconcile: () => { fs.rmSync(MERGE_RUN, { recursive: true, force: true }); return { code: 0, stdout: '', stderr: '' }; },
+    script: [[onGit('worktree', 'list'), () => {
+      if (!fired) { fired = true; h.signals[0]('SIGTERM'); }
+      return `worktree ${MAIN}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n`;
+    }]],
+  });
+  await run(['7'], h.deps);
+  const final = finals(h)[0];
+  assert.ok(fired, 'the signal landed after the reconcile');
+  const reconcileAt = h.calls.findIndex((c) => c.kind === 'node' && c.args[1] === 'reconcile');
+  assert.ok(reconcileAt > 0);
+  assert.deepEqual(h.calls.slice(reconcileAt + 1).filter((c) => c.kind === 'appendFile'), [], 'no append after the unbind');
+  assert.equal('eventsFileError' in final, false);
+  assert.equal(final.eventsFile, 'stdout-only');
+  assert.equal(final.stop.step, 'merge');
+});
+
+test('merge step, run level: the merge line for each outcome reads the outcome word once', async () => {
+  const isPrViewOf = (fields) => (c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(fields);
+  // merge-when-green with a pending, BLOCKED PR arms auto-merge; the confirmation read shows it armed.
+  const armed = mergeHarness({
+    script: [
+      [(c) => c.kind === 'node' && path.basename(c.args[0]) === 'resolve-policy.js' && !c.args.includes('--values'),
+        { code: 0, stdout: JSON.stringify({ 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }), stderr: '' }],
+      [isPrViewOf(GATE_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA, statusCheckRollup: [PENDING_CHECK] })],
+      [isPrViewOf(CONFIRM_FIELDS), JSON.stringify({ state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, statusCheckRollup: [PENDING_CHECK], mergeCommit: null })],
+    ],
+  });
+  const af = await driveRecord(7, newShared(), armed.deps, STEPS);
+  assert.equal(af.outcome, 'armed');
+  assert.equal(armed.lines().find((l) => l.step === 'merge').detail,
+    'armed — auto-merge armed, the forge holds the merge; the reconciler completes cleanup');
+  const merged = mergeHarness({ reconcile: archiveRunDir });
+  await driveRecord(7, newShared(), merged.deps, STEPS);
+  assert.equal(merged.lines().find((l) => l.step === 'merge').detail, 'merged, unit concluded SUCCESS');
+});
+
+test('merge step, run level: an unclassified stop names the failing sub-step on the merge line', async () => {
+  // A deliberate throw from the merge watch, which rethrows its own failure so merge's run-level
+  // catch classifies the step (every other sub-step catches its own calls).
+  const h = mergeHarness({ rollup: PENDING_CHECK });
+  const tick = h.deps.sleep;
+  h.deps.sleep = async (ms) => {
+    await tick(ms);
+    // The CI wait sleeps too: only a sleep after the merge gate's GATE_FIELDS read is the watch's.
+    const inMerge = h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(GATE_FIELDS));
+    if (inMerge) throw new Error('watch sleep failed');
+  };
+  const final = await driveRecord(7, newShared(), h.deps, STEPS);
+  const line = h.lines().find((l) => l.step === 'merge');
+  assert.equal(line.detail, 'pending-review: unclassified — merge-watch: watch sleep failed');
+  assert.equal(final.merge.reason, 'unclassified');
+  assert.equal(final.outcome, 'pending-review');
+  assert.ok(!h.calls.some((c) => c.kind === 'ghCreate' && c.args[1] === 'merge'), 'nothing merged');
 });
