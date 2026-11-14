@@ -2,7 +2,7 @@
 
 This repo dogfoods the same release engine every consumer project uses: `/claude-tweaks:release`, driving release-please under `integration-model: pr-first`.
 
-**The whole-branch review still gates the bump** — `/claude-tweaks:release`'s Step 3 runs `/claude-tweaks:review base:{lastTag}` unconditionally, before any merge, for the same reason this always applied: a plan that schedules its version bump as the final step has, by that ordering alone, decided that any cross-task defect ships and is fixed as a patch (`[IL-97]`).
+**The whole-branch review still gates the bump** — `/claude-tweaks:release`'s Step 3 runs `/claude-tweaks:review base:{lastTag}` unconditionally, before any merge, for the same reason this always applied: a plan that schedules its version bump as the final step has, by that ordering alone, decided that any cross-task defect ships and is fixed as a patch (`[IL-97]`). Before that review, once its review-tree check passes, Step 3 runs `/claude-tweaks:test full` — the one whole-suite run on the developer machine per version (#5370) — and a failing test stops the release before the console.
 
 **Invocation:** `/claude-tweaks:release` (no arguments for the on-demand path; `--train` for the scheduled release-train Routine). It reads the preflight fact pack, renders one console, merges the release-please PR via `gh pr merge --squash` — only once `origin/main` still equals the tip Step 3 reviewed, delta-reviewing any commits that arrived and holding the release past `release-tip-moves` moves (#4041) — verifies the resulting tag/GitHub Release/`release: published` workflow run, and books the shipped records. Full procedure: `plugin/skills/release/SKILL.md`.
 
