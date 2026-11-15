@@ -111,8 +111,13 @@ test('journey-health.js main(): churn-report --fail-on-high-churn with a non-num
   assert.strictEqual(code, 2);
 });
 
+test('code-health.js main(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
+  const root = tmpGitRootWithOneRun('code-health-churn-', 'code-health');
+  const code = returnedCode(() => captureStdio(() => codeHealth.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
 const CHURN_REPORT_CLIS = [
-  ['code-health', codeHealth],
   ['docs-health', docsHealth],
 ];
 
@@ -183,8 +188,21 @@ test('journey-health.js main(): retry-queue update with an unparseable results f
   assert.strictEqual(code, 1);
 });
 
+test('code-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
+  const root = tmpRoot('code-health-retryq-missing-');
+  const code = returnedCode(() => captureStdio(() => codeHealth.main(['retry-queue', 'update', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
+test('code-health.js main(): retry-queue update with an unparseable results file returns 1', () => {
+  const root = tmpRoot('code-health-retryq-malformed-');
+  const resultsPath = path.join(root, 'results.json');
+  fs.writeFileSync(resultsPath, 'not valid json {{{');
+  const code = returnedCode(() => captureStdio(() => codeHealth.main(['retry-queue', 'update', resultsPath, '--root', root])));
+  assert.strictEqual(code, 1);
+});
+
 const ALL_CLIS = [
-  ['code-health', codeHealth],
   ['docs-health', docsHealth],
 ];
 

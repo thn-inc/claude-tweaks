@@ -27,7 +27,6 @@ const NOT_YET = [
   'blast-radius.js',
   'calibration-report.js',
   'claude-tweaks-statusline.js',
-  'code-health.js',
   'compose-subject.js',
   'declined-learning.js',
   'design-detect.js',
