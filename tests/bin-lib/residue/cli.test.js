@@ -85,7 +85,21 @@ test('#1781: --own-pr 42 parses and is not itself an open PR here, so ownPr is n
   const parsed = JSON.parse(r.stdout);
   // results[2] is the forge probe (worktrees, branches, forge, suite, release, pipeline-runs, artifacts).
   assert.ok(Object.prototype.hasOwnProperty.call(parsed.results[2], 'ownPr'), 'forge result carries an ownPr field');
+  // ran: true and PR #7 among the findings: the PR loop ran, so the null is not an early bail-out.
+  assert.strictEqual(parsed.results[2].ran, true, parsed.results[2].reason);
+  assert.ok(parsed.results[2].findings.some((f) => f.subject === 'PR #7'), JSON.stringify(parsed.results[2].findings));
   assert.strictEqual(parsed.results[2].ownPr, null);
+});
+
+test('#1781: --own-pr 7 names an open PR here, so ownPr is that PR and it is not a finding', () => {
+  const root = initRepo('residue-cli-ownpr-match-');
+  const gh = JSON.stringify([{ number: 7, title: 'other', headRefName: 'other-lane' }]);
+  const r = run(['--base', 'HEAD', '--no-suite', '--json', '--own-pr', '7'], { cwd: root, deps: { runner: gitRunner({ gh }) } });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const forge = JSON.parse(r.stdout).results[2];
+  assert.strictEqual(forge.ran, true, forge.reason);
+  assert.deepStrictEqual(forge.ownPr, { number: 7, headRefName: 'other-lane' });
+  assert.ok(!forge.findings.some((f) => f.subject === 'PR #7'), 'the own PR is reported on ownPr, not as residue');
 });
 
 test('#1781: a non-integer --own-pr value is rejected with the usage error', () => {
@@ -180,7 +194,7 @@ function ghHostRun(configEnv) {
   const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-cli-gh-stub-'));
   const marker = path.join(stubDir, 'host.txt');
   fs.writeFileSync(path.join(stubDir, 'gh'), `#!/bin/sh\nprintf '%s' "$GH_HOST" > "${marker}"\necho '[]'\n`);
-  fs.chmodSync(path.join(stubDir, 'gh'), 0o755);
+  fs.chmodSync(path.join(stubDir, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
   const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-cli-gh-cfg-'));
   const runner = (argv, opts) => (argv[1] === 'ls-remote' ? null : realDeps.runner(argv, opts));
   const env = { ...CLI_ENV, PATH: stubDir + path.delimiter + CLI_ENV.PATH, GIT_DIR: path.join(b, '.git'), ...configEnv(cfg) };

@@ -14,6 +14,10 @@ const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'release-boo
 const CLI_ENV = { PATH: process.env.PATH, HOME: os.homedir() };
 for (const key of ['SystemRoot', 'USERPROFILE']) if (process.env[key] !== undefined) CLI_ENV[key] = process.env[key];
 
+// The env a spawnCli smoke gets: CLI_ENV, plus the variables tools/count-node-procs.js counts through.
+const SMOKE_ENV = { ...CLI_ENV };
+for (const key of ['NODE_OPTIONS', 'CT_COUNT_NODE_LOG']) if (process.env[key] !== undefined) SMOKE_ENV[key] = process.env[key];
+
 // In-process call (#5385); maps the helper's `code` onto the `status` field the assertions use.
 function run(args, opts = {}) {
   const { code, stdout, stderr } = runCliSync(CLI, args, { env: CLI_ENV, ...opts });
@@ -31,7 +35,7 @@ test('CLI: fresh local-merge root prints the JSON envelope and exits 0', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
   fs.writeFileSync(path.join(root, 'package.json'), '{"name":"x"}');
   // Real process: proves the script entry (the require.main guard), exit 0 and the JSON envelope on stdout.
-  const res = spawnCli(CLI, ['--root', root, '--integration-model', 'local-merge', '--branch', 'main'], { env: CLI_ENV });
+  const res = spawnCli(CLI, ['--root', root, '--integration-model', 'local-merge', '--branch', 'main'], { env: SMOKE_ENV });
   const r = { status: res.code, stdout: res.stdout, stderr: res.stderr };
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);
@@ -44,7 +48,7 @@ test('CLI: fresh local-merge root prints the JSON envelope and exits 0', () => {
 // Real process: proves the script entry turns run's usage refusal into the exit code (AC6.1); the baseline
 // for a no-argument call is exit 2, empty stdout and this stderr.
 test('CLI: no arguments is a usage refusal — exit 2, empty stdout, missing --integration-model plus the usage line', () => {
-  const res = spawnCli(CLI, [], { env: CLI_ENV });
+  const res = spawnCli(CLI, [], { env: SMOKE_ENV });
   assert.equal(res.code, 2);
   assert.equal(res.stdout, '');
   assert.equal(res.stderr, 'missing required --integration-model\nusage: release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type> --extra-file <path>] [--dry-run]\n');
