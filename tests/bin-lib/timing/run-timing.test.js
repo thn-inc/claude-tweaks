@@ -187,7 +187,47 @@ test('readUsage with an aborted signal destroys a real slow stream', { timeout: 
   assert.equal(stream.destroyed, true);
 });
 
-test('readUsage with an already-aborted signal rejects without opening a stream', async () => {
+test('deriveTiming returns deadlineHit when the deadline passes between the transcript reads and collectDispatches', { timeout: 5000 }, async (t) => {
+  const dir = fixtureCopy();
+  try {
+    // The clock is pinned until the one transcript read finishes, then jumps past
+    // the deadline, so the read itself wins its race and only collectDispatches sees it expire.
+    const start = Date.now();
+    let now = start;
+    t.mock.method(Date, 'now', () => now);
+    const r = await deriveTiming(dir, {
+      transcriptPaths: [path.join(dir, 'main.jsonl')],
+      cwd: dir,
+      deadlineAt: start + 10000,
+      readUsageImpl: async () => { now = start + 20000; return []; },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.deadlineHit, true);
+    assert.equal(Object.hasOwn(r.timing, 'dispatches'), false);
+    assert.equal(Object.hasOwn(r.timing.totals, 'tokens'), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('phase-timing run derives each CLI run once: events.jsonl is read a single time', async (t) => {
+  const dir = fixtureCopy();
+  try {
+    const original = fs.readFileSync;
+    let eventReads = 0;
+    t.mock.method(fs, 'readFileSync', (file, ...rest) => {
+      if (typeof file === 'string' && path.basename(file) === 'events.jsonl') eventReads += 1;
+      return original.call(fs, file, ...rest);
+    });
+    const r = await runCli(CLI, ['--run', dir]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(eventReads, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readUsage with an already-aborted signal rejects without opening a stream', { timeout: 5000 }, async () => {
   let opened = false;
   const fsImpl = { statSync: () => ({ isFile: () => true }), createReadStream: () => { opened = true; return new Readable({ read() {} }); } };
   const ctl = new AbortController();
