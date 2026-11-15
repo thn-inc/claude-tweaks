@@ -36,7 +36,6 @@ const NOT_YET = [
   'release-bootstrap.js',
   'residue.js',
   'session-tmp-resolve.js',
-  'sweep-stray-run-dirs.js',
   'verify.js',
   'visual-decide.js',
   'wrap-up-engine.js',
