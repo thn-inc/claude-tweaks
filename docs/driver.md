@@ -110,7 +110,7 @@ Policy key `express-driver-review` (`policy.yml` only; a `--run` config never sw
 |---|---|
 | `off` | The step is skipped and writes no event line. |
 | `on` | The step runs for every record. |
-| `beyond-express` (default, also for an unset or malformed value) | The step runs for a record whose size label is missing or not `low`, or that has more than three Key Files (`EXPRESS_MAX_KEY_FILES`); a record with unreadable Key Files counts as beyond. A record inside the express bounds skips it. The driver's eligibility gate refuses the same records (a size label missing or not `low`, more than three Key Files), so under this default the step does not run in a real run today; `on` is how to exercise it. |
+| `beyond-express` (default, also for an unset or malformed value) | The step runs for a record whose size label is missing or not `low`, or that has more than three Key Files (`EXPRESS_MAX_KEY_FILES`); a record with unreadable Key Files counts as beyond. A record inside the express bounds skips it. The driver's eligibility gate refuses the same records (a size label missing or not `low`, more than three Key Files), so under this default and the default lane bounds the step does not run in a real run today; widening the lane bounds (below) or `on` is how it runs. |
 
 The `review` event line adds `returned`, `reproduced`, `discarded` (returned = reproduced + discarded when the pass does not stop), and the reviewer's own `usage`, `denials`, `costUsd` and `turns` (`null`, or `[]` for `denials`, when the reviewer returned no envelope). The final line's `costUsd` and `turns` leave the reviewer out, so a record's total spend is the two lines added. TAP output of each evidence run goes to `{run-dir}/review/review-evidence-{i}.tap`, and of the fix round to `{run-dir}/review/fix-evidence-{i}.tap`.
 
@@ -126,6 +126,18 @@ The `review` event line adds `returned`, `reproduced`, `discarded` (returned = r
 - An evidence path holding a character `node --test` expands as a glob (`[ ] { } ( ) ! + @`, beside the already refused `* ?`) is refused unwritten, so a legitimate test at a bracketed path (for example `app/[id]/page.test.js`) is discarded, not run.
 - The reviewer's read confinement rests on `--restricted` alone: its launch has no settings file and no read block, and no live probe of a `settings: false` launch has been made. The evidence run has HOME and the network.
 - The tree check reads plain `git status`, so it cannot see an evidence test that changes ignored files (for example `node_modules/` or build output) or creates empty directories. Such changes can affect later runs.
+
+### Lane bounds
+
+Three policy keys bound the records and diffs the driver takes on (#5224). All three are `policy.yml` only: a `--run` config never widens them. Each defaults to the express lane's value, and a malformed value resolves to the default (`invalid: true`), so it never widens the lane. One value is not resolved away: an all-digit `express-driver-max-lines` past 2^53 passes the resolver but is not a safe integer, so the policy step refuses it before any record is claimed and the run exits 1.
+
+| Key | Default | Bounds |
+|---|---|---|
+| `express-driver-max-size` | `low` | The highest size label eligibility accepts. `low` accepts `size:low` only; `medium` accepts `size:low` and `size:medium`. A `size:high` record is never accepted. |
+| `express-driver-max-key-files` | `3` (`EXPRESS_MAX_KEY_FILES`) | The most Key Files eligibility accepts. |
+| `express-driver-max-lines` | unset = `auto-merge-max-lines` | The implementation-line bound `check` applies to a record the reviewer step is on for. |
+
+A record beyond the express bounds (a size label that is not `low`, or more than `EXPRESS_MAX_KEY_FILES` Key Files) is admitted only when the reviewer step is on for it; otherwise admission refuses it with `record is beyond the express bounds and the reviewer step is off for it`. When a record beyond the express bounds, with the reviewer step off for it, is inside the lane bounds but fails another eligibility rule, the eligibility stop names that admission reason after eligibility's own. The driver passes `check --max-lines` only when `express-driver-max-lines` is set and the reviewer step is on for the record; otherwise it passes no flag and `check` reads `auto-merge-max-lines` itself. The worker's prompt states whichever bound `check` applies. Whether the reviewer step is on is decided once per record, in the eligibility step, and admission, the flag and the reviewer step all read that one answer. The widened values are chosen by editing `policy.yml`, not by the change that added these keys: its defaults widen nothing.
 
 ## The merge step
 

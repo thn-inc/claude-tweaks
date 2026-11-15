@@ -18,6 +18,9 @@ const POLICY_RESOLVED = Object.freeze({
   'express-driver': { value: 'on' },
   'integration-model': { value: 'pr-first' },
   'merge-sensitive-paths': { value: [] },
+  // #5224's lane bounds, which eligibilityOptions hands the eligibility call.
+  'express-driver-max-size': { value: 'low' },
+  'express-driver-max-key-files': { value: 3 },
 });
 const DEFAULT_FACTS = Object.freeze({ final: null, outcome: 'pending-review', claimed: true, claimExit: 0 });
 const EMPTY_PULL = Object.freeze({ groups: [], exclusions: [] });

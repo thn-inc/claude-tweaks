@@ -53,6 +53,26 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.169.0](https://github.com/thn-inc/claude-tweaks/compare/v6.168.0...v6.169.0) (2026-11-14)
+
+
+### Features
+
+* Driver merge step: mark ready, read the checks, merge… ([#5226](https://github.com/thn-inc/claude-tweaks/issues/5226)) ([27b8bef](https://github.com/thn-inc/claude-tweaks/commit/27b8befd1fcd0f6c3a4c628817f43a4004c59b9c))
+* Record CI wall time at the merge gate ([#5160](https://github.com/thn-inc/claude-tweaks/issues/5160)) ([8cda921](https://github.com/thn-inc/claude-tweaks/commit/8cda921c281544db5c20f980bf71a3d3c90d5dda)), closes [#5161](https://github.com/thn-inc/claude-tweaks/issues/5161) [#5162](https://github.com/thn-inc/claude-tweaks/issues/5162)
+* Run the impact-selected subset on a plain local npm… ([#5319](https://github.com/thn-inc/claude-tweaks/issues/5319)) ([1b89593](https://github.com/thn-inc/claude-tweaks/commit/1b89593324b6d662455c21f485b17a32bfdb2f6f)), closes [#5369](https://github.com/thn-inc/claude-tweaks/issues/5369) [#5370](https://github.com/thn-inc/claude-tweaks/issues/5370)
+
+### Highlights
+* Made wrap-up, phase exit, dispatch prompts and the release tip check read policy without starting an extra process each time.
+* The pipeline driver now stops a record when a worker moves the branch itself, instead of keeping commits the worker was never allowed to make.
+* The pipeline driver now stops a record when code it runs hides a file's changes from git with an index flag, so such hidden changes can no longer pass its test and evidence runs. A worktree whose git config sets `core.ignoreStat` is refused up front.
+* Recorded how long a pull request's CI took at the merge gate, so a growing CI suite now shows up in run timing instead of going unnoticed.
+* Added a reporting-only check to harness-health that shows workflow run duration trends, superseded and cancelled runs, and Actions budget headroom, and reports quietly when billing cannot be read.
+* Added an init review of a project's existing pull request CI workflows that flags draft-skipping jobs, path filters, missing cancel-in-progress concurrency and push triggers gated only at step level.
+* A project can now keep CI-declared test suites off the developer machine: with `"localRuns": "on-request"` in its verify declaration, `verify.js` takes those suites from the PR's CI job and runs them locally only with `--local`.
+* Pipelines now push before verifying and take CI-declared test suites from the PR's CI job, so a project that sets `"localRuns": "on-request"` no longer runs those suites on the developer machine unless asked (`/claude-tweaks:test full`). Every project also gets two changes without the key: `/claude-tweaks:release` now runs the whole suite on the developer machine before the version bump, and build's Final Verification now runs the scoped invocation for any project with a verify-scope declaration.
+* Added a merge step to the pipeline driver: once the judgment step that feeds it is wired in, a run on a record carrying `auto:merge` marks its pull request ready, waits for the checks and merges it.
+
 ## [6.168.0](https://github.com/thn-inc/claude-tweaks/compare/v6.167.0...v6.168.0) (2026-11-14)
 
 

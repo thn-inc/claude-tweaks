@@ -74,6 +74,13 @@ test('inScope: only build/*, worktree-*, demo/* namespaces', () => {
   assert.strictEqual(inScope('feature/z', []), false);
   assert.strictEqual(inScope('flow/spec-1-2', []), false);
 });
+// #5290 final review M3: wrap-up's learned-skills PR branches are plugin-owned too, so prune-remote
+// (which reuses inScope) can age them out of origin under the same evidence bar.
+test('inScope: learned-skills/{run-id} branches are plugin-owned', () => {
+  assert.strictEqual(inScope('learned-skills/2026-11-13T000000-spec-5290', []), true);
+  assert.strictEqual(inScope('learned-skills-other', []), false, 'the prefix is the namespace, slash included');
+  assert.strictEqual(inScope('x/learned-skills/y', []), false, 'anchored at the start');
+});
 test('inScope: branch attached to a worktree is out of scope', () => {
   const wts = [{ path: '/w/a', branch: 'build/x' }];
   assert.strictEqual(inScope('build/x', wts), false);

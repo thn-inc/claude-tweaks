@@ -151,7 +151,7 @@ function newCtx(record, shared) {
     record, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
-    summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false,
+    summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
     shared,
   };
 }
@@ -517,8 +517,11 @@ const realDeps = {
     return { code: r.status, stdout: r.stdout || '', stderr: r.error ? `${stderr}${r.error.message}\n` : stderr };
   },
   resolvePolicy: (keys) => defaultResolvePolicy(keys),
+  resolvePolicyCore: (opts, coreDeps) => require('../../resolve-policy').resolvePolicy(opts, coreDeps),
   evaluateRecordEligibility: (issue, opts) => require('../express/eligibility').evaluateRecordEligibility(issue, opts),
   evaluateAdmission: (input) => require('./admission').evaluateAdmission(input),
+  // The record's one reviewer answer (#5224), asked by the eligibility step.
+  reviewRequired: (opts) => require('./review').reviewRequired(opts),
   fetchNativeDependencies: (opts) => require('../issues/native-dependencies').fetchNativeDependencies(opts),
   fetchLinkedPRs: (opts) => require('../issues/linked-prs').fetchLinkedPRs(opts),
   // The queue-pull module bounds its own gh calls (isBatchGhCall), so these take no timeout here.
