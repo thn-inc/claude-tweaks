@@ -318,3 +318,15 @@ test('AC5.1 AC7.1: script installs the wrapper under the injected home and print
   assert.strictEqual(statAfter, statBefore, 'the real home wrapper must be untouched');
   fs.rmSync(tmp, { recursive: true, force: true });
 });
+
+test('AC8.1: run writes under deps.homeDir(), not the real home', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-install-sl-inproc-')));
+
+  const res = runCliSync(CLI, [], { env: { HOME: tmp, USERPROFILE: tmp } });
+
+  const expected = path.join(tmp, '.claude-tweaks', 'bin', 'statusline.js');
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(res.stdout, expected);
+  assert.ok(fs.existsSync(expected));
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
