@@ -20,6 +20,7 @@ const os = require('os');
 const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
 const { USAGE, VERBS } = require('../plugin/bin/hooks.js');
+const { runCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -63,6 +64,16 @@ test('#1143: every USAGE-table verb honors -h identically to --help', () => {
     const result = runHook([verb, '-h']);
     assert.strictEqual(result.code, 0, `${verb} -h must exit 0`);
     assert.strictEqual(result.stdout, `claude-tweaks: usage: ${USAGE[verb]}\n`, `${verb} -h stdout must match --help's`);
+  }
+});
+
+test('AC2.1 AC4.1: runCli(hooks, [verb, "--help"]) resolves to the usage line for every VERBS verb', async () => {
+  for (const verb of Object.keys(VERBS)) {
+    const r = await runCli(HOOKS, [verb, '--help'], {
+      cwd: HOOK_SANDBOX,
+      env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+    });
+    assert.deepStrictEqual(r, { code: 0, stdout: `claude-tweaks: usage: ${VERBS[verb].usage}\n`, stderr: '' }, verb);
   }
 });
 
