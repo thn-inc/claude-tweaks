@@ -3219,9 +3219,9 @@ describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_0
 });
 
 // ---- Task 9: fetch-failure faults (AC4), files-input faults (AC7.2) and the reproduced script
-// defects (D1, D4; D3 is fixed, #5307). Each FAULTS row (queue-pull-fixtures.js) fails one gh fetch, and each
-// FILES_FAULTS row one files input, on both sides through the shared table. Its base is the same
-// scenario un-faulted: the AC1 matrix's own run of it where the matrix has one (S1 and S2, reused
+// defects (D1, D4; D3 is fixed, #5307). Each FAULTS row (queue-pull-fixtures.js) fails one gh
+// fetch, and each FILES_FAULTS row one files input, on both sides through the shared table. Its
+// base is the same scenario un-faulted: the AC1 matrix's own run of it where the matrix has one (S1 and S2, reused
 // through the pair memo), else a base run in the fault pool. One pool runs both transports' rows,
 // their new bases and D1, from one `before`. A row asserts what the ORACLE did (Plan Review
 // Clarifications, criteria 4, 5 and 7): its exit, the lines it adds on each channel, and its
@@ -3331,6 +3331,7 @@ const FILES_EXPECT = {
   'files-inFlightClaims-missing': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightClaims-malformed': FILES_STOPPED_NEIGHBOUR,
   'files-queueRaw-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-queueRaw-wrapper/dispatch-queue-raw.json is not a JSON array — treated as a failed read', STOP_LINE.grouping], entries: [] },
+  'files-queueRaw-string': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-queueRaw-string/dispatch-queue-raw.json is not a JSON array — treated as a failed read', STOP_LINE.grouping], entries: [] },
   'files-depFreshness-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
   'files-depFreshness-string': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-string/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
   'files-depFreshness-wrapper-cold': { status: 0, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper-cold/dispatch-dep-freshness.json is not a JSON array — treated as a failed read'], drops: [] },
@@ -3609,6 +3610,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
     const cacheStop = ['dispatch-open-numbers.json', 'dispatch-verified-open-deps.txt', ...inFlight];
     assert.deepEqual(carved, {
       'files-queueRaw-missing': inFlight, 'files-queueRaw-malformed': inFlight, 'files-queueRaw-wrapper': inFlight,
+      'files-queueRaw-string': inFlight,
       'files-depFreshness-missing': cacheStop, 'files-depFreshness-malformed': cacheStop, 'files-depFreshness-wrapper': cacheStop,
       'files-depFreshness-string': cacheStop,
       'files-openNumbers-missing': inFlight, 'files-openNumbers-malformed': inFlight,
@@ -3639,7 +3641,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
   });
 
   test('#5307 D3: a wrapper-object queue or dependency-freshness file is a failed read on both sides: exit 1, one Warning naming the file, the matching stop last', () => {
-    for (const [id, file, stop] of [['files-queueRaw-wrapper', 'dispatch-queue-raw.json', STOP_LINE.grouping], ['files-depFreshness-wrapper', 'dispatch-dep-freshness.json', STOP_LINE.cacheHit], ['files-depFreshness-string', 'dispatch-dep-freshness.json', STOP_LINE.cacheHit]]) {
+    for (const [id, file, stop] of [['files-queueRaw-wrapper', 'dispatch-queue-raw.json', STOP_LINE.grouping], ['files-queueRaw-string', 'dispatch-queue-raw.json', STOP_LINE.grouping], ['files-depFreshness-wrapper', 'dispatch-dep-freshness.json', STOP_LINE.cacheHit], ['files-depFreshness-string', 'dispatch-dep-freshness.json', STOP_LINE.cacheHit]]) {
       stopMapped(R[id].oracle, R[id].module);
       for (const [side, r] of sides(R[id])) {
         const warnings = reported(r.stderr).filter((l) => l.startsWith('Warning: '));
