@@ -22,6 +22,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnCli } = require('../../helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-state.js');
 
@@ -103,4 +104,19 @@ test('outside a git repository the fields render unknown and the exit stays 0', 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('AC7.1 script: missing --since exits 2 with usage on stderr', () => {
+  // real process: proves the shebang, the require.main guard and the exit code of the script entry
+  const r = spawnCli(CLI, []);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /usage: wrap-up-state\.js --since/);
+  assert.strictEqual(r.stdout, '');
+});
+
+test('AC7.1 script: a valid --since exits 0 and renders the Branch line', () => {
+  // real process: the script entry reaches real git and prints through real stdout
+  const r = spawnCli(CLI, ['--since', 'HEAD~1'], { cwd: path.join(__dirname, '..', '..', '..') });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^Branch\s+\S/m);
 });

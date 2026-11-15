@@ -11,6 +11,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnCli } = require('../../helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 
@@ -744,4 +745,79 @@ test('render --section with a bare unrecognized value (no procedure: prefix) sti
   const r = run(['render', '--run-dir', runDir, '--section', 'bogus']);
   assert.strictEqual(r.status, 2);
   assert.match(r.stderr, /--section must be 'trace', 'console', or 'procedure:<name>'/);
+});
+
+// ---- script-entry pins (#5379) ---------------------------------------------
+// Real-process cases committed before the in-process split: they pin today's
+// script behaviour so the split is checked against the old one. The three
+// spawnCli tests below stay as the script-entry smoke set.
+
+// The parsed worklist the script printed for AC4.2; the in-process parity
+// check reads it.
+let scriptPlanStdout;
+
+test('AC4.1: script with no verb prints usage and exits 2', () => {
+  // real process: proves the shebang, the require.main guard and the exit code of the script entry
+  const r = spawnCli(CLI, [], { cwd: repoDir });
+  assert.strictEqual(r.code, 2);
+  assert.ok(r.stderr.startsWith('usage: wrap-up-engine.js plan'), r.stderr);
+  assert.strictEqual(r.stdout, '');
+});
+
+test('AC4.2: script plan --dry-run prints the worklist JSON', () => {
+  const r = spawnCli(CLI, ['plan', '--run-dir', makeRunDir(), '--base', baseSha, '--dry-run'], { cwd: repoDir });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stderr, '');
+  scriptPlanStdout = JSON.parse(r.stdout);
+  assert.strictEqual(scriptPlanStdout.rows.length, 8);
+});
+
+test('real stdin: a non-ASCII record payload decodes through fd 0', () => {
+  // real process: fd-0 byte decoding, which runCli's string stdin skips
+  const runDir = planFreshRunDir();
+  const row = readState(runDir).worklist.rows.find((r) => r.gate === 'open');
+  const detail = 'naïve — ✓ 日本';
+  const payload = JSON.stringify({
+    version: 1, rowId: row.id, result: 'clean', read: [], findings: [], gapDetection: 'not-run', detail,
+  });
+  const r = spawnCli(CLI, ['record', '--run-dir', runDir, '--dry-run'], { cwd: repoDir, stdin: payload });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /SCANNED/);
+  // pickStoredFields stores payload.detail in engine-state.json; decisions.md's SCANNED line omits it.
+  assert.strictEqual(readState(runDir).results[row.id].detail, detail);
+});
+
+// Verb-vocabulary pins: amend and verify had no non-zero CLI assertion.
+
+test('amend against a run dir with no engine-state.json exits 2', () => {
+  const r = run(['amend', '--run-dir', makeRunDir()], { input: '{}' });
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /amend: no engine-state\.json/);
+});
+
+test('amend with garbage stdin exits 1', () => {
+  const r = run(['amend', '--run-dir', planFreshRunDir()], { input: '{not-json' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /amend: stdin is not valid JSON/);
+});
+
+test('verify without --base exits 2 with usage', () => {
+  const r = run(['verify', '--run-dir', makeRunDir()]);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /^usage: wrap-up-engine\.js/);
+});
+
+test('record with a falsy JSON stdin (null) exits 0 with no output', () => {
+  // pins today's `if (!payload) return;`
+  const r = run(['record', '--run-dir', planFreshRunDir(), '--dry-run'], { input: 'null' });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(r.stderr, '');
+});
+
+test('amend with a falsy JSON stdin (null) exits 0 with no output', () => {
+  const r = run(['amend', '--run-dir', planFreshRunDir()], { input: 'null' });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(r.stderr, '');
 });
