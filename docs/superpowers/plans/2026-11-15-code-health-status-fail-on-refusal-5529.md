@@ -41,6 +41,9 @@ Waived tests/bin-lib/code-health/skill-md.test.js: run unchanged in Task 2 Step 
 
 ### Task 1: Refusal gate in cmdStatus
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/code-health.js` (imports near `:6-21`; `cmdStatus` at `:64-110`)
 - Test: `tests/bin-lib/code-health/status-v2.test.js` (append new cases; do not edit existing ones)
@@ -109,6 +112,8 @@ git commit -m "Refuse code-health status --fail-on on an untrusted cache — exi
 
 ### Task 2: Correct the CI gating documentation
 
+**Role:** integration
+
 **Files:**
 - Modify: `plugin/skills/code-health/ci-integration.md:5-22` (Regression and Risk Gating section only)
 
@@ -118,7 +123,7 @@ git commit -m "Refuse code-health status --fail-on on an untrusted cache — exi
 
 - [ ] **Step 1: Write the section text**
 
-Opening sentence names the local, git-ignored cache (`.claude-tweaks/code-health/cache.json`) under `--root` or the current directory. Then: each checkout and linked worktree has its own cache, so a hook that runs elsewhere passes `--root` naming the checkout the sweep ran in. Exit-code list adds: `2` — the gate could not evaluate (unrecognized `--fail-on` value, or the cache is not accepted), a setup problem, not a finding, with the three reasons listed verbatim. Limits: the gate cannot tell a stale cache from a fresh one, and it is not suited to a fresh CI checkout (no sweep has written a cache there, so it exits 2). Keep the two example commands.
+Opening sentence names the local, git-ignored cache (`.claude-tweaks/code-health/cache.json`) under `--root` or the current directory. Then: each checkout and linked worktree has its own cache, so a hook that runs elsewhere passes `--root` naming the checkout the sweep ran in. The two existing exit-code bullets change from "exits `0` otherwise" to "exits `0` when the cache is accepted and no entry matches", each pointing to the exit-2 bullet. Exit-code list adds: `2` — the gate could not evaluate (unrecognized `--fail-on` value, or the cache is not accepted), a setup problem, not a finding, with the three reasons listed verbatim. Limits: the gate cannot tell a stale cache from a fresh one, and it is not suited to a fresh CI checkout (no sweep has written a cache there, so it exits 2). Keep the two example commands.
 
 - [ ] **Step 2: Verify the section fails the AC7 checks before the edit**
 
