@@ -20,11 +20,29 @@ const EXPRESS_MAX_KEY_FILES = 3;
 // driver lane (#5224) may pass `medium`.
 const SIZE_CEILINGS = Object.freeze({ low: Object.freeze(['low']), medium: Object.freeze(['low', 'medium']) });
 
+// The driver lane's bound values as eligibility reads them: a ceiling is an own key of SIZE_CEILINGS
+// (`toString` is not one), and a Key File limit is a safe integer of at least 1.
+function isReadableSizeCeiling(v) {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(SIZE_CEILINGS, v);
+}
+function isReadableKeyFileLimit(v) {
+  return Number.isSafeInteger(v) && v >= 1;
+}
+
+// Beyond the express bounds: a size label that is not `low`, or more than EXPRESS_MAX_KEY_FILES Key
+// Files. A `keyFiles` that is not an array counts as beyond.
+function isBeyondExpressBounds({ size, keyFiles } = {}) {
+  return size !== 'low' || !Array.isArray(keyFiles) || keyFiles.length > EXPRESS_MAX_KEY_FILES;
+}
+
 // Reasons for the two bounds the driver lane can widen. REASONS.size and
 // REASONS.tooManyKeyFiles are built from these at the express defaults, so the express
 // strings cannot drift from the parameterised ones.
 const BOUND_REASONS = Object.freeze({
-  size: (ceiling) => `size is not ${SIZE_CEILINGS[ceiling].join(' or ')}`,
+  // A ceiling that is not a SIZE_CEILINGS key gets the unreadable reason, never a throw.
+  size: (ceiling) => (isReadableSizeCeiling(ceiling)
+    ? `size is not ${SIZE_CEILINGS[ceiling].join(' or ')}`
+    : BOUND_REASONS.sizeCeilingUnreadable(ceiling)),
   tooManyKeyFiles: (limit) => `more than ${limit} Key Files`,
   sizeCeilingUnreadable: (v) => `size ceiling unreadable: ${String(v)}`,
   keyFileLimitUnreadable: (v) => `Key File limit unreadable: ${String(v)}`,
@@ -131,7 +149,7 @@ function evaluateRecordEligibility(issue, opts) {
   if (facets.risk !== 'low') reasons.push(REASONS.risk);
   if (sizeCeiling === undefined) {
     if (facets.size !== 'low') reasons.push(REASONS.size);
-  } else if (typeof sizeCeiling !== 'string' || !Object.prototype.hasOwnProperty.call(SIZE_CEILINGS, sizeCeiling)) {
+  } else if (!isReadableSizeCeiling(sizeCeiling)) {
     reasons.push(BOUND_REASONS.sizeCeilingUnreadable(sizeCeiling));
   } else if (!SIZE_CEILINGS[sizeCeiling].includes(facets.size)) {
     reasons.push(BOUND_REASONS.size(sizeCeiling));
@@ -149,7 +167,7 @@ function evaluateRecordEligibility(issue, opts) {
   if (keyFiles.length === 0) reasons.push(REASONS.noKeyFiles);
   if (maxKeyFiles === undefined) {
     if (keyFiles.length > EXPRESS_MAX_KEY_FILES) reasons.push(REASONS.tooManyKeyFiles);
-  } else if (!Number.isSafeInteger(maxKeyFiles) || maxKeyFiles < 1) {
+  } else if (!isReadableKeyFileLimit(maxKeyFiles)) {
     reasons.push(BOUND_REASONS.keyFileLimitUnreadable(maxKeyFiles));
   } else if (keyFiles.length > maxKeyFiles) {
     reasons.push(BOUND_REASONS.tooManyKeyFiles(maxKeyFiles));
@@ -219,5 +237,5 @@ function expressMergeVerification(resolved) {
 }
 
 module.exports = {
-  EXPRESS_MAX_KEY_FILES, SIZE_CEILINGS, BOUND_REASONS, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
+  EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS, BOUND_REASONS, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
 };

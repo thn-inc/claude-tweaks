@@ -5,12 +5,16 @@ const path = require('node:path');
 
 const {
   EXPRESS_MAX_KEY_FILES, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
+  BOUND_REASONS, SIZE_CEILINGS, isBeyondExpressBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
 const { resolveBlastRadiusConfig } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js'));
 
 const ELIGIBLE_LABELS = ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'];
 const ELIGIBLE_KEYS = ['plugin/skills/init/claude-md-template.md', 'CLAUDE.md'];
 const OPTS = { enabled: true, integrationModel: 'pr-first', sensitivePaths: [] };
+// The driver lane bound tests' (#5224) label and Key File builders.
+const nonSize = (labels) => labels.filter((l) => !l.startsWith('size:'));
+const keyFilesN = (n) => Array.from({ length: n }, (_, i) => `docs/k${i}.md`);
 
 // A spec-shaped body; extraBody is the leading metadata block (e.g. a Surface: line),
 // which liftMetadata reads only before the first blank line.
@@ -309,9 +313,6 @@ test('allowAbsentCeremony: gh {name} label objects take the same ceremony rule a
 });
 
 // Driver lane bounds (#5224): sizeCeiling / maxKeyFiles options; absent options keep every express verdict.
-const { BOUND_REASONS, SIZE_CEILINGS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
-const nonSize = (labels) => labels.filter((l) => !l.startsWith('size:'));
-const keyFilesN = (n) => Array.from({ length: n }, (_, i) => `docs/k${i}.md`);
 
 test('AC3.3: size:high is refused under every ceiling, naming the ceiling', () => {
   for (const ceiling of ['low', 'medium']) {
@@ -374,4 +375,32 @@ test('defaults spelled explicitly give byte-identical verdicts to absent options
       );
     }
   }
+});
+
+test('the widened size and Key File reasons keep their place in the reasons order (#5224)', () => {
+  const issue = record(['risk:medium', 'size:high', ...nonSize(ELIGIBLE_LABELS).filter((l) => l !== 'risk:low')], keyFilesN(6));
+  assert.deepStrictEqual(evaluateRecordEligibility(issue, { ...OPTS, sizeCeiling: 'medium', maxKeyFiles: 5 }).reasons, [
+    REASONS.risk, 'size is not low or medium', 'more than 5 Key Files',
+  ]);
+});
+
+test('BOUND_REASONS.size names an unreadable ceiling instead of throwing (#5224)', () => {
+  for (const v of ['high', 'toString', 'Medium', null, undefined, 3]) {
+    assert.strictEqual(BOUND_REASONS.size(v), BOUND_REASONS.sizeCeilingUnreadable(v), String(v));
+  }
+});
+
+test('isBeyondExpressBounds: a size other than low, more than the express Key File limit, or an unreadable list (#5224)', () => {
+  assert.strictEqual(isBeyondExpressBounds({ size: 'low', keyFiles: keyFilesN(EXPRESS_MAX_KEY_FILES) }), false);
+  assert.strictEqual(isBeyondExpressBounds({ size: 'low', keyFiles: [] }), false);
+  assert.strictEqual(isBeyondExpressBounds({ size: 'low', keyFiles: keyFilesN(EXPRESS_MAX_KEY_FILES + 1) }), true);
+  for (const size of ['medium', 'high', null, undefined]) assert.strictEqual(isBeyondExpressBounds({ size, keyFiles: keyFilesN(1) }), true, String(size));
+  for (const keyFiles of [null, undefined, 'a.js']) assert.strictEqual(isBeyondExpressBounds({ size: 'low', keyFiles }), true, String(keyFiles));
+});
+
+test('isReadableSizeCeiling and isReadableKeyFileLimit are the checks eligibility applies (#5224)', () => {
+  for (const v of ['low', 'medium']) assert.strictEqual(isReadableSizeCeiling(v), true, v);
+  for (const v of ['high', 'Medium', 'toString', '__proto__', null, undefined, 1]) assert.strictEqual(isReadableSizeCeiling(v), false, String(v));
+  for (const v of [1, 3, 99]) assert.strictEqual(isReadableKeyFileLimit(v), true, String(v));
+  for (const v of [0, -1, 2.5, '4', null, undefined, Infinity, NaN, 2 ** 53]) assert.strictEqual(isReadableKeyFileLimit(v), false, String(v));
 });
