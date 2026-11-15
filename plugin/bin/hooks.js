@@ -1829,6 +1829,7 @@ async function runReconcile(argv, deps) {
   const opts = {
     dryRun: args.includes('--dry-run'),
     cwd: deps.cwd(),
+    env: deps.env,
     mcpReachable: args.includes('--mcp-reachable'),
     // Unscoped: run everything except the janitorial checks deferred to the
     // background pass (#4032); FAST_CHECKS stays inside the inline set, so the

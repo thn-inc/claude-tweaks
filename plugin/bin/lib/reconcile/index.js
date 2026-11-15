@@ -100,7 +100,10 @@ function expandChecks(checks) {
   return out;
 }
 
-// opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number }
+// opts: { dryRun?: boolean, checks?: string[], cwd?: string, env?: object, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number }
+// `env` (#5376), when set, is the environment of the git children that resolve the integration
+// branch and probe the origin remote (the no-repo/no-remote gate); absent, they inherit process.env.
+// The checks past that gate still inherit process.env.
 // -> { mirror, redTip, worktrees, claims, postMerge, runs, branches, remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }
 // A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
 // tracking would have done (an array on a dry run when archive ran, null otherwise), and
@@ -159,15 +162,14 @@ async function reconcileInner(opts, state) {
 
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
-  // `checks`, the integration model, or whether this even resolves to a repo — the store's own
-  // path resolves from process.cwd() to the main checkout (#4360; no root param on this module
-  // today, matching every existing caller: /feedback and /reflect never pass one either), so this
-  // deliberately does not thread `root` through. Best-effort: a prune failure never blocks the
-  // rest of the pass.
+  // `checks`, the integration model, or whether this even resolves to a repo — the store's
+  // lock and file resolve from this pass's `cwd` to its main checkout (#4360, #5376: the store's
+  // `deps.cwd` anchor), so an in-process caller with its own cwd never prunes the store of the
+  // process's own checkout. Best-effort: a prune failure never blocks the rest of the pass.
   // #4180: skipped on a dry run — the prune rewrites the store file (and takes its lock directory).
   if (!dryRun) {
     try {
-      require('../declined-learning/store').pruneDeclines();
+      require('../declined-learning/store').pruneDeclines({}, { cwd });
     } catch {
       /* best-effort — never break reconcile over declined-learning maintenance */
     }
@@ -215,7 +217,8 @@ async function reconcileInner(opts, state) {
   // its own `origin/${integration}` ref or issues `git fetch origin
   // {integration}` on the assumption that `integration` is bare — normalize
   // once here so the whole module keeps that contract.
-  let integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
+  const gitEnvOpts = opts.env ? { env: opts.env } : {};
+  let integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache, gitEnvOpts));
   // #3132: a fresh clone can lack refs/remotes/origin/HEAD even with a
   // working `origin` — repair it once here (reconcile already does network
   // work) and re-resolve, rather than adding a network call to the shared
@@ -224,7 +227,7 @@ async function reconcileInner(opts, state) {
   if (!integration) {
     // #4180: on a dry run the repair is reported as skipped, never attempted (it writes a git ref
     // and, on failure, the cache); the pass then falls through to the no-remote skip below.
-    const repair = repairOriginHead(root, { dryRun });
+    const repair = repairOriginHead(root, { dryRun, ...gitEnvOpts });
     if (repair) {
       // Re-resolve after EVERY attempt, not only 'repaired' — a concurrent
       // session may have written origin/HEAD while this one's set-head lost
@@ -232,7 +235,7 @@ async function reconcileInner(opts, state) {
       // skipped under recent-failure (skipped). The caller's resolver cache
       // may already hold this root's null either way.
       if (opts.cache && opts.cache.integrationBranch) opts.cache.integrationBranch.delete(root);
-      integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
+      integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache, gitEnvOpts));
       if (integration) {
         result.originHeadRepair = { ...repair, branch: integration };
       } else {

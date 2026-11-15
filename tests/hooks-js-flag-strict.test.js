@@ -68,13 +68,15 @@ function runHook(args, { cwd = HOOK_SANDBOX, env = {} } = {}) {
 // undefined-valued one, which is not a behavior difference here. Every defined field is still compared.
 const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 
-// reconcile() takes no env, so a real pass in this process would start its git and gh children
-// on the runner's own environment. The reconcile verbs therefore run with reconcile() and the
-// background spawn stubbed on their module objects. hooks.js looks both up through the module
-// object at call time (`reconcileLib.reconcile`, `require('./lib/reconcile').reconcile`, the
-// destructure inside runReconcileBackground, `require('./lib/reconcile/background-spawn')
-// .spawnBackgroundIfStale`), so the stub is what it calls. No `fresh: true` on these calls: a
-// reload would hand hooks.js new module objects without the stubs.
+// reconcile() takes an env for the git children at its no-repo/no-remote gate only (#5376); the
+// checks past that gate still start their git and gh children on the runner's own environment,
+// so a real pass in this process would reach them. The reconcile verbs therefore run with
+// reconcile() and the background spawn stubbed on their module objects. hooks.js looks both
+// up through the module object at call time (`reconcileLib.reconcile`,
+// `require('./lib/reconcile').reconcile`, the destructure inside runReconcileBackground,
+// `require('./lib/reconcile/background-spawn').spawnBackgroundIfStale`), so the stub is what it
+// calls. No `fresh: true` on these calls: a reload would hand hooks.js new module objects
+// without the stubs.
 async function withReconcileStubbed(body, { result = () => ({ skipped: [] }), spawnResult = { spawned: true, reason: 'spawned' } } = {}) {
   const reconcileMod = require('../plugin/bin/lib/reconcile');
   const spawnMod = require('../plugin/bin/lib/reconcile/background-spawn');
@@ -208,7 +210,7 @@ test('#4777: reconcile --json with no typo runs for real (positive control for t
   assert.equal(result.code, 0);
   // In place of the real pass's cache stamp and fast-forward: reconcile() got the parsed flags,
   // and the converged pass handed the deferred checks to the background spawn.
-  assert.deepStrictEqual(calls.map(defined), [{ dryRun: false, cwd: root, mcpReachable: false, checks: INLINE_CHECKS }]);
+  assert.deepStrictEqual(calls.map(defined), [{ dryRun: false, cwd: root, env: hookEnv({ CLAUDE_CODE_SESSION_ID: 'flag-strict-session' }), mcpReachable: false, checks: INLINE_CHECKS }]);
   assert.deepStrictEqual(spawnCalls, [{ root, cwd: root, sessionId: 'flag-strict-session' }]);
   assert.deepStrictEqual(JSON.parse(result.stdout).background, { checks: CLI_DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
 });
