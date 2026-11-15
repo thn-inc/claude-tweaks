@@ -2175,6 +2175,27 @@ test('main() with no arguments still renders through realDeps', () => {
   assert.match(wrapper, /spawn\('node', \[target\]/);
 });
 
+// main() closes over the exported realDeps object, so swapping its io keys for fakes runs the very
+// call the wrapper makes on every render. `run` swallows a throw into an empty render, so a main
+// that no longer hands realDeps to run shows as empty output, not a rejection: assert the render.
+test('main() with no arguments resolves 0 and renders the payload read from realDeps.stdin', async () => {
+  await withScriptFixture(async ({ dir, home }) => {
+    const saved = { ...sl.realDeps };
+    let written = '';
+    sl.realDeps.stdin = () => JSON.stringify(SCRIPT_PAYLOAD(dir));
+    sl.realDeps.stdout = (s) => { written += s; };
+    sl.realDeps.env = { NO_COLOR: '1' };
+    sl.realDeps.homeDir = () => home;
+    try {
+      assert.strictEqual(await sl.main(), 0);
+    } finally {
+      Object.assign(sl.realDeps, saved);
+    }
+    assert.match(written, /Sonnet 5/);
+    assert.match(written, /18%/);
+  });
+});
+
 // #1793 AC1: renderPorts and its toplevel-resolution helper.
 function tmpRepoDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
