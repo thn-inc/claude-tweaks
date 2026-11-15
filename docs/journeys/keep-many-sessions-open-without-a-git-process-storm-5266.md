@@ -17,6 +17,7 @@ files:
 **Success state:**
 - In a main checkout or a linked worktree with a plain GitHub `origin`, one render starts exactly one child process, `git --no-optional-locks status --porcelain -b`, and no `/bin/sh`. That is two processes counting node, down from 5 in a main checkout and 7 in a linked worktree.
 - The project name, the link and the glyph are byte-for-byte what git's own answers would produce, in every repo shape. That includes repos git refuses to open.
+- Around each tool call, a hook in a directory it has already asked about starts no git process: a warm pre-tool-use call in a linked worktree is node alone. Every allow or deny is the one git's fresh answer would give.
 
 ## Steps
 
