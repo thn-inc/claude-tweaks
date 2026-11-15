@@ -130,29 +130,40 @@ test('AC1.1: from a linked worktree, ledger-row appends one row keeping the esca
   assert.deepEqual(ledgerRows(f), ['| 1 | build | a \\| b | open | — |']);
 });
 
-// In-process, with the lock wait threaded: the injected 30ms wait must be the one the lock uses. A decoy
-// 20s wait in process.env (outside the call's leak-guard window) makes an ignored deps.env show up as time.
+// In-process, with the lock wait threaded: the injected 30ms wait must be the one the lock uses. process.env
+// holds a decoy wait of 0 (set outside the call's leak-guard window), and the clock advances 1ms per Date.now
+// call, so the poll count depends only on the wait read: 0 polls the held lock's owner file once, 30 polls it
+// on every pass until the deadline. Counting those reads keeps the check free of real time.
 test('AC1.1 lock: a held ledger lock refuses and writes nothing', async () => {
   const f = await fixture();
   const lock = path.join(f.runDir, '.ledger.lock');
+  const owner = path.join(lock, '.owner');
   fs.mkdirSync(lock);
-  fs.writeFileSync(path.join(lock, '.owner'), `${process.pid}-held`);
+  fs.writeFileSync(owner, `${process.pid}-held`);
   const prior = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
-  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '20000';
+  const realNow = Date.now;
+  const realRead = fs.readFileSync;
+  let clock = realNow();
+  let ownerReads = 0;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '0';
+  Date.now = () => { clock += 1; return clock; };
+  fs.readFileSync = function readFileSync(p, ...rest) {
+    if (p === owner) ownerReads += 1;
+    return realRead.call(this, p, ...rest);
+  };
   let r;
-  let elapsed;
   try {
-    const started = Date.now();
     r = await ledgerRow(f, APPEND, { env: { CLAUDE_TWEAKS_LOCK_WAIT_MS: '30' } });
-    elapsed = Date.now() - started;
   } finally {
+    fs.readFileSync = realRead;
+    Date.now = realNow;
     if (prior === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
     else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prior;
   }
   refused(f, r, /lock/);
   assert.match(r.stderr, /LOCK_TIMEOUT/);
   assert.match(r.stderr, /retry once/);
-  assert.ok(elapsed < 10000, `the lock waited ${elapsed}ms: the wait came from process.env, not the injected env`);
+  assert.ok(ownerReads > 1, `the held lock was polled ${ownerReads} time(s): the wait came from process.env's 0, not the injected 30`);
 });
 
 test('AC2.1: --row 3 --status fixed --resolution abc123 rewrites only row 3\'s Status and Resolution', async () => {
