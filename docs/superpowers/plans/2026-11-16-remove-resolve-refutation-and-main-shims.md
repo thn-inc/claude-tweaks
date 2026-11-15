@@ -72,7 +72,7 @@ All five files change in one commit: `tests/review-tiebreak-step-conformance.tes
   - Delete the comment block at 1107-1109 (the one saying `resolveRefutation` "stay[s] pinned here at the library level"; the spec cites it as 1105-1107).
   - Test at 1110: retitle to `"refutation: the can't-tell downgrade line matches the documented schema"` and delete its first line, `assert.strictEqual(c.resolveRefutation('refuted'), 'unconfirmed');`. The `entry` constant and the `assert.match(entry, decisionLogPattern(...))` line stay as they are.
   - Delete the tests at 1117, 1121 and 1131 entirely.
-  - Test at 1143: retitle to `'/review Step 3.5: SKILL.md documents both the Per-Candidate Refutation Pass and Cross-Lens Debate'`. Delete everything in its body down to and including the "No silent drops" assertion (1144-1168). Keep, unchanged, the two-line comment at 1170-1171 and the two `assert.ok(REVIEW_SKILL.includes(...))` lines at 1172-1173.
+  - Test at 1143: retitle to `'/review Step 3.5: the review skill documents both the Per-Candidate Refutation Pass and Cross-Lens Debate'` (`REVIEW_SKILL` concatenates `SKILL.md`, `step3-lens-dispatch.md` and `step3-debate-and-refutation.md`, so the title names the skill, not one file). Delete everything in its body down to and including the "No silent drops" assertion (1144-1168). Keep, unchanged, the two-line comment at 1170-1171 and the two `assert.ok(REVIEW_SKILL.includes(...))` lines at 1172-1173.
 
 `tests/review-tiebreak-step-conformance.test.js`:
   - Delete the `refutationVerb` slice (1313) and the three `FAILURE_PATHS` rows at 1349-1351.
