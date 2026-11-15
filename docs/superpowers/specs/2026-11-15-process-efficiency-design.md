@@ -150,6 +150,10 @@ The existing records that teach callers to avoid refused shapes (#4990, #4931) s
 
 ## Phase 5 — Per-step facts and replay tools
 
+## Phase 5: Specified
+
+Records: parent #5554, unit 5.1 as #5555, unit 5.2 as #5556 (blocked by #5555), unit 5.3 as #5557. Unit 5.4 is filed in the dispatch repository by the caller.
+
 **5.1 Timing for every run.** `timing.json` exists in 406 of 2,948 run directories. It is written only when a model step runs `phase-timing.js`. Of 255 November runs, 106 have none; 90 of those are dispatched runs and 93 are closed. The record writes the file in code when a run closes.
 
 **5.2 Step yield.** One run artifact holds, per step: tokens, minutes, agents, and what the step produced. For review: findings raised, reported by both reviewers, confirmed and refuted by tiebreak. For any step: questions asked and minutes waited on each. Written by code from the decision log and the timing data; no model turn.
