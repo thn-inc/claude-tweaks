@@ -12,6 +12,7 @@ const sl = require('../plugin/bin/claude-tweaks-statusline.js');
 const color = require('../plugin/bin/lib/color');
 const { readText } = require('./helpers/read-skill');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
+const { spawnCli } = require('./helpers/run-cli');
 const { chmodDenialSkip } = require('./helpers/root');
 
 // The project segment wraps text in OSC 8 hyperlinks (\x1b]8;;URL\x07text\x1b]8;;\x07).
@@ -2013,6 +2014,50 @@ test('end-to-end: NO_COLOR strips ANSI codes even at high context', () => {
     { NO_COLOR: '1' },
   );
   assert.doesNotMatch(out, /\x1b\[/);
+});
+
+// The status-line script's own runs (#5386 AC1: at most these two). A realpath'd
+// temp dir with no git, so the project segment's macOS /private/var spelling
+// matches, and the four repo-redirecting GIT_* names dropped, since the expected
+// output depends on git finding no repository there.
+function withScriptFixture(fn) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-script-')));
+  const dir = path.join(root, 'proj');
+  const home = path.join(root, 'home');
+  fs.mkdirSync(dir);
+  fs.mkdirSync(home);
+  const { GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR, ...base } = process.env;
+  try {
+    return fn({ dir, env: { ...fixtureHomeEnv(home, base), NO_COLOR: '1' } });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const SCRIPT_PAYLOAD = (dir) => ({
+  model: { id: 'claude-sonnet-5', display_name: 'Sonnet 5' },
+  context_window: { used_percentage: 18, context_window_size: 200000 },
+  workspace: { current_dir: dir },
+});
+
+// Real process: proves the script entry, shebang and exit code (the wrapper starts this file as a script).
+test('AC5.1 AC7.1: script renders the payload and exits 0', () => {
+  withScriptFixture(({ dir, env }) => {
+    const res = spawnCli(STATUSLINE, [], { env, stdin: JSON.stringify(SCRIPT_PAYLOAD(dir)) });
+    assert.strictEqual(res.code, 0, res.stderr);
+    assert.strictEqual(res.stdout, `${linkedName(dir)}  Sonnet 5  ctx: 18%`);
+    assert.strictEqual(res.stderr, '');
+  });
+});
+
+// Real process: proves malformed stdin still exits 0 with output — the status line has no refusal path, so no non-zero smoke test exists.
+test('AC7.1: script given malformed JSON on stdin exits 0', () => {
+  withScriptFixture(({ dir, env }) => {
+    const res = spawnCli(STATUSLINE, [], { env, cwd: dir, stdin: 'not json' });
+    assert.strictEqual(res.code, 0, res.stderr);
+    assert.strictEqual(res.stdout, linkedName(dir));
+    assert.strictEqual(res.stderr, '');
+  });
 });
 
 // #1793 AC1: renderPorts and its toplevel-resolution helper.
