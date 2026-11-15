@@ -13,7 +13,7 @@ description: Use when adding an exit code or a new stop to `plugin/bin/claim-tar
 
 ### The registration set
 
-Answer the decisions below first, because they choose the rows. Rows 1-10 apply to every stop, row 3 only for the field it names; rows 11-13 say when they apply.
+Answer the decisions below first, because they choose the rows. Rows 1-10 and 14 apply to every `claim-targets.js` exit, row 3 only for the field it names; rows 11-13 say when they apply.
 
 | # | Site | What it owes |
 |---|---|---|
@@ -30,6 +30,7 @@ Answer the decisions below first, because they choose the rows. Rows 1-10 apply 
 | 11 | `plugin/skills/dispatch/two-call-gate.md` section 5, `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section E, `plugin/skills/wrap-up/flags.md` | Only when teardown must not release: the phrase the `cleanup-only` call appends, Section E's skip with its log line, and the `cleanup-only` flag entry that strips the phrase before input classification |
 | 12 | `plugin/skills/dispatch/reporting.md` | Only when a person must act: the relay block, since the first call's reply carries only status lines |
 | 13 | `plugin/skills/dispatch/SKILL.md`, `sequential-execution.md`, `two-call-gate.md` sections 5 and 7 | Only for a firing stop: the stop paragraph, the Every-exit close-out list, the Loop's terminators (two sentences), and every "next group" move-on site |
+| 14 | `plugin/bin/lib/driver/budget.js` (`classifyFacts`, `CLAIM_STOP_EXITS`, `PERMISSION_EXIT`, `CONTESTED_EXIT`), `docs/driver.md`'s "Picking records: `--budget`" | `drive.js --budget` reads the claim step's exit (`ctx.claimExit`) and decides the counter and whether its loop ends. An unlisted code falls through to `claimFailed` and the loop goes on, with no test failing. Decision 5 applies here on its own terms: exit 6 continues a `/dispatch` firing but ends the budget loop (`claim-stop`). Tests: `classifyFacts`' table in `tests/bin-lib/driver/budget.test.js` and the claim-exit table in `tests/bin-lib/driver/run.test.js` |
 
 Tests: `tests/bin-lib/claim-targets/claim-targets.test.js` (the exit and its envelope), `tests/bin-lib/issues/claim-store.test.js` (a new store field), `tests/flow-claim-preflight.test.js` (one pin per prose row above), `tests/dispatch-resume-prose.test.js` (row 5).
 
@@ -77,9 +78,9 @@ When a sibling path must **not** end the firing (a denied-twice call), pin that 
 
 | The stop is | Rows it takes |
 |---|---|
-| Per-target, record at fault, firing continues | 1-10 |
-| Run-level, record not at fault, firing continues (exit 6) | 1-10 |
-| Run-level, shared cause, teardown must not release, firing ends (exit 7) | All 13 |
+| Per-target, record at fault, firing continues | 1-10, 14 |
+| Run-level, record not at fault, firing continues (exit 6) | 1-10, 14 |
+| Run-level, shared cause, teardown must not release, firing ends (exit 7) | All 14 |
 | An existing failure re-routed to another code | Every row that names the old code, plus row 7's restatements of it |
 | A new cause folded into an existing code (#4794's `unknown-host` origin refusal on exit 2) | Rows 1, 2 and 4, row 7's command line, and every sentence that characterizes the code's old meaning, reworded so it does not misdescribe the new cause. Exit 2's bullet called every exit 2 "a bug in this call" until review reworded it as an environment stop with its remedy (`f1d8d79f6`). The shared code answers none of the six decisions above; answer them for the new cause |
 | A `/flow` pre-claim stop that is not a `claim-targets.js` exit (blocker-landing) | 8, 11, and the four sites in the section above |
