@@ -406,6 +406,7 @@ function runFetch(ctx) {
 // #5304: the CLI lookup's Warning when gh is absent (resolve-foreign-blockers.js's exit 2), the one
 // foreign-states Warning the dispatch layer drops after an ignored states file. Matches the fence's test.
 const GH_ABSENT_LOOKUP = /^Warning: foreign blocker state lookup failed \(exit 2: [^)]*gh[^)]* is required\)/;
+
 // Fence 159-205 on a miss (the eligible list, the unresolved-dependency check, the body-text and
 // native blocker filtering); on a hit the persisted `excluded` entries replayed as 'blocked'.
 function runBlocked(ctx) {
@@ -805,7 +806,12 @@ function runTargetMissing(ctx) {
 
 // The one claim reader of a pull, shared by the shipped and neighbour-in-flight passes; built on its first read.
 function claimReader(ctx) {
-  return { read: (n) => { if (!ctx.state.claimReader) ctx.state.claimReader = ctx.deps.createClaimReader(); return ctx.state.claimReader.read(n); } };
+  return {
+    read: (n) => {
+      if (!ctx.state.claimReader) ctx.state.claimReader = ctx.deps.createClaimReader();
+      return ctx.state.claimReader.read(n);
+    },
+  };
 }
 
 // Fence 551-580: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
