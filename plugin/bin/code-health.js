@@ -34,6 +34,9 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 
 // Strict read of the local cache for the --fail-on gate: unlike readCache, a missing,
 // non-regular, escaping or malformed cache is a refusal, never an empty cache.
+// The cache is found at a path no caller names and decides a pass/fail verdict, so the
+// lookup is a trust decision (#5529): any symlink is refused, even one that stays
+// inside the checkout — one regular-file rule, no cases to argue about.
 function readGateCache(root) {
   const p = cachePath(root);
   const refuse = (key) => ({ ok: false, path: p, reason: FAIL_ON_REFUSAL[key] });
@@ -41,6 +44,8 @@ function readGateCache(root) {
   if (t === 'missing') return refuse('missing');
   if (t === 'unreadable') return refuse('unreadable');
   if (t !== 'file') return refuse('notRegular');
+  // lstat sees only the leaf; this catches a symlinked parent directory
+  // (.claude-tweaks/code-health -> outside the checkout) that lstat reports as a plain file.
   const real = resolveWithin(p, root);
   if (real === null) return refuse('notRegular');
   let cache;
@@ -94,9 +99,11 @@ function parseArgs(argv, cwd = process.cwd()) {
 function cmdStatus(args, ctx) {
   const root = args.root || ctx.cwd();
   const failOn = args['fail-on'];
-  if (failOn != null && !FAIL_ON_VALUES.has(failOn)) {
+  // `in`, not `failOn != null`: a bare trailing `--fail-on` parses to undefined and must
+  // refuse like any other unrecognized value, never fall through to plain status.
+  if ('fail-on' in args && !FAIL_ON_VALUES.has(failOn)) {
     ctx.stderr(
-      `status: --fail-on "${failOn}" is not a recognized value ` +
+      `status: --fail-on "${failOn ?? ''}" is not a recognized value ` +
       `(must be one of ${[...FAIL_ON_VALUES].join('|')}) — an unrecognized value silently disables ` +
       'the gate (always exits 0) regardless of how many regressed/risk-high findings actually exist.\n',
     );

@@ -109,6 +109,17 @@ test('status --fail-on with an unrecognized value exits 2 (does not silently dis
   assert.ok(result.stderr.includes('--fail-on'), `expected --fail-on mentioned in stderr: ${result.stderr}`);
 });
 
+test('status with a bare trailing --fail-on (no value) exits 2 instead of running as plain status', () => {
+  const root = tmp();
+  writeV2Cache(root, [
+    { fp: 'codehealth-aaaabbbb', status: 'regressed', severity: 'high', risk: 'high' },
+  ]);
+  const result = cli(['status', '--root', root, '--fail-on']);
+  assert.strictEqual(result.status, 2, `expected exit 2 for a bare --fail-on, got ${result.status}: ${result.stdout}${result.stderr}`);
+  assert.strictEqual(result.stdout, '', `expected nothing on stdout: ${result.stdout}`);
+  assert.ok(result.stderr.includes('--fail-on'), `expected --fail-on mentioned in stderr: ${result.stderr}`);
+});
+
 // REGRESSION: --fail-on used to unconditionally fetch the durable
 // remembered store (a `git fetch origin health-state`, up to a 30s timeout
 // when offline) purely to print an informational count neither gate branch
