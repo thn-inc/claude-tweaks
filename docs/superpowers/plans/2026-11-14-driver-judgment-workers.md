@@ -195,7 +195,7 @@ Expected: FAIL.
 
 **Interfaces:**
 - Consumes: Task 1 `ACCEPTANCE_RESULT_SCHEMA`; Task 2 `loadAcceptanceRules`, `buildAcceptancePrompt`; Task 4 `decideRoute`; `inline` (`packet-render.js`); `findRunComments` (`plugin/bin/find-run-comment.js`, in-process); `isTrustedComment` (`plugin/bin/lib/issues/comment-trust.js`); `readCeilings`, `launchTracked`.
-- Produces: `runAcceptance(env, ctx) -> Promise<{ completed: boolean, route: string | null, detail: string }>` (never throws; emits one `merge-acceptance` event with `extra.route`), and the pure renderers `renderTryIt(groups) -> string`, `renderParentBrief(brief, { confirmed, poster }) -> string`, `renderObservationPlan(plan) -> string`, `neutralizeLines(text) -> string` (`text.split('\n').map(inline).join('\n')`).
+- Produces: `runAcceptance(env, ctx) -> Promise<{ completed: boolean, route: string | null, detail: string }>` (never throws; emits one `merge-acceptance` event with `extra.route`), and the pure renderers `renderTryIt(groups) -> string`, `renderParentBrief(brief, { confirmed, poster }) -> string`, `renderObservationPlan(plan) -> string` (each renderer passes every worker value through `inline`, per field; the shared I/O helpers live in `plugin/bin/lib/driver/judgment-io.js`, extracted at Task 5 review).
 
 Worker output shapes (validated in code; a violation → `completed: false`, detail names the field):
 - `tryIt`: non-empty array of `{ name, precondition, access, entryPoint, steps: [string, ≥1], expected }`, all strings non-empty. `renderTryIt` emits `_shared/try-it.md`'s Shape (`### Try it`, `**{name}**`, the five field lines in order, numbered steps), every value through `inline`.
