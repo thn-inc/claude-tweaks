@@ -3,24 +3,31 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
+const { execFileSync } = require('child_process');
 const path = require('path');
-const { spawnSync } = require('child_process');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { readText } = require('../../helpers/read-skill');
 const { fixtureHomeEnv } = require('../../helpers/fixture-home');
+const { runCli, spawnCli } = require('../../helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
-function run(args) { return spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' }); }
+// The complete environment each in-process call sees.
+const cliEnv = () => ({ ...process.env });
+// In-process: the CLI's run() under runCli, mapped onto { status, stdout, stderr }.
+async function run(args, { env = cliEnv(), cwd, allowRealRunner } = {}) {
+  const r = await runCli(CLI, args, { env, cwd, allowRealRunner });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
+}
 function tmpRun(copyFixture) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-'));
   if (copyFixture) for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(dir, f));
   return dir;
 }
 
-test('#1928 AC4: --markdown prints the table and writes timing.json', () => {
+test('#1928 AC4: --markdown prints the table and writes timing.json', async () => {
   const dir = tmpRun(true);
-  const r = run(['--run', dir, '--markdown']);
+  const r = await run(['--run', dir, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.split('\n')[0], '| Phase | Minutes | Verify |');
   assert.match(r.stdout, /^\| call-1 \| 25 \(own 1\) \|/m);
@@ -32,32 +39,65 @@ test('#1928 AC4: --markdown prints the table and writes timing.json', () => {
   assert.equal(json.totals.verifyRuns, 2);
 });
 
-test('#2550: an events file with only session-end collapses to a one-line summary instead of a 12-row all-unattributed table, and exits 0', () => {
+// A real process, to prove stdout is flushed on exit 0.
+test('AC8.1: --markdown on a fixture run prints the table and exits 0 (script entry)', () => {
+  const dir = tmpRun(true);
+  const r = spawnCli(CLI, ['--run', dir, '--markdown'], { env: { ...process.env } });
+  assert.equal(r.code, 0);
+  assert.equal(r.stderr, '');
+  assert.equal(r.stdout, [
+    '| Phase | Minutes | Verify |',
+    '|---|---|---|',
+    '| call-1 | 25 (own 1) | — |',
+    '| call-2 | 48 (own 24) | — |',
+    '| build | 22 (own 2) | — |',
+    '| plan | 6 | — |',
+    '| tasks | 14 | scoped ×1 |',
+    '| test | 2 | full ×1 |',
+    '| review | 8 | — |',
+    '| polish | 0 | unattributed |',
+    '| wrap-up | 15 | — |',
+    '| merge | 1 | — |',
+    '| total | 73 | 2 run(s) (scoped, full) |',
+    '',
+  ].join('\n'));
+});
+
+// A real process, to prove the entry's .catch maps a rejection to exit 2.
+test('AC8.1: a rejected run exits 2 with the phase-timing.js: line (script entry)', () => {
+  const dir = tmpRun(true);
+  fs.mkdirSync(path.join(dir, 'timing.json')); // the timing.json write throws EISDIR
+  const r = spawnCli(CLI, ['--run', dir, '--markdown'], { env: { ...process.env } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /^phase-timing\.js: EISDIR/);
+});
+
+test('#2550: an events file with only session-end collapses to a one-line summary instead of a 12-row all-unattributed table, and exits 0', async () => {
   const dir = tmpRun(false);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"ts":"2026-09-05T14:13:00.000Z","type":"session-end"}\n');
-  const r = run(['--run', dir, '--markdown']);
+  const r = await run(['--run', dir, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'no phase events; no tool-use data available\n');
 });
 
-test('#1928: a malformed line is skipped, not fatal; a missing events file is an empty run', () => {
+test('#1928: a malformed line is skipped, not fatal; a missing events file is an empty run', async () => {
   const dir = tmpRun(true);
   fs.appendFileSync(path.join(dir, 'events.jsonl'), 'not json\n');
-  assert.equal(run(['--run', dir, '--json']).status, 0);
+  assert.equal((await run(['--run', dir, '--json'])).status, 0);
   const empty = tmpRun(false);
-  const r = run(['--run', empty, '--json']);
+  const r = await run(['--run', empty, '--json']);
   assert.equal(r.status, 0);
   assert.equal(JSON.parse(r.stdout).totals.minutes, 0);
 });
 
-test('#1928: malformed invocation exits 2 — no --run, or a --run that is not a directory', () => {
-  assert.equal(run([]).status, 2);
-  assert.equal(run(['--run', path.join(os.tmpdir(), 'ct-timing-does-not-exist')]).status, 2);
-  assert.equal(run(['--run']).status, 2);
+test('#1928: malformed invocation exits 2 — no --run, or a --run that is not a directory', async () => {
+  assert.equal((await run([])).status, 2);
+  assert.equal((await run(['--run', path.join(os.tmpdir(), 'ct-timing-does-not-exist')])).status, 2);
+  assert.equal((await run(['--run'])).status, 2);
 });
 
-test('#1928 fix round 2: --run "" (present but empty — the unset-$PIPELINE_RUN_DIR idiom) exits 0 and writes nothing', () => {
-  const r = run(['--run', '', '--markdown']);
+test('#1928 fix round 2: --run "" (present but empty — the unset-$PIPELINE_RUN_DIR idiom) exits 0 and writes nothing', async () => {
+  const r = await run(['--run', '', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /no run directory/);
@@ -65,10 +105,10 @@ test('#1928 fix round 2: --run "" (present but empty — the unset-$PIPELINE_RUN
 
 const TFIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'transcript-small.jsonl');
 
-test('#1929 AC4: --transcript twice sums both, prints the three columns and the Guard footer, writes totals.guard', () => {
+test('#1929 AC4: --transcript twice sums both, prints the three columns and the Guard footer, writes totals.guard', async () => {
   const dir = tmpRun(true);
   fs.appendFileSync(path.join(dir, 'events.jsonl'), '{"ts":"2026-09-05T13:05:00.000Z","type":"gate-denial"}\n{"ts":"2026-09-05T13:06:00.000Z","type":"wd-deny"}\n{"ts":"2026-09-05T13:07:00.000Z","type":"wd-deny"}\n');
-  const r = run(['--run', dir, '--transcript', TFIX, '--transcript', TFIX, '--markdown']);
+  const r = await run(['--run', dir, '--transcript', TFIX, '--transcript', TFIX, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.split('\n')[0], '| Phase | Minutes | Verify | Tokens (in/out) | Proc. KB | Tool RTs |');
   // every fixture transcript row sits in 13:50-13:51 → review; two transcripts double it
@@ -84,9 +124,9 @@ test('#1929 AC4: --transcript twice sums both, prints the three columns and the 
   assert.equal(json.transcripts[0].rows, 8);
 });
 
-test('#1929 AC4: a nonexistent --transcript prints the not-found note, blank columns, exit 0', () => {
+test('#1929 AC4: a nonexistent --transcript prints the not-found note, blank columns, exit 0', async () => {
   const dir = tmpRun(true);
-  const r = run(['--run', dir, '--transcript', path.join(os.tmpdir(), 'ct-missing-transcript.jsonl'), '--markdown']);
+  const r = await run(['--run', dir, '--transcript', path.join(os.tmpdir(), 'ct-missing-transcript.jsonl'), '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^tokens: transcript not found \(ENOENT/m);
   assert.match(r.stdout, /^\| review \| 8 \| — \| — \| — \| — \|$/m);
@@ -95,24 +135,24 @@ test('#1929 AC4: a nonexistent --transcript prints the not-found note, blank col
   assert.match(json.transcripts[0].note, /ENOENT/);
 });
 
-test('#1929 review fold-in: an empty transcript file prints the no-usage-rows note, exit 0, six-column header', () => {
+test('#1929 review fold-in: an empty transcript file prints the no-usage-rows note, exit 0, six-column header', async () => {
   const dir = tmpRun(true);
   const empty = path.join(os.tmpdir(), 'ct-empty-transcript.jsonl');
   fs.writeFileSync(empty, '');
-  const r = run(['--run', dir, '--transcript', empty, '--markdown']);
+  const r = await run(['--run', dir, '--transcript', empty, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^tokens: transcript had no usage rows \(/m);
   assert.match(r.stdout, /^\| Phase \| Minutes \| Verify \| Tokens \(in\/out\) \| Proc\. KB \| Tool RTs \|$/m);
 });
 
-test('#1929: without any --transcript the table keeps its #1928 three-column shape', () => {
+test('#1929: without any --transcript the table keeps its #1928 three-column shape', async () => {
   const dir = tmpRun(true);
-  const r = run(['--run', dir, '--markdown']);
+  const r = await run(['--run', dir, '--markdown']);
   assert.equal(r.stdout.split('\n')[0], '| Phase | Minutes | Verify |');
   assert.doesNotMatch(r.stdout, /Guard denials/);
 });
 
-test('#1929 AC4: --auto-transcript locates the run session transcript from run-state.json under a fixture home', () => {
+test('#1929 AC4: --auto-transcript locates the run session transcript from run-state.json under a fixture home', async () => {
   const dir = tmpRun(true);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'));
   const worktree = '/Users/x/Code/repo/.claude/worktrees/wt';
@@ -120,24 +160,24 @@ test('#1929 AC4: --auto-transcript locates the run session transcript from run-s
   fs.mkdirSync(slugDir, { recursive: true });
   fs.copyFileSync(TFIX, path.join(slugDir, 'sess-9.jsonl'));
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree, sessionId: 'sess-9', status: 'active' }));
-  const r = spawnSync(process.execPath, [CLI, '--run', dir, '--markdown', '--auto-transcript'], { encoding: 'utf8', env: fixtureHomeEnv(home) });
+  const r = await run(['--run', dir, '--markdown', '--auto-transcript'], { env: fixtureHomeEnv(home) });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^\| review \| 8 \| — \| 116\/228 \| 0\.0 \| 3 \|$/m);
   const none = tmpRun(true);
   fs.writeFileSync(path.join(none, 'run-state.json'), JSON.stringify({ status: 'active' }));
-  const r2 = spawnSync(process.execPath, [CLI, '--run', none, '--markdown', '--auto-transcript'], { encoding: 'utf8', env: fixtureHomeEnv(home) });
+  const r2 = await run(['--run', none, '--markdown', '--auto-transcript'], { env: fixtureHomeEnv(home) });
   assert.equal(r2.status, 0);
   assert.match(r2.stdout, /^tokens: transcript not found \(no worktree or sessionId in run-state\.json\)$/m);
 });
 
-test('#1929 whole-branch review fix 3: a transcript row timestamped before every phase renders an unattributed row, and total sums visible + unattributed', () => {
+test('#1929 whole-branch review fix 3: a transcript row timestamped before every phase renders an unattributed row, and total sums visible + unattributed', async () => {
   const dir = tmpRun(true);
   const early = path.join(os.tmpdir(), 'ct-timing-early-transcript.jsonl');
   fs.writeFileSync(early, [
     '{"type":"assistant","timestamp":"2026-09-05T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"early"}],"usage":{"input_tokens":7,"output_tokens":9,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}',
     '{"type":"user","timestamp":"2026-09-05T12:00:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"none","content":"x"}]}}',
   ].join('\n') + '\n');
-  const r = run(['--run', dir, '--transcript', early, '--markdown']);
+  const r = await run(['--run', dir, '--transcript', early, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^\| unattributed \| — \| — \| 7\/9 \| 0\.0 \| 1 \|$/m);
   const json = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
@@ -146,36 +186,36 @@ test('#1929 whole-branch review fix 3: a transcript row timestamped before every
   assert.equal(visible.output + json.unattributed.tokens.output, json.totals.tokens.output);
 });
 
-test('#2550 (was #1929 whole-branch review fix 8): a run with no phase events but a transcript collapses to a one-line summary naming the token/round-trip counts, not a total row in an otherwise-empty table', () => {
+test('#2550 (was #1929 whole-branch review fix 8): a run with no phase events but a transcript collapses to a one-line summary naming the token/round-trip counts, not a total row in an otherwise-empty table', async () => {
   const dir = tmpRun(false); // no events.jsonl copied — an empty run
   const early = path.join(os.tmpdir(), 'ct-timing-notimes-transcript.jsonl');
   fs.writeFileSync(early, '{"type":"assistant","timestamp":"2026-09-05T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":3,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
-  const r = run(['--run', dir, '--transcript', early, '--markdown']);
+  const r = await run(['--run', dir, '--transcript', early, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   // #3375: a transcript-requested run also prints the dispatches not-found line (no subagents/ beside this transcript)
   const subDir = path.join(os.tmpdir(), 'ct-timing-notimes-transcript', 'subagents');
   assert.equal(r.stdout, `no phase events; 0 tool round-trips, 3/4 tokens\n\ndispatches: subagent transcripts not found (no subagents/ directory at ${subDir})\n`);
 });
 
-test('#2550 review fix: the collapsed one-line summary still carries a Guard-denials line when the run recorded real denials', () => {
+test('#2550 review fix: the collapsed one-line summary still carries a Guard-denials line when the run recorded real denials', async () => {
   const dir = tmpRun(false); // no phase events
   fs.appendFileSync(path.join(dir, 'events.jsonl'), '{"ts":"2026-09-05T12:00:00.000Z","type":"gate-denial"}\n{"ts":"2026-09-05T12:01:00.000Z","type":"wd-deny"}\n');
   const early = path.join(os.tmpdir(), 'ct-timing-guard-collapsed-transcript.jsonl');
   fs.writeFileSync(early, '{"type":"assistant","timestamp":"2026-09-05T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":3,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
-  const r = run(['--run', dir, '--transcript', early, '--markdown']);
+  const r = await run(['--run', dir, '--transcript', early, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   // #3375: followed by the dispatches not-found line (no subagents/ beside this transcript)
   const subDir = path.join(os.tmpdir(), 'ct-timing-guard-collapsed-transcript', 'subagents');
   assert.equal(r.stdout, `no phase events; 0 tool round-trips, 3/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n\ndispatches: subagent transcripts not found (no subagents/ directory at ${subDir})\n`);
 });
 
-test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', chmodDenialSkip('root ignores file permissions'), () => {
+test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', chmodDenialSkip('root ignores file permissions'), async () => {
   const dir = tmpRun(true);
   const unreadable = path.join(os.tmpdir(), 'ct-timing-unreadable-transcript.jsonl');
   fs.writeFileSync(unreadable, '{}\n');
   fs.chmodSync(unreadable, 0o000);
   try {
-    const r = run(['--run', dir, '--transcript', unreadable, '--markdown']);
+    const r = await run(['--run', dir, '--transcript', unreadable, '--markdown']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /^tokens: transcript not found \(EACCES/m);
   } finally {
@@ -205,13 +245,13 @@ function subagentRun({ events = SUB_EVENTS } = {}) {
   return { dir, home, slugDir, transcript: path.join(slugDir, 'sess-1.jsonl'), env: fixtureHomeEnv(home) };
 }
 function runAuto(s, extra = []) {
-  return spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--auto-transcript', ...extra], { encoding: 'utf8', env: s.env });
+  return run(['--run', s.dir, '--markdown', '--auto-transcript', ...extra], { env: s.env });
 }
 const readTiming = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
 
-test('#3375 AC3.1: with --auto-transcript the phase table is byte-identical to before, followed by the dispatch table', () => {
+test('#3375 AC3.1: with --auto-transcript the phase table is byte-identical to before, followed by the dispatch table', async () => {
   const s = subagentRun();
-  const r = runAuto(s);
+  const r = await runAuto(s);
   assert.equal(r.status, 0, r.stderr);
   const golden = readText(path.join(SUBFIX, '..', 'subagents-golden-auto.md'));
   assert.ok(r.stdout.startsWith(golden), 'the phase table and Guard footer must be unchanged');
@@ -233,18 +273,18 @@ test('#3375 AC3.1: with --auto-transcript the phase table is byte-identical to b
   assert.equal(d.excludedOutsideWindow, 0);
 });
 
-test('#3375 AC3.2: with no transcript flag, the whole output and timing.json are byte-identical to before', () => {
+test('#3375 AC3.2: with no transcript flag, the whole output and timing.json are byte-identical to before', async () => {
   const s = subagentRun();
-  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown'], { encoding: 'utf8', env: s.env });
+  const r = await run(['--run', s.dir, '--markdown'], { env: s.env });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, readText(path.join(SUBFIX, '..', 'subagents-golden-plain.md')));
   assert.equal('dispatches' in readTiming(s.dir), false);
 });
 
-test('#3375 AC4: a not-found dispatch prints a not-found line and no numeric row for it', () => {
+test('#3375 AC4: a not-found dispatch prints a not-found line and no numeric row for it', async () => {
   const s = subagentRun();
   fs.writeFileSync(path.join(s.slugDir, 'sess-1', 'subagents', 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
-  const r = runAuto(s);
+  const r = await runAuto(s);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^dispatch agent-x: transcript not found \(ENOENT\)$/m);
   assert.match(r.stdout, /^\| standard \| 2 \|/m);
@@ -254,7 +294,7 @@ test('#3375 AC4: a not-found dispatch prints a not-found line and no numeric row
   assert.equal(x.wallClockMs, null);
 });
 
-test('#3375 AC4: an empty transcript, an orphan transcript, and a user-lines-only transcript each render per their own rule', () => {
+test('#3375 AC4: an empty transcript, an orphan transcript, and a user-lines-only transcript each render per their own rule', async () => {
   const s = subagentRun();
   const sub = path.join(s.slugDir, 'sess-1', 'subagents');
   fs.writeFileSync(path.join(sub, 'agent-empty.meta.json'), JSON.stringify({ description: 'Implement Task 7', model: 'sonnet' }));
@@ -264,7 +304,7 @@ test('#3375 AC4: an empty transcript, an orphan transcript, and a user-lines-onl
   // user-lines-only: timestamped, no assistant row -> notFound null, tokens 0, renders in its bucket
   fs.writeFileSync(path.join(sub, 'agent-user.meta.json'), JSON.stringify({ description: 'Review lens 3b security', model: 'fable' }));
   fs.writeFileSync(path.join(sub, 'agent-user.jsonl'), '{"type":"user","timestamp":"2026-10-17T10:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"x"}]}}\n');
-  const r = runAuto(s);
+  const r = await runAuto(s);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^dispatch agent-empty: transcript has no usage rows$/m);
   assert.match(r.stdout, /^dispatch agent-orphan: meta not found \(description null\)$/m);
@@ -276,9 +316,9 @@ test('#3375 AC4: an empty transcript, an orphan transcript, and a user-lines-onl
   assert.match(r.stdout, /^\| standard \| 2 \|/m);
 });
 
-test('#3375 AC5.1: a transcript-requested run with no subagent data gains exactly one new key, dispatches, with the not-found reason', () => {
+test('#3375 AC5.1: a transcript-requested run with no subagent data gains exactly one new key, dispatches, with the not-found reason', async () => {
   const dir = tmpRun(true);
-  const r = run(['--run', dir, '--transcript', TFIX, '--markdown']);
+  const r = await run(['--run', dir, '--transcript', TFIX, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   const json = readTiming(dir);
   // the #1929 key set for this run
@@ -292,10 +332,10 @@ test('#3375 AC5.1: a transcript-requested run with no subagent data gains exactl
   assert.ok(r.stdout.endsWith('\n\ndispatches: subagent transcripts not found (' + json.dispatches.notFound + ')\n'));
 });
 
-test('#3375 AC5.2: no existing timing.json key changes', () => {
+test('#3375 AC5.2: no existing timing.json key changes', async () => {
   const dir = tmpRun(true);
   fs.appendFileSync(path.join(dir, 'events.jsonl'), '{"ts":"2026-09-05T13:05:00.000Z","type":"gate-denial"}\n');
-  assert.equal(run(['--run', dir, '--transcript', TFIX, '--transcript', TFIX, '--markdown']).status, 0);
+  assert.equal((await run(['--run', dir, '--transcript', TFIX, '--transcript', TFIX, '--markdown'])).status, 0);
   const json = readTiming(dir);
   assert.deepEqual(json.totals.tokens, { input: 232, output: 456, cacheRead: 620, cacheCreate: 104 });
   assert.equal(json.totals.procedureBytes, 36);
@@ -304,19 +344,19 @@ test('#3375 AC5.2: no existing timing.json key changes', () => {
   assert.equal(json.transcripts.length, 2);
 });
 
-test('#3375 review focus 3: the same transcript passed twice does not double-count dispatches', () => {
+test('#3375 review focus 3: the same transcript passed twice does not double-count dispatches', async () => {
   const s = subagentRun();
-  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', s.transcript], { encoding: 'utf8' });
+  const r = await run(['--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', s.transcript]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^\| standard \| 2 \|/m);
   assert.equal(readTiming(s.dir).dispatches.items.length, 3);
 });
 
-test('#3375: with several transcripts, one whose subagents/ directory is missing is still named beside the tables', () => {
+test('#3375: with several transcripts, one whose subagents/ directory is missing is still named beside the tables', async () => {
   const s = subagentRun();
   const other = path.join(s.slugDir, 'sess-2.jsonl');
   fs.writeFileSync(other, '');
-  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', other], { encoding: 'utf8' });
+  const r = await run(['--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', other]);
   assert.equal(r.status, 0, r.stderr);
   const d = readTiming(s.dir).dispatches;
   const expectedDir = path.join(s.slugDir, 'sess-2', 'subagents');
@@ -327,29 +367,29 @@ test('#3375: with several transcripts, one whose subagents/ directory is missing
   assert.ok(r.stdout.split('\n').includes(`dispatches: subagent transcripts not found (no subagents/ directory at ${expectedDir})`), r.stdout);
 });
 
-test('#3375 M2: the same transcript reached through a symlinked directory alias does not double-count dispatches', () => {
+test('#3375 M2: the same transcript reached through a symlinked directory alias does not double-count dispatches', async () => {
   const s = subagentRun();
   const alias = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-alias-')), 'link');
   fs.symlinkSync(s.slugDir, alias, 'dir');
-  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', path.join(alias, 'sess-1.jsonl')], { encoding: 'utf8' });
+  const r = await run(['--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', path.join(alias, 'sess-1.jsonl')]);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readTiming(s.dir).dispatches.items.length, 3);
   assert.match(r.stdout, /^\| standard \| 2 \|/m);
 });
 
-test('#3375: the collapsed no-phase-events path still appends the dispatch table', () => {
+test('#3375: the collapsed no-phase-events path still appends the dispatch table', async () => {
   const s = subagentRun({ events: null });
-  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript], { encoding: 'utf8' });
+  const r = await run(['--run', s.dir, '--markdown', '--transcript', s.transcript]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^no phase events; [^\n]*\n\nDispatches \(whole session — no run events;/);
   assert.match(r.stdout, /^\| standard \| 2 \|/m);
   assert.equal(readTiming(s.dir).dispatches.scope, 'whole-session');
 });
 
-test('#3375 R1: a run whose events all sit outside the dispatches reports them excluded and renders no tier rows', () => {
+test('#3375 R1: a run whose events all sit outside the dispatches reports them excluded and renders no tier rows', async () => {
   const s = subagentRun({ events: null });
   for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(s.dir, f));
-  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript], { encoding: 'utf8' });
+  const r = await run(['--run', s.dir, '--markdown', '--transcript', s.transcript]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^dispatches: 3 outside the run window excluded$/m);
   assert.doesNotMatch(r.stdout, /^\| (fast|standard|capable|frontier|unmapped) \|/m);
@@ -359,10 +399,10 @@ test('#3375 R1: a run whose events all sit outside the dispatches reports them e
   assert.deepEqual(d.items, []);
 });
 
-test('#3375: a late worktree-reaped event does not stretch the run window over the idle gap', () => {
+test('#3375: a late worktree-reaped event does not stretch the run window over the idle gap', async () => {
   // the session ends at 10:03; a3 (10:05-10:07) ran after it, the reap fires at 12:00
   const s = subagentRun({ events: SUB_EVENTS.replace('10:10:00', '10:03:00') + '{"ts":"2026-10-17T12:00:00.000Z","type":"worktree-reaped"}\n' });
-  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript], { encoding: 'utf8' });
+  const r = await run(['--run', s.dir, '--markdown', '--transcript', s.transcript]);
   assert.equal(r.status, 0, r.stderr);
   const d = readTiming(s.dir).dispatches;
   assert.equal(d.excludedOutsideWindow, 1);
@@ -379,9 +419,9 @@ function tcRun() {
   return dir;
 }
 
-test('#4029 AC1.1: timing.json for the turn-classes fixture carries the class breakdown matching the hand count', () => {
+test('#4029 AC1.1: timing.json for the turn-classes fixture carries the class breakdown matching the hand count', async () => {
   const dir = tcRun();
-  const r = run(['--run', dir, '--transcript', path.join(TC_FIX, 'session.jsonl'), '--markdown']);
+  const r = await run(['--run', dir, '--transcript', path.join(TC_FIX, 'session.jsonl'), '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   const t = readTiming(dir);
   assert.deepEqual(t.totals.turnClasses, TC_HAND);
@@ -399,9 +439,9 @@ test('#4029 AC1.1: timing.json for the turn-classes fixture carries the class br
   assert.ok(lines.includes('Context per turn: p50 5.0k · p90 9.1k tokens over 10 turns · models: claude-opus-5-5 ×9, claude-sonnet-5 ×1 · subagents: 1'), r.stdout);
 });
 
-test('#4029: without a transcript timing.json totals gain verifyMinutes only, and no class lines render', () => {
+test('#4029: without a transcript timing.json totals gain verifyMinutes only, and no class lines render', async () => {
   const dir = tcRun();
-  const r = run(['--run', dir, '--markdown']);
+  const r = await run(['--run', dir, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   const t = readTiming(dir);
   assert.equal(t.totals.verifyMinutes, 2);
@@ -409,11 +449,11 @@ test('#4029: without a transcript timing.json totals gain verifyMinutes only, an
   assert.doesNotMatch(r.stdout, /Turn classes|Context per turn/);
 });
 
-test('#4029: a transcript with no tool calls and no assistant turns renders the class lines with zeros and dashes', () => {
+test('#4029: a transcript with no tool calls and no assistant turns renders the class lines with zeros and dashes', async () => {
   const dir = tcRun();
   const bare = path.join(dir, 'bare.jsonl');
   fs.writeFileSync(bare, '{"type":"user","timestamp":"2026-10-24T10:02:00.000Z","message":{"role":"user","content":"hello"}}\n');
-  const r = run(['--run', dir, '--transcript', bare, '--markdown']);
+  const r = await run(['--run', dir, '--transcript', bare, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^Turn classes \(tool calls\): edit 0 · read 0 · explore 0 · procedure 0 · bookkeeping 0 · orientation 0 · verify 0 · guard-refusal 0 · dispatch 0 · other 0 — ceremony share —$/m);
   assert.match(r.stdout, /^Context per turn: p50 — · p90 — tokens over 0 turns · models: — · subagents: 0$/m);
@@ -434,28 +474,28 @@ function renderTotals(totals) {
 }
 const zeroClasses = () => Object.fromEntries(['edit', 'read', 'explore', 'procedure', 'bookkeeping', 'orientation', 'verify', 'guard-refusal', 'dispatch', 'other'].map((c) => [c, 0]));
 
-test('#4029 M2: the ceremony share renders from the integer class counts, not the 3dp float', () => {
+test('#4029 M2: the ceremony share renders from the integer class counts, not the 3dp float', async () => {
   // 889 of 2000 is 44.45%; the 3dp float 0.445 would render 45%
   const lines = renderTotals({ turnClasses: { ...zeroClasses(), procedure: 889, edit: 1111 }, ceremonyShare: 0.445 });
   assert.ok(lines.some((l) => l.endsWith('— ceremony share 44%')), lines.join('\n'));
 });
 
-test('#4029 M3: one context turn renders "over 1 turn", any other count "turns"', () => {
+test('#4029 M3: one context turn renders "over 1 turn", any other count "turns"', async () => {
   const one = renderTotals({ turnClasses: zeroClasses(), ceremonyShare: null });
   assert.ok(one.some((l) => l.includes(' tokens over 1 turn · ')), one.join('\n'));
   const two = renderTotals({ turnClasses: zeroClasses(), ceremonyShare: null, context: { turns: 2, p50: 1, p90: 1 } });
   assert.ok(two.some((l) => l.includes(' tokens over 2 turns · ')), two.join('\n'));
 });
 
-test('#4029 M1: a rewrite without --check-budgets carries the existing budget verdict forward unchanged', () => {
+test('#4029 M1: a rewrite without --check-budgets carries the existing budget verdict forward unchanged', async () => {
   const { root, dir } = budgetTree();
-  assert.equal(runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']).status, 0);
+  assert.equal((await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets'])).status, 0);
   const checked = readTiming(dir).budget;
   assert.ok(checked && checked.profile === 'fast-lane', JSON.stringify(checked));
-  assert.equal(runIn(root, ['--run', dir, '--transcript', TC_SESSION]).status, 0);
+  assert.equal((await runIn(root, ['--run', dir, '--transcript', TC_SESSION])).status, 0);
   assert.deepEqual(readTiming(dir).budget, checked);
   // and --json shows the carried verdict too
-  assert.deepEqual(JSON.parse(runIn(root, ['--run', dir, '--json']).stdout).budget, checked);
+  assert.deepEqual(JSON.parse((await runIn(root, ['--run', dir, '--json'])).stdout).budget, checked);
 });
 
 // --check-budgets (#4029): a tmp checkout (.git dir) with a policy.yml and a run dir under
@@ -477,13 +517,14 @@ function budgetTree({ config = 'ceremony-profile: fast-lane\n', policy = 'fast-l
   if (config !== null) fs.writeFileSync(path.join(dir, 'config.yml'), config);
   return { root, dir, id };
 }
-const runIn = (cwd, args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd, env: { ...process.env, PATH: `${path.join(cwd, 'stub-bin')}${path.delimiter}${process.env.PATH}` } });
+// The stub gh is found through the injected PATH, so the real gh seam runs (allowRealRunner).
+const runIn = (cwd, args) => run(args, { cwd, env: { ...process.env, PATH: `${path.join(cwd, 'stub-bin')}${path.delimiter}${process.env.PATH}` }, allowRealRunner: true });
 const TC_SESSION = path.join(TC_FIX, 'session.jsonl');
 const stagedFiles = (dir) => (fs.existsSync(path.join(dir, 'staged')) ? fs.readdirSync(path.join(dir, 'staged')) : []);
 
-test('#4029 AC2.1: a budget-breach fixture produces a staged item', () => {
+test('#4029 AC2.1: a budget-breach fixture produces a staged item', async () => {
   const { root, dir, id } = budgetTree();
-  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   const staged = path.join(dir, 'staged', `efficiency-budget-${id}.md`);
   assert.ok(fs.existsSync(staged), r.stderr);
@@ -508,17 +549,17 @@ test('#4029 AC2.1: a budget-breach fixture produces a staged item', () => {
   assert.match(out[out.length - 1], /^Budget \(fast-lane\): round-trips 10\/5 BREACH · procedure-kb 0\.1\/\d+ ok · verify-minutes 2\/\d+ ok$/);
 
   // a re-run overwrites the one staged item and does not log it twice
-  const again = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const again = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(again.status, 0, again.stderr);
   assert.deepEqual(stagedFiles(dir).filter((f) => f.startsWith('efficiency-budget-')), [`efficiency-budget-${id}.md`]);
   assert.equal(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8').split('\n').filter((l) => l.startsWith('- STAGED')).length, 1);
 });
 
-test('#4029 I3: through the real CLI, an open record carrying the fingerprint folds the breach (stub gh)', { skip: process.platform === 'win32' && 'win32: a bare executable stub is not a launchable gh' }, () => {
+test('#4029 I3: through the real CLI, an open record carrying the fingerprint folds the breach (stub gh)', { skip: process.platform === 'win32' && 'win32: a bare executable stub is not a launchable gh' }, async () => {
   const { budgetFingerprint } = require('../../../plugin/bin/lib/timing/budget');
   const fp = budgetFingerprint('fast-lane');
   const { root, dir } = budgetTree({ ghAnswer: JSON.stringify([{ number: 4242, body: `x\n\n<!-- work-fingerprint: ${fp} -->\nwork-fingerprint: ${fp}` }]) });
-  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(stagedFiles(dir), []);
   const t = readTiming(dir);
@@ -527,9 +568,27 @@ test('#4029 I3: through the real CLI, an open record carrying the fingerprint fo
   assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^- AUTO [^\n]*already tracked by #4242 — not re-staged\./m);
 });
 
-test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', () => {
+test('AC9.1: the gh host probe reads the injected env and writes its one-time host note through the injected stderr', { skip: process.platform === 'win32' && 'win32: a bare executable stub is not a launchable gh' }, async () => {
   const { root, dir } = budgetTree();
-  const r = runIn(root, ['--run', dir, '--check-budgets', '--markdown']);
+  fs.rmSync(path.join(root, '.git'), { recursive: true });
+  // the fixture's own setup git calls must not inherit a repo-pointing variable from the test runner
+  // GH_HOST is dropped too: an exported one makes the host probe return before it reads the remote.
+  const {
+    GH_HOST, GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR, ...gitEnv
+  } = process.env;
+  for (const args of [['init', '-q'], ['remote', 'add', 'origin', 'git@acme.ghe.com:o/r.git']]) {
+    execFileSync('git', args, { cwd: root, env: gitEnv, windowsHide: true });
+  }
+  const r = await run(['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown'], {
+    cwd: root, env: { ...gitEnv, PATH: `${path.join(root, 'stub-bin')}${path.delimiter}${process.env.PATH}` }, allowRealRunner: true,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /^claude-tweaks: .*acme\.ghe\.com.* — gh calls get GH_HOST=acme\.ghe\.com$/m);
+});
+
+test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', async () => {
+  const { root, dir } = budgetTree();
+  const r = await runIn(root, ['--run', dir, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   const checks = Object.fromEntries(readTiming(dir).budget.checks.map((c) => [c.metric, c.status]));
   assert.deepEqual(checks, { 'round-trips': 'unmeasured', 'procedure-kb': 'unmeasured', 'verify-minutes': 'ok' });
@@ -539,18 +598,18 @@ test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', 
   assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^- SKIP \d{2}:\d{2}:\d{2} — efficiency budget \(degraded\): condition: round-trips, procedure-kb unmeasured \(no transcript rows\)/m);
 });
 
-test('#4029: a transcript that cannot be read leaves the transcript-backed budgets unmeasured, not ok', () => {
+test('#4029: a transcript that cannot be read leaves the transcript-backed budgets unmeasured, not ok', async () => {
   const { root, dir } = budgetTree();
-  const r = runIn(root, ['--run', dir, '--transcript', path.join(root, 'missing.jsonl'), '--check-budgets', '--json']);
+  const r = await runIn(root, ['--run', dir, '--transcript', path.join(root, 'missing.jsonl'), '--check-budgets', '--json']);
   assert.equal(r.status, 0, r.stderr);
   const checks = Object.fromEntries(JSON.parse(r.stdout).budget.checks.map((c) => [c.metric, c.status]));
   assert.equal(checks['round-trips'], 'unmeasured');
   assert.equal(checks['procedure-kb'], 'unmeasured');
 });
 
-test('#4029: a config.yml without ceremony-profile falls back to standard with a note', () => {
+test('#4029: a config.yml without ceremony-profile falls back to standard with a note', async () => {
   const { root, dir } = budgetTree({ config: 'mode: auto\n', policy: 'standard-run-round-trip-ceiling: 5\n' });
-  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /budget: ceremony-profile absent from config\.yml — checked against standard/);
   const t = readTiming(dir);
@@ -561,36 +620,36 @@ test('#4029: a config.yml without ceremony-profile falls back to standard with a
   assert.ok(fs.readFileSync(path.join(dir, 'staged', `efficiency-budget-${path.basename(dir)}.md`), 'utf8').startsWith('Title: Efficiency budget: standard runs over'));
 });
 
-test('#4029: a ceiling of 0 disables its budget and a disabled budget stages nothing', () => {
+test('#4029: a ceiling of 0 disables its budget and a disabled budget stages nothing', async () => {
   const { root, dir } = budgetTree({ policy: 'fast-lane-run-round-trip-ceiling: 0\n' });
-  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']);
+  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readTiming(dir).budget.checks.find((c) => c.metric === 'round-trips').status, 'disabled');
   assert.deepEqual(stagedFiles(dir), []);
   assert.match(r.stdout, /^Budget \(fast-lane\): round-trips 10\/0 disabled/m);
 });
 
-test('#4029: --check-budgets --json keeps stdout a single JSON document carrying the budget key', () => {
+test('#4029: --check-budgets --json keeps stdout a single JSON document carrying the budget key', async () => {
   const { root, dir } = budgetTree();
-  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--json']);
+  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--json']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).budget.staged !== null, true);
 });
 
-test('#4029: without --check-budgets timing.json has no budget key and is otherwise unchanged', () => {
+test('#4029: without --check-budgets timing.json has no budget key and is otherwise unchanged', async () => {
   const { root, dir } = budgetTree();
   const strip = (t) => { const { generatedAt, budget, ...rest } = t; return rest; };
-  assert.equal(runIn(root, ['--run', dir, '--transcript', TC_SESSION]).status, 0);
+  assert.equal((await runIn(root, ['--run', dir, '--transcript', TC_SESSION])).status, 0);
   const plain = readTiming(dir);
   assert.equal('budget' in plain, false);
   assert.deepEqual(stagedFiles(dir), []);
-  assert.equal(runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']).status, 0);
+  assert.equal((await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets'])).status, 0);
   assert.deepEqual(strip(readTiming(dir)), strip(plain));
 });
 
-test('#4029: a staging failure (run dir not anchored under a checkout) is reported, never fatal', () => {
+test('#4029: a staging failure (run dir not anchored under a checkout) is reported, never fatal', async () => {
   const { root, dir } = budgetTree({ git: false });
-  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /budget: could not stage the efficiency-budget proposal/);
   const t = readTiming(dir);
@@ -601,11 +660,81 @@ test('#4029: a staging failure (run dir not anchored under a checkout) is report
   assert.match(r.stdout, /^Budget \(fast-lane\): round-trips 10\/5 BREACH/m);
 });
 
-test('#4029: a run dir with no .claude-tweaks ancestor records budget.skipped and prints the reason to stderr', () => {
+test('#4029: a run dir with no .claude-tweaks ancestor records budget.skipped and prints the reason to stderr', async () => {
   const dir = tcRun();
-  const r = run(['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const r = await run(['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(readTiming(dir).budget, { skipped: 'no .claude-tweaks ancestor' });
   assert.match(r.stderr, /budget: skipped — no \.claude-tweaks ancestor/);
   assert.doesNotMatch(r.stdout, /^Budget \(/m);
+});
+
+// --- #5382 in-process entry contract -------------------------------------------
+
+test('AC9.1: a relative --run resolves against the injected cwd', async () => {
+  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-parent-')));
+  fs.mkdirSync(path.join(parent, 'run'));
+  for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(parent, 'run', f));
+  const r = await run(['--run', 'run', '--json'], { cwd: parent });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).runDir, path.join(parent, 'run'));
+});
+
+test('AC9.1: a relative --transcript resolves against the injected cwd, for its usage rows and its subagents/ dir', async () => {
+  const s = subagentRun();
+  // The runner's real cwd has no sess-1.jsonl; only deps.cwd() can find the transcript and sess-1/subagents.
+  const r = await run(['--run', s.dir, '--markdown', '--transcript', 'sess-1.jsonl'], { cwd: s.slugDir });
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.ok(t.transcripts[0].rows > 0, JSON.stringify(t.transcripts));
+  assert.equal(t.transcripts[0].note, undefined);
+  assert.equal(t.dispatches.items.length, 3);
+});
+
+// A run dir whose run-state.json names a worktree and session, plus the session's transcript
+// copied under `<configDir>/projects/<slug>/`.
+function autoFixture(configDir) {
+  const dir = tmpRun(true);
+  const slugDir = path.join(configDir, 'projects', '-Users-x-Code-repo--claude-worktrees-wt');
+  fs.mkdirSync(slugDir, { recursive: true });
+  fs.copyFileSync(TFIX, path.join(slugDir, 'sess-9.jsonl'));
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/Users/x/Code/repo/.claude/worktrees/wt', sessionId: 'sess-9', status: 'active' }));
+  return dir;
+}
+
+test('--auto-transcript searches the injected HOME, never os.homedir()', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'));
+  const dir = autoFixture(path.join(home, '.claude'));
+  // runCli throws when os.homedir() is called while env.HOME is injected
+  const r = await run(['--run', dir, '--markdown', '--auto-transcript'], { env: fixtureHomeEnv(home) });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^\| review \| 8 \| — \| 116\/228 \| 0\.0 \| 3 \|$/m);
+});
+
+test('--auto-transcript honours CLAUDE_CONFIG_DIR given only in the injected env', async () => {
+  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-cfg-')), 'cfg');
+  const dir = autoFixture(cfg);
+  const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'));
+  const r = await run(['--run', dir, '--markdown', '--auto-transcript'], { env: { ...fixtureHomeEnv(otherHome), CLAUDE_CONFIG_DIR: cfg } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^\| review \| 8 \| — \| 116\/228 \| 0\.0 \| 3 \|$/m);
+});
+
+test('AC6.1: require() prints nothing and leaves process.exitCode undefined', () => {
+  delete require.cache[require.resolve(CLI)];
+  const writes = [];
+  const outWrite = process.stdout.write;
+  const errWrite = process.stderr.write;
+  const before = process.exitCode;
+  process.stdout.write = (t) => { writes.push(t); return true; };
+  process.stderr.write = (t) => { writes.push(t); return true; };
+  try {
+    require(CLI);
+  } finally {
+    process.stdout.write = outWrite;
+    process.stderr.write = errWrite;
+  }
+  assert.deepStrictEqual(writes, []);
+  assert.strictEqual(process.exitCode, before);
+  assert.strictEqual(process.exitCode, undefined);
 });

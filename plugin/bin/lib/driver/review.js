@@ -207,9 +207,9 @@
 //   read (before or after it), the worker's `fail`/`timeout`, a rewrite refused or failed,
 //   the commit failing, an evidence file not at HEAD as recorded, a kept path no longer resolving where
 //   it was confirmed or a kept file not in the worktree as recorded before its run, a kept run that throws or survives
-//   its kill, an index flag newly set after a kept run (the launch and test-step flag stops arrive as
-//   the fix-round launch and test results), the tree changed during the checks (after the scoped run
-//   and each kept run; neither is singled out), the name-only diff failing (it ends with `--`, so a
+//   its kill, an index flag newly set after a kept run (the launch and test-step flag stops, and the
+//   test step's tree stop after the scoped run, arrive as the fix-round launch and test results), the
+//   tree changed after a kept run, the name-only diff failing (it ends with `--`, so a
 //   file named HEAD or after the sha is never read as a revision). `stop`: the worker's
 //   cannot-complete, the commit step's own stop (no changed files, or the worker's title
 //   empty once normalized), a kept evidence test that does not pass (reason failing-test), no path outside
@@ -1114,7 +1114,7 @@ async function fixRound(ctx, deps, wiring, pass) {
       } catch {
         return end('fail', 'git status failed after a kept evidence run', { c });
       }
-      // The scoped test run or this evidence run may have left it: neither is singled out.
+      // The test step has already checked the tree after the scoped run, so this evidence run left it.
       if (changed.length) return end('fail', `the tree changed during the fix-round checks: ${normalizeEventText(changed.join(', '))}`);
       if (run.verdict !== 'passed') return end('stop', `the kept evidence test did not pass (${run.verdict})`, { c, reason: 'failing-test' });
     }
