@@ -83,6 +83,14 @@ The worker step and the review fix round both launch through `steps.js`'s `runIm
 - Never recover by resetting HEAD or clearing a flag. A baseline the check keeps on `ctx` (`ctx.indexFlags`) starts as `null` in `newCtx` and gets no `interruptClass` rung: it is a read, not a side effect. The review module gets the check through the wiring object (`indexFlagCheck`), and `reviewPass` throws without it.
 - Pin each new read's position and leave the rest of the run as it was. Capture the happy path's call signatures, event `[step, status]` pairs and per-line key sets on the unmodified code as literal constants (`BASE_CALLS_PLAIN`, `BASE_CALLS_FIX`, `BASE_LINES_*`, `BASE_KEYS_*` in `run.test.js`). Then assert the new run equals them with the new reads filtered out, and that a read sits right before and right after each launch. Fault the n-th read with `nthCall(isHeadRead, n, reply)`. A later check that reads at the same points filters its own reads first (`withoutFlagReads`) and pins their count and order in its own test, as `AC8.1 (#5415)` does over #5414's captures.
 
+### An answer more than one step reads
+
+The reviewer on-or-off answer (#5224, `review.js`'s `reviewRequired`) is read by admission, by the worker prompt and check's `--max-lines` (`driverLineBound`), and by the review step. A decision of this shape follows the same rules:
+- Ask it once per record, in the earliest step that reads it: the eligibility step sets `ctx.reviewer`. It starts as `null` in `newCtx` and gets no `interruptClass` rung, because it is a read, not a side effect.
+- Later steps read the `ctx` field and never call again, so two steps cannot act on different answers. A reader that needs it fails closed on a missing or malformed value: `reviewRecord` returns a `pre-push` `fail` (`reviewer-on answer missing`), and admission refuses a non-boolean `on` as unreadable.
+- A predicate two steps both apply is exported by the module that owns it and called by both, never re-derived. Admission's first `reviewerGateReason` restated the bound comparisons eligibility refuses on, and review moved both onto `eligibility.js`'s `isInsideLaneBounds` (`b338f4b74`).
+- In `run.test.js` the call goes through a `deps` member whose harness default is the real function, and the harness records it outside `calls` (`reviewerCalls`), so the `BASE_CALLS_*` captures stay as they were. A test pins one call per record.
+
 ## Adding a settle step
 
 A settle call is not a `STEPS` entry; it is a handler in one of `settle.js`'s `SETTLE_ROWS` rows (#5219). The rules for adding one:

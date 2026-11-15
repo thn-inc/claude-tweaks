@@ -44,6 +44,8 @@ function parsePolicy(repoRoot) {
 // the same alias-aware lookup isWorktreeAlwaysOn always did, now exposing
 // WHICH key resolved it. session-start.js's verdict banner and this gate
 // must never disagree, so both call this — see docs/incident-log.md IL-133.
+// bin/hooks.sh's policy_verdict is a shell copy of this read for sessions with
+// no node (#5392): change both, plus its hooks.sh AC9 differential fixtures.
 function resolveWorktreeAlways(repoRoot) {
   const parsed = parsePolicy(repoRoot);
   if (Object.prototype.hasOwnProperty.call(parsed, 'worktree-always')) {
