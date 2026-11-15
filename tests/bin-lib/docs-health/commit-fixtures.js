@@ -10,13 +10,8 @@ const { execFileSync } = require('child_process');
 // FIXTURE_TIMEOUT_MS rationale).
 const GIT_TIMEOUT_MS = 30000;
 
-// A copy of `env` without the four variables that repoint git at another
-// repository, so one the test runner inherited cannot redirect a fixture call.
-function withoutAmbientGitVars(env) {
-  const out = { ...env };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete out[k];
-  return out;
-}
+// Re-exported below for this file's existing callers.
+const { withoutAmbientGitVars } = require('../../helpers/git-env');
 
 function git(cwd, args, input) {
   return execFileSync('git', args, {

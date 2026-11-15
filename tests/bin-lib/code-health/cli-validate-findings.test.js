@@ -8,7 +8,7 @@ const path = require('path');
 
 const { extractFingerprint } = require('../../../plugin/bin/lib/issues/record');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
-const { withoutAmbientGitVars } = require('../docs-health/commit-fixtures');
+const { withoutAmbientGitVars } = require('../../helpers/git-env');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
@@ -615,8 +615,7 @@ test('validate-findings stamps Verified-as-of from the injected env: GIT_DIR nam
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
 
-  // GIT_COMMON_DIR: undefined drops an inherited value (Node skips undefined env entries).
-  const result = runValidateFindings(root, findingsFile, ['--dry-run'], { env: { GIT_DIR: path.join(repo, '.git'), GIT_COMMON_DIR: undefined } });
+  const result = runValidateFindings(root, findingsFile, ['--dry-run'], { env: { GIT_DIR: path.join(repo, '.git') } });
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   const [payload] = JSON.parse(result.stdout);
   assert.ok(payload.body.includes(`Verified-as-of: ${sha}`), `expected the injected repo's HEAD ${sha}, got body:\n${payload.body}`);

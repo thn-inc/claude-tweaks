@@ -165,9 +165,8 @@ test('AC8.1: status without --root reads the cache under the injected cwd', () =
 
 // env-only fixture: readDurableState's `git fetch origin health-state` runs under the injected
 // env, so a GIT_DIR that only the injected env carries points it at repo B (whose origin holds the
-// seeded remembered store) although --root itself is not a repo. The injected env carries no
-// other ambient git variable (sweepCli drops GIT_WORK_TREE and GIT_INDEX_FILE; GIT_COMMON_DIR is
-// dropped below).
+// seeded remembered store) although --root itself is not a repo. sweepCli drops every other ambient
+// git variable from the injected env.
 test('status reads the durable remembered store through the injected env: GIT_DIR names the repo, root is not one', () => {
   const root = tmp(); // not a git repo
   const repo = tmp();
@@ -177,8 +176,7 @@ test('status reads the durable remembered store through the injected env: GIT_DI
   const control = cli(['status', '--root', root]);
   assert.ok(control.stdout.includes('remembered:0'), `expected remembered:0 without the injected GIT_DIR, got: ${control.stdout}`);
 
-  // GIT_COMMON_DIR: undefined drops an inherited value (Node skips undefined env entries).
-  const result = cli(['status', '--root', root], { env: { GIT_DIR: path.join(repo, '.git'), GIT_COMMON_DIR: undefined } });
+  const result = cli(['status', '--root', root], { env: { GIT_DIR: path.join(repo, '.git') } });
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.ok(result.stdout.includes('remembered:1'), `expected remembered:1 from the injected repo, got: ${result.stdout}`);
 });

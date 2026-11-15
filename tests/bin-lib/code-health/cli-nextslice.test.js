@@ -6,6 +6,10 @@ const os = require('os');
 const path = require('path');
 const { contentHash, sliceRecursive } = require('../../../plugin/bin/lib/code-health/scope');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { withoutAmbientGitVars } = require('../../helpers/git-env');
+
+// Every setup git call runs without an inherited GIT_DIR and friends, so they cannot land in another repo.
+const GIT_OPTS = { env: withoutAmbientGitVars(process.env) };
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
@@ -26,20 +30,21 @@ function runNextSlice(args, root) {
 // calls) requires live GitHub credentials — this helper never touches it.
 function seedDurableCursors(root, cursors) {
   const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-bare-'));
-  execFileSync('git', ['init', '--bare', '-q', bareDir]);
+  execFileSync('git', ['init', '--bare', '-q', bareDir], GIT_OPTS);
   const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-seed-'));
-  execFileSync('git', ['init', '-q', seedDir]);
-  execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state']);
+  execFileSync('git', ['init', '-q', seedDir], GIT_OPTS);
+  execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state'], GIT_OPTS);
   fs.mkdirSync(path.join(seedDir, 'code-health'), { recursive: true });
   fs.writeFileSync(path.join(seedDir, 'code-health', 'cursors.json'), JSON.stringify(cursors));
-  execFileSync('git', ['-C', seedDir, 'add', '-A']);
+  execFileSync('git', ['-C', seedDir, 'add', '-A'], GIT_OPTS);
   execFileSync(
     'git',
     ['-C', seedDir, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '-m', 'seed'],
+    GIT_OPTS,
   );
-  execFileSync('git', ['-C', seedDir, 'push', '-q', bareDir, 'health-state']);
-  execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['remote', 'add', 'origin', bareDir], { cwd: root });
+  execFileSync('git', ['-C', seedDir, 'push', '-q', bareDir, 'health-state'], GIT_OPTS);
+  execFileSync('git', ['init', '-q'], { cwd: root, ...GIT_OPTS });
+  execFileSync('git', ['remote', 'add', 'origin', bareDir], { cwd: root, ...GIT_OPTS });
 }
 
 test('next-slice returns a slice object for a new repo', () => {

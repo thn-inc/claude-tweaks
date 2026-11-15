@@ -4,7 +4,7 @@
 // `sweepCli` runs a CLI through runCliSync, with two guards against a cwd or
 // --root thread-through regression reaching anything real:
 // - Network transports: the ambient environment (minus any inherited GIT_DIR,
-//   GIT_WORK_TREE and GIT_INDEX_FILE, e.g. from a git hook, which would point the
+//   GIT_WORK_TREE, GIT_INDEX_FILE and GIT_COMMON_DIR, e.g. from a git hook, which would point the
 //   CLI's git at the real repo; a caller's own opts.env may still set them) plus
 //   GIT_ALLOW_PROTOCOL=file
 //   (spread last, so a caller's own env cannot restore a looser value). The
@@ -25,16 +25,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runCliSync } = require('./run-cli');
+const { withoutAmbientGitVars } = require('./git-env');
 
 function sweepCli(cliPath, argv, opts = {}) {
   const emptyCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'health-sweep-cwd-'));
   const prev = process.cwd();
   process.chdir(emptyCwd);
   try {
-    const ambient = { ...process.env };
-    delete ambient.GIT_DIR;
-    delete ambient.GIT_WORK_TREE;
-    delete ambient.GIT_INDEX_FILE;
+    const ambient = withoutAmbientGitVars(process.env);
     const res = runCliSync(cliPath, argv, {
       env: { ...ambient, ...opts.env, GIT_ALLOW_PROTOCOL: 'file' },
       cwd: opts.cwd,
