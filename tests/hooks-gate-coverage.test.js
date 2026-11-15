@@ -3653,8 +3653,9 @@ test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main ch
   assert.notStrictEqual(decisionFor(`cd ${wt} && cp a f.js`), 'deny');
 });
 // #4448: a write or commit behind a stripped prefix, run from a linked worktree into the main
-// checkout. Bash 3.2, 5 and zsh, started in the worktree, write `main/f.js` (or `main/b`) for each cp, tee and sed -i
-// row, and run `git commit` in main for the git rows (`x+=1 git -C M commit`, and `x+=1 git commit`
+// checkout. Bash 3.2, 5 and zsh, started in the worktree, write `main/f.js` (or `main/b`) for each cp and tee row and for
+// `X=1 sed -i.bak s/a/b/ M/x` (a suffix glued to `-i`: macOS BSD sed reads a separate `-i s/a/b/` as
+// the suffix and fails, so the row uses the glued spelling), and run `git commit` in main for the git rows (`x+=1 git -C M commit`, and `x+=1 git commit`
 // after `cd M`). The `!`, time, command, nohup, nice and exec rows write `main/b` in all three. `sudo`
 // and `doas` cannot run in the oracle; their rows follow sudo(8) and doas(1), which run the command
 // after their options. `X=1 cp a W/f.js` writes `wt/f.js`, so it stays allowed. Skipped on win32 for the
@@ -3667,7 +3668,7 @@ test('AC1.1 e2e #4448: a write or commit behind a stripped prefix from a linked 
     `X=1 cp a ${main}/f.js`,
     `sudo cp a ${main}/f.js`,
     `X=1 tee ${main}/f.js`,
-    `X=1 sed -i s/a/b/ ${main}/f.js`,
+    `X=1 sed -i.bak s/a/b/ ${main}/f.js`,
     `cd ${main}; x+=1 git commit -m x`,
     `x+=1 git -C ${main} commit -m x`,
     `! cp x ${main}/b`,

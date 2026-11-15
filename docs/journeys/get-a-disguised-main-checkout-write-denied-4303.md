@@ -99,6 +99,7 @@ files:
 - Updated during the build of #4481: a `case` compound that starts a pipeline, a redirect on a case compound, nested cases, and `x=()` no longer leak a main-checkout write.
 - Updated during the build of #4449: a cp or mv backup-suffix value after the operands (`-S`, `--suffix`) no longer hides the real destination.
 - Updated during the build of #4486: a `case` whose cd arm may not match no longer hides a write made from where the case began.
+- Updated during the build of #4448: a write, `git` call or `mkdir` behind an assignment word, `env`, `sudo`, `time`, `command` or another stripped prefix no longer leaks a main-checkout write.
 - Related journeys:
   - `write-a-glued-redirect-from-the-main-checkout-4015.md`, the redirect scan the same walk feeds.
   - `run-a-heredoc-node-script-from-the-main-checkout-3989.md`, the heredoc carve-out.
