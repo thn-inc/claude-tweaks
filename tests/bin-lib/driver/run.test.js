@@ -6326,12 +6326,13 @@ test('#5232 an adopted --run merge keeps the worktree and local branch through t
 test('#5232 parseArgs: --in-flight-prs and --near-dup-pairs, each key present only when given', () => {
   assert.deepEqual(parseArgs(['#7']), { records: [7], settle: true });
   assert.deepEqual(parseArgs(['#7', '--in-flight-prs', 'f.json']), { records: [7], settle: true, inFlightPrsFile: 'f.json' });
-  assert.deepEqual(parseArgs(['--near-dup-pairs', 'p.json', '#7']), { records: [7], settle: true, nearDupPairsFile: 'p.json' });
+  assert.deepEqual(parseArgs(['--in-flight-prs', 'f.json', '--near-dup-pairs', 'p.json', '#7']),
+    { records: [7], settle: true, inFlightPrsFile: 'f.json', nearDupPairsFile: 'p.json' });
   assert.deepEqual(parseArgs(['#7', '--in-flight-prs', 'f', '--near-dup-pairs', 'p', '#8']),
     { records: [7, 8], settle: true, inFlightPrsFile: 'f', nearDupPairsFile: 'p' });
   assert.deepEqual(parseArgs(['#7', '--run', '/r', '--no-settle', '--in-flight-prs', 'f']),
     { records: [7], settle: false, runDir: '/r', inFlightPrsFile: 'f' });
-  assert.deepEqual(parseArgs(['#7', '--no-settle', '--near-dup-pairs', 'p']), { records: [7], settle: false, nearDupPairsFile: 'p' });
+  assert.deepEqual(parseArgs(['#7', '--no-settle', '--in-flight-prs', 'f']), { records: [7], settle: false, inFlightPrsFile: 'f' });
 });
 
 test('#5232 parseArgs grammar: the hold flags are refused in every malformed shape (exit 2)', async () => {
@@ -6341,6 +6342,8 @@ test('#5232 parseArgs grammar: the hold flags are refused in every malformed sha
     ['#7', '--near-dup-pairs'], ['#7', '--near-dup-pairs', ' '], ['#7', '--near-dup-pairs', '--no-settle'],
     ['#7', '--in-flight-prs', 'a', '--in-flight-prs', 'b'], ['#7', '--near-dup-pairs', 'a', '--near-dup-pairs', 'b'],
     ['--budget', '2', '--in-flight-prs', 'f.json'], ['--budget', '2', '--near-dup-pairs', 'p.json'],
+    // --near-dup-pairs refines the in-flight list; alone it would be silently ignored.
+    ['#7', '--near-dup-pairs', 'p.json'], ['#7', '--run', '/r', '--no-settle', '--near-dup-pairs', 'p.json'],
   ];
   for (const argv of bad) {
     assert.ok(parseArgs(argv).error, `parseArgs ${JSON.stringify(argv)} is an error`);
@@ -6348,6 +6351,16 @@ test('#5232 parseArgs grammar: the hold flags are refused in every malformed sha
     assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
     assert.deepEqual(h.out, [], JSON.stringify(argv));
   }
+});
+
+test('#5232 --near-dup-pairs without --in-flight-prs is refused, naming both flags', () => {
+  const { error } = parseArgs(['#7', '--near-dup-pairs', 'p.json']);
+  assert.match(error, /--near-dup-pairs/);
+  assert.match(error, /--in-flight-prs/);
+});
+
+test('#5232 the exit-2 text in USAGE lists the hold flags\' malformed shapes', () => {
+  assert.match(USAGE, /--in-flight-prs or --near-dup-pairs, a missing, empty, flag-shaped or repeated value, --budget or --check beside either, or --near-dup-pairs without --in-flight-prs/);
 });
 
 test('#5232 the hold flags are in the usage text', () => {

@@ -248,6 +248,11 @@ async function entry(s) {
   readLever(s);
   const note = s.logFailures.length ? ` (${s.logFailures.join(', ')})` : '';
   emit(s, 'merge-entry', 'ok', `entry conditions met; lever ${s.value} (${s.source})${note}`);
+  // The drain-overlap hold runs here, after the authorization checks and before the judgment supplier,
+  // so a held record launches no merge-check or acceptance worker (the prose lane holds before
+  // merge-check too). It still precedes compose, mark-ready and the merge call.
+  const hold = overlapHold(s);
+  if (hold.stop) return hold;
   s.stage = 'merge-supplier';
   return consultSupplier(s);
 }
@@ -1353,10 +1358,12 @@ function deleteRemoteBranch(s, worktree) {
 
 // Ports settle.js's `settle-close` row: a run reconcile kept in place, once teardown removed its
 // worktree, is left non-terminal (status active, naming a worktree that is gone), so close it.
-// --run is explicit, so close-run does not refuse the driver-owned run as foreign. No call when
-// reconcile archived the run (s.runDir moved to the archive twin), when the run directory is gone
-// (events stdout-only), or when the worktree was kept after a refused removal (close-run refuses a
-// live worktree). A `--run` adoption proceeds: the explicit --run bypasses that refusal.
+// --run is explicit, so close-run does not refuse the driver-owned run as foreign or for a live
+// worktree. No call when reconcile archived the run (s.runDir moved to the archive twin), when the
+// run directory is gone (events stdout-only), or when a removal that was tried failed (`kept`): the
+// run still names a live worktree an operator must act on, so it stays non-terminal rather than
+// reading closed over it. A `--run` adoption (`caller`) does close the run: the worktree is kept on
+// purpose, for dispatch's own close-out, not because a removal failed.
 function closeRun(s, worktree) {
   const { ctx, deps } = s;
   if (!worktreeProceeds(worktree) || s.eventsStdoutOnly || s.runDir !== ctx.runDir) return undefined;
@@ -1407,8 +1414,6 @@ async function merge(ctx, deps) {
     closingLinks(s);
     const c = compose(s);
     if (c.stop) return result(s, 'pending-review', c.stop, c.detail);
-    const hold = overlapHold(s);
-    if (hold.stop) return result(s, 'pending-review', hold.stop, hold.detail);
     const ready = markReady(s);
     if (ready.stop) return result(s, 'pending-review', ready.stop, ready.detail);
     // Every route through the gate ends in a stop or in confirm's merged / armed.

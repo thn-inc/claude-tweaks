@@ -2711,7 +2711,7 @@ test('AC6.2: merge.js names no rebase, no --force, and passes no merge or push t
 // only forwards a value some literal site produced. Recall limits: a reason built from a constant, or
 // handed out through any other call or property name, is invisible here, and review owns it.
 const REASON_PASSTHROUGHS = {
-  stop: ['reason', 'g.stop'], halt: [], park: [], gateReads: [], result: ['e.stop', 'c.stop', 'hold.stop', 'ready.stop', 'g.stop', 'null'],
+  stop: ['reason', 'g.stop'], halt: [], park: [], gateReads: [], result: ['e.stop', 'c.stop', 'ready.stop', 'g.stop', 'null'],
   'stop:': ['reason', 'word', 'out.step.stop'],
 };
 const REASON_SHAPES = [
@@ -2973,6 +2973,11 @@ async function assertHeld(h, ctx, reason) {
   assertNoReadyNoMerge(h);
   assert.deepEqual(readyCalls(h), [], 'the PR was never read for draft state, so never marked ready');
   assert.ok(!h.events.some((e) => e.step === 'merge-ready' || e.step === 'merge-gate'), 'no sub-step past the hold ran');
+  // Before the judgment supplier: a held record launches no merge-check or acceptance worker.
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'judgments'), [], 'the judgment supplier was never called');
+  assert.ok(!h.events.some((e) => e.step === 'merge-supplier'), 'no supplier sub-step ran');
+  for (const e of h.events) assert.ok(MERGE_STEP_NAMES.includes(e.step), `${e.step} is in MERGE_STEP_NAMES`);
+  assert.equal(h.events.at(-1).step, 'merge-overlap', 'the hold is the last event');
   return { r, e: overlapStop(h) };
 }
 
@@ -2984,13 +2989,37 @@ test('#5232 AC9.1, AC9.3, AC9.4, AC9.7, AC9.11: a path shared with an open in-fl
   assert.doesNotMatch(e.detail, /a\.js/, 'only the shared path is named');
 });
 
+test('#5232 the hold runs before the judgment supplier: a held record makes no deps.judgments call', async () => {
+  const h = mergeHarness({ script: holdScript() });
+  const r = await merge(holdCtx(), h.deps);
+  assert.equal(r.reason, 'drain-overlap');
+  assert.equal(h.calls.filter((c) => c.kind === 'judgments').length, 0);
+  // The authorization checks still come first: an unauthorized record stops there, before any in-flight read.
+  const unauth = mergeHarness({ labels: [], script: holdScript() });
+  assert.equal((await merge(holdCtx(), unauth.deps)).reason, 'not-authorized');
+  assert.ok(!unauth.calls.some((c) => c.kind === 'ghBatch' || (c.kind === 'readFile' && c.args[0] === IN_FLIGHT)));
+});
+
+test('#5232 the in-flight file in dispatch Step 5\'s entry shape: the hold reads `number`, the forge supplies the files', async () => {
+  // drain-pr-overlap.md Step 5 appends { number, files, closingIssueNumbers } entries; its files may be stale.
+  const entry = { number: 12, files: ['stale-from-the-list.js'], closingIssueNumbers: [30] };
+  const held = mergeHarness({ script: holdScript({ list: [entry], others: { 12: { state: 'OPEN', files: ['b.js'] } } }) });
+  const { e } = await assertHeld(held, holdCtx(), 'drain-overlap');
+  assert.match(e.detail, /in-flight PR 12 on b\.js/);
+  assert.ok(held.calls.some(isBatchView(12)), 'PR 12 was read from the forge');
+  const clear = mergeHarness({ script: holdScript({ list: [{ number: 12, files: ['b.js'], closingIssueNumbers: [30] }], others: { 12: { state: 'OPEN', files: ['c.js'] } } }) });
+  assert.equal((await merge(holdCtx(), clear.deps)).outcome, 'merged', 'the list\'s own files are not the evidence');
+});
+
 test('#5232 AC9.8: disjoint paths proceed to the merge', async () => {
   const h = mergeHarness({ script: holdScript({ others: { 12: { state: 'OPEN', files: ['c.js'] } } }) });
   const r = await merge(holdCtx(), h.deps);
   assert.equal(r.outcome, 'merged');
   assert.ok(h.events.some((e) => e.step === 'merge-overlap' && e.status === 'ok' && /read 1 in-flight PR; none overlaps/.test(e.detail)));
   const steps = h.events.map((e) => e.step);
-  assert.ok(steps.indexOf('merge-overlap') > steps.indexOf('merge-compose') && steps.indexOf('merge-overlap') < steps.indexOf('merge-ready'));
+  assert.ok(steps.indexOf('merge-overlap') > steps.indexOf('merge-entry') && steps.indexOf('merge-overlap') < steps.indexOf('merge-supplier'), 'between entry and the supplier');
+  assert.ok(steps.indexOf('merge-overlap') < steps.indexOf('merge-compose') && steps.indexOf('merge-overlap') < steps.indexOf('merge-ready'));
+  for (const e of h.events) assert.ok(MERGE_STEP_NAMES.includes(e.step), `${e.step} is in MERGE_STEP_NAMES`);
   assert.ok(h.calls.some(isMergeCall));
 });
 

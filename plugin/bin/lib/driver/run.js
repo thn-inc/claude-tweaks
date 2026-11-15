@@ -89,7 +89,7 @@ const USAGE = [
   'Exit codes (Combined-2):',
   '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
-  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record; a missing, empty or repeated --run value, or --run without --no-settle, with more than one record, or with --budget or --check',
+  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record; a missing, empty or repeated --run value, or --run without --no-settle, with more than one record, or with --budget or --check; with --in-flight-prs or --near-dup-pairs, a missing, empty, flag-shaped or repeated value, --budget or --check beside either, or --near-dup-pairs without --in-flight-prs',
   '  3  --run refused: the run directory is missing or not a run directory under the main checkout, or the working directory is not a linked worktree of it, or the run directory\'s run-state.json does not name that worktree, or the worktree has no branch; nothing written',
   '  --check: 0 a verdict was printed (admitted or not); 1 no verdict could be computed (nothing on stdout); 2 malformed (anything but exactly one record reference)',
   '',
@@ -106,7 +106,7 @@ const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 // `--run <dir>` (once, with exactly one record and --no-settle, never with --budget or --check)
 // adds `runDir`, the raw value; run() resolves it. The key is present only when the flag was given.
 // `--in-flight-prs <file>` and `--near-dup-pairs <file>` (once each, with records or --run, never with
-// --budget or --check) add `inFlightPrsFile` / `nearDupPairsFile`, the raw values, on the same terms;
+// --budget or --check; --near-dup-pairs only beside --in-flight-prs) add `inFlightPrsFile` / `nearDupPairsFile`, the raw values, on the same terms;
 // run() resolves them against deps.cwd(). They feed merge.js's drain-overlap hold.
 // --help (or -h) anywhere wins. `--no-settle` anywhere sets settle false (the caller
 // settles stops); any other option is an error.
@@ -171,6 +171,9 @@ function parseArgs(argv) {
       return { error: String(a).startsWith('-') && !m ? `unknown option: ${a}` : `not a record reference: ${JSON.stringify(a)}` };
     }
     if (!records.includes(n)) records.push(n);
+  }
+  if (nearDupPairsFile !== undefined && inFlightPrsFile === undefined) {
+    return { error: '--near-dup-pairs requires --in-flight-prs (the pairs apply only to the in-flight PRs that list names)' };
   }
   const hold = {
     ...(inFlightPrsFile !== undefined ? { inFlightPrsFile } : {}),
