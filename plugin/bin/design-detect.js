@@ -28,6 +28,7 @@
 // exclusive invocation forms — pass one or the other, never both.
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { execFileSync } = require('child_process');
 const {
   evaluate,
@@ -57,6 +58,19 @@ function parseArgs(argv) {
   return { ok: true, args: out };
 }
 
+// An operand carrying a root never reads the cwd: a deleted working directory makes
+// process.cwd() throw, and the unconverted CLI never called it for an absolute path.
+// A relative operand whose cwd cannot be read is handed to fs as written, as the
+// unconverted CLI did, so the read fails with fs's own message naming the caller's spelling.
+function resolveOperand(deps, p) {
+  if (path.parse(p).root) return p;
+  try {
+    return resolveAgainst(deps.cwd(), p);
+  } catch {
+    return p;
+  }
+}
+
 function repoRoot(deps) {
   try {
     return execFileSync('git', ['rev-parse', '--show-toplevel'], {
@@ -76,7 +90,7 @@ function resolvePlatform(args, deps) {
   if (!args.signalsPath) return null;
   let raw;
   try {
-    raw = args.signalsPath === '-' ? deps.stdin() : fs.readFileSync(resolveAgainst(deps.cwd(), args.signalsPath), 'utf8');
+    raw = args.signalsPath === '-' ? deps.stdin() : fs.readFileSync(resolveOperand(deps, args.signalsPath), 'utf8');
     const signals = JSON.parse(raw);
     return (signals && signals.setup && signals.setup.platform) || null;
   } catch {
@@ -89,7 +103,7 @@ function resolveDesignIntegration(args, deps) {
   if (args.claudeMdPath) {
     try {
       const { readDesignIntegrationFlag } = require('./lib/design-detect');
-      return readDesignIntegrationFlag(fs.readFileSync(resolveAgainst(deps.cwd(), args.claudeMdPath), 'utf8'));
+      return readDesignIntegrationFlag(fs.readFileSync(resolveOperand(deps, args.claudeMdPath), 'utf8'));
     } catch {
       return null;
     }
@@ -110,8 +124,9 @@ function run(argv, deps = realDeps) {
   if (args.surfaceLinesPath) {
     if (args.mode) return fail('--surface-lines and --mode are mutually exclusive');
     let diffText;
-    const resolved = args.surfaceLinesPath === '-' ? null : resolveAgainst(deps.cwd(), args.surfaceLinesPath);
+    let resolved = null;
     try {
+      resolved = args.surfaceLinesPath === '-' ? null : resolveOperand(deps, args.surfaceLinesPath);
       diffText = resolved === null ? deps.stdin() : fs.readFileSync(resolved, 'utf8');
     } catch (err) {
       // Node's message names the opened path; print the caller's own spelling instead of the joined one.

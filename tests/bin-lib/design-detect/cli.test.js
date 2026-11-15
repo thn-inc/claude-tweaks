@@ -14,7 +14,7 @@ const path = require('node:path');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'design-detect.js');
 
 function run(args, opts = {}) {
-  return runCliSync(CLI, args, { env: opts.env || { ...process.env }, cwd: opts.cwd, stdin: opts.input });
+  return runCliSync(CLI, args, { env: opts.env || { ...process.env }, cwd: opts.cwd, stdin: opts.input, deps: opts.deps });
 }
 
 test('CLI: --mode required', () => {
@@ -233,28 +233,78 @@ function gitRepoWithFlag(value) {
 }
 
 test('AC8.1: with no --design-integration/--claude-md the decision follows the injected cwd repo', () => {
-  const repo = gitRepoWithFlag('enabled');
-  try {
-    const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: repo, env: withoutAmbientGitVars(process.env) });
-    assert.equal(r.code, 0);
-    assert.equal(JSON.parse(r.stdout).decision, 'proceed'); // this worktree's own CLAUDE.md skips
-  } finally {
-    fs.rmSync(repo, { recursive: true, force: true });
+  // Both flag values, so the decision cannot come from this worktree's own CLAUDE.md.
+  for (const [value, decision] of [['enabled', 'proceed'], ['disabled', 'skip']]) {
+    const repo = gitRepoWithFlag(value);
+    try {
+      const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: repo, env: withoutAmbientGitVars(process.env) });
+      assert.equal(r.code, 0);
+      assert.equal(JSON.parse(r.stdout).decision, decision, `flag ${value}`);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   }
 });
 
 test('repoRoot falls back to deps.cwd() when cwd is not a git repo', () => {
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-nogit-')));
-  fs.writeFileSync(path.join(tmp, 'CLAUDE.md'), '## Design integration\n\ndesign-integration: enabled\n');
-  try {
-    // GIT_CEILING_DIRECTORIES keeps git from finding a repo above the temp dir.
-    const env = { ...withoutAmbientGitVars(process.env), GIT_CEILING_DIRECTORIES: path.dirname(tmp) };
-    const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: tmp, env });
-    assert.equal(r.code, 0);
-    assert.equal(JSON.parse(r.stdout).decision, 'proceed'); // a process.cwd() fallback would read this worktree and skip
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+  for (const [value, decision] of [['enabled', 'proceed'], ['disabled', 'skip']]) {
+    const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-nogit-')));
+    fs.writeFileSync(path.join(tmp, 'CLAUDE.md'), `## Design integration\n\ndesign-integration: ${value}\n`);
+    try {
+      // GIT_CEILING_DIRECTORIES keeps git from finding a repo above the temp dir.
+      const env = { ...withoutAmbientGitVars(process.env), GIT_CEILING_DIRECTORIES: path.dirname(tmp) };
+      const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: tmp, env });
+      assert.equal(r.code, 0);
+      assert.equal(JSON.parse(r.stdout).decision, decision, `flag ${value}`); // a process.cwd() fallback would read this worktree instead
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   }
+});
+
+// A deleted working directory makes process.cwd() throw; the unconverted CLI never called it
+// for an absolute operand, so neither may the in-process entry.
+const throwingCwd = () => { throw new Error('uv_cwd'); };
+
+function absOperandFixture() {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-abs-')));
+  const diff = path.join(tmp, 'd.patch');
+  fs.writeFileSync(diff, 'diff --git a/a.css b/a.css\n--- a/a.css\n+++ b/a.css\n@@ -1 +1 @@\n-.a{}\n+.b{}\n');
+  const claudeMd = path.join(tmp, 'CLAUDE.md');
+  fs.writeFileSync(claudeMd, '## Design integration\n\ndesign-integration: enabled\n');
+  const signals = path.join(tmp, 's.json');
+  fs.writeFileSync(signals, JSON.stringify({ setup: { platform: 'ios' } }));
+  return { tmp, diff, claudeMd, signals };
+}
+
+test('absolute --surface-lines, --claude-md and --signals never call cwd(): same result as a normal cwd', () => {
+  const f = absOperandFixture();
+  try {
+    const cases = [
+      ['--surface-lines', f.diff],
+      ['--mode', 'review', '--claude-md', f.claudeMd, '--surface', 'web', '--files', 'a.tsx'],
+      ['--mode', 'review', '--design-integration', 'enabled', '--surface', 'mobile', '--signals', f.signals],
+    ];
+    for (const args of cases) {
+      const normal = run(args);
+      const gone = run(args, { deps: { cwd: throwingCwd } });
+      assert.equal(gone.code, normal.code, args[0]);
+      assert.equal(gone.stdout, normal.stdout, args[0]);
+      assert.equal(gone.stderr, normal.stderr, args[0]);
+    }
+    assert.equal(JSON.parse(run(cases[1], { deps: { cwd: throwingCwd } }).stdout).decision, 'proceed');
+    assert.equal(JSON.parse(run(cases[2], { deps: { cwd: throwingCwd } }).stdout).platform, 'ios');
+    assert.equal(JSON.parse(run(cases[0], { deps: { cwd: throwingCwd } }).stdout).surface, true);
+  } finally {
+    fs.rmSync(f.tmp, { recursive: true, force: true });
+  }
+});
+
+test('relative --surface-lines with a throwing cwd() prints the could-not-read line with the caller spelling and exits 1', () => {
+  const r = run(['--surface-lines', 'sub/missing.patch'], { deps: { cwd: throwingCwd } });
+  assert.equal(r.code, 1);
+  assert.equal(r.stdout, '');
+  assert.equal(r.stderr, 'design-detect: could not read diff at "sub/missing.patch": ENOENT: no such file or directory, open \'sub/missing.patch\'\n');
 });
 
 test('--surface-lines with a relative unreadable path prints the caller spelling, not the joined path', () => {
