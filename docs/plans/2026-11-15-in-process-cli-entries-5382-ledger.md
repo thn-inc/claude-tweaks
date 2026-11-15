@@ -2,3 +2,11 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD ruling — Task 4 fake-resolvePolicy cases are new tests, not conversions: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 2 | build | SDD ruling — keep phase-timing.js main export per spec Deliverable 1: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 3 | build | SDD ruling — AC4 no-child proof is the PATH-node stub plus the process count: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 4 | build | SDD ruling — a throw in the in-process policy core reads as silent unknown per spec Deliverable 3: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 5 | build | SDD ruling — Windows forward-slash relative path in plan-audit read errors stays absolute, as before: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
+| 6 | build | calibration-report.js --root given as the last argument throws an uncaught TypeError (exit 1) — pre-existing before and after the conversion; a clean `--root requires a value` exit 2 would change an exit code, which this record's spec Non-Goals rule out | deferred | Defer-reason: needs-human-decision — an exit-code change is outside this record's Non-Goals |
+| 7 | build | tests/bin-lib/model-profiles/cli.test.js tmpProject() temp dirs (mp-cli-*) are never removed (pre-dates this record; fix-now-eligible, but the single SDD final-review fix wave had closed) | deferred | Defer-reason: needs-human-decision — every fix-now criterion holds and only the closed SDD fix wave stopped it |
+| 8 | build | tests/bin-lib/calibration/cli.test.js redirected leg of the GIT_DIR env test still inherits GIT_INDEX_FILE/GIT_COMMON_DIR through cliEnv (fix-now-eligible, but the single SDD final-review fix wave had closed) | deferred | Defer-reason: needs-human-decision — every fix-now criterion holds and only the closed SDD fix wave stopped it |
