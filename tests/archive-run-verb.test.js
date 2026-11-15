@@ -1,7 +1,7 @@
 'use strict';
 // In-process (#5375): the `archive-run` and `close-run` calls go through hooks.js's
 // run(argv, deps) via runCli. Real-process coverage is the four AC9.1 smoke tests
-// (each family's success twin and refusal), each marked with its reason.
+// (each family's success twin and its unknown-flag refusal), each marked with its reason.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
@@ -761,15 +761,27 @@ test('AC3.1 AC9.1: archive-run on a clean fixture through runCli and spawnCli pr
   }
 });
 
-// Real process: the archive-run family's refusal smoke test (AC9.1) — exit code and channels of the script
-// entry. The verb prints this refusal on stdout and exits 0: every archive-run refusal but the flag guard's does.
-test('AC9.1: node hooks.js archive-run on an active run refuses with exit 0 naming close-run', () => {
+// Every archive-run refusal but the flag guard's prints on stdout and exits 0.
+test('archive-run on an active run refuses on stdout with exit 0 naming close-run', async () => {
   const { root, runDir, runId } = runDirFixture('active');
-  const r = spawnCli(HOOKS, ['archive-run', '--run', runDir], { cwd: root, env: hookEnv() });
+  const r = await runHook(['archive-run', '--run', runDir], { cwd: root });
   assert.deepStrictEqual(r, {
     code: 0, stdout: `claude-tweaks: ${runId} is active — not archived; run close-run first (or let the owning session finish)\n`, stderr: '',
   });
   assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must stay in place');
+});
+
+// Real process: the archive-run family's refusal smoke test (AC9.1) — the script entry's non-zero exit and stderr.
+test('AC9.1: node hooks.js archive-run --dry-run exits 1 naming the unknown flag', () => {
+  const { root, runDir, runId } = runDirFixture('clean');
+  const headBefore = git(['rev-parse', 'HEAD'], root);
+  const r = spawnCli(HOOKS, ['archive-run', '--run', runDir, '--dry-run'], { cwd: root, env: hookEnv() });
+  assert.deepStrictEqual(r, {
+    code: 1, stdout: '', stderr: "claude-tweaks: archive-run: unknown flag '--dry-run'\nclaude-tweaks: usage: archive-run [--run <dir>]\n",
+  });
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must stay in place');
+  assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), 'nothing archived');
+  assert.strictEqual(git(['rev-parse', 'HEAD'], root), headBefore, 'no commit');
 });
 
 // close-run (#5375): a session id and plugin root pinned for both routes, so the stdout bytes are fixed.
@@ -814,14 +826,25 @@ test('AC3.1 AC9.1: close-run on a recorded run through runCli and spawnCli retur
   }
 });
 
-// Real process: the close-run family's refusal smoke test (AC9.1) — exit code and channels of the script entry.
 // The verb prints this refusal on stdout, so the exact stderr is empty.
-test('AC9.1: node hooks.js close-run with an unusable --run exits non-zero naming the --run value', () => {
+test('close-run with an unusable --run exits 1 on stdout naming the --run value', async () => {
   const { root, runDir } = runDirFixture('active');
   const state = path.join(runDir, 'run-state.json');
   const before = fs.readFileSync(state, 'utf8');
   const missing = path.join(root, 'no-such-run');
-  const r = spawnCli(HOOKS, ['close-run', '--run', missing], { cwd: root, env: hookEnv() });
+  const r = await runHook(['close-run', '--run', missing], { cwd: root });
   assert.deepStrictEqual(r, { code: 1, stdout: `claude-tweaks: --run path rejected: ${missing} — run not closed\n`, stderr: '' });
+  assert.equal(fs.readFileSync(state, 'utf8'), before, 'run-state.json must not move');
+});
+
+// Real process: the close-run family's refusal smoke test (AC9.1) — the script entry's non-zero exit and stderr.
+test('AC9.1: node hooks.js close-run --bogus exits 1 naming the unknown flag', () => {
+  const { root, runDir } = runDirFixture('active');
+  const state = path.join(runDir, 'run-state.json');
+  const before = fs.readFileSync(state, 'utf8');
+  const r = spawnCli(HOOKS, ['close-run', '--run', runDir, '--bogus'], { cwd: root, env: hookEnv() });
+  assert.deepStrictEqual(r, {
+    code: 1, stdout: '', stderr: "claude-tweaks: close-run: unknown flag '--bogus'\nclaude-tweaks: usage: close-run [--run <dir>]\n",
+  });
   assert.equal(fs.readFileSync(state, 'utf8'), before, 'run-state.json must not move');
 });

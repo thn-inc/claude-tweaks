@@ -262,12 +262,25 @@ test('AC3.1 AC9.1: record-worktree through runCli and spawnCli returns the same 
   }
 });
 
-// Real process: the record-worktree family's refusal smoke test (AC9.1). The verb prints this refusal on stdout.
-test('AC9.1: node hooks.js record-worktree without --run exits 1 and records nothing', () => {
+// The verb prints this refusal on stdout, so the exact stderr is empty.
+test('record-worktree without --run exits 1 on stdout and records nothing', async () => {
   const f = recordFixture();
   const before = fs.readFileSync(f.state, 'utf8');
-  const r = spawnCli(HOOKS, ['record-worktree', f.wt], { cwd: f.root, env: hookEnv() });
+  const r = await runHook(['record-worktree', f.wt], { cwd: f.root });
   assert.deepStrictEqual(r, { code: 1, stdout: 'claude-tweaks: record-worktree requires --run — worktree not recorded\n', stderr: '' });
+  assert.equal(fs.readFileSync(f.state, 'utf8'), before);
+});
+
+// Real process: the record-worktree family's refusal smoke test (AC9.1) — the script entry's non-zero exit and stderr.
+test('AC9.1: node hooks.js record-worktree --bogus exits 1 naming the unknown flag and records nothing', () => {
+  const f = recordFixture();
+  const before = fs.readFileSync(f.state, 'utf8');
+  const r = spawnCli(HOOKS, ['record-worktree', '--run', f.runDir, f.wt, '--bogus'], { cwd: f.root, env: hookEnv() });
+  assert.deepStrictEqual(r, {
+    code: 1,
+    stdout: '',
+    stderr: "claude-tweaks: record-worktree: unknown flag '--bogus'\nclaude-tweaks: usage: record-worktree --run <dir> <worktree-path> [--dispatch]\n",
+  });
   assert.equal(fs.readFileSync(f.state, 'utf8'), before);
 });
 
