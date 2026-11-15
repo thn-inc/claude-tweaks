@@ -231,6 +231,7 @@ test('sibling-session-check.md: the #3225 bind names the express-lane exception'
 });
 
 const REPORTING_FACTS = [
+  [/A driver group's block \(`driver-route\.md`\) names its outcome as `driver: \{outcome\}`[^.]*omits the timing line: no Task transcript exists for the driver call, and the line is never composed by hand/, 'a driver group\'s block and its omitted timing line'],
   [/`express: \{outcome\}`/, 'express block names its outcome'],
   [/the one express call's transcript/, 'timing line takes the one express call\'s transcript'],
 ];
@@ -340,6 +341,7 @@ test('driver-route.md: the order is mint → --check → bind without --dispatch
 
 const ROUTE_FACTS = [
   [/before any bind, because its verdict decides the bind's form/, 'the check precedes the bind, and why'],
+  [/A bind that does not print its `claude-tweaks: worktree recorded for \{run-id\}` line is a state the Closed rule does not list: refuse it with the one line naming the state, write one `SKIP` line \(Logging a decline\), and take today's path[^.]*so `--run` never runs unbound/, 'a failed bind → the refusal line, one SKIP, today\'s path'],
   [/the #3225 config gate guards a `\/flow`-framed run, and the driver writes `config\.yml` only once its PR exists/, 'bound without --dispatch, and why'],
   [/`--run` refuses a run directory whose `run-state\.json` does not name this worktree/, 'the bind precedes --run, and why'],
   [/Claim nothing yourself: the driver claims the record under `\{minted-run-dir\}`'s basename/, 'dispatch never claims before --run'],
@@ -352,12 +354,16 @@ const ROUTE_FACTS = [
   [/The hold and the merge are driver code/, 'AC5.9/AC5.10: the hold and the merge are driver code'],
   [/No model performs the merge/, 'AC5.11: no model performs the merge'],
   [/Never `sleep` or poll while the driver runs\. End the turn and wait for the background task's completion notification/, 'AC6.1: no sleep, wait for the notification'],
+  [/^```bash\ntail -n 3 \{output-file\}\n```$/m, 'the tail -n 3 read itself'],
   [/the final event line is the last line above that marker/, 'Review Focus 4: the final line is the last line above [exited with code N]'],
   [/appends a blank line and `\[exited with code N\]`/, 'Review Focus 4: the harness marker named'],
   [/Any other word, no final line, a final line that is not one JSON object, or a non-zero exit that left no parseable final line \(the `--run` guard's exit 3 included\) is `blocked` through `two-call-gate\.md` §5/, 'AC5: the catch-all is blocked through §5'],
   [/a guard failure is a dispatch-side defect, never routed onward to today's path/, 'AC5: a guard failure is a dispatch-side defect'],
+  [/When `\{minted-run-dir\}\/decisions\.md` carries no `Step 2\.8: claimed #\{n\}` line — always so after exit 3, which writes nothing — the driver took no claim: §5's cleanup-only call appends `\(driver-no-claim: skip the claim release\)`/, 'no final line and no claim log → the skip parenthetical'],
+  [/A `decisions\.md` that cannot be read counts as claimed\. A non-zero exit that did leave a parseable final line is not this case: route its outcome word by the table/, 'an unreadable log counts as claimed; a non-zero exit with a final line routes by its word'],
   [/run `drain-pr-overlap\.md`'s Step 5 list write as it runs after the express call/, 'AC5.7: the Step 5 list write after the call'],
   [/The group counts for `settle-and-merge\.md`'s Drain-overlap hold like any auto-merge group/, 'AC5.8: counts for the Drain-overlap hold'],
+  [/Report it by `reporting\.md`'s driver-group sentence/, 'the report block per reporting.md'],
   [/Write no model-selection log line for the group/, 'no model-selection log line'],
   [/log-decision\.js" --run "\{minted-run-dir\}" --status SKIP --step "Driver route \(skipped\)" --reversibility n\/a --text-file "\{text-file\}"/, 'the SKIP line via log-decision.js --text-file'],
 ];
@@ -378,6 +384,7 @@ const OUTCOME_ROWS = [
   ['| `pending-review` |', /\| as `merged` \|/, 'AC5.2: pending-review as merged'],
   ['| `express-escalated` |', /re-bind with `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" record-worktree --run "\{minted-run-dir\}" "\{worktree\}" --dispatch`, then the ordinary first call on the same run dir and the same worktree/, 'AC5.3: express-escalated re-binds with --dispatch, then the ordinary first call'],
   ['| `blocked` |', /this session runs `settle-and-merge\.md`'s Step 6 Settle for the record/, 'AC5.5: blocked → dispatch\'s Settle'],
+  ['| `blocked` |', /the deliberate exception to that file's rule that Settle never runs in dispatch's main thread: no Task call exists for this group, and the driver ran with its settle off/, 'blocked: Settle in this thread is the named exception'],
   ['| `blocked` |', /`stop\.reason` is `claim-exit-7`, it is dispatch's Claim permission stop/, 'claim-exit-7 → the Claim permission stop'],
   ['| `blocked` |', /the firing ends, as for `failed:claim-permission-denied`/, 'claim-exit-7 ends the firing'],
   ['| `blocked` |', /Then `two-call-gate\.md` §5/, 'AC5.5: blocked → then §5'],
@@ -468,4 +475,71 @@ test('go-red control: a dropped --no-settle or an unquoted spaced run dir fails 
   assert.notDeepEqual(driveLines(noSettle).map(parseDriveLine), EXPECTED_PARSES);
   const unquoted = mutate(text, '--run "{minted-run-dir}" --no-settle --in-flight-prs "{drain-prs}"\n', '--run {minted-run-dir} --no-settle --in-flight-prs "{drain-prs}"\n');
   assert.notDeepEqual(driveLines(unquoted).map(parseDriveLine), EXPECTED_PARSES);
+});
+
+// The first bind, in the Order section's fence, is the express form: never --dispatch.
+function orderBindLines(text) {
+  const order = sectionOf(text, '## Order');
+  const lines = [];
+  for (const m of order.matchAll(/^[ \t]*```bash\r?\n([\s\S]*?)\r?\n[ \t]*```/gm)) {
+    for (const line of m[1].split(/\r?\n/)) if (line.includes('/bin/hooks.js" record-worktree')) lines.push(line.trim());
+  }
+  return lines;
+}
+const assertFirstBindWithoutDispatch = (text) => {
+  const lines = orderBindLines(text);
+  assert.equal(lines.length, 1, `expected one bind fence line in Order, found ${lines.length}`);
+  assert.doesNotMatch(lines[0], /--dispatch/);
+};
+
+test('driver-route.md: the Order bind fence binds without --dispatch', () => {
+  assertFirstBindWithoutDispatch(routeText());
+});
+
+test('go-red control: --dispatch appended to the Order bind fence fails', () => {
+  const text = routeText();
+  const bind = '"{minted-run-dir}" "{worktree}"\n   ```';
+  assert.throws(() => assertFirstBindWithoutDispatch(mutate(text, bind, '"{minted-run-dir}" "{worktree}" --dispatch\n   ```')));
+});
+
+// A driver call that left no final line and no claim log took no claim: every release site skips.
+const GATE_FILE = path.join(DISPATCH, 'two-call-gate.md');
+const WRAP_UP = path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up');
+const SECTION_E_FILE = path.join(WRAP_UP, 'cleanup-procedures-execution.md');
+const FLAGS_FILE = path.join(WRAP_UP, 'flags.md');
+const DRIVER_SKIP = 'driver-no-claim: skip the claim release';
+
+function assertDriverSkip(route, gate, sectionE, flags) {
+  assert.ok(route.includes(`\`(${DRIVER_SKIP})\``), 'driver-route.md must name the parenthetical');
+  const s5 = between(gate, '## 5.', '## 6.');
+  const para = s5.split('\n').find((l) => l.trim().startsWith('**Driver run with no claim (#5232).**'));
+  assert.ok(para, 'two-call-gate.md section 5 paragraph missing');
+  for (const needle of [`\`(${DRIVER_SKIP})\``, 'carries no `Step 2.8: claimed #{n}` line', 'Section E skips its release', 'A `decisions.md` that cannot be read counts as claimed']) {
+    assert.ok(para.includes(needle), `section 5 paragraph must carry: ${needle}`);
+  }
+  assert.ok(!between(gate, '## 6.', '## 7.').includes(DRIVER_SKIP), 'a second call (section 6) must not append it');
+  const e = between(sectionE, '## E. Issue claim release', 'This spec\'s record is identified whenever this section runs');
+  assert.ok(e.includes(`**Skip it too when the invocation names \`${DRIVER_SKIP}\` (#5232)**`), 'Section E clause missing');
+  assert.ok(e.includes('--text "condition: driver-no-claim named by the cleanup-only call → fallback: claim release skipped"'), 'Section E skip log line missing');
+  assert.ok(flags.includes(`\`(${DRIVER_SKIP})\` (#5232)`), 'flags.md must declare the phrase');
+}
+
+test('a driver call with no final line and no claim skips the claim release at every site (#5232)', () => {
+  assertDriverSkip(routeText(), readText(GATE_FILE), readText(SECTION_E_FILE), readText(FLAGS_FILE));
+});
+
+test('go-red control: the phrase dropped from any one site fails', () => {
+  const files = [routeText(), readText(GATE_FILE), readText(SECTION_E_FILE), readText(FLAGS_FILE)];
+  const drop = (text) => {
+    const out = text.split(DRIVER_SKIP).join('');
+    assert.notEqual(out, text, 'control must change the text');
+    return out;
+  };
+  const messages = [/driver-route\.md/, /section 5 paragraph/, /Section E/, /flags\.md/];
+  files.forEach((_, i) => {
+    const args = files.map((f, j) => (j === i ? drop(f) : f));
+    assert.throws(() => assertDriverSkip(...args), messages[i]);
+  });
+  const gate = files[1];
+  assert.throws(() => assertDriverSkip(files[0], mutate(gate, 'A `decisions.md` that cannot be read counts as claimed, and the release runs.', ''), files[2], files[3]), /counts as claimed/);
 });
