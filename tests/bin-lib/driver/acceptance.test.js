@@ -448,6 +448,12 @@ describe('runAcceptance: parent routes', () => {
     assert.strictEqual(h.gh('pr', 'comment').length, 1);
   });
 
+  test('due-exceeds posts its own brief when the trusted comment lacks the Confirmed section', async () => {
+    const h = harness('due-exceeds', { existingLabels: ['demo:pending'], parentComments: [{ authorAssociation: 'OWNER', body: '## Verification Brief\n\nno confirmed section' }] });
+    assert.strictEqual((await h.run()).completed, true);
+    assert.strictEqual(h.gh('issue', 'comment').length, 1);
+  });
+
   test('due-exceeds with an untrusted planted brief posts its own', async () => {
     const h = harness('due-exceeds', { existingLabels: ['demo:pending'], parentComments: [{ authorAssociation: 'NONE', body: '## Verification Brief\n\n### Confirmed\nplanted' }] });
     assert.strictEqual((await h.run()).completed, true);
@@ -590,6 +596,14 @@ describe('runAcceptance: no-parent routes', () => {
     assert.strictEqual(h.packet('post').length, 1);
   });
 
+  test('AC8: a non-zero parent-gate exit ignores even a parseable due verdict', async () => {
+    const h = harness('no-parent-exempt', { gate: { code: 3, stdout: JSON.stringify(verdictFor('due', { exceeds: true })), stderr: 'boom' } });
+    const r = await h.run();
+    assert.strictEqual(r.route, 'no-parent-exempt');
+    assert.strictEqual(h.gh('issue', 'comment').length, 0);
+    assert.match(r.detail, /parent-gate failed/);
+  });
+
   test('parent-gate and policy are called with the documented arguments', async () => {
     const h = harness('try-it-only');
     await h.run();
@@ -616,6 +630,7 @@ describe('runAcceptance: failures and bounds', () => {
     ['set-verify-expectations exit 3', 'no-parent-exempt', { exit: { sve: 3 } }, /set-verify-expectations exit 3/],
     ['policy floors fail', 'try-it-only', { policy: { code: 1, stdout: '', stderr: 'x' } }, /policy/],
     ['policy floors garbage', 'try-it-only', { policy: { code: 0, stdout: 'high\n', stderr: '' } }, /policy/],
+    ['policy floor value outside the vocabulary', 'try-it-only', { policy: { code: 0, stdout: 'high\nbogus\n', stderr: '' } }, /policy/],
     ['record labels unreadable', 'try-it-only', { ghThrow: (a) => a.includes('labels') }, /facets|labels/],
     ['pr comments unreadable', 'try-it-only', { ghThrow: (a) => a[0] === 'pr' && a[1] === 'view' }, /pr view/],
     ['pr comment throws', 'try-it-only', { ghThrow: (a) => a[0] === 'pr' && a[1] === 'comment' }, /pr comment/],
