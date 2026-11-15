@@ -535,8 +535,8 @@ function run(ctx) {
   // write itself failing — a broken tmp dir) is treated identically to
   // "already retried" so a write failure can never cause a retry loop.
   const agentId = ctx.input.agent_id;
-  const alreadyRetried = agentId ? contractRetries.readRetried(ctx.input.session_id).has(agentId) : true;
-  if (!alreadyRetried && contractRetries.recordRetry(ctx.input.session_id, agentId)) {
+  const alreadyRetried = agentId ? contractRetries.readRetried(ctx.input.session_id, { env: ctx.env }).has(agentId) : true;
+  if (!alreadyRetried && contractRetries.recordRetry(ctx.input.session_id, agentId, { env: ctx.env })) {
     return {
       json: {
         decision: 'block',

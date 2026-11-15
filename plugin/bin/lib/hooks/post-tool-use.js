@@ -24,7 +24,7 @@ const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 const { resolveIntegrationBranch, bareIntegrationName, parseWorktreeList } = require('./worktree-reap');
 // Session-scoped marker path for the non-EnterWorktree ad-hoc-run-dir rate-limit (#1333) — see
 // stampAdHocRunDir below.
-const { sessionTmpPath } = require('../session-tmp');
+const { sessionTmpPath, envTmpdir } = require('../session-tmp');
 
 // Field/record separators for recentCommits' combined --format string below.
 // ASCII 0x1f/0x1e (unit/record separator) — practically never appear in a
@@ -235,6 +235,7 @@ function extractToolResponseText(toolResponse) {
 // worktree-reap.js's `findWorktreeEntry`, so a win32 forward-slash porcelain path matches a
 // backslash cwd (#3811).
 function resolveWorktreePathViaPorcelain(ctx, deps = {}) {
+  ctxLib.requireEnv(ctx);
   return ctxLib.listedWorktreeForCwd(ctx.cwd, { env: ctx.env, ...deps });
 }
 
@@ -295,7 +296,7 @@ function stampAdHocRunDir(ctx) {
     if (isEnterWorktree) {
       worktreePath = resolveCreatedWorktreePath(ctx);
     } else {
-      const markerPath = sessionTmpPath(sessionId, ADHOC_WORKTREE_CHECKED_MARKER);
+      const markerPath = sessionTmpPath(sessionId, ADHOC_WORKTREE_CHECKED_MARKER, { tmpdir: envTmpdir(ctx.env) });
       if (markerPath && fs.existsSync(markerPath)) return; // already checked (or ruled out) this session — skip the git call entirely
       // #1864: the porcelain lookup shells out `git -C ctx.cwd worktree list --porcelain`,
       // which is guaranteed to fail when ctx.cwd no longer exists on disk — the shape produced

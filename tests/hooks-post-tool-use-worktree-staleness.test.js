@@ -392,8 +392,18 @@ test('#2476: a real (non-forced) unset key still logs result: unset, distinct fr
 test('#3811: resolveWorktreePathViaPorcelain matches win32 forward-slash porcelain against a backslash cwd', () => {
   const porcelain = 'worktree D:/a/x\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nbranch refs/heads/feat\n\n';
   const deps = { runGit: () => ({ stdout: porcelain, failure: null }), pathImpl: path.win32 };
-  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'D:\\a\\x\\feat' }, deps), { path: 'D:/a/x/feat', isMain: false });
-  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'd:\\a\\x\\feat\\' }, deps), { path: 'D:/a/x/feat', isMain: false });
-  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'D:\\a\\x' }, deps), { path: 'D:/a/x', isMain: true });
-  assert.strictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'D:\\elsewhere' }, deps), null);
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ env: process.env, cwd: 'D:\\a\\x\\feat' }, deps), { path: 'D:/a/x/feat', isMain: false });
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ env: process.env, cwd: 'd:\\a\\x\\feat\\' }, deps), { path: 'D:/a/x/feat', isMain: false });
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ env: process.env, cwd: 'D:\\a\\x' }, deps), { path: 'D:/a/x', isMain: true });
+  assert.strictEqual(post.resolveWorktreePathViaPorcelain({ env: process.env, cwd: 'D:\\elsewhere' }, deps), null);
+});
+
+test('#5377: resolveWorktreePathViaPorcelain runs its git child under ctx.env and throws without one', () => {
+  const porcelain = 'worktree /a/x\nbranch refs/heads/trunk\n\n';
+  let seen = null;
+  const deps = { runGit: (args, cwd, opts) => { seen = opts; return { stdout: porcelain, failure: null }; } };
+  const env = { SENTINEL_5377: 'ctx-env' };
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ env, cwd: '/a/x' }, deps), { path: '/a/x', isMain: true });
+  assert.strictEqual(seen.env, env, 'the lookup\'s git child gets the context environment');
+  assert.throws(() => post.resolveWorktreePathViaPorcelain({ cwd: '/a/x' }, deps), TypeError);
 });

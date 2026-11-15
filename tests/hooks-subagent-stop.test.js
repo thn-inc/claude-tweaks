@@ -222,7 +222,7 @@ test('#2345: a non-compliant reply with zero tool-use blocks logs both zero-tool
 // `{ decision: 'block', reason }`, which keeps the subagent running and
 // delivers `reason` as its next instruction.
 function cleanupRetries(sessionId) {
-  const p = contractRetries.retriesPath(sessionId);
+  const p = contractRetries.retriesPath(sessionId, { env: process.env });
   if (p) { try { fs.unlinkSync(p); } catch { /* already absent */ } }
 }
 
@@ -261,7 +261,7 @@ test('#1936: an exempt agent_type is never blocked and never writes a retry-coun
   });
   assert.deepStrictEqual(out, {}, 'an exempt third-party agent is never governed by this contract');
   assert.strictEqual(events.length, 0);
-  assert.deepStrictEqual(contractRetries.readRetried(sessionId), new Set(), 'an exempt agent must never be recorded in the retry counter');
+  assert.deepStrictEqual(contractRetries.readRetried(sessionId, { env: process.env }), new Set(), 'an exempt agent must never be recorded in the retry counter');
 });
 
 test('#1936: a counter-write failure is treated as already-retried, falling through to the warn-and-log path rather than blocking', (t) => {
@@ -280,7 +280,7 @@ test('#1936: a compliant reply is never blocked and writes no retry-counter entr
   const { out, events } = callSubstop('All good.\nSTATUS: DONE', { session_id: sessionId, agent_id: 'agent-e' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(events.length, 0);
-  assert.deepStrictEqual(contractRetries.readRetried(sessionId), new Set(), 'a compliant reply must never touch the retry counter');
+  assert.deepStrictEqual(contractRetries.readRetried(sessionId, { env: process.env }), new Set(), 'a compliant reply must never touch the retry counter');
 });
 
 // #2714: a nested dispatcher's own interim progress-update reply (more async
@@ -418,7 +418,7 @@ test('#3015 AC1.1: a yield after intervening tool calls while 2 of 3 launched Ag
   const { out, events } = runOn(p, { session_id: sessionId, agent_id: 'parent-1' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(events.length, 0);
-  assert.strictEqual(contractRetries.readRetried(sessionId).has('parent-1'), false, 'no forced STATUS retry while dispatches are pending');
+  assert.strictEqual(contractRetries.readRetried(sessionId, { env: process.env }).has('parent-1'), false, 'no forced STATUS retry while dispatches are pending');
   cleanupRetries(sessionId);
 });
 
@@ -558,7 +558,7 @@ test('#3015 AC1.2: a yield while one launch is pending and the others completed 
   const { out, events } = runOn(p, { session_id: sessionId, agent_id: 'parent-1att' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(events.length, 0);
-  assert.strictEqual(contractRetries.readRetried(sessionId).has('parent-1att'), false);
+  assert.strictEqual(contractRetries.readRetried(sessionId, { env: process.env }).has('parent-1att'), false);
   cleanupRetries(sessionId);
 });
 
@@ -617,7 +617,7 @@ test('#3589 AC1.1: a non-compliant reply right after a verbatim queued_command c
   const { out, events } = runOn(writeTranscript(entries), { session_id: sessionId, agent_id: 'fixwave-1' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(events.length, 0);
-  assert.strictEqual(contractRetries.readRetried(sessionId).has('fixwave-1'), false, 'no forced STATUS retry for a reply reacting to a queued completion');
+  assert.strictEqual(contractRetries.readRetried(sessionId, { env: process.env }).has('fixwave-1'), false, 'no forced STATUS retry for a reply reacting to a queued completion');
   cleanupRetries(sessionId);
 });
 

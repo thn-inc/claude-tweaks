@@ -193,10 +193,10 @@ const SESSION = 'sess-5377';
 const eventPayload = (extra, cwd) => JSON.stringify({ session_id: SESSION, cwd, ...extra });
 
 // A project whose one run dir is owned by SESSION (and by ownerPid, when given).
-function ownedProject({ ownerPid } = {}) {
+function ownedProject({ ownerPid, session = SESSION } = {}) {
   const project = gitRepo();
   const run = mkRunAt(project, '2026-11-15T000000-spec-5377', project);
-  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active', worktree: project, sessionId: SESSION, ...(ownerPid ? { ownerPid } : {}) }));
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active', worktree: project, sessionId: session, ...(ownerPid ? { ownerPid } : {}) }));
   return { project, run };
 }
 
@@ -230,20 +230,30 @@ test('post-tool-use runs its git children under the injected env (a commit check
   assert.strictEqual(res.code, 0);
 });
 
-test('post-tool-use stamps the owner pid from the injected env', async () => {
+test('post-tool-use stamps the owner pid and owner block from the injected env, and its marker under the injected tmp dir', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-tmp-'));
   const injected = String(process.pid);
-  await withProcessEnv({ CLAUDE_PID: String(process.ppid) }, async () => {
-    // A fresh session id: the non-EnterWorktree ad-hoc check leaves a once-per-session marker in the tmp dir.
-    const input = eventPayload({ session_id: `sess-5377-${process.pid}-${Date.now()}`, tool_name: 'Write', tool_input: { file_path: path.join(wt, 'a.txt') } }, wt);
-    const res = await runHookCli(['post-tool-use'], { input, cwd: wt, env: hookEnv({ CLAUDE_PID: injected }) });
-    assert.strictEqual(res.code, 0);
-  });
-  const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
-  const dirs = fs.readdirSync(pipelines).filter((n) => n.endsWith('-adhoc-standalone'));
-  assert.strictEqual(dirs.length, 1, 'one ad-hoc run dir is minted');
-  assert.strictEqual(stateOf(path.join(pipelines, dirs[0])).ownerPid, Number(injected));
+  // A fresh session id: the non-EnterWorktree ad-hoc check leaves a once-per-session marker under the tmp dir.
+  const sessionId = `sess-5377-${process.pid}-${Date.now()}`;
+  try {
+    await withProcessEnv({ CLAUDE_PID: String(process.ppid) }, async () => {
+      const input = eventPayload({ session_id: sessionId, tool_name: 'Write', tool_input: { file_path: path.join(wt, 'a.txt') } }, wt);
+      const res = await runHookCli(['post-tool-use'], { input, cwd: wt, env: hookEnv({ CLAUDE_PID: injected, TMPDIR: tmp, TEMP: tmp }) });
+      assert.strictEqual(res.code, 0);
+    });
+    const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
+    const dirs = fs.readdirSync(pipelines).filter((n) => n.endsWith('-adhoc-standalone'));
+    assert.strictEqual(dirs.length, 1, 'one ad-hoc run dir is minted');
+    const state = stateOf(path.join(pipelines, dirs[0]));
+    assert.strictEqual(state.ownerPid, Number(injected));
+    assert.strictEqual(state.owner.pid, Number(injected), 'the owner block carries the injected pid too');
+    assert.ok(fs.existsSync(path.join(tmp, `ct-session-${sessionId}`, 'adhoc-worktree-checked')), 'the once-per-session marker lands under the injected tmp dir');
+    assert.ok(!fs.existsSync(path.join(os.tmpdir(), `ct-session-${sessionId}`)), 'and nothing lands under the real tmp dir');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 const REFUSAL = (wt) => `This session is isolated in the worktree ${wt}, but this command … cannot be shown not to be git. Refusing to run it — a worktree-isolated session's git operations must target its own worktree.`;
@@ -317,6 +327,33 @@ test('subagent-stop reads nothing from process.env', async () => {
   const res = await runHookCli(['subagent-stop'], { input: eventPayload({ agent_transcript_path: transcript, agent_id: 'a1' }, project), cwd: project, env: hookEnv() });
   assert.strictEqual(res.code, 0);
   assert.deepStrictEqual(eventsOf(run).filter((e) => e.type === 'contract-violation'), []);
+});
+
+test('subagent-stop writes its retry counter under the injected tmp dir', async () => {
+  const sessionId = `sess-5377-retry-${process.pid}-${Date.now()}`;
+  const { project } = ownedProject({ session: sessionId });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-tmp-'));
+  const transcript = path.join(project, 'agent.jsonl');
+  fs.writeFileSync(transcript, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'task' }] } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Looked into it.\nNot sure yet.\nWill keep digging.' }] } }),
+  ].join('\n') + '\n');
+  const counter = `ct-contract-retries-${sessionId}.json`;
+  try {
+    const res = await runHookCli(['subagent-stop'], {
+      input: JSON.stringify({ session_id: sessionId, cwd: project, agent_transcript_path: transcript, agent_id: 'a1' }),
+      cwd: project,
+      env: hookEnv({ TMPDIR: tmp, TEMP: tmp }),
+    });
+    assert.strictEqual(res.code, 0);
+    assert.strictEqual(JSON.parse(res.stdout).decision, 'block', 'the first violation is blocked once');
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(tmp, counter), 'utf8')), ['a1']);
+    assert.ok(!fs.existsSync(path.join(os.tmpdir(), counter)), 'nothing lands under the real tmp dir');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('user-prompt-submit reads nothing from process.env', async () => {
