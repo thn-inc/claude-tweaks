@@ -161,4 +161,27 @@ function originWithTwoClones(prefix) {
   };
 }
 
-module.exports = { gitRepo, linkedWorktreeOf, harnessWorktreeOf, originWithTwoClones, fixtureGit, FIXTURE_TIMEOUT_MS };
+// `base` (default process.env) minus the variables that pick which repository a git child reads
+// (a test running under a git hook inherits them). The env a fixture's own setup git calls run with,
+// and the base a test layers an injected `GIT_DIR` and the like onto.
+function cleanGitEnv(base = process.env) {
+  const env = { ...base };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
+  return env;
+}
+
+// A fresh repository with one commit of `file` (content `${prefix}\n`, so two repos built with distinct
+// prefixes hold distinct commits): `{ dir, head, git }`. `git(...args)` runs in `dir` under cleanGitEnv()
+// with a fixed identity and returns trimmed stdout; the caller removes `dir`.
+function committedRepo({ prefix = 'ct-fx-', file = 'seed.txt', branch } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const env = cleanGitEnv();
+  const git = (...args) => fixtureGit(['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env, encoding: 'utf8' }).trim();
+  git('init', '-q', ...(branch ? ['-b', branch] : []));
+  fs.writeFileSync(path.join(dir, file), `${prefix}\n`);
+  git('add', '.');
+  git('commit', '-q', '-m', prefix);
+  return { dir, head: git('rev-parse', 'HEAD'), git };
+}
+
+module.exports = { gitRepo, linkedWorktreeOf, harnessWorktreeOf, originWithTwoClones, fixtureGit, FIXTURE_TIMEOUT_MS, cleanGitEnv, committedRepo };

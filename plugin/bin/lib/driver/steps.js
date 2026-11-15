@@ -249,6 +249,20 @@ function driverLineBound(ctx) {
   return source !== 'default' && ctx.reviewer && ctx.reviewer.on === true ? value : null;
 }
 
+// The options the eligibility step hands deps.evaluateRecordEligibility, lane bounds included, so a
+// caller that pre-screens a record (the budget loop) asks the same question the step does.
+function eligibilityOptions(policy) {
+  const bounds = laneBounds(policy);
+  return {
+    enabled: true,
+    allowAbsentCeremony: true,
+    integrationModel: policy['integration-model'].value,
+    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
+    sizeCeiling: bounds.sizeCeiling,
+    maxKeyFiles: bounds.maxKeyFiles,
+  };
+}
+
 // Ports express-lane.md's Eligibility section, with the driver's relaxed ceremony gate and the lane
 // bounds. It also makes the record's one reviewRequired call (ctx.reviewer, #5224): admission, the check
 // flag and the review step read that answer, never a second call. A refusal names the reviewer reason
@@ -257,14 +271,7 @@ function driverLineBound(ctx) {
 const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async (ctx, deps) => {
   const { policy } = ctx.shared;
   const bounds = laneBounds(policy);
-  const verdict = deps.evaluateRecordEligibility(ctx.issue, {
-    enabled: true,
-    allowAbsentCeremony: true,
-    integrationModel: policy['integration-model'].value,
-    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
-    sizeCeiling: bounds.sizeCeiling,
-    maxKeyFiles: bounds.maxKeyFiles,
-  });
+  const verdict = deps.evaluateRecordEligibility(ctx.issue, eligibilityOptions(policy));
   ctx.keyFiles = (verdict && verdict.keyFiles) || [];
   ctx.reviewer = deps.reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: policy['express-driver-review'].value });
   if (!verdict || verdict.eligible !== true) {
@@ -348,6 +355,10 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   const r = deps.node(binScript('claim-targets.js'),
     ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
     { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  // A recorded fact, not a side effect: the budget loop reads it to tell a contested claim (3) from
+  // other claim failures (4, 5, an exit 0 that claimed nothing, a killed claim with a null exit, a
+  // failed mint) and from the run-ending claim stops (7, and 2 and 6).
+  ctx.claimExit = Number.isInteger(r.code) ? r.code : null;
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
@@ -950,8 +961,10 @@ const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps
 
 // Ports express-lane.md step 6 (push): only the commit `check` verified goes out. The guard
 // is closed: a head that is not a full sha, a HEAD that cannot be read, or one that differs
-// each stop before any push. The explicit `origin {branch}` is needed because the branch was
-// created with --no-track. Never retried, never forced.
+// each stop before any push; so does the branch ref `refs/heads/{branch}` (#5458), which
+// catches a switch to another branch at the same commit that HEAD alone cannot see. The
+// explicit `origin {branch}` is needed because the branch was created with --no-track.
+// Never retried, never forced.
 const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const { wt, branch } = ctx;
   const head = ctx.check && ctx.check.head;
@@ -966,6 +979,15 @@ const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   }
   if (current !== head) {
     return { status: 'stop', detail: `HEAD ${neutralize(current)} is not the commit check verified (${head})` };
+  }
+  let branchSha;
+  try {
+    branchSha = String(gitIn(deps, wt, ['rev-parse', '--verify', '--end-of-options', `refs/heads/${branch}`])).trim();
+  } catch {
+    return { status: 'stop', detail: 'the branch ref of the worktree is unreadable' };
+  }
+  if (branchSha !== head) {
+    return { status: 'stop', detail: `branch ${neutralize(branch)} points at ${neutralize(branchSha)}, not the commit check verified (${head})` };
   }
   try {
     gitIn(deps, wt, ['push', '--end-of-options', 'origin', branch], { remoteWrite: true });
@@ -1220,7 +1242,7 @@ const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) =>
 }));
 
 // Ports express-lane.md step 9, the merge: entered only when the CI wait ended green, then
-// merge.js owns every decision (no supplier configured, no merge). The result rides on ctx.merge
+// merge.js owns every decision (a deps object that carries no supplier stops at `no-supplier`; production deps carry one). The result rides on ctx.merge
 // for the final line. The step never halts: merge() reports every stop as a result, so the
 // record's outcome comes from it (finalEvent), not from a stop class. Class `none` is for a throw
 // in this entry itself. There is no interruptClass rung for it: ctx.configWritten is already true
@@ -1242,6 +1264,12 @@ const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) =>
     interrupted: () => ctx.shared.interrupted,
     watchClock: (t) => { ctx.ciWaitStartedAt = t; },
   };
+  // The judgment supplier is built over these same merge deps and the run's shared state (its worker
+  // launches track `shared.activeWorker`); a deps object with only `judgments` keeps it, one with neither
+  // stops at `no-supplier`.
+  mdeps.judgments = typeof deps.createJudgments === 'function'
+    ? deps.createJudgments({ deps: mdeps, shared: ctx.shared })
+    : deps.judgments;
   const r = await merge(mctx, mdeps);
   ctx.merge = r;
   if (r.runDir !== ctx.runDir) ctx.runDir = r.runDir;
@@ -1260,7 +1288,7 @@ const STEPS = Object.freeze([
 ]);
 
 module.exports = {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
   testTreeStop, TEST_TREE_UNREADABLE,
 };

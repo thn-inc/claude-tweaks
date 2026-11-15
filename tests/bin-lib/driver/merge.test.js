@@ -14,11 +14,13 @@ const {
   MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
 } = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
-const { VERDICT_STEPS, verdictMarker } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
+const { createJudgments } = require(path.join(LIB, 'driver', 'judgments'));
+const { VERDICT_STEPS, verdictMarker, verdictText } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
 const { formatEntry, STATUSES } = require(path.join(LIB, 'log-decision', 'append'));
 const { aggregateReproductionProblem } = require(path.join(LIB, 'log-decision', 'aggregate-reproduction'));
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
+const { BAD_MERGE_CHECK_ENVELOPES } = require('../../helpers/merge-check-envelopes');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const { realDeps } = require(path.join(LIB, 'driver', 'run'));
 
@@ -2860,3 +2862,78 @@ test('AC13.1–AC13.3: express-lane.js verify exits 0 for fixture runs driven to
     assert.deepEqual(JSON.parse(v.stdout), { ok: true, missing: [] }, name);
   }
 });
+
+// ---- AC10: the real judgment supplier (judgments.js, acceptance.js) behind merge() ----
+
+const POLICY_CEILINGS = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 } };
+const TRY_IT_GROUP = { name: 'Run the thing', precondition: 'none', access: 'none', entryPoint: 'node bin/x.js', steps: ['Run it', 'Read the output'], expected: 'It prints ok' };
+
+// The replies the supplier's own reads and writes need, tried before the merge harness's defaults: the
+// blast radius (finite ceilings), log-decision.js's `--text` form appending the real formatEntry line to
+// decisions.md as the CLI does, the policy floors, a `gated` parent gate (try-it-only), and the record,
+// diff, checks and PR comment reads. The merge harness's own `--text-file` log calls fall through.
+function supplierScript(f) {
+  const flag = (c, name) => c.args[c.args.indexOf(name) + 1];
+  return [
+    [isNode('blast-radius.js'), { code: 0, stdout: JSON.stringify({ config: { autoMergeMaxLines: 200, autoMergeMaxFiles: 12 }, summary: { sensitiveFilesTouched: [], files: 1 } }), stderr: '' }],
+    [(c) => isNode('log-decision.js')(c) && c.args.includes('--text'), (c) => {
+      fs.appendFileSync(f.decisions, `${formatEntry({ status: flag(c, '--status'), now: MAIN_NOW, step: flag(c, '--step'), text: flag(c, '--text'), reversibility: flag(c, '--reversibility') })}\n`);
+      return { code: 0, stdout: '', stderr: '' };
+    }],
+    [(c) => isNode('resolve-policy.js')(c) && c.args.includes('risk-floor'), { code: 0, stdout: 'high\nhigh\n', stderr: '' }],
+    [isNode('parent-gate.js'), { code: 0, stdout: JSON.stringify({ parent: 42, state: 'gated', exceeds: null, subIssues: [], skipped: [] }), stderr: '' }],
+    [(c) => isGh('issue', 'view')(c) && flag(c, '--json') === 'title,body', JSON.stringify({ title: 'Rec', body: 'Rec body' })],
+    [isGh('pr', 'checks'), JSON.stringify([{ name: 'ci', bucket: 'pass' }])],
+    [(c) => isGh('pr', 'view')(c) && flag(c, '--json') === 'comments', JSON.stringify({ comments: [] })],
+    [(c) => c.kind === 'git' && c.args.includes('diff'), (c) => (c.args.includes('--name-only') ? 'plugin/bin/x.js\0' : 'diff --git a/x b/x\n+line\n')],
+  ];
+}
+
+// A merge harness whose `judgments` is the real supplier over the harness's own deps. `envelopes` maps a
+// worker role to its launch envelope; the verdict line is left for the supplier to write.
+function realSupplierHarness(f, envelopes) {
+  const launched = [];
+  const h = mergeHarness({
+    fx: f,
+    decisions: verifyDecisions().replace(`${verdictLine()}\n`, ''),
+    script: supplierScript(f),
+    deps: { launchWorker: async (opts) => { launched.push(opts); return envelopes[opts.role]; }, runner: () => ({}), platform: 'linux' },
+  });
+  h.deps.judgments = createJudgments({ deps: h.deps, shared: { policy: POLICY_CEILINGS, activeWorker: null } });
+  fs.writeFileSync(path.join(f.runDir, 'run-state.json'), JSON.stringify({ worktree: f.worktree, pr: { number: 9, url: 'https://github.com/o/r/pull/9' } }));
+  return { ...h, launched };
+}
+
+test('AC10: the real supplier drives a record to merged and express-lane verify passes', async () => {
+  const f = fixture();
+  const h = realSupplierHarness(f, {
+    'merge-check': { status: 'ok', result: { verdict: 'auto-merge', rationale: 'r' } },
+    acceptance: { status: 'ok', result: { tryIt: [TRY_IT_GROUP], observationPlan: {}, claims: [], parentBrief: {} } },
+  });
+  const r = await merge(f.ctx, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
+  assert.deepEqual(h.launched.map((o) => o.role), ['merge-check', 'acceptance']);
+  assert.ok(fs.readFileSync(f.decisions, 'utf8').includes(verdictText(7)), 'the supplier logged the verdict line itself');
+  const tryIt = Object.values(h.files).filter((text) => String(text).includes('<!-- run-comment: try-it -->'));
+  assert.equal(tryIt.length, 1, 'the Try it comment body was written once');
+  assert.ok(tryIt[0].includes('Run the thing'));
+  const commented = h.calls.filter(isGh('pr', 'comment')).map((c) => c.args[c.args.indexOf('--body-file') + 1]);
+  assert.ok(Object.keys(h.files).some((p) => commented.includes(p) && String(h.files[p]).includes('<!-- run-comment: try-it -->')), 'and posted through gh pr comment');
+  const v = spawnVerify(f);
+  assert.equal(v.status, 0, `verify exit ${v.status}: ${v.stdout}${v.stderr}`);
+  assert.deepEqual(JSON.parse(v.stdout), { ok: true, missing: [] });
+});
+
+// AC2's last sentence, for every envelope that must not read as auto-merge (the supplier suite's own table).
+for (const [name, envelope] of BAD_MERGE_CHECK_ENVELOPES) {
+  test(`AC2 over merge: ${name} through the real supplier is pending-review with no ready and no merge`, async () => {
+    const f = fixture();
+    const h = realSupplierHarness(f, { 'merge-check': envelope });
+    const r = await merge(f.ctx, h.deps);
+    assert.equal(r.outcome, 'pending-review');
+    assert.equal(r.reason, 'verdict-not-confirmed');
+    assert.deepEqual(h.launched.map((o) => o.role), ['merge-check'], 'acceptance never launched');
+    assert.ok(!h.calls.some(isGh('pr', 'ready')), 'no gh pr ready');
+    assert.ok(!h.calls.some(isMergeCall), 'no gh pr merge');
+  });
+}

@@ -7,7 +7,7 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 
 const {
-  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger, namesRecordReference, isDeferredUnstaged,
+  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, parseLedger, namesRecordReference, isDeferredUnstaged,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
@@ -354,6 +354,111 @@ test('resolveInputs: no headers anywhere and no manifest → records [] and sour
   assert.deepStrictEqual(inputs.records, []);
   assert.strictEqual(inputs.record, null);
   assert.strictEqual(inputs.sources.records, 'unavailable');
+});
+
+// #5347: an express run writes no materialized header or manifest; its record
+// is the `spec:` line the lane's step 7 pins into the run dir's config.yml.
+function configOnlyRunDir(configText, name = 'wrap-up-pack-config-') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), name));
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
+  if (configText !== null) fs.writeFileSync(path.join(dir, 'config.yml'), configText);
+  return dir;
+}
+
+test('AC2.1: an express run dir (config.yml spec:, no header or manifest) resolves its record from the config rung and the claim probe is ok', async () => {
+  const runDir = configOnlyRunDir('spec: 5338\nceremony-profile: fast-lane\nintegration-model: pr-first\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [5338]);
+  assert.strictEqual(inputs.sources.records, 'config');
+  assert.deepStrictEqual(inputs.closingRecords, []);
+  const pack = await gatherPack({ runDir, cwd: '/w/tree', only: ['claim'], deps: okDeps() });
+  assert.strictEqual(pack.claim.ok, true);
+  assert.deepStrictEqual(pack.claim.value, { 5338: { state: 'live', reclaimable: false, via: 'git' } });
+});
+
+test('AC3.1: a config.yml with no valid spec: still leaves records unresolved', async () => {
+  for (const config of ['', 'spec: 0\n', 'spec: abc\n', 'spec: 12x\n']) {
+    const runDir = configOnlyRunDir(config);
+    const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+    assert.strictEqual(inputs.sources.records, 'unavailable', JSON.stringify(config));
+    assert.deepStrictEqual(inputs.records, [], JSON.stringify(config));
+    const pack = await gatherPack({ runDir, cwd: '/w/tree', only: ['claim'], deps: okDeps() });
+    assert.strictEqual(pack.claim.ok, false, JSON.stringify(config));
+    assert.match(pack.claim.error, /^records unresolved — no materialized header or manifest found$/, JSON.stringify(config));
+  }
+});
+
+test('the config rung is last: a header wins over config.yml spec:', () => {
+  const runDir = fixtureRunDir();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'spec: 9999\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1535]);
+  assert.strictEqual(inputs.sources.records, 'headers');
+});
+
+test('the config rung is last: a worktree-mirror header wins over config.yml spec:', () => {
+  const { runDir } = mirrorFixture();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'spec: 9999\n');
+  const inputs = resolveInputs({ runDir, cwd: '/nowhere', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1930]);
+  assert.strictEqual(inputs.sources.records, 'worktree-headers');
+});
+
+test('the config rung never runs when the run dir holds a manifest.yml, even an empty one', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), '');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.deepStrictEqual(inputs.records, []);
+});
+
+test('the config rung is last: a manifest wins and closingRecords stays empty', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  parent: 1904\n  specs:\n    - id: 1930\n      status: complete\n      subdir: spec-1930\n    - id: 1931\n      status: pending\n      subdir: spec-1931\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'manifest');
+  assert.deepStrictEqual(inputs.records, [1930, 1931]);
+  assert.deepStrictEqual(inputs.closingRecords, []);
+});
+
+test('the config rung reads a CRLF config.yml', () => {
+  const runDir = configOnlyRunDir('spec: 5338\r\nmode: auto\r\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [5338]);
+  assert.strictEqual(inputs.sources.records, 'config');
+});
+
+test('the config rung never runs for a multi-spec spec-{N} subdirectory', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-config-parent-'));
+  const child = path.join(parent, 'spec-1931');
+  fs.mkdirSync(child);
+  fs.writeFileSync(path.join(child, 'config.yml'), 'spec: 1930\n');
+  fs.writeFileSync(path.join(child, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const inputs = resolveInputs({ runDir: child, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.deepStrictEqual(inputs.records, []);
+});
+
+test('the config rung never runs when manifest.yml exists but cannot be read (unreadable is not absent)', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  const realFs = (p) => fs.readFileSync(p, 'utf8');
+  const unreadable = (p) => {
+    if (path.basename(p) === 'manifest.yml') { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+    return realFs(p);
+  };
+  const deps = { readFile: unreadable, readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  assert.deepStrictEqual(resolveRecords(deps, runDir, null), { records: [], source: 'unavailable', parkedAtShaping: {} });
+  const absent = { ...deps, readFile: realFs };
+  assert.deepStrictEqual(resolveRecords(absent, runDir, null).source, 'config');
+});
+
+test('memberRecords: header and manifest rungs name members; the config rung and an unknown rung never do (Reading A, #5347)', () => {
+  for (const source of ['headers', 'worktree-headers', 'manifest', 'worktree-manifest']) {
+    assert.deepStrictEqual(memberRecords({ records: [7, 8], source }), [7, 8], source);
+  }
+  for (const source of ['config', 'unavailable', 'some-future-rung']) {
+    assert.deepStrictEqual(memberRecords({ records: [7], source }), [], source);
+  }
 });
 
 test('resolveInputs: a spec-* subdirectory whose own run-state.json lacks worktree/pr falls back to the parent run\'s (#1930 review C1)', () => {
@@ -1629,7 +1734,7 @@ test('AC1.2: a header-resolved pack has inputs.closingRecords equal to inputs.re
 
 test('closingRecords keeps records only for the two header rungs (Ruling R1, decided once)', () => {
   for (const source of ['headers', 'worktree-headers']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), [7, 8]);
-  for (const source of ['manifest', 'worktree-manifest', 'unavailable']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
+  for (const source of ['manifest', 'worktree-manifest', 'config', 'unavailable']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
 });
 
 test('#3399: a worktree-manifest rung yields an empty closing set', () => {
@@ -1813,4 +1918,101 @@ test('isDeferredUnstaged: the one definition parseLedger counts and the ledger-r
   assert.strictEqual(isDeferredUnstaged('staged/ledger-record-a.md', []), false);
   assert.strictEqual(isDeferredUnstaged('see #77', []), false);
   assert.strictEqual(isDeferredUnstaged('see #5', [5]), true);
+});
+
+// #5379: defaultDeps(cwd, { env }) hands the injected environment to the git children resolveWorktreeBase
+// runs. B alone carries `origin/HEAD` at its base commit (plus one more commit); A has no remote, so a
+// child that answers B's base ran under `GIT_DIR=B/.git`.
+const packDefaultDeps = () => require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js')).defaultDeps;
+
+// Repos A (no remote) and B (the env-only one), removed after `fn(a, b)`.
+function withTwoRepos(fn) {
+  const { committedRepo } = require('../../helpers/git-fixtures');
+  const a = committedRepo({ prefix: 'pack-env-a-', branch: 'main' });
+  const b = committedRepo({ prefix: 'pack-env-b-', branch: 'main' });
+  try {
+    return fn(a, b);
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+}
+
+function commitFile(repo, name, text) {
+  fs.mkdirSync(path.dirname(path.join(repo.dir, name)), { recursive: true });
+  fs.writeFileSync(path.join(repo.dir, name), text);
+  repo.git('add', '.');
+  repo.git('commit', '-q', '-m', name);
+  return repo.git('rev-parse', 'HEAD');
+}
+
+// #5379: when `git rev-parse --show-toplevel` fails, defaultResolvePolicy reads the policy under the injected
+// cwd, not the ambient process.cwd() (whose own policy.yml would answer otherwise).
+test('defaultDeps(cwd): resolvePolicy falls back to the injected cwd when the toplevel lookup fails (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-policy-cwd-'));
+  try {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-branch: injected-cwd-branch\n');
+    const deps = packDefaultDeps()(dir, { env: { ...cleanGitEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir) } });
+    assert.deepStrictEqual(deps.resolvePolicy(['integration-branch']), { 'integration-branch': 'injected-cwd-branch' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('defaultDeps(cwd, { env }): resolveWorktreeBase reads the env-only repo (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const bBase = b.head;
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', bBase);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    commitFile(b, 'more.txt', 'more\n');
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), bBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), bBase, 'no env: the children read A');
+  });
+});
+
+// The `integration-branch` policy read is resolveWorktreeBase's first git child. B's policy.yml names a
+// branch at a commit distinct from origin/HEAD's, so the result moves only when defaultResolvePolicy's git
+// ran under env (GIT_WORK_TREE makes B the policy root while cwd stays A, which has no policy).
+test('defaultDeps(cwd, { env }): the integration-branch policy is read through the injected env (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const originMain = commitFile(b, path.join('.claude-tweaks', 'policy.yml'), 'integration-branch: pbranch\n');
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', originMain);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    const policyBase = commitFile(b, 'p.txt', 'p\n');
+    b.git('branch', 'pbranch');
+    commitFile(b, 'q.txt', 'q\n');
+    assert.notStrictEqual(policyBase, originMain);
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), GIT_WORK_TREE: b.dir };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), policyBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), policyBase, 'no env: the policy is read from A, which has none');
+  });
+});
+
+// ghSync wraps its options in ghOptions with the injected env: with GH_HOST unset, B's origin (read under
+// GIT_DIR while cwd is A) decides the GH_HOST the stub `gh` prints.
+test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read under env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-env-stub-'));
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho "$GH_HOST"\n', { mode: 0o755 });
+  _resetGhHostCache();
+  try {
+    withTwoRepos((a, b) => {
+      b.git('remote', 'add', 'origin', 'https://acme.ghe.com/o/r.git');
+      const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), PATH: stubDir + path.delimiter + process.env.PATH };
+      delete env.GH_HOST;
+      delete env.GH_REPO;
+      assert.strictEqual(packDefaultDeps()(a.dir, { env, stderr: () => {} }).ghSync(['--version'], { cwd: a.dir }).trim(), 'acme.ghe.com');
+    });
+  } finally {
+    _resetGhHostCache();
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
 });

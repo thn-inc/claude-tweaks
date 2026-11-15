@@ -10,7 +10,7 @@
 const crypto = require('crypto');
 const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
-const { resolveRecords } = require('../wrap-up/pack');
+const { resolveRecords, memberRecords } = require('../wrap-up/pack');
 const {
   SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
 } = require('./sdd-ruling');
@@ -295,14 +295,21 @@ function readJson(deps, file) {
 // Members: the fact pack's resolved record list when a pack exists (#1930
 // gathers it before the console), else pack.js's shared resolveRecords
 // ladder (run dir's own headers, the worktree mirror, a parent multi-spec
-// run's manifest.yml + spec-*/work/ headers — #2028).
+// run's manifest.yml + spec-*/work/ headers — #2028). Which rungs may name
+// members is pack.js's memberRecords, decided once (Reading A, #5347: the
+// config rung never does). A pack whose rung grants no members yields []
+// with no fallback; a pack with no `sources.records` string predates the
+// field and keeps its records as before.
 function readMembers(deps, runDir) {
   const pack = readJson(deps, path.join(runDir, 'wrap-up-pack.json'));
-  const fromPack = pack && pack.inputs && Array.isArray(pack.inputs.records) ? pack.inputs.records.map(Number).filter(Number.isFinite) : [];
-  if (fromPack.length) return fromPack;
+  if (pack && pack.inputs && Array.isArray(pack.inputs.records)) {
+    const records = pack.inputs.records.map(Number).filter(Number.isFinite);
+    const source = pack.inputs.sources && pack.inputs.sources.records;
+    if (records.length) return typeof source === 'string' ? memberRecords({ records, source }) : records;
+  }
   const state = readJson(deps, path.join(runDir, 'run-state.json'));
   const worktree = state && typeof state.worktree === 'string' ? state.worktree : null;
-  return resolveRecords(deps, runDir, worktree).records;
+  return memberRecords(resolveRecords(deps, runDir, worktree));
 }
 
 function parseInvariant(patchText) {

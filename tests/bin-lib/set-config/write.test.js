@@ -40,9 +40,10 @@ test('validateLever: every canonical Manifesto lever is accepted with a known-go
   }
 });
 
-test('RUN_PINS: integration-model is a run pin, not a Manifesto lever', () => {
-  assert.deepEqual([...RUN_PINS], ['integration-model']);
+test('RUN_PINS: integration-model and spec are run pins, not Manifesto levers', () => {
+  assert.deepEqual([...RUN_PINS], ['integration-model', 'spec']);
   assert.equal(MANIFESTO_LEVERS.includes('integration-model'), false);
+  assert.equal(MANIFESTO_LEVERS.includes('spec'), false);
   assert.deepEqual(leverValues('integration-model'), ['pr-first', 'local-merge']);
 });
 
@@ -53,8 +54,18 @@ test('validateLever: integration-model accepts pr-first/local-merge and rejects 
   });
 });
 
+test('AC1.1: validateLever accepts spec as a positive-integer run pin', () => {
+  assert.deepEqual(validateLever('spec', '5347'), { ok: true });
+  assert.deepEqual(validateLever('spec', '7'), { ok: true });
+  for (const bad of ['0', '-1', 'abc', '12x', '07', '']) {
+    assert.deepEqual(validateLever('spec', bad), {
+      ok: false, reason: 'invalid-value', allowed: ['a positive integer record number'],
+    }, `spec=${JSON.stringify(bad)} should be refused`);
+  }
+});
+
 test('validateLever: a key outside the lever enum is refused (unknown-key) — including config.yml bookkeeping fields', () => {
-  for (const key of ['spec', 'created', 'worktree-always', 'not-a-lever']) {
+  for (const key of ['created', 'worktree-always', 'not-a-lever']) {
     assert.deepEqual(validateLever(key, 'x'), { ok: false, reason: 'unknown-key' });
   }
 });

@@ -1,8 +1,9 @@
 'use strict';
 // Event vocabulary for the pipeline driver (drive.js, record #5218).
 //
-// The step-name list below IS the event vocabulary: event lines carry `step` drawn from it
-// (plus FINAL_STEP for the closing line). Fields may be added to an event, never renamed.
+// The step-name list below IS the event vocabulary: event lines carry `step` drawn from it,
+// plus FINAL_STEP for a record's closing line and BUDGET_STEP for a `--budget` run's summary
+// line (budget.js). Fields may be added to an event, never renamed.
 //
 // This module holds no step logic. It holds:
 //   - the step, outcome and stop-class constants,
@@ -26,6 +27,9 @@ const STEP_NAMES = Object.freeze([
   'commit', 'test', 'check', 'review', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci', 'merge',
 ]);
 const FINAL_STEP = 'final';
+// A `--budget` run's one summary line (run and record null). Kept apart from STEP_NAMES, as
+// SETTLE_STEP_NAMES is: it names the run, not a pipeline step, and the step list is pinned.
+const BUDGET_STEP = 'budget';
 
 // Bound on one plugin/bin CLI call (claim-targets.js talks to GitHub; the rest are local).
 // Shared by steps.js and settle.js (settle.js never requires steps.js).
@@ -50,8 +54,8 @@ const SETTLE_STEP_NAMES = Object.freeze([
 // The sub-step events merge.js emits (#5226), one per sub-step call. Kept apart from STEP_NAMES
 // for the same reason as SETTLE_STEP_NAMES: the pipeline-step list is pinned.
 const MERGE_STEP_NAMES = Object.freeze([
-  'merge-entry', 'merge-supplier', 'merge-closing-links', 'merge-compose', 'merge-ready',
-  'merge-gate', 'merge-watch', 'merge-park', 'merge-conflict', 'merge-call', 'merge-confirm',
+  'merge-entry', 'merge-supplier', 'merge-check', 'merge-acceptance', 'merge-closing-links', 'merge-compose',
+  'merge-ready', 'merge-gate', 'merge-watch', 'merge-park', 'merge-conflict', 'merge-call', 'merge-confirm',
   'merge-post-merge', 'merge-release-status', 'merge-reconcile', 'merge-teardown',
   'merge-delete-branch', 'merge-close-run',
 ]);
@@ -306,6 +310,6 @@ function createEventSink({ stdout, appendFile }) {
 
 module.exports = {
   CLI_TIMEOUT_MS, firstLine, errorText,
-  STEP_NAMES, SETTLE_STEP_NAMES, MERGE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
+  STEP_NAMES, SETTLE_STEP_NAMES, MERGE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, yieldToEventLoop, neutralize, normalizeTitle, createEventSink,
 };

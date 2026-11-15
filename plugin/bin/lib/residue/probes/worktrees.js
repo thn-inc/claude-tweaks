@@ -98,9 +98,10 @@ const IS_DIRTY_TIMEOUT_MS = 10000;
 // rename's ` -> ` or trim a status prefix's leading space — both are
 // significant), or `null` on a read failure — same fail-toward-"could not
 // confirm" contract `defaultIsDirty` already documented before this split.
-function readPorcelainStatus(worktreePath) {
+// `env` is the child's environment; absent, the child inherits the process's own (#5385).
+function readPorcelainStatus(worktreePath, { env } = {}) {
   try {
-    const out = execFileSync('git', ['-C', worktreePath, '--no-optional-locks', 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: IS_DIRTY_TIMEOUT_MS, windowsHide: true }); // git-path-read: not a path list (display only)
+    const out = execFileSync('git', ['-C', worktreePath, '--no-optional-locks', 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: IS_DIRTY_TIMEOUT_MS, env, windowsHide: true }); // git-path-read: not a path list (display only)
     const lines = out.split('\n');
     if (lines[lines.length - 1] === '') lines.pop(); // trailing newline's empty tail entry (and the empty-output case)
     return lines;
@@ -109,8 +110,8 @@ function readPorcelainStatus(worktreePath) {
   }
 }
 
-function defaultIsDirty(worktreePath) {
-  const lines = readPorcelainStatus(worktreePath);
+function defaultIsDirty(worktreePath, { env } = {}) {
+  const lines = readPorcelainStatus(worktreePath, { env });
   if (lines === null) return null;
   return lines.length > 0;
 }
