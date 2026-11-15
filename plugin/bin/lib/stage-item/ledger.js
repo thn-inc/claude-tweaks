@@ -292,8 +292,9 @@ function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = nul
 
 // Appends one row under the ledger lock, fail-closed: a held lock throws LOCK_TIMEOUT instead of
 // racing. Throws on an unreadable ledger, no table, and LEDGER_UNSAFE (see appendLedgerRow).
+// `env` is where the lock wait is read (file-lock.js's resolveLockWaitMs); settleRow takes it too.
 function appendRow({
-  runDir, ledgerPath, phase, item, status, resolution,
+  runDir, ledgerPath, phase, item, status, resolution, env = process.env,
   readLedger = (p) => fs.readFileSync(p, 'utf8'), // test seam: lets a test attempt a second append between this call's read and its write
 }) {
   return withLock(ledgerLockPath(runDir), () => {
@@ -302,7 +303,7 @@ function appendRow({
     });
     writeFileAtomic(ledgerPath, appended.text);
     return { number: appended.number };
-  }, { failClosed: true });
+  }, { failClosed: true, env });
 }
 
 // Rewrites row `row`'s Status and Resolution under the ledger lock, fail-closed. The status guards
@@ -311,7 +312,7 @@ function appendRow({
 // refused-proposal reopen. The row is looked up before any guard runs, so a missing or
 // non-5-column row throws rewriteLedgerRow's own message, never a guard reading a shifted cell.
 function settleRow({
-  runDir, ledgerPath, row, status, resolution, excludeRecords = [],
+  runDir, ledgerPath, row, status, resolution, excludeRecords = [], env = process.env,
 }) {
   return withLock(ledgerLockPath(runDir), () => {
     const text = fs.readFileSync(ledgerPath, 'utf8');
@@ -331,7 +332,7 @@ function settleRow({
     }
     writeFileAtomic(ledgerPath, rewritten);
     return { number: Number(row) };
-  }, { failClosed: true });
+  }, { failClosed: true, env });
 }
 
 module.exports = {

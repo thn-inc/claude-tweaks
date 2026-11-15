@@ -1345,7 +1345,7 @@ async function runLedgerRow(argv, deps) {
     try {
       const repoResolve = require('./lib/repo-resolve');
       // #4794: read the origin the gate's way (userinfo, port and scheme dropped), so the verdict never depends on the URL's spelling.
-      repo = repoResolve.originSpecOf(repoResolve.originUrl(worktree));
+      repo = repoResolve.originSpecOf(repoResolve.originUrl(worktree, deps.env));
     } catch { repo = null; }
   }
   const verdict = checkLedgerStatus(status, resolution.text, { excludeRecords, repo });
@@ -1366,10 +1366,10 @@ async function runLedgerRow(argv, deps) {
   try {
     written = settle
       ? settleRow({
-        runDir, ledgerPath: resolved.path, row, status, resolution: resolution.text, excludeRecords,
+        runDir, ledgerPath: resolved.path, row, status, resolution: resolution.text, excludeRecords, env: deps.env,
       })
       : appendRow({
-        runDir, ledgerPath: resolved.path, phase, item: item.text, status, resolution: resolution.text,
+        runDir, ledgerPath: resolved.path, phase, item: item.text, status, resolution: resolution.text, env: deps.env,
       });
   } catch (err) {
     const message = err && err.message ? err.message : String(err);

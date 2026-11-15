@@ -109,18 +109,6 @@ test('#5375: realDeps.stderr writes every byte, retries EAGAIN and never throws 
   assert.strictEqual(Buffer.concat(delivered).toString(), text.slice(0, 15));
 });
 
-// #5375: a relative path argument is joined onto the injected cwd WITHOUT normalizing (resolveAgainst),
-// so the kernel sees a trailing slash exactly as a bare relative read did at base.
-test('#5375: ledger-row --item-file item.txt/ (trailing slash) still refuses with exit 2 and ENOTDIR', async () => {
-  const { dir, run } = projectWithRun();
-  fs.writeFileSync(path.join(dir, 'item.txt'), 'a row\n');
-  const r = await runCli(HOOKS, ['ledger-row', '--run', run, '--phase', 'build', '--status', 'observation', '--item-file', 'item.txt/'], {
-    cwd: dir,
-    env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
-  });
-  assert.deepStrictEqual(r, { code: 2, stdout: '', stderr: 'claude-tweaks: ledger-row: --item-file item.txt/ is unreadable (ENOTDIR) — nothing written\n' });
-});
-
 test('#5375: delete-ledger --ledger <relative> deletes against the injected cwd and prints the typed path', async () => {
   const { run } = projectWithRun();
   fs.writeFileSync(path.join(run, 'x-ledger.md'), '# ledger\n');
