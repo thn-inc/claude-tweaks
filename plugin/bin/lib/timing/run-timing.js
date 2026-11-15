@@ -143,7 +143,9 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   if (!withTokens) return { ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: false };
 
   const read = readUsageImpl || ((p, o) => require('./transcript').readUsage(p, o));
-  const worktree = runState && runState.worktree ? runState.worktree : null;
+  // A closed run has worktree null; worktreeAtClose keeps the path (#3023).
+  const usable = (v) => (typeof v === 'string' && v ? v : null);
+  const worktree = runState ? usable(runState.worktree) || usable(runState.worktreeAtClose) : null;
   const at = cwd === undefined ? process.cwd() : cwd;
   const hit = () => ({ ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: true });
   const transcripts = [];

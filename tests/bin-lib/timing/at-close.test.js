@@ -254,6 +254,32 @@ test('deadline: readUsage never settles → resolves within boundMs + 1000, phas
   }
 });
 
+test('a closed run reads its transcript against worktreeAtClose: a Read under the worktree is classed worktree-relative', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    // A worktree whose absolute path holds a skills/ segment: read whole, every
+    // file in it looks like a procedure file; worktree-relative, notes.md does not.
+    const wt = path.join(root, 'skills', 'wt-a');
+    const runDir = closedRun(root, 'run', wt);
+    const dir = path.join(cfg, 'projects', transcript.slugForCwd(wt));
+    fs.mkdirSync(dir, { recursive: true });
+    const lines = [
+      { timestamp: '2026-11-16T10:01:00.000Z', message: { role: 'assistant', id: 'm1', model: 'claude-test', usage: { input_tokens: 5, output_tokens: 1 }, content: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: path.join(wt, 'notes.md') } }] } },
+      { timestamp: '2026-11-16T10:01:05.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'hello notes' }] } },
+    ];
+    fs.writeFileSync(path.join(dir, `${SID}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    const r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.equal(r.status, 'written');
+    const totals = readTiming(runDir).totals;
+    assert.equal(totals.procedureBytes, 0);
+    assert.equal(totals.turnClasses.read, 1);
+    assert.equal(totals.turnClasses.procedure, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('TIMING_BOUND_MS is at most 60000', () => {
   assert.ok(TIMING_BOUND_MS <= 60000);
   assert.equal(TIMING_BOUND_MS, 60000);
