@@ -41,6 +41,12 @@ function readBlastRadius({ deps }, ctx) {
       parsed = null;
     }
   }
+  return blastFloor(parsed);
+}
+
+// The two code floors over a parsed blast-radius object (or null for unusable output): { floor, detail, summary? },
+// floor null when neither fires. Exported so the verdict-fixture harness applies the same floors (tools/driver-merge-check-eval.js).
+function blastFloor(parsed) {
   const summary = parsed && isPlainObject(parsed) ? parsed.summary : null;
   if (!isPlainObject(summary) || !Array.isArray(summary.sensitiveFilesTouched)) {
     return { floor: 'blast-radius-failed', detail: 'blast radius failed or returned unusable output' };
@@ -187,4 +193,4 @@ function createJudgments({ deps, shared, readFile, runAcceptance } = {}) {
   };
 }
 
-module.exports = { judgeMergeCheck, createJudgments };
+module.exports = { judgeMergeCheck, createJudgments, blastFloor };
