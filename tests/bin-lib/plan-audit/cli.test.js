@@ -1198,10 +1198,13 @@ test('resolveRepoRoot: outside a git repo, git\'s fatal line goes to deps.stderr
   try {
     const plan = writePlan(repo, '### Task 1: Do a thing\n**Files:**\n- Modify: `plan.md`\n');
     // No --repo-root: git runs in the non-git cwd. A process.stderr write would trip the leak guard.
-    const r = runCliArgs([plan], { cwd: repo, env: { GIT_CEILING_DIRECTORIES: os.tmpdir() } });
+    // A git hook running npm test exports GIT_DIR and friends, which would point git at a repository.
+    const env = cliEnv({ GIT_CEILING_DIRECTORIES: os.tmpdir() });
+    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[key];
+    const r = runCliSync(CLI, [plan], { env, cwd: repo });
     assert.match(r.stderr, /not a git repository/i);
     // The fallback is the injected cwd: plan.md exists there, so Check A passes and the audit exits 0.
-    assert.strictEqual(r.exitCode, 0);
+    assert.strictEqual(r.code, 0);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
