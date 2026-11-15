@@ -1814,3 +1814,100 @@ test('isDeferredUnstaged: the one definition parseLedger counts and the ledger-r
   assert.strictEqual(isDeferredUnstaged('see #77', []), false);
   assert.strictEqual(isDeferredUnstaged('see #5', [5]), true);
 });
+
+// #5379: defaultDeps(cwd, { env }) hands the injected environment to the git children resolveWorktreeBase
+// runs. B alone carries `origin/HEAD` at its base commit (plus one more commit); A has no remote, so a
+// child that answers B's base ran under `GIT_DIR=B/.git`.
+const packDefaultDeps = () => require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js')).defaultDeps;
+
+// Repos A (no remote) and B (the env-only one), removed after `fn(a, b)`.
+function withTwoRepos(fn) {
+  const { committedRepo } = require('../../helpers/git-fixtures');
+  const a = committedRepo({ prefix: 'pack-env-a-', branch: 'main' });
+  const b = committedRepo({ prefix: 'pack-env-b-', branch: 'main' });
+  try {
+    return fn(a, b);
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+}
+
+function commitFile(repo, name, text) {
+  fs.mkdirSync(path.dirname(path.join(repo.dir, name)), { recursive: true });
+  fs.writeFileSync(path.join(repo.dir, name), text);
+  repo.git('add', '.');
+  repo.git('commit', '-q', '-m', name);
+  return repo.git('rev-parse', 'HEAD');
+}
+
+// #5379: when `git rev-parse --show-toplevel` fails, defaultResolvePolicy reads the policy under the injected
+// cwd, not the ambient process.cwd() (whose own policy.yml would answer otherwise).
+test('defaultDeps(cwd): resolvePolicy falls back to the injected cwd when the toplevel lookup fails (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-policy-cwd-'));
+  try {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-branch: injected-cwd-branch\n');
+    const deps = packDefaultDeps()(dir, { env: { ...cleanGitEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir) } });
+    assert.deepStrictEqual(deps.resolvePolicy(['integration-branch']), { 'integration-branch': 'injected-cwd-branch' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('defaultDeps(cwd, { env }): resolveWorktreeBase reads the env-only repo (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const bBase = b.head;
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', bBase);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    commitFile(b, 'more.txt', 'more\n');
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), bBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), bBase, 'no env: the children read A');
+  });
+});
+
+// The `integration-branch` policy read is resolveWorktreeBase's first git child. B's policy.yml names a
+// branch at a commit distinct from origin/HEAD's, so the result moves only when defaultResolvePolicy's git
+// ran under env (GIT_WORK_TREE makes B the policy root while cwd stays A, which has no policy).
+test('defaultDeps(cwd, { env }): the integration-branch policy is read through the injected env (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const originMain = commitFile(b, path.join('.claude-tweaks', 'policy.yml'), 'integration-branch: pbranch\n');
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', originMain);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    const policyBase = commitFile(b, 'p.txt', 'p\n');
+    b.git('branch', 'pbranch');
+    commitFile(b, 'q.txt', 'q\n');
+    assert.notStrictEqual(policyBase, originMain);
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), GIT_WORK_TREE: b.dir };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), policyBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), policyBase, 'no env: the policy is read from A, which has none');
+  });
+});
+
+// ghSync wraps its options in ghOptions with the injected env: with GH_HOST unset, B's origin (read under
+// GIT_DIR while cwd is A) decides the GH_HOST the stub `gh` prints.
+test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read under env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-env-stub-'));
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho "$GH_HOST"\n', { mode: 0o755 });
+  _resetGhHostCache();
+  try {
+    withTwoRepos((a, b) => {
+      b.git('remote', 'add', 'origin', 'https://acme.ghe.com/o/r.git');
+      const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), PATH: stubDir + path.delimiter + process.env.PATH };
+      delete env.GH_HOST;
+      delete env.GH_REPO;
+      assert.strictEqual(packDefaultDeps()(a.dir, { env, stderr: () => {} }).ghSync(['--version'], { cwd: a.dir }).trim(), 'acme.ghe.com');
+    });
+  } finally {
+    _resetGhHostCache();
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
+});

@@ -1,7 +1,8 @@
 'use strict';
 // The pipeline driver's run loop (drive.js, record #5218): run(argv, deps) parses the
 // record references, probes gh and git, then walks steps.js's STEPS table once per named
-// record, in order. The loop owns only event emission and stop handling between steps:
+// record, in order (`--budget` instead hands off to budget.js's runBudget, after the probes and
+// the signal subscription). The loop owns only event emission and stop handling between steps:
 // it names no step, so adding a step is a table entry, never a change here — with one
 // exception: a step that leaves a new durable side effect must also set a ctx flag for it
 // and add a rung for that flag to interruptClass (the ladder in the Interrupts paragraph).
@@ -76,14 +77,15 @@ const USAGE = [
   'Usage: drive.js #N [#M…]',
   '       drive.js --help | -h   (prints this text; exit 0, before any probe)',
   '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)',
+  '       drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record)',
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
   'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when it carries auto:merge and the merge-check and acceptance judgment workers both clear it.',
   'Exit codes (Combined-2):',
-  '  0  every named record reached its final event, whatever its outcome',
-  '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted',
-  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed)',
+  '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
+  '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
+  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record',
   '',
 ].join('\n');
 
@@ -91,17 +93,32 @@ const RECORD_RE = /^#?(\d+)$/;
 const GIT_PROBE_TIMEOUT_MS = 10000;
 const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 
-// argv -> { records, settle } | { help: true } | { error }. `#N` or `N`, positive integers only,
-// de-duplicated in the order given. --help (or -h) anywhere wins. `--no-settle` anywhere sets
-// settle false (the caller settles stops); any other option is an error.
+// argv -> { records, settle } | { budget, settle } | { help: true } | { error }. `#N` or `N`,
+// positive integers only, de-duplicated in the order given. `--budget <n|all>` (n a positive
+// integer without a leading zero) names a queue-pulled run instead of records and is exclusive
+// with them. --help (or -h) anywhere wins. `--no-settle` anywhere sets settle false (the caller
+// settles stops); any other option is an error.
+const BUDGET_NEEDS_RECORD = 'a record reference (#N) or --budget <n|all> is required';
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
-  if (argv.length === 0) return { error: 'at least one record reference (#N) is required' };
+  if (argv.length === 0) return { error: BUDGET_NEEDS_RECORD };
   const records = [];
+  let budget;
   let settleStops = true;
-  for (const a of argv) {
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
     if (a === '--no-settle') {
       settleStops = false;
+      continue;
+    }
+    if (a === '--budget') {
+      if (budget !== undefined) return { error: '--budget given more than once' };
+      if (i + 1 >= argv.length) return { error: '--budget needs a value: a positive integer or all' };
+      const v = String(argv[i + 1]);
+      i += 1;
+      if (v === 'all') budget = 'all';
+      else if (/^[1-9][0-9]*$/.test(v) && Number.isSafeInteger(Number(v))) budget = Number(v);
+      else return { error: `--budget must be a positive integer or all, got: ${JSON.stringify(v)}` };
       continue;
     }
     const m = RECORD_RE.exec(String(a));
@@ -111,7 +128,11 @@ function parseArgs(argv) {
     }
     if (!records.includes(n)) records.push(n);
   }
-  if (records.length === 0) return { error: 'at least one record reference (#N) is required' };
+  if (budget !== undefined) {
+    if (records.length > 0) return { error: '--budget and a named record (#N) are exclusive' };
+    return { budget, settle: settleStops };
+  }
+  if (records.length === 0) return { error: BUDGET_NEEDS_RECORD };
   return { records, settle: settleStops };
 }
 
@@ -127,7 +148,7 @@ function newShared() {
 
 function newCtx(record, shared) {
   return {
-    record, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false,
+    record, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
     summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
@@ -282,9 +303,9 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
   };
 }
 
-// One record through the table; returns its final event (null when an interrupt landed
-// before its first step). `steps` is a test seam.
-async function driveRecord(record, shared, deps, steps = STEPS) {
+// One record through the table; resolves to `{ final, ctx }` — the final event (null when an
+// interrupt landed before its first step) and the record's context. `steps` is a test seam.
+async function driveWithCtx(record, shared, deps, steps) {
   const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
   const ctx = newCtx(record, shared);
   // The writer a step uses to emit sub-step lines (before its own result line) and to follow the
@@ -317,7 +338,7 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
         if (current.step !== null) {
           reportInterrupt(shared, current, step, `interrupted by ${shared.interrupted} before ${step.name}`, 0, deps);
         }
-        return current.final;
+        return { final: current.final, ctx };
       }
       const t0 = deps.now();
       current.step = step;
@@ -330,7 +351,7 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
         current.inStep = false;
       }
       // The handler already wrote this record's stop and final line.
-      if (shared.interrupted) return current.final;
+      if (shared.interrupted) return { final: current.final, ctx };
       const ms = deps.now() - t0;
       if (!bound && ctx.runDir) {
         sink.bindRunDir(ctx.runDir);
@@ -357,10 +378,28 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
       current.final = final;
       deps.terminate(shared.interrupted);
     }
-    return final;
+    return { final, ctx };
   } finally {
     shared.current = null;
   }
+}
+
+// One record through the table; returns its final event (null when an interrupt landed
+// before its first step).
+async function driveRecord(record, shared, deps, steps = STEPS) {
+  return (await driveWithCtx(record, shared, deps, steps)).final;
+}
+
+// The final event plus the claim facts the budget loop counts from: whether the claim was
+// obtained and its run dir minted, and the claim step's exit code.
+async function driveRecordFacts(record, shared, deps, steps = STEPS) {
+  const { final, ctx } = await driveWithCtx(record, shared, deps, steps);
+  return {
+    final,
+    outcome: final ? final.outcome : null,
+    claimed: ctx.claimed === true && typeof ctx.runDir === 'string' && ctx.runDir !== '',
+    claimExit: ctx.claimExit,
+  };
 }
 
 // The signal handler run() subscribes (see the header's Interrupts paragraph). A second
@@ -427,6 +466,10 @@ async function run(argv, deps) {
   shared.settle = parsed.settle;
   const unsubscribe = deps.onSignal((signal) => interrupt(shared, signal, deps));
   try {
+    if (parsed.budget !== undefined) {
+      const { runBudget } = require('./budget');
+      return await runBudget(parsed.budget, shared, deps, { driveOne: (n) => driveRecordFacts(n, shared, deps) });
+    }
     for (const record of parsed.records) {
       await driveRecord(record, shared, deps);
       // A signal queued during the record's last synchronous call is delivered only when the
@@ -481,6 +524,9 @@ const realDeps = {
   reviewRequired: (opts) => require('./review').reviewRequired(opts),
   fetchNativeDependencies: (opts) => require('../issues/native-dependencies').fetchNativeDependencies(opts),
   fetchLinkedPRs: (opts) => require('../issues/linked-prs').fetchLinkedPRs(opts),
+  // The queue-pull module bounds its own gh calls (isBatchGhCall), so these take no timeout here.
+  queuePull: (options, d) => require('../dispatch/queue-pull').queuePull(options, d),
+  rankNext: (groups, entries, opts) => require('../dispatch/queue-pull').rankNext(groups, entries, opts),
   launchWorker: (opts, d) => require('./worker').launchWorker(opts, d),
   // The merge step's judgment supplier (#5228): the merge-check and acceptance workers behind merge.js's `deps.judgments`.
   createJudgments: (opts) => require('./judgments').createJudgments(opts),
@@ -535,4 +581,4 @@ const realDeps = {
   remoteUrl: () => remoteUrl(),
 };
 
-module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, newShared, interruptClass, reraiseAfterFlush };
+module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, driveRecordFacts, newShared, interruptClass, reraiseAfterFlush };

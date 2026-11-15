@@ -21,8 +21,9 @@ const { isPathContained } = require('../shared-primitives');
 const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation'];
 
 // Local on purpose: resolveLedgerPath must not load pack.js eagerly (pack.js is required lazily, only on the docs/plans fallback).
-function defaultGit(args, { cwd } = {}) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+// `env` is the caller's injected environment (#5379); absent, the child inherits the real one.
+function defaultGit(args, { cwd, env } = {}) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) });
 }
 
 // Resolves the single active ledger file for a run dir, per
@@ -42,13 +43,13 @@ function defaultGit(args, { cwd } = {}) {
 // `ledger.md` or `*-ledger.md` and its real path must sit under `runDir` or
 // `worktree` — otherwise `{ ok: false, reason: 'rejected', detail }`, since
 // callers unlink or overwrite whatever it names.
-function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
+function resolveLedgerPath({ runDir, worktree, explicit, env, deps = {} } = {}) {
   const existsSync = deps.existsSync || fs.existsSync;
   const readdirSync = deps.readdirSync || fs.readdirSync;
   const realpathSync = deps.realpathSync || fs.realpathSync;
-  const git = deps.git || defaultGit;
+  const git = deps.git || ((args, o) => defaultGit(args, { ...o, env }));
   // Lazy: pack.js is a heavy module, and only the docs/plans fallback needs it.
-  const resolveBase = deps.resolveBase || ((wt) => require('./pack').resolveWorktreeBase(wt));
+  const resolveBase = deps.resolveBase || ((wt) => { const pack = require('./pack'); return pack.resolveWorktreeBase(wt, pack.defaultDeps(wt, { env })); });
 
   if (explicit) {
     const base = path.basename(explicit);

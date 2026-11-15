@@ -11,13 +11,14 @@
 //   Usage: drive.js #N [#M…]
 //          drive.js --help | -h
 //          drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)
+//          drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record)
 //
 // One JSON event line per step on stdout (and, once the run directory exists, in
 // {run-dir}/driver-events.jsonl); each record's final line carries its outcome word.
 // Exit codes (Combined-2, as bin/link-records.js):
-//   0  every named record reached its final event, whatever its outcome (outcomes are data)
-//   1  when the policy, or the run's repository or integration branch, cannot be resolved and no further record is attempted
-//   2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed)
+//   0  every named record reached its final event, whatever its outcome (outcomes are data); with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record's outcome
+//   1  when the policy, or the run's repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull
+//   2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record
 //      (exit 2 is overloaded on purpose; revisit if a caller needs to retry an internal error
 //      differently from a usage error)
 // --help (or -h) exits 0 before any probe of gh, git or policy.
