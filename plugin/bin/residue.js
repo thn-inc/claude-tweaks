@@ -71,12 +71,13 @@ function runner(argv, opts = {}) {
   // still override it per call through the same spread. A `gh` argv also goes
   // through ghOptions (#4505's GH_HOST seam); git calls get the object as is.
   // `cwd` and `env` arrive through `opts` (run() binds them from deps.cwd() and
-  // deps.env); `stderr` and `homeDir` are ghOptions' injected deps, not execFileSync options.
+  // deps.env). ghOptions also gets `env`, `stderr` and `homeDir` as its injected deps, for its
+  // origin read and gh config-dir lookup; `stderr` and `homeDir` are not execFileSync options.
   const { stderr, homeDir, ...execOpts } = opts;
   try {
     const args = argv.slice(1);
     const wrap = argv[0] === 'gh' ? ghOptions : (_args, o) => o;
-    return execFileSync(argv[0], args, wrap(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, stdio: ['ignore', 'pipe', 'ignore'], ...execOpts, windowsHide: true }, injectedGhDeps({ stderr, homeDir }))).trim();
+    return execFileSync(argv[0], args, wrap(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, stdio: ['ignore', 'pipe', 'ignore'], ...execOpts, windowsHide: true }, injectedGhDeps({ env: execOpts.env, stderr, homeDir }))).trim();
   } catch {
     return null;
   }
