@@ -51,8 +51,9 @@ const TAG_AGE_DAYS = 90; // matches git's default reflog window: past it, the ta
 
 // Plugin-owned branch namespaces. No canonical source elsewhere in the repo —
 // maintained manually here; a future plugin-owned prefix must be added by
-// hand or its branches silently never age out.
-const SCOPE_PATTERNS = [/^build\//, /^worktree-/, /^demo\//];
+// hand or its branches silently never age out. learned-skills/{run-id} is wrap-up's never-armed
+// learned-skills PR branch (#5290, bin/lib/learned-skills/land.js).
+const SCOPE_PATTERNS = [/^build\//, /^worktree-/, /^demo\//, /^learned-skills\//];
 
 // Scope guard — runs BEFORE decideArchive is ever called. `worktrees` is
 // parseWorktreeList output (bin/lib/hooks/worktree-reap.js), reused not
