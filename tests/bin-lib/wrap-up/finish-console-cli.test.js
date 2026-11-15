@@ -4,7 +4,7 @@
 // end as an in-process `run` call (runCliSync, with the cwd, env and stdin
 // injected and `gh` faked). Mirrors engine-cli.test.js's anchoring setup
 // (a real git repo as the "main checkout"; run dirs nest under it) since
-// main()'s #790/[IL-127] guard rejects an unanchored --run-dir for every
+// run()'s #790/[IL-127] guard rejects an unanchored --run-dir for every
 // verb, this one included.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');

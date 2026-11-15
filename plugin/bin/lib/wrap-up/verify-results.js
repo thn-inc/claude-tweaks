@@ -4,7 +4,7 @@
 // --require-verify, the merge-site acceptance guard) can tell whether a check
 // — acceptance labeling in particular — actually ran and landed.
 //
-// Run-dir anchoring is the caller's job (wrap-up-engine.js's main() guards
+// Run-dir anchoring is the caller's job (wrap-up-engine.js's run() guards
 // --run-dir itself) — this module writes into whatever directory it is given.
 //
 // Replace semantics, not merge: every verify run recomputes the full row set,

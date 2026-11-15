@@ -49,7 +49,7 @@ function resolveLedgerPath({ runDir, worktree, explicit, env, deps = {} } = {}) 
   const realpathSync = deps.realpathSync || fs.realpathSync;
   const git = deps.git || ((args, o) => defaultGit(args, { ...o, env }));
   // Lazy: pack.js is a heavy module, and only the docs/plans fallback needs it.
-  const resolveBase = deps.resolveBase || ((wt) => require('./pack').resolveWorktreeBase(wt));
+  const resolveBase = deps.resolveBase || ((wt) => { const pack = require('./pack'); return pack.resolveWorktreeBase(wt, pack.defaultDeps(wt, { env })); });
 
   if (explicit) {
     const base = path.basename(explicit);

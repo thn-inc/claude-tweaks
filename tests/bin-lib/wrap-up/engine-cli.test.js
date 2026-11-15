@@ -744,8 +744,9 @@ test('render --section with a bare unrecognized value (no procedure: prefix) sti
 
 // ---- script-entry pins (#5379) ---------------------------------------------
 // Real-process cases committed before the in-process split: they pin today's
-// script behaviour so the split is checked against the old one. The three
-// spawnCli tests below stay as the script-entry smoke set.
+// script behaviour so the split is checked against the old one. The spawnCli
+// tests below stay as two script-entry smoke tests plus one fd-0 stdin
+// process-property test.
 
 // The parsed worklist the script printed for AC4.2; the in-process parity
 // check reads it.
@@ -760,6 +761,7 @@ test('AC4.1: script with no verb prints usage and exits 2', () => {
 });
 
 test('AC4.2: script plan --dry-run prints the worklist JSON', () => {
+  // real process: the script entry's success path prints the worklist through real stdout
   const r = spawnCli(CLI, ['plan', '--run-dir', makeRunDir(), '--base', baseSha, '--dry-run'], { cwd: repoDir });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.strictEqual(r.stderr, '');
@@ -834,7 +836,7 @@ test('AC2.1: a usage error then a valid plan return 2 then 0 — no exit code ca
   assert.strictEqual(plan.code, 0, plan.stderr);
 });
 
-test('AC4.2/AC3.1: in-process plan stdout equals the script plan stdout', () => {
+test('AC4.2: in-process plan stdout equals the script plan stdout', () => {
   assert.ok(scriptPlanStdout, 'the AC4.2 script test runs first and records the script plan stdout');
   const r = run(['plan', '--run-dir', makeRunDir(), '--base', baseSha, '--dry-run']);
   assert.strictEqual(r.status, 0, r.stderr);

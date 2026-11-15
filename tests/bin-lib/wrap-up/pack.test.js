@@ -1841,6 +1841,21 @@ function commitFile(repo, name, text) {
   return repo.git('rev-parse', 'HEAD');
 }
 
+// #5379: when `git rev-parse --show-toplevel` fails, defaultResolvePolicy reads the policy under the injected
+// cwd, not the ambient process.cwd() (whose own policy.yml would answer otherwise).
+test('defaultDeps(cwd): resolvePolicy falls back to the injected cwd when the toplevel lookup fails (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-policy-cwd-'));
+  try {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-branch: injected-cwd-branch\n');
+    const deps = packDefaultDeps()(dir, { env: { ...cleanGitEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir) } });
+    assert.deepStrictEqual(deps.resolvePolicy(['integration-branch']), { 'integration-branch': 'injected-cwd-branch' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('defaultDeps(cwd, { env }): resolveWorktreeBase reads the env-only repo (#5379)', () => {
   const { cleanGitEnv } = require('../../helpers/git-fixtures');
   withTwoRepos((a, b) => {
