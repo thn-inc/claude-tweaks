@@ -1128,7 +1128,7 @@ const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) =>
 }));
 
 // Ports express-lane.md step 9, the merge: entered only when the CI wait ended green, then
-// merge.js owns every decision (no supplier configured, no merge). The result rides on ctx.merge
+// merge.js owns every decision (a deps object that carries no supplier stops at `no-supplier`; production deps carry one). The result rides on ctx.merge
 // for the final line. The step never halts: merge() reports every stop as a result, so the
 // record's outcome comes from it (finalEvent), not from a stop class. Class `none` is for a throw
 // in this entry itself. There is no interruptClass rung for it: ctx.configWritten is already true

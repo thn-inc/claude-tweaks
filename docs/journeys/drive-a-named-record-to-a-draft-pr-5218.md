@@ -6,6 +6,8 @@ files:
   - plugin/bin/lib/driver/events.js
   - plugin/bin/lib/driver/settle.js
   - plugin/bin/lib/driver/merge.js
+  - plugin/bin/lib/driver/judgments.js
+  - plugin/bin/lib/driver/acceptance.js
   - plugin/bin/lib/driver/review.js
   - plugin/bin/lib/driver/launch.js
 ---
