@@ -68,6 +68,7 @@
 ### Task 1: Remove the twin write and the bare-file read
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/verify/stamp.js` (header comment `:1-19`, `:27`, `writeStamp` `:76-100`, `readStamp` `:144-147`, exports `:150-152`)
@@ -156,7 +157,7 @@ Import `passStampFiles` in the three CLI test files below. `STAMP` below means t
 | `:259-260` | one assertion: `assert.deepStrictEqual(passStampFiles(gitDir), [], \`stamp file written for ${JSON.stringify(args)}\`);` |
 | `:275-276` | one assertion: `assert.deepStrictEqual(passStampFiles(gitDir), [], 'no stamp for a timed-out run');` |
 | `:351-352` | one assertion: `assert.deepStrictEqual(passStampFiles(gitDir), [], 'no stamp for a moved tree');` |
-| `:505-520` | replace the test with the two tests below |
+| `:505-520` | replace the test with the two tests below (the first needs no new import) |
 | `:610` title | `a passing full-set run on a DIRTY tree still writes the stamp, and --stamp-status reflects dirty:true, match:false (#1921 Gotchas)` |
 | `:620` | `assert.deepStrictEqual(passStampFiles(gitDir), [STAMP]);` |
 | `:654-663` | one assertion replacing all four: `assert.deepStrictEqual([passStampFiles(otherGitDir), passStampFiles(cwdGitDir)], [[], []], 'an explicit --git-dir run never stamps: not the redirected repo, not the invoking cwd\'s own');` |
@@ -168,23 +169,22 @@ Import `passStampFiles` in the three CLI test files below. `STAMP` below means t
 The two tests replacing `:505-520` (the first keeps the `--stamp-status --git-dir` coverage on a JSON stamp; the second is AC3's CLI half plus Review Focus 1 and 2):
 
 ```js
-test('--stamp-status honors --git-dir: a JSON stamp in a foreign git dir is read but never matches (#1921)', async () => {
+test('--stamp-status honors --git-dir naming the checkout\'s own git dir: a JSON stamp there is read and matches (#1921)', async () => {
   const { repo, git, gitDir } = tmpGitRepo();
   const head = git('rev-parse', 'HEAD').trim();
-  const foreign = tmpDir();
-  fs.writeFileSync(path.join(foreign, 'claude-tweaks-verify-pass.json'), JSON.stringify({
+  fs.writeFileSync(path.join(gitDir, 'claude-tweaks-verify-pass.json'), JSON.stringify({
     sha: head, dirty: false, scope: 'full', fullSha: head, base: null, changedFiles: [], suitesRun: ['tests'],
-    flakyRetried: [], reportPath: path.join(foreign, 'report.json'), at: new Date().toISOString(),
+    flakyRetried: [], reportPath: path.join(gitDir, 'report.json'), at: new Date().toISOString(),
   }));
-  const { code, stdout } = await runCli(['--stamp-status', '--git-dir', foreign], { cwd: repo });
+  const { code, stdout } = await runCli(['--stamp-status', '--git-dir', gitDir], { cwd: repo });
   assert.strictEqual(code, 0);
   const s = JSON.parse(stdout);
   assert.strictEqual(s.present, true);
   assert.strictEqual(s.sha, head);
   assert.strictEqual(s.scope, 'full');
-  assert.strictEqual(s.match, false, 'a foreign --git-dir stamp never covers this checkout\'s HEAD');
-  assert.strictEqual(s.verifiedHead, false);
-  assert.deepStrictEqual(passStampFiles(gitDir), [], 'reading a foreign git dir writes nothing into the invoking checkout');
+  assert.strictEqual(s.match, true, 'the checkout\'s own git dir is not a foreign --git-dir');
+  assert.strictEqual(s.verifiedHead, true);
+  assert.strictEqual(s.reportPath, path.join(gitDir, 'report.json'));
 });
 
 test('AC3.1: a git dir holding only a bare-SHA file has no stamp — --stamp-status reads present:false and a --scope run starts as full', async () => {
@@ -203,7 +203,7 @@ test('AC3.1: a git dir holding only a bare-SHA file has no stamp — --stamp-sta
 });
 ```
 
-The first test's `match: false` rests on `stampStatus()`'s `foreignGitDir` term (`plugin/bin/verify.js:273-282`): a `--git-dir` that is not the invoking checkout's own git dir is read and reported, never trusted. The stamp exists only in the foreign directory, so `present: true` is what proves `--git-dir` was honored.
+The first test keeps what the old `:505-520` test covered, the non-foreign branch of `stampStatus()` (`plugin/bin/verify.js:273-282`, `requestedGitDir === resolvedOwnGitDir`) with a stamp present, now on a JSON stamp. The foreign-directory case is already covered by the test at `cli.test.js:563`; leave that test alone.
 
 `tests/bin-lib/verify/cli-baseline.test.js:30`: `assert.deepStrictEqual(passStampFiles(r.gitDir), ['claude-tweaks-verify-pass.json'], 'an adjudicated pass writes the JSON stamp and nothing else');`
 
