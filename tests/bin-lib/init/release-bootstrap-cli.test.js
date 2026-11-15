@@ -4,21 +4,111 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { execFileSync } = require('child_process');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'release-bootstrap.js');
-function run(args) { return spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' }); }
+
+// The complete environment the CLI sees: its git child needs PATH, and HOME keeps a global git
+// config reachable. SystemRoot and USERPROFILE are what a Windows git child needs to start.
+const CLI_ENV = { PATH: process.env.PATH, HOME: os.homedir() };
+for (const key of ['SystemRoot', 'USERPROFILE']) if (process.env[key] !== undefined) CLI_ENV[key] = process.env[key];
+
+// In-process call (#5385); maps the helper's `code` onto the `status` field the assertions use.
+function run(args, opts = {}) {
+  const { code, stdout, stderr } = runCliSync(CLI, args, { env: CLI_ENV, ...opts });
+  return { status: code, stdout, stderr };
+}
+
+// The fixture's own git calls must not read a repo named by an inherited GIT_* variable.
+function git(cwd, ...args) {
+  const env = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[key];
+  return execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
 
 test('CLI: fresh local-merge root prints the JSON envelope and exits 0', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
   fs.writeFileSync(path.join(root, 'package.json'), '{"name":"x"}');
-  const r = run(['--root', root, '--integration-model', 'local-merge', '--branch', 'main']);
+  // Real process: proves the script entry (the require.main guard), exit 0 and the JSON envelope on stdout.
+  const res = spawnCli(CLI, ['--root', root, '--integration-model', 'local-merge', '--branch', 'main'], { env: CLI_ENV });
+  const r = { status: res.code, stdout: res.stdout, stderr: res.stderr };
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);
   assert.equal(out.verdict, 'fresh');
   assert.equal(out.releaseType, 'node');
   assert.deepEqual(out.written, ['release-please-config.json', '.release-please-manifest.json']);
   assert.equal(out.policyRows.length, 2);
+});
+
+// Real process: proves the script entry turns run's usage refusal into the exit code (AC6.1); the baseline
+// for a no-argument call is exit 2, empty stdout and this stderr.
+test('CLI: no arguments is a usage refusal — exit 2, empty stdout, missing --integration-model plus the usage line', () => {
+  const res = spawnCli(CLI, [], { env: CLI_ENV });
+  assert.equal(res.code, 2);
+  assert.equal(res.stdout, '');
+  assert.equal(res.stderr, 'missing required --integration-model\nusage: release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type> --extra-file <path>] [--dry-run]\n');
+});
+
+test('AC9.1: the default --root is the injected cwd', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"name":"x"}');
+  assert.notEqual(fs.realpathSync(root), fs.realpathSync(process.cwd()));
+  const r = run(['--integration-model', 'local-merge', '--dry-run'], { cwd: root });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.verdict, 'fresh');
+  assert.equal(out.releaseType, 'node');
+  assert.deepEqual(out.written, ['release-please-config.json', '.release-please-manifest.json']);
+  assert.equal(fs.existsSync(path.join(root, 'release-please-config.json')), false, '--dry-run writes nothing');
+});
+
+test('AC9.1: a relative --root and a relative --extra-file resolve against the injected cwd', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const root = path.join(parent, 'proj');
+  fs.mkdirSync(path.join(root, 'plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'plugin', 'plugin.json'), '{"version":"4.5.6"}');
+  const r = run(['--root', 'proj', '--integration-model', 'local-merge', '--release-type', 'simple', '--extra-file', 'plugin/plugin.json', '--dry-run'], { cwd: parent });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).version, '4.5.6');
+});
+
+// AC9.1 env-only fixture (model: forgePair in forge-probe-env.test.js): repo A is the CLI's cwd and
+// --root and holds no tag; repo B holds v1.2.3 and is named only through GIT_DIR in the injected env,
+// so the manifest is seeded from B's tag only if the git tag child gets that env.
+test('AC9.1: the git tag child reads the repo named by the injected env', () => {
+  const mk = (prefix) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    git(dir, 'init', '-b', 'main');
+    git(dir, 'config', 'user.email', 't@t');
+    git(dir, 'config', 'user.name', 't');
+    fs.writeFileSync(path.join(dir, 'README.md'), 'x\n');
+    git(dir, 'add', 'README.md');
+    git(dir, 'commit', '-m', 'init');
+    return dir;
+  };
+  const a = mk('rb-cli-a-');
+  fs.writeFileSync(path.join(a, 'package.json'), '{"name":"x","version":"0.0.1"}');
+  const b = mk('rb-cli-b-');
+  git(b, 'tag', 'v1.2.3');
+  const r = run(['--root', a, '--integration-model', 'local-merge', '--dry-run'], { cwd: a, env: { ...CLI_ENV, GIT_DIR: path.join(b, '.git') } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).version, '1.2.3');
+});
+
+test('a relative --root that is not a directory prints the argument as given', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const r = run(['--integration-model', 'local-merge', '--root', 'nope'], { cwd: parent });
+  assert.equal(r.status, 2);
+  assert.equal(r.stdout, '');
+  assert.ok(r.stderr.startsWith('root is not a directory: nope\n'), r.stderr);
+});
+
+test('--root "" stays a not-a-directory failure, as before', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const r = run(['--integration-model', 'local-merge', '--root', ''], { cwd: parent });
+  assert.equal(r.status, 2);
+  assert.ok(r.stderr.startsWith('root is not a directory: \n'), r.stderr);
 });
 
 test('CLI: conflict is an outcome (exit 0, verdict in JSON), missing --integration-model is usage (exit 2)', () => {
