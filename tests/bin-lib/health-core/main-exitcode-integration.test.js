@@ -56,21 +56,6 @@ function tmpGitRootWithOneRun(prefix, skillName) {
   return root;
 }
 
-// Runs `fn`, then reports whatever process.exitCode it left behind and
-// restores the original -- calling main() directly (not a subprocess) means
-// a set exitCode would otherwise leak into this test file's own eventual
-// exit code.
-function withExitCode(fn) {
-  const original = process.exitCode;
-  process.exitCode = undefined;
-  try {
-    fn();
-    return process.exitCode;
-  } finally {
-    process.exitCode = original;
-  }
-}
-
 function captureStdio(fn) {
   const origOut = process.stdout.write;
   const origErr = process.stderr.write;
@@ -117,19 +102,11 @@ test('code-health.js main(): churn-report --fail-on-high-churn with a non-numeri
   assert.strictEqual(code, 2);
 });
 
-const CHURN_REPORT_CLIS = [
-  ['docs-health', docsHealth],
-];
-
-for (const [name, mod] of CHURN_REPORT_CLIS) {
-  test(`${name}.js main(): churn-report --fail-on-high-churn with a non-numeric value sets process.exitCode 2 (not a silently-disabled gate)`, () => {
-    const root = tmpGitRootWithOneRun(`${name}-churn-`, name);
-    const exitCode = withExitCode(() => {
-      captureStdio(() => mod.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root]));
-    });
-    assert.strictEqual(exitCode, 2);
-  });
-}
+test('docs-health.js main(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
+  const root = tmpGitRootWithOneRun('docs-health-churn-', 'docs-health');
+  const code = returnedCode(() => captureStdio(() => docsHealth.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
+  assert.strictEqual(code, 2);
+});
 
 test('harness-health.js main(): mark <fingerprint> <bad-status> returns 2', () => {
   const root = tmpRoot('harness-health-mark-');
@@ -143,22 +120,11 @@ test('journey-health.js main(): mark <fingerprint> <bad-status> returns 2', () =
   assert.strictEqual(code, 2);
 });
 
-const MARK_CLIS = [
-  ['docs-health', docsHealth],
-  // code-health.js has no `mark` command (confirmed: cmdMark is not
-  // required/dispatched there) -- deliberately excluded, per the record's
-  // own Gotcha.
-];
-
-for (const [name, mod] of MARK_CLIS) {
-  test(`${name}.js main(): mark <fingerprint> <bad-status> sets process.exitCode 2`, () => {
-    const root = tmpRoot(`${name}-mark-`);
-    const exitCode = withExitCode(() => {
-      captureStdio(() => mod.main(['mark', 'some-fingerprint', 'bogus-status', '--root', root]));
-    });
-    assert.strictEqual(exitCode, 2);
-  });
-}
+test('docs-health.js main(): mark <fingerprint> <bad-status> returns 2', () => {
+  const root = tmpRoot('docs-health-mark-');
+  const code = returnedCode(() => captureStdio(() => docsHealth.main(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
+  assert.strictEqual(code, 2);
+});
 
 test('harness-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
   const root = tmpRoot('harness-health-retryq-missing-');
@@ -202,26 +168,16 @@ test('code-health.js main(): retry-queue update with an unparseable results file
   assert.strictEqual(code, 1);
 });
 
-const ALL_CLIS = [
-  ['docs-health', docsHealth],
-];
+test('docs-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
+  const root = tmpRoot('docs-health-retryq-missing-');
+  const code = returnedCode(() => captureStdio(() => docsHealth.main(['retry-queue', 'update', '--root', root])));
+  assert.strictEqual(code, 2);
+});
 
-for (const [name, mod] of ALL_CLIS) {
-  test(`${name}.js main(): retry-queue update with a missing results-file argument sets process.exitCode 2`, () => {
-    const root = tmpRoot(`${name}-retryq-missing-`);
-    const exitCode = withExitCode(() => {
-      captureStdio(() => mod.main(['retry-queue', 'update', '--root', root]));
-    });
-    assert.strictEqual(exitCode, 2);
-  });
-
-  test(`${name}.js main(): retry-queue update with an unparseable results file sets process.exitCode 1`, () => {
-    const root = tmpRoot(`${name}-retryq-malformed-`);
-    const resultsPath = path.join(root, 'results.json');
-    fs.writeFileSync(resultsPath, 'not valid json {{{');
-    const exitCode = withExitCode(() => {
-      captureStdio(() => mod.main(['retry-queue', 'update', resultsPath, '--root', root]));
-    });
-    assert.strictEqual(exitCode, 1);
-  });
-}
+test('docs-health.js main(): retry-queue update with an unparseable results file returns 1', () => {
+  const root = tmpRoot('docs-health-retryq-malformed-');
+  const resultsPath = path.join(root, 'results.json');
+  fs.writeFileSync(resultsPath, 'not valid json {{{');
+  const code = returnedCode(() => captureStdio(() => docsHealth.main(['retry-queue', 'update', resultsPath, '--root', root])));
+  assert.strictEqual(code, 1);
+});
