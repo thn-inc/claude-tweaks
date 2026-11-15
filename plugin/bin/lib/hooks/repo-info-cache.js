@@ -316,9 +316,20 @@ function lookupRepoInfo(dir, env = process.env, uid = currentUid()) {
   return { answer: null, signature };
 }
 
-// No-op for a null signature or an indeterminate answer: neither may be cached.
+// Whether git's answer is the one the signature describes. A `.git` git rejects
+// (HEAD, objects or refs missing) makes git answer "not a repo", or fall through
+// to an enclosing repo, while the signature tracks that `.git`. Repairing it
+// changes nothing the signature watches, so such an answer must not be cached.
+function answerMatchesSignature(signature, answer) {
+  if (!answer.repoRoot) return !signature.git;
+  return Boolean(signature.root) && canonicalRealpath(answer.repoRoot) === signature.root.path;
+}
+
+// No-op for a null signature, an indeterminate answer, or an answer the
+// signature does not describe: none may be cached.
 function rememberRepoInfo(dir, env, signature, answer, uid = currentUid()) {
   if (!signature || !answer || answer.indeterminate) return;
+  if (!answerMatchesSignature(signature, answer)) return;
   memoSet(memoKey(dir, env, uid), signature, answer);
   if (!storeBypassed(env)) storeRemember(dir, env, signature, answer, uid);
 }

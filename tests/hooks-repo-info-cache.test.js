@@ -210,6 +210,34 @@ test('#5294: git\'s own "not a git repository" answer is remembered', (t) => {
   assert.strictEqual(counter.n, 1);
 });
 
+test('#5294: a "not a repo" answer for a .git git rejects is not remembered', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const head = path.join(main, '.git', 'HEAD');
+  const saved = fs.readFileSync(head);
+  fs.rmSync(head);
+  const counter = countRevParse(t);
+  assert.strictEqual(repoInfo(main).repoRoot, null);
+  fs.writeFileSync(head, saved);
+  assert.deepStrictEqual(repoInfo(main), { repoRoot: main, isLinkedWorktree: false, indeterminate: false });
+  assert.strictEqual(counter.n, 2, 'the call after HEAD was restored spawned git');
+});
+
+test('#5294: an answer naming an enclosing repo is not remembered for a rejected inner .git', (t) => {
+  isolateRepoInfoCache(t);
+  const outer = gitRepo();
+  const inner = path.join(outer, 'inner');
+  fixtureGit(['init', '-q', inner]);
+  const head = path.join(inner, '.git', 'HEAD');
+  const saved = fs.readFileSync(head);
+  fs.rmSync(head);
+  const counter = countRevParse(t);
+  const broken = repoInfo(inner);
+  fs.writeFileSync(head, saved);
+  assert.deepStrictEqual(repoInfo(inner), { repoRoot: fs.realpathSync(inner), isLinkedWorktree: false, indeterminate: false });
+  assert.strictEqual(counter.n, 2, `the call after HEAD was restored spawned git (first answer: ${JSON.stringify(broken)})`);
+});
+
 test('#5294: a git killed by a signal is answered as today but not remembered', (t) => {
   isolateRepoInfoCache(t);
   const main = gitRepo();

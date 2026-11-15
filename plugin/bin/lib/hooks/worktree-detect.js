@@ -134,7 +134,8 @@ function isNotARepoAnswer(exitCode, stderr) {
 // while the directory's filesystem signature is unchanged; a call passing any
 // opts key bypasses the memo entirely. Only definitive answers are remembered,
 // and a negative only when git itself said "not a git repository"
-// (isNotARepoAnswer above). A cache fault costs only the cache: a lookup that
+// (isNotARepoAnswer above), and either kind only when it agrees with the
+// signature (rememberRepoInfo). A cache fault costs only the cache: a lookup that
 // throws is a miss, a remember that throws is ignored (the
 // never-break-a-session invariant).
 function repoInfo(p, opts = {}) {
