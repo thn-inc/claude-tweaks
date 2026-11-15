@@ -233,7 +233,10 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
     throw new LeverError(`levers must be the 13 Manifesto levers in canonical order (${MANIFESTO_LEVERS.join(', ')})`);
   }
   const pin = integrationModelDegraded === null && typeof integrationModel === 'string' && integrationModel.trim() ? integrationModel.trim() : null;
-  const pairs = [...levers.map((l) => ({ key: l.key, value: l.value })), ...(pin ? [{ key: 'integration-model', value: pin }] : [])];
+  // spec: is the run's record pin (RUN_PINS, #5347): the lowest record number,
+  // written through set-config like every other pin, after the levers.
+  const spec = String(Math.min(...records.map((r) => r.n)));
+  const pairs = [...levers.map((l) => ({ key: l.key, value: l.value })), ...(pin ? [{ key: 'integration-model', value: pin }] : []), { key: 'spec', value: spec }];
   const problems = pairs.map(({ key, value }) => ({ key, value, v: validateLever(key, value) })).filter((p) => !p.v.ok);
   if (problems.length) {
     throw new LeverError(problems.map((p) => `${p.key}=${p.value} is not valid${p.v.allowed ? ` (allowed: ${p.v.allowed.join(', ')})` : ''}`).join('; '));
@@ -247,10 +250,9 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
   }
   try {
     for (const { key, value } of pairs) set({ runDir, key, value });
-    // spec:/created: are run bookkeeping, not levers — set-config refuses
-    // them by design, so they are appended after the batch (Write mechanism).
-    const spec = Math.min(...records.map((r) => r.n));
-    fs.appendFileSync(configPath, `spec: ${spec}\ncreated: ${created}\n`);
+    // created: is run bookkeeping that set-config refuses by design, so it is
+    // the one line appended directly.
+    fs.appendFileSync(configPath, `created: ${created}\n`);
   } catch (err) {
     let removed = true;
     try { fs.rmSync(configPath, { force: true }); } catch { removed = false; }

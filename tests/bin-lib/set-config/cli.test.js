@@ -56,7 +56,7 @@ test('cli: missing --run/--key/--value is exit 2', () => {
 test('cli: a key outside the lever enum is exit 2 and names the enum source', () => {
   const { main, runDir } = fixture();
   const { deps, err } = fakeDeps(main);
-  assert.equal(run(['--run', runDir, '--key', 'spec', '--value', '13'], deps), 2);
+  assert.equal(run(['--run', runDir, '--key', 'created', '--value', '13'], deps), 2);
   const msg = err.join('');
   assert.ok(/not a config\.yml policy lever/.test(msg), msg);
   assert.ok(msg.includes('ceremony-profile'), 'error should list the valid levers');
@@ -120,7 +120,7 @@ test('cli: --set validates the full set before writing any — one invalid value
 test('cli: --set with an unknown key blocks the whole batch and names the canonical lever set', () => {
   const { main, runDir } = fixture();
   const { deps, err } = fakeDeps(main);
-  const code = run(['--run', runDir, '--set', 'mode=hybrid,spec=13'], deps);
+  const code = run(['--run', runDir, '--set', 'mode=hybrid,created=13'], deps);
   assert.equal(code, 2);
   const msg = err.join('');
   assert.ok(/not a config\.yml policy lever/.test(msg));
@@ -163,10 +163,10 @@ test('cli: a dangling --set with no value is reported as a --set problem, not mi
 test('cli: batch validation errors name the offending --set entry, not bare --key/--value', () => {
   const { main, runDir } = fixture();
   const { deps, err } = fakeDeps(main);
-  const code = run(['--run', runDir, '--set', 'mode=hybrid,spec=13'], deps);
+  const code = run(['--run', runDir, '--set', 'mode=hybrid,created=13'], deps);
   assert.equal(code, 2);
   const msg = err.join('');
-  assert.ok(msg.includes('--set entry "spec=13"'), 'should name the offending --set entry');
+  assert.ok(msg.includes('--set entry "created=13"'), 'should name the offending --set entry');
   assert.ok(/not a config\.yml policy lever/.test(msg), 'single-key wording is still reused after the prefix');
 });
 
@@ -240,7 +240,30 @@ test('cli: an invalid integration-model pin value is exit 2 and writes nothing',
 test('cli: a batch carrying an unknown non-pin extra key alongside the 13 levers is exit 2', () => {
   const { main, runDir } = fixture();
   const { deps } = fakeDeps(main);
-  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO + ',spec=12'], deps), 2);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO + ',created=12'], deps), 2);
+});
+
+test('AC1.1: --set accepts spec={n} and writes spec: {n} to config.yml', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'mode=auto,spec=5347'], deps), 0);
+  assert.match(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'), /^spec: 5347$/m);
+});
+
+test('AC1.1: --set spec=abc is exit 2 naming the allowed shape, and writes nothing', () => {
+  const { main, runDir } = fixture();
+  const before = fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8');
+  const { deps, err } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'mode=hybrid,spec=abc'], deps), 2);
+  assert.match(err.join(''), /--value "abc" is not valid for spec \(allowed: a positive integer record number\)/);
+  assert.equal(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'), before);
+});
+
+test('AC1.1: --key spec --value {n} writes the pin from a single-key call', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--key', 'spec', '--value', '5347'], deps), 0);
+  assert.match(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'), /^spec: 5347$/m);
 });
 
 test('cli: a full 13-lever --set batch with mode=hybrid does NOT print the auto FYI table', () => {

@@ -152,7 +152,7 @@ proposed field, answer three questions against the code, at plan-authoring time:
      `spec-{N}/`, multi-spec parent) and whether that writer's value is authoritative there.
    - **A location teardown removes.** A materialized spec header is committed in the worktree only,
      so before merge it lives in the worktree's mirror of the run dir, not in the main checkout's
-     `work/`; `pack.js`'s `resolveRecords` reads own `work/`, then that mirror (#3365). A reader
+     `work/`; `pack.js`'s `resolveRecords` reads own `work/`, then that mirror (#3365), then the manifest rungs, then `config.yml`'s `spec:` (#5347). A reader
      that runs after cleanup removes the worktree, such as `engine-verify.js`'s `carrier-commit`,
      cannot re-read it. So the Review Console's step 11 persists the set while the mirror still
      exists (`set-verify-expectations.js --issues`, or the `issues` key of `finish-console`'s
@@ -212,6 +212,14 @@ planned, and give each one a test fixture that holds its output (`tests/bin-lib/
   the pack reads the header while the worktree mirror still exists, so Section E's late restore
   reads no file. `tests/wrap-up-record-resolution-conformance.test.js` pins that no
   `plugin/skills/wrap-up/*.md` file restates the gate.
+- **A new rung is classified for every authority it could grant, in an allowlist.**
+  `closingRecords` answers only who closes. #5347's `config` rung was non-closing yet still reached
+  the unattended console's merge members through `inputs.records` (`console/resolve.js`
+  `readMembers`) until the final review caught it: the plan-review ruling had re-gated three prose
+  sites and no code reader. `pack.js` now holds two allowlists, `CLOSING_RECORD_SOURCES` and
+  `MEMBER_RECORD_SOURCES`, so a new `resolveRecords` source grants nothing until it is listed in
+  each. Before adding a rung, grep every reader of `inputs.records` and of `resolveRecords(`, code
+  and prose, and state for each whether the rung may feed it.
 - **A header field is read from the leading frontmatter block, by every reader.** A whole-file
   `/^record:\s*(\d+)\s*$/m` also matches a body line quoting the key, so a spec body holding
   `record: 999` names the wrong record. `pack.js`'s `headerEntries` scoped `parked-at-shaping` to
@@ -222,6 +230,12 @@ planned, and give each one a test fixture that holds its output (`tests/bin-lib/
   `tests/wrap-up-closing-records-array-fill.test.js`). Do not copy
   `plugin/bin/lib/dispatch/first-call-artifact-check.js` or
   `plugin/skills/tidy/issue-claims-backstops.md`; both still read `record:` from the whole file.
+- **Absence is ENOENT, not a null read.** A helper that returns null on any read error (`pack.js`'s
+  `readText`) cannot answer "does this file exist": an unreadable file reads as missing. #5347's
+  `config` rung skipped itself when a `manifest.yml` was present and fell through on an unreadable
+  one until review; `manifestAbsent` now treats only ENOENT, or an injected `readFile` that returns
+  null, as absent. A probe that branches on a file's absence gets two fixtures: the file missing,
+  and the file present but unreadable.
 
 ## When to use
 
