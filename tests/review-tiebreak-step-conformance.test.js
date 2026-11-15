@@ -1298,20 +1298,14 @@ test('each console-visibility and sweep re-run assertion can go red', () => {
 // --- Failure paths: every failing call has a stated next move, so no finding loses its verdict silently ---
 
 const AUTO_DECISION_LOG = path.join(SKILLS, '_shared', 'auto-decision-log.md');
-const COORDINATION_CLI = path.join(__dirname, '..', 'plugin', 'bin', 'review-coordination.js');
-const PLUGIN_STRUCTURE = path.join(__dirname, '..', 'docs', 'plugin-structure.md');
 const failurePathTexts = () => ({
   ...liveTexts(),
   coordination: coordinationText(),
   adlog: readText(AUTO_DECISION_LOG),
-  cli: readText(COORDINATION_CLI),
-  structure: readText(PLUGIN_STRUCTURE),
 });
 const refutationStep5Of = (texts) => refutationStep5(texts.debate);
 const coordinationNoInlineLine = (texts) => lineStartingWith(texts.coordination, 'No outcome is "ask the user inline."');
 const statusSemantics = (texts) => sliceSection(texts.adlog, '\n## Status semantics\n', '\n## ');
-const refutationVerb = (texts) => sliceSection(texts.cli, "if (command === 'resolve-refutation')", "if (command === 'resolve-tiebreak')");
-const coordinationCliDocLine = (texts) => lineStartingWith(texts.structure, 'node plugin/bin/review-coordination.js');
 
 const FAILURE_PATHS = [
   // The failure log lines carry branch text, so they ride --text-file.
@@ -1342,13 +1336,10 @@ const FAILURE_PATHS = [
   [refutationStep5Of, /a non-zero `resolve-tiebreak` exit \(no `outcome`\) → the candidate is downgraded to `unconfirmed`/, 'a refutation resolver crash downgrades the candidate'],
   [refutationStep5Of, /`\{cause\}` `resolve-tiebreak exited \{exit\}`/, 'the downgrade cause names the resolver exit'],
   [refutationStep5Of, /never treats a crashed resolver as a surviving finding/, 'a crashed resolver never leaves a surviving finding'],
-  // Shared docs and the retired verb.
+  // Shared docs.
   [coordinationNoInlineLine, /On `\/review` they first go to its tiebreak \(`review\/step3-tiebreak\.md`\)/, "/review's unconfirmed findings go to its tiebreak first"],
   [coordinationNoInlineLine, /the caller's Review Console handles what is left/, 'the Review Console handles what the tiebreak leaves'],
   [statusSemantics, /`STAGED` lines \(low-confidence, unconfirmed, contested, debate\) need no `staged\/` file[^\n]*`plugin\/bin\/lib\/console\/resolve\.js`'s `coordinationItems`/, "review's coordination STAGED lines need no staged file"],
-  [refutationVerb, /No skill prose invokes it since #3947/, 'resolve-refutation records that no skill prose invokes it'],
-  [refutationVerb, /remove it with `resolveRefutation` and its tests once #3950/, 'resolve-refutation records its removal condition'],
-  [coordinationCliDocLine, /`resolve-refutation` \(unused since #3947\)/, 'the command reference marks resolve-refutation unused'],
 ];
 const failurePathsMissing = sectionFactsMissing(FAILURE_PATHS);
 
