@@ -769,6 +769,9 @@ test('run-tests.js runs the suite under a ct-testrun-* TMPDIR it removes on exit
       fs.realpathSync(path.join(sb.childTmp, 'ct-test-runs')),
     );
     assert.strictEqual(fs.existsSync(recorded.tmpdir), false);
+    // #5294: the repoInfo store lives inside the run root, never the real per-user location.
+    assert.strictEqual(typeof recorded.repoInfoStore, 'string');
+    assert.strictEqual(path.dirname(recorded.repoInfoStore), recorded.tmpdir);
     assert.strictEqual(recorded.held, '1');
     assert.deepStrictEqual(SLOT_LOCKS(sb.slotDir), []);
   });
