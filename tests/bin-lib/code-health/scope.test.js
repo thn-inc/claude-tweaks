@@ -991,7 +991,7 @@ test('listSlices still writes the warning to process.stderr when no stderr is in
   assert.match(recorded.join(''), /\[code-health\] scope: skipping unsupported workspace pattern "packages\/\*\*"/);
 });
 
-test('contentHash, listSlices and sliceRecursive reach find with the injected env', () => {
+test('contentHash and listSlices reach find with the injected env', () => {
   // A PATH holding no `find` makes the scan throw: sourceFiles degrades to [],
   // so the dir hashes as empty and listSlices emits no "." slice. The default
   // env still finds it.
