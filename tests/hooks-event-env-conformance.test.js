@@ -1,0 +1,177 @@
+'use strict';
+// #5377: a hook event module reads the environment and the working directory from the context
+// hooks.js builds (ctx.env, ctx.cwd), never from the process. Two scans over each listed module's
+// source text keep that true as the file grows:
+//
+//   Scan A: the comment-stripped source names neither `process.env` nor `process.cwd()`.
+//   Scan B: every call to `repoInfo(`, `runGit(` and `writeRunState(` names `env` inside its own
+//           argument text (balanced parentheses, so a call spanning lines is read whole). Those
+//           three default to the real process.env when `env` is left out, and a git child started
+//           without an `env` option inherits it, which no runtime tripwire can see.
+//
+// Tasks 4 and 5 of #5377 append the other event modules to EVENT_MODULES.
+//
+// Both scans read blank-mode text (string, template and regex bodies blanked, comments blanked), so a
+// message that mentions `process.env` is not code. The verdict is taken on that same text, and a
+// mis-parse is an offender. Recall limits, stated rather than hidden: a key spelled as a string
+// (`process['env']`), an `env` built into an options object under another name and passed as that
+// object (`runGit(a, b, opts)` is flagged: spell `{ env }` in the call, or list the line in
+// NAMED_EXCEPTIONS with its reason), and a call reached through an alias (`const g = runGit`).
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('path');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
+const { readText } = require('./helpers/read-skill');
+
+const REPO = path.join(__dirname, '..');
+const EVENT_MODULES = ['plugin/bin/lib/hooks/pre-tool-use.js'];
+const CALL_NAMES = ['repoInfo', 'runGit', 'writeRunState'];
+
+// A call that legitimately reaches its env under another name goes here, keyed by module path then
+// call name, with the text of its line and the reason. None today.
+const NAMED_EXCEPTIONS = {};
+
+// Calls the module holds today, per call name, per module. A matcher that stops matching drops below.
+const FLOORS = {
+  'plugin/bin/lib/hooks/pre-tool-use.js': { repoInfo: 9, runGit: 11, writeRunState: 5 },
+};
+
+function lineOf(src, offset) {
+  let line = 1;
+  for (let i = 0; i < offset; i++) if (src[i] === '\n') line++;
+  return line;
+}
+
+// Text between the paren at `open` and its matching close paren.
+function balanced(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '(') depth++;
+    else if (src[i] === ')' && --depth === 0) return src.slice(open + 1, i);
+  }
+  return src.slice(open + 1);
+}
+
+// -> { offenders: string[], sites: { [callName]: number } } for one module's raw text.
+function scan(raw, rel = 'fixture.js') {
+  const offenders = [];
+  const sites = Object.fromEntries(CALL_NAMES.map((n) => [n, 0]));
+  const code = stripComments(raw, { literals: 'blank' });
+  const verdict = stripperVerdict(raw, code);
+  if (verdict !== 'ok') {
+    offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
+    return { offenders, sites };
+  }
+  for (const m of code.matchAll(/(?<![\w$])process\s*\.\s*(env|cwd)\b/g)) {
+    offenders.push(`${rel}:${lineOf(code, m.index)}: reads process.${m[1]} (Scan A)`);
+  }
+  const callRe = new RegExp(`(?<![\\w$])(?:[\\w$]+\\s*\\.\\s*)?(${CALL_NAMES.join('|')})\\s*\\(`, 'g');
+  for (const m of code.matchAll(callRe)) {
+    if (/function\s+$/.test(code.slice(0, m.index))) continue; // a declaration, not a call
+    const line = lineOf(code, m.index);
+    sites[m[1]]++;
+    const args = balanced(code, m.index + m[0].length - 1);
+    if (/\benv\b/.test(args)) continue;
+    const lineText = raw.split('\n')[line - 1].trim();
+    const exception = (NAMED_EXCEPTIONS[rel] || {})[m[1]];
+    if (exception && exception.line === lineText) continue;
+    offenders.push(`${rel}:${line}: ${m[1]}( call does not name env (Scan B)`);
+  }
+  return { offenders, sites };
+}
+
+for (const rel of EVENT_MODULES) {
+  test(`${rel}: reads no process.env or process.cwd() and passes env to every repoInfo, runGit and writeRunState call`, () => {
+    const { offenders, sites } = scan(readText(path.join(REPO, rel)), rel);
+    assert.deepEqual(offenders, [], `an event module read the process, or a call left out env:\n${offenders.join('\n')}`);
+    const floor = FLOORS[rel];
+    assert.ok(floor, `${rel} has no FLOORS entry`);
+    for (const name of CALL_NAMES) {
+      assert.ok(
+        sites[name] >= floor[name],
+        `${rel}: matched ${sites[name]} ${name}( calls, floor ${floor[name]}: a lower count means the matcher stopped matching, not that the calls went away`,
+      );
+    }
+  });
+}
+
+// --- the matcher flags what it must and nothing else ---
+
+test('self-test: a planted process.env read is flagged with its line', () => {
+  const { offenders } = scan('const a = 1;\nconst b = process.env.X;\n');
+  assert.deepEqual(offenders, ['fixture.js:2: reads process.env (Scan A)']);
+});
+
+test('self-test: a planted process.cwd() read is flagged with its line', () => {
+  const { offenders } = scan('const a = 1;\n\nconst c = process.cwd();\n');
+  assert.deepEqual(offenders, ['fixture.js:3: reads process.cwd (Scan A)']);
+});
+
+test('self-test: process.env in a comment or a string is not code', () => {
+  const { offenders } = scan("// process.env.X\n/* process.cwd() */\nconst s = 'process.env.X';\nconst t = `process.cwd()`;\n");
+  assert.deepEqual(offenders, []);
+});
+
+test('self-test: a planted repoInfo(dir) and runGit(args, cwd) are each flagged with their line', () => {
+  const src = 'const a = wtDetect.repoInfo(dir);\nconst b = 1;\nconst r = runGit(args, cwd);\nctxLib.writeRunState(runDir, { x: 1 });\n';
+  const { offenders } = scan(src);
+  assert.deepEqual(offenders, [
+    'fixture.js:1: repoInfo( call does not name env (Scan B)',
+    'fixture.js:3: runGit( call does not name env (Scan B)',
+    'fixture.js:4: writeRunState( call does not name env (Scan B)',
+  ]);
+});
+
+test('self-test: calls that name env are not flagged', () => {
+  const src = 'wtDetect.repoInfo(dir, {}, { env });\nrunGit(args, cwd, { env });\nctxLib.writeRunState(d, { a: 1 }, { env: ctx.env });\n';
+  const { offenders, sites } = scan(src);
+  assert.deepEqual(offenders, []);
+  assert.deepEqual(sites, { repoInfo: 1, runGit: 1, writeRunState: 1 });
+});
+
+test('self-test: a call spanning several lines with env on a later line is not flagged', () => {
+  const src = 'const r = runGit(\n  args,\n  cwd,\n  { raw: true, env },\n);\n';
+  assert.deepEqual(scan(src).offenders, []);
+});
+
+test('self-test: env named only after the closing paren, or inside a nested call elsewhere, does not satisfy a call', () => {
+  const src = 'runGit(args, cwd); const env = {};\n';
+  assert.deepEqual(scan(src).offenders, ['fixture.js:1: runGit( call does not name env (Scan B)']);
+});
+
+test('self-test: a declaration named like a call is not a site', () => {
+  const { offenders, sites } = scan('function runGit(args, cwd) {}\n');
+  assert.deepEqual(offenders, []);
+  assert.equal(sites.runGit, 0);
+});
+
+test('self-test: a call after a literal holding a comment opener is still scanned', () => {
+  const src = "const g = '/*';\nrunGit(args, cwd);\n";
+  assert.deepEqual(scan(src).offenders, ['fixture.js:2: runGit( call does not name env (Scan B)']);
+});
+
+test('self-test: a mis-parse is an offender, not a clean scan', () => {
+  // The quote inside the regex pairs with the later one in blank mode, which blanks the live call.
+  const src = "if (b) /'/.test(b); const c = 'x'; runGit(args, cwd);\n";
+  const { offenders } = scan(src);
+  assert.equal(offenders.length, 1);
+  assert.ok(offenders[0].startsWith('fixture.js: '), offenders[0]);
+  assert.ok(offenders[0].includes(STRIPPER_VERDICT_MESSAGES.misparsed), offenders[0]);
+});
+
+test('self-test: a file that does not compile is an offender', () => {
+  const { offenders } = scan('const = ;\n');
+  assert.equal(offenders.length, 1);
+  assert.ok(offenders[0].includes(STRIPPER_VERDICT_MESSAGES.unparseable), offenders[0]);
+});
+
+test('self-test: a named exception passes only for its exact line', () => {
+  const rel = 'exc.js';
+  NAMED_EXCEPTIONS[rel] = { runGit: { line: 'runGit(args, cwd, opts);', reason: 'fixture' } };
+  try {
+    assert.deepEqual(scan('runGit(args, cwd, opts);\n', rel).offenders, []);
+    assert.deepEqual(scan('runGit(args, cwd, other);\n', rel).offenders, ['exc.js:1: runGit( call does not name env (Scan B)']);
+  } finally {
+    delete NAMED_EXCEPTIONS[rel];
+  }
+});

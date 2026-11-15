@@ -151,7 +151,7 @@ test('a staged rename of policy.yml is not an allowlisted commit (isPolicyOnlyCo
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
   execFileSync('git', ['-C', repo, 'commit', '-m', 'add policy', '-q']);
   execFileSync('git', ['-C', repo, 'mv', '.claude-tweaks/policy.yml', '.claude-tweaks/other.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), false);
 });
 
 test('commit shapes that must stay denied: -a, --amend, compound, -C', () => {
@@ -344,21 +344,21 @@ test('a staged rename INTO policy.yml is denied even though --name-only would sh
   execFileSync('git', ['-C', repo, 'mv', '-f', 'payload.yml', '.claude-tweaks/policy.yml']);
   const nameOnly = execFileSync('git', ['-C', repo, 'diff', '--cached', '--name-only'], { encoding: 'utf8' }).trim();
   assert.strictEqual(nameOnly, '.claude-tweaks/policy.yml', 'precondition: --name-only really does collapse the rename to one line');
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), false);
 });
 
 test('a staged Add, Modify, and Delete of policy.yml each still qualify (the three admitted statuses)', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'a: b\n');
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true, 'Add');
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), true, 'Add');
   execFileSync('git', ['-C', repo, 'commit', '-m', 'add', '-q']);
   withPolicy(repo, 'a: c\n');
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true, 'Modify');
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), true, 'Modify');
   execFileSync('git', ['-C', repo, 'commit', '-m', 'mod', '-q']);
   execFileSync('git', ['-C', repo, 'rm', '-q', '.claude-tweaks/policy.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true, 'Delete');
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), true, 'Delete');
 });
 
 test('AC1.1: the staged-file read uses -z', () => {
@@ -380,11 +380,11 @@ test('the exemption still fires when HEAD tracks a non-ASCII path (docs/café.md
   execFileSync('git', ['-C', repo, 'commit', '-m', 'baseline', '-q']);
   withPolicy(repo, 'a: c\n');
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), true);
   // A second staged entry — the non-ASCII path — still defeats the exemption.
   fs.writeFileSync(path.join(repo, 'docs', 'café.md'), 'two\n');
   execFileSync('git', ['-C', repo, 'add', 'docs/café.md']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), false);
 });
 
 // ─── allowlist regex unit cases (pure — no spawn) ──────────────────────────
@@ -427,15 +427,15 @@ test('POLICY_COMMIT_ALLOWLIST matches exactly the admitted shapes', () => {
 
 test('isPolicyOnlyCommit fails closed when git cannot answer (non-repo cwd)', () => {
   const nonRepo = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-norepo-')));
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', nonRepo), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', nonRepo, { env: process.env }), false);
 });
 
 test('isPolicyOnlyCommit fails closed on non-string / garbage input without throwing', () => {
-  assert.strictEqual(isPolicyOnlyCommit(null, '/tmp'), false);
-  assert.strictEqual(isPolicyOnlyCommit(undefined, '/tmp'), false);
-  assert.strictEqual(isPolicyOnlyCommit(42, '/tmp'), false);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', null), false);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', undefined), false);
+  assert.strictEqual(isPolicyOnlyCommit(null, '/tmp', { env: process.env }), false);
+  assert.strictEqual(isPolicyOnlyCommit(undefined, '/tmp', { env: process.env }), false);
+  assert.strictEqual(isPolicyOnlyCommit(42, '/tmp', { env: process.env }), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', null, { env: process.env }), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', undefined, { env: process.env }), false);
 });
 
 // ─── every outcome is a returned object, never a throw ─────────────────────

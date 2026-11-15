@@ -10,7 +10,7 @@ const { shellQuote } = require('./helpers/shell-quote');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { readText } = require('./helpers/read-skill');
-const { gitRepo, gitRepoWithCommit, withoutGhTimeoutEnv, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
+const { gitRepo, gitRepoWithCommit, GH_TIMEOUT_ENV, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 // A hook event's context always carries env (hooks.js builds it); a hand-built one passes it explicitly.
 const BASE_ENV = Object.freeze({ ...process.env });
@@ -1060,25 +1060,25 @@ test('isUntrackedOrIgnored fails closed on anything it cannot prove, and is giti
   const repo = gitRepoWithCommit();
   fs.writeFileSync(path.join(repo, '.gitignore'), 'ignored.txt\n');
   const ignored = path.join(repo, 'ignored.txt');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, ignored), true, 'the positive (gitignored) case must actually match');
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, ignored, { env: BASE_ENV }), true, 'the positive (gitignored) case must actually match');
 
   const existingUntrackedNotIgnored = path.join(repo, 'scratch.txt');
   fs.writeFileSync(existingUntrackedNotIgnored, 'x');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, existingUntrackedNotIgnored), false,
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, existingUntrackedNotIgnored, { env: BASE_ENV }), false,
     'untracked alone (not gitignored) is never exempt — the reverted branch stays reverted');
 
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, 'ignored.txt'), false, 'relative path is unprovable');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, ''), false, 'empty path');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, null), false, 'null path');
-  assert.strictEqual(pre.isUntrackedOrIgnored(null, ignored), false, 'null repoRoot');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(repo, 'never', 'created.txt')), false,
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, 'ignored.txt', { env: BASE_ENV }), false, 'relative path is unprovable');
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, '', { env: BASE_ENV }), false, 'empty path');
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, null, { env: BASE_ENV }), false, 'null path');
+  assert.strictEqual(pre.isUntrackedOrIgnored(null, ignored, { env: BASE_ENV }), false, 'null repoRoot');
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(repo, 'never', 'created.txt'), { env: BASE_ENV }), false,
     'a not-yet-existing, non-ignored path is never exempt');
   // A path resolving outside repoRoot is a real git failure (exit 128, with
   // stderr) for check-ignore — indeterminate, not a clean negative, so it
   // must fail closed rather than being read as "not ignored".
   const outsideRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-outside-'));
   fs.writeFileSync(path.join(outsideRepo, 'x.txt'), 'x');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(outsideRepo, 'x.txt')), false,
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(outsideRepo, 'x.txt'), { env: BASE_ENV }), false,
     'a path outside repoRoot is a git fatal error, not a clean negative — fails closed');
 });
 
@@ -1279,11 +1279,12 @@ test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detectio
   const gh = fakeGh({ first: 'hang' });
   const seen = [];
   try {
-    withoutGhTimeoutEnv(() => {
-      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
-      assert.strictEqual(result, 'local-merge');
-      assert.strictEqual(gh.count(), 2);
-    });
+    // The stub's PATH is on the live process.env; the timeout key is left out so detection's ladder falls to its default.
+    const env = { ...process.env };
+    delete env[GH_TIMEOUT_ENV];
+    const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d), env });
+    assert.strictEqual(result, 'local-merge');
+    assert.strictEqual(gh.count(), 2);
     // The recorded timeoutMs proves which bound reached detection (no wall-clock assertion).
     assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
   } finally {
@@ -1334,10 +1335,10 @@ test('resolveRunPinnedIntegrationModel forwards opts.onDegrade to forge detectio
   const gh = fakeGh({ first: 'hang' });
   const seen = [];
   try {
-    withoutGhTimeoutEnv(() => {
-      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
-      assert.strictEqual(result, 'local-merge');
-    });
+    const env = { ...process.env };
+    delete env[GH_TIMEOUT_ENV];
+    const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d), env });
+    assert.strictEqual(result, 'local-merge');
     assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
   } finally {
     gh.restore();
@@ -1763,7 +1764,7 @@ test('#3712: a non-git cwd fails open even with autonomy: unattended in the run 
   assert.deepStrictEqual(pre.run(ctx), {});
   // The gate never reaches the ceiling there (ownership is unprovable outside a
   // repo), so pin the reader's own git-failure throw, which the gate turns into allow.
-  assert.throws(() => pre.readConsoleCeiling(dir, notGit));
+  assert.throws(() => pre.readConsoleCeiling(dir, notGit, { env: BASE_ENV }));
 });
 
 test('#3712: readConsoleCeiling matches console-resolve.js readPolicy() ceiling', () => {
@@ -1773,7 +1774,7 @@ test('#3712: readConsoleCeiling matches console-resolve.js readPolicy() ceiling'
     const dir = consoleRun(autonomy);
     const repo = repoOfRun(dir);
     assert.strictEqual(
-      pre.readConsoleCeiling(dir, repo),
+      pre.readConsoleCeiling(dir, repo, { env: BASE_ENV }),
       readPolicy({ execFile, cwd: repo, runDir: dir }).ceiling,
       `autonomy=${autonomy}`,
     );
@@ -1829,7 +1830,7 @@ test('#3712: a near-miss console header allows — the header match is exact', (
 test('#3712: a malformed autonomy value in config.yml resolves supervised and allows', () => {
   for (const autonomy of ['bogus', 'Unattended']) {
     const dir = consoleRun(autonomy);
-    assert.strictEqual(pre.readConsoleCeiling(dir, repoOfRun(dir)), 'supervised', autonomy);
+    assert.strictEqual(pre.readConsoleCeiling(dir, repoOfRun(dir), { env: BASE_ENV }), 'supervised', autonomy);
     assert.deepStrictEqual(pre.run(consoleCtx(dir, CONSOLE_Q)), {}, autonomy);
   }
 });

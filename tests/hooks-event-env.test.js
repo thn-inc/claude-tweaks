@@ -72,20 +72,26 @@ function readRefusalEvents(main) {
 
 test('AC2.1: pre-tool-use resolves the run directory from the injected env, not process.env', async () => {
   const main = gitRepoWithCommit();
+  const wtOld = linkedWorktreeOf(main);
   const wtA = linkedWorktreeOf(main);
   const wtB = linkedWorktreeOf(main);
   const wtC = linkedWorktreeOf(main);
+  // process.env names the OLDEST run: neither the injected run (A) nor the newest-run fallback (C).
+  const runOld = mkRunAt(main, '2026-06-01T090000-spec-9', wtOld);
   const runA = mkRunAt(main, '2026-07-01T090000-spec-1', wtA);
   mkRunAt(main, '2026-07-02T090000-spec-2', wtB);
-  const runC = mkRunAt(main, '2026-07-03T090000-spec-3', wtC);
+  mkRunAt(main, '2026-07-03T090000-spec-3', wtC);
   const input = bashPayload('git commit -m "x"', main);
-  await withProcessEnv({ PIPELINE_RUN_DIR: runC }, async () => {
-    const named = await runHookCli(['pre-tool-use'], { input, cwd: main, env: hookEnv({ PIPELINE_RUN_DIR: runA }) });
+  const assigned = (wt) => `assigned worktree is ${wt} `;
+  await withProcessEnv({ PIPELINE_RUN_DIR: runOld }, async () => {
+    const named = await runHookCli(['pre-tool-use'], { input, cwd: main, env: hookEnv({ PIPELINE_RUN_DIR: runA }), tripwire: false });
     assert.strictEqual(named.code, 0);
-    assert.ok(denialReason(named).includes(`assigned worktree is ${wtA} `), `the deny names A's worktree as the assigned one: ${denialReason(named)}`);
-    const unnamed = await runHookCli(['pre-tool-use'], { input, cwd: main, env: hookEnv({ PIPELINE_RUN_DIR: '' }) });
+    assert.ok(denialReason(named).includes(assigned(wtA)), `the injected run is the assigned one: ${denialReason(named)}`);
+    // tripwire off: the assertion itself, not the tripwire, must tell a fallback from a process.env read.
+    const unnamed = await runHookCli(['pre-tool-use'], { input, cwd: main, env: hookEnv({ PIPELINE_RUN_DIR: '' }), tripwire: false });
     assert.strictEqual(unnamed.code, 0);
-    assert.ok(!denialReason(unnamed).includes(`assigned worktree is ${wtA} `), `with no run dir in the injected env A is not the assigned run: ${denialReason(unnamed)}`);
+    assert.ok(denialReason(unnamed).includes(assigned(wtC)), `with no run dir in the injected env the newest run (C) is the fallback: ${denialReason(unnamed)}`);
+    assert.ok(!denialReason(unnamed).includes(assigned(wtOld)), 'the run process.env names is not read');
   });
 });
 
@@ -162,4 +168,13 @@ test('pre-tool-use with an empty env resolves to an exit code', async () => {
 test('pre-tool-use run throws on a context without env', () => {
   const input = { tool_name: 'Write', tool_input: { file_path: path.join(os.tmpdir(), 'x.txt') } };
   assert.throws(() => preToolUse.run({ input, cwd: os.tmpdir() }), TypeError);
+});
+
+test('pre-tool-use helpers only a hook event calls throw TypeError when env is left out', () => {
+  const abs = path.join(os.tmpdir(), 'x');
+  assert.throws(() => preToolUse.isUntrackedOrIgnored(abs, path.join(abs, 'y')), TypeError);
+  assert.throws(() => preToolUse.isPolicyOnlyCommit('git commit -m x', abs), TypeError);
+  assert.throws(() => preToolUse.toplevel(abs), TypeError);
+  assert.throws(() => preToolUse.shadowPipelineRunDir(path.join(abs, 'y')), TypeError);
+  assert.throws(() => preToolUse.readConsoleCeiling(abs, abs), TypeError);
 });
