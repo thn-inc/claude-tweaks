@@ -35,6 +35,32 @@ function tmpProject(policyText) {
   return dir;
 }
 
+const { spawnCli } = require('../../helpers/run-cli');
+
+// Skills paste this stdout into Agent calls; proves one JSON line and the flush on exit 0.
+test('AC8.1: resolve-profile.js <profile> prints exactly one JSON line (script entry)', () => {
+  const dir = tmpProject(null);
+  const r = spawnCli(CLI, ['standard'], { env: isolatedEnv(), cwd: dir });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stderr, '');
+  assert.strictEqual(
+    r.stdout,
+    '{"model":"sonnet","effort":"high","source":"default","effortLine":"[Effort: high — apply high-level reasoning depth to this task.]"}\n',
+  );
+  const lines = r.stdout.split('\n');
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(lines[1], '');
+});
+
+// Proves the refusal exit code survives the real entry.
+test('AC3.1, AC8.1: --stance with no value exits 1 naming the flag (script entry)', () => {
+  const dir = tmpProject(null);
+  const r = spawnCli(CLI, ['standard', '--stance'], { env: isolatedEnv(), cwd: dir });
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(r.stderr, 'resolve-profile: --stance requires a value\n');
+});
+
 test('resolves from the table when no policy file exists', () => {
   const dir = tmpProject(null);
   assert.deepStrictEqual(run(['standard'], dir), {
