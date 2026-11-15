@@ -163,3 +163,15 @@ test('AC9.1: a relative --root resolves against the injected cwd', () => {
   assert.strictEqual(res.status, 0, res.stderr);
   assert.strictEqual(JSON.parse(res.stdout).path, path.join(parent, 'proj', '.claude-tweaks', 'verify-scope.json'));
 });
+
+test('(j) --drift with an unparseable declaration prints its errors on stderr and exits 1', () => {
+  const root = tmpRoot('ivs-baddecl-');
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'proj' }));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'verify-scope.json'), '{bad');
+
+  const res = cli(['--root', root, '--drift']);
+  assert.strictEqual(res.status, 1);
+  assert.strictEqual(res.stdout, '');
+  assert.match(res.stderr, /verify-scope\.json: could not parse JSON/);
+});
