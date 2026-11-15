@@ -16,8 +16,9 @@ const path = require('path');
 // a long call passes `waitMs` to acquireLock/withLock instead
 // (plugin/bin/lib/docs-health/commit-ref.js's deepenShallowClone does, #2988),
 // never an env swap.
-function resolveLockWaitMs() {
-  const raw = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+// `env` is where the knob is read: an in-process CLI passes its injected env (#5375).
+function resolveLockWaitMs(env = process.env) {
+  const raw = env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   const n = Number(raw);
   return raw !== undefined && raw.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : 500;
 }
@@ -66,8 +67,9 @@ function readOwnerPid(lockPath) {
 }
 
 // Acquires a mkdir-based lock at `lockPath`, waiting up to `opts.waitMs` (a
-// non-negative integer) or, without one, resolveLockWaitMs() (500 ms unless
-// CLAUDE_TWEAKS_LOCK_WAIT_MS overrides it).
+// non-negative integer) or, without one, resolveLockWaitMs(opts.env) (500 ms
+// unless CLAUDE_TWEAKS_LOCK_WAIT_MS in `opts.env` overrides it; withLock passes
+// its own `opts.waitMs` and `opts.env`).
 // Returns a { lockPath, token } handle on success, null on timeout — the
 // caller proceeds unlocked (this project's posture: never break a caller
 // over bookkeeping state; a missed lock just reopens the pre-existing race
@@ -82,8 +84,8 @@ function readOwnerPid(lockPath) {
 // still-in-progress one, the exact unsynchronized-read-modify-write shape
 // this lock exists to prevent. Age is now only the fallback for a lock
 // whose owner pid can't be read at all (see readOwnerPid above).
-function acquireLock(lockPath, { waitMs } = {}) {
-  const wait = Number.isInteger(waitMs) && waitMs >= 0 ? waitMs : resolveLockWaitMs();
+function acquireLock(lockPath, { waitMs, env = process.env } = {}) {
+  const wait = Number.isInteger(waitMs) && waitMs >= 0 ? waitMs : resolveLockWaitMs(env);
   const deadline = Date.now() + wait;
   const parentDir = path.dirname(lockPath);
   const token = `${process.pid}-${Math.random().toString(36).slice(2)}`;
@@ -157,8 +159,8 @@ function releaseLock(held) {
 // sequence) has actually finished, reopening the exact race the lock exists
 // to close.
 function withLock(lockPath, fn, opts = {}) {
-  const { failClosed = false, waitMs } = opts;
-  const held = acquireLock(lockPath, { waitMs });
+  const { failClosed = false, waitMs, env = process.env } = opts;
+  const held = acquireLock(lockPath, { waitMs, env });
   if (held === null && failClosed) {
     const err = new Error(`could not acquire lock within the configured wait: ${lockPath}`);
     err.code = 'LOCK_TIMEOUT';
