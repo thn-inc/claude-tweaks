@@ -1,6 +1,6 @@
 # The pipeline driver (`drive.js`)
 
-`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read. A program owns every step; a headless worker only writes the change. A record merges only when a judgment supplier is configured (none is by default) — see "The merge step". This page is documentation, not a contract: no test reads it, so update it by hand when the code below changes. The code is the source of truth.
+`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read; with `--budget` it picks the records itself from the dispatch queue (see "Picking records: `--budget`"). A program owns every step; a headless worker only writes the change. A record merges only when a judgment supplier is configured (none is by default) — see "The merge step". This page is documentation, not a contract: update it by hand when the code below changes. The code is the source of truth. A few of its sentences are pinned by `tests/bin-lib/driver/run.test.js` (the HEAD and Index flags bullets under "Worker rights"), so run that suite after editing them.
 
 ## Running it
 
