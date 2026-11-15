@@ -3,7 +3,9 @@
 // policy requires it.
 'use strict';
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { writeFileAtomic } = require('../atomic-write');
 const deps = require('../deps');
 const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
@@ -90,6 +92,25 @@ function restampOwnerPidOnResume(ctx) {
   ctxLib.writeRunState(owned.dir, patch);
 }
 
+// #5392: the launcher (bin/hooks.sh) finds node by PATH, then by the first
+// line of $HOME/.claude-tweaks/node-path, then by well-known install
+// locations. This fills that second rung with the node running this hook, so a
+// later session whose PATH lacks node still reaches hooks.js. `home` defaults
+// to HOME before os.homedir() because on win32 os.homedir() reads USERPROFILE,
+// which can differ from the HOME the launcher's shell reads. Rewrites only on
+// a content difference; a write failure throws and the caller swallows it.
+function saveNodePath({ execPath = process.execPath, home = process.env.HOME || os.homedir() } = {}) {
+  const dir = path.join(home, '.claude-tweaks');
+  const file = path.join(dir, 'node-path');
+  const content = execPath + '\n';
+  let current;
+  try { current = fs.readFileSync(file, 'utf8'); } catch { current = undefined; }
+  if (current === content) return 'unchanged';
+  fs.mkdirSync(dir, { recursive: true });
+  writeFileAtomic(file, content);
+  return 'written';
+}
+
 async function run(ctx) {
   const parts = [];
   // Per-invocation cache (#381): memoizes `git worktree list --porcelain` and
@@ -119,6 +140,9 @@ async function run(ctx) {
   // plain string push that cannot throw, and every session gets it regardless
   // of what else this hook finds to report.
   parts.push(INTERACTION_STYLE_DIRECTIVE);
+  // `nodePathHome` is a test-only seam (undefined falls through to
+  // saveNodePath's own default home); bin/hooks.js never sets it.
+  try { saveNodePath({ home: ctx && ctx.nodePathHome }); } catch { /* best-effort */ }
   // #2070: single upstream read of CLAUDE_PLUGIN_ROOT, threaded into both
   // resolveBuildLine (below) and the stale-runs report line's fallback
   // (further down) — one place for a future normalization/validation fix to
@@ -501,4 +525,4 @@ async function run(ctx) {
   return { json: { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: parts.join('\n\n') } } };
 }
 
-module.exports = { run, FAST_CHECKS, resolveBuildLine };
+module.exports = { run, FAST_CHECKS, resolveBuildLine, saveNodePath };

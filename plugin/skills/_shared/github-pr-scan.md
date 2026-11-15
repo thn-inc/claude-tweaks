@@ -151,6 +151,8 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
 
 9. **Unarmed ready PR** — a green, gate-passed, granted or grantable, plugin-created PR whose `--auto` was never armed. "Plugin-created" is detected purely GitHub-side, from the PR body's `<!-- claude-tweaks-run: {run-id} -->` marker (stamped by `_shared/pr-early-run-lifecycle.md`'s PR-open template) or one of the two mechanical-housekeeping markers — `<!-- tidy-housekeeping-pr -->` (stamped by `/claude-tweaks:tidy` Step 7 at creation) or `<!-- wrap-up-residue-pr -->` (stamped by `wrap-up/residue-sweep.md`'s pr-first landing path — the same low-judgment, purely-mechanical shape as a tidy Step-7 commit, gated by the identical `housekeeping-auto-merge` lever) — no local run-dir join, so this check works from a fresh sandbox exactly like every other item here.
 
+   A `<!-- wrap-up-skills-pr -->` PR (`wrap-up/learned-skills-pr.md`) is never a candidate, by marker or linked-record grant: it carries instruction edits a human must review.
+
 <!-- when: transport=gh -->
    Resolve this item's session-scoped temp paths first, per `_shared/session-tmp-root.md`:
 
@@ -171,6 +173,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
      const HOUSEKEEPING_MARKER = /<!-- (?:tidy-housekeeping-pr|wrap-up-residue-pr) -->/;
      const prs = require('$PR_SCAN_UNARMED');
      const candidates = prs.filter((pr) => {
+       if (/<!-- wrap-up-skills-pr -->/.test(pr.body || '')) return false;
        if (pr.isDraft || pr.autoMergeRequest) return false;
        const ageHours = (now - Date.parse(pr.updatedAt)) / 3600000;
        if (ageHours < AGE_HOURS) return false;

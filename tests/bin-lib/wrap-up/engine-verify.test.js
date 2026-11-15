@@ -1654,6 +1654,23 @@ test('reference-repairs check fails when Initiative-Fix commit diff touches a fi
   assert.strictEqual(row.detail, 'Initiative-Fix: commit touches unrelated file(s): docs/b.md');
 });
 
+test('reference-repairs check fails on the range path when an applied repair has no Initiative-Fix: commit in range', () => {
+  const runDir = makeTmpDir('verify-refrepair-nocommit-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md' }] } },
+  }));
+  const calls = [];
+  const fakeGit = (args) => {
+    calls.push(args);
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.deepStrictEqual(row, { check: 'reference-repairs', result: 'fail', detail: 'no Initiative-Fix: commit found in range' });
+  assert.ok(!calls.some((a) => a[0] === 'diff-tree'), `no commit to inspect, so no diff-tree call: ${JSON.stringify(calls)}`);
+});
+
 // ---- reference-repairs: pr-first verification via the PR's own (pre-squash)
 // commit list (#2552 AC3/AC6) ----
 
@@ -1709,6 +1726,105 @@ test('reference-repairs check still fails under pr-first when a repair genuinely
   const row = result.rows.find((r) => r.check === 'reference-repairs');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /no Initiative-Fix: commit found on PR #1201/);
+});
+
+// #5290 final review M5: a reference repair whose file a learned-skills capture took rides that PR's
+// commit, with no Initiative-Fix: trailer and nothing on the run branch, so it is not this check's.
+test('reference-repairs skips an applied repair that rode the learned-skills PR, calling neither git nor gh', () => {
+  const runDir = makeTmpDir('verify-refrepair-ls-pr-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: '.claude/skills/x/SKILL.md', commit: 'abc1234', pr: 'https://github.com/o/r/pull/77' }] } },
+  }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1202 } }));
+  const calls = [];
+  const record = (tool) => (args) => { calls.push(`${tool} ${args.join(' ')}`); return ''; };
+  const result = runVerify({ runDir, base: 'main', deps: { git: record('git'), gh: record('gh') } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.deepStrictEqual(row, { check: 'reference-repairs', result: 'skip', detail: 'every applied reference repair rode the learned-skills PR, not the run branch' });
+  assert.ok(!calls.some((c) => c.includes('--json commits') || c.includes('Initiative-Fix')), calls.join('\n'));
+});
+
+test('reference-repairs still judges the run-branch repairs beside one that rode the learned-skills PR', () => {
+  const runDir = makeTmpDir('verify-refrepair-ls-mixed-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [
+      { action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md', commit: 'def5678' },
+      { action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: '.claude/skills/x/SKILL.md', commit: 'abc1234', pr: 'https://github.com/o/r/pull/77' },
+    ] } },
+  }));
+  const fakeGit = (args) => {
+    if (args[0] === 'log' && args.includes('--grep=Initiative-Fix:')) return 'def5678\n';
+    if (args[0] === 'diff-tree') return 'docs/a.md\0';
+    return '';
+  };
+  const row = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } }).rows.find((r) => r.check === 'reference-repairs');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+// ---- learned-skills-delivered (#5290 final review I2) ----
+// A captured Skills-row edit exists only as {run}/learned-skills/{id}.patch until land or stage runs.
+// The manifest goes where the writers put it (layout.js), so a moved layout cannot leave this check
+// green on a skip.
+const { manifestPath: learnedManifestPath } = require('../../../plugin/bin/lib/learned-skills/layout');
+function writeLearnedManifest(runDir, entries) {
+  fs.mkdirSync(path.dirname(learnedManifestPath(runDir)), { recursive: true });
+  fs.writeFileSync(learnedManifestPath(runDir), typeof entries === 'string' ? entries : JSON.stringify(entries));
+}
+const learnedRow = (runDir) => runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
+
+test('learned-skills-delivered skips when the run captured nothing', () => {
+  const runDir = makeTmpDir('verify-learned-none-');
+  const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.deepStrictEqual(row, { check: 'learned-skills-delivered', result: 'skip', detail: 'no learned-skills captures this run' });
+});
+
+test('learned-skills-delivered passes when every entry was landed, staged or superseded', () => {
+  const runDir = makeTmpDir('verify-learned-done-');
+  writeLearnedManifest(runDir, [
+    { id: '1', status: 'landed', patch: '/gone/1.patch' }, { id: '2', status: 'staged', patch: '' }, { id: '3', status: 'superseded', patch: '/gone/3.patch' },
+  ]);
+  const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('learned-skills-delivered fails on a captured entry and names each patch where it now lives', () => {
+  const runDir = makeTmpDir('verify-learned-captured-');
+  // Absolute paths from before the run dir was archived: the check names the copy beside the manifest.
+  writeLearnedManifest(runDir, [
+    { id: '1', status: 'captured', patch: '/original/run/learned-skills/1.patch' },
+    { id: '2', status: 'landed', patch: '/original/run/learned-skills/2.patch' },
+    { id: '3', status: 'captured', patch: '/original/run/learned-skills/3.patch' },
+  ]);
+  const result = learnedRow(runDir);
+  const row = result.rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.strictEqual(row.result, 'fail');
+  assert.strictEqual(row.detail, `2 captured learned-skills patch(es) never delivered: ${path.join(runDir, 'learned-skills', '1.patch')}, ${path.join(runDir, 'learned-skills', '3.patch')} — run learned-skills-pr.js land (pr-first) or stage (local-merge) with --run ${runDir}`);
+  assert.strictEqual(result.exitCode, 3, 'a fail blocks the verdict');
+});
+
+// A null or unknown-status entry may be an undelivered edit: it fails, never reads as delivered.
+test('learned-skills-delivered fails on an entry no writer produces, naming it', () => {
+  for (const [bad, problem] of [
+    [null, 'is not an object'],
+    [{ id: '2', status: 'pending', patch: '/x/2.patch' }, 'has an unknown status ("pending")'],
+    [{ id: '2', status: 'captured' }, 'is captured but names no patch file'],
+  ]) {
+    const runDir = makeTmpDir('verify-learned-malformed-');
+    writeLearnedManifest(runDir, [{ id: '1', status: 'landed', patch: '/x/1.patch' }, bad]);
+    const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+    assert.strictEqual(row.result, 'fail', JSON.stringify(bad));
+    assert.strictEqual(row.detail, `learned-skills manifest entry 1 ${problem}: ${learnedManifestPath(runDir)}`);
+  }
+});
+
+test('learned-skills-delivered fails on an unreadable manifest', () => {
+  const runDir = makeTmpDir('verify-learned-bad-');
+  writeLearnedManifest(runDir, '{not json');
+  const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /^learned-skills manifest unreadable: /);
 });
 
 test('acceptance-labeling check renders unknown (gh absent) when gh probe throws', () => {

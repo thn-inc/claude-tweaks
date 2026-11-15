@@ -336,6 +336,11 @@ const POLICY = {
   'verify-suite-slots': 1,
   'auto-merge-max-lines': 200,
   'express-driver-review': 'beyond-express',
+  // #5224's lane bounds, in POLICY_KEYS order. express-driver-max-lines unset resolves as its Shape B
+  // default: auto-merge-max-lines' value with source 'default' (the policy reply below).
+  'express-driver-max-size': 'low',
+  'express-driver-max-key-files': 3,
+  'express-driver-max-lines': undefined,
 };
 
 function issueFor(n) {
@@ -452,7 +457,9 @@ function defaultScript(over, fx) {
     [on('node', /hooks\.js$/, 'record-pr'), (c) => ({ code: 0, stderr: '', stdout: `claude-tweaks: PR #${c.args[4]} recorded for ${path.basename(c.args[3])}\n` })],
     [on('node', /set-config\.js$/), { code: 0, stdout: '', stderr: '' }],
     [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state: 'green', headRefOid: HEAD_SHA, headRunCount: 1 }) }],
-    [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, { value: policy[k], source: 'policy' }]))],
+    [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines' && policy[k] === undefined
+      ? { value: policy['auto-merge-max-lines'], source: 'default' }
+      : { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
     [on('eligibility'), (c) => ({ number: c.args[0].number, eligible: true, reasons: [], keyFiles: ['a.js'], ...pick(over.eligibility, c) })],
@@ -466,8 +473,13 @@ function describeArgs(args) {
   return args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
 }
 
+// The record's one reviewer answer (#5224): recorded in reviewerCalls, outside `calls` so the captured call
+// signatures stay as they were; over.reviewRequired replaces the real function.
+const { reviewRequired: realReviewRequired } = require(path.join(LIB, 'driver', 'review'));
+
 function harness(over = {}) {
   const calls = [];
+  const reviewerCalls = [];
   const out = [];
   const err = [];
   const files = {};
@@ -507,10 +519,12 @@ function harness(over = {}) {
     git: (args, opts = {}) => dispatch('git', args, opts.cwd, undefined, undefined, { remoteWrite: opts.remoteWrite }),
     node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, opts.env, opts.timeout),
     resolvePolicy: (keys) => dispatch('policy', keys),
+    resolvePolicyCore: (opts, coreDeps) => dispatch('policyCore', opts.keys, coreDeps.cwd(), coreDeps.env, undefined, { runDir: opts.runDir }),
     evaluateRecordEligibility: (issue, opts) => dispatch('eligibility', [issue, opts]),
     fetchNativeDependencies: (opts) => dispatch('native-deps', [opts]),
     fetchLinkedPRs: (opts) => dispatch('linked-prs', [opts]),
     evaluateAdmission: (input) => dispatch('admission', [input]),
+    reviewRequired: (opts) => { reviewerCalls.push(opts); return (over.reviewRequired || realReviewRequired)(opts); },
     launchWorker: (opts, d) => dispatch('worker', [opts, d]),
     resolveRunDir: (opts) => dispatch('resolveRunDir', [opts]),
     lstatType: (p) => dispatch('lstatType', [p]),
@@ -552,7 +566,7 @@ function harness(over = {}) {
   const lines = () => out.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const writes = () => calls.filter((c) => ['writeFile', 'appendFile', 'mkdirSync', 'resolveRunDir'].includes(c.kind));
   return {
-    deps, calls, out, err, files, signals, lines, writes, fx,
+    deps, calls, out, err, files, signals, lines, writes, fx, reviewerCalls,
     get probes() { return state.probes; },
   };
 }
@@ -676,7 +690,10 @@ test('eligibility runs with the relaxed ceremony gate and the policy values', as
   await run(['#7'], h.deps);
   const [issue, opts] = h.calls.find((c) => c.kind === 'eligibility').args;
   assert.deepEqual(issue, issueFor(7));
-  assert.deepEqual(opts, { enabled: true, allowAbsentCeremony: true, integrationModel: 'local-merge', sensitivePaths: ['plugin/bin/**', 'docs/**'] });
+  assert.deepStrictEqual(opts, {
+    enabled: true, allowAbsentCeremony: true, integrationModel: 'local-merge', sensitivePaths: ['plugin/bin/**', 'docs/**'],
+    sizeCeiling: 'low', maxKeyFiles: 3,
+  });
 });
 
 test('AC1.3: failed fetch refuses with the fetch error', async () => {
@@ -732,9 +749,10 @@ test('admission reads blockers and linked PRs from the shared repo and passes th
   // Both GraphQL reads run under the batch bound (deps.ghBatch), never the single-call gh.
   assert.deepEqual(h.calls.filter((c) => c.kind === 'ghBatch').map((c) => c.args.at(-1)), ['query=blockers', 'query=linked']);
   assert.equal(h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'api').length, 0);
-  assert.deepEqual(h.calls.find((c) => c.kind === 'admission').args[0], {
+  assert.deepStrictEqual(h.calls.find((c) => c.kind === 'admission').args[0], {
     number: 7, state: 'OPEN', labels: issueFor(7).labels,
     openBlockerRefs: openBlockerRefs(entry), openLinkedPRs: [12], routing: 'on', driverEscalated: false,
+    keyFiles: ['a.js'], bounds: { sizeCeiling: 'low', maxKeyFiles: 3 }, reviewerOn: false,
   });
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
 });
@@ -4130,7 +4148,7 @@ test('AC12: a throw inside the review pass is a pre-push stop whose line keeps t
   assert.equal(pushCalls(h).length, 0);
   // A missing wiring member escapes the pass itself: the step still returns the seven keys.
   const { reviewRecord } = require(path.join(LIB, 'driver', 'review'));
-  const ctx = { issue: issueFor(7), keyFiles: [], shared: { policy: { 'express-driver-review': { value: 'on' } } } };
+  const ctx = { issue: issueFor(7), keyFiles: [], reviewer: { on: true, reason: 'test' }, shared: { policy: { 'express-driver-review': { value: 'on' } } } };
   const res = await reviewRecord(ctx, {}, { testCommand: 'npm test' });
   assert.deepEqual([res.status, res.stopClass, res.extra], ['fail', 'pre-push', { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null }]);
   assert.equal(res.detail, 'the review pass failed before it started');
@@ -4138,10 +4156,332 @@ test('AC12: a throw inside the review pass is a pre-push stop whose line keeps t
 
 test('AC12: a wiring with isRunArtifact but no indexFlagCheck fails the review step before it starts', async () => {
   const { reviewRecord } = require(path.join(LIB, 'driver', 'review'));
-  const ctx = { issue: issueFor(7), keyFiles: [], shared: { policy: { 'express-driver-review': { value: 'on' } } } };
+  const ctx = { issue: issueFor(7), keyFiles: [], reviewer: { on: true, reason: 'test' }, shared: { policy: { 'express-driver-review': { value: 'on' } } } };
   const res = await reviewRecord(ctx, {}, { testCommand: 'npm test', isRunArtifact: () => false });
   assert.deepEqual([res.status, res.stopClass, res.extra], ['fail', 'pre-push', { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null }]);
   assert.equal(res.detail, 'the review pass failed before it started');
+});
+
+// --- #5224: the lane bounds and the record's one reviewer answer --------------------------------
+//
+// The eligibility step makes the record's one reviewRequired call (ctx.reviewer); admission, the check
+// flag and the review step read that answer. REAL_GATES answers the eligibility and admission calls with
+// the real functions, over a spec-shaped record whose Key Files section lists boundsIssue's paths
+// (eligibility.test.js's record()): the default fakes always pass, so they can never refuse.
+const { evaluateRecordEligibility } = require(path.join(LIB, 'express', 'eligibility.js'));
+const { evaluateAdmission, ADMISSION_REASONS } = require(path.join(LIB, 'driver', 'admission'));
+const boundsBody = (keyFiles) => [
+  '## Current State', '', 'The total is wrong.', '',
+  '## Deliverables', '', '- Fix the total.', '',
+  '## Acceptance Criteria', '', '- The total adds.', '',
+  '## Release Note', '', 'Fixes the total.', '',
+  '## Technical Approach', '',
+  '### Key Files', '',
+  ...keyFiles.map((p) => `- \`${p}\` (modify)`),
+  '',
+].join('\n');
+const boundsIssue = ({ risk = 'low', size = 'low', keyFiles = 1 } = {}) => [on('gh', 'issue', 'view'), (c) => JSON.stringify({
+  ...issueFor(Number(c.args.at(-1))),
+  body: boundsBody(Array.from({ length: keyFiles }, (_, i) => `src/f${i}.js`)),
+  // A null size leaves the record with no size label.
+  labels: [`risk:${risk}`, ...(size ? [`size:${size}`] : []), 'type:task', 'auto:build'].map((name) => ({ name })),
+})];
+const REAL_GATES = [
+  [on('eligibility'), (c) => evaluateRecordEligibility(c.args[0], c.args[1])],
+  [on('admission'), (c) => evaluateAdmission(c.args[0])],
+];
+// A widened policy, set explicitly here: no test pins a widened value as a default.
+const WIDENED = { 'express-driver-max-size': 'medium', 'express-driver-max-key-files': 5 };
+const maxLinesArg = (c) => { const i = c.args.indexOf('--max-lines'); return i === -1 ? null : c.args.slice(i, i + 2); };
+const checkFlags = (h) => checkCalls(h).map(maxLinesArg);
+const admissionInputs = (h) => calls(h, 'admission').map((c) => c.args[0]);
+const stepsRun = (h) => h.lines().map((l) => l.step);
+// check's verdict on a diff between the two bounds: within the driver's bound the flag carries, over the
+// express bound check reads itself when no flag is passed.
+const boundedCheck = [on('node', /express-lane\.js$/, 'check'), (c) => ({
+  code: 0, stderr: '',
+  stdout: JSON.stringify(c.args.includes('--max-lines')
+    ? checkProceed()
+    : { action: 'escalate', reason: 'out-of-bounds', detail: '150 implementation lines exceed 100' }),
+})];
+const BETWEEN_BOUNDS = { 'auto-merge-max-lines': 100, 'express-driver-max-lines': 160 };
+
+test('AC12.1 (#5224): one reviewRequired call per record feeds admission, the check flag and the review step', async () => {
+  const h = harness({ policy: { 'express-driver-max-lines': 90 }, reviewRequired: () => ({ on: true, reason: 'sentinel' }) });
+  assert.equal(await run(['#7', '#8'], h.deps), 0);
+  assert.deepStrictEqual(h.reviewerCalls, [7, 8].map((n) => ({ issue: issueFor(n), keyFiles: ['a.js'], policyValue: 'beyond-express' })));
+  assert.deepStrictEqual(admissionInputs(h).map((i) => i.reviewerOn), [true, true]);
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '90'], ['--max-lines', '90']]);
+  // The review step reads the same answer: the sentinel turns the reviewer on for both records, so each
+  // runs a reviewer role (the real rule would leave a size:low, one-Key-File record off).
+  assert.deepStrictEqual(rolesOf(h), ['implementer', 'reviewer', 'implementer', 'reviewer']);
+  const off = harness({ policy: { 'express-driver-max-lines': 90 }, reviewRequired: () => ({ on: false, reason: 'sentinel' }) });
+  assert.equal(await run(['#7'], off.deps), 0);
+  assert.equal(off.reviewerCalls.length, 1);
+  assert.deepStrictEqual(admissionInputs(off).map((i) => i.reviewerOn), [false]);
+  assert.deepStrictEqual(checkFlags(off), [null]);
+  assert.deepStrictEqual(rolesOf(off), ['implementer']);
+});
+
+test('AC4.3/AC4.4 (#5224): check gets --max-lines only when express-driver-max-lines is set and the reviewer is on', async () => {
+  // Shape B: an invalid value resolves to the default, derived from auto-merge-max-lines.
+  const invalid = [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+    ? { value: 200, source: 'default', invalid: true }
+    : { value: { ...POLICY, 'express-driver-review': 'on' }[k], source: 'policy' }]))];
+  const rows = [
+    ['unset, reviewer on', { policy: { 'express-driver-review': 'on' } }, null],
+    ['invalid, reviewer on', { script: [invalid] }, null],
+    ['set, reviewer off', { policy: { 'express-driver-review': 'off', 'express-driver-max-lines': 120 } }, null],
+    ['set, default reviewer, a record inside the express bounds', { policy: { 'express-driver-max-lines': 120 } }, null],
+    ['set, reviewer on', { policy: { 'express-driver-review': 'on', 'express-driver-max-lines': 120 } }, ['--max-lines', '120']],
+  ];
+  for (const [name, over, flag] of rows) {
+    const h = harness(over);
+    assert.equal(await run(['#7'], h.deps), 0, name);
+    assert.deepStrictEqual(checkFlags(h), [flag], name);
+  }
+});
+
+test('AC4.5 (#5224): a record inside the express bounds with the reviewer always on gets the driver bound', async () => {
+  const h = harness({ policy: { 'express-driver-review': 'on', 'express-driver-max-lines': 120 }, script: [boundsIssue(), ...REAL_GATES] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepStrictEqual(h.reviewerCalls.map((o) => o.keyFiles), [['src/f0.js']]);
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '120']]);
+  assert.deepStrictEqual(rolesOf(h), ['implementer', 'reviewer']);
+});
+
+test('AC4.6/AC4.7 (#5224): a diff between the express and driver bounds passes check with the reviewer on and escalates with it off', async () => {
+  const reviewed = harness({ policy: { ...BETWEEN_BOUNDS, 'express-driver-review': 'on' }, script: [boundedCheck] });
+  assert.equal(await run(['#7'], reviewed.deps), 0);
+  assert.equal(lastLine(reviewed).outcome, 'pending-review');
+  assert.deepStrictEqual(checkFlags(reviewed), [['--max-lines', '160']]);
+  assert.notEqual(stepsRun(reviewed).indexOf(STEP.review), -1);
+  assert.ok(stepsRun(reviewed).indexOf(STEP.review) < stepsRun(reviewed).indexOf(STEP.push));
+  const unreviewed = harness({ policy: { ...BETWEEN_BOUNDS, 'express-driver-review': 'off' }, script: [boundedCheck] });
+  await run(['#7'], unreviewed.deps);
+  const final = lastLine(unreviewed);
+  assert.deepStrictEqual([final.stop.step, final.stop.reason, final.outcome], ['check', 'out-of-bounds', 'express-escalated']);
+  assert.deepStrictEqual(checkFlags(unreviewed), [null]);
+  assert.equal(pushCalls(unreviewed).length, 0);
+});
+
+test('AC4.8/AC11.1 (#5224): a record admitted only by the widened policy goes through review before push', async () => {
+  const h = harness({ policy: { ...WIDENED, ...BETWEEN_BOUNDS }, script: [boundsIssue({ size: 'medium', keyFiles: 4 }), boundedCheck, ...REAL_GATES] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const steps = stepsRun(h);
+  for (const s of [STEP.admission, STEP.check, STEP.review, STEP.push]) assert.equal(steps.filter((x) => x === s).length, 1, s);
+  assert.ok(steps.indexOf(STEP.check) < steps.indexOf(STEP.review));
+  assert.ok(steps.indexOf(STEP.review) < steps.indexOf(STEP.push));
+  assert.deepStrictEqual([reviewLines(h)[0].status, reviewLines(h)[0].detail], ['ok', '0 reproduced of 0']);
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '160']]);
+  assert.equal(lastLine(h).outcome, 'pending-review');
+  // The same record under the express defaults: eligibility refuses it, and the reviewer reason does not
+  // follow, since the record is beyond the driver's bounds too.
+  const plain = harness({ script: [boundsIssue({ size: 'medium', keyFiles: 4 }), ...REAL_GATES] });
+  await run(['#7'], plain.deps);
+  assert.deepStrictEqual([lastLine(plain).stop.step, lastLine(plain).stop.detail], ['eligibility', 'size is not low; more than 3 Key Files']);
+});
+
+test('AC11.2 (#5224): with the reviewer off a widened record is refused at admission and nothing reaches check', async () => {
+  const h = harness({ policy: { ...WIDENED, 'express-driver-review': 'off' }, script: [boundsIssue({ size: 'medium', keyFiles: 4 }), ...REAL_GATES] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepStrictEqual([final.stop.step, final.stop.class, final.outcome], ['admission', 'refused', 'refused']);
+  assert.equal(final.stop.detail, ADMISSION_REASONS.reviewerOff);
+  assert.equal(checkCalls(h).length, 0);
+  assert.equal(calls(h, 'worker').length, 0);
+});
+
+test('AC3.6 (#5224, Plan Review Clarification): the eligibility stop names the reviewer reason after eligibility\'s own', async () => {
+  const refused = (over, issue) => {
+    const h = harness({ policy: { ...WIDENED, ...over }, script: [boundsIssue({ risk: 'medium', size: 'medium', ...issue }), ...REAL_GATES] });
+    return run(['#7'], h.deps).then(() => h);
+  };
+  const h = await refused({ 'express-driver-review': 'off' }, { keyFiles: 4 });
+  assert.deepStrictEqual([lastLine(h).stop.step, lastLine(h).stop.class], ['eligibility', 'refused']);
+  assert.equal(lastLine(h).stop.detail, `risk is not low; ${ADMISSION_REASONS.reviewerOff}`);
+  assert.equal(h.reviewerCalls.length, 1);
+  assert.equal(calls(h, 'admission').length, 0);
+  // Beyond the driver's bounds (6 Key Files over a limit of 5), or with the reviewer on, eligibility's reasons stand alone.
+  assert.equal(lastLine(await refused({ 'express-driver-review': 'off' }, { keyFiles: 6 })).stop.detail, 'risk is not low; more than 5 Key Files');
+  assert.equal(lastLine(await refused({}, { keyFiles: 4 })).stop.detail, 'risk is not low');
+});
+
+test('AC6 (#5224): a reviewer answer that is not a boolean refuses the record at admission', async () => {
+  const h = harness({ reviewRequired: () => ({ on: 'yes', reason: 'x' }), script: [boundsIssue(), ...REAL_GATES] });
+  await run(['#7'], h.deps);
+  assert.deepStrictEqual([lastLine(h).stop.step, lastLine(h).outcome, lastLine(h).stop.detail], ['admission', 'refused', ADMISSION_REASONS.reviewerUnreadable]);
+  assert.deepStrictEqual(admissionInputs(h).map((i) => i.reviewerOn), ['yes']);
+  assert.equal(calls(h, 'worker').length, 0);
+});
+
+test('AC5.5 (#5224): with express-driver-max-lines unset the lane bound is auto-merge-max-lines, whatever it holds', async () => {
+  const h = harness({ policy: { 'auto-merge-max-lines': 77, 'express-driver-review': 'on' } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepStrictEqual(checkFlags(h), [null]);
+  assert.match(workerCall(h).args[0].prompt, /within 77 implementation lines/);
+});
+
+test('AC6.1 (#5224): an unreadable lane bound key stops the driver before any record', async () => {
+  for (const key of ['express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines']) {
+    for (const [why, entry] of [['missing', undefined], ['unknown-key', { error: 'unknown-key' }]]) {
+      const reply = (c) => {
+        const resolved = Object.fromEntries(c.args.map((k) => [k, { value: POLICY[k], source: 'policy' }]));
+        if (entry) resolved[key] = entry;
+        else delete resolved[key];
+        return resolved;
+      };
+      const h = harness({ script: [[on('policy'), reply]] });
+      assert.equal(await run(['#7', '#8'], h.deps), 1, key);
+      const final = h.lines().at(-1);
+      assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused'], key);
+      assert.ok(final.stop.detail.includes(`${key} (${why})`), final.stop.detail);
+      assert.equal(h.lines().filter((l) => l.record === 8).length, 0, key);
+      assert.equal(h.calls.filter((c) => c.kind === 'gh').length, 0, key);
+    }
+  }
+});
+
+test('Review Focus 3 (#5224): a driver bound below the express bound narrows reviewer-on records', async () => {
+  const h = harness({ policy: { 'auto-merge-max-lines': 200, 'express-driver-max-lines': 20, 'express-driver-review': 'on' } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '20']]);
+  assert.match(workerCall(h).args[0].prompt, /within 20 implementation lines/);
+});
+
+test('Review Focus 4 (#5224): the worker prompt states the line bound check applies', async () => {
+  const flagged = harness({ policy: { 'express-driver-max-lines': 120, 'express-driver-review': 'on' } });
+  await run(['#7'], flagged.deps);
+  assert.deepStrictEqual(checkFlags(flagged), [['--max-lines', '120']]);
+  assert.match(workerCall(flagged).args[0].prompt, /within 120 implementation lines/);
+  assert.doesNotMatch(workerCall(flagged).args[0].prompt, /within 200 implementation lines/);
+  const plain = harness({ policy: { 'express-driver-max-lines': 120, 'express-driver-review': 'off' } });
+  await run(['#7'], plain.deps);
+  assert.deepStrictEqual(checkFlags(plain), [null]);
+  assert.match(workerCall(plain).args[0].prompt, /within 200 implementation lines/);
+  // The label names no one bound: it is the driver's under the flag and the express one without it.
+  for (const h of [flagged, plain]) {
+    assert.match(workerCall(h).args[0].prompt, /implementation lines \(the diff bound check applies; deleted test lines count toward it\)/);
+    assert.doesNotMatch(workerCall(h).args[0].prompt, /express diff bound/);
+  }
+});
+
+test('(#5224) the eligibility step passes the size ceiling and Key File limit it read; admission gets the same bounds', async () => {
+  const h = harness({ policy: { ...WIDENED } });
+  await run(['#7'], h.deps);
+  const opts = calls(h, 'eligibility')[0].args[1];
+  assert.deepStrictEqual([opts.sizeCeiling, opts.maxKeyFiles], ['medium', 5]);
+  const [input] = admissionInputs(h);
+  assert.deepStrictEqual([input.bounds, input.keyFiles], [{ sizeCeiling: 'medium', maxKeyFiles: 5 }, ['a.js']]);
+  // Unset, the express values reach both.
+  const plain = harness();
+  await run(['#7'], plain.deps);
+  assert.deepStrictEqual(calls(plain, 'eligibility')[0].args[1], {
+    enabled: true, allowAbsentCeremony: true, integrationModel: 'pr-first', sensitivePaths: [], sizeCeiling: 'low', maxKeyFiles: 3,
+  });
+  assert.deepStrictEqual(admissionInputs(plain)[0].bounds, { sizeCeiling: 'low', maxKeyFiles: EXPRESS_MAX_KEY_FILES });
+});
+
+test('AC2.1/AC2.2 (#5224): with every key unset the run refuses and admits as today (hand-written table, real gates)', async () => {
+  // Written by hand from the express rules before #5224, not computed by the code under test: the
+  // eligibility stop's reasons, or [] for a record the run takes to a draft PR.
+  const EXPECTED = {
+    'low|0': ['no Key Files'],
+    'low|1': [],
+    'low|2': [],
+    'low|3': [],
+    'low|4': ['more than 3 Key Files'],
+    'low|5': ['more than 3 Key Files'],
+    'medium|0': ['size is not low', 'no Key Files'],
+    'medium|1': ['size is not low'],
+    'medium|2': ['size is not low'],
+    'medium|3': ['size is not low'],
+    'medium|4': ['size is not low', 'more than 3 Key Files'],
+    'medium|5': ['size is not low', 'more than 3 Key Files'],
+    'high|0': ['size is not low', 'no Key Files'],
+    'high|1': ['size is not low'],
+    'high|2': ['size is not low'],
+    'high|3': ['size is not low'],
+    'high|4': ['size is not low', 'more than 3 Key Files'],
+    'high|5': ['size is not low', 'more than 3 Key Files'],
+    'absent|0': ['size is not low', 'no Key Files'],
+    'absent|1': ['size is not low'],
+    'absent|2': ['size is not low'],
+    'absent|3': ['size is not low'],
+    'absent|4': ['size is not low', 'more than 3 Key Files'],
+    'absent|5': ['size is not low', 'more than 3 Key Files'],
+  };
+  let rows = 0;
+  for (const size of ['low', 'medium', 'high', 'absent']) {
+    for (let keyFiles = 0; keyFiles <= 5; keyFiles += 1) {
+      const key = `${size}|${keyFiles}`;
+      const want = EXPECTED[key];
+      for (const review of ['off', 'beyond-express', 'on']) {
+        const h = harness({
+          policy: { 'express-driver-review': review },
+          script: [boundsIssue({ size: size === 'absent' ? null : size, keyFiles }), ...REAL_GATES],
+        });
+        const code = await run(['#7'], h.deps);
+        const final = lastLine(h);
+        const got = final.stop.step === null ? [code, final.outcome] : [final.stop.step, final.stop.detail];
+        assert.deepStrictEqual(got, want.length ? [STEP.eligibility, want.join('; ')] : [0, 'pending-review'], `${key} review=${review}`);
+        rows += 1;
+      }
+    }
+  }
+  assert.strictEqual(rows, 72);
+});
+
+test('(#5224) a policy reply whose express-driver-max-lines is set but not an integer of at least 1 stops the driver before any record (defensive: the real resolver never sends these)', async () => {
+  for (const review of ['on', 'off']) {
+    for (const value of ['x', 0, 2.5, null]) {
+      const name = `${JSON.stringify(value)} review=${review}`;
+      const malformed = [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+        ? { value, source: 'policy' }
+        : { value: { ...POLICY, 'express-driver-review': review }[k], source: 'policy' }]))];
+      const h = harness({ script: [malformed] });
+      assert.equal(await run(['#7', '#8'], h.deps), 1, name);
+      const final = h.lines().at(-1);
+      assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused'], name);
+      assert.equal(final.stop.detail, `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(value)})`, name);
+      assert.equal(h.lines().filter((l) => l.record === 8).length, 0, name);
+      assert.equal(h.calls.filter((c) => c.kind === 'gh').length, 0, name);
+    }
+  }
+});
+
+test('(#5224) through the real resolver: a malformed express-driver-max-lines falls back to no flag, a value past 2^53 stops the driver', async () => {
+  const { resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+  const resolvedLine = (raw) => resolvePolicyKeys(['express-driver-max-lines'], { policyRaw: `express-driver-max-lines: ${raw}\n` })['express-driver-max-lines'];
+  const withLine = (reply) => [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+    ? reply
+    : { value: { ...POLICY, 'express-driver-review': 'on' }[k], source: 'policy' }]))];
+  for (const raw of ['0', 'x', '2.5']) {
+    const reply = resolvedLine(raw);
+    assert.deepStrictEqual([reply.source, reply.invalid], ['default', true], raw);
+    const h = harness({ script: [withLine(reply)] });
+    assert.equal(await run(['#7'], h.deps), 0, raw);
+    assert.notEqual(h.lines().find((l) => l.step === 'policy').status, 'fail', raw);
+    assert.deepStrictEqual(checkFlags(h), [null], raw);
+  }
+  const huge = resolvedLine('9007199254740993');
+  assert.deepStrictEqual([huge.source, Number.isSafeInteger(huge.value)], ['policy', false]);
+  const h = harness({ script: [withLine(huge)] });
+  assert.equal(await run(['#7'], h.deps), 1);
+  const final = h.lines().at(-1);
+  assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused']);
+  assert.equal(final.stop.detail, `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(huge.value)})`);
+});
+
+test('(#5224) the fix round of a widened record passes the driver bound to its second check', async () => {
+  const h = fixRig({
+    policy: { ...WIDENED, 'express-driver-review': 'on', 'express-driver-max-lines': 120 },
+    script: [boundsIssue({ size: 'medium', keyFiles: 4 }), ...REAL_GATES],
+  });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(implementerCalls(h).length, 2, 'the fix round ran');
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '120'], ['--max-lines', '120']]);
+  assert.equal(lastLine(h).outcome, 'pending-review');
 });
 
 test('skip: a skipped step emits no line and the loop goes on', async () => {
@@ -5139,8 +5479,8 @@ function mergeHarness(over = {}) {
       [on('resolveRunDir'), { ok: true, created: true, reason: null, message: '', path: MERGE_RUN }],
       [(c) => c.kind === 'lstatType' && c.args[0].startsWith(path.join(MAIN, '.claude-tweaks')), (c) => realLstatType(c.args[0])],
       [(c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args[1] === 'view' && c.args.at(-1) === 'labels', JSON.stringify({ labels: [{ name: 'auto:merge' }] })],
-      [(c) => isNode('resolve-policy.js')(c) && c.args.includes('--values'), { code: 0, stdout: 'pr-first\n', stderr: '' }],
-      [isNode('resolve-policy.js'), { code: 0, stdout: JSON.stringify({ 'merge-verification': { value: 'wait', source: 'run-config' } }), stderr: '' }],
+      [(c) => c.kind === 'policyCore' && c.args.includes('integration-model'), { code: 0, result: { 'integration-model': { value: 'pr-first', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
+      [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'), { code: 0, result: { 'merge-verification': { value: 'wait', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
       [(c) => c.kind === 'readFile' && path.basename(c.args[0]) === 'run-state.json', JSON.stringify({ pr: { number: 9 } })],
       [isNode('closing-links.js'), { code: 0, stdout: JSON.stringify({ action: 'clean', keepOpen: [] }), stderr: '' }],
       [isNode('compose-subject.js'), { code: 0, stdout: "SUBJECT_TITLE='x'\n", stderr: '' }],
@@ -5253,8 +5593,8 @@ test('merge step, run level: the merge line for each outcome reads the outcome w
   // merge-when-green with a pending, BLOCKED PR arms auto-merge; the confirmation read shows it armed.
   const armed = mergeHarness({
     script: [
-      [(c) => c.kind === 'node' && path.basename(c.args[0]) === 'resolve-policy.js' && !c.args.includes('--values'),
-        { code: 0, stdout: JSON.stringify({ 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }), stderr: '' }],
+      [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'),
+        { code: 0, result: { 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
       [isPrViewOf(GATE_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA, statusCheckRollup: [PENDING_CHECK] })],
       [isPrViewOf(CONFIRM_FIELDS), JSON.stringify({ state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, statusCheckRollup: [PENDING_CHECK], mergeCommit: null })],
     ],

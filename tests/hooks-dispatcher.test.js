@@ -747,7 +747,7 @@ test('hooks.json registers a PreToolUse matcher for ExitWorktree (unfiltered, li
   assert.strictEqual(entry.hooks.length, 1);
   assert.strictEqual(entry.hooks[0].type, 'command');
   assert.ok(!('if' in entry.hooks[0]), 'ExitWorktree matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+  assert.match(entry.hooks[0].command, /bin\/hooks\.sh" pre-tool-use$/);
 });
 
 test('AC6.1: hooks.json registers a PreToolUse matcher for AskUserQuestion (unfiltered, literal tool-name match)', () => {
@@ -757,7 +757,7 @@ test('AC6.1: hooks.json registers a PreToolUse matcher for AskUserQuestion (unfi
   assert.strictEqual(entry.hooks.length, 1);
   assert.strictEqual(entry.hooks[0].type, 'command');
   assert.ok(!('if' in entry.hooks[0]), 'AskUserQuestion matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+  assert.match(entry.hooks[0].command, /bin\/hooks\.sh" pre-tool-use$/);
 });
 
 // #4589: the dispatch-prompt fidelity gate. CLI 2.1.322 reports the tool as `Agent`; `Task` covers a
@@ -770,7 +770,7 @@ test('AC5.1: hooks.json registers PreToolUse matchers for Agent and Task (unfilt
     assert.strictEqual(entry.hooks.length, 1);
     assert.strictEqual(entry.hooks[0].type, 'command');
     assert.ok(!('if' in entry.hooks[0]), `${name} matcher must be a literal tool-name match, not pattern-filtered`);
-    assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+    assert.match(entry.hooks[0].command, /bin\/hooks\.sh" pre-tool-use$/);
   }
 });
 
@@ -905,7 +905,7 @@ test('hooks.json registers a PostToolUse matcher for Skill (unfiltered, literal 
   assert.strictEqual(skillEntry.hooks.length, 1);
   assert.strictEqual(skillEntry.hooks[0].type, 'command');
   assert.ok(!('if' in skillEntry.hooks[0]), 'Skill matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(skillEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
+  assert.match(skillEntry.hooks[0].command, /bin\/hooks\.sh" post-tool-use$/);
 });
 
 test('hooks.json registers a PostToolUse matcher for AskUserQuestion (unfiltered, literal tool-name match)', () => {
@@ -919,7 +919,7 @@ test('hooks.json registers a PostToolUse matcher for AskUserQuestion (unfiltered
   assert.strictEqual(askEntry.hooks.length, 1);
   assert.strictEqual(askEntry.hooks[0].type, 'command');
   assert.ok(!('if' in askEntry.hooks[0]), 'AskUserQuestion matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(askEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
+  assert.match(askEntry.hooks[0].command, /bin\/hooks\.sh" post-tool-use$/);
 });
 
 // #457: audit of every tool_name checked in post-tool-use.js's run() and its
@@ -936,7 +936,7 @@ test('hooks.json registers a PostToolUse matcher for Write (unfiltered, literal 
   assert.strictEqual(writeEntry.hooks.length, 1);
   assert.strictEqual(writeEntry.hooks[0].type, 'command');
   assert.ok(!('if' in writeEntry.hooks[0]), 'Write matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(writeEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
+  assert.match(writeEntry.hooks[0].command, /bin\/hooks\.sh" post-tool-use$/);
 });
 
 test('hooks.json registers a matcher-less UserPromptSubmit group invoking hooks.js user-prompt-submit', () => {
@@ -945,7 +945,7 @@ test('hooks.json registers a matcher-less UserPromptSubmit group invoking hooks.
   assert.ok(Array.isArray(groups), 'expected a UserPromptSubmit array');
   assert.strictEqual(groups.length, 1);
   assert.ok(!('matcher' in groups[0]), 'Claude Code ignores matchers for UserPromptSubmit, so none is registered');
-  assert.ok(groups[0].hooks.some((h) => h.type === 'command' && h.command.includes('hooks.js" user-prompt-submit')));
+  assert.ok(groups[0].hooks.some((h) => h.type === 'command' && h.command.includes('hooks.sh" user-prompt-submit')));
 });
 
 test('hooks.json registers ONE unconditional PostToolUse handler for Bash (#3074)', () => {
@@ -956,7 +956,7 @@ test('hooks.json registers ONE unconditional PostToolUse handler for Bash (#3074
   const hook = bashEntry.hooks[0];
   assert.strictEqual(hook.type, 'command');
   assert.ok(!('if' in hook), 'the PostToolUse Bash handler must be unconditional — the prefilter in bin/hooks.js replaces the "if" patterns');
-  assert.match(hook.command, /bin\/hooks\.js" post-tool-use$/);
+  assert.match(hook.command, /bin\/hooks\.sh" post-tool-use$/);
 });
 
 test("the Bash prefilter covers every VALUE_FLAGS entry git-command.js's gitTargets() resolves (finding regression)", () => {
