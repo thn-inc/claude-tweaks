@@ -90,7 +90,7 @@ node -e "
 
 **Definition flag:** flag every `backlog`-bucket record carrying `needs:definition` — under `work-backend: github-issues` the label, under `work-backend: local-files` `facets.needsDefinition === true` (already present on the fetched record above — no extra call either way) — stamped by `/claude-tweaks:capture` or `/claude-tweaks:feedback` at filing time when the record names an open choice with no tradeoff made yet. Flag matches in the Needs Attention table with the concrete next step: `run /claude-tweaks:specify {ref} to route through brainstorming`.
 
-**Sampling flag** (`work-backend: github-issues` only — no local-files equivalent exists, the same omission `_shared/trust-table.md` states for its own `demo:*` reads). `bin/lib/issues/trust.js`'s `MIN_VERDICTS` counts merged-and-unreverted outcomes toward promotion (#267), so a trust class can promote purely on operational survival signal without ever collecting a real `/demo` verdict. This flag is the sampling floor that keeps forcing some of that evidence in (#310): among every closed record still carrying `demo:pending` (the acceptance-labeling step applies it to every `auto:merge`'d record regardless of who granted it — `wrap-up/auto-merge-short-circuit.md`), flag the ones whose position in the full machine-granted-merge history — ordered by `closedAt`, machine-origin detected by `fleet-counters.js`'s `isMachineGrant` audit-comment marker, never the `auto:merge` label alone (a human can grant that label too) — lands on a `grant-sampling-every` boundary. Computed from the same session-scoped `$HELP_RECORDS_FACETED` snapshot Stage 1 already fetched (`--state all`, so closed records are already present) — no extra `gh` call. Re-resolve the path first (`_shared/session-tmp-root.md`):
+**Sampling flag** (`work-backend: github-issues` only — no local-files equivalent exists, the same omission `_shared/trust-table.md` states for its own acceptance-label reads). `bin/lib/issues/trust.js`'s `MIN_VERDICTS` counts merged-and-unreverted outcomes toward promotion (#267), so a trust class can promote purely on operational survival signal without ever collecting a real `/demo` verdict. This flag is the sampling floor that keeps forcing some of that evidence in (#310): among every closed record still carrying the pending acceptance label (`_shared/work-record.md`; the acceptance-labeling step applies it to every `auto:merge`'d record regardless of who granted it — `wrap-up/auto-merge-short-circuit.md`), flag the ones whose position in the full machine-granted-merge history — ordered by `closedAt`, machine-origin detected by `fleet-counters.js`'s `isMachineGrant` audit-comment marker, never the `auto:merge` label alone (a human can grant that label too) — lands on a `grant-sampling-every` boundary. Computed from the same session-scoped `$HELP_RECORDS_FACETED` snapshot Stage 1 already fetched (`--state all`, so closed records are already present) — no extra `gh` call. Re-resolve the path first (`_shared/session-tmp-root.md`):
 
 ```bash
 HELP_RECORDS_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value help-records-faceted.json)"
@@ -277,12 +277,12 @@ Cheap counts only — detail stays `/claude-tweaks:backlog`'s and `/tidy`'s job,
 not `/help`'s. Skip silently (same fail-open detection ladder as Stage 4.5)
 when `gh` is unavailable, unauthenticated, or the repo has no GitHub remote.
 
-Scan per `_shared/github-pr-scan.md`, **`triage-queue`** scope. The dispatcher inlines `_shared/forge-detection.md`'s Detection Ladder plus that file's `triage-queue` scope section and the three-line render format into this agent's prompt — subagents cannot read sibling files. This is the single source for these three counts; this stage does not compute them independently (previously it did, and its own version double-counted `status:blocked` issues inside "pending authorization" — the shared scope excludes them). Origin-agnostic: every `ready` record counts toward pending authorization regardless of origin (health-filed, captured, or human-filed, with or without a `by:*` label) — matching `/claude-tweaks:backlog refine`'s own origin-agnostic `ready`-queue pull, which tiers no health-skill origin specially.
+Scan per `_shared/github-pr-scan-triage.md`, **`triage-queue`** scope (split from `_shared/github-pr-scan.md`, #4820). The dispatcher inlines `_shared/forge-detection.md`'s Detection Ladder plus that file's `triage-queue` scope section and the three-line render format into this agent's prompt — subagents cannot read sibling files. This is the single source for these three counts; this stage does not compute them independently (previously it did, and its own version double-counted `status:blocked` issues inside "pending authorization" — the shared scope excludes them). Origin-agnostic: every `ready` record counts toward pending authorization regardless of origin (health-filed, captured, or human-filed, with or without a `by:*` label) — matching `/claude-tweaks:backlog refine`'s own origin-agnostic `ready`-queue pull, which tiers no health-skill origin specially.
 
 ## Stage 4.7: Acceptance Queue
 
 Cheap list only — the walkthrough stays `/claude-tweaks:demo`'s job, not `/help`'s. `/demo` no
-longer sweeps the `demo:pending` backlog itself (it resolves only the items you name — this
+longer sweeps the pending acceptance backlog itself (it resolves only the items you name — this
 session's own recall-detected work, one explicit `#N`, or an explicit `#N,#M` list taken one at
 a time — never a scan), so this stage is the sole discovery surface for which records are
 outstanding, on either driver.
@@ -296,7 +296,7 @@ this agent's prompt — subagents cannot read sibling files.
 
 `work-backend: local-files`: no Detection Ladder or `gh` call — read the local record store
 directly, the same `queryRecords` (`bin/lib/issues/local-store.js`) primitive Stage 1's Conflict
-detection sub-section already uses. `demo:pending` (`facets.acceptance === 'pending'`) persists
+detection sub-section already uses. The pending acceptance label (`facets.acceptance === 'pending'`) persists
 independent of open/closed state, exactly as it does under `github-issues`, so this needs the same
 open-plus-closed merge `tidy/step-1-records.md`'s Shape 7/8 already use for the same reason:
 `queryRecords`'s default is open-only, and `{ closed: true }` does not mean "open and closed" —

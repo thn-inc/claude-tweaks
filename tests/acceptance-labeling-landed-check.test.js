@@ -46,7 +46,7 @@ test('AC1.2 (verify.json tier): multi-spec read and the pass/skip rule', () => {
 });
 
 const LIVE_PINS = [
-  /demo:pending/,
+  /pending acceptance label/,
   /at least one record/,
   /every label read succeeded/,
   /<!-- run-comment: brief -->/,

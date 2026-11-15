@@ -81,6 +81,40 @@ test('throws on a missing raw artifact rather than silently defaulting to passed
   assert.throws(() => deriveTestVerdict({ rawTestOutputPath: '/nonexistent/path.log' }));
 });
 
+// #4347: the runner-written pass stamp is the other raw artifact — a CI-sourced
+// one (`source: "ci"`) reads exactly as a local one does, from one file read.
+const SHA = '0123456789abcdef0123456789abcdef01234567';
+for (const [label, extra, stampSource] of [
+  ['a local pass stamp', {}, 'local'],
+  ['a CI-sourced pass stamp', { source: 'ci', ci: { tests: { runId: 41, runUrl: 'https://example.test/runs/41' } } }, 'ci'],
+]) {
+  test(`derives a passing verdict from ${label}, reading only that file (#4347)`, (t) => {
+    const stampPath = tmpFile(JSON.stringify({ sha: SHA, dirty: false, scope: 'full', fullSha: SHA, ...extra }));
+    t.mock.method(fs, 'readFileSync');
+    const verdict = deriveTestVerdict({ stampPath });
+    assert.deepStrictEqual(verdict, { passed: true, failCount: 0, source: 'pass-stamp', stampSource, sha: SHA, scope: 'full' });
+    assert.strictEqual(fs.readFileSync.mock.calls.length, 1);
+    assert.strictEqual(fs.readFileSync.mock.calls[0].arguments[0], stampPath);
+  });
+}
+
+for (const [label, body] of [
+  ['an unparseable stamp', '{'],
+  ['a stamp with no 40-hex sha', JSON.stringify({ sha: 'abc', scope: 'full' })],
+  ['a stamp with no scope', JSON.stringify({ sha: SHA })],
+  ['a stamp naming a source the runner never writes', JSON.stringify({ sha: SHA, scope: 'full', source: 'agent' })],
+  ['a ci stamp without its ci record', JSON.stringify({ sha: SHA, scope: 'full', source: 'ci' })],
+]) {
+  test(`throws on ${label} rather than deriving a pass (#4347)`, () => {
+    assert.throws(() => deriveTestVerdict({ stampPath: tmpFile(body) }), /deriveTestVerdict: /);
+  });
+}
+
+test('names exactly one artifact — both or neither is a usage error (#4347)', () => {
+  assert.throws(() => deriveTestVerdict({}), /exactly one of/);
+  assert.throws(() => deriveTestVerdict({ rawTestOutputPath: 'a', stampPath: 'b' }), /exactly one of/);
+});
+
 // The cheapest way to fool a module built to resist being fooled is to hand it an
 // artifact with no summary line at all -- empty, truncated mid-run, or not TAP.
 // A `failMatch ? ... : 0` default turned exactly that into passed: true.

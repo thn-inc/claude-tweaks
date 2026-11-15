@@ -36,6 +36,7 @@ files:
   - `cd ../main && case a in a) cd ../wt;; esac | cat; echo x > f`
   - `cd ../main; case a in a) cd ../wt;; esac > f`
   - `cd ../main; a=() case x | cd ../wt; echo hi > f.js`
+  - `cd ../main; case $x in a) cd ../wt;; esac; echo x > f`
 - **Action:** The session runs each.
 - **Should feel:** Refused, with the same denial and "use a worktree" remediation a plain `echo x > ../main/f` gets. No shape slips through because of how the cd or flag was written.
 - **Should understand:** The walk follows bash's semantics, each checked against bash 3.2 and 5:
@@ -49,6 +50,7 @@ files:
   - An `&` inside arithmetic parentheses is not a background.
   - A `case … esac` that is the first element of a pipeline runs in a subshell, so its arm's cd does not reach the next command. The walk checks the write under both the pipeline's start and the arm's cwd, and keeps a separate record per nested case.
   - A redirect on a `case … esac` opens before any arm runs, so it resolves under the case's start (and, failing closed, the arm's cwd too).
+  - A case arm may not run. Every arm starts where the case began, and the write after `esac` is checked under each arm's end. When no pattern of bare `*`s (`*)`, `a|*)`, `(*)`) guarantees that some arm runs, it is also checked under the case's start. An arm that ends in `;&` or `;;&` (bash 4 and later; bash 3.2 rejects both) or zsh's `;|` runs on into the next arm, so that arm also starts where the one before it left the cwd.
   - `x=()` is an empty array assignment, not a function definition, so the word after it is a command.
 - **Red flags:**
   - One of these runs while its plain form is denied.
@@ -89,7 +91,6 @@ files:
   | `cd -`, `$OLDPWD`, a symlinked dir or a failing cd | #4450 |
   | Compound-command bodies (including a case or `cd` inside an `if`/`while`/`for` body), `pushd` and `builtin cd` | #4244 |
   | zsh-only forms (redirects, a pipeline's last element) | #4455 |
-  | A `case` whose cd arm does not match | #4486 |
   | A function called after a later cd | #4487 |
 - **Red flags:** A skill or procedure that tells agents to use one of these shapes because the gate misses it.
 
@@ -97,6 +98,7 @@ files:
 - Created during the build of #4303. That build fixed the seven fail-opens #4149's review left (U1–U6, S49, S50), then made the cwd cap affordable. Losing track of the cwd past the cap led to the `lost` marker and its consumers, which were settled on base parity by the user's decision.
 - Updated during the build of #4481: a `case` compound that starts a pipeline, a redirect on a case compound, nested cases, and `x=()` no longer leak a main-checkout write.
 - Updated during the build of #4449: a cp or mv backup-suffix value after the operands (`-S`, `--suffix`) no longer hides the real destination.
+- Updated during the build of #4486: a `case` whose cd arm may not match no longer hides a write made from where the case began.
 - Related journeys:
   - `write-a-glued-redirect-from-the-main-checkout-4015.md`, the redirect scan the same walk feeds.
   - `run-a-heredoc-node-script-from-the-main-checkout-3989.md`, the heredoc carve-out.

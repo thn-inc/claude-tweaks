@@ -6,9 +6,10 @@
 'use strict';
 
 const { recordPayload } = require('../issues/record');
+const { fencedLineMask } = require('../markdown-blocks');
 const {
-  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, sectionText, shapeGate, stripCodeSpans,
-  liftMetadata, describeDesignIntentError,
+  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, originalRequestOffset, UNCLOSED_FENCE_PREFIX, sectionText, shapeGate,
+  stripCodeSpans, liftMetadata, describeDesignIntentError,
 } = require('../issues/materialize-format');
 
 // Derived from the gate's own lists — never a locally declared copy (#2827). Exported under
@@ -18,13 +19,15 @@ const MARKER_NAMES = PLACEHOLDER_PATTERNS.map((p) => p.marker);
 
 // body -> { [headingText]: contentString } — content is every line between one line-anchored
 // "## {Heading}" line and the next (or end of string), trimmed. A "## " appearing mid-line
-// (not at the start of a line) is never treated as a heading.
+// (not at the start of a line) is never treated as a heading, nor is one inside a fenced
+// block (#4351, the sectionText rule since #4169) — it stays content of its section.
 function splitSections(body) {
   const lines = String(body || '').split('\n');
+  const fenced = fencedLineMask(lines);
   const raw = {};
   let current = null;
-  for (const line of lines) {
-    const m = /^## (.+)$/.exec(line);
+  for (const [i, line] of lines.entries()) {
+    const m = fenced[i] ? null : /^## (.+)$/.exec(line);
     if (m) {
       current = m[1].trim();
       if (!(current in raw)) raw[current] = [];
@@ -40,7 +43,7 @@ function splitSections(body) {
 // body -> { ok, gaps: string[] } — ok is shapeGate's verdict plus the Design-intent: line check
 // (#3018: materialization rejects an invalid line, so a record must not be written ready with
 // one); gaps names every failing check at once (never just the first), in REQUIRED_SECTIONS
-// order, then marker order, then the Design-intent line.
+// order, then the unclosed-fence entry (#4350), then marker order, then the Design-intent line.
 function validateShaped(body) {
   const text = String(body || '');
   const gate = shapeGate(text);
@@ -51,8 +54,11 @@ function validateShaped(body) {
     if (!gate.missing.includes(name)) continue;
     gaps.push(sectionText(text, name) === null ? `missing section: ## ${name}` : `empty section: ## ${name}`);
   }
+  for (const entry of gate.missing) {
+    if (entry.startsWith(UNCLOSED_FENCE_PREFIX)) gaps.push(entry);
+  }
   if (gate.missing.includes('unresolved-placeholder')) {
-    const at = text.search(ORIGINAL_REQUEST_RE);
+    const at = originalRequestOffset(text);
     const authored = stripCodeSpans(at === -1 ? text : text.slice(0, at));
     for (const { marker, re } of PLACEHOLDER_PATTERNS) {
       if (re.test(authored)) gaps.push(`unresolved placeholder marker: ${marker}`);

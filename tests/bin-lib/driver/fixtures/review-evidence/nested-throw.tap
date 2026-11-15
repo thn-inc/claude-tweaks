@@ -1,0 +1,43 @@
+TAP version 13
+# Subtest: widget
+    # Subtest: reads a property of null
+    not ok 1 - reads a property of null
+      ---
+      duration_ms: 0.285417
+      type: 'test'
+      location: '<DIR>/nested-throw.test.js:5:3'
+      failureType: 'testCodeFailure'
+      error: "Cannot read properties of null (reading 'length')"
+      code: 'ERR_TEST_FAILURE'
+      name: 'TypeError'
+      stack: |-
+        TestContext.<anonymous> (<DIR>/nested-throw.test.js:7:18)
+        Test.runInAsyncScope (node:async_hooks:214:14)
+        Test.run (node:internal/test_runner/test:1047:25)
+        Test.start (node:internal/test_runner/test:944:17)
+        node:internal/test_runner/test:1440:71
+        node:internal/per_context/primordials:466:82
+        new Promise (<anonymous>)
+        new SafePromise (node:internal/per_context/primordials:435:3)
+        node:internal/per_context/primordials:466:9
+        Array.map (<anonymous>)
+      ...
+    1..1
+not ok 1 - widget
+  ---
+  duration_ms: 0.734417
+  type: 'suite'
+  location: '<DIR>/nested-throw.test.js:4:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..1
+# tests 1
+# suites 1
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 41.279

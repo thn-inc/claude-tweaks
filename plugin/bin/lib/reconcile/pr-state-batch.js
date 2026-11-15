@@ -17,7 +17,7 @@
 const { execFileAsyncTimed } = require('./timing');
 const { pickGoverningPr } = require('./pr-state');
 const { runGit } = require('../hooks/git-exec');
-const { parseRepo } = require('../repo-resolve');
+const { parseRepo, ghOptions, ghHostIn } = require('../repo-resolve');
 const { runWithConcurrency } = require('./gh-pool');
 
 const BATCH_CHUNK = 50; // aliases per query (numbers + heads) — one rate-limit point
@@ -129,9 +129,9 @@ function parseBatchResponse(stdout, { numbers = [], heads = [] } = {}) {
 
 function defaultRunner(root) {
   return async (args) => {
-    const { stdout } = await execFileAsyncTimed('gh', args, {
+    const { stdout } = await execFileAsyncTimed('gh', args, ghOptions(args, {
       cwd: root, encoding: 'utf8', timeout: BATCH_TIMEOUT_MS, maxBuffer: BATCH_MAX_BUFFER, windowsHide: true,
-    });
+    }));
     return stdout;
   };
 }
@@ -139,7 +139,10 @@ function defaultRunner(root) {
 // The only host the batch talks to. `gh api graphql` is pinned to it with
 // --hostname, so a GH_HOST (or a different default login) cannot send the query
 // to a same-named repo elsewhere, whose answer would then be memoized and
-// persisted.
+// persisted. The batch talks only to github.com, so it runs only when gh's default
+// host is github.com too (GH_HOST unset, empty, or github.com): under any other
+// GH_HOST it spawns nothing and the per-item path, which follows GH_HOST, answers
+// (#4794).
 const GITHUB_HOST = 'github.com';
 
 // origin -> { owner, repo } only when it is provably on GITHUB_HOST. On any
@@ -161,9 +164,10 @@ function githubOrigin(root) {
 // so a rejection's `stdout` is parsed like a success (parseBatchResponse
 // discards it when the errors are not the per-alias NOT_FOUND kind); a chunk
 // that cannot be read at all contributes nothing, and its keys fall to the
-// per-item path. An origin that is not on github.com (or cannot be resolved)
-// -> nothing is spawned.
-async function fetchBatch(root, { numbers = [], heads = [] } = {}, { runner } = {}) {
+// per-item path. An origin that is not on github.com (or cannot be resolved), or
+// a non-empty GH_HOST naming another host (read from `env`, default
+// process.env), -> nothing is spawned.
+async function fetchBatch(root, { numbers = [], heads = [] } = {}, { runner, env } = {}) {
   const byNumber = new Map();
   const byHead = new Map();
   const keys = [
@@ -171,6 +175,8 @@ async function fetchBatch(root, { numbers = [], heads = [] } = {}, { runner } = 
     ...heads.map((h) => ({ kind: 'head', value: h })),
   ];
   if (keys.length === 0) return { byNumber, byHead };
+  const ghHost = ghHostIn(env || process.env);
+  if (ghHost && ghHost !== GITHUB_HOST) return { byNumber, byHead };
   const origin = githubOrigin(root);
   if (!origin) return { byNumber, byHead };
   const { owner, repo: name } = origin;

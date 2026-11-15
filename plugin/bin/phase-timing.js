@@ -32,6 +32,11 @@
 // aggregated by tier and role, clipped to the run's event window, and printed
 // after the phase table; the key is absent without a transcript flag.
 //
+// When events.jsonl holds a `ci-gate` event (#5160, bin/ci-gate-record.js),
+// timing.json also gains `ciGate` (those events, in file order) and
+// `totals.ciWallMinutes`, and --markdown prints one `CI gate: ...` line per PR
+// after the phase table; with no such event both keys and the line are absent.
+//
 // --check-budgets (#4029) compares the run's totals with the efficiency
 // ceilings for its {run-dir}/config.yml `ceremony-profile` (absent or invalid
 // reads as `standard`, with a stderr note) from the checkout's policy.yml, found
@@ -53,12 +58,14 @@
 // `budget` key forward untouched.
 'use strict';
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS } = require('./lib/timing/derive');
+const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS, latestCiGatePerPr } = require('./lib/timing/derive');
 const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
 const { readManifest } = require('./lib/flow/manifest');
 const { TURN_CLASSES, CEREMONY_CLASSES } = require('./lib/timing/turn-class');
-const { checkBudgets } = require('./lib/timing/budget');
+const { checkBudgets, defaultGh } = require('./lib/timing/budget');
+const { resolveAgainst } = require('./lib/health-core/io');
 
 const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript] [--check-budgets]\n';
 
@@ -243,6 +250,18 @@ function renderDispatches(dispatches) {
   return lines.join('\n') + '\n';
 }
 
+// ciGate: the timing.json `ciGate` list (#5160), or undefined -> ''. One line
+// per distinct pr in first-appearance order, from that PR's latest event
+// (derive.js's latestCiGatePerPr, the rule totals.ciWallMinutes uses); a
+// missing or non-numeric duration renders `n/a`, never NaN.
+function renderCiGate(ciGate) {
+  if (!Array.isArray(ciGate) || ciGate.length === 0) return '';
+  const min = (x) => (Number.isFinite(x) ? Math.round(x / 6000) / 10 : 'n/a');
+  const lines = latestCiGatePerPr(ciGate).map((e) =>
+    `CI gate: ${e.verdict}, ${min(e.ciWallMs)} min wall${e.pendingAtBound === true ? ' (lower bound)' : ''}, gate waited ${min(e.gateWaitMs)} min (PR #${e.pr})`);
+  return lines.join('\n') + '\n';
+}
+
 // paths: the resolved transcript paths; events: parsed events.jsonl rows. The
 // window is the earliest..latest event ts (no event with a ts -> the whole
 // session), leaving out worktree-reaped: it fires hours after the session
@@ -250,7 +269,7 @@ function renderDispatches(dispatches) {
 // endOfRun rule, #1928). Subagents dirs are deduped by fs.realpathSync (path.resolve when
 // the dir does not resolve) so a transcript passed twice, or reached through a
 // symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
-async function collectDispatches(paths, events) {
+async function collectDispatches(paths, events, cwd) {
   const stamps = events.filter((e) => !(e && e.type === 'worktree-reaped')).map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
   // reduce, not Math.min(...stamps): a spread of a very large array can throw RangeError.
   const window = stamps.length
@@ -259,7 +278,7 @@ async function collectDispatches(paths, events) {
   // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
   // link and refuses it instead of reading wherever it points.
   const canonical = (p) => {
-    const dir = path.resolve(subagentsDirFor(p));
+    const dir = path.resolve(cwd, subagentsDirFor(p));
     try { return fs.lstatSync(dir).isSymbolicLink() ? dir : fs.realpathSync(dir); } catch { return dir; }
   };
   const dirs = [...new Set(paths.map(canonical))];
@@ -284,7 +303,7 @@ async function collectDispatches(paths, events) {
 
 // Resolve the transcript list: explicit --transcript paths, plus the
 // auto-located one. Returns { paths, notes }.
-function resolveTranscripts(o, runState) {
+function resolveTranscripts(o, runState, deps) {
   const paths = [...o.transcripts];
   const notes = [];
   if (o.autoTranscript) {
@@ -293,7 +312,9 @@ function resolveTranscripts(o, runState) {
     if (!worktree && !sessionId) {
       notes.push('tokens: transcript not found (no worktree or sessionId in run-state.json)');
     } else {
-      const found = locateTranscripts({ cwd: worktree, sessionId });
+      // homeDir: null stops locateTranscripts' os.homedir() default; it is read there only to default configDir.
+      const configDir = deps.env.CLAUDE_CONFIG_DIR || path.join(deps.homeDir(), '.claude');
+      const found = locateTranscripts({ cwd: worktree, sessionId, homeDir: null, configDir });
       if (!found.length) notes.push(`tokens: transcript not found (no ${sessionId ? `${sessionId}.jsonl` : '*.jsonl'} under the ${worktree ? 'worktree slug' : 'projects'} directory)`);
       else {
         paths.push(found[0].path);
@@ -304,29 +325,30 @@ function resolveTranscripts(o, runState) {
   return { paths, notes };
 }
 
-async function main(argv) {
+async function run(argv, deps) {
   const o = parseArgs(argv);
-  if (!o) { process.stderr.write(USAGE); return 2; }
+  if (!o) { deps.stderr(USAGE); return 2; }
   if (o.run === '') {
-    process.stderr.write('timing: no run directory (PIPELINE_RUN_DIR unset)\n');
+    deps.stderr('timing: no run directory (PIPELINE_RUN_DIR unset)\n');
     return 0;
   }
-  const runDir = path.resolve(o.run);
+  const cwd = deps.cwd();
+  const runDir = path.resolve(cwd, o.run);
   let stat = null;
   try { stat = fs.statSync(runDir); } catch { /* not a directory, handled below */ }
-  if (!stat || !stat.isDirectory()) { process.stderr.write(`phase-timing.js: --run ${o.run} is not a directory\n${USAGE}`); return 2; }
+  if (!stat || !stat.isDirectory()) { deps.stderr(`phase-timing.js: --run ${o.run} is not a directory\n${USAGE}`); return 2; }
   const events = readEvents(path.join(runDir, 'events.jsonl'));
-  if (!events.ok) { process.stderr.write(`phase-timing.js: events.jsonl unreadable (${events.error})\n`); return 2; }
+  if (!events.ok) { deps.stderr(`phase-timing.js: events.jsonl unreadable (${events.error})\n`); return 2; }
   const runState = readJsonOrNull(path.join(runDir, 'run-state.json'));
   const out = derivePhases({ events: events.events, manifest: readManifest(runDir), runState });
 
   const wantTokens = o.transcripts.length > 0 || o.autoTranscript;
-  const { paths, notes } = wantTokens ? resolveTranscripts(o, runState) : { paths: [], notes: [] };
+  const { paths, notes } = wantTokens ? resolveTranscripts(o, runState, deps) : { paths: [], notes: [] };
   const transcripts = [];
   let rows = [];
   for (const p of paths) {
     try {
-      const r = await readUsage(p, { worktree: runState && runState.worktree ? runState.worktree : null });
+      const r = await readUsage(resolveAgainst(cwd, p), { worktree: runState && runState.worktree ? runState.worktree : null });
       if (r.length === 0) {
         const note = `transcript had no usage rows (${p})`;
         transcripts.push({ path: p, rows: 0, note });
@@ -346,6 +368,7 @@ async function main(argv) {
   const guard = wantTokens ? countGuardEvents(events.events) : null;
 
   const timing = { runDir, generatedAt: new Date().toISOString(), phases: tokens ? tokens.phases : out.phases, totals: { ...out.totals } };
+  if (out.ciGate) timing.ciGate = out.ciGate;
   if (tokens) {
     timing.unattributed = tokens.unattributed;
     timing.totals.tokens = tokens.totals.tokens;
@@ -355,7 +378,7 @@ async function main(argv) {
     timing.totals.guard = guard;
     timing.transcripts = transcripts;
     if (notes.length) timing.notes = notes;
-    timing.dispatches = await collectDispatches(paths, events.events);
+    timing.dispatches = await collectDispatches(paths, events.events, cwd);
   }
   // #4029: the efficiency-budget check. A transcript that yielded no rows leaves
   // the transcript-backed totals out, so they read as unmeasured, never as 0 -> ok.
@@ -363,10 +386,10 @@ async function main(argv) {
   if (o.checkBudgets) {
     const measured = { ...timing.totals };
     if (!tokens || tokens.totals.rows === 0) { delete measured.toolRoundTrips; delete measured.procedureBytes; }
-    const checked = checkBudgets({ runDir, totals: measured, unattributed: timing.unattributed });
+    const checked = checkBudgets({ runDir, totals: measured, unattributed: timing.unattributed, deps: { cwd, gh: deps.gh, env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir } });
     timing.budget = checked.budget;
     budgetLine = checked.line;
-    for (const line of checked.stderr) process.stderr.write(line + '\n');
+    for (const line of checked.stderr) deps.stderr(line + '\n');
   }
   const timingPath = path.join(runDir, 'timing.json');
   // A rewrite without --check-budgets keeps the last budget verdict rather than dropping it.
@@ -375,18 +398,30 @@ async function main(argv) {
     if (previous && typeof previous === 'object' && Object.hasOwn(previous, 'budget')) timing.budget = previous.budget;
   }
   fs.writeFileSync(timingPath, JSON.stringify(timing, null, 2) + '\n');
-  if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes) + renderDispatches(timing.dispatches));
-  else if (o.json) process.stdout.write(JSON.stringify(timing, null, 2) + '\n');
-  else process.stdout.write(`timing: wrote ${timingPath}\n`);
+  if (o.markdown) deps.stdout(renderMarkdown(out, tokens, guard, notes) + renderCiGate(timing.ciGate) + renderDispatches(timing.dispatches));
+  else if (o.json) deps.stdout(JSON.stringify(timing, null, 2) + '\n');
+  else deps.stdout(`timing: wrote ${timingPath}\n`);
   // Under --json stdout stays one JSON document; the budget rides in its `budget` key.
-  if (budgetLine && !o.json) process.stdout.write(budgetLine + '\n');
+  if (budgetLine && !o.json) deps.stdout(budgetLine + '\n');
   return 0;
 }
 
+const realDeps = {
+  stdout: (t) => process.stdout.write(t),
+  stderr: (t) => process.stderr.write(t),
+  cwd: () => process.cwd(),
+  env: process.env,
+  homeDir: () => os.homedir(),
+  gh: defaultGh,
+};
+
+// Kept for callers that import it. Removal condition: no file under plugin/, tests/, tools/, perf/ or evals/ calls main.
+async function main(argv) { return run(argv, realDeps); }
+
+module.exports = { run, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
 if (require.main === module) {
-  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((err) => {
+  run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; }).catch((err) => {
     process.stderr.write(`phase-timing.js: ${err && err.message}\n`);
     process.exitCode = 2;
   });
 }
-module.exports = { main, parseArgs, renderMarkdown, renderDispatches };

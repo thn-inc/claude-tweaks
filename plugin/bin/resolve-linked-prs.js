@@ -23,7 +23,8 @@
 // same way regardless of how many numbers it asked for. Exit 0 on success;
 // 1 on a malformed invocation (missing/non-positive-integer number in the
 // list, unknown flag); 2 when `gh` is absent or owner/repo cannot be
-// resolved (no --repo and no readable origin remote); 3 when the GraphQL
+// resolved (no --repo and no readable origin remote, or an origin host with no
+// GitHub signal — refused before any gh call, #4933); 3 when the GraphQL
 // call itself throws (network/API failure, or fetchLinkedPRs' own
 // partial-result guard). Repo root comes from `git remote get-url origin`
 // at the process cwd — never from CLAUDE_PLUGIN_ROOT (unset in Bash tool
@@ -39,11 +40,6 @@ const USAGE = 'usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo owner/name] [
 const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   name: 'resolve-linked-prs.js',
   usage: USAGE,
-  // 30s bound: ONE GraphQL call for the whole aliased batch, whatever its
-  // size — same precedent as resolve-blockers.js's own runner bound, since
-  // this comma-list can span the same full ~200-record queues
-  // queue-pull-script.md builds from `--limit 200`.
-  runnerTimeoutMs: 30000,
   fetch: ({
     numbers, owner, repo, host, runner,
   }) => fetchLinkedPRs({

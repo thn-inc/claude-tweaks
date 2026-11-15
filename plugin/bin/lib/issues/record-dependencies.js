@@ -15,6 +15,10 @@ const DEP_RE = /^Blocked by #(\d+)\b/gm;
 // '- [ ] #{subIssueNum}' and checked off over time — both box states count.
 const SUB_ISSUE_RE = /^- \[[ xX]\] #(\d+)\b/gm;
 
+// Line-anchored 'Parent: #N' back-link (work-links: body-text), written by
+// /specify as a metadata line in a sub-issue's body. Non-global: first match wins.
+const PARENT_RE = /^Parent: #(\d+)\b/m;
+
 // Line-anchored 'Blocked by #N: {text}' assumption declarations (multiline) —
 // a separate, additive sibling to DEP_RE/parseDependencies below, never a
 // modification of either. DEP_RE already stops matching at the number, so a
@@ -56,17 +60,39 @@ function parseSubIssues(body) {
   return parseIssueNumbers(body, SUB_ISSUE_RE);
 }
 
+// sub-issue body -> its parent's issue number from the first line-anchored
+// 'Parent: #N' line (written by /specify under work-links: body-text), or null
+// for a null/undefined/empty/non-string body or one with no such line. Mid-line
+// mentions don't count, exactly as with DEP_RE.
+function parseParent(body) {
+  if (typeof body !== 'string' || !body) return null;
+  const m = body.match(PARENT_RE);
+  return m ? Number(m[1]) : null;
+}
+
+// issue numbers + a per-alias field expression -> the one batched, aliased GraphQL
+// query all four builders below share: `i{n}: {fieldExpr(n)}` per number, inside
+// repository(owner:$owner,name:$repo){}. Returns null for a non-array or empty
+// input. Module-private; the builders below own the per-alias selection sets.
+function buildAliasedIssueQuery(numbers, fieldExpr) {
+  if (!Array.isArray(numbers) || numbers.length === 0) return null;
+  const fields = numbers
+    .map((n) => `i${n}: ${fieldExpr(n)}`)
+    .join('\n      ');
+  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+}
+
 // candidate issue numbers -> one batched, aliased GraphQL query requesting each
 // candidate's native blockedBy connection (work-links: native). GraphQL aliases
 // can't start with a digit, hence the 'i' prefix. Returns null for an empty or
 // non-array input — nothing to query, and an empty repository{} selection set
 // would be invalid GraphQL.
+// #4793: also selects the dependent issue's and each blocker node's
+// repository{ nameWithOwner } — a native blockedBy link can point at an issue
+// in another repository, and `number` alone then reads as this repository's
+// same-numbered issue. crossRepositoryBlockers below compares the two names.
 function buildNativeDependencyQuery(numbers) {
-  if (!Array.isArray(numbers) || numbers.length === 0) return null;
-  const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number blockedBy(first:25){ nodes{ number state } } }`)
-    .join('\n      ');
-  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number repository{ nameWithOwner } blockedBy(first:25){ nodes{ number state repository{ nameWithOwner } } } }`);
 }
 
 // candidate parent-issue numbers -> one batched, aliased GraphQL query requesting
@@ -77,11 +103,7 @@ function buildNativeDependencyQuery(numbers) {
 // that cap turns out to be, so a truncated page is never mistaken for a complete
 // one. Same alias/null conventions as buildNativeDependencyQuery above.
 function buildNativeSubIssuesQuery(numbers) {
-  if (!Array.isArray(numbers) || numbers.length === 0) return null;
-  const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number subIssues(first:100){ nodes{ number } pageInfo{ hasNextPage } } }`)
-    .join('\n      ');
-  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number subIssues(first:100){ nodes{ number } pageInfo{ hasNextPage } } }`);
 }
 
 // candidate sub-issue numbers -> one batched, aliased GraphQL query requesting each
@@ -93,11 +115,7 @@ function buildNativeSubIssuesQuery(numbers) {
 // pointer sub-procedure. review/cross-spec-promise-check.md performs the equivalent
 // native parent-resolution query independently — it does not call this function.
 function buildNativeParentQuery(numbers) {
-  if (!Array.isArray(numbers) || numbers.length === 0) return null;
-  const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number parent{ number title state } }`)
-    .join('\n      ');
-  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number parent{ number title state } }`);
 }
 
 // one candidate's parsed aliased response value (the { number, blockedBy: { nodes } }
@@ -111,8 +129,100 @@ function hasOpenNativeBlocker(issueNode) {
   return nodes.some((n) => n && n.state === 'OPEN');
 }
 
-// candidates[] (each with .number), openBlockerIdsFn: candidate -> number[] of
-// the open blocker ids excluding it (empty when none) -> { eligible, excluded }.
+// A readable repository name is a non-empty string; anything else is unreadable.
+function readableRepoName(repository) {
+  const name = repository && repository.nameWithOwner;
+  return typeof name === 'string' && name ? name : null;
+}
+
+// one candidate's parsed aliased response value -> [{ number, repository, state }]
+// for each blockedBy node living in another repository (#4793). Compared against
+// the DEPENDENT node's own repository.nameWithOwner, case-insensitively — never
+// the caller's owner/repo, so an `origin` left on a pre-transfer name cannot make
+// every blocker read as foreign. A name is readable only when it is a non-empty
+// string; a node with no readable name on either side is never foreign, so a
+// response without the field keeps the old same-repository behavior. `state` is
+// the node's state when a string, else null (the caller fails closed on it, see
+// foreignBlockerBlocks). A malformed or missing blockedBy.nodes gives [].
+function crossRepositoryBlockers(issueNode) {
+  const home = readableRepoName(issueNode && issueNode.repository);
+  const nodes = issueNode && issueNode.blockedBy && issueNode.blockedBy.nodes;
+  if (!home || !Array.isArray(nodes)) return [];
+  const result = [];
+  for (const n of nodes) {
+    const repository = readableRepoName(n && n.repository);
+    if (!repository || repository.toLowerCase() === home.toLowerCase()) continue;
+    result.push({ number: n.number, repository, state: typeof n.state === 'string' ? n.state : null });
+  }
+  return result;
+}
+
+// (numbers, crossRepoBlockers?) -> a copy of `numbers` with one occurrence removed
+// per crossRepoBlockers entry's `number`, order kept. fetchNativeDependencies'
+// blockedBy/openBlockerIds still carry a foreign blocker's bare number (existing
+// consumers' shape is unchanged, #4793); a reader that names this repository's
+// own blockers strips them with this first. A non-array `numbers` gives [] and a
+// non-array `crossRepoBlockers` a plain copy.
+function withoutCrossRepoBlockers(numbers, crossRepoBlockers) {
+  if (!Array.isArray(numbers)) return [];
+  const result = numbers.slice();
+  if (!Array.isArray(crossRepoBlockers)) return result;
+  for (const b of crossRepoBlockers) {
+    const i = result.indexOf(b && b.number);
+    if (i !== -1) result.splice(i, 1);
+  }
+  return result;
+}
+
+// Decisions Q5 (#4793): a foreign blocker blocks unless its native state is
+// exactly CLOSED — an OPEN, missing, null or unrecognised state all fail closed,
+// so an unreadable state can never read as landed.
+function foreignBlockerBlocks(entry) {
+  return entry.state !== 'CLOSED';
+}
+
+const UNREADABLE_SUFFIX = ' (state unreadable)';
+
+// A foreign blocker's qualified `owner/repo#N` name; a state that is neither
+// OPEN nor CLOSED adds ' (state unreadable)' (Decisions Q5), so the stop it
+// causes can be diagnosed instead of reading as a silent fallback.
+function foreignBlockerRef(entry) {
+  const ref = `${entry.repository}#${entry.number}`;
+  return entry.state === 'OPEN' || entry.state === 'CLOSED' ? ref : `${ref}${UNREADABLE_SUFFIX}`;
+}
+
+// foreignBlockerRef's inverse for the suffix: a qualified ref string without the
+// ' (state unreadable)' it may carry, so two spellings of one blocker share a key.
+function withoutUnreadableSuffix(ref) {
+  return ref.endsWith(UNREADABLE_SUFFIX) ? ref.slice(0, -UNREADABLE_SUFFIX.length) : ref;
+}
+
+// { openBlockerIds, crossRepoBlockers } (a fetchNativeDependencies entry's fields)
+// -> this repository's open blocker numbers (foreign OPEN ones stripped,
+// deduplicated in first-appearance order), then each still-blocking foreign
+// blocker's qualified ref in entry order. A non-object entry in
+// crossRepoBlockers contributes nothing, as in withoutCrossRepoBlockers.
+function openBlockerRefs({ openBlockerIds, crossRepoBlockers } = {}) {
+  const foreign = Array.isArray(crossRepoBlockers) ? crossRepoBlockers.filter((b) => b && typeof b === 'object') : [];
+  const local = withoutCrossRepoBlockers(openBlockerIds, foreign.filter((b) => b.state === 'OPEN'));
+  return [...new Set(local), ...foreign.filter(foreignBlockerBlocks).map(foreignBlockerRef)];
+}
+
+// one candidate's parsed aliased response value -> the same list openBlockerRefs
+// builds, straight from the raw node (partitionByOpenNativeBlockers' reader).
+function openNativeBlockerRefs(issueNode) {
+  const rawNodes = issueNode && issueNode.blockedBy && issueNode.blockedBy.nodes;
+  const nodes = Array.isArray(rawNodes) ? rawNodes : [];
+  return openBlockerRefs({
+    openBlockerIds: nodes.filter((n) => n && n.state === 'OPEN').map((n) => n.number),
+    crossRepoBlockers: crossRepositoryBlockers(issueNode),
+  });
+}
+
+// candidates[] (each with .number), openBlockerIdsFn: candidate ->
+// Array<number|string> of the open blockers excluding it (empty when none; a
+// number is this repository's issue, a string a qualified foreign ref, #4793)
+// -> { eligible, excluded }.
 // The shared partition shape both blocked-by checks below need: split on
 // whether the candidate has any open blocker, carrying the actual blocker
 // id(s) for whichever candidates get dropped instead of discarding them
@@ -132,12 +242,22 @@ function partitionByOpenBlockers(candidates, openBlockerIdsFn) {
   return { eligible, excluded };
 }
 
-// candidates[] (each with .number and .body), openNumbers: Set<number> -> { eligible, excluded }.
+// candidates[] (each with .number and .body), openNumbers: Set<number>,
+// foreignByRecord: Map<number, crossRepoBlockers-shaped entries> -> { eligible, excluded }.
 // The same open-body-text-dependency predicate dispatch/queue-pull-script.md's own
 // eligibility filter already applies (parseDependencies + an open id), via
-// partitionByOpenBlockers above.
-function partitionByOpenBodyBlockers(candidates, openNumbers) {
-  return partitionByOpenBlockers(candidates, (c) => parseDependencies(c.body).filter((dep) => openNumbers.has(dep)));
+// partitionByOpenBlockers above. #4793 (Plan Review Clarifications): a body-declared
+// `Blocked by owner/repo#N` is another repository's issue, so each candidate's blocker
+// list is its open local numbers, then foreignBlockerRef for each foreignByRecord entry
+// that foreignBlockerBlocks (open or unreadable, never CLOSED). `foreignByRecord` is required
+// (pass `new Map()` for "no foreign refs"): a default of "no rule" would fail open for a caller
+// that forgot it, so a missing or non-Map value throws a TypeError.
+function partitionByOpenBodyBlockers(candidates, openNumbers, foreignByRecord) {
+  if (!(foreignByRecord instanceof Map)) throw new TypeError('partitionByOpenBodyBlockers: foreignByRecord must be a Map (pass new Map() for none)');
+  return partitionByOpenBlockers(candidates, (c) => [
+    ...parseDependencies(c.body).filter((dep) => openNumbers.has(dep)),
+    ...(foreignByRecord.get(c.number) || []).filter(foreignBlockerBlocks).map(foreignBlockerRef),
+  ]);
 }
 
 // candidates[] (each with .number), repoData: the native GraphQL response's
@@ -151,13 +271,11 @@ function partitionByOpenBodyBlockers(candidates, openNumbers) {
 // no-array-of-nodes -> false behavior. Same fails-safe guard as hasOpenNativeBlocker:
 // a malformed response (nodes present but not an array, e.g. a schema mismatch)
 // degrades to "no blockers resolved", never throws .filter-is-not-a-function.
+// #4793: each candidate's blocker list is openNativeBlockerRefs(node) — this
+// repository's open numbers, then a still-blocking foreign blocker by its
+// qualified `owner/repo#N` name (Decisions Q3), never as a bare `#N`.
 function partitionByOpenNativeBlockers(candidates, repoData) {
-  return partitionByOpenBlockers(candidates, (c) => {
-    const node = repoData && repoData['i' + c.number];
-    const rawNodes = node && node.blockedBy && node.blockedBy.nodes;
-    const nodes = Array.isArray(rawNodes) ? rawNodes : [];
-    return nodes.filter((n) => n && n.state === 'OPEN').map((n) => n.number);
-  });
+  return partitionByOpenBlockers(candidates, (c) => openNativeBlockerRefs(repoData && repoData['i' + c.number]));
 }
 
 // candidate issue numbers -> one batched, aliased GraphQL query requesting
@@ -204,11 +322,7 @@ function partitionByOpenNativeBlockers(candidates, repoData) {
 // wrap-up's carrier-commit fallback can read whether the issue is CLOSED
 // from this one batched call instead of a per-issue `gh issue view`.
 function buildLinkedPRQuery(numbers) {
-  if (!Array.isArray(numbers) || numbers.length === 0) return null;
-  const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state createdAt merged mergedAt repository { nameWithOwner } } } } } } }`)
-    .join('\n      ');
-  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state createdAt merged mergedAt repository { nameWithOwner } } } } } } }`);
 }
 
 // candidates[] (each with .number), repoData: the linked-PR GraphQL response's
@@ -255,6 +369,7 @@ function parseDependencyAssumptions(body) {
 
 module.exports = {
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
-  hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery, buildNativeParentQuery,
+  hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, buildLinkedPRQuery, partitionByOpenLinkedPR,
+  crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,
 };

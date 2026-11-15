@@ -89,6 +89,11 @@ test('captionList: a role locator with no name renders "role={role}" without the
   assert.equal(/undefined/.test(out), false);
 });
 
+test('AC3a.1: captionList output is byte-identical', () => {
+  const out = captionList([{ caption: 'api_key=sk_live_1' }, { action: 'click', locator: { role: 'button', name: 'Go' } }]);
+  assert.equal(out, '1. api_key=sk_live_1\n2. click role=button "Go"\n');
+});
+
 test('encodeWalkthrough: three identical-size fixtures encode to a valid GIF, prints frames:3', async () => {
   const png = buildPng(8, 6, (x, y) => [x * 10, y * 10, 50]);
   const readFile = (p) => png; // every path returns the same fixture bytes

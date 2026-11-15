@@ -23,7 +23,7 @@ function runHook(args, { cwd } = {}) {
     });
     return { code: 0, stdout };
   } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
+    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
   }
 }
 
@@ -65,7 +65,35 @@ test('resolve-console --filing-failed on a non-finding item is refused by the CL
     result = { code: e.status, stdout: e.stdout || '' };
   }
   assert.equal(result.code, 1);
-  assert.match(result.stdout, /--filing-failed id\(s\) 1 are not finding rows \(no findingItem\)/);
+  assert.match(result.stdout, /--filing-failed id\(s\) 1 are neither finding rows nor sdd-ruling rows \(no findingItem, no isRulingRow flag\)/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
+});
+
+// #3942: a ruling id named in both --reverse-failed and --filing-failed; the CLI renders the refusal.
+test('resolve-console naming one ruling in both --reverse-failed and --filing-failed is refused by the CLI with the conflicting-failure-ids message', { skip: process.platform === 'win32' }, () => {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-cf-')));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-11-03T000000-cf');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    commentIds: ['IC_primary'], prNumber: 42, items: [{ id: 'r1', kind: 'batch', summary: 'ruling', isRulingRow: true }],
+  }));
+  const binDir = path.join(repo, 'stub-bin');
+  fs.mkdirSync(binDir);
+  const comment = { id: 'IC_primary', body: '<!-- console-item: resolve -->\n- [ ] **Resolve console**\n<!-- console-item: r1 -->\n- [ ] ruling r1' };
+  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
+  let result;
+  try {
+    const stdout = execFileSync('node', [HOOKS, 'resolve-console', '--run', runDir, '--reverse-failed', 'r1', '--filing-failed', 'r1'], {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+    });
+    result = { code: 0, stdout };
+  } catch (e) {
+    result = { code: e.status, stdout: e.stdout || '' };
+  }
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /id\(s\) r1 named in both --reverse-failed and --filing-failed, console not resolved/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
 });
 
@@ -115,14 +143,15 @@ test('resolve-console without --run exits non-zero with a usage message, perform
   assert.equal(fs.readdirSync(runDir).length, 0, 'nothing should be written when --run is omitted');
 });
 
-// Unknown-flag interception is verb-agnostic and, per this dispatcher's own
-// "never break a session" cardinal invariant, always exits 0 — the usage
-// line itself is the rejection signal, not the exit code (same convention
-// every other KNOWN_FLAGS verb in this file already follows).
-test('resolve-console with an unrecognized flag prints usage instead of silently proceeding', () => {
+// Unknown-flag refusal is verb-agnostic (#4834): stdout stays empty, the
+// flag and the usage line go to stderr, and the exit is 1 — the same shape
+// as an unknown verb (#1586). It is a caller mistake, not a hook event, so
+// the never-break-a-session invariant does not cover it.
+test('resolve-console with an unrecognized flag is refused on stderr with exit 1, instead of silently proceeding', () => {
   const result = runHook(['resolve-console', '--run', '/tmp', '--bogus', 'x']);
-  assert.equal(result.code, 0);
-  assert.match(result.stdout, /usage: resolve-console --run <dir>/);
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /^claude-tweaks: resolve-console: unknown flag '--bogus'\nclaude-tweaks: usage: resolve-console --run <dir>/);
 });
 
 test('resolve-console with a --run path that is not a real directory is rejected', () => {

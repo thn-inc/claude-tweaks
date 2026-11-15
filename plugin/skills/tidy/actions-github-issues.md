@@ -110,7 +110,7 @@ tidy run's `decisions.md` whenever the run has one (`_shared/auto-decision-log.m
 recommendation just named and `--run` this tidy run's directory, not the PR's:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/tidy" --status SKIP --step "Step 7 Arm ready PR (skipped)" --text "condition: PR #{n} acceptance labeling not landed ({reason}) → fallback: held, not armed; recommended {command}" --reversibility n/a`.
 So a record-linked PR whose run dir has no `verify.json`, and whose `Fixes` records carry no
-`demo:pending`, is held, not armed. The housekeeping-marker flavor (`<!-- tidy-housekeeping-pr -->` /
+pending acceptance label (`_shared/work-record.md`), is held, not armed. The housekeeping-marker flavor (`<!-- tidy-housekeeping-pr -->` /
 `<!-- wrap-up-residue-pr -->`) skips this check: it links no record, so there is nothing to label.
 
 If every gate still holds (and, for a record-linked PR, labeling has landed),
@@ -139,6 +139,8 @@ Executor for a `[claim]` Release row from Step 4.7's claim audit (`scan-procedur
 the `Blob classified 'stale'` and the `Issue closed (any claim state)` recommendation rows. A
 `'stale'` row carrying an open marked PR (`scan-procedures.md` Step 4.7's Stale claim with an open
 PR) is never a Release row: it is a Yours no-op, so this executor never receives it.
+A row's PR disposition, appended by the open-linked-PR backstop, is the human's to act on:
+`release-claim.js` never closes or touches the PR.
 `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" <n> --run <tidy-run-dir> --sweep --reason
 "swept: stale claim"` (or `"swept: issue closed"`). `--sweep` is required — this run's `--run`
 basename is never the crashed dispatcher's `runId`, so without it `release-claim.js`'s ordinary

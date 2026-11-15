@@ -135,7 +135,7 @@ const MAP = parseImpactMap(JSON.stringify(encodeImpactMap({
 }))).map;
 const HEAD = ['tests/a.test.js', 'tests/b.test.js', 'tests/p.test.js'];
 const CTX = { map: MAP, problem: null, headTests: HEAD };
-const FULL_RUN = { suite: 'tests', files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false };
+const FULL_RUN = { suite: 'tests', files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false, supersedingPaths: [] };
 const NOT_SELECTED = { ...FULL_RUN, files: [], selected: 0, driftSelected: 0 };
 const SUPERSEDED = { ...FULL_RUN, superseded: true };
 const isel = (files, statuses, impact = CTX, extra = {}) => selectScope({ decl: IMPACT, files, stamp: STAMP, statuses, impact, ...extra });
@@ -147,7 +147,7 @@ test('impact subset → scoped, only the tests that read the changed path', () =
   assert.strictEqual(r.static, true);
   assert.strictEqual(r.base, FULL);
   assert.deepStrictEqual(r.matched, [{ file: 'src/x.js', rule: 0 }]);
-  assert.deepStrictEqual(r.impact, { suite: 'tests', files: ['tests/a.test.js'], fallback: null, selected: 1, changedTests: [], untracedTests: [], driftTests: [], driftSelected: 0, superseded: false });
+  assert.deepStrictEqual(r.impact, { suite: 'tests', files: ['tests/a.test.js'], fallback: null, selected: 1, changedTests: [], untracedTests: [], driftTests: [], driftSelected: 0, superseded: false, supersedingPaths: [] });
 });
 
 test('a subset impact suite never yields full, even with every suite selected and static', () => {
@@ -199,21 +199,21 @@ test('an unmatched path supersedes the impact subset', () => {
   assert.strictEqual(r.mode, 'full');
   assert.strictEqual(r.suites, '*');
   assert.deepStrictEqual(r.unmatched, ['unknown/path.txt']);
-  assert.deepStrictEqual(r.impact, SUPERSEDED);
+  assert.deepStrictEqual(r.impact, { ...SUPERSEDED, supersedingPaths: ['unknown/path.txt'] });
 });
 
 test('a "*" rule or an explicit rule naming the impact suite also supersedes; fallback stays null', () => {
   const ctx = { ...CTX, problem: 'map-missing' };
   let r = isel(['src/x.js', 'shared/k.js'], { 'src/x.js': 'M', 'shared/k.js': 'M' }, ctx);
   assert.strictEqual(r.mode, 'full');
-  assert.deepStrictEqual(r.impact, SUPERSEDED);
+  assert.deepStrictEqual(r.impact, { ...SUPERSEDED, supersedingPaths: ['shared/k.js'] });
   r = isel(['src/x.js', 'lib/k.js'], { 'src/x.js': 'M', 'lib/k.js': 'M' }, ctx);
   assert.strictEqual(r.mode, 'scoped');
   assert.deepStrictEqual(r.suites, ['tests']);
-  assert.deepStrictEqual(r.impact, SUPERSEDED);
+  assert.deepStrictEqual(r.impact, { ...SUPERSEDED, supersedingPaths: ['lib/k.js'] });
   // Selected in full with no impact-rule file at all is still superseded.
   r = isel(['lib/k.js'], { 'lib/k.js': 'M' });
-  assert.deepStrictEqual(r.impact, SUPERSEDED);
+  assert.deepStrictEqual(r.impact, { ...SUPERSEDED, supersedingPaths: ['lib/k.js'] });
 });
 
 test('no impact-rule file and the impact suite unselected: impact is the empty subset (files [], selected 0)', () => {
@@ -230,7 +230,7 @@ test('changed test files at HEAD and untraced HEAD tests join the subset', () =>
   const r = isel(['src/x.js', 'tests/b.test.js'], { 'src/x.js': 'M', 'tests/b.test.js': 'M' }, { ...CTX, headTests: head });
   assert.deepStrictEqual(r.impact, {
     suite: 'tests', files: ['tests/a.test.js', 'tests/b.test.js', 'tests/new.test.js'], fallback: null, selected: 3,
-    changedTests: ['tests/b.test.js'], untracedTests: ['tests/new.test.js'], driftTests: [], driftSelected: 0, superseded: false,
+    changedTests: ['tests/b.test.js'], untracedTests: ['tests/new.test.js'], driftTests: [], driftSelected: 0, superseded: false, supersedingPaths: [],
   });
   assert.strictEqual(r.static, true);
 });
@@ -239,8 +239,21 @@ test('drifted tests from the context join the subset and are counted (#4132)', (
   const r = isel(['src/x.js'], { 'src/x.js': 'M' }, { ...CTX, driftTests: ['tests/b.test.js'] });
   assert.deepStrictEqual(r.impact, {
     suite: 'tests', files: ['tests/a.test.js', 'tests/b.test.js'], fallback: null, selected: 2,
-    changedTests: [], untracedTests: [], driftTests: ['tests/b.test.js'], driftSelected: 1, superseded: false,
+    changedTests: [], untracedTests: [], driftTests: ['tests/b.test.js'], driftSelected: 1, superseded: false, supersedingPaths: [],
   });
+});
+
+test('supersedingPaths names unmatched and suite-selecting files only (#4321)', () => {
+  const files = ['docs/a.md', 'lib/k.js', 'shared/k.js', 'src/x.js', 'unknown/path.txt'];
+  const r = isel(files, Object.fromEntries(files.map((f) => [f, 'M'])));
+  assert.strictEqual(r.impact.superseded, true);
+  assert.deepStrictEqual(r.impact.supersedingPaths, ['lib/k.js', 'shared/k.js', 'unknown/path.txt']);
+});
+
+test('a rule selecting only another suite supersedes nothing (#4321)', () => {
+  const r = isel(['docs/a.md'], { 'docs/a.md': 'M' });
+  assert.strictEqual(r.impact.superseded, false);
+  assert.deepStrictEqual(r.impact.supersedingPaths, []);
 });
 
 test('an empty subset drops the impact suite', () => {

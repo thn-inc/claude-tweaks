@@ -24,6 +24,11 @@
 //     actually reads GH_TIMEOUT_MS (bin/lib/hooks/pre-tool-use.js's hot
 //     path pulls this module in via git-exec.js for `isPathContained` alone
 //     and must not pay for a read it never asked for).
+//   - GH_BATCH_TIMEOUT_MS (#4815): `max(30000, GH_TIMEOUT_MS)`, the bound for
+//     one aliased GraphQL batch outside reconcile; a lazy getter composing
+//     GH_TIMEOUT_MS, so a raised `gh-timeout-ms` widens those batched calls
+//     too. Reconcile's hook-path batches (pr-state-batch.js, pr-state.js) keep
+//     their own 15 s bound and do not follow the key.
 //   - escapeRegExp: a one-line "escape regex metacharacters" helper, also
 //     defined identically in `plugin/bin/lib/skill-audit/skill-catalog.js`
 //     and `plugin/bin/lib/code-health/candidates-dead-code.js` before this
@@ -93,6 +98,13 @@ const { isAncestorOrSelf } = require('./path-guard');
 
 const DEFAULT_GH_TIMEOUT_MS = 5000;
 const GH_TIMEOUT_ENV_VAR = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+// #4815: one aliased GraphQL call carries a whole batch (a comma-list can span
+// the ~200-record queues `--limit 200` builds), so it gets
+// fetch-sub-issues.js's 30 s batched precedent as a floor. `max` with
+// GH_TIMEOUT_MS means a raised `gh-timeout-ms` (a GitHub Enterprise Server
+// project) widens these batched calls too. Reconcile's hook-path batches keep
+// their own 15 s bound (pr-state-batch.js, pr-state.js) and do not follow it.
+const DEFAULT_GH_BATCH_TIMEOUT_MS = 30000;
 // #3051: mirrors GH_TIMEOUT_MS's own shape exactly — a separate key because
 // claims-git-cas.js's `git` subprocess calls (fetch/show/push against the
 // claims-registry branch) have a different cost profile than a `gh` call,
@@ -284,5 +296,9 @@ module.exports = {
   relativeDisplayId,
 };
 Object.defineProperty(module.exports, 'GH_TIMEOUT_MS', { enumerable: true, get: getGhTimeoutMs });
+Object.defineProperty(module.exports, 'GH_BATCH_TIMEOUT_MS', {
+  enumerable: true,
+  get: () => Math.max(DEFAULT_GH_BATCH_TIMEOUT_MS, getGhTimeoutMs()),
+});
 Object.defineProperty(module.exports, 'GIT_TIMEOUT_MS', { enumerable: true, get: getGitTimeoutMs });
 Object.defineProperty(module.exports, 'GIT_PUSH_TIMEOUT_MS', { enumerable: true, get: getGitPushTimeoutMs });

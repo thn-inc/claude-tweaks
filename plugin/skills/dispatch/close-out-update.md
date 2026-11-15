@@ -118,7 +118,7 @@ A restore posts that saved `{prior-body-path}` file as the comment body, unchang
    or at step 4 when step 2 found a pending marker, since the head it marks is still unverified.
 4. **Verify.** `verify.js` checks only the checkout it runs from (`test/verification.md`'s cwd note), so a standalone `cd {wt}` (never chained) comes first.
    When the project has a lockfile, run its install command there (the mapping is `_shared/worktree-adopt-freshness.md` step 4) — after the merge, which may change it.
-   Then `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js"` with the project's full command set per `/claude-tweaks:test`'s `verification.md`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status`,
+   Then `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --local` with the project's full command set per `/claude-tweaks:test`'s `verification.md` (a whole-suite run asked for by name — the accepted update "runs the full suite" — and under `localRuns` an unscoped run needs `--local`), then `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status`,
    then a standalone `cd {main-checkout}` whatever the result, before any later step.
    Continue only when `verifiedHead` is true, `scope` is `full`, and the stamp's `sha` equals `git -C {wt} rev-parse HEAD` — that sha is `{verified-sha}`.
    Otherwise stop (`stopped: update failed — verification`), push nothing, keep `{wt}`, and report it with the paste-ready re-run

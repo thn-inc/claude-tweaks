@@ -66,9 +66,11 @@ files:
 - **Action:**
   - Rewrite the facade's clause to name each sub-module with its one-phrase responsibility.
   - Run the full suite, redirected to a file.
+  - The full suite is `npm test -- --full`, the command the skill's "Done when" list names. A plain `npm test` runs only the impact-selected subset (`run-a-plain-npm-test-on-the-impact-subset-5319.md`).
 - **Should feel:** Like the easy last step. The skill says #2805's own docs curation stopped here, and every claim fixed later was found by the sweep in step 3.
 - **Should understand:** Conformance tests pin prose, so a repointed sentence can turn the suite red even when no code changed.
 - **Red flags:** Treating the `docs/plugin-structure.md` edit as the whole docs sweep.
 
 ## Origin
 - Created during the build of #4010. That build added the `lib-module-split` project skill from #2805's review hindsight: PR #2822's review proved the split from scratch scripts, and fix commit `31cf39c0e` repointed 15 stale claims across 16 files.
+- Updated at wrap-up of #5319: step 4 names `npm test -- --full` as the full suite, since a plain `npm test` now runs only the impact-selected subset.

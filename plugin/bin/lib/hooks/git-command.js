@@ -1152,13 +1152,19 @@ function gitTargets(command, cwd, opts) {
 // module already accepts in exchange for never fabricating a false deny.
 const POWERSHELL_LEADS = new Set(['powershell', 'pwsh']);
 const POWERSHELL_OPAQUE_FLAGS = new Set(['-command', '-encodedcommand']);
+// A command word's name: lowercase, `.exe` and any directory dropped (Windows exe lookups are
+// case-insensitive, and `\` is a path separator there).
+function commandName(word) {
+  const lead = word.toLowerCase().replace(/\.exe$/, '');
+  const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
+  return cut >= 0 ? lead.slice(cut + 1) : lead;
+}
+
 // The lead is matched on the word's value and on the word as typed (#4281), so an
 // unquoted `C:\Windows\System32\powershell.exe`, whose value has lost its backslashes,
 // still reads as powershell: the deny keeps erring toward the shape.
 function isPowershellLead(word) {
-  const lead = word.toLowerCase().replace(/\.exe$/, '');
-  const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
-  return POWERSHELL_LEADS.has(cut >= 0 ? lead.slice(cut + 1) : lead);
+  return POWERSHELL_LEADS.has(commandName(word));
 }
 
 function powershellOpaqueCommand(command, cwd) {
@@ -1174,6 +1180,193 @@ function powershellOpaqueCommand(command, cwd) {
     }
   });
   return found;
+}
+
+// #4548: which segments of a Bash command kill processes by image or name, for
+// pre-tool-use.js's warn-only checkProcessKillWarn. The process table is shared with
+// sibling sessions, so a kill that names no PID may take one down; a PID-scoped kill
+// (`kill 123`, `taskkill /PID 12`, `kill $(lsof -t -iTCP:3000)`) is never reported. Every
+// lead is a GUARDED_PROGRAM_WORDS.processKill word except `pgrep`/`pidof`/`get-process`
+// (each only arms a later `kill`/`Stop-Process`), `xargs`/`sudo` and the other command
+// wrappers (each only runs a segment led by one of those words), and the wrappers that
+// carry a command string: `sh`/`bash`/… `-c`, `cmd /c`, `powershell`/`pwsh` `-Command`/`-c`.
+// Their argument still carries a kill word, which the whitespace-splitting prefilter
+// reads. Command names match case-insensitively because `taskkill` and PowerShell cmdlets
+// are case-insensitive on Windows. A `PID eq {n}` filter is the only silent `/FI` filter.
+// `-EncodedCommand` (base64) is not decoded. A `kill` is also armed by a process listing piped
+// through `grep` (`ps aux | grep node | … | xargs kill`, `kill $(ps aux | grep node | …)`): a
+// `ps`-led segment before a `grep`/`egrep`/`fgrep`-led one arms the `kill` segments that FOLLOW the
+// pair (`kill 123; ps aux | grep node` stays silent, unlike `pgrep`, which arms command-wide), as does
+// a `$(ps …`/backtick opener inside the `kill` itself; a `ps` with `-p`/`--pid` is a PID lookup and arms nothing.
+// Why the two differ: `pgrep` arms command-wide because its result reaches the `kill` through a variable
+// (`P=$(pgrep node); kill $P`), which the walk cannot order; the cost is an occasional spurious warning on a
+// PID-scoped `kill` that shares a command with `pgrep`. A `ps … | grep` listing is often run only to look, so
+// it arms only what follows it (the #4548 SDD rulings on pgrep arming, ledger rows 13 and 16).
+// Deliberate narrow miss: a positional PowerShell command (`powershell "Stop-Process -Name node"`,
+// which Windows PowerShell 5.1 runs as `-Command`) is not scanned, here or in powershellOpaqueCommand —
+// only an explicit `-Command` (here also `-c`) is, like every best-effort parser in this module.
+// Deliberate narrow miss: a command substitution's
+// body (`echo $(pkill node)`, `git commit -m "$(pkill node)"`, backticks) is not scanned — the
+// shared segment walk keeps `$(…)` inside its enclosing segment's tokens and exposes no nested
+// segment, and widening that scanner is out of this parser's scope. Only the pgrep/pidof arming
+// reads into a substitution.
+const PROCESS_KILL_WORDS = Object.freeze(['pkill', 'killall', 'taskkill', 'kill', 'stop-process']);
+// Wrapper nesting (`sh -c 'bash -c "…"'`) is scanned this deep; a deeper nest reads as no kill (silence,
+// never a block), which bounds the recursion and keeps a pathological command linear. Four covers every
+// real wrapper chain (`sudo sh -c 'cmd /c …'`); the cap is pinned by a test in tests/hooks-git-command.test.js.
+const PROCESS_KILL_MAX_DEPTH = 4;
+// `$(pgrep …)` or `` `pgrep …` `` — a kill fed the names a process search found.
+// The directory part excludes the substitution delimiters (a `$` may start a variable in the path:
+// `$($HOME/bin/pgrep node)`), so a run of openers inside one word is not rescanned.
+const PGREP_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`()]*[\/\\])?(?:pgrep|pidof)(?:\.exe)?(?=[\s)`]|$)/i;
+// `$(ps …` or `` `ps … `` — a kill fed by a process listing. The segment walk cuts the substitution
+// at its `|` (`kill -9 $(ps aux` | `grep node` | …), so the opener only arms a later `grep`-led
+// segment; a `|` kept inside one segment's text (a quoted substitution) is searched from the first
+// `ps` opener on, once, with a directory part that excludes `|` so each pipe rescans only its own word.
+const PS_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`()]*[\/\\])?ps(?:\.exe)?(?=[\s)`]|$)/i;
+const PIPE_TO_GREP_RE = /\|\s*(?:[^\s`()|]*[\/\\])?[ef]?grep(?=[\s)`'"]|$)/i;
+// A `ps` looking up given PIDs (`-p 123`, `-p123`, `-ep`, `--pid 5`, `--pid=5`) names no process by name.
+const PS_PID_FLAG_RE = /^(?:--pid(?:=.*)?|-[A-Za-z]*p\d*)$/;
+const PS_PID_FLAG_IN_TEXT_RE = /(?:^|\s)(?:--pid(?:=\S*)?|-[A-Za-z]*p\d*)(?=\s|$)/;
+const SHELL_COMMAND_FLAG_RE = /^-[A-Za-z]*c[A-Za-z]*$/;
+const CMD_COMMAND_FLAG_RE = /^\/\/?[ck]$/i;
+const TASKKILL_IMAGE_FLAG_RE = /^(\/\/?|-)im$/i;
+const TASKKILL_FILTER_FLAG_RE = /^(\/\/?|-)fi$/i;
+const TASKKILL_PID_FILTER_RE = /^pid\s+eq\s+\d+$/i;
+const POWERSHELL_NAME_FLAG_RE = /^-(name|processname)(:.*)?$/i;
+const POWERSHELL_PID_FLAG_RE = /^-id(:.*)?$/i;
+const POWERSHELL_STOP_PID_FLAG_RE = /^-(id|inputobject)(:.*)?$/i;
+// Each command wrapper's value-taking flags: the word after one is its value, not the program.
+const PROCESS_KILL_WRAPPER_VALUE_FLAGS = Object.freeze({
+  sudo: new Set(['-u', '-g', '-U', '-C', '-D', '-h', '-p']),
+  doas: new Set(['-u', '-C']),
+  env: new Set(['-u', '-C']),
+  nice: new Set(['-n']),
+  timeout: new Set(['-s', '-k', '--signal', '--kill-after']),
+});
+const XARGS_VALUE_FLAGS = new Set(['-I', '-n', '-P', '-L', '-d', '-E', '-s', '-a']);
+const NO_FLAGS = new Set();
+
+// The index of the first word at or after `i` that is no flag, flag value, `NAME=value`
+// (when `assignments`) or the duration `timeout` takes first (when `duration`).
+function skipWrapperArguments(t, i, valueFlags, { assignments = false, duration = false } = {}) {
+  let wantDuration = duration;
+  while (i < t.length) {
+    const word = t[i];
+    if (word.length > 1 && word[0] === '-') i += valueFlags.has(word) ? 2 : 1;
+    else if (assignments && SIMPLE_ASSIGNMENT_RE.test(word)) i += 1;
+    else if (wantDuration) { wantDuration = false; i += 1; } else break;
+  }
+  return i;
+}
+
+// The names the word at `i` reads as: its value, and the word as typed (#4281), so an unquoted
+// `C:\Windows\System32\taskkill.exe`, whose value lost its backslashes, still reads as taskkill.
+function leadNames(t, quoting, i) {
+  const names = [commandName(t[i])];
+  if (typeof quoting.typed[i] === 'string') names.push(commandName(quoting.typed[i]));
+  return names;
+}
+
+// The index of the program a segment runs: past leading `NAME=value` words, command wrappers
+// (`sudo`, `env`, `timeout 10`, …) and `xargs`, with their flags and flag values.
+function processKillLead(t, quoting) {
+  let i = 0;
+  // A control keyword (`then pkill node`, `do kill $p`, `! taskkill …`) leads a segment the walk
+  // hands over whole. It counts only as a bare word, as compoundBodyEnd reads it (#4281).
+  const isControlKeyword = (k) => {
+    const raw = quoting.raw[k];
+    return raw !== undefined && COMPOUND_LEAD_WORDS.has(raw) && quoting.spanKinds[k] === 'b'.repeat(raw.length);
+  };
+  while (i < t.length && (SIMPLE_ASSIGNMENT_RE.test(t[i]) || isControlKeyword(i))) i += 1;
+  while (i < t.length) {
+    const names = leadNames(t, quoting, i);
+    const wrapper = names.find((n) => READER_WRAPPER_WORDS.has(n) || n === 'timeout');
+    // `command -v pkill` looks the program up; it runs nothing.
+    if (wrapper === 'command' && /^-[A-Za-z]*[vV]/.test(t[i + 1] || '')) return t.length;
+    if (wrapper) {
+      i = skipWrapperArguments(t, i + 1, PROCESS_KILL_WRAPPER_VALUE_FLAGS[wrapper] || NO_FLAGS, {
+        assignments: wrapper === 'env' || wrapper === 'sudo', duration: wrapper === 'timeout',
+      });
+    } else if (names.includes('xargs')) i = skipWrapperArguments(t, i + 1, XARGS_VALUE_FLAGS);
+    else return i;
+  }
+  return i;
+}
+
+function processKillLabels(command, cwd, depth) {
+  if (typeof command !== 'string' || depth > PROCESS_KILL_MAX_DEPTH || !/kill|stop-process/i.test(command)) return [];
+  const slots = []; // one per visited segment, in order: what it reports, and what a later arm could add
+  let pgrepSeen = false;
+  // A name-listing `ps` so far (one that is no PID lookup), and the slot index of the first `grep`-led
+  // segment after it: that pair arms the kill-led slots after it, and any kill whose own text holds the
+  // `$(ps` opener. Unlike pgrep, it is order-aware: `kill 123; ps aux | grep node` stays silent.
+  let psSeen = false;
+  let pairAt = -1;
+  let getProcessSeen = false;
+  forEachCommandSegment(command, cwd, (t, _effCwd, quoting, again) => {
+    // `again` marks the walk's repeat visit to a compound segment (forEachCommandSegment's header); the first visit already reported it.
+    if (again || !t.length) return;
+    const slot = { labels: [], killLed: false, stopConsumer: false, psOpener: false, psInline: false };
+    slots.push(slot);
+    // Joined, because the tokenizer splits a spaced `$( pgrep node )` after its `$(`.
+    const joined = t.join(' ');
+    if (PGREP_SUBSTITUTION_RE.test(joined)) pgrepSeen = true;
+    const psOpener = PS_SUBSTITUTION_RE.exec(joined);
+    if (psOpener) {
+      const tail = joined.slice(psOpener.index + psOpener[0].length);
+      if (!PS_PID_FLAG_IN_TEXT_RE.test(tail.split('|')[0])) {
+        psSeen = true;
+        slot.psOpener = true;
+        if (PIPE_TO_GREP_RE.test(tail)) slot.psInline = true;
+      }
+    }
+    const i = processKillLead(t, quoting);
+    if (i >= t.length) return;
+    const names = leadNames(t, quoting, i);
+    const is = (...words) => names.some((n) => words.includes(n));
+    const later = (test) => t.slice(i + 1).some((word) => test(word));
+    const recurse = (inner) => { if (inner !== undefined) slot.labels.push(...processKillLabels(inner, cwd, depth + 1)); };
+    if (is('pgrep', 'pidof')) pgrepSeen = true;
+    else if (is('ps')) { if (!later((word) => PS_PID_FLAG_RE.test(word))) psSeen = true; }
+    else if (is('grep', 'egrep', 'fgrep')) { if (psSeen && pairAt < 0) pairAt = slots.length - 1; }
+    else if (is('pkill', 'killall')) slot.labels.push(names.find((n) => PROCESS_KILL_WORDS.includes(n)));
+    else if (is('taskkill')) {
+      const filter = t.findIndex((word, j) => j > i && TASKKILL_FILTER_FLAG_RE.test(word) && j + 1 < t.length && !TASKKILL_PID_FILTER_RE.test(t[j + 1].trim()));
+      if (later((word) => TASKKILL_IMAGE_FLAG_RE.test(word)) || filter >= 0) slot.labels.push('taskkill');
+    } else if (is('kill')) {
+      if (later((word) => POWERSHELL_NAME_FLAG_RE.test(word))) slot.labels.push('kill');
+      else slot.killLed = true;
+    } else if (is('stop-process')) {
+      if (later((word) => POWERSHELL_NAME_FLAG_RE.test(word))) slot.labels.push('stop-process');
+      else if (!later((word) => POWERSHELL_STOP_PID_FLAG_RE.test(word))) slot.stopConsumer = true;
+    } else if (is('get-process')) {
+      if (!later((word) => POWERSHELL_PID_FLAG_RE.test(word))) getProcessSeen = true;
+    } else if (names.some((n) => KNOWN_SHELL_WORDS.has(n))) {
+      const j = t.findIndex((word, k) => k > i && SHELL_COMMAND_FLAG_RE.test(word));
+      if (j >= 0) recurse(t[j + 1]);
+    } else if (names.some((n) => POWERSHELL_LEADS.has(n))) {
+      const j = t.findIndex((word, k) => k > i && (word.toLowerCase() === '-command' || word.toLowerCase() === '-c'));
+      if (j >= 0 && j + 1 < t.length) recurse(t.slice(j + 1).join(' '));
+    } else if (is('cmd')) {
+      const j = t.findIndex((word, k) => k > i && CMD_COMMAND_FLAG_RE.test(word));
+      if (j >= 0 && j + 1 < t.length) recurse(t.slice(j + 1).join(' '));
+    }
+  });
+  for (const [at, slot] of slots.entries()) {
+    if (slot.labels.length) continue;
+    const psFed = slot.psInline || (pairAt >= 0 && (at > pairAt || slot.psOpener));
+    if ((pgrepSeen || psFed) && slot.killLed) slot.labels.push('kill');
+    else if (getProcessSeen && slot.stopConsumer) slot.labels.push('stop-process');
+  }
+  return slots.flatMap((slot) => slot.labels);
+}
+
+// One lowercased label per segment of `command` that kills by image or name (`'pkill'`,
+// `'killall'`, `'taskkill'`, `'kill'`, `'stop-process'`); a wrapper contributes its inner
+// command's labels. Empty when none. Wrapper nesting past PROCESS_KILL_MAX_DEPTH reads as none.
+function processKillByName(command, cwd) {
+  return processKillLabels(command, cwd, 0);
 }
 
 // Best-effort detection of non-git, non-Edit/Write direct file-write shapes in
@@ -1290,6 +1483,44 @@ function isBareOrAbsoluteProgram(tok) {
 // Fd digits may follow the `)` (`(ls)2>x` is a subshell with a `2>` redirect).
 const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)\d*$/;
 
+// The plain-word rule over raw[from, to): every character is quoted (`s`/`d`), escaped (`e`) or bare and
+// not `$`, backtick or `(`. A stray (`x`) character, or a bare `$`, backtick or `(`, makes it not plain.
+function isPlainWordSpan(raw, kinds, from, to) {
+  for (let j = from; j < to; j += 1) {
+    const kind = kinds[j];
+    if (kind === 's' || kind === 'd' || kind === 'e') continue;
+    if (kind === 'b' && !'$`('.includes(raw[j])) continue;
+    return false;
+  }
+  return true;
+}
+
+// #4294: a prefix whose LAST escaped blank (`\ ` or an escaped tab, kind `e`) follows only closed
+// expansions. Before that blank: no bare `(` or `$[`, no stray (`x`) character, every bare `${` closed by a
+// bare `}` (counted, so `${M:-${N}}` closes) and every bare backtick paired. After it: the plain-word
+// rule (isPlainWordSpan), so `$M\ $N>x` stays out as `$N>x` does (#4328).
+function escapedBlankPrefixOk(raw, kinds, k) {
+  let blank = -1;
+  for (let j = 0; j < k; j += 1) {
+    if (kinds[j] === 'e' && (raw[j] === ' ' || raw[j] === '\t')) blank = j;
+  }
+  // No blank (-1): the after-part is the whole prefix, which the caller already found not plain.
+  if (!isPlainWordSpan(raw, kinds, blank + 1, k)) return false;
+  let braces = 0;
+  let tick = false;
+  for (let j = 0; j < blank; j += 1) {
+    if (kinds[j] === 'x') return false;
+    if (kinds[j] !== 'b') continue;
+    const c = raw[j];
+    if (c === '(') return false;
+    if (c === '`') tick = !tick;
+    else if (c === '$' && raw[j + 1] === '[' && kinds[j + 1] === 'b') return false;
+    else if (c === '$' && raw[j + 1] === '{' && kinds[j + 1] === 'b') braces += 1;
+    else if (c === '}' && braces > 0) braces -= 1;
+  }
+  return braces === 0 && !tick;
+}
+
 // #4015/#4210: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
 // like `echo foo > x`, and the word before it may hold quoted spans (`echo "hi">x`).
 // `kinds` is the token's per-character span mask (tokenize): only a BARE `>` is an
@@ -1303,8 +1534,9 @@ const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)\d*$/;
 // `$(`, `<(` or extglob syntax. A stray character in the prefix rejects it; ambiguity
 // resolves to no target. A leading `>` (k === 0) is leadingRedirectOpEnd's case.
 //
-// The one exception is a prefix that is exactly one all-bare, un-nested group: it ends
-// at its `)`, so the `>` after it is a redirect (BALANCED_GROUP_RE).
+// One exception is a prefix that is exactly one all-bare, un-nested group: it ends
+// at its `)`, so the `>` after it is a redirect (BALANCED_GROUP_RE). The other is a prefix
+// whose expansions close before an escaped blank, which ends them (escapedBlankPrefixOk, #4294).
 //
 // `nest` is the nesting state at the token's start (advanceNesting); a `>` reached
 // inside a nested context is quoted in bash, so it yields null.
@@ -1312,15 +1544,10 @@ function gluedRedirectOpEnd(raw, kinds, nest) {
   let k = 0;
   while (k < raw.length && !(raw[k] === '>' && kinds[k] === 'b')) k += 1;
   if (k === 0 || k === raw.length || isNested(advanceNesting(nest, raw, kinds, k))) return null;
-  let plain = true;
-  for (let j = 0; j < k; j += 1) {
-    const kind = kinds[j];
-    if (kind === 's' || kind === 'd' || kind === 'e') continue;
-    if (kind === 'b' && !'$`('.includes(raw[j])) continue;
-    plain = false;
-    break;
+  if (!isPlainWordSpan(raw, kinds, 0, k)) {
+    const balancedGroup = kinds.slice(0, k) === 'b'.repeat(k) && BALANCED_GROUP_RE.test(raw.slice(0, k));
+    if (!balancedGroup && !escapedBlankPrefixOk(raw, kinds, k)) return null;
   }
-  if (!plain && !(kinds.slice(0, k) === 'b'.repeat(k) && BALANCED_GROUP_RE.test(raw.slice(0, k)))) return null;
   const second = raw[k + 1];
   const twoChar = (second === '>' || second === '|') && kinds[k + 1] === 'b';
   return k + (twoChar ? 2 : 1);
@@ -1805,8 +2032,9 @@ const KNOWN_SHELL_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', '
 //           opener's index in the outer text, `shell` whether a token on the line names a
 //           KNOWN_SHELL_WORDS program), because a structure is open (`lineOpen`:
 //           left open on an earlier line or on this one), the line feeds them to
-//           something other than a known data reader, the line continues, or an
-//           unquoted body expands `$(` or a backtick; `end` is the index after the last;
+//           something other than a known data reader, the line continues, an
+//           unquoted body expands `$(` or a backtick, or a heredoc's `$( … )` closed on
+//           its opener line (`sameLineClose`, #4246); `end` is the index after the last;
 //   strip - every body is data; `end` is the index after the last one.
 function planHeredocBodies(str, start, pending, lineText, lineOpen) {
   const bodies = [];
@@ -1817,7 +2045,10 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
     bodies.push({ h, text: body.text });
     p = body.end;
   }
-  const keep = lineOpen || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
+  // #4246: bash 3.2 and zsh run a same-line-closed heredoc's would-be body as commands, so the
+  // line's bodies are all kept (scanned as commands) whatever reads them; a mixed line such as
+  // `cat $(cat <<A) <<B` keeps B's too, a spurious deny the scan accepts.
+  const keep = lineOpen || pending.some((h) => h.sameLineClose) || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
   const expands = bodies.some(({ h, text }) => !h.quoted && /\$\(|`/.test(text));
   if (keep || expands) {
     const shell = tokenize(lineText).typed.some((tok) => programNames(tok).some((n) => KNOWN_SHELL_WORDS.has(n)));
@@ -1827,8 +2058,8 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
 }
 
 // The single char-level pass behind stripHeredocBodies. Quote, escape, and comment
-// handling mirror splitSegments, so a `<<` inside quotes or after a word-boundary
-// `#` is never an opener. Every terminated body is cut out of the outer text with its
+// handling mirror splitSegments, so a `<<` inside quotes, inside a closed `${ … }` with no `$(`, or after a
+// word-boundary `#` is never an opener. Every terminated body is cut out of the outer text with its
 // closing line, so the outer scan resumes after the delimiter with fresh quote state and
 // never plans an opener inside a body; a kept body is returned as its own chunk.
 function scanHeredocs(str) {
@@ -1846,7 +2077,9 @@ function scanHeredocsWith(str, spans) {
   let quote = null;
   // Each open `"$( … )"` substitution (#4210): its paren depth and where its own text starts. A
   // heredoc opened inside one is planned against that text (`cat <<'EOF'`), never the outer line,
-  // since the substitution's command is the one that reads the body.
+  // since the substitution's command is the one that reads the body. #4246 adds a frame for each
+  // open unquoted `$( … )` too (`dq: false`), only so a heredoc can tell its substitution closed on
+  // the opener line; it leaves the planned line text as before.
   const subs = [];
   // Parens left open by a `((` or `$((`: `((` opens two and every single paren inside counts, so
   // `((cd x && ls) | cat)` (bash's nested-subshell reading) closes at its final `)`. It spans
@@ -1856,6 +2089,12 @@ function scanHeredocsWith(str, spans) {
   let pending = []; // heredocs opened on the current logical line, in order
   let sticky = false; // a structure was left open on an earlier line: keep every later body
   let lineStart = 0;
+  let param; // the `${ … }` span read at the current `$`
+  // #4246: each closed `${ … }` read a character at a time because it holds a `$(`: its end and the
+  // frame count when it opened. A `<<` with no frame opened since is the span's own text, not an
+  // opener; one inside its substitution is. An entry the scan has passed is popped when next read.
+  const params = [];
+  const popParams = () => { while (params.length && params[params.length - 1].end <= i) params.pop(); };
   let i = 0;
   while (i < str.length) {
     const ch = str[i];
@@ -1872,7 +2111,7 @@ function scanHeredocsWith(str, spans) {
       // is found, and its body no longer reads as quotes. `subs` holds one paren depth per
       // open substitution; the `)` that closes the last one returns to the double quote.
       emit('$(');
-      subs.push({ depth: 1, start: i + 2 });
+      subs.push({ depth: 1, start: i + 2, dq: true, dqStart: i + 2, heredocs: [] });
       quote = null;
       i += 2;
     } else if (quote === '"') {
@@ -1905,7 +2144,10 @@ function scanHeredocsWith(str, spans) {
       emit(str.slice(i, j));
       i = j;
     } else if (ch === '\n') {
-      const lineText = str.slice(subs.length ? Math.max(lineStart, subs[subs.length - 1].start) : lineStart, i);
+      // #4246: only a `"$( … )"` frame narrows the planned text; an unquoted one plans as before.
+      // Each frame carries the innermost `"$(` frame's start (`dqStart`), so this reads it in O(1).
+      const dqStart = subs.length ? subs[subs.length - 1].dqStart : null;
+      const lineText = str.slice(dqStart !== null ? Math.max(lineStart, dqStart) : lineStart, i);
       i += 1;
       emit(ch);
       sticky = sticky || lineLeavesStructureOpen(lineText);
@@ -1920,6 +2162,29 @@ function scanHeredocsWith(str, spans) {
       }
       pending = [];
       lineStart = i;
+    } else if (ch === '$' && str[i + 1] === '{' && (param = spans.param(str, i + 2)).closed) {
+      // #4246: a closed `${ … }` is word text, so a `<<` inside it opens nothing out here. One that
+      // holds a `$(` is read a character at a time (its entry in `params` keeps its own `<<` text),
+      // so a heredoc inside that substitution is planned as any other. An unclosed one (or the flat
+      // reading, which never closes) falls through to the branches below.
+      if (str.slice(i, param.end).includes('$(')) {
+        popParams();
+        params.push({ end: param.end, subs: subs.length });
+        emit('${');
+        i += 2;
+      } else {
+        emit(str.slice(i, param.end));
+        i = param.end;
+      }
+    } else if (parenDepth === 0 && ch === '$' && str[i + 1] === '(' && str[i + 2] !== '(') {
+      // #4246: an unquoted `$( … )` opens a frame, so a heredoc opened inside it knows when its
+      // substitution closes (the `)` branch below). `quote` is always null here: the branches
+      // above take every character inside quotes. Inside an open `((`/`$((` a `$(` opens no frame
+      // and its parens count toward parenDepth, as before #4246, since that branch takes every `)`.
+      // `$((` is arithmetic and stays with parenDepth.
+      emit('$(');
+      subs.push({ depth: 1, start: i + 2, dq: false, dqStart: subs.length ? subs[subs.length - 1].dqStart : null, heredocs: [] });
+      i += 2;
     } else if (ch === '$' && str[i + 1] === '[') {
       bracketDepth += 1;
       emit('$[');
@@ -1944,8 +2209,15 @@ function scanHeredocsWith(str, spans) {
     } else if (subs.length > 0 && (ch === '(' || ch === ')')) {
       subs[subs.length - 1].depth += ch === '(' ? 1 : -1;
       if (subs[subs.length - 1].depth === 0) {
-        subs.pop();
-        quote = '"';
+        const popped = subs.pop();
+        if (popped.dq) quote = '"';
+        // #4246: a heredoc opened inside a `$( … )` that closes on its opener line has no body to
+        // bash 3.2 and zsh, which run the lines after it as commands, while bash 5 reads them as
+        // its body. Marked here so planHeredocBodies keeps every body on the line: each would-be
+        // body is scanned as commands, and the outer scan still resumes after the delimiter. The
+        // frame lists its own heredocs, so this costs one step per heredoc; one opened on an earlier
+        // line is marked too, harmlessly, since its line was planned already.
+        for (const h of popped.heredocs) h.sameLineClose = true;
       }
       emit(ch);
       i += 1;
@@ -1953,14 +2225,18 @@ function scanHeredocsWith(str, spans) {
       emit('<<<'); // a here-string is never a heredoc
       i += 3;
     } else if (ch === '<' && str[i + 1] === '<') {
-      // A `<<` inside an open `((...))` or `$[...]` is an arithmetic shift, not an opener.
-      const h = parenDepth === 0 && bracketDepth === 0 ? readHeredocOpener(str, i + 2) : null;
+      // A `<<` inside an open `((...))` or `$[...]` is an arithmetic shift, not an opener; one in a
+      // `${ … }`'s own text (no frame opened since, #4246) is literal text.
+      popParams();
+      const inParam = params.length > 0 && params[params.length - 1].subs === subs.length;
+      const h = parenDepth === 0 && bracketDepth === 0 && !inParam ? readHeredocOpener(str, i + 2) : null;
       if (h && h.unprovable) {
         emit(str.slice(i));
         break;
       }
       if (h) {
         h.at = outLen;
+        if (subs.length) subs[subs.length - 1].heredocs.push(h); // #4246: the substitution it was opened in
         emit(str.slice(i, h.end));
         pending.push(h);
         i = h.end;
@@ -2004,8 +2280,9 @@ const MAX_HEREDOC_NESTING = 8;
 // Group structure of one segment, for walkShellChunk (#4149): a `(` or `{` at command position
 // opens a group and the `)` or `}` that matches it closes it, so a `cd` behind `(`/`{` is read as
 // a `cd` scoped to its group. Returns the segment as { text } pieces and { open } / { close } /
-// { bg } events, in order ({ bg } at a lone `&`, which backgrounds the and-or list before it);
-// each piece, { bg } and group frame carries `nesting`, the substitution depth it begins at;
+// { bg } / { arm } events, in order ({ bg } at a lone `&`, which backgrounds the and-or list before it;
+// { arm } at the `)` that ends a case's pattern list, #4486);
+// each piece, { bg }, { arm } and group frame carries `nesting`, the substitution depth it begins at;
 // `g.stack` carries the open groups and nesting parens across segments. Any
 // other `(` (`$(`, `$((`, `<(`, an array, a glob) only nests until its `)`. A `)` while a `case` is
 // open in the innermost group is a pattern's, and a `)` that matches nothing (a group this walk
@@ -2038,6 +2315,19 @@ function groupEventsWith(seg, g, spans, undo) {
   const setCaseDepth = (frame, d) => { const was = frame.caseDepth; frame.caseDepth = d; undo.push(() => { frame.caseDepth = was; }); };
   const setCasePattern = (frame, on) => { const was = frame.casePattern; frame.casePattern = on; undo.push(() => { frame.casePattern = was; }); };
   const setBrackets = (frame, d) => { const was = frame.brackets; frame.brackets = d; undo.push(() => { frame.brackets = was; }); };
+  const setField = (obj, key, v) => { const was = obj[key]; obj[key] = v; undo.push(() => { obj[key] = was; }); };
+  // The case whose pattern list is open where the scan stands, or null (#4486): the innermost case of the
+  // frame in its pattern list, read through a leading-paren pattern list's own frame (`(*)`).
+  const patternCase = () => {
+    let f = top();
+    if (f.leadParen && !f.casePattern) f = g.stack[g.stack.length - 2] || g.root;
+    return f.caseDepth > 0 && f.casePattern && f.caseInfos && f.caseInfos.length > 0 ? f.caseInfos[f.caseInfos.length - 1] : null;
+  };
+  // A pattern list's `)` opens an arm of the innermost case in the frame (#4486), so the walk knows that the
+  // arm after a `;;` runs commands of its own.
+  const armOpens = () => { const t = top(); if (t.caseDepth > 0) events.push({ arm: t.caseDepth, sub: g.nesting > 0, nesting: g.nesting }); };
+  // An `esac` drops the frame's innermost case info (#4486).
+  const closeCaseInfo = (frame) => { if (frame.caseInfos && frame.caseInfos.length > 0) setField(frame, 'caseInfos', frame.caseInfos.slice(0, -1)); };
   // `esac` on a piece (#4481): the level of the case its last keyword `esac` closes, so walkShellChunk
   // resolves a redirect on the compound (`esac > k`) where that case began.
   let pieceEsac = 0;
@@ -2114,6 +2404,7 @@ function groupEventsWith(seg, g, spans, undo) {
         if (t.leadParen) setCasePattern(top(), false);
         if (g.nesting < pieceNesting) { cut(i, null); tail = true; }
         else if (t.leadParen) cut(i, null);
+        if (t.leadParen) armOpens();
         atCmd = t.leadParen || emptyParens(t, i);
       }
       else if (t.caseDepth === 0 && t.kind === '(') {
@@ -2127,12 +2418,15 @@ function groupEventsWith(seg, g, spans, undo) {
         pop();
         if (t.leadParen) setCasePattern(top(), false);
         cut(i, { close: t });
+        if (t.leadParen) armOpens();
         atCmd = true;
       }
       else {
         // A case's pattern list ends at this `)` (#4303), and its arm's commands follow.
+        const opens = t.caseDepth > 0 && t.casePattern;
         if (t.caseDepth > 0) setCasePattern(t, false);
         cut(i, null);
+        if (opens) armOpens();
         atCmd = true;
       }
       i += 1;
@@ -2219,6 +2513,15 @@ function groupEventsWith(seg, g, spans, undo) {
     if (i === wStart) { i += 1; continue; } // a stray separator character: never a word
     const prevWord = lastWord;
     lastWord = plain ? w : '';
+    // #4486: a case's subject ends at its `in`, and a pattern of bare `*`s after it (`*)`, `a|*)`, `(*)`)
+    // matches any subject, so one of the case's arms always runs. A quoted or escaped `*`, a `$` word and an
+    // extglob (`*(a)`) are no catch-all: the walk then keeps the case's start after its `esac`. Neither is a `*`
+    // glued to a closed group (`$(echo a)*)`, `@(a)*)`): the word starts right after that `)`.
+    const pc = patternCase();
+    if (pc && plain) {
+      if (!pc.inSeen) { if (w === 'in') setField(pc, 'inSeen', true); }
+      else if (/^\*+$/.test(w) && seg[wStart - 1] !== ')' && /^[ \t]*(\)|$)/.test(seg.slice(i))) setField(pc, 'catchAll', true);
+    }
     if (fnName) { fnName = false; atCmd = true; continue; }
     // A case with no arm (`case x in esac`) ends at the `esac` right after its `in`, which is no command
     // position (#4481): bash 3.2, bash 5 and zsh run `case x in esac; cd ../q | cat; echo y > g` with the
@@ -2227,6 +2530,7 @@ function groupEventsWith(seg, g, spans, undo) {
       pieceEsac = top().caseDepth;
       setCaseDepth(top(), top().caseDepth - 1);
       setCasePattern(top(), false);
+      closeCaseInfo(top());
       atCmd = true;
       continue;
     }
@@ -2249,10 +2553,14 @@ function groupEventsWith(seg, g, spans, undo) {
     // many cases are open in that frame once it is (#4303, #4481): the case is closed once fewer are. The
     // push is journaled like the rest of the group state, so a flat pass takes back its own (a duplicate
     // entry is harmless: it gives the same case a second, identical record; the journal keeps the list exact).
+    // The entry is the case's info, which the frame's `caseInfos` holds until its `esac`, so its pattern
+    // words can set `inSeen` and `catchAll` after the walk has taken its record (#4486).
     if (w === 'case') {
       setCaseDepth(t, t.caseDepth + 1);
       setCasePattern(t, true);
-      g.casesOpened.push({ depth: g.stack.length, level: t.caseDepth });
+      const info = { depth: g.stack.length, level: t.caseDepth, inSeen: false, catchAll: false };
+      setField(t, 'caseInfos', [...(t.caseInfos || []), info]);
+      g.casesOpened.push(info);
       undo.push(() => { g.casesOpened.pop(); });
     }
     // A reserved word may follow `esac` directly (#4481): `case a in a) cd ../wt; case b in b) cd ../q;; esac
@@ -2262,6 +2570,7 @@ function groupEventsWith(seg, g, spans, undo) {
       if (t.caseDepth > 0) pieceEsac = t.caseDepth;
       setCaseDepth(t, Math.max(0, t.caseDepth - 1));
       setCasePattern(t, false);
+      closeCaseInfo(t);
       atCmd = true;
       continue;
     }
@@ -2459,11 +2768,44 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   const freshList = (at) => ({ listStart: at, spanStart: at, skipOk: [], skipFail: [], pipeStart: null, pipeKeep: false, cases: [] });
   // Pops the records of list `L`'s cases that are closed where `openCases` cases are still open in its
   // frame (#4481), joins the outermost one's `listStart` back into the list's, and returns that record.
-  const closeCases = (L, openCases) => {
+  // Every record it pops goes onto `popped` too, innermost first (#4486).
+  const closeCases = (L, openCases, popped = []) => {
     let closed = null; // the outermost case closed here
-    while (L.cases.length > 0 && L.cases[L.cases.length - 1].level > openCases) closed = L.cases.pop();
+    while (L.cases.length > 0 && L.cases[L.cases.length - 1].level > openCases) popped.push((closed = L.cases.pop()));
     if (closed) L.listStart = joinCwds(L.listStart, closed.listStart, overflow);
     return closed;
+  };
+  // The cwds after the `esac` of each case in `popped`, innermost first, from `at`, where the last arm
+  // stands (#4486): every arm starts where the case began, so the case ends under each arm's end, the
+  // open last arm's too (`at`), and under its start unless a catch-all pattern makes some arm run.
+  const afterCases = (popped, at) => popped.reduce((cw, R) => {
+    const ends = R.armOpen ? joinCwds(R.ends, cw, overflow) : R.ends;
+    return R.info.catchAll ? ends : joinCwds(ends, R.from, overflow);
+  }, at);
+  // An arm's `;;`, or a `;&`/`;;&` (`fall`), in list `L` ends the arm of the case open at `openCases`
+  // (#4486): its cwds `at` are one way the case can end, and the next arm starts where the case began, or,
+  // after a fallthrough, also where this arm left the cwd.
+  const endArm = (L, at, openCases, fall) => {
+    const R = L.cases.length > 0 ? L.cases[L.cases.length - 1] : null;
+    if (!R || R.level !== openCases) return at;
+    R.ends = joinCwds(R.ends, at, overflow);
+    R.armOpen = false;
+    const start = fall ? joinCwds(R.from, at, overflow) : R.from;
+    L.listStart = start;
+    L.spanStart = start;
+    return start;
+  };
+  // A pattern list's `)` opened an arm of the case at `level` in list `L` (#4486), so the commands up to its
+  // `esac` are one way the case can end. A first arm before any separator has no record yet: nothing to do.
+  const openArm = (L, level) => {
+    for (let k = L.cases.length - 1; k >= 0; k -= 1) if (L.cases[k].level === level) { L.cases[k].armOpen = true; return; }
+  };
+  // A group's close ends every case still open in its own list (`{ case … esac }`, #4486), so the group
+  // ends under every arm and the case's start as a separator after the `esac` would.
+  const settleCases = (L, at) => {
+    const popped = [];
+    closeCases(L, 0, popped);
+    return popped.length > 0 ? afterCases(popped, at) : at;
   };
   // Ends the current command of list `L`, in effect at `at`, at the separator `op`, and returns the
   // cwds the next command runs under. `&&` runs it where the command succeeded and `||` where it
@@ -2476,11 +2818,13 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // says a case compound opened since the last separator: as a pipeline element it is one command
   // whose own `;;` and `;` end no pipeline (#4244), so a pipeline holding one ends under its start and
   // the cwd in effect, failing closed (the per-case records below place its `esac`). The arm's own
-  // `;;` resets `caseSeen` and moves the list on to the arm's post-`cd` cwd, so each case gets a record
-  // in `L.cases` (#4481) at the first separator after its `case` word (`opened`, the levels of the cases
-  // that opened in this list's frame since the last separator): `from`, the cwds its command began at,
-  // and the list's `listStart`, `skipOk`, `skipFail` and `pipeStart` there (held by reference, which is
-  // safe: every writer of those fields assigns a new array, never mutates one). The arm's own list begins
+  // `;;` resets `caseSeen`, banks the arm's cwd in the case's record and restarts the next arm where the
+  // case began (#4486, endArm), so each case gets a record in `L.cases` (#4481) at the first separator
+  // after its `case` word (`opened`, the infos of the cases that opened in this list's frame since the
+  // last separator): `from`, the cwds its command began at, and the list's `listStart`, `skipOk`,
+  // `skipFail` and `pipeStart` there (held by reference, which is safe: every writer of those fields
+  // assigns a new array, never mutates one), with `info`, `ends` (the cwds its ended arms left) and
+  // `armOpen` (an arm runs commands past the last `;;`) for afterCases (#4486). The arm's own list begins
   // at `from`, so the record moves `listStart` there: an `&` in the arm returns to it (`cd ../wt && case a
   // in a) case a in a) cd ../q ;; esac & echo x > f ;; esac` writes wt/f). `level` is the case's own
   // nesting in the frame and `openCases` how many cases are open where the separator stands, so a case is
@@ -2499,15 +2843,20 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // ../m ;; esac; esac; echo w > k` writes r/k). bash 3.2 and 5 agree on each.
   const endCommand = (L, at, op, maybePattern = false, caseSeen = false, openCases = 0, opened = []) => {
     if (caseSeen && L.pipeStart !== null) L.pipeKeep = true;
-    for (const level of opened) {
+    for (const info of opened) {
       // One record per case: nested cases each start their own pipeline and list, so a single per-list
       // `caseFrom`/`caseOpen` pair mixed an inner case's start with the outer's (an inner case first in an
-      // outer arm, a command before an inner case; #4481 review rounds 3-4).
-      L.cases.push({ level, from: L.spanStart, listStart: L.listStart, skipOk: L.skipOk, skipFail: L.skipFail, pipeStart: L.pipeStart });
+      // outer arm, a command before an inner case; #4481).
+      L.cases.push({ level: info.level, info, from: L.spanStart, listStart: L.listStart, skipOk: L.skipOk, skipFail: L.skipFail, pipeStart: L.pipeStart, ends: [], armOpen: true });
       L.listStart = L.spanStart;
     }
-    const closed = closeCases(L, openCases);
+    const popped = [];
+    const closed = closeCases(L, openCases, popped);
     if (closed) {
+      at = afterCases(popped, at);
+      // The case command may have failed under any cwd it ended in, so a `||` after its `esac` runs there too
+      // (#4486: the arm's `;;` moved `spanStart` back to the case's start).
+      L.spanStart = joinCwds(L.spanStart, at, overflow);
       L.skipOk = joinCwds(L.skipOk, closed.skipOk, overflow);
       L.skipFail = joinCwds(L.skipFail, closed.skipFail, overflow);
     }
@@ -2656,9 +3005,10 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // effect is left as the arm left it. A case with no record yet had no separator in its list since its
   // `case` word, so its arm is one command or group, and the piece is visited under the cwd in effect,
   // which already holds where the case began (a `{ … }` close joins the cwd before it): `case a in a) {
-  // cd ../m; } esac > k` reports m/k and r/k.
+  // cd ../m; } esac > k` reports m/k and r/k. The ended arms' cwds (`ends`) join in too, since each arm's
+  // `;;` resets the cwd in effect to where the case began (#4486).
   const caseBegan = (L, level, at) => {
-    for (let k = L.cases.length - 1; k >= 0; k -= 1) if (L.cases[k].level === level) return joinCwds(L.cases[k].from, at, overflow);
+    for (let k = L.cases.length - 1; k >= 0; k -= 1) if (L.cases[k].level === level) return joinCwds(joinCwds(L.cases[k].from, L.cases[k].ends, overflow), at, overflow);
     return null;
   };
   let btCase = false; // a `case` word shows in the top-level backtick run in progress (#4303)
@@ -2669,7 +3019,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     const before = cur;
     const inBacktick = span.sub ? 1 : 0; // the backtick span's own level, which g.nesting omits
     for (const ev of groupEvents(span.text, g)) {
-      if (ev.open ? ev.open.sub || span.sub : ev.close ? ev.close.inSubRun : ev.bg && (ev.sub || span.sub)) {
+      if (ev.open ? ev.open.sub || span.sub : ev.close ? ev.close.inSubRun : (ev.bg || ev.arm) && (ev.sub || span.sub)) {
         startSubRun();
         if (ev.open) {
           ev.open.inSubRun = true;
@@ -2681,9 +3031,10 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
         } else if (ev.close) {
           const { saved, level } = ev.close;
           const at = subLevelAt(level);
-          subCur = ev.close.kind === '(' ? saved : joinCwds(saved, subCur, overflow);
+          subCur = ev.close.kind === '(' ? saved : joinCwds(saved, settleCases(at.list, subCur), overflow);
           at.list = closeGroup(ev.close, subCur);
-        } else subCur = background(subLevelAt(ev.nesting + inBacktick).list, ev.cases);
+        } else if (ev.arm) openArm(subLevelAt(ev.nesting + inBacktick).list, ev.arm);
+        else subCur = background(subLevelAt(ev.nesting + inBacktick).list, ev.cases);
         continue;
       }
       if (ev.open) {
@@ -2692,9 +3043,10 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
         list = freshList(cur);
       } else if (ev.close) {
         const { saved } = ev.close;
-        cur = ev.close.kind === '(' ? saved : joinCwds(saved, cur, overflow);
+        cur = ev.close.kind === '(' ? saved : joinCwds(saved, settleCases(list, cur), overflow);
         list = closeGroup(ev.close, cur);
-      } else if (ev.bg) cur = background(list, ev.cases);
+      } else if (ev.arm) openArm(list, ev.arm);
+      else if (ev.bg) cur = background(list, ev.cases);
       else if (ev.sub || span.sub) {
         startSubRun();
         const at = subLevelAt(ev.nesting + inBacktick);
@@ -2733,10 +3085,17 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     // separator inside a top-level backtick is that backtick's own, never the frame's: groupEvents
     // never reads the backtick's first command, so once a `case` word shows in the backtick run, a
     // `|` in it is read both ways (endCommand's `maybePattern`), failing closed.
+    // The arm terminator this separator starts, when it starts one (#4486): `;;` ends the arm, and `;&` or
+    // `;;&` falls through to the next arm's commands or patterns, as zsh's `;|` does (its `|` is no pipe: the
+    // case-pattern `continue` below skips it). The second `;` of a `;;` starts none.
+    let armEnd = null;
     if (span.endsInSub) btCase = btCase || CASE_WORD_RE.test(span.text);
     else {
       if (op === '|' && (frame.casePattern || frame.leadParen)) continue;
-      if (frame.caseDepth > 0 && outer[span.end] === ';' && (outer[span.end + 1] === ';' || outer[span.end + 1] === '&')) frame.casePattern = true;
+      if (frame.caseDepth > 0 && outer[span.end] === ';' && (outer[span.end + 1] === ';' || outer[span.end + 1] === '&' || outer[span.end + 1] === '|')) {
+        frame.casePattern = true;
+        if (span.text !== '' || outer[span.end - 1] !== ';') armEnd = outer[span.end + 1] === '&' || outer[span.end + 1] === '|' || outer[span.end + 2] === '&' ? 'fall' : 'end';
+      }
     }
     const maybePattern = span.endsInSub && btCase;
     if (!span.endsInSub) btCase = false;
@@ -2746,13 +3105,17 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     // this depth is in this separator's list, which keeps its record; a deeper one's group has closed.
     const sepDepth = g.stack.length;
     const caseSeen = casePending.some((c) => c.depth >= sepDepth);
-    const opened = casePending.filter((c) => c.depth === sepDepth).map((c) => c.level);
+    const opened = casePending.filter((c) => c.depth === sepDepth);
     casePending = casePending.filter((c) => c.depth < sepDepth);
     if (level > 0) {
       startSubRun();
       const at = subLevelAt(level);
       subCur = endCommand(at.list, subCur, op, maybePattern, caseSeen, openCases, opened);
-    } else cur = endCommand(list, cur, op, maybePattern, caseSeen, openCases, opened);
+      if (armEnd) subCur = endArm(at.list, subCur, openCases, armEnd === 'fall');
+    } else {
+      cur = endCommand(list, cur, op, maybePattern, caseSeen, openCases, opened);
+      if (armEnd) cur = endArm(list, cur, openCases, armEnd === 'fall');
+    }
   }
   runBodies(Infinity, cur);
 }
@@ -2985,6 +3348,7 @@ const WRITE_SHAPES = Object.freeze(['cp', 'mv', 'tee', 'sed', 'perl', 'install',
 //   powershell: powershellOpaqueCommand's lead (`powershell`, `pwsh`) — pre-tool-use
 //          only (#3061); post-tool-use's POST_TOOL_USE_WORDS stays scoped to the
 //          git family, since this gate has nothing to check after the fact.
+//   processKill: processKillByName's leads — pre-tool-use only, matched case-insensitively by the prefilter (#4548); post-tool-use stays git-scoped
 // tests/hooks-bash-prefilter.test.js's differential corpus runs the real parsers
 // and fails when a targeted command's word is missing here — for the commands it
 // lists, so a parser keyed on a new word also needs a corpus line there.
@@ -2993,6 +3357,7 @@ const GUARDED_PROGRAM_WORDS = Object.freeze({
   mkdir: Object.freeze(['mkdir']),
   write: WRITE_SHAPES,
   powershell: Object.freeze([...POWERSHELL_LEADS]),
+  processKill: PROCESS_KILL_WORDS,
 });
 
 // Per-shape value-consuming flags. Wrong entries here shift which token is read
@@ -3324,7 +3689,7 @@ function mkdirTargets(command, cwd, opts) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, PROCESS_KILL_WORDS, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };

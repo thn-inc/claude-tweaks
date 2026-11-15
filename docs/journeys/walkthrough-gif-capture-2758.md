@@ -46,9 +46,10 @@ files:
 - **URL:** *(`AskUserQuestion` rendered by the skill)*
 - **Action:** Pick the archive path (`docs/walkthroughs/{story-id}.gif`+`.md`, recommended), the current directory, an explicit `Other` path, or don't save at all.
 - **Should feel:** The developer's own call — nothing lands in the repository, and nothing is ever committed, without this explicit choice.
-- **Should understand:** The recommended default is deliberately outside `.claude-tweaks/artifacts/` — a walkthrough exists to be kept and shared, not pruned by `/claude-tweaks:tidy`'s 30-day cleanup like the QA screenshots it's built from.
+- **Should understand:** The recommended default is deliberately outside `.claude-tweaks/artifacts/` — a walkthrough exists to be kept and shared, not pruned by `/claude-tweaks:tidy`'s 30-day cleanup like the QA screenshots it's built from. This standalone path applies no redaction, so read the captions before sharing; the acceptance packet's automatic recording is a separate path (`watch-the-recording-an-acceptance-packet-links-4612.md`).
 - **Red flags:** An automatic commit; a default save path under `.claude-tweaks/artifacts/`; the Playwright CLI session left open after this step (it closes on every path — success, a Step 2 locator miss, or a Step 3 encode failure).
 
 ## Origin
 - Created during build of #2758 (`/claude-tweaks:walkthrough` — a GIF-encoding skill added to the claude-tweaks plugin)
-- Related specs: #2758
+- Updated during build of #4612 (names the automatic path and that this one stays unredacted)
+- Related specs: #2758, #4612

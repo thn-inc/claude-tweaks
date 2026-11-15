@@ -140,9 +140,9 @@ function sweepShadow({ runRoot, pipelineRunDir, worktree }) {
   // ---- staged/ relocation ----
   // The readdir and every step below it are wrapped so a mid-sweep throw
   // (e.g. a permission-denied staged/ dir) becomes a `sweep:`-prefixed
-  // diagnostic line instead of propagating to hooks.js's blanket
-  // `.catch(() => process.exit(0))` — which would otherwise turn a failed
-  // partial sweep into a silent, indistinguishable-from-clean exit 0.
+  // diagnostic line instead of propagating to hooks.js's main(), which
+  // would turn it into the generic `claude-tweaks: sweep-shadow: {message}`
+  // exit 1 (#4932) and lose the partial-sweep lines already collected.
   const shadowStaged = path.join(shadow, 'staged');
   const stagedStat = statOrDiagnose(fs.statSync, shadowStaged, 'shadow staged/', lines);
   if (stagedStat && stagedStat.isDirectory()) {

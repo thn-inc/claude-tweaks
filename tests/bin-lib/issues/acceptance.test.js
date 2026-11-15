@@ -7,9 +7,12 @@ const {
   verificationSurface,
   needsBackstop,
   parentGateState,
+  closedParentGap,
   approvalProvenance,
   APPROVAL_PROVENANCE_LABEL,
+  APPROVAL_PROVENANCE_LABELS,
 } = require('../../../plugin/bin/lib/issues/acceptance.js');
+const { parseRecordFacets } = require('../../../plugin/bin/lib/issues/record-vocabulary.js');
 
 test('dispositionState reads each acceptance label', () => {
   assert.equal(dispositionState(['demo:pending']), 'pending');
@@ -23,11 +26,57 @@ test('dispositionState returns none when no acceptance label is present', () => 
   assert.equal(dispositionState(undefined), 'none');
 });
 
-test('a resolved verdict wins over a stale demo:pending', () => {
+test('changes-requested wins over a stale demo:pending; pending now wins over approved', () => {
   // /demo removes demo:pending as it adds the verdict, but a partial write or a
-  // concurrent edit can leave both. A resolved record must never be re-swept.
-  assert.equal(dispositionState(['demo:pending', 'demo:approved']), 'approved');
+  // concurrent edit can leave both. changes-requested must never be re-swept.
+  // Human ruling at plan time (#4610): one precedence rule across both
+  // vocabularies — changes-requested > pending > approved > none. These are the
+  // deliberate exceptions to AC7 ("no demo:* behaviour changes"). For
+  // dispositionState, which used a first-match table (approved, changes-requested,
+  // pending), two demo:*-only pairs change: demo:pending + demo:approved now
+  // resolves 'pending' (previously 'approved'), and demo:approved +
+  // demo:changes-requested now resolves 'changes-requested' (previously 'approved';
+  // pinned in AC3.1 below). For parseRecordFacets, which was last-match-wins, every
+  // demo:* pair that used to depend on array order now resolves by precedence, e.g.
+  // ['demo:changes-requested', 'demo:pending'] was 'pending' and is now
+  // 'changes-requested'.
+  assert.equal(dispositionState(['demo:pending', 'demo:approved']), 'pending');
   assert.equal(dispositionState(['demo:pending', 'demo:changes-requested']), 'changes-requested');
+});
+
+for (const x of ['pending', 'approved', 'changes-requested']) {
+  test(`AC1.1: accept:${x} resolves the same disposition and facet as demo:${x}`, () => {
+    assert.equal(dispositionState([`accept:${x}`]), x);
+    assert.equal(dispositionState([`demo:${x}`]), x);
+    assert.equal(parseRecordFacets([`accept:${x}`]).acceptance, x);
+    assert.equal(parseRecordFacets([`demo:${x}`]).acceptance, x);
+  });
+}
+
+test('AC3.1: mixed labels resolve to one disposition, most conservative first', () => {
+  for (const [labels, want] of [
+    [['accept:pending', 'demo:changes-requested'], 'changes-requested'],
+    [['accept:approved', 'demo:changes-requested'], 'changes-requested'],
+    [['accept:approved', 'demo:pending'], 'pending'],
+    [['accept:approved', 'demo:approved'], 'approved'],
+    [['accept:pending', 'accept:approved'], 'pending'],
+    [['demo:pending', 'demo:approved'], 'pending'],
+    [['demo:approved', 'demo:changes-requested'], 'changes-requested'],
+    [['accept:approved', 'accept:changes-requested'], 'changes-requested'],
+  ]) {
+    assert.equal(dispositionState(labels), want, labels.join('+'));
+    assert.equal(dispositionState([...labels].reverse()), want, `reversed ${labels.join('+')}`);
+    assert.equal(parseRecordFacets(labels).acceptance, want, labels.join('+'));
+    assert.equal(parseRecordFacets([...labels].reverse()).acceptance, want, `reversed ${labels.join('+')}`);
+  }
+});
+
+test('AC3.2: accept:approved-batch is batch provenance, like demo:approved-batch', () => {
+  assert.equal(approvalProvenance(['accept:approved', 'accept:approved-batch']), 'batch');
+  assert.equal(approvalProvenance(['demo:approved', 'accept:approved-batch']), 'batch');
+  assert.equal(approvalProvenance(['accept:approved']), 'walkthrough');
+  assert.equal(approvalProvenance(['accept:pending', 'accept:approved-batch']), null);
+  assert.deepEqual(APPROVAL_PROVENANCE_LABELS, ['demo:approved-batch', 'accept:approved-batch']);
 });
 
 test('verificationSurface treats docs, skills, bin and config as non-interactive', () => {
@@ -160,6 +209,26 @@ test('parentGateState is resolved once a verdict is recorded', () => {
   );
 });
 
+test('parentGateState reads a parent carrying demo:pending + demo:approved as gated (#4610 ruling)', () => {
+  // Consumer-level effect of the plan-time human ruling (#4610): the parent's
+  // label is the authoritative record, and pending now beats approved, so a
+  // parent left with both labels is gated again where it used to read
+  // 'resolved'. changes-requested still wins over pending, so that pair stays
+  // resolved.
+  assert.equal(
+    parentGateState({ subIssues: [CLOSED(1)], parentLabels: ['demo:pending', 'demo:approved'] }),
+    'gated',
+  );
+  assert.equal(
+    parentGateState({ subIssues: [CLOSED(1)], parentLabels: ['demo:approved', 'demo:pending'] }),
+    'gated',
+  );
+  assert.equal(
+    parentGateState({ subIssues: [CLOSED(1)], parentLabels: ['demo:pending', 'demo:changes-requested'] }),
+    'resolved',
+  );
+});
+
 test('parentGateState reports gated even if a sub-issue reopens after gating', () => {
   // The label is the authoritative record of what was applied; a reopened sub-issue
   // must not cause the sweep to re-gate an already-gated parent.
@@ -210,4 +279,70 @@ test('AC4.1: needsBackstop excludes a decomposition parent', () => {
   // Controls: the same record without the flag (false or absent) is still a gap.
   assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: false }), true);
   assert.equal(needsBackstop({ state: 'CLOSED', labels: [] }), true);
+});
+
+test('AC1.1: needsBackstop admits a closed parent the caller shows above the floor', () => {
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true, parentExceedsFloor: true }), true);
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: ['demo:approved'], isParent: true, parentExceedsFloor: true }), false);
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true, parentExceedsFloor: true, stateReason: 'NOT_PLANNED' }), false);
+  assert.equal(needsBackstop({ state: 'OPEN', labels: [], isParent: true, parentExceedsFloor: true }), false);
+});
+
+test('AC2.1: needsBackstop keeps a parent at or below the floor excluded', () => {
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true, parentExceedsFloor: false }), false);
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true, parentExceedsFloor: 'true' }), false);
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true }), false);
+});
+
+test('AC1.1: closedParentGap reports a hand-closed parent above the floor', () => {
+  const high = [{ risk: 'high' }, { risk: 'low' }];
+  assert.equal(closedParentGap({ parentLabels: [], stateReason: 'COMPLETED', subIssues: high, riskFloor: 'high' }), 'gap');
+  // Unscored fails closed.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: null }], riskFloor: 'high' }), 'gap');
+  // Disposition, not planned and duplicate are never a gap.
+  assert.equal(closedParentGap({ parentLabels: ['demo:approved'], subIssues: high, riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: ['accept:pending'], subIssues: high, riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: [], stateReason: 'NOT_PLANNED', subIssues: high, riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: [], stateReason: 'DUPLICATE', subIssues: high, riskFloor: 'high' }), 'none');
+});
+
+test('AC2.1: closedParentGap excludes a #4466-closed parent before the floor', () => {
+  // Relabelled to risk:high after the close: the marker still excludes it (Decision Q1).
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: true, subIssues: [{ risk: 'high' }], riskFloor: 'high' }), 'none');
+  // Control: the same parent without the marker is a gap.
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: false, subIssues: [{ risk: 'high' }], riskFloor: 'high' }), 'gap');
+  // Below the floor with no marker (hand-closed below the floor): no sign-off owed.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'medium' }], riskFloor: 'high' }), 'none');
+});
+
+test('AC1.1: closedParentGap applies the caller\'s risk floor, not a fixed one', () => {
+  const medium = [{ risk: 'medium' }];
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: medium, riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: medium, riskFloor: 'medium' }), 'gap');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'low' }], riskFloor: 'always' }), 'gap');
+  // The marker still wins over every floor.
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: true, subIssues: medium, riskFloor: 'always' }), 'none');
+});
+
+test('closedParentGap reports an unreadable parent instead of guessing', () => {
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [], riskFloor: 'high' }), 'no-sub-issues');
+  assert.equal(closedParentGap({ parentLabels: [], riskFloor: 'high' }), 'no-sub-issues');
+  // A readable sub-issue already above the floor proves the gap: an unread one can only raise the max.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'high' }, { risk: null, unread: true }], riskFloor: 'high' }), 'gap');
+  // Readable ones below the floor: indeterminate, never a guessed row.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'low' }, { risk: null, unread: true }], riskFloor: 'high' }), 'unread-sub-issue');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: null, unread: true }], riskFloor: 'high' }), 'unread-sub-issue');
+  // The disposition and marker checks run first: an approved or #4466-closed parent is never counted.
+  assert.equal(closedParentGap({ parentLabels: ['demo:approved'], subIssues: [], riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: true, subIssues: [], riskFloor: 'high' }), 'none');
+});
+
+test('closedParentGap treats an unbuildable sub-issue entry as unread, not unscored', () => {
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [null, { risk: 'low' }], riskFloor: 'high' }), 'unread-sub-issue');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [null, { risk: 'high' }], riskFloor: 'high' }), 'gap');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: ['high', { risk: 'low' }], riskFloor: 'high' }), 'unread-sub-issue');
+});
+
+test('closedParentGap excludes on the marker only for literal true', () => {
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: 'true', subIssues: [{ risk: 'high' }], riskFloor: 'high' }), 'gap');
 });

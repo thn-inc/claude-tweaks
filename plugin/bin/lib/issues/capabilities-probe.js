@@ -25,9 +25,10 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
+const { ghOptions } = require('../repo-resolve');
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', windowsHide: true });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true }));
 }
 
 // Shared skeleton both probes below follow: call the runner with a fixed args

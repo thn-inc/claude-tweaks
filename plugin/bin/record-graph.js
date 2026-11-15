@@ -3,15 +3,19 @@
 // faceted-record JSON file (produced by _shared/record-queue-fetch.md's
 // existing fetch procedure) and deterministically emits D2 or SVG source.
 // No gh/network I/O happens in this file — see bin/lib/record-graph/*.js.
+// Exports { run, realDeps, parseArgs }: run(argv, deps) returns the exit code and
+// reaches the outside world only through deps (stdout, stderr, cwd, now) — the
+// entry contract is .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md.
 'use strict';
 
 const fs = require('fs');
+const { fsPath } = require('./lib/health-core/io');
 const { buildGraph } = require('./lib/record-graph/layout');
 const { renderD2 } = require('./lib/record-graph/render-d2');
 const { renderSvg } = require('./lib/record-graph/render-svg');
 
-function parseArgs(argv) {
-  const args = { _: [], generatedAt: new Date().toISOString() };
+function parseArgs(argv, { now } = realDeps) {
+  const args = { _: [], generatedAt: now().toISOString() };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--format') args.format = argv[++i];
@@ -26,44 +30,38 @@ function parseArgs(argv) {
   return args;
 }
 
-function cmdRender(args) {
+function cmdRender(args, d) {
   const jsonPath = args._[0];
   if (!jsonPath) {
-    process.stderr.write('render: missing <faceted-json-path>\n');
-    process.exitCode = 2;
-    return;
+    d.stderr('render: missing <faceted-json-path>\n');
+    return 2;
   }
   if (args.format !== 'd2' && args.format !== 'svg') {
-    process.stderr.write('render: --format must be "d2" or "svg"\n');
-    process.exitCode = 2;
-    return;
+    d.stderr('render: --format must be "d2" or "svg"\n');
+    return 2;
   }
   if (args.workLinks !== 'native' && args.workLinks !== 'body-text') {
-    process.stderr.write('render: --work-links must be "native" or "body-text"\n');
-    process.exitCode = 2;
-    return;
+    d.stderr('render: --work-links must be "native" or "body-text"\n');
+    return 2;
   }
   let fetchLimit;
   if (args.fetchLimitRaw !== undefined) {
     fetchLimit = Number(args.fetchLimitRaw);
     if (!Number.isFinite(fetchLimit)) {
-      process.stderr.write(`render: --fetch-limit must be a number (got "${args.fetchLimitRaw}")\n`);
-      process.exitCode = 2;
-      return;
+      d.stderr(`render: --fetch-limit must be a number (got "${args.fetchLimitRaw}")\n`);
+      return 2;
     }
   }
   let records;
   try {
-    records = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    records = JSON.parse(fs.readFileSync(fsPath(d, jsonPath), 'utf8'));
   } catch (e) {
-    process.stderr.write(`render: could not read faceted-record JSON at ${jsonPath} — ${e.message}\n`);
-    process.exitCode = 2;
-    return;
+    d.stderr(`render: could not read faceted-record JSON at ${jsonPath} — ${e.message}\n`);
+    return 2;
   }
   if (!Array.isArray(records)) {
-    process.stderr.write(`render: expected an array of faceted records at ${jsonPath}\n`);
-    process.exitCode = 2;
-    return;
+    d.stderr(`render: expected an array of faceted records at ${jsonPath}\n`);
+    return 2;
   }
   const truncated = Number.isFinite(fetchLimit) && records.length === fetchLimit;
   const graph = buildGraph(records, { workLinks: args.workLinks, truncated });
@@ -72,24 +70,31 @@ function cmdRender(args) {
     : renderSvg(graph, { generatedAt: args.generatedAt });
 
   if (args.out) {
-    fs.writeFileSync(args.out, output);
+    fs.writeFileSync(fsPath(d, args.out), output);
     const omitted = graph.edgesOmitted ? ', edges omitted' : '';
-    process.stderr.write(`render: wrote ${args.out} (${records.length} records, ${graph.edges.length} edges${omitted})\n`);
+    d.stderr(`render: wrote ${args.out} (${records.length} records, ${graph.edges.length} edges${omitted})\n`);
   } else {
-    process.stdout.write(output);
+    d.stdout(output);
   }
+  return 0;
 }
 
-function main() {
-  const argv = process.argv.slice(2);
+function run(argv, deps = {}) {
+  const d = { ...realDeps, ...deps };
   const cmd = argv[0];
-  const args = parseArgs(argv.slice(1));
-  if (cmd === 'render') {
-    cmdRender(args);
-    return;
-  }
-  process.stderr.write(`record-graph: unknown command "${cmd}" (expected: render)\n`);
-  process.exitCode = 2;
+  const args = parseArgs(argv.slice(1), d);
+  if (cmd === 'render') return cmdRender(args, d);
+  d.stderr(`record-graph: unknown command "${cmd}" (expected: render)\n`);
+  return 2;
 }
 
-main();
+const realDeps = {
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  now: () => new Date(),
+};
+
+module.exports = { run, realDeps, parseArgs };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

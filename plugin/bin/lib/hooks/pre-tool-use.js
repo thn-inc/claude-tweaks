@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, keepLost,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, keepLost,
   PIPELINE_STATE_DIR, namesPipelinesSegment,
 } = require('./git-command');
 const ctxLib = require('./context');
@@ -34,7 +34,7 @@ const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
-const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
+const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS, FORGE_DEGRADE_MEMO_TTL_MS } = require('../policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 // toPosix: git always reports/accepts forward-slash paths regardless of
 // platform — used for GATE_COVERAGE's prose-facing rendering and for comparing
@@ -706,14 +706,12 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
 // invariant every project gets, not something a project opts into.
 //
 // Flags only a NEW creation — the run-dir-level path (the first path segment
-// under `.claude-tweaks/pipelines/`) does not already exist on disk. A
-// pre-anchoring run directory already sitting in a worktree is left alone
-// (tolerated transitionally by wrap-up/cleanup-procedures.md Section C step
-// 3.5's copy-out guard, sunset 2026-11-07): that guard only ever READS from
-// the worktree and WRITES to the main checkout, so it never trips this guard
-// itself, and further writes into an already-existing worktree-trapped run
-// dir (e.g. a still-running pre-anchoring pipeline appending events.jsonl)
-// must not be newly denied by a guard shipped after that pipeline started.
+// under `.claude-tweaks/pipelines/`) does not already exist on disk. A run
+// directory that already exists in a worktree is left alone: the guard stops
+// the main-checkout/worktree split at the moment a shadow is created, and a
+// write into an existing directory creates nothing new. Such a directory is
+// normal — every run's tracked `work/{n}-spec.md` lives in one (the #959
+// exception below) — and one that predates anchoring is the historical case.
 //
 // #959: also lets the one documented worktree-local exception through even
 // when the run-id directory does NOT yet exist there — `work/{n}-spec.md`
@@ -897,11 +895,17 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
 // call proved this by popping a sibling worktree's WIP stash while comparing
 // test discrimination against a baseline; #2065 closed the gap where only
 // the bare/`pop` spellings were covered — the exact hazard, reachable
-// through the equally common explicit `stash push`/`-u`/`-m` forms. This is
-// a WARN, never a deny: unlike E1/worktree-required, there is no provable
-// "whose stash entry is this" signal to gate on — only a heads-up pointing
-// at a non-mutating alternative. `list`/`show`/`apply`/`drop`/`clear`/
-// `branch` stay silent — mirroring git-command.js's own
+// through the equally common explicit `stash push`/`-u`/`-m` forms. #4559
+// added `drop` and `clear`, which destroy stack entries — a sibling
+// worktree's in-flight WIP stash included — and `branch`, which drops the
+// entry it applies (stash@{0} when bare), so all three warn like `pop`; and
+// `store` and `import`, which write onto the stack like `push`. This is a
+// WARN, never a deny: unlike E1/worktree-required, there is no provable "whose
+// stash entry is this" signal to gate on — only a heads-up pointing at a
+// non-mutating alternative. Subcommands that leave the stack untouched stay
+// silent — `list`, `show`, `apply` (which changes the worktree, not the stack),
+// `create` and `export` (/review relies on `git stash create`), and any
+// unrecognized token — mirroring git-command.js's own
 // PLUMBING_WRITE_SUBCOMMANDS comment on why `stash` was deliberately
 // excluded from its one-level subcommand check: a second token has to be
 // resolved to tell the mutating shape from a read-only one; `next.startsWith('-')`
@@ -922,19 +926,48 @@ function checkGitStashWarn(segments, warnings) {
     if (t[index] !== 'stash') continue;
     const next = t[index + 1];
     const mutatesStack = next === undefined || next === 'pop' || next === 'push'
-      || next === 'save' || (typeof next === 'string' && next.startsWith('-'));
+      || next === 'save' || next === 'drop' || next === 'clear' || next === 'branch'
+      || next === 'store' || next === 'import'
+      || (typeof next === 'string' && next.startsWith('-'));
     if (!mutatesStack) continue;
     if (!dir) continue;
     const { isLinkedWorktree, indeterminate } = wtDetect.repoInfo(dir);
     if (indeterminate || !isLinkedWorktree) continue;
     warnings.push(
       'claude-tweaks: git stash is repository-wide, shared by every linked worktree of this '
-      + "checkout — running it here can push onto or pop a SIBLING worktree's stash entry. "
+      + "checkout — running it here can push onto, pop, or drop a SIBLING worktree's stash entry. "
       + 'Compare against a baseline without mutating the tree instead: `git show <rev>:<path>`, '
       + 'or set your own work aside with a temporary WIP commit (`git commit -m wip`, then apply '
-      + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash.',
+      + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash. '
+      + 'Exception: putting back a stash entry that `stash-guard.js` reported lost, with the '
+      + '`git stash store -m "<subject>" <sha>` command it printed, is the intended recovery.',
     );
   }
+}
+
+// #4548: warn-only heads-up for a Bash command that kills processes by image or name
+// (`pkill`, `killall`, `taskkill /IM`, `Stop-Process -Name`, a `pgrep`-fed `kill`, also
+// inside `sh -c`/`cmd /c`/`powershell -Command`). Unlike checkGitStashWarn's linked-worktree
+// condition, the hazard is machine-wide — every sibling session and worktree shares the
+// process table — so this is run- and location-independent: it needs no run state and no
+// repo. It is reachable only because GUARDED_PROGRAM_WORDS.processKill feeds the bash
+// prefilter, which matches those words case-insensitively (`TASKKILL`). The parser is
+// git-command.js's processKillByName; a PID-scoped kill is never reported. Fail-open: any
+// parser throw swallows to silence, never to a block.
+function checkProcessKillWarn(command, cwd, warnings) {
+  if (!command) return;
+  try {
+    if (processKillByName(command, cwd).length) {
+      warnings.push(
+        'claude-tweaks: killing a process by image or name (`taskkill /IM`, `pkill`, `killall`, '
+        + '`Stop-Process -Name`, a `pgrep`-fed `kill`, also inside `sh -c`/`cmd /c`/`powershell -Command`) '
+        + 'matches every process of that name on this machine — the process table is shared with every '
+        + 'sibling session and worktree, so it can take down their dev servers and tooling. Kill only a '
+        + 'PID you captured when you started the process, or the listener on a port you own '
+        + '(`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`, then `kill {pid}`; win32: `taskkill /PID {pid} /T /F`).',
+      );
+    }
+  } catch (_) { /* best-effort heads-up: a parser failure is silence, never a block */ }
 }
 
 // worktree-required policy gate: unlike E1 below, this needs no pipeline run
@@ -1474,6 +1507,41 @@ function hasLoggedPrEarlyStep1(runDir, branch) {
   }
 }
 
+// The dirs whose decisions.md may carry this run's PR-early lines: `runDir`,
+// plus its parent when `runDir` is a `spec-*` dir whose parent is run-id-shaped
+// (RUN_ID_RE). The parent is whatever readRunStateWithParent({ requireRunIdParent:
+// true }) -- the rule lib/pr-bookkeeping/precondition.js uses -- reports as
+// `parentRunDir`, so that one function owns the rule; its read is stubbed out
+// because only the directory matters here. pr-early-open.js refuses a `spec-`
+// --run, so in a multi-spec run the Step 1 and FAILED lines land on the parent.
+// A non-string or empty `runDir` is returned as is, so the reads keep their
+// missing-file -> false posture.
+function prEvidenceDirs(runDir) {
+  if (typeof runDir !== 'string' || !runDir) return [runDir];
+  const { parentRunDir } = ctxLib.readRunStateWithParent(path.resolve(runDir), { read: () => null, requireRunIdParent: true });
+  return parentRunDir ? [runDir, parentRunDir] : [runDir];
+}
+
+// Whether a pr-first push may go ahead with no recorded PR ([IL-131]) -- the one
+// rule checkBookkeepingStampsGate's PR-stamp branch and lib/phase-exit/phase-exit.js's
+// prPushReleased both call (#4344). In order: a closed run; any truthy `pr` stamp;
+// a model other than pr-first; a first publish (`hasNoUpstream`), released only by
+// this branch's Step 1 line (#989/#1800) -- never by prExempt or a FAILED line,
+// since the gate's record-pr deny text tells agents to hand-log a FAILED line, so
+// a memoized prExempt can precede a first publish that never ran Step 1 (#903);
+// then prExempt; then a logged `PR-early run lifecycle: ... FAILED` line. Only
+// reads decisions.md (through prEvidenceDirs); a null `runState` reads as `{}`.
+function prStampReleased({ runState, runDir, branch, model, hasNoUpstream }) {
+  const state = runState || {};
+  if (state.status === 'clean') return true;
+  if (state.pr) return true;
+  if (model !== 'pr-first') return true;
+  const dirs = prEvidenceDirs(runDir);
+  if (hasNoUpstream) return Boolean(branch) && dirs.some((d) => hasLoggedPrEarlyStep1(d, branch));
+  if (state.prExempt) return true;
+  return dirs.some((d) => hasLoggedPrDegrade(d));
+}
+
 // #3012: pure form of hasLoggedPrEarlyStep1's check over a decisions.md body.
 // True when the exact three-shape regex matches, or when a single AUTO line
 // (no FAILED) mentions PR-early, states a Step 1 outcome before its Reversibility
@@ -1618,6 +1686,16 @@ function hasNoUpstreamYet(dir) {
   return upstream !== `origin/${branch}`;
 }
 
+// Freshness of a run-scoped forge degrade memo (#4830): `at` is the epoch-ms stamp
+// the memo was written at, `now` the current epoch ms, `ttlMs` the window
+// (FORGE_DEGRADE_MEMO_TTL_MS at the call site). Fresh only for a finite stamp no
+// later than `now` and strictly younger than the TTL; absent, non-numeric, NaN,
+// Infinity, or a future stamp (a clock step) is stale.
+function isFreshForgeDegradeMemo(at, now, ttlMs) {
+  const age = now - at;
+  return Number.isFinite(at) && age >= 0 && age < ttlMs;
+}
+
 // The PRODUCTION integration-model read for the PR-stamp branch below.
 // `_shared/integration-model.md`'s contract (and its "Re-detecting mid-run
 // instead of reading the run's pin" anti-pattern) is that a run resolves the
@@ -1645,7 +1723,40 @@ function hasNoUpstreamYet(dir) {
 // runs with no agent turn active, so there is no MCP call this gate could
 // ever source a reachability signal from. This is a permanent, structural
 // gap, not an oversight (docs/incident-log.md IL-63).
-function resolveRunPinnedIntegrationModel(mainRoot, runDir) {
+//
+// `opts.timeoutMs` / `opts.onDegrade` (#4578) are forwarded to
+// detectIntegrationModel, each only when set (an absent opt adds no key), and
+// only the fresh-detection fallback uses them: a pin returns first and never
+// calls `onDegrade`. With the #4830 memo opted in (below), `onDegrade` is
+// instead always wrapped, so the memo can see the degrade, and is also called
+// on a memo hit with no detection at all. This gate passes `timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`
+// rather than inheriting `gh-timeout-ms` (up to 60 s, retried once = 120 s)
+// because it runs inside a PreToolUse lifecycle hook (no per-hook timeout in
+// hooks.json, so Claude Code's default command-hook timeout applies) and must
+// keep docs/hooks.md's never-break-a-session invariant. 5000 ms per attempt
+// gives a 15 s worst case (git 5 s + two 5 s attempts, record #4578 Decision
+// Q2). `check-pr-bookkeeping.js` (via pr-bookkeeping/precondition.js) runs as a
+// CLI, not a hook, passes no `timeoutMs`, and so follows the ladder.
+//
+// `opts.degradeMemoTtlMs` (#4830) is an opt-in run-scoped degrade memo, and only
+// this gate opts in (precondition.js passes `{ onDegrade }` alone and gets
+// today's behavior, byte for byte). Without it, a hung `gh` costs the full ~15 s
+// forge probe on every hooked call. With a positive-integer TTL and a non-empty
+// `runDir`, a degraded detection stamps `forgeDegradedAt` into run-state.json and
+// a call inside the TTL returns 'local-merge' without spawning `gh` or `git`. A
+// memo hit is still reported through `onDegrade` — as `{ memoized: true,
+// degradedAt }`, deliberately with no `reason` key so nothing mistakes it for a
+// FORGE_DEGRADE_REASON code — so the gate's Q5 rule still withholds `prExempt`.
+// The memo expires after the TTL and is cleared by the next clean detection. It
+// is read only after the pin check, so an explicit pin always wins. `opts.now`
+// (default Date.now) is a test seam.
+//
+// Concurrency: no compare-and-set. A degraded detection that began before a
+// concurrent clean one still writes `forgeDegradedAt: now()` after its probe,
+// which can re-arm a just-cleared memo; a recovered forge then goes unnoticed
+// for at most one more TTL — accepted, inside "recovery is noticed within one
+// TTL".
+function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const git = () => mainRoot;
   const readFile = (p) => {
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
@@ -1656,7 +1767,39 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir) {
   // 'default' (absent, or set-but-invalid) falls through to detection, the
   // same posture resolveIntegrationModel itself documents.
   if (entry && entry.source !== 'default') return entry.value;
-  return detectIntegrationModel(root);
+  const detectOpts = {};
+  if (opts.timeoutMs !== undefined) detectOpts.timeoutMs = opts.timeoutMs;
+  if (opts.onDegrade !== undefined) detectOpts.onDegrade = opts.onDegrade;
+  const ttl = opts.degradeMemoTtlMs;
+  if (!(Number.isInteger(ttl) && ttl > 0 && typeof runDir === 'string' && runDir !== '')) {
+    return detectIntegrationModel(root, detectOpts);
+  }
+  const now = typeof opts.now === 'function' ? opts.now : Date.now;
+  const state = ctxLib.readRunState(runDir);
+  const memoAt = state && state.forgeDegradedAt;
+  if (isFreshForgeDegradeMemo(memoAt, now(), ttl)) {
+    if (typeof opts.onDegrade === 'function') {
+      try { opts.onDegrade({ memoized: true, degradedAt: memoAt }); } catch { /* a reporting callback never breaks the resolver */ }
+    }
+    return 'local-merge';
+  }
+  let degraded = false;
+  detectOpts.onDegrade = (d) => {
+    degraded = true;
+    // detectIntegrationModel guards and swallows a throwing callback itself.
+    if (typeof opts.onDegrade === 'function') opts.onDegrade(d);
+  };
+  const model = detectIntegrationModel(root, detectOpts);
+  if (degraded) {
+    ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });
+  } else if (memoAt != null) {
+    // Clear on a clean detection. The outer `memoAt != null` check keeps the
+    // common no-memo path free of the run-state lock and write. The updater
+    // re-checks under the lock and returns null when a concurrent call already
+    // cleared it, which writeRunState treats as "write nothing, keep updatedAt".
+    ctxLib.writeRunState(runDir, (s) => (s.forgeDegradedAt == null ? null : { forgeDegradedAt: null }));
+  }
+  return model;
 }
 
 // True only on a PROVABLE ownership mismatch: this run's run-state.json was
@@ -1828,12 +1971,16 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 //   3. This run's materialize commit hasn't landed yet (hasMaterializeCommit
 //      above) — Common Step 1 is still legitimately in progress.
 //   4. The two stamp checks themselves — record-worktree unconditionally,
-//      record-pr only under a run pinned `integration-model: pr-first`
-//      (resolveRunPinnedIntegrationModel above) and with no logged degrade.
-//      The first time this branch proves no further PR-stamp denial is
+//      record-pr whenever prStampReleased (above) does not release the call:
+//      it releases a run not pinned `integration-model: pr-first`
+//      (resolveRunPinnedIntegrationModel above), a first publish only on its
+//      Step 1 line, and anything else on a memoized `prExempt` or a logged degrade.
+//      The first time this branch proves no tracked-branch PR-stamp denial is
 //      possible (model resolved cleanly to non-pr-first, or pr-first with
 //      the degrade already logged), it persists `prExempt: true` to
 //      run-state.json so every later covered call short-circuits at check 1
+//      -- except an all-push call, which still reaches the PR branch because
+//      a first publish needs its Step 1 line (prStampReleased) --
 //      instead of re-paying repoInfo + hasMaterializeCommit + this
 //      resolution — each hook invocation is a fresh process, so an in-memory
 //      cache would not survive between calls; run-state.json is the durable
@@ -1842,8 +1989,9 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 //      pinned once at run start per `_shared/integration-model.md` and never
 //      re-derived mid-run; decisions.md is append-only, so a logged degrade
 //      line never disappears), so the cache can never produce a false allow
-//      later. See the PR-stamp branch below for the one case that must NOT
-//      be cached (a caught resolution exception).
+//      later. See the PR-stamp branch below for the two cases that must NOT
+//      be cached as `prExempt`: a caught resolution exception, and a degraded
+//      detection (#4578; memoized run-scoped instead, #4830).
 // Ambiguity resolves to allow throughout, same posture as E1.
 //
 // A provably foreign-owned run (isForeignSessionCall above) downgrades either
@@ -1884,13 +2032,17 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // All three stamps already recorded, OR the worktree+claim stamps are
   // recorded and the PR stamp is durably exempt (`prExempt`, memoized by the
   // PR-stamp branch below the first time it proves no further denial is
-  // possible): neither deny branch below can fire, so reach the same `{}`
+  // possible; an all-push call is the one exception, below): neither deny
+  // branch below can fire, so reach the same `{}`
   // here instead of paying for repoInfo's git spawn, hasMaterializeCommit's
   // git spawn, and (on the PR branch) a possible network-touching `gh` call —
   // on EVERY covered tool call of the run, including a `local-merge` run's
   // steady state, which never sets `runState.pr` and previously never
-  // reached this short-circuit at all. Purely an optimization; it changes no
-  // deny/allow outcome.
+  // reached this short-circuit at all. `prExempt` short-circuits every call
+  // except an all-push one (`allPush`): a first publish still needs its Step 1
+  // line (prStampReleased, #4344), so that call reaches the PR branch below.
+  // The test is `allPush`, not `firstPublish`, because `firstPublish` spawns
+  // git per target (hasNoUpstreamYet) -- the cost this short-circuit avoids.
   //
   // `runState.claimExempt` MUST be part of this condition (#2636) — a prior
   // version of this comment argued it was safe to omit because "the
@@ -1910,7 +2062,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // `hasLoggedClaim()` against that run's own `decisions.md` shows every one
   // of its 13 record numbers would have classified as "missing claim" had
   // the branch ever executed.
-  if (runState.worktree && (runState.pr || runState.prExempt) && runState.claimExempt) return {};
+  const allPush = isGitWrite && commandGitTargets.every((t) => t.action === 'push');
+  if (runState.worktree && (runState.pr || (runState.prExempt && !allPush)) && runState.claimExempt) return {};
 
   const { repoRoot: wtRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(ctx.cwd || process.cwd());
   if (indeterminate || !wtRoot || !isLinkedWorktree) return {};
@@ -2053,8 +2206,9 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   }
 
   if (!runState.pr) {
-    // lib/phase-exit/phase-exit.js prPushReleased applies this branch's release rules to the
-    // push phase-exit.js makes itself (#4026) -- a change to them here belongs there too.
+    // The release rule is prStampReleased above, which lib/phase-exit/phase-exit.js's
+    // prPushReleased also calls for the push phase-exit.js makes itself (#4026, #4344);
+    // a new release condition goes in that one function.
     // Model resolution moved ahead of the #989 exemption below (#1800) — the
     // exemption's own precondition now depends on `model` (a resolved
     // `local-merge` run never runs pr-early-run-lifecycle.md's Step 1 at all,
@@ -2067,39 +2221,58 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     // fail-open fallback — only a genuine resolution is a provable verdict
     // safe to cache below; a caught exception is a transient failure (e.g. a
     // flaky `gh` call) that a later, unmemoized call might resolve
-    // differently, including to `pr-first`.
+    // differently, including to `pr-first`. A detection that degraded (#4578
+    // Decision Q5: the forge probe timed out, then failed on retry, so the
+    // `local-merge` it returned is a fallback, not a verdict) is the same kind
+    // of transient failure and clears `modelResolved` too.
     let modelResolved = true;
+    let degraded = false;
+    const onDegrade = () => { degraded = true; };
+    // Hook-bounded, never gh-timeout-ms — see resolveRunPinnedIntegrationModel's
+    // comment (#4578 Q2).
     try {
-      model = override ? override(mainRoot) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);
+      model = override
+        ? override(mainRoot, { onDegrade })
+        : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade });
     } catch {
       model = 'local-merge'; // fail open: an unresolvable model is not provably pr-first
       modelResolved = false;
     }
+    // Decision Q5: a degraded detection is never cached as `prExempt`, exactly
+    // like the catch branch above. After a degrade the next covered call detects
+    // again once the run's degrade memo expires (#4830); after a catch it detects
+    // at once, since the catch branch writes no memo. A memo hit arrives through
+    // `onDegrade` too, so it never persists `prExempt` either.
+    if (degraded) modelResolved = false;
     // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
-    // before doing anything else in this branch — this is a narrow, one-shot
-    // allowance for THIS call only, never persisted as `prExempt`, so a push
-    // to an already-tracked branch (Step 2 already ran once, `gh pr create`
-    // never followed it) still falls through to the deny below, preserving
-    // the "keep pushing forever, never open the PR" case IL-131 exists to
-    // close. Applies only to the Bash/git branch (`commandGitTargets`) — an
+    // once the model is resolved — prStampReleased decides it, and this is a narrow,
+    // one-shot allowance for THIS call only, never persisted as `prExempt`, so a
+    // push to an already-tracked branch (Step 2 already ran once, `gh pr create`
+    // never followed it) goes to prStampReleased's tracked rules (`prExempt` or a
+    // logged FAILED line can release it) and otherwise gets the `record-pr` deny
+    // below, preserving the "keep pushing forever, never open the PR" case IL-131
+    // exists to close. Applies only to the Bash/git branch (`commandGitTargets`) — an
     // Edit/Write/NotebookEdit call (`commandGitTargets` null) is never a
     // push and always continues past this check.
-    if (Array.isArray(commandGitTargets) && commandGitTargets.length > 0
-      && commandGitTargets.every((t) => t.action === 'push' && hasNoUpstreamYet(t.dir))) {
-      // #1800: a resolved `local-merge` model never runs Step 1 (the whole
-      // file is skipped for it), so it stays exempt exactly as before —
-      // only `pr-first` gains the added precondition below. The exemption
-      // above answers "is this the branch's first publish push?" — it does
-      // not answer "did Step 1 run first?". A `pr-first` push additionally
-      // requires every target's branch to carry a Step 1 outcome line in
-      // decisions.md before the push it precedes is let through.
-      if (model !== 'pr-first') return {};
+    const firstPublish = Array.isArray(commandGitTargets) && commandGitTargets.length > 0
+      && commandGitTargets.every((t) => t.action === 'push' && hasNoUpstreamYet(t.dir));
+    // #1800: a resolved `local-merge` model never runs Step 1 (the whole
+    // file is skipped for it), so it stays exempt exactly as before —
+    // only `pr-first` gains the added precondition. `firstPublish` answers
+    // "is this the branch's first publish push?" — it does not answer "did
+    // Step 1 run first?". A `pr-first` push additionally requires every
+    // target's branch to carry a Step 1 outcome line in decisions.md before
+    // the push it precedes is let through, so the branch name is read (and
+    // `currentBranchName` spawns) only under `pr-first`.
+    let branch = null;
+    if (firstPublish && model === 'pr-first') {
       const branches = commandGitTargets.map((t) => currentBranchName(t.dir));
-      const [branch] = branches;
-      if (branch && branches.every((b) => b === branch)
-        && hasLoggedPrEarlyStep1(ctx.runDir, branch)) {
-        return {};
-      }
+      const [first] = branches;
+      if (first && branches.every((b) => b === first)) branch = first;
+    }
+    const released = prStampReleased({ runState, runDir: ctx.runDir, branch, model, hasNoUpstream: firstPublish });
+    if (firstPublish) {
+      if (released) return {}; // one-shot: never persisted as prExempt
       return stampCheckOutcome(
         ctx, 'record-pr-step1', wtRoot, warnings,
         `claude-tweaks: pipeline run ${path.basename(ctx.runDir)} resolves integration-model: pr-first and this ` +
@@ -2116,7 +2289,7 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
         isForeignSessionCall(ctx),
       );
     }
-    if (model === 'pr-first' && !hasLoggedPrDegrade(ctx.runDir)) {
+    if (!released) {
       return stampCheckOutcome(
         ctx, 'record-pr', wtRoot, warnings,
         `claude-tweaks: pipeline run ${path.basename(ctx.runDir)} resolves integration-model: pr-first and has a ` +
@@ -2134,15 +2307,18 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
         isForeignSessionCall(ctx),
       );
     }
-    // No further PR-stamp denial is possible for the rest of this run: model
+    // No further tracked-branch PR-stamp denial is possible for the rest of this run: model
     // resolved cleanly to something other than pr-first (the run's pin is
     // fixed at run start and never re-derived — `_shared/integration-model.md`
     // — so it cannot later flip to pr-first), or it resolved pr-first but the
     // degrade line already landed in decisions.md (append-only — once present
     // it is permanent). Persist the verdict so every later covered call for
-    // this run hits the check-1 short-circuit above instead of re-paying
+    // this run — except an all-push call, which still reaches this branch
+    // because a first publish needs its Step 1 line — hits the check-1
+    // short-circuit above instead of re-paying
     // repoInfo + hasMaterializeCommit + this same resolution. Skipped when
-    // `modelResolved` is false (the catch above fired) — see its comment.
+    // `modelResolved` is false (the catch above fired, or the forge detection
+    // itself degraded — #4578 Q5) — see its comment.
     if (modelResolved) {
       ctxLib.writeRunState(ctx.runDir, { prExempt: true });
     }
@@ -2222,13 +2398,21 @@ function checkDispatchConfigGate(ctx, commandGitTargets, deps = {}) {
 // (checkTeardownGate's foreign-owned teardown, checkBookkeepingStampsGate's
 // foreign-owned run); run() attaches them all to whatever outcome is reached.
 // `deps` is run()'s own pass-through of its test-only override bag — see
-// run()'s header comment below — forwarded verbatim to checkTeardownGate,
-// checkPipelineShadowGuard, checkDispatchConfigGate and
-// checkBookkeepingStampsGate as their own `deps`
+// run()'s header comment below — forwarded verbatim to checkReviewConsoleAskGate,
+// checkDispatchPromptGate, checkTeardownGate, checkPipelineShadowGuard,
+// checkDispatchConfigGate and checkBookkeepingStampsGate as their own `deps`
 // parameter, and read directly by E1 at the tail of this function.
 function runInner(ctx, indeterminateTargets, warnings, deps) {
   // #3712: no other gate applies to AskUserQuestion.
   if (ctx.input && ctx.input.tool_name === 'AskUserQuestion') return checkReviewConsoleAskGate(ctx, deps);
+  // #4589: no other gate applies to Agent/Task. Required lazily inside the try, as withGuardRewrite
+  // requires guard-rewrite.js: a load-time fault in dispatch-prompt-gate.js (or the task-call.js it
+  // requires) must cost only this gate, never this module's load (every Bash/Edit/Write deny gate).
+  if (ctx.input && (ctx.input.tool_name === 'Agent' || ctx.input.tool_name === 'Task')) {
+    let promptGate;
+    try { promptGate = require('./dispatch-prompt-gate'); } catch { return {}; }
+    return promptGate.checkDispatchPromptGate(ctx, deps, denyResult);
+  }
 
   const teardown = checkTeardownGate(ctx, warnings, deps);
   if (teardown.json) return teardown;
@@ -2245,6 +2429,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // three times per invocation (once per consumer) was pure repeated work.
   const segments = command ? resolvedGitSegments(command, ctx.cwd, walkOptions(ctx.cwd)) : null;
   checkGitStashWarn(segments, warnings);
+  checkProcessKillWarn(command, ctx.cwd, warnings);
   const commandGitTargets = segments ? gitTargetsFrom(segments) : null;
 
   const gate = checkWorktreeRequired(ctx, commandGitTargets, indeterminateTargets);
@@ -2391,8 +2576,11 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 // function's header comment), `fsImpl` (an fs-like object every
 // canonicalRealpath call resolves through, so a case-insensitive fake can stand
 // in for the volume, #3682; it also backs checkTeardownGate's existence probe
-// and its `findRunByWorktreePath` lookup, #3769), and `toplevel` (replaces the
-// `git rev-parse --show-toplevel` probe in E1 and checkDispatchConfigGate). The production
+// and its `findRunByWorktreePath` lookup, #3769, and checkDispatchPromptGate's
+// reads), `toplevel` (replaces the `git rev-parse --show-toplevel` probe in E1
+// and checkDispatchConfigGate), checkReviewConsoleAskGate's `readConsoleCeiling`,
+// and checkDispatchPromptGate's `mainCheckoutRoot`, `readRunState` and
+// `loadTaskPrompt` (#4589, that module's header comment). The production
 // call site (bin/hooks.js's `main()`) calls `mod.run({...})` with a single argument, so
 // `deps` is always `{}` there; only a test passes a second argument. Adding
 // this parameter is what lets a test exercise checkBookkeepingStampsGate's
@@ -2473,12 +2661,18 @@ module.exports = {
   checkDispatchConfigGate,
   hasLoggedPrDegrade,
   hasPrEarlyStep1LineFor,
-  // Exported for bin/lib/phase-exit/phase-exit.js (#4026), whose push applies the
-  // same pr-first no-PR release conditions as checkBookkeepingStampsGate's PR-stamp branch.
-  hasLoggedPrEarlyStep1,
+  // The one pr-first no-PR release rule (#4344): called by checkBookkeepingStampsGate's
+  // PR-stamp branch above and by bin/lib/phase-exit/phase-exit.js's prPushReleased (#4026).
+  prStampReleased,
+  // phase-exit.js's hasNoUpstreamYet seam.
   hasNoUpstreamYet,
   // Exported for check-pr-bookkeeping.js's phase-boundary precondition check
   // (#2472) to reuse rather than reimplement — the same integration-model
   // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.
   resolveRunPinnedIntegrationModel,
+  // Exported only for its unit test (#4830): the one place the degrade memo's
+  // boundary cases (age equal to the TTL, a future stamp, a non-finite or
+  // non-numeric stamp) are pinned directly. Its sole production caller is
+  // resolveRunPinnedIntegrationModel above.
+  isFreshForgeDegradeMemo,
 };

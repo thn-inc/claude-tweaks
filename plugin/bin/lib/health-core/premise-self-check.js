@@ -29,10 +29,17 @@ function posixShell(platform = process.platform) {
 // from execFileSync's throw); no exit code at all (timeout, spawn error)
 // re-throws. An omitted cwd runs in the process cwd. `platform` picks the
 // shell (posixShell) and `exec` is the spawn seam — both injectable so the
-// platform split is testable without stubbing process.platform (#3563).
-function defaultRunner(command, { cwd, timeoutMs, platform = process.platform, exec = execFileSync }) {
+// platform split is testable without stubbing process.platform (#3563). `env`
+// (optional, #5380) is the child environment; omitted = inherited.
+function defaultRunner(command, {
+  cwd, timeoutMs, platform = process.platform, exec = execFileSync, env,
+}) {
+  const options = {
+    cwd, stdio: 'ignore', timeout: timeoutMs, windowsHide: true,
+  };
+  if (env !== undefined) options.env = env;
   try {
-    exec(posixShell(platform), ['-c', command], { cwd, stdio: 'ignore', timeout: timeoutMs, windowsHide: true });
+    exec(posixShell(platform), ['-c', command], options);
     return 0;
   } catch (err) {
     if (typeof err.status === 'number') return err.status;
@@ -45,10 +52,12 @@ function defaultRunner(command, { cwd, timeoutMs, platform = process.platform, e
 // keeping. Every other outcome (non-zero, timeout, spawn error) is false:
 // fail toward "no auto-close", never toward keeping a line that may fire.
 function premiseReadsUnresolved(command, {
-  root, runner = defaultRunner, timeoutMs = PREMISE_SELF_CHECK_TIMEOUT_MS,
+  root, runner = defaultRunner, timeoutMs = PREMISE_SELF_CHECK_TIMEOUT_MS, env,
 } = {}) {
+  const options = { cwd: root, timeoutMs };
+  if (env !== undefined) options.env = env;
   try {
-    return runner(command, { cwd: root, timeoutMs }) === 0;
+    return runner(command, options) === 0;
   } catch {
     return false;
   }

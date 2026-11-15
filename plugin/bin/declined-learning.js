@@ -19,6 +19,7 @@
 
 const fs = require('fs');
 const { createFingerprint } = require('./lib/health-core/fingerprint');
+const { cwdOrUndefined } = require('./lib/health-core/io');
 const { lookupDecline, recordDecline } = require('./lib/declined-learning/store');
 
 const USAGE = [
@@ -27,17 +28,9 @@ const USAGE = [
   '',
 ].join('\n');
 
-function usageExit() {
-  process.stderr.write(USAGE);
-  process.exitCode = 2;
-}
-
-function readStdin() {
-  try {
-    return fs.readFileSync(0, 'utf8');
-  } catch {
-    return '';
-  }
+function usageExit(d) {
+  d.stderr(USAGE);
+  return 2;
 }
 
 function parseArgs(argv) {
@@ -51,25 +44,23 @@ function parseArgs(argv) {
 }
 
 // Reads stdin as JSON and validates it carries a non-empty `description`
-// string. Returns the parsed payload, or null (having already written the
-// error and exit code 1) on any failure — the shared payload gate for both
+// string. Returns { payload } on success, or { code } (having already written
+// the error; the code is 1) on any failure — the shared payload gate for both
 // verbs below.
-function readDescriptionPayload(verb) {
-  const raw = readStdin();
+function readDescriptionPayload(verb, d) {
+  const raw = d.stdin();
   let payload;
   try {
     payload = JSON.parse(raw);
   } catch (e) {
-    process.stderr.write(`declined-learning.js ${verb}: stdin is not valid JSON: ${e.message}\n`);
-    process.exitCode = 1;
-    return null;
+    d.stderr(`declined-learning.js ${verb}: stdin is not valid JSON: ${e.message}\n`);
+    return { code: 1 };
   }
   if (!payload || typeof payload !== 'object' || typeof payload.description !== 'string' || payload.description.trim() === '') {
-    process.stderr.write(`declined-learning.js ${verb}: stdin JSON must carry a non-empty "description" string\n`);
-    process.exitCode = 1;
-    return null;
+    d.stderr(`declined-learning.js ${verb}: stdin JSON must carry a non-empty "description" string\n`);
+    return { code: 1 };
   }
-  return payload;
+  return { payload };
 }
 
 // Shared by runLookup/runRecordDecline: the fingerprint both verbs key
@@ -78,20 +69,25 @@ function computeFingerprint(source, description) {
   return createFingerprint(source, ['description']).fingerprint({ description });
 }
 
-function runLookup(args) {
-  if (!args.source) { usageExit(); return; }
-  const payload = readDescriptionPayload('lookup');
-  if (!payload) return;
+// Both subcommands pass the store cwdOrUndefined(d): its anchor directory is undefined when d.cwd()
+// throws (a deleted working directory), and the store's own anchorRoot() then degrades open exactly
+// as it did before the entry contract.
+function runLookup(args, d) {
+  if (!args.source) return usageExit(d);
+  const read = readDescriptionPayload('lookup', d);
+  if (!read.payload) return read.code;
 
-  const fingerprint = computeFingerprint(args.source, payload.description);
-  const decline = lookupDecline(fingerprint);
-  process.stdout.write(`${JSON.stringify({ fingerprint, decline }, null, 2)}\n`);
+  const fingerprint = computeFingerprint(args.source, read.payload.description);
+  const decline = lookupDecline(fingerprint, { cwd: cwdOrUndefined(d) });
+  d.stdout(`${JSON.stringify({ fingerprint, decline }, null, 2)}\n`);
+  return 0;
 }
 
-function runRecordDecline(args) {
-  if (!args.source) { usageExit(); return; }
-  const payload = readDescriptionPayload('record-decline');
-  if (!payload) return;
+function runRecordDecline(args, d) {
+  if (!args.source) return usageExit(d);
+  const read = readDescriptionPayload('record-decline', d);
+  if (!read.payload) return read.code;
+  const { payload } = read;
 
   const fingerprint = computeFingerprint(args.source, payload.description);
   let entry;
@@ -104,26 +100,38 @@ function runRecordDecline(args) {
       reason: typeof payload.reason === 'string' ? payload.reason : null,
       source: args.source,
       subject: payload.description,
-    });
+    }, { cwd: cwdOrUndefined(d) });
   } catch (e) {
-    process.stderr.write(`declined-learning.js record-decline: ${e.message}\n`);
-    process.exitCode = 1;
-    return;
+    d.stderr(`declined-learning.js record-decline: ${e.message}\n`);
+    return 1;
   }
-  process.stdout.write(`${JSON.stringify({ fingerprint, entry }, null, 2)}\n`);
+  d.stdout(`${JSON.stringify({ fingerprint, entry }, null, 2)}\n`);
+  return 0;
 }
 
-function main() {
-  const verb = process.argv[2];
-  const args = parseArgs(process.argv.slice(3));
+function run(argv, deps = {}) {
+  const d = { ...realDeps, ...deps };
+  const verb = argv[0];
+  const args = parseArgs(argv.slice(1));
 
-  if (verb === 'lookup') { runLookup(args); return; }
-  if (verb === 'record-decline') { runRecordDecline(args); return; }
-  usageExit();
+  if (verb === 'lookup') return runLookup(args, d);
+  if (verb === 'record-decline') return runRecordDecline(args, d);
+  return usageExit(d);
 }
 
-if (require.main === module) {
-  main();
-}
+const realDeps = {
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  stdin: () => {
+    try {
+      return fs.readFileSync(0, 'utf8');
+    } catch {
+      return '';
+    }
+  },
+};
 
-module.exports = { parseArgs, USAGE };
+module.exports = { run, realDeps, parseArgs, USAGE };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

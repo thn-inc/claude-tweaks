@@ -3,7 +3,7 @@
 Canonical definition of the `### Try it` block: the human-facing walkthrough of what a finished
 run delivered — where to go, what to do, what to expect. Every surface that shows it cites this
 file and renders the block verbatim; none restates its fields. Consumers:
-`wrap-up/verification-brief.md` (composes it for every record), `wrap-up/verification-brief-parent-gate.md`
+`wrap-up/verification-brief.md` (composes it for every record; on a record with no parent it, like the observation plan, feeds the packet's Test guide, `_shared/acceptance-packet.md`), `wrap-up/verification-brief-parent-gate.md`
 (the end-to-end variant for a decomposition parent), `flow/summary-template.md` and
 `flow/multispec-summary.md` (render it in the Pipeline Summary), `demo/SKILL.md` and
 `demo/entry-paths.md` (render it first, read back from the brief or the PR's `try-it` run comment;
@@ -64,15 +64,15 @@ own design summary for the path that joins them.
 - Every command is runnable as written from the repository root — no inherited working directory.
 - Composed once per record per run, by `wrap-up/verification-brief.md`, into the session-scoped
   file `try-it-{N}.md` (`_shared/session-tmp-root.md`). Every later surface in the same run reads
-  that file rather than recomposing, so the summary, the PR and the brief show identical text. A
+  that file rather than recomposing, so the summary, the PR and the packet's Test guide draw on identical text. A
   surface that finds the file missing or empty (a different session, or the composing step never
   ran) composes the block fresh from the Sources above.
 
 ## Where it appears
 
 `wrap-up/verification-brief.md`'s Routing and **Posting it alone** decide where the block lands —
-in the record's Verification Brief, or alone as a `try-it` PR run comment
-(`_shared/pr-run-comments.md`) — and `verification-brief-parent-gate.md` decides where the
+in the Test guide of the record's acceptance packet, or, for a parent-linked sub-issue, alone as a
+`try-it` PR run comment (`_shared/pr-run-comments.md`) — and `verification-brief-parent-gate.md` decides where the
 end-to-end variant lands. Stated there once, not restated here. Every successful
 `/claude-tweaks:flow` run's Pipeline Summary renders the block (`flow/summary-template.md`,
 `flow/multispec-summary.md`), and `/claude-tweaks:demo` renders it first (its Step 2).

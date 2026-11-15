@@ -54,7 +54,7 @@ Severity: critical | high | medium | low | info
 Recommendation: file | drop — {one-line reason}
 
 You are the independent tiebreak judge for this one finding. Re-read the live file at Location and decide from the code itself whether the finding holds; you were deliberately given no account of how it was reported.
-Evidence is required for confirmed and refuted: cite the Location path exactly as given (the full repo-relative path, never a bare filename or another file) and a line within 5 of Location, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. cant-tell needs no Evidence line.
+Evidence is required for confirmed and refuted: cite the Location path exactly as given (the full repo-relative path, never a bare filename or another file) and a line within 5 of Location, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. The cited line must carry a run of at least 3 letters, digits or underscores (an identifier or keyword that long): a line with none, such as `});` or `if (fd === 2) {`, is rejected as unverified however exact the quote, so cite a neighbouring line within that range that has one. cant-tell needs no Evidence line.
 Recommendation file means the finding is worth a fix or a work record; drop means it is not worth acting on.
 A vacuity claim — that a test cannot fail, or that its cases are vacuous — cannot be confirmed by reading code: never reply confirmed for one.
 Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.

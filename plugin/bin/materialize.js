@@ -4,7 +4,7 @@
 //   node bin/materialize.js <n> --check [--repo owner/name] [--record-json <path>]
 // --check (#4027) runs only Resolution + the Materialization hard gate —
 // /flow Step 1 item 5's pre-flight — with no --run-dir and no write, and
-// prints {record, check: "passed", title, ceremony, surface}; its exit codes
+// prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; its exit codes
 // are the same 0 / 1 (gate failed) / 2 (unresolved, gh absent, malformed —
 // including --check beside --run-dir, --ceremony or --multi-record-slug).
 // Implements skills/flow/materialize.md's Resolution + Materialization hard
@@ -22,7 +22,8 @@
 // determinable git repository root; #959 — a --run-dir resolving INSIDE the
 // current linked worktree is anchored-equivalent and accepted, since this
 // CLI only ever writes to that worktree's own work/{n}-spec.md), an
-// unresolved record, or when `gh` is absent. #1210: when cwd is itself
+// unresolved record, an origin host that is not a known GitHub host (refused before any
+// gh call, #4933; an exported `GH_HOST` opts in), or when `gh` is absent. #1210: when cwd is itself
 // inside a linked worktree but --run-dir resolves somewhere else — the main
 // checkout (the standard $PIPELINE_RUN_DIR shape every other --run/--run-dir
 // consumer expects, passed unmodified from inside a worktree) or a DIFFERENT
@@ -45,13 +46,14 @@ const { execFileSync } = require('child_process');
 const {
   parseRecordFacets, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseDependencies,
 } = require('./lib/issues/record');
+const { parseCrossRepoDependencies } = require('./lib/issues/cross-repo-refs');
 const {
   shapeGate, liftMetadata, composeHeader, composeFile, describeDesignIntentError,
 } = require('./lib/issues/materialize-format');
 const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const {
-  parseRepo, ghAvailable, repoSlug, repoResolutionNote,
+  parseRepo, ghAvailable, repoSlug, repoResolutionNote, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -62,7 +64,7 @@ const { defaultRunner: runPremiseCommand, PREMISE_SELF_CHECK_TIMEOUT_MS } = requ
 const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
   + '       materialize.js <n> --check [--repo owner/name] [--record-json <path>]\n'
   + '  --check: Resolution + the Materialization hard gate only (#4027) — no --run-dir, no write;\n'
-  + '           prints {record, check: "passed", title, ceremony, surface}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
+  + '           prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
 
@@ -144,7 +146,8 @@ function resolveCheckoutRoot(cwd) {
 // it was read before filing. A non-zero exit is a normal outcome; no exit
 // code at all (ENOENT when no POSIX sh resolves — /bin/sh, or sh from PATH on
 // Windows — or a timeout) re-throws for computePremise's own catch to degrade
-// to null.
+// to null. The command inherits the process env as is: the --repo host pin
+// lives only in each gh call's own env (ghOptions), never in process.env (#4795).
 function runPremiseCheckDefault(command, { cwd } = {}) {
   return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
 }
@@ -203,28 +206,34 @@ function parseArgs(argv) {
 }
 
 const realDeps = {
-  ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8', windowsHide: true }),
+  ghView: (owner, repo, n, host) => {
+    const args = ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'];
+    return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true }));
+  },
   // #2590: closed PRs referencing this issue, searched by body text — used
   // to detect a sibling attempt that already reached this record's own
   // "premise disproved" conclusion. Read-only; no author-association gate
   // needed (unlike ghAuthorAssociation/runPremiseCheck, nothing here
   // executes body content — it only searches and pattern-matches it).
-  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS, windowsHide: true }),
+  ghSearchClosedPRs: (owner, repo, n, host) => {
+    const args = ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'];
+    return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS, windowsHide: true }));
+  },
   // Security fix (see TRUSTED_AUTHOR_ASSOCIATIONS above): GitHub's REST API
   // computes author_association from the issue author's *current* repo
   // relationship — not body content, so it can't be spoofed by editing the
   // issue. `gh issue view --json` has no such field to request; the REST
   // endpoint does. Only called when a Premise-check: line is actually
   // present (the uncommon case) — every other record pays no extra call.
-  ghAuthorAssociation: (owner, repo, n, host) => String(
-    execFileSync(
-      'gh',
-      ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
-        .concat(host && host !== 'github.com' ? ['--hostname', host] : []),
-      { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS, windowsHide: true },
-    ),
-  ).trim(),
+  ghAuthorAssociation: (owner, repo, n, host) => {
+    const args = ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
+      .concat(host && host !== 'github.com' ? ['--hostname', host] : []);
+    return String(execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS, windowsHide: true }))).trim();
+  },
   ghAvailable,
+  // #4505: an explicit --repo's host reaches every gh call, including the
+  // author-association lookup that threads no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   // #117: commit distance from a record's Verified-as-of: stamp to current
   // HEAD, and that commit's own date — both scoped to computeDrift above.
@@ -381,8 +390,14 @@ function run(argv, deps = realDeps) {
 
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+    if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+    else {
+      const gated = gateOriginRepo(remote, deps.gateDeps);
+      if (gated.refusal) { deps.stderr(`materialize.js: ${gated.refusal}\n`); return 2; }
+      repoSpec = gated.spec;
+    }
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+    if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { host, owner, repo } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host.
     const repoNote = repoResolutionNote(repoSpec);
@@ -420,6 +435,7 @@ function run(argv, deps = realDeps) {
   if (opts.check) {
     deps.stdout(JSON.stringify({
       record: opts.n, check: 'passed', title: record.title, ceremony: parseRecordFacets(record.labels).ceremony || null, surface: meta.surface || null,
+      bodyBlockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body)], // #4793, Decisions Q7: a foreign-only body still runs 2.7b's call
     }) + '\n');
     return 0;
   }
@@ -612,7 +628,7 @@ function run(argv, deps = realDeps) {
     ceremony,
     grants: facets.grants,
     fingerprint: extractFingerprint(record.body),
-    blockedBy: parseDependencies(record.body),
+    blockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body)], // #4793, Decisions Q7: foreign refs as owner/name#N, after this repository's numbers
     surface: meta.surface,
     designIntent: meta.designIntent,
     uiStack: meta.uiStack,

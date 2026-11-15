@@ -25,11 +25,22 @@ test('init/SKILL.md has a Step 21 stub after Step 20 and before the finalization
   const fin = SKILL.indexOf('### Finalizing the worktree-always Decision');
   assert.ok(step20 !== -1 && step21 !== -1 && fin !== -1, 'all three headings must exist');
   assert.ok(step20 < step21 && step21 < fin, 'Step 21 must sit between Step 20 and the finalization section');
-  const body = SKILL.slice(step21, fin);
+  const body = step21Stub(SKILL);
   assert.ok(body.includes('bootstrap/step-21-release.md'), 'the stub must cite its sub-file');
   assert.ok(body.includes('_shared/integration-model.md'), 'the stub routes on integration-model and must cite the fragment');
-  assert.ok(body.split('\n').filter((l) => l.trim() && !l.startsWith('---')).length <= 4, 'the stub must stay <= 4 lines');
+  assert.ok(stubLines(body) <= 4, 'the stub must stay <= 4 lines');
+  // Control: the slice ends at the next ### heading, so a longer Step 22 block never counts against Step 21.
+  const marker = 'Read `bootstrap/step-22-ci-workflow-review.md` for the full procedure.';
+  assert.ok(SKILL.includes(marker), 'the Step 22 block follows Step 21');
+  assert.equal(stubLines(step21Stub(SKILL.replace(marker, `${marker}\nOne more line.\nAnd another.`))), stubLines(body));
 });
+
+// Step 21's stub: from its heading to the next ### heading.
+function step21Stub(text) {
+  const start = text.indexOf('### Step 21: Release Bootstrap');
+  return text.slice(start, text.indexOf('\n### ', start + 1));
+}
+function stubLines(body) { return body.split('\n').filter((l) => l.trim() && !l.startsWith('---')).length; }
 
 test('the release Enhancement filter token is registered in SKILL.md and input-grammar.md, and the index lists step 21', () => {
   assert.match(SKILL, /Enhancement filter tokens\*\* — one per Optional Enhancement step:[^\n]*`release`/);

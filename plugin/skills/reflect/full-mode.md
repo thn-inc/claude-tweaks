@@ -110,8 +110,11 @@ text. The non-`EnterWorktree` path is rate-limited to at most one `git worktree 
 finds that ad-hoc run dir back by its recorded `worktree` field (`bin/lib/hooks/context.js`'s
 `findRunsByWorktreePath` — the plural sibling of the teardown gate's `findRunByWorktreePath`, since
 a session can leave behind more than one such stamp before it finally reaches wrap-up) and merges
-its events into the output alongside this run's own. A genuinely frictionless ad-hoc session still
-returns `[]` — nothing is manufactured. "Owns no run dir" excludes `resolveRun`'s `fallback` guess —
+its events into the output alongside this run's own. From the main checkout, where every
+main-checkout session's ad-hoc dir records that same path, the path match keeps only ad-hoc dirs
+owned by the current session id; a linked worktree's match is unchanged (#4704). A genuinely
+frictionless ad-hoc session still returns `[]` — nothing is manufactured. "Owns no run dir"
+excludes `resolveRun`'s `fallback` guess —
 the newest unowned run, routinely a sibling session's — which every friction write path treats as
 not owned (#2783; before that fix the guess silently suppressed the mint and absorbed the session's
 events). A formal `/claude-tweaks:build`/`/claude-tweaks:flow` run is unaffected: once
@@ -131,7 +134,9 @@ unions every ad-hoc dir owned by the current session id (`--session`, default
 `CLAUDE_CODE_SESSION_ID`). **Known limitation:** a session whose id changes between the friction and
 the wrap-up (a resumed or account-switched session that receives a new id) finds the earlier dir
 only by worktree path, i.e. only when wrap-up runs inside that same still-live worktree; otherwise
-those events stay in the earlier session's ad-hoc dir, unread; and since every subagent of a
+those events stay in the earlier session's ad-hoc dir, unread. From the main checkout the path match
+is itself session-scoped (#4704), so a changed id loses the earlier main-checkout dir even though
+the main checkout is always live; and since every subagent of a
 session shares its id, a sibling subagent's dir is unioned too once its worktree was removed (one
 whose worktree still exists is skipped).
 
@@ -163,11 +168,12 @@ before an `appendEvent` call whose target run dir would otherwise be null. It ke
 `worktree` field on whatever `ctx.cwd` resolves to in `git worktree list` — main checkout
 included, unlike the fallback above — which is safe specifically because the trigger is an actual
 denial, never ordinary activity: it cannot fire on a benign `git status` or read. `friction-events.js`
-finds it back the identical way, via `findRunsByWorktreePath`, so a later run dir created in the
-same session (this wrap-up run itself, or an earlier interrupted one) still surfaces it. Together,
-these two mechanisms mean an empty array from this lens's input command is not a false all-clear
-for a session that ran entirely in the main checkout and never entered a worktree — a genuine
-denial there is logged too, confirmed end-to-end by `tests/friction-main-checkout-denial-coverage.test.js`.
+finds it back via `findRunsByWorktreePath`, scoped from the main checkout to this session's own id
+(#4704), so a later run dir created in the same session (this wrap-up run itself, or an earlier
+interrupted one) still surfaces it. Together, these two mechanisms mean that, with a resolvable
+session id, an empty array from this lens's input command is not a false all-clear for a session
+that ran entirely in the main checkout and never entered a worktree — a genuine denial there is
+logged too, confirmed end-to-end by `tests/friction-main-checkout-denial-coverage.test.js`.
 
 **Lifecycle: surviving the orphan-mint sweep (#1117).** An ad-hoc dir never gets a `config.yml` in
 practice either (`/flow`'s Manifesto is what writes one; `bin/set-config.js`'s `setConfigLever`

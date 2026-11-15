@@ -29,7 +29,7 @@ SCANNED {HH:MM:SS} — Step 8 disposition: no staged review findings. Reversibil
 
 ### Review staging roster
 
-`Route` is one value from the closed set `confirmed`, `unconfirmed`, `contested`, `proposal`, `note`, `not staged by review`. The Routing table keys on that value, never on a prefix. `review-{n}` means `review-` followed by a number, so a `review-foo.md` matches no row.
+`Route` is one value from the closed set `confirmed`, `unconfirmed`, `contested`, `proposal`, `note`, `not staged by review`. The Routing table keys on that value, never on a prefix. `review-{n}` means `review-` followed by a number, so a `review-foo.md` matches no row. Every row's Example names at least one `staged/` file.
 
 | Prefix | Example | Staged by | Counted as | Route |
 |---|---|---|---|---|
@@ -37,13 +37,14 @@ SCANNED {HH:MM:SS} — Step 8 disposition: no staged review findings. Reversibil
 | `review-followup-` | `staged/review-followup-{n}.md` | `review/step3-routing.md` (Step 3; a confirmed finding whose fix is a new record, not a patch) | one finding per file, its severity read from the file's `Finding: {severity} {category} — …` line | `proposal` |
 | `review-unconfirmed-` | `staged/review-unconfirmed-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3 tiebreak) | one finding per entry line | `unconfirmed` |
 | `review-contested-` | `staged/review-contested-{n}.md` | `review/step3-debate-and-refutation.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |
-| `review-debate-` | `staged/review-debate-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |
+| `review-debate-` | `staged/review-debate-{n}.md` | no current writer — an older run's `_shared/multi-agent-coordination.md` Mode 2 file; `review/step3-debate-and-refutation.md` now writes `review-contested-` | one finding per file, both verdicts side by side | `contested` |
 | `reflect-` | `staged/reflect-{n}.md` | `reflect/SKILL.md` (Step 4's hindsight pass) | one finding per file | `proposal` |
 | `simplify-` | `staged/simplify-{n}.md` | `simplify/SKILL.md` (Step 5) | one finding per file | `proposal` |
 | `deepen-` | `staged/deepen-{n}.md`, `staged/deepen-collapse-{n}.patch` | `deepen/SKILL.md` (any deepen candidate list) | one finding per file | `proposal` |
 | `design-decision-` | `staged/design-decision-*.md` | `design-wrapper/modes/review.md` (Step 6.5) | one finding per file | `proposal` |
 | `test-fix-` | `staged/test-fix-{n}.patch` | `test/fix-mode.md` (Step 1.5's test gate) | one finding per file | `proposal` |
 | `flaky-allowlist-` | `staged/flaky-allowlist-{slug}.md` | `test/flake-handling.md` (Step 1.5's test gate) | one finding per file | `proposal` |
+| `visual-review-late-` | `staged/visual-review-late-{n}.md` | `_shared/rendered-ui-units.md` (a late review Step 6/6.5 result) | one finding per file | `proposal` |
 | `visual-review-` | `staged/visual-review-skipped.md`, `staged/visual-review-dev-url.md` | `visual-review/SKILL.md` (Step 6's skip notes) | not a finding | `note` |
 | `wrap-up-reflect-` | `staged/wrap-up-reflect-insights.md` | `reflect/full-mode.md` (`--source wrap-up` only) | — | `not staged by review` |
 | `specify-redteam-` | `staged/specify-redteam-{n}.md` | `_shared/multi-agent-coordination.md` (`/claude-tweaks:specify`'s red team) | — | `not staged by review` |

@@ -110,6 +110,11 @@ the worktree in place -- the orchestrator merges your branch and removes it. Wri
 open-items ledger rows only to {parent}/spec-{N}/ledger.md. Before replying, run `ls` on that
 path and on the same path under your own toplevel; LEDGER names whichever exists.
 
+Never kill a process by image or name (`taskkill /IM`, `pkill`, `killall`, `Stop-Process -Name`,
+a `pgrep`-fed `kill`): the process table is shared machine-wide with sibling sessions. Kill only
+a PID you started or your own port's listener (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`; win32:
+`taskkill /PID {pid} /T /F`); otherwise leave the process running and report it.
+
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
 MEMBER: #{N}

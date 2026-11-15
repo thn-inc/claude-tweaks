@@ -3,28 +3,28 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" session-start" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" session-start" }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" user-prompt-submit" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" user-prompt-submit" }
         ]
       }
     ],
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" session-end" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" session-end" }
         ]
       }
     ],
     "PreCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-compact" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" pre-compact" }
         ]
       }
     ],
@@ -32,37 +32,49 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" pre-tool-use" }
         ]
       },
       {
         "matcher": "Edit",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" pre-tool-use" }
         ]
       },
       {
         "matcher": "Write",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" pre-tool-use" }
         ]
       },
       {
         "matcher": "NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" pre-tool-use" }
         ]
       },
       {
         "matcher": "ExitWorktree",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" pre-tool-use" }
         ]
       },
       {
         "matcher": "AskUserQuestion",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" pre-tool-use" }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" pre-tool-use" }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" pre-tool-use" }
         ]
       }
     ],
@@ -70,37 +82,37 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" post-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" post-tool-use" }
         ]
       },
       {
         "matcher": "Write",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" post-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" post-tool-use" }
         ]
       },
       {
         "matcher": "Skill",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" post-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" post-tool-use" }
         ]
       },
       {
         "matcher": "AskUserQuestion",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" post-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" post-tool-use" }
         ]
       },
       {
         "matcher": "EnterWorktree",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" post-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" post-tool-use" }
         ]
       },
       {
         "matcher": "ExitWorktree",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" post-tool-use" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" post-tool-use" }
         ]
       }
     ],
@@ -108,14 +120,14 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" post-tool-use-failure" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" post-tool-use-failure" }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" subagent-stop" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh\" subagent-stop" }
         ]
       }
     ]
