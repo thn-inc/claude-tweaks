@@ -130,7 +130,7 @@ function newCtx(record, shared) {
     record, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
-    summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false,
+    summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
     shared,
   };
 }
@@ -477,6 +477,8 @@ const realDeps = {
   resolvePolicyCore: (opts, coreDeps) => require('../../resolve-policy').resolvePolicy(opts, coreDeps),
   evaluateRecordEligibility: (issue, opts) => require('../express/eligibility').evaluateRecordEligibility(issue, opts),
   evaluateAdmission: (input) => require('./admission').evaluateAdmission(input),
+  // The record's one reviewer answer (#5224), asked by the eligibility step.
+  reviewRequired: (opts) => require('./review').reviewRequired(opts),
   fetchNativeDependencies: (opts) => require('../issues/native-dependencies').fetchNativeDependencies(opts),
   fetchLinkedPRs: (opts) => require('../issues/linked-prs').fetchLinkedPRs(opts),
   launchWorker: (opts, d) => require('./worker').launchWorker(opts, d),

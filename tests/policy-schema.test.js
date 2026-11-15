@@ -150,8 +150,9 @@ test('POLICY_KEYS entries are unique', () => {
   // 100 -> 103, #5216 (pipeline driver admission): express-driver — enum off|split|on, default off; express-driver-wall-clock-minutes, express-driver-spend-ceiling-dollars — integer >= 1, ceilings
   // 103 -> 104, #5222: express-driver-review — enum off|on|beyond-express, default beyond-express, policyOnly
   // 104 -> 106, #5291 (trust verdict window bridge): trust-evaluation-window-days — integer >= 1, default 30; trust-follow-up-rate-max-percent — integer 0..100, default 30
-  assert.strictEqual(POLICY_KEYS.length, 106);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 106);
+  // 106 -> 109, #5224: express-driver-max-size — enum low|medium, default low; express-driver-max-key-files — integer >= 1, default 3; express-driver-max-lines — integer >= 1, Shape B (base 40, derives auto-merge-max-lines while source is default); all policyOnly
+  assert.strictEqual(POLICY_KEYS.length, 109);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 109);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -1021,6 +1022,9 @@ const DRIVER_KEYS = [
   { id: 'AC11.2', key: 'express-driver-wall-clock-minutes', def: 30, other: 99, policyVal: 5 },
   { id: 'AC11.3', key: 'express-driver-spend-ceiling-dollars', def: 10, other: 77, policyVal: 5 },
   { id: 'AC16.1', key: 'express-driver-review', def: 'beyond-express', other: 'on', policyVal: 'off' },
+  { id: 'AC7.1 (#5224)', key: 'express-driver-max-size', def: 'low', other: 'medium', policyVal: 'medium' },
+  { id: 'AC7.2 (#5224)', key: 'express-driver-max-key-files', def: 3, other: 9, policyVal: 5 },
+  { id: 'AC7.3 (#5224)', key: 'express-driver-max-lines', def: 40, other: 999, policyVal: 120 },
 ];
 
 // AC7 (#5384): the fresh-project cwd is the only input that yields `off` — this repo's own policy.yml pins `on`.
@@ -1102,7 +1106,64 @@ test('AC8.3: each ceiling\'s doc row states its unit', () => {
   assert.match(summaryOf('express-driver-spend-ceiling-dollars'), /\bwhole dollars\b/i);
 });
 
-test('AC11.4: the policyOnly bullet names all four keys', () => {
+test('AC11.4: the policyOnly bullet names every DRIVER_KEYS key', () => {
   const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
   for (const { key } of DRIVER_KEYS) assert.ok(line.includes('`' + key + '`'), key);
+});
+
+// #5224: the driver lane bound keys.
+const LANE_KEYS = ['express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines'];
+const resolveLane = (policyRaw, runConfigRaw = null, keys = LANE_KEYS) => resolvePolicyKeys(keys, { policyRaw, runConfigRaw });
+
+test('AC5.1 (#5224): the size and Key File keys resolve the express values unset', () => {
+  const r = resolveLane('');
+  assert.deepStrictEqual(r['express-driver-max-size'], { value: 'low', source: 'default' });
+  assert.deepStrictEqual(r['express-driver-max-key-files'], { value: 3, source: 'default' });
+  assert.deepStrictEqual(r['express-driver-max-lines'], { value: 40, source: 'default' });
+});
+
+test('AC5.5 (#5224): express-driver-max-lines unset derives whatever auto-merge-max-lines holds', () => {
+  const k = ['express-driver-max-lines'];
+  assert.deepStrictEqual(resolveLane('auto-merge-max-lines: 77\n', null, k)['express-driver-max-lines'], { value: 77, source: 'default' });
+  assert.deepStrictEqual(resolveLane('auto-merge-max-lines: x\n', null, k)['express-driver-max-lines'], { value: 40, source: 'default' });
+  assert.deepStrictEqual(resolveLane('', 'auto-merge-max-lines: 55\n', k)['express-driver-max-lines'], { value: 55, source: 'default' });
+  assert.deepStrictEqual(resolveLane('express-driver-max-lines: 0\nauto-merge-max-lines: 77\n', null, k)['express-driver-max-lines'], { value: 77, source: 'default', invalid: true });
+});
+
+test('AC5.2 (#5224): the Key File default equals EXPRESS_MAX_KEY_FILES', () => {
+  const { EXPRESS_MAX_KEY_FILES } = require('../plugin/bin/lib/express/eligibility');
+  assert.strictEqual(POLICY_KEYS.find((k) => k.key === 'express-driver-max-key-files').default, EXPRESS_MAX_KEY_FILES);
+});
+
+test('AC5.3 (#5224): malformed values never widen', () => {
+  for (const bad of ['high', 'Medium', 'med']) {
+    assert.deepStrictEqual(resolveLane(`express-driver-max-size: ${bad}\n`)['express-driver-max-size'], { value: 'low', source: 'default', invalid: true }, bad);
+  }
+  for (const bad of ['0', '2.5', 'x']) {
+    assert.deepStrictEqual(resolveLane(`express-driver-max-key-files: ${bad}\n`)['express-driver-max-key-files'], { value: 3, source: 'default', invalid: true }, bad);
+  }
+  for (const bad of ['0', '-1', 'x']) {
+    assert.deepStrictEqual(resolveLane(`express-driver-max-lines: ${bad}\n`)['express-driver-max-lines'], { value: 40, source: 'default', invalid: true }, bad);
+  }
+});
+
+test('AC7.3 (#5224): a run config setting express-driver-max-lines and auto-merge-max-lines feeds only the derivation', () => {
+  const k = ['express-driver-max-lines'];
+  const both = 'express-driver-max-lines: 999\nauto-merge-max-lines: 55\n';
+  assert.deepStrictEqual(resolveLane('', both, k)['express-driver-max-lines'], { value: 55, source: 'default' });
+  assert.deepStrictEqual(resolveLane('auto-merge-max-lines: 77\n', both, k)['express-driver-max-lines'], { value: 55, source: 'default' });
+  assert.deepStrictEqual(resolveLane('express-driver-max-lines: 120\n', both, k)['express-driver-max-lines'], { value: 120, source: 'policy' });
+});
+
+test('(#5224) the express-driver-max-lines summary names the reviewer condition', () => {
+  const { summary } = POLICY_KEYS.find((k) => k.key === 'express-driver-max-lines');
+  assert.match(summary, /reviewer step is on/);
+  assert.ok(summary.length <= 140, `${summary.length}`);
+});
+
+test('AC5.4 (#5224): set values resolve from policy', () => {
+  const r = resolveLane('express-driver-max-size: medium\nexpress-driver-max-key-files: 5\nexpress-driver-max-lines: 120\n');
+  assert.deepStrictEqual(r['express-driver-max-size'], { value: 'medium', source: 'policy' });
+  assert.deepStrictEqual(r['express-driver-max-key-files'], { value: 5, source: 'policy' });
+  assert.deepStrictEqual(r['express-driver-max-lines'], { value: 120, source: 'policy' });
 });
