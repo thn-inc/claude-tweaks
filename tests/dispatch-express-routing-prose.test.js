@@ -752,8 +752,7 @@ const STEP6_EXCEPTION_FACTS = [
 const ONE_CALL_FACTS = [
   [/read in the one `--values express-lane express-driver` call above, not a second one/, 'the Express lane paragraph names the one express-lane express-driver call'],
 ];
-const step6 = (text) => between(text, 
-'### Step 6: Settle', '## Reporting');
+const step6 = (text) => between(text, '### Step 6: Settle', '## Reporting');
 
 test('#5232 settle-and-merge.md names the driver route blocked stop as the exception to its main-thread rule', () => {
   const text = readText(SETTLE_FILE);
