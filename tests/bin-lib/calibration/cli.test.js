@@ -7,6 +7,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { TERMINAL_DECISION_VALUES } = require('../../../plugin/bin/lib/calibration/decisions-classifier.js');
 const { readText } = require('../../helpers/read-skill');
+const { spawnCli } = require('../../helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'calibration-report.js');
 
@@ -264,6 +265,14 @@ test('--runs rejects a non-numeric value with exit 2, instead of silently wideni
   } catch (err) {
     assert.strictEqual(err.status, 2);
   }
+});
+
+test('AC8.1: --runs abc exits 2 naming the value (script entry)', () => {
+  // Real process: proves the refusal exit code survives the script entry.
+  const res = spawnCli(CLI, ['--runs', 'abc', '--root', makeFixtureRoot()]);
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.stdout, '');
+  assert.strictEqual(res.stderr, '--runs requires a positive number, got: abc\n');
 });
 
 test('--runs as the last argument with no value exits 2 rather than reading undefined', () => {
