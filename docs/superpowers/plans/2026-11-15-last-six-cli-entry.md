@@ -28,7 +28,8 @@
 - `runCli` calls run one at a time (no `Promise.all`, no concurrent subtests). The `env` passed to `runCli` is the complete environment: pass `PATH`, `HOME`, `USERPROFILE`, `TMPDIR` (and `SystemRoot` on Windows) where the CLI or its children need them; give `runCli` and `spawnCli` the identical explicit `env` when comparing them. A converted file's local helper maps the helper's `code` onto the field name its assertions already use.
 - Each test left on a real process carries a one-line comment naming the process property it proves.
 - `NOT_YET_CEILING` in `tests/bin-lib/cli-entry-conformance.test.js` is not edited ("the sibling records of #5373 delete their own lines without ever editing this constant"). Each task deletes only its own CLI's `NOT_YET` line, in the same commit as the conversion (the walk fails a conforming file still listed).
-- Waived `tests/gh-host-seam-behavior.test.js`: read only — Task 6 Step 4 runs it unchanged; its 9 real-process `compose-subject.js` tests are deliberate (spec Deliverables) and stay.
+- Waived `tests/gh-host-seam-behavior.test.js`: read only — Task 6 Step 4 runs it unchanged; its 9 real-process `compose-subject.js` tests are deliberate (spec Deliverables) and stay, but are not compose-subject's AC5/AC7 smoke tests (spec `## Plan Review Clarifications`; Task 6 Step 0 adds those).
+- Task 1 Step 0's baseline was already taken by the orchestrator before any edit (13:04 UTC): `{run-dir}/procs-before.txt` / `procs-before.json` — `tests/statusline.test.js` 16 CLI processes, `tests/gh-host-seam-behavior.test.js` 73, 417 tests passing. Task 1 runs only `npm run test:perf` for its perf baseline.
 - Waived `tools/count-node-procs.js`: run only, in Task 1 Step 0 and the Post-task evidence section.
 - Waived `plugin/bin/lib/statusline-wrapper-source.js`: read only — Task 1 Step 3's `main() with no arguments` test reads it to confirm it still calls `.main()` and starts the status line as a script.
 - Waived `tests/bin-lib/exit-code-conformance.test.js`: read only — every task's guard must pass it unchanged; Common Step 5's full suite runs it.
@@ -83,7 +84,7 @@ test('AC5.1 AC7.1: script renders the payload and exits 0', () => { /* spawnCli(
 test('AC7.1: script given malformed JSON on stdin exits 0', () => { /* stdin 'not json' → code 0, stderr '' */ });
 ```
 
-Use a payload with `model`, `workspace.current_dir` (a temp dir with no git), `NO_COLOR: '1'` and a temp `HOME`/`USERPROFILE`, and the same expected stdout literal an existing `runStatusline` test already asserts for that shape.
+Use a payload with `model`, `workspace.current_dir` (a temp dir with no git, `fs.realpathSync`'d so the macOS `/private/var` spelling matches), `NO_COLOR: '1'` and a temp `HOME`/`USERPROFILE`, and the same expected stdout literal an existing `runStatusline` test already asserts for that shape. These two are the file's only status-line script runs: AC1's ceiling of 2 counts script runs (spec `## Plan Review Clarifications`). The 4 FIFO tests' `readerInChild` children (`node -e` requiring the module) stay as they are, each gaining a one-line comment naming the property (a blocking FIFO read would hang the test thread); they are listed in the PR body and not counted toward the ceiling.
 
 - [ ] **Step 2: Run them; they pass against the unconverted file. Commit.**
 
@@ -95,10 +96,8 @@ Expected: PASS. Commit `tests/statusline.test.js` alone: `Pin statusline script 
 In `tests/statusline.test.js`:
 
 ```js
-test('AC2.1: in-process run returns the same stdout as the spawned script for the same payload and env', async () => {
-  // env: { NO_COLOR: '1', HOME: home, USERPROFILE: home, PATH: process.env.PATH }, identical object to both calls
-  // assert.strictEqual((await runCli(STATUSLINE, [], { env, stdin, cwd: dir })).stdout, spawnCli(STATUSLINE, [], { env, stdin, cwd: dir }).stdout)
-});
+// AC2.1 adds no spawn: extend Step 1's success smoke test (rename it 'AC2.1 AC5.1 AC7.1: …') so the one spawnCli result it already holds is also compared with
+//   (await runCli(STATUSLINE, [], { env, stdin, cwd: dir })).stdout — the identical env object and stdin for both calls.
 test('AC8.1: payload directory wins over deps.cwd()', async () => { /* payload workspace.current_dir = A, runCli cwd = B → project segment names basename(A) */ });
 test('AC8.1: deps.cwd() is used when the payload has no directory', async () => { /* payload {}, runCli cwd = A → project segment names basename(A); fails if run reads process.cwd() */ });
 test('AC8.1: session segment reads the injected HOME through deps.homeDir()', async () => { /* seed <home>/.claude/statusline/segments/<id>.json; runCli env HOME=USERPROFILE=home → segment text present */ });
@@ -129,7 +128,7 @@ Expected: PASS. Then revert each thread-through once (payload-dir fallback to `p
 
 - [ ] **Step 7: Perf and process count**
 
-Run: `npm run test:perf` → within budget, save to `{run-dir}/perf-after.txt`. Run `CT_TEST_CONCURRENCY=6 node tools/count-node-procs.js --files-from {run-dir}/procs-files.txt` → `tests/statusline.test.js` starts at most 2 status-line processes (**AC1.1**).
+Run: `npm run test:perf` → within budget, save to `{run-dir}/perf-after.txt`. Run `CT_TEST_CONCURRENCY=6 node tools/count-node-procs.js --files-from {run-dir}/procs-files.txt` → `tests/statusline.test.js` runs the status-line script at most twice (**AC1.1**); the counter's raw `cli` number for the file is that plus the 4 FIFO `readerInChild` children — record both numbers for the PR body.
 
 - [ ] **Step 8: Commit**
 
@@ -177,7 +176,8 @@ git commit -m "Give the statusline an injectable entry — run(argv, deps), in-p
 - [ ] **Step 2: Failing in-process tests.**
   - `test('AC3.1: require() prints nothing and leaves process.exitCode undefined', …)` — spawn-free: `delete require.cache[CLI]`, capture `process.stdout.write`, `require(CLI)`, assert no write and `process.exitCode === undefined`.
   - `test('AC8.1: a relative --skill path resolves against deps.cwd()', …)` — fixture under tmp dir, `runCliSync(CLI, ['--skill', 'SKILL.md'], { cwd: tmp })` → code 0.
-  - `test('a missing relative --skill path prints the path as typed', …)` → code 2, stderr names `nope/SKILL.md` exactly as typed in the `cannot read --skill path:` line, matching what the script printed before (compare against `spawnCli` with the same cwd).
+  - `test('a missing relative --skill path prints the absolute path resolved against deps.cwd()', …)` → code 2, stderr `reachability-audit: cannot read --skill path: ${path.resolve(tmp, 'nope/SKILL.md')} (ENOENT)\n` (today's output prints `path.resolve(...)` and `err.code`, never `err.message`, so no swap-back applies here). `tmp` is `fs.realpathSync`'d.
+  - `test('a missing relative --mcp-server path prints err.message with the path as typed', …)` → code 2; the `cannot read/parse --mcp-server path:` line's `(…)` part names `nope.json` as typed, not the joined absolute path (the swap-back rule, Global Constraints); compare byte-for-byte against `spawnCli(CLI, ['--mcp-server', 'nope.json'], { cwd: tmp })` with `tmp` realpath'd.
   Run → FAIL.
 - [ ] **Step 3: Implement** `run(argv, deps)`: today's `main` body with `fail(msg)` returning 2 after `deps.stderr`, reads via `deps.readFile(resolveAgainst(deps.cwd(), p))`, the error message's resolved path swapped back to the typed spelling (Global Constraints), `deps.stdout(JSON line)`, return `result.clean ? 0 : 1`. The `cannot read` message keeps printing `path.resolve(opts.skill)`-equivalent text exactly as today — compute it as `path.resolve(deps.cwd(), opts.skill)` so it matches the unconverted output under the same cwd. Delete the bare `main(process.argv);` call; sync guard last; delete the `NOT_YET` line.
 - [ ] **Step 4: Run** `node --test tests/bin-lib/issues/reachability-audit.test.js tests/bin-lib/cli-entry-conformance.test.js` → PASS; revert `deps.cwd()` to `process.cwd()` once → AC8.1 fails; restore.
@@ -212,6 +212,7 @@ git commit -m "Give the statusline an injectable entry — run(argv, deps), in-p
 ### Task 5: sweep-stray-run-dirs.js
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/sweep-stray-run-dirs.js`
@@ -222,13 +223,13 @@ git commit -m "Give the statusline an injectable entry — run(argv, deps), in-p
 **Interfaces:**
 - Produces: `run(argv, deps) -> 0|1` (sync), `realDeps = { cwd: () => process.cwd(), env: process.env, stdout }`; `sweep({ root, dryRun, logPath, env = process.env })`, `hasTrackedWork(root, runDir, env = process.env)` — `repoPinnedEnv(env)` instead of `repoPinnedEnv()`; existing exports keep working.
 
-- [ ] **Step 1: Pin the script.** One `spawnCli` test — `// Real process: proves the script entry and exit code; the CLI has no argument refusal (unknown flags are ignored), so no non-zero smoke test.` — `AC5.1 AC7.1: --dry-run --root <fixture> prints the four summary lines and exits 0`. Run, PASS, commit alone.
+- [ ] **Step 1: Pin the script.** Two `spawnCli` tests, each with its process-property comment: `AC5.1 AC7.1: --dry-run --root <fixture> prints the summary lines and exits 0`, and `AC7.1: a failed archive exits 1 with a FAILED line on stdout and empty stderr` (the refusal path, spec `## Plan Review Clarifications`; induce the failure with a fixture whose archive twin path is blocked, e.g. a regular file already at `archive/{run-id}`). Run, PASS, commit alone.
 - [ ] **Step 2: Failing in-process tests.**
   - `test('AC4.1: in-process with a fixture cwd sweeps only under that directory', …)` — two git fixtures each holding a stray run dir with a tracked `work/1-spec.md`; `runCliSync(CLI, [], { cwd: fixtureA, env })` (env from `process.env` minus the four `GIT_*` vars, plus `PATH`) → fixtureA's stray dir archived, fixtureB untouched, stdout `root: <fixtureA>`.
-  - `test('AC8.1: a relative --root and --log resolve against deps.cwd()', …)`.
+  - `test('AC8.1: a relative --root and --log resolve against deps.cwd()', …)` — the log file lands under the injected cwd, and stdout's `log:` line prints the relative spelling as typed.
   - `test('AC8.1: git children get the injected env', …)` — env-only fixture: the injected env carries `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=core.excludesFile`… or another env-only switch that changes what `git ls-files` reports; the assertion fails when `hasTrackedWork` reads `process.env`. (`repoPinnedEnv` strips the four `GIT_*` location vars by design, so the probe must use a variable it keeps.)
   Run → FAIL.
-- [ ] **Step 3: Implement** `run`: `parseArgs(argv)`, `root = args.root ? path.resolve(deps.cwd(), args.root) : (mainCheckoutRoot(deps.cwd()) || deps.cwd())`, `logPath` resolved against `deps.cwd()` when relative, `sweep({ …, env: deps.env })`, the four `console.log` lines and the failure lines through `deps.stdout(line + '\n')`, return 1 on failures else 0. Thread `env` into every git child on the path (`hasTrackedWork`, `archiveRunDir` — add an `env` option defaulting to `process.env` where one is missing). Exports above the guard; sync guard last; delete the `NOT_YET` line.
+- [ ] **Step 3: Implement** `run`: `parseArgs(argv)`, `root = args.root ? path.resolve(deps.cwd(), args.root) : (mainCheckoutRoot(deps.cwd()) || deps.cwd())`, the log path handed to `fs`/`appendLog` is `resolveAgainst(deps.cwd(), args.logPath)` (unnormalized join, `plugin/bin/lib/health-core/io.js`) while the `log: …` line keeps printing `args.logPath` as typed (the default path, when no `--log` is given, prints as today), `sweep({ …, env: deps.env })`, the four `console.log` lines and the failure lines through `deps.stdout(line + '\n')`, return 1 on failures else 0. Thread `env` into every git child on the path (`hasTrackedWork`, `archiveRunDir` — add an `env` option defaulting to `process.env` where one is missing). Exports above the guard; sync guard last; delete the `NOT_YET` line.
 - [ ] **Step 4: Run** `node --test tests/sweep-stray-run-dirs.test.js tests/bin-lib/cli-entry-conformance.test.js tests/path-guard-conformance.test.js` plus the test files of any lib changed in Step 3 → PASS; revert the cwd and env thread-throughs once each → AC4.1 / AC8.1 fail; restore.
 - [ ] **Step 5: Commit** `Give sweep-stray-run-dirs.js an injectable entry, cwd through deps (#5386)`.
 
@@ -241,16 +242,33 @@ git commit -m "Give the statusline an injectable entry — run(argv, deps), in-p
 **Files:**
 - Modify: `plugin/bin/compose-subject.js`
 - Modify: `plugin/bin/lib/compose-subject.js` (`realDeps` lines 278-297; `run` from line 301)
+- Modify: `plugin/bin/lib/repo-resolve.js` (`remoteUrl` ~59-61, `ghAvailable`, `explicitRepoGhHost` ~366-381 — optional `{ cwd, env }`)
+- Test: `tests/bin-lib/repo-resolve.test.js` (existing suite must stay green)
 - Test: `tests/bin-lib/compose-subject.test.js`
 - Test: `tests/bin-lib/cli-entry-conformance.test.js` (delete its `NOT_YET` line)
 
 **Interfaces:**
-- Produces: `plugin/bin/compose-subject.js` exports `{ run, realDeps }` (the lib's), guard last. Lib `realDeps` gains `cwd: () => process.cwd()` and `env: process.env`; `readCommitScope` / `readCommitScopePaths` become `(cwd) => …` and `run` calls them with `deps.cwd()`; `runner` and `gitRunner` real values pass `cwd`/`env` taken from `deps` via `run` (seams become `(args, { cwd, env } = {})`, real values defaulting to today's behaviour when the option is absent, so existing fakes keep working).
+- Produces: `plugin/bin/compose-subject.js` exports `{ run, realDeps }` (the lib's), guard last. Lib `realDeps` gains `cwd: () => process.cwd()` and `env: process.env`. Every seam `run` reaches takes the injected values, each new parameter optional with today's ambient default so existing fakes and callers keep working:
+  - `readCommitScope(cwd)` / `readCommitScopePaths(cwd)` — `run` passes `deps.cwd()`.
+  - `runner(args, { cwd, env } = {})` and `gitRunner(args, { cwd, env } = {})` — `run` passes `{ cwd: deps.cwd(), env: deps.env }`.
+  - `remoteUrl({ cwd, env } = {})` (`git remote get-url origin`, `plugin/bin/lib/repo-resolve.js:59-61`) — `run` passes them.
+  - `ghAvailable({ cwd, env } = {})` (`gh --version` on the injected `PATH`).
+  - `pinGhHost(repoSpec, { cwd, env } = {})` → `explicitRepoGhHost` (`repo-resolve.js:366-381`) with that `cwd`/`env` in place of `process.cwd()`/`process.env`.
+  - `fetchIssueType` is handed a runner already bound to `{ cwd: deps.cwd(), env: deps.env }`.
+  - A relative `--out-dir` reaches `fs` as `resolveAgainst(deps.cwd(), outDir)`.
+  Modify `plugin/bin/lib/repo-resolve.js` (`remoteUrl`, `ghAvailable`, `explicitRepoGhHost`) for the options; name it in the PR body.
 
-- [ ] **Step 1: Failing test.** `test('AC8.1: run reads commit-scope through deps.cwd()', …)` in `tests/bin-lib/compose-subject.test.js`: call the lib `run` directly with fakes (`ghAvailable: () => true`, a `runner` returning a fixture issue JSON) and `cwd: () => tmp`, and a `readCommitScope` spy; assert the spy received `tmp`. And one asserting `runner` received `{ cwd: tmp, env: injected }`. Run → FAIL.
+- [ ] **Step 0: Pin the script (committed before the split).** In `tests/bin-lib/compose-subject.test.js`, two `spawnCli` tests, each with its process-property comment (spec `## Plan Review Clarifications`): `AC5.1 AC7.1: a record with a Type and a Release Note composes a subject — exit 0, stdout asserted` (fake `gh` on an injected `PATH`, reusing `tests/helpers/gh-host-seam.js`'s stub if it fits, returning a fixture issue; `--repo owner/name` so no origin probe), and `AC7.1: --bogus exits 1 with the usage on stderr`. Run, PASS, commit alone.
+
+- [ ] **Step 1: Failing tests** in `tests/bin-lib/compose-subject.test.js`, each calling the lib `run` directly with fakes (`ghAvailable`, a `runner` returning a fixture issue JSON) and `cwd: () => tmp`, `env: injected`:
+  - `test('AC8.1: run reads commit-scope through deps.cwd()', …)` — a `readCommitScope` spy received `tmp`.
+  - `test('AC8.1: runner, gitRunner, ghAvailable and the fetchIssueType runner receive the injected cwd and env', …)` — every recorded option equals `{ cwd: tmp, env: injected }`.
+  - `test('AC8.1: the origin read follows deps.cwd()', …)` — real `remoteUrl` (not faked), `cwd` = a fixture repo whose `origin` is `https://github.com/fixture/repo.git`, no `--repo`; the composed output resolves `fixture/repo` (env from `process.env` minus the four `GIT_*` vars, plus `PATH`). Fails when `remoteUrl` reads `process.cwd()`.
+  - `test('AC8.1: a relative --out-dir lands under deps.cwd()', …)`.
+  Run → FAIL.
 - [ ] **Step 2: Implement** as in Interfaces; `plugin/bin/compose-subject.js` becomes `const { run, realDeps } = require('./lib/compose-subject'); module.exports = { run, realDeps }; if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);`. Delete the `NOT_YET` line.
 - [ ] **Step 3: Check fail-closed names.** Confirm every lib `realDeps` key that starts `gh` is named `runner`, `ghAvailable` or another `FAIL_CLOSED_KEYS` name (`fetchIssueType` and `pinGhHost` start `gh` too — if a test of this CLI goes through `runCli`, add those names to `FAIL_CLOSED_KEYS` in `tests/helpers/run-cli.js` in this commit; if none does, record the reason in the PR body).
-- [ ] **Step 4: Run** `node --test tests/bin-lib/compose-subject.test.js tests/gh-host-seam-behavior.test.js tests/bin-lib/driver/merge.test.js tests/bin-lib/cli-entry-conformance.test.js` → PASS. `tests/gh-host-seam-behavior.test.js`'s 9 real-process tests are compose-subject's script smoke tests (**AC5.1**, **AC7.1**) and stay unconverted. Revert the `deps.cwd()` thread-through once → AC8.1 fails; restore.
+- [ ] **Step 4: Run** `node --test tests/bin-lib/compose-subject.test.js tests/gh-host-seam-behavior.test.js tests/bin-lib/repo-resolve.test.js tests/bin-lib/driver/merge.test.js tests/bin-lib/cli-entry-conformance.test.js` → PASS. `tests/gh-host-seam-behavior.test.js`'s 9 real-process tests stay unconverted and are not counted as its smoke tests (Step 0's two are). Revert each thread-through once (commit-scope cwd, runner option, origin read, `--out-dir`) → its AC8.1 test fails; restore.
 - [ ] **Step 5: Commit** `Re-export compose-subject's run and realDeps; thread cwd and env through the lib (#5386)`.
 
 ---
@@ -263,7 +281,7 @@ git commit -m "Give the statusline an injectable entry — run(argv, deps), in-p
 | AC2.1 | Task 1 test `AC2.1` |
 | AC3.1 | Task 3 test `AC3.1` |
 | AC4.1 | Task 5 test `AC4.1` |
-| AC5.1 | Each task's Step 1 pin test; Task 6 Step 4 |
+| AC5.1 | Each task's Step 1 pin test; Task 6 Step 0 |
 | AC6.1 | Each task deletes its own `NOT_YET` line; `tests/bin-lib/cli-entry-conformance.test.js` passes |
 | AC7.1 | Each task's Step 1 (two smoke tests where a refusal path exists, one otherwise with the reason) |
 | AC8.1 | Each task's `AC8.1` tests, each shown red once by reverting its thread-through |
