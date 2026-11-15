@@ -17,6 +17,7 @@
 // retired shell choreography in merge-check.md carried).
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { computeBlastRadius, BlastRadiusError, defaultGit } = require('./lib/blast-radius-cli.js');
 const { resolveAgainst } = require('./lib/health-core/io.js');
 
@@ -52,19 +53,25 @@ function run(argv, deps = {}) {
     }
   }
   if (!opts.base && !opts.integrationBranch) return fail(USAGE, d);
+  // d.cwd() throws when the working directory was deleted. Left undefined then, git starts in the
+  // inherited directory and its own failure is reported, as before the entry contract.
+  let cwd;
+  try { cwd = d.cwd(); } catch { cwd = undefined; }
   const rawRunDir = opts.runDir;
   if (rawRunDir !== undefined) {
     // An empty value is never a directory (fs.statSync('') throws); the join would turn it into the cwd.
-    opts.runDir = rawRunDir === '' ? rawRunDir : resolveAgainst(d.cwd(), rawRunDir);
-    if (rawRunDir === '' || !isDirectory(opts.runDir)) {
+    // Neither is a relative value with no readable cwd: fs.statSync of it failed the same way.
+    const unresolvable = rawRunDir === '' || (cwd === undefined && !path.parse(rawRunDir).root);
+    opts.runDir = unresolvable ? rawRunDir : resolveAgainst(cwd, rawRunDir);
+    if (unresolvable || !isDirectory(opts.runDir)) {
       return fail(`--run dir does not exist or is not a directory: ${rawRunDir}`, d);
     }
   }
   let result;
   try {
     result = computeBlastRadius(opts, {
-      git: (gitArgs) => defaultGit(gitArgs, { cwd: d.cwd(), env: d.env }),
-      cwd: d.cwd(),
+      git: (gitArgs) => defaultGit(gitArgs, { cwd, env: d.env }),
+      cwd,
     });
   } catch (err) {
     if (err instanceof BlastRadiusError) return fail(err.message, d);

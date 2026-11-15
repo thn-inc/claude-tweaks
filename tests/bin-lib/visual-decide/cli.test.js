@@ -23,13 +23,16 @@ async function run(args, { cwd, env, deps } = {}) {
   return { code, out: stdout, err: stderr };
 }
 
+// Cleanup stop; its output is ignored. run never rejects, so a rejection here is the helper's
+// leak guard, and it fails the test.
 async function stopQuiet(stateDir, opts) {
-  try {
-    await run(['stop', '--state', stateDir], opts);
-  } catch {
-    // best-effort cleanup
-  }
+  await run(['stop', '--state', stateDir], opts);
 }
+
+// A cwd() that throws the way process.cwd() does once the working directory has been deleted.
+const UNREADABLE_CWD = () => {
+  throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' });
+};
 
 // In-process stand-in for start's detached daemon. The fake spawn runs the server in this
 // process with the resolved args start gave it; the fake kill answers signal 0 as alive and
@@ -41,21 +44,28 @@ function inProcessDaemon() {
   // eslint-disable-next-line global-require
   const { startServer } = require(SERVER_LIB);
   let current = null;
+  const started = [];
   const closes = [];
   const spawnOpts = [];
+  const spawnArgs = [];
   const deps = {
     spawn: (cmd, args, options) => {
       spawnOpts.push(options);
+      spawnArgs.push(args);
       const { opts } = parseArgs(args.slice(1));
-      startServer({ dir: opts.dir, stateDir: opts.state, port: 0, idleMinutes: Number(opts['idle-minutes']) }).then(
-        (started) => {
-          current = started;
-          closes.push(new Promise((resolve) => {
-            started.server.once('close', resolve);
-          }));
+      const serving = startServer({ dir: opts.dir, stateDir: opts.state, port: 0, idleMinutes: Number(opts['idle-minutes']) }).then(
+        (server) => {
+          current = server;
+          started.push(server);
+          return new Promise((resolve) => {
+            server.server.once('close', resolve);
+          });
         },
-        () => {},
       );
+      // A startServer rejection is kept in `serving` and rethrown by closed(); this branch only
+      // stops it surfacing as an unhandled rejection before the test gets there.
+      serving.catch(() => {});
+      closes.push(serving);
       return { unref() {} };
     },
     kill: (pid, signal) => {
@@ -67,9 +77,15 @@ function inProcessDaemon() {
     opts: { deps },
     // The options each fake spawn call received, in call order.
     spawnOpts,
+    // The daemon flags each fake spawn call received, parsed as the daemon parses its argv.
+    spawnArgs: () => spawnArgs.map((args) => parseArgs(args.slice(1)).opts),
     // The latest server's own http.Server, for closing it without the marker.
     server: () => current.server,
-    // Resolves once every server this stand-in started has closed.
+    // Stops every server this stand-in started (stop is idempotent): cleanup for a test whose
+    // CLI stop may have missed the server, so closed() cannot hang on it.
+    stopAll: () => started.forEach((server) => server.stop()),
+    // Resolves once every server this stand-in started has closed; rejects with the error of
+    // a server that failed to start.
     closed: () => Promise.all(closes),
   };
 }
@@ -131,6 +147,71 @@ test('AC9.1: relative --state resolves against the injected cwd', async () => {
   assert.equal(stopped.stdout, 'stopped\n');
 });
 
+test('AC9.1: relative --dir/--state resolve against the injected cwd for start, its daemon argv and stop', { timeout: 10000 }, async () => {
+  const D = mkTmp('vd-cwd-');
+  assert.notEqual(fs.realpathSync(D), fs.realpathSync(process.cwd()));
+  fs.mkdirSync(path.join(D, 'content'));
+  const daemon = inProcessDaemon();
+  const opts = { ...daemon.opts, cwd: D };
+  let stopped;
+  try {
+    const started = await run(['start', '--dir', 'content', '--state', 'st', '--idle-minutes', '2'], opts);
+    assert.equal(started.code, 0, started.err);
+    const [daemonArgs] = daemon.spawnArgs();
+    assert.equal(daemonArgs.dir, path.resolve(D, 'content'));
+    assert.equal(daemonArgs.state, path.resolve(D, 'st'));
+    assert.equal(daemon.spawnOpts[0].cwd, D);
+    assert.equal(fs.existsSync(path.join(D, 'st', 'server-info')), true);
+    stopped = await run(['stop', '--state', 'st'], opts);
+  } finally {
+    daemon.stopAll();
+    await daemon.closed();
+  }
+  assert.equal(stopped.code, 0, stopped.err);
+  assert.equal(stopped.out, 'stopped\n');
+  assert.equal(fs.existsSync(path.join(D, 'st', 'server-stopped')), true);
+
+  // The daemon path itself, run in-process with idleMinutes=0 so it stops at once. start creates
+  // the state dir before it spawns the daemon, so the test does too.
+  fs.mkdirSync(path.join(D, 'st2'));
+  const ran = await run(['start', '--dir', 'content', '--state', 'st2', '--idle-minutes', '0', '--__daemon__'], { cwd: D });
+  assert.equal(ran.code, 0, ran.err);
+  assert.equal(fs.existsSync(path.join(D, 'st2', 'server-stopped')), true);
+});
+
+// A deleted working directory makes the real cwd() throw. Absolute --dir/--state never needed it,
+// and the daemon then inherits the working directory, as before the entry contract.
+test('an unreadable cwd leaves absolute --dir/--state working: status, start, stop and the daemon', { timeout: 10000 }, async () => {
+  const dir = mkTmp('vd-content-');
+  const stateDir = mkTmp('vd-state-');
+  const never = await run(['status', '--state', stateDir], { deps: { cwd: UNREADABLE_CWD } });
+  assert.equal(never.code, 0, never.err);
+  assert.equal(never.out, 'never-started\n');
+
+  const daemon = inProcessDaemon();
+  const opts = { deps: { ...daemon.opts.deps, cwd: UNREADABLE_CWD } };
+  let stopped;
+  try {
+    const started = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '2'], opts);
+    assert.equal(started.code, 0, started.err);
+    assert.equal(daemon.spawnOpts[0].cwd, undefined);
+    assert.equal(daemon.spawnArgs()[0].state, stateDir);
+    stopped = await run(['stop', '--state', stateDir], opts);
+  } finally {
+    daemon.stopAll();
+    await daemon.closed();
+  }
+  assert.equal(stopped.code, 0, stopped.err);
+  assert.equal(stopped.out, 'stopped\n');
+
+  const daemonState = mkTmp('vd-state-');
+  const ran = await run(['start', '--dir', dir, '--state', daemonState, '--idle-minutes', '0', '--__daemon__'], {
+    deps: { cwd: UNREADABLE_CWD },
+  });
+  assert.equal(ran.code, 0, ran.err);
+  assert.equal(fs.existsSync(path.join(daemonState, 'server-stopped')), true);
+});
+
 test('AC1: start returns detached-running server-info (mode 0600, url has ?key=); second start refuses naming the URL', async () => {
   const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
@@ -148,6 +229,10 @@ test('AC1: start returns detached-running server-info (mode 0600, url has ?key=)
     assert.equal(spawned.env.VD_SENTINEL, 'ac1');
     assert.equal(spawned.detached, true);
     assert.equal(spawned.windowsHide, true);
+    // ...and its argv carries the requested --idle-minutes, marked as the daemon path.
+    const [daemonArgs] = daemon.spawnArgs();
+    assert.equal(daemonArgs['idle-minutes'], '2');
+    assert.equal(daemonArgs.daemon, true);
     const info = JSON.parse(first.out);
     assert.match(info.url, /\?key=/);
 
@@ -207,7 +292,8 @@ test('review fix: --idle-minutes 0 is honored by the daemon, not silently replac
   // the 240-minute default would instead hit this test's timeout.
   const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
-  await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '0', '--__daemon__']);
+  const res = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '0', '--__daemon__']);
+  assert.equal(res.code, 0, res.err);
   assert.equal(
     fs.existsSync(path.join(stateDir, 'server-stopped')),
     true,
@@ -322,7 +408,7 @@ test('stop leaves server-stopped and status reports stopped when the daemon exit
   }
 });
 
-test('AC6 (CLI path): fractional --idle-minutes self-exits and status reflects stopped', { timeout: 10000 }, async () => {
+test('AC6 (daemon path, in-process): fractional --idle-minutes self-exits and status reflects stopped', { timeout: 10000 }, async () => {
   const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
   // The daemon path in-process: run resolves once the 3s idle timeout has stopped the server.

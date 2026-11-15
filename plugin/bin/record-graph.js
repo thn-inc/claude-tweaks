@@ -9,10 +9,17 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { resolveAgainst } = require('./lib/health-core/io');
 const { buildGraph } = require('./lib/record-graph/layout');
 const { renderD2 } = require('./lib/record-graph/render-d2');
 const { renderSvg } = require('./lib/record-graph/render-svg');
+
+// The path to hand fs: a path with a root never reads d.cwd() (resolveAgainst leaves it unchanged
+// anyway), so a deleted working directory fails only a relative path.
+function fsPath(d, p) {
+  return path.parse(p).root ? p : resolveAgainst(d.cwd(), p);
+}
 
 function parseArgs(argv, { now } = realDeps) {
   const args = { _: [], generatedAt: now().toISOString() };
@@ -54,7 +61,7 @@ function cmdRender(args, d) {
   }
   let records;
   try {
-    records = JSON.parse(fs.readFileSync(resolveAgainst(d.cwd(), jsonPath), 'utf8'));
+    records = JSON.parse(fs.readFileSync(fsPath(d, jsonPath), 'utf8'));
   } catch (e) {
     d.stderr(`render: could not read faceted-record JSON at ${jsonPath} — ${e.message}\n`);
     return 2;
@@ -70,7 +77,7 @@ function cmdRender(args, d) {
     : renderSvg(graph, { generatedAt: args.generatedAt });
 
   if (args.out) {
-    fs.writeFileSync(resolveAgainst(d.cwd(), args.out), output);
+    fs.writeFileSync(fsPath(d, args.out), output);
     const omitted = graph.edgesOmitted ? ', edges omitted' : '';
     d.stderr(`render: wrote ${args.out} (${records.length} records, ${graph.edges.length} edges${omitted})\n`);
   } else {

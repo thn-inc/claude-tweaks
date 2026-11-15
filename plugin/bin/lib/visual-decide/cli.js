@@ -55,6 +55,22 @@ function requireOpts(opts, names, command) {
   }
 }
 
+// A --dir/--state value as one absolute, normalized path. An absolute value never reads d.cwd(),
+// so a deleted working directory fails only a relative one.
+function resolveFrom(d, p) {
+  return path.isAbsolute(p) ? path.resolve(p) : path.resolve(d.cwd(), p);
+}
+
+// The daemon's cwd, or undefined when d.cwd() throws (a deleted working directory): the child
+// then inherits it, as before the entry contract; its --dir/--state are absolute either way.
+function childCwd(d) {
+  try {
+    return d.cwd();
+  } catch {
+    return undefined;
+  }
+}
+
 function pidAlive(pid, kill = (p, s) => process.kill(p, s)) {
   try {
     kill(pid, 0);
@@ -124,8 +140,8 @@ async function findFreePortFrom(base) {
 
 async function cmdStart(opts, d) {
   requireOpts(opts, ['dir', 'state'], 'start');
-  const dir = path.resolve(d.cwd(), opts.dir);
-  const stateDir = path.resolve(d.cwd(), opts.state);
+  const dir = resolveFrom(d, opts.dir);
+  const stateDir = resolveFrom(d, opts.state);
   fs.mkdirSync(stateDir, { recursive: true });
 
   const existing = readInfo(stateDir);
@@ -161,7 +177,7 @@ async function cmdStart(opts, d) {
       String(idleMinutes),
       '--__daemon__',
     ],
-    { cwd: d.cwd(), env: d.env, detached: true, stdio: 'ignore', windowsHide: true },
+    { cwd: childCwd(d), env: d.env, detached: true, stdio: 'ignore', windowsHide: true },
   );
   child.unref();
 
@@ -183,8 +199,8 @@ async function runDaemon(opts, d) {
   // eslint-disable-next-line global-require
   const { startServer } = require('./server.js');
   const { server, info, stop } = await startServer({
-    dir: path.resolve(d.cwd(), opts.dir),
-    stateDir: path.resolve(d.cwd(), opts.state),
+    dir: resolveFrom(d, opts.dir),
+    stateDir: resolveFrom(d, opts.state),
     port: Number(opts.port) || 0,
     // `|| DEFAULT` would silently replace an explicit `--idle-minutes 0`
     // (Number('0') is falsy) with the 240-minute default — check presence,
@@ -230,7 +246,7 @@ function reportAlreadyStopped(stateDir, d) {
 
 async function cmdStop(opts, d) {
   requireOpts(opts, ['state'], 'stop');
-  const stateDir = path.resolve(d.cwd(), opts.state);
+  const stateDir = resolveFrom(d, opts.state);
   const info = readInfo(stateDir);
   if (!info || !pidAlive(info.pid, d.kill)) {
     return reportAlreadyStopped(stateDir, d);
@@ -263,7 +279,7 @@ async function cmdStop(opts, d) {
 
 async function cmdStatus(opts, d) {
   requireOpts(opts, ['state'], 'status');
-  const stateDir = path.resolve(d.cwd(), opts.state);
+  const stateDir = resolveFrom(d, opts.state);
   const info = readInfo(stateDir);
   if (!info) {
     d.stdout('never-started\n');

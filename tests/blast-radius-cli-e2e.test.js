@@ -213,6 +213,29 @@ test('AC9.1: a relative --run that exists resolves against the injected cwd', ()
   assert.strictEqual(JSON.parse(res.stdout).config.autoMergeMaxLines, 7);
 });
 
+// A deleted working directory makes the real cwd() throw. Before the entry contract git then
+// failed in it and blast-radius printed git's one-line failure; with cwd() unreadable, git starts
+// in the inherited directory, which GIT_DIR (injected) points away from any repository, so git's
+// own failure is what reaches stderr. A relative --run is not a directory, as fs.statSync gave.
+test('an unreadable cwd gives the same one-line failure and exit 1, never a stack trace', () => {
+  const noRepo = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-nocwd-')), 'none.git');
+  const opts = {
+    env: { ...CLI_ENV, GIT_DIR: noRepo },
+    deps: { cwd: () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); } },
+  };
+  const base = cli(['--base', 'HEAD'], opts);
+  assert.strictEqual(base.status, 1);
+  assert.strictEqual(base.stdout, '');
+  assert.strictEqual(
+    base.stderr,
+    'blast-radius: --base "HEAD" does not resolve to a commit: Command failed: git rev-parse --verify --end-of-options HEAD^{commit}\n',
+  );
+  const rel = cli(['--base', 'HEAD', '--run', 'rel'], opts);
+  assert.strictEqual(rel.status, 1);
+  assert.strictEqual(rel.stdout, '');
+  assert.strictEqual(rel.stderr, 'blast-radius: --run dir does not exist or is not a directory: rel\n');
+});
+
 // Repo B is bare (GIT_DIR only, injected): `git rev-parse --show-toplevel` fails there while
 // merge-base still resolves, so the policy root must fall back to the injected cwd D, a non-repo
 // directory that is not the process's cwd.

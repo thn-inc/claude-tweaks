@@ -98,6 +98,21 @@ test('render --out writes the file instead of stdout', () => {
   assert.match(result.stderr, /wrote .*record-graph\.d2 \(3 records, 1 edges\)/);
 });
 
+// A deleted working directory makes the real cwd() throw; absolute <json> and --out never needed it.
+test('render with absolute <json> and --out succeeds with an unreadable cwd, as before the entry contract', () => {
+  const jsonPath = tmpJson(FIXTURE_RECORDS);
+  const outPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'record-graph-cli-nocwd-')), 'record-graph.d2');
+  const args = ['render', jsonPath, '--format', 'd2', '--work-links', 'body-text', '--generated-at', 'X'];
+  const expected = cli(args).stdout;
+  const result = cli([...args, '--out', outPath], {
+    deps: { cwd: () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); } },
+  });
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.strictEqual(result.stdout, '');
+  assert.strictEqual(result.stderr, `render: wrote ${outPath} (3 records, 1 edges)\n`);
+  assert.strictEqual(fs.readFileSync(outPath, 'utf8'), expected);
+});
+
 test('render sets truncated when record count equals --fetch-limit', () => {
   const jsonPath = tmpJson(FIXTURE_RECORDS);
   const out = cli([

@@ -107,7 +107,8 @@ function run(argv, deps = {}) {
     return 2;
   }
 
-  const root = path.resolve(d.cwd(), parsed.root);
+  // An absolute --root never reads d.cwd(), so a deleted working directory fails only a relative one.
+  const root = path.isAbsolute(parsed.root) ? path.resolve(parsed.root) : path.resolve(d.cwd(), parsed.root);
   let rootStat = null;
   try { rootStat = fs.statSync(root); } catch { /* doesn't exist, or unreadable */ }
   if (!rootStat || !rootStat.isDirectory()) {

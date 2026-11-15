@@ -164,6 +164,20 @@ test('AC9.1: a relative --root resolves against the injected cwd', () => {
   assert.strictEqual(JSON.parse(res.stdout).path, path.join(parent, 'proj', '.claude-tweaks', 'verify-scope.json'));
 });
 
+// A deleted working directory makes the real cwd() throw; an absolute --root never needed it.
+test('an absolute --root succeeds with an unreadable cwd, as before the entry contract', () => {
+  const root = tmpRoot('ivs-nocwd-');
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'proj', scripts: { test: 'node --test' } }));
+  const expected = cli(['--root', root, '--json']);
+  const res = cli(['--root', root, '--json'], {
+    deps: { cwd: () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); } },
+  });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(res.stderr, '');
+  assert.strictEqual(res.stdout, expected.stdout);
+  assert.strictEqual(JSON.parse(res.stdout).path, path.join(root, '.claude-tweaks', 'verify-scope.json'));
+});
+
 test('(j) --drift with an unparseable declaration prints its errors on stderr and exits 1', () => {
   const root = tmpRoot('ivs-baddecl-');
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'proj' }));

@@ -13,6 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('../helpers/run-cli');
 const { lookupDecline } = require('../../plugin/bin/lib/declined-learning/store');
+const { mainCheckoutRoot } = require('../../plugin/bin/lib/hooks/worktree-detect');
 
 const CLI = path.join(__dirname, '..', '..', 'plugin', 'bin', 'declined-learning.js');
 // The complete environment for a call; NODE_OPTIONS and the counter's log path ride along on
@@ -152,6 +153,11 @@ test('AC9.1: record-decline writes the store under the injected cwd, not this ch
 
 test('record-decline under a non-git injected cwd lands the store there, not under the process cwd', () => {
   const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'declined-learning-plain-'));
+  assert.strictEqual(
+    mainCheckoutRoot(plain),
+    null,
+    `the fixture must sit outside any repository, or the run writes that repository's store: ${plain}`,
+  );
   const description = `non-git ${process.pid} ${Date.now()}`;
   const r = runCliSync(CLI, ['record-decline', '--source', 'reflect'], {
     cwd: plain, env: CLI_ENV, stdin: JSON.stringify({ description, reason: 'r' }),
@@ -161,6 +167,23 @@ test('record-decline under a non-git injected cwd lands the store there, not und
   const store = JSON.parse(fs.readFileSync(path.join(plain, '.claude-tweaks', 'declined-learning', 'store.json'), 'utf8'));
   assert.strictEqual(store[fingerprint].reason, 'r');
   assert.strictEqual(lookupDecline(fingerprint, { cwd: process.cwd() }), null, 'the process cwd store must hold no entry for it');
+});
+
+// A deleted working directory makes the real cwd() throw. lookup degrades open as it did before
+// the entry contract: the store's anchorRoot() catches the throw and the read finds nothing.
+test('lookup with an unreadable cwd degrades open: exit 0 and a null decline', () => {
+  const description = `deleted-cwd ${process.pid} ${Date.now()}`;
+  const input = JSON.stringify({ description });
+  const expected = run(['lookup', '--source', 'reflect'], { input });
+  const r = runCliSync(CLI, ['lookup', '--source', 'reflect'], {
+    env: CLI_ENV,
+    stdin: input,
+    deps: { cwd: () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); } },
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stderr, '');
+  assert.strictEqual(r.stdout, expected.stdout);
+  assert.strictEqual(JSON.parse(r.stdout).decline, null);
 });
 
 test('empty stdin keeps the not-valid-JSON exit 1', () => {

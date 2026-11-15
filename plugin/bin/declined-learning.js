@@ -68,13 +68,23 @@ function computeFingerprint(source, description) {
   return createFingerprint(source, ['description']).fingerprint({ description });
 }
 
+// The store's anchor directory, or undefined when d.cwd() throws (a deleted working directory):
+// the store's own anchorRoot() then degrades open exactly as it did before the entry contract.
+function storeCwd(d) {
+  try {
+    return d.cwd();
+  } catch {
+    return undefined;
+  }
+}
+
 function runLookup(args, d) {
   if (!args.source) return usageExit(d);
   const read = readDescriptionPayload('lookup', d);
   if (!read.payload) return read.code;
 
   const fingerprint = computeFingerprint(args.source, read.payload.description);
-  const decline = lookupDecline(fingerprint, { cwd: d.cwd() });
+  const decline = lookupDecline(fingerprint, { cwd: storeCwd(d) });
   d.stdout(`${JSON.stringify({ fingerprint, decline }, null, 2)}\n`);
   return 0;
 }
@@ -96,7 +106,7 @@ function runRecordDecline(args, d) {
       reason: typeof payload.reason === 'string' ? payload.reason : null,
       source: args.source,
       subject: payload.description,
-    }, { cwd: d.cwd() });
+    }, { cwd: storeCwd(d) });
   } catch (e) {
     d.stderr(`declined-learning.js record-decline: ${e.message}\n`);
     return 1;
