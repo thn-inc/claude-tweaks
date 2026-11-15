@@ -70,9 +70,9 @@ function captureStdio(fn) {
   }
 }
 
-// harness-health.js and journey-health.js are on the entry contract (#5380): main() returns the
-// exit code and never sets process.exitCode, so their rows assert the return value and that
-// process.exitCode is untouched.
+// All four health CLIs (code-health.js, docs-health.js, harness-health.js, journey-health.js) are on
+// the entry contract (#5380, #5381): main() returns the exit code and never sets process.exitCode,
+// so their rows assert the return value and that process.exitCode is untouched.
 function returnedCode(fn) {
   const original = process.exitCode;
   process.exitCode = undefined;
