@@ -180,9 +180,9 @@ Its numbers come from Phase 5.
 
 ## Phase 8 — Repository weight
 
-**8.1 Working plans out of git.** `docs/superpowers/plans/` holds 79 plan files (2.8 MB) that `/claude-tweaks:tidy` deletes in batches after their runs end. Stop tracking them, or delete each at merge. The record checks every reader first.
+**8.1 Working plans out of git.** `docs/superpowers/plans/` holds 79 plan files (2.8 MB) that `/claude-tweaks:tidy` deletes in batches after their runs end: 699 added and 641 deleted on `main` in 30 days. The mechanism to delete each at wrap-up exists: the policy key `superpowers-plans-retention` has a `prune-after-wrapup` value, and this repository leaves it at `keep-forever`. The record sets it here, checks every reader first, and leaves the plugin default alone.
 
-**8.2 Changelog size.** `CHANGELOG.md` is 547 KB. Keep a bounded number of releases in the file and link to GitHub releases for the rest. The record checks what release-please and `/claude-tweaks:release` read from it (#5508 is open on that reader).
+**8.2 Changelog size.** `CHANGELOG.md` is 557 KB in 335 sections; the newest 50 take 197 KB. Keep a bounded number of releases in the file, set by a new policy key that is off by default. Only 61 of the 320 tags have a GitHub release, so a link to GitHub releases covers the recent sections only; the trimmed file also names the commit at which it was last whole. The release residue probe and `/claude-tweaks:tidy`'s Backfill action must respect the floor, or the next tidy puts the removed headings back.
 
 ## Not planned
 
