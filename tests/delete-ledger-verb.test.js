@@ -9,6 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { cleanGitEnv } = require('./helpers/git-fixtures');
 const { runCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -324,9 +325,7 @@ test('AC3.1: a failed append keeps stdout and exit 0 and adds one stderr line', 
 // environment the verb sees: the ambient one minus the four repo-pointing git variables, with any
 // ambient run dir neutralized (#1130), and gh pointed at an unreachable host.
 function inProcessEnv(env = {}) {
-  const ambient = { ...process.env };
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete ambient[key];
-  return { ...ambient, PIPELINE_RUN_DIR: '', GH_HOST: 'localhost', GH_TOKEN: 'x', ...env };
+  return { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', GH_HOST: 'localhost', GH_TOKEN: 'x', ...env };
 }
 
 function runInProcess(args, { cwd, env } = {}) {

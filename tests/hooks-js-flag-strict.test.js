@@ -21,7 +21,7 @@ const { BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, KNOWN_FLAGS, USAGE, VALUE_FLAGS,
 const { ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
 const { BACKGROUND_BUDGET_MS } = require('../plugin/bin/lib/reconcile/budget');
 const { readText } = require('./helpers/read-skill');
-const { fixtureGit } = require('./helpers/git-fixtures');
+const { cleanGitEnv, fixtureGit } = require('./helpers/git-fixtures');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -55,9 +55,7 @@ const OFFLINE_GH = { GH_HOST: 'localhost', GH_TOKEN: 'x', GH_REPO: '' };
 // var (#1130). The four repo-pointing git variables are dropped from the ambient copy, so a git
 // hook's GIT_DIR cannot steer the verb's git children to another repository.
 function hookEnv(env = {}) {
-  const ambient = { ...process.env };
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete ambient[key];
-  return { ...ambient, PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env };
+  return { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env };
 }
 
 // In-process (#5375): the call goes through hooks.js's run(argv, deps). Real-process coverage is
@@ -65,6 +63,10 @@ function hookEnv(env = {}) {
 function runHook(args, { cwd = HOOK_SANDBOX, env = {} } = {}) {
   return runCli(HOOKS, args, { cwd, env: hookEnv(env) });
 }
+
+// An options object without its undefined-valued keys: strict deep equality tells an absent key from an
+// undefined-valued one, which is not a behavior difference here. Every defined field is still compared.
+const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 
 // reconcile() takes no env, so a real pass in this process would start its git and gh children
 // on the runner's own environment. The reconcile verbs therefore run with reconcile() and the
@@ -206,7 +208,7 @@ test('#4777: reconcile --json with no typo runs for real (positive control for t
   assert.equal(result.code, 0);
   // In place of the real pass's cache stamp and fast-forward: reconcile() got the parsed flags,
   // and the converged pass handed the deferred checks to the background spawn.
-  assert.deepStrictEqual(calls, [{ dryRun: false, cwd: root, mcpReachable: false, checks: INLINE_CHECKS, budgetMs: undefined, skipCacheStamp: undefined }]);
+  assert.deepStrictEqual(calls.map(defined), [{ dryRun: false, cwd: root, mcpReachable: false, checks: INLINE_CHECKS }]);
   assert.deepStrictEqual(spawnCalls, [{ root, cwd: root, sessionId: 'flag-strict-session' }]);
   assert.deepStrictEqual(JSON.parse(result.stdout).background, { checks: CLI_DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
 });
@@ -263,7 +265,7 @@ test('#4777: a flagless verb still runs bare', async () => {
   assert.ok(result.stdout.startsWith('reconcile:'), result.stdout);
   // Positive control for reconcile-summary's refusal test, in place of the real fast-forward:
   // the bare run reached its mirror-only reconcile() call and printed that call's mirror result.
-  assert.deepStrictEqual(calls, [{ cwd: root, checks: ['mirror'], skipCacheStamp: true }]);
+  assert.deepStrictEqual(calls.map(defined), [{ cwd: root, checks: ['mirror'], skipCacheStamp: true }]);
   assert.match(result.stdout, /mirror ff ok/);
 });
 
@@ -287,7 +289,7 @@ test('#4777: reconcile-background with no typo writes its status file (positive 
   });
   assert.equal(result.stdout, 'claude-tweaks: reconcile-background complete\n');
   assert.ok(fs.existsSync(path.join(root, STATUS)), 'a real background pass writes its status file');
-  assert.deepStrictEqual(calls, [{ cwd: root, checks: BACKGROUND_CHECKS, sessionId: 'flag-strict-bg', budgetMs: BACKGROUND_BUDGET_MS }]);
+  assert.deepStrictEqual(calls.map(defined), [{ cwd: root, checks: BACKGROUND_CHECKS, sessionId: 'flag-strict-bg', budgetMs: BACKGROUND_BUDGET_MS }]);
 });
 
 test('#4777: adopt-run-dir refuses an undeclared flag before adopting', async () => {

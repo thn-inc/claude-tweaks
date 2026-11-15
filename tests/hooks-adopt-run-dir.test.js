@@ -15,7 +15,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { cleanGitEnv, gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
 const { USAGE } = require('../plugin/bin/hooks.js');
 const { runCli } = require('./helpers/run-cli');
 
@@ -214,8 +214,7 @@ test('AC10.1: a relative --worktree resolves against the injected cwd', async ()
   const wt = linkedWorktreeOf(main);
   const runId = '2026-01-01T000000-spec-10';
   const runDir = makeRunDir(main, runId, { decisions: '- AUTO 00:00:00 — one\n' });
-  const env = { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' };
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[key];
+  const env = { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' };
   const r = await runCli(HOOKS, ['adopt-run-dir', '--run', runDir, '--worktree', path.relative(main, wt)], { cwd: main, env });
   assert.deepStrictEqual(r, { code: 0, stdout: 'copied: decisions.md\n', stderr: '' });
   assert.strictEqual(fs.readFileSync(path.join(destDirFor(wt, runId), 'decisions.md'), 'utf8'), '- AUTO 00:00:00 — one\n');

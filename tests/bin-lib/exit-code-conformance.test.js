@@ -20,8 +20,11 @@ const { readText } = require('../helpers/read-skill');
 const ROOT = path.join(__dirname, '..', '..');
 
 // The two exceptions #1535's final whole-branch review verified safe:
-// hooks.js's own stdout goes through a synchronous fs.writeSync(1, ...) with
-// nothing pending to flush, and statusline-wrapper-source.js deliberately
+// hooks.js's hook-event tail writes stdout synchronously (realDeps.stdoutSync),
+// and its verb stdout (realDeps.stdout, a Promise around process.stdout.write)
+// is awaited before the entry's process.exit(code) at the three flush sites
+// whose output a caller parses (resolve-ledger, ledger-row's JSON,
+// check-pass-reentry); statusline-wrapper-source.js deliberately
 // hard-stops on a child process's own exit code. hooks.js's entry
 // `.catch(() => process.exit(0))` now only catches harness EVENTS failures
 // (the never-break-a-session invariant): main() turns a VERBS command's

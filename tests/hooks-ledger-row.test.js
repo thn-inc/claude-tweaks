@@ -13,7 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { parseLedger } = require('../plugin/bin/lib/wrap-up/pack');
-const { fixtureGit } = require('./helpers/git-fixtures');
+const { cleanGitEnv, fixtureGit } = require('./helpers/git-fixtures');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -31,22 +31,14 @@ after(() => {
   for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// The ambient environment minus the four repo-pointing git variables, so a git hook's GIT_DIR
-// cannot steer a fixture's setup git, or the verb's git children, to another repository.
-function withoutGitDiscovery() {
-  const env = { ...process.env };
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[key];
-  return env;
-}
-
 function git(args, cwd) {
-  return fixtureGit(args, { cwd, encoding: 'utf8', env: withoutGitDiscovery() });
+  return fixtureGit(args, { cwd, encoding: 'utf8', env: cleanGitEnv() });
 }
 
 // The complete env a hooks.js call sees. PIPELINE_RUN_DIR: '' neutralizes any ambient run-dir env var (#1130).
 function hookEnv(env = {}) {
   return {
-    ...withoutGitDiscovery(), PIPELINE_RUN_DIR: '', CLAUDE_CODE_SESSION_ID: SESSION, ...env,
+    ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CLAUDE_CODE_SESSION_ID: SESSION, ...env,
   };
 }
 
