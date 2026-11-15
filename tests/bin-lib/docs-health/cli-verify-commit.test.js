@@ -97,7 +97,7 @@ test('AC3.1, AC3.2: an in-process verify-commit that deepens a shallow clone pas
   const calls = [];
   const envBefore = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   const res = cli(['verify-commit', origin.root, '--root', dir, '--remote', 'origin'], {
-    env: { ...process.env, CLAUDE_TWEAKS_LOCK_WAIT_MS: '7' },
+    env: { CLAUDE_TWEAKS_LOCK_WAIT_MS: '7' }, // sweepCli merges this over the ambient env, minus GIT_*
     deps: {
       lock: (p, opts) => {
         // envAtCall sees a set-then-restore swap of process.env around the lock, which the

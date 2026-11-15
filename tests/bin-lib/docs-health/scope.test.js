@@ -8,6 +8,7 @@ const { listDocs, extractDomainPaths, domainChurn, selectTarget } = require('../
 const { listTargets } = require('../../../plugin/bin/lib/harness-health/scope');
 const { listJourneys } = require('../../../plugin/bin/lib/journey-health/scope');
 const { STALE_DAYS } = require('../../../plugin/bin/lib/docs-health/score');
+const { withoutAmbientGitVars } = require('../../helpers/git-env');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-scope-')); }
 
@@ -294,8 +295,7 @@ test('selectTarget without opts.dir considers every doc under docs/ (no scoping 
 });
 
 test('selectTarget passes env to domainChurn (#5381)', () => {
-  const clean = { ...process.env };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete clean[k];
+  const clean = withoutAmbientGitVars(process.env);
   const B = tmp();
   const git = (args) => execFileSync('git', ['-C', B, ...args], { env: clean, stdio: 'pipe' });
   git(['init', '-q']);

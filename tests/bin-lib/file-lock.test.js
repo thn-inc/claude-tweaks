@@ -35,13 +35,13 @@ test('acquireLock: parent directory missing -> creates it and still acquires the
 // Runs acquireLock against a Date.now that advances 25 ms per read, so the
 // wait it honoured is read off a virtual clock, not a real-time budget that
 // flakes under load (tests/wall-clock-budget-conformance.test.js).
-function acquireOnVirtualClock(lockPath, opts) {
+function acquireOnVirtualClock(lockPath, opts, acquire = acquireLock) {
   const realNow = Date.now;
   let virtual = 0;
   let first = null;
   Date.now = () => { virtual += CLOCK_STEP_MS; if (first === null) first = virtual; return virtual; };
   try {
-    const result = acquireLock(lockPath, opts);
+    const result = acquire(lockPath, opts);
     // The first read is the one that sets the deadline, so `waited` is the
     // wait acquireLock chose, independent of how often its loop reads the clock.
     return { result, waited: virtual - first };
@@ -64,6 +64,29 @@ test('acquireLock: an explicit waitMs wins over CLAUDE_TWEAKS_LOCK_WAIT_MS', () 
   try {
     const { result, waited } = acquireOnVirtualClock(lockPath, { waitMs: 150 });
     assert.equal(result, null);
+    assertWaited(waited, 150);
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+    else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prev;
+    releaseLock(held);
+  }
+});
+
+test('withLock: an explicit waitMs is passed through to acquireLock and wins over CLAUDE_TWEAKS_LOCK_WAIT_MS', () => {
+  const lockPath = path.join(tmpDir(), '.x.lock');
+  const held = acquireLock(lockPath);
+  const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '0';
+  try {
+    // failClosed turns the missed lock into a throw, so the wait is observable on the virtual clock.
+    const { result, waited } = acquireOnVirtualClock(lockPath, { waitMs: 150, failClosed: true }, (p, o) => {
+      try {
+        return withLock(p, () => 'ran', o);
+      } catch (e) {
+        return e.code;
+      }
+    });
+    assert.equal(result, 'LOCK_TIMEOUT');
     assertWaited(waited, 150);
   } finally {
     if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;

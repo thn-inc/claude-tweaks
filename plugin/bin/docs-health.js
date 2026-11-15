@@ -350,6 +350,11 @@ function cmdVerifyCommit(args, ctx) {
   return 0;
 }
 
+// The in-process entry (#5381): `deps` is { stdout(text), stderr(text), cwd(), env, lock }
+// and nothing here reaches process.* — the exit code is returned, never set.
+// Everything that holds io or env (durable state, the shared sub-command
+// factories) is built per call from `deps`, so an injected stderr/env reaches
+// every child git and every message.
 function run(argv, deps = realDeps) {
   const { stderr } = deps;
   const durable = createDurable({ env: deps.env, stderr });

@@ -307,8 +307,7 @@ test('AC7.1: validate-findings --min-confidence bogus --dry-run exits 2 with the
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([]));
 
-  const env = { ...process.env, LC_ALL: 'C', LANG: 'C' };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
+  const env = { ...withoutAmbientGitVars(process.env), LC_ALL: 'C', LANG: 'C' };
   const r = spawnCli(CLI, ['validate-findings', findingsFile, '--root', root, '--min-confidence', 'bogus', '--dry-run'], { env, cwd: root });
   assert.strictEqual(r.code, 2);
   assert.strictEqual(r.stdout, '');
