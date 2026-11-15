@@ -42,7 +42,7 @@ const path = require('node:path');
 
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { readRunState } = require('./lib/hooks/context');
-const { injectedGhDeps } = require('./lib/repo-resolve');
+const { injectedGhDeps, pickInjected } = require('./lib/repo-resolve');
 const { resolveAgainst } = require('./lib/health-core/io');
 
 // The plugin payload root — the directory with `skills/` directly beneath it
@@ -560,7 +560,7 @@ function runVerifyVerb(args, d) {
   // Every git and gh child the checks start goes through d.git/d.gh with the
   // injected process context; gateDeps carries the same env, stderr and home
   // directory to the origin gate.
-  const ctx = { env: d.env, stderr: d.stderr, homeDir: d.homeDir };
+  const ctx = pickInjected(d);
   const { rows, exitCode } = runVerify({
     runDir: resolvedDir, originalRunDir: args.runDirPath, base: args.base, repoRoot, cwd,
     deps: { git: (a, c) => d.git(a, c, ctx), gh: (a, c) => d.gh(a, c, ctx), gateDeps: injectedGhDeps(ctx) },
@@ -730,7 +730,7 @@ function runFinishConsole(args, d) {
     // reads under the injected env, and its `gh repo view` probe through the
     // one d.gh seam (verify's runner options: 5000 ms timeout, piped stderr).
     // pack.js stays lazily loaded: only that fallback needs it.
-    const ctx = { env: d.env, stderr: d.stderr, homeDir: d.homeDir };
+    const ctx = pickInjected(d);
     const resolveBase = (wt) => {
       const { resolveWorktreeBase, defaultDeps } = require('./lib/wrap-up/pack');
       return resolveWorktreeBase(wt, { ...defaultDeps(wt, { env: d.env }), ghSync: (a, o = {}) => d.gh(a, o.cwd, ctx) });
@@ -870,6 +870,9 @@ function run(argv, deps = {}) {
       d.stderr(`wrap-up-engine.js: ${wtDetect.unanchoredRunDirNoRepoMessage(cwd)}\n`);
       return 2;
     }
+    // The guard compares one absolute, normalized value against the main checkout root, while fs
+    // access below keeps resolveAgainst's unnormalized join, so a trailing slash or a `..` after a
+    // symlink reaches the kernel as typed (.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md).
     if (!wtDetect.isAnchoredUnderRoot(path.resolve(cwd, args.runDir), mainRoot)) {
       d.stderr(`wrap-up-engine.js: ${wtDetect.unanchoredRunDirShadowMessage(args.runDir, mainRoot)}\n`);
       return 2;

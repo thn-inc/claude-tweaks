@@ -748,9 +748,18 @@ test('render --section with a bare unrecognized value (no procedure: prefix) sti
 // tests below stay as two script-entry smoke tests plus one fd-0 stdin
 // process-property test.
 
-// The parsed worklist the script printed for AC4.2; the in-process parity
-// check reads it.
-let scriptPlanStdout;
+// The parsed worklist the script printed for AC4.2, spawned once and memoized so the
+// script test and the in-process parity check share one process and either runs alone.
+let scriptPlanCache;
+function scriptPlan() {
+  if (!scriptPlanCache) {
+    const r = spawnCli(CLI, ['plan', '--run-dir', makeRunDir(), '--base', baseSha, '--dry-run'], { cwd: repoDir });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.strictEqual(r.stderr, '');
+    scriptPlanCache = JSON.parse(r.stdout);
+  }
+  return scriptPlanCache;
+}
 
 test('AC4.1: script with no verb prints usage and exits 2', () => {
   // real process: proves the shebang, the require.main guard and the exit code of the script entry
@@ -762,11 +771,7 @@ test('AC4.1: script with no verb prints usage and exits 2', () => {
 
 test('AC4.2: script plan --dry-run prints the worklist JSON', () => {
   // real process: the script entry's success path prints the worklist through real stdout
-  const r = spawnCli(CLI, ['plan', '--run-dir', makeRunDir(), '--base', baseSha, '--dry-run'], { cwd: repoDir });
-  assert.strictEqual(r.code, 0, r.stderr);
-  assert.strictEqual(r.stderr, '');
-  scriptPlanStdout = JSON.parse(r.stdout);
-  assert.strictEqual(scriptPlanStdout.rows.length, 8);
+  assert.strictEqual(scriptPlan().rows.length, 8);
 });
 
 test('real stdin: a non-ASCII record payload decodes through fd 0', () => {
@@ -837,10 +842,9 @@ test('AC2.1: a usage error then a valid plan return 2 then 0 — no exit code ca
 });
 
 test('AC4.2: in-process plan stdout equals the script plan stdout', () => {
-  assert.ok(scriptPlanStdout, 'the AC4.2 script test runs first and records the script plan stdout');
   const r = run(['plan', '--run-dir', makeRunDir(), '--base', baseSha, '--dry-run']);
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.deepStrictEqual(JSON.parse(r.stdout), scriptPlanStdout);
+  assert.deepStrictEqual(JSON.parse(r.stdout), scriptPlan());
 });
 
 test('relative --run-dir resolves against the injected cwd', () => {

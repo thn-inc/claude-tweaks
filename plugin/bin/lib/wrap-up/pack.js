@@ -94,6 +94,9 @@ function defaultGhSync(args, opts) {
 // key, an error entry, or a null/absent value all read as ''. One call
 // resolves every key the pack needs.
 // `env` is the caller's injected environment (#5379); absent, the git child inherits the real one.
+// `cwd` is the repo-root fallback when `git rev-parse --show-toplevel` fails (it replaces
+// `process.cwd()` there, policy-schema.js), so an in-process caller's policy read never falls back
+// to the test runner's cwd.
 function defaultResolvePolicy(keys, cwd, env) {
   const out = {};
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });

@@ -408,6 +408,14 @@ test('finish-console with malformed stdin JSON exits 1, not 2', () => {
   assert.match(r.stderr, /not valid JSON/);
 });
 
+test('finish-console with a falsy JSON stdin (null) exits 0 with no output', () => {
+  // pins today's `if (!payload) return 0;`
+  const r = run(['finish-console', '--run-dir', makeRunDir(), '--approve-all'], { input: 'null' });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(r.stderr, '');
+});
+
 test('finish-console without --approve-all exits 2 with usage', () => {
   const runDir = makeRunDir();
   const r = run(['finish-console', '--run-dir', runDir], { input: '{}' });
