@@ -91,7 +91,7 @@ The `review` event line adds `returned`, `reproduced`, `discarded` (returned = r
 
 ### Lane bounds
 
-Three policy keys bound the records and diffs the driver takes on (#5224). All three are `policy.yml` only: a `--run` config never widens them. Each defaults to the express lane's value, and a malformed value resolves to the default (`invalid: true`), so it never widens the lane.
+Three policy keys bound the records and diffs the driver takes on (#5224). All three are `policy.yml` only: a `--run` config never widens them. Each defaults to the express lane's value, and a malformed value resolves to the default (`invalid: true`), so it never widens the lane. One value is not resolved away: an all-digit `express-driver-max-lines` past 2^53 passes the resolver but is not a safe integer, so the policy step refuses it before any record is claimed and the run exits 1.
 
 | Key | Default | Bounds |
 |---|---|---|
