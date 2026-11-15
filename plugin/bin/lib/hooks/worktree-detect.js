@@ -162,7 +162,7 @@ function repoInfo(p, opts = {}, { env = process.env } = {}) {
   const { stdout: out, failure, exitCode, stderr } = runGit(
     ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir', '--show-superproject-working-tree'],
     dir,
-    opts,
+    { env, ...opts }, // the child runs under the same env the memo and store were keyed on; an explicit opts.env wins
   );
   if (failure) {
     // git-error == git ran and said "not a git repository": a real answer.

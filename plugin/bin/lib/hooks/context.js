@@ -972,7 +972,7 @@ function isSessionOwnedAdHocRun(runDir, state, sessionId) {
 // findWorktreeEntry so win32's forward-slash porcelain matches a backslash cwd (#3811).
 function listedWorktreeForCwd(cwd, deps = {}) {
   if (typeof cwd !== 'string' || !cwd) return null;
-  const { stdout, failure } = (deps.runGit || runGit)(['worktree', 'list', '--porcelain'], cwd);
+  const { stdout, failure } = (deps.runGit || runGit)(['worktree', 'list', '--porcelain'], cwd, deps.env ? { env: deps.env } : {});
   if (failure || stdout === null) return null;
   const entries = parseWorktreeList(stdout);
   const entry = findWorktreeEntry(entries, cwd, deps.pathImpl || path);
@@ -1009,7 +1009,7 @@ function stampAdHocRunDirForDenial(ctx) {
   const cwd = ctx.cwd;
   if (typeof cwd !== 'string' || !cwd) return null;
   try {
-    const wt = listedWorktreeForCwd(cwd);
+    const wt = listedWorktreeForCwd(cwd, { env });
     if (!wt) return null; // cwd isn't a listed worktree at all — nothing to key the stamp on
     const worktreePath = wt.path;
     // Deliberately NOT process.env — a stray PIPELINE_RUN_DIR left over from

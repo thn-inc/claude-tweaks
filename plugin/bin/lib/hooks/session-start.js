@@ -443,7 +443,9 @@ async function run(ctx) {
       // stamp, #820 Task 10 fix-up), the `CLAUDE_TWEAKS_SESSION_ID` env
       // threading (#1687) and the detached/windowsHide/'error'-listener spawn
       // hardening all live in the shared helper, which the unscoped
-      // `hooks.js reconcile` CLI also calls (#4032). It never throws.
+      // `hooks.js reconcile` CLI also calls (#4032). It never throws on a failed spawn; a missing
+      // `env` throws before the helper's own try, and this best-effort catch would swallow it, which
+      // is harmless only because the event context always carries `env`.
       require('../reconcile/background-spawn').spawnBackgroundIfStale({
         root: path.dirname(path.dirname(bgStatusPath)), // bgStatusPath = {root}/.claude-tweaks/<status file>
         cwd: ctx.cwd,

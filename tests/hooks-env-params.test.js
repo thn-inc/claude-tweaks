@@ -14,7 +14,7 @@ const ctxLib = require('../plugin/bin/lib/hooks/context');
 const { spawnBackgroundIfStale } = require('../plugin/bin/lib/reconcile/background-spawn');
 const wtDetect = require('../plugin/bin/lib/hooks/worktree-detect');
 const { checkDispatchPromptGate } = require('../plugin/bin/lib/hooks/dispatch-prompt-gate');
-const { findLiveClaim } = require('../plugin/bin/lib/hooks/sibling-sessions');
+const { findLiveClaim, findConflictingSession, findSessionOnWorktree } = require('../plugin/bin/lib/hooks/sibling-sessions');
 const { hookEnv } = require('./helpers/hook-event');
 const { gitRepo } = require('./helpers/git-fixtures');
 
@@ -240,4 +240,51 @@ test('stampAdHocRunDirForDenial stamps the owner pid and block from the context 
     assert.strictEqual(state.owner.pid, 4242);
   });
   assert.throws(() => ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 's' }, cwd: '/x', ownedRun: {} }), TypeError);
+});
+
+test('findConflictingSession and findSessionOnWorktree read the session id from the passed env', () => {
+  const wtPath = '/repo/.claude/worktrees/wt-308';
+  const porcelain = [
+    'worktree /repo', 'HEAD 1111111111111111111111111111111111111111', 'branch refs/heads/main', '',
+    `worktree ${wtPath}`, 'HEAD 2222222222222222222222222222222222222222', 'branch refs/heads/worktree-spec-308',
+    `locked claude session x (pid ${process.pid} start Fri Aug  7 14:40:15 2026)`, '',
+  ].join('\n');
+  const listRunDirsWithState = () => [{ dir: '/repo/.claude-tweaks/pipelines/run-1', state: { sessionId: 'given-sess', worktree: wtPath } }];
+  const base = { run: () => porcelain, listRunDirsWithState };
+  withProcessEnv({ CLAUDE_CODE_SESSION_ID: 'process-sess' }, () => {
+    // The passed env's session owns the worktree: it is the caller's own, not a sibling.
+    assert.strictEqual(findConflictingSession('308', { ...base, env: { CLAUDE_CODE_SESSION_ID: 'given-sess' } }), null);
+    assert.strictEqual(findSessionOnWorktree({ branch: 'worktree-spec-308' }, { ...base, env: { CLAUDE_CODE_SESSION_ID: 'given-sess' } }), null);
+    // Another session in the passed env: the lock is a sibling's.
+    assert.strictEqual(findConflictingSession('308', { ...base, env: { CLAUDE_CODE_SESSION_ID: 'other' } }).path, wtPath);
+    assert.strictEqual(findSessionOnWorktree({ branch: 'worktree-spec-308' }, { ...base, env: { CLAUDE_CODE_SESSION_ID: 'other' } }).path, wtPath);
+  });
+});
+
+test('repoInfo runs git under the passed env, not process.env (a GIT_DIR in process.env must not reach the child)', () => {
+  const repo = fs.realpathSync(tmp('repo-gitdir'));
+  cp.execFileSync('git', ['init', '-q', repo], { env: hookEnv(), stdio: 'ignore' });
+  const store = path.join(tmp('store-gitdir'), 'store.json');
+  withProcessEnv({ GIT_DIR: path.join(os.tmpdir(), 'ct-5377-no-such-git-dir') }, () => {
+    const given = hookEnv({ CT_HOOKS_REPO_INFO_STORE: store });
+    const info = wtDetect.repoInfo(repo, {}, { env: given });
+    assert.strictEqual(info.repoRoot, repo);
+    assert.strictEqual(info.indeterminate, false);
+  });
+});
+
+test('listedWorktreeForCwd hands its git child the passed env', () => {
+  const seen = [];
+  const deps = { runGit: (args, cwd, opts) => { seen.push(opts); return { stdout: 'worktree /r\nHEAD 1\nbranch refs/heads/main\n', failure: null }; } };
+  const env = { CT_5377_SENTINEL: 'given' };
+  ctxLib.listedWorktreeForCwd('/r', { ...deps, env });
+  assert.strictEqual(seen[0].env, env);
+});
+
+test('stampAdHocRunDirForDenial lists worktrees under the context env, not process.env (a GIT_DIR in process.env must not reach git)', () => {
+  const repo = gitRepo();
+  withProcessEnv({ GIT_DIR: path.join(os.tmpdir(), 'ct-5377-no-such-git-dir') }, () => {
+    const stamped = ctxLib.stampAdHocRunDirForDenial({ env: hookEnv(), input: { session_id: 'sess-5377-gitdir' }, cwd: repo, ownedRun: {} });
+    assert.ok(stamped, 'the worktree list found the repo under the clean context env');
+  });
 });

@@ -85,9 +85,9 @@ function matchesRecordRef(entry, recordRef) {
 // worktrees exist". Tests never exercise this path: they inject `run`
 // directly against frozen porcelain fixtures, per [IL-80] — the lock-reason
 // format is git's own unversioned implementation detail.
-function defaultRun(cwd) {
+function defaultRun(cwd, env) {
   return (args) => {
-    const { stdout, failure } = runGit(args, cwd);
+    const { stdout, failure } = runGit(args, cwd, env ? { env } : {});
     return failure ? null : stdout;
   };
 }
@@ -163,7 +163,7 @@ function findSessionOnWorktree({ branch = null, worktreePath = null } = {}, opts
 // The first in-use worktree `matches` accepts that is not the calling session's own.
 function firstForeignInUse(matches, opts) {
   const cwd = opts.cwd || process.cwd();
-  const run = opts.run || defaultRun(cwd);
+  const run = opts.run || defaultRun(cwd, opts.env);
   const listRunDirsWithState = opts.listRunDirsWithState || ctxLib.listRunDirsWithState;
   const sessionId = Object.prototype.hasOwnProperty.call(opts, 'sessionId')
     ? opts.sessionId
