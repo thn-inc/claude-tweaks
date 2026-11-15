@@ -40,6 +40,12 @@ test('withEnvTripwire restores process.env when fn throws', async () => {
   assert.strictEqual(process.env, original);
 });
 
+test('withEnvTripwire restores process.env when an async fn rejects', async () => {
+  const original = process.env;
+  await assert.rejects(withEnvTripwire(async () => { throw new Error('async boom'); }), /async boom/);
+  assert.strictEqual(process.env, original);
+});
+
 test('AC9.1: the event tail hands env, cwd, homeDir and spawn to the event module', async () => {
   let seen;
   const fakeSpawn = () => {};
@@ -78,9 +84,28 @@ test('runHookCli rejects when an event reads process.env', async () => {
   });
 });
 
-test('runHookCli leaves a verb call outside the tripwire', async () => {
-  const res = await runHookCli(['resolve-run-dir', '--root-only'], { input: '', cwd: sandbox, env: hookEnv() });
-  assert.strictEqual(typeof res.code, 'number');
+test('runHookCli leaves a verb call outside the tripwire, and trips the same read under an event name', async () => {
+  // A verb whose handler reads the real process.env from a plugin/bin frame: the verb call resolves,
+  // the same read under an event name rejects. Without the isVerb branch the verb call would reject.
+  const { VERBS } = require('../plugin/bin/hooks');
+  const original = VERBS['reconcile-summary'].run;
+  let ran = 0;
+  const reader = () => { ran += 1; resolvePluginVersion(); return 0; };
+  VERBS['reconcile-summary'].run = reader;
+  try {
+    const res = await runHookCli(['reconcile-summary'], { input: '', cwd: sandbox, env: hookEnv() });
+    assert.strictEqual(res.code, 0);
+    assert.strictEqual(ran, 1, 'the verb handler ran its process.env read');
+  } finally {
+    VERBS['reconcile-summary'].run = original;
+  }
+  await withRecorder(reader, async () => {
+    await assert.rejects(
+      runHookCli(['session-end'], { input: '{}', cwd: sandbox, env: hookEnv() }),
+      /hook event read process\.env: .*CLAUDE_PLUGIN_ROOT@/,
+    );
+  });
+  assert.strictEqual(ran, 2);
 });
 
 test('runHookCli requires cwd and env', async () => {

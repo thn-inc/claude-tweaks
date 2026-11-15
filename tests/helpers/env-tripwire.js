@@ -1,7 +1,17 @@
 'use strict';
 // Env tripwire (#5377): while `fn` runs, process.env is a Proxy over the real object that records
-// every read made from code under plugin/bin. A hook event run in-process must see only the `env` the
-// test injected, so a read of the real process.env from the plugin is a defect the test can report.
+// reads of it made while a frame under plugin/bin is on the stack. A hook event run in-process must
+// see only the `env` the test injected, so a read of the real process.env from the plugin is a defect
+// the test can report.
+//
+// Limits (it is a tripwire, not a proof):
+// - A reference to process.env captured before the tripwire arms bypasses it (plugin/bin/lib/color.js
+//   keeps one in a module-level `let activeEnv = process.env;`).
+// - A module first loaded while the tripwire is armed keeps the Proxy after it is restored.
+// - runHookCli requires hooks.js before arming, so top-level reads in hooks.js and its static imports
+//   are not checked.
+// - A false positive is possible: a test's own fake in `deps` that reads process.env while hooks.js
+//   is calling it has a plugin/bin frame below it and is reported.
 //
 // - Traps: get, has, getOwnPropertyDescriptor and ownKeys (recorded under the key '*').
 // - A read counts only when the stack holds a frame under plugin/bin/ (matched with path.sep): a read

@@ -214,7 +214,9 @@ test('#4777: reconcile --json with no typo runs for real (positive control for t
   const { spawn, env, ...spawnArgs } = spawnCalls[0];
   assert.deepStrictEqual(spawnArgs, { root, cwd: root, sessionId: 'flag-strict-session' });
   assert.equal(typeof spawn, 'function');
-  assert.equal(env.CLAUDE_CODE_SESSION_ID, 'flag-strict-session');
+  // runCli hands hooks.js a frozen copy of the env the test passed, so identity cannot hold: deep-equal
+  // against the same env, proving the value was passed through and not rebuilt.
+  assert.deepStrictEqual(env, hookEnv({ CLAUDE_CODE_SESSION_ID: 'flag-strict-session' }));
   assert.deepStrictEqual(JSON.parse(result.stdout).background, { checks: CLI_DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
 });
 
