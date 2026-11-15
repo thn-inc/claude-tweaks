@@ -152,7 +152,7 @@ The existing records that teach callers to avoid refused shapes (#4990, #4931) s
 
 ## Phase 5: Specified
 
-Records: parent #5554, unit 5.1 as #5555, unit 5.2 as #5556 (blocked by #5555), unit 5.3 as #5557. Unit 5.4 is filed in the dispatch repository by the caller.
+Records: parent #5554, unit 5.1 as #5555, unit 5.2 as #5556 (blocked by #5555), unit 5.3 as #5557. Unit 5.4 is thn-inc/dispatch#1586, which waits on #5556 and on its own design there.
 
 **5.1 Timing for every run.** `timing.json` exists in 406 of 2,948 run directories. It is written only when a model step runs `phase-timing.js`. Of 255 November runs, 106 have none; 90 of those are dispatched runs and 93 are closed. The record writes the file in code when a run closes.
 
@@ -182,7 +182,7 @@ Its numbers come from Phase 5.
 
 ## Phase 8: Specified
 
-Records: unit 8.1 as #5562, unit 8.2 as #5563. No parent: the two units are independent.
+Records: unit 8.1 as #5562 (blocked by #3813, which moves the plan deletion before the `pr-first` merge), unit 8.2 as #5563. No parent: the two units are independent. #5563 ships the changelog key switched off; this repository opts in through #5566 (blocked by #5563), once that release is the installed plugin, so no running session reads a trimmed file with a release check that does not know the trim.
 
 **8.1 Working plans out of git.** `docs/superpowers/plans/` holds 79 plan files (2.8 MB) that `/claude-tweaks:tidy` deletes in batches after their runs end: 699 added and 641 deleted on `main` in 30 days. The mechanism to delete each at wrap-up exists: the policy key `superpowers-plans-retention` has a `prune-after-wrapup` value, and this repository leaves it at `keep-forever`. The record sets it here, checks every reader first, and leaves the plugin default alone.
 
