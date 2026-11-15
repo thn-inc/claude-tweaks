@@ -949,7 +949,7 @@ test('verify hands the injected env, stderr and homeDir to every git and gh call
   const r = runCliSync(CLI, ['verify', '--run-dir', runDir, '--base', baseSha], {
     cwd: repoDir, env, deps: { env, stderr, homeDir, git, gh },
   });
-  assert.ok([0, 3].includes(r.code), String(r.code));
+  assert.strictEqual(r.code, 3, r.stdout);
   assert.ok(calls.some((c) => c.seam === 'git'), 'verify reached the git seam');
   assert.ok(calls.some((c) => c.seam === 'gh'), 'verify reached the gh seam');
   for (const c of calls) {
@@ -960,4 +960,22 @@ test('verify hands the injected env, stderr and homeDir to every git and gh call
     assert.strictEqual(c.ctx.homeDir, homeDir, `${label}: ctx.homeDir`);
   }
   assert.match(r.stdout, /^\| acceptance-labeling \| unknown \(gh absent\) \|/m);
+});
+
+test('verify hands the injected env to the gh host gates: a GH_HOST only in deps.env stops upstream-feedback', () => {
+  // GH_HOST is only in the injected env. A gate that read the runner's process.env instead would see no
+  // enterprise host, probe gh (the fake throws ENOENT) and report `gh absent`.
+  assert.notStrictEqual(process.env.GH_HOST, 'ghe.example.com', 'the runner env must not carry the injected host');
+  const runDir = planFreshRunDir();
+  fs.writeFileSync(path.join(runDir, 'verify-expectations.json'), JSON.stringify({
+    version: 1, upstream: [{ url: 'https://github.com/o/r/issues/1' }],
+  }));
+  const env = Object.freeze({ ...process.env, GH_HOST: 'ghe.example.com' });
+  const git = () => '';
+  const gh = () => { throw Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' }); };
+  const r = runCliSync(CLI, ['verify', '--run-dir', runDir, '--base', baseSha], {
+    cwd: repoDir, env, deps: { env, git, gh },
+  });
+  assert.strictEqual(r.code, 3, r.stdout);
+  assert.match(r.stdout, /^\| upstream-feedback \| unknown \(GH_HOST is ghe\.example\.com, but upstream-feedback issue URLs are on github\.com/m);
 });

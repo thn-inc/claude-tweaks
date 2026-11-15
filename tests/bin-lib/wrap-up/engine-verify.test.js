@@ -3579,7 +3579,7 @@ test('runVerify short-circuits to an all-unknown row set when runDir is null, ne
   }
 });
 
-// #790/[IL-127]: wrap-up-engine.js's main() rejects any --run-dir that doesn't
+// #790/[IL-127]: wrap-up-engine.js's run() rejects any --run-dir that doesn't
 // resolve under the main checkout (bin/lib/hooks/worktree-detect.js's
 // isAnchoredUnderRoot) for EVERY verb, including this new `verify` one — a
 // bare os.tmpdir() path like /tmp/anything never anchors, so this test uses a
