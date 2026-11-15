@@ -56,7 +56,7 @@ function run(argv, deps = realDeps) {
     }
   };
   // The path a failure message names: path.resolve of an absolute path needs no cwd.
-  const shown = (p) => (path.isAbsolute(p) ? path.resolve(p) : path.resolve(deps.cwd(), p));
+  const shown = (p) => path.resolve(fsPath(deps, p));
 
   const args = argv.slice();
   const opts = {};
