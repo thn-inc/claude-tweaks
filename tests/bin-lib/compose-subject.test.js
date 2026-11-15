@@ -1057,6 +1057,23 @@ test('AC8.1: the origin gate reads an exported GH_HOST from the injected env', (
   assert.match(refused.out.stderr, /is not a known GitHub host/);
 });
 
+test('AC8.1: the injected homeDir stays lazy — an exported GH_HOST never reaches it', () => {
+  const origin = 'https://git.corp.example/owner/name.git';
+  const boom = () => { throw new Error('homeDir() must not run when GH_HOST decides the lookup'); };
+  const env = { ...INJECTED_ENV, GH_HOST: 'git.corp.example' };
+  // The origin gate, with and without a caller-supplied gateDeps overlay.
+  for (const gateDeps of [undefined, { remoteUrl: () => origin }]) {
+    const { deps, out } = fakeDeps({ remoteUrl: () => origin });
+    Object.assign(deps, { env, homeDir: boom, gateDeps });
+    assert.equal(run(['2251'], deps), 0, out.stderr);
+  }
+  // realDeps.pinGhHost for an explicit --repo: the exported GH_HOST wins before the home is read.
+  const { _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve.js');
+  _resetGhHostCache();
+  assert.equal(realDeps.pinGhHost({ host: 'git.corp.example', owner: 'owner', repo: 'name' }, { cwd: PHANTOM_CWD, env, homeDir: boom, stderr: () => {} }), null);
+  _resetGhHostCache();
+});
+
 test('AC8.1: the origin read follows deps.cwd()', (t) => {
   const repo = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-origin-')));
   t.after(() => nodeFs.rmSync(repo, { recursive: true, force: true }));

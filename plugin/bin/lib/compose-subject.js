@@ -281,13 +281,18 @@ function aggregateType(records) {
 // spawn inherits the process's own, as it did before `run` took them from deps.
 const childOptions = ({ cwd, env } = {}) => ({ ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) });
 
+// Own properties of `over` laid over a copy of `base`, copied as descriptors: injectedGhDeps's lazy
+// `homedir` getter (repo-resolve.js) stays a getter, where an object spread would call it here and run
+// `homeDir()` even when the lookup never falls through to the home.
+const withDescriptors = (base, over) => Object.defineProperties({}, { ...Object.getOwnPropertyDescriptors(base), ...Object.getOwnPropertyDescriptors(over || {}) });
+
 const realDeps = {
   ghAvailable,
   remoteUrl,
   // #4505: an explicit --repo's host reaches the issue-type GraphQL fallback,
   // which threads no --hostname for github.com. `{ cwd, env, stderr, homeDir }` (#5386) is the
   // injected process context for the origin read and the hosts.yml lookup; absent, the process's own.
-  pinGhHost: (repoSpec, { cwd, env, stderr, homeDir } = {}) => pinExplicitRepoHost(repoSpec, { cwd, ...injectedGhDeps({ env, stderr, homeDir }) }),
+  pinGhHost: (repoSpec, { cwd, env, stderr, homeDir } = {}) => pinExplicitRepoHost(repoSpec, { cwd, env, stderr, homeDir }),
   // stderr piped, not inherited (#3028): execFileSync's default echoes the
   // child's stderr to ours, so the handled #2561 `Unknown JSON field:
   // "issueType"` rejection printed gh's full field list ahead of a successful
@@ -323,7 +328,7 @@ function run(argv, deps = realDeps) {
   let repoSpec;
   if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
   else {
-    const gated = gateOriginRepo(remote, { ...injectedGhDeps(pickInjected(deps)), ...deps.gateDeps });
+    const gated = gateOriginRepo(remote, withDescriptors(injectedGhDeps(pickInjected(deps)), deps.gateDeps));
     if (gated.refusal) { deps.stderr(`compose-subject.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }

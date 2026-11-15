@@ -381,7 +381,12 @@ function explicitRepoGhHost(repoSpec, cwd, deps = {}) {
 // reached by it. -> the host recorded, or null. Called from a CLI's realDeps only.
 function pinExplicitRepoHost(repoSpec, deps = {}) {
   const env = deps.env || process.env;
-  explicitRepoHost = explicitRepoGhHost(repoSpec, deps.cwd, { ...deps, env });
+  // A `homeDir` function becomes injectedGhDeps's lazy `homedir` getter, and the copy is made by
+  // descriptor, so `homeDir()` runs only when the lookup falls through to the home (an exported
+  // GH_HOST returns before it); a spread would call the getter here.
+  const lookup = { ...Object.getOwnPropertyDescriptors(deps), env: { value: env, enumerable: true } };
+  if (typeof deps.homeDir === 'function' && !('homedir' in deps)) Object.assign(lookup, Object.getOwnPropertyDescriptors(injectedGhDeps({ homeDir: deps.homeDir })));
+  explicitRepoHost = explicitRepoGhHost(repoSpec, deps.cwd, Object.defineProperties({}, lookup));
   return explicitRepoHost;
 }
 

@@ -328,6 +328,11 @@ test('AC8.1: run writes under deps.homeDir(), not the real home', () => {
   // only records that call and still returns the real value, so a decoy stands in for it while
   // the helper's guard (which wraps whatever os.homedir is at call time) still flags the call.
   const realHomedir = os.homedir;
+  // The same decoy stands behind a direct read of process.env.HOME / USERPROFILE. Set outside the
+  // runCli call, so the helper's env-leak guard (which snapshots around the call) sees no change.
+  const savedEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = decoy;
+  process.env.USERPROFILE = decoy;
   os.homedir = () => decoy;
   try {
     const res = runCliSync(CLI, [], { env: { HOME: tmp, USERPROFILE: tmp } });
@@ -336,9 +341,10 @@ test('AC8.1: run writes under deps.homeDir(), not the real home', () => {
     assert.strictEqual(res.code, 0);
     assert.strictEqual(res.stdout, expected);
     assert.ok(fs.existsSync(expected));
-    assert.ok(!fs.existsSync(path.join(decoy, '.claude-tweaks')), 'run must not ask os.homedir() for the home');
+    assert.ok(!fs.existsSync(path.join(decoy, '.claude-tweaks')), 'run must not ask os.homedir() or process.env for the home');
   } finally {
     os.homedir = realHomedir;
+    for (const [k, v] of Object.entries(savedEnv)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     const statAfter = fs.existsSync(realWrapper) ? fs.statSync(realWrapper).mtimeMs : null;
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(decoy, { recursive: true, force: true });

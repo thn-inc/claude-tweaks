@@ -237,6 +237,7 @@ test('AC8.1: a relative --root resolves against deps.cwd() for file reads and gh
     const seen = { gh: [], git: [], reads: [], writes: [] };
     const gh = (args, input, opts) => {
       seen.gh.push(opts);
+      opts.stderr(`gh-stderr-probe ${seen.gh.length}\n`); // lands in the run's injected collector only
       const key = args.join(' ');
       if (key.startsWith('release list')) return JSON.stringify([{ tagName: 'v1.3.0', publishedAt: '2026-10-02T00:00:00Z' }, { tagName: 'v1.2.0', publishedAt: '2026-09-01T00:00:00Z' }]);
       if (key.startsWith('release view')) return 'Auto-generated release-please body.';
@@ -261,8 +262,9 @@ test('AC8.1: a relative --root resolves against deps.cwd() for file reads and gh
     // gh's host and config lookups read the injected home and stderr, not the process's.
     for (const o of seen.gh) {
       assert.strictEqual(o.homeDir(), tmp);
-      assert.strictEqual(typeof o.stderr, 'function');
     }
+    // The stderr handed to gh is the run's own collector: each probe written in the gh fake landed in res.stderr.
+    for (let i = 1; i <= seen.gh.length; i++) assert.ok(res.stderr.includes(`gh-stderr-probe ${i}\n`), res.stderr);
     assert.deepStrictEqual(seen.reads, [path.join(root, 'CHANGELOG.md')]);
     assert.deepStrictEqual(seen.writes, [path.join(root, 'CHANGELOG.md')]);
   } finally {
