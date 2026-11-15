@@ -9,6 +9,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { runCli } = require('./helpers/run-cli');
+
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
 function git(args, cwd) {
@@ -316,4 +318,65 @@ test('AC3.1: a failed append keeps stdout and exit 0 and adds one stderr line', 
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /^claude-tweaks: delete-ledger: failed to delete .+\n$/);
   assert.match(result.stderr, /^claude-tweaks: delete-ledger: decisions\.md append failed \(.+\) — hand-log the Item 2 SKIP line\n$/);
+});
+
+// In-process (#5375): these call hooks.js's run(argv, deps) through runCli. The env is the complete
+// environment the verb sees: the ambient one minus the four repo-pointing git variables, with any
+// ambient run dir neutralized (#1130), and gh pointed at an unreachable host.
+function inProcessEnv(env = {}) {
+  const ambient = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete ambient[key];
+  return { ...ambient, PIPELINE_RUN_DIR: '', GH_HOST: 'localhost', GH_TOKEN: 'x', ...env };
+}
+
+function runInProcess(args, { cwd, env } = {}) {
+  return runCli(HOOKS, args, { cwd, env: inProcessEnv(env) });
+}
+
+// The env-only A/B fixture (cli-wrapper-contract.md) on the docs/plans ownership path: the run's recorded worktree
+// is not a git checkout, so ownership is computable only when the git children read the injected GIT_DIR (repo B,
+// with a recorded origin/HEAD so the integration branch resolves without gh). `inherited` commits the ledger to B,
+// so it reads as another run's; otherwise it is untracked there, so it is this run's.
+function ownershipFixture({ inherited }) {
+  const root = gitRoot();
+  const runDir = runDirFixture(root);
+  const worktree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-nongit-')));
+  const rel = 'docs/plans/2026-08-14-x-ledger.md';
+  const ledger = path.join(worktree, ...rel.split('/'));
+  fs.mkdirSync(path.dirname(ledger), { recursive: true });
+  fs.writeFileSync(ledger, '# Open Items\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree }));
+  const b = gitRoot();
+  if (inherited) {
+    fs.mkdirSync(path.join(b, 'docs', 'plans'), { recursive: true });
+    fs.writeFileSync(path.join(b, ...rel.split('/')), '# Open Items\n');
+    git(['add', rel], b);
+    git(['commit', '-q', '-m', 'inherited ledger'], b);
+  }
+  git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], b);
+  git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], b);
+  return { root, runDir, ledger, gitDir: path.join(b, '.git') };
+}
+
+test('AC10.1: delete-ledger deletes an owned docs/plans ledger only when the ownership git children read the injected env', async () => {
+  const f = ownershipFixture({ inherited: false });
+  const args = ['delete-ledger', '--run', f.runDir];
+  const unowned = await runInProcess(args, { cwd: f.root });
+  assert.equal(unowned.code, 0);
+  assert.match(unowned.stdout, /cannot attribute docs\/plans ledgers/);
+  assert.ok(fs.existsSync(f.ledger));
+  const ok = await runInProcess(args, { cwd: f.root, env: { GIT_DIR: f.gitDir } });
+  assert.deepStrictEqual(ok, { code: 0, stdout: `claude-tweaks: deleted ledger ${f.ledger}\n`, stderr: '' });
+  assert.ok(!fs.existsSync(f.ledger));
+});
+
+test('AC10.1: delete-ledger names an inherited docs/plans ledger only when describeRunLedgers reads the injected env', async () => {
+  const f = ownershipFixture({ inherited: true });
+  const r = await runInProcess(['delete-ledger', '--run', f.runDir], { cwd: f.root, env: { GIT_DIR: f.gitDir } });
+  assert.deepStrictEqual(r, {
+    code: 0,
+    stdout: `claude-tweaks: delete-ledger: no ledger found for ${path.basename(f.runDir)} — only inherited ledgers found: ${f.ledger} — not found\n`,
+    stderr: '',
+  });
+  assert.ok(fs.existsSync(f.ledger));
 });

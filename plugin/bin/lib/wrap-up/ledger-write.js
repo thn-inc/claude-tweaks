@@ -99,8 +99,10 @@ function resolveLedgerPath({ runDir, worktree, explicit, env, deps = {}, cwd } =
 // another run — for a caller that must show the split rather than act on one
 // target. `report` mirrors the resolve outcome: found | none | ambiguous |
 // unattributable. An unattributable run names no this-run/other-run entries
-// (ownership is unknown), only `unattributed`.
-function describeRunLedgers({ runDir, worktree, deps = {} } = {}) {
+// (ownership is unknown), only `unattributed`. `env` is forwarded to
+// resolveLedgerPath, so its ownership git children see the caller's injected
+// environment (#5375); absent, they inherit the real one.
+function describeRunLedgers({ runDir, worktree, env = process.env, deps = {} } = {}) {
   const readdirSync = deps.readdirSync || fs.readdirSync;
   const plansDir = path.join(worktree, 'docs', 'plans');
   let entries = [];
@@ -108,7 +110,7 @@ function describeRunLedgers({ runDir, worktree, deps = {} } = {}) {
   const plans = entries.filter((f) => f.endsWith('-ledger.md')).map((f) => path.join(plansDir, f));
   const without = (taken) => plans.filter((p) => !taken.includes(p));
 
-  const r = resolveLedgerPath({ runDir, worktree, deps });
+  const r = resolveLedgerPath({ runDir, worktree, env, deps });
   if (r.ok) return { report: 'found', ledgers: [r.path], others: without([r.path]), unattributed: [], detail: null };
   if (r.reason === 'ambiguous') return { report: 'ambiguous', ledgers: r.candidates, others: without(r.candidates), unattributed: [], detail: null };
   if (r.reason === 'unattributable') return { report: 'unattributable', ledgers: [], others: [], unattributed: r.candidates, detail: r.detail };

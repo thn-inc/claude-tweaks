@@ -744,6 +744,31 @@ test('AC10.1: archive-run resolves a relative --run against the injected cwd and
   assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
 });
 
+// AC10.1 (#5375): repoPinnedEnv() strips only the four repo-pointing variables, so a variable git still honours
+// reaches the archive path's git children only through the injected env. The archive commit's author name pins
+// archiveRunDir's children; an upstream configured only through GIT_CONFIG_* pins archiveCommitLine's push-state
+// probe. Neither value is in this process's environment or the fixture's git config.
+test('AC10.1: archive-run starts the archive commit and its push-state probe with the injected env', async () => {
+  const { root, runDir, runId } = trackedRunFixture();
+  const bare = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-origin-')));
+  git(['init', '-q', '--bare'], bare);
+  git(['remote', 'add', 'origin', bare], root);
+  git(['push', '-q', 'origin', 'main'], root);
+  const env = {
+    GIT_AUTHOR_NAME: 'ct-env-only-author',
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'branch.main.remote',
+    GIT_CONFIG_VALUE_0: 'origin',
+    GIT_CONFIG_KEY_1: 'branch.main.merge',
+    GIT_CONFIG_VALUE_1: 'refs/heads/main',
+  };
+  const result = await runHook(['archive-run', '--run', runDir], { cwd: root, env });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`^claude-tweaks: archived ${runId}$`, 'm'));
+  assert.equal(git(['log', '-1', '--format=%an %s', 'HEAD'], root).trim(), `ct-env-only-author [reconcile] archive run ${runId}`);
+  assert.match(result.stdout, /^claude-tweaks: committed [0-9a-f]{7,} on main \(not pushed — 1 ahead of origin\/main\)$/m);
+});
+
 // Real process: the archive-run family's success smoke test (AC9.1), twinned with the same archival in-process.
 test('AC3.1 AC9.1: archive-run on a clean fixture through runCli and spawnCli prints the same moved: lines and exit 0', async () => {
   const inProcess = runDirFixture('clean');

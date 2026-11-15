@@ -10,6 +10,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { runCli } = require('./helpers/run-cli');
+
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
 function git(args, cwd) {
@@ -145,4 +147,44 @@ test('resolve-ledger: no --run with two live candidate runs refuses, listing can
   assert.match(result.stderr, /Ledger not resolved\./);
   assert.doesNotMatch(result.stdout, REPORT_LINE_RE);
   assert.doesNotMatch(result.stdout, /multiple candidate runs|not resolved/i);
+});
+
+// In-process (#5375): these call hooks.js's run(argv, deps) through runCli. The env is the complete
+// environment the verb sees: the ambient one minus the four repo-pointing git variables, with any
+// ambient run dir neutralized (#1130), and gh pointed at an unreachable host.
+function inProcessEnv(env = {}) {
+  const ambient = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete ambient[key];
+  return { ...ambient, PIPELINE_RUN_DIR: '', GH_HOST: 'localhost', GH_TOKEN: 'x', ...env };
+}
+
+function runInProcess(args, { cwd, env } = {}) {
+  return runCli(HOOKS, args, { cwd, env: inProcessEnv(env) });
+}
+
+// The env-only A/B fixture (cli-wrapper-contract.md): the run's recorded worktree is not a git checkout, and repo B
+// (reachable only through GIT_DIR in the injected env, with a recorded origin/HEAD) has the ledger committed, so
+// describeRunLedgers can tell it is another run's only when its ownership git children read that env.
+test('AC10.1: resolve-ledger reports an inherited ledger as other-run only when describeRunLedgers reads the injected env', async () => {
+  const root = gitRoot();
+  const runDir = runDirFixture(root);
+  const worktree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-ledger-nongit-')));
+  const rel = 'docs/plans/2026-08-14-old-ledger.md';
+  const ledger = path.join(worktree, ...rel.split('/'));
+  fs.mkdirSync(path.dirname(ledger), { recursive: true });
+  fs.writeFileSync(ledger, '# Open Items\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree }));
+  const b = gitRoot();
+  fs.mkdirSync(path.join(b, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(b, ...rel.split('/')), '# Open Items\n');
+  git(['add', rel], b);
+  git(['commit', '-q', '-m', 'inherited ledger'], b);
+  git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], b);
+  git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], b);
+  const args = ['resolve-ledger', '--run', runDir];
+
+  const ambient = await runInProcess(args, { cwd: root });
+  assert.ok(ambient.stdout.startsWith('claude-tweaks: resolve-ledger: unattributable ('), ambient.stdout);
+  const r = await runInProcess(args, { cwd: root, env: { GIT_DIR: path.join(b, '.git') } });
+  assert.deepStrictEqual(r, { code: 0, stdout: `claude-tweaks: resolve-ledger: none\nother-run: ${ledger}\n`, stderr: '' });
 });

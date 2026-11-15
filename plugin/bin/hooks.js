@@ -1166,6 +1166,7 @@ async function runDeleteLedger(argv, deps) {
       runDir,
       worktree,
       explicit: ledgerArg || null,
+      env: deps.env,
       cwd: deps.cwd(),
     });
     // #4026: a report that leaves the ledger on disk logs its own SKIP line
@@ -1204,7 +1205,7 @@ async function runDeleteLedger(argv, deps) {
       // #3686: with no --ledger, an inherited-only docs/plans set is named here.
       let inherited = '';
       if (!ledgerArg) {
-        const { report, others } = describeRunLedgers({ runDir, worktree });
+        const { report, others } = describeRunLedgers({ runDir, worktree, env: deps.env });
         if (report === 'none' && others.length > 0) {
           inherited = ` — only inherited ledgers found: ${others.join(', ')}`;
         }
@@ -1244,7 +1245,7 @@ async function runResolveLedger(argv, deps) {
   } else {
     const { describeRunLedgers, formatLedgerReport } = require('./lib/wrap-up/ledger-write');
     const worktree = ctxLib.readRunState(runDir)?.worktree || deps.cwd();
-    const text = formatLedgerReport(describeRunLedgers({ runDir, worktree }));
+    const text = formatLedgerReport(describeRunLedgers({ runDir, worktree, env: deps.env }));
     await deps.stdout(text);
   }
   return 0;
@@ -1354,7 +1355,9 @@ async function runLedgerRow(argv, deps) {
     return refuse(`settling row #${row} to '${status}' needs --resolution or --resolution-file`);
   }
 
-  const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg ? path.resolve(deps.cwd(), ledgerArg) : null });
+  const resolved = resolveLedgerPath({
+    runDir, worktree, explicit: ledgerArg ? path.resolve(deps.cwd(), ledgerArg) : null, env: deps.env,
+  });
   if (!resolved.ok) {
     const named = resolved.candidates.length > 0 ? `: ${resolved.candidates.join(', ')}` : '';
     // The hint names the flag the caller already passed for an explicit --ledger (rejected, not-found); it only helps an implicit resolution.
@@ -1405,7 +1408,7 @@ async function runTeardownRun(argv, deps) {
 
 async function runArchiveRun(argv, deps) {
   const {
-    archiveRunDir, archiveCommitLine, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+    archiveRunDir, archiveCommitLine, pinnedGit, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
     TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
   } = require('./lib/reconcile/archive-merged');
   const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1536,7 +1539,9 @@ async function runArchiveRun(argv, deps) {
   // The "moved:" lines are read from archiveRunDir's own movedEntries
   // return value — never a hardcoded guess at the run dir's shape, which
   // is the exact fixed-list drift this whole record eliminates.
-  const result = archiveRunDir(mainRoot, runDir);
+  // Every git child of the archival and of the committed line starts with deps.env (#5375).
+  const result = archiveRunDir(mainRoot, runDir, { env: deps.env });
+  const git = pinnedGit(deps.env);
   if (!result.ok) {
     // #1982: every refusal reason carries its own recovery `hint`
     // (co-located with the detector in archive-merged.js's `refusal()`
@@ -1545,14 +1550,14 @@ async function runArchiveRun(argv, deps) {
     const hintSuffix = typeof result.hint === 'string' && result.hint.length ? ` — ${result.hint}` : '';
     deps.stdout(`claude-tweaks: archival refused — ${result.reason}${hintSuffix}\n`);
     // #3721: a refusal after the archive commit landed still reports that commit.
-    if (result.commit) deps.stdout(`${archiveCommitLine(mainRoot, result.commit)}\n`);
+    if (result.commit) deps.stdout(`${archiveCommitLine(mainRoot, result.commit, git)}\n`);
     return 0;
   }
   for (const name of result.movedEntries) {
     deps.stdout(`moved: ${name}\n`);
   }
   deps.stdout(`claude-tweaks: archived ${path.basename(runDir)}\n`);
-  if (result.commit) deps.stdout(`${archiveCommitLine(mainRoot, result.commit)}\n`);
+  if (result.commit) deps.stdout(`${archiveCommitLine(mainRoot, result.commit, git)}\n`);
   return 0;
 }
 
@@ -1771,7 +1776,7 @@ async function runCheckSiblingSessions(argv, deps) {
     deps.stdout('claude-tweaks: --record <id-or-slug> is required — sibling-session check not run\n');
     return 0;
   }
-  const match = siblingSessions.findConflictingSession(recordRef, { cwd: deps.cwd() });
+  const match = siblingSessions.findConflictingSession(recordRef, { cwd: deps.cwd(), sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
   if (match) {
     deps.stdout(
       `claude-tweaks: sibling session may already hold record ${recordRef} — ` +
@@ -1782,7 +1787,7 @@ async function runCheckSiblingSessions(argv, deps) {
   }
   // The worktree lock above sees only local siblings; the live claim is the
   // remote-facing half (another machine, the cloud, no worktree yet).
-  const claim = siblingSessions.findLiveClaim(recordRef, { cwd: deps.cwd() });
+  const claim = siblingSessions.findLiveClaim(recordRef, { cwd: deps.cwd(), sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
   if (claim) {
     deps.stdout(
       `claude-tweaks: sibling session may already hold record ${recordRef} — ` +

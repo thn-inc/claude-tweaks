@@ -418,6 +418,48 @@ test('#4777: check-sibling-sessions --record <id> does not print the usage line 
   assert.doesNotMatch(result.stderr, /unknown flag|needs a value/);
 });
 
+// AC10.1 (#5375): check-sibling-sessions excludes the caller's own worktree and claim by the session id in the
+// injected env, not the runner's. Both fixtures belong to OWN; the same call under another id is the control.
+const OWN = 'ct-sibling-own-session';
+const NOT_OWN = 'ct-sibling-other-session';
+
+test('AC10.1: check-sibling-sessions skips a live worktree the injected session recorded', async () => {
+  const root = freshRepo();
+  const parent = tracked(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-sib-')));
+  const wt = path.join(parent, 'wt');
+  git(['worktree', 'add', '-q', wt, '-b', 'ct-sib-rec5375x'], root);
+  git(['worktree', 'lock', '--reason', `claude session test (pid ${process.pid})`, wt], root);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-11-15T000000-record-5375x');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', sessionId: OWN, worktree: fs.realpathSync(wt) }));
+  const args = ['check-sibling-sessions', '--record', 'rec5375x'];
+  const other = await runHook(args, { cwd: root, env: { CLAUDE_CODE_SESSION_ID: NOT_OWN } });
+  assert.match(other.stdout, /^claude-tweaks: sibling session may already hold record rec5375x — worktree .* is in use by a live session; verify before claiming\n$/);
+  const own = await runHook(args, { cwd: root, env: { CLAUDE_CODE_SESSION_ID: OWN } });
+  assert.deepStrictEqual(own, { code: 0, stdout: 'claude-tweaks: no sibling-session conflict found for record rec5375x\n', stderr: '' });
+});
+
+test('AC10.1: check-sibling-sessions skips a live claim the injected session holds', async () => {
+  const root = freshRepo();
+  const sib = tracked(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-claims-'))));
+  const origin = path.join(sib, 'origin.git');
+  const registry = path.join(sib, 'registry');
+  git(['init', '-q', '--bare', origin], sib);
+  git(['init', '-q', '--initial-branch=claims-registry', registry], sib);
+  fs.mkdirSync(path.join(registry, 'claims'));
+  const claim = { runId: 'ct-run', sessionId: OWN, host: 'ct-host', claimedAt: new Date().toISOString() };
+  fs.writeFileSync(path.join(registry, 'claims', 'issue-5375.json'), JSON.stringify(claim));
+  git(['add', 'claims'], registry);
+  git(['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '-q', '-m', 'claim'], registry);
+  git(['push', '-q', origin, 'claims-registry'], registry);
+  git(['remote', 'add', 'origin', origin], root);
+  const args = ['check-sibling-sessions', '--record', '5375'];
+  const other = await runHook(args, { cwd: root, env: { CLAUDE_CODE_SESSION_ID: NOT_OWN } });
+  assert.match(other.stdout, /^claude-tweaks: sibling session may already hold record 5375 — live claim by run ct-run \(session ct-sibling-own-session, /);
+  const own = await runHook(args, { cwd: root, env: { CLAUDE_CODE_SESSION_ID: OWN } });
+  assert.deepStrictEqual(own, { code: 0, stdout: 'claude-tweaks: no sibling-session conflict found for record 5375\n', stderr: '' });
+});
+
 test('#4834: help wins over an unknown flag in the same call', async () => {
   const { root } = reconcileFixture();
   const { calls } = await withReconcileStubbed(async () => {

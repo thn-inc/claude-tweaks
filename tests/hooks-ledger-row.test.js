@@ -468,6 +468,31 @@ test('AC10.1: ledger-row --status fixed accepts B\'s /pull/N URL only when the g
   assert.deepEqual(ledgerRows(f), ['| 1 | build | x | fixed | https://github.com/ct-env-only/fixture/pull/7 |']);
 });
 
+// The env-only A/B fixture again, on the implicit docs/plans resolution (#5375): the run's recorded worktree W is
+// not a git checkout, so ledger ownership is computable only when resolveLedgerPath's git children read the
+// injected GIT_DIR (B, with a recorded origin/HEAD). gh is pointed at an unreachable host so no call leaves the machine.
+test('AC10.1: ledger-row resolves an owned docs/plans ledger only when the ownership git children read the injected env', async () => {
+  const root = seedRepo('ct-ledgerrow-own-');
+  const w = tmp('ct-ledgerrow-nongit-');
+  const ledger = path.join(w, 'docs', 'plans', '2026-11-03-x-ledger.md');
+  fs.mkdirSync(path.dirname(ledger), { recursive: true });
+  fs.writeFileSync(ledger, HEAD);
+  const runDir = await stampedRun(root, RUN_ID, w);
+  const b = seedRepo('ct-ledgerrow-own-b-');
+  git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], b);
+  git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], b);
+  const offline = { GH_HOST: 'localhost', GH_TOKEN: 'x' };
+  const args = ['ledger-row', '--run', runDir, ...APPEND];
+
+  const unowned = await runHook(args, { cwd: root, env: offline });
+  assert.equal(unowned.code, 1, unowned.stderr);
+  assert.match(unowned.stderr, /ledger unattributable/);
+  assert.equal(fs.readFileSync(ledger, 'utf8'), HEAD);
+  const ok = await runHook(args, { cwd: root, env: { ...offline, GIT_DIR: path.join(b, '.git') } });
+  assert.deepStrictEqual(ok, { code: 0, stdout: `${JSON.stringify({ action: 'appended', row: 1, status: 'open', ledger })}\n`, stderr: '' });
+  assert.equal(fs.readFileSync(ledger, 'utf8'), `${HEAD}| 1 | build | item | open | — |\n`);
+});
+
 test('rejects a --ledger outside the run and worktree', async () => {
   const f = await fixture();
   const outside = path.join(tmp('ct-ledgerrow-out-'), 'x-ledger.md');
