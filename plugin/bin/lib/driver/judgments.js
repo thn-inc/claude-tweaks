@@ -183,7 +183,6 @@ function createJudgments({ deps, shared, readFile, runAcceptance } = {}) {
   return async function judgments(ctx) {
     try {
       const mc = await judgeMergeCheck({ deps, shared, readFile: read }, ctx);
-      if (isInterrupted(deps)) return { mergeCheck: { verdict: 'unconfirmed' }, acceptance: { completed: false } };
       if (mc.verdict !== 'auto-merge') {
         return { mergeCheck: { verdict: mc.verdict }, acceptance: { completed: false } };
       }
