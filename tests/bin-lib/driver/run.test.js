@@ -416,6 +416,8 @@ function defaultScript(over, fx) {
     // The test step's scope guard: no scope blob on origin by default, and the ref resolves.
     [blobCall('main'), exitOne],
     [refCall('main'), `${HEAD_SHA}\n`],
+    // The push guard's branch read in the worktree (#5458): the branch points at the checked commit.
+    [isBranchRead, `${HEAD_SHA}\n`],
     [onGit('rev-parse'), exitOne],
     [onGit('ls-remote'), ''],
     [onGit('fetch'), ''],
@@ -1649,7 +1651,7 @@ const isStatusReadInWt = (c) => !!c && onGit('--no-optional-locks', 'status')(c)
 const isVerifyCall = (c) => !!c && c.kind === 'node' && /verify\.js$/.test(c.args[0]);
 // The status read #5454 added: once the flag reads are dropped, it follows verify.js directly.
 const isTestTreeRead = (calls, i) => isStatusReadInWt(calls[i]) && isVerifyCall(calls[i - 1]);
-const baselineCalls = (cs) => withoutFlagReads(cs).filter((c, i, a) => !isLaunchSideRead(a, i) && !isTestTreeRead(a, i));
+const baselineCalls = (cs) => withoutFlagReads(cs).filter((c, i, a) => !isLaunchSideRead(a, i) && !isTestTreeRead(a, i) && !isBranchRead(c));
 const treeDetail = (n, named) => `the worktree differs from HEAD after the test step on ${n} path(s): ${named}`;
 // verify.js's reply that leaves `porcelain` in the tree (fx.dirty is listed once the commit has run).
 // `get` returns the harness: the script is built before `harness()` returns, so `h` is read at call time.
@@ -2590,6 +2592,9 @@ const verifyCalls = (h) => calls(h, 'node', /verify\.js$/);
 // express-lane.js check calls only: a settled pre-push stop also calls its escalate subcommand.
 const checkCalls = (h) => calls(h, 'node', /express-lane\.js$/).filter((c) => c.args[1] === 'check');
 const pushCalls = (h) => gitCalls(h).filter((c) => gitSub(c)[0] === 'push');
+// The push guard's read of refs/heads/{branch} in a worktree (#5458): any worktree cwd, never the main
+// checkout's probes, which carry --quiet.
+const isBranchRead = (c) => !!c && c.cwd !== MAIN && onGit('rev-parse', '--verify', '--end-of-options')(c) && /^refs\/heads\//.test(gitSub(c)[3] || '');
 const checkReply = (env, code = 0) => [on('node', /express-lane\.js$/, 'check'), { code, stderr: '', stdout: typeof env === 'string' ? env : JSON.stringify(env) }];
 const lastLine = (h) => h.lines().at(-1);
 
@@ -3214,6 +3219,35 @@ test('AC2.5: a failing rev-parse never passes the guard', async () => {
   assert.equal(pushCalls(h).length, 0);
 });
 
+test('AC1 (#5458): a branch ref that is not the checked head stops at push, and no git push is recorded', async () => {
+  const h = harness({ script: [[isBranchRead, `${'b'.repeat(40)}\n`]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.outcome, final.stop.class], ['push', 'stop', 'express-escalated', 'pre-push']);
+  assert.ok(final.stop.detail.includes('drive-record-7') && final.stop.detail.includes('b'.repeat(40)) && final.stop.detail.includes(HEAD_SHA));
+  assert.equal(pushCalls(h).length, 0);
+  assert.equal(final.stop.pushed, false);
+});
+
+test('AC2 (#5458): an unreadable branch ref stops at push with a fixed detail, never git\'s stderr', async () => {
+  const h = harness({ script: [[isBranchRead, unreadableGit()]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['push', 'stop', 'pre-push']);
+  assert.equal(final.stop.detail, 'the branch ref of the worktree is unreadable');
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('AC3 (#5458): the happy path adds one branch-ref read, right before the push, and its event lines are unchanged', async () => {
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(h.calls.filter(isBranchRead).length, 1);
+  const push = h.calls.findIndex((c) => c.kind === 'git' && gitSub(c)[0] === 'push');
+  assert.ok(isBranchRead(h.calls[push - 1]), 'the branch read is the call right before git push');
+  assert.deepEqual(h.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+  assert.deepEqual(h.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_PLAIN);
+});
+
 test('AC7.5: a failed push is express-escalated, never retried, and leaves pushed false', async () => {
   const h = harness({ script: [[onGit('push'), Object.assign(new Error('Command failed: git push'), { stderr: 'remote: denied for @bob, closes #3\n' })]] });
   await run(['#7'], h.deps);
@@ -3338,7 +3372,9 @@ test('AC2.1: happy path calls run in the deliverable order', async () => {
     'git rev-parse', 'worker', 'git rev-parse', 'git ls-files', 'git status', 'git add', 'git commit',
     // The test step looks up the scope blob on origin/{ref} (absent here, so the ref check follows) before verify.js,
     // then the tree check (#5454).
-    'git rev-parse', 'git rev-parse', 'node verify.js', 'git ls-files', 'git status', 'node express-lane.js check', 'git rev-parse', 'git push',
+    'git rev-parse', 'git rev-parse', 'node verify.js', 'git ls-files', 'git status', 'node express-lane.js check', 'git rev-parse',
+    // The push guard's branch-ref read, right before the push (#5458).
+    'git rev-parse', 'git push',
     'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
     'node log-decision.js',
     // The polls up to the settled one, then the one --run read; the commit-run answer rides each poll's envelope.
@@ -3879,8 +3915,9 @@ const SECOND_HEAD = 'c'.repeat(40);
 const checkNth = (n, head) => nthCall((c) => c.kind === 'node' && /express-lane\.js$/.test(c.args[0]) && c.args[1] === 'check', n, { code: 0, stderr: '', stdout: JSON.stringify(checkProceed({ head })) });
 const headRead = (headSha) => [isHeadRead, `${headSha}\n`];
 
+// The fix round's commit moves the branch ref with HEAD (#5458), so both reads answer the second head.
 test('AC15: after a fix round the push guard compares HEAD with the second check\'s head', async () => {
-  const h = fixRig({ script: [checkNth(2, SECOND_HEAD), headRead(SECOND_HEAD)] });
+  const h = fixRig({ script: [checkNth(2, SECOND_HEAD), headRead(SECOND_HEAD), [isBranchRead, `${SECOND_HEAD}\n`]] });
   assert.equal(await run(['#7'], h.deps), 0);
   assert.equal(h.calls.filter((c) => c.kind === 'node' && /express-lane\.js$/.test(c.args[0]) && c.args[1] === 'check').length, 2);
   assert.equal(pushCalls(h).length, 1);
