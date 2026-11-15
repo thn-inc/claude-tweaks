@@ -304,11 +304,14 @@ test('AC7.1: validate-findings --min-confidence bogus --dry-run exits 2 with the
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([]));
 
-  const r = spawnCli(CLI, ['validate-findings', findingsFile, '--root', root, '--min-confidence', 'bogus', '--dry-run'], { env: { ...process.env } });
+  const env = { ...process.env, LC_ALL: 'C', LANG: 'C' };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
+  const r = spawnCli(CLI, ['validate-findings', findingsFile, '--root', root, '--min-confidence', 'bogus', '--dry-run'], { env, cwd: root });
   assert.strictEqual(r.code, 2);
   assert.strictEqual(r.stdout, '');
-  assert.strictEqual(
-    r.stderr,
-    'fatal: not a git repository (or any of the parent directories): .git\nvalidate-findings: --min-confidence "bogus" is not a recognized confidence tier (must be one of high|med|low) — an unrecognized value would silently file every finding regardless of confidence, defeating the floor.\n',
+  // Only the CLI-owned refusal line is pinned; git's own stderr text varies by version, locale and checkout.
+  assert.ok(
+    r.stderr.split('\n').includes('validate-findings: --min-confidence "bogus" is not a recognized confidence tier (must be one of high|med|low) — an unrecognized value would silently file every finding regardless of confidence, defeating the floor.'),
+    `expected the tier message in stderr: ${r.stderr}`,
   );
 });

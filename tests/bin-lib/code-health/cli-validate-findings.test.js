@@ -550,14 +550,17 @@ test('AC7.1: validate-findings --dry-run on a valid finding exits 0 and prints t
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
 
-  const r = spawnCli(CLI, ['validate-findings', findingsFile, '--root', root, '--dry-run', '--run-id', 'fixed-run'], { env: { ...process.env } });
+  const env = { ...process.env, LC_ALL: 'C', LANG: 'C' };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
+  const r = spawnCli(CLI, ['validate-findings', findingsFile, '--root', root, '--dry-run', '--run-id', 'fixed-run'], { env, cwd: root });
   assert.strictEqual(r.code, 0);
   assert.strictEqual(
     r.stdout,
     '[\n  {\n    "title": "getUser is a passthrough",\n    "body": "**Criterion:** simplification | **Risk:** high | **Severity:** high | **Likelihood:** medium | **Effort:** medium | **Confidence:** high | **Area:** src/api\\n\\n## Current State\\n\\nAnchor: `src/api/user.js#getUser`\\n\\ngetUser delegates directly to UserRepository.find with no added logic.\\n\\n## Deliverables\\n\\nInline the call or add caching.\\n\\n## Acceptance Criteria\\n\\ngetUser adds caching or is removed.\\n\\n## Release Note\\n\\nNo user-visible change — internal code-quality fix.\\n\\n## Technical Approach\\n\\n### Key Files\\n\\n- `src/api/user.js` — address the finding at this anchor\\n\\n_Filed by `/claude-tweaks:code-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\\n\\n<!-- work-fingerprint: codehealth-a7f87202 -->\\nwork-fingerprint: codehealth-a7f87202",\n    "labels": [\n      "by:code-health",\n      "risk:high",\n      "size:medium",\n      "ready"\n    ],\n    "type": "task"\n  }\n]\n',
   );
-  assert.strictEqual(
-    r.stderr.split(root).join('{ROOT}'),
-    'fatal: not a git repository (or any of the parent directories): .git\nfatal: not a git repository (or any of the parent directories): .git\nhealth-state: fetch failed, treating as empty state: Command failed: git -C {ROOT} fetch origin health-state\nfatal: not a git repository (or any of the parent directories): .git\n\n[code-health] validate-findings fixed-run: 1 valid finding(s), 1 payload(s) after dedup\n',
+  // Only the CLI-owned summary line is pinned; git's own stderr text varies by version, locale and checkout.
+  assert.ok(
+    r.stderr.split('\n').includes('[code-health] validate-findings fixed-run: 1 valid finding(s), 1 payload(s) after dedup'),
+    `expected the summary line in stderr: ${r.stderr}`,
   );
 });
