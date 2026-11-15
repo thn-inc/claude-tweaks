@@ -4,8 +4,11 @@
 // source text keep that true as the file grows:
 //
 //   Scan A: the comment-stripped source names neither `process.env` nor `process.cwd()`.
-//   Scan B: every call to `repoInfo(`, `runGit(` and `writeRunState(` names `env` inside its own
-//           argument text (balanced parentheses, so a call spanning lines is read whole). Those
+//   Scan B: every call to `repoInfo(`, `runGit(` and `writeRunState(` names `env` in its own
+//           arguments (balanced parentheses, so a call spanning lines is read whole): at paren depth 0 of
+//           the call, outside any nested `(...)` and outside an arrow or function body. The braces and
+//           brackets of a plain object or array literal argument (`{ env }`, `{ ...opts, env }`) do not
+//           disqualify it. Those
 //           three default to the real process.env when `env` is left out, and a git child started
 //           without an `env` option inherits it, which no runtime tripwire can see.
 //
@@ -16,7 +19,9 @@
 // mis-parse is an offender. Recall limits, stated rather than hidden: a key spelled as a string
 // (`process['env']`), an `env` built into an options object under another name and passed as that
 // object (`runGit(a, b, opts)` is flagged: spell `{ env }` in the call, or list the line in
-// NAMED_EXCEPTIONS with its reason), and a call reached through an alias (`const g = runGit`).
+// NAMED_EXCEPTIONS with its reason), a call reached through an alias (`const g = runGit`), an `env`
+// that is only a different value under the same word at the top level (`runGit(a, b, other.env)` passes),
+// and an arrow or function body ended by anything but a top-level comma or the call's close.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
@@ -40,6 +45,33 @@ function lineOf(src, offset) {
   let line = 1;
   for (let i = 0; i < offset; i++) if (src[i] === '\n') line++;
   return line;
+}
+
+// Does `args` (the text between a call's own parentheses, blank mode) name `env` at paren depth 0,
+// outside an arrow or function body? An arrow or `function` body runs from its start to the next
+// comma, or closing bracket, at the level it began at, so a body written with braces or without ends
+// correctly. `env` directly before `=>` is an arrow parameter, not a use.
+function namesEnvAtTop(args) {
+  const stack = [];
+  let skipLevel = null;
+  for (let i = 0; i < args.length; i++) {
+    const c = args[i];
+    if (skipLevel !== null) {
+      if (c === ',' && stack.length === skipLevel) { skipLevel = null; continue; }
+      if (')]}'.includes(c) && stack.length === skipLevel) skipLevel = null;
+      else { if ('([{'.includes(c)) stack.push(c); else if (')]}'.includes(c)) stack.pop(); continue; }
+    }
+    if ('([{'.includes(c)) { stack.push(c); continue; }
+    if (')]}'.includes(c)) { stack.pop(); continue; }
+    if (c === '=' && args[i + 1] === '>') { skipLevel = stack.length; i++; continue; }
+    if (/[A-Za-z_$]/.test(c) && !/[\w$]/.test(args[i - 1] || '')) {
+      const word = /^[\w$]+/.exec(args.slice(i))[0];
+      i += word.length - 1;
+      if (word === 'function') { skipLevel = stack.length; continue; }
+      if (word === 'env' && !stack.includes('(') && !/^\s*=>/.test(args.slice(i + 1))) return true;
+    }
+  }
+  return false;
 }
 
 // Text between the paren at `open` and its matching close paren.
@@ -71,7 +103,7 @@ function scan(raw, rel = 'fixture.js') {
     const line = lineOf(code, m.index);
     sites[m[1]]++;
     const args = balanced(code, m.index + m[0].length - 1);
-    if (/\benv\b/.test(args)) continue;
+    if (namesEnvAtTop(args)) continue;
     const lineText = raw.split('\n')[line - 1].trim();
     const exception = (NAMED_EXCEPTIONS[rel] || {})[m[1]];
     if (exception && exception.line === lineText) continue;
@@ -134,9 +166,43 @@ test('self-test: a call spanning several lines with env on a later line is not f
   assert.deepEqual(scan(src).offenders, []);
 });
 
-test('self-test: env named only after the closing paren, or inside a nested call elsewhere, does not satisfy a call', () => {
+test('self-test: env declared after the closing paren does not satisfy a call', () => {
   const src = 'runGit(args, cwd); const env = {};\n';
   assert.deepEqual(scan(src).offenders, ['fixture.js:1: runGit( call does not name env (Scan B)']);
+});
+
+test('self-test: env only inside a nested callback does not satisfy a call', () => {
+  const { offenders } = scan('ctxLib.writeRunState(runDir, (s) => ({ env: s.x }));\n');
+  assert.deepEqual(offenders, ['fixture.js:1: writeRunState( call does not name env (Scan B)']);
+});
+
+test('self-test: env only inside a nested call does not satisfy the outer call', () => {
+  const { offenders } = scan('runGit(args, repoInfo(dir, {}, { env }).root);\n');
+  assert.deepEqual(offenders, ['fixture.js:1: runGit( call does not name env (Scan B)']);
+});
+
+test('self-test: env only inside a callback parameter and body does not satisfy a call', () => {
+  const { offenders } = scan('runGit(args, cwd, [1].map((env) => env)[0]);\n');
+  assert.deepEqual(offenders, ['fixture.js:1: runGit( call does not name env (Scan B)']);
+});
+
+test('self-test: env only in a bare-parameter arrow or a function body does not satisfy a call', () => {
+  const src = 'writeRunState(d, env => ({ a: env }));\nwriteRunState(d, function (s) { return { env: s }; });\n';
+  assert.deepEqual(scan(src).offenders, [
+    'fixture.js:1: writeRunState( call does not name env (Scan B)',
+    'fixture.js:2: writeRunState( call does not name env (Scan B)',
+  ]);
+});
+
+test('self-test: env in an object literal argument, beside an arrow or a nested call, still counts', () => {
+  const src = [
+    'runGit(a, b, { raw: true, env });',
+    'runGit(a, b, { ...opts, env: ctx.env });',
+    'writeRunState(d, (s) => ({ x: s }), { env: ctx.env });',
+    'wtDetect.repoInfo(path.join(a, b), {}, { env });',
+    'runGit(a, b, ctx.env);',
+  ].join('\n');
+  assert.deepEqual(scan(src).offenders, []);
 });
 
 test('self-test: a declaration named like a call is not a site', () => {
