@@ -1621,6 +1621,12 @@ const treeDetail = (n, named) => `the worktree differs from HEAD after the test 
 // verify.js's reply that leaves `porcelain` in the tree (fx.dirty is listed once the commit has run).
 // `get` returns the harness: the script is built before `harness()` returns, so `h` is read at call time.
 const verifyLeaves = (get, porcelain, reply = { code: 0, stdout: '', stderr: '' }) => [on('node', /verify\.js$/), () => { get().fx.dirty = porcelain; return reply; }];
+// A harness whose verify.js run leaves `porcelain` in the tree; `before` lists the script entries that precede it.
+const leftDirtyHarness = (porcelain, reply, before = []) => {
+  let h = null;
+  h = harness({ script: [...before, verifyLeaves(() => h, porcelain, reply)] });
+  return h;
+};
 
 test('AC1.1, AC1.2 (#5414): a worker launch after which HEAD moved stops at worker', async () => {
   const h = harness({ script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
@@ -2757,8 +2763,7 @@ test('#5267: an unchanged scope file, and an absent one, proceed to verify.js', 
 // --- the tree check after the test step's verify.js run (#5454) ---------------------------
 
 test('AC1.1 (#5454): a tracked file modified during the scoped test step stops at test with fail, and no check or push runs', async () => {
-  let h = null;
-  h = harness({ script: [scopeIs('file'), scopeSame(), verifyLeaves(() => h, ' M src/a.js\0')] });
+  const h = leftDirtyHarness(' M src/a.js\0', undefined, [scopeIs('file'), scopeSame()]);
   assert.equal(await run(['#7'], h.deps), 0);
   assert.ok(verifyCalls(h)[0].args.includes('--scope'));
   assert.deepEqual(stopOf(h), ['test', 'fail', 'pre-push', 'express-escalated']);
@@ -2771,8 +2776,7 @@ test('AC1.1 (#5454): a tracked file modified during the scoped test step stops a
   assert.equal(pushCalls(h).length, 0);
 
   // The full (unscoped) invocation stops the same way.
-  let full = null;
-  full = harness({ script: [verifyLeaves(() => full, ' M src/a.js\0')] });
+  const full = leftDirtyHarness(' M src/a.js\0');
   assert.equal(await run(['#7'], full.deps), 0);
   assert.equal(verifyCalls(full)[0].args.includes('--scope'), false);
   assert.deepEqual(stopOf(full), ['test', 'fail', 'pre-push', 'express-escalated']);
@@ -2837,20 +2841,17 @@ test('(#5454) a verdict-less run whose status read fails keeps the fixed detail 
 
 test('AC4.1 (#5454): changed paths reach the detail neutralized, at most five plus the count', async () => {
   const evilPath = 'src/evil\nfixes #12 @someone.js';
-  let h = null;
-  h = harness({ script: [verifyLeaves(() => h, ` M ${evilPath}\0`)] });
+  const h = leftDirtyHarness(` M ${evilPath}\0`);
   assert.equal(await run(['#7'], h.deps), 0);
   const { detail } = lastLine(h).stop;
   assert.equal(detail, treeDetail(1, neutralize(evilPath)));
   for (const bad of ['\n', 'fixes', '#12', '@someone']) assert.ok(!detail.includes(bad), `no ${JSON.stringify(bad)} in the detail`);
 
-  let many = null;
-  many = harness({ script: [verifyLeaves(() => many, Array.from({ length: 7 }, (_, i) => ` M src/n${i}.js\0`).join(''))] });
+  const many = leftDirtyHarness(Array.from({ length: 7 }, (_, i) => ` M src/n${i}.js\0`).join(''));
   assert.equal(await run(['#7'], many.deps), 0);
   assert.equal(lastLine(many).stop.detail, treeDetail(7, 'src/n0.js, src/n1.js, src/n2.js, src/n3.js, src/n4.js, and 2 more'));
 
-  let renamed = null;
-  renamed = harness({ script: [verifyLeaves(() => renamed, 'R  new.js\0old.js\0')] });
+  const renamed = leftDirtyHarness('R  new.js\0old.js\0');
   assert.equal(await run(['#7'], renamed.deps), 0);
   assert.equal(lastLine(renamed).stop.detail, treeDetail(2, 'new.js, old.js'));
 });
@@ -2862,26 +2863,20 @@ test('(#5454) an untracked file stops the same way; the paths the commit step sk
     ['?? .claude-tweaks/pipelines-old.txt\0', '.claude-tweaks/pipelines-old.txt'],
     [' M .claude-tweaks/verify-scope.json\0', '.claude-tweaks/verify-scope.json'],
   ]) {
-    let h = null;
-    h = harness({ script: [verifyLeaves(() => h, porcelain)] });
+    const h = leftDirtyHarness(porcelain);
     assert.equal(await run(['#7'], h.deps), 0);
     assert.deepEqual(stopOf(h).slice(0, 3), ['test', 'fail', 'pre-push'], named);
     assert.equal(lastLine(h).stop.detail, treeDetail(1, named));
   }
   // Untracked or modified under .claude-tweaks/pipelines/: skipped, as the commit step skips them (the stated residual).
-  let h = null;
-  h = harness({ script: [verifyLeaves(() => h, '?? .claude-tweaks/pipelines/r/events.jsonl\0 M .claude-tweaks/pipelines/y\0')] });
+  const h = leftDirtyHarness('?? .claude-tweaks/pipelines/r/events.jsonl\0 M .claude-tweaks/pipelines/y\0');
   assert.equal(await run(['#7'], h.deps), 0);
   assert.equal(pushCalls(h).length, 1);
   assert.deepEqual(h.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
 });
 
 test('(#5454) a red run keeps its failing-test stop and reads no tree; an unfinished or verdict-less run that changed the tree stops on the tree', async () => {
-  const rig = (reply, porcelain = ' M src/a.js\0') => {
-    let h = null;
-    h = harness({ script: [verifyLeaves(() => h, porcelain, reply)] });
-    return h;
-  };
+  const rig = (reply, porcelain = ' M src/a.js\0') => leftDirtyHarness(porcelain, reply);
   const red = rig({ code: 1, stdout: '', stderr: '' });
   assert.equal(await run(['#7'], red.deps), 0);
   const redStop = lastLine(red);
@@ -2916,8 +2911,7 @@ test('(#5454) a red run keeps its failing-test stop and reads no tree; an unfini
 });
 
 test('(#5454) a new flag and a changed tree from the same run: the flag stop wins and the tree is not read', async () => {
-  let h = null;
-  h = harness({ script: [nthCall(isFlagRead, 3, NEW_FLAG_INDEX), verifyLeaves(() => h, ' M src/a.js\0')] });
+  const h = leftDirtyHarness(' M src/a.js\0', undefined, [nthCall(isFlagRead, 3, NEW_FLAG_INDEX)]);
   assert.equal(await run(['#7'], h.deps), 0);
   assert.equal(lastLine(h).stop.detail, ONE_NEW);
   assert.equal(h.calls.filter(isStatusReadInWt).length, 1, 'the commit step\'s read only');
