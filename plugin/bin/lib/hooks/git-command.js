@@ -918,6 +918,7 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
     }
     return i;
   };
+  const noCommand = () => ({ index: -1, dir, unprovable, split: false }); // no word left, or a `stop` option read
   const chdir = (value) => {
     if (value === undefined) return;
     const next = resolveCd(dir, value, pathImpl);
@@ -935,7 +936,7 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       i = next;
       reserved = false;
     }
-    if (i >= t.length) return { index: -1, dir, unprovable, split: false };
+    if (i >= t.length) return noCommand();
     const word = t[i];
     let name = STRIPPED_PREFIX_WORDS.includes(word) ? word : null;
     if (name === null && !shellOnly && word.includes('/')) {
@@ -980,11 +981,11 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       if (!w.startsWith('-') || w === '-' || (!spec.value && !spec.stop && !spec.long)) break;
       const stops = spec.stop || '';
       // A long option fails here too: its second `-` is no known letter.
-      if (spec.known !== undefined && [...w.slice(1)].some((c) => !spec.known.includes(c) && !stops.includes(c))) return { index: -1, dir, unprovable, split: false };
+      if (spec.known !== undefined && [...w.slice(1)].some((c) => !spec.known.includes(c) && !stops.includes(c))) return noCommand();
       if (w.startsWith('--')) {
         const opt = longOptionName(w, longNames);
         const kind = opt === null ? 'flag' : spec.long[opt];
-        if (kind === 'stop') return { index: -1, dir, unprovable, split: false };
+        if (kind === 'stop') return noCommand();
         i += 1;
         if (kind === 'flag') continue;
         let value;
@@ -1000,7 +1001,7 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       const opt = readShortCluster(w, spec.value || '');
       const valueLength = opt === null || opt.value === null ? 0 : opt.value.length;
       const switches = opt === null ? w.slice(1) : w.slice(1, w.length - 1 - valueLength);
-      if ([...switches].some((c) => stops.includes(c)) || (opt !== null && stops.includes(opt.letter))) return { index: -1, dir, unprovable, split: false };
+      if ([...switches].some((c) => stops.includes(c)) || (opt !== null && stops.includes(opt.letter))) return noCommand();
       i += 1;
       if (opt === null) continue;
       let value = opt.value;
