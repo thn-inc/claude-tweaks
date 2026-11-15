@@ -5,9 +5,10 @@ const path = require('node:path');
 
 const {
   EXPRESS_MAX_KEY_FILES, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
-  BOUND_REASONS, SIZE_CEILINGS, isBeyondExpressBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
+  BOUND_REASONS, SIZE_CEILINGS, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
 const { resolveBlastRadiusConfig } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js'));
+const { POLICY_KEYS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
 
 const ELIGIBLE_LABELS = ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'];
 const ELIGIBLE_KEYS = ['plugin/skills/init/claude-md-template.md', 'CLAUDE.md'];
@@ -404,9 +405,6 @@ test('isReadableSizeCeiling and isReadableKeyFileLimit are the checks eligibilit
   for (const v of [1, 3, 99]) assert.strictEqual(isReadableKeyFileLimit(v), true, String(v));
   for (const v of [0, -1, 2.5, '4', null, undefined, Infinity, NaN, 2 ** 53]) assert.strictEqual(isReadableKeyFileLimit(v), false, String(v));
 });
-
-const { isInsideLaneBounds } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
-const { POLICY_KEYS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
 
 test('isInsideLaneBounds: a size the ceiling accepts and at most the Key File limit, the same comparisons eligibility refuses on (#5224)', () => {
   const bounds = { sizeCeiling: 'medium', maxKeyFiles: 5 };
