@@ -26,6 +26,8 @@ Exit codes:
 | 1 | The policy, or the run's repository or integration branch, cannot be resolved; no further record is attempted. With `--budget`, also a failed queue pull. |
 | 2 | Malformed invocation (no record reference, a non-numeric one; with `--budget`, a bad or repeated value, or a named record beside it), `gh` or `git` absent, or an internal error. |
 
+With `--check`, the codes mean: 0 a verdict was printed (admitted or not); 1 none could be computed (nothing on stdout); 2 malformed (anything but exactly one record reference).
+
 ## Picking records: `--budget`
 
 `--budget <n|all>` picks the records itself instead of taking names. The loop is `plugin/bin/lib/driver/budget.js`'s `runBudget`; the queue-pull module and ranking are `plugin/bin/lib/dispatch/queue-pull.js`'s.

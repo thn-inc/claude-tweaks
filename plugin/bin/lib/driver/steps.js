@@ -279,7 +279,8 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
     const reasons = [...((verdict && verdict.reasons) || [])];
     const reviewer = reviewerGateReason({ labels: ctx.issue.labels, keyFiles: ctx.keyFiles, bounds, reviewerOn: ctx.reviewer && ctx.reviewer.on });
     if (reviewer) reasons.push(reviewer);
-    ctx.eligibilityReasons = reasons;
+    // A refusal always carries a reason: a verdict with none reads as the stop detail's own fallback.
+    ctx.eligibilityReasons = reasons.length > 0 ? reasons : ['not eligible'];
     return { status: 'stop', detail: reasons.join('; ') || 'not eligible' };
   }
   ctx.eligibilityReasons = [];
@@ -325,10 +326,12 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     bounds: laneBounds(policy),
     reviewerOn: ctx.reviewer ? ctx.reviewer.on : undefined,
   });
-  ctx.admissionReasons = (verdict && verdict.reasons) || [];
+  const admissionReasons = verdict && Array.isArray(verdict.reasons) ? verdict.reasons : [];
   if (!verdict || verdict.admitted !== true) {
-    return { status: 'stop', detail: ctx.admissionReasons.join('; ') || 'not admitted' };
+    ctx.admissionReasons = admissionReasons.length > 0 ? admissionReasons : ['not admitted'];
+    return { status: 'stop', detail: ctx.admissionReasons.join('; ') };
   }
+  ctx.admissionReasons = admissionReasons;
   return { status: 'ok' };
 });
 

@@ -108,7 +108,7 @@ function parseArgs(argv) {
   if (argv.length === 0) return { error: BUDGET_NEEDS_RECORD };
   if (argv.includes('--check')) {
     const rest = argv.filter((a) => a !== '--check');
-    const m = rest.length === 1 ? RECORD_RE.exec(String(rest[0])) : null;
+    const m = rest.length === 1 && argv.length === 2 ? RECORD_RE.exec(String(rest[0])) : null;
     const n = m ? Number(m[1]) : NaN;
     return Number.isSafeInteger(n) && n > 0 ? { check: n } : { error: CHECK_GRAMMAR };
   }

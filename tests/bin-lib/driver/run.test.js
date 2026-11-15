@@ -6361,8 +6361,23 @@ test('#5232 AC1.1: --check with no computable verdict exits 1 and prints nothing
   assert.match(down.err.join(''), /fetch/);
 });
 
+test('#5232 AC1.1: --check reports the stop detail fallback as the one reason when a verdict carries none', async () => {
+  const cases = [
+    ['eligibility returns null', { deps: { evaluateRecordEligibility: () => null } }, ['not eligible']],
+    ['admission returns null', { deps: { evaluateAdmission: () => null } }, ['not admitted']],
+    ['admission refuses with no reasons array', { deps: { evaluateAdmission: () => ({ admitted: false }) } }, ['not admitted']],
+  ];
+  for (const [name, over, expected] of cases) {
+    const h = harness(over);
+    assert.equal(await run(['--check', '#7'], h.deps), 0, name);
+    const verdict = JSON.parse(h.out.join(''));
+    assert.equal(verdict.admitted, false, name);
+    assert.deepEqual(verdict.reasons, expected, name);
+  }
+});
+
 test('#5232 --check grammar', async () => {
-  for (const argv of [['--check'], ['--check', '#7', '#8'], ['--check', '#7', '--no-settle'], ['--check', '--budget', '1']]) {
+  for (const argv of [['--check'], ['--check', '#7', '#8'], ['--check', '#7', '--no-settle'], ['--check', '--budget', '1'], ['--check', '--check', '#7']]) {
     const h = harness();
     assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
     assert.deepEqual(h.out, []);
