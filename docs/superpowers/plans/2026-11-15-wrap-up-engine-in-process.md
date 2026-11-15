@@ -66,6 +66,7 @@ In `engine-cli.test.js`, with `const { spawnCli } = require('../../helpers/run-c
   - `test('amend against a run dir with no engine-state.json exits 2', …)` → `status === 2`, stderr matches `/amend: no engine-state\.json/`.
   - `test('amend with garbage stdin exits 1', …)`: planned run dir, input `'{not-json'` → `status === 1`, stderr matches `/amend: stdin is not valid JSON/`.
   - `test('verify without --base exits 2 with usage', …)`: `run(['verify', '--run-dir', makeRunDir()])` → `status === 2`, stderr matches `/^usage: wrap-up-engine\.js/`.
+  - `test('record with a falsy JSON stdin (null) exits 0 with no output', …)`: planned run dir, input `'null'` → `status === 0`, `stdout === ''`, `stderr === ''`. This pins today's `if (!payload) return;`. Add the same pin for `amend` (planned run dir, input `'null'`).
 
 In `cli.test.js`, with `const { spawnCli } = require('../../helpers/run-cli');`:
 - `test('AC7.1 script: missing --since exits 2 with usage on stderr', …)`: `spawnCli(CLI, [])` → `code === 2`, `stderr` matches `/usage: wrap-up-state\.js --since/`, `stdout === ''`. Comment names the script-entry property.
@@ -86,18 +87,21 @@ git commit -m "Pin the wrap-up CLIs' script behaviour — real-process cases com
 ### Task 2: Give the engine's spawning libraries an injected `env`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/wrap-up/engine-verify.js:44-55` (`makeDefaultRunner`)
 - Modify: `plugin/bin/lib/wrap-up/facts.js` (`makeGitRunner`, `lineCount`, `gatherFacts`)
 - Modify: `plugin/bin/lib/wrap-up/ledger-write.js` (`defaultGit`, `resolveLedgerPath`)
-- Test: `tests/bin-lib/wrap-up/engine-verify.test.js`, `tests/bin-lib/wrap-up/facts.test.js`, `tests/bin-lib/wrap-up/ledger-write.test.js` (append)
+- Modify: `plugin/bin/lib/wrap-up/pack.js` (`defaultGit`, `defaultGhSync`, `defaultResolvePolicy`, `defaultDeps`; export `defaultDeps`)
+- Test: `tests/bin-lib/wrap-up/engine-verify.test.js`, `tests/bin-lib/wrap-up/facts.test.js`, `tests/bin-lib/wrap-up/ledger-write.test.js`, `tests/bin-lib/wrap-up/pack.test.js` (append)
 
 **Interfaces:**
 - Produces:
   - `defaultGit(args, cwd, ctx = {})` and `defaultGh(args, cwd, ctx = {})`, where `ctx` is `{ env, stderr, homeDir }`, each optional. `ctx.env` is added to the spawn options only when given. `defaultGh` calls `ghOptions(args, opts, injectedGhDeps(ctx))` (`injectedGhDeps` from `../repo-resolve`). Calling either with two arguments behaves exactly as today.
   - `gatherFacts({ cwd, base, env, resolvePolicy })` passes `env` to every `git` and `wc` child, via `makeGitRunner(cwd, env)` and `lineCount(filePath, env)`.
-  - `resolveLedgerPath({ runDir, worktree, explicit, env, deps })`: the default `git` becomes `(args, o) => defaultGit(args, { ...o, env })`, and `defaultGit(args, { cwd, env } = {})` puts `env` into its options. `deps.resolveBase` is unchanged: `pack.js`'s `resolveWorktreeBase` keeps the inherited env, reported as a follow-up (see Task 5).
+  - `resolveLedgerPath({ runDir, worktree, explicit, env, deps })`: the default `git` becomes `(args, o) => defaultGit(args, { ...o, env })`, and `defaultGit(args, { cwd, env } = {})` puts `env` into its options. `deps.resolveBase` stays injectable. Its default stays `pack.js`'s `resolveWorktreeBase(wt)`; the engine overrides it in Task 4.
+  - `pack.js`: `defaultDeps(cwd, { env } = {})` threads `env` into `git` (`defaultGit(args, opts)` puts `opts.env` into its options), `ghSync` and `resolvePolicy` (`defaultResolvePolicy`'s own `git`), and is added to `module.exports`. Calling `defaultDeps(cwd)` behaves exactly as today. Every other key is unchanged. `resolveWorktreeBase(wt, deps)`'s signature is unchanged.
 
 - [ ] **Step 1: Write the env-only tests**
 
@@ -106,13 +110,14 @@ Each test builds the spec's two-repo fixture locally: A with one commit and no r
 - `engine-verify.test.js`, `test('defaultGh: the gh child gets ctx.env', { skip: process.platform === 'win32' && 'sh stub' }, …)`: a `gh` sh stub that echoes `stubbed` in its own directory; `defaultGh(['--version'], A, { env: { ...cleanEnv, PATH: stubDir + path.delimiter + process.env.PATH, GH_HOST: 'github.com' } })` contains `stubbed`. (`GH_HOST` set makes `ghOptions` return the options untouched.)
 - `facts.test.js`, `test('gatherFacts: git children get env', …)`: `gatherFacts({ cwd: A, base: <B base sha>, env: { ...cleanEnv, GIT_DIR: path.join(B, '.git') } }).changedFiles` includes `b-only.txt`.
 - `ledger-write.test.js`, `test('resolveLedgerPath: ownership git gets env', …)`: A holds an untracked `docs/plans/x-ledger.md` on disk. B's history adds `docs/plans/x-ledger.md` after `<B base sha>`. With `resolveLedgerPath({ runDir: <empty dir>, worktree: A, env: { ...cleanEnv, GIT_DIR: B/.git }, deps: { resolveBase: () => '<B base sha>' } })` → `{ ok: true, path: A/docs/plans/x-ledger.md }`. Probe `ownedPlansFiles` against this fixture first. If B's diff alone cannot make the file owned, adjust the fixture so `env` is the only difference between `ok: true` and `unattributable`, and note the adjustment in the commit body.
+- `pack.test.js`, `test('defaultDeps(cwd, { env }): resolveWorktreeBase reads the env-only repo', …)`: the spec's two-repo fixture (B with an `origin` remote, `refs/remotes/origin/main` at B's base commit and `refs/remotes/origin/HEAD` → `refs/remotes/origin/main`, then one more commit; A with no remote). `resolveWorktreeBase(A, defaultDeps(A, { env: { ...cleanEnv, GIT_DIR: path.join(B, '.git') } }))` equals B's base sha. Run without `env`, it does not.
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `node --test tests/bin-lib/wrap-up/engine-verify.test.js tests/bin-lib/wrap-up/facts.test.js tests/bin-lib/wrap-up/ledger-write.test.js`
-Expected: FAIL after Step 1 — the four new tests (the child reads A, or the env argument is ignored).
+Run: `node --test tests/bin-lib/wrap-up/engine-verify.test.js tests/bin-lib/wrap-up/facts.test.js tests/bin-lib/wrap-up/ledger-write.test.js tests/bin-lib/wrap-up/pack.test.js`
+Expected: FAIL after Step 1 — the five new tests (the child reads A, or the env argument is ignored).
 
-- [ ] **Step 3: Thread `env` through the three libraries as the Interfaces block states**
+- [ ] **Step 3: Thread `env` through the four libraries as the Interfaces block states**
 
 - [ ] **Step 4: Run them to see them pass**
 
@@ -122,7 +127,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/wrap-up/engine-verify.js plugin/bin/lib/wrap-up/facts.js plugin/bin/lib/wrap-up/ledger-write.js tests/bin-lib/wrap-up/engine-verify.test.js tests/bin-lib/wrap-up/facts.test.js tests/bin-lib/wrap-up/ledger-write.test.js
+git add plugin/bin/lib/wrap-up/engine-verify.js plugin/bin/lib/wrap-up/facts.js plugin/bin/lib/wrap-up/ledger-write.js plugin/bin/lib/wrap-up/pack.js tests/bin-lib/wrap-up/engine-verify.test.js tests/bin-lib/wrap-up/facts.test.js tests/bin-lib/wrap-up/ledger-write.test.js tests/bin-lib/wrap-up/pack.test.js
 git commit -m "Thread an injected env through the wrap-up engine's git and gh children — default stays the inherited environment (#5379)" -m "Claude-Session: https://claude.ai/code/session_01Ngy9oWzg41k3Z4ESKmz36m"
 ```
 
@@ -187,7 +192,8 @@ git commit -m "Give wrap-up-state.js the in-process entry — run(argv, deps), t
   - `resolveRepoRoot(cwd, env)`, `resolveFactsRoot(cwd, env)` and `resolveTelemetryPath(cwd, env)` take `env` into their `git` options.
   - Paths: the anchoring check uses `path.resolve(d.cwd(), args.runDir)` and `wtDetect.mainCheckoutRoot(d.cwd())`. After it passes, `args.runDirPath = resolveAgainst(d.cwd(), args.runDir)` feeds every fs call and library call. `--batch`, each `--spec-state` path and `--ledger` are read through `resolveAgainst(d.cwd(), p)`. Messages print `args.runDir`, the batch path and the spec-state `p` as given. `--ledger`'s rejection message prints `args.ledger`, which equals today's `candidates[0]`.
   - `verify` passes `deps: { git: (a, c) => d.git(a, c, ctx), gh: (a, c) => d.gh(a, c, ctx), gateDeps: injectedGhDeps(ctx) }` to `runVerify`, with `ctx = { env: d.env, stderr: d.stderr, homeDir: d.homeDir }`.
-  - `finish-console`'s fallback worktree is `d.cwd()`, and `resolveLedgerPath` gets `env: d.env`.
+  - `finish-console`'s fallback worktree is `d.cwd()`. `resolveLedgerPath` gets `env: d.env` and `deps: { resolveBase: (wt) => resolveWorktreeBase(wt, { ...defaultDeps(wt, { env: d.env }), ghSync: (args, o = {}) => d.gh(args, o.cwd, ctx) }) }` (both from `./lib/wrap-up/pack`). Every `gh` child on the engine's path therefore goes through the one fail-closed `gh` seam. The docs/plans fallback's `gh repo view` probe now carries the verify runner's options (5000 ms timeout, piped stderr). A timeout falls through `resolveIntegrationBranch`'s try/catch ladder, the same way a gh failure does today. Record this in the PR body.
+  - Falsy payload: `parseStdinPayload` keeps today's semantics. Valid JSON that is falsy (`null`, `false`, `0`) makes `record`, `amend` and `finish-console` return 0 with no output, exactly as today's `if (!payload) return;`. Task 1's `null` pins hold this.
   - `gatherFacts` gets `env: d.env`.
 - Exit precedence: a verb that today assigns `process.exitCode` and continues keeps a local `code` and returns the last value it would have assigned (`render --strict` prints first, then returns 2; `verify` returns its verdict after any `verify.json` write-failure message).
 
@@ -247,7 +253,7 @@ git commit -m "Give wrap-up-engine.js the in-process entry — verbs return code
 
 - [ ] **Step 1: Switch each helper to `runCliSync` and write the new tests**
 
-Every helper passes `cwd` as today, `stdin` (where the helper takes input) and `env: { ...process.env }`, and maps `code` onto the field its assertions read (`status` or `code`). verify-json passes `env: { ...process.env, PATH: binDir }` as today, plus `deps: { gh: () => { const e = new Error('spawnSync gh ENOENT'); e.code = 'ENOENT'; throw e; } }`. `inProcessExitCode` stays as it is. journey-crlf's header sentence that explains the subprocess calls (no `require.main` guard) is replaced with one line saying the tests call `run` in-process. Append:
+Every helper passes `cwd` as today, `stdin` (where the helper takes input) and `env: { ...process.env }`, and maps `code` onto the field its assertions read (`status` or `code`). finish-console's helper also passes `deps: { gh: ghAbsent }`, where `ghAbsent` throws an ENOENT error like verify-json's below. Its docs/plans cases (ambiguous, unattributable, the new AC8.1 case) reach `resolveBase`'s `gh repo view` probe when the fixture has no policy and no `origin/HEAD`. The real `gh` there fails for the same reason (a fixture with no remote), so the outcome is unchanged and no real `gh` is reached. verify-json passes `env: { ...process.env, PATH: binDir }` as today, plus `deps: { gh: () => { const e = new Error('spawnSync gh ENOENT'); e.code = 'ENOENT'; throw e; } }`. `inProcessExitCode` stays as it is. journey-crlf's header sentence that explains the subprocess calls (no `require.main` guard) is replaced with one line saying the tests call `run` in-process. Append:
 - `finish-console-cli.test.js`, `test('AC8.1: with no worktree in run-state, the ledger resolves under the injected cwd', …)`: a run dir with no `run-state.json`, and a `docs/plans/*-ledger.md` that only the injected `cwd` holds. The ledger resolve uses `resolveBase`, so pick a fixture that `resolveLedgerPath` resolves from `cwd` alone. A `ledger.md` placed by `--ledger <relative name>` under `cwd` also qualifies and covers Review Focus 1. Assert the row flips.
 - `finish-console-cli.test.js`, `test('relative --ledger resolves against the injected cwd', …)`: `--ledger <relative>` naming a ledger inside the run dir, relative to `cwd`, → `status === 0` and the row flips. An outside relative ledger's rejection names the value as typed.
 - `verify-json-cli.test.js`: the existing "lands in the archived copy" case is this file's injected-`cwd` case (`repoRoot` comes from `cwd`).
@@ -263,11 +269,7 @@ Expected: PASS, the existing assertions unchanged (AC3.1, AC5.1).
 
 With the Edit tool, temporarily make the engine read `process.cwd()` in place of `d.cwd()` (all sites at once), run the four files, and confirm that each one has at least one FAIL. Restore, re-run to PASS, and append one line per file to `{evidence}/revert-red.txt`.
 
-- [ ] **Step 4: Report the pack.js follow-up**
-
-`resolveLedgerPath`'s `resolveBase` (`pack.js` `resolveWorktreeBase` → `defaultDeps` → `defaultResolvePolicy`) still starts `git` with the inherited env. Report it in your reply, with file and line, as a follow-up for the controller to file; it is not part of this change.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add tests/bin-lib/wrap-up/finish-console-cli.test.js tests/wrap-up-engine-run-dir-anchoring.test.js tests/bin-lib/wrap-up/verify-json-cli.test.js tests/wrap-up-engine-journey-crlf.test.js
@@ -299,7 +301,8 @@ Expected: `proc-after.txt`'s `cli` total for the six files is ≤ 12 (AC1.1), wi
 - a `### Process counts (#5379)` heading;
 - the before/after `node`/`cli`/`wall-ms` rows per file, with both dates and the command;
 - the list of every test left on a real process, with its reason (Task 1's five `spawnCli` tests);
-- the `plugin/bin/lib` files changed to pass an injected value (`engine-verify.js`, `facts.js`, `ledger-write.js`);
+- the `plugin/bin/lib` files changed to pass an injected value (`engine-verify.js`, `facts.js`, `ledger-write.js`, `pack.js`);
+- the docs/plans fallback's `gh repo view` probe, now on the verify runner's 5000 ms timeout;
 - the spec premises that differ from the merged code (the false premise that `run` awaits `verify.js`; `facts.js`'s `resolve-policy` spawn, gone since #5384; and the CRLF Gotcha: `wrap-up-engine-journey-crlf.test.js` pipes no stdin, so the real-stdin case lives in `engine-cli.test.js`).
 
 Log the AC9 evidence with `--text-file` per `_shared/auto-decision-log.md`.
@@ -316,7 +319,7 @@ Log the AC9 evidence with `--text-file` per `_shared/auto-decision-log.md`.
 | AC5.1 | Task 5 Step 1/2 (anchoring file in-process, cwd ≠ runner's) |
 | AC6.1 | Tasks 3 and 4 (`NOT_YET` edits, conformance test run) |
 | AC6.2 | Waived AC6.2: the list keeps 23 entries after this change, so the delete-when-empty branch does not trigger |
-| AC7.1 | Task 1 Step 1 (engine: AC4.1 refusal + AC4.2 success; state: two script tests) |
+| AC7.1 | Task 1 Step 1 (engine: AC4.1 refusal + AC4.2 success; state: two script tests). Per the spec's Plan Review Clarification (Reading B), the engine's fd-0 stdin test is outside AC7's count and is listed in the PR body |
 | AC8.1 | Task 3 Step 1, Task 4 Step 1, Task 5 Step 1, with revert-red proofs in Tasks 3–5 |
 | AC9.1 | Task 6 Step 3 |
 | AC10.1 | Waived AC10.1 for tasks: the build's Common Step 5 runs the full suite, and the Windows CI job (`windows-regression.yml`) is dispatched after simplify and after any review fix wave |
