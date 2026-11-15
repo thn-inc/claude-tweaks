@@ -4,12 +4,29 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'blast-radius.js');
 
+// The fixture's own git calls must not read a repo named by an inherited GIT_* variable.
+function cleanEnv() {
+  const env = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[key];
+  return env;
+}
+
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', args, { cwd, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+// The complete environment the CLI sees: git needs PATH, and HOME keeps a global git config reachable.
+const CLI_ENV = { PATH: process.env.PATH, HOME: os.homedir() };
+
+// In-process call; maps the helper's `code` onto the `status` field the assertions use.
+function cli(args, opts = {}) {
+  const { code, stdout, stderr } = runCliSync(CLI, args, { env: CLI_ENV, ...opts });
+  return { status: code, stdout, stderr };
 }
 
 // Fixture: a repo with a main branch, a feature branch one behavior commit
@@ -34,10 +51,11 @@ function makeFixtureRepo() {
   return dir;
 }
 
+// Real process: proves the script entry (require.main guard, argv slice, process.exitCode wiring).
 test('e2e: success prints one JSON object with mergeBase, config, summary', () => {
   const dir = makeFixtureRepo();
-  const res = spawnSync('node', [CLI, '--integration-branch', 'main'], { cwd: dir, encoding: 'utf8' });
-  assert.strictEqual(res.status, 0, res.stderr);
+  const res = spawnCli(CLI, ['--integration-branch', 'main'], { cwd: dir });
+  assert.strictEqual(res.code, 0, res.stderr);
   const out = JSON.parse(res.stdout);
   assert.match(out.mergeBase, /^[0-9a-f]{40}$/);
   assert.strictEqual(out.summary.implFiles, 1);
@@ -49,24 +67,25 @@ test('e2e: success prints one JSON object with mergeBase, config, summary', () =
 
 test('e2e: unresolvable integration branch exits 1 with stderr and NO stdout', () => {
   const dir = makeFixtureRepo();
-  const res = spawnSync('node', [CLI, '--integration-branch', 'no-such-branch'], { cwd: dir, encoding: 'utf8' });
+  const res = cli(['--integration-branch', 'no-such-branch'], { cwd: dir });
   assert.strictEqual(res.status, 1);
   assert.match(res.stderr, /blast-radius: could not resolve merge base/);
   assert.strictEqual(res.stdout, '', 'a resolution failure must never print a summary');
 });
 
+// Real process: proves the no-argument refusal through the script entry (exit 1, nothing on stdout).
 test('e2e: missing both base flags exits 1 with usage on stderr', () => {
   const dir = makeFixtureRepo();
-  const res = spawnSync('node', [CLI], { cwd: dir, encoding: 'utf8' });
-  assert.strictEqual(res.status, 1);
-  assert.match(res.stderr, /usage: blast-radius\.js/);
+  const res = spawnCli(CLI, [], { cwd: dir });
+  assert.strictEqual(res.code, 1);
+  assert.strictEqual(res.stderr, 'blast-radius: usage: blast-radius.js (--base <ref> | --integration-branch <branch>) [--run <dir>]\n');
   assert.strictEqual(res.stdout, '');
 });
 
 test('e2e: --base pass-through uses the given commit', () => {
   const dir = makeFixtureRepo();
   const baseSha = git(dir, 'rev-parse', 'main').trim();
-  const res = spawnSync('node', [CLI, '--base', baseSha], { cwd: dir, encoding: 'utf8' });
+  const res = cli(['--base', baseSha], { cwd: dir });
   assert.strictEqual(res.status, 0, res.stderr);
   assert.strictEqual(JSON.parse(res.stdout).mergeBase, baseSha);
 });
@@ -76,11 +95,7 @@ test('e2e: --base pass-through uses the given commit', () => {
 test('e2e: nonexistent --run dir exits 1 with the bad-path message and NO stdout', () => {
   const dir = makeFixtureRepo();
   const badRunDir = path.join(dir, 'no-such-run-dir');
-  const res = spawnSync(
-    'node',
-    [CLI, '--integration-branch', 'main', '--run', badRunDir],
-    { cwd: dir, encoding: 'utf8' }
-  );
+  const res = cli(['--integration-branch', 'main', '--run', badRunDir], { cwd: dir });
   assert.strictEqual(res.status, 1);
   assert.match(res.stderr, /blast-radius: --run dir does not exist or is not a directory: /);
   assert.strictEqual(res.stdout, '', 'a bad --run path must never print a summary');
@@ -123,7 +138,7 @@ function makeStaleLocalMainFixture() {
 
 test('e2e #1592: a stale local main resolves against origin/main, excluding unrelated already-landed commits (AC2)', () => {
   const dir = makeStaleLocalMainFixture();
-  const res = spawnSync('node', [CLI, '--integration-branch', 'main'], { cwd: dir, encoding: 'utf8' });
+  const res = cli(['--integration-branch', 'main'], { cwd: dir });
   assert.strictEqual(res.status, 0, res.stderr);
   const out = JSON.parse(res.stdout);
   const originMainSha = git(dir, 'rev-parse', 'refs/remotes/origin/main').trim();
@@ -134,9 +149,56 @@ test('e2e #1592: a stale local main resolves against origin/main, excluding unre
 
 test('e2e #1592: --integration-branch main and --integration-branch origin/main agree on a stale local main (AC1)', () => {
   const dir = makeStaleLocalMainFixture();
-  const viaBare = spawnSync('node', [CLI, '--integration-branch', 'main'], { cwd: dir, encoding: 'utf8' });
-  const viaQualified = spawnSync('node', [CLI, '--integration-branch', 'origin/main'], { cwd: dir, encoding: 'utf8' });
+  const viaBare = cli(['--integration-branch', 'main'], { cwd: dir });
+  const viaQualified = cli(['--integration-branch', 'origin/main'], { cwd: dir });
   assert.strictEqual(viaBare.status, 0, viaBare.stderr);
   assert.strictEqual(viaQualified.status, 0, viaQualified.stderr);
   assert.deepStrictEqual(JSON.parse(viaBare.stdout), JSON.parse(viaQualified.stdout));
+});
+
+test('AC5.1: require() of blast-radius.js prints nothing and leaves process.exitCode undefined', () => {
+  const dir = makeFixtureRepo();
+  // fresh: true re-requires the CLI inside the helper's snapshot, so a require-time
+  // stdout/stderr write or process.exitCode change fails this call.
+  const res = cli(['--integration-branch', 'main'], { cwd: dir, fresh: true });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(process.exitCode, undefined);
+});
+
+// AC9.1 env-only fixture (model: forgePair in forge-probe-env.test.js): repo A is the
+// CLI's cwd and has no main branch; repo B has main and a feature commit. B is named only
+// through GIT_DIR in the injected env, so the git child reads B only if it gets that env.
+test('AC9.1: the git child reads the repo named by the injected env, not the inherited one', () => {
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-a-'));
+  git(a, 'init', '-b', 'trunk');
+  git(a, 'config', 'user.email', 'test@example.invalid');
+  git(a, 'config', 'user.name', 'Test');
+  fs.writeFileSync(path.join(a, 'a.txt'), 'a\n');
+  git(a, 'add', '.');
+  git(a, 'commit', '-m', 'a');
+  const b = makeFixtureRepo();
+  const baseSha = git(b, 'rev-parse', 'main').trim();
+  const res = cli(['--integration-branch', 'main'], {
+    cwd: a,
+    env: { ...CLI_ENV, GIT_DIR: path.join(b, '.git') },
+  });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(JSON.parse(res.stdout).mergeBase, baseSha);
+});
+
+test('AC9.1: a relative --run that does not exist prints the argument as given', () => {
+  const dir = makeFixtureRepo();
+  const res = cli(['--integration-branch', 'main', '--run', 'nope'], { cwd: dir });
+  assert.strictEqual(res.status, 1);
+  assert.strictEqual(res.stdout, '');
+  assert.strictEqual(res.stderr, 'blast-radius: --run dir does not exist or is not a directory: nope\n');
+});
+
+test('AC9.1: a relative --run that exists resolves against the injected cwd', () => {
+  const dir = makeFixtureRepo();
+  fs.mkdirSync(path.join(dir, 'run'));
+  fs.writeFileSync(path.join(dir, 'run', 'config.yml'), 'auto-merge-max-lines: 7\n');
+  const res = cli(['--integration-branch', 'main', '--run', 'run'], { cwd: dir });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(JSON.parse(res.stdout).config.autoMergeMaxLines, 7);
 });
