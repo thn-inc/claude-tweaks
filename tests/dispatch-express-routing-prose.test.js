@@ -12,7 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = path.join(DISPATCH, 'SKILL.md');
@@ -241,4 +241,231 @@ test('reporting.md: an express group\'s block and timing line', () => {
 
 test('go-red control: each reporting fact stripped reports exactly itself', () => {
   assertEachFactGoesRed(readText(REPORTING), REPORTING_FACTS);
+});
+
+// #5232: the driver route. SKILL.md carries one conditional pointer to driver-route.md and no
+// drive.js call; driver-route.md carries the Closed rule, the order, the call, the read, the outcome
+// mapping and the decline log. All of it is new prose in this change, so every go-red control
+// mutates the live text in memory, behind an assert.notEqual that the mutation landed.
+const ROUTE = path.join(DISPATCH, 'driver-route.md');
+const { OUTCOMES } = require('../plugin/bin/lib/driver/events');
+const { parseArgs } = require('../plugin/bin/lib/driver/run');
+
+const mutate = (text, from, to) => {
+  const out = text.replace(from, to);
+  assert.notEqual(out, text, `mutation did not land: ${from}`);
+  return out;
+};
+
+// AC3.2: exactly one driver-route.md mention, inside a sentence carrying the off condition; no drive.js.
+function assertOnePointerNoDriveCall(text) {
+  const hits = text.match(/driver-route\.md/g) || [];
+  assert.equal(hits.length, 1, `SKILL.md must name driver-route.md exactly once, found ${hits.length}`);
+  const sentence = text.split('\n\n').find((p) => p.includes('driver-route.md'))
+    .split(/(?<=\.)\s+/).find((s) => s.includes('driver-route.md'));
+  assert.match(sentence, /unless it resolves `off`/, 'the pointer sentence must carry its off condition');
+  assert.equal(/drive\.js/.test(text), false, 'SKILL.md must name no drive.js call');
+}
+const POINTER_START = '**Driver route (#5232).**';
+const pointerParagraph = (text) => text.split('\n\n').find((p) => p.startsWith(POINTER_START));
+
+test('AC3.2: SKILL.md names driver-route.md in exactly one conditional pointer and names no drive.js call', () => {
+  assertOnePointerNoDriveCall(readText(SKILL));
+});
+
+test('go-red control: a drive.js mention, a duplicated pointer, or the pointer moved out of its condition fails', () => {
+  const text = readText(SKILL);
+  assert.throws(() => assertOnePointerNoDriveCall(`${text} drive.js`));
+  const pointer = pointerParagraph(text);
+  assert.ok(pointer, 'pointer paragraph not found');
+  assert.throws(() => assertOnePointerNoDriveCall(mutate(text, pointer, `${pointer}\n\n${pointer}`)));
+  const movedOut = mutate(text, '`driver-route.md` in this skill\'s directory', 'the driver route') + '\n\nRead `driver-route.md` in this skill\'s directory.\n';
+  assert.throws(() => assertOnePointerNoDriveCall(movedOut));
+});
+
+test('AC3.3: express-driver is resolved by the same resolve-policy.js call as express-lane', () => {
+  const pattern = /`resolve-policy\.js --values express-lane express-driver`/;
+  const text = readText(SKILL);
+  assert.match(pointerParagraph(text), pattern);
+  assert.doesNotMatch(mutate(text, pattern, '`resolve-policy.js --values express-driver`'), pattern);
+});
+
+const routeText = () => readText(ROUTE);
+const closedRule = (text) => sectionOf(text, '## Closed rule');
+
+// Each Closed rule row: its State cell's opening, then the facts its own line must carry.
+const CLOSED_ROWS = [
+  ['| `express-driver` resolves `off`, or to a value other than `off`, `split`, `on`, or cannot be read |',
+    /\| `driver-route\.md` is not read, no `drive\.js` call is made, today's path applies \|/, 'AC3.1: off, unknown or unreadable → not read, no drive.js call'],
+  ['| `split` or `on`, record is a singleton group |',
+    /\| `drive\.js --check` runs, whatever `express-lane` resolves/, 'split or on singleton → --check whatever express-lane resolves'],
+  ['| `--check` exits non-zero, prints no line, prints a line that is not one JSON object, or the object\'s `admitted` field is missing or not `true` |',
+    /\| today's path \(the express gate when `express-lane` resolves `true`, else the normal path\); one `SKIP` line/, 'AC4.2: a --check that does not admit → today\'s path plus one SKIP'],
+  ['| `--check` admits |',
+    /\| `drive\.js \{n\} --run "\{minted-run-dir\}" --no-settle --in-flight-prs "\{drain-prs\}"` runs as one background Bash call [^|]*; no express gate call is made for this record \|/, 'AC5.1: admits → drive.js --run as one background call, no express gate'],
+  ['| a bundle group |',
+    /\| today's path; the route is never consulted \|/, 'a bundle group → today\'s path, never consulted'],
+];
+const missingRowsOf = (rows) => (text) => rows.filter(([prefix, pattern]) => !pattern.test(lineStartingWith(text, prefix))).map(([, , fact]) => fact);
+
+test('driver-route.md: the Closed rule has exactly its five rows, each with its result', () => {
+  const section = closedRule(routeText());
+  const rows = section.split('\n').filter((l) => l.startsWith('| ') && !l.startsWith('| State |'));
+  assert.equal(rows.length, 5, `expected five Closed rule rows, found ${rows.length}`);
+  assert.deepEqual(missingRowsOf(CLOSED_ROWS)(section), []);
+  assert.match(section, /A state not listed here is refused with one line naming the state, and the record takes today's path\./);
+});
+
+test('go-red control: each Closed rule result stripped from its row, or moved to another row, reports itself', () => {
+  const section = closedRule(routeText());
+  for (const [prefix, pattern, fact] of CLOSED_ROWS) {
+    const line = lineStartingWith(section, prefix);
+    assert.deepEqual(missingRowsOf(CLOSED_ROWS)(mutate(section, line, line.replace(pattern, '| x |'))), [fact]);
+  }
+  // Move-out: swap the results of the first and last rows.
+  const first = lineStartingWith(section, CLOSED_ROWS[0][0]);
+  const last = lineStartingWith(section, CLOSED_ROWS[4][0]);
+  const cell = (l) => l.slice(l.lastIndexOf(' |', l.length - 3) + 2);
+  const swapped = mutate(mutate(section, first, first.replace(cell(first), cell(last))), last, last.replace(cell(last), cell(first)));
+  assert.deepEqual(missingRowsOf(CLOSED_ROWS)(swapped), [CLOSED_ROWS[0][2], CLOSED_ROWS[4][2]]);
+});
+
+test('driver-route.md: the order is mint → --check → bind without --dispatch → --run', () => {
+  const items = sectionOf(routeText(), '## Order').split('\n').filter((l) => /^\d+\. /.test(l));
+  const ORDER = [/^1\. Step 4 mints `\{minted-run-dir\}`/, /^2\. Run `drive\.js --check` before any bind/, /^3\. .*Admitted: bind without `--dispatch`/, /^4\. .*`drive\.js --run`/];
+  const check = (list) => list.length === ORDER.length && ORDER.every((re, i) => re.test(list[i]));
+  assert.equal(check(items), true, `order items: ${JSON.stringify(items)}`);
+  assert.equal(check([items[0], items[2], items[1], items[3]]), false, 'go-red: --check after the bind must fail');
+});
+
+const ROUTE_FACTS = [
+  [/before any bind, because its verdict decides the bind's form/, 'the check precedes the bind, and why'],
+  [/the #3225 config gate guards a `\/flow`-framed run, and the driver writes `config\.yml` only once its PR exists/, 'bound without --dispatch, and why'],
+  [/`--run` refuses a run directory whose `run-state\.json` does not name this worktree/, 'the bind precedes --run, and why'],
+  [/Claim nothing yourself: the driver claims the record under `\{minted-run-dir\}`'s basename/, 'dispatch never claims before --run'],
+  [/as one Bash call with `run_in_background: true`/, 'one background Bash call'],
+  [/prefix it with `cd \{worktree-path\} &&`/, 'cwd-pinned case prefix (#447)'],
+  [/`\{drain-prs\}` is the path `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value dispatch-drain-prs\.json` prints/, 'the drain-PR list path'],
+  [/When that file does not exist yet, write `\[\]` to it with the Write tool first/, 'Review Focus 1: [] written when the list is absent'],
+  [/When this firing's queue pull wrote `dispatch-near-dup-pairs\.json`, pass `--near-dup-pairs "\{near-dup-pairs\}"` too/, 'near-dup pairs passed whenever the firing wrote them'],
+  [/Always pass `--in-flight-prs`: without it the driver applies no drain-overlap hold/, 'AC9.2: the route always passes --in-flight-prs'],
+  [/The hold and the merge are driver code/, 'AC5.9/AC5.10: the hold and the merge are driver code'],
+  [/No model performs the merge/, 'AC5.11: no model performs the merge'],
+  [/Never `sleep` or poll while the driver runs\. End the turn and wait for the background task's completion notification/, 'AC6.1: no sleep, wait for the notification'],
+  [/the final event line is the last line above that marker/, 'Review Focus 4: the final line is the last line above [exited with code N]'],
+  [/appends a blank line and `\[exited with code N\]`/, 'Review Focus 4: the harness marker named'],
+  [/Any other word, no final line, a final line that is not one JSON object, or a non-zero exit that left no parseable final line \(the `--run` guard's exit 3 included\) is `blocked` through `two-call-gate\.md` §5/, 'AC5: the catch-all is blocked through §5'],
+  [/a guard failure is a dispatch-side defect, never routed onward to today's path/, 'AC5: a guard failure is a dispatch-side defect'],
+  [/run `drain-pr-overlap\.md`'s Step 5 list write as it runs after the express call/, 'AC5.7: the Step 5 list write after the call'],
+  [/The group counts for `settle-and-merge\.md`'s Drain-overlap hold like any auto-merge group/, 'AC5.8: counts for the Drain-overlap hold'],
+  [/Write no model-selection log line for the group/, 'no model-selection log line'],
+  [/log-decision\.js" --run "\{minted-run-dir\}" --status SKIP --step "Driver route \(skipped\)" --reversibility n\/a --text-file "\{text-file\}"/, 'the SKIP line via log-decision.js --text-file'],
+];
+
+test('driver-route.md: the route\'s facts', () => {
+  assert.deepEqual(missingFactsOf(ROUTE_FACTS)(routeText()), []);
+});
+
+test('go-red control: each route fact stripped reports exactly itself', () => {
+  assertEachFactGoesRed(routeText(), ROUTE_FACTS);
+});
+
+// AC5: each outcome word's own row carries its mapping.
+const outcomeTable = (text) => sectionOf(text, '## Outcome words');
+const OUTCOME_ROWS = [
+  ['| `merged` |', /the group ends once `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/express-lane\.js" verify --run "\{minted-run-dir\}" --issue \{n\}` exits 0 \(non-zero: `blocked`/, 'AC5.2: merged → verify exit 0 ends the group, non-zero blocked'],
+  ['| `armed` |', /\| as `merged` \|/, 'AC5.2: armed as merged'],
+  ['| `pending-review` |', /\| as `merged` \|/, 'AC5.2: pending-review as merged'],
+  ['| `express-escalated` |', /re-bind with `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" record-worktree --run "\{minted-run-dir\}" "\{worktree\}" --dispatch`, then the ordinary first call on the same run dir and the same worktree/, 'AC5.3: express-escalated re-binds with --dispatch, then the ordinary first call'],
+  ['| `blocked` |', /this session runs `settle-and-merge\.md`'s Step 6 Settle for the record/, 'AC5.5: blocked → dispatch\'s Settle'],
+  ['| `blocked` |', /`stop\.reason` is `claim-exit-7`, it is dispatch's Claim permission stop/, 'claim-exit-7 → the Claim permission stop'],
+  ['| `blocked` |', /the firing ends, as for `failed:claim-permission-denied`/, 'claim-exit-7 ends the firing'],
+  ['| `blocked` |', /Then `two-call-gate\.md` §5/, 'AC5.5: blocked → then §5'],
+  ['| `refused` |', /take today's path for the record, with one `SKIP` line/, 'AC5.6: refused → today\'s path plus one SKIP'],
+  ['| `refused` |', /when `express-lane` resolves `true`, the express gate runs/, 'AC5.6: refused re-decides the bind through the express gate'],
+  ['| `refused` |', /on anything but an eligible verdict, re-bind with `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" record-worktree --run "\{minted-run-dir\}" "\{worktree\}" --dispatch` before the ordinary first call/, 'AC5.6: refused re-binds with --dispatch before the ordinary first call'],
+];
+
+test('driver-route.md: each outcome word\'s row carries its mapping', () => {
+  assert.deepEqual(missingRowsOf(OUTCOME_ROWS)(outcomeTable(routeText())), []);
+});
+
+test('go-red control: each outcome mapping stripped from its row, or moved to another row, reports itself', () => {
+  const table = outcomeTable(routeText());
+  for (const [prefix, pattern, fact] of OUTCOME_ROWS) {
+    const line = lineStartingWith(table, prefix);
+    assert.deepEqual(missingRowsOf(OUTCOME_ROWS)(mutate(table, line, line.replace(pattern, 'x'))), [fact]);
+  }
+  const merged = lineStartingWith(table, '| `merged` |');
+  const escalated = lineStartingWith(table, '| `express-escalated` |');
+  const swap = (l, other) => `${l.slice(0, l.indexOf(' |', 2) + 2)}${other.slice(other.indexOf(' |', 2) + 2)}`;
+  const swapped = mutate(mutate(table, merged, swap(merged, escalated)), escalated, swap(escalated, merged));
+  assert.deepEqual(missingRowsOf(OUTCOME_ROWS)(swapped), [OUTCOME_ROWS[0][2], OUTCOME_ROWS[3][2]]);
+});
+
+// AC5.4: the table's words, both directions, against the driver's own vocabulary.
+const outcomeWords = (text) => outcomeTable(text).split('\n').map((l) => /^\| `([a-z-]+)` \|/.exec(l)).filter(Boolean).map((m) => m[1]);
+const sameSet = (a, b) => a.length === new Set(a).size && a.length === b.length && b.every((w) => a.includes(w));
+
+test('AC5.4: the outcome words driver-route.md maps equal the driver\'s OUTCOMES', () => {
+  const words = outcomeWords(routeText());
+  assert.equal(words.length, new Set(words).size, `a word has two rows: ${words}`);
+  assert.deepEqual(new Set(words), new Set(Object.values(OUTCOMES)));
+});
+
+test('go-red control: a driver word without a row, a dropped row, or a row for an unknown word fails', () => {
+  const text = routeText();
+  const words = outcomeWords(text);
+  const outcomes = Object.values(OUTCOMES);
+  assert.equal(sameSet(words, outcomes), true);
+  assert.equal(sameSet(words, [...outcomes, 'parked']), false);
+  assert.equal(sameSet(words.slice(1), outcomes), false);
+  const refusedRow = lineStartingWith(text, '| `refused` |');
+  assert.equal(sameSet(outcomeWords(mutate(text, refusedRow, `${refusedRow}\n| \`parked\` | x |`)), outcomes), false);
+});
+
+const PARITY_PATTERNS = [[/\bodd\b/i, ' odd'], [/\beven\b/i, ' even'], [/parity/i, ' parity'], [/`auto:/, ' `auto:merge`'], [/`size:/, ' `size:low`'], [/`risk:/, ' `risk:low`'], [/`ceremony:/, ' `ceremony:light`'], [/% ?2\b/, ' n % 2']];
+
+test('AC4.1: driver-route.md states no parity, label or number rule', () => {
+  const text = routeText();
+  for (const [pattern] of PARITY_PATTERNS) assert.doesNotMatch(text, pattern);
+});
+
+test('go-red control: each parity, label or number token appended is caught', () => {
+  const text = routeText();
+  for (const [pattern, token] of PARITY_PATTERNS) assert.match(`${text}${token}`, pattern, token);
+});
+
+// The fenced drive.js lines, as drive.js's own parseArgs reads them.
+function driveLines(text) {
+  const lines = [];
+  // A fence may sit indented under a list item: anchor on the line start, indentation allowed.
+  for (const m of text.matchAll(/^[ \t]*```bash\r?\n([\s\S]*?)\r?\n[ \t]*```/gm)) {
+    for (const line of m[1].split(/\r?\n/)) if (line.includes('/bin/drive.js"')) lines.push(line.trim());
+  }
+  return lines;
+}
+function parseDriveLine(line) {
+  const sub = line.replace(/\{n\}/g, '7').replace(/\{minted-run-dir\}/g, '/r/x y')
+    .replace(/\{drain-prs\}/g, '/t/dispatch-drain-prs.json').replace(/\{near-dup-pairs\}/g, '/t/dispatch-near-dup-pairs.json');
+  const tokens = [...sub.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => (m[1] !== undefined ? m[1] : m[2]));
+  assert.equal(tokens[0], 'node', line);
+  assert.match(tokens[1], /\/bin\/drive\.js$/, line);
+  return parseArgs(tokens.slice(2));
+}
+const RUN = { records: [7], settle: false, runDir: '/r/x y', inFlightPrsFile: '/t/dispatch-drain-prs.json' };
+const EXPECTED_PARSES = [{ check: 7 }, RUN, { ...RUN, nearDupPairsFile: '/t/dispatch-near-dup-pairs.json' }];
+
+test('the route\'s drive.js command lines parse through drive.js\'s own parseArgs', () => {
+  const lines = driveLines(routeText());
+  assert.deepEqual(lines.map(parseDriveLine), EXPECTED_PARSES);
+  assert.deepEqual(driveLines(routeText().replace(/\n/g, '\r\n')), lines, 'a CRLF copy extracts the same lines');
+});
+
+test('go-red control: a dropped --no-settle or an unquoted spaced run dir fails the parse', () => {
+  const text = routeText();
+  const noSettle = mutate(text, '--run "{minted-run-dir}" --no-settle --in-flight-prs "{drain-prs}"\n', '--run "{minted-run-dir}" --in-flight-prs "{drain-prs}"\n');
+  assert.notDeepEqual(driveLines(noSettle).map(parseDriveLine), EXPECTED_PARSES);
+  const unquoted = mutate(text, '--run "{minted-run-dir}" --no-settle --in-flight-prs "{drain-prs}"\n', '--run {minted-run-dir} --no-settle --in-flight-prs "{drain-prs}"\n');
+  assert.notDeepEqual(driveLines(unquoted).map(parseDriveLine), EXPECTED_PARSES);
 });
