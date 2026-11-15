@@ -6,7 +6,7 @@ whenever that heading's applicability condition (below) holds. Extracted out of
 grant and no `merge-authorization: pre-authorized` override never loads this procedure at
 all — the common case, since most records carry `auto:build` alone.
 
-When this run's spec has a materialized header (`{run-dir}/wrap-up-pack.json`'s `inputs.records` is
+When this run's spec has a materialized header (`{run-dir}/wrap-up-pack.json`'s `inputs.closingRecords` is
 non-empty — see `skills/flow/materialize.md` for the header; when the pack file is absent, fall
 back to `cleanup-procedures-execution.md`'s Section C step 2 worktree-mirror glob instead) AND
 EITHER the issue's **live**

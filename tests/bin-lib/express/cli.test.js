@@ -297,7 +297,7 @@ test('check proceed: a Key-File-only diff logs the proceed line and no escalatio
   const res = h.json();
   assert.strictEqual(res.action, 'proceed');
   assert.strictEqual(res.mergeVerification, 'merge-when-green');
-  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green');
+  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green,spec=7');
   assert.strictEqual(res.bounds.implLines, 4);
   assert.strictEqual(res.head, HEAD_SHA);
   const text = decisions(fx);
@@ -339,11 +339,24 @@ test('AC4.1 configSet: check under merge-verification off yields merge-when-gree
   assert.strictEqual(run(checkArgv(fx), h.deps), 0);
   const res = h.json();
   assert.strictEqual(res.mergeVerification, 'merge-when-green');
-  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green');
+  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green,spec=7');
 
   const wait = harness(fx, {}, { 'merge-verification': 'wait' });
   assert.strictEqual(run(checkArgv(fx), wait.deps), 0);
-  assert.strictEqual(wait.json().configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=wait');
+  assert.strictEqual(wait.json().configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=wait,spec=7');
+});
+
+test('AC1.1 AC3.1: the proceed configSet written through set-config.js leaves spec: {n} in config.yml', () => {
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(checkArgv(fx), h.deps), 0);
+  const { configSet } = h.json();
+  const out = []; const err = [];
+  const scDeps = { cwd: () => fx.main, stdout: (s) => out.push(s), stderr: (s) => err.push(s) };
+  assert.strictEqual(require('../../../plugin/bin/set-config.js').run(['--run', fx.runDir, '--set', configSet], scDeps), 0, err.join(''));
+  const body = fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8');
+  assert.match(body, /^spec: 7$/m);
+  assert.match(body, /^integration-model: pr-first$/m);
 });
 
 test('check: a BlastRadiusError from the diff gather escalates as express-error, never a proceed', () => {

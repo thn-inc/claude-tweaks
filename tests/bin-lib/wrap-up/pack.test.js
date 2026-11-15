@@ -7,7 +7,7 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 
 const {
-  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger, namesRecordReference, isDeferredUnstaged,
+  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, parseLedger, namesRecordReference, isDeferredUnstaged,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
@@ -354,6 +354,111 @@ test('resolveInputs: no headers anywhere and no manifest → records [] and sour
   assert.deepStrictEqual(inputs.records, []);
   assert.strictEqual(inputs.record, null);
   assert.strictEqual(inputs.sources.records, 'unavailable');
+});
+
+// #5347: an express run writes no materialized header or manifest; its record
+// is the `spec:` line the lane's step 7 pins into the run dir's config.yml.
+function configOnlyRunDir(configText, name = 'wrap-up-pack-config-') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), name));
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
+  if (configText !== null) fs.writeFileSync(path.join(dir, 'config.yml'), configText);
+  return dir;
+}
+
+test('AC2.1: an express run dir (config.yml spec:, no header or manifest) resolves its record from the config rung and the claim probe is ok', async () => {
+  const runDir = configOnlyRunDir('spec: 5338\nceremony-profile: fast-lane\nintegration-model: pr-first\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [5338]);
+  assert.strictEqual(inputs.sources.records, 'config');
+  assert.deepStrictEqual(inputs.closingRecords, []);
+  const pack = await gatherPack({ runDir, cwd: '/w/tree', only: ['claim'], deps: okDeps() });
+  assert.strictEqual(pack.claim.ok, true);
+  assert.deepStrictEqual(pack.claim.value, { 5338: { state: 'live', reclaimable: false, via: 'git' } });
+});
+
+test('AC3.1: a config.yml with no valid spec: still leaves records unresolved', async () => {
+  for (const config of ['', 'spec: 0\n', 'spec: abc\n', 'spec: 12x\n']) {
+    const runDir = configOnlyRunDir(config);
+    const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+    assert.strictEqual(inputs.sources.records, 'unavailable', JSON.stringify(config));
+    assert.deepStrictEqual(inputs.records, [], JSON.stringify(config));
+    const pack = await gatherPack({ runDir, cwd: '/w/tree', only: ['claim'], deps: okDeps() });
+    assert.strictEqual(pack.claim.ok, false, JSON.stringify(config));
+    assert.match(pack.claim.error, /^records unresolved — no materialized header or manifest found$/, JSON.stringify(config));
+  }
+});
+
+test('the config rung is last: a header wins over config.yml spec:', () => {
+  const runDir = fixtureRunDir();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'spec: 9999\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1535]);
+  assert.strictEqual(inputs.sources.records, 'headers');
+});
+
+test('the config rung is last: a worktree-mirror header wins over config.yml spec:', () => {
+  const { runDir } = mirrorFixture();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'spec: 9999\n');
+  const inputs = resolveInputs({ runDir, cwd: '/nowhere', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1930]);
+  assert.strictEqual(inputs.sources.records, 'worktree-headers');
+});
+
+test('the config rung never runs when the run dir holds a manifest.yml, even an empty one', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), '');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.deepStrictEqual(inputs.records, []);
+});
+
+test('the config rung is last: a manifest wins and closingRecords stays empty', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  parent: 1904\n  specs:\n    - id: 1930\n      status: complete\n      subdir: spec-1930\n    - id: 1931\n      status: pending\n      subdir: spec-1931\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'manifest');
+  assert.deepStrictEqual(inputs.records, [1930, 1931]);
+  assert.deepStrictEqual(inputs.closingRecords, []);
+});
+
+test('the config rung reads a CRLF config.yml', () => {
+  const runDir = configOnlyRunDir('spec: 5338\r\nmode: auto\r\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [5338]);
+  assert.strictEqual(inputs.sources.records, 'config');
+});
+
+test('the config rung never runs for a multi-spec spec-{N} subdirectory', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-config-parent-'));
+  const child = path.join(parent, 'spec-1931');
+  fs.mkdirSync(child);
+  fs.writeFileSync(path.join(child, 'config.yml'), 'spec: 1930\n');
+  fs.writeFileSync(path.join(child, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const inputs = resolveInputs({ runDir: child, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.deepStrictEqual(inputs.records, []);
+});
+
+test('the config rung never runs when manifest.yml exists but cannot be read (unreadable is not absent)', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  const realFs = (p) => fs.readFileSync(p, 'utf8');
+  const unreadable = (p) => {
+    if (path.basename(p) === 'manifest.yml') { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+    return realFs(p);
+  };
+  const deps = { readFile: unreadable, readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  assert.deepStrictEqual(resolveRecords(deps, runDir, null), { records: [], source: 'unavailable', parkedAtShaping: {} });
+  const absent = { ...deps, readFile: realFs };
+  assert.deepStrictEqual(resolveRecords(absent, runDir, null).source, 'config');
+});
+
+test('memberRecords: header and manifest rungs name members; the config rung and an unknown rung never do (Reading A, #5347)', () => {
+  for (const source of ['headers', 'worktree-headers', 'manifest', 'worktree-manifest']) {
+    assert.deepStrictEqual(memberRecords({ records: [7, 8], source }), [7, 8], source);
+  }
+  for (const source of ['config', 'unavailable', 'some-future-rung']) {
+    assert.deepStrictEqual(memberRecords({ records: [7], source }), [], source);
+  }
 });
 
 test('resolveInputs: a spec-* subdirectory whose own run-state.json lacks worktree/pr falls back to the parent run\'s (#1930 review C1)', () => {
@@ -1629,7 +1734,7 @@ test('AC1.2: a header-resolved pack has inputs.closingRecords equal to inputs.re
 
 test('closingRecords keeps records only for the two header rungs (Ruling R1, decided once)', () => {
   for (const source of ['headers', 'worktree-headers']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), [7, 8]);
-  for (const source of ['manifest', 'worktree-manifest', 'unavailable']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
+  for (const source of ['manifest', 'worktree-manifest', 'config', 'unavailable']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
 });
 
 test('#3399: a worktree-manifest rung yields an empty closing set', () => {
