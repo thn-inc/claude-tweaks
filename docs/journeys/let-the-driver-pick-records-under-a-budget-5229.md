@@ -2,6 +2,7 @@
 files:
   - plugin/bin/drive.js
   - plugin/bin/lib/driver/budget.js
+  - plugin/bin/lib/driver/claim-exit.js
   - plugin/bin/lib/driver/run.js
   - plugin/bin/lib/driver/steps.js
   - plugin/bin/lib/driver/events.js
@@ -94,3 +95,4 @@ files:
 - Created during the build of #5229 (run `2026-11-13T061542-spec-5229`). The record adds `drive.js --budget <n|all>`, so the driver picks its own records through the dispatch queue-pull module, `rankNext` and the express eligibility pre-screen, and closes with one run-level `budget` summary line.
 - The plan review settled three questions (PRC1–3 in the spec): claim exits 2 and 6 end the run (`claim-stop`); the queue pull's side effects are accepted as dispatch has them; and no summary line is written on the exit-1 and interrupt paths.
 - Updated at the wrap-up of #5229. Step 2 now names the `pre-screen skipped #N` stderr line the review fix added (b73613a45). Step 3 now says a driven record can also end `merged` or `armed`, since the driver's `review` and `merge` steps landed upstream after this journey was written.
+- Updated at the wrap-up of the driver's claim-exit deepening (daa4a8f87): `files:` now lists `plugin/bin/lib/driver/claim-exit.js`, which holds what each `claim-targets.js` exit means. Step 3's counters and run-ending stops are read from its table, so a change there now flags this journey. No step changed.

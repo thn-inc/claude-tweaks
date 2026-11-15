@@ -91,6 +91,7 @@ const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta } = require('./review');
 const { reviewerGateReason } = require('./admission');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
+const { readClaimExit } = require('./claim-exit');
 
 // The worker's test command and the full verify invocation's `--cmd tests=…` value.
 const TEST_COMMAND = 'npm test';
@@ -357,15 +358,17 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
     { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
   // A recorded fact, not a side effect: the budget loop reads it to tell a contested claim (3) from
   // other claim failures (4, 5, an exit 0 that claimed nothing, a killed claim with a null exit, a
-  // failed mint) and from the run-ending claim stops (7, and 2 and 6).
-  ctx.claimExit = Number.isInteger(r.code) ? r.code : null;
+  // failed mint) and from the run-ending claim stops (7, and 2 and 6). claim-exit.js holds what
+  // each exit means.
+  const claim = readClaimExit(r.code);
+  ctx.claimExit = claim.exit;
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
     // A killed or timed-out run has no integer exit; settle treats `claim-exit-none` as a possibly written claim.
     return {
       status: 'fail',
-      reason: Number.isInteger(r.code) ? `claim-exit-${r.code}` : 'claim-exit-none',
+      reason: claim.reason,
       detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}`,
     };
   }

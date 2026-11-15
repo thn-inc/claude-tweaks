@@ -295,7 +295,7 @@ test('AC3.1: every gh spawn under plugin/bin/ routes through ghOptions', () => {
 
 // An explicit --repo records its host through repo-resolve.js's pinExplicitRepoHost, which ghOptions
 // adds to every later gh call's own env (process.env is never written). Each CLI that takes --repo
-// wires that by hand: a `pinGhHost` dep in realDeps (optionally taking the caller's `{ env, cwd }`, #5383) plus a `deps.pinGhHost(…)` call in run(). A
+// wires that by hand: a `pinGhHost` dep in realDeps (optionally taking the caller's injected `{ cwd, env, stderr, homeDir }`, #5383, #5386) plus a `deps.pinGhHost(…)` call in run(). A
 // caller scoping the host to some calls passes ghOptions's `deps.explicitHost` instead
 // (backlog-grant-gate.js). The spawn scan above cannot see a CLI that drops either half, and the CLI
 // then splits one record across two hosts on a GHE origin (found in #4505's review), so the roster
