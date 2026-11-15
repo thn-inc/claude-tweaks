@@ -944,7 +944,7 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
         if (t[i] === '--') i += 1;
         continue;
       }
-      reserved = false; // builtin and command: a `!` or `time` after them is a command name
+      if (name !== '!') reserved = false; // builtin and command: a `!` or `time` after them is a command name
     }
     const spec = PREFIX_OPTIONS[name];
     if (spec === null) continue;

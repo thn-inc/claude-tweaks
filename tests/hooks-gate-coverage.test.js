@@ -2052,13 +2052,16 @@ test('#4303: the cd after an assignment word that never closes is not followed',
 
   // bash 3.2 and 5 write M/f.js for each moving row (zsh writes W/f.js for `builtin --`, `command`,
   // `command -p -p` and `time -p` before cd: side with bash); `time -- cd` moves under bash 5 only (bash 3.2 and zsh
-  // run `--`): side with bash 5, which writes into M. All three write W/f.js for `nice cd` and
+  // run `--`): side with bash 5, which writes into M. `! time cd` and `! ! cd` follow a reserved
+  // word after `!`: bash 5 and zsh write M/f.js for `! time cd M; cp a f.js` (bash 3.2 W/f.js), and
+  // bash 5 writes M/f.js for `! ! cd M; cp a f.js` (bash 3.2 and zsh cannot parse it): side with
+  // the shells that write into M. All three write W/f.js for `nice cd` and
   // `env cd` (an external cd), and nothing for `exec cd` (exit 127): the scanner reads on under the
   // unmoved cwd there, a target in the shell's own cwd, never M.
   test('#4448: builtin, command, ! and time before cd move the cwd; other prefixes do not', () => {
     for (const cmd of ['builtin cd /main; cp a f.js', '\\builtin cd /main; cp a f.js', 'builtin -- cd /main; cp a f.js',
       'command cd /main; cp a f.js', 'command -p cd /main; cp a f.js', 'command -p -p cd /main; cp a f.js', '! cd /main; cp a f.js',
-      'time cd /main; cp a f.js',
+      'time cd /main; cp a f.js', '! time cd /main; cp a f.js', '! ! cd /main; cp a f.js',
       'time -p cd /main; cp a f.js', 'time -- cd /main; cp a f.js']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyMain, cmd);
     }
