@@ -13,17 +13,18 @@ const fs = require('fs');
 const path = require('path');
 const { execFile: execFileCb, execFileSync } = require('child_process');
 const { promisify } = require('util');
-const { resolvePolicyConfig } = require('../policy-schema');
+const { resolvePolicyConfig, parseFlatLines } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies, withoutCrossRepoBlockers, foreignBlockerBlocks, DEFER_REASONS } = require('../issues/record');
 const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign, distinctCrossRepoRefs } = require('../issues/cross-repo-refs');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
-const { gateOriginRepo, repoSlug, ghOptions } = require('../repo-resolve');
+const { gateOriginRepo, repoSlug, ghOptions, injectedGhDeps } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
 const { isTimeoutError } = require('../shared-primitives');
 const { parseWorkBackend } = require('../work-backend');
+const { PIN_PATTERNS } = require('../set-config/write');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -73,8 +74,10 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // `err.stderr` for any consumer module that classifies a failure by message.
 // `wrap` transforms the options, as execBounded's does: identity by default,
 // ghOptions (#4505's GH_HOST seam) for a gh spawn.
-function execSync(bin, args, { cwd } = {}, wrap = keepOptions) {
-  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+// `env` (from the opts) is the caller's injected environment (#5379); absent, the child inherits the real one.
+// `stderr` is the caller's injected note sink for ghOptions's repo-resolution note; absent, the note goes to the real stderr.
+function execSync(bin, args, { cwd, env, stderr } = {}, wrap = keepOptions) {
+  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) }, injectedGhDeps({ env, stderr })));
 }
 
 function defaultGit(args, opts) {
@@ -91,12 +94,16 @@ function defaultGhSync(args, opts) {
 // review I8). Same scalar semantics as that CLI's --values mode: an unknown
 // key, an error entry, or a null/absent value all read as ''. One call
 // resolves every key the pack needs.
-function defaultResolvePolicy(keys, cwd) {
+// `env` is the caller's injected environment (#5379); absent, the git child inherits the real one.
+// `cwd` is the repo-root fallback when `git rev-parse --show-toplevel` fails (it replaces
+// `process.cwd()` there, policy-schema.js), so an in-process caller's policy read never falls back
+// to the test runner's cwd.
+function defaultResolvePolicy(keys, cwd, env) {
   const out = {};
-  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   try {
-    const { result } = resolvePolicyConfig({ git, readFile, keys });
+    const { result } = resolvePolicyConfig({ git, readFile, keys, cwd });
     for (const key of keys) {
       const entry = result[key];
       out[key] = !entry || entry.error !== undefined || entry.value === null || entry.value === undefined ? '' : String(entry.value);
@@ -107,15 +114,18 @@ function defaultResolvePolicy(keys, cwd) {
   return out;
 }
 
-function defaultDeps(cwd) {
+// `{ env }` is the caller's injected environment (#5379): it reaches `git`, `ghSync` and `resolvePolicy`'s
+// own git, each of which merges it into the options its caller passes. Absent, behavior is unchanged.
+// `{ stderr }` is the sink for `ghSync`'s repo-resolution note; absent, the note goes to the real stderr.
+function defaultDeps(cwd, { env, stderr } = {}) {
   return {
     now: () => Date.now(),
-    git: defaultGit,
-    ghSync: defaultGhSync,
+    git: env ? (args, opts) => defaultGit(args, { ...opts, env }) : defaultGit,
+    ghSync: env || stderr ? (args, opts) => defaultGhSync(args, { ...opts, ...(env ? { env } : {}), ...(stderr ? { stderr } : {}) }) : defaultGhSync,
     execFile: promisify(execFileCb),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
-    resolvePolicy: (keys, policyCwd) => defaultResolvePolicy(keys, policyCwd || cwd),
+    resolvePolicy: (keys, policyCwd) => defaultResolvePolicy(keys, policyCwd || cwd, env),
     computeBlastRadius: require('../blast-radius-cli').computeBlastRadius,
     readClaimBlob: require('../issues/claim-store').readClaimBlob,
     classifyClaimBlob: require('../issues/claims').classifyClaimBlob,
@@ -184,11 +194,26 @@ function headerRecords(deps, dir) {
 
 // Which resolveRecords rungs may receive a closing keyword (Ruling R1): only
 // the header rungs. Manifest ids include not-run/failed specs, whose PR-body
-// line is `Refs`, not `Fixes`. Decided here once; consumers read the result.
+// line is `Refs`, not `Fixes`. The `config` rung is not closing either: a
+// config.yml `spec:` is the lowest of a run's records, so it names one record
+// of a multi-record run and carries no closing intent (an express run's PR
+// body already carries its own `Fixes`). Decided here once; consumers read the result.
 const CLOSING_RECORD_SOURCES = new Set(['headers', 'worktree-headers']);
 
 function closingRecords({ records, source }) {
   return CLOSING_RECORD_SOURCES.has(source) ? records : [];
+}
+
+// Which rungs may name the unattended console's merge members (Reading A,
+// #5347): the header and manifest rungs. Members are wider than the closing
+// set (a manifest's not-run spec is still a member), but the `config` rung
+// names only a run's lowest record and carries no header-stated intent, so it
+// never grants members. An allowlist, like CLOSING_RECORD_SOURCES, so a new
+// rung grants nothing until it is listed here.
+const MEMBER_RECORD_SOURCES = new Set(['headers', 'worktree-headers', 'manifest', 'worktree-manifest']);
+
+function memberRecords({ records, source }) {
+  return MEMBER_RECORD_SOURCES.has(source) ? records : [];
 }
 
 // The worktree's own mirror of a run dir: everything from the
@@ -223,6 +248,28 @@ function manifestRecords(deps, dir) {
   return sortedUnique(nums);
 }
 
+// Rung (e)'s read: the run dir's config.yml `spec:` pin as a one-element list,
+// or [] when absent or not a positive integer. parseFlatLines keeps the last
+// occurrence, the same semantics set-config.js's setConfigLever documents.
+// The shape test is the writer's own PIN_PATTERNS.spec, so what set-config
+// accepts and what this rung reads back cannot drift apart.
+function configRecords(deps, dir) {
+  const spec = parseFlatLines(readText(deps, path.join(dir, 'config.yml'))).spec;
+  return typeof spec === 'string' && PIN_PATTERNS.spec.re.test(spec) ? [Number(spec)] : [];
+}
+
+// True only when `dir` provably holds no manifest.yml: a missing file (ENOENT)
+// or a deps.readFile that signals absence by returning null. Any other read
+// error (EACCES, EISDIR, EIO) is a manifest that exists but cannot be read —
+// a possibly broken multi-spec parent — so it is not absent (fail closed).
+function manifestAbsent(deps, dir) {
+  try {
+    return deps.readFile(path.join(dir, 'manifest.yml')) === null;
+  } catch (err) {
+    return Boolean(err) && err.code === 'ENOENT';
+  }
+}
+
 // The record-resolution ladder, in order, reporting which rung won:
 // (a) the run dir's own materialized headers; (b) the worktree's mirror of the
 // same run dir; (c) a parent multi-spec run's manifest.yml ids plus any
@@ -230,7 +277,9 @@ function manifestRecords(deps, dir) {
 // materialize.md commits spec-{n}/work/{n}-spec.md on the feature branch, so
 // on a real pr-first dispatch group it exists only in the worktree, never in
 // the main-checkout run dir --run anchors to, same reason rung (b) mirrors
-// rung (a)); else none.
+// rung (a)); (e) last, the run dir's config.yml `spec:` pin (#5347, the express
+// lane — skipped for a spec-* subdirectory or a run dir holding a manifest.yml);
+// else none.
 function resolveRecords(deps, runDir, worktree) {
   // `parkedAtShaping` (record number -> boolean) is populated for the two
   // header rungs only; the manifest rungs and `unavailable` carry `{}`.
@@ -255,6 +304,17 @@ function resolveRecords(deps, runDir, worktree) {
   if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
     const mirrored2 = manifestRecords(deps, mirror);
     if (mirrored2.length) return { records: mirrored2, source: 'worktree-manifest', parkedAtShaping: {} };
+  }
+
+  // (e) the run dir's config.yml `spec:` pin (#5347) — an express run writes no
+  // header or manifest. Never for a spec-* subdirectory: its config.yml is a
+  // byte copy of the parent's, so `spec:` names the parent's lowest record.
+  // Nor when a manifest.yml is present: an empty or unparseable one is a broken
+  // multi-spec parent, which the pin would hide behind its lowest record — and
+  // an unreadable manifest.yml counts as present, never absent.
+  if (!/^spec-/.test(path.basename(runDir)) && manifestAbsent(deps, runDir)) {
+    const pinned = configRecords(deps, runDir);
+    if (pinned.length) return { records: pinned, source: 'config', parkedAtShaping: {} };
   }
 
   return { records: [], source: 'unavailable', parkedAtShaping: {} };
@@ -846,6 +906,6 @@ function ownRecordNumbers(runDir, worktree) {
 }
 
 module.exports = {
-  gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, worktreeMirror,
-  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers,
+  gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, worktreeMirror,
+  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers, defaultDeps,
 };

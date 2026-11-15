@@ -4,7 +4,9 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { DEFAULT_IO, makeExec, resolveAgainst } = require('../../../plugin/bin/lib/health-core/io');
+const { DEFAULT_IO, makeExec, resolveAgainst, fsPath, cwdOrUndefined } = require('../../../plugin/bin/lib/health-core/io');
+
+const THROWING = { cwd: () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); } };
 
 test('resolveAgainst leaves a win32 drive-relative path unchanged (fs resolves it per drive)', () => {
   assert.strictEqual(resolveAgainst('D:\\work', 'C:foo', path.win32), 'C:foo');
@@ -16,6 +18,18 @@ test('resolveAgainst leaves a win32 drive-relative path unchanged (fs resolves i
 test('resolveAgainst joins a POSIX relative path without normalizing it', () => {
   assert.strictEqual(resolveAgainst('/work', 'a/../b/', path.posix), '/work/a/../b/');
   assert.strictEqual(resolveAgainst('/work', '/abs/x', path.posix), '/abs/x');
+});
+
+test('fsPath never reads cwd for a path with a root, and joins a relative one unnormalized', () => {
+  const abs = path.join(os.tmpdir(), 'x');
+  assert.strictEqual(fsPath(THROWING, abs), abs);
+  assert.strictEqual(fsPath({ cwd: () => '/work' }, 'a/../b'), `/work${path.sep}a/../b`);
+  assert.throws(() => fsPath(THROWING, 'rel'), /process\.cwd failed/);
+});
+
+test('cwdOrUndefined returns the injected cwd, or undefined when it throws', () => {
+  assert.strictEqual(cwdOrUndefined({ cwd: () => '/work' }), '/work');
+  assert.strictEqual(cwdOrUndefined(THROWING), undefined);
 });
 
 test('makeExec writes a failing child\'s stderr to the injected stderr, never to process.stderr', () => {

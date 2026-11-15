@@ -15,10 +15,10 @@
 // mid-batch fs failure exits 3 having already durably written the earlier
 // entries; the stderr message on that path names which keys were already
 // written (see the write loop below) so a caller isn't left guessing.
-// Run pins (RUN_PINS, currently just integration-model) are accepted on the
-// same surface with the same enum validation, but are not Manifesto levers:
-// the FYI table never shows them; the auto-batch match admits them only
-// alongside all 13 levers.
+// Run pins (RUN_PINS: integration-model, and spec — a positive-integer record
+// number, #5347) are accepted on the same surface with the same validation
+// (enum or value pattern), but are not Manifesto levers: the FYI table never
+// shows them; the auto-batch match admits them only alongside all 13 levers.
 // Exit 0 on success (echoes, per lever, the config.yml path and the
 // previous -> new value, so escape-hatch logs are evidence-based); 2 on a
 // malformed invocation (missing/conflicting args, a `--set` entry not in

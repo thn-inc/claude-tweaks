@@ -10,9 +10,13 @@ const { execFileSync } = require('child_process');
 // FIXTURE_TIMEOUT_MS rationale).
 const GIT_TIMEOUT_MS = 30000;
 
+// Re-exported below for this file's existing callers.
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
+
 function git(cwd, args, input) {
   return execFileSync('git', args, {
     cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: 'pipe', input,
+    env: cleanGitEnv(process.env),
   });
 }
 
@@ -80,4 +84,6 @@ function makeAmbiguousRepo() {
   throw new Error('makeAmbiguousRepo: no shared 4-character commit prefix — fixture is broken');
 }
 
-module.exports = { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo };
+module.exports = {
+  git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo, cleanGitEnv,
+};
