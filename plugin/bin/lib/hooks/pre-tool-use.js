@@ -526,16 +526,18 @@ function teardownTargets(ctx, { pathImpl } = {}) {
   const cwd = ctx.cwd || process.cwd();
   forEachCommandSegment(toolInput.command, cwd, (toks, effCwd, quoting) => {
     // Shares gitTargets' own findGitLead -> skipGlobalFlags preamble via
-    // resolveGitCommand: findGitLead walks past a leading NAME=value
-    // assignment and/or the env builtin (with env's own flags, including
-    // -C/--chdir) to find the real git/.../git lead token — a bare
+    // resolveGitCommand: findGitLead reads the command word through
+    // git-command.js's commandWord, past assignment words, redirections and
+    // the stripped prefixes (`!`, builtin, command, doas, env with its flags
+    // including -C/--chdir, exec, nice, nohup, sudo, time, #4448) to find
+    // the real git/.../git lead token — a bare
     // `toks[0] !== 'git'` check misses every wrapped form (#1308) — and
     // skipGlobalFlags then walks past any global flag ahead of the
     // subcommand (-C, -c, --exec-path, --namespace, --git-dir, --work-tree,
     // or an unrecognized `-...` flag), which used to defeat this parser
     // entirely when it only checked for a literal `-C`, silently allowing
     // `git -c foo=bar worktree remove <path>` past the gate.
-    const resolved = resolveGitCommand(toks, effCwd, quoting.pathImpl);
+    const resolved = resolveGitCommand(toks, effCwd, quoting.pathImpl, quoting);
     if (!resolved) return; // not git, or unprovable, or cwd unknown with no provable -C
     const { index: i, dir, lost } = resolved;
     // Derived from GATE_COVERAGE.teardownGitCommands rather than a hardcoded

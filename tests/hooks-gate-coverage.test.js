@@ -2145,6 +2145,32 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     assert.deepStrictEqual(mkdirTargets('command -v mkdir', '/r'), []);
   });
 
+  // all: git commit runs in M for each (and W/g for the two redirect rows); `x+=1 git`, `time git`,
+  // `command git`, `nohup git`, `! git` and the redirect rows are oracle verdicts, `builtin cd M;
+  // git commit` and `env X=1 git -C M` too. sudo, doas per sudo(8) and doas(1): `sudo -D M git
+  // commit` runs git in M, `sudo -u bob` and `doas` read their option, then the command.
+  test('AC1.1 #4448: a git commit behind an appending assignment or a stripped prefix resolves the main checkout', () => {
+    for (const cmd of ['cd /main; x+=1 git commit -m x', 'x+=1 git -C /main commit -m x', 'sudo git -C /main commit -m x',
+      'sudo -u bob git -C /main commit -m x', 'sudo -D /main git commit -m x', 'doas git -C /main commit -m x',
+      'time git -C /main commit -m x', 'command git -C /main commit -m x', 'nohup git -C /main commit -m x',
+      'nice -n 5 git -C /main commit -m x', '! git -C /main commit -m x', 'exec git -C /main commit -m x',
+      'builtin cd /main; git commit -m x', 'env X=1 git -C /main commit -m x', '>g git -C /main commit -m x',
+      'X=1 >g git -C /main commit -m x']) {
+      assert.ok(gitTargets(cmd, '/r').some((x) => x.dir === MAIN_ROOT), `${cmd}: ${JSON.stringify(gitTargets(cmd, '/r'))}`);
+    }
+  });
+
+  // all: nothing runs (`x=1: command not found`, exit 127), so no commit. This moves a base deny to
+  // allow: base read `"x"=1` as an assignment and ran git.
+  test('#4448: a quoted or escaped assignment name before git runs no git', () => {
+    for (const cmd of ['"x"=1 git -C /main commit -m x', 'x\\=1 git -C /main commit -m x']) assert.deepStrictEqual(gitTargets(cmd, '/r'), [], cmd);
+  });
+
+  // all: `command -v git` prints a path and runs no git.
+  test('#4448: command -v git runs no git', () => {
+    assert.deepStrictEqual(gitTargets('command -v git', '/r'), []);
+  });
+
   // The record's body, "Scope under ADR 0028", lists the stripped prefixes: assignment words and
   // these ten words. The exported set and reader are the one copy #4572 and #4244 reuse.
   test('AC4.1 #4448: the exported stripped-prefix rule matches the record\'s list', () => {

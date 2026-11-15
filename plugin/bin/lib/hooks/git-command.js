@@ -1009,8 +1009,10 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
 // non-assignment segment (a cd one included), and returns the effective cwds after it: one, or
 // two for a cd the bash versions split on (#4448, commandWord's `split`). The base-like walk
-// (`baseLike`, BASE_VIEW) splits none: base followed no prefixed cd, and that walk's set grows only
-// where base's grew (it has no join that caps it), so there such a cd changes no cwd, as in base.
+// (`baseLike`, BASE_VIEW) splits none: base followed no split prefixed cd (a reserved word after `!`,
+// or `time --`; a `time cd /x` or `command cd /x` that does not split is still followed there), and
+// that walk's set grows only where base's grew (it has no join that caps it), so such a cd changes
+// no cwd there, as in base.
 function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path, baseLike = false) {
   const { typed, singleQuoted, doubleQuoted, leadQuoted } = tok;
   const { tokens: rawT, spanKinds } = settleStrayBackslash(tok.tokens, tok.spanKinds, pathImpl);
@@ -1104,65 +1106,44 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
   return { index: i, dir, unprovable };
 }
 
-// Finds the real `git` command word in a segment's raw token array, looking
-// past three equivalent shapes a real shell treats identically to a bare
-// `git` invocation (#590):
-//   - leading `NAME=value` assignment tokens: `FOO=1 git commit -m x`
-//   - the `env` builtin, plus ITS OWN leading flags/assignments, ahead of the
-//     real command: `env git commit -m x`, `env -i git commit -m x`,
-//     `env FOO=1 git commit -m x`
+// Finds the real `git` command word in a segment's token array, through
+// commandWord (#4448), the one reading of what bash strips before the
+// command it runs (#590 began it with `env`):
+//   - assignment words: `FOO=1 git commit -m x`, `x+=1 git commit -m x`
+//     (a quoted or escaped name is the command word itself, so no git runs)
+//   - redirections: `>g git commit -m x`
+//   - STRIPPED_PREFIX_WORDS with their options: `env -i FOO=1 git commit`,
+//     `sudo -u bob git commit`, `time git commit`, `nohup git commit`, …
 //   - a directory-qualified executable ending in `/git`: `/usr/bin/git commit`
-// (any combination of the three also resolves, e.g. `FOO=1 /usr/bin/git …`
-// or `env FOO=1 /usr/bin/git …`.)
+// (any combination also resolves, e.g. `FOO=1 /usr/bin/git …` or
+// `env FOO=1 /usr/bin/git …`.)
+//
+// `quoting` is the walk's `{ raw, spanKinds, leadQuoted, pathImpl }`; a direct
+// caller passes none and a bare-word one is built from `t` (tokenQuoting).
 //
 // Returns `{ index, dir, unprovable }` — `index` is -1 when, after
 // normalization, the leading token still isn't `git` (ambiguity resolves to
 // "not git", the same never-fabricate-a-target posture as the rest of this
-// module). `dir` starts at the caller's effective cwd and moves when env's
-// own `-C <dir>` / `--chdir[=]<dir>` flag changes where the command runs —
-// skipping those flags without consuming their value made
-// `env -C <main-checkout> git commit` read as not-git at all (the dir token
-// became the presumed lead) and `env --chdir=/x git commit` resolve its
-// target against the wrong directory. `-u`/`--unset <name>` likewise
-// consumes its value so the name is never mistaken for the command word.
+// module), or when a prefix option leaves no readable command (`command -v
+// git`, `env -S`). `dir` starts at the caller's effective cwd and moves when
+// env's `-C`/`--chdir` or sudo's `-D`/`--chdir` changes where the command runs
+// (commandWord resolves it, `unprovable` when it cannot).
 // Still not full env(1) parsing (see #590's Gotchas): `-S`/`--split-string`
 // re-splits an opaque program string, which is statically unknowable — the
 // same deliberately-uncovered class as `sh -c`/`python -c` (see
 // fileWriteTargets' header) — so it falls through to the not-git default.
-function findGitLead(t, dir, pathImpl = path) {
-  let unprovable = false;
-  let i = 0;
-  while (i < t.length && SIMPLE_ASSIGNMENT_RE.test(t[i])) i += 1;
-  if (t[i] === 'env') {
-    i += 1;
-    while (i < t.length) {
-      const tok = t[i];
-      if (SIMPLE_ASSIGNMENT_RE.test(tok)) { i += 1; continue; }
-      if (tok === '-' || !tok.startsWith('-')) break;
-      // Both spellings env accepts: separate value (`-C <dir>`, `--chdir <dir>`)
-      // and attached value (`-C<dir>`, `--chdir=<dir>`). Skipping the attached
-      // short form as a generic flag left the resolved dir at the caller's cwd
-      // while git was still detected as lead — the same silent-allow bypass as
-      // the separate form, one spelling over.
-      if (tok === '-C' || tok === '--chdir' || tok.startsWith('--chdir=') || (tok.startsWith('-C') && tok.length > 2)) {
-        const attached = tok.startsWith('--chdir=') ? tok.slice('--chdir='.length)
-          : tok.startsWith('-C') && tok.length > 2 ? tok.slice(2)
-          : null;
-        const raw = attached !== null ? attached : t[i + 1];
-        const resolved = resolveCd(dir, raw, pathImpl);
-        if (resolved === null) unprovable = true;
-        else dir = resolved;
-        i += attached !== null ? 1 : 2;
-        continue;
-      }
-      if (tok === '-u' || tok === '--unset') { i += 2; continue; }
-      i += 1;
-    }
-  }
-  if (i >= t.length) return { index: -1, dir, unprovable };
-  const lead = t[i];
-  if (lead === 'git' || lead.endsWith('/git')) return { index: i, dir, unprovable };
-  return { index: -1, dir, unprovable };
+function findGitLead(t, dir, pathImpl = path, quoting = null) {
+  const { index, dir: leadDir, unprovable } = commandWord(t, quoting || tokenQuoting(t, pathImpl), dir);
+  if (index === -1) return { index: -1, dir: leadDir, unprovable };
+  const lead = t[index];
+  if (lead === 'git' || lead.endsWith('/git')) return { index, dir: leadDir, unprovable };
+  return { index: -1, dir: leadDir, unprovable };
+}
+
+// The quoting findGitLead falls back on when a direct caller passes none: every character of `t`
+// bare and no word lead-quoted, so commandWord reads the words as typed (#4448).
+function tokenQuoting(t, pathImpl) {
+  return { raw: t, spanKinds: t.map((w) => 'b'.repeat(w.length)), leadQuoted: t.map(() => false), pathImpl };
 }
 
 // Shared findGitLead -> skipGlobalFlags preamble: resolves one command
@@ -1176,8 +1157,8 @@ function findGitLead(t, dir, pathImpl = path) {
 // callers instead of drifting between two hand-kept copies — the exact gap
 // #1308 closed for teardownTargets, which used to skip this preamble
 // entirely and check a bare `toks[0] !== 'git'` instead.
-function resolveGitCommand(t, effCwd, pathImpl = path) {
-  const lead = findGitLead(t, effCwd, pathImpl);
+function resolveGitCommand(t, effCwd, pathImpl = path, quoting = null) {
+  const lead = findGitLead(t, effCwd, pathImpl, quoting);
   if (lead.index === -1) return null;
   const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir, pathImpl);
   if (lead.unprovable || unprovable || dir === null) return null;
@@ -1228,7 +1209,7 @@ function resolvedGitSegments(command, cwd, opts) {
     let pieceStart = 0; // where the current piece's first-cwd visit began pushing
     forEachCommandSegment(command, cwd, (t, effCwd, quoting, again) => {
       if (!again) pieceStart = segments.length;
-      const resolved = resolveGitCommand(t, effCwd, quoting.pathImpl);
+      const resolved = resolveGitCommand(t, effCwd, quoting.pathImpl, quoting);
       if (!resolved) return;
       // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
       if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index && s.lost === resolved.lost)) return;
