@@ -926,6 +926,7 @@ function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrow
     record: 5222,
     issue: { number: 5222, title: 'Fix the total', body: 'The total is wrong.', labels: [] },
     keyFiles: ['src/a.js'],
+    reviewer: { on: true, reason: 'test' },
     wt: WT,
     runDir: RUN_DIR,
     changedFiles: ['src/a.js', 'tests/a.test.js'],
@@ -1010,6 +1011,20 @@ const evidenceSpawns = (calls) => calls.filter((c) => c.kind === 'runner' && c.f
 const destsOf = (calls) => evidenceSpawns(calls).map((c) => c.args.find((a) => a.startsWith(DEST_FLAG)).slice(DEST_FLAG.length));
 const ofKind = (calls, kind) => calls.filter((c) => c.kind === kind);
 const statusReads = (calls) => calls.filter((c) => c.kind === 'git' && c.args.includes('status'));
+
+test('reviewRecord with no ctx.reviewer fails closed and launches no worker', async () => {
+  // The record's one reviewer answer is the eligibility step's (#5224): reviewRecord never computes its own.
+  for (const reviewer of [undefined, null, true, { on: 'yes' }, { reason: 'no on' }]) {
+    const rig = passRig();
+    rig.ctx.reviewer = reviewer;
+    const res = await reviewRecord(rig.ctx, rig.deps, { testCommand: 'npm test', isRunArtifact: isPipelineArtifact, indexFlagCheck: () => null });
+    assert.deepStrictEqual(res, {
+      status: 'fail', stopClass: 'pre-push', detail: 'reviewer-on answer missing',
+      extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null },
+    }, JSON.stringify(reviewer));
+    assert.deepStrictEqual(rig.calls, [], JSON.stringify(reviewer));
+  }
+});
 
 test('AC1: the reviewer is launched with role reviewer and its result schema', async () => {
   for (const platform of ['darwin', 'win32']) {

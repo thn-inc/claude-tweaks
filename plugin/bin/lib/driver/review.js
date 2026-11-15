@@ -74,7 +74,10 @@
 //
 // On or off (reviewRequired): policy `off` and `on` decide alone; any other value is the beyond
 // rule, on when the size label is not `low` or the Key Files (the eligibility verdict's own
-// extraction; a non-array counts as beyond) exceed EXPRESS_MAX_KEY_FILES.
+// extraction; a non-array counts as beyond) exceed EXPRESS_MAX_KEY_FILES. The run asks it once
+// per record, in the eligibility step (ctx.reviewer, #5224), and admission, the check flag and
+// reviewRecord all read that one answer; reviewRecord never calls it, and fails closed (a
+// pre-push `fail`) when ctx.reviewer is not an object with a boolean `on`.
 //
 // The reviewer's result is untrusted, and an evidence path names a file the driver writes into the
 // worktree, so every rule here fails closed and no reason string echoes reviewer text.
@@ -1150,16 +1153,19 @@ async function fixRound(ctx, deps, wiring, pass) {
 // A stop carries the pass's counts. A confirmed finding takes the one fix round.
 async function reviewRecord(ctx, deps, wiring) {
   const { testCommand, isRunArtifact, indexFlagCheck } = wiring;
-  const need = reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: ctx.shared.policy['express-driver-review'].value });
+  // A stop before any pass: the line keeps the seven keys.
+  const notStarted = (detail) => ({ status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null } });
+  // The eligibility step's answer (see the header's "On or off").
+  const need = ctx.reviewer;
+  if (!need || typeof need !== 'object' || typeof need.on !== 'boolean') return notStarted('reviewer-on answer missing');
   if (!need.on) return { status: 'ok', skip: true };
   let pass;
   try {
     pass = await reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagCheck });
   } catch (err) {
     // A throw before the pass can take anything back (its setup, a missing wiring member) writes nothing: the
-    // pass's own catch covers every throw after its first evidence write. The line keeps the seven keys.
-    const detail = `the review pass failed before it started${codeSuffix(err)}`;
-    return { status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null } };
+    // pass's own catch covers every throw after its first evidence write.
+    return notStarted(`the review pass failed before it started${codeSuffix(err)}`);
   }
   if (pass.result) return pass.result;
   if (pass.confirmed.length === 0) return { status: 'ok', detail: pass.detail, extra: pass.extra };
