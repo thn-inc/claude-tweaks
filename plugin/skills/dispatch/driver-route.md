@@ -27,7 +27,7 @@ Today's path is Step 5 as it reads without this file: the Express lane paragraph
    node "${CLAUDE_PLUGIN_ROOT}/bin/drive.js" --check {n}
    ```
 
-3. Not admitted: take today's path, which binds as it always does (`sibling-session-check.md`'s bind, after the express gate when `express-lane` resolves `true`). Admitted: bind without `--dispatch`, as an express-eligible singleton is bound — the #3225 config gate guards a `/flow`-framed run, and the driver writes `config.yml` only once its PR exists:
+3. Not admitted: write one `SKIP` line (Logging a decline) and take today's path, which binds as it always does (`sibling-session-check.md`'s bind, after the express gate when `express-lane` resolves `true`). Admitted: bind without `--dispatch`, as an express-eligible singleton is bound — the #3225 config gate guards a `/flow`-framed run, and the driver writes `config.yml` only once its PR exists:
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{minted-run-dir}" "{worktree}"
