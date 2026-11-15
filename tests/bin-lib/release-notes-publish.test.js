@@ -6,6 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 const { readText } = require('../helpers/read-skill');
+const { spawnCli } =require('../helpers/run-cli');
 const {
   run, resolveTagPair, parseReleaseNotesFromLog, applyToReleaseBody, applyToChangelogEntry,
 } = require('../../plugin/bin/lib/release-notes-publish.js');
@@ -201,4 +202,25 @@ test('AC6.2: only No user-visible change notes in range is a no-op on both targe
   assert.ok(!state.gh.some((c) => c.key.startsWith('release edit')), 'no Release edit');
   assert.deepStrictEqual(state.writes, []);
   assert.ok(!state.git.some((k) => k.startsWith('commit ')), 'no CHANGELOG commit');
+});
+
+// --- the script entry (#5386). The real-process tests use only --help and a bad
+// argument, which exit before any gh or git call; the in-process test fakes both. ---
+const CLI = path.join(__dirname, '..', '..', 'plugin', 'bin', 'release-notes-publish.js');
+const CLI_USAGE = 'usage: release-notes-publish.js [--root <dir>]\nexit 0 applied/no-op; 1 a gh/git call failed';
+
+// Proves the script's exit code and stdout through a real process.
+test('AC5.1 AC7.1: --help exits 0 and prints the usage', () => {
+  const res = spawnCli(CLI, ['--help'], { env: { PATH: process.env.PATH } });
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(res.stdout, `${CLI_USAGE}\n`);
+  assert.strictEqual(res.stderr, '');
+});
+
+// Proves the script's exit code and stderr through a real process.
+test('AC7.1: an unknown argument exits 2 with the usage on stderr', () => {
+  const res = spawnCli(CLI, ['--bogus'], { env: { PATH: process.env.PATH } });
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.stdout, '');
+  assert.strictEqual(res.stderr, `unknown argument: --bogus\n${CLI_USAGE}\n`);
 });
