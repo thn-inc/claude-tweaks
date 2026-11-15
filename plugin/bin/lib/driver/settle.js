@@ -139,6 +139,11 @@ function selectRow(stop, { prRecorded }) {
 }
 
 // The settle step names each row runs, in call order. docs/driver.md copies this by hand.
+// The one settle step run.js keeps under --run --no-settle: it writes only the escalation line to the
+// caller's run directory. Named here, with the HANDLERS key it must match (settle refuses an `only`
+// name outside HANDLERS), so the caller never spells the handler name itself.
+const ESCALATE_STEP = 'settle-escalate';
+
 const SETTLE_ROWS = Object.freeze({
   refused: Object.freeze([]),
   'claim-contested': Object.freeze([]),
@@ -343,6 +348,12 @@ async function settle(input, deps) {
     },
   };
 
+  // An `only` name outside the handler table would silently skip every step; refuse it instead.
+  if (only) {
+    const unknown = only.filter((n) => !Object.prototype.hasOwnProperty.call(HANDLERS, n));
+    if (unknown.length > 0) throw new Error(`settle: unknown step name in only: ${unknown.join(', ')}`);
+  }
+
   async function runRow(names) {
     for (const name of names) {
       const h = HANDLERS[name];
@@ -354,7 +365,7 @@ async function settle(input, deps) {
       }
       const status = step(name, h.run);
       // A failed escalate means the work cannot be removed safely: keep it, settle as blocked.
-      if (name === 'settle-escalate' && status === 'fail') {
+      if (name === ESCALATE_STEP && status === 'fail') {
         row = 'blocked';
         await runRow(SETTLE_ROWS.blocked);
         return;
@@ -372,5 +383,5 @@ async function settle(input, deps) {
 
 module.exports = {
   DRIVER_ESCALATION_MARKER, reduceDetail, commentFor, escalateDetailText, hasDriverEscalationMarker,
-  toEscalationReason, selectRow, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle, canonicalWorktreePath,
+  toEscalationReason, selectRow, planRow, SETTLE_ROWS, ESCALATE_STEP, CLASS_BY_ROW, settle, canonicalWorktreePath,
 };

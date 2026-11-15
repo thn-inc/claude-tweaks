@@ -399,9 +399,12 @@ function readPairs(deps, file) {
 
 // One `gh pr view --json {fields}` read of a PR's changed paths, through the batch bound (a files list
 // is a batch-bounded read). `{ failed }` on any throw, unparseable output, missing field, or a list
-// of exactly FILES_CAP entries (possibly cut by GitHub, so not evidence of disjointness).
-function readPrFiles(s, pr, fields, wantState, wantClosing) {
+// of exactly FILES_CAP entries (possibly cut by GitHub, so not evidence of disjointness). The
+// `--json` fields follow from the options: `wantState` adds `state`, `wantClosing` adds
+// `closingIssuesReferences`.
+function readPrFiles(s, pr, { wantState = false, wantClosing = false } = {}) {
   const { ctx, deps } = s;
+  const fields = [wantState && 'state', 'files', wantClosing && 'closingIssuesReferences'].filter(Boolean).join(',');
   const who = `PR ${pr}`;
   let parsed;
   try {
@@ -443,6 +446,12 @@ function logHold(s, pr, what) {
 
 // The details name numbers without a `#`: every event detail passes `neutralize`, which strips a bare
 // `#N` reference by design (it must not link or close anything), so `#12` would reach the line as nothing.
+//
+// Check order (the fail-closed rules are the section comment above's): read the list file and the pairs
+// file, then drop this PR from the list; read this PR's own files only when other PRs remain; per other
+// PR, check path overlap before near-duplicate; return the first hit. Two stops differ by source:
+// `in-flight-unreadable` is a local file (the list or the pairs) that cannot be read or is malformed;
+// `in-flight-read-failed` is a forge read (`gh pr view`) that failed or came back unusable.
 function overlapHold(s) {
   const { ctx, deps } = s;
   s.stage = 'merge-overlap';
@@ -468,11 +477,10 @@ function overlapHold(s) {
     emit(s, 'merge-overlap', 'ok', 'no in-flight PR besides this one');
     return { ok: true };
   }
-  const own = readPrFiles(s, ctx.pr, 'files', false, false);
+  const own = readPrFiles(s, ctx.pr);
   if (own.failed) return halt('in-flight-read-failed', reduceDetail(own.failed));
-  const fields = pairs ? 'state,files,closingIssuesReferences' : 'state,files';
   for (const n of others) {
-    const other = readPrFiles(s, n, fields, true, pairs !== null);
+    const other = readPrFiles(s, n, { wantState: true, wantClosing: pairs !== null });
     if (other.failed) return halt('in-flight-read-failed', reduceDetail(other.failed));
     if (other.state !== 'OPEN') continue;
     const common = own.paths.filter((p) => other.paths.includes(p));

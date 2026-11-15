@@ -67,7 +67,7 @@ const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { createEventSink, outcomeFor, neutralize, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
 const { STEPS, CHECK_STEPS } = require('./steps');
-const { toEscalationReason, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle } = require('./settle');
+const { toEscalationReason, planRow, SETTLE_ROWS, ESCALATE_STEP, CLASS_BY_ROW, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType, canonicalRealpath } = require('../path-guard');
 const { resolveAgainst } = require('../health-core/io');
@@ -364,7 +364,7 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
   // (build's already-shipped check, `hasEscalation`); the rest of the row stays the caller's. Its
   // own precondition skips it when check already wrote the line. A failed escalate reads `blocked`.
   if (shared.adopted && plan.row === 'pre-push') {
-    return reported(await settle({ ...input, only: ['settle-escalate'] }, deps), 'left-to-caller');
+    return reported(await settle({ ...input, only: [ESCALATE_STEP] }, deps), 'left-to-caller');
   }
   return {
     mode: SETTLE_ROWS[plan.row].length > 0 ? 'left-to-caller' : 'none', row: plan.row, failed: [],
