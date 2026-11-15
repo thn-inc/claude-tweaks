@@ -17,7 +17,7 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
+  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE,
 } = require(path.join(LIB, 'driver', 'steps'));
 // Polls taken before the first one at or past the settle window (the harness clock moves 1 per now(), ms per sleep).
 const WINDOW_POLLS = CI_SETTLE_WINDOW_MS / CI_POLL_INTERVAL_MS + 1;
@@ -1630,6 +1630,21 @@ const isHeadReadInWt = (c) => !!c && isHeadRead(c) && c.cwd === WT;
 // A HEAD read on either side of an implementer launch: the reads #5414 added.
 const withoutFlagReads = (cs) => cs.filter((c) => !isFlagReadInWt(c) && !isIgnoreStatReadInWt(c));
 const isLaunchSideRead = (calls, i) => isHeadReadInWt(calls[i]) && (isImplementerLaunch(calls[i - 1]) || isImplementerLaunch(calls[i + 1]));
+const isStatusReadInWt = (c) => !!c && onGit('--no-optional-locks', 'status')(c) && c.cwd === WT;
+const isVerifyCall = (c) => !!c && c.kind === 'node' && /verify\.js$/.test(c.args[0]);
+// The status read #5454 added: once the flag reads are dropped, it follows verify.js directly.
+const isTestTreeRead = (calls, i) => isStatusReadInWt(calls[i]) && isVerifyCall(calls[i - 1]);
+const baselineCalls = (cs) => withoutFlagReads(cs).filter((c, i, a) => !isLaunchSideRead(a, i) && !isTestTreeRead(a, i));
+const treeDetail = (n, named) => `the worktree differs from HEAD after the test step on ${n} path(s): ${named}`;
+// verify.js's reply that leaves `porcelain` in the tree (fx.dirty is listed once the commit has run).
+// `get` returns the harness: the script is built before `harness()` returns, so `h` is read at call time.
+const verifyLeaves = (get, porcelain, reply = { code: 0, stdout: '', stderr: '' }) => [on('node', /verify\.js$/), () => { get().fx.dirty = porcelain; return reply; }];
+// A harness whose verify.js run leaves `porcelain` in the tree; `before` lists the script entries that precede it.
+const leftDirtyHarness = (porcelain, reply, before = []) => {
+  let h = null;
+  h = harness({ script: [...before, verifyLeaves(() => h, porcelain, reply)] });
+  return h;
+};
 
 test('AC1.1, AC1.2 (#5414): a worker launch after which HEAD moved stops at worker', async () => {
   const h = harness({ script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
@@ -1832,8 +1847,8 @@ test('AC6.1 (#5415): an unreadable read after the launch stops at worker', async
   assert.equal(commitGit(h).length, 0);
 });
 
-test('AC7.1 (#5415): the detail lists at most INDEX_FLAG_PATHS_SHOWN paths plus the count, neutralized', async () => {
-  assert.equal(INDEX_FLAG_PATHS_SHOWN, 5);
+test('AC7.1 (#5415): the detail lists at most NAMED_PATHS_SHOWN paths plus the count, neutralized', async () => {
+  assert.equal(NAMED_PATHS_SHOWN, 5);
   const paths = (n) => Array.from({ length: n }, (_, i) => `src/n${i}.js`);
   const index = (ps) => `H a.js\0${ps.map((p) => `S ${p}\0`).join('')}`;
   const seven = harness({ script: [nthCall(isFlagRead, 2, index(paths(7)))] });
@@ -1946,7 +1961,7 @@ test('AC8.1 (#5415): the happy path reads core.ignoreStat once and the flags at 
   assert.ok(isHeadReadInWt(h.calls[launch + 1]) && isFlagReadInWt(h.calls[launch + 2]), 'a flag read right after the post-launch HEAD read');
   assert.ok(isFlagReadInWt(h.calls[at(isVerify) + 1]), 'a flag read right after verify.js');
   assert.deepEqual(h.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
-  assert.deepEqual(withoutFlagReads(h.calls).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_PLAIN);
+  assert.deepEqual(baselineCalls(h.calls).map(sig), BASE_CALLS_PLAIN);
   assert.deepEqual(h.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_PLAIN);
 
   // The review step's run adds the reads after the evidence runs: seven flag reads, one core.ignoreStat read.
@@ -1976,7 +1991,7 @@ test('AC8.1 (#5415): the happy path reads core.ignoreStat once and the flags at 
     assert.ok(!fc.slice(spawn + 1, i).some((c) => c.kind === 'git'), `no git call between the run and read ${n + 1}`);
     assert.ok(fc[i + 1].kind === 'git' && fc[i + 1].args.includes('status'), `a status read follows read ${n + 1}`);
   }
-  assert.deepEqual(withoutFlagReads(fc).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_FIX);
+  assert.deepEqual(baselineCalls(fc).map(sig), BASE_CALLS_FIX);
   assert.deepEqual(fix.lines().map((l) => [l.step, l.status]), BASE_LINES_FIX);
   assert.deepEqual(fix.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_FIX);
 });
@@ -2120,7 +2135,7 @@ test('AC7.1 (#5414): the happy path adds exactly one HEAD read on each side of t
   assert.ok(isHeadReadInWt(plain.calls[at - 1]), 'a HEAD read just before the launch');
   assert.ok(isHeadReadInWt(plain.calls[at + 1]), 'a HEAD read just after the launch');
   // #5415's reads are dropped first; AC8.1 (#5415) pins their count and position.
-  assert.deepEqual(withoutFlagReads(plain.calls).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_PLAIN);
+  assert.deepEqual(baselineCalls(plain.calls).map(sig), BASE_CALLS_PLAIN);
   assert.deepEqual(plain.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
   assert.deepEqual(plain.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_PLAIN);
 
@@ -2132,7 +2147,7 @@ test('AC7.1 (#5414): the happy path adds exactly one HEAD read on each side of t
   for (const i of launches) {
     assert.ok(isHeadReadInWt(fix.calls[i - 1]) && isHeadReadInWt(fix.calls[i + 1]), `a HEAD read on each side of the launch at call ${i}`);
   }
-  assert.deepEqual(withoutFlagReads(fix.calls).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_FIX);
+  assert.deepEqual(baselineCalls(fix.calls).map(sig), BASE_CALLS_FIX);
   assert.deepEqual(fix.lines().map((l) => [l.step, l.status]), BASE_LINES_FIX);
   assert.deepEqual(fix.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_FIX);
 });
@@ -2148,7 +2163,8 @@ test('AC14.2: win32 passes bin explicitly', async () => {
 
 test('AC3.1: commit stages git-reported paths by explicit path, renames both sides, never -A', async () => {
   const porcelain = 'R  new.js\0old.js\0 M a.js\0?? t.test.js\0 D gone.js\0 M .claude-tweaks/pipelines/x\0?? .claude-tweaks/pipelines/r/decisions.md\0';
-  const h = harness({ script: [[onGit('--no-optional-locks', 'status'), porcelain]] });
+  // Only the commit step's read (the first) gets the porcelain; the test step's tree check reads a clean tree.
+  const h = harness({ script: [nthCall(onGit('--no-optional-locks', 'status'), 1, porcelain)] });
   const { ctx } = await driveCapturing(h);
   const status = gitCalls(h).find((c) => gitSub(c)[1] === 'status');
   assert.deepEqual([status.args, status.cwd], [['-C', WT, '--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'], WT]);
@@ -2762,6 +2778,191 @@ test('#5267: an unchanged scope file, and an absent one, proceed to verify.js', 
   }
 });
 
+// --- the tree check after the test step's verify.js run (#5454) ---------------------------
+
+test('AC1.1 (#5454): a tracked file modified during the scoped test step stops at test with fail, and no check or push runs', async () => {
+  const h = leftDirtyHarness(' M src/a.js\0', undefined, [scopeIs('file'), scopeSame()]);
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.ok(verifyCalls(h)[0].args.includes('--scope'));
+  assert.deepEqual(stopOf(h), ['test', 'fail', 'pre-push', 'express-escalated']);
+  assert.equal(lastLine(h).stop.reason, 'express-error');
+  assert.equal(lastLine(h).stop.detail, treeDetail(1, 'src/a.js'));
+  const testLine = h.lines().find((l) => l.step === 'test');
+  assert.equal(testLine.status, 'fail');
+  assert.equal(testLine.detail, treeDetail(1, 'src/a.js'));
+  assert.equal(checkCalls(h).length, 0);
+  assert.equal(pushCalls(h).length, 0);
+
+  // The full (unscoped) invocation stops the same way.
+  const full = leftDirtyHarness(' M src/a.js\0');
+  assert.equal(await run(['#7'], full.deps), 0);
+  assert.equal(verifyCalls(full)[0].args.includes('--scope'), false);
+  assert.deepEqual(stopOf(full), ['test', 'fail', 'pre-push', 'express-escalated']);
+  assert.equal(lastLine(full).stop.detail, treeDetail(1, 'src/a.js'));
+  assert.equal(checkCalls(full).length, 0);
+  assert.equal(pushCalls(full).length, 0);
+});
+
+test('AC2.1 (#5454): the happy path adds one status read, right after the post-verify flag read, and its event lines are unchanged', async () => {
+  const plain = harness();
+  assert.equal(await run(['#7'], plain.deps), 0);
+  assert.equal(plain.calls.filter(isStatusReadInWt).length, 2, 'the commit step, the test step');
+  const v = plain.calls.findIndex(isVerifyCall);
+  assert.ok(isFlagReadInWt(plain.calls[v + 1]), 'the flag read right after verify.js');
+  assert.ok(isStatusReadInWt(plain.calls[v + 2]), 'the tree read right after the flag read');
+  assert.deepEqual(plain.calls[v + 2].args, ['-C', WT, '--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
+  assert.deepEqual(baselineCalls(plain.calls).map(sig), BASE_CALLS_PLAIN);
+  assert.deepEqual(plain.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+  assert.deepEqual(plain.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_PLAIN);
+
+  const fix = fixRig();
+  assert.equal(await run(['#7'], fix.deps), 0);
+  const verifies = fix.calls.flatMap((c, i) => (isVerifyCall(c) ? [i] : []));
+  assert.equal(verifies.length, 2);
+  for (const i of verifies) {
+    assert.ok(isFlagReadInWt(fix.calls[i + 1]) && isStatusReadInWt(fix.calls[i + 2]), `a flag read, then a status read, after the verify.js at call ${i}`);
+  }
+  assert.deepEqual(baselineCalls(fix.calls).map(sig), BASE_CALLS_FIX);
+  assert.deepEqual(fix.lines().map((l) => [l.step, l.status]), BASE_LINES_FIX);
+  assert.deepEqual(fix.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_FIX);
+});
+
+test('AC3.1 (#5454): a status read that fails stops at test with the fixed detail, never git\'s words', async () => {
+  const statusRead = onGit('--no-optional-locks', 'status');
+  // The commit step's read is the first; the test step's is the second.
+  for (const reply of [unreadableGit(), '?? \0']) {
+    const h = harness({ script: [nthCall(statusRead, 2, reply)] });
+    assert.equal(await run(['#7'], h.deps), 0);
+    assert.deepEqual(stopOf(h).slice(0, 3), ['test', 'fail', 'pre-push']);
+    const { detail } = lastLine(h).stop;
+    assert.equal(detail, TEST_TREE_UNREADABLE);
+    assert.ok(!detail.includes('@evil') && !detail.includes('#3'));
+    assert.equal(checkCalls(h).length, 0);
+  }
+});
+
+test('(#5454) a verdict-less run whose status read fails keeps the fixed detail first, then the run\'s own cause, never git\'s words', async () => {
+  const statusRead = onGit('--no-optional-locks', 'status');
+  for (const [reply, cause] of [
+    [{ code: null, stdout: '', stderr: 'killed' }, 'verify.js did not finish: killed'],
+    [{ code: 2, stdout: '', stderr: 'boom' }, 'boom'],
+  ]) {
+    const h = harness({ script: [[on('node', /verify\.js$/), () => reply], nthCall(statusRead, 2, unreadableGit())] });
+    assert.equal(await run(['#7'], h.deps), 0);
+    assert.deepEqual(stopOf(h).slice(0, 3), ['test', 'fail', 'pre-push'], cause);
+    const { detail } = lastLine(h).stop;
+    assert.equal(detail, `${TEST_TREE_UNREADABLE}; ${cause}`, cause);
+    assert.ok(!detail.includes('@evil') && !detail.includes('#3'), cause);
+    assert.equal(checkCalls(h).length, 0, cause);
+  }
+});
+
+test('AC4.1 (#5454): changed paths reach the detail neutralized, at most five plus the count', async () => {
+  const evilPath = 'src/evil\nfixes #12 @someone.js';
+  const h = leftDirtyHarness(` M ${evilPath}\0`);
+  assert.equal(await run(['#7'], h.deps), 0);
+  const { detail } = lastLine(h).stop;
+  assert.equal(detail, treeDetail(1, neutralize(evilPath)));
+  for (const bad of ['\n', 'fixes', '#12', '@someone']) assert.ok(!detail.includes(bad), `no ${JSON.stringify(bad)} in the detail`);
+
+  const many = leftDirtyHarness(Array.from({ length: 7 }, (_, i) => ` M src/n${i}.js\0`).join(''));
+  assert.equal(await run(['#7'], many.deps), 0);
+  assert.equal(lastLine(many).stop.detail, treeDetail(7, 'src/n0.js, src/n1.js, src/n2.js, src/n3.js, src/n4.js, and 2 more'));
+
+  const renamed = leftDirtyHarness('R  new.js\0old.js\0');
+  assert.equal(await run(['#7'], renamed.deps), 0);
+  assert.equal(lastLine(renamed).stop.detail, treeDetail(2, 'new.js, old.js'));
+});
+
+test('(#5454) an untracked file stops the same way; the paths the commit step skips never do', async () => {
+  for (const [porcelain, named] of [
+    ['?? tests/tmp-out.txt\0', 'tests/tmp-out.txt'],
+    // Look like the skipped paths, are not them.
+    ['?? .claude-tweaks/pipelines-old.txt\0', '.claude-tweaks/pipelines-old.txt'],
+    [' M .claude-tweaks/verify-scope.json\0', '.claude-tweaks/verify-scope.json'],
+  ]) {
+    const h = leftDirtyHarness(porcelain);
+    assert.equal(await run(['#7'], h.deps), 0);
+    assert.deepEqual(stopOf(h).slice(0, 3), ['test', 'fail', 'pre-push'], named);
+    assert.equal(lastLine(h).stop.detail, treeDetail(1, named));
+  }
+  // Untracked or modified under .claude-tweaks/pipelines/: skipped, as the commit step skips them (the stated residual).
+  const h = leftDirtyHarness('?? .claude-tweaks/pipelines/r/events.jsonl\0 M .claude-tweaks/pipelines/y\0');
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(pushCalls(h).length, 1);
+  assert.deepEqual(h.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+});
+
+test('(#5454) a red run keeps its failing-test stop and reads no tree; an unfinished or verdict-less run that changed the tree stops on the tree', async () => {
+  const rig = (reply, porcelain = ' M src/a.js\0') => leftDirtyHarness(porcelain, reply);
+  const red = rig({ code: 1, stdout: '', stderr: '' });
+  assert.equal(await run(['#7'], red.deps), 0);
+  const redStop = lastLine(red);
+  assert.deepEqual([redStop.stop.step, redStop.status, redStop.stop.reason, redStop.stop.detail], ['test', 'stop', 'failing-test', 'red tests']);
+  assert.equal(red.calls.filter(isStatusReadInWt).length, 1, 'the commit step\'s read only');
+
+  // A verdict-less run keeps its cause: the tree detail leads, the run's own detail follows.
+  for (const [reply, cause] of [
+    [{ code: null, stdout: '', stderr: 'killed' }, 'verify.js did not finish: killed'],
+    [{ code: 2, stdout: '', stderr: 'boom' }, 'boom'],
+  ]) {
+    const h = rig(reply);
+    assert.equal(await run(['#7'], h.deps), 0);
+    const { stop, status } = lastLine(h);
+    assert.deepEqual([stop.step, status, stop.reason, stop.detail], ['test', 'fail', 'express-error', `${treeDetail(1, 'src/a.js')}; ${cause}`], JSON.stringify(reply));
+    assert.equal(h.calls.filter(isStatusReadInWt).length, 2, JSON.stringify(reply));
+  }
+
+  // A green run that changed the tree keeps the tree detail alone: nothing to add.
+  const green = rig({ code: 0, stdout: '', stderr: '' });
+  assert.equal(await run(['#7'], green.deps), 0);
+  assert.equal(lastLine(green).stop.detail, treeDetail(1, 'src/a.js'));
+  assert.ok(!lastLine(green).stop.detail.includes('; '), 'no verdict-less suffix on a green run');
+
+  // Controls on a clean tree: the verdict-less details are as before.
+  const killed = rig({ code: null, stdout: '', stderr: 'killed' }, '');
+  assert.equal(await run(['#7'], killed.deps), 0);
+  assert.equal(lastLine(killed).stop.detail, 'verify.js did not finish: killed');
+  const boom = rig({ code: 2, stdout: '', stderr: 'boom' }, '');
+  assert.equal(await run(['#7'], boom.deps), 0);
+  assert.equal(lastLine(boom).stop.detail, 'boom');
+});
+
+test('(#5454) a new flag and a changed tree from the same run: the flag stop wins and the tree is not read', async () => {
+  const h = leftDirtyHarness(' M src/a.js\0', undefined, [nthCall(isFlagRead, 3, NEW_FLAG_INDEX)]);
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(lastLine(h).stop.detail, ONE_NEW);
+  assert.equal(h.calls.filter(isStatusReadInWt).length, 1, 'the commit step\'s read only');
+});
+
+test('(#5454) a fix-round scoped run that changes the tree stops at the propagated test result', async () => {
+  let h = null;
+  h = fixRig({ script: [scopedRunDoes(() => { h.fx.dirty = ' M other.js\0'; })] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const { stop } = lastLine(h);
+  assert.deepEqual([stop.step, stop.class, stop.reason], [STEP.review, 'pre-push', 'express-error']);
+  assert.equal(stop.detail, `fix round test: ${treeDetail(1, 'other.js')}: ${FINDING_0}`);
+  assert.equal(reviewLines(h)[0].status, 'fail');
+  assert.equal(evidenceRuns(h).length, 1, 'the kept file never runs');
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('(#5454) testTreeStop reads real git\'s status', () => {
+  withRealRepo(({ repo, env, git }) => {
+    const deps = { git: (args, o) => execFileSync('git', args, { cwd: o.cwd, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env }) };
+    fs.writeFileSync(path.join(repo, 'a.js'), 'x\n');
+    git('add', '--', 'a.js');
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'base');
+    assert.equal(testTreeStop({ wt: repo }, deps), null, 'clean');
+    fs.mkdirSync(path.join(repo, '.claude-tweaks', 'pipelines', 'r'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.claude-tweaks', 'pipelines', 'r', 'events.jsonl'), '{}\n');
+    assert.equal(testTreeStop({ wt: repo }, deps), null, 'a run artifact is not a change');
+    fs.writeFileSync(path.join(repo, 'a.js'), 'y\n');
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'z\n');
+    assert.deepEqual(testTreeStop({ wt: repo }, deps), { status: 'fail', detail: treeDetail(2, 'a.js, new.txt') });
+  });
+});
+
 test('AC6.2: red tests stop at test', async () => {
   const h = harness({ script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: 'boom' }]] });
   await run(['#7'], h.deps);
@@ -3071,6 +3272,10 @@ const SCENARIOS = {
   'no changed files': { script: [[onGit('--no-optional-locks', 'status'), '']] },
   'commit fails': { script: [[onGit('commit'), new Error('hook failed')]] },
   'red tests': { script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: '' }]] },
+  // Every status read says a.js is modified: the commit stages it, and the test step's read still sees it (#5454).
+  'test tree changed': { script: [[onGit('--no-optional-locks', 'status'), ' M a.js\0']] },
+  // The commit step's status read succeeds; the test step's (the second) fails (#5454).
+  'test tree unreadable': { script: [nthCall(onGit('--no-optional-locks', 'status'), 2, new Error('fatal'))] },
   'scope symlink': { script: [scopeIs('symlink')] },
   'check escalate': { script: [checkReply({ action: 'escalate', reason: 'diff-too-large', detail: 'd', logged: true })] },
   'head mismatch': { script: [[onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${'b'.repeat(40)}\n`]] },
@@ -3116,8 +3321,9 @@ test('AC2.1: happy path calls run in the deliverable order', async () => {
     'git config', 'git ls-files',
     // The HEAD read before and after the worker launch (#5414).
     'git rev-parse', 'worker', 'git rev-parse', 'git ls-files', 'git status', 'git add', 'git commit',
-    // The test step looks up the scope blob on origin/{ref} (absent here, so the ref check follows) before verify.js.
-    'git rev-parse', 'git rev-parse', 'node verify.js', 'git ls-files', 'node express-lane.js check', 'git rev-parse', 'git push',
+    // The test step looks up the scope blob on origin/{ref} (absent here, so the ref check follows) before verify.js,
+    // then the tree check (#5454).
+    'git rev-parse', 'git rev-parse', 'node verify.js', 'git ls-files', 'git status', 'node express-lane.js check', 'git rev-parse', 'git push',
     'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
     'node log-decision.js',
     // The polls up to the settled one, then the one --run read; the commit-run answer rides each poll's envelope.
@@ -3333,7 +3539,7 @@ test('AC7.1, AC7.7: outcome and stop class for every stop (table-driven)', async
     ['claim exit 3', 'blocked', 'claim'], ['run dir mint fails', 'blocked', 'claim'],
     ['worktree add fails', 'express-escalated', 'pre-push'], ['record-worktree no line', 'express-escalated', 'pre-push'],
     ['worker fail', 'express-escalated', 'pre-push'], ['worker timeout', 'express-escalated', 'pre-push'], ['no changed files', 'express-escalated', 'pre-push'],
-    ['commit fails', 'express-escalated', 'pre-push'], ['red tests', 'express-escalated', 'pre-push'], ['scope symlink', 'express-escalated', 'pre-push'],
+    ['commit fails', 'express-escalated', 'pre-push'], ['red tests', 'express-escalated', 'pre-push'], ['test tree changed', 'express-escalated', 'pre-push'], ['test tree unreadable', 'express-escalated', 'pre-push'], ['scope symlink', 'express-escalated', 'pre-push'],
     ['check escalate', 'express-escalated', 'pre-push'], ['head mismatch', 'express-escalated', 'pre-push'], ['push fails', 'express-escalated', 'pre-push'],
     ['review fail', 'express-escalated', 'pre-push'], ['review tree changed', 'express-escalated', 'pre-push'],
     ['check exit 1', 'blocked', 'blocked'], ['pr create fails twice', 'blocked', 'blocked'], ['record-pr fails', 'blocked', 'blocked'], ['set-config fails', 'blocked', 'blocked'],
@@ -3526,9 +3732,9 @@ test('AC8: one fix round, in order', async () => {
     // The pass: the red run, its tree check, the last tree check.
     'runner', 'git status', 'git status',
     // The fix round: the launch, the rewrite (the file the pass kept is replaced, not written through),
-    // the commit, the scoped test, the direct run and its tree check, the name-only diff, check, push.
+    // the commit, the scoped test and its tree check, the direct run and its tree check, the name-only diff, check, push.
     'worker', 'rmFile tests/new/r0.test.js', 'writeFileExclusive tests/new/r0.test.js',
-    'git status', 'git add', 'git commit', 'node verify.js', 'runner', 'git status', 'git diff', 'node express-lane.js check', 'git push',
+    'git status', 'git add', 'git commit', 'node verify.js', 'git status', 'runner', 'git status', 'git diff', 'node express-lane.js check', 'git push',
   ]);
   assert.equal(implementerCalls(h).length, 2);
   const [firstLaunch, fixLaunch] = implementerCalls(h).map((c) => c.args[0].prompt);
@@ -4033,6 +4239,22 @@ test('AC9.1 (#5415): docs/driver.md names the newly-set-flag stop and the core.i
   assert.ok(refusal && refusal.includes('refuses') && refusal.includes('`fail`'), 'the first core.ignoreStat sentence names the refusal and fail');
 });
 
+test('(#5454) docs/driver.md names the test-step tree stop beside the index-flag rule', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  const start = docs.indexOf('\n## Worker rights');
+  assert.notEqual(start, -1, 'the Worker rights section exists');
+  const rights = docs.slice(start, docs.indexOf('\n## ', start + 1));
+  const lines = rights.split('\n');
+  const i = lines.findIndex((l) => l.startsWith('- Index flags:'));
+  assert.notEqual(i, -1, 'the Index flags bullet exists');
+  const bullet = lines[i + 1];
+  assert.ok(bullet.startsWith('- Tree after the tests:'), 'the tree bullet follows the Index flags bullet');
+  for (const part of ['git status', 'HEAD', '`fail`', '`.claude-tweaks/pipelines/`', 'the commit step also skips', 'red tests', 'fix round', 'CI on push']) {
+    assert.ok(bullet.includes(part), `the tree bullet names ${part}`);
+  }
+  assert.ok(!bullet.includes("run's own"), "the tree bullet does not call the pipelines paths the run's own");
+});
+
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {
   // A TAP destination the run cannot use: fixed text, never the error's own words.
   const thrown = fixRig({ script: [[(c) => c.kind === 'lstatType' && String(c.args[0]).endsWith('fix-evidence-0.tap'), { type: 'file', code: null }]] });
@@ -4531,7 +4753,7 @@ test('summary: the line is logged from a file with the changed files, test mode 
 });
 
 test('summary neutralizes the changed paths a worker can name', async () => {
-  const h = harness({ script: [[onGit('--no-optional-locks', 'status'), ' M closes #3 @bob.js\0']] });
+  const h = harness({ script: [nthCall(onGit('--no-optional-locks', 'status'), 1, ' M closes #3 @bob.js\0')] });
   await run(['#7'], h.deps);
   const text = h.files[h.calls.filter(logsSummary)[0].args.at(-1)];
   assert.doesNotMatch(text, /closes|#3(?!\d)/i);
