@@ -2,7 +2,8 @@
 // The pipeline driver's merge step (#5226): takes a record whose live labels carry `auto:merge`
 // from a green draft PR to a merged one, in program code, with no model call. The one judgment
 // the lane needs (the merge-check verdict and the acceptance state) arrives only through the
-// optional `deps.judgments` supplier; with none configured the step changes nothing.
+// `deps.judgments` supplier (production builds it from `deps.createJudgments`, #5228); a deps
+// object with no supplier changes nothing.
 //
 // Ported procedure, by section: `_shared/pr-first-merge.md` Steps 2 to 3,
 // `_shared/pr-first-merge-post-merge.md` Steps 4 and 5, and `_shared/express-lane.md` step 9.

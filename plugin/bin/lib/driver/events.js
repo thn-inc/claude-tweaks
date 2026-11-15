@@ -54,8 +54,8 @@ const SETTLE_STEP_NAMES = Object.freeze([
 // The sub-step events merge.js emits (#5226), one per sub-step call. Kept apart from STEP_NAMES
 // for the same reason as SETTLE_STEP_NAMES: the pipeline-step list is pinned.
 const MERGE_STEP_NAMES = Object.freeze([
-  'merge-entry', 'merge-supplier', 'merge-closing-links', 'merge-compose', 'merge-ready',
-  'merge-gate', 'merge-watch', 'merge-park', 'merge-conflict', 'merge-call', 'merge-confirm',
+  'merge-entry', 'merge-supplier', 'merge-check', 'merge-acceptance', 'merge-closing-links', 'merge-compose',
+  'merge-ready', 'merge-gate', 'merge-watch', 'merge-park', 'merge-conflict', 'merge-call', 'merge-confirm',
   'merge-post-merge', 'merge-release-status', 'merge-reconcile', 'merge-teardown',
   'merge-delete-branch', 'merge-close-run',
 ]);

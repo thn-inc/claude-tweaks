@@ -209,12 +209,44 @@ const REVIEW_RESULT_SCHEMA = deepFreeze({
   additionalProperties: false,
 });
 
+// The merge-check judgment worker's result: a verdict and its reason. Every property is
+// required, so `required` is derived from the names.
+const MERGE_CHECK_PROPERTIES = {
+  verdict: { type: 'string', enum: ['auto-merge', 'needs-human'] },
+  rationale: { type: 'string' },
+};
+const MERGE_CHECK_RESULT_SCHEMA = deepFreeze({
+  type: 'object',
+  properties: MERGE_CHECK_PROPERTIES,
+  required: Object.keys(MERGE_CHECK_PROPERTIES),
+  additionalProperties: false,
+});
+
+// The acceptance-brief worker's result. The launcher's schema subset accepts only
+// object|string|array and has no `items`, so the shapes inside each value are checked in
+// acceptance.js; a route that needs no observation plan, claims or parent brief has the
+// worker return {} or [] there.
+const ACCEPTANCE_PROPERTIES = {
+  tryIt: { type: 'array' },
+  observationPlan: { type: 'object' },
+  claims: { type: 'array' },
+  parentBrief: { type: 'object' },
+};
+const ACCEPTANCE_RESULT_SCHEMA = deepFreeze({
+  type: 'object',
+  properties: ACCEPTANCE_PROPERTIES,
+  required: Object.keys(ACCEPTANCE_PROPERTIES),
+  additionalProperties: false,
+});
+
 const SANDBOX_PROBED_PLATFORMS = deepFreeze(['darwin']);
 
 const ROLES = deepFreeze({
   implementer: { tools: ['Read', 'Write', 'Edit', 'Bash'], settings: true },
   reviewer: { tools: ['Read', 'Grep', 'Glob'], settings: false },
   explorer: { tools: ['Read', 'Grep', 'Glob'], settings: false },
+  'merge-check': { tools: ['Read', 'Grep', 'Glob'], settings: false },
+  acceptance: { tools: ['Read', 'Grep', 'Glob'], settings: false },
 });
 
 function specFor(role) {
@@ -423,4 +455,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling };

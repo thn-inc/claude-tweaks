@@ -160,6 +160,18 @@ The packet's recording fact (#4612) added two more channels, found the same way:
 Pins: `tests/bin-lib/walkthrough/redact.test.js`, `tests/bin-lib/wrap-up/packet-links.test.js`,
 `tests/bin-lib/wrap-up/packet-recording.test.js`.
 
+The pipeline driver's acceptance worker (#5228, `plugin/bin/lib/driver/acceptance.js`) narrates the
+same packet with no human reading it before it posts, which adds one more rule:
+
+- **The render's counts are the caller's signal, not only the reader's.** `acceptance-packet.js render`
+  drops or screens a claim, writes a warning line into the packet, and still exits 0 with `dropped` and
+  `screened` counts on stdout. A person reading the packet sees the warning, but an automated caller that
+  checks only the exit code does not. Until review's gap sweep, a no-parent packet whose Try it steps
+  had all been dropped was still posted, labelled and reported completed. The driver now parses both
+  counts and stops with nothing posted when either is non-zero or unreadable.
+
+Pins: `tests/bin-lib/driver/acceptance.test.js` (the `dropped claims` and `screened claims` rows).
+
 ## When to use
 
 - Adding or reviewing a skill whose output is model-written prose over facts gathered from outside

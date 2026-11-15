@@ -1242,7 +1242,7 @@ const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) =>
 }));
 
 // Ports express-lane.md step 9, the merge: entered only when the CI wait ended green, then
-// merge.js owns every decision (no supplier configured, no merge). The result rides on ctx.merge
+// merge.js owns every decision (a deps object that carries no supplier stops at `no-supplier`; production deps carry one). The result rides on ctx.merge
 // for the final line. The step never halts: merge() reports every stop as a result, so the
 // record's outcome comes from it (finalEvent), not from a stop class. Class `none` is for a throw
 // in this entry itself. There is no interruptClass rung for it: ctx.configWritten is already true
@@ -1264,6 +1264,12 @@ const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) =>
     interrupted: () => ctx.shared.interrupted,
     watchClock: (t) => { ctx.ciWaitStartedAt = t; },
   };
+  // The judgment supplier is built over these same merge deps and the run's shared state (its worker
+  // launches track `shared.activeWorker`); a deps object with only `judgments` keeps it, one with neither
+  // stops at `no-supplier`.
+  mdeps.judgments = typeof deps.createJudgments === 'function'
+    ? deps.createJudgments({ deps: mdeps, shared: ctx.shared })
+    : deps.judgments;
   const r = await merge(mctx, mdeps);
   ctx.merge = r;
   if (r.runDir !== ctx.runDir) ctx.runDir = r.runDir;

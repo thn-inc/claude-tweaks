@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // bin/drive.js — the pipeline driver (#5218): takes each named record, one at a time and
 // in order, from admission to a draft PR with CI read. A program owns every step; a
-// headless worker only writes the change. A record merges only when a judgment supplier is
-// configured (none is by default; #5226's merge step, bin/lib/driver/merge.js); otherwise
-// nothing merges, and a run that gets that far ends at pending-review, as in Phase 1. A thin
+// headless worker only writes the change. A record merges only when it carries auto:merge and
+// the judgment supplier (#5228; bin/lib/driver/judgments.js, its merge-check and acceptance
+// workers) clears it for the merge step (#5226, bin/lib/driver/merge.js); otherwise nothing
+// merges, and a run that gets that far ends at pending-review, as in Phase 1. A thin
 // entry: the loop, the step table, USAGE and realDeps live in bin/lib/driver/ (run.js,
 // steps.js, events.js, merge.js).
 //
