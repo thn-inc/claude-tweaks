@@ -2,16 +2,18 @@
 // tests/bin-lib/wrap-up/engine-cli.test.js — exercises bin/wrap-up-engine.js
 // end to end: `plan` against a real fixture git repo (same builder shape as
 // facts.test.js), `record` reading a payload off stdin, and `render`
-// including the --strict completeness gate. Spawns the CLI as a real child
-// process (spawnSync) so exit codes AND stderr are asserted the way a caller
-// would actually observe them, not by calling internals in-process.
+// including the --strict completeness gate. Calls the CLI's `run` in-process
+// through runCliSync (tests/helpers/run-cli.js), with the cwd, env and stdin
+// injected, so exit codes AND stderr (on a 0 exit too, #2688) are asserted as
+// `run` returns and writes them. The spawnCli tests below prove the script entry.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnCli } = require('../../helpers/run-cli');
+const { spawnCli, runCliSync } = require('../../helpers/run-cli');
+const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 
@@ -22,16 +24,9 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
 
-// #2688: spawnSync (not execFileSync) so stderr is captured on a 0 exit too —
-// execFileSync only surfaces stderr via its throw path on a non-zero exit,
-// which silently discarded any stderr a *successful* run also wrote.
 function run(args, { cwd, input } = {}) {
-  const r = spawnSync(process.execPath, [CLI, ...args], {
-    cwd: cwd || repoDir,
-    input: input !== undefined ? input : undefined,
-    encoding: 'utf8',
-  });
-  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+  const r = runCliSync(CLI, args, { cwd: cwd || repoDir, stdin: input !== undefined ? input : '', env: { ...process.env } });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 before(() => {
@@ -820,4 +815,149 @@ test('amend with a falsy JSON stdin (null) exits 0 with no output', () => {
   assert.strictEqual(r.status, 0);
   assert.strictEqual(r.stdout, '');
   assert.strictEqual(r.stderr, '');
+});
+
+// ---- in-process entry (#5379) ---------------------------------------------
+
+function escapeRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function uniqueName(prefix) {
+  return `${prefix}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+test('AC2.1: a usage error then a valid plan return 2 then 0 — no exit code carries over', () => {
+  const usage = runCliSync(CLI, [], { cwd: repoDir, env: { ...process.env } });
+  assert.strictEqual(usage.code, 2);
+  const plan = runCliSync(CLI, ['plan', '--run-dir', makeRunDir(), '--base', baseSha, '--dry-run'], { cwd: repoDir, env: { ...process.env } });
+  assert.strictEqual(plan.code, 0, plan.stderr);
+});
+
+test('AC4.2/AC3.1: in-process plan stdout equals the script plan stdout', () => {
+  assert.ok(scriptPlanStdout, 'the AC4.2 script test runs first and records the script plan stdout');
+  const r = run(['plan', '--run-dir', makeRunDir(), '--base', baseSha, '--dry-run']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(r.stdout), scriptPlanStdout);
+});
+
+test('relative --run-dir resolves against the injected cwd', () => {
+  const rel = uniqueName('rel');
+  const r = run(['plan', '--run-dir', rel, '--base', baseSha, '--dry-run'], { cwd: repoDir });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(repoDir, rel, 'engine-state.json')));
+});
+
+test('relative --batch resolves against the injected cwd', () => {
+  const runDir = planFreshRunDir();
+  const row = readState(runDir).worklist.rows.find((r) => r.gate === 'open');
+  const name = `${uniqueName('batch')}.json`;
+  fs.writeFileSync(path.join(repoDir, name), JSON.stringify([
+    { version: 1, rowId: row.id, result: 'clean', read: [], findings: [], gapDetection: 'not-run', detail: 'relative batch' },
+  ]));
+  const r = run(['record', '--run-dir', runDir, '--batch', name, '--dry-run'], { cwd: repoDir });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^SCANNED /);
+  assert.strictEqual(readState(runDir).results[row.id].detail, 'relative batch');
+});
+
+test('relative --spec-state path resolves against the injected cwd', () => {
+  const runDir = planFreshRunDir();
+  const rel = path.relative(repoDir, path.join(runDir, 'engine-state.json'));
+  assert.ok(!path.isAbsolute(rel), rel);
+  const r = run(['render', '--section', 'console', '--spec-state', `a=${rel}`], { cwd: repoDir });
+  assert.strictEqual(r.status, 0, r.stderr);
+
+  const missing = path.join(uniqueName('missing'), 'engine-state.json');
+  const m = run(['render', '--section', 'console', '--spec-state', `a=${missing}`], { cwd: repoDir });
+  assert.strictEqual(m.status, 2);
+  assert.match(m.stderr, new RegExp(`could not read spec state from ${escapeRe(missing)}: `));
+});
+
+test('AC8.1: plan telemetry follows the injected env (GIT_DIR only in env)', () => {
+  // cwd and the run dir are in repo A; the injected env points GIT_DIR at repo B. A telemetry
+  // root lookup that ignored the injected env would read A's common dir and append under A.
+  const a = committedRepo({ prefix: 'wrapup-engine-env-a-' });
+  const b = committedRepo({ prefix: 'wrapup-engine-env-b-' });
+  try {
+    const r = runCliSync(CLI, ['plan', '--run-dir', path.join(a.dir, 'run'), '--base', a.head], {
+      cwd: a.dir, env: { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') },
+    });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.ok(fs.existsSync(path.join(b.dir, '.claude-tweaks', 'wrap-up-outcomes.tsv')), 'telemetry under B');
+    assert.strictEqual(fs.existsSync(path.join(a.dir, '.claude-tweaks', 'wrap-up-outcomes.tsv')), false);
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+});
+
+test('AC8.1: plan facts follow the injected env (GIT_DIR only in env)', () => {
+  // Only repo B holds the --base commit and the rename after it; repo A (cwd) holds neither. A facts
+  // git child that ignored the injected env would diff in A, fail to resolve the base, and leave the
+  // references row closed with no candidates.
+  const a = committedRepo({ prefix: 'wrapup-engine-facts-a-' });
+  const b = committedRepo({ prefix: 'wrapup-engine-facts-b-' });
+  try {
+    b.git('mv', 'seed.txt', 'renamed.txt');
+    b.git('commit', '-q', '-m', 'rename');
+    const r = runCliSync(CLI, ['plan', '--run-dir', path.join(a.dir, 'run'), '--base', b.head, '--dry-run'], {
+      cwd: a.dir, env: { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') },
+    });
+    assert.strictEqual(r.code, 0, r.stderr);
+    const references = JSON.parse(r.stdout).rows.find((row) => row.id === 'references');
+    assert.strictEqual(references.gate, 'open');
+    assert.deepStrictEqual(references.scope.candidates, [{ status: 'R', oldPath: 'seed.txt', newPath: 'renamed.txt' }]);
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+});
+
+test('AC8.1: the facts root follows the injected env (GIT_DIR and GIT_WORK_TREE only in env)', () => {
+  // Only repo B has docs/journeys/. With GIT_WORK_TREE=<B> in the injected env, --show-toplevel
+  // prints B, so the journeys row opens; a facts-root lookup that ignored the env would print A
+  // (cwd), find no journeys and close the row.
+  const a = committedRepo({ prefix: 'wrapup-engine-root-a-' });
+  const b = committedRepo({ prefix: 'wrapup-engine-root-b-' });
+  try {
+    fs.mkdirSync(path.join(b.dir, 'docs', 'journeys'), { recursive: true });
+    fs.writeFileSync(path.join(b.dir, 'docs', 'journeys', 'j.md'), '# Journey\n');
+    const r = runCliSync(CLI, ['plan', '--run-dir', path.join(a.dir, 'run'), '--base', b.head, '--dry-run'], {
+      cwd: a.dir, env: { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), GIT_WORK_TREE: b.dir },
+    });
+    assert.strictEqual(r.code, 0, r.stderr);
+    const journeys = JSON.parse(r.stdout).rows.find((row) => row.id === 'journeys');
+    assert.strictEqual(journeys.gate, 'open');
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+});
+
+test('verify hands the injected env, stderr and homeDir to every git and gh call; an ENOENT gh reads as gh absent', () => {
+  const runDir = planFreshRunDir();
+  const env = Object.freeze({ ...process.env });
+  const homeDir = () => repoDir;
+  const stderr = () => {};
+  const calls = [];
+  const git = (args, cwd, ctx) => { calls.push({ seam: 'git', args, ctx }); return ''; };
+  const gh = (args, cwd, ctx) => {
+    calls.push({ seam: 'gh', args, ctx });
+    throw Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' });
+  };
+  const r = runCliSync(CLI, ['verify', '--run-dir', runDir, '--base', baseSha], {
+    cwd: repoDir, env, deps: { env, stderr, homeDir, git, gh },
+  });
+  assert.ok([0, 3].includes(r.code), String(r.code));
+  assert.ok(calls.some((c) => c.seam === 'git'), 'verify reached the git seam');
+  assert.ok(calls.some((c) => c.seam === 'gh'), 'verify reached the gh seam');
+  for (const c of calls) {
+    const label = `${c.seam} ${c.args.join(' ')}`;
+    assert.ok(c.ctx, `${label}: no ctx`);
+    assert.strictEqual(c.ctx.env, env, `${label}: ctx.env`);
+    assert.strictEqual(c.ctx.stderr, stderr, `${label}: ctx.stderr`);
+    assert.strictEqual(c.ctx.homeDir, homeDir, `${label}: ctx.homeDir`);
+  }
+  assert.match(r.stdout, /^\| acceptance-labeling \| unknown \(gh absent\) \|/m);
 });
