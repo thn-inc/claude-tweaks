@@ -183,3 +183,27 @@ test('checkTrackedFreshness spawns exactly one git subprocess for multiple track
 
   assert.strictEqual(invocations, 1, `expected exactly one git subprocess spawn for 3 tracked files, got ${invocations}`);
 });
+
+test('checkTrackedFreshness runs git log with the injected env (#5381)', () => {
+  const clean = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete clean[k];
+  const B = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-envB-'));
+  const git = (args) => execFileSync('git', ['-C', B, ...args], { env: clean, stdio: 'pipe' });
+  git(['init', '-q']);
+  git(['config', 'user.email', 'test@example.com']);
+  git(['config', 'user.name', 'Test']);
+  fs.mkdirSync(path.join(B, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(B, 'src', 'a.ts'), 'export const a = 1;\n');
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'add a']);
+  // A non-git root holding the same path: history is visible only via GIT_DIR.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-envroot-'));
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'a.ts'), 'export const a = 1;\n');
+
+  const content = '---\nfiles:\n  - src/a.ts\n---\n\n# Doc\n';
+  const since = Date.now() - 86400000;
+  const injected = { ...clean, GIT_DIR: path.join(B, '.git') };
+  assert.deepStrictEqual(checkTrackedFreshness(content, root, since, { env: injected }).stale.map((s) => s.path), ['src/a.ts']);
+  assert.deepStrictEqual(checkTrackedFreshness(content, root, since, { env: clean }).stale, []);
+});

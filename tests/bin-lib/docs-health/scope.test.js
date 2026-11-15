@@ -292,3 +292,32 @@ test('selectTarget without opts.dir considers every doc under docs/ (no scoping 
   const result = selectTarget(root, {}, { now: 1000000 });
   assert.strictEqual(result.id, 'guides/setup');
 });
+
+test('selectTarget passes env to domainChurn (#5381)', () => {
+  const clean = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete clean[k];
+  const B = tmp();
+  const git = (args) => execFileSync('git', ['-C', B, ...args], { env: clean, stdio: 'pipe' });
+  git(['init', '-q']);
+  git(['config', 'user.email', 'test@test.com']);
+  git(['config', 'user.name', 'Test']);
+  fs.mkdirSync(path.join(B, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(B, 'src', 'x.ts'), 'export const x = 1;\n');
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'add x']);
+  // Churn lives only in B; each call gets its own root (domainChurn memoizes
+  // on root+paths+since, not env).
+  const makeRoot = () => {
+    const root = tmp();
+    fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'docs', 'd.md'), '---\nfiles:\n  - src/x.ts\n---\n\n# d\n');
+    return root;
+  };
+  const now = Date.now();
+  const cursors = { 'doc:d': { lastAuditedMs: now - 86400000 } };
+  const injected = { ...clean, GIT_DIR: path.join(B, '.git') };
+  const withEnv = selectTarget(makeRoot(), cursors, { now, env: injected });
+  assert.strictEqual(withEnv.id, 'd');
+  assert.strictEqual(withEnv.why, 'hotspot');
+  assert.strictEqual(selectTarget(makeRoot(), cursors, { now, env: clean }), null);
+});
