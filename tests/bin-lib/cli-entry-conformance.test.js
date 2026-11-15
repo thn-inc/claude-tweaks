@@ -35,8 +35,6 @@ const NOT_YET = [
   'release-notes-publish.js',
   'sweep-stray-run-dirs.js',
   'verify.js',
-  'wrap-up-engine.js',
-  'wrap-up-state.js',
 ];
 
 const GUARD = 'require.main === module';

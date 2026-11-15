@@ -10,34 +10,21 @@
 // Phase 2's Journeys-row candidate-overlap scan even when its own `files:`
 // frontmatter named a file the diff actually touched.
 //
-// These are CLI-level (subprocess) tests, not unit tests against
-// `parseJourneyFilesList` directly: that function (and `buildJourneyFrontmatter`)
-// live in bin/wrap-up-engine.js, which runs its CLI unconditionally at load
-// time (no `require.main` guard) rather than exporting anything importable —
-// the same reason tests/wrap-up-engine-run-dir-anchoring.test.js already
-// drives this file via `plan` subprocess invocations instead of a direct
-// require.
+// These are CLI-level tests, not unit tests against `parseJourneyFilesList`
+// directly: the tests call the engine's `run` in-process (runCliSync) with
+// the cwd injected.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
+const { runCliSync } = require('./helpers/run-cli');
 
 const ENGINE_JS = path.join(__dirname, '..', 'plugin', 'bin', 'wrap-up-engine.js');
 
 function runPlan(args, cwd) {
-  try {
-    const stdout = execFileSync('node', [ENGINE_JS, 'plan', ...args], { cwd, timeout: 15000 });
-    return { code: 0, stdout: stdout.toString('utf8'), stderr: '' };
-  } catch (e) {
-    return {
-      code: typeof e.status === 'number' ? e.status : 1,
-      stdout: e.stdout ? e.stdout.toString('utf8') : '',
-      stderr: e.stderr ? e.stderr.toString('utf8') : '',
-    };
-  }
+  return runCliSync(ENGINE_JS, ['plan', ...args], { cwd, env: { ...process.env } });
 }
 
 // Writes the journey file with the exact requested line-ending style and

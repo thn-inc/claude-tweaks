@@ -1,26 +1,52 @@
 # The pipeline driver (`drive.js`)
 
-`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read. A program owns every step; a headless worker only writes the change. A record merges only when a judgment supplier is configured (none is by default) — see "The merge step". This page is documentation, not a contract: a few tests in `tests/bin-lib/driver/run.test.js` pin named rules in it, but nothing checks the rest, so update it by hand when the code below changes. The code is the source of truth.
+`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read; with `--budget` it picks the records itself from the dispatch queue (see "Picking records: `--budget`"). A program owns every step; a headless worker only writes the change. A record merges only when a judgment supplier is configured (none is by default) — see "The merge step". This page is documentation, not a contract: a few tests in `tests/bin-lib/driver/run.test.js` pin named rules in it, but nothing checks the rest, so update it by hand when the code below changes. The code is the source of truth.
 
 ## Running it
 
 ```
 node plugin/bin/drive.js #N [#M…]
 node plugin/bin/drive.js --no-settle #N [#M…]
+node plugin/bin/drive.js [--no-settle] --budget <n|all>
 node plugin/bin/drive.js --help
 ```
 
 - `#N` (or a bare `N`) is a positive record number; duplicates are dropped, order is kept.
 - `--no-settle` turns the driver's own settle off, for a caller that settles stops itself. A stop then makes none of the settle calls; the final line carries the structured `stop` object and `settle: left-to-caller` when the stop's row has calls (`none` otherwise). Default is on.
+- `--budget` takes a positive integer (no leading zero) or `all`, is exclusive with named records, and may be given once. `--no-settle` then applies to each driven record. See "Picking records: `--budget`".
 - `--help` (or `-h`) prints the usage and exits 0 before any probe of `gh`, `git` or policy.
 
 Exit codes:
 
 | Code | Meaning |
 |---|---|
-| 0 | Every named record reached its final event, whatever its outcome. Outcomes are data. |
-| 1 | The policy, or the run's repository or integration branch, cannot be resolved; no further record is attempted. |
-| 2 | Malformed invocation (no record reference, a non-numeric one), `gh` or `git` absent, or an internal error. |
+| 0 | Every named record reached its final event, whatever its outcome. Outcomes are data. With `--budget`, also a loop that ended normally: `budget`, `exhausted`, `permission-stop`, `claim-stop` or `policy-refused`. |
+| 1 | The policy, or the run's repository or integration branch, cannot be resolved; no further record is attempted. With `--budget`, also a failed queue pull. |
+| 2 | Malformed invocation (no record reference, a non-numeric one; with `--budget`, a bad or repeated value, or a named record beside it), `gh` or `git` absent, or an internal error. |
+
+## Picking records: `--budget`
+
+`--budget <n|all>` picks the records itself instead of taking names. The loop is `plugin/bin/lib/driver/budget.js`'s `runBudget`; the queue-pull module and ranking are `plugin/bin/lib/dispatch/queue-pull.js`'s.
+
+Selection:
+
+- Each round is a fresh queue pull, then the `next` ranking over the pulled groups. The grouping is the one the module applies under the project's `express-lane` value. A bundle's members are driven one at a time, in the bundle's order. The loop never reorders or filters beyond the pre-screen and its own `firing` set.
+- The pre-screen is the eligibility step's own call over the pulled record. It may skip a record, never admit one: an admitted record still takes the full per-record path (fetch, eligibility, admission, claim). It runs only over groups the ranking could select. A group the pull excluded for a reason the ranking never selects (`UNSELECTABLE_REASONS`: today `oversized` and `neighbour-in-flight`, tied to the queue-pull module's PASSES registry) is never pre-screened, counted or added to `firing`. A selectable group whose every member the pre-screen rules out is counted `skipped` and joins `firing` without costing a pull; that count is taken as each pull arrives, including groups beyond where the run stopped (whatever its `ended` reason), while the skip members of a mixed group are counted only when the loop reaches them. Each counted skip writes `drive.js: pre-screen skipped #N (…); no live fetch` to stderr, naming the eligibility reasons. A record the pre-screen cannot read (no `labels`, a non-string `body`, or an eligibility call that throws) writes `drive.js: pre-screen could not read #N (…); taking the full path` to stderr and takes the full path.
+- An empty pulled group, or a group member that is not an object with a positive integer `number`, makes the pull malformed: `ended: pull-failed`, exit 1.
+- `express-driver: off` refuses before the pull (`policy-refused`).
+
+Counting: a record consumes budget when its claim was obtained and its run directory minted (`driven`), whatever its outcome. A refused, pre-screen-skipped or contested record, or a claim that fails any other way, consumes nothing.
+
+Termination: every handled record joins this invocation's `firing` set and is never selected twice, so a queue that never shrinks still ends. The run ends when:
+
+- the budget is spent (`budget`);
+- the ranking returns `null` (`exhausted`);
+- a pull fails or is malformed, or the ranking throws (`pull-failed`);
+- a claim stop ends it: `claim-targets.js` exit 7 gives `permission-stop`, counted in `permissionStopped`; exit 2 or 6 gives `claim-stop`, counted in `claimFailed`. That record gets the claim row's settle (one comment and `bot:blocked`, no release call; under `--no-settle` none of it runs and the record's final line carries `settle: left-to-caller`), and the rest of the budget goes unused. Exits 4 and 5, a killed claim, an exit 0 that claimed nothing and a failed mint count `claimFailed` and the loop goes on; exit 3 counts `contested` and the loop goes on.
+
+When no summary line is written: an unreadable policy or a refused origin exits 1, and an interrupt ends the process by its signal. The loop yields to the event loop and checks for an interrupt after the policy step, before and after each queue pull, and after each driven record; a pending signal ends the process at any of those points with no summary line. The hub reads the exit code, or the death by signal.
+
+What the queue pull itself writes, accepted as dispatch has it: the target-missing and shipped passes log decisions and stage Close proposals into the newest `dispatch-standalone` run directory (or an inherited `PIPELINE_RUN_DIR`), and the write-back pass rewrites the queue-order cache. The pull's own session files sit under `os.tmpdir()`. The module's stdout (warnings, AUTO lines) goes to the driver's stderr, so stdout carries JSON event lines only.
 
 ## Outcome words
 
@@ -59,6 +85,18 @@ The final line (`step: "final"`) adds:
 | `eventsFile` | `stdout-only` when neither the run directory nor its archive twin existed after the merge step's reconcile, so the events went to stdout alone. Absent otherwise. |
 
 The `stop` object: `step`, `class` (`refused`, `claim`, `pre-push`, `blocked`, `none`), `pushed`, `created` (`{ worktree, branch }`, what this run created), `reason`, `detail`, `checkLogged` (`check`'s `logged` value: whether `check` wrote its own decision line, proceed or escalate; `null` when `check` did not run). A pre-push `reason` is always one of `failing-test`, `out-of-bounds`, `gate-denial` or `express-error`, so a `--no-settle` caller need not re-derive it. A claim stop's reason is `claim-exit-{code}`, `claim-exit-none` when `claim-targets.js` was killed or timed out, or `fail` when it exited 0 without claiming the record, when the run directory could not be minted, or for an interrupt after the claim.
+
+A `--budget` run writes one more line, last (the summary line, `step: "budget"`, with `run` and `record` `null`; it goes to stdout only, never to a run directory's jsonl). Every handled record is in exactly one counter. Fields are added and never renamed: a consumer in another repository, the hub, reads this line.
+
+| Field | Meaning |
+|---|---|
+| `budget` | The value given: a positive integer or `all`. |
+| `driven`, `refused`, `skipped`, `contested`, `claimFailed`, `permissionStopped` | The six counters. `driven` is the records that consumed budget (claim obtained, run directory minted); `refused` a record refused before the claim (a failed live fetch, eligibility or admission); `skipped` a record the pre-screen ruled out (a whole-group skip is counted as each pull arrives, including groups beyond where the run stopped, whatever its `ended` reason; the skip members of a mixed group are counted only when the loop reaches them); `contested` a claim lost (`claim-targets.js` exit 3); `claimFailed` any other claim failure; `permissionStopped` an exit 7. |
+| `ended` | Why the loop ended: `budget`, `exhausted`, `permission-stop`, `claim-stop`, `pull-failed` or `policy-refused`. |
+| `status` | From `ended`: `ok` for `budget`, `exhausted` and `policy-refused`; `stop` for `permission-stop` and `claim-stop`; `fail` for `pull-failed`. |
+| `detail` | Present with `permission-stop`, `claim-stop` (the exit code and record) and `pull-failed` (`queue pull failed: ` followed by the first line of the failure). |
+
+`policy-refused` is preceded by a `policy` line with status `stop` and `detail` `express-driver off: --budget drives nothing`. `tests/bin-lib/driver/run.test.js` pins the exit codes and the `ended` to `status` mapping (`budget AC9.5`); `tests/bin-lib/driver/budget.test.js` pins the loop.
 
 Settle calls are step lines named `settle-escalate`, `settle-comment-pr`, `settle-comment-record`, `settle-label`, `settle-release`, `settle-remove-worktree`, `settle-delete-branch` and `settle-close`, emitted before the final line. A failed call has status `fail`, is never retried, and does not stop the calls after it (one exception, below).
 
