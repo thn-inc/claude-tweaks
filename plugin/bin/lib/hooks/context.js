@@ -669,14 +669,16 @@ function sleepSync(ms) {
 // via CLAUDE_TWEAKS_LOCK_WAIT_MS when it parses as a non-negative integer —
 // a test-only knob (production never sets this env var, so it always gets
 // the 500ms default) that lets tests pin the budget instead of racing it.
-function resolveLockWaitMs() {
-  const raw = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+// Read per call from `env` (default: the inherited environment, for the verb
+// and CLI callers of writeRunState), so an in-process hook event honours the
+// environment its context carries rather than the one this module loaded under.
+function resolveLockWaitMs(env = process.env) {
+  const raw = env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   const n = Number(raw);
   // raw.trim() !== '' guards the JS quirk that Number('') === 0 — an empty
   // or whitespace-only value is garbage and falls back like any other.
   return raw !== undefined && raw.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : 500;
 }
-const LOCK_WAIT_MS = resolveLockWaitMs();
 const LOCK_POLL_MS = 10;
 const LOCK_STALE_MS = 5000; // a lock dir older than this is treated as abandoned (holder crashed) and reclaimed
 
@@ -704,9 +706,9 @@ const LOCK_STALE_MS = 5000; // a lock dir older than this is treated as abandone
 // declined-learning's store (N concurrent *first-ever* writers racing a parent nobody had
 // created), acquireRunStateLock's ENOENT branch below is a genuine defensive fallback, not a
 // live race — left unchanged deliberately, not an oversight.
-function acquireRunStateLock(runDir) {
+function acquireRunStateLock(runDir, env = process.env) {
   const lockPath = path.join(runDir, '.run-state.lock');
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + resolveLockWaitMs(env);
   for (;;) {
     try {
       fs.mkdirSync(lockPath);
@@ -740,8 +742,10 @@ function releaseRunStateLock(lockPath) {
 // the existing state (`{}` when none) so a conditional stamp decides against the
 // state it is about to merge into. A null/undefined return writes nothing, does not
 // bump `updatedAt`, and returns the existing state.
-function writeRunState(runDir, patchOrFn) {
-  const lock = acquireRunStateLock(runDir);
+// `env` is where the lock wait is read; verb and CLI callers keep the inherited
+// environment, every hook event passes its context's.
+function writeRunState(runDir, patchOrFn, { env = process.env } = {}) {
+  const lock = acquireRunStateLock(runDir, env);
   const finalPath = path.join(runDir, 'run-state.json');
   try {
     const existing = readRunState(runDir) || {};
@@ -766,6 +770,15 @@ function writeRunState(runDir, patchOrFn) {
 // worktree-compatible run, routinely a sibling session's *-standalone dir in a
 // busy checkout. It is never this session's own run, so no write path that
 // stamps or logs friction may treat it as owned.
+// The environment a hook event runs under: hooks.js builds it into every event's
+// context. A missing one is a programming error, never a reason to read process.env.
+function requireEnv(ctx) {
+  if (!ctx || ctx.env === null || typeof ctx.env !== 'object') {
+    throw new TypeError('hook context has no env: hooks.js builds it for every event');
+  }
+  return ctx.env;
+}
+
 function isTrustedOwnedRun(ownedRun) {
   return !!(ownedRun && ownedRun.dir && ownedRun.attribution !== 'fallback');
 }
@@ -835,10 +848,11 @@ function ownerStampPatch(existing, sessionId, block, { replacesSessionId = false
 // `patch` as the `patchOrFn` argument of writeRunState, extended with an owner stamp
 // for `sessionId`. The owner block spawns `ps`, so it is built here, before the lock;
 // a failure (or no session id) degrades to the bare `patch` and never costs the stamp.
-function patchWithOwnerBlock(patch, sessionId, { replacesSessionId = false } = {}) {
+// `env` feeds the owner-pid probe; the record-worktree verb keeps the inherited default.
+function patchWithOwnerBlock(patch, sessionId, { replacesSessionId = false, env = process.env } = {}) {
   if (typeof sessionId !== 'string' || sessionId === '') return patch;
   let block;
-  try { block = ownerBlock({ sessionId }); } catch { return patch; }
+  try { block = ownerBlock({ sessionId, env }); } catch { return patch; }
   return (current) => ({ ...patch, ...ownerStampPatch(current, sessionId, block, { replacesSessionId }) });
 }
 
@@ -870,7 +884,11 @@ function stampedOwnerProvablyAlive(owner, { hostname, aliveFn, startFn }) {
 // window. session-start.js passes `restampWhileFresh: true` to keep the full probe
 // there, so a resume under a new process re-stamps at once.
 // Returns 'heartbeat' | 'restamp' | null (null: nothing written).
-function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}, restampWhileFresh = false } = {}) {
+// Only hook events call this, so there is no inherited-environment default: `env` is the
+// option, else the context's own, and neither is a programming error thrown before the
+// `try` (inside it the throw would read as "nothing to refresh" and mask the missing env).
+function refreshOwnerBlock(ctx, { now = Date.now(), env, deps = {}, restampWhileFresh = false } = {}) {
+  env = requireEnv({ env: env !== undefined ? env : ctx && ctx.env });
   try {
     const owned = ctx && ctx.ownedRun;
     if (!isTrustedOwnedRun(owned)) return null;
@@ -918,7 +936,7 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
       if (!o || o.sessionId !== owner.sessionId || o.pid !== owner.pid) return null;
       applied = true;
       return { owner: { ...o, ...fields } };
-    });
+    }, { env });
     return applied && written !== null ? result : null;
   } catch {
     return null;
@@ -984,6 +1002,7 @@ function listedWorktreeForCwd(cwd, deps = {}) {
 // included, rather than excluding it — the narrower trigger above is what
 // makes that safe.
 function stampAdHocRunDirForDenial(ctx) {
+  const env = requireEnv(ctx);
   if (isTrustedOwnedRun(ctx.ownedRun)) return ctx.ownedRun.dir;
   const sessionId = ctx.input && ctx.input.session_id;
   if (typeof sessionId !== 'string' || !sessionId) return null;
@@ -1003,8 +1022,8 @@ function stampAdHocRunDirForDenial(ctx) {
     // stampAdHocRunDir's identical guard).
     const existing = readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return null;
-    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ownerPidPatch(process.env) };
-    const written = writeRunState(result.path, patchWithOwnerBlock(todaysPatch, sessionId));
+    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ownerPidPatch(env) };
+    const written = writeRunState(result.path, patchWithOwnerBlock(todaysPatch, sessionId, { env }), { env });
     if (!written) { rollbackMint(result.path); return null; }
     return result.path;
   } catch { return null; }
@@ -1085,5 +1104,5 @@ module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, isSessionOwnedAdHocRun, resolveDenialRunDir,
-  claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
+  claudePid, requireEnv, resolveLockWaitMs, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
 };

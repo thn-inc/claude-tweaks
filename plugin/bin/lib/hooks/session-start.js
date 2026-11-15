@@ -448,6 +448,8 @@ async function run(ctx) {
         root: path.dirname(path.dirname(bgStatusPath)), // bgStatusPath = {root}/.claude-tweaks/<status file>
         cwd: ctx.cwd,
         sessionId,
+        env: ctx.env,
+        spawn: ctx.spawn,
       });
     }
   } catch { /* best-effort */ }

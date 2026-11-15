@@ -86,9 +86,9 @@ function mainCheckoutRoot(p) {
 }
 
 // #5294: repoInfo's remember step. A throw costs only the cache.
-function remember(dir, signature, result) {
+function remember(dir, signature, result, env) {
   try {
-    rememberRepoInfo(dir, process.env, signature, result);
+    rememberRepoInfo(dir, env, signature, result);
   } catch (_) {
     // the answer returned is git's own
   }
@@ -140,7 +140,11 @@ function isNotARepoAnswer(exitCode, stderr) {
 // signature (rememberRepoInfo). A cache fault costs only the cache: a lookup that
 // throws is a miss, a remember that throws is ignored (the
 // never-break-a-session invariant).
-function repoInfo(p, opts = {}) {
+//
+// `env` (third parameter, not a runGit opt: an opts key would bypass the memo) is the
+// environment the memo's store, bypass and uid knobs are read from. Callers outside the
+// hook events keep the inherited default; every event passes its context's.
+function repoInfo(p, opts = {}, { env = process.env } = {}) {
   const dir = nearestExistingDir(p);
   // A path with no existing ancestor is a definitive negative, not a failure to
   // look: there is nothing on disk to be a repo.
@@ -148,7 +152,7 @@ function repoInfo(p, opts = {}) {
   let signature = null;
   if (Object.keys(opts).length === 0) {
     try {
-      const hit = lookupRepoInfo(dir, process.env);
+      const hit = lookupRepoInfo(dir, env);
       if (hit.answer) return hit.answer;
       signature = hit.signature;
     } catch (_) {
@@ -164,7 +168,7 @@ function repoInfo(p, opts = {}) {
     // git-error == git ran and said "not a git repository": a real answer.
     // timeout/spawn/no-git == we never got one.
     const result = { repoRoot: null, isLinkedWorktree: false, indeterminate: isIndeterminate(failure) };
-    if (!result.indeterminate && isNotARepoAnswer(exitCode, stderr)) remember(dir, signature, result);
+    if (!result.indeterminate && isNotARepoAnswer(exitCode, stderr)) remember(dir, signature, result, env);
     return result;
   }
   const [top, gitDir, gitCommon, superproject] = out.split('\n');
@@ -182,7 +186,7 @@ function repoInfo(p, opts = {}) {
   // calls). Also a failure to determine, not a negative.
   if (!repoRoot) return { repoRoot: null, isLinkedWorktree: false, indeterminate: true };
   const result = { repoRoot, isLinkedWorktree: isLinked, indeterminate: false };
-  remember(dir, signature, result);
+  remember(dir, signature, result, env);
   return result;
 }
 

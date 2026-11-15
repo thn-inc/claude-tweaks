@@ -6,12 +6,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { shellQuote } = require('./helpers/shell-quote');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { readText } = require('./helpers/read-skill');
-const { gitRepo, gitRepoWithCommit, withoutGhTimeoutEnv, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
+const { withCtxEnv, gitRepo, gitRepoWithCommit, withoutGhTimeoutEnv, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
+const pre = withCtxEnv(require('../plugin/bin/lib/hooks/pre-tool-use'));
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
 function mkRun(worktree, sessionId) {

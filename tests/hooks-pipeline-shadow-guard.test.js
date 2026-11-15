@@ -18,7 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
-const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
+const pre = require('./helpers/pre-tool-use').withCtxEnv(require('../plugin/bin/lib/hooks/pre-tool-use'));
 const { shellQuote } = require('./helpers/shell-quote');
 
 const bashInput = (command, cwd) => ({ tool_name: 'Bash', tool_input: { command }, cwd });
