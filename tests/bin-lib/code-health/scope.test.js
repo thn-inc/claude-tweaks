@@ -1001,7 +1001,6 @@ test('contentHash, listSlices and sliceRecursive reach find with the injected en
   assert.notStrictEqual(contentHash(root, null, { env: noFind }), contentHash(root, null));
   assert.deepStrictEqual(listSlices(root, { env: noFind }), []);
   assert.deepStrictEqual(listSlices(root).map((s) => s.id), ['.']);
-  assert.strictEqual(sliceRecursive('.', root, { env: noFind }), false);
 });
 
 test('sliceRecursive(id, root, { env }) lists slices with the injected env', () => {
