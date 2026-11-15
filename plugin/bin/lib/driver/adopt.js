@@ -19,6 +19,9 @@
 //   4. the pair belongs together: the run directory's run-state.json, which dispatch's bind
 //      (`hooks.js record-worktree`) wrote, names that worktree once both are realpath'd;
 //   5. that worktree is on a branch (`git branch --show-current` prints one), since the push names it.
+// One more refusal belongs to adoption but is not here: that branch must not be the integration
+// branch, which this guard cannot see yet. steps.js's policyStep refuses it once it resolves the ref,
+// before the claim and any write.
 // The run directory's anchor and the worktree's are one main checkout without a further check:
 // resolveTarget anchors the run directory to mainCheckoutRoot(cwd), and check 3 requires
 // mainCheckoutRoot(top) to equal that same root.
