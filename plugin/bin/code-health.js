@@ -25,8 +25,8 @@ const FAIL_ON_VALUES = new Set(['regressed', 'risk-high']);
 
 // Shared by cmdPullIssues' --min-severity and cmdValidateFindings' --min-risk —
 // both reject a value that isn't a RISK_RANK key, print an error naming the
-// offending flag/command, and return { ok: false, code: 2 }, so a future change to RISK_RANK's tiers
-// (or the error-reporting convention) only has to be made in one place.
+// offending flag/command, and return { ok: false, code: 2 }, so a future change to
+// RISK_RANK's tiers (or the error-reporting convention) only has to be made in one place.
 function validateRiskArg(value, { argName, cmdName, consequence }, stderr) {
   if (value == null) return { ok: true };
   if (Object.prototype.hasOwnProperty.call(RISK_RANK, value)) return { ok: true };
@@ -146,10 +146,11 @@ function cmdPullIssues(args, ctx) {
 
 function cmdValidateFindings(args, ctx) {
   const root = args.root || ctx.cwd();
+  const seam = { env: ctx.env, stderr: ctx.stderr };
   // Resolved ONCE per run, right before filing — #117's freshness stamp
   // must reflect the commit this sweep actually read, not the moment each
   // finding's issue happens to be created.
-  const verifiedAsOf = resolveReadCommit(root, makeExec({ env: ctx.env, stderr: ctx.stderr }));
+  const verifiedAsOf = resolveReadCommit(root, makeExec(seam));
   const findingsPath = args._[1]; // positional after the subcommand name
   if (!findingsPath) {
     ctx.stderr(
@@ -291,7 +292,7 @@ function cmdValidateFindings(args, ctx) {
     try {
       const sliceId = args.slice;
       const areasSwept = sliceId ? [sliceId] : [];
-      const hashes = sliceId ? { [sliceId]: contentHash(path.resolve(root, sliceId), null, { env: ctx.env, recursive: sliceRecursive(sliceId, root, { env: ctx.env, stderr: ctx.stderr }) }) } : {};
+      const hashes = sliceId ? { [sliceId]: contentHash(path.resolve(root, sliceId), null, { env: ctx.env, recursive: sliceRecursive(sliceId, root, seam) }) } : {};
       const runRecord = { runId: args.runId, runAt: new Date().toISOString(), fingerprints: [...seen] };
       // Named rather than inlined into the mutator call below, for readability.
       const mutatorInput = { areasSwept, hashes, rememberCandidates, runRecord, wontfixSuppressed };
