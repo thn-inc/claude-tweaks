@@ -644,6 +644,9 @@ const FAULTS = [
     },
   },
   { id: 'F-foreign', pass: 'blocked', scenario: () => failGraphql(S2(), 'foreign') },
+  // #5304: gh transport with DISPATCH_FOREIGN_STATES naming an unwritten file, and the lookup failing
+  // for a cause other than gh being absent: the ignored-file Warning and the lookup Warning both print.
+  { id: 'F-foreign-states', pass: 'blocked', scenario: () => Object.assign(failGraphql(S2(), 'foreign'), { foreignEnv: true }) },
   { id: 'F-linked', pass: 'open-pr', scenario: () => failGraphql(P1(), 'linked') },
   {
     id: 'F-intbranch', pass: 'target-missing',

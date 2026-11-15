@@ -706,6 +706,8 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     const agentDir = dir('agent');
     for (const [file, content] of Object.entries(agent)) fs.writeFileSync(path.join(agentDir, file), content);
     let foreignStates = null;
+    // #5304: foreignEnv puts DISPATCH_FOREIGN_STATES on any transport, naming a file the agent never wrote.
+    if (scenario.foreignEnv) foreignStates = path.join(agentDir, 'foreign-states.json');
     if (onFiles && scenario.foreign !== undefined) {
       foreignStates = path.join(agentDir, 'foreign-states.json');
       // An object is written as JSON, a string as is; null names a file the agent never wrote.

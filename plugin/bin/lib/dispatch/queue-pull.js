@@ -461,12 +461,13 @@ function runBlocked(ctx) {
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
     // resolve-foreign-blockers.js through the library's own bounded spawn (tests inject
     // deps.foreignDeps.spawn).
-    // #5304: on files the ignored states file's Warning stays; the CLI lookup it falls through to
-    // (gh absent there) adds a second one, which is dropped here. The library is unchanged.
+    // #5304: after an ignored states file, the CLI lookup's gh-absent Warning is dropped (the states
+    // file's stays); a lookup that fails for another cause keeps its Warning. Keyed on the text, the
+    // same test the fence applies. The library is unchanged.
     let statesIgnored = false;
     const foreignStderr = (line) => {
       if (line.startsWith('Warning: foreign blocker states file ')) statesIgnored = true;
-      else if (statesIgnored && ctx.options.transport === 'files' && line.startsWith('Warning: foreign blocker state lookup failed ')) return;
+      else if (statesIgnored && GH_ABSENT_LOOKUP.test(line)) return;
       deps.stderr(line);
     };
     const foreign = bodyForeignBlockers(eligiblePreDep, {
@@ -937,7 +938,10 @@ function runBlockerLanding(ctx) {
 }
 
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
-const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
+// #5304: the CLI lookup's Warning when gh is absent (resolve-foreign-blockers.js's exit 2), the one
+// foreign-states Warning the dispatch layer drops after an ignored states file. Matches the fence's test.
+const GH_ABSENT_LOOKUP = /^Warning: foreign blocker state lookup failed \(exit 2: [^)]*gh[^)]* is required\)/;
+const IN_FLIGHT_POOL_AUTO ='AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
 // fence 595, byte for byte
 const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
 

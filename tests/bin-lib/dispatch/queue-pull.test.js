@@ -3197,6 +3197,7 @@ const FAULT_EXPECT = {
   'F-depview': { status: 0, base: 'gh-livedep', stderr: [], drops: ['blocked:9002'] },
   'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_WARNING_PREFIX}gh-fault: injected failure`, LANDING_EXITED], drops: ['blocked:9030'] },
   'F-foreign': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
+  'F-foreign-states': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (ENOENT: ', 'Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
   'F-linked': { status: 0, stderr: [`${LINKED_WARNING}gh-fault: injected failure`], drops: ['open-pr:9005', 'open-pr:9008', 'shipped:9010'] },
   'F-intbranch': {
     status: 0, stderr: [`${LANDING_SKIPPED}no integration branch resolved; no unlanded-blocker exclusions this pull`],

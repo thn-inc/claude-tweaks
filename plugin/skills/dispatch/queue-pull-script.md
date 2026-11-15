@@ -185,9 +185,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" 
     : [];
   for (const dep of verifiedOpen) openNumbers.add(dep);
   // #4793: DISPATCH_FOREIGN_STATES is set only on the MCP path (mcp-transport.md); unset asks gh.
-  // #5304: after an ignored states file, the gh-less CLI lookup's Warning is dropped (the states file's stays).
+  // #5304: after an ignored states file, the gh-absent lookup Warning is dropped (any other lookup failure stays).
   let statesIgnored = false;
-  const stderr = (line) => { if (line.startsWith('Warning: foreign blocker states file ')) statesIgnored = true; else if (statesIgnored && line.startsWith('Warning: foreign blocker state lookup failed ')) return; process.stderr.write(line); };
+  const stderr = (line) => { if (line.startsWith('Warning: foreign blocker states file ')) statesIgnored = true; else if (statesIgnored && /^Warning: foreign blocker state lookup failed \(exit 2: [^)]*gh[^)]* is required\)/.test(line)) return; process.stderr.write(line); };
   const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers, bodyForeignBlockers(eligiblePreDep, { statesFile: process.env.DISPATCH_FOREIGN_STATES, stderr }));
   fs.writeFileSync(process.argv[4], JSON.stringify(eligible));
   fs.writeFileSync(process.argv[5], JSON.stringify(excluded));
