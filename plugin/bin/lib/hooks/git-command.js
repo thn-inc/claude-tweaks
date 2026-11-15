@@ -895,7 +895,8 @@ function longOptionName(word, names) {
 // reserved word: bash 3.2, 5 and zsh run `\time cd`, `X=1 time cd`, `>g ! cd` and `command time cd`
 // as an external program or a missing command, which changes no cwd), the `time` keyword reads one
 // `-p` and a `--` (`time -l cd` runs `-l`), and no path-qualified word strips (`/usr/bin/command` is
-// a script). `dir` never moves there. Where the bash versions split on reaching the command word,
+// a script), and after `builtin` or `command` an assignment word is the command name (`command X=1
+// cd /x` runs `X=1`, so its cd never runs). `dir` never moves there. Where the bash versions split on reaching the command word,
 // `split` is true on the returned command word: bash 5 reads `time`'s `--` as an option end and a
 // reserved word after `!` (`! time`, `! !`; zsh too for `! time`), while bash 3.2 runs `--` or the
 // second word as a command (zsh runs `--` too). visitSegment then walks on under the cwd before
@@ -906,6 +907,7 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
   let reserved = true; // shellOnly: still where bash reads `!` and `time` as reserved words
   let afterBang = false; // shellOnly: a `!` was read, after which only bash 5 and zsh read another reserved word
   let split = false; // shellOnly: the bash versions disagree on whether the command word is reached
+  let afterBuiltin = false; // shellOnly: a builtin or command was read, after which an assignment word is the command name
   const skipRedirections = (i) => {
     for (let width; i < t.length && (width = redirectionWidth(raw[i], spanKinds[i], leadQuoted[i])) > 0;) {
       i += width;
@@ -925,6 +927,8 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       i = skipRedirections(i);
       const next = assignmentWordEnd(raw, spanKinds, i);
       if (next === i) break;
+      // bash 3.2, 5 and zsh run it as a command (`command X=1 cd /x`: `X=1: command not found`).
+      if (afterBuiltin) return { index: i, dir, unprovable, split };
       i = next;
       reserved = false;
     }
@@ -954,7 +958,10 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
         continue;
       }
       if (name === '!') afterBang = true;
-      else reserved = false; // builtin and command: a `!` or `time` after them is a command name
+      else {
+        reserved = false; // builtin and command: a `!` or `time` after them is a command name
+        afterBuiltin = true;
+      }
     }
     const spec = PREFIX_OPTIONS[name];
     if (spec === null) continue;

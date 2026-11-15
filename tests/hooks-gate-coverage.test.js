@@ -1962,14 +1962,15 @@ test('#4303: the cd after an assignment word that never closes is not followed',
   // zsh runs `-p` and writes nothing: side with bash). `builtin cp x M/b` writes nothing in any
   // shell (`builtin: cp: not a shell builtin`): reading cp is the accepted fail-closed tradeoff.
   // `nice --adjustment=5` and `nice --adjustment 5` pin GNU nice's reading (macOS nice rejects
-  // them and writes nothing). sudo and doas rows per sudo(8) and doas(1).
+  // them and writes nothing). sudo and doas rows per sudo(8) and doas(1); sudo reads every word with
+  // an `=` before the command as an environment assignment, so `sudo a.b=1 cp` runs cp.
   test('AC1.2 #4448: a write shape behind each stripped prefix resolves the main-checkout write', () => {
     includesFor(['! cp x /main/b', 'time cp x /main/b', 'command cp x /main/b', 'nohup cp x /main/b', 'nice cp x /main/b',
       'doas cp x /main/b', 'exec cp x /main/b', 'builtin cp x /main/b',
       'time -p cp x /main/b', 'command -p -- cp x /main/b', 'nohup -- cp x /main/b', 'nice -n 5 cp x /main/b',
       'nice -n5 cp x /main/b', 'nice -5 cp x /main/b', 'nice --adjustment=5 cp x /main/b', 'nice --adjustment 5 cp x /main/b',
       'exec -a foo cp x /main/b',
-      'exec -cl cp x /main/b', 'sudo -u bob cp x /main/b', 'sudo -E X=1 tee /main/b', 'doas -u bob cp x /main/b',
+      'exec -cl cp x /main/b', 'sudo -u bob cp x /main/b', 'sudo -E X=1 tee /main/b', 'sudo a.b=1 cp x /main/b', 'doas -u bob cp x /main/b',
       'doas -n cp x /main/b'], MAIN_B);
   });
 
@@ -1988,9 +1989,12 @@ test('#4303: the cd after an assignment word that never closes is not followed',
   });
 
   // all: nothing written (`!: command not found`, `X=1: command not found`, exit 127); zsh cannot
-  // parse `X=1 !`. Reading cp anyway is the accepted fail-closed tradeoff.
+  // parse `X=1 !`. The same holds where an external prefix runs the word as its program (`env !`,
+  // `nohup builtin`, `env exec`, `nohup x+=1`: `No such file or directory`, exit 127). Reading cp
+  // anyway is the accepted fail-closed tradeoff.
   test('#4448: a prefix word bash runs as a command name strips anyway (deliberate fail-closed tradeoff)', () => {
-    includesFor(['X=1 ! cp a /main/f.js', '\\! cp a /main/f.js', 'command X=1 cp a /main/f.js'], MAIN_F);
+    includesFor(['X=1 ! cp a /main/f.js', '\\! cp a /main/f.js', 'command X=1 cp a /main/f.js', 'env ! cp a /main/f.js',
+      'nohup builtin cp a /main/f.js', 'env exec cp a /main/f.js', 'nohup x+=1 cp a /main/f.js'], MAIN_F);
   });
 
   // all: M/f.js for each (macOS env). `env --unset=X` and `env --unset X` pin GNU env's reading
@@ -2016,11 +2020,12 @@ test('#4303: the cd after an assignment word that never closes is not followed',
   // all: M/f.js and W/g for each: bash reads a redirection anywhere among the prefix words and
   // their options, and opens it in the shell's own cwd.
   test('#4448: a redirect before or among the prefix words keeps its own cwd, and the command after it is read', () => {
-    for (const cmd of ['X=1 >g cp a /main/f.js', '>g X=1 cp a /main/f.js', 'env >g -u X cp a /main/f.js']) {
+    for (const cmd of ['X=1 >g cp a /main/f.js', '>g X=1 cp a /main/f.js', 'env >g -u X cp a /main/f.js', 'env X=1 >g a.b=1 cp a /main/f.js']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [writeG, ...copyMain], cmd);
     }
-    // all: M/b and W/g.
-    for (const cmd of ['nice >g -n 5 cp x /main/b', 'nice -n >g 5 cp x /main/b', 'nice >g cp x /main/b']) {
+    // all: M/b and W/g; `nice --adjustment >g 5` pins GNU nice's reading (macOS nice rejects it and
+    // writes W/g only).
+    for (const cmd of ['nice >g -n 5 cp x /main/b', 'nice -n >g 5 cp x /main/b', 'nice >g cp x /main/b', 'nice --adjustment >g 5 cp x /main/b']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [writeG, { action: 'copy', file: MAIN_B }], cmd);
     }
     // all: M/f.js. A heredoc operator glued to its delimiter is one word, so the word after it is read.
@@ -2039,14 +2044,27 @@ test('#4303: the cd after an assignment word that never closes is not followed',
 
   // `env -S 'cp a M/f.js'` writes M/f.js (macOS env) and `env -P /nope cp …` nothing (exit 127);
   // sudo and doas per sudo(8)/doas(1); `env --split-string x cp …` per GNU env, which splits `x`
-  // into the command it runs. No command word is read behind these options: base parity, a
-  // left-out shape owned by #4572.
+  // into the command it runs. `env -S x cp …` runs nothing (all: macOS env runs `x`, exit 127);
+  // `env --split-string=x` and the long sudo spellings per GNU env and sudo(8), where `--chroot`
+  // takes a value and the others none (macOS env rejects long options). No command word is read
+  // behind these options: base parity, a left-out shape owned by #4572.
   test('#4448: an opaque prefix option resolves no target (base parity, owned by #4572)', () => {
     for (const cmd of ["env -S 'cp a /main/f.js'", "env --split-string='cp a /main/f.js'", 'env --split-string x cp a /main/f.js',
       'env -P /x cp a /main/f.js',
       "env -iS 'cp a /main/f.js'", 'sudo -e /main/f.js', 'sudo --edit /main/f.js', 'sudo -R /x cp a /main/f.js',
       'sudo -i cp a /main/f.js', 'sudo -l cp a /main/f.js', 'sudo -v cp a /main/f.js', 'sudo -K cp a /main/f.js',
-      'doas -C /x cp a /main/f.js', 'doas -s', 'doas -L cp a /main/f.js']) {
+      'doas -C /x cp a /main/f.js', 'doas -s', 'doas -L cp a /main/f.js',
+      'env -S x cp a /main/f.js', 'env --split-string=x cp a /main/f.js', 'sudo -e cp a /main/f.js', 'doas -s cp a /main/f.js',
+      'sudo --chroot /x cp a /main/f.js', 'sudo --chroot=/x cp a /main/f.js',
+      ...['edit', 'login', 'list', 'validate', 'remove-timestamp'].flatMap((o) => [`sudo --${o} cp a /main/f.js`, `sudo --${o}=x cp a /main/f.js`])]) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+    }
+  });
+
+  // all: nothing (`nohup -x` is a usage error; `! --` runs `--`, command not found). A dash word
+  // after nohup or `!` is no option, so no command word is read behind it.
+  test('#4448 (base parity): nohup and ! read no option before the command word', () => {
+    for (const cmd of ['nohup -x cp a /main/f.js', '! -- cp a /main/f.js']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
     }
   });
@@ -2064,6 +2082,24 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     assert.deepStrictEqual(fileWriteTargets('>g cd /main; cp a f.js', '/r'), [writeG, ...copyMain]);
     for (const cmd of ['nice cd /main; cp a f.js', 'env cd /main; cp a f.js', 'exec cd /main; cp a f.js']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyHere, cmd);
+    }
+  });
+
+  // From M, `cd W`: all write M/f.js for each `builtin`/`command` row (`X=1: command not found`,
+  // `builtin: X=1: not a shell builtin`; the git row commits in M), since after those builtins an
+  // assignment word is the command name and the cd never runs. Before them, and after `!` or
+  // `time`, it is an assignment: all write W/f.js for `time X=1 cd W` and `! X=1 cd W`, and bash 3.2
+  // and 5 for `X=1 command cd W` (zsh writes M/f.js, the #4455 gap).
+  test('#4448: an assignment word after builtin or command is the command name, so the cd after it is not followed', () => {
+    const copyAt = (dir) => [{ action: 'copy', file: path.resolve(dir, 'f.js') }];
+    for (const cmd of ['command X=1 cd /wt; cp a f.js', 'command -p X=1 cd /wt; cp a f.js', 'command -p x=$(echo a b) cd /wt; cp a f.js',
+      'command x+=1 cd /wt; cp a f.js', 'builtin X=1 cd /wt; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), copyAt('/main'), cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('command >g X=1 cd /wt; cp a f.js', '/main'), [{ action: 'write', file: path.resolve('/main/g') }, ...copyAt('/main')]);
+    assert.deepStrictEqual(gitTargets('command X=1 cd /wt; git commit -m x', '/main'), [{ action: 'commit', dir: path.resolve('/main') }]);
+    for (const cmd of ['time X=1 cd /wt; cp a f.js', '! X=1 cd /wt; cp a f.js', 'X=1 command cd /wt; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), copyAt('/wt'), cmd);
     }
   });
 
@@ -2126,12 +2162,12 @@ test('#4303: the cd after an assignment word that never closes is not followed',
   });
 
   // all: M/f.js for `\time -l` and `/usr/bin/time -p` (macOS /usr/bin/time); `X=1 time -a -o log`
-  // writes M/f.js and W/log under bash 3.2 and 5 (zsh: parse error; side with bash); `-f` and
-  // `--output=` pin GNU time's reading (macOS time rejects them). `\time -o M/log cp a b` writes
+  // writes M/f.js and W/log under bash 3.2 and 5 (zsh: parse error; side with bash); `-f`,
+  // `--output=` and `--output log` pin GNU time's reading (macOS time rejects them). `\time -o M/log cp a b` writes
   // M/log (time's own output file) and W/b in all three: that -o file is a left-out shape (#4572).
   test('#4448: the external time program\'s options are read, and its -o file is a left-out shape (#4572)', () => {
     includesFor(['\\time -l cp a /main/f.js', '/usr/bin/time -p cp a /main/f.js', 'X=1 time -a -o log cp a /main/f.js',
-      '\\time -f %e cp a /main/f.js', '\\time --output=log cp a /main/f.js'], MAIN_F);
+      '\\time -f %e cp a /main/f.js', '\\time --output=log cp a /main/f.js', '\\time --output log cp a /main/f.js'], MAIN_F);
     assert.ok(!files('\\time -o /main/log cp a b').includes(path.resolve('/main/log')), JSON.stringify(files('\\time -o /main/log cp a b')));
   });
 
