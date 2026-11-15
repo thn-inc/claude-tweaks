@@ -321,12 +321,27 @@ test('AC5.1 AC7.1: script installs the wrapper under the injected home and print
 
 test('AC8.1: run writes under deps.homeDir(), not the real home', () => {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-install-sl-inproc-')));
+  const decoy = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-install-sl-decoy-')));
+  const realWrapper = path.join(os.homedir(), '.claude-tweaks', 'bin', 'statusline.js');
+  const statBefore = fs.existsSync(realWrapper) ? fs.statSync(realWrapper).mtimeMs : null;
+  // A regression of `deps.homeDir()` back to `os.homedir()` must not reach the real home: runCli
+  // only records that call and still returns the real value, so a decoy stands in for it while
+  // the helper's guard (which wraps whatever os.homedir is at call time) still flags the call.
+  const realHomedir = os.homedir;
+  os.homedir = () => decoy;
+  try {
+    const res = runCliSync(CLI, [], { env: { HOME: tmp, USERPROFILE: tmp } });
 
-  const res = runCliSync(CLI, [], { env: { HOME: tmp, USERPROFILE: tmp } });
-
-  const expected = path.join(tmp, '.claude-tweaks', 'bin', 'statusline.js');
-  assert.strictEqual(res.code, 0);
-  assert.strictEqual(res.stdout, expected);
-  assert.ok(fs.existsSync(expected));
-  fs.rmSync(tmp, { recursive: true, force: true });
+    const expected = path.join(tmp, '.claude-tweaks', 'bin', 'statusline.js');
+    assert.strictEqual(res.code, 0);
+    assert.strictEqual(res.stdout, expected);
+    assert.ok(fs.existsSync(expected));
+    assert.ok(!fs.existsSync(path.join(decoy, '.claude-tweaks')), 'run must not ask os.homedir() for the home');
+  } finally {
+    os.homedir = realHomedir;
+    const statAfter = fs.existsSync(realWrapper) ? fs.statSync(realWrapper).mtimeMs : null;
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(decoy, { recursive: true, force: true });
+    assert.strictEqual(statAfter, statBefore, 'the real home wrapper must be untouched');
+  }
 });
