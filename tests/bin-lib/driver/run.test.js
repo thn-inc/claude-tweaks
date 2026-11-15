@@ -3262,6 +3262,8 @@ const SCENARIOS = {
   'red tests': { script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: '' }]] },
   // Every status read says a.js is modified: the commit stages it, and the test step's read still sees it (#5454).
   'test tree changed': { script: [[onGit('--no-optional-locks', 'status'), ' M a.js\0']] },
+  // The commit step's status read succeeds; the test step's (the second) fails (#5454).
+  'test tree unreadable': { script: [nthCall(onGit('--no-optional-locks', 'status'), 2, new Error('fatal'))] },
   'scope symlink': { script: [scopeIs('symlink')] },
   'check escalate': { script: [checkReply({ action: 'escalate', reason: 'diff-too-large', detail: 'd', logged: true })] },
   'head mismatch': { script: [[onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${'b'.repeat(40)}\n`]] },
@@ -3525,7 +3527,7 @@ test('AC7.1, AC7.7: outcome and stop class for every stop (table-driven)', async
     ['claim exit 3', 'blocked', 'claim'], ['run dir mint fails', 'blocked', 'claim'],
     ['worktree add fails', 'express-escalated', 'pre-push'], ['record-worktree no line', 'express-escalated', 'pre-push'],
     ['worker fail', 'express-escalated', 'pre-push'], ['worker timeout', 'express-escalated', 'pre-push'], ['no changed files', 'express-escalated', 'pre-push'],
-    ['commit fails', 'express-escalated', 'pre-push'], ['red tests', 'express-escalated', 'pre-push'], ['test tree changed', 'express-escalated', 'pre-push'], ['scope symlink', 'express-escalated', 'pre-push'],
+    ['commit fails', 'express-escalated', 'pre-push'], ['red tests', 'express-escalated', 'pre-push'], ['test tree changed', 'express-escalated', 'pre-push'], ['test tree unreadable', 'express-escalated', 'pre-push'], ['scope symlink', 'express-escalated', 'pre-push'],
     ['check escalate', 'express-escalated', 'pre-push'], ['head mismatch', 'express-escalated', 'pre-push'], ['push fails', 'express-escalated', 'pre-push'],
     ['review fail', 'express-escalated', 'pre-push'], ['review tree changed', 'express-escalated', 'pre-push'],
     ['check exit 1', 'blocked', 'blocked'], ['pr create fails twice', 'blocked', 'blocked'], ['record-pr fails', 'blocked', 'blocked'], ['set-config fails', 'blocked', 'blocked'],
