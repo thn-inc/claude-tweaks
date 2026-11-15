@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-15T23:10:05.338Z",
+  "computedAt": "2026-11-15T23:15:54.781Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -15,7 +15,7 @@
       },
       {
         "number": 5557,
-        "updatedAt": "2026-11-15T23:03:19Z",
+        "updatedAt": "2026-11-15T23:15:28Z",
         "state": "OPEN"
       },
       {
@@ -25,7 +25,7 @@
       },
       {
         "number": 5555,
-        "updatedAt": "2026-11-15T23:03:01Z",
+        "updatedAt": "2026-11-15T23:15:18Z",
         "state": "OPEN"
       },
       {
@@ -35,7 +35,7 @@
       },
       {
         "number": 5540,
-        "updatedAt": "2026-11-15T23:02:43Z",
+        "updatedAt": "2026-11-15T23:15:30Z",
         "state": "OPEN"
       },
       {
@@ -134,6 +134,11 @@
         "state": "OPEN"
       },
       {
+        "number": 5049,
+        "updatedAt": "2026-11-15T23:13:06Z",
+        "state": "OPEN"
+      },
+      {
         "number": 4990,
         "updatedAt": "2026-11-15T15:09:41Z",
         "state": "OPEN"
@@ -209,6 +214,11 @@
         "state": "OPEN"
       },
       {
+        "number": 4679,
+        "updatedAt": "2026-11-15T23:12:55Z",
+        "state": "OPEN"
+      },
+      {
         "number": 4672,
         "updatedAt": "2026-10-31T09:57:06Z",
         "state": "OPEN"
@@ -259,6 +269,11 @@
         "state": "OPEN"
       },
       {
+        "number": 4620,
+        "updatedAt": "2026-11-15T23:14:08Z",
+        "state": "OPEN"
+      },
+      {
         "number": 4619,
         "updatedAt": "2026-10-30T16:09:18Z",
         "state": "OPEN"
@@ -285,7 +300,7 @@
       },
       {
         "number": 4613,
-        "updatedAt": "2026-10-30T16:08:51Z",
+        "updatedAt": "2026-11-15T23:13:59Z",
         "state": "OPEN"
       },
       {
@@ -900,7 +915,7 @@
       },
       {
         "number": 3813,
-        "updatedAt": "2026-11-15T23:07:56Z",
+        "updatedAt": "2026-11-15T23:13:38Z",
         "state": "OPEN"
       },
       {
@@ -1065,166 +1080,10 @@
         "number": 5557,
         "state": "OPEN",
         "title": "Turn the review replay scratch scripts into one tested tool",
-        "updatedAt": "2026-11-15T23:03:19Z",
+        "updatedAt": "2026-11-15T23:15:28Z",
         "facets": {
           "origin": null,
           "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n**Related:** #5535, #5013, #5466, #5376, #5377, #3978, #3977\nRisk-flags: none\n\n## Current State\n\n`timing.json` is written only when a model step runs `plugin/bin/phase-timing.js`: the wrap-up summary, the verification brief, the flow summary and `/claude-tweaks:dispatch`'s group report (`plugin/skills/dispatch/reporting.md`). A run that closes without reaching one of those steps has no timing file, so every cost report built on the archive sees a biased sample.\n\nMeasured on 2026-11-15 over this machine's run directories (scratch scripts; re-derive before relying on a number):\n\n- All run directories: 406 of 2,948 have `timing.json`.\n- November runs named `spec-` or `record-`: 149 of 255 have it. Of the 106 without, 93 are closed (`status: clean`), 7 are active, 2 interrupted and 4 are empty directories.\n- 90 of the 106 are dispatched runs (`dispatched: true` in `run-state.json`). 55 carry a `close-without-wrapup` event. 48 have a wrap-up line in `decisions.md` and still no timing file.\n- For 92 of the 93 closed runs, a transcript for the recorded session id is still on disk.\n- Of the 149 files that exist, 10 have no token totals.\n- After a close, `run-state.json` holds the worktree path under `worktreeAtClose` and `worktree` is null (91 of the 106). `phase-timing.js --auto-transcript` reads only `worktree`, so on a closed run it falls back to the session id alone and takes the newest candidate. A dispatch session has one transcript per worktree it entered, so that candidate can belong to another run.\n\nEvery finishing run passes through `closeRunState` in `plugin/bin/lib/hooks/close-run-state.js`. It has three callers: the `close-run` verb in `plugin/bin/hooks.js`, `plugin/bin/lib/hooks/teardown-run.js`, and the reconciler's archive path in `plugin/bin/lib/reconcile/archive-merged.js`. The pipeline driver closes its runs through `hooks.js close-run` with a 120-second limit (`plugin/bin/lib/driver/merge.js`, `settle.js`).\n\nDesign: `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`, Phase 5, unit 5.1 (branch `worktree-design-process-efficiency`).\n\n## Deliverables\n\n1. **Cause table.** The PR carries the table above, re-derived at build time, with one row per cause and its count.\n2. **Timing as a function.** The computation in `phase-timing.js`'s `run` moves to a module under `plugin/bin/lib/timing/` that takes a run directory and options and returns the timing object. `phase-timing.js` calls it and its output does not change.\n3. **Written when a run closes.** Each path that closes a run writes `timing.json` after the state change succeeds, in code, with no model turn. The PR lists the closing paths and the call site for each.\n4. **Transcripts for a closed run.** The writer finds the run's transcript from `sessionId` and `worktreeAtClose` (or `worktree` when still set). For a dispatched run it reads the transcripts of that run's own calls and no other run's.\n5. **An existing file is kept when it is better.** A `timing.json` that already has token totals is left as it is. One that is absent, or has no token totals, is written. The `budget` key is carried forward as today.\n6. **A close never fails or stalls on timing.** A failure to derive or write timing is logged to the run's `decisions.md` as a `SKIP` line per `_shared/auto-decision-log.md`'s Degrade-trace rule, and the close result is unchanged. The added work stays inside one time bound: a named constant exported by the writer module, at most 60 seconds (half the driver's 120-second limit) for the whole timing step across every transcript it reads. The deadline is checked inside the transcript read loop; past it, the writer stops and logs the same `SKIP`.\n7. **Docs.** `docs/hooks.md` and `docs/plugin-structure.md` say who writes `timing.json` and when.\n\n## Acceptance Criteria\n\n- [ ] AC1: Closing a fixture run that has `events.jsonl` and no `timing.json` through each closing path leaves a `timing.json` with a phase row per phase the events show, present when the close returns. One test per closing path. (Decided 2026-11-15: for `hooks.js close-run` and `teardown-run.js` the file also has its token totals when the close returns; for the reconciler's archive path the token totals arrive with its background pass, and the test asserts them after that pass completes.)\n- [ ] AC2: A fixture run closed with `worktree: null` and `worktreeAtClose` set, whose session has transcripts under two project slugs, gets token totals from the transcript under the slug of `worktreeAtClose`. The test fails when the writer takes the newest candidate.\n- [ ] AC3: A `timing.json` with token totals is byte-identical after a close. One with no token totals is replaced, and its `budget` key survives.\n- [ ] AC4: With the timing function stubbed to throw, each closing path returns the same result and exit code as on the base commit, and `decisions.md` gains one `SKIP` line.\n- [ ] AC5: With a transcript reader stubbed to never finish, `hooks.js close-run` returns within the named bound constant (imported by the test) and logs the `SKIP` line. The same test runs against `teardown-run.js`.\n- [ ] AC6: The existing tests in `tests/bin-lib/timing/` pass with no edit to their expectations, and `phase-timing.js --markdown` output for the golden fixture is byte-identical.\n- [ ] AC7: Replay proof in the PR. The writer is run over copies of the November closed runs that have no `timing.json`. Every copy with at least one event gets a file, and at least 90% of the copies whose transcript is on disk under the run's own worktree slug (`worktreeAtClose`, or `worktree` when still set) get token totals, and the PR checks the totals of a sample of those runs against a count made independently from the same transcript. The PR names each run that got none and why.\n- [ ] AC8: No hook event's own path (`session-start`, `pre-tool-use`, `post-tool-use`, `stop`, `session-end`) reads a transcript because of this change. The PR states how that was checked.\n- [ ] AC9: A fixture dispatch session with transcripts for two runs (two worktree slugs, one session id) gives each run token totals from its own slug's transcripts only. A run whose slug has no transcript gets phase rows with no token totals and one `SKIP` line naming the reason.\n- [ ] AC10: A fixture whose `run-state.json` has no `worktreeAtClose` key, in the older shape, closes with the same result and exit code as on the base commit and gets phase rows from `events.jsonl` with no token totals.\n- [ ] AC11: A fixture run closed by the reconciler's archive path, with the background pass stubbed to fail, keeps its phase rows, has no token totals, and logs one `SKIP` line.\n- [ ] AC12: A fixture multi-record run (a parent run directory with two `spec-N` children) closed through each closing path gets one `timing.json`, in the parent directory, covering the whole run. No file is written into a `spec-N` directory by the close, and one already there is left byte-identical.\n\n## Technical Approach\n\nSplit `run` in `plugin/bin/phase-timing.js` at the point where it has parsed its arguments: everything from reading `events.jsonl` to building the `timing` object becomes the library function; argument parsing, the write, the budget check's output lines and the rendering stay in the CLI or move with care. The closing paths call the function in-process; they do not spawn `phase-timing.js`.\n\n`resolveTranscripts` gains the closed-run case: `worktreeAtClose` stands in for a null `worktree`. `locateTranscripts` already takes `cwd` and `sessionId`.\n\nFor a dispatched run, the files `phase-timing.js` wrote in November name a transcript under the run's own worktree slug with the dispatching session's id, for example `…--claude-worktrees-dispatch-record-4505/{sessionId}.jsonl`. Check whether that holds for every dispatched run before relying on it; `tools/guard-refusals/transcripts.js` already attributes a subagent transcript to the run it names and is the second rule to consider.\n\nThe reconciler's archive path can run inside a session-start pass. Read `docs/hooks.md` and `docs/reconcile-checks.md` before choosing where the reconciler's write happens; `plugin/bin/lib/reconcile/background-spawn.js` is the existing way to do work off a hook's path. Decided 2026-11-15: `hooks.js close-run` and `teardown-run.js` are typed commands, not hook events; they write the whole file, token totals included, before they return, inside the time bound. The reconciler's archive path writes the phase rows from `events.jsonl` before it returns, with no transcript read, and fills the token totals in its background pass. A background pass that fails or cannot start leaves the phase rows and logs the `SKIP` line.\n\nDo not change what `--check-budgets` does or when it runs. The closing paths never run it.\n\nA `timing.json` \"has token totals\" when its `totals.tokens` object is present and the sum of its `input`, `output`, `cacheRead` and `cacheCreate` is above zero; `phase-timing.js` writes `totals.tokens` only when it ran with token derivation on. A replaced file is rewritten whole from the derivation, and `budget` is the only key carried forward, as `phase-timing.js` carries it today.\n\nThe library function returns the timing object and the transcript notes and does not run the budget check. One shared write helper, called by the CLI and by every closing path, carries `budget` forward and writes to a temporary file in the run directory and renames it, so a reader never sees a half-written file and a second closer re-reading the same run reaches the same result.\n\nWhen the run's own transcripts cannot be established (neither `worktreeAtClose` nor `worktree` is set, or the session id has no transcript under that slug), the writer writes the phase rows with no token totals and logs one `SKIP` line naming the reason. It never falls back to the newest candidate for a dispatched run.\n\n### Key Files\n\n- `plugin/bin/phase-timing.js`\n- `plugin/bin/lib/timing/transcript.js`\n- `plugin/bin/lib/timing/derive.js`\n- `plugin/bin/lib/hooks/close-run-state.js`\n- `plugin/bin/lib/hooks/teardown-run.js`\n- `plugin/bin/lib/reconcile/archive-merged.js`\n- `plugin/bin/hooks.js`\n- `tests/bin-lib/timing/cli.test.js`\n- `tests/bin-lib/timing/golden.test.js`\n- `tests/bin-lib/timing/transcript.test.js`\n- `tests/bin-lib/hooks/close-run-state.test.js`\n- `tests/bin-lib/reconcile/archive-merged.test.js`\n- `docs/hooks.md`\n- `docs/plugin-structure.md`\n\n## Gotchas\n\n- `plugin/bin/hooks.js` is being edited by several open records (#5376 and #5377 are in progress and move its tests in-process; #5545, #5525, #5261). Keep the change in `hooks.js` to the one call and rebase on what has landed.\n- #5535 removes the `main()` shim from `phase-timing.js`. #5013, #5466, #5093 and #4259 edit `plugin/bin/lib/timing/derive.js`. Rebase on whichever has landed.\n- A run on the previous release may be closed by this release's code, and the reverse. A run directory with no `worktreeAtClose` key, or with an older `run-state.json`, must close as it does today.\n- A multi-record run has `spec-N` directories under one parent run directory. State in the PR which directory gets the file; `tools/efficiency-report.js` reads only the top-level one. Decided 2026-11-15: one file, in the top-level run directory, covering the whole run. The close writes nothing into a `spec-N` directory; per-record files there stay as the multi-spec summary step writes them today (#5013 owns their content).\n- Decided 2026-11-15: history is not backfilled. Runs closed before this ships keep whatever `timing.json` they have; the replay in AC7 runs on copies and commits nothing into the archive. Cost reports over older runs stay a partial sample, and the Release Note says so.\n- A driver run's workers are headless sessions. State in the PR what such a run's `timing.json` contains; phase rows with no token totals are acceptable there if the PR says so.\n- Transcripts for a twelve-hour session are large. `readUsage` streams; keep it that way.\n- Active and interrupted runs are out of scope. They get a file when they close.\n\n## Release Note\n\nEvery pipeline run now gets a `timing.json` when it closes, including dispatched runs and runs closed without a wrap-up, so cost reports cover all runs from this release on. Runs closed earlier are not backfilled.\n\n\n<!-- work-fingerprint: process-efficiency:timing-at-close -->\nwork-fingerprint: process-efficiency:timing-at-close",
-        "createdAt": "2026-11-15T22:28:14Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5555,
-        "state": "OPEN",
-        "title": "Write timing.json in code when a run closes, for every run",
-        "updatedAt": "2026-11-15T23:03:01Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n**Related:** #5148, #4663, #5535, #5214, #4708, #4672, #4828, #3835\nRisk-flags: none\n\n## Current State\n\n`plugin/skills/review/step3-tiebreak.md` (Step 3.7 of `/claude-tweaks:review`) sends every finding still `unconfirmed` or `contested` to its own Capable-tier agent, in waves of 8 (`plugin/skills/review/step3-tiebreak.md:29`). Each agent starts fresh, so each pays its own starting context to judge one finding. Each verdict is then settled with two file writes and one `review-coordination.js resolve-tiebreak` call per finding (`plugin/bin/review-coordination.js:189`; #5148 reports 26 writes and 13 calls for 13 findings).\n\nMeasured on 2026-11-15 from archived runs (scratch scripts; re-derive before relying on a number):\n\n- In 44 archived reviews, 529 tiebreak agents used 24.6M cache-creation tokens, about as much as one side of the paired lens reviewers in the same reviews.\n- A replay judged 60 archived findings from nine reviews with one judge per review. It agreed with the archived verdict on 52 of 60 (87%). A control arm that reran one judge per finding on 14 of those findings agreed on 12 (86%), and the batched judge scored 12 of 14 on the same findings.\n- For those 60 findings the archive shows 63 agents, 132k output tokens and 2.83M cache-creation tokens; the replay used 10 agents, 64k output tokens and 0.63M cache-creation tokens.\n\nDesign: `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`, Phase 2, unit 2.1 (branch `worktree-design-process-efficiency`).\n\n## Deliverables\n\n1. **Chunked dispatch.** Step 3.7 groups its entry set into chunks of at most 8 findings and dispatches one fresh agent per chunk. The prompt lists each finding with its id from `review-findings.json`, claim, severity, location and, for a contested finding, its positions. It tells the agent to judge each finding on its own. The reply carries one block per id with the same four lines as today (`Verdict`, `Evidence`, `Severity`, `Recommendation`).\n2. **One settle call per chunk.** `review-coordination.js resolve-tiebreak` accepts a chunk: the chunk's entries and the agent's one reply. It splits the reply by id and runs the existing per-finding settle for each entry, so the outcome vocabulary, the evidence checks and each finding's log line are unchanged. An id missing from the reply, or present twice, resolves that one finding as an empty reply does today; the other findings settle normally. The chunk form settles per finding, not all or nothing, and writes exactly the per-finding artifacts the one-finding form writes today.\n3. **The one-finding form keeps working, permanently.** A session on the previous release still calls `resolve-tiebreak` with one entry file and one reply file. That call form, its output and its exit codes do not change, and no removal is planned; a future removal gets its own record with a removal condition.\n4. **Failure handling per chunk.** A chunk whose agent returns empty, fails, times out or ends without `DONE` is re-dispatched once as a fresh agent; valid blocks in a failed reply are discarded, not settled. If that fails too, each of its findings takes today's per-finding path (for a dispatched reviewer, the inline rung). A finding whose block is missing or duplicated in an otherwise good reply gets one single-finding re-dispatch, made before the chunk's `resolve-tiebreak` call, so the call settles a missing or duplicated id as can't-tell only after that retry has also failed. A finding therefore gets at most three judge attempts: the chunk agent, the chunk re-dispatch or the single-finding re-dispatch, and the per-finding path.\n5. **Carried-over rules.** The lens 3f vacuity rule, the contested-finding positions, the post-fan-out untracked-file sweep and the \"never reuse the reporting agent\" rule apply per finding exactly as today.\n6. **Replay proof.** Run the tiebreak replay harness over at least 20 archived reviews and put the table in the PR: agreement with archived verdicts for the chunked arm and for a one-per-finding rerun arm on the same findings, and tokens for each. The chunked arm uses the real chunking rule (at most 8 per chunk, in entry order), so reviews with more than 8 findings are included and exercise the split.\n7. **Record link.** Comment on #5148 that its \"resolve a wave in one call\" request is delivered here.\n\n## Acceptance Criteria\n\n- [ ] AC1: A chunk of 1 to 8 findings is settled by one `resolve-tiebreak` call that produces one verdict line per finding, each byte-identical in form to the line the one-finding call produces for the same entry and reply block. A test proves it with a fixture chunk of several findings and one of a single finding.\n- [ ] AC2: The existing one-finding tests in `tests/bin-lib/tiebreak.test.js` and `tests/bin-lib/review-coordination/cli.test.js` pass with no edit to their expectations.\n- [ ] AC3: A reply missing one id, and a reply repeating one id, each settle the affected finding as can't-tell and every other finding normally. One test per case.\n- [ ] AC4: `tests/review-tiebreak-step-conformance.test.js` pins the chunk size bound and the per-chunk dispatch, and fails when the prose is reverted to one agent per finding.\n- [ ] AC5: `review-coordination.js check-coverage` and `plugin/bin/lib/console/resolve.js` read a run whose verdicts were settled by chunk with no code change to either. A fixture test over a chunk-settled run proves it.\n- [ ] AC6: The replay table in the PR covers at least 20 archived reviews. The chunked arm's agreement with archived verdicts is no lower than the rerun arm's on the same findings; if it is lower, the build stops and reports both numbers for a human decision.\n  - Decided 2026-11-15: \"no lower\" means the chunked arm's agreement is at most 5 percentage points below the rerun arm's, with at least 100 findings judged in each arm. A larger shortfall is the stop case.\n- [ ] AC7: In that replay, cache-creation tokens for the chunked arm are at most half the archived one-per-finding total for the same findings.\n\n## Release Note\n\n`/claude-tweaks:review` now settles unconfirmed findings with one judge per group of up to eight findings instead of one judge per finding, which cuts the step's token cost substantially.\n\n## Technical Approach\n\nKeep the settle logic where it is. `plugin/bin/lib/tiebreak.js` already turns one entry and one reply into an outcome and a log line; add a reply splitter keyed on finding id and call the existing function once per entry. `plugin/bin/review-coordination.js` decides between the chunk form and the one-finding form from the shape of the entries file, so no new flag is needed: an array always takes the chunk form whatever its length (a one-finding chunk included), and the legacy single object is the only trigger of the old path; an empty or malformed entries file takes the one-finding form's existing error exit. If a flag is added anyway, check the audit simplification design's Phase 3 first: it moves every `plugin/bin` CLI onto one argument parser.\n\nThe prompt template in `step3-tiebreak.md` changes from one `Finding:` block to a numbered list of finding blocks, each headed by its id, and the reply repeats that id as a line-anchored header on each block. The splitter treats only a line-anchored header whose id is in the chunk's entry set as a block boundary, so an id quoted inside an `Evidence:` line is not a boundary; a test covers an id quoted in evidence. Within the existing wave rule, each wave dispatches up to 8 chunk agents in parallel, as it dispatches 8 finding agents today. Everything the agent is told about evidence, vacuity claims, read-only review, shell discipline and scratch stays.\n\nChunk order follows the entry set's order. Do not group by lens or by file: the replay did neither.\n\n### Key Files\n\n- `plugin/skills/review/step3-tiebreak.md`\n- `plugin/bin/lib/tiebreak.js`\n- `plugin/bin/review-coordination.js`\n- `tests/bin-lib/tiebreak.test.js`\n- `tests/bin-lib/review-coordination/cli.test.js`\n- `tests/review-tiebreak-step-conformance.test.js`\n\n## Gotchas\n\n- Do not add text to `plugin/skills/review/code-mode-steps.md`. It sits one byte under the read rail (#5076).\n- Other open records edit the same files: #5535 (removes `resolve-refutation` from the same CLI), #4663, #5214, #4708, #4672, #4412, #5122, #4747. Rebase on whichever has landed.\n- The judge must still be given no account of how a finding was reported. Independence is from the reporter, not between findings. The bound of 8 per chunk is the tested size; raising it needs a new replay.\n- #5122 (escaped backticks read as an unverified quote) lowers agreement in any replay. Report can't-tell counts beside agreement.\n- ASSUMPTION — verify at build: a tiebreak replay harness is available to run. At this commit `git ls-files -- tools` holds no replay script; the harness is a scratch script behind the design (unit 5.3 of the design moves it into `tools/`) — confirm via `git ls-files -- tools` once that unit lands, or ask the maintainer for the scratch script. Do not rebuild a different harness: AC6 compares against the same method as the 2026-11-15 numbers. If neither the maintainer nor `tools/` supplies the harness when the build starts, stop and report NEEDS_CONTEXT rather than shipping with AC6 and AC7 unmet.\n- `tests/review-tiebreak-step-conformance.test.js` has failed on Windows before (#4828). Follow `.claude/skills/windows-checkout-test-parity`.\n\n\n<!-- work-fingerprint: process-efficiency:tiebreak-chunked-dispatch -->\nwork-fingerprint: process-efficiency:tiebreak-chunked-dispatch",
-        "createdAt": "2026-11-15T22:06:50Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5540,
-        "state": "OPEN",
-        "title": "Review tiebreak: one judge per chunk of findings instead of one per finding",
-        "updatedAt": "2026-11-15T23:02:43Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
           "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
@@ -1541,6 +1400,84 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: reflect full from #4815\n\nDefer-reason: tangential\n\n## Current State\n\n`docs/plugin-structure.md` keeps each module-family row as one markdown line, and 17 of its lines exceed 4000 characters (`awk 'length>4000' docs/plugin-structure.md | wc -l` printed 17 on 2026-11-03; the `plugin/bin/lib/dispatch/` row alone is about 8.7 KB).\n\nGit merges by line, so two PRs that each append a clause to the same row always conflict. #4815's catch-up merge of origin/main conflicted in that one row (hand-merged), and the friction events recorded against the same worktree show #4809's close-out update (PR #4917) conflicting in the same file.\n\n## Deliverables\n\n- [ ] Re-flow each `docs/plugin-structure.md` row longer than 4000 characters so each module entry sits on its own line (a nested bullet or a continuation line), keeping every existing fact.\n- [ ] Update the tests that locate a row by its first line (for example `tests/ai-design-tells-lens-rows.test.js` and `tests/build-dispatch-subfile-table-completeness.test.js`) so they still find the entries.\n\n## Acceptance Criteria\n\n- [ ] `awk 'length>4000' docs/plugin-structure.md | wc -l` prints `0` (it prints 17 on the tree this record was filed against).\n- [ ] `npm test` passes with no assertion weakened.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `docs/plugin-structure.md` — split rows over 4000 characters into one line per module entry\n- `tests/ai-design-tells-lens-rows.test.js` — adjust row lookup if the visual-review row is split\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-11-03T09:34:22Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 5049,
+        "state": "OPEN",
+        "title": "Split docs/plugin-structure.md rows over 4000 characters so concurrent PRs stop conflicting",
+        "updatedAt": "2026-11-15T23:13:06Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -2660,6 +2597,90 @@
     ],
     [
       {
+        "body": "**Related:** #3944 (parent design: \"settle findings aggressively\", \"moving the nag instead of removing it\" named as a rejected shape), #3949 (shipped the file-everything unattended rule), #4620 (control mode carries undecidable console items into the acceptance packet — overlapping destination), #1426 (digest container)\n\nOrigin: /claude-tweaks:backlog attention triage, 2026-10-31 — 50 Review Console can't-tell records in the needs:definition queue\n\nDefer-reason: tangential\n\n## Current State\n\nWith no human present, the Review Console files **every** can't-tell finding of severity medium or higher as a `needs:definition` backlog record, ignoring the tiebreak's own `file`/`drop` recommendation:\n\n- `plugin/bin/lib/console/resolve.js` `resolveAll` maps every `tiebreak` item to `resolution: 'filed'` (`UNATTENDED_FILED_REASON`: \"an agent that could not tell is not licensed to drop\"). Only the human-present Approve-all path honours the recommendation (`approveAllDefault`: `drop` → `dropped`).\n- `plugin/bin/lib/console/finding-filing.js` `composeFindingProposal` files the can't-tell shape with an `## Open Question` (\"Does this finding hold at `path:line`?\") and `Labels: needs:definition`, `Defer-reason: needs-human-decision`.\n- The same rule is stated in `plugin/skills/_shared/autonomy-ceiling.md` (`consoleAutoResolve` row) and `plugin/skills/_shared/console-execution.md:186`.\n- `_shared/materiality-floor.md`'s \"Tiebreak can't-tell value\" already routes **low/info** can't-tell findings to the digest (`tiebreak-cant-tell`); medium+ never reaches it.\n\n**Measured cost (2026-10-31).** The `needs:definition` queue held 53 records; 50 were these console filings (filed 2026-10-24 by the console backfill). 41 carried `Recommendation: drop` and were closed by hand on that basis. The other 9 (`file` or confirmed) were each settled in under a minute by one Standard-profile agent reading the code at `main`, with quoted evidence — 8 held, 1 was gone. None needed brainstorming, yet `needs:definition` routes each into `/claude-tweaks:specify`'s brainstorm redirect, and that redirect rejects batch form, so 50 records meant 50 interactive sessions.\n\n## Deliverables\n\n- [ ] Unattended resolution (`resolveAll`, the reconciler-side executor `plugin/bin/lib/reconcile/console-execute.js`, and the backfill path `plugin/bin/lib/console/backfill-dispose.js`) routes a medium+ can't-tell finding whose tiebreak recommended `drop` to the digest under `Defer-reason: tiebreak-cant-tell`. It is preserved and deduplicated by its `consolefinding` fingerprint, never silently dropped, and never filed as a record.\n- [ ] A medium+ can't-tell finding recommended `file` (or with no recommendation) is filed as an agent-buildable verification task. That means `## Acceptance Criteria` in place of `## Open Question`: verify at the integration-branch tip with a quoted `path:line`, then fix if it holds, or close with the quoted evidence if not. It carries no `needs:definition` label, and its `Defer-reason` fits a verification task, not `needs-human-decision`.\n- [ ] Update the restated rule in `_shared/autonomy-ceiling.md`, `_shared/console-execution.md`, and `_shared/materiality-floor.md` (the digest value now also covers medium+ `drop`). Record the reversal of #3949's \"not licensed to drop\" ruling, with the measurement above as its evidence.\n- [ ] Tests in `tests/bin-lib/console/resolve.test.js` and `tests/bin-lib/console/finding-filing.test.js` pin both routes, each proven red against the pre-change code.\n\n## Acceptance Criteria\n\n- [ ] An unattended `resolveAll` over a fixture holding one medium can't-tell `drop` item and one medium can't-tell `file` item yields a digest entry for the first and a filing for the second.\n- [ ] The filed proposal for a can't-tell `file` item has no `needs:definition` label and no `## Open Question` section, and it has an `## Acceptance Criteria` section requiring quoted evidence at the integration-branch tip.\n- [ ] A `drop`-recommended item re-appearing in a later run dedupes to the existing digest entry by fingerprint and creates no record.\n- [ ] Every `plugin/skills/_shared/*.md` statement that every can't-tell item files \"whatever it recommended\" is updated, confirmed by a case-insensitive repo-wide grep for `licensed to drop` and `its recommendation notwithstanding`.\n- [ ] Human-present Approve-all behaviour is unchanged.\n\n## Release Note\n\nUnattended runs no longer flood the backlog with unverified review findings. A finding the review tiebreak recommended dropping goes to the digest, and one it recommended filing arrives as a task an agent can verify and build, not one that needs a human brainstorm.\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-10-31T09:49:40Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 4679,
+        "state": "OPEN",
+        "title": "Review Console: unattended filing ignores the tiebreak's drop recommendation and files verification questions as needs:definition",
+        "updatedAt": "2026-11-15T23:12:55Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "Origin: reflect full from #4602\n\nDefer-reason: tangential\n\n## Current State\n\nA review tiebreak agent on #4602 (run `2026-10-31T075610-record-4602`) was refused when it ran `git -C \".../review-ctx/agent-scratch/tb-2/src\" init -q -b main` to build a git fixture at its sanctioned `SCRATCH:` path. The run recorded a `gate-denial` event for that path (`friction-events.js`, ts 2026-10-31T09:06:10Z), immediately after a `wd-guard-refusal` for the same command at 09:06:09Z.\n\n`plugin/skills/review/step3-tiebreak.md`, `step3-debate-and-refutation.md` and `step3-lens-dispatch.md` give every dispatched review agent a `SCRATCH: {ctx-dir}/agent-scratch/{agent-id}` path under the run directory, which is anchored to the main checkout, and tell it to create probe fixtures there with plain `mkdir`/`printf`/`node -e` calls. None of them mentions that a fixture needing a git repository cannot be created at that path from a `worktree-always` session: the gate refuses `git init` there.\n\nIntegration-branch probe (#3987): `git fetch origin main`, then `git grep -n -F -e \"agent-scratch\" origin/main -- plugin/bin` and `git grep -n -i -F -e \"git init\" origin/main -- plugin/skills/review` both matched nothing (exit 1), so main carries neither a gate exemption for the scratch path nor skill text for git fixtures.\n\n## Deliverables\n\nAdd one clause to the `SCRATCH:` instruction in each of `step3-tiebreak.md`, `step3-debate-and-refutation.md` (both its dispatch templates) and `step3-lens-dispatch.md`: a probe that needs a git repository creates it under the session scratchpad directory (`_shared/session-tmp-root.md`) instead of `{ctx-dir}/agent-scratch/`, because `git init` at the run-dir path is refused from a worktree session.\n\nKeep the three copies word-identical so one test pin covers all of them.\n\n## Acceptance Criteria\n\nEach of the three files names the git-fixture exception inside its `SCRATCH:` instruction: `grep -c -F \"git init\" plugin/skills/review/step3-tiebreak.md plugin/skills/review/step3-debate-and-refutation.md plugin/skills/review/step3-lens-dispatch.md` prints a count of at least 1 for every file.\n\nA conformance test pins the clause in all three files and goes red when it is removed from any one of them.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/step3-tiebreak.md` — add the git-fixture clause to the SCRATCH line\n- `plugin/skills/review/step3-debate-and-refutation.md` — add the git-fixture clause to both SCRATCH lines\n- `plugin/skills/review/step3-lens-dispatch.md` — add the git-fixture clause to the SCRATCH line\n\n_Filed by `reflect` via specShapedBody._\n",
         "createdAt": "2026-10-31T09:32:51Z",
         "labels": [
@@ -2954,6 +2975,90 @@
     ],
     [
       {
+        "body": "Surface: infra\n\n## Overview\n\n**The autonomous middle, console half.** Under control mode nothing between intent and acceptance asks the human anything. The Wrap-Up Review Console stops being a stop: everything it can resolve by policy it resolves and logs (the existing `consoleAutoResolve` machinery, granted at the `unattended` autonomy ceiling); anything it genuinely cannot — a contested finding, an unconfirmed bug flagged by review, a `needs-human-decision` SDD ruling — is **carried into the acceptance packet's \"Decisions left for you\" section** instead of a separate console.\n\n**Bookkeeping never accumulates.** At run end, ledger residue, reflection insights, and archived-run residue are each **resolved**, or **filed as a backlog record** (spec-shaped, with a `Defer-reason:` from `_shared/deferral-gate.md` when an agent holds the context), never left pending. \"Pending for a human\" is not a terminal state in control mode. **Memory writes are fully automatic**, logged so a bad one is traceable and revertable; no approval prompt.\n\nExisting HARD-GATEs (the canonical list is `_shared/auto-mode-contract.md`'s exemption list; the design cites test failure, spec compliance, plan validation and an unresolvable merge conflict among them) still stop the run; a stop in control mode is a failure to report, not a question to answer. Anti-goal: re-creating the residue pile under a new name. Evidence the model has outlived involvement: dozens of open ledger residues, unreviewed console items and leftover worktrees accumulate because the plugin keeps asking for attention the human has stopped giving.\n\n**Outside control mode all of this is unchanged** (designer's call: the stop-removing behaviors exist only under control mode).\n\n**Contract decisions this record pins:**\n\n- **Ceiling composition.** Control mode is a new input to the bookkeeping permissions: `bookkeepingPermissions(ceiling, { controlMode })` returns the `unattended` capability set when control mode is on. Precedence for the effective ceiling: CLI arg > an explicit `autonomy` value in pipeline config or `policy.yml` > the control-mode implication > the `supervised` default. So `control-mode: on` with no `autonomy` key yields `unattended` capabilities; `control-mode: on` with an explicit `autonomy: supervised` yields `supervised` (the explicit lever wins, and the status scan says so). The grant is the maintainer's own: `control-mode: on` in `policy.yml` is a committed, human-made edit (the init setup path writes it only after the user answers), exactly like setting `autonomy: unattended` today; no other actor can raise the ceiling. The control-mode-switch record composes the full implied set; this record supplies only the console-and-residue effect.\n- **Sink for carried decisions.** The console resolver appends facts to `{runDir}/packet-facts/decisions.json` (a working file; the packet record's gather reads it, and the schema's single owner is `_shared/acceptance-packet.md`). This record's code constants for the fact (`kind: 'decision'`, `origin` values `console | review | upstream`, `id`, `summary`, `evidenceRef`) are pinned equal to that schema table by a prose-code twin test. `id` is `decision:{origin}:{slug}` where `slug` is the staged item's id; `evidenceRef` is a fact id or a repo-relative path. Mapping: contested-finding and unconfirmed-bug rows (review-sourced) have `origin: 'review'`; `needs-human-decision` SDD rulings and other console rows have `origin: 'console'`; external-repo upstream items (the upstream-filing record) have `origin: 'upstream'`. No new console section is added; the route replaces the interactive render for these rows only under control mode.\n- **Boundary with #3944 and #4587.** The agent tiebreak of #3944 (when it ships) runs first and settles what it can; only findings it cannot settle, and contested pairs, are carried. #4587's contract, restated: the unattended console holds `needs-human-decision` SDD rulings for a human instead of auto-applying them; this record carries those held rulings into the packet.\n- **Terminal states for residue.** A ledger residue row, reflection insight or archived-run residue ends `resolved`, `filed` (a spec-shaped backlog record passing the deferral gate), or `digested` (below the materiality floor, `_shared/materiality-floor.md`; a digest entry counts as terminal by design). An item that is none of these is carried into the packet as a decision fact; if even that fails, the run reports a failure card naming the item, never a silent drop. Filing authorization: the existing `unattended` record-filing bookkeeping capability (verify the capability name in `_shared/autonomy-ceiling.md` \"What it authorizes\"). A filing failure or a gate rejection carries the draft into the packet. Sources and hooks: ledger residue through `wrap-up/residue-sweep.md` and the ledger resolve gate, reflection insights through `reflect`'s Defer/Capture routing, archived-run residue through the existing `plugin/bin/lib/reconcile/` checks (name each exact module at build from `docs/reconcile-checks.md`); the residue predicates are \"row status is open\", \"insight not yet routed\" and \"archived run has open items\".\n- **Unanswered packet decisions.** A carried decision is the packet's open item for the human. When a verdict of `approved` arrives while decisions are still listed, the verdict handler calls this record's pure `settleOpenDecisions(packetFacts)` which files each still-open decision as a spec-shaped backlog record (so nothing is silently ratified by an accept). A packet never blocks a merge on its decisions.\n- **Memory writes.** Scope: the memory files the Review Console's memory approvals cover today, and nothing else. Each automatic write logs to `decisions.md` the path, the prior content hash (`none` on create) and a unified diff old-to-new (capped at 20 KB; a larger write stores the prior content in the run's `staged/` directory), so a bad write is reverted by applying the reverse diff. The existing console memory-approval section is auto-resolved under control mode, not removed.\n- **HARD-GATEs.** The canonical list is `_shared/auto-mode-contract.md`'s HARD-GATE exemption list; this record cites it rather than restating. The design also names an unresolvable merge conflict; if the contract does not list it, add it there as part of this record. A gate stop is reported with the existing generic failure card (`flow/manifesto.md`'s failure card), asserted per gate in tests.\n- **AC5 baseline.** \"Unchanged outside control mode\" means the existing console, resolve and wrap-up test suites pass unmodified when built from current `main` (including #3942's and #4587's landed changes).\n\n## Non-Goals\n\n- Not weakening any HARD-GATE or the contract's \"not silenced\" list outside the explicit ceiling bookkeeping capabilities.\n- Not the merge authorization change (separate record) and not the upstream-filing ownership rule (separate record, though it uses this record's carry-into-packet path for external repos).\n- Not the packet schema (the packet record defines \"Decisions left for you\"; this record populates it).\n- Not changing behavior when `control-mode` is off.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4611 | Acceptance packet: schema, canonical marker comment, new sections | open (Blocked by) |\n| #4609 | Add control-mode policy keys | open (Blocked by) |\n| #4587 | Hold needs-human-decision SDD rulings for a human at the unattended console | in progress (companion: its held-for-human rulings are exactly what this record carries into the packet) |\n| #4484 | record that touched `plugin/bin/lib/console/resolve.js` | closed (completed); build from current `main` |\n| #3942 | Ratifying a deferral SDD ruling at the Review Console files no backlog record | in progress (shares `review-console.md`) |\n\n## Current State\n\n- Console: `plugin/skills/wrap-up/review-console.md` (render and resolution), `plugin/bin/lib/console/resolve.js` (787 lines; the unattended resolver), `plugin/bin/console-resolve.js` (writes only when `bookkeepingPermissions(ceiling).consoleAutoResolve` is granted, i.e. `unattended`), `plugin/bin/lib/reconcile/console-execute.js`.\n- Ceiling: `plugin/skills/_shared/autonomy-ceiling.md` (what each ceiling authorizes, \"Bookkeeping capabilities\", Floor rule, Restricted-disposition rule) and `plugin/bin/lib/issues/autonomy.js` (`CEILINGS = [supervised, trusted, unattended]`, `bookkeepingPermissions`).\n- Open umbrella #3944 (Settle unconfirmed review findings with an agent tiebreak and a clean-slate Review Console) is the same direction for the review-findings slice; this record is Related to it and must not duplicate its tiebreak.\n- Section additions to the console touch a fixed set of code and prose sites; the `review-console-section-addition` skill lists them (SECTIONS, SECTION_MAP, CANONICAL_PREFIXES, SECTION_STANCES, ENGINE_ROW_SECTIONS, SECTION_SPECS, console-template).\n## Deliverables\n\n- [ ] `bookkeepingPermissions(ceiling, { controlMode })` and its callers (`bin/console-resolve.js`, the pre-tool-use gate) per the ceiling-composition rule above, with tests for the four precedence cases.\n- [ ] Under `control-mode: on`, the Review Console resolves every policy-resolvable item (existing auto-resolve), then appends each remaining human-needed item (contested findings, unconfirmed bugs, needs-human-decision rulings) as a decision fact to `{runDir}/packet-facts/decisions.json` and does **not** render an interactive console stop.\n- [ ] `settleOpenDecisions(packetFacts)` (pure, builder's module location beside the console modules) that files each still-open decision as a spec-shaped backlog record, plus the one-line call from the verdict handler's approve branch (the verdict-handler record, #4614, calls it when present).\n- [ ] End-of-run residue convergence: ledger residue, reflection insights, and archived-run residue are resolved or filed as spec-shaped backlog records (Current State / Deliverables / Acceptance Criteria plus `Defer-reason:`), with the filing logged; nothing is left \"pending for a human\".\n- [ ] Memory writes under control mode are automatic and logged to `decisions.md` with enough detail to trace and revert.\n- [ ] Prose in `review-console.md`, `autonomy-ceiling.md` and the console contract describing the control-mode branch; the control-mode-off prose and behavior unchanged.\n- [ ] Tests: a control-mode run with a contested finding ends with zero pending console items outside the packet; a control-mode-off run behaves as before (existing console tests untouched).\n\n## Acceptance Criteria\n\n1. With `control-mode: on` and a run that produced one policy-resolvable item and one contested finding, the run ends with the first resolved and logged, the second present in the packet's \"Decisions left for you\" section, and **no console prompt** rendered.\n2. A control-mode run ends with zero pending console items outside the packet, zero unresolved ledger residue rows, and zero unfiled reflection insights; each was resolved or filed (assert against fixtures).\n3. A filed residue record is spec-shaped and carries a `Defer-reason:` accepted by the deferral gate (a record failing the gate's shape check fails the test).\n4. A memory write under control mode produces a `decisions.md` entry naming the path, the prior content hash (`none` for a create) and the old-to-new unified diff; applying the reverse diff restores the prior content (round-trip test); no approval prompt is emitted; a write outside the memory scope is refused.\n4a. A residue item that is not resolvable, not fileable (gate rejection or filing failure) and not below the floor appears as a decision fact in the packet; a forced failure of that carry produces a failure card naming the item. A below-floor item lands in the digest and counts as terminal.\n4b. `settleOpenDecisions` files one spec-shaped backlog record per still-open decision when called with an approved packet, and files nothing when none are open; an unanswered decision never blocks a merge.\n4c. Ceiling precedence: `control-mode: on` alone gives `unattended` capabilities; with an explicit `autonomy: supervised` the capabilities are `supervised`'s; with `autonomy: trusted` they are `trusted`'s; `control-mode: off` is unchanged.\n5. With `control-mode: off`, console behavior is unchanged: the pre-existing console, resolve and wrap-up test suites pass unmodified when built from current `main`.\n6. Every HARD-GATE on `_shared/auto-mode-contract.md`'s exemption list still stops the run under control mode and is reported with the generic failure card, not a question (one fixture per gate).\n7. A `needs-human-decision` ruling is held in the packet (not auto-applied), matching #4587's unattended behavior.\n8. `npm test` passes.\n\n## Release Note\n\nMade the end-of-run review console optional in control mode, resolving what policy can and carrying anything that needs you into the acceptance packet.\n\n## Technical Approach\n\nReuse `consoleAutoResolve` for the resolvable class; add one new terminal route for the unresolvable class (packet section) instead of the interactive render. Residue convergence runs at run end through the existing reconcile/ledger machinery; do not add a new sweep. Control mode implies the `unattended` bookkeeping capabilities through the ceiling-composition rule in the contract decisions above (the `autonomy` ceiling remains the mechanism; an explicit `autonomy` value beats the implication).\n\n### Data / API Surface\n\n- Fact: `{ id, kind: 'decision', origin: 'console' | 'upstream' | 'review', summary, evidenceRef, suggestedResolution }` appended to the packet's decisions list.\n- Filed records follow `_shared/deferral-gate.md` and `_shared/materiality-floor.md` (below-floor items go to the digest, not the backlog).\n\n### Key Files\n\n- `plugin/bin/lib/console/resolve.js` — carry-forward route for the unresolvable class\n- `plugin/skills/wrap-up/review-console.md` — control-mode branch\n- `plugin/bin/lib/issues/autonomy.js` — control mode's effect on `bookkeepingPermissions`\n- `plugin/skills/wrap-up/residue-sweep.md` — ledger residue routing (read; terminal states)\n- `plugin/skills/_shared/materiality-floor.md` — digest rule for below-floor items\n- `plugin/skills/_shared/auto-mode-contract.md` — canonical HARD-GATE list\n- `plugin/skills/_shared/autonomy-ceiling.md` — document the control-mode ceiling behavior\n- `plugin/bin/console-resolve.js` — CLI gate for the control-mode ceiling\n- `plugin/skills/_shared/acceptance-packet.md` — \"Decisions left for you\" fact contract (created by #4611)\n- `tests/bin-lib/console/resolve.test.js` — extend with the control-mode carry-forward cases\n\n## Gotchas\n\n- Open records #4585, #4583, #4582, #4581, #4038 and #3813 also touch the console resolver or wrap-up flow and are Related; #3942 (in progress in `review-console.md`) and #4587 are Blocked-by. #4484 touched the same resolver and closed (completed) on 2026-10-30 while this decomposition ran; build from current `main`.\n- Staged items need a staged artifact; a decision-log line saying STAGED without one is a vocabulary violation (`_shared/auto-decision-log.md`).\n- Do not add a new mid-flow stop to compensate: if something truly needs a human it goes into the packet; the packet is the one acceptance control point.\n- `info`-level or below-materiality-floor findings follow `_shared/materiality-floor.md` (digest, not a record); do not file noise as backlog records.\n- A packet whose \"Decisions left for you\" section is empty omits it; an unreadable carry-forward source must render a visible \"could not read\" row, never silence.\n\n**Related:** #3944\n**Related:** #4585\n**Related:** #4583\n**Related:** #4582\n**Related:** #4581\n**Related:** #4038\n**Related:** #3813\n\n\n<!-- work-fingerprint: human-in-control-acceptance:control-mode-carry-undecidable-console-items-into-the-packet -->\nwork-fingerprint: human-in-control-acceptance:control-mode-carry-undecidable-console-items-into-the-packet",
+        "createdAt": "2026-10-30T11:46:43Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMTcg",
+            "name": "risk:high",
+            "description": "Scoring: high blast radius — human review required",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4620,
+        "state": "OPEN",
+        "title": "Control mode: carry undecidable console items into the packet, leave no residue",
+        "updatedAt": "2026-11-15T23:14:08Z",
+        "facets": {
+          "origin": null,
+          "risk": "high",
+          "size": "high",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: infra\n\n## Overview\n\nRename and rewrite `/claude-tweaks:demo` as `/claude-tweaks:accept`, the acceptance step. It is **the same flow from two entries**:\n\n- **Automatic, at pipeline end:** produce the acceptance packet (or reuse the one wrap-up already posted), post it, mark the record `accept:pending`.\n- **On demand, `/claude-tweaks:accept #N`:** walk the human through the same packet: open the links, show the recording, step through the test guide, then ask the verdict.\n\n**Re-running on an item that already has a packet reuses it and refreshes only what is stale** (deploy status, links to an older deploy). It never builds a second packet. The same verdict comes from either surface (terminal or Dispatch) and has the same effect; the verdict handler itself is a separate record.\n\nKeep from today's `/demo`: the verdict labels (renamed to `accept:*` by the expand record), follow-up record mechanics (a separate record reworks them), the Verification Brief / Try-it block as packet input, the Prepare / Validate / Show observation plan, and the **no-record path** for this session's unrecorded work. Drop: the standalone-only restriction, and the terminal question as the only way to give a verdict.\n\n`/demo` stays as a **deprecated alias** with one warn-tier deprecation notice per invocation and a **recorded removal condition** (the repo's deprecated-alias convention, see `plugin/skills/specify/deprecated-aliases.md` and `plugin/skills/dispatch/deprecated-aliases.md`). The removal condition recorded here is exactly this text, quoted by the notice and by `plugin/skills/demo/deprecated-aliases.md`, and is what the final contract-cleanup record waits on: **`/demo` may be removed when all three hold, checked at each minor release: (a) `grep -rFn \"claude-tweaks:demo\" plugin docs README.md` finds no match outside the alias stub, the alias doc, `docs/incident-log.md`, `docs/decisions/` and `docs/plans/`; (b) at least two minor releases (versions of `plugin/.claude-plugin/plugin.json`) have shipped after the release containing this change; (c) the maintainer has confirmed Dispatch emits `accept:*` labels.** The alias doc lives in `plugin/skills/demo/` (the aliased skill's own directory, as `specify/` and `dispatch/` do for theirs).\n\n**Contract decisions this record pins:**\n\n- **Single owner of the packet.** The packet module (the packet record) owns creating and refreshing it; `/accept` never builds one by itself. The automatic entry is the lazy-loaded sub-file `plugin/skills/accept/automatic-entry.md`, which the five call sites in `wrap-up/verification-brief.md`'s Routing table reach; it calls the packet module (which finds the packet by marker and creates it only if absent), then applies `accept:pending` only when the record carries no verdict label of either vocabulary (read through the label-expand record's precedence function). **The automatic entry never prompts, never blocks and returns after labelling**, so auto mode's no-new-mid-flow-stop rule holds; every interactive step (walking the guide, asking the verdict) belongs to the on-demand entry only. The standalone-only restriction `/demo` had protected nothing the packet-centric flow needs once the automatic entry is non-interactive; drop it.\n- **Staleness.** The refreshable fields are a closed list: the Deploy-status section, the base URL of Test-guide links, and the Recording link. Staleness test: compare the `deploy.ref` fact stored in the packet with the current ref from the deploy-status source when that source exists; when it does not, or is unavailable, leave the field as is and mark it `unverified`. Nothing else is ever rewritten by `/accept`; a human-edited packet keeps the human's edits outside those three fields. A missing, duplicated or deleted marker comment follows the packet reader rules (the packet record): missing means build, duplicate means the earliest trusted wins, never a second packet.\n- **Packet states `/accept` handles** (each with minimal behavior): awaiting local acceptance (start the app from the PR branch, then walk); waiting for deploy (show the deploy status, skip the link step, say so plainly); live on dev (walk the guide with dev links); no recording (say so, walk the rest); already accepted or closed (show the recorded verdict and stop; no second verdict); no packet and a resolvable record (build via the packet module, then walk). An unhandled state prints a one-line message naming the state and stops; it does not guess.\n- **Labels written.** During the expand window `/accept` writes `accept:*` and removes the `demo:*` twin when present; `/accept #N` on a record carrying only `demo:pending` reads it as pending, and on a verdict removes it and writes the `accept:*` verdict. `/demo` (the alias) forwards, so it too writes `accept:*`.\n- **Verdict handling until the verdict-handler record lands.** The interim is `/demo`'s existing verdict mechanics under the `accept:*` labels, confined to one sub-file `plugin/skills/accept/verdict-interim.md` that the verdict-handler record (#4614, which follows this record) replaces wholesale and deletes; Dispatch-given verdicts are not handled until then, and the skill says so. The parent-close behavior of `/demo`'s Approve step (close a parent once its sub-issues are accepted, keyed on `isParentIssue`) carries over unchanged into `/accept`'s Approve step until the feature-level-acceptance record changes it.\n- **No-record path selection.** It is taken only for `/claude-tweaks:accept` with no `#N` argument and unrecorded work in this session. A `#N` that does not resolve is an error and never falls back to the no-record path.\n- **Sub-files.** `entry-paths.md`, `browser-verdict.md`, `design-contract-section.md` and `follow-up-record.md` move to `plugin/skills/accept/` (git mv; no pointer stubs left in `demo/`); `legacy-brief-compatibility.md` stays in `plugin/skills/demo/` (readers of legacy briefs) until the final cleanup record. After the moves, sweep every path citation, including tests and the `files:` frontmatter of journey docs.\n\n## Non-Goals\n\n- Not the verdict handler's actions (fix forward, revert now, local re-entry) — separate record.\n- Not target resolution (local vs dev), the local pre-merge park, or deploy-wait — separate records; `/accept` here handles whichever state the packet is in.\n- Not removing `/demo` or `demo:*` (the final contract-cleanup record).\n- Not adding an inbox or overview to claude-tweaks (that belongs to Dispatch).\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4610 | Add accept:* verdict labels alongside demo:* | open (Blocked by) |\n| #4611 | Acceptance packet: schema, canonical marker comment, new sections | open (Blocked by) |\n\n## Current State\n\n- Skill: `plugin/skills/demo/SKILL.md` (about 29 KB) with sub-files `entry-paths.md` (about 21 KB), `follow-up-record.md`, `legacy-brief-compatibility.md`, `browser-verdict.md`, `design-contract-section.md`. Its Approve step reads a parent record's `isParentIssue` facet to decide whether to close a parent once its sub-issues are accepted.\n- Deprecated-alias precedent: `plugin/skills/specify/deprecated-aliases.md` (the `next` alias and its removal condition) and `plugin/skills/dispatch/deprecated-aliases.md`.\n- Graph and docs: `docs/skill-graph.md` is the only home for skill-to-skill edges (CLAUDE.md); `README.md` carries the artifact lifecycle diagram, which `/help`'s workflow diagram must keep in sync with (`plugin/skills/help/`: `SKILL.md`, `reference-card.md`, `context-flow.md`, `status-scan.md`, `policy.md`).\n- Skill authoring rules: `docs/skill-authoring.md` (read before creating `plugin/skills/**/*.md`); references to skills inside actionable instruction text must use the fully-qualified `/claude-tweaks:accept` form.\n- `plugin/skills/accept/` does not exist.\n\n## Deliverables\n\n- [ ] `plugin/skills/accept/SKILL.md` (new) plus lazy-loaded sub-files, under the skill size ceiling: `automatic-entry.md` (non-interactive), the on-demand entry (`#N`) with the state table above, the packet reuse-and-refresh rule, the no-record path, the verdict question, and `verdict-interim.md` (replaced by the verdict-handler record).\n- [ ] `plugin/skills/demo/SKILL.md` reduced to a deprecated alias stub that prints one warn-tier notice (quoting the removal condition) and forwards to `/claude-tweaks:accept` with the same arguments; the condition recorded in `plugin/skills/demo/deprecated-aliases.md` following the existing shape.\n- [ ] Move the four sub-files named in the contract decisions to `plugin/skills/accept/`, keep `legacy-brief-compatibility.md` in `demo/`, and sweep path citations in skills, tests and journey `files:` frontmatter.\n- [ ] Update `docs/journeys/accept-built-work-via-demo.md` (or add a successor journey and retire it) so journey-health stays green; update `plugin/skills/help/reference-card.md`'s argument grammar.\n- [ ] Update every caller that invokes `/claude-tweaks:demo` in actionable instruction text (grep `claude-tweaks:demo` across `plugin/skills` and `docs`) to `/claude-tweaks:accept`, except the alias itself.\n- [ ] `docs/skill-graph.md` edges, `/help`'s workflow diagrams and `README.md`'s lifecycle diagram updated together (the two diagrams must stay in sync); `docs/plugin-structure.md` skill list updated.\n- [ ] Tests: conformance for the new skill's frontmatter and structure per the existing skill conformance suites; a test that the alias stub prints the deprecation notice and names the new skill; a test (or fixture-driven prose check) that the on-demand path on a record with an existing packet comment edits rather than posts.\n\n## Acceptance Criteria\n\n1. `/claude-tweaks:demo #N` still works: it prints exactly one deprecation notice naming `/claude-tweaks:accept` and the recorded removal condition, then behaves as `/claude-tweaks:accept #N`.\n2. `/claude-tweaks:accept #N` on a record whose acceptance packet comment already exists reuses it: no second packet comment is created (the record ends with exactly one comment carrying the packet marker), and stale parts (deploy status line, links) are refreshed in place.\n3. `/claude-tweaks:accept` with no argument and no record for this session's work takes the no-record path `/demo` had today, with unchanged observable behavior.\n4. The automatic entry, given a record with no packet yet, has the packet module produce and post one packet and applies the pending label; given one with a packet, it only ensures the pending label; given a record already carrying any verdict label of either vocabulary (`accept:approved`, `accept:changes-requested`, `demo:approved`, `demo:changes-requested`, or a pending one), it applies nothing. It issues no prompt in any case (a test asserts no `AskUserQuestion` call path is reachable from `automatic-entry.md`).\n4a. `/claude-tweaks:accept #N` on a record labelled only `demo:pending` treats it as pending and, on an approve verdict, ends with `accept:approved` present and `demo:pending` removed.\n4b. Each packet state in the state table has a fixture-driven check of its minimal behavior; an unhandled state prints a one-line message and stops. A `#N` that does not resolve exits with an error and does not take the no-record path.\n5. `plugin/skills/demo/deprecated-aliases.md` has a row for `/demo` carrying the removal condition (a)-(c) verbatim, and the alias notice quotes it.\n6. `grep -rFn \"claude-tweaks:demo\" plugin docs README.md` returns no match outside `plugin/skills/demo/SKILL.md`, `plugin/skills/demo/deprecated-aliases.md`, `docs/incident-log.md`, `docs/decisions/` and `docs/plans/` (the grep has been run once against the pre-change tree and matched). Descriptive prose using the bare `/demo` is allowed per CLAUDE.md.\n7. `docs/skill-graph.md`, `/help`'s workflow diagram and `README.md`'s lifecycle diagram each list `accept`; the help reference card's argument grammar lists `/claude-tweaks:accept`; the journey doc is updated; and the existing doc-conformance and journey-health tests pass.\n7a. The Approve step of `/accept` still closes a parent whose sub-issues are all accepted (parent-close fixture from `/demo`'s tests passes against `/accept`).\n8. `npm test` passes.\n\n## Release Note\n\nAdded `/claude-tweaks:accept`, an acceptance step that walks you through a finished feature's packet and takes your verdict, and kept `/claude-tweaks:demo` as a deprecated alias.\n\n## Technical Approach\n\nTreat this as a rename plus a rewrite behind a stable alias, expand-contract style: add `accept`, make `demo` forward, migrate callers, and leave removal to the contract record. The skill's flow is packet-centric: find the packet by its marker comment; if absent, build it (the packet record's module); if present, refresh stale facts; then step the human through it and ask for the verdict. Both entries converge on one code path so behavior cannot diverge by surface. `local-files` backend: the packet and interactive verdict work through the existing `acceptance:` field; Dispatch-given verdicts and revert-now are GitHub-only and say so when unavailable.\n\n### Data / API Surface\n\n- Invocation: `/claude-tweaks:accept [#N]`; automatic entry is called from wrap-up/flow, not typed.\n- Reads: the packet marker comment (GitHub) or the record's packet section (`local-files`).\n- Writes: the pending acceptance label; verdicts through the verdict handler.\n\n### Key Files\n\n- `plugin/skills/demo/SKILL.md` — becomes the alias stub\n- `plugin/skills/demo/entry-paths.md` — entry logic to move or share\n- `plugin/skills/demo/legacy-brief-compatibility.md` — keep for records with an old-style brief\n- `plugin/skills/accept/SKILL.md` — new skill\n- `plugin/skills/accept/automatic-entry.md` — new; the non-interactive entry\n- `plugin/skills/accept/verdict-interim.md` — new; replaced by the verdict-handler record\n- `plugin/skills/demo/deprecated-aliases.md` — new; the `/demo` removal condition\n- `plugin/skills/wrap-up/verification-brief.md` — Routing table callers reach the automatic entry\n- `plugin/skills/wrap-up/execution-and-verification.md` — Phase 4 acceptance-labeling bullet\n- `docs/journeys/accept-built-work-via-demo.md` — journey to update\n- `docs/skill-graph.md` — edges, stated once\n- `docs/plugin-structure.md` — skill listing\n- `README.md` — lifecycle diagram\n- `plugin/skills/help/SKILL.md` — workflow diagrams must list all skills\n- `plugin/skills/help/reference-card.md` — argument grammar\n- `docs/skill-authoring.md` — read first (conventions)\n\n## Gotchas\n\n- `docs/skill-graph.md` is where edges live; do not restate an edge inside a SKILL.md unless it is the skill's trigger condition or its only disambiguation from a same-named skill.\n- Fully-qualified `/claude-tweaks:accept` form in actionable text; bare `/accept` only in descriptive prose and relationship tables.\n- During the expand window both vocabularies exist; the alias must not strand a record labelled with `demo:*` (the label-expand record makes both readable).\n- Do not carry over the \"standalone-only\" restriction from `/demo`; the whole point is that the same step runs in-pipeline and on demand.\n- `docs/journeys/accept-built-work-via-demo.md` documents the old flow; update it or add a successor journey in the same change, since journey-health reads it.\n- The skill size ceiling is a platform-limits guard (`docs/decisions/0024-*`); keep SKILL.md small and push detail into lazy-loaded sub-files.\n\n**Related:** #3831\n**Related:** #3758\n**Related:** #3381\n\n\n<!-- work-fingerprint: human-in-control-acceptance:rewrite-demo-as-claude-tweaks-accept -->\nwork-fingerprint: human-in-control-acceptance:rewrite-demo-as-claude-tweaks-accept",
         "createdAt": "2026-10-30T11:46:14Z",
         "labels": [
@@ -2974,6 +3079,12 @@
             "name": "auto:build",
             "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
             "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACsDgIWw",
@@ -3003,7 +3114,7 @@
         "number": 4613,
         "state": "OPEN",
         "title": "Rewrite /demo as /claude-tweaks:accept",
-        "updatedAt": "2026-10-30T16:08:51Z",
+        "updatedAt": "2026-11-15T23:13:59Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -3016,7 +3127,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": false
+            "merge": true
           },
           "bot": {
             "inProgress": false,
