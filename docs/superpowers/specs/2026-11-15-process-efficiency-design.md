@@ -124,6 +124,10 @@ No new records. Raise priority and order these.
 
 ## Phase 2 — Tiebreak cost
 
+## Phase 2: Specified
+
+Records: parent #5539, unit 2.1 as #5540, unit 2.2 as #5541 (blocked by #5540).
+
 **2.1 One judge per review.** Step 3.7 sends every unpaired finding to its own judge. Send a review's unpaired findings to one judge in chunks of at most eight, each judged independently, with the same evidence rules. The verdict line per finding in `decisions.md` keeps its present form, because other readers parse it; the record lists them. Done when a replay over at least 20 archived reviews shows agreement with the archived verdicts no lower than a one-per-finding rerun on the same findings, and cache-creation tokens for the step at most half.
 
 **2.2 Judge tier by severity.** Every finding gets a Capable-tier judge, including `info` findings (#5148 names this). Adopt the tiebreak half of #5148 here, not as a second record: the record decides the tier for `low` and `info` from a replay, and leaves `medium` and above on Capable.
