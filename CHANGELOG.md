@@ -53,6 +53,25 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.170.0](https://github.com/thn-inc/claude-tweaks/compare/v6.169.0...v6.170.0) (2026-11-15)
+
+
+### Features
+
+* drive.js --budget N: the driver picks its own records ([#5229](https://github.com/thn-inc/claude-tweaks/issues/5229)) ([f1459d5](https://github.com/thn-inc/claude-tweaks/commit/f1459d5d25f9cc5ec080390aec0eeedbb865c522))
+* Driver lane bounds as policy values, with the reviewer… ([#5224](https://github.com/thn-inc/claude-tweaks/issues/5224)) ([ba45c5a](https://github.com/thn-inc/claude-tweaks/commit/ba45c5a090b25fd85e518336602e03bb9a4fc60e))
+* Judgment workers: merge-check verdict and acceptance… ([#5228](https://github.com/thn-inc/claude-tweaks/issues/5228)) ([4df8aa9](https://github.com/thn-inc/claude-tweaks/commit/4df8aa9c08949786a728ddd420791ab14a732520))
+
+
+### Bug Fixes
+
+* bin/claude-tweaks-statusline.js: re-spawns node + 3… ([#5266](https://github.com/thn-inc/claude-tweaks/issues/5266)) ([4fb2fad](https://github.com/thn-inc/claude-tweaks/commit/4fb2fad303ea383fa8416940882e96fc32abe101)), closes [#5294](https://github.com/thn-inc/claude-tweaks/issues/5294)
+* Driver: the plain path's test step judges a tree it never… ([#5454](https://github.com/thn-inc/claude-tweaks/issues/5454)) ([c045aa2](https://github.com/thn-inc/claude-tweaks/commit/c045aa2bb96add1c25c3a31616fe1e86a73a8253))
+* Express-lane runs record no spec: in config.yml and no… ([#5347](https://github.com/thn-inc/claude-tweaks/issues/5347)) ([1ecde9d](https://github.com/thn-inc/claude-tweaks/commit/1ecde9d538a3dbd07db22e691041198084af1105))
+* Hooks fail open for the whole session when node is not on… ([#5392](https://github.com/thn-inc/claude-tweaks/issues/5392)) ([6a8a696](https://github.com/thn-inc/claude-tweaks/commit/6a8a696a3ae35727f781a11754fb168b1d008655)), closes [#5393](https://github.com/thn-inc/claude-tweaks/issues/5393)
+* Wrap-up's learned-skill edits block the run's own… ([#5290](https://github.com/thn-inc/claude-tweaks/issues/5290)) ([c38bf1d](https://github.com/thn-inc/claude-tweaks/commit/c38bf1d6bedb94f20ec65e151faa9d866809f9da))
+* Write gate reads &lt;&lt; inside ${…} or a same-line $(… &lt;&lt;EOF)… ([#4246](https://github.com/thn-inc/claude-tweaks/issues/4246)) ([22b363a](https://github.com/thn-inc/claude-tweaks/commit/22b363a7af2595df973ff6dd1dc80279f26938e2))
+
 ## [6.169.0](https://github.com/thn-inc/claude-tweaks/compare/v6.168.0...v6.169.0) (2026-11-14)
 
 
