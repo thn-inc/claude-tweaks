@@ -5,6 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { sweepCli } = require('../../helpers/health-sweep-cli');
+
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'docs-health.js');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-word-count-')); }
@@ -33,7 +35,6 @@ test('word-count returns the depth-hint frontmatter value as-is', () => {
 // In-process (#5381): a relative path resolves against the injected cwd, and an unreadable one is
 // named as the caller spelled it. One in-process test, no extra process.
 test('word-count resolves a relative path against the injected cwd and names a missing one as written', () => {
-  const { sweepCli } = require('../../helpers/health-sweep-cli');
   const root = tmp();
   fs.writeFileSync(path.join(root, 'doc.md'), 'one two three four five');
   const ok = sweepCli(CLI, ['word-count', 'doc.md'], { cwd: root });

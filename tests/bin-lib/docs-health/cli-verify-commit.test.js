@@ -95,13 +95,22 @@ test('AC3.1, AC3.2: an in-process verify-commit that deepens a shallow clone pas
   const origin = makeOriginRepo();
   const dir = cloneOf(origin, { depth: 1 });
   const calls = [];
+  const envBefore = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   const res = cli(['verify-commit', origin.root, '--root', dir, '--remote', 'origin'], {
     env: { ...process.env, CLAUDE_TWEAKS_LOCK_WAIT_MS: '7' },
-    deps: { lock: (p, opts) => { calls.push(opts); return acquireLock(p, opts); } },
+    deps: {
+      lock: (p, opts) => {
+        // envAtCall sees a set-then-restore swap of process.env around the lock, which the
+        // leak guard's end-state comparison cannot.
+        calls.push({ ...opts, envAtCall: process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS });
+        return acquireLock(p, opts);
+      },
+    },
   });
   assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].waitMs, DEEPEN_TIMEOUT_MS + LOCK_WAIT_MARGIN_MS);
+  assert.strictEqual(calls[0].envAtCall, envBefore, 'process.env must not carry the wait while the lock is acquired');
   assert.strictEqual(JSON.parse(res.stdout).result.shallow.deepened, true);
 });
 
