@@ -16,11 +16,18 @@
 //
 // evaluate: replays each fixture through the production merge-check path — the two code floors first (judgments.js's
 // blastFloor), else `merge-check` workers --repeat times in a detached scratch checkout at the merge commit — and
-// prints { total, autoMergeFixtures, needsHumanFixtures, floorDecided, excluded, agreement, falseAutoMerge,
-// byReviewFindings }. --dry-run replaces the worker with one that always returns needs-human (no model call).
+// prints { total, autoMergeFixtures, needsHumanFixtures, floorDecided, excluded, excludedByReason, ac9, agreement,
+// falseAutoMerge, notJudged, byReviewFindings, ... }. A launch that failed, or returned no valid verdict, is never a
+// judged run: it counts toward launchFailures and the record's notJudged status, not toward agreement. --dry-run
+// replaces the worker with one that always returns needs-human (no model call).
+//
+// The check state (`checks`, with its `closingPr`) is read at extraction with production's own call
+// (`gh pr checks {pr} --json name,bucket`, falling back to the string `checks: unreadable`), so it is the state as of
+// extractedAt, like the record bodies; evaluate passes it to the prompt as production does.
 //
 // Exit codes: 0 ok; 1 a runtime failure, or (evaluate) a false auto-merge — a needs-human fixture the worker
-// merged on any repeat; 2 malformed invocation.
+// merged on any judged repeat; 2 malformed invocation; 3 (evaluate, not --dry-run) no false auto-merge, but a launch
+// failed or a fixture could not be replayed, so the run is not a clean result.
 //
 // Seam: run({ argv, deps }) returns the exit code. deps: gh(args) -> stdout (throws), git(args, {cwd}) -> stdout
 // (throws), node(script, args, {cwd, timeout}) -> { code, stdout, stderr }, launchWorker(opts) -> envelope, fs,
@@ -44,11 +51,14 @@ const USAGE = [
   '       node tools/driver-merge-check-eval.js evaluate --fixtures <file> [--repeat N] [--concurrency N] [--limit N]',
   '                                                      [--minutes N] [--dollars N] [--out <results.json>] [--dry-run] [--worktree <dir>]',
 ].join('\n');
-const DIVERGENCE = 'record bodies as of extractedAt; later edits are a named divergence';
+const DIVERGENCE = 'record bodies and check state as of extractedAt; later edits are a named divergence';
 const COMPARABLE = ['auto-merge', 'needs-human'];
 const SEVERITIES = ['Critical', 'High', 'Medium', 'Low'];
 const FINDING_TEXT_MAX = 200;
 const SHA_RE = /^[0-9a-f]{40}$/;
+const CHECKS_UNREADABLE = 'checks: unreadable';
+const AC9_ENTRIES_FLOOR = 30;
+const AC9_NON_AUTO_MERGE_FLOOR = 10;
 
 // ---------------------------------------------------------------------------------------------------------
 // The review-summary classifier.
@@ -225,7 +235,7 @@ function verdictsOf(content) {
   const confirmed = confirmPassingVerdicts(content, records);
   return records.map((record) => {
     const latest = confirmed[record].latest;
-    return COMPARABLE.includes(latest) ? { record, verdict: latest } : { record, exclude: 'verdict-not-comparable' };
+    return COMPARABLE.includes(latest) ? { record, verdict: latest } : { record, exclude: 'no-merge-gate-verdict' };
   });
 }
 
@@ -245,14 +255,24 @@ function readRecord(deps, record) {
       const pr = JSON.parse(deps.gh(['pr', 'view', String(ref.number), '--json', 'state,mergeCommit,mergedAt']));
       const sha = pr && pr.mergeCommit && pr.mergeCommit.oid;
       if (pr.state === 'MERGED' && SHA_RE.test(String(sha)) && (!best || String(pr.mergedAt) > best.mergedAt)) {
-        best = { sha, mergedAt: String(pr.mergedAt) };
+        best = { sha, pr: ref.number, mergedAt: String(pr.mergedAt) };
       }
     } catch {
       // a closing reference that cannot be read is not a merge commit
     }
   }
   if (!best) return { exclude: 'no-merge-commit' };
-  return { title: scrubLocalPaths(issue.title || ''), body: scrubLocalPaths(issue.body || ''), mergeSha: best.sha };
+  return { title: scrubLocalPaths(issue.title || ''), body: scrubLocalPaths(issue.body || ''), mergeSha: best.sha, closingPr: best.pr };
+}
+
+// The PR's check state, read the way production's merge-check reads it (judgments.js gatherInputs): the parsed
+// `gh pr checks {pr} --json name,bucket`, or the string `checks: unreadable`.
+function readChecks(deps, pr) {
+  try {
+    return JSON.parse(deps.gh(['pr', 'checks', String(pr), '--json', 'name,bucket']));
+  } catch {
+    return CHECKS_UNREADABLE;
+  }
 }
 
 // blast-radius.js at the merge commit in a scratch checkout: the parsed { mergeBase, config, summary } or { exclude }.
@@ -311,6 +331,8 @@ async function extract(opts, deps) {
       continue;
     }
     for (const v of verdictsOf(content)) {
+      // A later run with no merge-gate verdict never replaces an earlier real one; among merge-gate verdicts the latest wins.
+      if (v.exclude && byRecord.has(v.record)) continue;
       if (byRecord.has(v.record)) superseded += 1;
       byRecord.set(v.record, { ...v, content });
     }
@@ -346,8 +368,8 @@ async function extract(opts, deps) {
       continue;
     }
     entries.push({
-      record, verdict: cand.verdict, mergeSha: rec.mergeSha, title: rec.title, body: rec.body,
-      blastRadius: blast.blastRadius, reviewFindings: review.findings,
+      record, verdict: cand.verdict, mergeSha: rec.mergeSha, closingPr: rec.closingPr, title: rec.title, body: rec.body,
+      checks: readChecks(deps, rec.closingPr), blastRadius: blast.blastRadius, reviewFindings: review.findings,
     });
   }
   const out = {
@@ -392,33 +414,32 @@ function bump(bucket, expected, runs, agree) {
 
 const newBucket = () => ({ fixtures: 0, runs: 0, agree: 0, byExpected: { 'auto-merge': { runs: 0, agree: 0 }, 'needs-human': { runs: 0, agree: 0 } } });
 
-// One fixture's launches: the verdict of each repeat ('needs-human' for any launch that did not return a valid verdict).
+// One fixture's launches: { verdicts, failures }. Only a launch that returned a valid verdict is a judged run; a failed
+// launch or an invalid envelope adds to `failures` and to no verdict, so it can never read as agreement.
 async function judgeFixture(fx, floor, opts, deps, rules) {
   const policy = { 'auto-merge-max-lines': floor.limits.lines, 'auto-merge-max-files': floor.limits.files };
   return withScratch(deps, fx.mergeSha, async (dir) => {
     const diff = deps.git(['-C', dir, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--end-of-options', `${fx.mergeSha}^1`, fx.mergeSha, '--']);
     const prompt = buildMergeCheckPrompt({
       record: fx.record, title: fx.title, body: fx.body, diff, summary: floor.summary, policy,
-      checks: 'checks: not recorded for this historical replay', reviewFindings: fx.reviewFindings, rules,
+      checks: fx.checks === undefined ? CHECKS_UNREADABLE : fx.checks, reviewFindings: fx.reviewFindings, rules,
     });
     const settingsDir = deps.fs.mkdtempSync(path.join(deps.tmpdir, 'mc-eval-settings-'));
     const verdicts = [];
     let failures = 0;
     try {
       for (let i = 0; i < opts.repeat; i += 1) {
-        let verdict = 'needs-human';
         try {
           const env = await deps.launchWorker({
             role: 'merge-check', cwd: dir, prompt, schema: MERGE_CHECK_RESULT_SCHEMA, settingsDir,
             ceilings: { wallClockMs: opts.minutes * 60000, spendCeiling: opts.dollars }, platform: deps.platform, env: deps.env,
           });
           const result = env && env.status === 'ok' ? env.result : null;
-          if (result && COMPARABLE.includes(result.verdict)) verdict = result.verdict;
+          if (result && COMPARABLE.includes(result.verdict)) verdicts.push(result.verdict);
           else failures += 1;
         } catch {
           failures += 1;
         }
-        verdicts.push(verdict);
       }
     } finally {
       try {
@@ -469,7 +490,7 @@ async function evaluate(opts, deps) {
         results[idx] = { record: fx.record, expected: fx.verdict, floorDecided: false, floor: null, ...judged, findings: fx.reviewFindings.length };
       } catch (e) {
         // A fixture that could not be replayed is reported, never counted as agreement or as a pass.
-        results[idx] = { record: fx.record, expected: fx.verdict, floorDecided: false, floor: null, verdicts: [], failures: opts.repeat, error: errText(e), findings: fx.reviewFindings.length };
+        results[idx] = { record: fx.record, expected: fx.verdict, floorDecided: false, floor: null, verdicts: [], failures: 0, error: errText(e), findings: fx.reviewFindings.length };
       }
     }
   }
@@ -481,29 +502,48 @@ async function evaluate(opts, deps) {
   let floorDecided = 0;
   let launchFailures = 0;
   let replayErrors = 0;
+  const notJudged = [];
+  const failuresByRecord = {};
   for (const r of results) {
     if (r.floorDecided) {
       floorDecided += 1;
       continue;
     }
     launchFailures += r.failures;
+    if (r.failures > 0) failuresByRecord[r.record] = r.failures;
     if (r.error) replayErrors += 1;
+    if (r.verdicts.length === 0) {
+      notJudged.push(r.record);
+      continue;
+    }
     const agree = r.verdicts.filter((v) => v === r.expected).length;
     bump(agreement, r.expected, r.verdicts.length, agree);
     bump(r.findings === 0 ? byReviewFindings.empty : byReviewFindings.nonEmpty, r.expected, r.verdicts.length, agree);
     if (r.expected === 'needs-human' && r.verdicts.includes('auto-merge')) falseAutoMerge.push(r.record);
   }
+  const excludedList = Array.isArray(fixtures.excluded) ? fixtures.excluded : [];
+  const excludedByReason = {};
+  for (const e of excludedList) excludedByReason[e.reason] = (excludedByReason[e.reason] || 0) + 1;
+  const nonAutoMerge = all.filter((e) => e && e.verdict !== 'auto-merge').length;
   const rate = (b) => ({ ...b, rate: b.runs > 0 ? b.agree / b.runs : null });
   const summary = {
     total: picked.length,
     autoMergeFixtures: picked.filter((e) => e.verdict === 'auto-merge').length,
     needsHumanFixtures: picked.filter((e) => e.verdict === 'needs-human').length,
     floorDecided,
-    excluded: all.length - comparable.length,
+    skippedEntries: all.length - comparable.length,
+    excluded: excludedList.length,
+    excludedByReason,
+    ac9: {
+      entries: all.length, entriesFloor: AC9_ENTRIES_FLOOR, nonAutoMerge, nonAutoMergeFloor: AC9_NON_AUTO_MERGE_FLOOR,
+      met: all.length >= AC9_ENTRIES_FLOOR && nonAutoMerge >= AC9_NON_AUTO_MERGE_FLOOR,
+    },
     agreement: rate(agreement),
     falseAutoMerge,
+    notJudged,
     byReviewFindings: { empty: rate(byReviewFindings.empty), nonEmpty: rate(byReviewFindings.nonEmpty) },
     launchFailures,
+    launchFailuresByRecord: failuresByRecord,
     replayErrors,
     repeat: opts.repeat,
     dryRun: opts.dryRun,
@@ -513,7 +553,13 @@ async function evaluate(opts, deps) {
     deps.fs.mkdirSync(path.dirname(path.resolve(opts.out)), { recursive: true });
     deps.fs.writeFileSync(opts.out, `${JSON.stringify({ ...summary, results }, null, 2)}\n`);
   }
-  return falseAutoMerge.length > 0 ? 1 : 0;
+  if (falseAutoMerge.length > 0) return 1;
+  // A run with a failed launch or an unreplayable fixture judged less than it was asked to: not a clean result.
+  if (!opts.dryRun && (launchFailures > 0 || replayErrors > 0)) {
+    deps.err(`evaluate: ${launchFailures} launch failure(s), ${replayErrors} replay error(s); not a clean result (exit 3)`);
+    return 3;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------------------------------------
