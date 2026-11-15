@@ -76,11 +76,15 @@ function loadAcceptanceRules(readFile, route) {
   return loadParts(readFile, parts);
 }
 
-// A record or parent body is the one input the wrap cannot fence, so a line that spells either marker is
-// defanged before wrapping: its `<`/`>` runs are dropped, and it can no longer end (or reopen) the block.
-const MARKER_WORDS = /\b(?:BEGIN|END)\s+UNTRUSTED\s+RECORD\s+CONTENT\b/i;
+// A record or parent body is the one input the wrap cannot fence, so it is defanged structurally, not by
+// wording: the text is NFKC-normalised (folds fullwidth/small `<` `>`), invisible format characters (zero-width
+// space and kin) are dropped, and EVERY run of 3+ angle-like characters (ASCII plus the guillemet, single
+// guillemet, angle-bracket, double-angle, and math forms NFKC leaves unfolded) is replaced — whatever words
+// surround it. Only the template's own two marker lines then carry such a run, so a body cannot end or
+// reopen the block; a line break splitting a run leaves runs of at most two, which is not a marker.
+const ANGLE_RUN = /[<>«»‹›˂˃≪≫⋘⋙⦉⦊❬-❱⟨-⟫〈-》]{3,}/g;
 function defangMarkers(text) {
-  return String(text).split(/\r\n|[\r\n]/).map((line) => (MARKER_WORDS.test(line) ? line.replace(/[<>]+/g, '[marker removed]') : line)).join('\n');
+  return String(text).normalize('NFKC').replace(/\p{Cf}/gu, '').split(/\r\n|[\r\n]/).map((line) => line.replace(ANGLE_RUN, '[marker removed]')).join('\n');
 }
 
 // The template of _shared/untrusted-record-content.md, "Caller obligation 1 — wrap".

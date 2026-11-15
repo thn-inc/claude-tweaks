@@ -18,6 +18,11 @@ const { MERGE_CHECK_RESULT_SCHEMA } = require('./roles');
 const { loadMergeCheckRules, buildMergeCheckPrompt } = require('./judgment-prompts');
 const { bin, isPlainObject, isInterrupted, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
 const { verdictText, VERDICT_STEPS, confirmFromFile } = require('../dispatch/merge-verdict');
+const { runAcceptance: defaultRunAcceptance } = require('./acceptance');
+
+// A sanitized error code for a stop detail: the error's own `code` when it is an upper-case token, never its
+// message (mirrors review.js's codeSuffix, which is not exported).
+const codeSuffix = (err) => (err && typeof err.code === 'string' && /^[A-Z0-9_]+$/.test(err.code) ? ` (${err.code})` : '');
 
 // One merge-check event.
 function emitEvent(deps, startedAt, verdict, floor, detail) {
@@ -141,9 +146,10 @@ async function judgeMergeCheck(env, ctx) {
       }
     }
     return finish(deps, startedAt, ctx, env, reached, floor, detail);
-  } catch {
-    emitEvent(deps, startedAt, verdict, floor, 'merge-check failed unexpectedly');
-    return { verdict, floor, detail: 'merge-check failed unexpectedly' };
+  } catch (err) {
+    const failed = `merge-check failed unexpectedly${codeSuffix(err)}`;
+    emitEvent(deps, startedAt, verdict, floor, failed);
+    return { verdict, floor, detail: failed };
   }
 }
 
@@ -176,8 +182,8 @@ function finish(deps, startedAt, ctx, env, reached, floor, detail) {
   return { verdict, floor, detail: cleanDetail(detail) };
 }
 
-// The supplier merge.js takes as `deps.judgments`. `runAcceptance` (acceptance.js, resolved lazily so
-// this module loads before that one exists) runs only after a confirmed auto-merge.
+// The supplier merge.js takes as `deps.judgments`. `runAcceptance` (default: acceptance.js's) runs only
+// after a confirmed auto-merge; a caller may inject its own.
 function createJudgments({ deps, shared, readFile, runAcceptance } = {}) {
   const read = typeof readFile === 'function' ? readFile : (p) => fs.readFileSync(p, 'utf8');
   return async function judgments(ctx) {
@@ -186,7 +192,7 @@ function createJudgments({ deps, shared, readFile, runAcceptance } = {}) {
       if (mc.verdict !== 'auto-merge') {
         return { mergeCheck: { verdict: mc.verdict }, acceptance: { completed: false } };
       }
-      const run = typeof runAcceptance === 'function' ? runAcceptance : require('./acceptance').runAcceptance;
+      const run = typeof runAcceptance === 'function' ? runAcceptance : defaultRunAcceptance;
       const acc = await run({ deps, shared, readFile: read }, ctx);
       return { mergeCheck: { verdict: mc.verdict }, acceptance: { completed: !!acc && acc.completed === true } };
     } catch {
@@ -195,4 +201,4 @@ function createJudgments({ deps, shared, readFile, runAcceptance } = {}) {
   };
 }
 
-module.exports = { judgeMergeCheck, createJudgments, blastFloor };
+module.exports = { judgeMergeCheck, createJudgments, blastFloor, launchAndValidate };

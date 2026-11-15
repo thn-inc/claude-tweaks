@@ -27,6 +27,7 @@ const { ACCEPTANCE_RESULT_SCHEMA } = require('./roles');
 const { bin, isPlainObject, isInterrupted, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
 const { readSection, loadAcceptanceRules, buildAcceptancePrompt } = require('./judgment-prompts');
 const { inline, codeSpan } = require('../wrap-up/packet-render');
+const { findCredentialInText } = require('../wrap-up/packet-links');
 const { findRunComments } = require('../../find-run-comment');
 const { isTrustedComment } = require('../issues/comment-trust');
 const { parseRecordFacets } = require('../issues/record');
@@ -201,6 +202,35 @@ function validateResult(route, result, endToEnd) {
   return null;
 }
 
+// ---- credential screen ----
+
+const GROUP_KEYS = Object.freeze(['name', 'precondition', 'access', 'entryPoint', 'expected']);
+
+// Every [field, text] pair of well-formed Try it groups (validateResult ran first).
+function* groupTexts(groups, field) {
+  for (const [i, g] of groups.entries()) {
+    for (const key of GROUP_KEYS) yield [`${field}[${i}].${key}`, g[key]];
+    for (const [j, step] of g.steps.entries()) yield [`${field}[${i}].steps[${j}]`, step];
+  }
+}
+
+// { stop } naming the post step and the first worker field that carries a credential-shaped value (the
+// field, never the value), else null. The parent routes post worker text directly, so it is screened here
+// the way the no-parent packet's validator and render screen it. Nothing has been written when this runs.
+// `route` is try-it-only (the end-to-end groups are posted only when the parent gate is `due`, i.e. `endToEnd`)
+// or due-exceeds (the brief's own fields too).
+function screenWorkerText(result, route, endToEnd) {
+  const briefStep = route === 'due-exceeds' ? 'parent brief post' : 'try-it post';
+  const pairs = [];
+  if (route === 'due-exceeds') {
+    pairs.push(['parent brief post', 'parentBrief.ask', result.parentBrief.ask], ['parent brief post', 'parentBrief.whatShipped', result.parentBrief.whatShipped]);
+  }
+  if (endToEnd) for (const [field, text] of groupTexts(endToEnd, 'parentBrief.tryItEndToEnd')) pairs.push([briefStep, field, text]);
+  for (const [field, text] of groupTexts(result.tryIt, 'tryIt')) pairs.push(['try-it post', field, text]);
+  const hit = pairs.find(([, , text]) => findCredentialInText(text));
+  return hit ? { stop: `${hit[0]}: a credential-shaped value was withheld (${hit[1]})` } : null;
+}
+
 // ---- execution ----
 
 // A step's exit named for the detail; a throw or a null status (a killed child) is named too.
@@ -261,10 +291,11 @@ function writeText({ deps }, file, text, what) {
 
 // Rules, prompt, launch, validate. { result } or { stop }. `extra` carries the route's own prompt inputs;
 // `endToEnd` marks a route that also owes the end-to-end Try it variant (the parent gate is `due`).
-async function judge(env, ctx, route, extra, endToEnd = false) {
+// `preRead` is a record-and-diff read the route already made, handed over so the record is read once.
+async function judge(env, ctx, route, extra, endToEnd = false, preRead = null) {
   const rules = loadAcceptanceRules(env.readFile, route);
   if (!rules.ok) return { stop: `skill section missing: ${rules.missing}` };
-  const inputs = readRecordAndDiff(env.deps, ctx, { files: true });
+  const inputs = preRead || readRecordAndDiff(env.deps, ctx, { files: true });
   if (inputs.stop) return inputs;
   const prompt = buildAcceptancePrompt({ route, record: ctx.record, ...inputs, ...extra, endToEnd, rules: rules.text });
   const launched = await launchJudge(env, ctx, {
@@ -363,12 +394,16 @@ async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   if (verdict.state !== 'due') {
     const judged = await judge(env, ctx, decision.route, {});
     if (judged.stop) return judged;
+    const screened = screenWorkerText(judged.result, decision.route, null);
+    if (screened) return screened;
     return postTryIt(env, ctx, state, judged.result.tryIt, null, tmp) || {};
   }
   const parent = readParent(env, ctx, verdict);
   if (parent.stop) return parent;
   const judged = await judge(env, ctx, decision.route, parentInputs(parent.read, verdict), true);
   if (judged.stop) return judged;
+  const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
+  if (screened) return screened;
   return postTryIt(env, ctx, state, judged.result.tryIt, judged.result.parentBrief.tryItEndToEnd, tmp) || {};
 }
 
@@ -379,6 +414,8 @@ async function dueExceeds(env, ctx, state, decision, verdict, tmp) {
   const { parent, read } = found;
   const judged = await judge(env, ctx, decision.route, parentInputs(read, verdict), true);
   if (judged.stop) return judged;
+  const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
+  if (screened) return screened;
   const labels = labelsOn(decision, 'parent');
   const bootstrapped = ensureLabels(env, ctx, labels);
   if (bootstrapped) return bootstrapped;
@@ -418,10 +455,19 @@ function testGuideClaims(groups) {
 
 async function noParent(env, ctx, decision, tmp) {
   const files = Object.fromEntries(['facts.json', 'links.json', 'narrative.json', 'plan.md', 'packet.md', 'spec.md'].map((f) => [f.split('.')[0], path.join(tmp, f)]));
+  // The record body is the spec on this lane (verification-brief.md's `--spec`): without it the packet's
+  // acceptance criteria are not derived. It is read once, before the first gather, so the worker's facts
+  // carry the check:ac-* rows it cites; the same read is handed to the worker prompt below.
+  const inputs = readRecordAndDiff(env.deps, ctx, { files: true });
+  if (inputs.stop) return inputs;
+  const specFailed = writeText(env, files.spec, inputs.body, 'spec');
+  if (specFailed) return specFailed;
   const gather = (extra) => cli(env, 'acceptance-packet.js', [
     'gather', '--record', String(ctx.record), '--out', files.facts, '--run', ctx.runDir, '--base', `origin/${ctx.base}`, '--head', ctx.head,
-    ...extra, '--surface', 'backend',
+    '--spec', files.spec, ...extra, '--surface', 'backend',
   ], ctx.worktree);
+  // Two gathers, neither redundant: this first one supplies the facts the worker cites; the second runs
+  // after the worker returns, so the links built from its Try it groups (`--links`) can be added to the facts.
   const g1 = gather([]);
   if (!g1 || g1.code !== 0) return { stop: exitText('gather', g1) };
   let facts;
@@ -430,16 +476,13 @@ async function noParent(env, ctx, decision, tmp) {
   } catch {
     return { stop: 'gather output unreadable' };
   }
-  const judged = await judge(env, ctx, decision.route, { facts });
+  const judged = await judge(env, ctx, decision.route, { facts }, false, inputs);
   if (judged.stop) return judged;
   const { tryIt, observationPlan, claims } = judged.result;
   const links = tryIt.map((g, n) => ({ id: `entry-point-${n + 1}`, label: g.name, command: g.entryPoint }));
-  // The record body is the spec on this lane (verification-brief.md's `--spec`): without it the packet's
-  // acceptance criteria are not derived. The body the worker already read is written, not read again.
-  const linksFailed = writeText(env, files.links, JSON.stringify(links), 'links')
-    || writeText(env, files.spec, judged.body, 'spec');
+  const linksFailed = writeText(env, files.links, JSON.stringify(links), 'links');
   if (linksFailed) return linksFailed;
-  const g2 = gather(['--links', files.links, '--spec', files.spec]);
+  const g2 = gather(['--links', files.links]);
   if (!g2 || g2.code !== 0) return { stop: exitText('gather', g2) };
   const narrative = { schemaVersion: 1, claims: [...claims, ...testGuideClaims(tryIt)] };
   const failed = writeText(env, files.narrative, JSON.stringify(narrative), 'narrative')
@@ -449,6 +492,16 @@ async function noParent(env, ctx, decision, tmp) {
     'render', '--facts', files.facts, '--narrative', files.narrative, '--out', files.packet, '--observation-plan', files.plan, '--poster', POSTER,
   ], ctx.worktree);
   if (!rendered || rendered.code !== 0) return { stop: exitText('render', rendered) };
+  // A dropped or screened claim means the packet lacks a Try it step (or another claim) the worker wrote:
+  // nothing is posted or labelled from a partial packet.
+  let counts;
+  try {
+    counts = JSON.parse(String(rendered.stdout));
+  } catch {
+    counts = null;
+  }
+  if (!isPlainObject(counts) || !Number.isInteger(counts.dropped) || !Number.isInteger(counts.screened)) return { stop: 'render output unreadable (no dropped/screened counts)' };
+  if (counts.dropped > 0 || counts.screened > 0) return { stop: `render dropped ${counts.dropped} claim(s) and screened ${counts.screened} claim(s); the packet is partial, nothing posted` };
   const labels = labelsOn(decision, 'record');
   const bootstrapped = ensureLabels(env, ctx, labels);
   if (bootstrapped) return bootstrapped;
@@ -466,14 +519,18 @@ async function noParent(env, ctx, decision, tmp) {
 
 async function execute(env, ctx, state) {
   const { deps } = env;
+  state.step = 'policy floors';
   const floors = readFloors(env, ctx);
   if (floors.stop) return floors;
+  state.step = 'record facets';
   const facets = readFacets(env, ctx);
   if (facets.stop) return facets;
+  state.step = 'parent gate';
   const gate = readGate(env, ctx);
   const decision = decideRoute({ gate, facets: facets.facets, floors: floors.floors });
   if (decision.route === null) return { stop: decision.error };
   state.route = decision.route;
+  state.step = `route ${decision.route}`;
   const note = decision.fallback ? `; ${decision.fallback}` : '';
   const tmp = path.join(ctx.runDir, 'acceptance');
   try {
@@ -488,16 +545,22 @@ async function execute(env, ctx, state) {
   return out.stop ? { stop: `${out.stop}${note}` } : { detail: `route ${decision.route} complete${note}` };
 }
 
+// The thrown error's code (or, failing that, its name) as a bounded token, never its message.
+const errorSuffix = (err) => {
+  const token = err && [err.code, err.name].find((v) => typeof v === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(v));
+  return token ? ` (${token})` : '';
+};
+
 // The driver's acceptance step: { completed, route, detail }, one `merge-acceptance` event, never throws.
 async function runAcceptance(env, ctx) {
   const deps = env && env.deps;
   const startedAt = clock(deps);
-  const state = { route: null, skipped: 0 };
+  const state = { route: null, skipped: 0, step: 'start' };
   let out;
   try {
     out = await execute(env, ctx, state);
-  } catch {
-    out = { stop: 'acceptance failed unexpectedly' };
+  } catch (err) {
+    out = { stop: `acceptance failed unexpectedly at ${state.step}${errorSuffix(err)}` };
   }
   // A signal during the worker launch was already reported by run.js's handler: no event, nothing more.
   if (isInterrupted(deps)) return { completed: false, route: state.route, detail: 'interrupted' };

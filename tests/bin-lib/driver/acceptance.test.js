@@ -230,7 +230,9 @@ function harness(route, over = {}) {
         rec.plan = fs.readFileSync(flagOf(args, '--observation-plan'), 'utf8');
         const code = exit.render || 0;
         if (code === 0) fs.writeFileSync(flagOf(args, '--out'), '<!-- acceptance-packet -->\npacket\n');
-        return { code, stdout: '', stderr: '' };
+        const stdout = spec.renderStdout !== undefined ? spec.renderStdout
+          : JSON.stringify({ out: flagOf(args, '--out'), dropped: spec.renderDropped || 0, screened: spec.renderScreened || 0, truncated: false, chars: 30 });
+        return { code, stdout, stderr: '' };
       }
       if (rec.sub === 'post') {
         rec.body = readIf(flagOf(args, '--body-file'));
@@ -614,9 +616,8 @@ describe('runAcceptance: no-parent routes', () => {
     const [g1, g2] = h.packet('gather');
     assert.strictEqual(g1.args.includes('--links'), false);
     assert.strictEqual(g2.args.includes('--links'), true);
-    assert.strictEqual(g1.args.includes('--spec'), false);
-    assert.strictEqual(g2.args.includes('--spec'), true);
     for (const g of [g1, g2]) {
+      assert.strictEqual(g.args.includes('--spec'), true);
       assert.strictEqual(flagOf(g.args, '--surface'), 'backend');
       assert.strictEqual(flagOf(g.args, '--base'), 'origin/main');
       assert.strictEqual(flagOf(g.args, '--head'), 'drive-7');
@@ -652,25 +653,43 @@ describe('runAcceptance: no-parent routes', () => {
     assert.ok(guide[0].text.includes('Run it'));
   });
 
-  test('the second gather is handed the record body as --spec; the first is not', async () => {
+  test('both gathers are handed the record body as --spec, and the record is read once', async () => {
     const h = harness('no-parent-gated');
     await h.run();
     const [g1, g2] = h.packet('gather');
-    assert.strictEqual(g1.args.includes('--spec'), false);
-    const spec = flagOf(g2.args, '--spec');
+    const spec = flagOf(g1.args, '--spec');
+    assert.strictEqual(flagOf(g2.args, '--spec'), spec);
     assert.strictEqual(path.dirname(spec), path.join(h.ctx.runDir, 'acceptance'), 'the acceptance temp dir, not the worker settings dir');
     assert.strictEqual(fs.readFileSync(spec, 'utf8'), 'Rec body');
+    assert.strictEqual(h.gh('issue', 'view').filter((c) => c.args.includes('title,body')).length, 1);
   });
 
-  test('a spec file that cannot be written is a stop before the second gather', async () => {
+  test('a spec file that cannot be written is a stop before the first gather', async () => {
     const h = harness('no-parent-gated');
     const write = h.env.deps.writeFile;
     h.env.deps.writeFile = (f, t) => { if (path.basename(f) === 'spec.md') throw new Error('disk'); write(f, t); };
     const r = await h.run();
     assert.strictEqual(r.completed, false);
     assert.match(r.detail, /spec file not written/);
-    assert.strictEqual(h.packet('gather').length, 1);
+    assert.strictEqual(h.packet('gather').length, 0);
+    assert.strictEqual(h.launches().length, 0);
   });
+
+  for (const [name, over, detail] of [
+    ['dropped claims', { renderDropped: 1 }, /render dropped 1 claim\(s\) and screened 0/],
+    ['screened claims', { renderScreened: 2 }, /render dropped 0 claim\(s\) and screened 2/],
+    ['unreadable render counts', { renderStdout: 'not json' }, /render output unreadable/],
+  ]) {
+    test(`${name} from render: not completed, nothing posted, no label`, async () => {
+      const h = harness('no-parent-gated', over);
+      const r = await h.run();
+      assert.strictEqual(r.completed, false);
+      assert.match(r.detail, detail);
+      assert.strictEqual(h.packet('post').length, 0);
+      assert.strictEqual(h.writes().length, 0);
+      assert.strictEqual(h.gh('label').length, 0);
+    });
+  }
 
   test('changed files are read with -z and split on NUL, so a non-ASCII path reaches the prompt raw', async () => {
     const h = harness('no-parent-gated', { changedFiles: 'docs/café.md\0plugin/bin/x.js' });
@@ -755,7 +774,8 @@ describe('runAcceptance: failures and bounds', () => {
     ['label create throws', 'no-parent-gated', { ghThrow: (a) => a[0] === 'label' && a[1] === 'create' }, /label/],
     ['worker launch throws', 'try-it-only', { envelope: new Error('spawn') }, /launch/],
     ['worker status not ok', 'try-it-only', { envelope: { status: 'timeout' } }, /worker/],
-    ['worker result not an object', 'try-it-only', { envelope: { status: 'ok', result: 'x' } }, /worker/],
+    ['worker status fail with a schema-valid result', 'try-it-only', { envelope: { status: 'fail', reason: 'schema', result: result({ tryIt: [GROUP] }) } }, /no valid result/],
+    ['worker result not an object','try-it-only', { envelope: { status: 'ok', result: 'x' } }, /worker/],
     ['tryIt empty', 'try-it-only', { envelope: ok({ tryIt: [] }) }, /tryIt/],
     ['tryIt step list empty', 'try-it-only', { envelope: ok({ tryIt: [{ ...GROUP, steps: [] }] }) }, /tryIt/],
     ['tryIt field blank', 'try-it-only', { envelope: ok({ tryIt: [{ ...GROUP, expected: '  ' }] }) }, /tryIt/],
@@ -809,6 +829,46 @@ describe('runAcceptance: failures and bounds', () => {
     const h = harness('no-parent-exempt', { envelope: ok({ tryIt: [GROUP], observationPlan: { kind: 'diff', entryPoint: 'origin/main...HEAD', prepare: [], inspect: [] }, claims: [] }) });
     assert.strictEqual((await h.run()).completed, true);
     assert.ok(h.packet('render')[0].plan.endsWith('- Inspect: none\n'));
+  });
+
+  test('a non-ok envelope with a schema-valid result posts nothing', async () => {
+    const h = harness('try-it-only', { envelope: { status: 'fail', reason: 'schema', result: result({ tryIt: [GROUP] }) } });
+    assert.strictEqual((await h.run()).completed, false);
+    assert.strictEqual(h.writes().length, 0);
+  });
+
+  test('the catch-all names the step and a sanitized error code, never the message', async () => {
+    const h = harness('try-it-only');
+    h.ctx.runDir = undefined;
+    const r = await h.run();
+    assert.strictEqual(r.completed, false);
+    assert.match(r.detail, /acceptance failed unexpectedly at route try-it-only \(ERR_INVALID_ARG_TYPE\)/);
+    assert.doesNotMatch(r.detail, /must be of type/);
+    assert.strictEqual(h.writes().length, 0);
+  });
+
+  describe('a credential-shaped worker value is withheld, never posted', () => {
+    const BEARER = 'curl -H "Authorization: Bearer abcdef123456" https://x.test';
+    const KEY = 'run with api_key=sk12345678 set';
+    const CASES = [
+      ['try-it-only', 'a Try it step', ok({ tryIt: [{ ...GROUP, steps: ['Run it', BEARER] }] }), /try-it post.*credential-shaped.*tryIt\[0\]\.steps\[1\]/],
+      ['try-it-only', 'a Try it expected value', ok({ tryIt: [{ ...GROUP, expected: KEY }] }), /try-it post.*tryIt\[0\]\.expected/],
+      ['due-below', 'an end-to-end step', ok({ tryIt: [GROUP], parentBrief: { tryItEndToEnd: [{ ...E2E, steps: [`${KEY} (#7)`] }] } }), /try-it post.*parentBrief\.tryItEndToEnd\[0\]\.steps\[0\]/],
+      ['due-exceeds', 'the ask', ok({ tryIt: [GROUP], parentBrief: { ask: BEARER, whatShipped: 'x', tryItEndToEnd: [E2E] } }), /parent brief post.*parentBrief\.ask/],
+      ['due-exceeds', 'whatShipped', ok({ tryIt: [GROUP], parentBrief: { ask: 'a', whatShipped: KEY, tryItEndToEnd: [E2E] } }), /parent brief post.*parentBrief\.whatShipped/],
+      ['due-exceeds', 'an end-to-end step', ok({ tryIt: [GROUP], parentBrief: { ask: 'a', whatShipped: 'x', tryItEndToEnd: [{ ...E2E, steps: [`${BEARER} (#7)`] }] } }), /parent brief post.*tryItEndToEnd\[0\]\.steps\[0\]/],
+      ['due-exceeds', 'a Try it step', ok({ tryIt: [{ ...GROUP, steps: [KEY] }], parentBrief: { ask: 'a', whatShipped: 'x', tryItEndToEnd: [E2E] } }), /try-it post.*tryIt\[0\]\.steps\[0\]/],
+    ];
+    for (const [route, name, envelope, detail] of CASES) {
+      test(`${route}: ${name} is not completed and makes no forge write`, async () => {
+        const h = harness(route, { envelope });
+        const r = await h.run();
+        assert.strictEqual(r.completed, false);
+        assert.match(r.detail, detail);
+        assert.doesNotMatch(r.detail, /abcdef123456|sk12345678/);
+        assert.strictEqual(h.writes().length, 0);
+      });
+    }
   });
 
   test('a failed render writes nothing to the forge', async () => {

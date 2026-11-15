@@ -15,7 +15,7 @@
 // rationale text and no local filesystem path.
 //
 // evaluate: replays each fixture through the production merge-check path — the two code floors first (judgments.js's
-// blastFloor), else `merge-check` workers --repeat times in a detached scratch checkout at the merge commit — and
+// blastFloor), else `merge-check` workers (judgments.js's launchAndValidate: the production launch and verdict check) --repeat times in a detached scratch checkout at the merge commit — and
 // prints { total, autoMergeFixtures, needsHumanFixtures, floorDecided, excluded, excludedByReason, ac9, agreement,
 // falseAutoMerge, notJudged, byReviewFindings, ... }. A launch that failed, or returned no valid verdict, is never a
 // judged run: it counts toward launchFailures and the record's notJudged status, not toward agreement. --dry-run
@@ -40,9 +40,8 @@ const { execFileSync, spawnSync } = require('child_process');
 
 const DRIVER = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'driver');
 const { confirmPassingVerdicts } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'dispatch', 'merge-verdict.js'));
-const { MERGE_CHECK_RESULT_SCHEMA } = require(path.join(DRIVER, 'roles.js'));
 const { loadMergeCheckRules, buildMergeCheckPrompt } = require(path.join(DRIVER, 'judgment-prompts.js'));
-const { blastFloor } = require(path.join(DRIVER, 'judgments.js'));
+const { blastFloor, launchAndValidate } = require(path.join(DRIVER, 'judgments.js'));
 const { WIN32_CLAUDE_BIN } = require(path.join(DRIVER, 'launch.js'));
 
 const BLAST_RADIUS = path.join(__dirname, '..', 'plugin', 'bin', 'blast-radius.js');
@@ -425,17 +424,20 @@ async function judgeFixture(fx, floor, opts, deps, rules) {
       checks: fx.checks === undefined ? CHECKS_UNREADABLE : fx.checks, reviewFindings: fx.reviewFindings, rules,
     });
     const settingsDir = deps.fs.mkdtempSync(path.join(deps.tmpdir, 'mc-eval-settings-'));
+    // Production's own launch and verdict validation (judgments.js launchAndValidate), on a scratch run dir and the
+    // scratch checkout as the worktree; the policy carries this run's ceilings.
+    const env = {
+      deps: { ...deps, mkdirSync: (p, o) => deps.fs.mkdirSync(p, o), runner: deps.runner || ((call) => require(path.join(DRIVER, 'worker.js')).defaultRunner(call)) },
+      shared: { policy: { 'express-driver-wall-clock-minutes': { value: opts.minutes }, 'express-driver-spend-ceiling-dollars': { value: opts.dollars } }, activeWorker: null },
+    };
+    const ctx = { runDir: settingsDir, worktree: dir };
     const verdicts = [];
     let failures = 0;
     try {
       for (let i = 0; i < opts.repeat; i += 1) {
         try {
-          const env = await deps.launchWorker({
-            role: 'merge-check', cwd: dir, prompt, schema: MERGE_CHECK_RESULT_SCHEMA, settingsDir,
-            ceilings: { wallClockMs: opts.minutes * 60000, spendCeiling: opts.dollars }, platform: deps.platform, env: deps.env,
-          });
-          const result = env && env.status === 'ok' ? env.result : null;
-          if (result && COMPARABLE.includes(result.verdict)) verdicts.push(result.verdict);
+          const judged = await launchAndValidate(env, ctx, prompt);
+          if (judged.verdict) verdicts.push(judged.verdict);
           else failures += 1;
         } catch {
           failures += 1;
