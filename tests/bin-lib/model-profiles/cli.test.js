@@ -1,5 +1,5 @@
 'use strict';
-const { test } = require('node:test');
+const { test, afterEach } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -32,14 +32,23 @@ function tmpProject(policyText) {
   return dir;
 }
 
-// A per-test directory the CLI writes its session-failure files under (deps.tmpDir).
+// A per-test directory the CLI writes its session-failure files under (deps.tmpDir);
+// removed after the test that made it.
+const madeTmpDirs = [];
 function tmpDirFor() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cli-tmp-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cli-tmp-'));
+  madeTmpDirs.push(dir);
+  return dir;
 }
+afterEach(() => {
+  for (const dir of madeTmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
 
-// One in-process call -> { code, stdout, stderr }.
-function call(args, cwd, { env = isolatedEnv(), tmp = tmpDirFor() } = {}) {
-  return runCliSync(CLI, args, { env, cwd, deps: { tmpDir: () => tmp } });
+// One in-process call -> { code, stdout, stderr }. The failure-file directory is
+// created only if the CLI asks for one, so a call that never touches it leaves none.
+function call(args, cwd, { env = isolatedEnv(), tmp } = {}) {
+  let dir = tmp;
+  return runCliSync(CLI, args, { env, cwd, deps: { tmpDir: () => { dir = dir || tmpDirFor(); return dir; } } });
 }
 
 // A successful resolution -> the parsed JSON line.
@@ -204,6 +213,23 @@ test('a failing tally append exits 1 naming the problem, with no stack trace', (
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /cannot append frontier tally/);
   assert.doesNotMatch(r.stderr, /\n\s+at /); // no stack frames
+});
+
+test('AC9.1: a relative --run-dir reads and appends the tally against the injected cwd', () => {
+  const dir = tmpProject(null);
+  fs.mkdirSync(path.join(dir, 'run'));
+  // The runner's real cwd has no `run`; only deps.cwd() can find the tally's directory.
+  assert.strictEqual(run(['frontier', '--run-dir', 'run'], dir).model, 'fable');
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'run', 'frontier-tally.log'), 'utf8').split('\n').filter(Boolean).length, 1);
+  assert.strictEqual(run(['frontier', '--run-dir', 'run'], dir).model, 'fable');
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'run', 'frontier-tally.log'), 'utf8').split('\n').filter(Boolean).length, 2);
+});
+
+test('output: a failing tally append prints the run-dir as typed, not the cwd-resolved path', () => {
+  const dir = tmpProject(null);
+  const r = call(['frontier', '--run-dir', 'no/such/dir'], dir);
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stderr, `resolve-profile: cannot append frontier tally: ENOENT: no such file or directory, open '${path.join('no', 'such', 'dir', 'frontier-tally.log')}'\n`);
 });
 
 test('malformed policy exits non-zero naming the problem', () => {

@@ -424,17 +424,19 @@ const CEILING_CASES = [
   ['no autonomy key', 'other-key: 1\n', true, ''],
 ];
 
-test('AC4.1, AC8.1: autonomy is read without starting resolve-policy.js (script entry)', { skip: STUB_SKIP }, () => {
+test('AC4.1, AC8.1: autonomy is read without starting resolve-policy.js (script entry)', () => {
   // Real process: proves the script entry resolves autonomy in-process (a node child would hit the stub, read unknown and omit the line).
+  // The stub and its marker run off win32 only (a script stub is never spawned there); the success path runs everywhere.
   const root = makeCeilingRoot('autonomy: supervised\n');
-  const stub = makeNodeStub();
+  const stub = STUB_SKIP ? null : makeNodeStub();
   try {
-    const res = spawnCli(CLI, ['--root', root], { env: cliEnv({ MARKER: stub.marker, PATH: stub.dir + path.delimiter + process.env.PATH }) });
+    const env = stub ? cliEnv({ MARKER: stub.marker, PATH: stub.dir + path.delimiter + process.env.PATH }) : cliEnv();
+    const res = spawnCli(CLI, ['--root', root], { env });
     assert.strictEqual(res.code, 0, res.stderr);
     assert.match(res.stdout, /Consider raising autonomy/);
-    assert.strictEqual(fs.existsSync(stub.marker), false, 'a node child was started');
+    if (stub) assert.strictEqual(fs.existsSync(stub.marker), false, 'a node child was started');
   } finally {
-    fs.rmSync(stub.dir, { recursive: true, force: true });
+    if (stub) fs.rmSync(stub.dir, { recursive: true, force: true });
   }
 });
 
@@ -524,7 +526,7 @@ test('AC9.1: the injected env reaches the policy core (a GIT_DIR in env redirect
   assert.strictEqual(init.status, 0, init.stderr);
   fs.mkdirSync(path.join(other, '.claude-tweaks'));
   fs.writeFileSync(path.join(other, '.claude-tweaks', 'policy.yml'), 'autonomy: trusted\n');
-  const plain = runRaw(['--root', root]);
+  const plain = runRaw(['--root', root], { env: gitEnv });
   assert.match(plain.stdout, /Consider raising autonomy/);
   const redirected = runRaw(['--root', root], { env: cliEnv({ GIT_DIR: path.join(other, '.git'), GIT_WORK_TREE: other }) });
   assert.strictEqual(redirected.code, 0, redirected.stderr);

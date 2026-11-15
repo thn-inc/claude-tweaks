@@ -1200,13 +1200,98 @@ test('resolveRepoRoot: outside a git repo, git\'s fatal line goes to deps.stderr
     // No --repo-root: git runs in the non-git cwd. A process.stderr write would trip the leak guard.
     const r = runCliArgs([plan], { cwd: repo, env: { GIT_CEILING_DIRECTORIES: os.tmpdir() } });
     assert.match(r.stderr, /not a git repository/i);
+    // The fallback is the injected cwd: plan.md exists there, so Check A passes and the audit exits 0.
+    assert.strictEqual(r.exitCode, 0);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('output: an unreadable plan prints the path as typed, not the cwd-resolved one', () => {
+  const repo = makeTmpRepo();
+  try {
+    const r = runCliArgs(['missing-plan.md', '--count-tasks'], { cwd: repo });
+    assert.strictEqual(r.exitCode, 2);
+    assert.strictEqual(r.stderr, "plan-audit.js: cannot read plan file missing-plan.md: ENOENT: no such file or directory, open 'missing-plan.md'\n");
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('output: an unreadable spec prints the path as typed, not the cwd-resolved one', () => {
+  const repo = makeERepo();
+  try {
+    writePlan(repo, cliEPlan());
+    const r = runCliArgs(['plan.md', '--repo-root', repo, '--spec', 'missing-spec.md'], { cwd: repo });
+    assert.strictEqual(r.exitCode, 2);
+    assert.strictEqual(r.stderr, "plan-audit.js: cannot read spec file missing-spec.md: ENOENT: no such file or directory, open 'missing-spec.md'\n");
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC9.1: a relative --spec resolves against the injected cwd', () => {
+  const repo = makeERepo();
+  try {
+    writePlan(repo, cliEPlan());
+    fs.writeFileSync(path.join(repo, 'spec.md'), CLI_E_SPEC);
+    const r = runCliArgs(['plan.md', '--repo-root', repo, '--spec', 'spec.md'], { cwd: repo });
+    assert.strictEqual(r.exitCode, 0);
+    const report = JSON.parse(r.stdout.split('\n')[0]);
+    assert.deepStrictEqual(report.checkE.uncovered, [{ id: 'AC2.3', clause: 'the total equals the recipient count.' }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC9.1: a relative --repo-root resolves against the injected cwd', () => {
+  const repo = makeTmpRepo();
+  try {
+    const root = path.join(repo, 'root');
+    fs.mkdirSync(path.join(root, 'plugin', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'plugin', 'bin', 'existing.js'), '// existing\n');
+    writePlan(repo, cliEPlan());
+    // Only deps.cwd() can find root/plugin/bin/existing.js; the runner's real cwd has no `root`.
+    const r = runCliArgs(['plan.md', '--repo-root', 'root'], { cwd: repo });
+    assert.strictEqual(r.exitCode, 0);
+    const report = JSON.parse(r.stdout.split('\n')[0]);
+    assert.strictEqual(report.checkA.ok, true);
+    assert.deepStrictEqual(report.checkA.missing, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('Check C runs its command under the injected env, not the inherited one', () => {
+  const repo = makeTmpRepo();
+  try {
+    const probe = 'PLAN_AUDIT_ENV_PROBE_5382';
+    assert.strictEqual(process.env[probe], undefined);
+    const plan = writePlan(repo, [
+      '### Task 1: Add a guard clause',
+      '**Files:**',
+      '- Modify: `plan.md`',
+      '',
+      '- [ ] **Step 2: Run test to verify it fails**',
+      '',
+      `Run: \`node -e "process.exit(process.env.${probe} ? 0 : 1)"\``,
+      'Expected: FAIL with "guard not present"',
+    ].join('\n'));
+    // The command passes only when the injected env carries the probe: that makes it non-discriminating.
+    const withProbe = runCliArgs([plan, '--repo-root', repo], { env: { [probe]: '1' } });
+    const reportWith = JSON.parse(withProbe.stdout.split('\n')[0]);
+    assert.strictEqual(reportWith.checkC.ok, false);
+    assert.strictEqual(reportWith.checkC.findings.length, 1);
+    const withoutProbe = runCliArgs([plan, '--repo-root', repo]);
+    const reportWithout = JSON.parse(withoutProbe.stdout.split('\n')[0]);
+    assert.strictEqual(reportWithout.checkC.ok, true);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
 
 test('AC6.1: require() prints nothing and leaves process.exitCode undefined', () => {
-  delete require.cache[CLI];
+  delete require.cache[require.resolve(CLI)];
   const writes = [];
   const outWrite = process.stdout.write;
   const errWrite = process.stderr.write;

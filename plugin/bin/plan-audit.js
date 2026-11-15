@@ -99,10 +99,12 @@ function run(argv, deps) {
   }
 
   let text;
+  const planResolved = resolveAgainst(deps.cwd(), parsed.planFile);
   try {
-    text = fs.readFileSync(resolveAgainst(deps.cwd(), parsed.planFile), 'utf8');
+    text = fs.readFileSync(planResolved, 'utf8');
   } catch (err) {
-    deps.stderr(`plan-audit.js: cannot read plan file ${parsed.planFile}: ${err.message}\n`);
+    // The message embeds the path handed to fs; print the spelling the user gave.
+    deps.stderr(`plan-audit.js: cannot read plan file ${parsed.planFile}: ${err.message.split(planResolved).join(parsed.planFile)}\n`);
     return 2;
   }
 
@@ -155,10 +157,11 @@ function run(argv, deps) {
   // unreadable plan — never a silent fall back to `skipped: 'no-spec'`.
   let specText = null;
   if (parsed.spec !== null) {
+    const specResolved = resolveAgainst(deps.cwd(), parsed.spec);
     try {
-      specText = fs.readFileSync(resolveAgainst(deps.cwd(), parsed.spec), 'utf8');
+      specText = fs.readFileSync(specResolved, 'utf8');
     } catch (err) {
-      deps.stderr(`plan-audit.js: cannot read spec file ${parsed.spec}: ${err.message}\n`);
+      deps.stderr(`plan-audit.js: cannot read spec file ${parsed.spec}: ${err.message.split(specResolved).join(parsed.spec)}\n`);
       return 2;
     }
   }

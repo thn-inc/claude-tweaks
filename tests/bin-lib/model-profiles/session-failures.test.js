@@ -231,3 +231,18 @@ test('invalidateFailures is a no-op with no session id', () => {
   assert.doesNotThrow(() => invalidateFailures(undefined));
   assert.doesNotThrow(() => invalidateFailures(''));
 });
+
+// recordFailure's read-modify-write reads under the same `dir` as its lock: a read from
+// os.tmpdir() would miss the first model and the second write would overwrite it.
+test('recordFailure with opts.dir accumulates models under that dir and never touches os.tmpdir()', () => {
+  const id = `sf-test-dir-${process.pid}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-dir-'));
+  try {
+    recordFailure(id, 'fable', { dir });
+    recordFailure(id, 'opus', { dir });
+    assert.deepStrictEqual(readFailedModels(id, { dir }), new Set(['fable', 'opus']));
+    assert.ok(!fs.existsSync(failurePath(id)), 'nothing lands under os.tmpdir()');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

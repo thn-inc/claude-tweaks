@@ -143,7 +143,7 @@ function run(argv, deps) {
 
   let frontierUsed = 0;
   // A relative --run-dir is read and appended against the injected cwd, not the
-  // process's own: unnormalized, so the kernel sees the spelling the user gave.
+  // process's own: resolved against it, then joined (normalized, as before).
   const tallyPath = runDir ? path.join(resolveAgainst(deps.cwd(), runDir), 'frontier-tally.log') : null;
   if (tallyPath && fs.existsSync(tallyPath)) {
     frontierUsed = fs.readFileSync(tallyPath, 'utf8')
@@ -167,7 +167,8 @@ function run(argv, deps) {
     try {
       fs.appendFileSync(tallyPath, `frontier\t${new Date().toISOString()}\n`);
     } catch (e) {
-      return fail(`cannot append frontier tally: ${e.message}`);
+      // The message embeds the path handed to fs; print the spelling the user gave.
+      return fail(`cannot append frontier tally: ${e.message.split(tallyPath).join(path.join(runDir, 'frontier-tally.log'))}`);
     }
   }
   deps.stdout(`${JSON.stringify(result)}\n`);

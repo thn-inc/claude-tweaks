@@ -572,11 +572,16 @@ test('AC9.1: the gh host probe reads the injected env and writes its one-time ho
   const { root, dir } = budgetTree();
   fs.rmSync(path.join(root, '.git'), { recursive: true });
   // the fixture's own setup git calls must not inherit a repo-pointing variable from the test runner
-  const { GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR, ...gitEnv } = process.env;
+  // GH_HOST is dropped too: an exported one makes the host probe return before it reads the remote.
+  const {
+    GH_HOST, GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR, ...gitEnv
+  } = process.env;
   for (const args of [['init', '-q'], ['remote', 'add', 'origin', 'git@acme.ghe.com:o/r.git']]) {
     execFileSync('git', args, { cwd: root, env: gitEnv, windowsHide: true });
   }
-  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const r = await run(['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown'], {
+    cwd: root, env: { ...gitEnv, PATH: `${path.join(root, 'stub-bin')}${path.delimiter}${process.env.PATH}` }, allowRealRunner: true,
+  });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /^claude-tweaks: .*acme\.ghe\.com.* — gh calls get GH_HOST=acme\.ghe\.com$/m);
 });
@@ -675,6 +680,17 @@ test('AC9.1: a relative --run resolves against the injected cwd', async () => {
   assert.equal(JSON.parse(r.stdout).runDir, path.join(parent, 'run'));
 });
 
+test('AC9.1: a relative --transcript resolves against the injected cwd, for its usage rows and its subagents/ dir', async () => {
+  const s = subagentRun();
+  // The runner's real cwd has no sess-1.jsonl; only deps.cwd() can find the transcript and sess-1/subagents.
+  const r = await run(['--run', s.dir, '--markdown', '--transcript', 'sess-1.jsonl'], { cwd: s.slugDir });
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.ok(t.transcripts[0].rows > 0, JSON.stringify(t.transcripts));
+  assert.equal(t.transcripts[0].note, undefined);
+  assert.equal(t.dispatches.items.length, 3);
+});
+
 // A run dir whose run-state.json names a worktree and session, plus the session's transcript
 // copied under `<configDir>/projects/<slug>/`.
 function autoFixture(configDir) {
@@ -705,7 +721,7 @@ test('--auto-transcript honours CLAUDE_CONFIG_DIR given only in the injected env
 });
 
 test('AC6.1: require() prints nothing and leaves process.exitCode undefined', () => {
-  delete require.cache[CLI];
+  delete require.cache[require.resolve(CLI)];
   const writes = [];
   const outWrite = process.stdout.write;
   const errWrite = process.stderr.write;
