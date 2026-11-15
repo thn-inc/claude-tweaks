@@ -25,10 +25,7 @@ const BIN_DIR = path.join(__dirname, '..', '..', 'plugin', 'bin');
 // test, with its reason, kept apart from this list.
 const NOT_YET = [
   'blast-radius.js',
-  'code-health.js',
   'declined-learning.js',
-  'design-detect.js',
-  'docs-health.js',
   'hooks.js',
   'init-verify-scope.js',
   'record-graph.js',
@@ -37,8 +34,6 @@ const NOT_YET = [
   'session-tmp-resolve.js',
   'verify.js',
   'visual-decide.js',
-  'wrap-up-engine.js',
-  'wrap-up-state.js',
 ];
 
 const GUARD = 'require.main === module';

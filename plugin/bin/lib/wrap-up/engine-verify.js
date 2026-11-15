@@ -26,7 +26,7 @@ const { execFileSync } = require('node:child_process');
 const { isPathContained } = require('../shared-primitives');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
-  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo, ghHostIn,
+  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo, ghHostIn, injectedGhDeps,
 } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
@@ -47,9 +47,15 @@ const { learnedSkillsDelivered } = require('../learned-skills/delivered');
 // #1230 found them to (defaultGit missing the `timeout` defaultGh already
 // had) -- one options object, reused by construction. `wrap` transforms that
 // object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
+// `ctx` is the caller's injected process context, `{ env, stderr, homeDir }`, each optional (#5379): an
+// `env` becomes the child's environment and reaches ghOptions' host lookup; absent, the child inherits
+// the real one.
 function makeDefaultRunner(cmd, wrap = (_args, o) => o) {
-  return function run(args, cwd) {
-    return execFileSync(cmd, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true }));
+  return function run(args, cwd, ctx = {}) {
+    return execFileSync(cmd, args, wrap(args, {
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true,
+      ...(ctx.env ? { env: ctx.env } : {}),
+    }, injectedGhDeps(ctx)));
   };
 }
 
@@ -743,9 +749,10 @@ function resolveParent(n, deps, cwd, workLinks, spec) {
 // The check's one repository: the origin remote, gated like bin/parent-gate.js (#4933)
 // -> { ok: true, spec: { host, owner, repo } } | { ok: false, error }. Resolved once per check run
 // and passed to every read for the run's gates (Clarification 7: one repository per gate
-// evaluation), for every target, parent or not. `deps.gateDeps` is undefined in production, so
-// gateOriginRepo reads process.env and gh's real hosts.yml, as the CLI does; a test injects it to
-// keep the result independent of the machine.
+// evaluation), for every target, parent or not. `deps.gateDeps` is the caller's injected process
+// context: wrap-up-engine.js passes injectedGhDeps({ env, stderr, homeDir }), which in production is
+// process.env and the real home directory's gh hosts.yml; absent, gateOriginRepo reads those
+// itself. A test injects it to keep the result independent of the machine.
 function resolveCheckRepo(deps, cwd) {
   let remote;
   try {
@@ -1247,8 +1254,8 @@ function runVerify({ runDir, originalRunDir, base, repoRoot, cwd, deps = {} }) {
         try {
           const { result, detail } = fn({
             runDir, originalRunDir: resolvedOriginalRunDir, base, repoRoot: resolvedRepoRoot,
-            // gateDeps stays undefined in production (the origin gate reads process.env and gh's
-            // hosts.yml); a test injects it so the origin gate's verdict is independent of the machine.
+            // gateDeps is the caller's injected env/stderr/homeDir (wrap-up-engine.js passes
+            // injectedGhDeps(ctx)); a test injects it so the origin gate's verdict is independent of the machine.
             cwd: resolvedCwd, expectations, deps: { git, gh, gateDeps: deps.gateDeps },
           });
           return { check: name, result, detail: detail || '' };

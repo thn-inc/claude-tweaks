@@ -74,7 +74,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    `closingRecords`): it equals `inputs.records` when `inputs.sources.records` is `headers` or
    `worktree-headers` — a materialized header, read from the worktree's mirror of the run dir until
    the header reaches the main checkout by merge — and is empty on a `manifest`/`worktree-manifest`
-   rung, whose ids include `not-run`/`failed` specs with no closing keyword to stamp. Every other
+   rung, whose ids include `not-run`/`failed` specs with no closing keyword to stamp, or a `config` rung, which names only the run's lowest record and carries no header-stated closing intent. Every other
    closing-keyword reader cites this field rather than restating the rule. Only when the pack
    could not be produced (Section E's production step failed, or this section was skipped) or lacks that field, list the
    worktree mirror's spec headers instead —

@@ -347,7 +347,9 @@ function runCheck(deps, flags) {
   // integration-model=pr-first is the run pin (_shared/integration-model.md's Run-scoped
   // stability): eligibility required pr-first, and the merge steps that follow must not
   // re-detect it, where a transient `gh` failure would flip the run to local-merge.
-  const configSet = `mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=${mergeVerification}`;
+  // spec={n} is the run's record pin (set-config.js's RUN_PINS): wrap-up's run binding
+  // and the pack's record resolution read `spec:` from this config.yml.
+  const configSet = `mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=${mergeVerification},spec=${n}`;
   return emit(deps, { action: 'proceed', head, mergeVerification, configSet, bounds }, logged);
 }
 
