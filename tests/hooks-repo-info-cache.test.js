@@ -12,7 +12,7 @@ const path = require('path');
 const cp = require('child_process');
 const { repoInfo } = require('../plugin/bin/lib/hooks/worktree-detect');
 const {
-  resetMemo, lookupRepoInfo, rememberRepoInfo, repoSignature, storePath,
+  resetMemo, lookupRepoInfo, rememberRepoInfo, repoSignature, storePath, storeBypassed,
 } = require('../plugin/bin/lib/hooks/repo-info-cache');
 const { gitRepo, linkedWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 const { isolateRepoInfoCache } = require('./helpers/repo-info-cache');
@@ -517,11 +517,40 @@ test('#5294 review: the store file is created readable by its owner only', { ski
   assert.strictEqual(mode, 0o600, `mode ${mode.toString(8)}`);
 });
 
-test('#5294 review: a relative CT_HOOKS_REPO_INFO_STORE is ignored', () => {
-  const fallback = path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json');
-  assert.strictEqual(storePath({ CT_HOOKS_REPO_INFO_STORE: path.join('rel', 'store.json') }), fallback);
+// A writer killed mid-write leaves its temp file behind; a later process with
+// the same pid writes into it, and writeFileSync keeps an existing file's mode.
+test('#5294 review: a leftover temp file does not lend the store its mode', { skip: process.platform === 'win32' }, (t) => {
+  isolateRepoInfoCache(t);
+  const dir = scratchDir('ct-ric-mode-tmp-');
+  const file = process.env.CT_HOOKS_REPO_INFO_STORE;
+  fs.writeFileSync(`${file}.tmp-${process.pid}`, 'left behind', { mode: 0o644 });
+  rememberRepoInfo(dir, process.env, repoSignature(dir), { repoRoot: null, isLinkedWorktree: false, indeterminate: false });
+  const mode = fs.statSync(file).mode & 0o777;
+  assert.strictEqual(mode, 0o600, `mode ${mode.toString(8)}`);
+});
+
+test('#5294 review: a relative CT_HOOKS_REPO_INFO_STORE turns the store off', (t) => {
+  const relative = path.join('rel', 'store.json');
   const absolute = path.join(os.tmpdir(), 'abs-store.json');
+  assert.strictEqual(storeBypassed({ CT_HOOKS_REPO_INFO_STORE: relative }), true);
+  assert.strictEqual(storeBypassed({ CT_HOOKS_REPO_INFO_STORE: absolute }), false);
   assert.strictEqual(storePath({ CT_HOOKS_REPO_INFO_STORE: absolute }), absolute);
+
+  // End to end: with a relative value nothing is written, here or at home.
+  isolateRepoInfoCache(t);
+  const isolated = process.env.CT_HOOKS_REPO_INFO_STORE;
+  const cwd = fs.realpathSync(scratchDir('ct-ric-rel-'));
+  const env = { ...process.env, CT_HOOKS_REPO_INFO_STORE: relative };
+  const prior = process.cwd();
+  process.chdir(cwd);
+  try {
+    rememberRepoInfo(cwd, env, repoSignature(cwd, env), { repoRoot: null, isLinkedWorktree: false, indeterminate: false });
+  } finally {
+    process.chdir(prior);
+  }
+  assert.strictEqual(fs.existsSync(path.join(cwd, relative)), false, 'no store file under the cwd');
+  assert.strictEqual(fs.existsSync(isolated), false, 'the isolated store was not written either');
+  assert.strictEqual(lookupRepoInfo(cwd, env).answer.repoRoot, null, 'the memo still answers');
 });
 
 test('#5294 review: isolateRepoInfoCache removes the git discovery variables for the test', async (t) => {

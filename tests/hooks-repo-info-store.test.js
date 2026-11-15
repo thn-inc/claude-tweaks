@@ -239,6 +239,9 @@ test('#5294 review: a named pipe at a worktree\'s commondir does not hang the lo
   // spawn, where no timeout applies.
   const got = runChildBounded(wt, childEnv(storeIn(scratchDir('ct-ris-')), { CT_HOOKS_GIT_TIMEOUT_MS: '1500' }));
   assert.strictEqual(got.info.repoRoot, null, `git's answer: ${JSON.stringify(got.info)}`);
+  // A pipe is "cannot tell", never an empty commondir: no signature, nothing
+  // cached. Asked in-process only after the bounded child proved it cannot block.
+  assert.strictEqual(repoSignature(wt), null);
 });
 
 test('#5294 review: a named pipe at the store path does not hang the lookup', { skip: NO_FIFO }, () => {

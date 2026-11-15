@@ -89,15 +89,30 @@ function statOrMissing(p) {
   }
 }
 
+// O_NONBLOCK makes opening a named pipe return at once instead of waiting for a
+// writer. win32 has no such flag (and no named pipes on a file path).
+const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
+
+// -> the text of `p`, which must be a regular file. Throws the open error
+// (ENOENT when missing) or Unknown for anything else that exists. The kind is
+// checked on the open descriptor, not by a stat beforehand, so a file swapped
+// for a pipe between the two calls cannot block the read either.
+function readRegularFile(p) {
+  const fd = fs.openSync(p, OPEN_FLAGS);
+  try {
+    if (!fs.fstatSync(fd).isFile()) throw new Unknown();
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 // Reads `p` only when it is a regular file: null when missing, Unknown for
 // anything else that exists. A named pipe there would block the read (and the
 // hook) for ever, and a directory or device is not something git reads as text.
 function readRegularOrMissing(p) {
-  const st = statOrMissing(p);
-  if (!st) return null;
-  if (!st.isFile()) throw new Unknown();
   try {
-    return fs.readFileSync(p, 'utf8');
+    return readRegularFile(p);
   } catch (e) {
     if (e && e.code === 'ENOENT') return null;
     throw new Unknown();
@@ -305,13 +320,17 @@ const DISCOVERY_ENV_NAMES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_
 // Read on every call, never captured at load, so a test's env change takes effect.
 function storePath(env = process.env) {
   const override = envGet(env, 'CT_HOOKS_REPO_INFO_STORE');
-  // A relative override would resolve against each hook's cwd and drop store
-  // files into project directories, so only an absolute one is honoured.
   if (override && path.isAbsolute(override)) return override;
   return path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json');
 }
 
 function storeBypassed(env = process.env) {
+  // A relative override would resolve against each hook's cwd and drop store
+  // files into project directories. Whoever set it wanted another store than
+  // the user's own, so the store is off for this process rather than falling
+  // back to the real one.
+  const override = envGet(env, 'CT_HOOKS_REPO_INFO_STORE');
+  if (override && !path.isAbsolute(override)) return true;
   return DISCOVERY_ENV_NAMES.some((name) => envGet(env, name) !== undefined);
 }
 
@@ -334,25 +353,22 @@ function validEntry(e) {
 
 // -> the store's entries object, or null when absent/unreadable/not our format.
 function readStoreEntries(env) {
-  const file = storePath(env);
   // Only a regular file is read: a named pipe at the store path would block
   // the read for ever, and a directory or device is not a store.
-  let st;
-  try {
-    st = fs.statSync(file);
-  } catch (_) {
-    return null;
-  }
-  if (!st.isFile()) return null;
-  const raw = readJsonFile(file, { fallback: null });
+  const raw = readJsonFile(storePath(env), { readFile: readRegularFile, fallback: null });
   if (!isPlainObject(raw) || raw.version !== STORE_VERSION || !isPlainObject(raw.entries)) return null;
   return raw.entries;
 }
 
 // The store holds which directories a user works in, so it is created
-// readable by its owner only. Every write replaces the file with a freshly
-// created temp file (json-store.js), so the mode applies to each one.
-const writeOwnerOnly = (p, content) => fs.writeFileSync(p, content, { mode: 0o600 });
+// readable by its owner only. Every write replaces the file with a temp file
+// (json-store.js). `mode` applies only when that temp file is created, and a
+// temp file left under this pid's name by a killed writer keeps its own mode,
+// so the mode is set again after the write.
+const writeOwnerOnly = (p, content) => {
+  fs.writeFileSync(p, content, { mode: 0o600 });
+  fs.chmodSync(p, 0o600);
+};
 
 function storeWrite(env, entries) {
   writeJsonFile(storePath(env), { version: STORE_VERSION, entries }, { writeFile: writeOwnerOnly });
