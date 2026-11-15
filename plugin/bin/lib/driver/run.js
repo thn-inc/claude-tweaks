@@ -79,7 +79,7 @@ const USAGE = [
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
-  'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when a judgment supplier is configured; none is by default.',
+  'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when it carries auto:merge and the merge-check and acceptance judgment workers both clear it.',
   'Exit codes (Combined-2):',
   '  0  every named record reached its final event, whatever its outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted',
@@ -479,6 +479,8 @@ const realDeps = {
   fetchNativeDependencies: (opts) => require('../issues/native-dependencies').fetchNativeDependencies(opts),
   fetchLinkedPRs: (opts) => require('../issues/linked-prs').fetchLinkedPRs(opts),
   launchWorker: (opts, d) => require('./worker').launchWorker(opts, d),
+  // The merge step's judgment supplier (#5228): the merge-check and acceptance workers behind merge.js's `deps.judgments`.
+  createJudgments: (opts) => require('./judgments').createJudgments(opts),
   runner: (call) => require('./worker').defaultRunner(call),
   resolveRunDir: (opts) => require('../hooks/run-dir-resolve').resolve(opts),
   lstatType: (p) => lstatType(p),

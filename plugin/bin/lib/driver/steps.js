@@ -1150,6 +1150,12 @@ const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) =>
     interrupted: () => ctx.shared.interrupted,
     watchClock: (t) => { ctx.ciWaitStartedAt = t; },
   };
+  // The judgment supplier is built over these same merge deps and the run's shared state (its worker
+  // launches track `shared.activeWorker`); a deps object with only `judgments` keeps it, one with neither
+  // stops at `no-supplier`.
+  mdeps.judgments = typeof deps.createJudgments === 'function'
+    ? deps.createJudgments({ deps: mdeps, shared: ctx.shared })
+    : deps.judgments;
   const r = await merge(mctx, mdeps);
   ctx.merge = r;
   if (r.runDir !== ctx.runDir) ctx.runDir = r.runDir;
