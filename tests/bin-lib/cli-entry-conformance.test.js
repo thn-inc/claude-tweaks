@@ -38,7 +38,6 @@ const NOT_YET = [
   'phase-timing.js',
   'plan-audit.js',
   'reachability-audit.js',
-  'record-graph.js',
   'release-bootstrap.js',
   'release-notes-publish.js',
   'residue.js',
