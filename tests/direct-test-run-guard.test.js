@@ -24,6 +24,7 @@ const opts = {
 // Each deny row with the replacement line its reason names. `null` marks the rows whose replacement is
 // the fixed placeholder text (the files a `while read` loop, `xargs` or `find` runs cannot be known).
 const PLACEHOLDER = 'node tools/run-tests.js <the test files this loop runs>';
+const DIR_STACK_PLACEHOLDER = 'node <path to tools/run-tests.js> <the same flags and test files>';
 const DENY_ROWS = [
   ['node --test "$TEST_FILE"', 'node tools/run-tests.js "$TEST_FILE"'],
   ['for i in 1 2 3; do node --test tests/a.test.js; done', 'node tools/run-tests.js tests/a.test.js'],
@@ -58,6 +59,33 @@ const DENY_ROWS = [
   ['bash -o pipefail -c "node --test tests/a.test.js tests/b.test.js"', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
   ['(node --test tests/a.test.js tests/b.test.js)', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
   ['{ node --test tests/a.test.js tests/b.test.js; }', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  // An `o`-ending option cluster takes the next word, like `-o`.
+  ['bash -euo pipefail -c "node --test tests/a.test.js tests/b.test.js"', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  // A wrapper inside a loop sees the loop's variable; no replacement line holds a loop variable.
+  ['for f in tests/a.test.js tests/b.test.js; do sh -c "node --test $f"; done', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['for f in $(ls tests); do sh -c "node --test $f"; done', null],
+  ['while read f; do sh -c "node --test $f"; done < list.txt', null],
+  ['for f in a b; do node --test tests/a.test.js --test-name-pattern "$f"; done', null],
+  ['while read f; do node --test tests/a.test.js --test-name-pattern "$f"; done < list.txt', null],
+  // Node options the runner does not take are left out of the replacement (and named in the reason).
+  ['node --env-file .env --test tests/a.test.js tests/b.test.js', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['node --test --trace-warnings tests/a.test.js tests/b.test.js', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['for i in 1 2; do node --test -e "x" tests/a.test.js; done', 'node tools/run-tests.js tests/a.test.js'],
+  // `--` ends the options: it is dropped, and what follows is files.
+  ['node --test -- tests/a.test.js tests/b.test.js', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['npx -p node@20 node --test tests/a.test.js tests/b.test.js', 'npx -p node@20 node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['npx --package node@20 node --test tests/a.test.js tests/b.test.js', 'npx --package node@20 node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['sudo node --test tests/a.test.js tests/b.test.js', 'sudo node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['eval "node --test tests/a.test.js tests/b.test.js"', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['eval node --test tests/a.test.js tests/b.test.js', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  // An unquoted substituted value holding blanks is word-split into that many files.
+  ['F="tests/a.test.js tests/b.test.js"; node --test $F', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  // The scanner does not follow pushd/popd, so the runner path cannot be named from the call's directory.
+  ['pushd tests && node --test a.test.js b.test.js', DIR_STACK_PLACEHOLDER],
+  ['popd; node --test tests/a.test.js tests/b.test.js', DIR_STACK_PLACEHOLDER],
+  // xargs and parallel run their first non-option word, past the options that take a value.
+  ['ls tests | xargs -n 1 node --test', null],
+  ['ls tests | parallel -j 2 node --test {}', null],
 ];
 
 const ALLOW_ROWS = [
@@ -81,11 +109,18 @@ const ALLOW_ROWS = [
   'env NODE_OPTIONS=--trace-warnings node scripts/x.js --test',
   'if node --test tests/a.test.js; then echo ok; fi',
   'timeout 600 git log --grep "node --test a b"',
+  'git ls-files tests | xargs grep -n node tests/a.test.js',
+  'find tests -exec grep -n node tests/a.test.js tests/b.test.js \\;',
+  'node --test --env-file .env tests/a.test.js',
+  'node --test --conditions dev tests/a.test.js',
+  'for i in 1 2; do node -e "x" tests/a.test.js; done',
+  'for i in 1 2; do node -p "x" tests/a.test.js; done',
+  'F="tests/a.test.js tests/b.test.js"; node --test "$F"',
 ];
 
 const EXPANSION_LINE = 'The runner takes *.test.js files only and refuses anything else the expansion names, so make it name test files only.';
 
-function reasonFor(replacement, { expansion = false } = {}) {
+function reasonFor(replacement, { expansion = false, options = null } = {}) {
   return [
     `This repository's guard blocked a direct test run. ${SAFEGUARDS_TEXT}`,
     'Run the same files through the runner, which takes the same files and node test flags:',
@@ -93,6 +128,7 @@ function reasonFor(replacement, { expansion = false } = {}) {
     replacement,
     '',
     ...(expansion ? [EXPANSION_LINE] : []),
+    ...(options ? [`The runner does not take ${options}; if the tests need them, set NODE_OPTIONS.`] : []),
     'In a checkout older than this guard, write the files to a list and use: node tools/run-tests.js --files-from <list>',
     'A single test file outside a loop can still be run directly.',
   ].join('\n');
@@ -169,10 +205,13 @@ test('a prefix command is skipped with its own options, and one it cannot model 
     'timeout -k 5 -s KILL --preserve-status 600',
     'gtimeout --signal=TERM 10m',
     'timeout 600 env FOO=1 nice',
+    'sudo -u root -E -n -H',
+    'sudo --',
   ]) {
     assert.equal(classifyCommandOrThrow(`${prefix} ${two}`, opts).decision, 'deny', prefix);
   }
-  for (const prefix of ['env -S', 'env --split-string', 'command -v', 'time -o out.txt', 'nice -x', 'timeout --bogus 600']) {
+  // An option a prefix does not model ends its options: the program is then that option word, never node.
+  for (const prefix of ['env -S', 'env --split-string', 'command -v', 'time -o out.txt', 'nice -x', 'timeout --bogus 600', 'timeout --bogus', 'sudo -s']) {
     assert.equal(classifyCommandOrThrow(`${prefix} ${two}`, opts).decision, 'allow', prefix);
   }
   // A prefix may stand in front of a wrapper too, and `+o` pairs are skipped like `-o` ones.
@@ -241,8 +280,47 @@ test('the unresolved-expansion reason says the runner takes test files only', ()
   assert.equal(plain.includes(EXPANSION_LINE), false);
 });
 
+test('the reason names the node options the runner does not take, as typed', () => {
+  assert.equal(
+    classifyCommandOrThrow('node --env-file .env --test tests/a.test.js tests/b.test.js', opts).reason,
+    reasonFor('node tools/run-tests.js tests/a.test.js tests/b.test.js', { options: '--env-file .env' }),
+  );
+  assert.equal(
+    classifyCommandOrThrow('node --test -r ./setup.js --trace-warnings tests/a.test.js tests/b.test.js', opts).reason,
+    reasonFor('node tools/run-tests.js tests/a.test.js tests/b.test.js', { options: '-r ./setup.js --trace-warnings' }),
+  );
+  // A test flag stays in the line and is no such option.
+  assert.equal(
+    classifyCommandOrThrow('node --test --test-reporter tap tests/a.test.js tests/b.test.js', opts).reason,
+    reasonFor('node tools/run-tests.js --test-reporter tap tests/a.test.js tests/b.test.js'),
+  );
+});
+
+test('an inline-code option takes its code as a value, and after -- a dash word is a file', () => {
+  for (const flag of ['-e', '--eval', '-p', '--print']) {
+    assert.equal(
+      classifyCommandOrThrow(`node --test ${flag} "x" tests/a.test.js tests/b.test.js`, opts).replacement,
+      'node tools/run-tests.js tests/a.test.js tests/b.test.js',
+      flag,
+    );
+  }
+  assert.equal(classifyCommandOrThrow('node --test -- tests/a.test.js -x.test.js', opts).decision, 'deny');
+});
+
+test('every general node option that takes a value word is read with its value', () => {
+  // `node --help` (Node 26.13.1) lists these as `--name=...`; each value here would otherwise be a second file.
+  for (const flag of [
+    '-r', '--require', '--import', '--loader', '--experimental-loader', '--env-file', '--env-file-if-exists', '-C',
+    '--conditions', '--input-type', '--title', '--watch-path', '--inspect-port', '--disable-warning',
+    '--redirect-warnings', '--diagnostic-dir', '--max-http-header-size', '--secure-heap', '--secure-heap-min',
+    '--debug-port', '--localstorage-file', '--watch-kill-signal', '--unhandled-rejections', '--allow-fs-read',
+  ]) {
+    assert.equal(classifyCommandOrThrow(`node --test ${flag} v tests/a.test.js`, opts).decision, 'allow', flag);
+  }
+});
+
 test('AC9.1 AC9.2: every replacement line is allowed by the classifier and accepted by the runner\'s parser', () => {
-  const rows = DENY_ROWS.filter(([, replacement]) => replacement !== null).map(([command]) => command);
+  const rows = DENY_ROWS.filter(([, replacement]) => replacement !== null && replacement !== DIR_STACK_PLACEHOLDER).map(([command]) => command);
   rows.push('cd tests && node --test a.test.js b.test.js');
   for (const command of rows) {
     const { replacement } = classifyCommandOrThrow(command, opts);
