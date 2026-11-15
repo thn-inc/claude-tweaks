@@ -528,7 +528,11 @@ test('AC9.1: the injected env reaches the policy core (a GIT_DIR in env redirect
   fs.writeFileSync(path.join(other, '.claude-tweaks', 'policy.yml'), 'autonomy: trusted\n');
   const plain = runRaw(['--root', root], { env: gitEnv });
   assert.match(plain.stdout, /Consider raising autonomy/);
-  const redirected = runRaw(['--root', root], { env: cliEnv({ GIT_DIR: path.join(other, '.git'), GIT_WORK_TREE: other }) });
+  // A git hook running npm test exports GIT_INDEX_FILE and GIT_COMMON_DIR, which would mix in a third repository.
+  const redirectedEnv = cliEnv();
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete redirectedEnv[key];
+  Object.assign(redirectedEnv, { GIT_DIR: path.join(other, '.git'), GIT_WORK_TREE: other });
+  const redirected = runRaw(['--root', root], { env: redirectedEnv });
   assert.strictEqual(redirected.code, 0, redirected.stderr);
   assert.doesNotMatch(redirected.stdout, /Consider raising autonomy/);
 });

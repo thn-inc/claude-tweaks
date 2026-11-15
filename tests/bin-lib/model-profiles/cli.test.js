@@ -23,8 +23,13 @@ function isolatedEnv() {
   return env;
 }
 
+// Every directory a test makes (project dirs and failure-file dirs) is tracked here
+// and removed by the afterEach below.
+const madeTmpDirs = [];
+
 function tmpProject(policyText) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cli-'));
+  madeTmpDirs.push(dir);
   if (policyText !== null) {
     fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), policyText);
@@ -34,7 +39,6 @@ function tmpProject(policyText) {
 
 // A per-test directory the CLI writes its session-failure files under (deps.tmpDir);
 // removed after the test that made it.
-const madeTmpDirs = [];
 function tmpDirFor() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cli-tmp-'));
   madeTmpDirs.push(dir);
