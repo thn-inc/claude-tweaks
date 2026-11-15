@@ -71,6 +71,7 @@ Criteria covered outside a test step:
 ### Task 1: Test helpers, the event context, and the pinned smoke tests
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `tests/helpers/env-tripwire.js`
@@ -111,7 +112,7 @@ Expected: FAIL (the helper files do not exist)
 - [ ] **Step 4: Run** `node --test tests/helpers-hook-event.test.js tests/helpers-run-cli.test.js tests/hooks-help-guard.test.js tests/hooks-js-flag-strict.test.js tests/reconcile-dispatch.test.js`
 Expected: PASS
 
-- [ ] **Step 5: Append the three smoke tests** to `tests/hooks-dispatcher.test.js`, on `spawnCli`, each with a comment naming what the real process proves (script entry, stdin payload, exit code):
+- [ ] **Step 5: Append the three smoke tests** to `tests/hooks-dispatcher.test.js`, on `spawnCli`, each with a comment naming what the real process proves (script entry, stdin payload, exit code). Each builds its environment with an explicit `hookEnv(...)` and stores `{ args, input, cwd, env, result }` under its own key (`deny`, `allow`, `sessionEnd`) in a module-level `const SMOKE = {}`, which Task 6's parity test reads:
   - `AC6.1 AC8.1 smoke: pre-tool-use deny through the script entry` — fixture: `gitRepo()` plus `writeWorktreeAlwaysPolicy(project)` and an `Edit` payload on a file in that checkout; assert the exit code and the deny text on stderr (or the deny JSON on stdout, whichever the process emits today) with exact values, the fixture path substituted.
   - `AC6.1 AC8.1 smoke: pre-tool-use allow through the script entry` — `Bash` payload `echo hi` with `cwd: HOOK_SANDBOX`; assert exit 0 and the exact stdout.
   - `AC8.1 smoke: session-end through the script entry` — assert exit 0 and the exact stdout; the comment says the event has no non-zero refusal path, so it has no refusal test.
@@ -124,6 +125,7 @@ Expected: PASS
 ### Task 2: Helpers take the environment as a parameter
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `tests/hooks-env-params.test.js`
@@ -135,6 +137,8 @@ Expected: PASS
 - Modify: `plugin/bin/lib/hooks/repo-info-cache.js` (read only unless a signature must widen)
 - Modify: `plugin/bin/lib/reconcile/background-spawn.js`
 - Modify: `tests/bin-lib/reconcile/background-spawn.test.js` (its eight calls pass `env`)
+- Modify: `plugin/bin/lib/hooks/session-start.js` (`:447` only: the `spawnBackgroundIfStale` call passes `env: ctx.env, spawn: ctx.spawn`, so the now-required `env` never throws into that call's best-effort catch; Task 5 does the rest of the file)
+- Modify: `tests/hooks-session-start.test.js` (direct `run` calls pass `env: process.env`, so the background spawn those tests observe still happens)
 - Test: `tests/hooks-context.test.js`
 - Test: `tests/hooks-git-exec.test.js`
 - Test: `tests/hooks-sibling-sessions.test.js`
@@ -168,7 +172,7 @@ Expected: FAIL (the file does not exist; once written, each test fails on the un
 
 - [ ] **Step 3: Implement** the signatures above. Before changing a signature, list its callers: `git grep -n -e 'refreshOwnerBlock' -e 'ownerPidPatch' -e 'repoPinnedEnv' -e 'spawnBackgroundIfStale' -e 'ownerBlock(' -- plugin tests` and update every caller this change breaks; a caller on a verb path keeps the default.
 
-- [ ] **Step 4: Run** `node --test tests/hooks-env-params.test.js tests/bin-lib/reconcile/background-spawn.test.js tests/hooks-context.test.js tests/hooks-git-exec.test.js tests/hooks-sibling-sessions.test.js tests/hooks-dispatch-prompt-gate.test.js tests/hooks-worktree-detect.test.js tests/hooks-repo-info-cache.test.js tests/bin-lib/file-lock.test.js tests/hooks-js-flag-strict.test.js tests/reconcile-dispatch.test.js` and the source-scan suites in Global Constraints.
+- [ ] **Step 4: Run** `node --test tests/hooks-env-params.test.js tests/bin-lib/reconcile/background-spawn.test.js tests/hooks-context.test.js tests/hooks-git-exec.test.js tests/hooks-sibling-sessions.test.js tests/hooks-dispatch-prompt-gate.test.js tests/hooks-worktree-detect.test.js tests/hooks-repo-info-cache.test.js tests/bin-lib/file-lock.test.js tests/hooks-js-flag-strict.test.js tests/reconcile-dispatch.test.js tests/hooks-session-start.test.js tests/run-integrity.test.js` and the source-scan suites in Global Constraints.
 Expected: PASS
 
 - [ ] **Step 5: Commit.**
@@ -206,7 +210,7 @@ Before Step 1, read `.claude/skills/pre-tool-use-gate-exemptions/SKILL.md` in fu
 - [ ] **Step 1: Write the failing tests** in `tests/hooks-event-env.test.js`, all through `runHookCli`:
   - `AC2.1: pre-tool-use resolves the run directory from the injected env, not process.env`: two fixture run dirs A and B in one project, each bound to its own worktree; `process.env.PIPELINE_RUN_DIR` is set to a third directory for the whole test (restore in `finally`). With `env: hookEnv({ PIPELINE_RUN_DIR: A })` a `git commit` payload from the main checkout is denied naming A's worktree; with `PIPELINE_RUN_DIR: ''` the result does not name A's worktree. Reuse the run-state fixture shape of `tests/hooks-pre-tool-use.test.js:60-67`.
   - `AC3.1: CT_HOOKS_TEST_MODE only in the injected env tags the denial's friction event as a test event`: `process.env.CT_HOOKS_TEST_MODE` deleted for the call; read the event back from the file `tests/hooks-denial-run-dir.test.js` reads and assert `test === true`.
-  - `AC3.2: CT_HOOKS_TEST_MODE only in process.env leaves the event untagged`: `process.env.CT_HOOKS_TEST_MODE = '1'`, injected env without the key (`tripwire: false` is not needed: the module must not read it); assert the event has no `test` field.
+  - `AC3.2: CT_HOOKS_TEST_MODE only in process.env leaves the event untagged`: `process.env.CT_HOOKS_TEST_MODE = '1'`; build the injected env with `hookEnv()` and then `delete env.CT_HOOKS_TEST_MODE` (`hookEnv` adds the key and `cleanGitEnv()` copies the live `process.env`), asserting `!('CT_HOOKS_TEST_MODE' in env)` before the call; assert the event has no `test` field. AC3.1 asserts the mirror: `!('CT_HOOKS_TEST_MODE' in process.env)` before its call.
   - `pre-tool-use allow and deny read nothing from process.env`: one allow payload and the worktree-always deny payload resolve under the tripwire.
   - `pre-tool-use deny text names the injected CLAUDE_PLUGIN_ROOT`.
   - `pre-tool-use with an empty env resolves to an exit code`: `env: {}`; assert `Number.isInteger(r.code)`.
@@ -338,24 +342,25 @@ Expected: PASS
 - Produces: `tests/hooks-event-process-ceiling.test.js` exports nothing; it holds `CONVERTED = ['tests/hooks-dispatcher.test.js']` (Task 7 appends five paths) and `CEILING = 20`.
 
 - [ ] **Step 1: Write the failing test** `tests/hooks-event-process-ceiling.test.js`:
-  - `AC1.1: no converted file starts hooks.js outside spawnCli`: for each path in `CONVERTED`, the comment-stripped source (use `tests/helpers/strip-comments`) has no match for `/(execFileSync|spawnSync|execSync|spawn)\(\s*('node'|"node"|process\.execPath)\s*,\s*\[\s*(HOOKS|hooks)\b/`. Assert the flagged line numbers are empty, not a count.
+  - `AC1.1: no converted file starts hooks.js outside spawnCli`: for each path in `CONVERTED`, the comment-stripped source (use `tests/helpers/strip-comments`) has no match for `/(execFileSync|spawnSync|execSync|spawn)\(\s*('node'|"node"|process\.execPath)\s*,\s*\[[^\]]*\b(HOOKS|hooks)\b/` (any argv array that names the script, so a `['--require', preload, HOOKS, …]` site is flagged too). Assert the flagged line numbers are empty, not a count.
   - `AC1.1: the converted files hold at most 20 spawnCli call sites for hooks.js`: the sum of `/spawnCli\(\s*(HOOKS|hooks)\b/g` matches across `CONVERTED` is `<= CEILING`, and no `spawnCli(` call sits inside a `for`/`while`/`.forEach(`/`.map(` body (flag by line).
-  - Self-tests from inline fixtures: a planted `execFileSync('node', [HOOKS, 'pre-tool-use'])` is flagged with its line; a planted twenty-first `spawnCli(HOOKS` fails with the ceiling message; `spawnSync(process.execPath, ['-e', ''])` is not flagged.
+  - Self-tests from inline fixtures: a planted `execFileSync('node', [HOOKS, 'pre-tool-use'])` and a planted `execFileSync('node', ['--require', preload, HOOKS, 'pre-tool-use'])` are each flagged with their line; a planted twenty-first `spawnCli(HOOKS` fails with the ceiling message; `spawnSync(process.execPath, ['-e', ''])` is not flagged.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test tests/hooks-event-process-ceiling.test.js`
-Expected: FAIL (the file does not exist; once written it flags `tests/hooks-dispatcher.test.js`'s two `execFileSync('node', [HOOKS` sites)
+Expected: FAIL (the file does not exist; once written it flags `tests/hooks-dispatcher.test.js`'s `runHook` spawn at `:27` and the `--require` preload spawn at `:885`)
 
 - [ ] **Step 3: Convert `tests/hooks-dispatcher.test.js`.** `runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {}, deps, fresh } = {})` becomes `async` and returns `runHookCli(args, { input, cwd, env: hookEnv(env), deps, fresh })`'s `{ code, stdout, stderr }`; every test that calls it becomes `async` and awaits each call. Assertion text does not change (AC4.1). Rules for the cases that differ in-process:
   - A `session-start` call passes `deps: { spawn: fakeSpawn }`.
+  - The `--require` preload case at `:885` stays a real process: its subject is a module replaced before `hooks.js` loads. Move it onto `spawnCli(HOOKS, ['pre-tool-use'], { env: { …, NODE_OPTIONS: '--require "<preload path>"' } })` (quote the path: a checkout path can hold spaces), with the comment "real process: a require-time preload cannot be installed after the module graph is loaded", and count it toward the ceiling.
   - A test that asserted exit 0 for a throwing event module asserts `assert.rejects` instead; if the script-entry exit 0 is itself the subject, it stays on `spawnCli` with the comment.
   - Forge-degrade cases get one run directory each (the 60 s degrade memo is per run, not per process).
   - A case whose answer depends on module state passes `fresh: true`.
   - A case that fakes `gh` or `git` with a stub on `PATH` must see the stub used in-process (its own assertion proves it); if it cannot, it stays on `spawnCli` and is listed.
   - On Windows a spread env keeps the stored key `Path`: do not read or assert `env.PATH` in the test.
   - Add `AC9.1: hooks-dispatcher — an event call uses the injected cwd and env`: a payload without `cwd`, `cwd` set to a fixture project that is not `process.cwd()`, and an `env` whose `PIPELINE_RUN_DIR` names that project's run; assert an observable only that project and run produce.
-  - Add `smoke parity: in-process and script-entry agree`: for the three smoke fixtures, the `runHookCli` result deep-equals the `spawnCli` result the smoke test already obtained, both given the identical explicit `env`. Reuse the smoke tests' results (a shared `before` fixture or module-level memo) so this adds no process.
+  - Add `smoke parity: in-process and script-entry agree`: for the three smoke fixtures, the `runHookCli` result deep-equals `SMOKE.{deny,allow,sessionEnd}.result`, called with that entry's own `args`, `input`, `cwd` and `env` (Task 1 Step 5 stores them), so this adds no process. The test sits after the three smoke tests in the file and fails with a clear message when a `SMOKE` entry is missing (a filtered run).
 
 - [ ] **Step 4: Run** `node --test tests/hooks-dispatcher.test.js tests/hooks-event-process-ceiling.test.js`, then `node tools/run-tests.js --files-from <list of the two>`.
 Expected: PASS, with the same number of passing tests as before the conversion plus the tests this plan added (record both numbers from the TAP summary).
@@ -384,7 +389,7 @@ Expected: PASS, with the same number of passing tests as before the conversion p
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test tests/hooks-event-process-ceiling.test.js`
-Expected: FAIL (on the base tree the file does not exist; after Task 6 it flags the seven remaining `[HOOKS`/`[hooks` spawn sites in the five files)
+Expected: FAIL (on the base tree the file does not exist; after Task 6 it flags every remaining spawn site that names `HOOKS`/`hooks` in the five files)
 
 - [ ] **Step 3: Convert each file** with Task 6 Step 3's rules, keeping each file's local helper name and return field names (`status`, `exitCode`, `stdout`) so test bodies change only by `async`/`await`. Per file:
   - `tests/teardown-gate.test.js`, `tests/user-prompt-submit.test.js`, `tests/skill-invocation.test.js`: the local `runHook` wraps `runHookCli`.
@@ -411,26 +416,27 @@ Expected: PASS, with per-file passing-test counts equal to before plus the added
 - Test: `tests/bin-lib/exit-code-conformance.test.js`
 
 **Interfaces:**
-- Produces: `const EXEMPT = { 'hooks.js': { reason: 'require-time bash prefilter (exits before run) and a script entry that calls process.exit(code) so a hook never outlives its event', proof: 'tests/hooks-bash-prefilter.test.js' } }`. `NOT_YET`, `NOT_YET_CEILING` and the code that reads them are deleted (the list is empty once `hooks.js` leaves it).
+- Produces: `const EXEMPT = { 'hooks.js': { reason: 'require-time bash prefilter (exits before run) and a script entry that calls process.exit(code) so a hook never outlives its event', proof: 'tests/hooks-bash-prefilter.test.js' } }`. Only the `'hooks.js'` line leaves `NOT_YET`. The list still holds `verify.js` at `tests/bin-lib/cli-entry-conformance.test.js:26-29`, so the spec's conditional ("If `NOT_YET` is then empty, the list and the code that reads it are deleted") does not fire: `NOT_YET`, `NOT_YET_CEILING` and their tests stay. Re-read the list after the pre-verification catch-up merge; delete the list and its reading code only if a merged sibling record has emptied it.
 
 - [ ] **Step 1: Rewrite the file's tests first:**
   - `AC7.1 AC7.2: every top-level plugin/bin CLI meets the entry rules, except the named EXEMPT entries`.
   - `AC7.1: each EXEMPT entry names a reason and an existing proof file` (`fs.existsSync` on `proof`, non-empty `reason`).
   - `AC7.4: an EXEMPT file that now conforms fails the walk` — from an inline fixture, matching the message `now conforms — delete it from EXEMPT`.
-  - `AC7.3: NOT_YET is gone` — the test file's own source has no `NOT_YET` identifier outside this test's pattern literal (build the pattern as `'NOT' + '_YET'`).
-  - Keep the existing "a non-conforming file missing from the list fails the walk" self-test, pointed at `EXEMPT`, built from an inline fixture.
+  - `AC7.3: hooks.js is in EXEMPT and not in NOT_YET` — `!NOT_YET.includes('hooks.js')` and `Object.keys(EXEMPT)` deep-equals `['hooks.js']`; a comment records that the list is not empty (it holds `verify.js`), so the list and its reading code stay.
+  - `AC7.1: a file cannot be both exempt and listed` — no `EXEMPT` key appears in `NOT_YET`.
+  - The existing `NOT_YET` self-tests stay as they are.
 
 - [ ] **Step 2: Run the check to verify it fails**
 
-Run: `node -e "const s=require('fs').readFileSync('tests/bin-lib/cli-entry-conformance.test.js','utf8');process.exit(/const EXEMPT = /.test(s)&&!/const NOT_YET = /.test(s)?0:1)"`
-Expected: FAIL (exit 1: the file still declares `NOT_YET` and no `EXEMPT`)
+Run: `node -e "const s=require('fs').readFileSync('tests/bin-lib/cli-entry-conformance.test.js','utf8');const m=s.match(/const NOT_YET = \[([^\]]*)\]/);process.exit(/const EXEMPT = /.test(s)&&m&&!/hooks\.js/.test(m[1])?0:1)"`
+Expected: FAIL (exit 1: the file declares no `EXEMPT` and `NOT_YET` still names `hooks.js`)
 
-- [ ] **Step 3: Implement** the `EXEMPT` handling in `assertFile` and delete the `NOT_YET` code.
+- [ ] **Step 3: Implement** the `EXEMPT` handling in `assertFile` and delete the `'hooks.js'` line from `NOT_YET`.
 
 - [ ] **Step 4: Run** `node --test tests/bin-lib/cli-entry-conformance.test.js tests/bin-lib/exit-code-conformance.test.js` (AC7.2).
 Expected: PASS
 
-- [ ] **Step 5: Update the three skill passages** this change makes stale, changing only the stale clauses: `cli-wrapper-contract.md:4` ("`NOT_YET` list that only shrinks; `hooks.js` is the standing exception" becomes the `EXEMPT` wording; "`context.js`'s own module-load read, which #5377 owns" is removed from the list of callers that pass no `env`); `bin-source-scan-conformance/SKILL.md:22`; `pre-tool-use-gate-exemptions/SKILL.md:28` and `:42` (`resolveRunDir(cwd, process.env)` / `resolveRun(cwd, process.env, …)` become `deps.env`, and the "#3515 incident e2e" sentence says the case runs through `spawnCli`). Then `git grep -n -e 'NOT_YET' -- . ':!.claude-tweaks/pipelines' ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md' ':!CHANGELOG.md'` must print nothing (control: the same command prints matches on the base commit, including `tests/bin-lib/cli-entry-conformance.test.js:26`).
+- [ ] **Step 5: Update the three skill passages** this change makes stale, changing only the stale clauses: `cli-wrapper-contract.md:4` ("`hooks.js` is the standing exception" now says it is the named `EXEMPT` entry, with the `NOT_YET` list unchanged beside it; "`context.js`'s own module-load read, which #5377 owns" is removed from the list of callers that pass no `env`); `bin-source-scan-conformance/SKILL.md:22`; `pre-tool-use-gate-exemptions/SKILL.md:28` and `:42` (`resolveRunDir(cwd, process.env)` / `resolveRun(cwd, process.env, …)` become `deps.env`, and the "#3515 incident e2e" sentence says the case runs through `spawnCli`). Then `git grep -n -F "is the standing exception" -- .claude/skills` must print nothing (control, run while planning on commit 66764ef7e: it matches `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md:4`).
 
 - [ ] **Step 6: Commit.**
 
