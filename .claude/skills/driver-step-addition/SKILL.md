@@ -111,6 +111,7 @@ The merge step (#5226) runs a procedure with sub-steps of its own, so its body l
 | Passing `deps: { sleep }` to the harness to record sleeps | The replacement stops the harness clock, so a loop bounded on time only ends once `now()`'s one-per-call ticks cover the window or the bound. Two tests did this, and had to wrap the harness's `sleep` once the ci step waited on time (#5277) |
 | Keeping every intermediate read on `ctx` for the interrupt handler | The interrupted line reports it as the record's word, though the loop would not have ended on it. The ci step keeps `ctx.ci` at `pending` until a read is final (`AC14: an interrupt after an unsettled early read reports pending, never that read`) |
 | A new stop class added to `STOP_CLASSES` and `OUTCOME_BY_CLASS` only | `selectRow` has no case for it, so settle runs the `blocked` row: the record is labelled `bot:blocked`, the final line's outcome reads `blocked` whatever the class maps to, and `unclassified` is the only sign |
+| Adding a second call of a shape existing tests script as `[match, reply]` | The harness answers every call an entry matches, so the new call gets the old reply: #5454's test-step `git status` read got `AC3.1`'s commit-step porcelain and stopped the run on the tree. Move such entries to `nthCall(match, 1, reply)` |
 
 ## Reference
 
