@@ -64,24 +64,17 @@ test('AC8.1: resolve-profile.js <profile> prints exactly one JSON line (script e
   assert.strictEqual(lines[1], '');
 });
 
-// Proves the refusal exit code survives the real entry.
-test('AC3.1, AC8.1: --stance with no value exits 1 naming the flag (script entry)', () => {
-  const dir = tmpProject(null);
-  const r = spawnCli(CLI, ['standard', '--stance'], { env: isolatedEnv(), cwd: dir });
-  assert.strictEqual(r.code, 1);
-  assert.strictEqual(r.stdout, '');
-  assert.strictEqual(r.stderr, 'resolve-profile: --stance requires a value\n');
-});
-
-test('AC3.1: in-process --stance with no value matches the script entry', () => {
+// Proves the refusal exit code survives the real entry, and that the in-process
+// call (identical env) gives the same code, stdout and stderr as the script.
+test('AC3.1, AC8.1: --stance with no value exits 1 naming the flag, in-process matching the script entry', () => {
   const dir = tmpProject(null);
   const env = isolatedEnv();
   const spawned = spawnCli(CLI, ['standard', '--stance'], { env, cwd: dir });
+  assert.strictEqual(spawned.code, 1);
+  assert.strictEqual(spawned.stdout, '');
+  assert.strictEqual(spawned.stderr, 'resolve-profile: --stance requires a value\n');
   const r = call(['standard', '--stance'], dir, { env });
-  assert.strictEqual(r.code, 1);
-  assert.strictEqual(r.code, spawned.code);
-  assert.strictEqual(r.stdout, '');
-  assert.strictEqual(r.stderr, spawned.stderr);
+  assert.deepStrictEqual(r, { code: spawned.code, stdout: spawned.stdout, stderr: spawned.stderr });
 });
 
 test('AC2.1: a preset process.exitCode does not stop a valid --stance resolution', () => {
