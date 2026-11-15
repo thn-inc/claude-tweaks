@@ -43,6 +43,13 @@ function runGit(args, cwd, opts = {}) {
   return runGitInherited(args, cwd, { ...opts, env: repoPinnedEnv(opts.env) });
 }
 
+// #5375: runGit over a caller's own environment (a CLI's injected `deps.env`),
+// still pinned the same way, for helpers that take a runner rather than an
+// `env` — archive-run passes it to archiveCommitLine.
+function pinnedGit(env = process.env) {
+  return (args, cwd, opts = {}) => runGit(args, cwd, { ...opts, env });
+}
+
 // Orphan case introduced by the dispatch/flow run-identity unification:
 // dispatch mints an empty, anchored run directory (mkdir only, no
 // config.yml) before claiming, then hands it to flow's first Task call as
@@ -2806,7 +2813,7 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
