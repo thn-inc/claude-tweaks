@@ -63,7 +63,7 @@ test('AC9.1: the default --root is the injected cwd', () => {
   assert.equal(fs.existsSync(path.join(root, 'release-please-config.json')), false, '--dry-run writes nothing');
 });
 
-test('AC9.1: a relative --root and a relative --extra-file resolve against the injected cwd', () => {
+test('AC9.1: a relative --root resolves against the injected cwd, and a relative --extra-file against that root', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
   const root = path.join(parent, 'proj');
   fs.mkdirSync(path.join(root, 'plugin'), { recursive: true });
@@ -94,6 +94,13 @@ test('AC9.1: the git tag child reads the repo named by the injected env', () => 
   const r = run(['--root', a, '--integration-model', 'local-merge', '--dry-run'], { cwd: a, env: { ...CLI_ENV, GIT_DIR: path.join(b, '.git') } });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).version, '1.2.3');
+});
+
+test('--help prints the usage line on stdout and exits 0', () => {
+  const r = run(['--help']);
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, 'usage: release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type> --extra-file <path>] [--dry-run]\n');
+  assert.equal(r.stderr, '');
 });
 
 test('a relative --root that is not a directory prints the argument as given', () => {
