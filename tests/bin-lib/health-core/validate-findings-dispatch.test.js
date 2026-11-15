@@ -21,6 +21,16 @@ test('dedupAndDispatch reads the cache via the injected readCache(root)', () => 
   assert.strictEqual(calledWith, '/some/root');
 });
 
+test('dedupAndDispatch passes an injected stderr through to the issue-index diagnostics', () => {
+  let err = '';
+  const { readCache, decide, toIssuePayload } = makeDeps();
+  dedupAndDispatch({
+    root: '/r', issuesPath: '/nonexistent/issues.json', toolName: 'harness-health', survivors: [],
+    readCache, decide, toIssuePayload, stderr: (t) => { err += t; },
+  });
+  assert.match(err, /^\[harness-health\] validate-findings: could not read or parse --issues file/);
+});
+
 test('dedupAndDispatch skips a finding when decide returns action: "skip"', () => {
   const { readCache, toIssuePayload } = makeDeps({ decideImpl: () => ({ action: 'skip' }) });
   const result = dedupAndDispatch({

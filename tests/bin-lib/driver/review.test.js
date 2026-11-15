@@ -910,12 +910,13 @@ const okEnvelope = (findings, over = {}) => ({
 });
 const reviewDest = (i) => path.join(RUN_DIR, 'review', `review-evidence-${i}.tap`);
 
-function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrows = false, real = {}, dirs = ['tests'], status = () => '', onRun = () => {}, handleFor, fail = {}, platform = 'darwin', launch, timers } = {}) {
+function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrows = false, real = {}, dirs = ['tests'], status = () => '', flags = () => null, onRun = () => {}, handleFor, fail = {}, platform = 'darwin', launch, timers } = {}) {
   const calls = [];
   const types = new Map([[WT, 'directory'], ...dirs.map((d) => [at(d), 'directory'])]);
   const realOf = new Map(Object.entries(real).map(([rel, r]) => [at(rel), at(r)]));
   const taps = new Map();
   const statusReplies = [];
+  const flagChecks = [];
   let runIndex = 0;
   const canonical = (p) => (realOf.has(p) ? realOf.get(p) : (types.has(p) ? p : null));
   const gitName = (abs) => path.relative(WT, path.join(canonical(path.dirname(abs)), path.basename(abs))).split(path.sep).join('/');
@@ -1000,8 +1001,10 @@ function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrow
       return envelope || okEnvelope(findings);
     },
   };
-  const run = (o = {}) => reviewPass(ctx, deps, { testCommand: 'npm test', isRunArtifact: isPipelineArtifact, ...o });
-  return { ctx, deps, calls, types, statusReplies, run };
+  // The flag check stands in for steps.js newIndexFlagStop: it records where in the call log it ran.
+  const indexFlagCheck = () => { flagChecks.push(calls.length); return flags(flagChecks.length - 1); };
+  const run = (o = {}) => reviewPass(ctx, deps, { testCommand: 'npm test', isRunArtifact: isPipelineArtifact, indexFlagCheck, ...o });
+  return { ctx, deps, calls, types, statusReplies, flagChecks, run };
 }
 const evidenceSpawns = (calls) => calls.filter((c) => c.kind === 'runner' && c.file === EXEC_PATH);
 const destsOf = (calls) => evidenceSpawns(calls).map((c) => c.args.find((a) => a.startsWith(DEST_FLAG)).slice(DEST_FLAG.length));
@@ -1278,6 +1281,50 @@ test('AC7: a tree changed outside the evidence files stops (Review Focus 3: a mo
     assert.deepStrictEqual(out.confirmed, [], extra);
     assert.strictEqual(evidenceSpawns(rig.calls).length, 1, extra);
   }
+});
+
+test('AC3.1 (#5415): reviewPass checks the index flags after each evidence run, before its tree check', async () => {
+  const rig = passRig({ findings: [reviewFinding(0), reviewFinding(1)], runs: ['reproduced', 'passed'] });
+  const out = await rig.run();
+  assert.strictEqual(out.result, null, out.result && out.result.detail);
+  assert.strictEqual(rig.flagChecks.length, 2);
+  rig.flagChecks.forEach((at0, k) => {
+    // The check ran with the evidence spawn as the last call before it: no git call between, and the tree check (a status read) follows.
+    const spawnIdx = rig.calls.map((c, i) => [c, i]).filter(([c, i]) => i < at0 && c.kind === 'runner' && c.file === EXEC_PATH).map(([, i]) => i).at(-1);
+    assert.ok(spawnIdx !== undefined, `check ${k} follows an evidence spawn`);
+    assert.ok(!rig.calls.slice(spawnIdx + 1, at0).some((c) => c.kind === 'git'), `no git call between the spawn and check ${k}`);
+    const next = rig.calls[at0];
+    assert.ok(next && next.kind === 'git' && next.args.includes('status'), `a status read follows check ${k}`);
+  });
+});
+
+test('AC3.1 (#5415): a newly set flag after an evidence run stops the pass before its tree check', async () => {
+  const rig = passRig({ findings: [reviewFinding(0), reviewFinding(1)], runs: ['reproduced'], flags: (k) => (k === 0 ? { status: 'fail', detail: 'FLAGGED' } : null) });
+  const out = await rig.run();
+  assert.deepStrictEqual([out.result.status, out.result.stopClass, out.result.detail], ['fail', 'pre-push', 'evidence run: FLAGGED']);
+  assert.deepStrictEqual(out.confirmed, []);
+  assert.strictEqual(ofKind(rig.calls, 'rmFile').filter((c) => c.p === at('tests/new/r0.test.js')).length, 1);
+  // Only the clean check before the first write read the status: the tree check never ran.
+  assert.strictEqual(statusReads(rig.calls).length, 1);
+  assert.strictEqual(evidenceSpawns(rig.calls).length, 1);
+});
+
+test('AC3.1 (#5415): an evidence run that is interrupted and leaves a newly set flag reports the interrupt, not the flag stop', async () => {
+  const rig = passRig({
+    findings: [reviewFinding(0), reviewFinding(1)],
+    onRun: (n, { ctx }) => { ctx.shared.interrupted = 'SIGTERM'; },
+    flags: (k) => (k === 0 ? { status: 'fail', detail: 'FLAGGED' } : null),
+  });
+  const out = await rig.run();
+  assert.strictEqual(out.result.status, 'fail');
+  assert.strictEqual(out.result.detail, 'interrupted by SIGTERM');
+  assert.strictEqual(evidenceSpawns(rig.calls).length, 1);
+});
+
+test('(#5415) reviewPass needs indexFlagCheck', async () => {
+  const rig = passRig({ findings: [reviewFinding(0)] });
+  await assert.rejects(rig.run({ indexFlagCheck: undefined }), { name: 'TypeError', message: 'reviewPass needs indexFlagCheck' });
+  assert.strictEqual(ofKind(rig.calls, 'launchWorker').length, 0);
 });
 
 test('Review Focus 4: a dirty tree before any evidence is written stops', async () => {
@@ -1792,6 +1839,7 @@ async function fixOnDisk(t, swap) {
   const wiring = {
     testCommand: 'npm test',
     isRunArtifact: isPipelineArtifact,
+    indexFlagCheck: () => null,
     launchImplementer: async (ctx) => { steps.push('launch'); swap(wt, outside, state); ctx.worker = { title: 'Fix', summary: 'Fixed.' }; return { status: 'ok' }; },
     commit: { run: async (ctx) => { steps.push('commit'); ctx.changedFiles = untracked(); for (const p of ctx.changedFiles) { committed.add(p); atHead.set(p, fs.readFileSync(path.join(wt, ...p.split('/')), 'utf8')); } return { status: 'ok' }; } },
     test: { run: async () => { steps.push('test'); return { status: 'ok' }; } },
