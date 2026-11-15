@@ -4,10 +4,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 // Every setup git call runs without an inherited GIT_DIR and friends, so they cannot land in another repo.
-const GIT_OPTS = { env: withoutAmbientGitVars(process.env) };
+const GIT_OPTS = { env: cleanGitEnv(process.env) };
 
 // Shared health-state-branch git-fixture-seeding helper, for any subsystem
 // built on bin/lib/health-core/durable-state.js (harness-health,

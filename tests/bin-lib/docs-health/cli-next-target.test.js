@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const { sweepCli } = require('../../helpers/health-sweep-cli');
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 const { seedDurableState } = require('../health-core/seed-durable-state');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'docs-health.js');
@@ -127,7 +127,7 @@ test('next-target --root <relative dir> prints target paths resolved against the
 // although --root itself is not a repo. Every variant uses a fresh root: churnCache is not keyed on env.
 function seedRepoB(cursors, { commitDoc } = {}) {
   const repo = tmp();
-  const setup = { env: withoutAmbientGitVars(process.env) };
+  const setup = { env: cleanGitEnv(process.env) };
   if (commitDoc) {
     execFileSync('git', ['init', '-q'], { cwd: repo, ...setup });
     fs.mkdirSync(path.join(repo, 'docs'), { recursive: true });

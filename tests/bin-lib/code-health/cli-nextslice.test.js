@@ -6,10 +6,10 @@ const os = require('os');
 const path = require('path');
 const { contentHash, sliceRecursive } = require('../../../plugin/bin/lib/code-health/scope');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 // Every setup git call runs without an inherited GIT_DIR and friends, so they cannot land in another repo.
-const GIT_OPTS = { env: withoutAmbientGitVars(process.env) };
+const GIT_OPTS = { env: cleanGitEnv(process.env) };
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 

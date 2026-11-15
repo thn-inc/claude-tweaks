@@ -4,10 +4,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 // Every setup git call runs without an inherited GIT_DIR and friends, so they cannot land in another repo.
-const GIT_OPTS = { env: withoutAmbientGitVars(process.env) };
+const GIT_OPTS = { env: cleanGitEnv(process.env) };
 
 // Shared git-fixture-seeding helper for code-health/tests. Seeds a local
 // bare repo as `origin`, commits `code-health/<filename>` directly onto a

@@ -11,12 +11,12 @@ const { execFileSync } = require('child_process');
 const GIT_TIMEOUT_MS = 30000;
 
 // Re-exported below for this file's existing callers.
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 function git(cwd, args, input) {
   return execFileSync('git', args, {
     cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: 'pipe', input,
-    env: withoutAmbientGitVars(process.env),
+    env: cleanGitEnv(process.env),
   });
 }
 
@@ -85,5 +85,5 @@ function makeAmbiguousRepo() {
 }
 
 module.exports = {
-  git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo, withoutAmbientGitVars,
+  git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo, cleanGitEnv,
 };

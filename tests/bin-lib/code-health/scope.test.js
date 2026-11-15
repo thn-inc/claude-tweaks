@@ -8,7 +8,7 @@ const { listSlices, contentHash, selectSlice, listWorkspaceSlices, gitChurn, sli
 const { MAX_STALE_DAYS } = require('../../../plugin/bin/lib/code-health/score');
 const { toPosix } = require('../../../plugin/bin/lib/shared-primitives');
 const { chmodDenialSkip } = require('../../helpers/root');
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-scope-')); }
 
@@ -915,7 +915,7 @@ test('sourceFiles returns absolute paths regardless of where the root sits', () 
 // ─── injected env / stderr (#5381) ─────────────────────────────────────────
 
 function cleanEnv() {
-  return withoutAmbientGitVars(process.env);
+  return cleanGitEnv(process.env);
 }
 
 // A repo B with a recent commit touching src/a.js, and a NON-git root holding

@@ -9,7 +9,7 @@ const {
   DEEPEN_TIMEOUT_MS, LOCK_WAIT_MARGIN_MS,
 } = require('../../../plugin/bin/lib/docs-health/commit-ref');
 const {
-  git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo, withoutAmbientGitVars,
+  git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo, cleanGitEnv,
 } = require('./commit-fixtures');
 
 const outcomeOf = (result, input) => result.commits.find((c) => c.input === input).outcome;
@@ -322,7 +322,7 @@ test('verifyCommits runs git with the injected env', () => {
     root,
     hashes: [head],
     integrationBranch: 'main',
-    env: { ...withoutAmbientGitVars(process.env), GIT_DIR: path.join(origin.dir, '.git') },
+    env: { ...cleanGitEnv(process.env), GIT_DIR: path.join(origin.dir, '.git') },
   });
   assert.strictEqual(outcomeOf(r, head), 'reachable');
 });

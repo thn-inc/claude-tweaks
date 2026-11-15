@@ -8,7 +8,7 @@ const path = require('path');
 
 const { extractFingerprint } = require('../../../plugin/bin/lib/issues/record');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
@@ -548,7 +548,7 @@ test('AC7.1: validate-findings --dry-run on a valid finding exits 0 and prints t
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
 
-  const env = { ...withoutAmbientGitVars(process.env), LC_ALL: 'C', LANG: 'C' };
+  const env = { ...cleanGitEnv(process.env), LC_ALL: 'C', LANG: 'C' };
   const r = spawnCli(CLI, ['validate-findings', findingsFile, '--root', root, '--dry-run', '--run-id', 'fixed-run'], { env, cwd: root });
   assert.strictEqual(r.code, 0);
   assert.strictEqual(
@@ -607,7 +607,7 @@ test('AC2.1: validate-findings returns 0 on a valid findings file when process.e
 test('validate-findings stamps Verified-as-of from the injected env: GIT_DIR names the repo, root is not one', () => {
   const root = tmp(); // not a git repo
   const repo = tmp();
-  const setup = { env: withoutAmbientGitVars(process.env) };
+  const setup = { env: cleanGitEnv(process.env) };
   execFileSync('git', ['init', '-q'], { cwd: repo, ...setup });
   execFileSync('git', ['-C', repo, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '--allow-empty', '-m', 'seed'], setup);
   const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8', ...setup }).trim();

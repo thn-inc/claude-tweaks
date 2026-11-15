@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -228,7 +228,7 @@ function gitRepoWithFlag(value) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-repo-'));
   const real = fs.realpathSync(tmp);
   fs.writeFileSync(path.join(real, 'CLAUDE.md'), `## Design integration\n\ndesign-integration: ${value}\n`);
-  execFileSync('git', ['init', '-q'], { cwd: real, env: withoutAmbientGitVars(process.env), stdio: 'ignore' });
+  execFileSync('git', ['init', '-q'], { cwd: real, env: cleanGitEnv(process.env), stdio: 'ignore' });
   return real;
 }
 
@@ -237,7 +237,7 @@ test('AC8.1: with no --design-integration/--claude-md the decision follows the i
   for (const [value, decision] of [['enabled', 'proceed'], ['disabled', 'skip']]) {
     const repo = gitRepoWithFlag(value);
     try {
-      const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: repo, env: withoutAmbientGitVars(process.env) });
+      const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: repo, env: cleanGitEnv(process.env) });
       assert.equal(r.code, 0);
       assert.equal(JSON.parse(r.stdout).decision, decision, `flag ${value}`);
     } finally {
@@ -252,7 +252,7 @@ test('repoRoot falls back to deps.cwd() when cwd is not a git repo', () => {
     fs.writeFileSync(path.join(tmp, 'CLAUDE.md'), `## Design integration\n\ndesign-integration: ${value}\n`);
     try {
       // GIT_CEILING_DIRECTORIES keeps git from finding a repo above the temp dir.
-      const env = { ...withoutAmbientGitVars(process.env), GIT_CEILING_DIRECTORIES: path.dirname(tmp) };
+      const env = { ...cleanGitEnv(process.env), GIT_CEILING_DIRECTORIES: path.dirname(tmp) };
       const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: tmp, env });
       assert.equal(r.code, 0);
       assert.equal(JSON.parse(r.stdout).decision, decision, `flag ${value}`); // a process.cwd() fallback would read this worktree instead
@@ -362,7 +362,7 @@ test('repoRoot runs git with the injected env', () => {
   const repoB = gitRepoWithFlag('enabled');
   const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-plain-'));
   try {
-    const env = { ...withoutAmbientGitVars(process.env), GIT_DIR: path.join(repoB, '.git'), GIT_WORK_TREE: repoB };
+    const env = { ...cleanGitEnv(process.env), GIT_DIR: path.join(repoB, '.git'), GIT_WORK_TREE: repoB };
     const r = runCliSync(CLI, ['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { env, cwd: plain });
     assert.equal(r.code, 0);
     assert.equal(JSON.parse(r.stdout).decision, 'proceed');

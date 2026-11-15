@@ -7,7 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseFilesField, checkTrackedFreshness, gitLastChangedMap } = require('../../../plugin/bin/lib/docs-health/freshness');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 function makeTmpGitRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-'));
@@ -186,7 +186,7 @@ test('checkTrackedFreshness spawns exactly one git subprocess for multiple track
 });
 
 test('checkTrackedFreshness runs git log with the injected env (#5381)', () => {
-  const clean = withoutAmbientGitVars(process.env);
+  const clean = cleanGitEnv(process.env);
   const B = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-envB-'));
   const git = (args) => execFileSync('git', ['-C', B, ...args], { env: clean, stdio: 'pipe' });
   git(['init', '-q']);

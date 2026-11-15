@@ -7,7 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const { sweepCli } = require('../../helpers/health-sweep-cli');
-const { withoutAmbientGitVars } = require('../../helpers/git-env');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 const { seedDurableState } = require('../health-core/seed-durable-state');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'docs-health.js');
@@ -17,7 +17,7 @@ function cli(argv, opts) {
   return sweepCli(CLI, argv, opts);
 }
 
-const GIT_OPTS = { env: withoutAmbientGitVars(process.env) };
+const GIT_OPTS = { env: cleanGitEnv(process.env) };
 
 function makeTmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cli-check-freshness-plain-'));

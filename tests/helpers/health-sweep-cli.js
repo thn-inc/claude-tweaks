@@ -26,14 +26,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runCliSync } = require('./run-cli');
-const { withoutAmbientGitVars } = require('./git-env');
+const { cleanGitEnv } = require('./git-fixtures');
 
 function sweepCli(cliPath, argv, opts = {}) {
   const emptyCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'health-sweep-cwd-'));
   const prev = process.cwd();
   process.chdir(emptyCwd);
   try {
-    const ambient = withoutAmbientGitVars(process.env);
+    const ambient = cleanGitEnv(process.env);
     const res = runCliSync(cliPath, argv, {
       env: { ...ambient, ...opts.env, GIT_ALLOW_PROTOCOL: 'file' },
       cwd: opts.cwd,
