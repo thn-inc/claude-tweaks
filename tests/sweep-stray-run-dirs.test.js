@@ -220,12 +220,13 @@ function cleanEnv(extra = {}) {
 }
 
 // Real process: proves the script entry, exit code 0 and the four-line dry-run summary on stdout.
+// Its cwd is the fixture too: were --root ever ignored, the child would sweep the fixture, never this checkout.
 test('AC5.1 AC7.1: --dry-run --root <fixture> prints the summary lines and exits 0', () => {
   const root = fs.realpathSync(makeRepo());
   try {
     commitPath(root, '.claude-tweaks/pipelines/2026-08-01T090000-spec-1/work/1-spec.md', '# 1\n');
     fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', '2026-08-03T090000-spec-9', 'staged'), { recursive: true });
-    const res = spawnCli(CLI, ['--dry-run', '--root', root], { env: cleanEnv() });
+    const res = spawnCli(CLI, ['--dry-run', '--root', root], { env: cleanEnv(), cwd: root });
     assert.equal(res.code, 0, res.stderr);
     assert.equal(res.stderr, '');
     assert.equal(res.stdout, `root: ${root}\narchived: 1\nskipped: 1\nfailed: 0\n`);
@@ -235,6 +236,7 @@ test('AC5.1 AC7.1: --dry-run --root <fixture> prints the summary lines and exits
 });
 
 // Real process: proves the script entry's exit code 1, the FAILED line on stdout and the empty stderr.
+// Not a dry run, so its cwd is the fixture: a regressed --root must never archive the real checkout.
 test('AC7.1: a failed archive exits 1 with a FAILED line on stdout and empty stderr', () => {
   const root = fs.realpathSync(makeRepo());
   try {
@@ -244,7 +246,7 @@ test('AC7.1: a failed archive exits 1 with a FAILED line on stdout and empty std
     fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive'), { recursive: true });
     fs.writeFileSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId), 'in the way\n');
     const logPath = path.join(root, 'sweep.log');
-    const res = spawnCli(CLI, ['--root', root, '--log', logPath], { env: cleanEnv() });
+    const res = spawnCli(CLI, ['--root', root, '--log', logPath], { env: cleanEnv(), cwd: root });
     assert.equal(res.code, 1);
     assert.equal(res.stderr, '');
     assert.equal(
