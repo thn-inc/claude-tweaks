@@ -1,13 +1,15 @@
 'use strict';
 // The review-summary classifier of tools/driver-merge-check-eval.js (#5228): the one piece of the
-// verdict-fixture extraction that decides what a fixture's reviewFindings are, and evaluate's counting, floors and
-// exit code over fake deps. extract's gh and git calls and evaluate's real worker launches are a maintainer
-// tool's job and are not in npm test.
+// verdict-fixture extraction that decides what a fixture's reviewFindings are, extract's supersede rule and check
+// reads, and evaluate's counting, floors and exit code, the last two over fake gh, git, node and launcher deps.
+// Only the real gh, git and worker launches (a maintainer running the tool) are outside npm test.
 const { describe, test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { formatEntry } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'log-decision', 'append'));
+const { verdictText, VERDICT_STEPS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'dispatch', 'merge-verdict'));
 const { classifyReviewSection, scrubLocalPaths, run } = require(path.join(__dirname, '..', '..', '..', 'tools', 'driver-merge-check-eval.js'));
 
 const roots = [];
@@ -290,6 +292,111 @@ describe('evaluate: counting, floors and the exit code', () => {
     assert.ok(t.prompts[0].includes('Medium: a gap'));
     assert.ok(t.prompts[1].includes('checks: unreadable'));
     assert.ok(t.prompts[1].includes('review findings: none'));
+  });
+});
+
+describe('extract: the supersede rule and the check reads', () => {
+  const SHA = 'c'.repeat(40);
+  const OLD_SHA = 'd'.repeat(40);
+  const BLAST = { mergeBase: 'e'.repeat(40), config: { mergeSensitivePaths: [], autoMergeMaxLines: 40, autoMergeMaxFiles: 2 }, summary: { implLines: 1, sensitiveFilesTouched: [] } };
+  const stamp = new Date(2026, 10, 14, 10, 0, 0);
+
+  // One run dir's decisions.md: a `## /review` section stating no findings, then the logged merge-gate verdict
+  // lines (the format log-decision.js writes); `verdict: null` writes a line that names a different verdict word.
+  function decisions(lines) {
+    const out = ['## /review', '- AUTO 10:00:00 — Code review: No findings at any severity. Reversibility: n/a.', '## /wrap-up'];
+    for (const [record, verdict] of lines) {
+      out.push(formatEntry({ status: 'AUTO', now: stamp, step: VERDICT_STEPS.gate, text: verdictText(record, verdict), reversibility: 'n/a' }));
+    }
+    return `${out.join('\n')}\n`;
+  }
+
+  // runs: [[relative dir, decisions text]]; checks: (pr) => stdout, may throw.
+  function setup(runs, { checks = () => '[{"name":"test","bucket":"pass"}]' } = {}) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-extract-test-'));
+    roots.push(dir);
+    const runsDir = path.join(dir, 'runs');
+    for (const [rel, text] of runs) {
+      fs.mkdirSync(path.join(runsDir, rel), { recursive: true });
+      fs.writeFileSync(path.join(runsDir, rel, 'decisions.md'), text);
+    }
+    const out = path.join(dir, 'out', 'fixtures.json');
+    const logs = [];
+    const ghCalls = [];
+    const deps = {
+      fs, tmpdir: dir, worktree: dir, active: new Set(), now: () => new Date(0),
+      gh: (args) => {
+        ghCalls.push(args);
+        if (args[0] === 'issue') return JSON.stringify({ title: 'T', body: 'B', closedByPullRequestsReferences: [{ number: 41 }, { number: 42 }] });
+        if (args[0] === 'pr' && args[1] === 'view') {
+          return JSON.stringify(args[2] === '41'
+            ? { state: 'MERGED', mergeCommit: { oid: OLD_SHA }, mergedAt: '2026-10-01T00:00:00Z' }
+            : { state: 'MERGED', mergeCommit: { oid: SHA }, mergedAt: '2026-10-02T00:00:00Z' });
+        }
+        if (args[0] === 'pr' && args[1] === 'checks') return checks(args[2]);
+        throw new Error(`unexpected gh ${args.join(' ')}`);
+      },
+      git: (args) => {
+        if (args.includes('remove')) fs.rmSync(args[args.length - 1], { recursive: true, force: true });
+        return '';
+      },
+      node: () => ({ code: 0, stdout: JSON.stringify(BLAST), stderr: '' }),
+      log: (l) => logs.push(l), err: () => {},
+    };
+    const go = async () => {
+      const code = await run({ argv: ['extract', '--runs', runsDir, '--out', out], deps });
+      return { code, fixtures: code === 0 ? JSON.parse(fs.readFileSync(out, 'utf8')) : null };
+    };
+    return { go, ghCalls };
+  }
+
+  test('a later run with no merge-gate verdict keeps the earlier run\'s real verdict', async () => {
+    const t = setup([
+      ['2026-10-01T000000-record-9', decisions([[9, 'auto-merge']])],
+      ['archive/2026-10-02T000000-record-9', decisions([[9, 'skipped']])],
+    ]);
+    const { code, fixtures } = await t.go();
+    assert.strictEqual(code, 0);
+    assert.deepStrictEqual(fixtures.entries.map((e) => [e.record, e.verdict]), [[9, 'auto-merge']]);
+    assert.deepStrictEqual(fixtures.excluded, []);
+  });
+
+  test('a record whose only verdict is not a merge-gate verdict is excluded as no-merge-gate-verdict', async () => {
+    const t = setup([['2026-10-01T000000-record-9', decisions([[9, 'skipped']])]]);
+    const { fixtures } = await t.go();
+    assert.deepStrictEqual(fixtures.entries, []);
+    assert.deepStrictEqual(fixtures.excluded, [{ record: 9, reason: 'no-merge-gate-verdict' }]);
+  });
+
+  test('a later real verdict supersedes an earlier one, in either direction', async () => {
+    const up = setup([
+      ['2026-10-01T000000-record-9', decisions([[9, 'needs-human']])],
+      ['2026-10-02T000000-record-9', decisions([[9, 'auto-merge']])],
+    ]);
+    assert.deepStrictEqual((await up.go()).fixtures.entries.map((e) => e.verdict), ['auto-merge']);
+    const down = setup([
+      ['2026-10-01T000000-record-9', decisions([[9, 'auto-merge']])],
+      ['2026-10-02T000000-record-9', decisions([[9, 'needs-human']])],
+    ]);
+    assert.deepStrictEqual((await down.go()).fixtures.entries.map((e) => e.verdict), ['needs-human']);
+  });
+
+  test('the check output is parsed into the entry and the latest merged closing PR is carried as closingPr', async () => {
+    const t = setup([['2026-10-01T000000-record-9', decisions([[9, 'needs-human']])]]);
+    const { fixtures } = await t.go();
+    const [entry] = fixtures.entries;
+    assert.deepStrictEqual(entry.checks, [{ name: 'test', bucket: 'pass' }]);
+    assert.strictEqual(entry.closingPr, 42);
+    assert.strictEqual(entry.mergeSha, SHA);
+    assert.deepStrictEqual(t.ghCalls.find((a) => a[1] === 'checks'), ['pr', 'checks', '42', '--json', 'name,bucket']);
+    assert.deepStrictEqual(Object.keys(entry), ['record', 'verdict', 'mergeSha', 'closingPr', 'title', 'body', 'checks', 'blastRadius', 'reviewFindings']);
+  });
+
+  test('a gh pr checks that throws, or prints something that is not JSON, gives checks: unreadable', async () => {
+    const throwing = setup([['2026-10-01T000000-record-9', decisions([[9, 'needs-human']])]], { checks: () => { throw new Error('no checks reported'); } });
+    assert.strictEqual((await throwing.go()).fixtures.entries[0].checks, 'checks: unreadable');
+    const garbled = setup([['2026-10-01T000000-record-9', decisions([[9, 'needs-human']])]], { checks: () => 'not json' });
+    assert.strictEqual((await garbled.go()).fixtures.entries[0].checks, 'checks: unreadable');
   });
 });
 
