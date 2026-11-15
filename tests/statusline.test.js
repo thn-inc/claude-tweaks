@@ -2090,9 +2090,14 @@ test('AC7.1: script given malformed JSON on stdin exits 0', async () => {
 test('AC8.1: payload directory wins over deps.cwd()', async () => {
   await withScriptFixture(async ({ root, dir, env }) => {
     const other = path.join(root, 'other');
-    fs.mkdirSync(other);
+    // renderProject reads the payload itself; the spec segment reads run's cwd, so
+    // each directory carries a different spec number.
+    for (const [where, spec] of [[dir, '010-a.md'], [other, '020-b.md']]) {
+      fs.mkdirSync(path.join(where, 'specs'), { recursive: true });
+      fs.writeFileSync(path.join(where, 'specs', spec), '');
+    }
     const res = await runCli(STATUSLINE, [], { env, cwd: other, stdin: JSON.stringify({ workspace: { current_dir: dir } }) });
-    assert.strictEqual(res.stdout, linkedName(dir));
+    assert.strictEqual(res.stdout, `${linkedName(dir)}  spec: 010`);
   });
 });
 
