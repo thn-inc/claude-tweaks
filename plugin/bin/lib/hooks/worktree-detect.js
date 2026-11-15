@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { runGit, isIndeterminate } = require('./git-exec');
+const { lookupRepoInfo, rememberRepoInfo } = require('./repo-info-cache');
 
 // Returns null (not the original, unresolved path) on failure. This
 // project's fail-open invariant ("a recorded worktree whose path no longer
@@ -84,6 +85,26 @@ function mainCheckoutRoot(p) {
   return null;
 }
 
+// #5294: repoInfo's remember step. A throw costs only the cache.
+function remember(dir, signature, result) {
+  try {
+    rememberRepoInfo(dir, process.env, signature, result);
+  } catch (_) {
+    // the answer returned is git's own
+  }
+}
+
+// #5294: git's own "not a repo" answer — exit 128 with that text. Every other
+// git-error (a git killed by a signal, whose exitCode is null; an EACCES/EPERM
+// spawn error; any other non-zero exit) still returns a definitive negative for
+// THIS call (#134's classification is unchanged) but is not remembered, so a
+// transient failure cannot become a lasting "not a repo" for later calls and
+// processes. A localized git message is a miss, never a wrong answer.
+const NOT_A_REPO = /not a git repository/i;
+function isNotARepoAnswer(exitCode, stderr) {
+  return exitCode === 128 && NOT_A_REPO.test(stderr || '');
+}
+
 // Single git subprocess spawn querying toplevel + git-dir + git-common-dir +
 // superproject in one invocation instead of four separate spawns — every
 // caller of this module needs both the repo root and the linked-worktree
@@ -110,12 +131,31 @@ function mainCheckoutRoot(p) {
 //                           unanswered; it carries NO information either way
 // opts is forwarded verbatim to runGit — tests use { timeoutMs } to force the
 // indeterminate branch deterministically. Production callers omit it.
+//
+// #5294: a call with no opts keys is answered from repo-info-cache.js's memo
+// while the directory's filesystem signature is unchanged; a call passing any
+// opts key bypasses the memo entirely. Only definitive answers are remembered,
+// and a negative only when git itself said "not a git repository"
+// (isNotARepoAnswer above), and either kind only when it agrees with the
+// signature (rememberRepoInfo). A cache fault costs only the cache: a lookup that
+// throws is a miss, a remember that throws is ignored (the
+// never-break-a-session invariant).
 function repoInfo(p, opts = {}) {
   const dir = nearestExistingDir(p);
   // A path with no existing ancestor is a definitive negative, not a failure to
   // look: there is nothing on disk to be a repo.
   if (!dir) return { repoRoot: null, isLinkedWorktree: false, indeterminate: false };
-  const { stdout: out, failure } = runGit(
+  let signature = null;
+  if (Object.keys(opts).length === 0) {
+    try {
+      const hit = lookupRepoInfo(dir, process.env);
+      if (hit.answer) return hit.answer;
+      signature = hit.signature;
+    } catch (_) {
+      // a miss, and nothing will be remembered (signature stays null)
+    }
+  }
+  const { stdout: out, failure, exitCode, stderr } = runGit(
     ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir', '--show-superproject-working-tree'],
     dir,
     opts,
@@ -123,7 +163,9 @@ function repoInfo(p, opts = {}) {
   if (failure) {
     // git-error == git ran and said "not a git repository": a real answer.
     // timeout/spawn/no-git == we never got one.
-    return { repoRoot: null, isLinkedWorktree: false, indeterminate: isIndeterminate(failure) };
+    const result = { repoRoot: null, isLinkedWorktree: false, indeterminate: isIndeterminate(failure) };
+    if (!result.indeterminate && isNotARepoAnswer(exitCode, stderr)) remember(dir, signature, result);
+    return result;
   }
   const [top, gitDir, gitCommon, superproject] = out.split('\n');
   // Exit 0 but missing lines: git answered something we cannot parse. Treat as
@@ -139,7 +181,9 @@ function repoInfo(p, opts = {}) {
   // realpath on its answer failed (the directory went away between the two
   // calls). Also a failure to determine, not a negative.
   if (!repoRoot) return { repoRoot: null, isLinkedWorktree: false, indeterminate: true };
-  return { repoRoot, isLinkedWorktree: isLinked, indeterminate: false };
+  const result = { repoRoot, isLinkedWorktree: isLinked, indeterminate: false };
+  remember(dir, signature, result);
+  return result;
 }
 
 // fs-only walk-up looking for a .claude-tweaks/policy.yml, so callers can

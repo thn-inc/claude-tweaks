@@ -27,11 +27,13 @@ files:
   - Its tests see `TMPDIR` pointing at `<tmpdir>/ct-test-runs/ct-testrun-<pid>-XXXXXX/`.
   - `node --test` runs with `--test-concurrency` set to half the cores, or cores minus 1 when `CI` is set.
   - Its tests' git sees `maintenance.auto=false` and `gc.auto=0`, appended as `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` after any `GIT_CONFIG_COUNT` entries the caller already exported.
+  - Its tests' hooks see `CT_HOOKS_REPO_INFO_STORE` pointing at `repo-info-cache.json` inside that same run root, so fixture repos never land in the user's real `~/.claude-tweaks/repo-info-cache.json`. A bare `node --test` run of a suite that loads `tests/helpers/git-template.js` gets a fresh temp store instead, when the variable is unset.
   - The common fixture repos are built once per test process and copied per test (`tests/helpers/git-template.js`), so a copy starts no git process.
   - A push into a local bare origin is the one exception to the env config: git's local transport strips `GIT_CONFIG_*` from the receiving side, so `git-receive-pack` still starts `maintenance run --auto` unless the origin's own config sets `receive.autogc = false` (`disableReceiveAutoGc` in `tests/helpers/git-template.js`).
 - **Red flags:**
   - New `ct-wtd-*`, `verify-cli-test-*` and similar fixture dirs appearing directly in the real tmpdir after the run. They should exist only inside the run's own root.
   - `git maintenance run --auto` processes showing up under the run in a process capture. Check first for a test that pushes into a bare origin it built without `disableReceiveAutoGc`.
+  - Temp fixture directories appearing as entries in the real `~/.claude-tweaks/repo-info-cache.json` after a runner-driven run.
 
 ### 2. Start a second run while one is already running
 - **URL:** the second session's output.
@@ -91,4 +93,5 @@ files:
 - Updated during build of #5119: the lock moved into `plugin/bin/lib/suite-slot.js`, shared with `verify.js`. Step 4 now covers a verify.js-driven `npm test` skipping the lock, with verify.js's own slot count governing instead of `CT_TEST_SUITE_SLOTS`.
 - Updated during build of #5297: step 1 now covers git auto-maintenance turned off for the suite and template-copied fixture repos. Step 5 covers the spawn-free git check and its macOS shim rule. The trigger was one run spawning 1,300–2,100 processes per second.
 - Updated during build of #5319: a plain top-level `npm test` now runs the impact-selected subset from the subset lane. The entry point and steps 1 and 2 name `npm test -- --full` for the whole-suite run these steps describe, and step 4 says a bare child of `verify.js` or of another run also runs the whole set.
+- Updated during build of #5294: step 1 now covers the hooks' repoInfo store pointed into the run root, so a suite run never writes fixture answers into the user's real store.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).

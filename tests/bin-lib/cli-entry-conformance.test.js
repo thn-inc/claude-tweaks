@@ -25,7 +25,6 @@ const BIN_DIR = path.join(__dirname, '..', '..', 'plugin', 'bin');
 // test, with its reason, kept apart from this list.
 const NOT_YET = [
   'blast-radius.js',
-  'calibration-report.js',
   'claude-tweaks-statusline.js',
   'code-health.js',
   'compose-subject.js',
@@ -35,14 +34,11 @@ const NOT_YET = [
   'hooks.js',
   'init-verify-scope.js',
   'install-statusline-wrapper.js',
-  'phase-timing.js',
-  'plan-audit.js',
   'reachability-audit.js',
   'record-graph.js',
   'release-bootstrap.js',
   'release-notes-publish.js',
   'residue.js',
-  'resolve-profile.js',
   'session-tmp-resolve.js',
   'sweep-stray-run-dirs.js',
   'verify.js',

@@ -25,18 +25,20 @@ function resolveSessionId(sessionId) {
   return sessionId && String(sessionId).trim() ? String(sessionId).trim() : null;
 }
 
-function failurePath(sessionId) {
+// `dir` is the directory the file lives under — os.tmpdir() unless a caller
+// (the CLI, via its injected tmpDir) passes another.
+function failurePath(sessionId, dir = os.tmpdir()) {
   const id = resolveSessionId(sessionId);
   if (!id) return null;
-  return path.join(os.tmpdir(), `ct-model-failures-${id}.json`);
+  return path.join(dir, `ct-model-failures-${id}.json`);
 }
 
 // -> Set<string> of model names that have failed with a credit/usage
 // exhaustion error this session. Any read failure (missing file, malformed
 // JSON) degrades to an empty set — a corrupt or absent blacklist must
 // never block a resolution, only fail to protect one.
-function readFailedModels(sessionId) {
-  const p = failurePath(sessionId);
+function readFailedModels(sessionId, { dir } = {}) {
+  const p = failurePath(sessionId, dir);
   if (!p) return new Set();
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -109,14 +111,16 @@ function releaseLock(lockDir) {
 //
 // `opts.lockTimeoutMs`/`opts.lockPollMs` override the production defaults —
 // exposed for tests to prove the timeout-degrade path without a real
-// multi-second wait; production callers omit both.
+// multi-second wait; production callers omit both. `opts.dir` moves the file
+// (and so its lock) off os.tmpdir(); the inner read takes the same `dir`, so
+// the read-modify-write stays under the lock derived from `p`.
 function recordFailure(sessionId, model, opts = {}) {
-  const p = failurePath(sessionId);
+  const p = failurePath(sessionId, opts.dir);
   if (!p) return;
   const lockDir = `${p}.lock`;
   const locked = acquireLock(lockDir, opts.lockTimeoutMs ?? LOCK_TIMEOUT_MS, opts.lockPollMs ?? LOCK_POLL_MS);
   try {
-    const current = readFailedModels(sessionId);
+    const current = readFailedModels(sessionId, { dir: opts.dir });
     current.add(model);
     writeFileAtomic(p, JSON.stringify([...current]));
   } finally {
@@ -131,8 +135,8 @@ function recordFailure(sessionId, model, opts = {}) {
 // tolerating it already being absent. Mirrors
 // bin/lib/issues/record-snapshot.js's invalidateSnapshot() shape; see that
 // file's own header for the sibling this was compared against.
-function invalidateFailures(sessionId) {
-  const p = failurePath(sessionId);
+function invalidateFailures(sessionId, { dir } = {}) {
+  const p = failurePath(sessionId, dir);
   if (!p) return;
   try {
     fs.unlinkSync(p);
