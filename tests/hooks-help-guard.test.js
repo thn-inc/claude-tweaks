@@ -109,19 +109,6 @@ test('#5375: realDeps.stderr writes every byte, retries EAGAIN and never throws 
   assert.strictEqual(Buffer.concat(delivered).toString(), text.slice(0, 15));
 });
 
-test('#5375: delete-ledger --ledger <relative> deletes against the injected cwd and prints the typed path', async () => {
-  const { run } = projectWithRun();
-  fs.writeFileSync(path.join(run, 'x-ledger.md'), '# ledger\n');
-  const env = { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' };
-  // A trailing slash is not a file at base (not-found) and must stay one.
-  const slash = await runCli(HOOKS, ['delete-ledger', '--run', run, '--ledger', 'x-ledger.md/'], { cwd: run, env });
-  assert.deepStrictEqual(slash, { code: 0, stdout: `claude-tweaks: delete-ledger: no ledger found for ${path.basename(run)} — not found\n`, stderr: '' });
-  assert.ok(fs.existsSync(path.join(run, 'x-ledger.md')), 'the trailing-slash call must delete nothing');
-  const r = await runCli(HOOKS, ['delete-ledger', '--run', run, '--ledger', 'x-ledger.md'], { cwd: run, env });
-  assert.deepStrictEqual(r, { code: 0, stdout: 'claude-tweaks: deleted ledger x-ledger.md\n', stderr: '' });
-  assert.ok(!fs.existsSync(path.join(run, 'x-ledger.md')));
-});
-
 test('#1143: --help anywhere in the argument list intercepts, not just as the first arg', async () => {
   // record-pr's real shape is `record-pr [--run <dir>] <number> <url>` — a
   // --help buried after other-looking positionals must still intercept

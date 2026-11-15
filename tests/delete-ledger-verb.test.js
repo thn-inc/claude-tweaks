@@ -333,6 +333,43 @@ function runInProcess(args, { cwd, env } = {}) {
   return runCli(HOOKS, args, { cwd, env: inProcessEnv(env) });
 }
 
+// What this platform's fs makes of `<dir>/<name>/` on a file, through the calls delete-ledger makes on an explicit
+// --ledger (existsSync, realpathSync, unlinkSync), probed on a sacrificial copy: POSIX refuses the trailing slash,
+// so the verb reports not-found; a platform that tolerates it goes on to the realpath and the unlink.
+function slashOutcome(dir) {
+  const probe = `${dir}${path.sep}probe-ledger.md/`;
+  fs.writeFileSync(path.join(dir, 'probe-ledger.md'), '# probe\n');
+  try {
+    if (!fs.existsSync(probe)) return { kind: 'not-found' };
+    try { fs.realpathSync(probe); } catch { return { kind: 'rejected' }; }
+    try { fs.unlinkSync(probe); return { kind: 'deleted' }; } catch (err) { return { kind: 'failed', message: err.message }; }
+  } finally {
+    fs.rmSync(path.join(dir, 'probe-ledger.md'), { force: true });
+  }
+}
+
+test('#5375: delete-ledger --ledger <relative> deletes against the injected cwd and prints the typed path', async () => {
+  const root = gitRoot();
+  const run = runDirFixture(root);
+  const ledger = path.join(run, 'x-ledger.md');
+  fs.writeFileSync(ledger, '# ledger\n');
+  // A trailing slash is joined onto the cwd unnormalized, so the kernel sees it as a bare read did at base.
+  const outcome = slashOutcome(run);
+  const slash = await runInProcess(['delete-ledger', '--run', run, '--ledger', 'x-ledger.md/'], { cwd: run });
+  const expected = {
+    'not-found': `claude-tweaks: delete-ledger: no ledger found for ${path.basename(run)} — not found\n`,
+    rejected: 'claude-tweaks: delete-ledger: --ledger x-ledger.md/ rejected (outside the run directory and worktree) — ledger not deleted\n',
+    deleted: 'claude-tweaks: deleted ledger x-ledger.md/\n',
+    failed: `claude-tweaks: delete-ledger: failed to delete x-ledger.md/ (${String(outcome.message).split('probe-ledger.md').join('x-ledger.md')})\n`,
+  }[outcome.kind];
+  assert.deepStrictEqual(slash, { code: 0, stdout: expected, stderr: '' });
+  assert.strictEqual(fs.existsSync(ledger), outcome.kind !== 'deleted', 'only a tolerated trailing slash deletes the file');
+  if (outcome.kind === 'deleted') fs.writeFileSync(ledger, '# ledger\n');
+  const r = await runInProcess(['delete-ledger', '--run', run, '--ledger', 'x-ledger.md'], { cwd: run });
+  assert.deepStrictEqual(r, { code: 0, stdout: 'claude-tweaks: deleted ledger x-ledger.md\n', stderr: '' });
+  assert.ok(!fs.existsSync(ledger));
+});
+
 // The env-only A/B fixture (cli-wrapper-contract.md) on the docs/plans ownership path: the run's recorded worktree
 // is not a git checkout, so ownership is computable only when the git children read the injected GIT_DIR (repo B,
 // with a recorded origin/HEAD so the integration branch resolves without gh). `inherited` commits the ledger to B,

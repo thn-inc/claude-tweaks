@@ -775,11 +775,10 @@ test('AC3.1 AC9.1: archive-run on a clean fixture through runCli and spawnCli pr
   const spawned = runDirFixture('clean');
   const a = await runHook(['archive-run', '--run', inProcess.runDir], { cwd: inProcess.root });
   const b = spawnCli(HOOKS, ['archive-run', '--run', spawned.runDir], { cwd: spawned.root, env: hookEnv() });
-  assert.deepStrictEqual({ code: a.code, stdout: a.stdout }, { code: b.code, stdout: b.stdout });
-  assert.deepStrictEqual({ code: a.code, stdout: a.stdout }, {
-    code: 0, stdout: `moved: config.yml\nmoved: decisions.md\nmoved: run-state.json\nclaude-tweaks: archived ${inProcess.runId}\n`,
+  assert.deepStrictEqual(a, b);
+  assert.deepStrictEqual(a, {
+    code: 0, stdout: `moved: config.yml\nmoved: decisions.md\nmoved: run-state.json\nclaude-tweaks: archived ${inProcess.runId}\n`, stderr: '',
   });
-  assert.equal(b.stderr, '');
   for (const f of [inProcess, spawned]) {
     assert.ok(!fs.existsSync(f.runDir), 'run dir must be moved');
     assert.ok(fs.existsSync(path.join(f.root, '.claude-tweaks', 'pipelines', 'archive', f.runId, 'config.yml')));
@@ -830,11 +829,12 @@ test('AC3.1 AC9.1: close-run on a recorded run through runCli and spawnCli retur
   const spawned = await recordedRunFixture();
   const a = await runHook(['close-run', '--run', inProcess.runDir], { cwd: inProcess.root, env: CLOSE_ENV });
   const b = spawnCli(HOOKS, ['close-run', '--run', spawned.runDir], { cwd: spawned.root, env: hookEnv(CLOSE_ENV) });
-  const shape = (r, f) => ({ code: r.code, stdout: r.stdout.split(f.runDir).join('<run>') });
+  const shape = (r, f) => ({ code: r.code, stdout: r.stdout.split(f.runDir).join('<run>'), stderr: r.stderr });
   assert.deepStrictEqual(shape(a, inProcess), shape(b, spawned));
   const id = inProcess.runId;
   assert.deepStrictEqual(shape(a, inProcess), {
     code: 0,
+    stderr: '',
     stdout: `claude-tweaks: closing run ${id} with no recorded wrap-up invocation — expected if wrap-up was run manually `
       + '(typed slash commands leave no ledger event); otherwise consider /claude-tweaks:wrap-up before closing. '
       + 'Event recorded: close-without-wrapup.\n'
@@ -842,7 +842,6 @@ test('AC3.1 AC9.1: close-run on a recorded run through runCli and spawnCli retur
       + 'sequence (close-run always runs before archive-run); archival is still pending and will happen via the next '
       + 'routine reconcile pass, or you can archive it now: node "/ct-plugin-root/bin/hooks.js" archive-run --run "<run>"\n',
   });
-  assert.equal(b.stderr, '');
   for (const f of [inProcess, spawned]) {
     const state = JSON.parse(fs.readFileSync(path.join(f.runDir, 'run-state.json'), 'utf8'));
     assert.equal(state.status, 'clean');

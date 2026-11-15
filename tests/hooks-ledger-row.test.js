@@ -219,12 +219,11 @@ test('AC3.1 AC9.1: ledger-row append through runCli and spawnCli returns the sam
   const spawned = await fixture();
   const a = await ledgerRow(inProcess, APPEND);
   const b = spawnCli(HOOKS, ledgerRowArgs(spawned, APPEND), { cwd: spawned.wt, env: hookEnv() });
-  const shape = (r, f) => ({ code: r.code, stdout: r.stdout.split(JSON.stringify(f.ledger).slice(1, -1)).join('<ledger>') });
+  const shape = (r, f) => ({ code: r.code, stdout: r.stdout.split(JSON.stringify(f.ledger).slice(1, -1)).join('<ledger>'), stderr: r.stderr });
   assert.deepStrictEqual(shape(a, inProcess), shape(b, spawned));
   assert.deepStrictEqual(shape(a, inProcess), {
-    code: 0, stdout: '{"action":"appended","row":1,"status":"open","ledger":"<ledger>"}\n',
+    code: 0, stdout: '{"action":"appended","row":1,"status":"open","ledger":"<ledger>"}\n', stderr: '',
   });
-  assert.equal(b.stderr, '');
   assert.deepEqual(ledgerRows(spawned), ledgerRows(inProcess));
 });
 
@@ -253,8 +252,8 @@ test('AC3.1 AC9.1: record-worktree through runCli and spawnCli returns the same 
   const spawned = recordFixture();
   const a = await runHook(['record-worktree', '--run', inProcess.runDir, inProcess.wt], { cwd: inProcess.root });
   const b = spawnCli(HOOKS, ['record-worktree', '--run', spawned.runDir, spawned.wt], { cwd: spawned.root, env: hookEnv() });
-  assert.deepStrictEqual({ code: a.code, stdout: a.stdout }, { code: b.code, stdout: b.stdout });
-  assert.deepStrictEqual({ code: a.code, stdout: a.stdout }, { code: 0, stdout: `claude-tweaks: worktree recorded for ${RUN_ID}\n` });
+  assert.deepStrictEqual(a, b);
+  assert.deepStrictEqual(a, { code: 0, stdout: `claude-tweaks: worktree recorded for ${RUN_ID}\n`, stderr: '' });
   for (const f of [inProcess, spawned]) {
     const state = JSON.parse(fs.readFileSync(f.state, 'utf8'));
     assert.equal(state.worktree, f.wt);
@@ -269,6 +268,14 @@ test('record-worktree without --run exits 1 on stdout and records nothing', asyn
   const r = await runHook(['record-worktree', f.wt], { cwd: f.root });
   assert.deepStrictEqual(r, { code: 1, stdout: 'claude-tweaks: record-worktree requires --run — worktree not recorded\n', stderr: '' });
   assert.equal(fs.readFileSync(f.state, 'utf8'), before);
+});
+
+// AC10.1 (#5375): a relative worktree path is recorded against the injected cwd, not the runner's.
+test('AC10.1: record-worktree records a relative worktree path against the injected cwd', async () => {
+  const f = recordFixture();
+  const r = await runHook(['record-worktree', '--run', f.runDir, 'wt-rel'], { cwd: f.root });
+  assert.deepStrictEqual(r, { code: 0, stdout: `claude-tweaks: worktree recorded for ${RUN_ID}\n`, stderr: '' });
+  assert.equal(JSON.parse(fs.readFileSync(f.state, 'utf8')).worktree, path.join(f.root, 'wt-rel'));
 });
 
 // Real process: the record-worktree family's refusal smoke test (AC9.1) — the script entry's non-zero exit and stderr.
@@ -425,11 +432,21 @@ test('answer 5: an unreadable file and an interior newline exit 2', async () => 
 
 // #5375: a relative path argument is joined onto the injected cwd WITHOUT normalizing (resolveAgainst),
 // so the kernel sees a trailing slash exactly as a bare relative read did at base.
+// The expected code is read off this platform's own fs for the same joined path (POSIX: ENOTDIR; win32 maps a
+// trailing separator differently), so the pin stays exact everywhere.
 test('#5375: ledger-row --item-file item.txt/ (trailing slash) still refuses with exit 2 and ENOTDIR', async () => {
   const f = await fixture();
   fs.writeFileSync(path.join(f.wt, 'item.txt'), 'a row\n');
+  let code = null;
+  try { fs.readFileSync(`${f.wt}${path.sep}item.txt/`, 'utf8'); } catch (err) { code = err.code; }
   const r = await runHook(['ledger-row', '--run', f.runDir, '--phase', 'build', '--status', 'observation', '--item-file', 'item.txt/'], { cwd: f.wt });
-  assert.deepStrictEqual(r, { code: 2, stdout: '', stderr: 'claude-tweaks: ledger-row: --item-file item.txt/ is unreadable (ENOTDIR) — nothing written\n' });
+  if (code === null) {
+    // A platform that reads the file through the trailing separator appends the row, as a bare read did there.
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).action, 'appended');
+    return;
+  }
+  assert.deepStrictEqual(r, { code: 2, stdout: '', stderr: `claude-tweaks: ledger-row: --item-file item.txt/ is unreadable (${code}) — nothing written\n` });
 });
 
 test('answer 6: fixed with this repo\'s /pull/N URL through the CLI', async () => {

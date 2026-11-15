@@ -120,31 +120,12 @@ function runDirFixture(status) {
   return { root, runDir, runId };
 }
 
-// The runDirFixture('clean') shape plus a bare origin one commit ahead of
-// local main. policy.yml pins pr-first, so a reconcile pass gets past the
-// local-merge early return and writes its cache stamp; the ahead origin gives
-// the mirror check a fast-forward to make, so HEAD is an observable effect too.
+// The repo the reconcile verbs run in. reconcile() and the background spawn
+// are stubbed for every one of them (withReconcileStubbed), so no real pass
+// runs and the fixture needs no origin or policy: whether a call reached the
+// stub is the observable effect.
 function reconcileFixture() {
-  const fixture = runDirFixture('clean');
-  const { root } = fixture;
-  const sib = tracked(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-origin-'))));
-  const origin = path.join(sib, 'origin.git');
-  const other = path.join(sib, 'other');
-  git(['init', '-q', '--bare', '--initial-branch=main', origin], sib);
-  git(['remote', 'add', 'origin', origin], root);
-  git(['push', '-q', 'origin', 'main'], root);
-  git(['remote', 'set-head', 'origin', 'main'], root);
-  git(['clone', '-q', origin, other], sib);
-  git(['config', 'user.email', 'test@example.com'], other);
-  git(['config', 'user.name', 'Test'], other);
-  fs.writeFileSync(path.join(other, 'b.txt'), 'two\n');
-  git(['add', 'b.txt'], other);
-  git(['commit', '-q', '-m', 'ahead'], other);
-  git(['push', '-q', 'origin', 'main'], other);
-  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
-  fs.appendFileSync(path.join(root, '.git', 'info', 'exclude'), '.claude-tweaks/\n');
-  return fixture;
+  return runDirFixture('clean');
 }
 
 // A repo with one empty commit and no run dirs.
@@ -203,14 +184,11 @@ test('#4777: every VERBS verb refuses an undeclared flag on stderr with exit 1',
 
 test('#4777 AC1.1 AC1.2: reconcile --dryrun refuses on stderr with exit 1 and runs no check', async () => {
   const { root } = reconcileFixture();
-  const head = git(['rev-parse', 'HEAD'], root);
   const refused = await withReconcileStubbed(async () => {
     for (const args of [['reconcile', '--dryrun'], ['reconcile', '--json', '--dryrun']]) {
       const result = await runHook(args, { cwd: root });
       assertRefused(result, 'reconcile', "claude-tweaks: reconcile: unknown flag '--dryrun'", args.join(' '));
       assert.equal(result.stderr, "claude-tweaks: reconcile: unknown flag '--dryrun'\nclaude-tweaks: usage: reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]\n", args.join(' '));
-      assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'the reconcile pass never ran');
-      assert.equal(git(['rev-parse', 'HEAD'], root), head, 'HEAD is unchanged');
     }
   });
   assert.equal(refused.calls.length, 0, 'the refused calls never reached reconcile()');
@@ -260,7 +238,6 @@ test('#4777: declared value flags consume their value token', async () => {
 
 test('#4777: a value flag followed by a flag is refused as a missing value', async () => {
   const { root } = reconcileFixture();
-  const head = git(['rev-parse', 'HEAD'], root);
   const reconcileCases = [
     [['reconcile', '--dry-run', '--checks', '--json'], "claude-tweaks: reconcile: --checks needs a value, got '--json'"],
     [['reconcile', '--dry-run', '--checks', '--bogus'], "claude-tweaks: reconcile: --checks needs a value, got '--bogus'"],
@@ -269,8 +246,6 @@ test('#4777: a value flag followed by a flag is refused as a missing value', asy
     for (const [args, firstLine] of reconcileCases) {
       const result = await runHook(args, { cwd: root });
       assertRefused(result, 'reconcile', firstLine, args.join(' '));
-      assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'the reconcile pass never ran');
-      assert.equal(git(['rev-parse', 'HEAD'], root), head, 'HEAD is unchanged');
     }
   });
   assert.equal(refused.calls.length, 0, 'the refused calls never reached reconcile()');
@@ -302,13 +277,11 @@ test('#4777: a flagless verb still runs bare', async () => {
 
 test('#4777: reconcile-background and reconcile-summary refuse an undeclared flag and change nothing', async () => {
   const { root } = reconcileFixture();
-  const head = git(['rev-parse', 'HEAD'], root);
   const { calls, spawnCalls } = await withReconcileStubbed(async () => {
     for (const verb of ['reconcile-background', 'reconcile-summary']) {
       const result = await runHook([verb, '--bogus'], { cwd: root });
       assertRefused(result, verb, `claude-tweaks: ${verb}: unknown flag '--bogus'`, verb);
       assert.ok(!fs.existsSync(path.join(root, STATUS)), `${verb} wrote no background status`);
-      assert.equal(git(['rev-parse', 'HEAD'], root), head, `${verb} left HEAD where it was`);
     }
   });
   assert.equal(calls.length + spawnCalls.length, 0, 'neither refused verb reached reconcile()');
@@ -372,6 +345,15 @@ test('#4777: sweep-shadow with no typo sweeps the shadow file (positive control)
   const { root, runDir, wt, shadow } = sweepFixture();
   const result = await runHook(['sweep-shadow', '--run', runDir, '--worktree', wt], { cwd: root });
   assert.equal(result.stdout, 'relocated: proposal.md\n');
+  assert.ok(!fs.existsSync(shadow), 'the shadow file is moved out of the worktree');
+  assert.ok(fs.existsSync(path.join(runDir, 'staged', 'proposal.md')), 'the proposal lands in the main run dir');
+});
+
+// AC10.1 (#5375): a relative --run and --worktree resolve against the injected cwd, not the runner's.
+test('AC10.1: sweep-shadow resolves a relative --run and --worktree against the injected cwd', async () => {
+  const { root, runDir, wt, shadow } = sweepFixture();
+  const result = await runHook(['sweep-shadow', '--run', path.relative(root, runDir), '--worktree', path.relative(root, wt)], { cwd: root });
+  assert.deepStrictEqual(result, { code: 0, stdout: 'relocated: proposal.md\n', stderr: '' });
   assert.ok(!fs.existsSync(shadow), 'the shadow file is moved out of the worktree');
   assert.ok(fs.existsSync(path.join(runDir, 'staged', 'proposal.md')), 'the proposal lands in the main run dir');
 });
@@ -467,7 +449,6 @@ test('#4834: help wins over an unknown flag in the same call', async () => {
       const result = await runHook(args, { cwd: root });
       assert.equal(result.code, 0, args.join(' '));
       assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE.reconcile}\n`, args.join(' '));
-      assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'the reconcile pass never ran');
     }
   });
   assert.equal(calls.length, 0, 'the help calls never reached reconcile()');
@@ -482,6 +463,7 @@ test('#4834: an unusable stderr still refuses with exit 1', () => {
   const fd = fs.openSync(f, 'r');
   try {
     const r = spawnSync(process.execPath, [HOOKS, 'resolve-run-dir', '--bogus'], { cwd: HOOK_SANDBOX, stdio: ['ignore', 'pipe', fd], encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '' } });
+    assert.ifError(r.error);
     assert.equal(r.status, 1);
     assert.equal(r.stdout, '');
   } finally { fs.closeSync(fd); }

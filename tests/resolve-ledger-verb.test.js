@@ -188,3 +188,58 @@ test('AC10.1: resolve-ledger reports an inherited ledger as other-run only when 
   const r = await runInProcess(args, { cwd: root, env: { GIT_DIR: path.join(b, '.git') } });
   assert.deepStrictEqual(r, { code: 0, stdout: `claude-tweaks: resolve-ledger: none\nother-run: ${ledger}\n`, stderr: '' });
 });
+
+// R8 (#5375): an implicit resolution reads PIPELINE_RUN_DIR as written, and every later fs call resolves a relative
+// value against the process's real working directory. The guard therefore takes the value only when it names the
+// same directory against the injected cwd and against the real one. These run with the real cwd moved to a fixture
+// dir (restored after), never the test runner's checkout, and with two live runs, so a fall-through to the run scan
+// refuses as ambiguous instead of guessing.
+function twoRunRoot() {
+  const root = gitRoot();
+  const runs = ['2026-08-14T120000-spec-998', '2026-08-14T120100-spec-999'].map((runId) => {
+    const dir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+    fs.writeFileSync(path.join(dir, 'ledger.md'), '# Open Items\n');
+    return dir;
+  });
+  return { root, runs };
+}
+
+async function withRealCwd(dir, body) {
+  const before = process.cwd();
+  process.chdir(dir);
+  try {
+    return await body();
+  } finally {
+    process.chdir(before);
+  }
+}
+
+function assertFellThrough(r) {
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout, '', 'no report: the PIPELINE_RUN_DIR value was not taken');
+  assert.match(r.stderr, /multiple candidate runs/);
+  assert.match(r.stderr, /Ledger not resolved\.\n$/);
+}
+
+test('R8: a relative PIPELINE_RUN_DIR naming a different directory against the real cwd falls through to the run scan', async () => {
+  const { root } = twoRunRoot();
+  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-ledger-real-cwd-')));
+  const r = await withRealCwd(elsewhere, () => runInProcess(['resolve-ledger'], { cwd: root, env: { PIPELINE_RUN_DIR: '.' } }));
+  assertFellThrough(r);
+});
+
+test('R8: a relative PIPELINE_RUN_DIR naming the same directory against both cwds is taken as written', async () => {
+  const { root, runs } = twoRunRoot();
+  const rel = path.relative(root, runs[0]);
+  const r = await withRealCwd(root, () => runInProcess(['resolve-ledger'], { cwd: root, env: { PIPELINE_RUN_DIR: rel } }));
+  assert.deepStrictEqual(r, { code: 0, stdout: `claude-tweaks: resolve-ledger: found\nthis-run: ${path.join(rel, 'ledger.md')}\n`, stderr: '' });
+});
+
+test('R8: a relative PIPELINE_RUN_DIR naming a file falls through to the run scan', async () => {
+  const { root } = twoRunRoot();
+  fs.writeFileSync(path.join(root, 'not-a-run.txt'), 'x\n');
+  const r = await withRealCwd(root, () => runInProcess(['resolve-ledger'], { cwd: root, env: { PIPELINE_RUN_DIR: 'not-a-run.txt' } }));
+  assertFellThrough(r);
+});
