@@ -19,8 +19,10 @@ const LOOP_FILES_PLACEHOLDER = '<the test files this loop runs>';
 
 // Node options read as taking the next word as their value, so a flag value is never counted as a file.
 const SPACE_VALUE_FLAGS = new Set([...NODE_TEST_VALUE_FLAGS, '-r', '--require', '--import', '--loader']);
-const LEAD_KEYWORDS = new Set(['do', 'then', 'else']);
-const LOOP_OPENERS = new Set(['for', 'while', 'until']);
+// Keywords a command can follow in its segment. A `while`/`until` one also opens a loop whose condition
+// is this segment, so a run there is repeated.
+const LEAD_KEYWORDS = new Set(['do', 'then', 'else', 'if', 'elif', 'while', 'until']);
+const CONDITION_LOOPS = new Set(['while', 'until']);
 const REPEATING_LEADS = new Set(['xargs', 'parallel']);
 const FIND_EXEC_ACTIONS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
 const NODE_NAMES = new Set(['node', 'node.exe']);
@@ -34,8 +36,9 @@ const LOOP_VAR_RE = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\}
 // A redirection word: an operator alone (its target is the next word) or glued to its target (`>out`, `2>&1`).
 const REDIRECT_RE = /^(?:[0-9]*|&)[<>]/;
 const REDIRECT_OP_RE = /^(?:[0-9]*|&)(?:>>?|>\||<<?<?|<>|>&|<&)$/;
-// A short-option cluster that holds `c` (`-c`, `-lc`, `-ec`): the shell runs the next word as its script.
-const SHELL_C_RE = /^-[A-Za-z]*c[A-Za-z]*$/;
+// A shell's short-option cluster (`-c`, `-lc`, `+e`); one starting `-` and holding `c` makes the shell run
+// its first non-option word as a script.
+const SHELL_CLUSTER_RE = /^[-+][A-Za-z]+$/;
 
 const ALLOW = () => ({ decision: 'allow' });
 
@@ -89,17 +92,94 @@ function segmentView(t, q, P) {
   };
 }
 
-// The index past the segment's leading `NAME=value` assignments and `do`/`then`/`else` keywords, and the
-// assignment indices among them (kept in a replacement line; the keywords are not).
+// The index past the segment's leading `NAME=value` assignments and keywords (LEAD_KEYWORDS), the
+// assignment indices among them (kept in a replacement line; the keywords are not), and the last
+// `while`/`until` keyword among them, or null.
 function leadOf(seg) {
   const assignments = [];
+  let conditionLoop = null;
   let i = 0;
   for (; i < seg.t.length; i += 1) {
     if (ASSIGNMENT_RE.test(seg.t[i]) && seg.bare(i)) assignments.push(i);
-    else if (LEAD_KEYWORDS.has(seg.t[i]) && seg.bare(i)) continue;
-    else break;
+    else if (LEAD_KEYWORDS.has(seg.t[i]) && seg.bare(i)) {
+      if (CONDITION_LOOPS.has(seg.t[i])) conditionLoop = seg.t[i];
+    } else break;
   }
-  return { lead: i, assignments };
+  return { lead: i, assignments, conditionLoop };
+}
+
+// The index of the program after any run of transparent prefix commands starting at `i` (`!`, `env`,
+// `time`, `nice`, `nohup`, `command`, `exec`, `timeout`, `gtimeout`, each with the options modeled
+// here), or -1 when a prefix uses an option not modeled (`env -S`, `command -v`, `time -o`, ...): what
+// such a prefix runs is not read, as before prefixes were skipped.
+function skipPrefixes(seg, i) {
+  const { t } = seg;
+  const at = (k) => (k < t.length ? t[k] : undefined);
+  for (;;) {
+    if (i >= t.length) return -1;
+    const name = seg.name(i);
+    if (t[i] === '!' && seg.bare(i)) {
+      i += 1;
+    } else if (name === 'env') {
+      i += 1;
+      let optionsDone = false;
+      for (;;) {
+        const w = at(i);
+        if (w === undefined) return -1;
+        if (ASSIGNMENT_RE.test(w) || w === '-') i += 1;
+        else if (optionsDone || !w.startsWith('-')) break;
+        else if (w === '-i' || w === '--ignore-environment') i += 1;
+        else if (w === '-u' || w === '--unset') i += 2;
+        else if (w.startsWith('--unset=') || /^-u./.test(w)) i += 1;
+        else if (w === '--') { optionsDone = true; i += 1; }
+        else return -1;
+      }
+    } else if (name === 'time') {
+      i += 1;
+      while (at(i) === '-p') i += 1;
+      if (at(i) !== undefined && at(i).startsWith('-')) return -1;
+    } else if (name === 'nice') {
+      i += 1;
+      for (let w = at(i); w !== undefined && w.startsWith('-'); w = at(i)) {
+        if (w === '-n' || w === '--adjustment') i += 2;
+        else if (/^-n?-?[0-9]+$/.test(w) || w.startsWith('--adjustment=')) i += 1;
+        else if (w === '--') { i += 1; break; }
+        else return -1;
+      }
+    } else if (name === 'nohup') {
+      i += 1;
+      if (at(i) === '--') i += 1;
+      else if (at(i) !== undefined && at(i).startsWith('-')) return -1;
+    } else if (name === 'command') {
+      i += 1;
+      for (let w = at(i); w !== undefined && w.startsWith('-'); w = at(i)) {
+        if (w === '-p') i += 1;
+        else if (w === '--') { i += 1; break; }
+        else return -1;
+      }
+    } else if (name === 'exec') {
+      i += 1;
+      for (let w = at(i); w !== undefined && w.startsWith('-'); w = at(i)) {
+        if (/^-[cl]+$/.test(w)) i += 1;
+        else if (w === '-a') i += 2;
+        else if (w === '--') { i += 1; break; }
+        else return -1;
+      }
+    } else if (name === 'timeout' || name === 'gtimeout') {
+      i += 1;
+      for (let w = at(i); w !== undefined && w.startsWith('-'); w = at(i)) {
+        if (w === '-s' || w === '-k' || w === '--signal' || w === '--kill-after') i += 2;
+        else if (/^-[sk]./.test(w) || w.startsWith('--signal=') || w.startsWith('--kill-after=')) i += 1;
+        else if (['-v', '--verbose', '-f', '--foreground', '-p', '--preserve-status'].includes(w)) i += 1;
+        else if (w === '--') { i += 1; break; }
+        else return -1;
+      }
+      if (at(i) === undefined) return -1;
+      i += 1; // the duration
+    } else {
+      return i;
+    }
+  }
 }
 
 // The innermost enclosing `for` loop whose variable `word` names (`$f`, `${f}`), or null.
@@ -179,26 +259,37 @@ function readRun(seg, at, end, loops) {
   return { at, optStart, end, sawTest, operands, dropped };
 }
 
-// The script text a `sh|bash|zsh ... -c <text>` word list runs, or null.
+// The script text a `sh|bash|zsh [options] -c <text>` word list runs, or null: a `-`-cluster holding `c`
+// anywhere before the shell's first non-option word makes that word the script. `-o <name>` and
+// `+o <name>` pairs and long options are skipped.
 function wrapperText(seg, at, end) {
-  for (let j = at + 1; j < end && seg.t[j].startsWith('-'); j += 1) {
-    if (SHELL_C_RE.test(seg.t[j])) return j + 1 < end ? seg.t[j + 1] : null;
+  const { t } = seg;
+  let sawC = false;
+  for (let j = at + 1; j < end; j += 1) {
+    const w = t[j];
+    if (w === '--') return sawC && j + 1 < end ? t[j + 1] : null;
+    if (w === '-o' || w === '+o') j += 1;
+    else if (SHELL_CLUSTER_RE.test(w)) sawC = sawC || (w[0] === '-' && w.includes('c'));
+    else if (!w.startsWith('--')) return sawC ? w : null;
   }
   return null;
 }
 
-// The program a segment runs and whether its lead repeats it: `xargs`/`parallel` run the first node or
-// shell word after them, `find` the one after its `-exec`/`-execdir`/`-ok`, up to the `;` or `+` ending it.
+// The program a segment runs and whether its lead repeats it, after any transparent prefix commands
+// (skipPrefixes): `xargs`/`parallel` run the first node or shell word after them, `find` the one after
+// its `-exec`/`-execdir`/`-ok`, up to the `;` or `+` ending it.
 function programOf(seg, lead) {
   const { t } = seg;
   const runnable = (i) => NODE_NAMES.has(seg.name(i)) || seg.name(i) === 'npx' || SHELLS.has(seg.name(i));
-  const leadName = seg.name(lead);
+  const start = skipPrefixes(seg, lead);
+  if (start === -1) return null;
+  const leadName = seg.name(start);
   if (REPEATING_LEADS.has(leadName)) {
-    for (let i = lead + 1; i < t.length; i += 1) if (runnable(i)) return { at: i, end: t.length, ledRepeat: true };
+    for (let i = start + 1; i < t.length; i += 1) if (runnable(i)) return { at: i, end: t.length, ledRepeat: true };
     return null;
   }
   if (leadName === 'find') {
-    let i = lead + 1;
+    let i = start + 1;
     while (i < t.length && !FIND_EXEC_ACTIONS.has(t[i])) i += 1;
     for (i += 1; i < t.length; i += 1) {
       if (!runnable(i)) continue;
@@ -208,7 +299,7 @@ function programOf(seg, lead) {
     }
     return null;
   }
-  return { at: lead, end: t.length, ledRepeat: false };
+  return { at: start, end: t.length, ledRepeat: false };
 }
 
 // The deny verdict for a direct test run, or null when it is allowed.
@@ -247,7 +338,9 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
   if (fixed) {
     line = `node ${rel} ${LOOP_FILES_PLACEHOLDER}`;
   } else {
-    const parts = lead === run.at ? assignments.map(seg.render) : [];
+    // Leading assignments and the prefix commands before the program, as typed.
+    const parts = assignments.map(seg.render);
+    for (let i = lead; i < run.at; i += 1) parts.push(seg.render(i));
     if (seg.name(run.at) === 'npx') {
       for (let i = run.at; i < run.optStart; i += 1) parts.push(seg.render(i));
       parts.push(rel);
@@ -280,7 +373,8 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
 
 // Walks `text` segment by segment. In 'detect' mode it records whether any segment is a direct test run;
 // in 'classify' mode it records the first deny. Loop nesting is tracked across segments: a segment is
-// inside a loop after a `for`/`while`/`until` segment and before that loop's own `done`.
+// inside a loop after a `for` segment, or from a `while`/`until` segment (its condition included), up to
+// that loop's own `done`.
 function walk(text, cwd, ctx) {
   const P = ctx.pathImpl;
   const state = { loops: [], found: false, result: null };
@@ -293,15 +387,16 @@ function walk(text, cwd, ctx) {
       if (!again) state.loops.pop();
       return;
     }
+    // A `while`/`until` condition runs once per pass: its loop is open for the condition itself.
+    if (head.conditionLoop && !again) state.loops.push({ kind: head.conditionLoop, variable: null, words: null, wordText: [] });
     if (lead >= t.length) return;
-    if (LOOP_OPENERS.has(t[lead]) && seg.bare(lead)) {
+    if (t[lead] === 'for' && seg.bare(lead)) {
       if (!again) {
-        const kind = t[lead];
-        const hasList = kind === 'for' && t[lead + 2] === 'in';
+        const hasList = t[lead + 2] === 'in';
         const wordIdx = hasList ? t.map((_, i) => i).slice(lead + 3) : [];
         state.loops.push({
-          kind,
-          variable: kind === 'for' ? t[lead + 1] : null,
+          kind: 'for',
+          variable: t[lead + 1],
           words: hasList ? wordIdx.map((i) => t[i]) : null,
           wordText: wordIdx.map(seg.render),
         });
@@ -335,12 +430,18 @@ function walk(text, cwd, ctx) {
 
 // `{ decision: 'allow' }`, or `{ decision: 'deny', kind: 'typed', reason, replacement }` for the first
 // denied direct test run in `command`. `hasRunner(dir)` returns the checkout root holding
-// tools/run-tests.js at or above `dir`, or null; `isDirectory(absPath)` a boolean. Never throws.
-function classifyCommand(command, { cwd, hasRunner, isDirectory, pathImpl = path } = {}) {
+// tools/run-tests.js at or above `dir`, or null; `isDirectory(absPath)` a boolean. Lets any internal
+// error (or one from `hasRunner`/`isDirectory`) through, so a test can tell a bug from an allow.
+function classifyCommandOrThrow(command, { cwd, hasRunner, isDirectory, pathImpl = path } = {}) {
+  if (typeof command !== 'string' || command === '' || typeof cwd !== 'string') return ALLOW();
+  const ctx = { mode: 'classify', depth: 0, repeated: false, callCwd: cwd, hasRunner, isDirectory, pathImpl };
+  return walk(command, cwd, ctx).result || ALLOW();
+}
+
+// classifyCommandOrThrow for the hook: never throws, and any internal error allows.
+function classifyCommand(command, options) {
   try {
-    if (typeof command !== 'string' || command === '' || typeof cwd !== 'string') return ALLOW();
-    const ctx = { mode: 'classify', depth: 0, repeated: false, callCwd: cwd, hasRunner, isDirectory, pathImpl };
-    return walk(command, cwd, ctx).result || ALLOW();
+    return classifyCommandOrThrow(command, options);
   } catch (_) {
     return ALLOW();
   }
@@ -357,4 +458,4 @@ function hasDirectTestRun(text, { cwd, pathImpl = path } = {}) {
   }
 }
 
-module.exports = { classifyCommand, hasDirectTestRun, SAFEGUARDS_TEXT };
+module.exports = { classifyCommand, classifyCommandOrThrow, hasDirectTestRun, SAFEGUARDS_TEXT };

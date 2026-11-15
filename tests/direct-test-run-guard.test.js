@@ -8,7 +8,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 
-const { classifyCommand, hasDirectTestRun, SAFEGUARDS_TEXT } = require('../tools/direct-test-run-guard');
+// Every verdict below is read through classifyCommandOrThrow, which lets an internal error through, so a
+// classifier bug can never pass an allow row by landing in classifyCommand's catch.
+const { classifyCommand, classifyCommandOrThrow, hasDirectTestRun, SAFEGUARDS_TEXT } = require('../tools/direct-test-run-guard');
 const { parseRunnerOperands } = require('../tools/run-tests');
 
 const isDirectory = (p) => p === '/repo/tests' || p === '/repo/evals/tests';
@@ -41,6 +43,21 @@ const DENY_ROWS = [
   ['ls tests/*.test.js | xargs -n1 node --test', null],
   ['find tests -name "*.test.js" -exec node --test {} \\;', null],
   ['sh -c "node --test tests/a.test.js tests/b.test.js"', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  // A transparent prefix, a condition keyword, a grouping or a wrapper option keeps a run a direct run.
+  ['timeout 600 node --test tests/a.test.js tests/b.test.js', 'timeout 600 node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['time node --test tests/a.test.js tests/b.test.js', 'time node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['env FOO=1 node --test tests/a.test.js tests/b.test.js', 'env FOO=1 node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['nice -n 10 node --test tests/a.test.js tests/b.test.js', 'nice -n 10 node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['command node --test tests/a.test.js tests/b.test.js', 'command node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['exec node --test tests/a.test.js tests/b.test.js', 'exec node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['! node --test tests/a.test.js tests/b.test.js', '! node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['while node --test tests/a.test.js; do sleep 1; done', 'node tools/run-tests.js tests/a.test.js'],
+  ['until node --test tests/a.test.js; do sleep 1; done', 'node tools/run-tests.js tests/a.test.js'],
+  ['if node --test tests/a.test.js tests/b.test.js; then echo ok; fi', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['if false; then :; elif node --test tests/a.test.js tests/b.test.js; then :; fi', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['bash -o pipefail -c "node --test tests/a.test.js tests/b.test.js"', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['(node --test tests/a.test.js tests/b.test.js)', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ['{ node --test tests/a.test.js tests/b.test.js; }', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
 ];
 
 const ALLOW_ROWS = [
@@ -59,6 +76,11 @@ const ALLOW_ROWS = [
   'for f in a b; do :; done && node --test tests/a.test.js',
   'for f in scripts/a.js scripts/b.js; do node "$f"; done',
   'while read f; do node "$f"; done < list.txt',
+  'timeout 600 node --test tests/a.test.js',
+  'time node tools/run-tests.js tests/a.test.js tests/b.test.js',
+  'env NODE_OPTIONS=--trace-warnings node scripts/x.js --test',
+  'if node --test tests/a.test.js; then echo ok; fi',
+  'timeout 600 git log --grep "node --test a b"',
 ];
 
 const EXPANSION_LINE = 'The runner takes *.test.js files only and refuses anything else the expansion names, so make it name test files only.';
@@ -100,10 +122,10 @@ function expandAsShell(argText) {
 
 test('AC7.1 AC7.2: the classifier is pure and pins these verdicts', () => {
   for (const command of ALLOW_ROWS) {
-    assert.equal(classifyCommand(command, opts).decision, 'allow', command);
+    assert.equal(classifyCommandOrThrow(command, opts).decision, 'allow', command);
   }
   for (const [command] of DENY_ROWS) {
-    const verdict = classifyCommand(command, opts);
+    const verdict = classifyCommandOrThrow(command, opts);
     assert.equal(verdict.decision, 'deny', command);
     assert.equal(verdict.kind, 'typed', command);
   }
@@ -111,30 +133,57 @@ test('AC7.1 AC7.2: the classifier is pure and pins these verdicts', () => {
 
 test('each deny row names its replacement', () => {
   for (const [command, replacement] of DENY_ROWS) {
-    assert.equal(classifyCommand(command, opts).replacement, replacement === null ? PLACEHOLDER : replacement, command);
+    assert.equal(classifyCommandOrThrow(command, opts).replacement, replacement === null ? PLACEHOLDER : replacement, command);
   }
 });
 
 test('a trailing slash denies even when the path is not a directory', () => {
-  assert.equal(classifyCommand('node --test tests/', { ...opts, isDirectory: () => false }).decision, 'deny');
+  assert.equal(classifyCommandOrThrow('node --test tests/', { ...opts, isDirectory: () => false }).decision, 'deny');
   // Its counterpart: without the slash, only isDirectory decides.
-  assert.equal(classifyCommand('node --test tests', { ...opts, isDirectory: () => false }).decision, 'allow');
+  assert.equal(classifyCommandOrThrow('node --test tests', { ...opts, isDirectory: () => false }).decision, 'allow');
 });
 
 test('a run whose working directory is under evals/ is allowed with no operand to read', () => {
   // `cd evals && node --test tests/` is also allowed by its operand; this one only by the cwd.
-  assert.equal(classifyCommand('cd evals && node --test', opts).decision, 'allow');
-  assert.equal(classifyCommand('cd scripts && node --test', opts).decision, 'deny');
+  assert.equal(classifyCommandOrThrow('cd evals && node --test', opts).decision, 'allow');
+  assert.equal(classifyCommandOrThrow('cd scripts && node --test', opts).decision, 'deny');
 });
 
 test('a redirection target is no file operand, and a clustered -c is a wrapper', () => {
-  assert.equal(classifyCommand('node --test tests/a.test.js > out.txt 2>&1', opts).decision, 'allow');
-  assert.equal(classifyCommand('node --test tests/a.test.js >out.txt', opts).decision, 'allow');
-  assert.equal(classifyCommand('bash -lc "node --test tests/a.test.js tests/b.test.js"', opts).decision, 'deny');
+  assert.equal(classifyCommandOrThrow('node --test tests/a.test.js > out.txt 2>&1', opts).decision, 'allow');
+  assert.equal(classifyCommandOrThrow('node --test tests/a.test.js >out.txt', opts).decision, 'allow');
+  assert.equal(classifyCommandOrThrow('bash -lc "node --test tests/a.test.js tests/b.test.js"', opts).decision, 'deny');
+});
+
+test('a prefix command is skipped with its own options, and one it cannot model is not', () => {
+  const two = 'node --test tests/a.test.js tests/b.test.js';
+  for (const prefix of [
+    'env -i -u HOME --unset=PATH FOO=1 --',
+    '/usr/bin/env',
+    'time -p',
+    'nice -5',
+    'nice --adjustment=3',
+    'nohup',
+    'command -p',
+    'exec -a name -c -l',
+    'timeout -k 5 -s KILL --preserve-status 600',
+    'gtimeout --signal=TERM 10m',
+    'timeout 600 env FOO=1 nice',
+  ]) {
+    assert.equal(classifyCommandOrThrow(`${prefix} ${two}`, opts).decision, 'deny', prefix);
+  }
+  for (const prefix of ['env -S', 'env --split-string', 'command -v', 'time -o out.txt', 'nice -x', 'timeout --bogus 600']) {
+    assert.equal(classifyCommandOrThrow(`${prefix} ${two}`, opts).decision, 'allow', prefix);
+  }
+  // A prefix may stand in front of a wrapper too, and `+o` pairs are skipped like `-o` ones.
+  assert.equal(classifyCommandOrThrow('timeout 600 bash -c "node --test tests/a.test.js tests/b.test.js"', opts).decision, 'deny');
+  assert.equal(classifyCommandOrThrow('bash +o posix -e -c "node --test tests/a.test.js tests/b.test.js"', opts).decision, 'deny');
+  // A wrapper's `-c` must come before its first non-option word: here `script.sh` is the script.
+  assert.equal(classifyCommandOrThrow('bash script.sh -c "node --test tests/a.test.js tests/b.test.js"', opts).decision, 'allow');
 });
 
 test('allows everything when no runner is above the working directory', () => {
-  assert.deepEqual(classifyCommand(DENY_ROWS[0][0], { ...opts, hasRunner: () => null }), { decision: 'allow' });
+  assert.deepEqual(classifyCommandOrThrow(DENY_ROWS[0][0], { ...opts, hasRunner: () => null }), { decision: 'allow' });
 });
 
 test('never throws', () => {
@@ -143,6 +192,8 @@ test('never throws', () => {
   assert.deepEqual(classifyCommand('('.repeat(200000), opts), { decision: 'allow' });
   const throwing = { ...opts, hasRunner: () => { throw new Error('boom'); } };
   assert.deepEqual(classifyCommand('node --test tests/a.test.js tests/b.test.js', throwing), { decision: 'allow' });
+  // The inner function lets the same error through, so a throw can never read as a correct allow.
+  assert.throws(() => classifyCommandOrThrow('node --test tests/a.test.js tests/b.test.js', throwing), /boom/);
 });
 
 test('the replacement keeps flags, files, assignments and the rest of the pipeline out', () => {
@@ -159,14 +210,14 @@ test('the replacement keeps flags, files, assignments and the rest of the pipeli
     ['node --test "tests/my file.test.js" tests/b.test.js', 'node tools/run-tests.js "tests/my file.test.js" tests/b.test.js'],
   ];
   for (const [command, replacement] of pins) {
-    assert.equal(classifyCommand(command, opts).replacement, replacement, command);
+    assert.equal(classifyCommandOrThrow(command, opts).replacement, replacement, command);
   }
 });
 
 test('the directory prefix quotes a directory holding a space', () => {
   const spaced = { ...opts, isDirectory: () => false };
   assert.equal(
-    classifyCommand('cd "my tests" && node --test a.test.js b.test.js', spaced).replacement,
+    classifyCommandOrThrow('cd "my tests" && node --test a.test.js b.test.js', spaced).replacement,
     'cd "my tests" && node ../tools/run-tests.js a.test.js b.test.js',
   );
 });
@@ -177,15 +228,15 @@ test('the reason names the four safeguards, the replacement on its own line, --f
     SAFEGUARDS_TEXT,
     'A direct node --test over several files, or in a loop, skips what tools/run-tests.js gives a run: git auto-maintenance off for fixture repos, a per-run TMPDIR removed on exit, the machine-wide suite slot, and bounded file concurrency.',
   );
-  assert.equal(classifyCommand(command, opts).reason, reasonFor(replacement, { expansion: true }));
+  assert.equal(classifyCommandOrThrow(command, opts).reason, reasonFor(replacement, { expansion: true }));
 });
 
 test('the unresolved-expansion reason says the runner takes test files only', () => {
   assert.equal(
-    classifyCommand('node --test $(git diff --name-only main)', opts).reason,
+    classifyCommandOrThrow('node --test $(git diff --name-only main)', opts).reason,
     reasonFor('node tools/run-tests.js $(git diff --name-only main)', { expansion: true }),
   );
-  const plain = classifyCommand('node --test tests/a.test.js tests/b.test.js', opts).reason;
+  const plain = classifyCommandOrThrow('node --test tests/a.test.js tests/b.test.js', opts).reason;
   assert.equal(plain, reasonFor('node tools/run-tests.js tests/a.test.js tests/b.test.js'));
   assert.equal(plain.includes(EXPANSION_LINE), false);
 });
@@ -194,8 +245,8 @@ test('AC9.1 AC9.2: every replacement line is allowed by the classifier and accep
   const rows = DENY_ROWS.filter(([, replacement]) => replacement !== null).map(([command]) => command);
   rows.push('cd tests && node --test a.test.js b.test.js');
   for (const command of rows) {
-    const { replacement } = classifyCommand(command, opts);
-    assert.equal(classifyCommand(replacement, opts).decision, 'allow', `${command} -> ${replacement}`);
+    const { replacement } = classifyCommandOrThrow(command, opts);
+    assert.equal(classifyCommandOrThrow(replacement, opts).decision, 'allow', `${command} -> ${replacement}`);
     let cwd = '/repo';
     let line = replacement;
     const prefix = /^cd (\S+) && (.*)$/.exec(replacement);
@@ -220,8 +271,8 @@ test('win32 paths', () => {
     isDirectory: () => false,
     pathImpl: path.win32,
   };
-  assert.equal(classifyCommand('node --test tests/a.test.js tests/b.test.js', win).decision, 'deny');
-  assert.equal(classifyCommand('"C:/nodejs/node.exe" --test tests/a.test.js', win).decision, 'allow');
+  assert.equal(classifyCommandOrThrow('node --test tests/a.test.js tests/b.test.js', win).decision, 'deny');
+  assert.equal(classifyCommandOrThrow('"C:/nodejs/node.exe" --test tests/a.test.js', win).decision, 'allow');
 });
 
 test('hasDirectTestRun finds a single-file run and ignores quoted text', () => {
