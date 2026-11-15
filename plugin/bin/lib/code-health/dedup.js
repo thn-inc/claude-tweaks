@@ -12,8 +12,7 @@ const RISK_RANK = { high: 0, medium: 1, low: 2 };
 //
 // issueIndex: precomputed map { "<fingerprint>": { number, state, labels } }
 //   built from gh issue list output (the skill builds it; engine never calls network).
-//   the loader stores `state` lowercase; the compare below is case-insensitive
-//   so a hand-built index carrying gh's OPEN/CLOSED gets the same answer
+//   state: lowercase from the loader; compared case-insensitively for a hand-built index
 //
 // Decision logic (contract §dedup.js):
 //   open issue match         -> skip      (no flood)

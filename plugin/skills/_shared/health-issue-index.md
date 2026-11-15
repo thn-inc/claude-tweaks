@@ -22,11 +22,11 @@ write them to the same `{ISSUES_FILE}` path, so the `validate-findings` call dow
 byte-identical on both transports. Never `search_issues` — it rides an eventually-consistent
 index and has caused real duplicate-filing incidents (see that file).
 
-Neither field needs cleaning before the file is written, on either transport. `state` may be in
-either case (`gh` returns `OPEN`/`CLOSED`), and each `labels` element may be a label name or
-`gh`'s label object: `loadIssueIndex` (`bin/lib/health-core/issue-index.js`) lowercases `state`
-and reduces `labels` to label names. A label element with no string `name` is dropped, and the
-load reports the total once on stderr (`ignored {n} label entries with no name`).
+Neither `state` nor `labels` needs cleaning before the file is written, on either transport.
+`state` may be in either case (`gh` returns `OPEN`/`CLOSED`), and each `labels` element may be
+a label name or `gh`'s label object: `loadIssueIndex` (`bin/lib/health-core/issue-index.js`)
+lowercases `state` and reduces `labels` to label names. A label element with no string `name` is
+dropped, and the load reports the total once on stderr (`ignored {n} label entries with no name`).
 
 A missing `gh` is a reason to **change transport, never a reason to skip this step**. The
 detection is a capability probe, not an environment classification: it holds regardless of

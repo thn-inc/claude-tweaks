@@ -5,6 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { loadIssueIndex } = require('../../../plugin/bin/lib/health-core/issue-index');
+const { decide: coreDecide } = require('../../../plugin/bin/lib/health-core/dedup');
+const { decide: codeHealthDecide } = require('../../../plugin/bin/lib/code-health/dedup');
 
 // Regression: loadIssueIndex used to be duplicated near-verbatim in all
 // four health-suite CLI files (code-health.js, harness-health.js,
@@ -123,9 +125,6 @@ test('the [toolName] prefix parameterizes the bad-file diagnostic (proves the sh
   }
   assert.match(captured, /^\[docs-health\]/);
 });
-
-const { decide: coreDecide } = require('../../../plugin/bin/lib/health-core/dedup');
-const { decide: codeHealthDecide } = require('../../../plugin/bin/lib/code-health/dedup');
 
 function load(entries, toolName = 'code-health') {
   let err = '';
