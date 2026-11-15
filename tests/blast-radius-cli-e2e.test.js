@@ -202,3 +202,23 @@ test('AC9.1: a relative --run that exists resolves against the injected cwd', ()
   assert.strictEqual(res.status, 0, res.stderr);
   assert.strictEqual(JSON.parse(res.stdout).config.autoMergeMaxLines, 7);
 });
+
+// Repo B is bare (GIT_DIR only, injected): `git rev-parse --show-toplevel` fails there while
+// merge-base still resolves, so the policy root must fall back to the injected cwd D, a non-repo
+// directory that is not the process's cwd.
+test('AC9.1: the policy root falls back to the injected cwd when show-toplevel fails', () => {
+  const bare = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-bare-')), 'b.git');
+  git(os.tmpdir(), 'clone', '--bare', makeFixtureRepo(), bare);
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-d-'));
+  fs.mkdirSync(path.join(d, '.claude-tweaks'));
+  fs.writeFileSync(path.join(d, '.claude-tweaks', 'policy.yml'), 'auto-merge-max-lines: 7\n');
+  assert.notStrictEqual(fs.realpathSync(d), fs.realpathSync(process.cwd()));
+  const env = { ...CLI_ENV, GIT_DIR: bare };
+  assert.throws(
+    () => execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: d, env, stdio: 'ignore' }),
+    'the fixture must make show-toplevel fail',
+  );
+  const res = cli(['--integration-branch', 'main'], { cwd: d, env });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(JSON.parse(res.stdout).config.autoMergeMaxLines, 7);
+});

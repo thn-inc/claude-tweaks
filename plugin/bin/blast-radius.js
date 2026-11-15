@@ -61,7 +61,10 @@ function run(argv, deps = {}) {
   }
   let result;
   try {
-    result = computeBlastRadius(opts, { git: (gitArgs) => defaultGit(gitArgs, { cwd: d.cwd(), env: d.env }) });
+    result = computeBlastRadius(opts, {
+      git: (gitArgs) => defaultGit(gitArgs, { cwd: d.cwd(), env: d.env }),
+      cwd: d.cwd(),
+    });
   } catch (err) {
     if (err instanceof BlastRadiusError) return fail(err.message, d);
     throw err;

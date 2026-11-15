@@ -41,13 +41,14 @@ function defaultReadFile(filePath) {
   }
 }
 
-function resolveBlastRadiusConfig({ git, readFile, runDir }) {
+function resolveBlastRadiusConfig({ git, readFile, runDir, cwd }) {
   let resolved;
   try {
     ({ result: resolved } = resolvePolicyConfig({
       git,
       readFile,
       runDir,
+      cwd,
       keys: ['merge-sensitive-paths', 'auto-merge-max-lines', 'auto-merge-max-files'],
     }));
   } catch (err) {
@@ -136,7 +137,7 @@ function computeBlastRadius(opts = {}, deps = {}) {
   const { runDir = null } = opts;
 
   const { mergeBase, files } = gatherDiffFiles(opts, deps);
-  const config = resolveBlastRadiusConfig({ git, readFile, runDir });
+  const config = resolveBlastRadiusConfig({ git, readFile, runDir, cwd: deps.cwd });
   const summary = blastRadiusSummary(classifyDiffFiles(files, config.mergeSensitivePaths));
   return { mergeBase, config, summary };
 }
