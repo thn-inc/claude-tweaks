@@ -18,7 +18,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { escalateResidue, resolveResidue, errorText } = require('./escalate-residue');
+const { escalateResidue, resolveResidue, residueErrorText } = require('./escalate-residue');
 const { lstatType } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
 
@@ -335,7 +335,7 @@ function clearResidue(target, residueRepo, reason, targetPath, { resolve = resol
   try {
     resolved = resolve({ repo: residueRepo, reason, targetPath, runner, why, pathExists: ownedPathExists(target) });
   } catch (err) {
-    recordResidueError(target, reason, targetPath, { op: 'resolve', error: errorText(err) });
+    recordResidueError(target, reason, targetPath, { op: 'resolve', error: residueErrorText(err) });
     return { cleared: false, resolved: null };
   }
   if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) {
@@ -383,7 +383,7 @@ function trackResidue(target, residueRepo, reason, targetPath, { failed, lastErr
     }
   } catch (err) {
     // best-effort — never let escalation turn a residue-tracking call into a thrown error
-    recordResidueError(target, reason, targetPath, { op: 'escalate', error: errorText(err) });
+    recordResidueError(target, reason, targetPath, { op: 'escalate', error: residueErrorText(err) });
   }
 }
 
@@ -433,7 +433,7 @@ function pruneResidueFailures(root, residueRepo, { resolve = resolveResidue, run
       try {
         const resolved = resolve({ repo: residueRepo, reason, targetPath, runner, pathExists: ownedPathExists(root) });
         if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) failure = unresolvedError(resolved);
-      } catch (err) { failure = { error: errorText(err) }; }
+      } catch (err) { failure = { error: residueErrorText(err) }; }
       if (failure !== null) resolveFailures.push({ reason, path: targetPath, op: 'resolve', error: boundedError(failure.error, failure.detail) });
     }
   }

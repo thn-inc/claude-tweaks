@@ -4,6 +4,7 @@ files:
   - plugin/bin/lib/hooks/worktree-detect.js
   - plugin/bin/lib/policy-schema.js
   - plugin/bin/lib/policy.js
+  - plugin/bin/hooks.sh
   - plugin/bin/lib/risk-path-globs.js
   - plugin/bin/lib/model-profiles/policy-fragment.js
   - plugin/bin/lib/merge-verification.js
@@ -54,7 +55,7 @@ files:
 - **URL:** `node -e "console.log(require('./plugin/bin/lib/policy.js').isWorktreeAlwaysOn(process.cwd()))"`
 - **Action:** Run it in a scratch checkout whose `.claude-tweaks/policy.yml` carries only the pre-#602 line `worktree.always: true`; then again with only `worktree-always: true`; then with both present and disagreeing.
 - **Should feel:** The same answer every time the intent is the same — how the line is spelled is not a behavioral lever.
-- **Should understand:** The PreToolUse worktree gate never calls `plugin/bin/resolve-policy.js` — it reads `policy.yml` directly through `resolveWorktreeAlways`, which consults the same `RENAMED_KEYS` table the CLI does and returns `{on, matchedKey}` rather than a bare boolean. The current name wins whenever it is present, in any file order; the retired spelling contributes only when the current one is absent. That precedence is what lets a `policy.yml` carry both lines during a migration without ambiguity. `session-start.js`'s unconditional SessionStart banner (`claude-tweaks: worktree-always: ON/OFF (matched key: {key})`) calls this same function, so its answer and the gate's answer can never disagree (`docs/incident-log.md` IL-133).
+- **Should understand:** The PreToolUse worktree gate never calls `plugin/bin/resolve-policy.js` — it reads `policy.yml` directly through `resolveWorktreeAlways`, which consults the same `RENAMED_KEYS` table the CLI does and returns `{on, matchedKey}` rather than a bare boolean. The current name wins whenever it is present, in any file order; the retired spelling contributes only when the current one is absent. That precedence is what lets a `policy.yml` carry both lines during a migration without ambiguity. `session-start.js`'s unconditional SessionStart banner (`claude-tweaks: worktree-always: ON/OFF (matched key: {key})`) calls this same function, so its answer and the gate's answer can never disagree (`docs/incident-log.md` IL-133). One reader sits outside that function: when a session has no `node`, `plugin/bin/hooks.sh`'s `policy_verdict` reads the same two lines in shell, with the same current-name-wins precedence, to decide its PreToolUse deny. It is a copy of `parseFlatLines` and `resolveWorktreeAlways`, so a change to either needs the same change there; `tests/hooks-launcher.test.js`'s `hooks.sh AC9` differential pins the two to one verdict (#5392, `keep-hooks-running-when-node-is-not-on-path-5392.md`).
 - **Red flags:** `worktree.always: true` on its own reading as policy-OFF — an un-migrated project would silently lose worktree enforcement with no error anywhere; the retired spelling winning over the current one when both are set.
 
 ### 6. Read a block-style key — `risk-path-globs`
@@ -65,6 +66,7 @@ files:
 - **Red flags:** A malformed block resolving `{}`, which would silently switch off a safety check; a key after the block (`autonomy: trusted`) swallowed into it.
 
 ## Origin
+- Step 5 updated at the wrap-up of #5392 (the `bin/hooks.sh` node launcher): with no `node` found, the launcher's own `worktree-always` read is a shell copy of `resolveWorktreeAlways`, so step 5 names it and `files:` gains `plugin/bin/hooks.sh`
 - Steps 1 and 3 updated during build of #5224 (driver lane bounds) — step 1 names `express-driver-max-lines` as a derived default over `auto-merge-max-lines`, and step 3's red flag lists the three new `policyOnly` keys
 - No step change during build of #5374 — `plugin/bin/resolve-policy.js` now exports `resolvePolicy`, `run` and `realDeps` behind a `require.main` guard so tests can call it in-process; run as a script it prints the same stdout, stderr and exit code for every command in these steps. The in-process side is in `call-a-plugin-bin-cli-in-process-from-a-test-5374.md`
 - Step 3 updated during build of #5216 (driver lane admission) — three new `policyOnly` keys join the red flag's list of flat keys the `--run` overlay must never reach; the Canonical read path citation and `files:` now name `_shared/policy-schema-read-path.md`, where #5216 moved that text for Read-rail headroom. The keys are "Not yet used" until #5218 wires the driver, so no step demonstrates their effect

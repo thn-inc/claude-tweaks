@@ -24,7 +24,6 @@ const BIN_DIR = path.join(__dirname, '..', '..', 'plugin', 'bin');
 // leaves it through #5377, which replaces its entry with a named exemption in this
 // test, with its reason, kept apart from this list.
 const NOT_YET = [
-  'calibration-report.js',
   'claude-tweaks-statusline.js',
   'code-health.js',
   'compose-subject.js',
@@ -32,11 +31,8 @@ const NOT_YET = [
   'docs-health.js',
   'hooks.js',
   'install-statusline-wrapper.js',
-  'phase-timing.js',
-  'plan-audit.js',
   'reachability-audit.js',
   'release-notes-publish.js',
-  'resolve-profile.js',
   'sweep-stray-run-dirs.js',
   'verify.js',
   'wrap-up-engine.js',
