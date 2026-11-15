@@ -56,8 +56,12 @@ function ghAvailable(deps = {}) {
   }
 }
 
-function remoteUrl() {
-  return execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true });
+// `cwd` and `env` (optional) are where the git child runs and the environment it runs in; absent,
+// the process's own, so an existing caller is unchanged.
+function remoteUrl({ cwd, env } = {}) {
+  return execFileSync('git', ['remote', 'get-url', 'origin'], {
+    encoding: 'utf8', windowsHide: true, ...(cwd ? { cwd } : {}), ...(env ? { env } : {}),
+  });
 }
 
 // A parseRepo result (or any { host, owner, repo }) -> the slug `gh --repo`

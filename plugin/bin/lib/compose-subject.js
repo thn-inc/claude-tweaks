@@ -70,8 +70,9 @@ const {
   parseRecordFacets, typeOf, extractSection: extractSectionShared,
 } = require('./issues/record');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo, injectedGhDeps,
 } = require('./repo-resolve');
+const { resolveAgainst } = require('./health-core/io');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
 const { parseScopePaths, resolveCommitScope, CommitScopeError } = require('./commit-scope');
@@ -275,26 +276,33 @@ function aggregateType(records) {
   return null;
 }
 
+// A child process's working directory and environment, each only when injected (#5386): absent, the
+// spawn inherits the process's own, as it did before `run` took them from deps.
+const childOptions = ({ cwd, env } = {}) => ({ ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) });
+
 const realDeps = {
   ghAvailable,
   remoteUrl,
   // #4505: an explicit --repo's host reaches the issue-type GraphQL fallback,
-  // which threads no --hostname for github.com.
-  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
+  // which threads no --hostname for github.com. `{ cwd, env }` (#5386) is the origin read's
+  // directory and environment; absent, the process's own.
+  pinGhHost: (repoSpec, { cwd, env } = {}) => pinExplicitRepoHost(repoSpec, { cwd, env }),
   // stderr piped, not inherited (#3028): execFileSync's default echoes the
   // child's stderr to ours, so the handled #2561 `Unknown JSON field:
   // "issueType"` rejection printed gh's full field list ahead of a successful
   // compose and read as a failure. err.stderr (isUnknownIssueTypeField) and
   // err.message (the fatal paths) still carry the text.
-  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true })),
+  runner: (args, injected) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true, ...childOptions(injected) }, injectedGhDeps({ env: injected && injected.env }))),
   fetchIssueType: fetchIssueTypeGraphQL,
-  readCommitScope: () => readCommitScope(process.cwd()),
-  readCommitScopePaths: () => readListKey(process.cwd(), 'commit-scope-paths'),
-  gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true }),
+  readCommitScope: (cwd = process.cwd()) => readCommitScope(cwd),
+  readCommitScopePaths: (cwd = process.cwd()) => readListKey(cwd, 'commit-scope-paths'),
+  gitRunner: (args, injected) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true, ...childOptions(injected) }),
   mkdirp: (d) => fs.mkdirSync(d, { recursive: true }),
   writeFile: (p, s) => fs.writeFileSync(p, s, 'utf8'),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  env: process.env,
 };
 
 // argv -> exit code.
@@ -302,19 +310,23 @@ function run(argv, deps = realDeps) {
   const opts = parseArgs(argv);
   if (opts.error) { deps.stderr(opts.error + '\n' + USAGE); return 1; }
   if (opts.help) { deps.stdout(USAGE); return 0; }
-  if (!deps.ghAvailable()) { deps.stderr('compose-subject.js: `gh` is required\n'); return 2; }
+  // The working directory and environment every seam below runs in (#5386). A deps object that
+  // carries neither (an older caller's fakes) gets the seams' own defaults: the process's.
+  const cwd = typeof deps.cwd === 'function' ? deps.cwd() : undefined;
+  const injected = childOptions({ cwd, env: deps.env });
+  if (!deps.ghAvailable(injected)) { deps.stderr('compose-subject.js: `gh` is required\n'); return 2; }
 
   let remote = null;
-  if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
+  if (!opts.repo) { try { remote = deps.remoteUrl(injected); } catch { remote = null; } }
   let repoSpec;
   if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
   else {
-    const gated = gateOriginRepo(remote, deps.gateDeps);
+    const gated = gateOriginRepo(remote, deps.env ? { env: deps.env, ...deps.gateDeps } : deps.gateDeps);
     if (gated.refusal) { deps.stderr(`compose-subject.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
   if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
+  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec, injected);
   const slug = repoSlug(repoSpec);
 
   const records = [];
@@ -323,7 +335,7 @@ function run(argv, deps = realDeps) {
     let raw;
     let issueTypeFieldRejected = false;
     try {
-      raw = deps.runner(viewArgs('number,title,body,labels,issueType'));
+      raw = deps.runner(viewArgs('number,title,body,labels,issueType'), injected);
     } catch (err) {
       if (!isUnknownIssueTypeField(err)) {
         deps.stderr(`compose-subject.js: gh issue view ${n} failed: ${errMessage(err)}\n`);
@@ -334,7 +346,7 @@ function run(argv, deps = realDeps) {
       // auth/not-found/network failure on THIS retry is still fatal.
       issueTypeFieldRejected = true;
       try {
-        raw = deps.runner(viewArgs('number,title,body,labels'));
+        raw = deps.runner(viewArgs('number,title,body,labels'), injected);
       } catch (err2) {
         deps.stderr(`compose-subject.js: gh issue view ${n} failed: ${errMessage(err2)}\n`);
         return 3;
@@ -354,7 +366,7 @@ function run(argv, deps = realDeps) {
     // `typeOf` falls straight through to its own `type:*` label lookup.
     if (issueTypeFieldRejected) {
       const labelType = typeOf(record);
-      record.issueType = labelType ? null : deps.fetchIssueType(deps.runner, repoSpec, n);
+      record.issueType = labelType ? null : deps.fetchIssueType((args) => deps.runner(args, injected), repoSpec, n);
     }
     records.push(record);
   }
@@ -380,9 +392,9 @@ function run(argv, deps = realDeps) {
 
   let scope = opts.scope;
   if (scope === null) {
-    const constant = deps.readCommitScope();
+    const constant = deps.readCommitScope(cwd);
     let pairs;
-    try { pairs = parseScopePaths(deps.readCommitScopePaths()); } catch (err) {
+    try { pairs = parseScopePaths(deps.readCommitScopePaths(cwd)); } catch (err) {
       if (!(err instanceof CommitScopeError)) throw err;
       deps.stderr(`compose-subject.js: ${errMessage(err)}\n`);
       return 1;
@@ -396,8 +408,8 @@ function run(argv, deps = realDeps) {
       const command = opts.range ? `git diff --name-only ${opts.range}` : `gh pr diff ${opts.pr} --name-only`;
       try {
         changedPaths = opts.range
-          ? deps.gitRunner(['diff', '--name-only', '-z', '--end-of-options', opts.range]).split('\0').filter(Boolean)
-          : deps.runner(['pr', 'diff', String(opts.pr), '--repo', slug, '--name-only']).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+          ? deps.gitRunner(['diff', '--name-only', '-z', '--end-of-options', opts.range], injected).split('\0').filter(Boolean)
+          : deps.runner(['pr', 'diff', String(opts.pr), '--repo', slug, '--name-only'], injected).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
       } catch (err) {
         deps.stderr(`compose-subject.js: ${command} failed: ${errMessage(err)}\n`);
         return 3;
@@ -433,17 +445,18 @@ function run(argv, deps = realDeps) {
   }
 
   if (opts.outDir !== null) {
-    const files = [
-      [path.join(opts.outDir, 'title.txt'), composed.title],
-      [path.join(opts.outDir, 'body.md'), composed.body],
-      [path.join(opts.outDir, 'message.txt'), `${composed.title}\n\n${composed.body}`],
-    ];
-    let current = opts.outDir;
+    // A relative --out-dir is resolved against the injected cwd (#5386); fs sees the resolved
+    // path, so an error message naming it is swapped back to the spelling the caller typed.
+    const outDir = cwd === undefined ? opts.outDir : resolveAgainst(cwd, opts.outDir);
+    const names = ['title.txt', 'body.md', 'message.txt'];
+    const texts = [composed.title, composed.body, `${composed.title}\n\n${composed.body}`];
+    const files = names.map((name, i) => ({ resolved: path.join(outDir, name), typed: path.join(opts.outDir, name), text: texts[i] }));
+    let current = { resolved: outDir, typed: opts.outDir };
     try {
-      deps.mkdirp(opts.outDir);
-      for (const [file, text] of files) { current = file; deps.writeFile(file, text); }
+      deps.mkdirp(outDir);
+      for (const file of files) { current = file; deps.writeFile(file.resolved, file.text); }
     } catch (err) {
-      deps.stderr(`compose-subject.js: could not write ${current}: ${errMessage(err)}\n`);
+      deps.stderr(`compose-subject.js: could not write ${current.typed}: ${errMessage(err).split(current.resolved).join(current.typed)}\n`);
       return 3;
     }
     deps.stdout(shellQuote(composed.title) + '\n');

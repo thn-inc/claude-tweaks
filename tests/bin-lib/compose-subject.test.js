@@ -514,7 +514,7 @@ test('--scope (#3028): parsed, threaded into the subject, breaking keeps ! after
 
 test('realDeps.runner (#3028) pipes gh stderr instead of inheriting it, and keeps windowsHide', () => {
   const src = require('node:fs').readFileSync(require.resolve('../../plugin/bin/lib/compose-subject.js'), 'utf8');
-  const line = src.split('\n').find((l) => l.includes("runner: (args) => execFileSync('gh'"));
+  const line = src.split('\n').find((l) => l.includes("runner: (args, injected) => execFileSync('gh'"));
   assert.ok(line, 'realDeps.runner line must exist');
   assert.ok(line.includes("stdio: ['ignore', 'pipe', 'pipe']"), line);
   assert.ok(line.includes('windowsHide: true'), line);
@@ -944,4 +944,178 @@ test('AC7.1: --bogus exits 1 with the usage on stderr', () => {
   assert.equal(res.code, 1);
   assert.equal(res.stdout, '');
   assert.equal(res.stderr, `unknown argument: --bogus\n${USAGE}`);
+});
+
+// ---- Injected cwd and env (#5386): every seam `run` reaches takes them from deps. ----
+const nodeFs = require('node:fs');
+const nodeOs = require('node:os');
+const nodePath = require('node:path');
+const { execFileSync } = require('node:child_process');
+
+// process.env minus the variables that would point a git child at the test runner's own repository.
+function envWithoutGitRepoVars(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const k of GIT_REPO_VARS) delete env[k];
+  return env;
+}
+
+// A directory path that is never created: the fakes never touch the filesystem under it.
+const PHANTOM_CWD = nodePath.join(nodeOs.tmpdir(), 'compose-subject-phantom-cwd');
+const INJECTED_ENV = Object.freeze({ PATH: process.env.PATH || '', COMPOSE_SUBJECT_MARKER: 'injected' });
+
+test('AC8.1: run reads commit-scope through deps.cwd()', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: '' });
+  const seen = [];
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  deps.readCommitScope = (cwd) => { seen.push(['scope', cwd]); return null; };
+  deps.readCommitScopePaths = (cwd) => { seen.push(['paths', cwd]); return ['plugin/bin/=bin']; };
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.deepEqual(seen, [['scope', PHANTOM_CWD], ['paths', PHANTOM_CWD]]);
+});
+
+test('AC8.1: realDeps.readCommitScope and readCommitScopePaths read the policy under the cwd they are given', (t) => {
+  const dir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-policy-arg-'));
+  t.after(() => nodeFs.rmSync(dir, { recursive: true, force: true }));
+  nodeFs.mkdirSync(nodePath.join(dir, '.claude-tweaks'));
+  nodeFs.writeFileSync(nodePath.join(dir, '.claude-tweaks', 'policy.yml'), 'commit-scope: web\ncommit-scope-paths: plugin/bin/=bin\n');
+  assert.equal(realDeps.readCommitScope(dir), 'web');
+  assert.deepEqual(realDeps.readCommitScopePaths(dir), ['plugin/bin/=bin']);
+});
+
+test('AC8.1: runner, gitRunner, ghAvailable and the fetchIssueType runner receive the injected cwd and env', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: '' });
+  const expected = { cwd: PHANTOM_CWD, env: INJECTED_ENV };
+  const seen = { runner: [], gitRunner: [], ghAvailable: [], remoteUrl: [], fetchRunner: [] };
+  const viewRunner = deps.runner;
+  let first = true;
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  deps.ghAvailable = (o) => { seen.ghAvailable.push(o); return true; };
+  deps.remoteUrl = (o) => { seen.remoteUrl.push(o); return 'git@github.com:acme/repo.git'; };
+  deps.gitRunner = (args, o) => { seen.gitRunner.push(o); return ''; };
+  // The first view is rejected for the issueType field so the GraphQL fallback runs and receives its runner.
+  deps.runner = (args, o) => {
+    seen.runner.push(o);
+    if (first) { first = false; throw new Error('Unknown JSON field: "issueType"'); }
+    return args[0] === 'api' ? '{}' : viewRunner(args);
+  };
+  deps.fetchIssueType = (runner) => { runner(['api', 'graphql']); return { name: 'Bug' }; };
+  deps.readCommitScopePaths = () => ['plugin/bin/=bin'];
+  assert.equal(run(['2263', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.match(out.stdout, /^\{"title":"fix: /);
+  // runner: the failed view, its retry, and the call the fetchIssueType runner made.
+  assert.equal(seen.runner.length, 3);
+  for (const o of seen.runner) assert.deepEqual(o, expected);
+  assert.deepEqual(seen.gitRunner, [expected]);
+  assert.deepEqual(seen.ghAvailable, [expected]);
+  assert.deepEqual(seen.remoteUrl, [expected]);
+});
+
+test('AC8.1: pinGhHost receives the injected cwd and env for an explicit --repo', () => {
+  const { deps, out } = fakeDeps();
+  const seen = [];
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  deps.pinGhHost = (spec, o) => { seen.push([spec.owner, spec.repo, o]); };
+  assert.equal(run(['2251', '--repo', 'owner/name'], deps), 0, out.stderr);
+  assert.deepEqual(seen, [['owner', 'name', { cwd: PHANTOM_CWD, env: INJECTED_ENV }]]);
+});
+
+test('AC8.1: the origin gate reads an exported GH_HOST from the injected env', () => {
+  const origin = 'https://git.corp.example/owner/name.git';
+  const admitted = fakeDeps({ remoteUrl: () => origin });
+  admitted.deps.cwd = () => PHANTOM_CWD;
+  admitted.deps.env = { ...INJECTED_ENV, GH_HOST: 'git.corp.example' };
+  assert.equal(run(['2251'], admitted.deps), 0, admitted.out.stderr);
+  assert.ok(admitted.out.calls[0].includes('git.corp.example/owner/name'), admitted.out.calls[0].join(' '));
+
+  const refused = fakeDeps({ remoteUrl: () => origin });
+  refused.deps.cwd = () => PHANTOM_CWD;
+  refused.deps.env = INJECTED_ENV;
+  assert.equal(run(['2251'], refused.deps), 2);
+  assert.match(refused.out.stderr, /is not a known GitHub host/);
+});
+
+test('AC8.1: the origin read follows deps.cwd()', (t) => {
+  const repo = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-origin-')));
+  t.after(() => nodeFs.rmSync(repo, { recursive: true, force: true }));
+  const setupEnv = envWithoutGitRepoVars();
+  execFileSync('git', ['init', '-q'], { cwd: repo, env: setupEnv, stdio: 'ignore', windowsHide: true });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/fixture/repo.git'], { cwd: repo, env: setupEnv, stdio: 'ignore', windowsHide: true });
+  // Real remoteUrl (not faked): only the injected cwd points it at the fixture repository.
+  const { deps, out } = fakeDeps({ remoteUrl: realDeps.remoteUrl });
+  deps.cwd = () => repo;
+  deps.env = envWithoutGitRepoVars();
+  assert.equal(run(['2251'], deps), 0, out.stderr);
+  assert.ok(out.calls[0].includes('fixture/repo'), out.calls[0].join(' '));
+});
+
+test('AC8.1: a relative --out-dir lands under deps.cwd(), not the process cwd', () => {
+  const { deps, out } = fakeDeps();
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  assert.equal(run(['2251', '--out-dir', nodePath.join('rel', 'out')], deps), 0, out.stderr);
+  const resolvedDir = PHANTOM_CWD + nodePath.sep + nodePath.join('rel', 'out');
+  assert.deepEqual(out.dirs, [resolvedDir]);
+  assert.deepEqual(Object.keys(out.files), ['title.txt', 'body.md', 'message.txt'].map((f) => nodePath.join(resolvedDir, f)));
+});
+
+test('AC8.1: a failed write under a relative --out-dir names the path as typed, not the resolved one', () => {
+  const typed = nodePath.join('rel', 'out');
+  const resolvedFile = nodePath.join(PHANTOM_CWD + nodePath.sep + typed, 'title.txt');
+  const { deps, out } = fakeDeps();
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  deps.writeFile = (p) => { throw new Error(`EACCES: permission denied, open '${p}'`); };
+  assert.equal(run(['2251', '--out-dir', typed], deps), 3);
+  const typedFile = nodePath.join(typed, 'title.txt');
+  assert.equal(out.stderr, `compose-subject.js: could not write ${typedFile}: EACCES: permission denied, open '${typedFile}'\n`);
+  assert.ok(!out.stderr.includes(resolvedFile));
+});
+
+test('AC8.1: an absolute --out-dir is handed to fs unchanged even with a deps.cwd()', () => {
+  const abs = nodePath.join(nodeOs.tmpdir(), 'compose-subject-abs-out');
+  const { deps, out } = fakeDeps();
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  assert.equal(run(['2251', '--out-dir', abs], deps), 0, out.stderr);
+  assert.deepEqual(out.dirs, [abs]);
+});
+
+// The real children, not faked seams: each gets the injected values from an env-only or cwd-only fixture.
+test('AC8.1: realDeps.ghAvailable looks `gh` up on the injected PATH', { skip: STUB_SKIP }, (t) => {
+  const withGh = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-gh-present-'));
+  const withoutGh = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-gh-absent-'));
+  t.after(() => { nodeFs.rmSync(withGh, { recursive: true, force: true }); nodeFs.rmSync(withoutGh, { recursive: true, force: true }); });
+  nodeFs.writeFileSync(nodePath.join(withGh, 'gh'), '#!/bin/sh\necho "gh version 2.0.0"\n');
+  nodeFs.chmodSync(nodePath.join(withGh, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
+  assert.equal(realDeps.ghAvailable({ cwd: withGh, env: { PATH: withGh } }), true);
+  // An empty PATH directory: a real `gh` elsewhere on the machine must not answer.
+  assert.equal(realDeps.ghAvailable({ cwd: withoutGh, env: { PATH: withoutGh } }), false);
+});
+
+test('AC8.1: realDeps.runner starts gh in the injected cwd with the injected env', { skip: STUB_SKIP }, (t) => {
+  const stubDir = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-runner-stub-')));
+  const cwd = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-runner-cwd-')));
+  t.after(() => { nodeFs.rmSync(stubDir, { recursive: true, force: true }); nodeFs.rmSync(cwd, { recursive: true, force: true }); });
+  nodeFs.writeFileSync(nodePath.join(stubDir, 'gh'), '#!/bin/sh\nprintf "cwd=%s marker=%s" "$(pwd -P)" "$COMPOSE_SUBJECT_MARKER"\n');
+  nodeFs.chmodSync(nodePath.join(stubDir, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
+  const env = envWithoutGitRepoVars({ PATH: stubDir + nodePath.delimiter + (process.env.PATH || ''), COMPOSE_SUBJECT_MARKER: 'from-injected-env' });
+  delete env.GH_HOST;
+  assert.equal(realDeps.runner(['version-probe'], { cwd, env }), `cwd=${cwd} marker=from-injected-env`);
+});
+
+test('AC8.1: realDeps.gitRunner starts git in the injected cwd with the injected env', (t) => {
+  const repo = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-gitrunner-')));
+  t.after(() => nodeFs.rmSync(repo, { recursive: true, force: true }));
+  const env = envWithoutGitRepoVars({ GIT_AUTHOR_NAME: 'Env Proof', GIT_AUTHOR_EMAIL: 'env-proof@example.invalid' });
+  execFileSync('git', ['init', '-q'], { cwd: repo, env, stdio: 'ignore', windowsHide: true });
+  assert.equal(realDeps.gitRunner(['rev-parse', '--show-toplevel'], { cwd: repo, env }).trim(), repo);
+  assert.match(realDeps.gitRunner(['var', 'GIT_AUTHOR_IDENT'], { cwd: repo, env }), /^Env Proof <env-proof@example\.invalid> /);
+});
+
+test('AC8.1: realDeps.cwd and realDeps.env are the ambient values', () => {
+  assert.equal(realDeps.cwd(), process.cwd());
+  assert.equal(realDeps.env, process.env);
 });
