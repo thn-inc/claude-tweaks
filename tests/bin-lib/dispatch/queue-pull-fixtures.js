@@ -698,7 +698,7 @@ const FAULTS = [
 
 // FILES_FAULTS (files transport): { id, input, mode, pass, scenario(), agent(base agent files) ->
 // agent files, warm? }. `missing` leaves the file unwritten (the agent wrote none), `malformed`
-// writes NOT_JSON; the queue's `wrapper` (D3), the claim map's `non-JSON string` (D4) and the
+// writes NOT_JSON; the queue's and the dependency-freshness `wrapper` (D3), the claim map's `non-JSON string` (D4) and the
 // agent-written `[]` / `{}` values are the shapes the Plan Review Clarifications name.
 const withAgent = (name, content) => (files) => {
   const out = { ...files };
@@ -726,6 +726,11 @@ FILES_FAULTS.push(
   { id: 'files-depFreshness-missing-cold', input: 'depFreshness', mode: 'missing (cold cache)', pass: 'fetch', warm: false, scenario: P1, agent: withAgent('dispatch-dep-freshness.json', undefined) },
   { id: 'files-queueRaw-wrapper', input: 'queueRaw', mode: 'wrapper', pass: 'fetch', scenario: P1,
     agent: (files) => ({ ...files, 'dispatch-queue-raw.json': JSON.stringify({ issues: JSON.parse(files['dispatch-queue-raw.json']) }) }) },
+  // #5307: the dependency-freshness wrapper, warm (the cache check stops) and cold (the write-back does).
+  { id: 'files-depFreshness-wrapper', input: 'depFreshness', mode: 'wrapper', pass: 'fetch', warm: true, scenario: P1,
+    agent: (files) => ({ ...files, 'dispatch-dep-freshness.json': JSON.stringify({ issues: JSON.parse(files['dispatch-dep-freshness.json']) }) }) },
+  { id: 'files-depFreshness-wrapper-cold', input: 'depFreshness', mode: 'wrapper (cold cache)', pass: 'fetch', warm: false, scenario: P1,
+    agent: (files) => ({ ...files, 'dispatch-dep-freshness.json': JSON.stringify({ issues: JSON.parse(files['dispatch-dep-freshness.json']) }) }) },
   { id: 'files-inFlightRaw-empty', input: 'inFlightRaw', mode: 'empty []', pass: 'neighbour-in-flight', scenario: P1, agent: withAgent('dispatch-in-flight-raw.json', '[]') },
   { id: 'files-inFlightClaims-empty', input: 'inFlightClaims', mode: 'empty {}', pass: 'neighbour-in-flight', scenario: P1, agent: withAgent('dispatch-in-flight-claims.json', '{}') },
   { id: 'files-inFlightClaims-string', input: 'inFlightClaims', mode: 'non-JSON string', pass: 'neighbour-in-flight', scenario: P1,

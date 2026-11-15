@@ -56,12 +56,15 @@ NODE_EVAL_EOF
 
 # #3691: MCP tools return snake_case created_at/updated_at; readers want camelCase. Adds the camelCase
 # keys in place after each fetch -- a no-op on gh-shaped input, so both transports run the same line.
+# #5307: a non-array file is a Warning, left as written, and a non-zero exit (the reads after it fail).
 alias_mcp_timestamps() {
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$@" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { aliasMcpTimestamps } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/mcp-issue-shape.js');
   for (const file of process.argv.slice(1)) {
-    fs.writeFileSync(file, JSON.stringify(aliasMcpTimestamps(JSON.parse(fs.readFileSync(file, 'utf8')))));
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!Array.isArray(value)) { console.error('Warning: ' + file + ' is not a JSON array — treated as a failed read'); process.exitCode = 1; continue; }
+    fs.writeFileSync(file, JSON.stringify(aliasMcpTimestamps(value)));
   }
 NODE_EVAL_EOF
 }
@@ -73,14 +76,10 @@ if [ "$QUEUE_RAW_COUNT" -ge 500 ]; then
   echo "Warning: the auto:build queue pull returned exactly the --limit cap (500) — this repo may have more open auto:build records than fetched. gh issue list returns newest-first, so any records beyond the cap are the OLDEST same-priority ones, exactly what next's own oldest-first tie-break (Step 3) exists to surface first. Consider raising the cap, or filing this as a signal to re-triage the queue down." >&2
 fi
 
-# #1571: cache-check prefix. `updatedAt,state` above (added to DISPATCH_QUEUE_RAW's
-# existing --json field list — no extra bulk call, per AC1's merged-call allowance)
-# plus this one targeted dependency-freshness call are the "at most two bulk calls"
-# AC1 requires. Comparison logic (buildFreshnessSignal/signalsMatch) and the
-# persisted-blob read/write live in bin/lib/dispatch/queue-order.js — a cache,
-# not a lock: two racing firings both attempt the write-back below; the CAS
-# loser's own in-memory groups/excluded (computed by its own full pull) stay
-# valid for its own firing regardless of whether its write landed.
+# #1571: cache-check prefix. `updatedAt,state` (in DISPATCH_QUEUE_RAW's --json list) plus this one
+# dependency-freshness call are the "at most two bulk calls" AC1 requires. The comparison and the
+# persisted-blob read/write live in bin/lib/dispatch/queue-order.js. A cache, not a lock: racing firings
+# both attempt the write-back below, and each CAS loser's own in-memory groups stay valid for it.
 DISPATCH_DEP_NUMBERS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const { readOrder, buildFreshnessSignal } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/queue-order.js');
@@ -93,10 +92,7 @@ DISPATCH_DEP_NUMBERS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISP
 NODE_EVAL_EOF
 )
 echo '[]' > "$DISPATCH_DEP_FRESHNESS"
-# Cache-hit default: computed before cache-hit/miss is known, so this is
-# only the pre-computation placeholder -- the CACHE_HIT node -e block below
-# overwrites it with persisted.bundles (#2066) once it confirms a hit; a
-# cache miss re-derives it from scratch further down instead.
+# Placeholder: the CACHE_HIT block below overwrites it with persisted.bundles (#2066) on a hit.
 echo '[]' > "$DISPATCH_FASTLANE_BUNDLES"
 if [ -n "$DISPATCH_DEP_NUMBERS" ]; then
   gh issue list --search "$(echo "$DISPATCH_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"
@@ -112,6 +108,7 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
   if (!persisted) { console.log('0'); process.exit(0); }
   const autoBuild = require(process.argv[1]);
   const depFreshness = require(process.argv[2]);
+  if (!Array.isArray(autoBuild) || !Array.isArray(depFreshness)) throw new Error('not a JSON array');
   const current = buildFreshnessSignal([...autoBuild, ...depFreshness]);
   if (!cacheUsable(persisted, current, require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping)) { console.log('0'); process.exit(0); }
   fs.writeFileSync(process.argv[3], JSON.stringify(persisted.groups));
@@ -284,6 +281,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   const root = mainCheckoutRoot(process.cwd()) || process.cwd();
   const autoBuild = require(process.argv[1]);
   const depFreshness = require(process.argv[2]);
+  if (!Array.isArray(autoBuild) || !Array.isArray(depFreshness)) throw new Error('not a JSON array');
   const groups = require(process.argv[3]);
   // The disk cache's own 'excluded' field keeps its pre-#1752 shape
   // ({number, blockedBy}[]) unchanged -- reshape this run's unified

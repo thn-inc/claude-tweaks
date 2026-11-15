@@ -1204,10 +1204,10 @@ test('#5227 files: the dependency-freshness file is used only where the fence se
   assert.equal(absent.store.written.length, 0, 'the write-back cannot read the freshness and writes nothing');
 });
 
-test('#5227 D3: a non-array queue file such as {issues:[...]} reads as an empty queue, with no Warning, and the caller\'s file outside the session dir is left byte-identical', () => {
+test('#5307 D3: a non-array queue file such as {issues:[...]} is a failed read: one Warning names the session copy, both copies keep the wrapper, and the pull stops at group-building', () => {
   const wrapper = JSON.stringify({ issues: [mcpRecord(9001, withBody(9001))] });
   const r = pull(S1(), {
-    transport: 'files', run: () => { throw new Error('no gh on files'); },
+    transport: 'files', run: () => { throw new Error('no gh on files'); }, allowThrow: true,
     prepare: (own) => {
       return { inputs: {
         queueRaw: writeInput(own, 'queue.json', wrapper),
@@ -1217,11 +1217,37 @@ test('#5227 D3: a non-array queue file such as {issues:[...]} reads as an empty 
       } };
     },
   });
-  assert.notEqual(path.dirname(r.state.files.queueRaw), path.dirname(sessionPaths('qp-t3')['dispatch-queue-raw.json']), 'the caller file sits outside the session dir');
-  assert.equal(r.text[r.state.files.queueRaw], wrapper, 'D3 rewrites the session copy, never the caller\'s file');
-  assert.equal(r.text['dispatch-queue-raw.json'], '[]', 'D3 is unchanged: the session copy reads as []');
-  assert.deepEqual(r.json('dispatch-groups.json'), []);
-  assert.deepEqual(r.errs, [], r.stderr);
+  const sessionCopy = sessionPaths('qp-t3')['dispatch-queue-raw.json'];
+  assert.notEqual(path.dirname(r.state.files.queueRaw), path.dirname(sessionCopy), 'the caller file sits outside the session dir');
+  assert.equal(r.text[r.state.files.queueRaw], wrapper, 'the caller\'s file is byte-identical');
+  assert.equal(r.text['dispatch-queue-raw.json'], wrapper, 'the session copy still holds the wrapper');
+  // The pull's own session root is its per-test temp dir, so the Warning is matched on its tail.
+  const warnings = reported(r.stderr).filter((l) => l.startsWith('Warning: '));
+  assert.equal(warnings.length, 1, r.stderr);
+  assert.ok(warnings[0].endsWith('/ct-session-qp-t3/dispatch-queue-raw.json is not a JSON array — treated as a failed read'), warnings[0]);
+  const [, head, tail] = FENCE.match(GROUPING_STOP_RE);
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+  assert.equal(r.thrown.line, `${head}1${tail}`);
+});
+
+test('#5307 files: a dependency-freshness file holding a JSON string is a failed read, so a warm cache is not hit and the pull stops at the cache check', () => {
+  const blob = pull(S1()).store.written[0].blob;
+  const agent = agentInputs(S1());
+  const r = pull(S1(), {
+    transport: 'files', run: () => { throw new Error('no gh on files'); }, persisted: blob, allowThrow: true,
+    prepare: (own) => {
+      return { inputs: {
+        queueRaw: writeInput(own, 'queue.json', agent['dispatch-queue-raw.json']),
+        openNumbers: writeInput(own, 'open.json', agent['dispatch-open-numbers.json']),
+        depFreshness: writeInput(own, 'dep.json', JSON.stringify(agent['dispatch-dep-freshness.json'])),
+        verifiedOpenDeps: writeInput(own, 'verified.txt', agent['dispatch-verified-open-deps.txt']),
+      } };
+    },
+  });
+  assert.ok(!r.stderr.includes(HIT_MESSAGE), 'the string is not a freshness signal, so the cache is not hit');
+  const [, head, tail] = FENCE.match(CACHE_HIT_STOP_RE);
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+  assert.equal(r.thrown.line, `${head}1${tail}`);
 });
 
 test('#5227 files: a queue file the agent never wrote removes the session copy (the agent write\'s rm -f) and stops the pull at group-building, as AC7.2 pins', () => {
@@ -3285,7 +3311,9 @@ const FILES_EXPECT = {
   'files-inFlightRaw-malformed': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightClaims-missing': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightClaims-malformed': FILES_STOPPED_NEIGHBOUR,
-  'files-queueRaw-wrapper': { status: 0, stderr: [], entries: [] },
+  'files-queueRaw-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-queueRaw-wrapper/dispatch-queue-raw.json is not a JSON array — treated as a failed read', STOP_LINE.grouping], entries: [] },
+  'files-depFreshness-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
+  'files-depFreshness-wrapper-cold': { status: 0, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper-cold/dispatch-dep-freshness.json is not a JSON array — treated as a failed read'], drops: [] },
   'files-inFlightRaw-empty': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
   'files-inFlightClaims-empty': { status: 0, stderr: [CLAIM_READ_FAILED_7001], drops: ['neighbour-in-flight:9013'] },
   'files-inFlightClaims-string': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
@@ -3560,8 +3588,8 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
     // stop comes before the open-numbers and verified-open-deps writes as well.
     const cacheStop = ['dispatch-open-numbers.json', 'dispatch-verified-open-deps.txt', ...inFlight];
     assert.deepEqual(carved, {
-      'files-queueRaw-missing': inFlight, 'files-queueRaw-malformed': inFlight,
-      'files-depFreshness-missing': cacheStop, 'files-depFreshness-malformed': cacheStop,
+      'files-queueRaw-missing': inFlight, 'files-queueRaw-malformed': inFlight, 'files-queueRaw-wrapper': inFlight,
+      'files-depFreshness-missing': cacheStop, 'files-depFreshness-malformed': cacheStop, 'files-depFreshness-wrapper': cacheStop,
       'files-openNumbers-missing': inFlight, 'files-openNumbers-malformed': inFlight,
     });
   });
@@ -3578,15 +3606,31 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
       assert.equal(r.orderBlob, null, `cold ${side}: the write-back cannot read the freshness and persists nothing`);
       assert.deepEqual(groupedIn(r), groupedIn(R['S1-files-miss'].oracle), `cold ${side}: the pull itself is the base's`);
     }
+    for (const [side, r] of sides(R['files-depFreshness-wrapper-cold'])) {
+      assert.equal(r.status, 0, `cold wrapper ${side}`);
+      // The cold base also prints its own gh-absent Warnings (linked PRs, unlanded blockers): count the file's only.
+      const warnings = reported(r.stderr).filter((l) => l.includes('/dispatch-dep-freshness.json is not a JSON array'));
+      assert.equal(warnings.length, 1, `cold wrapper ${side}: one Warning naming the file`);
+      assert.ok(warnings[0].includes('/dispatch-dep-freshness.json is not a JSON array'), `cold wrapper ${side}: names the file`);
+      assert.equal(r.orderBlob, null, `cold wrapper ${side}: the write-back cannot read the wrapper and persists nothing`);
+      assert.deepEqual(groupedIn(r), groupedIn(R['S1-files-miss'].oracle), `cold wrapper ${side}: the pull itself is the base's`);
+    }
   });
 
-  test('#5227 D3: a wrapper-object queue file yields an empty pool, exit 0, no Warning, both sides', () => {
-    for (const [side, r] of sides(R['files-queueRaw-wrapper'])) {
-      assert.equal(r.status, 0, side);
-      assert.deepEqual(JSON.parse(r.files['dispatch-groups.json']), [], `${side}: an empty pool`);
-      assert.equal(r.files['dispatch-queue-raw.json'], '[]', `${side}: aliasMcpTimestamps rewrote the wrapper as []`);
-      assert.deepEqual([...reported(r.stderr), ...reported(r.stdout)].filter((l) => l.startsWith('Warning: ')), [], `${side}: no Warning`);
+  test('#5307 D3: a wrapper-object queue or dependency-freshness file is a failed read on both sides: exit 1, one Warning naming the file, the matching stop last', () => {
+    for (const [id, file, stop] of [['files-queueRaw-wrapper', 'dispatch-queue-raw.json', STOP_LINE.grouping], ['files-depFreshness-wrapper', 'dispatch-dep-freshness.json', STOP_LINE.cacheHit]]) {
+      stopMapped(R[id].oracle, R[id].module);
+      for (const [side, r] of sides(R[id])) {
+        const warnings = reported(r.stderr).filter((l) => l.startsWith('Warning: '));
+        assert.equal(warnings.length, 1, `${id} ${side}: one Warning`);
+        assert.ok(warnings[0].includes(`/${file} is not a JSON array`), `${id} ${side}: names the file`);
+        assert.equal(reported(r.stderr).at(-1), stop, `${id} ${side}`);
+      }
     }
+    // The queue stop truncates dispatch-groups.json and writes nothing into it; the dependency stop
+    // comes before any groups file, so there is none. Neither leaves a clean empty pool.
+    for (const [side, r] of sides(R['files-queueRaw-wrapper'])) assert.equal(r.files['dispatch-groups.json'], '', `${side}: no pool written`);
+    for (const [side, r] of sides(R['files-depFreshness-wrapper'])) assert.equal(r.files['dispatch-groups.json'], null, `${side}: no groups file`);
     assert.ok(groupedIn(R['S1-files-miss'].oracle).length > 0, 'the same records unwrapped are dispatchable (control)');
   });
 

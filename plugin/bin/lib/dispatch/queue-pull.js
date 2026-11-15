@@ -241,11 +241,26 @@ function readPolicy(ctx, key) {
 // A fence redirect or echo that fails does not stop the fence (R6): the write is a step.
 const put = (ctx, file, content) => step(ctx, `write ${path.basename(file)}`, () => fs.writeFileSync(file, content));
 
-// alias_mcp_timestamps (fence 61-69): the camelCase keys added in place. D3: a non-array file is
-// silently rewritten as [].
+// alias_mcp_timestamps (fence 61-69): the camelCase keys added in place. D3 (#5307): a non-array
+// file is a failed read -- a Warning, the file left as the agent wrote it, and a not-ok step, so the
+// reads that follow fail as they do for an unparseable file (readArray).
 function aliasFile(ctx, name, file) {
-  return step(ctx, name, () => fs.writeFileSync(file, JSON.stringify(aliasMcpTimestamps(readJson(file)))));
+  const parsed = step(ctx, name, () => readJson(file));
+  if (!parsed.ok) return parsed;
+  if (!Array.isArray(parsed.value)) {
+    ctx.deps.stderr(`Warning: ${file} is not a JSON array — treated as a failed read\n`);
+    return { ok: false };
+  }
+  return step(ctx, name, () => fs.writeFileSync(file, JSON.stringify(aliasMcpTimestamps(parsed.value))));
 }
+
+// The queue or dependency-freshness session file read as the list it must be. Any other JSON value
+// throws: a string would otherwise be spread character by character into the freshness signal (D3, #5307).
+const readArray = (file) => {
+  const value = readJson(file);
+  if (!Array.isArray(value)) throw new TypeError(`${path.basename(file)} is not a JSON array`);
+  return value;
+};
 
 // The `gh issue list --search "#a #b" --state all ...` dependency-freshness fetch (fence 104, 275):
 // stderr dropped, any failure writes [].
@@ -267,7 +282,7 @@ function agentDepFreshness(ctx, file) {
 
 // On `files` the agent's queue file stands where the fence's queue pull stands, as the agent's Write
 // does: copied into the session file, which is the one aliased and read from then on, so the
-// caller's own file is never rewritten (D3 turns a non-array into [] in the session copy only). A
+// caller's own file is never rewritten (a non-array session copy is a failed read, #5307). A
 // queue file the agent never wrote removes the session file, so an earlier pull's queue is not read.
 function agentQueueRaw(ctx, input, file) {
   const text = step(ctx, 'queue-input', () => readTextOrNull(input)).value ?? null;
@@ -385,7 +400,7 @@ function runFetch(ctx) {
   try {
     const persisted = deps.queueOrder.readOrder(rootOf(ctx));
     if (persisted) {
-      const current = buildFreshnessSignal([...readJson(queueFile), ...readJson(depFile)]);
+      const current = buildFreshnessSignal([...readArray(queueFile), ...readArray(depFile)]);
       if (cacheUsable(persisted, current, deps.expressQueuePolicy({ stderr: deps.stderr }).grouping)) {
         fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify(persisted.groups));
         state.cacheHit = true;
@@ -580,8 +595,8 @@ function runWriteBack(ctx) {
   if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);
-    const autoBuild = readJson(paths['dispatch-queue-raw.json']);
-    const depFreshness = readJson(depFile);
+    const autoBuild = readArray(paths['dispatch-queue-raw.json']);
+    const depFreshness = readArray(depFile);
     const groups = readJson(paths['dispatch-groups.json']);
     // The disk cache keeps its pre-#1752 {number, blockedBy}[] `excluded` shape: reshape the
     // unified 'blocked' entries back at the one place the schemas meet (Q28).
