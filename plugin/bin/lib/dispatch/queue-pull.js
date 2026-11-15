@@ -1145,14 +1145,19 @@ function queuePull(options = {}, deps = {}) {
 const RANK = { high: 0, medium: 1, low: 2 };
 const bandOf = (r) => (r.facets.priority ? RANK[r.facets.priority] : 3);
 
+// The exclusion reasons whose records stay IN dispatch-groups.json: every PASSES exclusion row
+// with removes: false. A removing reason never needs listing, since its records are already gone
+// from the groups. drive.js --budget's pre-screen (driver/budget.js) leaves these groups alone.
+const STAYING_EXCLUSION_REASONS = Object.freeze([...new Set(PASSES.filter((p) => p.kind === 'exclusion' && !p.removes).map((p) => p.reason))]);
+// What the ranking skips: the staying reasons plus `firing`, which the Loop appends between pulls
+// and no pass writes. next-ranking.md's fence spells the same three as a literal;
+// queue-pull.test.js pins this list to exactly that set.
+const RANK_SKIP_REASONS = Object.freeze([...STAYING_EXCLUSION_REASONS, 'firing']);
+
 // groups: arrays of records; exclusionEntries: dispatch-exclusions.json's entries. Returns the
 // best eligible group, or null.
-// The three reasons are next-ranking.md's literal: the exclusion reasons whose records stay IN
-// dispatch-groups.json (every PASSES exclusion row with removes: false), plus `firing`, which the
-// Loop appends between pulls and no pass writes. A removing reason never needs listing here, since
-// its records are already gone from the groups. queue-pull.test.js pins this set against PASSES.
 function rankNext(groups, exclusionEntries, { priority } = {}) {
-  const eligibleGroups = groups.filter((g) => !groupIsExcluded(g, exclusionEntries, ['oversized', 'firing', 'neighbour-in-flight']));
+  const eligibleGroups = groups.filter((g) => !groupIsExcluded(g, exclusionEntries, RANK_SKIP_REASONS));
   const representative = (g) => g.slice().sort((a, b) =>
     bandOf(a) - bandOf(b) || new Date(a.createdAt) - new Date(b.createdAt))[0];
   const priorityFilter = priority || null;
@@ -1180,4 +1185,5 @@ function rankFromFiles({ sessionId, priority } = {}) {
 
 module.exports = {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, sessionPaths, QueuePullStopped, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
+  STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS,
 };

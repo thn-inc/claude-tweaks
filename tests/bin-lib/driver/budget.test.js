@@ -12,7 +12,7 @@ const {
 const { BUDGET_STEP, STEP } = require(path.join(LIB, 'driver', 'events'));
 const { defineStep, eligibilityOptions } = require(path.join(LIB, 'driver', 'steps'));
 const { newShared } = require(path.join(LIB, 'driver', 'run'));
-const { rankNext, PASSES } = require(path.join(LIB, 'dispatch', 'queue-pull'));
+const { rankNext, PASSES, STAYING_EXCLUSION_REASONS } = require(path.join(LIB, 'dispatch', 'queue-pull'));
 
 const POLICY_RESOLVED = Object.freeze({
   'express-driver': { value: 'on' },
@@ -234,8 +234,9 @@ test('UNSELECTABLE_REASONS: every reason is one the real rankNext never selects'
 
 // The other direction: a new non-removing exclusion pass in queue-pull.js (which rankNext must
 // then skip too) must land in UNSELECTABLE_REASONS, or the loop would pre-screen and count
-// records the ranking can never select.
+// records the ranking can never select. It is the queue-pull module's own list, never a copy.
 test('UNSELECTABLE_REASONS is exactly the PASSES registry\'s non-removing exclusion reasons', () => {
+  assert.equal(UNSELECTABLE_REASONS, STAYING_EXCLUSION_REASONS, 'the same array the ranking reads, not a hand copy');
   const staying = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && !p.removes).map((p) => p.reason))];
   assert.ok(staying.length > 0, 'the registry has non-removing exclusion reasons');
   assert.deepEqual([...UNSELECTABLE_REASONS].sort(), staying.sort());

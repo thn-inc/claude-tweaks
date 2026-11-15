@@ -37,8 +37,9 @@ const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { groupIsExcluded } = require('../dispatch/exclusions');
 
 // The pull's exclusion reasons whose groups stay in the pulled groups yet are never selectable
-// (rankNext skips them too); `firing` is this loop's own and is handled by `attempted`.
-const UNSELECTABLE_REASONS = Object.freeze(['oversized', 'neighbour-in-flight']);
+// (rankNext skips them too): the queue-pull module's own list, never a copy. `firing` is this
+// loop's own and is handled by `attempted`.
+const { STAYING_EXCLUSION_REASONS: UNSELECTABLE_REASONS } = require('../dispatch/queue-pull');
 
 const ENDED = Object.freeze({
   BUDGET: 'budget',

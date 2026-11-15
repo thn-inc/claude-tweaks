@@ -70,6 +70,7 @@ const {
 } = require('./queue-pull-fixtures');
 const {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
+  STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS,
 } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
 const { aliasMcpTimestamps } = require('../../../plugin/bin/lib/issues/mcp-issue-shape');
@@ -2330,6 +2331,10 @@ test('#5227 registry: rankNext skips exactly the non-removing exclusion reasons 
   const staying = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && !p.removes).map((p) => p.reason))];
   const removing = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && p.removes).map((p) => p.reason))];
   assert.ok(staying.length > 0 && removing.length > 0);
+  // Exact, both ways: the one list rankNext reads holds the staying reasons plus firing and nothing else.
+  assert.ok(Object.isFrozen(STAYING_EXCLUSION_REASONS) && Object.isFrozen(RANK_SKIP_REASONS));
+  assert.deepEqual([...STAYING_EXCLUSION_REASONS].sort(), [...staying].sort());
+  assert.deepEqual([...RANK_SKIP_REASONS].sort(), [...staying, 'firing'].sort());
   const group = [rec(40, 'high', '2026-01-01T00:00:00Z')];
   for (const reason of [...staying, 'firing']) {
     assert.equal(rankNext([group], [{ reason, records: [40] }], {}), null, `${reason}: the group is skipped`);
