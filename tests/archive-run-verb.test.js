@@ -26,6 +26,14 @@ function git(args, cwd) {
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
 const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-sandbox-'));
+// #5375 ledger row 2: the archive-run and close-run calls below run in this
+// process, so a deps.cwd() -> process.cwd() regression in hooks.js would resolve
+// the test runner's own working directory (a real checkout under npm test) and
+// write archive/{runId}/ there before any assertion fails. Pinning this file's
+// process to the non-git sandbox keeps such a regression's writes in a throwaway
+// directory; every path this file reads is absolute, and runCli restores this
+// cwd after each call.
+process.chdir(HOOK_SANDBOX);
 
 // The complete env a hooks.js call sees. #1130: `PIPELINE_RUN_DIR: ''`
 // neutralizes any ambient run-dir env var so a call that doesn't explicitly
