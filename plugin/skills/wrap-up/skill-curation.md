@@ -62,9 +62,17 @@ An empty findings array is valid here — it still records `lastAuditedSha`/`las
 For each proposed change:
 
 1. Classify as **additive** (new examples, new anti-patterns, new section appended) or **restructural** (changing existing wording, moving content, renaming sections, splitting/merging skills).
-2. **Additive + reversibility:high + confidence:high** → auto-apply now: make the edit in the working tree only — never run `git add`/`git commit` (`curation-engine.md` section 4's serial-commit pass is the single committer; it audits the edit, commits it, and writes this log entry with the hash only it knows). This rule applies whether or not a ledger entry seeded the change. Log entry (written by the controller at commit time):
+2. **Additive + reversibility:high + confidence:high** → auto-apply now: make the edit in the working tree only — never run `git add`/`git commit` (`curation-engine.md` section 4's serial-commit pass is the single committer; it audits the edit, then moves it to the learned-skills PR or commits it per `learned-skills-pr.md`, and logs it with the hash only that pass knows). This rule applies whether or not a ledger entry seeded the change. In every line below, `{skill}/SKILL.md` is the target with its leading `.claude/skills/` stripped (the whole target path when it has none), and `{section}` is the finding's `summary`. Log entry when the edit rides the learned-skills PR (written by `learned-skills-pr.js land`):
+   ```
+   AUTO 14:52:24 — Skills row: applied additive update to {skill}/SKILL.md ({section}) on learned-skills PR #{pr}. Reversibility: high; commit: {hash}.
+   ```
+   Log entry when the edit stays on the run branch, record-owned or by the capture fail-safe (written by the controller at commit time):
    ```
    AUTO 14:52:24 — Skills row: applied additive update to {skill}/SKILL.md ({section}). Reversibility: high; commit: {hash}.
+   ```
+   When the edit cannot ride the PR, it downgrades to a staged proposal (written by the CLI; a description-only or gate-could-not-run stage logs `_shared/staged-patch.md`'s own line instead):
+   ```
+   STAGED 14:52:29 — Skills row: skill update for {skill}/SKILL.md ({section}) could not ride a learned-skills PR ({reason}); staged instead. Reversibility: high (stage path: staged/wrap-up-skill-{N}.md).
    ```
 3. **Restructural OR confidence:med-low** → stage as `staged/wrap-up-skill-{N}.md` containing the Update Mode patch. Log entry:
    ```
