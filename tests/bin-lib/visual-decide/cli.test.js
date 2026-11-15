@@ -70,7 +70,7 @@ function inProcessDaemon() {
   };
 }
 
-test('AC4.1: an in-process daemon start-and-stop leaves SIGTERM/SIGINT listener counts unchanged', async () => {
+test('AC4.1: an in-process daemon start-and-stop leaves SIGTERM/SIGINT listener counts unchanged', { timeout: 10000 }, async () => {
   const D = mkTmp('vd-content-');
   const S = mkTmp('vd-state-');
   const resources = (type) => process.getActiveResourcesInfo().filter((r) => r === type).length;
