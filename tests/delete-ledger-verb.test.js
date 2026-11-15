@@ -4,13 +4,13 @@
 // of a hand-run `rm`/Bash call.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const { cleanGitEnv } = require('./helpers/git-fixtures');
-const { runCli } = require('./helpers/run-cli');
+const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -18,13 +18,9 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
 }
 
-function runHook(args, { cwd } = {}) {
-  try {
-    const stdout = execFileSync('node', [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '' } });
-    return { code: 0, stdout };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
-  }
+async function runHook(args, { cwd } = {}) {
+  const r = await runInProcess(args, { cwd });
+  return { code: r.code, stdout: r.stdout };
 }
 
 function gitRoot() {
@@ -46,27 +42,27 @@ function runDirFixture(root) {
   return runDir;
 }
 
-test('delete-ledger: deletes {run-dir}/ledger.md when present and exits cleanly', () => {
+test('delete-ledger: deletes {run-dir}/ledger.md when present and exits cleanly', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.writeFileSync(path.join(runDir, 'ledger.md'), '# Open Items\n');
-  const result = runHook(['delete-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['delete-ledger', '--run', runDir], { cwd: root });
   assert.match(result.stdout, /deleted ledger/);
   assert.ok(!fs.existsSync(path.join(runDir, 'ledger.md')));
 });
 
-test('delete-ledger: falls back to the single docs/plans/*-ledger.md candidate when no run-dir ledger.md exists', () => {
+test('delete-ledger: falls back to the single docs/plans/*-ledger.md candidate when no run-dir ledger.md exists', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
   const ledgerPath = path.join(root, 'docs', 'plans', '2026-08-14-sample-ledger.md');
   fs.writeFileSync(ledgerPath, '# Open Items\n');
-  const result = runHook(['delete-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['delete-ledger', '--run', runDir], { cwd: root });
   assert.match(result.stdout, /deleted ledger/);
   assert.ok(!fs.existsSync(ledgerPath));
 });
 
-test('delete-ledger: an inherited docs/plans ledger committed on main is not deleted, and the not-found report names it (#3686)', () => {
+test('delete-ledger: an inherited docs/plans ledger committed on main is not deleted, and the not-found report names it (#3686)', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
@@ -75,13 +71,13 @@ test('delete-ledger: an inherited docs/plans ledger committed on main is not del
   git(['add', 'docs/plans/2026-08-14-old-ledger.md'], root);
   git(['commit', '-q', '-m', 'inherited ledger'], root);
   git(['checkout', '-q', '-b', 'feature'], root);
-  const result = runHook(['delete-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['delete-ledger', '--run', runDir], { cwd: root });
   assert.match(result.stdout, /only inherited ledgers found: .*2026-08-14-old-ledger\.md/);
   assert.match(result.stdout, /not found/);
   assert.ok(fs.existsSync(inherited));
 });
 
-test('delete-ledger: an explicit --ledger naming a missing file keeps the plain not-found line (no inherited diagnostic)', () => {
+test('delete-ledger: an explicit --ledger naming a missing file keeps the plain not-found line (no inherited diagnostic)', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
@@ -91,13 +87,13 @@ test('delete-ledger: an explicit --ledger naming a missing file keeps the plain 
   git(['commit', '-q', '-m', 'inherited ledger'], root);
   git(['checkout', '-q', '-b', 'feature'], root);
   const missing = path.join(root, 'docs', 'plans', 'missing-ledger.md');
-  const result = runHook(['delete-ledger', '--run', runDir, '--ledger', missing], { cwd: root });
+  const result = await runHook(['delete-ledger', '--run', runDir, '--ledger', missing], { cwd: root });
   assert.match(result.stdout, /not found/);
   assert.doesNotMatch(result.stdout, /inherited/);
   assert.ok(fs.existsSync(inherited));
 });
 
-test('delete-ledger: unattributable arm — a non-git run-state worktree prints "cannot attribute" and keeps the ledger', () => {
+test('delete-ledger: unattributable arm — a non-git run-state worktree prints "cannot attribute" and keeps the ledger', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   const nonGit = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-nongit-')));
@@ -105,30 +101,30 @@ test('delete-ledger: unattributable arm — a non-git run-state worktree prints 
   const ledger = path.join(nonGit, 'docs', 'plans', '2026-08-14-x-ledger.md');
   fs.writeFileSync(ledger, '# Open Items\n');
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: nonGit }));
-  const result = runHook(['delete-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['delete-ledger', '--run', runDir], { cwd: root });
   assert.match(result.stdout, /cannot attribute docs\/plans ledgers to 2026-08-14T120000-spec-999/);
   assert.match(result.stdout, /ledger not deleted/);
   assert.ok(fs.existsSync(ledger));
 });
 
-test('delete-ledger: running it again on an already-deleted ledger reports not-found, not a crash', () => {
+test('delete-ledger: running it again on an already-deleted ledger reports not-found, not a crash', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.writeFileSync(path.join(runDir, 'ledger.md'), '# Open Items\n');
-  runHook(['delete-ledger', '--run', runDir], { cwd: root });
-  const second = runHook(['delete-ledger', '--run', runDir], { cwd: root });
+  await runHook(['delete-ledger', '--run', runDir], { cwd: root });
+  const second = await runHook(['delete-ledger', '--run', runDir], { cwd: root });
   assert.strictEqual(second.code, 0);
   assert.match(second.stdout, /no ledger found for 2026-08-14T120000-spec-999 — not found\n$/);
   assert.doesNotMatch(second.stdout, /inherited/);
 });
 
-test('delete-ledger: 2+ docs/plans/*-ledger.md candidates refuses to guess, naming all candidates', () => {
+test('delete-ledger: 2+ docs/plans/*-ledger.md candidates refuses to guess, naming all candidates', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(root, 'docs', 'plans', 'a-ledger.md'), '# A\n');
   fs.writeFileSync(path.join(root, 'docs', 'plans', 'b-ledger.md'), '# B\n');
-  const result = runHook(['delete-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['delete-ledger', '--run', runDir], { cwd: root });
   assert.match(result.stdout, /candidate ledgers found/);
   assert.match(result.stdout, /a-ledger\.md/);
   assert.match(result.stdout, /b-ledger\.md/);
@@ -136,50 +132,49 @@ test('delete-ledger: 2+ docs/plans/*-ledger.md candidates refuses to guess, nami
   assert.ok(fs.existsSync(path.join(root, 'docs', 'plans', 'b-ledger.md')));
 });
 
-test('delete-ledger: --ledger explicitly overrides resolution, deleting the named file', () => {
+test('delete-ledger: --ledger explicitly overrides resolution, deleting the named file', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(root, 'docs', 'plans', 'a-ledger.md'), '# A\n');
   fs.writeFileSync(path.join(root, 'docs', 'plans', 'b-ledger.md'), '# B\n');
-  const result = runHook(['delete-ledger', '--run', runDir, '--ledger', path.join(root, 'docs', 'plans', 'a-ledger.md')], { cwd: root });
+  const result = await runHook(['delete-ledger', '--run', runDir, '--ledger', path.join(root, 'docs', 'plans', 'a-ledger.md')], { cwd: root });
   assert.match(result.stdout, /deleted ledger/);
   assert.ok(!fs.existsSync(path.join(root, 'docs', 'plans', 'a-ledger.md')));
   assert.ok(fs.existsSync(path.join(root, 'docs', 'plans', 'b-ledger.md')));
 });
 
-test('delete-ledger: --ledger naming a file outside the run dir and worktree is refused, nothing deleted', () => {
+test('delete-ledger: --ledger naming a file outside the run dir and worktree is refused, nothing deleted', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-outside-')));
   const victim = path.join(outside, 'victim-ledger.md');
   fs.writeFileSync(victim, '# keep me\n');
-  const result = runHook(['delete-ledger', '--run', runDir, '--ledger', victim], { cwd: root });
+  const result = await runHook(['delete-ledger', '--run', runDir, '--ledger', victim], { cwd: root });
   assert.match(result.stdout, /rejected \(outside the run directory and worktree\)/);
   assert.ok(fs.existsSync(victim));
 });
 
-test('delete-ledger: no --run exits cleanly with a clear message, nothing deleted', () => {
+test('delete-ledger: no --run exits cleanly with a clear message, nothing deleted', async () => {
   const root = gitRoot();
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(root, 'docs', 'plans', 'a-ledger.md'), '# A\n');
-  const result = runHook(['delete-ledger'], { cwd: root });
+  const result = await runHook(['delete-ledger'], { cwd: root });
   assert.match(result.stdout, /no pipeline run dir found/);
   assert.ok(fs.existsSync(path.join(root, 'docs', 'plans', 'a-ledger.md')));
 });
 
-test('delete-ledger --help prints usage and does nothing', () => {
+test('delete-ledger --help prints usage and does nothing', async () => {
   const root = gitRoot();
-  const result = runHook(['delete-ledger', '--help'], { cwd: root });
+  const result = await runHook(['delete-ledger', '--help'], { cwd: root });
   assert.match(result.stdout, /usage: delete-ledger/);
 });
 
 // Characterization (#4026 Task 8, written before the verb logged anything):
 // every report's exact stdout, exit code and empty stderr — the self-logging
 // change must leave all three untouched.
-function runHookFull(args, { cwd, env = {} } = {}) {
-  const r = spawnSync('node', [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', ...env } });
-  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+async function runHookFull(args, { cwd, env = {} } = {}) {
+  return runInProcess(args, { cwd, env });
 }
 
 function decisionsText(runDir) {
@@ -215,11 +210,11 @@ const LEFT_ON_DISK = {
 };
 
 for (const [report, setup] of Object.entries(LEFT_ON_DISK)) {
-  test(`characterization: the ${report} report keeps its stdout, exit 0 and an empty stderr`, () => {
+  test(`characterization: the ${report} report keeps its stdout, exit 0 and an empty stderr`, async () => {
     const root = gitRoot();
     const runDir = runDirFixture(root);
     const { args, stdout } = setup(root, runDir);
-    const result = runHookFull(args, { cwd: root });
+    const result = await runHookFull(args, { cwd: root });
     assert.strictEqual(result.code, 0);
     if (typeof stdout === 'string') assert.strictEqual(result.stdout, stdout);
     else assert.match(result.stdout, stdout);
@@ -227,21 +222,21 @@ for (const [report, setup] of Object.entries(LEFT_ON_DISK)) {
   });
 }
 
-test('characterization: deleted and not found keep their stdout and exit 0, and write no decisions.md', () => {
+test('characterization: deleted and not found keep their stdout and exit 0, and write no decisions.md', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   const ledger = path.join(runDir, 'ledger.md');
   fs.writeFileSync(ledger, '# Open Items\n');
-  const first = runHookFull(['delete-ledger', '--run', runDir], { cwd: root });
+  const first = await runHookFull(['delete-ledger', '--run', runDir], { cwd: root });
   assert.deepStrictEqual(first, { code: 0, stdout: `claude-tweaks: deleted ledger ${ledger}\n`, stderr: '' });
-  const second = runHookFull(['delete-ledger', '--run', runDir], { cwd: root });
+  const second = await runHookFull(['delete-ledger', '--run', runDir], { cwd: root });
   assert.deepStrictEqual(second, { code: 0, stdout: 'claude-tweaks: delete-ledger: no ledger found for 2026-08-14T120000-spec-999 — not found\n', stderr: '' });
   assert.strictEqual(decisionsText(runDir), null);
 });
 
-test('characterization: no run dir found prints its refusal, exits 0 and writes no decisions.md', () => {
+test('characterization: no run dir found prints its refusal, exits 0 and writes no decisions.md', async () => {
   const root = gitRoot();
-  const result = runHookFull(['delete-ledger'], { cwd: root });
+  const result = await runHookFull(['delete-ledger'], { cwd: root });
   assert.deepStrictEqual(result, { code: 0, stdout: 'claude-tweaks: no pipeline run dir found — ledger not deleted\n', stderr: '' });
   assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks')));
 });
@@ -253,11 +248,11 @@ function skipLine(report) {
   return new RegExp(`^## /wrap-up\\n- SKIP \\d{2}:\\d{2}:\\d{2} — Cleanup item 2 delete-ledger \\(skipped\\): condition: delete-ledger reported ${report} → fallback: ledger left on disk, nothing committed for item 2\\. Reversibility: n/a\\.\\n$`);
 }
 
-test('AC3.1: a failed delete logs the SKIP line; deleted and not found log nothing', () => {
+test('AC3.1: a failed delete logs the SKIP line; deleted and not found log nothing', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(runDir, 'ledger.md'));
-  const failed = runHookFull(['delete-ledger', '--run', runDir], { cwd: root });
+  const failed = await runHookFull(['delete-ledger', '--run', runDir], { cwd: root });
   assert.strictEqual(failed.code, 0);
   assert.match(failed.stdout, /failed to delete/);
   assert.strictEqual(failed.stderr, '');
@@ -266,36 +261,38 @@ test('AC3.1: a failed delete logs the SKIP line; deleted and not found log nothi
   const cleanRoot = gitRoot();
   const clean = runDirFixture(cleanRoot);
   fs.writeFileSync(path.join(clean, 'ledger.md'), '# Open Items\n');
-  assert.match(runHookFull(['delete-ledger', '--run', clean], { cwd: cleanRoot }).stdout, /deleted ledger/);
+  const deleted = await runHookFull(['delete-ledger', '--run', clean], { cwd: cleanRoot });
+  assert.match(deleted.stdout, /deleted ledger/);
   assert.strictEqual(decisionsText(clean), null, 'deleted logs nothing');
-  assert.match(runHookFull(['delete-ledger', '--run', clean], { cwd: cleanRoot }).stdout, /— not found\n$/);
+  const again = await runHookFull(['delete-ledger', '--run', clean], { cwd: cleanRoot });
+  assert.match(again.stdout, /— not found\n$/);
   assert.strictEqual(decisionsText(clean), null, 'not found logs nothing');
 });
 
 for (const report of ['rejected', 'ambiguous', 'unattributable']) {
-  test(`AC3.1: the ${report} report logs the SKIP line with stdout and exit code unchanged`, () => {
+  test(`AC3.1: the ${report} report logs the SKIP line with stdout and exit code unchanged`, async () => {
     const root = gitRoot();
     const runDir = runDirFixture(root);
     const { args } = LEFT_ON_DISK[report](root, runDir);
-    const result = runHookFull(args, { cwd: root });
+    const result = await runHookFull(args, { cwd: root });
     assert.strictEqual(result.code, 0);
     assert.strictEqual(result.stderr, '');
     assert.match(decisionsText(runDir), skipLine(report));
   });
 }
 
-test('AC3.1: a run dir that is not anchored under a checkout logs nothing', () => {
+test('AC3.1: a run dir that is not anchored under a checkout logs nothing', async () => {
   const root = gitRoot();
   const loose = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-loose-')));
   fs.mkdirSync(path.join(loose, 'ledger.md'));
-  const result = runHookFull(['delete-ledger'], { cwd: root, env: { PIPELINE_RUN_DIR: loose } });
+  const result = await runHookFull(['delete-ledger'], { cwd: root, env: { PIPELINE_RUN_DIR: loose } });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /failed to delete/);
   assert.strictEqual(result.stderr, '');
   assert.strictEqual(decisionsText(loose), null);
 });
 
-test('AC3.1: a candidate refusal logs nothing in any candidate run dir', () => {
+test('AC3.1: a candidate refusal logs nothing in any candidate run dir', async () => {
   const root = gitRoot();
   const a = runDirFixture(root);
   const b = path.join(path.dirname(a), '2026-08-14T130000-spec-998');
@@ -303,19 +300,19 @@ test('AC3.1: a candidate refusal logs nothing in any candidate run dir', () => {
   fs.writeFileSync(path.join(b, 'run-state.json'), JSON.stringify({ status: 'active' }));
   fs.mkdirSync(path.join(a, 'ledger.md'));
   fs.mkdirSync(path.join(b, 'ledger.md'));
-  const result = runHookFull(['delete-ledger'], { cwd: root });
+  const result = await runHookFull(['delete-ledger'], { cwd: root });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /pass --run explicitly/);
   assert.strictEqual(decisionsText(a), null);
   assert.strictEqual(decisionsText(b), null);
 });
 
-test('AC3.1: a failed append keeps stdout and exit 0 and adds one stderr line', () => {
+test('AC3.1: a failed append keeps stdout and exit 0 and adds one stderr line', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(runDir, 'ledger.md'));
   fs.mkdirSync(path.join(runDir, 'decisions.md'));
-  const result = runHookFull(['delete-ledger', '--run', runDir], { cwd: root });
+  const result = await runHookFull(['delete-ledger', '--run', runDir], { cwd: root });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /^claude-tweaks: delete-ledger: failed to delete .+\n$/);
   assert.match(result.stderr, /^claude-tweaks: delete-ledger: decisions\.md append failed \(.+\) — hand-log the Item 2 SKIP line\n$/);
@@ -415,4 +412,22 @@ test('AC10.1: delete-ledger names an inherited docs/plans ledger only when descr
     stderr: '',
   });
   assert.ok(fs.existsSync(f.ledger));
+});
+
+// real process: the script entry (shebang, process.argv, the exit code) of the delete-ledger success path (AC5.1),
+// twinned with the same deletion in-process.
+test('AC5.1: delete-ledger deleting {run-dir}/ledger.md through runCli and spawnCli returns the same code and stdout', async () => {
+  const inProcess = gitRoot();
+  const spawned = gitRoot();
+  const runA = runDirFixture(inProcess);
+  const runB = runDirFixture(spawned);
+  fs.writeFileSync(path.join(runA, 'ledger.md'), '# Open Items\n');
+  fs.writeFileSync(path.join(runB, 'ledger.md'), '# Open Items\n');
+  const a = await runInProcess(['delete-ledger', '--run', runA], { cwd: inProcess });
+  const b = spawnCli(HOOKS, ['delete-ledger', '--run', runB], { cwd: spawned, env: inProcessEnv() });
+  const shape = (r, run) => ({ code: r.code, stdout: r.stdout.split(path.join(run, 'ledger.md')).join('<ledger>'), stderr: r.stderr });
+  assert.deepStrictEqual(shape(a, runA), shape(b, runB));
+  assert.deepStrictEqual(shape(a, runA), { code: 0, stdout: 'claude-tweaks: deleted ledger <ledger>\n', stderr: '' });
+  assert.ok(!fs.existsSync(path.join(runA, 'ledger.md')));
+  assert.ok(!fs.existsSync(path.join(runB, 'ledger.md')));
 });

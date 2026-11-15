@@ -5,13 +5,13 @@
 // listing docs/plans itself.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const { cleanGitEnv } = require('./helpers/git-fixtures');
-const { runCli } = require('./helpers/run-cli');
+const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -19,9 +19,8 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
 }
 
-function runHook(args, { cwd } = {}) {
-  const r = spawnSync('node', [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '' } });
-  return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+async function runHook(args, { cwd } = {}) {
+  return runInProcess(args, { cwd });
 }
 
 // The temp dir's parent name contains a space, as a real checkout path can.
@@ -54,41 +53,41 @@ function commitInheritedLedger(root) {
   return inherited;
 }
 
-test('AC1.1: resolve-ledger returns {run-dir}/ledger.md even with no materialized header (records unresolved)', () => {
+test('AC1.1: resolve-ledger returns {run-dir}/ledger.md even with no materialized header (records unresolved)', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.writeFileSync(path.join(runDir, 'ledger.md'), '');
-  const result = runHook(['resolve-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['resolve-ledger', '--run', runDir], { cwd: root });
   assert.strictEqual(result.code, 0);
   assert.ok(result.stdout.startsWith('claude-tweaks: resolve-ledger: found\n'), result.stdout);
   assert.ok(result.stdout.includes(`this-run: ${path.join(runDir, 'ledger.md')}\n`), result.stdout);
 });
 
-test('AC2.1: an inherited ledger committed on main is reported as other-run, never this-run', () => {
+test('AC2.1: an inherited ledger committed on main is reported as other-run, never this-run', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   const inherited = commitInheritedLedger(root);
-  const result = runHook(['resolve-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['resolve-ledger', '--run', runDir], { cwd: root });
   assert.strictEqual(result.code, 0);
   assert.ok(result.stdout.startsWith('claude-tweaks: resolve-ledger: none\n'), result.stdout);
   assert.ok(result.stdout.includes(`other-run: ${inherited}\n`), result.stdout);
   assert.doesNotMatch(result.stdout, /this-run:/);
 });
 
-test('AC2.1: an untracked owned ledger beside an inherited one: found + other-run', () => {
+test('AC2.1: an untracked owned ledger beside an inherited one: found + other-run', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   const inherited = commitInheritedLedger(root);
   const owned = path.join(root, 'docs', 'plans', '2026-08-15-new-ledger.md');
   fs.writeFileSync(owned, '# Open Items\n');
-  const result = runHook(['resolve-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['resolve-ledger', '--run', runDir], { cwd: root });
   assert.strictEqual(result.code, 0);
   assert.ok(result.stdout.startsWith('claude-tweaks: resolve-ledger: found\n'), result.stdout);
   assert.ok(result.stdout.includes(`this-run: ${owned}\n`), result.stdout);
   assert.ok(result.stdout.includes(`other-run: ${inherited}\n`), result.stdout);
 });
 
-test('two owned ledgers report ambiguous, naming both as this-run', () => {
+test('two owned ledgers report ambiguous, naming both as this-run', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
@@ -96,29 +95,29 @@ test('two owned ledgers report ambiguous, naming both as this-run', () => {
   const b = path.join(root, 'docs', 'plans', 'b-ledger.md');
   fs.writeFileSync(a, '# A\n');
   fs.writeFileSync(b, '# B\n');
-  const result = runHook(['resolve-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['resolve-ledger', '--run', runDir], { cwd: root });
   assert.strictEqual(result.code, 0);
   assert.ok(result.stdout.startsWith('claude-tweaks: resolve-ledger: ambiguous\n'), result.stdout);
   assert.ok(result.stdout.includes(`this-run: ${a}\n`), result.stdout);
   assert.ok(result.stdout.includes(`this-run: ${b}\n`), result.stdout);
 });
 
-test('no --run exits 0 with "no pipeline run dir found — ledger not resolved"', () => {
+test('no --run exits 0 with "no pipeline run dir found — ledger not resolved"', async () => {
   const root = gitRoot();
-  const result = runHook(['resolve-ledger'], { cwd: root });
+  const result = await runHook(['resolve-ledger'], { cwd: root });
   assert.strictEqual(result.code, 0);
   assert.match(result.stderr, /no pipeline run dir found — ledger not resolved/);
   assert.strictEqual(result.stdout, '');
 });
 
-test('resolve-ledger leaves every ledger on disk', () => {
+test('resolve-ledger leaves every ledger on disk', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.writeFileSync(path.join(runDir, 'ledger.md'), '# Open Items\n');
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
   const planLedger = path.join(root, 'docs', 'plans', '2026-08-15-sample-ledger.md');
   fs.writeFileSync(planLedger, '# Open Items\n');
-  const result = runHook(['resolve-ledger', '--run', runDir], { cwd: root });
+  const result = await runHook(['resolve-ledger', '--run', runDir], { cwd: root });
   assert.ok(result.stdout.startsWith('claude-tweaks: resolve-ledger: found\n'), result.stdout);
   assert.ok(fs.existsSync(path.join(runDir, 'ledger.md')));
   assert.ok(fs.existsSync(planLedger));
@@ -126,23 +125,23 @@ test('resolve-ledger leaves every ledger on disk', () => {
 
 const REPORT_LINE_RE = /resolve-ledger: (found|none|ambiguous|unattributable)/;
 
-test('resolve-ledger: --run "" refuses with "ledger not resolved" and no report line', () => {
+test('resolve-ledger: --run "" refuses with "ledger not resolved" and no report line', async () => {
   const root = gitRoot();
-  const result = runHook(['resolve-ledger', '--run', ''], { cwd: root });
+  const result = await runHook(['resolve-ledger', '--run', ''], { cwd: root });
   assert.strictEqual(result.code, 0);
   assert.match(result.stderr, /ledger not resolved/);
   assert.doesNotMatch(result.stdout, REPORT_LINE_RE);
   assert.doesNotMatch(result.stdout, /claude-tweaks: --run|not resolved/);
 });
 
-test('resolve-ledger: no --run with two live candidate runs refuses, listing candidates, no report line', () => {
+test('resolve-ledger: no --run with two live candidate runs refuses, listing candidates, no report line', async () => {
   const root = gitRoot();
   for (const runId of ['2026-08-14T120000-spec-998', '2026-08-14T120100-spec-999']) {
     const dir = path.join(root, '.claude-tweaks', 'pipelines', runId);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'active' }));
   }
-  const result = runHook(['resolve-ledger'], { cwd: root });
+  const result = await runHook(['resolve-ledger'], { cwd: root });
   assert.strictEqual(result.code, 0);
   assert.match(result.stderr, /multiple candidate runs/);
   assert.match(result.stderr, /Ledger not resolved\./);
@@ -241,4 +240,20 @@ test('R8: a relative PIPELINE_RUN_DIR naming a file falls through to the run sca
   fs.writeFileSync(path.join(root, 'not-a-run.txt'), 'x\n');
   const r = await withRealCwd(root, () => runInProcess(['resolve-ledger'], { cwd: root, env: { PIPELINE_RUN_DIR: 'not-a-run.txt' } }));
   assertFellThrough(r);
+});
+
+// real process: the script entry (shebang, process.argv, the exit code) of the resolve-ledger success path (AC5.1),
+// twinned with the same resolution in-process.
+test('AC5.1: resolve-ledger on a run-dir ledger through runCli and spawnCli returns the same code and stdout', async () => {
+  const inProcess = gitRoot();
+  const spawned = gitRoot();
+  const runA = runDirFixture(inProcess);
+  const runB = runDirFixture(spawned);
+  fs.writeFileSync(path.join(runA, 'ledger.md'), '# Open Items\n');
+  fs.writeFileSync(path.join(runB, 'ledger.md'), '# Open Items\n');
+  const a = await runInProcess(['resolve-ledger', '--run', runA], { cwd: inProcess });
+  const b = spawnCli(HOOKS, ['resolve-ledger', '--run', runB], { cwd: spawned, env: inProcessEnv() });
+  const shape = (r, run) => ({ code: r.code, stdout: r.stdout.split(path.join(run, 'ledger.md')).join('<ledger>'), stderr: r.stderr });
+  assert.deepStrictEqual(shape(a, runA), shape(b, runB));
+  assert.deepStrictEqual(shape(a, runA), { code: 0, stdout: 'claude-tweaks: resolve-ledger: found\nthis-run: <ledger>\n', stderr: '' });
 });
