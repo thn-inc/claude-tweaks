@@ -950,8 +950,10 @@ const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps
 
 // Ports express-lane.md step 6 (push): only the commit `check` verified goes out. The guard
 // is closed: a head that is not a full sha, a HEAD that cannot be read, or one that differs
-// each stop before any push. The explicit `origin {branch}` is needed because the branch was
-// created with --no-track. Never retried, never forced.
+// each stop before any push; so does the branch ref `refs/heads/{branch}` (#5458), which
+// catches a switch to another branch at the same commit that HEAD alone cannot see. The
+// explicit `origin {branch}` is needed because the branch was created with --no-track.
+// Never retried, never forced.
 const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const { wt, branch } = ctx;
   const head = ctx.check && ctx.check.head;
@@ -966,6 +968,15 @@ const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   }
   if (current !== head) {
     return { status: 'stop', detail: `HEAD ${neutralize(current)} is not the commit check verified (${head})` };
+  }
+  let branchSha;
+  try {
+    branchSha = String(gitIn(deps, wt, ['rev-parse', '--verify', '--end-of-options', `refs/heads/${branch}`])).trim();
+  } catch {
+    return { status: 'stop', detail: 'the branch ref of the worktree is unreadable' };
+  }
+  if (branchSha !== head) {
+    return { status: 'stop', detail: `branch ${neutralize(branch)} points at ${neutralize(branchSha)}, not the commit check verified (${head})` };
   }
   try {
     gitIn(deps, wt, ['push', '--end-of-options', 'origin', branch], { remoteWrite: true });
