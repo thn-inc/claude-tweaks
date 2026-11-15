@@ -79,8 +79,12 @@ test('AC1.1: a real postMerge run whose Step 4.0b hit gh-failed reaches SessionS
 
   // No origin: SessionStart's inline FAST_CHECKS then do no network I/O.
   git(root, 'remote', 'remove', 'origin');
+  const nodePathHome = fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-e2e-nodepath-'));
+  roots.push(nodePathHome);
   const out = await require('../plugin/bin/lib/hooks/session-start').run({
     input: {}, runDir: null, runState: null, cwd: root, superpowersDeps: NO_INSTALL,
+    // #5392: run() saves process.execPath under <nodePathHome>/.claude-tweaks/node-path.
+    nodePathHome: nodePathHome,
   });
   const context = out.json.hookSpecificOutput.additionalContext;
   assert.match(context, /post-merge steps failed for 1 merged run\(s\)/);

@@ -404,6 +404,8 @@ function readFileSafe(filePath) {
 
 // Flat `key: value` line matcher, tolerant of a trailing `# comment` and of
 // living inside a fenced code block — matches bin/lib/policy.js's convention.
+// bin/hooks.sh's policy_verdict mirrors this for `worktree-always` (#5392):
+// change both, plus its hooks.sh AC9 differential fixtures.
 function parseFlatLines(raw) {
   const result = {};
   if (!raw) return result;
