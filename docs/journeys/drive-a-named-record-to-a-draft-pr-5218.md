@@ -156,6 +156,7 @@ files:
   - `--admin` or `--delete-branch` anywhere.
   - A remote delete of the integration branch.
   - `merged` reported from a merge call's exit code without the confirmation read.
+  - A Try it comment, parent brief or acceptance packet posted, or `accept:pending` applied, after a worker-written field carried a credential-shaped value or the packet's render dropped or screened a claim. Each of these stops the acceptance before any label or post, so the record ends `pending-review` / `acceptance-not-completed`.
 
 ## Origin
 - Created during the build of #5218 (run `2026-11-12T104316-spec-5218`), the pipeline driver's second unit. It drives the express lane's steps 1–8 and 10 as code over the #5217 worker launcher; step 9 (merge) is deliberately absent.
@@ -171,3 +172,4 @@ files:
 - Updated during the build of #5415 (run `2026-11-14T153732-spec-5414-5415`). Step 3 now lists the newly-set index-flag stop and the `core.ignoreStat` worktree refusal.
 - Updated during the build of #5224 (run `2026-11-14T212211-spec-5224`). Step 2 now covers the driver's lane bounds and the refusal of a record beyond the express bounds when the reviewer step is off for it, including the eligibility stop that names both reasons. Step 3 now covers when `check` gets `--max-lines`, and no longer says the review step never runs under its default. Matching red flags were added.
 - Updated during the build of #5228 (run `2026-11-14T212212-spec-5228`). The production deps now carry the judgment supplier, so the goal, the success state and step 7 describe a driven record that can merge. Step 7 names the read-only merge-check and acceptance workers, their fail-closed outcomes and the `accept:pending` label. Measuring the judge after a prompt change is journey `re-measure-the-merge-check-judge-after-a-prompt-change-5228`.
+- Updated at wrap-up of #5228, after the review fixes: step 7 gains a red flag for an acceptance post or label made after a credential-shaped worker field or a partial packet, both of which now stop the acceptance before any label or post.
