@@ -1,6 +1,6 @@
 # The pipeline driver (`drive.js`)
 
-`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read. A program owns every step; a headless worker only writes the change. A record merges only when a judgment supplier is configured (none is by default) — see "The merge step". This page is documentation, not a contract: no test reads it, so update it by hand when the code below changes. The code is the source of truth.
+`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read. A program owns every step; a headless worker only writes the change. A record merges only when it carries `auto:merge` and the read-only judgment workers clear it — see "The merge step" and "Judgment workers". This page is documentation, not a contract: no test reads it, so update it by hand when the code below changes. The code is the source of truth.
 
 ## Running it
 
@@ -91,7 +91,7 @@ The `review` event line adds `returned`, `reproduced`, `discarded` (returned = r
 
 ## The merge step
 
-`plugin/bin/lib/driver/merge.js` is the last step. It runs only after the CI wait ends `green` (any other CI word leaves the step line `not entered: ci {word}`), makes no model call, and takes its one judgment from `deps.judgments`, a supplier the driver does not configure by default. It never stops the run: every stop is a result, so the record's outcome comes from it, not from a stop class. The source of truth is the code; this section is copied by hand.
+`plugin/bin/lib/driver/merge.js` is the last step. It runs only after the CI wait ends `green` (any other CI word leaves the step line `not entered: ci {word}`), makes no model call itself, and takes its one judgment from `deps.judgments`, the supplier `mergeStep` builds from `deps.createJudgments` (production binds it to judgments.js; see "Judgment workers"). A deps object with neither a supplier nor `createJudgments` stops at `no-supplier`. It never stops the run: every stop is a result, so the record's outcome comes from it, not from a stop class. The source of truth is the code; this section is copied by hand.
 
 Entry runs in this order, and each refusal is `pending-review` with the reason named: the supplier is present (`no-supplier`, with no other call made); `gh` is available (`gh-absent`); the record's live labels carry `auto:merge` (`labels-unreadable`, `not-authorized`); the run logged its summary entry (`summary-entry-missing`); `integration-model` resolves `pr-first` and the run records a PR (`not-pr-first`); one supplier call returned a well-formed answer (`supplier-failed`), whose verdict is `auto-merge` (`verdict-not-confirmed`), whose acceptance is completed (`acceptance-not-completed`), and whose verdict line is confirmed in `decisions.md` (`verdict-not-confirmed`). Then the closing-link check, the subject composition (`compose-refused`), mark-ready (`ready-failed`), the gate, the bounded watch (15 minutes, polled every 30 seconds, so a PR that turns conflicting mid-watch stops as `conflict` at that poll), the labels read again immediately before the merge call, and `gh pr merge ... --match-head-commit {head}` against the head `check` verified. The merge is confirmed by a read: only a `MERGED` state is `merged`, an open PR holding auto-merge is `armed`, anything else is `merge-refused`. A `merge-refused` stop (a checks, permission or unrecognized refusal of the merge call, or a confirmation read showing neither state) leaves one comment on the PR from a fixed template, per `_shared/pr-first-merge.md` Step 3's "degrade to ready+comment", and parks nothing; a failed post is named in the event detail and logged to `decisions.md` as a SKIP.
 
@@ -127,6 +127,34 @@ What each outcome leaves behind:
 - `pending-review`: the PR is left as the table above says. `merge.js` makes no release, label-removal or git call that would undo the claim, so the claim is left as it was (the settle `none` row below makes none either).
 
 The final line carries a `merge` field (`{ outcome, reason, mergeCommit, postMerge }`) and, when the events could no longer be written to a run directory, `eventsFile: 'stdout-only'`. An interrupt (SIGINT, SIGTERM) during the merge step makes no further call and emits nothing more: the step yields only while it awaits the supplier and during the watch's sleeps, and checks for an interrupt after each (every other call is synchronous, so a signal is seen at the next of those points or after the step). A signal that arrives after a merge landed still reports `pending-review` (stop class `none`), because the step has no interrupt rung of its own; the reconciler's merged-evidence checks complete such a run. The watch's wait is reported on each `merge-watch` event and added to `msTotal - msWithoutCi`.
+
+## Judgment workers
+
+The merge step's one judgment comes from two read-only headless workers, run in order by the supplier `createJudgments({ deps, shared })` (`plugin/bin/lib/driver/judgments.js`). `realDeps.createJudgments` binds it, and `mergeStep` builds the supplier over the merge deps and the run's shared state (so a signal can kill a running worker). The source of truth is the code; this section is copied by hand.
+
+**Roles and rights.** Both roles (`merge-check`, `acceptance` in `roles.js`) get `Read`, `Grep` and `Glob` only and launch under the same ceilings as every other worker. A worker returns a result and nothing else: the merge-check worker a verdict and a rationale, the acceptance worker Try it groups, an observation plan, claims and a parent brief. It never writes a file, a comment, a label or a decision line, and any labels in its output are never read. Code does every write, and worker text reaches a posted body only through the packet renderers (`inline`, or the packet's own `render`), line by line.
+
+**The supplier and its return shape.** `judgments(ctx)` resolves to `{ mergeCheck: { verdict }, acceptance: { completed } }`, the shape `merge.js`'s `consultSupplier` takes, and never throws. The merge-check half runs first; acceptance runs only after a verdict that code logged and re-read from `decisions.md` (`confirmFromFile`) as `auto-merge`. Any other verdict (`needs-human`, `unconfirmed`) returns `acceptance: { completed: false }` with no acceptance launch. A worker that returns anything but the exact string `auto-merge`, a failed or timed-out launch, a missing skill section, a failed record or diff read, and a verdict line that could not be logged or confirmed are all not-`auto-merge`: every failure on the way is a stop, never a pass.
+
+**The two code floors.** Decided before any launch, with no judgment: a blast radius that failed to run, returned unusable output or reported no finite size ceilings (`blast-radius-failed`), and a change that touches a sensitive path (`sensitive-path`). Each is `needs-human`, logged as the verdict line, and launches no worker.
+
+**Acceptance routes.** Decided in code from `parent-gate.js --sub-issue {n} --closing {n}` and the record's `risk:*`/`size:*` labels against the `risk-floor` and `size-floor` policy values; the worker never picks the route.
+
+| Input | Route | Labels |
+|---|---|---|
+| parent gate exit 0, `state` `incomplete`, `gated` or `resolved` | `try-it-only` | none |
+| `state: due`, `exceeds === false` | `try-it-only` (the end-to-end Try it rides in the same comment) | none |
+| `state: due`, `exceeds === true` | `due-exceeds` | `demo:pending` on the parent |
+| `state: no-parent`, floor not exceeded | `no-parent-exempt` | none |
+| `state: no-parent`, floor exceeded (an unscored record counts as exceeded) | `no-parent-gated` | `demo:pending` on the record |
+| parent gate exit non-zero, or stdout that did not parse | fails open to the two no-parent rows, with `fallback: parent-gate failed` named in the detail | per the no-parent row |
+| exit 0 with a `state` outside the five, or `due` with a non-boolean `exceeds` | no route: the acceptance stops with the state named | none |
+
+The `try-it-only` routes post the Try it block as the `try-it` run comment on the PR (the trusted one is updated in place, else one is created). `due-exceeds` also posts the parent's verification brief on the parent (once) and applies `demo:pending` there. The no-parent routes have no separate PR comment: the Try it block reaches the acceptance packet's Test guide through `acceptance-packet.js` (`gather`, `render`, `post`), and `no-parent-exempt` then records the oversight exemption with `set-verify-expectations.js`. An observation plan of kind `app-route` or `rendered-page` stops acceptance: it needs the visual-review safety net, which the driver does not run.
+
+**Prompts.** The merge-check judge's prompt is `assess-agent-autonomy/merge-check.md`'s Step 2, read at run time. The acceptance prompts are read at run time from `_shared/try-it.md`, `_shared/observation-plan.md`, `_shared/acceptance-packet.md` and `wrap-up/verification-brief-parent-gate.md`. A skill file edit therefore changes the judge with no driver change.
+
+**Re-run rule.** Any change to a judgment prompt, to a skill file a judgment prompt is taken from (`merge-check.md`, `verification-brief.md` and the files above), or to the model a judgment role launches with re-runs `node tools/driver-merge-check-eval.js evaluate` as part of that change's own acceptance.
 
 ## When a run stops
 
@@ -168,7 +196,7 @@ The pre-push escalation comment ends with the marker `<!-- express-driver: escal
 
 Per role (`plugin/bin/lib/driver/roles.js`); the launcher is `worker.js`.
 
-- Tools: the implementer gets `Read`, `Write`, `Edit` and, on `darwin` only, `Bash`; the reviewer and explorer get `Read`, `Grep` and `Glob`.
+- Tools: the implementer gets `Read`, `Write`, `Edit` and, on `darwin` only, `Bash`; the reviewer, explorer, `merge-check` and `acceptance` roles get `Read`, `Grep` and `Glob`.
 - Every worker launches with `-p --safe-mode --restricted`, a short `--tools` list, `--disable-slash-commands`, `--strict-mcp-config` and `--permission-prompts none`. `--restricted` ignores user, project and local settings files and confines the file tools to the working directory. No role launches with a bypass flag, and rights are never widened after a denial; denials are data in the event line.
 - The implementer's generated settings use `defaultMode: dontAsk` and an exact allow list: `Read`, `Edit` and `Write`, plus, on `darwin` only (the sandbox-probed platform), the test command and read-only `git status`, `git diff`, `git log`, `git show` and `git ls-files`. The deny list names `gh`, `git push`, `git commit`, `git add`, `curl` and `wget`. The test command comes from project configuration, never from a record or a worker.
 - Sandbox: on a probed platform (`darwin` today) the implementer runs inside the Bash sandbox with the network denied and writes confined to the working directory and the CLI's own scratch root. Reads are confined too (`permissions.blockReadsOutsideWorkingDirectories`, #5268): code the worker runs, such as its tests, can read only the working directory, the CLI's own carve-outs and the test command's toolchain. The launcher derives that toolchain at launch (`toolchainReadPaths` in `roles.js`: the install root above the command's `bin/`, plus the root of the interpreter its shebang names) and re-opens it through `sandbox.filesystem.allowRead`, never `/`, the home directory or an ancestor of it. On any other platform the implementer has no Bash at all.
