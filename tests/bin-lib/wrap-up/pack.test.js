@@ -1814,3 +1814,39 @@ test('isDeferredUnstaged: the one definition parseLedger counts and the ledger-r
   assert.strictEqual(isDeferredUnstaged('see #77', []), false);
   assert.strictEqual(isDeferredUnstaged('see #5', [5]), true);
 });
+
+// #5379: defaultDeps(cwd, { env }) hands the injected environment to the git children resolveWorktreeBase
+// runs. B alone carries `origin/HEAD` at its base commit (plus one more commit); A has no remote, so a
+// child that answers B's base ran under `GIT_DIR=B/.git`.
+test('defaultDeps(cwd, { env }): resolveWorktreeBase reads the env-only repo (#5379)', () => {
+  const { execFileSync } = require('node:child_process');
+  const { defaultDeps } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
+  const clean = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete clean[k];
+  const mk = (prefix) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    const g = (...args) => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env: clean, encoding: 'utf8' }).trim();
+    g('init', '-q', '-b', 'main');
+    fs.writeFileSync(path.join(dir, 'seed.txt'), `${prefix}\n`);
+    g('add', '.');
+    g('commit', '-q', '-m', prefix);
+    return { dir, g };
+  };
+  const a = mk('pack-env-a-');
+  const b = mk('pack-env-b-');
+  try {
+    const bBase = b.g('rev-parse', 'HEAD');
+    b.g('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.g('update-ref', 'refs/remotes/origin/main', bBase);
+    b.g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    fs.writeFileSync(path.join(b.dir, 'more.txt'), 'more\n');
+    b.g('add', '.');
+    b.g('commit', '-q', '-m', 'b second');
+    const env = { ...clean, GIT_DIR: path.join(b.dir, '.git') };
+    assert.strictEqual(resolveWorktreeBase(a.dir, defaultDeps(a.dir, { env })), bBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, defaultDeps(a.dir)), bBase, 'no env: the children read A');
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+});

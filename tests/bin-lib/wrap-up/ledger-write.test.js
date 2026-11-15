@@ -370,3 +370,44 @@ test('flipLedgerRow refuses a table with duplicate row numbers instead of droppi
   assert.throws(() => flipLedgerRow(DUPLICATE, { item: 2, status: 'fixed', resolution: 'x' }), /duplicate row number\(s\) #1/);
   assert.throws(() => flipLedgerRow(DUPLICATE, { item: 1, status: 'fixed', resolution: 'x' }), /duplicate row number\(s\) #1/);
 });
+
+// #5379: resolveLedgerPath's ownership git takes the injected `env`. A holds the ledger on disk; only
+// B's history adds it after B's base, so it is owned only when the git child runs under B's `GIT_DIR`.
+test('resolveLedgerPath: ownership git gets env (#5379)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { execFileSync } = require('node:child_process');
+  const clean = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete clean[k];
+  const mk = (prefix) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    const g = (...args) => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env: clean, encoding: 'utf8' }).trim();
+    g('init', '-q');
+    fs.writeFileSync(path.join(dir, 'seed.txt'), `${prefix}\n`);
+    g('add', '.');
+    g('commit', '-q', '-m', prefix);
+    return { dir, g };
+  };
+  const a = mk('ledger-env-a-');
+  const b = mk('ledger-env-b-');
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-env-run-'));
+  try {
+    const bBase = b.g('rev-parse', 'HEAD');
+    for (const repo of [a, b]) {
+      fs.mkdirSync(path.join(repo.dir, 'docs', 'plans'), { recursive: true });
+      fs.writeFileSync(path.join(repo.dir, 'docs', 'plans', 'x-ledger.md'), '# ledger\n');
+    }
+    // B tracks the ledger (added after its base); A keeps it untracked on disk.
+    b.g('add', '.');
+    b.g('commit', '-q', '-m', 'b adds the ledger');
+    const env = { ...clean, GIT_DIR: path.join(b.dir, '.git') };
+    const deps = { resolveBase: () => bBase };
+    assert.deepStrictEqual(
+      resolveLedgerPath({ runDir, worktree: a.dir, env, deps }),
+      { ok: true, path: path.join(a.dir, 'docs', 'plans', 'x-ledger.md') },
+    );
+    assert.strictEqual(resolveLedgerPath({ runDir, worktree: a.dir, deps }).reason, 'unattributable', 'no env: A lacks the base, so ownership fails closed');
+  } finally {
+    for (const d of [a.dir, b.dir, runDir]) fs.rmSync(d, { recursive: true, force: true });
+  }
+});

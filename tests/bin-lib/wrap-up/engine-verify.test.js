@@ -3862,3 +3862,42 @@ test('#3595 AC3.1: carrier-commit matches Fixes/Closes and rejects Refs through 
   assert.match(source, /\{[^}]*\bCLOSING_KEYWORD_ALTERNATION\b[^}]*\}\s*=\s*require\('\.\.\/issue-branch-tracking'\)/);
   assert.doesNotMatch(source, /CLOSING_KEYWORDS_PATTERN/);
 });
+
+// #5379: an injected process context reaches the git and gh children (the in-process CLI entry hands
+// the engine its own `env`); absent, both inherit the real one. Two repos, A and B, tell them apart:
+// only B holds `GIT_DIR`'s HEAD, so a child that reads B's HEAD got the injected env.
+function cleanGitEnv() {
+  const env = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
+  return env;
+}
+function commitRepo(prefix, file) {
+  const dir = makeTmpDir(prefix);
+  const env = cleanGitEnv();
+  const g = (...args) => realExecFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env, encoding: 'utf8' }).trim();
+  g('init', '-q');
+  fs.writeFileSync(path.join(dir, file), `${prefix}\n`);
+  g('add', '.');
+  g('commit', '-q', '-m', prefix);
+  return { dir, head: g('rev-parse', 'HEAD') };
+}
+
+test('defaultGit: the git child gets ctx.env (#5379)', () => {
+  const { defaultGit } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+  const a = commitRepo('env-a-', 'a.txt');
+  const b = commitRepo('env-b-', 'b.txt');
+  assert.notStrictEqual(a.head, b.head);
+  const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+  assert.strictEqual(defaultGit(['rev-parse', 'HEAD'], a.dir, { env }).trim(), b.head);
+  assert.strictEqual(defaultGit(['rev-parse', 'HEAD'], a.dir).trim(), a.head, 'no ctx: the inherited environment, as before');
+});
+
+test('defaultGh: the gh child gets ctx.env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const { defaultGh } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+  const a = commitRepo('env-gh-a-', 'a.txt');
+  const stubDir = makeTmpDir('env-gh-stub-');
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho stubbed\n', { mode: 0o755 });
+  // GH_HOST set makes ghOptions hand the options back untouched.
+  const env = { ...cleanGitEnv(), PATH: stubDir + path.delimiter + process.env.PATH, GH_HOST: 'github.com' };
+  assert.match(defaultGh(['--version'], a.dir, { env }), /stubbed/);
+});

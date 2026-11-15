@@ -26,7 +26,7 @@ const { execFileSync } = require('node:child_process');
 const { isPathContained } = require('../shared-primitives');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
-  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo, ghHostIn,
+  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo, ghHostIn, injectedGhDeps,
 } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
@@ -46,9 +46,15 @@ const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 // #1230 found them to (defaultGit missing the `timeout` defaultGh already
 // had) -- one options object, reused by construction. `wrap` transforms that
 // object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
+// `ctx` is the caller's injected process context, `{ env, stderr, homeDir }`, each optional (#5379): an
+// `env` becomes the child's environment and reaches ghOptions' host lookup; absent, the child inherits
+// the real one.
 function makeDefaultRunner(cmd, wrap = (_args, o) => o) {
-  return function run(args, cwd) {
-    return execFileSync(cmd, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true }));
+  return function run(args, cwd, ctx = {}) {
+    return execFileSync(cmd, args, wrap(args, {
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true,
+      ...(ctx.env ? { env: ctx.env } : {}),
+    }, injectedGhDeps(ctx)));
   };
 }
 
