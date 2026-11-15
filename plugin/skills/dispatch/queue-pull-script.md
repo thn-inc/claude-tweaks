@@ -466,9 +466,9 @@ NODE_EVAL_EOF
   node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_STANDALONE_DIR" --id "dispatch-target-missing-${NUM}" --file "$TMP_PROPOSAL"
 done
 
-# #5304: a stop before the neighbour pass prints the shipped claims read so far, once (here and at the two stops below).
+# #5304: a stop before the claim line prints the shipped claims read so far, once (at each stop below that calls this).
 flush_shipped_claims() {
-  node -e "const s = JSON.parse(process.argv[1]); if (s.length) console.error('AUTO — dispatch: shipped-candidate claim read failed for ' + s.join(', ') + '; release time unknown, no downgrade')" -- "${SHIPPED_UNREADABLE:-[]}"
+  node -e "const s = (() => { try { const v = JSON.parse(process.argv[1]); return Array.isArray(v) ? v : []; } catch (e) { return []; } })(); if (s.length) console.error('AUTO — dispatch: shipped-candidate claim read failed for ' + s.join(', ') + '; release time unknown, no downgrade')" -- "${SHIPPED_UNREADABLE:-[]}"
 }
 
 # #1984: shipped-candidate classification, unconditional, after the #1224 and #1983 exclusions above.
@@ -483,6 +483,7 @@ SHIPPED_UNREADABLE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPAT
   const linkedPRs = require(process.argv[2]);
   const unreadable = [];
   const releases = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/shipped-releases.js').writeReleaseTimes(process.argv[4], groups.flat(), linkedPRs, { unreadable });
+  console.log(JSON.stringify(unreadable));
   const toProbe = [];
   for (const c of groups.flat()) {
     const entry = linkedPRs[c.number];
@@ -492,7 +493,6 @@ SHIPPED_UNREADABLE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPAT
     if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
   }
   require('fs').writeFileSync(process.argv[3], JSON.stringify([...new Set(toProbe)].slice(0, 5)));
-  console.log(JSON.stringify(unreadable));
 NODE_EVAL_EOF
 )
 
@@ -607,8 +607,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
     candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]), readClaimContent: createClaimReader().read, now: Date.now(),
   });
   for (const e of exclusions) appendExclusion(process.argv[3], e);
-  // #5304: one line per pull; the shipped pass's unreadable claims (argv 4) join this pass's.
-  const shipped = JSON.parse(process.argv[4]);
+  // #5304: one line per pull; the shipped pass's unreadable claims (argv 4) join this pass's. This node process makes its own claim
+  // reader, so the fence reads claims twice by necessity (two processes); the module shares one (claimReader(ctx)).
+  const shipped = (() => { try { const v = JSON.parse(process.argv[4]); return Array.isArray(v) ? v : []; } catch (e) { return []; } })();
   const neighbour = unreadable.map((n) => '#' + n);
   if (shipped.length && neighbour.length) console.error('AUTO — dispatch: claim read failed for ' + shipped.concat(neighbour).join(', ') + '; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight');
   else if (neighbour.length) console.error('AUTO — dispatch: neighbour-in-flight claim read failed for ' + neighbour.join(', ') + '; treated as not in flight');
@@ -616,6 +617,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
 NODE_EVAL_EOF
 NEIGHBOUR_RC=$?
 if [ "$NEIGHBOUR_RC" -ne 0 ]; then
+  flush_shipped_claims
   echo "dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit $NEIGHBOUR_RC); see error above." >&2
   exit 1
 fi

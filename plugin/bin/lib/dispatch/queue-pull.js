@@ -329,7 +329,8 @@ function makeContext(options = {}, deps = {}) {
     bundleCap: '',
     foreignStates: inputs.foreignStates || env.DISPATCH_FOREIGN_STATES,
     shippedUnreadable: [], // #5304: '#N (cause)' claims the shipped pass could not read; the neighbour pass reports them
-    neighbourReached: false, // #5304: set when the neighbour pass starts; a stop before it flushes the shipped list
+    claimLineReported: false, // #5304: set when reportClaimReadFailures runs; a stop before it flushes the shipped list
+    claimReader: null, // #5304: the pull's one claim reader, built on its first read (claimReader(ctx))
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     standaloneDir: '',
     integrationBranch: '',
@@ -401,6 +402,9 @@ function runFetch(ctx) {
   state.bundleCap = readPolicy(ctx, 'dispatch-fastlane-bundle-cap');
 }
 
+// #5304: the CLI lookup's Warning when gh is absent (resolve-foreign-blockers.js's exit 2), the one
+// foreign-states Warning the dispatch layer drops after an ignored states file. Matches the fence's test.
+const GH_ABSENT_LOOKUP = /^Warning: foreign blocker state lookup failed \(exit 2: [^)]*gh[^)]* is required\)/;
 // Fence 159-205 on a miss (the eligible list, the unresolved-dependency check, the body-text and
 // native blocker filtering); on a hit the persisted `excluded` entries replayed as 'blocked'.
 function runBlocked(ctx) {
@@ -938,10 +942,7 @@ function runBlockerLanding(ctx) {
 }
 
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
-// #5304: the CLI lookup's Warning when gh is absent (resolve-foreign-blockers.js's exit 2), the one
-// foreign-states Warning the dispatch layer drops after an ignored states file. Matches the fence's test.
-const GH_ABSENT_LOOKUP = /^Warning: foreign blocker state lookup failed \(exit 2: [^)]*gh[^)]* is required\)/;
-const IN_FLIGHT_POOL_AUTO ='AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
+const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
 // fence 595, byte for byte
 const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
 
@@ -949,6 +950,7 @@ const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbo
 // shipped pass's list waits in state.shippedUnreadable for this pass, which runs after it on both
 // transports and prints the single line, also when omitted (the shipped list is then all there is).
 function reportClaimReadFailures(ctx, neighbourUnreadable) {
+  ctx.state.claimLineReported = true;
   const shipped = ctx.state.shippedUnreadable;
   const neighbour = neighbourUnreadable.map((n) => `#${n}`);
   if (shipped.length && neighbour.length) ctx.deps.stderr(`AUTO — dispatch: claim read failed for ${[...shipped, ...neighbour].join(', ')}; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight\n`);
@@ -967,7 +969,6 @@ function reportClaimReadFailures(ctx, neighbourUnreadable) {
 // options.env are not threaded to it (createClaimReader takes only gitRunner/ghApi/runGh seams).
 function runNeighbourInFlight(ctx) {
   const { deps, paths, omit, state } = ctx;
-  state.neighbourReached = true;
   const f = state.files;
   const onGh = ctx.options.transport !== 'files';
   if (onGh) {
@@ -1079,8 +1080,8 @@ function runPasses(passes, ctx) {
       runner(passCtx);
     }
   } catch (err) {
-    // #5304: a stop before the neighbour pass still prints the shipped claims read so far (once: that pass never ran).
-    if (ctx.state && !ctx.state.neighbourReached) reportClaimReadFailures(ctx, []);
+    // #5304: a stop before the claim line prints (the neighbour pass stops before it, or never ran) still prints the shipped claims read so far, once.
+    if (ctx.state && !ctx.state.claimLineReported) reportClaimReadFailures(ctx, []);
     throw err;
   }
 }

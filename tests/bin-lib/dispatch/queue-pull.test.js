@@ -2006,6 +2006,34 @@ test('#5304 stop: a shipped claim read that fails before a stop between the pass
   });
 });
 
+// #5304 final review: a neighbour pass that stops before its claim line (here its compute throws on
+// a missing in-flight file, the files transport's R8 case) still prints the shipped claims read so far, once.
+test('#5304 neighbour stop: a neighbour pass that stops before its claim line prints the shipped claim line once', () => {
+  const errs = [];
+  const sessionId = 'qp-5304-neighbour-stop';
+  const ctx = makeContext({ sessionId, transport: 'files' }, {
+    stderr: (s) => errs.push(s), stdout: () => {},
+    createClaimReader: () => ({ read: () => ({ failure: 'network-failure' }) }),
+    spawnCli: (name) => { if (name === 'hooks.js') return { status: 0, stdout: '\n', stderr: '' }; throw new Error(`unexpected ${name}`); },
+    run: (cmd, args) => { throw new Error(`unexpected ${cmd} ${args.join(' ')}`); },
+  });
+  try {
+    const record = (number) => ({ number, title: 'Add widget export command', body: '', createdAt: '2026-09-20T10:00:00.000Z', labels: ['ready'] });
+    const mention = { number: 500, merged: true, title: 'Add widget export command', createdAt: '2026-09-25T10:00:00.000Z', mergedAt: '2026-10-01T10:00:00.000Z' };
+    fs.writeFileSync(ctx.paths['dispatch-groups.json'], JSON.stringify([[record(7), record(8)]]));
+    fs.writeFileSync(ctx.paths['dispatch-linked-prs.json'], JSON.stringify({ 7: { mentions: [mention] }, 8: { mentions: [mention] } }));
+    fs.writeFileSync(ctx.paths['dispatch-exclusions.json'], '[]');
+    fs.rmSync(ctx.state.files.inFlightRaw, { force: true });
+    assert.throws(() => runPasses(PASSES.filter((p) => p.id === 'shipped' || p.id === 'neighbour-in-flight'), ctx),
+      (err) => err instanceof QueuePullStopped && /neighbour-in-flight exclusion pass failed/.test(err.line));
+    assert.deepEqual(errs.filter((e) => e.includes('claim read failed')), [
+      'AUTO — dispatch: shipped-candidate claim read failed for #7 (network-failure), #8 (network-failure); release time unknown, no downgrade\n',
+    ]);
+  } finally {
+    fs.rmSync(path.dirname(ctx.paths['dispatch-groups.json']), { recursive: true, force: true });
+  }
+});
+
 test('#5227 neighbour: an unreadable claim prints the fence AUTO line and excludes nothing; a failed pool fetch writes [] and prints the pool AUTO line; a 200-record pool prints the cap Warning', () => {
   const unreadable = pull5(PIPE(), { deps: { createClaimReader: () => ({ read: () => ({ failure: 'git-fetch-failed' }) }) } });
   assert.deepEqual(entriesOf(unreadable, 'neighbour-in-flight'), []);
@@ -2817,7 +2845,7 @@ test('#5227 filesOracleScript: every gh fetch becomes the agent write, the neigh
   assert.deepEqual(script.split('\n').filter((l) => /^\s*(if ! )?gh (issue|pr) |\$\(gh issue view/.test(l)), [], 'no gh fetch survives');
   assert.ok(script.includes('neighbourClaimTargets') && script.includes('claimReaderFromMap'), 'both mcp-transport fences are in');
   assert.ok(!script.includes('createClaimReader().read'), 'the gh claim reader is gone');
-  assert.ok(script.includes('NEIGHBOUR_RC=$?\nif [ "$NEIGHBOUR_RC" -ne 0 ]; then\n  echo "dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit $NEIGHBOUR_RC); see error above." >&2\n  exit 1\nfi'), 'the fence\'s own stop follows step 4');
+  assert.ok(script.includes('NEIGHBOUR_RC=$?\nif [ "$NEIGHBOUR_RC" -ne 0 ]; then\n  flush_shipped_claims\n  echo "dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit $NEIGHBOUR_RC); see error above." >&2\n  exit 1\nfi'), 'the fence\'s own stop follows step 4');
   assert.ok(script.includes('echo \'[]\' > "$DISPATCH_CROSSPR_OVERLAP"') && !script.includes('detectCrossPRFileOverlap(candidates, openPRs)'), 'the overlap report is the agent\'s []');
   assert.ok(script.includes('gh pr view "$PR"'), 'the shipped probe loop stays as written (its list is empty on files)');
 
