@@ -1941,7 +1941,8 @@ test('#4303: the cd after an assignment word that never closes is not followed',
 // under bash 3.2, bash 5 and zsh from a worktree W with M the main checkout; "all" means the three
 // agree. sudo and doas cannot run in the oracle: their rows cite sudo(8)'s and doas(1)'s argv
 // contract (sudo reads options, value-taking short letters a C c D g h p R r T t U u, then VAR=value
-// words, then the command; doas reads -L -n -s and value-taking -C and -u, then the command).
+// words, then the command; doas reads -L -n -s and value-taking -a, -C and -u, then the command:
+// `doas [-Lns] [-a style] [-C config] [-u user] command`).
 {
   const MAIN_B = path.resolve('/main/b');
   const files = (cmd, cwd = '/r') => fileWriteTargets(cmd, cwd).map((x) => x.file);
@@ -1971,7 +1972,7 @@ test('#4303: the cd after an assignment word that never closes is not followed',
       'nice -n5 cp x /main/b', 'nice -5 cp x /main/b', 'nice --adjustment=5 cp x /main/b', 'nice --adjustment 5 cp x /main/b',
       'exec -a foo cp x /main/b',
       'exec -cl cp x /main/b', 'sudo -u bob cp x /main/b', 'sudo -E X=1 tee /main/b', 'sudo a.b=1 cp x /main/b', 'doas -u bob cp x /main/b',
-      'doas -n cp x /main/b'], MAIN_B);
+      'doas -n cp x /main/b', 'doas -a passwd cp x /main/b', 'doas -apasswd cp x /main/b'], MAIN_B);
   });
 
   // all: M/f.js, except `X=1 time cp` (zsh: parse error, nothing; side with bash) and `! ! cp`
@@ -2113,10 +2114,15 @@ test('#4303: the cd after an assignment word that never closes is not followed',
   // under bash 5 and W/f.js under bash 3.2 and zsh; `! ! cd` writes M/f.js under bash 5 (bash 3.2 and
   // zsh cannot parse it). From M, `cd W`: `! time cd` writes M/f.js under bash 3.2 and W/f.js under
   // bash 5 and zsh; `time -- cd` and `time -p -- cd` write M/f.js under bash 3.2 and zsh and W/f.js
-  // under bash 5; `! ! cd` writes W/f.js under bash 5 and nothing under bash 3.2 and zsh. Following
-  // one cwd either way leaks a main-checkout write (`! ! cd` from M only adds a spurious deny).
+  // under bash 5; `! ! cd` writes W/f.js under bash 5 and nothing under bash 3.2 and zsh. A `time`
+  // after a `time` is reserved in bash 5 only: `time time cd`, `time -p time cd`, `time time -p cd`,
+  // `time time time cd` and `time time ! cd` write M/f.js under bash 5 and W/f.js under bash 3.2 and
+  // zsh from W, and W/f.js under bash 5 and M/f.js under bash 3.2 and zsh from M (they run
+  // /usr/bin/time cd), and so does each after `true;`. Following one cwd either way leaks a
+  // main-checkout write (`! ! cd` from M only adds a spurious deny).
   test('#4448: a cd the bash versions split on is walked under both cwds', () => {
-    for (const shape of ['! time', 'time --', 'time -p --', '! !']) {
+    for (const shape of ['! time', 'time --', 'time -p --', '! !', 'time time', 'time -p time', 'time time -p', 'time time time',
+      'time time !', 'true; time time']) {
       assert.deepStrictEqual(fileWriteTargets(`${shape} cd /main; cp a f.js`, '/r'), [...copyHere, ...copyMain], shape);
       assert.deepStrictEqual(fileWriteTargets(`${shape} cd /wt; cp a f.js`, '/main'),
         [...copyMain, { action: 'copy', file: path.resolve('/wt/f.js') }], shape);
@@ -2206,10 +2212,14 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     assert.ok(gitTargets('env X=1 git -C /main commit -m x', '/r').some((x) => x.dir === MAIN_ROOT));
   });
 
-  // all: nothing runs (`x=1: command not found`, exit 127), so no commit. This moves a base deny to
-  // allow: base read `"x"=1` as an assignment and ran git.
-  test('#4448: a quoted or escaped assignment name before git runs no git', () => {
-    for (const cmd of ['"x"=1 git -C /main commit -m x', 'x\\=1 git -C /main commit -m x']) assert.deepStrictEqual(gitTargets(cmd, '/r'), [], cmd);
+  // all: nothing runs (`x=1: command not found`, exit 127), so no commit, and the same for
+  // `V=X=1; $V git -C M commit -m x` (`X=1: command not found`: bash reads assignment words before
+  // it expands `$V`). These move a base deny to allow: base read `"x"=1`, `x\=1` and the expanded
+  // `X=1` as an assignment and ran git.
+  test('#4448: a quoted, escaped or expanded assignment name before git runs no git', () => {
+    for (const cmd of ['"x"=1 git -C /main commit -m x', 'x\\=1 git -C /main commit -m x', 'V=X=1; $V git -C /main commit -m x']) {
+      assert.deepStrictEqual(gitTargets(cmd, '/r'), [], cmd);
+    }
   });
 
   // all: `command -v git -C M commit -m x` and the `-V` spelling look names up and run no git
@@ -2228,10 +2238,12 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     assert.deepStrictEqual([...gitCommand.STRIPPED_PREFIX_WORDS].sort(),
       ['!', 'builtin', 'command', 'doas', 'env', 'exec', 'nice', 'nohup', 'sudo', 'time']);
     assert.ok(Object.isFrozen(gitCommand.STRIPPED_PREFIX_WORDS));
-    const q = (t) => ({ raw: t, spanKinds: t.map((w) => 'b'.repeat(w.length)), leadQuoted: t.map(() => false), pathImpl: path });
-    for (const t of [['X=1', 'cp'], ['x+=1', 'cp']]) assert.strictEqual(gitCommand.commandWord(t, q(t), '/r').index, 1, t.join(' '));
-    for (const t of [['command', '-v', 'cp'], ['command', '-V', 'cp'], ['env', '-S', 'cp a b'], ['env', '-P', '/x', 'cp']]) {
-      assert.strictEqual(gitCommand.commandWord(t, q(t), '/r').index, -1, t.join(' '));
+    // With no quoting given, every word reads bare, and `split` is on every result.
+    for (const t of [['X=1', 'cp'], ['x+=1', 'cp']]) {
+      assert.deepStrictEqual(gitCommand.commandWord(t, null, '/r'), { index: 1, dir: '/r', unprovable: false, split: false }, t.join(' '));
+    }
+    for (const t of [['command', '-v', 'cp'], ['command', '-V', 'cp'], ['env', '-S', 'cp a b'], ['env', '-P', '/x', 'cp'], ['time']]) {
+      assert.deepStrictEqual(gitCommand.commandWord(t, undefined, '/r'), { index: -1, dir: '/r', unprovable: false, split: false }, t.join(' '));
     }
   });
 }

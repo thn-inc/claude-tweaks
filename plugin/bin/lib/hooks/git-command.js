@@ -839,7 +839,7 @@ const PREFIX_OPTIONS = Object.freeze({
     value: 'of',
     long: { output: 'value', format: 'value', append: 'flag', verbose: 'flag', portability: 'flag', quiet: 'flag', help: 'flag', version: 'flag' },
   },
-  doas: { value: 'Cu', stop: 'CsL' },
+  doas: { value: 'aCu', stop: 'CsL' }, // doas(1): doas [-Lns] [-a style] [-C config] [-u user] command
   env: {
     value: 'CuSPLUa',
     stop: 'SP',
@@ -877,10 +877,11 @@ function longOptionName(word, names) {
 }
 
 // #4448: the command word bash runs in segment `t` (its values; `quoting` is the walk's `{ raw,
-// spanKinds, leadQuoted, pathImpl }`), read from `dir` (the segment's cwd). Every assignment word
+// spanKinds, leadQuoted, pathImpl }`, and with none every word reads bare, tokenQuoting), read from
+// `dir` (the segment's cwd). Every assignment word
 // (assignmentWordEnd) and redirection (redirectionWidth) is skipped, then each STRIPPED_PREFIX_WORDS
-// word with its options (PREFIX_OPTIONS), and the loop runs again. Returns `{ index, dir, unprovable
-// }`: `index` is the command word's, or -1 when no word is left or a `stop` option is read; `dir` the
+// word with its options (PREFIX_OPTIONS), and the loop runs again. Returns `{ index, dir, unprovable,
+// split }`: `index` is the command word's, or -1 when no word is left or a `stop` option is read; `dir` the
 // cwd it runs in (env -C, sudo -D), and `unprovable` true when such a value cannot be resolved (dir
 // then kept). A prefix word is matched on its value, so a quoted or escaped one strips too: bash
 // runs `\time` as /usr/bin/time and `co\mmand` as command, and the rare one it runs as a command
@@ -897,15 +898,17 @@ function longOptionName(word, names) {
 // `-p` and a `--` (`time -l cd` runs `-l`), and no path-qualified word strips (`/usr/bin/command` is
 // a script), and after `builtin` or `command` an assignment word is the command name (`command X=1
 // cd /x` runs `X=1`, so its cd never runs). `dir` never moves there. Where the bash versions split on reaching the command word,
-// `split` is true on the returned command word: bash 5 reads `time`'s `--` as an option end and a
-// reserved word after `!` (`! time`, `! !`; zsh too for `! time`), while bash 3.2 runs `--` or the
-// second word as a command (zsh runs `--` too). visitSegment then walks on under the cwd before
-// such a cd and the cwd after it, failing closed for whichever shell runs the command.
+// `split` is true on the returned command word: bash 5 reads `time`'s `--` as an option end, a
+// reserved word after `!` (`! time`, `! !`; zsh too for `! time`) and a `time` after `time` (`time
+// time`), while bash 3.2 runs `--` or the second word as a command (zsh runs `--` and the second
+// `time` too). visitSegment then walks on under the cwd before such a cd and the cwd after it,
+// failing closed for whichever shell runs the command. `split` is false on an index of -1.
 function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
-  const { raw, spanKinds, leadQuoted, pathImpl = path } = quoting;
+  const { raw, spanKinds, leadQuoted, pathImpl = path } = quoting || tokenQuoting(t, path);
   let unprovable = false;
   let reserved = true; // shellOnly: still where bash reads `!` and `time` as reserved words
   let afterBang = false; // shellOnly: a `!` was read, after which only bash 5 and zsh read another reserved word
+  let afterTime = false; // shellOnly: a `time` was read, after which only bash 5 reads another `time`
   let split = false; // shellOnly: the bash versions disagree on whether the command word is reached
   let afterBuiltin = false; // shellOnly: a builtin or command was read, after which an assignment word is the command name
   const skipRedirections = (i) => {
@@ -932,7 +935,7 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       i = next;
       reserved = false;
     }
-    if (i >= t.length) return { index: -1, dir, unprovable };
+    if (i >= t.length) return { index: -1, dir, unprovable, split: false };
     const word = t[i];
     let name = STRIPPED_PREFIX_WORDS.includes(word) ? word : null;
     if (name === null && !shellOnly && word.includes('/')) {
@@ -944,11 +947,13 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       const bare = raw[i] === word && spanKinds[i] === 'b'.repeat(word.length);
       if (!SHELL_PREFIX_WORDS.includes(name) || (isReserved && !(reserved && bare))) name = null;
       else if (isReserved && afterBang) split = true; // bash 3.2 runs it as a command (`! time`, `! !`)
+      else if (name === 'time' && afterTime) split = true; // bash 3.2 and zsh run /usr/bin/time (`time time`)
     }
     if (name === null) return { index: i, dir, unprovable, split };
     i += 1;
     if (shellOnly) {
       if (name === 'time') {
+        afterTime = true;
         i = skipRedirections(i);
         if (t[i] === '-p') i = skipRedirections(i + 1);
         if (t[i] === '--') {
@@ -975,11 +980,11 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       if (!w.startsWith('-') || w === '-' || (!spec.value && !spec.stop && !spec.long)) break;
       const stops = spec.stop || '';
       // A long option fails here too: its second `-` is no known letter.
-      if (spec.known !== undefined && [...w.slice(1)].some((c) => !spec.known.includes(c) && !stops.includes(c))) return { index: -1, dir, unprovable };
+      if (spec.known !== undefined && [...w.slice(1)].some((c) => !spec.known.includes(c) && !stops.includes(c))) return { index: -1, dir, unprovable, split: false };
       if (w.startsWith('--')) {
         const opt = longOptionName(w, longNames);
         const kind = opt === null ? 'flag' : spec.long[opt];
-        if (kind === 'stop') return { index: -1, dir, unprovable };
+        if (kind === 'stop') return { index: -1, dir, unprovable, split: false };
         i += 1;
         if (kind === 'flag') continue;
         let value;
@@ -995,7 +1000,7 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       const opt = readShortCluster(w, spec.value || '');
       const valueLength = opt === null || opt.value === null ? 0 : opt.value.length;
       const switches = opt === null ? w.slice(1) : w.slice(1, w.length - 1 - valueLength);
-      if ([...switches].some((c) => stops.includes(c)) || (opt !== null && stops.includes(opt.letter))) return { index: -1, dir, unprovable };
+      if ([...switches].some((c) => stops.includes(c)) || (opt !== null && stops.includes(opt.letter))) return { index: -1, dir, unprovable, split: false };
       i += 1;
       if (opt === null) continue;
       let value = opt.value;
