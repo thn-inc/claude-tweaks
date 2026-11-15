@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const { computeBlastRadius, BlastRadiusError, defaultGit } = require('./lib/blast-radius-cli.js');
-const { resolveAgainst } = require('./lib/health-core/io.js');
+const { resolveAgainst, cwdOrUndefined } =require('./lib/health-core/io.js');
 
 const USAGE = 'usage: blast-radius.js (--base <ref> | --integration-branch <branch>) [--run <dir>]';
 
@@ -55,8 +55,7 @@ function run(argv, deps = {}) {
   if (!opts.base && !opts.integrationBranch) return fail(USAGE, d);
   // d.cwd() throws when the working directory was deleted. Left undefined then, git starts in the
   // inherited directory and its own failure is reported, as before the entry contract.
-  let cwd;
-  try { cwd = d.cwd(); } catch { cwd = undefined; }
+  const cwd = cwdOrUndefined(d);
   const rawRunDir = opts.runDir;
   if (rawRunDir !== undefined) {
     // An empty value is never a directory (fs.statSync('') throws); the join would turn it into the cwd.

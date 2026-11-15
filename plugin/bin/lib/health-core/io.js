@@ -25,6 +25,16 @@ function resolveAgainst(cwd, p, pathImpl = path) {
   return pathImpl.parse(p).root ? p : cwd + pathImpl.sep + p;
 }
 
+// cwdOrUndefined(d) -> d.cwd(), or undefined when it throws (a deleted working directory), for
+// the CLIs that degrade rather than refuse there.
+function cwdOrUndefined(d) {
+  try {
+    return d.cwd();
+  } catch {
+    return undefined;
+  }
+}
+
 // makeExec({ env, stderr }) -> exec(cmd, args, opts = {}) -> string
 //
 // Behaves as execFileSync(cmd, args, { encoding: 'utf8', windowsHide: true,
@@ -71,4 +81,4 @@ function makeExec({ env, stderr = DEFAULT_IO.stderr } = {}) {
   };
 }
 
-module.exports = { DEFAULT_IO, makeExec, resolveAgainst };
+module.exports = { DEFAULT_IO, makeExec, resolveAgainst, cwdOrUndefined };

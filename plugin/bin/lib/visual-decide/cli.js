@@ -16,6 +16,7 @@ const path = require('node:path');
 const http = require('node:http');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
+const { cwdOrUndefined } = require('../health-core/io.js');
 
 const DEFAULT_PORT_BASE = 4173;
 const DEFAULT_IDLE_MINUTES = 240;
@@ -63,14 +64,6 @@ function resolveFrom(d, p) {
 
 // The daemon's cwd, or undefined when d.cwd() throws (a deleted working directory): the child
 // then inherits it, as before the entry contract; its --dir/--state are absolute either way.
-function childCwd(d) {
-  try {
-    return d.cwd();
-  } catch {
-    return undefined;
-  }
-}
-
 function pidAlive(pid, kill = (p, s) => process.kill(p, s)) {
   try {
     kill(pid, 0);
@@ -177,7 +170,7 @@ async function cmdStart(opts, d) {
       String(idleMinutes),
       '--__daemon__',
     ],
-    { cwd: childCwd(d), env: d.env, detached: true, stdio: 'ignore', windowsHide: true },
+    { cwd: cwdOrUndefined(d), env: d.env, detached: true, stdio: 'ignore', windowsHide: true },
   );
   child.unref();
 
