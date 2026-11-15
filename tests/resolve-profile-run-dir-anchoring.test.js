@@ -3,30 +3,22 @@
 // #1065: bin/resolve-profile.js's --run-dir had zero anchoring validation —
 // the anchored-or-outside half of the [IL-127] CLI-argument-boundary guard
 // (tests/materialize-run-dir-anchoring.test.js covers the strict half).
-// The CLI has no deps seam, so these tests spawn the real binary with cwd
-// set per fixture and assert on exit code, stderr, and tally side effects.
+// These tests call the CLI in-process with the injected cwd set per fixture and
+// assert on exit code, stderr, and tally side effects.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { runCliSync } = require('./helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-profile.js');
 
 function runCli(args, cwd) {
-  try {
-    const stdout = execFileSync(process.execPath, [CLI, ...args], {
-      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, CLAUDE_CODE_SESSION_ID: '' },
-      timeout: 30000,
-    });
-    return { status: 0, stdout, stderr: '' };
-  } catch (e) {
-    return { status: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
+  const r = runCliSync(CLI, args, { cwd, env: { ...process.env, CLAUDE_CODE_SESSION_ID: '' } });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 test('accept: main-anchored --run-dir from linked-worktree cwd (production shape)', () => {
@@ -69,7 +61,7 @@ test('accept: --run-dir outside any checkout (journey shape) — tally readable/
   assert.ok(fs.existsSync(path.join(outside, 'frontier-tally.log')), 'tally written outside as before');
 });
 
-test('reject: bare relative --run-dir from linked-worktree cwd — exit 1, no tally anywhere', () => {
+test('AC9.1: reject: bare relative --run-dir from linked-worktree cwd (the injected cwd, not process.cwd()) — exit 1, no tally anywhere', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const res = runCli(['frontier', '--run-dir', path.join('.claude-tweaks', 'pipelines', 'r1')], wt);
