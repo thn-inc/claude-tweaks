@@ -21,7 +21,9 @@ function git(cwd, ...args) {
 }
 
 // The complete environment the CLI sees: git needs PATH, and HOME keeps a global git config reachable.
+// SystemRoot and USERPROFILE are what a Windows git child needs to start; absent elsewhere.
 const CLI_ENV = { PATH: process.env.PATH, HOME: os.homedir() };
+for (const key of ['SystemRoot', 'USERPROFILE']) if (process.env[key] !== undefined) CLI_ENV[key] = process.env[key];
 
 // In-process call; maps the helper's `code` onto the `status` field the assertions use.
 function cli(args, opts = {}) {
@@ -192,6 +194,14 @@ test('AC9.1: a relative --run that does not exist prints the argument as given',
   assert.strictEqual(res.status, 1);
   assert.strictEqual(res.stdout, '');
   assert.strictEqual(res.stderr, 'blast-radius: --run dir does not exist or is not a directory: nope\n');
+});
+
+test('--run "" exits 1 with the not-a-directory message, as before', () => {
+  const dir = makeFixtureRepo();
+  const res = cli(['--integration-branch', 'main', '--run', ''], { cwd: dir });
+  assert.strictEqual(res.status, 1);
+  assert.strictEqual(res.stdout, '');
+  assert.strictEqual(res.stderr, 'blast-radius: --run dir does not exist or is not a directory: \n');
 });
 
 test('AC9.1: a relative --run that exists resolves against the injected cwd', () => {

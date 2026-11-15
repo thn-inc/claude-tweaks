@@ -54,8 +54,9 @@ function run(argv, deps = {}) {
   if (!opts.base && !opts.integrationBranch) return fail(USAGE, d);
   const rawRunDir = opts.runDir;
   if (rawRunDir !== undefined) {
-    opts.runDir = resolveAgainst(d.cwd(), rawRunDir);
-    if (!isDirectory(opts.runDir)) {
+    // An empty value is never a directory (fs.statSync('') throws); the join would turn it into the cwd.
+    opts.runDir = rawRunDir === '' ? rawRunDir : resolveAgainst(d.cwd(), rawRunDir);
+    if (rawRunDir === '' || !isDirectory(opts.runDir)) {
       return fail(`--run dir does not exist or is not a directory: ${rawRunDir}`, d);
     }
   }
