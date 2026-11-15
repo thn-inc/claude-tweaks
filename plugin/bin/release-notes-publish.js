@@ -12,11 +12,12 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { run: publish } = require('./lib/release-notes-publish.js');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives.js');
-const { ghOptions } = require('./lib/repo-resolve.js');
+const { ghOptions, injectedGhDeps, pickInjected } = require('./lib/repo-resolve.js');
 
 const USAGE = 'usage: release-notes-publish.js [--root <dir>]\nexit 0 applied/no-op; 1 a gh/git call failed';
 
@@ -43,13 +44,16 @@ function parseArgs(argv) {
 const realDeps = {
   cwd: () => process.cwd(),
   env: process.env,
+  homeDir: () => os.homedir(),
   stdout: (t) => process.stdout.write(t),
   stderr: (t) => process.stderr.write(t),
-  gh: (args, input, { cwd, env }) => execFileSync('gh', args, ghOptions(args, {
+  // `{ cwd, env, stderr, homeDir }` is the caller's injected process context (#5386): ghOptions'
+  // origin-host probe, gh config-dir lookup and host note read it, not the real process's.
+  gh: (args, input, { cwd, env, stderr, homeDir }) => execFileSync('gh', args, ghOptions(args, {
     cwd, env, encoding: 'utf8', timeout: GH_TIMEOUT_MS,
     input, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     windowsHide: true,
-  })),
+  }, injectedGhDeps({ env, stderr, homeDir }))),
   git: (args, { cwd, env }) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
   readFile: (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
   writeFile: (abs, text) => fs.writeFileSync(abs, text),
@@ -61,7 +65,7 @@ function run(argv, deps) {
   if (opts.help) { deps.stdout(`${USAGE}\n`); return 0; }
   const root = opts.root ? path.resolve(deps.cwd(), opts.root) : deps.cwd();
   return publish(argv, {
-    gh: (args, input) => deps.gh(args, input, { cwd: root, env: deps.env }),
+    gh: (args, input) => deps.gh(args, input, { cwd: root, ...pickInjected(deps) }),
     git: (args) => deps.git(args, { cwd: root, env: deps.env }),
     readFile: (p) => deps.readFile(path.join(root, p)),
     writeFile: (p, text) => deps.writeFile(path.join(root, p), text),
