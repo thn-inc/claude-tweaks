@@ -204,6 +204,52 @@ test('#5294: a different PATH does not reuse another git\'s answer', () => {
   assert.strictEqual(runChild(wt, env).spawns, 1);
 });
 
+// #5294 review: a named pipe where the cache reads a file would block a read
+// for ever, so these cases run the child under a timeout and assert it exits.
+function canMkfifo() {
+  if (process.platform === 'win32') return false;
+  try {
+    const probe = path.join(scratchDir('ct-ris-fifo-probe-'), 'p');
+    execFileSync('mkfifo', [probe], { stdio: 'ignore' });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+const NO_FIFO = !canMkfifo();
+
+function runChildBounded(dir, env) {
+  try {
+    const out = execFileSync(process.execPath, ['-e', CHILD, MODULE, dir], { env, encoding: 'utf8', timeout: 5000 });
+    return JSON.parse(out);
+  } catch (e) {
+    assert.fail(`the child did not exit by itself (${e.code || e.signal || e.message})`);
+  }
+}
+
+test('#5294 review: a named pipe at a worktree\'s commondir does not hang the lookup', { skip: NO_FIFO }, () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const raw = fs.readFileSync(path.join(wt, '.git'), 'utf8');
+  const admin = path.resolve(wt, /^gitdir:\s*(.+?)\s*$/m.exec(raw)[1]);
+  fs.rmSync(path.join(admin, 'commondir'));
+  execFileSync('mkfifo', [path.join(admin, 'commondir')]);
+  // git itself blocks reading the pipe until runGit's own timeout kills it, so
+  // that budget is cut to fit the bound. The unfixed cache blocked before the
+  // spawn, where no timeout applies.
+  const got = runChildBounded(wt, childEnv(storeIn(scratchDir('ct-ris-')), { CT_HOOKS_GIT_TIMEOUT_MS: '1500' }));
+  assert.strictEqual(got.info.repoRoot, null, `git's answer: ${JSON.stringify(got.info)}`);
+});
+
+test('#5294 review: a named pipe at the store path does not hang the lookup', { skip: NO_FIFO }, () => {
+  const wt = linkedWorktreeOf(gitRepo());
+  const cold = runChild(wt, childEnv(storeIn(scratchDir('ct-ris-')))).info;
+  const fifo = path.join(scratchDir('ct-ris-'), 'store.json');
+  execFileSync('mkfifo', [fifo]);
+  const got = runChildBounded(wt, childEnv(fifo));
+  assert.deepStrictEqual(got.info, cold);
+});
+
 test('#5294: the store keeps at most MAX_STORE_ENTRIES entries, evicting the oldest', () => {
   const file = storeIn(scratchDir('ct-ris-'));
   const env = childEnv(file);

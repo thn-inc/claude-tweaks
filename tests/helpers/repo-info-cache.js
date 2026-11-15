@@ -9,16 +9,26 @@ const os = require('os');
 const path = require('path');
 const { resetMemo } = require('../../plugin/bin/lib/hooks/repo-info-cache');
 
-// Points CT_HOOKS_REPO_INFO_STORE at a fresh temp file, clears the memo, and
-// restores the env (and removes the temp dir) when the test ends.
+// Any of these in the env bypasses the store, so a launching environment that
+// sets one would make "nothing was written to the store" pass for that reason
+// alone. They are removed for the test and restored after.
+const DISCOVERY_ENV_NAMES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM'];
+
+// Points CT_HOOKS_REPO_INFO_STORE at a fresh temp file, removes the git
+// discovery variables, clears the memo, and restores the env (and removes the
+// temp dir) when the test ends.
 function isolateRepoInfoCache(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ric-iso-'));
-  const prior = process.env.CT_HOOKS_REPO_INFO_STORE;
+  const names = ['CT_HOOKS_REPO_INFO_STORE', ...DISCOVERY_ENV_NAMES];
+  const prior = Object.fromEntries(names.map((n) => [n, process.env[n]]));
   process.env.CT_HOOKS_REPO_INFO_STORE = path.join(dir, 'store.json');
+  for (const n of DISCOVERY_ENV_NAMES) delete process.env[n];
   resetMemo();
   t.after(() => {
-    if (prior === undefined) delete process.env.CT_HOOKS_REPO_INFO_STORE;
-    else process.env.CT_HOOKS_REPO_INFO_STORE = prior;
+    for (const n of names) {
+      if (prior[n] === undefined) delete process.env[n];
+      else process.env[n] = prior[n];
+    }
     resetMemo();
     fs.rmSync(dir, { recursive: true, force: true });
   });

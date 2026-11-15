@@ -7,21 +7,33 @@
 // The signature records stats only — it never derives git's answer itself
 // (which is why it does not reuse the status line's commonDirFromFs, and why
 // loading it costs no status-line code in every hook):
+//   - dir:     the directory's own real path (path, ino, dev), so a retargeted
+//              symlink, a recreated directory or a mount over it differ.
 //   - root:    the directory holding the nearest `.git` (path, uid, ino)
 //   - git:     that `.git` (path, kind, ino, uid; ctime only when it is a FILE —
 //              a directory's ctime moves on every index.lock, which would miss
 //              the cache after ordinary git activity). null when no `.git`
 //              exists up to the filesystem root.
-//   - content/admin/commondir: for a `.git` file, its full text, the admin dir
-//              it points at (path, ino, uid, or 'missing'), and that admin dir's
-//              `commondir` text. A worktree removed and re-added at one path is
-//              caught by the `.git` file's own ino + ctime (git rewrites it).
+//   - content/admin: for a `.git` file, its full text and the admin dir it
+//              points at (path, ino, uid, or 'missing'). A worktree removed and
+//              re-added at one path is caught by the `.git` file's own ino +
+//              ctime (git rewrites it).
+//   - commondir: the `commondir` text of the repo's git dir (the admin dir, or
+//              the `.git` directory itself: git treats either as a linked
+//              worktree when it has one). The common dir derives from it.
+//   - layout:  the kind or 'missing' of the git dir's HEAD and the common dir's
+//              objects and refs (no times: they move on ordinary git activity),
+//              so a cached positive is re-asked once git would reject the repo.
+//   - enclosing: the next `.git` above the root (path, kind, ino) and the stat
+//              key of that repo's index, which git's superproject check reads.
+//              null when there is no enclosing repo.
 //   - configs: "{mtimeNs}:{size}:{ino}" or 'missing' for the common config,
-//              config.worktree (the admin dir's for a linked worktree, the
-//              `.git` directory's own for a main checkout), the global config(s) and the
-//              system config git would read.
-// Anything that cannot be looked at (an error other than ENOENT) makes the
-// signature null, meaning "do not cache".
+//              the git dir's config.worktree, the global config(s) and the
+//              system config(s) git may read.
+// Every file whose content is read must be a regular file (a named pipe would
+// block the hook). Anything that cannot be looked at (an error other than
+// ENOENT, or a non-regular file where text is read) makes the signature null,
+// meaning "do not cache".
 //
 // repoInfo takes the signature BEFORE it spawns git. A change that races the
 // spawn then leaves the remembered signature describing the pre-change state,
@@ -77,13 +89,34 @@ function statOrMissing(p) {
   }
 }
 
-function readOrMissing(p) {
+// Reads `p` only when it is a regular file: null when missing, Unknown for
+// anything else that exists. A named pipe there would block the read (and the
+// hook) for ever, and a directory or device is not something git reads as text.
+function readRegularOrMissing(p) {
+  const st = statOrMissing(p);
+  if (!st) return null;
+  if (!st.isFile()) throw new Unknown();
   try {
     return fs.readFileSync(p, 'utf8');
   } catch (e) {
     if (e && e.code === 'ENOENT') return null;
     throw new Unknown();
   }
+}
+
+const GITDIR_LINE = /^gitdir:\s*(.+?)\s*$/m;
+
+// A `commondir` file's text without its trailing newline, or null when absent.
+function readCommondir(gitDir) {
+  const raw = readRegularOrMissing(path.join(gitDir, 'commondir'));
+  return raw === null ? null : raw.replace(/[\r\n]+$/, '');
+}
+
+// The kind of `p`, or 'missing'. Presence and kind only: HEAD and refs change on
+// ordinary git activity, so their times would miss the cache for nothing.
+function kindOrMissing(p) {
+  const st = statOrMissing(p);
+  return st ? kindOf(st) : 'missing';
 }
 
 function configKey(p) {
@@ -111,8 +144,11 @@ function globalAndSystemConfigs(env, platform) {
     const systemOverride = envGet(env, 'GIT_CONFIG_SYSTEM');
     if (systemOverride !== undefined) out.push(systemOverride);
     // win32's system config lives under the git install, which is not knowable
-    // from here: nothing is recorded (an accepted divergence).
-    else if (platform !== 'win32') out.push('/etc/gitconfig');
+    // from here: nothing is recorded (an accepted divergence). Elsewhere the
+    // install prefix decides it too: /etc for a distro git, and Homebrew's
+    // prefixes for a Homebrew git (Apple silicon, then Intel). All three are
+    // tracked; a path this git does not read only costs a miss when it changes.
+    else if (platform !== 'win32') out.push('/etc/gitconfig', '/opt/homebrew/etc/gitconfig', '/usr/local/etc/gitconfig');
   }
   return out;
 }
@@ -123,12 +159,48 @@ function kindOf(st) {
   return 'other';
 }
 
+// The nearest repo enclosing `root` (the next `.git` on the same upward walk),
+// or null. git's superproject check lists that repo's index for a gitlink at
+// `root`, and a hit forces isLinkedWorktree to false, so the index is tracked
+// (by its stat key) along with the `.git` entry that leads to it.
+function enclosingRepo(root) {
+  let e = path.dirname(root);
+  if (e === root) return null;
+  for (;;) {
+    const gitPath = path.join(e, '.git');
+    const st = statOrMissing(gitPath);
+    if (st) {
+      const kind = kindOf(st);
+      let indexPath;
+      if (kind === 'dir') {
+        indexPath = path.join(gitPath, 'index');
+      } else if (kind === 'file') {
+        const content = readRegularOrMissing(gitPath);
+        const m = content === null ? null : GITDIR_LINE.exec(content);
+        if (!m) throw new Unknown();
+        indexPath = path.join(path.resolve(e, m[1]), 'index');
+      } else {
+        throw new Unknown();
+      }
+      return { path: gitPath, kind, ino: String(st.ino), index: configKey(indexPath) };
+    }
+    const parent = path.dirname(e);
+    if (parent === e) return null;
+    e = parent;
+  }
+}
+
 function buildSignature(dir, env, platform) {
   // git walks the real path (it chdirs into `-C`, then reads getcwd), so the
   // signature walks it too: a symlink into a repo subdirectory would otherwise
   // walk the link's own parents and never see the repo's `.git`.
-  let d = canonicalRealpath(dir);
-  if (!d) throw new Unknown();
+  const real = canonicalRealpath(dir);
+  if (!real) throw new Unknown();
+  // The directory itself (ino + dev), so a symlink retargeted within one repo,
+  // a directory deleted and recreated, or a volume mounted over it all differ.
+  const dirStat = statOrMissing(real);
+  if (!dirStat) throw new Unknown();
+  let d = real;
   let gitStat = null;
   for (;;) {
     gitStat = statOrMissing(path.join(d, '.git'));
@@ -137,7 +209,10 @@ function buildSignature(dir, env, platform) {
     if (parent === d) break;
     d = parent;
   }
-  const sig = { root: null, git: null, content: null, admin: null, commondir: null, configs: [] };
+  const sig = {
+    dir: { path: real, ino: String(dirStat.ino), dev: String(dirStat.dev) },
+    root: null, git: null, content: null, admin: null, commondir: null, layout: null, enclosing: null, configs: [],
+  };
   const configFiles = [];
   if (gitStat) {
     const rootStat = statOrMissing(d);
@@ -146,24 +221,38 @@ function buildSignature(dir, env, platform) {
     const kind = kindOf(gitStat);
     sig.root = { path: d, uid: String(rootStat.uid), ino: String(rootStat.ino) };
     sig.git = { path: gitPath, kind, ino: String(gitStat.ino), uid: String(gitStat.uid) };
+    // The repo's own git dir: the `.git` directory, or the admin dir a `.git`
+    // file points at. A `.git` file without a `gitdir:` line has none.
+    let gitDir = null;
     if (kind === 'file') {
       sig.git.ctime = String(gitStat.ctimeNs);
-      const content = readOrMissing(gitPath);
+      const content = readRegularOrMissing(gitPath);
       if (content === null) throw new Unknown();
       sig.content = content;
-      const m = /^gitdir:\s*(.+?)\s*$/m.exec(content);
+      const m = GITDIR_LINE.exec(content);
       if (m) {
-        const admin = path.resolve(d, m[1]);
-        const adminStat = statOrMissing(admin);
-        sig.admin = adminStat ? { path: admin, ino: String(adminStat.ino), uid: String(adminStat.uid) } : 'missing';
-        const commondirRaw = readOrMissing(path.join(admin, 'commondir'));
-        sig.commondir = commondirRaw === null ? null : commondirRaw.replace(/[\r\n]+$/, '');
-        const common = sig.commondir ? path.resolve(admin, sig.commondir) : admin;
-        configFiles.push(path.join(common, 'config'), path.join(admin, 'config.worktree'));
+        gitDir = path.resolve(d, m[1]);
+        const adminStat = statOrMissing(gitDir);
+        sig.admin = adminStat ? { path: gitDir, ino: String(adminStat.ino), uid: String(adminStat.uid) } : 'missing';
       }
     } else if (kind === 'dir') {
-      configFiles.push(path.join(gitPath, 'config'), path.join(gitPath, 'config.worktree'));
+      gitDir = gitPath;
     }
+    if (gitDir) {
+      // git treats any git dir with a `commondir` as a linked worktree, a
+      // `.git` directory included, and takes its common dir from it.
+      sig.commondir = readCommondir(gitDir);
+      const common = sig.commondir ? path.resolve(gitDir, sig.commondir) : gitDir;
+      // What git checks before it accepts a git dir. Without these, a cached
+      // positive would outlive git starting to reject the repo.
+      sig.layout = {
+        head: kindOrMissing(path.join(gitDir, 'HEAD')),
+        objects: kindOrMissing(path.join(common, 'objects')),
+        refs: kindOrMissing(path.join(common, 'refs')),
+      };
+      configFiles.push(path.join(common, 'config'), path.join(gitDir, 'config.worktree'));
+    }
+    sig.enclosing = enclosingRepo(d);
   }
   configFiles.push(...globalAndSystemConfigs(env, platform));
   // Files reached through [include]/[includeIf] are not tracked (an accepted divergence).
@@ -216,7 +305,9 @@ const DISCOVERY_ENV_NAMES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_
 // Read on every call, never captured at load, so a test's env change takes effect.
 function storePath(env = process.env) {
   const override = envGet(env, 'CT_HOOKS_REPO_INFO_STORE');
-  if (override) return override;
+  // A relative override would resolve against each hook's cwd and drop store
+  // files into project directories, so only an absolute one is honoured.
+  if (override && path.isAbsolute(override)) return override;
   return path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json');
 }
 
@@ -243,9 +334,28 @@ function validEntry(e) {
 
 // -> the store's entries object, or null when absent/unreadable/not our format.
 function readStoreEntries(env) {
-  const raw = readJsonFile(storePath(env), { fallback: null });
+  const file = storePath(env);
+  // Only a regular file is read: a named pipe at the store path would block
+  // the read for ever, and a directory or device is not a store.
+  let st;
+  try {
+    st = fs.statSync(file);
+  } catch (_) {
+    return null;
+  }
+  if (!st.isFile()) return null;
+  const raw = readJsonFile(file, { fallback: null });
   if (!isPlainObject(raw) || raw.version !== STORE_VERSION || !isPlainObject(raw.entries)) return null;
   return raw.entries;
+}
+
+// The store holds which directories a user works in, so it is created
+// readable by its owner only. Every write replaces the file with a freshly
+// created temp file (json-store.js), so the mode applies to each one.
+const writeOwnerOnly = (p, content) => fs.writeFileSync(p, content, { mode: 0o600 });
+
+function storeWrite(env, entries) {
+  writeJsonFile(storePath(env), { version: STORE_VERSION, entries }, { writeFile: writeOwnerOnly });
 }
 
 function storeLookup(dir, env, signature, uid) {
@@ -253,7 +363,9 @@ function storeLookup(dir, env, signature, uid) {
     const entries = readStoreEntries(env);
     const key = storeKey(dir, env, uid);
     const entry = entries && entries[key];
-    if (validEntry(entry) && signatureMatches(entry.signature, signature)) {
+    // The answer must also agree with the signature, as rememberRepoInfo
+    // required: an edited entry must not name a root the signature does not.
+    if (validEntry(entry) && signatureMatches(entry.signature, signature) && answerMatchesSignature(signature, entry.answer)) {
       if (Date.now() - entry.at > TOUCH_INTERVAL_MS) storeTouch(env, key);
       return entry.answer;
     }
@@ -269,7 +381,7 @@ function storeTouch(env, key) {
     const entries = readStoreEntries(env);
     if (!entries || !validEntry(entries[key])) return;
     entries[key].at = Date.now();
-    writeJsonFile(storePath(env), { version: STORE_VERSION, entries });
+    storeWrite(env, entries);
   } catch (_) {
     // a failed refresh only costs recency
   }
@@ -289,7 +401,7 @@ function storeRemember(dir, env, signature, answer, uid) {
       const oldest = keys.slice().sort((a, b) => (Number(entries[a] && entries[a].at) || 0) - (Number(entries[b] && entries[b].at) || 0));
       for (const k of oldest.slice(0, excess)) delete entries[k];
     }
-    writeJsonFile(storePath(env), { version: STORE_VERSION, entries });
+    storeWrite(env, entries);
   } catch (_) {
     // the answer returned is the one git gave
   }
@@ -317,9 +429,10 @@ function lookupRepoInfo(dir, env = process.env, uid = currentUid()) {
 }
 
 // Whether git's answer is the one the signature describes. A `.git` git rejects
-// (HEAD, objects or refs missing) makes git answer "not a repo", or fall through
-// to an enclosing repo, while the signature tracks that `.git`. Repairing it
-// changes nothing the signature watches, so such an answer must not be cached.
+// makes git answer "not a repo", or fall through to an enclosing repo, while the
+// signature tracks that `.git`. The layout tracks only presence and kind, so a
+// repair that changes neither (a HEAD rewritten from garbage, say) would go
+// unseen: such an answer must not be cached.
 function answerMatchesSignature(signature, answer) {
   if (!answer.repoRoot) return !signature.git;
   return Boolean(signature.root) && canonicalRealpath(answer.repoRoot) === signature.root.path;

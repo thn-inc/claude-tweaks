@@ -11,7 +11,9 @@ const path = require('path');
 
 const cp = require('child_process');
 const { repoInfo } = require('../plugin/bin/lib/hooks/worktree-detect');
-const { resetMemo, lookupRepoInfo, rememberRepoInfo, repoSignature } = require('../plugin/bin/lib/hooks/repo-info-cache');
+const {
+  resetMemo, lookupRepoInfo, rememberRepoInfo, repoSignature, storePath,
+} = require('../plugin/bin/lib/hooks/repo-info-cache');
 const { gitRepo, linkedWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 const { isolateRepoInfoCache } = require('./helpers/repo-info-cache');
 
@@ -378,4 +380,164 @@ test('#5294: ordinary git activity keeps the cache warm', (t) => {
   assert.deepStrictEqual(repoInfo(wt), { repoRoot: wt, isLinkedWorktree: true, indeterminate: false });
   assert.deepStrictEqual(repoInfo(main), { repoRoot: main, isLinkedWorktree: false, indeterminate: false });
   assert.strictEqual(counter.n, 2);
+});
+
+// ---- #5294 review: stale answers ----------------------------------------------
+
+test('#5294 review: a gitlink added to the enclosing repo\'s index re-asks a nested linked worktree', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const wt = path.join(main, 'inner-wt');
+  fixtureGit(['-C', main, 'worktree', 'add', '-q', wt, '-b', `inner-${path.basename(main)}`]);
+  assert.strictEqual(repoInfo(wt).isLinkedWorktree, true);
+  const sha = fixtureGit(['-C', main, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  fixtureGit(['-C', main, 'update-index', '--add', '--cacheinfo', `160000,${sha},inner-wt`]);
+  const expected = fresh(wt);
+  assert.strictEqual(expected.isLinkedWorktree, false, 'git now sees a superproject');
+  assert.deepStrictEqual(repoInfo(wt), expected);
+});
+
+test('#5294 review: a cached plain repo that loses .git/HEAD is re-asked', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  assert.strictEqual(repoInfo(main).repoRoot, main);
+  fs.rmSync(path.join(main, '.git', 'HEAD'));
+  assert.deepStrictEqual(repoInfo(main), fresh(main));
+});
+
+test('#5294 review: a cached linked worktree whose admin dir loses HEAD is re-asked', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  assert.strictEqual(repoInfo(wt).isLinkedWorktree, true);
+  fs.rmSync(path.join(adminDirOf(wt), 'HEAD'));
+  assert.deepStrictEqual(repoInfo(wt), fresh(wt));
+});
+
+test('#5294 review: a commondir written into a main checkout\'s .git is re-asked', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const other = gitRepo();
+  assert.strictEqual(repoInfo(main).isLinkedWorktree, false);
+  fs.writeFileSync(path.join(main, '.git', 'commondir'), `${path.join(other, '.git')}\n`);
+  const expected = fresh(main);
+  assert.strictEqual(expected.isLinkedWorktree, true, 'git now treats the git dir as a linked worktree');
+  assert.deepStrictEqual(repoInfo(main), expected);
+});
+
+test('#5294 review: a symlink retargeted inside one repo is re-asked', (t) => {
+  isolateRepoInfoCache(t);
+  const base = scratchDir('ct-ric-retarget-');
+  const repo = path.join(base, 'repo');
+  fixtureGit(['init', '-q', repo]);
+  fs.mkdirSync(path.join(repo, 'sub'));
+  const link = path.join(base, 'link');
+  fs.symlinkSync(path.join(repo, 'sub'), link, 'dir');
+  const counter = countRevParse(t);
+  repoInfo(link);
+  fs.unlinkSync(link);
+  fs.symlinkSync(repo, link, 'dir');
+  const after = repoInfo(link);
+  // git gives the same toplevel for both targets; what matters is that a
+  // different directory is never answered from the old one's entry.
+  assert.strictEqual(counter.n, 2, 'the retargeted link spawned git');
+  assert.deepStrictEqual(after, fresh(link));
+});
+
+// ---- #5294 review: signature components --------------------------------------
+
+test('#5294 review: the Homebrew system configs are tracked off win32', (t) => {
+  isolateRepoInfoCache(t);
+  const dir = scratchDir('ct-ric-sys-');
+  const tracked = repoSignature(dir, { HOME: dir }, 'darwin').configs.map(([p]) => p);
+  for (const p of ['/etc/gitconfig', '/opt/homebrew/etc/gitconfig', '/usr/local/etc/gitconfig']) {
+    assert.ok(tracked.includes(p), `${p} is tracked (got ${JSON.stringify(tracked)})`);
+  }
+});
+
+test('#5294 review: a linked worktree\'s commondir text is part of the signature', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const before = repoSignature(wt);
+  fs.writeFileSync(path.join(adminDirOf(wt), 'commondir'), `${path.join(main, '.git')}\n`);
+  assert.notDeepStrictEqual(repoSignature(wt), before);
+});
+
+test('#5294 review: a linked worktree\'s common config is part of the signature', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const before = repoSignature(wt);
+  fs.appendFileSync(path.join(main, '.git', 'config'), '[user]\n\tname = x\n');
+  assert.notDeepStrictEqual(repoSignature(wt), before);
+});
+
+test('#5294 review: a linked worktree\'s admin config.worktree is part of the signature', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const before = repoSignature(wt);
+  fs.writeFileSync(path.join(adminDirOf(wt), 'config.worktree'), '[core]\n\tbare = false\n');
+  assert.notDeepStrictEqual(repoSignature(wt), before);
+});
+
+test('#5294 review: the XDG_CONFIG_HOME global config is part of the signature', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const xdg = scratchDir('ct-ric-xdg-');
+  const env = { HOME: xdg, XDG_CONFIG_HOME: xdg };
+  const before = repoSignature(main, env);
+  fs.mkdirSync(path.join(xdg, 'git'));
+  fs.writeFileSync(path.join(xdg, 'git', 'config'), '[user]\n\tname = x\n');
+  assert.notDeepStrictEqual(repoSignature(main, env), before);
+});
+
+// ---- #5294 review: the store -------------------------------------------------
+
+test('#5294 review: a store entry whose answer names another root is a miss', (t) => {
+  isolateRepoInfoCache(t);
+  const dir = scratchDir('ct-ric-edited-');
+  const elsewhere = gitRepo();
+  const answer = { repoRoot: null, isLinkedWorktree: false, indeterminate: false };
+  rememberRepoInfo(dir, process.env, repoSignature(dir), answer);
+  const file = process.env.CT_HOOKS_REPO_INFO_STORE;
+  const store = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const k of Object.keys(store.entries)) store.entries[k].answer.repoRoot = elsewhere;
+  fs.writeFileSync(file, JSON.stringify(store));
+  resetMemo();
+  assert.strictEqual(lookupRepoInfo(dir).answer, null);
+});
+
+test('#5294 review: the store file is created readable by its owner only', { skip: process.platform === 'win32' }, (t) => {
+  isolateRepoInfoCache(t);
+  const dir = scratchDir('ct-ric-mode-');
+  rememberRepoInfo(dir, process.env, repoSignature(dir), { repoRoot: null, isLinkedWorktree: false, indeterminate: false });
+  const mode = fs.statSync(process.env.CT_HOOKS_REPO_INFO_STORE).mode & 0o777;
+  assert.strictEqual(mode, 0o600, `mode ${mode.toString(8)}`);
+});
+
+test('#5294 review: a relative CT_HOOKS_REPO_INFO_STORE is ignored', () => {
+  const fallback = path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json');
+  assert.strictEqual(storePath({ CT_HOOKS_REPO_INFO_STORE: path.join('rel', 'store.json') }), fallback);
+  const absolute = path.join(os.tmpdir(), 'abs-store.json');
+  assert.strictEqual(storePath({ CT_HOOKS_REPO_INFO_STORE: absolute }), absolute);
+});
+
+test('#5294 review: isolateRepoInfoCache removes the git discovery variables for the test', async (t) => {
+  const names = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM'];
+  const prior = Object.fromEntries(names.map((n) => [n, process.env[n]]));
+  for (const n of names) process.env[n] = `sentinel-${n}`;
+  try {
+    await t.test('inside', (st) => {
+      isolateRepoInfoCache(st);
+      for (const n of names) assert.strictEqual(process.env[n], undefined, `${n} is removed`);
+    });
+    for (const n of names) assert.strictEqual(process.env[n], `sentinel-${n}`, `${n} is restored`);
+  } finally {
+    for (const n of names) {
+      if (prior[n] === undefined) delete process.env[n];
+      else process.env[n] = prior[n];
+    }
+  }
 });
