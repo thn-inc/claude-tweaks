@@ -323,6 +323,10 @@ function deepenShallowClone(git, root, remote, env, lock) {
   }
 }
 
+// Injection seams (#5381): `env` reaches every git child through the default `git`
+// (a caller that passes its own `git` threads env itself), and the deepen fetch
+// also passes it explicitly. `lock` replaces only the acquire: releaseLock stays
+// hard-wired, so a custom `lock` must return acquireLock's { lockPath, token } handle.
 function verifyCommits({
   root, hashes, integrationBranch = null, remote = 'origin', deepen = true,
   env = process.env, lock = acquireLock,

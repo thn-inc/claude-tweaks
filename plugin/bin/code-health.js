@@ -14,7 +14,7 @@ const { resolveReadCommit } = require('./lib/health-core/read-commit');
 const { getCriterion } = require('./lib/code-health/criteria');
 const { classifyArea } = require('./lib/code-health/area-type');
 const { listSlices, contentHash, selectSlice, sliceRecursive } = require('./lib/code-health/scope');
-const { makeExec, resolveAgainst } = require('./lib/health-core/io');
+const { DEFAULT_IO, makeExec, resolveAgainst } = require('./lib/health-core/io');
 const { makeRetryQueueCommands } = require('./lib/health-core/retry-cli');
 const { loadIssueIndex } = require('./lib/health-core/issue-index');
 const { selectBudget } = require('./lib/health-core/budget');
@@ -407,9 +407,7 @@ function run(argv, deps = realDeps) {
 }
 
 const realDeps = {
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
-  cwd: () => process.cwd(),
+  ...DEFAULT_IO,
   env: process.env,
 };
 

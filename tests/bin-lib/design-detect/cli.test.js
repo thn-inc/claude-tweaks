@@ -300,6 +300,40 @@ test('absolute --surface-lines, --claude-md and --signals never call cwd(): same
   }
 });
 
+test('absolute --surface-lines, --claude-md and --signals call the injected cwd() zero times', () => {
+  const f = absOperandFixture();
+  try {
+    const cases = [
+      ['--surface-lines', f.diff],
+      ['--mode', 'review', '--claude-md', f.claudeMd, '--surface', 'web', '--files', 'a.tsx'],
+      ['--mode', 'review', '--design-integration', 'enabled', '--surface', 'mobile', '--signals', f.signals],
+    ];
+    for (const args of cases) {
+      let calls = 0;
+      const r = run(args, { deps: { cwd: () => { calls += 1; return f.tmp; } } });
+      assert.equal(r.code, 0, args[0]);
+      assert.equal(calls, 0, `${args[0]} read cwd() for an absolute operand`);
+    }
+  } finally {
+    fs.rmSync(f.tmp, { recursive: true, force: true });
+  }
+});
+
+test('relative --surface-lines and --signals resolve against the injected cwd(), not the test process cwd', () => {
+  const f = absOperandFixture();
+  try {
+    const deps = { cwd: () => f.tmp };
+    const lines = run(['--surface-lines', 'd.patch'], { deps });
+    assert.equal(lines.code, 0, lines.stderr);
+    assert.equal(JSON.parse(lines.stdout).surface, true);
+    const signals = run(['--mode', 'review', '--design-integration', 'enabled', '--surface', 'mobile', '--signals', 's.json'], { deps });
+    assert.equal(signals.code, 0, signals.stderr);
+    assert.equal(JSON.parse(signals.stdout).platform, 'ios');
+  } finally {
+    fs.rmSync(f.tmp, { recursive: true, force: true });
+  }
+});
+
 test('relative --surface-lines with a throwing cwd() prints the could-not-read line with the caller spelling and exits 1', () => {
   const r = run(['--surface-lines', 'sub/missing.patch'], { deps: { cwd: throwingCwd } });
   assert.equal(r.code, 1);

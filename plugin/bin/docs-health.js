@@ -4,7 +4,7 @@ const fs = require('fs');
 const { fingerprint } = require('./lib/docs-health/fingerprint');
 const { computeWordCount } = require('./lib/docs-health/depth');
 const { readCache, writeCache, createDurable, buildValidateFindingsUpdate } = require('./lib/docs-health/cache');
-const { makeExec, resolveAgainst } = require('./lib/health-core/io');
+const { DEFAULT_IO, makeExec, resolveAgainst } = require('./lib/health-core/io');
 const { acquireLock } = require('./lib/file-lock');
 const { computeChurn } = require('./lib/health-core/runs');
 const { makeRetryQueueCommands } = require('./lib/health-core/retry-cli');
@@ -409,9 +409,7 @@ function run(argv, deps = realDeps) {
 }
 
 const realDeps = {
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
-  cwd: () => process.cwd(),
+  ...DEFAULT_IO,
   env: process.env,
   lock: acquireLock,
 };

@@ -36,7 +36,7 @@ const {
   MODE_LAYERS,
 } = require('./lib/design-detect');
 const { analyzeDiff } = require('./lib/design-detect/surface-lines');
-const { resolveAgainst } = require('./lib/health-core/io');
+const { DEFAULT_IO, resolveAgainst } = require('./lib/health-core/io');
 
 function parseArgs(argv) {
   const out = { mode: null, surface: null, files: [], signalsPath: null, designIntegration: null, claudeMdPath: null, platform: null, surfaceLinesPath: null };
@@ -157,9 +157,7 @@ function run(argv, deps = realDeps) {
 }
 
 const realDeps = {
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
-  cwd: () => process.cwd(),
+  ...DEFAULT_IO,
   env: process.env,
   stdin: () => { try { return fs.readFileSync(0, 'utf8'); } catch { return ''; } },
 };
