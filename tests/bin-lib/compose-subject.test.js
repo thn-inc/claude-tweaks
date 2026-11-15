@@ -33,12 +33,27 @@ const RECORDS = {
   2282: { number: 2282, title: 'Unclosed fence, no Release Note at all', body: '## Overview\n\nFenced.\n\n```\nnever closed\n', labels: [{ name: 'type:task' }], issueType: null },
 };
 
+const nodeFs = require('node:fs');
+const nodeOs = require('node:os');
+const nodePath = require('node:path');
+const { execFileSync } = require('node:child_process');
+
+// A directory path that is never created: the fakes never touch the filesystem under it.
+const PHANTOM_CWD = nodePath.join(nodeOs.tmpdir(), 'compose-subject-phantom-cwd');
+const INJECTED_ENV = Object.freeze({ PATH: process.env.PATH || '', COMPOSE_SUBJECT_MARKER: 'injected' });
+// A home directory that is never created: no gh hosts.yml is readable under it, so the origin gate and
+// host pin never read the developer's own.
+const PHANTOM_HOME = nodePath.join(nodeOs.tmpdir(), 'compose-subject-phantom-home');
+// The injected process context every deps object carries (#5386).
+const FAKE_CTX = { cwd: () => PHANTOM_CWD, env: INJECTED_ENV, homeDir: () => PHANTOM_HOME };
+
 function fakeDeps({
   records = RECORDS, ghAvailable = () => true, remoteUrl = () => 'git@github.com:acme/repo.git', failView = false,
   commitScope = null, commitScopePaths = [], changedFiles = null, prFiles = null, writeError = null,
 } = {}) {
   const out = { stdout: '', stderr: '', calls: [], gitCalls: [], files: {}, dirs: [] };
   const deps = {
+    ...FAKE_CTX,
     ghAvailable,
     remoteUrl,
     runner: (args) => {
@@ -388,6 +403,7 @@ test('run(): REST issueType rejection retries without the field, then still reso
   const out = { stdout: '', stderr: '', calls: [] };
   let attempt = 0;
   const deps = {
+    ...FAKE_CTX,
     ghAvailable: () => true,
     remoteUrl: () => 'git@github.com:acme/repo.git',
     runner: (args) => {
@@ -419,6 +435,7 @@ test('run(): REST issueType rejection + no type:* label falls back to the GraphQ
   const out = { stdout: '', stderr: '' };
   let viewAttempt = 0;
   const deps = {
+    ...FAKE_CTX,
     ghAvailable: () => true,
     remoteUrl: () => 'git@github.com:acme/repo.git',
     runner: (args) => {
@@ -448,6 +465,7 @@ test('run(): REST issueType rejection + no label + GraphQL fallback also finds n
   const out = { stdout: '', stderr: '' };
   let viewAttempt = 0;
   const deps = {
+    ...FAKE_CTX,
     ghAvailable: () => true,
     remoteUrl: () => 'git@github.com:acme/repo.git',
     runner: (args) => {
@@ -472,6 +490,7 @@ test('run(): a genuine gh failure (not the issueType rejection) on the first vie
   const out = { stdout: '', stderr: '' };
   let calls = 0;
   const deps = {
+    ...FAKE_CTX,
     ghAvailable: () => true,
     remoteUrl: () => 'git@github.com:acme/repo.git',
     runner: () => { calls++; throw new Error('HTTP 404: Not Found'); },
@@ -947,10 +966,6 @@ test('AC7.1: --bogus exits 1 with the usage on stderr', () => {
 });
 
 // ---- Injected cwd and env (#5386): every seam `run` reaches takes them from deps. ----
-const nodeFs = require('node:fs');
-const nodeOs = require('node:os');
-const nodePath = require('node:path');
-const { execFileSync } = require('node:child_process');
 
 // process.env minus the variables that would point a git child at the test runner's own repository.
 function envWithoutGitRepoVars(extra = {}) {
@@ -959,9 +974,6 @@ function envWithoutGitRepoVars(extra = {}) {
   return env;
 }
 
-// A directory path that is never created: the fakes never touch the filesystem under it.
-const PHANTOM_CWD = nodePath.join(nodeOs.tmpdir(), 'compose-subject-phantom-cwd');
-const INJECTED_ENV = Object.freeze({ PATH: process.env.PATH || '', COMPOSE_SUBJECT_MARKER: 'injected' });
 
 test('AC8.1: run reads commit-scope through deps.cwd()', () => {
   const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: '' });
@@ -1006,10 +1018,16 @@ test('AC8.1: runner, gitRunner, ghAvailable and the fetchIssueType runner receiv
   assert.match(out.stdout, /^\{"title":"fix: /);
   // runner: the failed view, its retry, and the call the fetchIssueType runner made.
   assert.equal(seen.runner.length, 3);
-  for (const o of seen.runner) assert.deepEqual(o, expected);
-  assert.deepEqual(seen.gitRunner, [expected]);
-  assert.deepEqual(seen.ghAvailable, [expected]);
-  assert.deepEqual(seen.remoteUrl, [expected]);
+  // Each seam also gets the injected home directory and stderr, for the gh host and hosts.yml lookups.
+  const ctxOf = (o) => ({ cwd: o.cwd, env: o.env });
+  for (const o of [...seen.runner, ...seen.gitRunner, ...seen.ghAvailable, ...seen.remoteUrl]) {
+    assert.deepEqual(ctxOf(o), expected);
+    assert.equal(o.homeDir(), PHANTOM_HOME);
+    assert.equal(o.stderr, deps.stderr);
+  }
+  assert.equal(seen.gitRunner.length, 1);
+  assert.equal(seen.ghAvailable.length, 1);
+  assert.equal(seen.remoteUrl.length, 1);
 });
 
 test('AC8.1: pinGhHost receives the injected cwd and env for an explicit --repo', () => {
@@ -1019,7 +1037,9 @@ test('AC8.1: pinGhHost receives the injected cwd and env for an explicit --repo'
   deps.env = INJECTED_ENV;
   deps.pinGhHost = (spec, o) => { seen.push([spec.owner, spec.repo, o]); };
   assert.equal(run(['2251', '--repo', 'owner/name'], deps), 0, out.stderr);
-  assert.deepEqual(seen, [['owner', 'name', { cwd: PHANTOM_CWD, env: INJECTED_ENV }]]);
+  assert.equal(seen.length, 1);
+  const [owner, name, o] = seen[0];
+  assert.deepEqual([owner, name, o.cwd, o.env, o.homeDir(), o.stderr], ['owner', 'name', PHANTOM_CWD, INJECTED_ENV, PHANTOM_HOME, deps.stderr]);
 });
 
 test('AC8.1: the origin gate reads an exported GH_HOST from the injected env', () => {
@@ -1130,4 +1150,78 @@ test('AC8.1: realDeps.remoteUrl runs git with the injected env', (t) => {
 test('AC8.1: realDeps.cwd and realDeps.env are the ambient values', () => {
   assert.equal(realDeps.cwd(), process.cwd());
   assert.equal(realDeps.env, process.env);
+});
+
+test('AC8.1: realDeps.homeDir is the ambient home', () => {
+  assert.equal(realDeps.homeDir(), nodeOs.homedir());
+});
+
+// ---- Injected home directory and stderr (#5386): the gh host lookups read them, not the real ones. ----
+const GHE_HOST = 'ghe.example.test';
+const GHE_ORIGIN = `https://${GHE_HOST}/owner/name.git`;
+
+// A fixture home whose gh hosts.yml names GHE_HOST: an injected homeDir finds it, the real home never does.
+function hostsHome(t) {
+  const home = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-hosts-home-')));
+  t.after(() => nodeFs.rmSync(home, { recursive: true, force: true }));
+  nodeFs.mkdirSync(nodePath.join(home, '.config', 'gh'), { recursive: true });
+  nodeFs.writeFileSync(nodePath.join(home, '.config', 'gh', 'hosts.yml'), `${GHE_HOST}:\n`);
+  return home;
+}
+
+// Repo A has no remote; repo B has the GHE origin. `GIT_DIR=<B>/.git` in the injected env only
+// makes a child whose cwd is A read B's remote. -> { a, env } with env free of GH_* and, when
+// given, a stub directory first on PATH.
+function originPair(t, stubDir) {
+  const { committedRepo, cleanGitEnv } = require('../helpers/git-fixtures');
+  const a = committedRepo({ prefix: 'cs-a-' });
+  const b = committedRepo({ prefix: 'cs-b-' });
+  t.after(() => { for (const d of [a.dir, b.dir]) nodeFs.rmSync(d, { recursive: true, force: true }); });
+  b.git('remote', 'add', 'origin', GHE_ORIGIN);
+  const env = { ...cleanGitEnv(), GIT_DIR: nodePath.join(b.dir, '.git') };
+  if (stubDir) env.PATH = stubDir + nodePath.delimiter + (process.env.PATH || '');
+  for (const k of ['GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR', 'XDG_CONFIG_HOME']) delete env[k];
+  return { a, b, env };
+}
+
+test('AC8.1: the origin gate reads gh hosts.yml from the injected homeDir', (t) => {
+  const { deps, out } = fakeDeps({ remoteUrl: () => GHE_ORIGIN });
+  const home = hostsHome(t);
+  deps.homeDir = () => home;
+  assert.equal(run(['2251'], deps), 0, out.stderr);
+  assert.ok(out.calls[0].includes(`${GHE_HOST}/owner/name`), out.calls[0].join(' '));
+  // Without that home the same origin is refused, so the admission above came from the injected one.
+  const refused = fakeDeps({ remoteUrl: () => GHE_ORIGIN });
+  assert.equal(run(['2251'], refused.deps), 2);
+});
+
+test('AC8.1: realDeps.runner takes the gh host from the injected env, homeDir and stderr', { skip: STUB_SKIP }, (t) => {
+  const { _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve.js');
+  const stubDir = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-hoststub-')));
+  t.after(() => nodeFs.rmSync(stubDir, { recursive: true, force: true }));
+  nodeFs.writeFileSync(nodePath.join(stubDir, 'gh'), '#!/bin/sh\nprintf %s "$GH_HOST"\n');
+  nodeFs.chmodSync(nodePath.join(stubDir, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
+  const { a, env } = originPair(t, stubDir);
+  const notes = [];
+  _resetGhHostCache();
+  t.after(_resetGhHostCache);
+  const home = hostsHome(t);
+  const out = realDeps.runner(['issue', 'view', '1'], { cwd: a.dir, env, homeDir: () => home, stderr: (s) => notes.push(s) });
+  assert.equal(out, GHE_HOST);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], new RegExp(GHE_HOST));
+});
+
+test('AC8.1: realDeps.pinGhHost reads the origin and hosts.yml from the injected context', (t) => {
+  const { _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve.js');
+  const { a, env } = originPair(t);
+  const spec = { host: GHE_HOST, owner: 'owner', repo: 'name' };
+  t.after(_resetGhHostCache);
+  // The origin host is known only through the injected home: explicit --repo on that very host needs no pin.
+  _resetGhHostCache();
+  const home = hostsHome(t);
+  assert.equal(realDeps.pinGhHost(spec, { cwd: a.dir, env, homeDir: () => home, stderr: () => {} }), null);
+  // An injected home with no hosts.yml leaves the origin host unknown, so the explicit host is pinned.
+  _resetGhHostCache();
+  assert.equal(realDeps.pinGhHost(spec, { cwd: a.dir, env, homeDir: () => PHANTOM_HOME, stderr: () => {} }), GHE_HOST);
 });

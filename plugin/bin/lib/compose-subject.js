@@ -61,6 +61,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { composeSubject, ComposeSubjectError } = require('./release/subject');
@@ -70,7 +71,7 @@ const {
   parseRecordFacets, typeOf, extractSection: extractSectionShared,
 } = require('./issues/record');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo, injectedGhDeps,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo, injectedGhDeps, pickInjected,
 } = require('./repo-resolve');
 const { resolveAgainst } = require('./health-core/io');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
@@ -284,15 +285,15 @@ const realDeps = {
   ghAvailable,
   remoteUrl,
   // #4505: an explicit --repo's host reaches the issue-type GraphQL fallback,
-  // which threads no --hostname for github.com. `{ cwd, env }` (#5386) is the origin read's
-  // directory and environment; absent, the process's own.
-  pinGhHost: (repoSpec, { cwd, env } = {}) => pinExplicitRepoHost(repoSpec, { cwd, env }),
+  // which threads no --hostname for github.com. `{ cwd, env, stderr, homeDir }` (#5386) is the
+  // injected process context for the origin read and the hosts.yml lookup; absent, the process's own.
+  pinGhHost: (repoSpec, { cwd, env, stderr, homeDir } = {}) => pinExplicitRepoHost(repoSpec, { cwd, ...injectedGhDeps({ env, stderr, homeDir }) }),
   // stderr piped, not inherited (#3028): execFileSync's default echoes the
   // child's stderr to ours, so the handled #2561 `Unknown JSON field:
   // "issueType"` rejection printed gh's full field list ahead of a successful
   // compose and read as a failure. err.stderr (isUnknownIssueTypeField) and
   // err.message (the fatal paths) still carry the text.
-  runner: (args, injected) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true, ...childOptions(injected) }, injectedGhDeps({ env: injected && injected.env }))),
+  runner: (args, injected) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true, ...childOptions(injected) }, injectedGhDeps(pickInjected(injected)))),
   fetchIssueType: fetchIssueTypeGraphQL,
   readCommitScope: (cwd = process.cwd()) => readCommitScope(cwd),
   readCommitScopePaths: (cwd = process.cwd()) => readListKey(cwd, 'commit-scope-paths'),
@@ -303,6 +304,7 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
   cwd: () => process.cwd(),
   env: process.env,
+  homeDir: () => os.homedir(),
 };
 
 // argv -> exit code.
@@ -310,10 +312,10 @@ function run(argv, deps = realDeps) {
   const opts = parseArgs(argv);
   if (opts.error) { deps.stderr(opts.error + '\n' + USAGE); return 1; }
   if (opts.help) { deps.stdout(USAGE); return 0; }
-  // The working directory and environment every seam below runs in (#5386). A deps object that
-  // carries neither (an older caller's fakes) gets the seams' own defaults: the process's.
-  const cwd = typeof deps.cwd === 'function' ? deps.cwd() : undefined;
-  const injected = childOptions({ cwd, env: deps.env });
+  // The working directory, environment, home directory and stderr every seam below runs in (#5386):
+  // spawns read cwd and env; the gh host and hosts.yml lookups read env, homeDir and stderr too.
+  const cwd = deps.cwd();
+  const injected = { cwd, ...pickInjected(deps) };
   if (!deps.ghAvailable(injected)) { deps.stderr('compose-subject.js: `gh` is required\n'); return 2; }
 
   let remote = null;
@@ -321,7 +323,7 @@ function run(argv, deps = realDeps) {
   let repoSpec;
   if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
   else {
-    const gated = gateOriginRepo(remote, deps.env ? { env: deps.env, ...deps.gateDeps } : deps.gateDeps);
+    const gated = gateOriginRepo(remote, { ...injectedGhDeps(pickInjected(deps)), ...deps.gateDeps });
     if (gated.refusal) { deps.stderr(`compose-subject.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
@@ -447,7 +449,7 @@ function run(argv, deps = realDeps) {
   if (opts.outDir !== null) {
     // A relative --out-dir is resolved against the injected cwd (#5386); fs sees the resolved
     // path, so an error message naming it is swapped back to the spelling the caller typed.
-    const outDir = cwd === undefined ? opts.outDir : resolveAgainst(cwd, opts.outDir);
+    const outDir = resolveAgainst(cwd, opts.outDir);
     const names = ['title.txt', 'body.md', 'message.txt'];
     const texts = [composed.title, composed.body, `${composed.title}\n\n${composed.body}`];
     const files = names.map((name, i) => ({ resolved: path.join(outDir, name), typed: path.join(opts.outDir, name), text: texts[i] }));
