@@ -78,8 +78,9 @@ test('AC6.1: no arguments is a usage refusal — exit 2, empty stdout, the usage
 // probe's `ownPr` result field.
 test('#1781: --own-pr 42 parses and is not itself an open PR here, so ownPr is null', () => {
   const root = initRepo('residue-cli-ownpr-');
-  // The fake gh answers null, the value a failed gh gives the real runner (this fixture has no remote, so real gh fails too).
-  const r = run(['--base', 'HEAD', '--no-suite', '--json', '--own-pr', '42'], { cwd: root });
+  // The fake gh answers an open-PR list that does not contain #42, so the forge probe's PR loop runs and finds no own PR.
+  const gh = JSON.stringify([{ number: 7, title: 'other', headRefName: 'other-lane' }]);
+  const r = run(['--base', 'HEAD', '--no-suite', '--json', '--own-pr', '42'], { cwd: root, deps: { runner: gitRunner({ gh }) } });
   assert.strictEqual(r.status, 0, r.stderr);
   const parsed = JSON.parse(r.stdout);
   // results[2] is the forge probe (worktrees, branches, forge, suite, release, pipeline-runs, artifacts).
@@ -149,8 +150,8 @@ test('AC9.1: PIPELINE_RUN_DIR is read from the injected env, not the process env
 // Env-only fixture (model: forgePair in tests/forge-probe-env.test.js): repo A, on `main`, is the CLI's
 // cwd; repo B, on `branch-b`, is named only through GIT_DIR in the injected env. A git child that gets the
 // env reads B's HEAD, so the scope's headBranch is B's; one that inherits the process env reads A's.
-// B also holds a second commit: the scope's `base` (the only sha the scope carries, echoed back once
-// `git rev-parse --verify` resolved it) is B's HEAD sha, which A's repo cannot resolve.
+// B also holds a second commit and the run is given its sha as --base: only B has it, so `scope.ran: true`
+// means the rev-parse child read B. `scope.base` is just the argv echo (scope.js sets it even for an unresolved base).
 test('AC9.1: the runner git children get the injected env', () => {
   const a = initRepo('residue-cli-env-a-', 'main');
   const b = initRepo('residue-cli-env-b-', 'branch-b');
@@ -166,15 +167,13 @@ test('AC9.1: the runner git children get the injected env', () => {
   assert.strictEqual(scope.base, shaB);
 });
 
-// probeWorktrees' dirty check is its own git child (defaultIsDirty). Git config injected through the
-// env makes an untracked-only worktree read clean: `dirty: false` only if that child got the env.
 // The gh branch of the runner: ghOptions reads the origin through its git child and gh's config dir from the
-// env it is given. Repo A (the cwd) has no origin; repo B has a GitHub Enterprise one and is named only through
-// GIT_DIR in the injected env; hosts.yml sits in an injected GH_CONFIG_DIR. A gh stub first on the injected PATH
-// records the GH_HOST it was started with: the host is set only if ghOptions got the env.
+// env and home it is given. Repo A (the cwd) has no origin; repo B has a GitHub Enterprise one and is named only
+// through GIT_DIR in the injected env. A gh stub first on the injected PATH records the GH_HOST it was started
+// with: the host is set only if ghOptions got what it needs. `configEnv(dir)` places hosts.yml's lookup.
 // The runner is a pass-through to the CLI's real one except for `git ls-remote`, so the release probe never
 // contacts the made-up host.
-test('AC9.1: the gh child gets GH_HOST from an origin read through the injected env', { skip: STUB_SKIP }, () => {
+function ghHostRun(configEnv) {
   const a = initRepo('residue-cli-gh-a-');
   const b = initRepo('residue-cli-gh-b-');
   git(b, 'remote', 'add', 'origin', 'https://ghe.example.test/o/r.git');
@@ -182,18 +181,36 @@ test('AC9.1: the gh child gets GH_HOST from an origin read through the injected 
   const marker = path.join(stubDir, 'host.txt');
   fs.writeFileSync(path.join(stubDir, 'gh'), `#!/bin/sh\nprintf '%s' "$GH_HOST" > "${marker}"\necho '[]'\n`);
   fs.chmodSync(path.join(stubDir, 'gh'), 0o755);
-  const ghConfig = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-cli-gh-cfg-'));
-  fs.writeFileSync(path.join(ghConfig, 'hosts.yml'), 'ghe.example.test:\n');
+  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-cli-gh-cfg-'));
   const runner = (argv, opts) => (argv[1] === 'ls-remote' ? null : realDeps.runner(argv, opts));
-  const env = {
-    ...CLI_ENV, PATH: stubDir + path.delimiter + CLI_ENV.PATH, GIT_DIR: path.join(b, '.git'), GH_CONFIG_DIR: ghConfig,
-  };
+  const env = { ...CLI_ENV, PATH: stubDir + path.delimiter + CLI_ENV.PATH, GIT_DIR: path.join(b, '.git'), ...configEnv(cfg) };
   const r = run(['--base', 'HEAD', '--no-suite', '--json'], { cwd: a, env, deps: { runner } });
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.strictEqual(fs.readFileSync(marker, 'utf8'), 'ghe.example.test');
+  return { r, host: fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : null };
+}
+
+test('AC9.1: the gh child gets GH_HOST from an origin read through the injected env', { skip: STUB_SKIP }, () => {
+  const { r, host } = ghHostRun((cfg) => {
+    fs.writeFileSync(path.join(cfg, 'hosts.yml'), 'ghe.example.test:\n');
+    return { GH_CONFIG_DIR: cfg };
+  });
+  assert.strictEqual(host, 'ghe.example.test');
   assert.match(r.stderr, /gh calls get GH_HOST=ghe\.example\.test/, 'the note goes to the injected stderr');
 });
 
+// Neither GH_CONFIG_DIR nor XDG_CONFIG_HOME is set, so hosts.yml is looked up under the injected home
+// (<home>/.config/gh/hosts.yml) through deps.homeDir; a lookup through os.homedir() would miss it.
+test('AC9.1: the gh config dir falls back to the injected home', { skip: STUB_SKIP }, () => {
+  const { host } = ghHostRun((home) => {
+    fs.mkdirSync(path.join(home, '.config', 'gh'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.config', 'gh', 'hosts.yml'), 'ghe.example.test:\n');
+    return { HOME: home, USERPROFILE: home };
+  });
+  assert.strictEqual(host, 'ghe.example.test');
+});
+
+// probeWorktrees' dirty check is its own git child (defaultIsDirty). Git config injected through the
+// env makes an untracked-only worktree read clean: `dirty: false` only if that child got the env.
 test('AC9.1: the worktree dirty check gets the injected env', () => {
   const root = initRepo('residue-cli-dirty-');
   const wt = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'residue-cli-dirty-wt-')), 'side');
