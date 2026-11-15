@@ -48,6 +48,7 @@ const CASES = [
 ];
 
 for (const { cmd, extraArgs } of CASES) {
+  // #5376 injected-value proof: fails when spec-status reads process.cwd() instead of the injected cwd (the spec-status case)
   test(`#280: ${cmd} discloses the worktree-local fallback`, async () => {
     const main = gitRepo();
     const wt = linkedWorktreeOf(main);

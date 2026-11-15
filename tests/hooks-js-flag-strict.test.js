@@ -205,12 +205,18 @@ test('#4777: reconcile --json with no typo runs for real (positive control for t
   const { root } = runDirFixture('clean');
   let result;
   const { calls, spawnCalls } = await withReconcileStubbed(async () => {
-    result = await runHook(['reconcile', '--json'], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'flag-strict-session' } });
+    result = await runHook(['reconcile', '--json'], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'flag-strict-session', CT_FLAG_STRICT_INJECTED_ENV_5376: 'injected' } });
   });
   assert.equal(result.code, 0);
   // In place of the real pass's cache stamp and fast-forward: reconcile() got the parsed flags,
   // and the converged pass handed the deferred checks to the background spawn.
-  assert.deepStrictEqual(calls.map(defined), [{ dryRun: false, cwd: root, env: hookEnv({ CLAUDE_CODE_SESSION_ID: 'flag-strict-session' }), mcpReachable: false, checks: INLINE_CHECKS }]);
+  assert.deepStrictEqual(calls.map(({ env, ...opts }) => defined(opts)), [{ dryRun: false, cwd: root, mcpReachable: false, checks: INLINE_CHECKS }]);
+  // The injected env, not process.env, reached reconcile() (#5376). Checked by key, so a failure never
+  // prints the runner's environment: the sentinel is set only in the env this call injects.
+  assert.equal('CT_FLAG_STRICT_INJECTED_ENV_5376' in process.env, false, 'the sentinel is not in the runner\'s environment');
+  assert.ok(calls[0].env && typeof calls[0].env === 'object', 'reconcile() was handed an env');
+  assert.equal(calls[0].env.CLAUDE_CODE_SESSION_ID, 'flag-strict-session');
+  assert.equal(calls[0].env.CT_FLAG_STRICT_INJECTED_ENV_5376, 'injected');
   assert.deepStrictEqual(spawnCalls, [{ root, cwd: root, sessionId: 'flag-strict-session' }]);
   assert.deepStrictEqual(JSON.parse(result.stdout).background, { checks: CLI_DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
 });

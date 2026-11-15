@@ -4,8 +4,9 @@
 // through runCli (unlike tests/hooks-run-dir-resolve.test.js, which tests
 // the pure resolver directly) — this is what proves the argv parsing, exit
 // codes, and stdout/stderr split in bin/hooks.js actually work end to end,
-// mirroring the acceptance-criteria commands verbatim. resolve-run-dir's script-entry
-// smoke tests are in tests/hooks-js-flag-strict.test.js (#5376).
+// mirroring the acceptance-criteria commands verbatim. resolve-run-dir's
+// script-entry smoke tests are in tests/hooks-js-flag-strict.test.js
+// (#5376).
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -61,6 +62,7 @@ test('--create mints a run directory and prints its path, exit 0', async () => {
   assert.match(path.basename(printed), /-spec-77$/);
 });
 
+// #5376 injected-value proof: fails when resolve-run-dir reads process.cwd() instead of the injected cwd
 test('--root-only prints the anchored main checkout root from inside a linked worktree', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);

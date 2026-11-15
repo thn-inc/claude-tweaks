@@ -83,6 +83,7 @@ test('#1452: archive-run does not defer a worktree-local-fallback run dir with n
   assert.match(result.stdout, /archival refused/);
 });
 
+// #5376 injected-value proof: fails when spec-status reads process.cwd() instead of the injected cwd
 test('#1452: a stale "archiving" claim stub at the main-checkout archive twin does not block the worktree-local fallback', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);

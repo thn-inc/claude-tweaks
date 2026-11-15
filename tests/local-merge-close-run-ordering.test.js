@@ -237,6 +237,10 @@ async function ownerAfterReprotect(fence, { vars, worktreeVar }) {
   };
   await hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'record-worktree', '--run', run, vars[worktreeVar]);
   await hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'close-run', '--run', run);
+  // close-run exits 0 on its refusal paths too: check the run really closed, as assertReprotectRestores does.
+  const closed = readRunState(run);
+  assert.strictEqual(closed.worktree, null, 'close-run clears the worktree assignment');
+  assert.strictEqual(closed.status, 'clean');
   const r = runFence(fence, {
     cwd: dir,
     env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run), CLAUDE_CODE_SESSION_ID: 'reconciler-session' },
@@ -447,6 +451,7 @@ for (const site of CITING_SITES) {
   });
 }
 
+// #5376 injected-value proof: fails when record-worktree reads process.env instead of the injected env
 test("worktree-merge.md: its owner-preserving re-protect fence restores the run and keeps its owner", async () => {
   const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
   const fence = extractFence(live, REPROTECT_NEEDLE);

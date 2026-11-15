@@ -87,16 +87,17 @@ test('#3553: --online is threaded through (gh absent -> degrade named in detail;
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cpr-bin-'));
   fs.symlinkSync(gitPath, path.join(bin, 'git'));
   const env = { PATH: bin };
-  // real process: the gh lookup reads the process PATH, which an in-process env cannot replace
+  // real process: checkPassReentry takes no env: its gh lookup (and its git children) start on the process environment, so an in-process PATH stub would be skipped
   const online = spawnCli(HOOKS, ['check-pass-reentry', '--run', runDir, '--online'], { cwd: root, env: hookEnv(env) });
-  // the offline call never starts gh, so it runs in-process
-  const offline = await runHook(['check-pass-reentry', '--run', runDir], { cwd: root, env });
+  // in-process with no PATH stub: the offline path starts no gh, so it needs no stub
+  const offline = await runHook(['check-pass-reentry', '--run', runDir], { cwd: root });
   assert.equal(online.code, 0, online.stderr);
   assert.equal(offline.code, 0, offline.stderr);
   assert.match(verdictOf(online).detail, /online PR check unavailable \(gh-absent\)/);
   assert.doesNotMatch(verdictOf(offline).detail, /online PR check unavailable/);
 });
 
+// #5376 injected-value proof: fails when check-pass-reentry reads process.env instead of the injected env
 test('#3553: the caller\'s CLAUDE_CODE_SESSION_ID is passed as sessionId (own run skips the parent-live lock check)', async () => {
   const { root, wt, runDir } = reentryFixture();
   // A lock with no pid is a lock whose holder cannot be proven dead, which

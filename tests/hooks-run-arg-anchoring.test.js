@@ -6,8 +6,9 @@
 // (in-process through runCli, like tests/hooks-resolve-run-dir-cli.test.js)
 // proving --run is now rejected when it resolves inside a linked worktree,
 // whether passed as a relative or an absolute path, and still accepted when
-// it genuinely resolves under the main checkout. In-process (#5376): record-worktree's
-// script-entry smoke tests are in tests/hooks-ledger-row.test.js.
+// it genuinely resolves under the main checkout. In-process (#5376):
+// record-worktree's script-entry smoke tests are in
+// tests/hooks-ledger-row.test.js.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -39,6 +40,7 @@ function mkRunDir(base, relParts) {
   return dir;
 }
 
+// #5376 injected-value proof: fails when record-worktree reads process.cwd() instead of the injected cwd
 test('reject: --run is a relative path that resolves inside the linked worktree', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);

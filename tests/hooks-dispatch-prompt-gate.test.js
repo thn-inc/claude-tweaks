@@ -180,6 +180,7 @@ test('AC5.1: an older render for the same call is denied', async () => {
   assert.deepStrictEqual(gate(ctxFor(fx, newer.prompt)), {});
 });
 
+// #5376 injected-value proof: fails when record-worktree reads process.env instead of the injected env
 test('AC5.1: a marker-less prompt naming a bound run is denied in every form', async () => {
   const fx = await fixture();
   const first = render(fx, 'first');

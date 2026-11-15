@@ -26,10 +26,42 @@ const {
 // Every non-dry reconcile() pass prunes the declined-learning store (#1399). The prune now anchors at
 // the pass's own cwd (#5376), but before that it resolved from process.cwd() to the main checkout
 // (#4360), which `cwd: <fixture>` does not move, and a regression to it would lock and rewrite the
-// maintainer's own store whenever the suite runs from a linked worktree. Stub the prune for the whole file; node --test
-// gives each file its own process, and the #4180 prune test (tests/reconcile-archive-residue.test.js) installs its own counting stub on top.
+// maintainer's own store whenever the suite runs from a linked worktree. Stub the prune for the whole
+// file; node --test gives each file its own process, and the #4180 prune test
+// (tests/reconcile-archive-residue.test.js) installs its own counting stub on top.
 const pruneDeclinesStub = () => 0;
 require('../plugin/bin/lib/declined-learning/store').pruneDeclines = pruneDeclinesStub;
+
+// #5376: an in-process `reconcile` verb call runs in this test process, so a runReconcile that stopped
+// handing reconcile() the injected cwd would run a real, non-dry pass (mirror fast-forward, archive, reap,
+// the detached background pass) against the runner's own checkout before any assertion could fail. Every
+// call into the module's reconcile() therefore goes through this guard, which throws before delegating
+// unless opts.cwd resolves to the cwd runHook is injecting for that call; a call with no expectation
+// recorded throws too. hooks.js looks reconcile up on the module object at call time, and
+// reconcileWithAsyncMerge (tests/helpers/reconcile-fixtures.js) reloads that module, so the guard is
+// (re)installed on whichever module object is current before every runHook and runReconcileVerbStubbed.
+const reconcileGuards = new WeakSet();
+let expectedReconcileCwd = null;
+let reconcileGuardFault = null;
+const realpathOrNull = (p) => { try { return fs.realpathSync(p); } catch { return null; } };
+function installReconcileGuard() {
+  const mod = require('../plugin/bin/lib/reconcile');
+  if (reconcileGuards.has(mod.reconcile)) return;
+  const delegate = mod.reconcile;
+  const guard = (opts, ...rest) => {
+    const got = opts && typeof opts.cwd === 'string' ? realpathOrNull(opts.cwd) : null;
+    if (expectedReconcileCwd === null || got !== expectedReconcileCwd) {
+      const fault = new Error(`#5376 reconcile guard: reconcile() was handed cwd ${JSON.stringify(opts && opts.cwd)}, `
+        + `expected the injected ${JSON.stringify(expectedReconcileCwd)}; refused before running a pass`);
+      reconcileGuardFault = reconcileGuardFault || fault;
+      throw fault;
+    }
+    return delegate(opts, ...rest);
+  };
+  reconcileGuards.add(guard);
+  mod.reconcile = guard;
+}
+installReconcileGuard();
 
 // #1130: never let an omitted cwd fall through to runCli's default, the
 // runner's own process.cwd() — that is the test runner's real working
@@ -47,9 +79,19 @@ const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-sandbox-'))
 // spreads last. The result is the whole environment the verb sees (#5376).
 const hookEnv = (env = {}) => ({ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', ...env });
 
-// In-process through hooks.js's run(argv, deps) (#5376).
+// In-process through hooks.js's run(argv, deps) (#5376). hooks.js catches a throw from reconcile() and
+// prints reconcile-threw with exit 0, so a guard refusal is re-thrown here rather than left to the caller.
 async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
-  const r = await runCli(HOOKS, args, { stdin: input, cwd, env: hookEnv(env) });
+  installReconcileGuard();
+  reconcileGuardFault = null;
+  expectedReconcileCwd = realpathOrNull(cwd);
+  let r;
+  try {
+    r = await runCli(HOOKS, args, { stdin: input, cwd, env: hookEnv(env) });
+  } finally {
+    expectedReconcileCwd = null;
+  }
+  if (reconcileGuardFault) throw reconcileGuardFault;
   return { code: r.code, stdout: r.stdout };
 }
 
@@ -397,7 +439,6 @@ test('reconcile verb: a missing/empty --checks value falls back to the ALL_CHECK
   assert.deepStrictEqual(JSON.parse(r.stdout).skipped, [{ check: 'all', reason: 'no-remote' }]);
 });
 
-// #5376 injected-value proof: fails when the verb reads process.cwd() instead of the injected cwd
 test('reconcile verb: --dry-run --json is accepted and never mutates on a no-remote fixture', async () => {
   const dir = noRemoteFixture('ct-recon-hook-');
   const r = await runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
@@ -408,6 +449,7 @@ test('reconcile verb: --dry-run --json is accepted and never mutates on a no-rem
 
 // #5376: the in-process verb call reaches the module-level stub above, never the real prune, and hands it the
 // injected cwd as its anchor. The counting stub is swapped back to that file stub, never the real one.
+// #5376 injected-value proof: fails when reconcile reads process.cwd() instead of the injected cwd
 test('an in-process reconcile verb call reaches the file\'s pruneDeclines stub, and a --dry-run call does not', async () => {
   const store = require('../plugin/bin/lib/declined-learning/store');
   let count = 0;
@@ -729,6 +771,7 @@ test('reconcile verb: compact default separates branch entries from archive-bran
 // background spawn stubbed (no GitHub, no real child), parsing each call's
 // JSON stdout. No `fresh: true`: a reload would drop the two stubs.
 async function runReconcileVerbStubbed(argvs, { reconcileResult = () => ({ skipped: [] }), spawnResult = { spawned: true, reason: 'spawned' }, cwd = HOOK_SANDBOX, env = {} } = {}) {
+  installReconcileGuard(); // so the restore below puts the guard back, never an unguarded reconcile()
   const reconcileMod = require('../plugin/bin/lib/reconcile');
   const spawnMod = require('../plugin/bin/lib/reconcile/background-spawn');
   const originalReconcile = reconcileMod.reconcile;

@@ -43,8 +43,8 @@ async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) 
 function runDirWithManifest(specs) {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-specstatus-'));
   // #790: --run must resolve under a real git checkout (see bin/hooks.js's
-  // resolveRunArg anchoring check) — every await runHook() call below passes
-  // { cwd: run } so the spawned process's cwd resolves this same checkout.
+  // resolveRunArg anchoring check) — every runHook() call below passes
+  // { cwd: run } so the in-process call's injected cwd resolves this same checkout.
   execFileSync('git', ['-C', project, 'init', '-q']);
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-16T210742-spec-1-2');
   fs.mkdirSync(run, { recursive: true });
