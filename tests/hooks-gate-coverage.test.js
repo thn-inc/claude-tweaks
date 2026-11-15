@@ -2087,13 +2087,17 @@ test('#4303: the cd after an assignment word that never closes is not followed',
 
   // From M, `cd W`: all write M/f.js for each `builtin`/`command` row (`X=1: command not found`,
   // `builtin: X=1: not a shell builtin`; the git row commits in M), since after those builtins an
-  // assignment word is the command name and the cd never runs. Before them, and after `!` or
+  // assignment word is the command name and the cd never runs. All write M/f.js for the `--`, chained
+  // (`command command`, `builtin command`, `time command`, `! command`) and quoted-name rows too;
+  // `command "x"=1` is no assignment word at all, so it pins only the reading base already had. Before them, and after `!` or
   // `time`, it is an assignment: all write W/f.js for `time X=1 cd W` and `! X=1 cd W`, and bash 3.2
   // and 5 for `X=1 command cd W` (zsh writes M/f.js, the #4455 gap).
   test('#4448: an assignment word after builtin or command is the command name, so the cd after it is not followed', () => {
     const copyAt = (dir) => [{ action: 'copy', file: path.resolve(dir, 'f.js') }];
     for (const cmd of ['command X=1 cd /wt; cp a f.js', 'command -p X=1 cd /wt; cp a f.js', 'command -p x=$(echo a b) cd /wt; cp a f.js',
-      'command x+=1 cd /wt; cp a f.js', 'builtin X=1 cd /wt; cp a f.js']) {
+      'command x+=1 cd /wt; cp a f.js', 'builtin X=1 cd /wt; cp a f.js', 'command -- X=1 cd /wt; cp a f.js',
+      'command command X=1 cd /wt; cp a f.js', 'builtin command X=1 cd /wt; cp a f.js', 'time command X=1 cd /wt; cp a f.js',
+      '! command X=1 cd /wt; cp a f.js', 'command "x"=1 cd /wt; cp a f.js']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), copyAt('/main'), cmd);
     }
     assert.deepStrictEqual(fileWriteTargets('command >g X=1 cd /wt; cp a f.js', '/main'), [{ action: 'write', file: path.resolve('/main/g') }, ...copyAt('/main')]);
