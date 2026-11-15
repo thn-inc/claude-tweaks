@@ -101,7 +101,7 @@ invoke the same procedure.
 
 1. Parse the user's overrides across every numbered item in the console
 2. For each item: apply (per `review-console.md`'s "On approval" step 1), skip (delete from staged/), or modify (re-edit the staged patch then apply); a Reference repairs row goes to Phase 4's `execution-and-verification.md` bullet instead, its verbs per the Reference repairs rows paragraph
-3. Auto-applied items the user wants reverted: `git revert {commit}` (one revert commit per item, to keep history clean)
+3. Auto-applied items the user wants reverted: `git revert {commit}` (one revert commit per item, to keep history clean), except an item whose disposition names a learned-skills PR (`applied ({commit}, learned-skills PR {url})`): its commit is on that PR's branch, not the run branch, so revert it by dropping it from that PR or by closing the PR, never by `git revert` on the run branch
 4. Cleanup items the user skipped: leave the target intact (spec/plan/worktree stays)
 5. Queue writes (`Q#`), Memory updates (`M#`), Upstream feedback (`U#`), and Reflection insights (`R#`) resolve via their own multiSelect chunking (`_shared/batched-item-drill.md` for `Q#`/`M#`/`R#`; `_shared/upstream-feedback-batch.md` for `U#`) — override is the one path where they resolve individually instead of by their Approve-all default; no per-item gate can be bulk-resolved by a shared toggle even here (Hard requirements below)
 6. Commit, then proceed to Phase 4's execution step

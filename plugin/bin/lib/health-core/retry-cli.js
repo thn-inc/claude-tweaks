@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('fs');
 const { enqueueRetry, dequeueRetry, shouldEscalate, ESCALATE_AFTER_ATTEMPTS } = require('./durable-state');
+const { DEFAULT_IO, resolveAgainst } = require('./io');
 
 // Shared retry-queue CLI command bodies for code-health, harness-health,
 // journey-health, and docs-health — each CLI calls makeRetryQueueCommands
@@ -8,11 +9,15 @@ const { enqueueRetry, dequeueRetry, shouldEscalate, ESCALATE_AFTER_ATTEMPTS } = 
 // cache.js) and wires the two returned functions to its `retry-queue
 // drain`/`retry-queue update` subcommands. One implementation instead of
 // four near-identical copies.
-function makeRetryQueueCommands({ readDurableState, writeDurableState }) {
+// Each command returns its exit code (drain: 0; update: 0 | 1 | 2) and writes
+// through the injected io — it never sets process.exitCode, so an in-process
+// caller owns the code. Omitted io = process stdout/stderr/cwd, as before.
+function makeRetryQueueCommands({ readDurableState, writeDurableState, io = DEFAULT_IO }) {
   function drain(args) {
-    const root = args.root || process.cwd();
+    const root = args.root || io.cwd();
     const { retryQueue } = readDurableState(root);
-    process.stdout.write(JSON.stringify(retryQueue.map((e) => e.payload), null, 2) + '\n');
+    io.stdout(JSON.stringify(retryQueue.map((e) => e.payload), null, 2) + '\n');
+    return 0;
   }
 
   // results: [{ fingerprint, payload, ok: true }] or
@@ -22,17 +27,21 @@ function makeRetryQueueCommands({ readDurableState, writeDurableState }) {
   // that just crossed the 3-strikes escalation threshold, for the calling
   // skill to file a {skill}:filing-failed issue for each.
   function update(args) {
-    const root = args.root || process.cwd();
+    const root = args.root || io.cwd();
     const resultsPath = args._[1];
     if (!resultsPath) {
-      process.stderr.write('usage: <cli>.js retry-queue update <results.json> [--root <dir>]\n');
+      io.stderr('usage: <cli>.js retry-queue update <results.json> [--root <dir>]\n');
       return 2;
     }
     let results;
+    const resolvedPath = resolveAgainst(io.cwd(), resultsPath);
     try {
-      results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+      results = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
     } catch (err) {
-      process.stderr.write(`retry-queue update: could not read or parse ${resultsPath}: ${err.message}\n`);
+      // A relative path is read against the injected cwd, but the message keeps the
+      // caller's spelling (the fs error text names the resolved path, so swap it back).
+      const detail = err.message.split(resolvedPath).join(resultsPath);
+      io.stderr(`retry-queue update: could not read or parse ${resultsPath}: ${detail}\n`);
       return 1;
     }
     // Declared here but reset to [] on every mutator invocation below: the
@@ -48,7 +57,7 @@ function makeRetryQueueCommands({ readDurableState, writeDurableState }) {
       let queue = current.retryQueue;
       for (const r of results) {
         if (!r || typeof r !== 'object') {
-          process.stderr.write('retry-queue update: skipping malformed result entry\n');
+          io.stderr('retry-queue update: skipping malformed result entry\n');
           continue;
         }
         if (r.ok) {
@@ -70,23 +79,23 @@ function makeRetryQueueCommands({ readDurableState, writeDurableState }) {
       return { ...current, retryQueue: queue };
     });
     if (!result.ok) {
-      process.stderr.write(`retry-queue update: health-state persistence failed after retries: ${result.error}\n`);
+      io.stderr(`retry-queue update: health-state persistence failed after retries: ${result.error}\n`);
       // The escalated list above was computed against the final (rejected)
       // mutator attempt's in-memory state, which never actually persisted —
       // printing it would tell the caller a 3rd-strike crossing happened
       // durably when it didn't. Print an empty result instead so the caller's
       // "non-empty output -> file a filing-failed issue" check doesn't act on
       // an escalation that was never actually saved to retry-queue.json.
-      process.stdout.write('[]\n');
+      io.stdout('[]\n');
       // A genuinely failed durable write must not exit 0 — a calling
       // shell/Routine checking $? would otherwise see success and never
       // surface the failure, silently losing this firing's retry-count
       // increments (matching the resultsPath/JSON-parse failure branches
       // above, which both already exit non-zero).
-      process.exitCode = 1;
-      return;
+      return 1;
     }
-    process.stdout.write(JSON.stringify(escalated, null, 2) + '\n');
+    io.stdout(JSON.stringify(escalated, null, 2) + '\n');
+    return 0;
   }
 
   return { drain, update };

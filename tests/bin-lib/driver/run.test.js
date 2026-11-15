@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, execFileSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
 const { VERDICT_STEPS, verdictMarker } = require('../../../plugin/bin/lib/dispatch/merge-verdict');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
@@ -17,7 +17,7 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS,
+  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
 } = require(path.join(LIB, 'driver', 'steps'));
 // Polls taken before the first one at or past the settle window (the harness clock moves 1 per now(), ms per sleep).
 const WINDOW_POLLS = CI_SETTLE_WINDOW_MS / CI_POLL_INTERVAL_MS + 1;
@@ -336,6 +336,11 @@ const POLICY = {
   'verify-suite-slots': 1,
   'auto-merge-max-lines': 200,
   'express-driver-review': 'beyond-express',
+  // #5224's lane bounds, in POLICY_KEYS order. express-driver-max-lines unset resolves as its Shape B
+  // default: auto-merge-max-lines' value with source 'default' (the policy reply below).
+  'express-driver-max-size': 'low',
+  'express-driver-max-key-files': 3,
+  'express-driver-max-lines': undefined,
 };
 
 function issueFor(n) {
@@ -361,6 +366,17 @@ const blobCall = (ref) => (c) => onGit('rev-parse', '--verify', '--quiet', '--en
 const refCall = (ref) => (c) => onGit('rev-parse', '--verify', '--quiet', '--end-of-options')(c) && gitSub(c)[4] === `origin/${ref}^{commit}`;
 // The scope file is on origin/{ref} with the same bytes as the worktree's copy.
 const scopeSame = (ref = 'main') => [blobCall(ref), `${SCOPE_SHA}\n`];
+
+// The index flag reads (#5415): `ls-files -v -z` and the `core.ignoreStat` read.
+const isFlagRead = onGit('--no-optional-locks', 'ls-files', '-v', '-z');
+const isFlagReadInWt = (c) => !!c && isFlagRead(c) && c.cwd === WT;
+const isIgnoreStatRead = onGit('config', '--bool', 'core.ignoreStat');
+const isIgnoreStatReadInWt = (c) => !!c && isIgnoreStatRead(c) && c.cwd === WT;
+const IGNORE_STAT_REFUSED = 'core.ignoreStat is true for the new worktree, so git would mark every path the driver stages assume-unchanged; the driver refuses such a worktree';
+const IGNORE_STAT_UNREADABLE = 'core.ignoreStat of the new worktree is unreadable';
+const UNFLAGGED_INDEX = 'H a.js\0';
+const NEW_FLAG_INDEX = 'H a.js\0S src/hidden.js\0';
+const ONE_NEW = 'skip-worktree or assume-unchanged newly set on 1 path(s) since the worktree was created: src/hidden.js';
 
 // The launcher's envelope for a worker that finished (worker.js's ENVELOPE_FIELDS).
 const ENVELOPE = Object.freeze({
@@ -408,6 +424,8 @@ function defaultScript(over, fx) {
     [(c) => c.kind === 'worker' && c.args[0].role === 'reviewer', (c) => ({ ...ENVELOPE, result: { findings: [] }, ...pick(over.reviewer, c) })],
     [on('worker'), (c) => ({ ...ENVELOPE, ...pick(over.worker, c) })],
     // Before the commit the worker's file is changed; after it the tree holds only the evidence files the review step wrote.
+    [isFlagRead, UNFLAGGED_INDEX],
+    [isIgnoreStatRead, exitOne],
     [onGit('--no-optional-locks', 'status'), (c) => (fx.committed ? fx.written(c.args[1]) + fx.dirty : ' M a.js\0')],
     [onGit('--no-optional-locks', 'diff'), ''],
     [onGit('check-ignore'), exitOne],
@@ -439,7 +457,9 @@ function defaultScript(over, fx) {
     [on('node', /hooks\.js$/, 'record-pr'), (c) => ({ code: 0, stderr: '', stdout: `claude-tweaks: PR #${c.args[4]} recorded for ${path.basename(c.args[3])}\n` })],
     [on('node', /set-config\.js$/), { code: 0, stdout: '', stderr: '' }],
     [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state: 'green', headRefOid: HEAD_SHA, headRunCount: 1 }) }],
-    [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, { value: policy[k], source: 'policy' }]))],
+    [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines' && policy[k] === undefined
+      ? { value: policy['auto-merge-max-lines'], source: 'default' }
+      : { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
     [on('eligibility'), (c) => ({ number: c.args[0].number, eligible: true, reasons: [], keyFiles: ['a.js'], ...pick(over.eligibility, c) })],
@@ -453,8 +473,13 @@ function describeArgs(args) {
   return args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
 }
 
+// The record's one reviewer answer (#5224): recorded in reviewerCalls, outside `calls` so the captured call
+// signatures stay as they were; over.reviewRequired replaces the real function.
+const { reviewRequired: realReviewRequired } = require(path.join(LIB, 'driver', 'review'));
+
 function harness(over = {}) {
   const calls = [];
+  const reviewerCalls = [];
   const out = [];
   const err = [];
   const files = {};
@@ -494,10 +519,12 @@ function harness(over = {}) {
     git: (args, opts = {}) => dispatch('git', args, opts.cwd, undefined, undefined, { remoteWrite: opts.remoteWrite }),
     node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, opts.env, opts.timeout),
     resolvePolicy: (keys) => dispatch('policy', keys),
+    resolvePolicyCore: (opts, coreDeps) => dispatch('policyCore', opts.keys, coreDeps.cwd(), coreDeps.env, undefined, { runDir: opts.runDir }),
     evaluateRecordEligibility: (issue, opts) => dispatch('eligibility', [issue, opts]),
     fetchNativeDependencies: (opts) => dispatch('native-deps', [opts]),
     fetchLinkedPRs: (opts) => dispatch('linked-prs', [opts]),
     evaluateAdmission: (input) => dispatch('admission', [input]),
+    reviewRequired: (opts) => { reviewerCalls.push(opts); return (over.reviewRequired || realReviewRequired)(opts); },
     launchWorker: (opts, d) => dispatch('worker', [opts, d]),
     resolveRunDir: (opts) => dispatch('resolveRunDir', [opts]),
     lstatType: (p) => dispatch('lstatType', [p]),
@@ -539,7 +566,7 @@ function harness(over = {}) {
   const lines = () => out.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const writes = () => calls.filter((c) => ['writeFile', 'appendFile', 'mkdirSync', 'resolveRunDir'].includes(c.kind));
   return {
-    deps, calls, out, err, files, signals, lines, writes, fx,
+    deps, calls, out, err, files, signals, lines, writes, fx, reviewerCalls,
     get probes() { return state.probes; },
   };
 }
@@ -663,7 +690,10 @@ test('eligibility runs with the relaxed ceremony gate and the policy values', as
   await run(['#7'], h.deps);
   const [issue, opts] = h.calls.find((c) => c.kind === 'eligibility').args;
   assert.deepEqual(issue, issueFor(7));
-  assert.deepEqual(opts, { enabled: true, allowAbsentCeremony: true, integrationModel: 'local-merge', sensitivePaths: ['plugin/bin/**', 'docs/**'] });
+  assert.deepStrictEqual(opts, {
+    enabled: true, allowAbsentCeremony: true, integrationModel: 'local-merge', sensitivePaths: ['plugin/bin/**', 'docs/**'],
+    sizeCeiling: 'low', maxKeyFiles: 3,
+  });
 });
 
 test('AC1.3: failed fetch refuses with the fetch error', async () => {
@@ -719,9 +749,10 @@ test('admission reads blockers and linked PRs from the shared repo and passes th
   // Both GraphQL reads run under the batch bound (deps.ghBatch), never the single-call gh.
   assert.deepEqual(h.calls.filter((c) => c.kind === 'ghBatch').map((c) => c.args.at(-1)), ['query=blockers', 'query=linked']);
   assert.equal(h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'api').length, 0);
-  assert.deepEqual(h.calls.find((c) => c.kind === 'admission').args[0], {
+  assert.deepStrictEqual(h.calls.find((c) => c.kind === 'admission').args[0], {
     number: 7, state: 'OPEN', labels: issueFor(7).labels,
     openBlockerRefs: openBlockerRefs(entry), openLinkedPRs: [12], routing: 'on', driverEscalated: false,
+    keyFiles: ['a.js'], bounds: { sizeCeiling: 'low', maxKeyFiles: 3 }, reviewerOn: false,
   });
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
 });
@@ -1584,6 +1615,528 @@ test('a worker that cannot complete stops at worker; a bad ceiling fails before 
   }
 });
 
+// HEAD reads on the implementer launch (#5414): the one before it and the one after it. The harness
+// answers every HEAD read with HEAD_SHA, so nthCall(isHeadRead, 2, ...) makes the read after the launch differ.
+const isHeadRead = onGit('rev-parse', '--verify', '--end-of-options', 'HEAD');
+const OTHER_SHA = 'e'.repeat(40);
+// The n-th call `match` accepts gets `reply`; every other call falls through to the later entries.
+const nthCall = (match, n, reply) => { let seen = 0; return [(c) => match(c) && (seen += 1) === n, reply]; };
+const UNREADABLE_BEFORE = 'HEAD of the worktree is unreadable before the worker launch';
+const unreadableGit = () => Object.assign(new Error('Command failed'), { stderr: 'fatal: @evil fixes #3\n' });
+const movedDetail = (from, to) => `the worker moved HEAD from ${from} to ${to}`;
+const sig = (c) => (c.kind === 'git' ? `git ${gitSub(c)[0]}` : c.kind);
+const isImplementerLaunch = (c) => !!c && c.kind === 'worker' && c.args[0].role === 'implementer';
+const isHeadReadInWt = (c) => !!c && isHeadRead(c) && c.cwd === WT;
+// A HEAD read on either side of an implementer launch: the reads #5414 added.
+const withoutFlagReads = (cs) => cs.filter((c) => !isFlagReadInWt(c) && !isIgnoreStatReadInWt(c));
+const isLaunchSideRead = (calls, i) => isHeadReadInWt(calls[i]) && (isImplementerLaunch(calls[i - 1]) || isImplementerLaunch(calls[i + 1]));
+
+test('AC1.1, AC1.2 (#5414): a worker launch after which HEAD moved stops at worker', async () => {
+  const h = harness({ script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['worker', 'fail', 'pre-push']);
+  assert.equal(final.stop.detail, movedDetail(HEAD_SHA, OTHER_SHA));
+  assert.equal(commitGit(h).length, 0);
+  assert.equal(calls(h, 'node', /verify\.js$/).length, 0);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('(#5414) an interrupt during the implementer launch that also moved HEAD is reported as the interrupt', async () => {
+  let h = null;
+  h = harness({ script: [[isImplementerLaunch, () => { h.signals[0]('SIGTERM'); return ENVELOPE; }], nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(h.lines().slice(-2).map((l) => [l.step, l.status]), [['worker', 'fail'], [FINAL_STEP, 'fail']]);
+  assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
+  assert.ok(h.lines().every((l) => !String(l.detail ?? '').includes('moved HEAD')));
+});
+
+test('AC2.1 (#5414): a reset to an earlier commit stops the same way', async () => {
+  const h = harness({ script: [nthCall(isHeadRead, 1, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['worker', 'fail', 'pre-push']);
+  assert.equal(final.stop.detail, movedDetail(OTHER_SHA, HEAD_SHA));
+  assert.equal(commitGit(h).length, 0);
+  assert.equal(calls(h, 'node', /verify\.js$/).length, 0);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('AC4.1, AC4.2 (#5414): HEAD unreadable before the launch stops with no worker launched', async () => {
+  const h = harness({ script: [nthCall(isHeadRead, 1, unreadableGit())] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['worker', 'fail', 'pre-push']);
+  assert.equal(final.stop.detail, UNREADABLE_BEFORE);
+  assert.equal(calls(h, 'worker').length, 0);
+});
+
+test('AC4.1 (#5414): an unreadable HEAD after the launch names only the earlier sha', async () => {
+  const h = harness({ script: [nthCall(isHeadRead, 2, unreadableGit())] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], ['worker', 'fail']);
+  assert.equal(final.stop.detail, `HEAD of the worktree is unreadable after the worker launch (it was ${HEAD_SHA})`);
+  assert.ok(!final.stop.detail.includes('@evil') && !final.stop.detail.includes('#3'));
+  assert.equal(calls(h, 'worker').length, 1);
+  assert.equal(final.stop.class, 'pre-push');
+  assert.equal(commitGit(h).length, 0);
+  assert.equal(calls(h, 'node', /verify\.js$/).length, 0);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('(#5414) a launch that returned no envelope, HEAD unchanged, stops at worker', async () => {
+  const h = harness({ script: [[on('worker'), null]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.detail], ['worker', 'fail', 'worker launch returned no envelope']);
+});
+
+test('(#5414) a worker result with an unknown status, HEAD unchanged, stops at worker', async () => {
+  const h = harness({ worker: { result: { status: 'weird', title: 't', summary: 's' } } });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], ['worker', 'fail']);
+  assert.ok(final.stop.detail.startsWith('worker result status is neither done nor cannot-complete'), final.stop.detail);
+});
+
+test('(#5414) a launcher throw with an unreadable HEAD after it names only the earlier sha', async () => {
+  const h = harness({ script: [[on('worker'), new Error('launch blew up')], nthCall(isHeadRead, 2, unreadableGit())] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], ['worker', 'fail']);
+  assert.equal(final.stop.detail, `HEAD of the worktree is unreadable after the worker launch (it was ${HEAD_SHA})`);
+  assert.ok(!final.stop.detail.includes('@evil') && !final.stop.detail.includes('#3'));
+});
+
+test('(#5414) a HEAD read that is not a full sha is unreadable', async () => {
+  for (const bad of ['abc123\n', `${HEAD_SHA.toUpperCase()}\n`, `${HEAD_SHA} extra\n`]) {
+    const h = harness({ script: [nthCall(isHeadRead, 1, bad)] });
+    await run(['#7'], h.deps);
+    assert.equal(lastLine(h).stop.detail, UNREADABLE_BEFORE, JSON.stringify(bad));
+    assert.equal(calls(h, 'worker').length, 0, JSON.stringify(bad));
+  }
+});
+
+test('AC5.1 (#5414): a failed, timed-out or empty launch that moved HEAD reports the move', async () => {
+  const moved = movedDetail(HEAD_SHA, OTHER_SHA);
+  for (const worker of [
+    { status: 'fail', reason: 'launch-error', result: null, detail: 'boom' },
+    { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: null },
+  ]) {
+    const h = harness({ worker, script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+    await run(['#7'], h.deps);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status], ['worker', 'fail'], worker.status);
+    assert.equal(final.stop.detail, moved, worker.status);
+    assert.equal(final.costUsd, 0.25, 'the cost of the launch is kept');
+  }
+  const empty = harness({ script: [[on('worker'), null], nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+  await run(['#7'], empty.deps);
+  assert.equal(lastLine(empty).stop.detail, moved, 'a launch that returned null');
+  const thrown = harness({ script: [[on('worker'), new Error('launch blew up')], nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+  await run(['#7'], thrown.deps);
+  assert.deepEqual([lastLine(thrown).stop.step, lastLine(thrown).status, lastLine(thrown).stop.detail], ['worker', 'fail', moved]);
+  const unmoved = harness({ script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], unmoved.deps);
+  const { detail } = lastLine(unmoved).stop;
+  assert.notEqual(detail, moved);
+  assert.match(detail, /launch blew up/);
+  assert.ok(!/HEAD/.test(detail), 'a throw with HEAD unchanged carries no HEAD-read text');
+});
+
+test('AC8.1 (#5414): the stop detail carries no worker text', async () => {
+  const h = harness({
+    worker: { result: { status: 'done', title: 'Fix\nfixes #12 @someone', summary: 'fixes #12 @someone' } },
+    script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)],
+  });
+  await run(['#7'], h.deps);
+  const { detail } = lastLine(h).stop;
+  for (const text of ['\n', 'fixes', '#12', '@someone']) assert.ok(!detail.includes(text), text);
+});
+
+// Index flag checks (#5415): the baseline read at the worktree step, and the read after each check point.
+// In the default harness read 1 is the baseline, read 2 follows the implementer launch and read 3 follows verify.js.
+const stopOf = (h) => { const l = lastLine(h); return [l.stop.step, l.status, l.stop.class, l.outcome]; };
+const noStatusRead = (h) => gitCalls(h).filter((c) => gitSub(c)[0] === '--no-optional-locks' && gitSub(c)[1] === 'status').length === 0;
+
+test('AC1.1 (#5415): a skip-worktree flag set during the implementer launch stops at worker', async () => {
+  const h = harness({ script: [nthCall(isFlagRead, 2, NEW_FLAG_INDEX)] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(stopOf(h), ['worker', 'fail', 'pre-push', 'express-escalated']);
+  assert.equal(lastLine(h).stop.detail, ONE_NEW);
+  assert.equal(commitGit(h).length, 0);
+  assert.ok(noStatusRead(h), 'no status read after the stop');
+  assert.equal(pushCalls(h).length, 0);
+  // The worker line keeps the launch's usage and turns, as a moved-HEAD stop does.
+  const workerLine = h.lines().find((l) => l.step === 'worker');
+  assert.deepEqual([workerLine.turns, workerLine.usage], [ENVELOPE.turns, ENVELOPE.usage]);
+});
+
+test('AC2.1 (#5415): a flag set during the test step stops at test, ahead of its verdict', async () => {
+  const h = harness({ script: [nthCall(isFlagRead, 3, NEW_FLAG_INDEX)] });
+  await run(['#7'], h.deps);
+  const [step, status, klass] = stopOf(h);
+  assert.deepEqual([step, status, klass], ['test', 'fail', 'pre-push']);
+  assert.equal(lastLine(h).stop.detail, ONE_NEW);
+  assert.equal(checkCalls(h).length, 0);
+  assert.equal(pushCalls(h).length, 0);
+  const red = harness({ script: [nthCall(isFlagRead, 3, NEW_FLAG_INDEX), [on('node', /verify\.js$/), { code: 1, stdout: '', stderr: '' }]] });
+  await run(['#7'], red.deps);
+  assert.deepEqual(stopOf(red).slice(0, 3), ['test', 'fail', 'pre-push']);
+  assert.equal(lastLine(red).stop.detail, ONE_NEW);
+});
+
+test('AC4.1 (#5415): an assume-unchanged flag stops the same way', async () => {
+  for (const index of ['H a.js\0h src/hidden.js\0', 'H a.js\0s src/hidden.js\0']) {
+    const h = harness({ script: [nthCall(isFlagRead, 2, index)] });
+    await run(['#7'], h.deps);
+    assert.deepEqual(stopOf(h), ['worker', 'fail', 'pre-push', 'express-escalated'], JSON.stringify(index));
+    assert.equal(lastLine(h).stop.detail, ONE_NEW, JSON.stringify(index));
+    assert.equal(commitGit(h).length, 0);
+    assert.ok(noStatusRead(h), 'no status read after the stop');
+    assert.equal(pushCalls(h).length, 0);
+  }
+});
+
+test('AC5.1 (#5415): flags already in the baseline never stop the record', async () => {
+  const SPARSE = 'H a.js\0S sparse/x.js\0S sparse/y.js\0';
+  const every = harness({ script: [[isFlagRead, SPARSE]] });
+  assert.equal(await run(['#7'], every.deps), 0);
+  assert.deepEqual(every.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+  assert.equal(pushCalls(every).length, 1);
+  let reads = 0;
+  const replies = [SPARSE, 'H a.js\0H sparse/x.js\0s sparse/y.js\0', SPARSE];
+  const moved = harness({ script: [[isFlagRead, () => replies[Math.min(reads++, 2)]]] });
+  assert.equal(await run(['#7'], moved.deps), 0);
+  assert.deepEqual(moved.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+  assert.equal(pushCalls(moved).length, 1);
+});
+
+test('AC6.1 (#5415): an unreadable baseline stops at worktree', async () => {
+  const h = harness({ script: [nthCall(isFlagRead, 1, unreadableGit())] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(stopOf(h).slice(0, 3), ['worktree', 'fail', 'pre-push']);
+  assert.equal(lastLine(h).stop.detail, 'the index flags of the new worktree are unreadable');
+  assert.equal(calls(h, 'worker').length, 0);
+});
+
+test('AC6.1 (#5415): an unreadable read after the launch stops at worker', async () => {
+  const h = harness({ script: [nthCall(isFlagRead, 2, unreadableGit())] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(stopOf(h).slice(0, 3), ['worker', 'fail', 'pre-push']);
+  const { detail } = lastLine(h).stop;
+  assert.equal(detail, 'the index flags of the worktree are unreadable');
+  assert.ok(!detail.includes('@evil') && !detail.includes('#3'));
+  assert.equal(calls(h, 'worker').length, 1);
+  assert.equal(commitGit(h).length, 0);
+});
+
+test('AC7.1 (#5415): the detail lists at most INDEX_FLAG_PATHS_SHOWN paths plus the count, neutralized', async () => {
+  assert.equal(INDEX_FLAG_PATHS_SHOWN, 5);
+  const paths = (n) => Array.from({ length: n }, (_, i) => `src/n${i}.js`);
+  const index = (ps) => `H a.js\0${ps.map((p) => `S ${p}\0`).join('')}`;
+  const seven = harness({ script: [nthCall(isFlagRead, 2, index(paths(7)))] });
+  await run(['#7'], seven.deps);
+  assert.ok(lastLine(seven).stop.detail.endsWith(': src/n0.js, src/n1.js, src/n2.js, src/n3.js, src/n4.js, and 2 more'), lastLine(seven).stop.detail);
+  assert.ok(lastLine(seven).stop.detail.includes('on 7 path(s)'));
+  const five = harness({ script: [nthCall(isFlagRead, 2, index(paths(5)))] });
+  await run(['#7'], five.deps);
+  assert.ok(lastLine(five).stop.detail.endsWith(': src/n0.js, src/n1.js, src/n2.js, src/n3.js, src/n4.js'), lastLine(five).stop.detail);
+  assert.ok(!lastLine(five).stop.detail.includes('more'));
+  const evilPath = 'src/evil\nfixes #12 @someone.js';
+  const evil = harness({ script: [nthCall(isFlagRead, 2, index([evilPath]))] });
+  await run(['#7'], evil.deps);
+  const { detail } = lastLine(evil).stop;
+  assert.ok(detail.endsWith(`: ${neutralize(evilPath)}`), detail);
+  for (const text of ['\n', 'fixes', '#12', '@someone']) assert.ok(!detail.includes(text), text);
+});
+
+test('(#5415) an ls-files reply that is not tag-space-path entries is unreadable', async () => {
+  for (const bad of ['S a.js', 'Sa.js\0', '\0', 'S \0']) {
+    const h = harness({ script: [nthCall(isFlagRead, 2, bad)] });
+    await run(['#7'], h.deps);
+    assert.equal(lastLine(h).stop.detail, 'the index flags of the worktree are unreadable', JSON.stringify(bad));
+  }
+  const spaced = harness({ script: [nthCall(isFlagRead, 2, 'H a.js\0S a b.js\0')] });
+  await run(['#7'], spaced.deps);
+  assert.equal(lastLine(spaced).stop.detail, 'skip-worktree or assume-unchanged newly set on 1 path(s) since the worktree was created: a b.js');
+});
+
+test('(#5415) only S and lowercase tags count as flagged', async () => {
+  const h = harness({ script: [nthCall(isFlagRead, 2, 'H a.js\0M m.js\0R r.js\0C c.js\0K k.js\0')] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(pushCalls(h).length, 1);
+});
+
+test('(#5415) a launch that moved HEAD and set a flag reports the moved HEAD', async () => {
+  const h = harness({ script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`), nthCall(isFlagRead, 2, NEW_FLAG_INDEX)] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).stop.detail, movedDetail(HEAD_SHA, OTHER_SHA));
+  assert.equal(h.calls.filter(isFlagReadInWt).length, 1, 'the baseline only');
+});
+
+test('(#5415) a launcher throw after which a flag is set reports the flag', async () => {
+  const h = harness({ script: [[on('worker'), new Error('launch blew up')], nthCall(isFlagRead, 2, NEW_FLAG_INDEX)] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(stopOf(h).slice(0, 2), ['worker', 'fail']);
+  assert.equal(lastLine(h).stop.detail, ONE_NEW);
+});
+
+test('(#5415) an interrupt during a launch that also set a flag is reported as the interrupt', async () => {
+  let h = null;
+  h = harness({ script: [[isImplementerLaunch, () => { h.signals[0]('SIGTERM'); return ENVELOPE; }], nthCall(isFlagRead, 2, NEW_FLAG_INDEX)] });
+  await run(['#7'], h.deps);
+  assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
+  assert.ok(h.lines().every((l) => !String(l.detail ?? '').includes('newly set')));
+});
+
+test('(#5415) a flag set between check points is caught at the next one', async () => {
+  let h = null;
+  h = harness({ script: [[isFlagRead, () => (h.fx.committed ? NEW_FLAG_INDEX : UNFLAGGED_INDEX)]] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(stopOf(h).slice(0, 2), ['test', 'fail']);
+  assert.equal(lastLine(h).stop.detail, ONE_NEW);
+  assert.equal(calls(h, 'node', /verify\.js$/).length, 1);
+});
+
+test('(#5415) a worktree with core.ignoreStat true is refused at worktree', async () => {
+  const h = harness({ script: [[isIgnoreStatRead, 'true\n']] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(stopOf(h).slice(0, 3), ['worktree', 'fail', 'pre-push']);
+  assert.equal(lastLine(h).stop.detail, IGNORE_STAT_REFUSED);
+  assert.equal(h.calls.filter(isIgnoreStatReadInWt).length, 1);
+  assert.equal(h.calls.filter(isFlagReadInWt).length, 0, 'refused before the baseline read');
+  assert.equal(calls(h, 'worker').length, 0);
+});
+
+test('(#5415) core.ignoreStat false or unset passes', async () => {
+  const off = harness({ script: [[isIgnoreStatRead, 'false\n']] });
+  assert.equal(await run(['#7'], off.deps), 0);
+  assert.equal(pushCalls(off).length, 1);
+  const unset = harness();
+  assert.equal(await run(['#7'], unset.deps), 0);
+  assert.equal(unset.calls.filter(isIgnoreStatReadInWt).length, 1);
+});
+
+test('(#5415) a core.ignoreStat read that fails other than not-set stops at worktree', async () => {
+  const bad = Object.assign(new Error('Command failed'), { status: 128, stderr: "fatal: bad boolean config value '@evil fixes #3' for 'core.ignorestat'\n" });
+  for (const reply of [bad, '', 'maybe\n']) {
+    const h = harness({ script: [[isIgnoreStatRead, reply]] });
+    await run(['#7'], h.deps);
+    assert.deepEqual(stopOf(h).slice(0, 3), ['worktree', 'fail', 'pre-push']);
+    const { detail } = lastLine(h).stop;
+    assert.equal(detail, IGNORE_STAT_UNREADABLE);
+    assert.ok(!detail.includes('@evil') && !detail.includes('#3'));
+    assert.equal(h.calls.filter(isFlagReadInWt).length, 0);
+    assert.equal(calls(h, 'worker').length, 0);
+  }
+});
+
+test('AC8.1 (#5415): the happy path reads core.ignoreStat once and the flags at the baseline and after each check point', async () => {
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const at = (pred) => h.calls.findIndex(pred);
+  const isVerify = (c) => c.kind === 'node' && /verify\.js$/.test(c.args[0]);
+  assert.equal(h.calls.filter(isIgnoreStatReadInWt).length, 1);
+  assert.equal(h.calls.filter(isFlagReadInWt).length, 3, 'baseline, after the launch, after verify.js');
+  const record = at((c) => c.kind === 'node' && /hooks\.js$/.test(c.args[0]) && c.args[1] === 'record-worktree');
+  assert.ok(isIgnoreStatReadInWt(h.calls[record + 1]) && isFlagReadInWt(h.calls[record + 2]), 'the refusal read, then the baseline, right after record-worktree');
+  const launch = at(isImplementerLaunch);
+  assert.ok(isHeadReadInWt(h.calls[launch + 1]) && isFlagReadInWt(h.calls[launch + 2]), 'a flag read right after the post-launch HEAD read');
+  assert.ok(isFlagReadInWt(h.calls[at(isVerify) + 1]), 'a flag read right after verify.js');
+  assert.deepEqual(h.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+  assert.deepEqual(withoutFlagReads(h.calls).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_PLAIN);
+  assert.deepEqual(h.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_PLAIN);
+
+  // The review step's run adds the reads after the evidence runs: seven flag reads, one core.ignoreStat read.
+  const fix = fixRig();
+  assert.equal(await run(['#7'], fix.deps), 0);
+  const fc = fix.calls;
+  const fat = (pred) => fc.findIndex(pred);
+  assert.equal(fc.filter(isIgnoreStatReadInWt).length, 1);
+  const frecord = fat((c) => c.kind === 'node' && /hooks\.js$/.test(c.args[0]) && c.args[1] === 'record-worktree');
+  assert.ok(isIgnoreStatReadInWt(fc[frecord + 1]) && isFlagReadInWt(fc[frecord + 2]), 'the refusal read, then the baseline, right after record-worktree');
+  const reads = fc.flatMap((c, i) => (isFlagReadInWt(c) ? [i] : []));
+  assert.equal(reads.length, 7, 'baseline, launch, verify, reviewer run, fix launch, fix verify, direct run');
+  const launches = fc.flatMap((c, i) => (isImplementerLaunch(c) ? [i] : []));
+  const verifies = fc.flatMap((c, i) => (c.kind === 'node' && /verify\.js$/.test(c.args[0]) ? [i] : []));
+  assert.equal(launches.length, 2);
+  assert.equal(verifies.length, 2);
+  assert.equal(reads[0], frecord + 2);
+  assert.ok(isHeadReadInWt(fc[launches[0] + 1]) && reads[1] === launches[0] + 2, "read 2 right after the first launch's HEAD read");
+  assert.equal(reads[2], verifies[0] + 1, 'read 3 right after the first verify.js');
+  assert.ok(isHeadReadInWt(fc[launches[1] + 1]) && reads[4] === launches[1] + 2, "read 5 right after the fix launch's HEAD read");
+  assert.equal(reads[5], verifies[1] + 1, 'read 6 right after the second verify.js');
+  for (const n of [3, 6]) {
+    // After an evidence run: the run's spawn, no git call, the flag read, then the tree check's status read.
+    const i = reads[n];
+    const spawn = fc.map((c, k) => (k < i && c.kind === 'runner' ? k : -1)).filter((k) => k >= 0).at(-1);
+    assert.ok(spawn !== undefined, `read ${n + 1} follows an evidence run`);
+    assert.ok(!fc.slice(spawn + 1, i).some((c) => c.kind === 'git'), `no git call between the run and read ${n + 1}`);
+    assert.ok(fc[i + 1].kind === 'git' && fc[i + 1].args.includes('status'), `a status read follows read ${n + 1}`);
+  }
+  assert.deepEqual(withoutFlagReads(fc).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_FIX);
+  assert.deepEqual(fix.lines().map((l) => [l.step, l.status]), BASE_LINES_FIX);
+  assert.deepEqual(fix.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_FIX);
+});
+
+// A scratch repo whose git ignores the developer's own config, so no config key can reach the fixture.
+function withRealRepo(body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'index-flags-'));
+  try {
+    const empty = path.join(dir, 'empty-gitconfig');
+    fs.writeFileSync(empty, '');
+    const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: empty };
+    // An inherited repo pointer would send git init, add and update-index to the outer repository.
+    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[key];
+    const repo = path.join(dir, 'repo');
+    fs.mkdirSync(repo);
+    const git = (...args) => {
+      const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true, env });
+      assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+    };
+    git('init', '-q');
+    return body({ repo, env, git });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('(#5415) readIndexFlags reads real git\'s tags', () => {
+  withRealRepo(({ repo, env, git }) => {
+    const names = ['plain.js', 'skip.js', 'assume.js', 'both.js'];
+    if (process.platform !== 'win32') names.push('new\nline.js');
+    for (const n of names) fs.writeFileSync(path.join(repo, n), 'x\n');
+    git('add', '--', ...names);
+    git('update-index', '--skip-worktree', '--', 'skip.js');
+    git('update-index', '--assume-unchanged', '--', 'assume.js');
+    git('update-index', '--skip-worktree', '--assume-unchanged', '--', 'both.js');
+    if (process.platform !== 'win32') git('update-index', '--skip-worktree', '--', 'new\nline.js');
+    const deps = { git: (args, o) => spawnSync('git', args, { cwd: o.cwd, encoding: 'utf8', windowsHide: true, env }).stdout };
+    const expected = ['assume.js', 'both.js', 'skip.js'];
+    if (process.platform !== 'win32') expected.push('new\nline.js');
+    assert.deepEqual([...readIndexFlags(deps, repo)].sort(), expected.sort());
+  });
+});
+
+test('(#5415) ignoreStatStop reads real git\'s core.ignoreStat', () => {
+  withRealRepo(({ repo, env, git }) => {
+    const deps = { git: (args, o) => execFileSync('git', args, { cwd: o.cwd, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env }) };
+    assert.equal(ignoreStatStop(deps, repo), null, 'unset (exit 1)');
+    git('config', 'core.ignoreStat', 'false');
+    assert.equal(ignoreStatStop(deps, repo), null);
+    git('config', 'core.ignoreStat', 'yes');
+    assert.deepEqual(ignoreStatStop(deps, repo), { status: 'fail', detail: IGNORE_STAT_REFUSED });
+    git('config', 'core.ignoreStat', 'bogus');
+    assert.deepEqual(ignoreStatStop(deps, repo), { status: 'fail', detail: IGNORE_STAT_UNREADABLE });
+  });
+});
+
+// The lines and calls of the plain and fix-round runs before #5414's HEAD reads were added, captured on the
+// unmodified code. The AC7.1 test compares them with the new reads removed.
+const BASE_CALLS_PLAIN = [
+  'policy', 'git symbolic-ref', 'gh', 'eligibility', 'native-deps', 'linked-prs', 'admission',
+  'node', 'resolveRunDir', 'node', 'appendFile', 'appendFile', 'appendFile', 'appendFile',
+  'appendFile', 'appendFile', 'lstatType', 'git rev-parse', 'git ls-remote', 'readdir',
+  'git fetch', 'git worktree', 'git fetch', 'git merge', 'node', 'appendFile', 'mkdirSync',
+  'worker', 'appendFile', 'git --no-optional-locks', 'writeFile', 'git --literal-pathspecs',
+  'git commit', 'appendFile', 'lstatType', 'lstatType', 'git rev-parse', 'git rev-parse',
+  'mkdirSync', 'node', 'appendFile', 'writeFile', 'node', 'appendFile', 'git rev-parse',
+  'git push', 'appendFile', 'writeFile', 'node', 'ghCreate', 'appendFile', 'node', 'appendFile',
+  'node', 'appendFile', 'writeFile', 'node', 'appendFile', 'node', 'node', 'node', 'node', 'node',
+  'node', 'appendFile', 'appendFile', 'appendFile', 'appendFile',
+];
+const BASE_CALLS_FIX = [
+  'policy', 'git symbolic-ref', 'gh', 'eligibility', 'native-deps', 'linked-prs', 'admission',
+  'node', 'resolveRunDir', 'node', 'appendFile', 'appendFile', 'appendFile', 'appendFile',
+  'appendFile', 'appendFile', 'lstatType', 'git rev-parse', 'git ls-remote', 'readdir',
+  'git fetch', 'git worktree', 'git fetch', 'git merge', 'node', 'appendFile', 'mkdirSync',
+  'worker', 'appendFile', 'git --no-optional-locks', 'writeFile', 'git --literal-pathspecs',
+  'git commit', 'appendFile', 'lstatType', 'lstatType', 'git rev-parse', 'git rev-parse',
+  'mkdirSync', 'node', 'appendFile', 'writeFile', 'node', 'appendFile', 'git --no-optional-locks',
+  'mkdirSync', 'worker', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'git --no-optional-locks',
+  'git check-ignore', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'mkdirSync', 'lstatType', 'mkdirSync',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'writeFileExclusive', 'lstatType', 'lstatType', 'lstatType',
+  'mkdirSync', 'mkdirSync', 'runner', 'readFile', 'git --no-optional-locks',
+  'git --no-optional-locks', 'git rev-parse', 'mkdirSync', 'worker', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'rmFile', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'mkdirSync',
+  'lstatType', 'mkdirSync', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
+  'lstatType', 'lstatType', 'lstatType', 'lstatType', 'writeFileExclusive',
+  'git --no-optional-locks', 'writeFile', 'git --literal-pathspecs', 'git commit',
+  'git --no-optional-locks', 'lstatType', 'lstatType', 'git rev-parse', 'git rev-parse',
+  'mkdirSync', 'node', 'lstatType', 'lstatType', 'lstatType', 'readFile', 'lstatType', 'mkdirSync',
+  'mkdirSync', 'runner', 'readFile', 'git --no-optional-locks', 'git --no-optional-locks',
+  'writeFile', 'node', 'appendFile', 'git rev-parse', 'git push', 'appendFile', 'writeFile',
+  'node', 'ghCreate', 'appendFile', 'node', 'appendFile', 'node', 'appendFile', 'writeFile',
+  'node', 'appendFile', 'node', 'node', 'node', 'node', 'node', 'node', 'appendFile', 'appendFile',
+  'appendFile', 'appendFile',
+];
+const BASE_LINES_PLAIN = [
+  ['policy', 'ok'], ['fetch', 'ok'], ['eligibility', 'ok'], ['admission', 'ok'], ['claim', 'ok'],
+  ['run-dir', 'ok'], ['worktree', 'ok'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'],
+  ['check', 'ok'], ['push', 'ok'], ['pr', 'ok'], ['record-pr', 'ok'], ['set-config', 'ok'],
+  ['summary', 'ok'], ['ci', 'ok'], ['merge-entry', 'stop'], ['merge', 'ok'], ['final', 'ok'],
+];
+const BASE_LINES_FIX = [
+  ['policy', 'ok'], ['fetch', 'ok'], ['eligibility', 'ok'], ['admission', 'ok'], ['claim', 'ok'],
+  ['run-dir', 'ok'], ['worktree', 'ok'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'],
+  ['check', 'ok'], ['review', 'ok'], ['push', 'ok'], ['pr', 'ok'], ['record-pr', 'ok'],
+  ['set-config', 'ok'], ['summary', 'ok'], ['ci', 'ok'], ['merge-entry', 'stop'], ['merge', 'ok'],
+  ['final', 'ok'],
+];
+
+// The sorted key set of every event line of the same two runs, captured on the same unmodified code: "event lines
+// unchanged" then catches an added or removed field without pinning volatile values.
+const K0 = ['ms', 'record', 'run', 'status', 'step', 'ts'];
+const K1 = ['denials', 'ms', 'record', 'run', 'status', 'step', 'ts', 'turns', 'usage'];
+const K2 = ['detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
+const K3 = ['ciWaitMs', 'detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
+const K4 = ['ci', 'costUsd', 'denialCount', 'merge', 'ms', 'msTotal', 'msWithoutCi', 'outcome', 'pr', 'record', 'run', 'settle', 'settleFailed', 'settleRow', 'status', 'step', 'stop', 'ts', 'turns'];
+const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reproduced', 'returned', 'run', 'status', 'step', 'ts', 'turns', 'usage'];
+const BASE_KEYS_PLAIN = [
+  K0, K0, K0, K0, K0, K0,
+  K0, K1, K2, K2, K0, K0,
+  K2, K0, K0, K0, K3, K2,
+  K2, K4,
+];
+const BASE_KEYS_FIX = [
+  K0, K0, K0, K0, K0, K0,
+  K0, K1, K2, K2, K0, K5,
+  K0, K2, K0, K0, K0, K3,
+  K2, K2, K4,
+];
+
+test('AC7.1 (#5414): the happy path adds exactly one HEAD read on each side of the implementer launch', async () => {
+  const plain = harness();
+  assert.equal(await run(['#7'], plain.deps), 0);
+  assert.equal(plain.calls.filter(isHeadReadInWt).length, 3, 'worker before, worker after, push guard');
+  const at = plain.calls.findIndex(isImplementerLaunch);
+  assert.ok(isHeadReadInWt(plain.calls[at - 1]), 'a HEAD read just before the launch');
+  assert.ok(isHeadReadInWt(plain.calls[at + 1]), 'a HEAD read just after the launch');
+  // #5415's reads are dropped first; AC8.1 (#5415) pins their count and position.
+  assert.deepEqual(withoutFlagReads(plain.calls).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_PLAIN);
+  assert.deepEqual(plain.lines().map((l) => [l.step, l.status]), BASE_LINES_PLAIN);
+  assert.deepEqual(plain.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_PLAIN);
+
+  const fix = fixRig();
+  assert.equal(await run(['#7'], fix.deps), 0);
+  assert.equal(fix.calls.filter(isHeadReadInWt).length, 6, 'two per implementer launch, preFixHead, the push guard');
+  const launches = fix.calls.flatMap((c, i) => (isImplementerLaunch(c) ? [i] : []));
+  assert.equal(launches.length, 2);
+  for (const i of launches) {
+    assert.ok(isHeadReadInWt(fix.calls[i - 1]) && isHeadReadInWt(fix.calls[i + 1]), `a HEAD read on each side of the launch at call ${i}`);
+  }
+  assert.deepEqual(withoutFlagReads(fix.calls).filter((c, i, a) => !isLaunchSideRead(a, i)).map(sig), BASE_CALLS_FIX);
+  assert.deepEqual(fix.lines().map((l) => [l.step, l.status]), BASE_LINES_FIX);
+  assert.deepEqual(fix.lines().map((l) => Object.keys(l).sort()), BASE_KEYS_FIX);
+});
+
 test('AC14.2: win32 passes bin explicitly', async () => {
   const h = harness({ deps: { platform: 'win32' } });
   await run(['#7'], h.deps);
@@ -2431,12 +2984,13 @@ test('AC2.4: missing, short or non-sha head never passes the guard', async () =>
     const final = lastLine(h);
     assert.deepEqual([final.stop.step, final.status, final.stop.class], ['push', 'stop', 'pre-push'], String(head));
     assert.equal(pushCalls(h).length, 0);
-    assert.equal(gitCalls(h).filter((c) => gitSub(c)[0] === 'rev-parse' && gitSub(c)[3] === 'HEAD').length, 0, 'no HEAD read for a head that cannot match');
+    const checkAt = h.calls.findIndex((c) => c.kind === 'node' && /express-lane\.js$/.test(c.args[0]) && c.args[1] === 'check');
+    assert.equal(h.calls.filter((c, i) => i > checkAt && isHeadRead(c)).length, 0, 'no HEAD read after check for a head that cannot match');
   }
 });
 
 test('AC2.5: a failing rev-parse never passes the guard', async () => {
-  const h = harness({ script: [[onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), Object.assign(new Error('Command failed'), { stderr: 'fatal: Needed a single revision\n' })]] });
+  const h = harness({ script: [nthCall(isHeadRead, 3, Object.assign(new Error('Command failed'), { stderr: 'fatal: Needed a single revision\n' }))] });
   await run(['#7'], h.deps);
   const final = lastLine(h);
   assert.deepEqual([final.stop.step, final.status, final.stop.class], ['push', 'stop', 'pre-push']);
@@ -2558,9 +3112,12 @@ test('AC2.1: happy path calls run in the deliverable order', async () => {
     'node claim-targets.js', 'resolveRunDir', 'node log-decision.js',
     // The leftover check's local and remote branch probes run before the worktree's own fetch.
     'git rev-parse', 'git ls-remote', 'git fetch', 'git worktree add', 'git fetch', 'git merge', 'node hooks.js record-worktree',
-    'worker', 'git status', 'git add', 'git commit',
+    // The core.ignoreStat read and the flag baseline (#5415).
+    'git config', 'git ls-files',
+    // The HEAD read before and after the worker launch (#5414).
+    'git rev-parse', 'worker', 'git rev-parse', 'git ls-files', 'git status', 'git add', 'git commit',
     // The test step looks up the scope blob on origin/{ref} (absent here, so the ref check follows) before verify.js.
-    'git rev-parse', 'git rev-parse', 'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
+    'git rev-parse', 'git rev-parse', 'node verify.js', 'git ls-files', 'node express-lane.js check', 'git rev-parse', 'git push',
     'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
     'node log-decision.js',
     // The polls up to the settled one, then the one --run read; the commit-run answer rides each poll's envelope.
@@ -2889,8 +3446,6 @@ const GREEN = Object.freeze({ code: 0, tap: EVIDENCE_TAP('pass') });
 const implementerCalls = (h) => h.calls.filter((c) => c.kind === 'worker' && c.args[0].role === 'implementer');
 const evidenceAbs = (i) => path.join(WT, 'tests', 'new', `r${i}.test.js`);
 const fixDest = (h, i) => path.join(runDirOf(h), 'review', `fix-evidence-${i}.tap`);
-// The n-th call `match` accepts gets `reply`; every other call falls through to the later entries.
-const nthCall = (match, n, reply) => { let seen = 0; return [(c) => match(c) && (seen += 1) === n, reply]; };
 // Calls after the second implementer launch.
 const afterFixLaunch = (h) => h.calls.slice(h.calls.indexOf(implementerCalls(h)[1]) + 1);
 function fixRig({ findings = [evidenceFinding(0)], fix = {}, effect = () => {}, direct = () => GREEN, script = [], ...over } = {}) {
@@ -3101,7 +3656,7 @@ test('Review Focus 5: a fix worker that deletes the evidence and fixes the code 
 // The first `check` answers HEAD_SHA, the second 'c' x 40: the second overwrites ctx.check, and the push compares HEAD with it.
 const SECOND_HEAD = 'c'.repeat(40);
 const checkNth = (n, head) => nthCall((c) => c.kind === 'node' && /express-lane\.js$/.test(c.args[0]) && c.args[1] === 'check', n, { code: 0, stderr: '', stdout: JSON.stringify(checkProceed({ head })) });
-const headRead = (headSha) => [onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${headSha}\n`];
+const headRead = (headSha) => [isHeadRead, `${headSha}\n`];
 
 test('AC15: after a fix round the push guard compares HEAD with the second check\'s head', async () => {
   const h = fixRig({ script: [checkNth(2, SECOND_HEAD), headRead(SECOND_HEAD)] });
@@ -3219,17 +3774,17 @@ const hideEvidence = (h) => {
 };
 const NOT_AT_HEAD = `the evidence file is not at HEAD with its recorded content: ${FINDING_0}`;
 
-test('fix round: every evidence file must be at HEAD with its recorded content, whoever committed it', async () => {
+test('fix round: every evidence file must be at HEAD with its recorded content', async () => {
   // Gitignored, with a code change: the commit holds the code only.
   const ignored = hideEvidence(fixRig({ effect: (fx) => { fx.dirty = ' M a.js\0 M .gitignore\0'; fx.hidden = true; } }));
   await run(['#7'], ignored.deps);
   assert.deepEqual([lastLine(ignored).stop.step, lastLine(ignored).stop.class, reviewLines(ignored)[0].status], [STEP.review, 'pre-push', 'fail']);
   assert.equal(lastLine(ignored).stop.detail, NOT_AT_HEAD);
   assert.equal(verifyCalls(ignored).length, 1, 'no second scoped run');
-  // Gitignored and nothing else: the commit step finds nothing to commit, and the same check stops it.
+  // Gitignored and nothing else: the commit step finds nothing to commit, and that stop ends the round before the check (AC6.1).
   const ignoredOnly = hideEvidence(fixRig({ effect: (fx) => { fx.dirty = ''; fx.hidden = true; } }));
   await run(['#7'], ignoredOnly.deps);
-  assert.deepEqual([lastLine(ignoredOnly).stop.detail, reviewLines(ignoredOnly)[0].status], [NOT_AT_HEAD, 'fail']);
+  assert.deepEqual([lastLine(ignoredOnly).stop.detail, reviewLines(ignoredOnly)[0].status], [`fix round commit: no changed files: ${FINDING_0}`, 'stop']);
   // Committed by the worker with other bytes, the change in the worktree hidden by an index flag.
   const edited = hideEvidence(fixRig({ effect: (fx) => { fx.hidden = true; fx.atHead.set('tests/new/r0.test.js', "require('node:test')('ok', () => {});\n"); } }));
   await run(['#7'], edited.deps);
@@ -3370,30 +3925,112 @@ test('fix round: the byte check sets CRLF against LF aside, as the HEAD check do
   }
 });
 
-test('fix round: an evidence file the worker committed itself, unchanged, passes', async () => {
-  const selfCommit = (fx, rest) => {
-    fx.hidden = true;
-    fx.atHead.set('tests/new/r0.test.js', EVIDENCE_CONTENT);
-    fx.diff = ['a.js', 'tests/new/r0.test.js'];
-    if (!rest) fx.dirty = '';
-  };
-  // The evidence committed, the code change left for the driver's commit.
-  const partly = hideEvidence(fixRig({ effect: (fx) => selfCommit(fx, true) }));
-  await run(['#7'], partly.deps);
-  assert.deepEqual([reviewLines(partly)[0].status, pushCalls(partly).length, lastLine(partly).outcome], ['ok', 1, 'pending-review']);
-  assert.equal(commitGit(partly).filter((c) => gitSub(c)[0] === 'commit').length, 2);
-  // Everything committed: the commit step finds nothing to commit and the round goes on, with no second commit.
-  const wholly = hideEvidence(fixRig({ effect: (fx) => selfCommit(fx, false) }));
+test('AC6.1 (#5414): a fix-round commit that finds nothing to commit stops the round', async () => {
+  const nothingLeft = (fx) => { fx.hidden = true; fx.dirty = ''; };
+  // Everything already committed: the commit step finds nothing to commit, and that stop ends the round with no second commit.
+  const wholly = hideEvidence(fixRig({ effect: nothingLeft }));
   await run(['#7'], wholly.deps);
-  assert.deepEqual([reviewLines(wholly)[0].status, pushCalls(wholly).length, lastLine(wholly).outcome], ['ok', 1, 'pending-review']);
+  assert.equal(lastLine(wholly).stop.detail, `fix round commit: no changed files: ${FINDING_0}`);
+  assert.equal(reviewLines(wholly)[0].status, 'stop');
+  assert.equal(pushCalls(wholly).length, 0);
   assert.equal(commitGit(wholly).filter((c) => gitSub(c)[0] === 'commit').length, 1);
-  assert.equal(verifyCalls(wholly).length, 2);
-  // The summary still lists what the round changed, read from the diff against preFixHead.
-  assert.equal(wholly.files[wholly.calls.filter(logsSummary)[0].args.at(-1)], '#7 built on the express lane: a.js, tests/new/r0.test.js; tests full; PR #9.\n');
   // A commit-step stop that names a path (an empty title) is still the commit's own stop.
   const untitled = fixRig({ fix: { result: { ...FIX_RESULT, title: '   ' } } });
   await run(['#7'], untitled.deps);
   assert.equal(lastLine(untitled).stop.detail, `fix round commit: the worker's title is empty once normalized: ${FINDING_0}`);
+});
+
+test('AC3.1 (#5414): a fix-round worker that moves HEAD stops at review', async () => {
+  // Index 5 is the HEAD read right after the fix launch (see the AC7 adjacency test).
+  const h = fixRig({ script: [nthCall(isHeadRead, 5, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).stop.step, 'review');
+  assert.equal(reviewLines(h)[0].status, 'fail');
+  assert.equal(lastLine(h).stop.detail, `fix round launch: the worker moved HEAD from ${HEAD_SHA} to ${OTHER_SHA}: ${FINDING_0}`);
+  assert.equal(afterFixLaunch(h).filter((c) => c.kind === 'writeFileExclusive').length, 0);
+  assert.equal(afterFixLaunch(h).filter((c) => c.kind === 'git' && gitSub(c)[0] === 'commit').length, 0);
+  assert.equal(verifyCalls(h).length, 1, 'only the pre-review verify ran');
+  assert.equal(checkCalls(h).length, 1, 'only the first express-lane check ran');
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('AC9.1 (#5414): docs/driver.md drops the self-commit carry-on and names the moved-HEAD stop', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  assert.equal(docs.includes('committed everything itself'), false);
+  const start = docs.indexOf('\n## Worker rights');
+  assert.notEqual(start, -1, 'the Worker rights section exists');
+  const rights = docs.slice(start, docs.indexOf('\n## ', start + 1));
+  assert.ok(rights.includes('HEAD has moved'), 'the HEAD bullet is in Worker rights');
+  assert.ok(rights.includes('`fail`'), 'the HEAD bullet names the fail result');
+});
+
+// Flag read n (1 = the baseline) is the n-th ls-files read of the run; AC8.1 (#5415) pins the order.
+const flaggedStop = (h, detail) => {
+  assert.deepEqual([lastLine(h).stop.step, lastLine(h).status, lastLine(h).stop.class, lastLine(h).outcome], [STEP.review, 'fail', 'pre-push', 'express-escalated']);
+  assert.equal(lastLine(h).stop.detail, detail);
+  assert.equal(reviewLines(h)[0].status, 'fail');
+  assert.equal(pushCalls(h).length, 0);
+};
+
+test('AC3.1 (#5415): a flag set during a reviewer evidence run stops at review', async () => {
+  const h = fixRig({ script: [nthCall(isFlagRead, 4, NEW_FLAG_INDEX)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  flaggedStop(h, `evidence run: ${ONE_NEW}`);
+  assert.equal(implementerCalls(h).length, 1);
+  assert.ok(h.calls.some((c) => c.kind === 'rmFile' && c.args[0] === evidenceAbs(0)), 'the evidence file is taken back');
+});
+
+test('AC3.1 (#5415): a flag set during a fix-round direct run stops at review', async () => {
+  const h = fixRig({ script: [nthCall(isFlagRead, 7, NEW_FLAG_INDEX)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  flaggedStop(h, `fix round evidence run: ${ONE_NEW}: ${FINDING_0}`);
+  assert.equal(checkCalls(h).length, 1);
+  assert.equal(verifyCalls(h).length, 2);
+});
+
+test('(#5415) a flag set during the fix-round launch stops at review', async () => {
+  const h = fixRig({ script: [nthCall(isFlagRead, 5, NEW_FLAG_INDEX)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  flaggedStop(h, `fix round launch: ${ONE_NEW}: ${FINDING_0}`);
+  assert.equal(afterFixLaunch(h).filter((c) => c.kind === 'writeFileExclusive').length, 0);
+  assert.equal(afterFixLaunch(h).filter((c) => c.kind === 'git' && gitSub(c)[0] === 'commit').length, 0);
+});
+
+test('(#5415) a flag set during the fix-round test step stops at review', async () => {
+  const h = fixRig({ script: [nthCall(isFlagRead, 6, NEW_FLAG_INDEX)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  flaggedStop(h, `fix round test: ${ONE_NEW}: ${FINDING_0}`);
+  assert.equal(checkCalls(h).length, 1);
+});
+
+test("AC5.1 (#5415): a sparse baseline passes the review step's checks too", async () => {
+  const h = fixRig({ script: [[isFlagRead, 'H a.js\0S sparse/x.js\0']] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(reviewLines(h)[0].status, 'ok');
+  assert.equal(pushCalls(h).length, 1);
+});
+
+test('(#5415) newIndexFlagStop throws on a missing baseline before it reads', () => {
+  const seen = [];
+  const deps = { git: (...a) => { seen.push(a); throw new Error('git was read'); } };
+  assert.throws(() => newIndexFlagStop({ wt: WT, indexFlags: null }, deps), /index flag baseline missing/);
+  assert.deepEqual(seen, []);
+});
+
+test('AC9.1 (#5415): docs/driver.md names the newly-set-flag stop and the core.ignoreStat refusal', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  const start = docs.indexOf('\n## Worker rights');
+  assert.notEqual(start, -1, 'the Worker rights section exists');
+  const rights = docs.slice(start, docs.indexOf('\n## ', start + 1));
+  const bullet = rights.split('\n').find((l) => l.startsWith('- Index flags:'));
+  assert.ok(bullet, 'the Index flags bullet exists');
+  const sentences = bullet.split('. ');
+  const stops = sentences.find((x) => x.includes('stops the record'));
+  assert.ok(stops && stops.includes('skip-worktree') && stops.includes('`fail`'), 'the stop sentence names skip-worktree and fail');
+  assert.ok(bullet.includes('when the worktree is created'));
+  assert.ok(bullet.includes('CI on push'));
+  const refusal = sentences.find((x) => x.includes('core.ignoreStat'));
+  assert.ok(refusal && refusal.includes('refuses') && refusal.includes('`fail`'), 'the first core.ignoreStat sentence names the refusal and fail');
 });
 
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {
@@ -3422,7 +4059,16 @@ test('fix round: a kept evidence run that throws or survives its kill fails, and
   await run(['#7'], h.deps);
   assert.deepEqual(h.lines().slice(-2).map((l) => [l.step, l.status]), [[STEP.review, 'fail'], [FINAL_STEP, 'fail']]);
   assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
-  assert.deepEqual(afterFixLaunch(h).filter((c) => ['writeFileExclusive', 'rmFile', 'git'].includes(c.kind)), []);
+  // The exceptions are the HEAD read right after the launch (#5414) and the index flag read after it (#5415), which run before the interrupt is seen.
+  assert.deepEqual(afterFixLaunch(h).filter((c) => ['writeFileExclusive', 'rmFile', 'git'].includes(c.kind)).map((c) => [c.kind, isHeadRead(c), isFlagRead(c)]), [['git', true, false], ['git', false, true]]);
+});
+
+test('(#5414) an interrupt during a fix launch that also moved HEAD is reported as the interrupt', async () => {
+  let h = null;
+  h = fixRig({ effect: () => { h.signals[0]('SIGTERM'); }, script: [nthCall(isHeadRead, 5, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
+  assert.ok(h.lines().every((l) => !String(l.detail ?? '').includes('moved HEAD')));
 });
 
 test('AC12: a discarded finding is counted, its evidence file removed, and the record goes on to the push', async () => {
@@ -3502,10 +4148,340 @@ test('AC12: a throw inside the review pass is a pre-push stop whose line keeps t
   assert.equal(pushCalls(h).length, 0);
   // A missing wiring member escapes the pass itself: the step still returns the seven keys.
   const { reviewRecord } = require(path.join(LIB, 'driver', 'review'));
-  const ctx = { issue: issueFor(7), keyFiles: [], shared: { policy: { 'express-driver-review': { value: 'on' } } } };
+  const ctx = { issue: issueFor(7), keyFiles: [], reviewer: { on: true, reason: 'test' }, shared: { policy: { 'express-driver-review': { value: 'on' } } } };
   const res = await reviewRecord(ctx, {}, { testCommand: 'npm test' });
   assert.deepEqual([res.status, res.stopClass, res.extra], ['fail', 'pre-push', { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null }]);
   assert.equal(res.detail, 'the review pass failed before it started');
+});
+
+test('AC12: a wiring with isRunArtifact but no indexFlagCheck fails the review step before it starts', async () => {
+  const { reviewRecord } = require(path.join(LIB, 'driver', 'review'));
+  const ctx = { issue: issueFor(7), keyFiles: [], reviewer: { on: true, reason: 'test' }, shared: { policy: { 'express-driver-review': { value: 'on' } } } };
+  const res = await reviewRecord(ctx, {}, { testCommand: 'npm test', isRunArtifact: () => false });
+  assert.deepEqual([res.status, res.stopClass, res.extra], ['fail', 'pre-push', { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null }]);
+  assert.equal(res.detail, 'the review pass failed before it started');
+});
+
+// --- #5224: the lane bounds and the record's one reviewer answer --------------------------------
+//
+// The eligibility step makes the record's one reviewRequired call (ctx.reviewer); admission, the check
+// flag and the review step read that answer. REAL_GATES answers the eligibility and admission calls with
+// the real functions, over a spec-shaped record whose Key Files section lists boundsIssue's paths
+// (eligibility.test.js's record()): the default fakes always pass, so they can never refuse.
+const { evaluateRecordEligibility } = require(path.join(LIB, 'express', 'eligibility.js'));
+const { evaluateAdmission, ADMISSION_REASONS } = require(path.join(LIB, 'driver', 'admission'));
+const boundsBody = (keyFiles) => [
+  '## Current State', '', 'The total is wrong.', '',
+  '## Deliverables', '', '- Fix the total.', '',
+  '## Acceptance Criteria', '', '- The total adds.', '',
+  '## Release Note', '', 'Fixes the total.', '',
+  '## Technical Approach', '',
+  '### Key Files', '',
+  ...keyFiles.map((p) => `- \`${p}\` (modify)`),
+  '',
+].join('\n');
+const boundsIssue = ({ risk = 'low', size = 'low', keyFiles = 1 } = {}) => [on('gh', 'issue', 'view'), (c) => JSON.stringify({
+  ...issueFor(Number(c.args.at(-1))),
+  body: boundsBody(Array.from({ length: keyFiles }, (_, i) => `src/f${i}.js`)),
+  // A null size leaves the record with no size label.
+  labels: [`risk:${risk}`, ...(size ? [`size:${size}`] : []), 'type:task', 'auto:build'].map((name) => ({ name })),
+})];
+const REAL_GATES = [
+  [on('eligibility'), (c) => evaluateRecordEligibility(c.args[0], c.args[1])],
+  [on('admission'), (c) => evaluateAdmission(c.args[0])],
+];
+// A widened policy, set explicitly here: no test pins a widened value as a default.
+const WIDENED = { 'express-driver-max-size': 'medium', 'express-driver-max-key-files': 5 };
+const maxLinesArg = (c) => { const i = c.args.indexOf('--max-lines'); return i === -1 ? null : c.args.slice(i, i + 2); };
+const checkFlags = (h) => checkCalls(h).map(maxLinesArg);
+const admissionInputs = (h) => calls(h, 'admission').map((c) => c.args[0]);
+const stepsRun = (h) => h.lines().map((l) => l.step);
+// check's verdict on a diff between the two bounds: within the driver's bound the flag carries, over the
+// express bound check reads itself when no flag is passed.
+const boundedCheck = [on('node', /express-lane\.js$/, 'check'), (c) => ({
+  code: 0, stderr: '',
+  stdout: JSON.stringify(c.args.includes('--max-lines')
+    ? checkProceed()
+    : { action: 'escalate', reason: 'out-of-bounds', detail: '150 implementation lines exceed 100' }),
+})];
+const BETWEEN_BOUNDS = { 'auto-merge-max-lines': 100, 'express-driver-max-lines': 160 };
+
+test('AC12.1 (#5224): one reviewRequired call per record feeds admission, the check flag and the review step', async () => {
+  const h = harness({ policy: { 'express-driver-max-lines': 90 }, reviewRequired: () => ({ on: true, reason: 'sentinel' }) });
+  assert.equal(await run(['#7', '#8'], h.deps), 0);
+  assert.deepStrictEqual(h.reviewerCalls, [7, 8].map((n) => ({ issue: issueFor(n), keyFiles: ['a.js'], policyValue: 'beyond-express' })));
+  assert.deepStrictEqual(admissionInputs(h).map((i) => i.reviewerOn), [true, true]);
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '90'], ['--max-lines', '90']]);
+  // The review step reads the same answer: the sentinel turns the reviewer on for both records, so each
+  // runs a reviewer role (the real rule would leave a size:low, one-Key-File record off).
+  assert.deepStrictEqual(rolesOf(h), ['implementer', 'reviewer', 'implementer', 'reviewer']);
+  const off = harness({ policy: { 'express-driver-max-lines': 90 }, reviewRequired: () => ({ on: false, reason: 'sentinel' }) });
+  assert.equal(await run(['#7'], off.deps), 0);
+  assert.equal(off.reviewerCalls.length, 1);
+  assert.deepStrictEqual(admissionInputs(off).map((i) => i.reviewerOn), [false]);
+  assert.deepStrictEqual(checkFlags(off), [null]);
+  assert.deepStrictEqual(rolesOf(off), ['implementer']);
+});
+
+test('AC4.3/AC4.4 (#5224): check gets --max-lines only when express-driver-max-lines is set and the reviewer is on', async () => {
+  // Shape B: an invalid value resolves to the default, derived from auto-merge-max-lines.
+  const invalid = [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+    ? { value: 200, source: 'default', invalid: true }
+    : { value: { ...POLICY, 'express-driver-review': 'on' }[k], source: 'policy' }]))];
+  const rows = [
+    ['unset, reviewer on', { policy: { 'express-driver-review': 'on' } }, null],
+    ['invalid, reviewer on', { script: [invalid] }, null],
+    ['set, reviewer off', { policy: { 'express-driver-review': 'off', 'express-driver-max-lines': 120 } }, null],
+    ['set, default reviewer, a record inside the express bounds', { policy: { 'express-driver-max-lines': 120 } }, null],
+    ['set, reviewer on', { policy: { 'express-driver-review': 'on', 'express-driver-max-lines': 120 } }, ['--max-lines', '120']],
+  ];
+  for (const [name, over, flag] of rows) {
+    const h = harness(over);
+    assert.equal(await run(['#7'], h.deps), 0, name);
+    assert.deepStrictEqual(checkFlags(h), [flag], name);
+  }
+});
+
+test('AC4.5 (#5224): a record inside the express bounds with the reviewer always on gets the driver bound', async () => {
+  const h = harness({ policy: { 'express-driver-review': 'on', 'express-driver-max-lines': 120 }, script: [boundsIssue(), ...REAL_GATES] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepStrictEqual(h.reviewerCalls.map((o) => o.keyFiles), [['src/f0.js']]);
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '120']]);
+  assert.deepStrictEqual(rolesOf(h), ['implementer', 'reviewer']);
+});
+
+test('AC4.6/AC4.7 (#5224): a diff between the express and driver bounds passes check with the reviewer on and escalates with it off', async () => {
+  const reviewed = harness({ policy: { ...BETWEEN_BOUNDS, 'express-driver-review': 'on' }, script: [boundedCheck] });
+  assert.equal(await run(['#7'], reviewed.deps), 0);
+  assert.equal(lastLine(reviewed).outcome, 'pending-review');
+  assert.deepStrictEqual(checkFlags(reviewed), [['--max-lines', '160']]);
+  assert.notEqual(stepsRun(reviewed).indexOf(STEP.review), -1);
+  assert.ok(stepsRun(reviewed).indexOf(STEP.review) < stepsRun(reviewed).indexOf(STEP.push));
+  const unreviewed = harness({ policy: { ...BETWEEN_BOUNDS, 'express-driver-review': 'off' }, script: [boundedCheck] });
+  await run(['#7'], unreviewed.deps);
+  const final = lastLine(unreviewed);
+  assert.deepStrictEqual([final.stop.step, final.stop.reason, final.outcome], ['check', 'out-of-bounds', 'express-escalated']);
+  assert.deepStrictEqual(checkFlags(unreviewed), [null]);
+  assert.equal(pushCalls(unreviewed).length, 0);
+});
+
+test('AC4.8/AC11.1 (#5224): a record admitted only by the widened policy goes through review before push', async () => {
+  const h = harness({ policy: { ...WIDENED, ...BETWEEN_BOUNDS }, script: [boundsIssue({ size: 'medium', keyFiles: 4 }), boundedCheck, ...REAL_GATES] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const steps = stepsRun(h);
+  for (const s of [STEP.admission, STEP.check, STEP.review, STEP.push]) assert.equal(steps.filter((x) => x === s).length, 1, s);
+  assert.ok(steps.indexOf(STEP.check) < steps.indexOf(STEP.review));
+  assert.ok(steps.indexOf(STEP.review) < steps.indexOf(STEP.push));
+  assert.deepStrictEqual([reviewLines(h)[0].status, reviewLines(h)[0].detail], ['ok', '0 reproduced of 0']);
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '160']]);
+  assert.equal(lastLine(h).outcome, 'pending-review');
+  // The same record under the express defaults: eligibility refuses it, and the reviewer reason does not
+  // follow, since the record is beyond the driver's bounds too.
+  const plain = harness({ script: [boundsIssue({ size: 'medium', keyFiles: 4 }), ...REAL_GATES] });
+  await run(['#7'], plain.deps);
+  assert.deepStrictEqual([lastLine(plain).stop.step, lastLine(plain).stop.detail], ['eligibility', 'size is not low; more than 3 Key Files']);
+});
+
+test('AC11.2 (#5224): with the reviewer off a widened record is refused at admission and nothing reaches check', async () => {
+  const h = harness({ policy: { ...WIDENED, 'express-driver-review': 'off' }, script: [boundsIssue({ size: 'medium', keyFiles: 4 }), ...REAL_GATES] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepStrictEqual([final.stop.step, final.stop.class, final.outcome], ['admission', 'refused', 'refused']);
+  assert.equal(final.stop.detail, ADMISSION_REASONS.reviewerOff);
+  assert.equal(checkCalls(h).length, 0);
+  assert.equal(calls(h, 'worker').length, 0);
+});
+
+test('AC3.6 (#5224, Plan Review Clarification): the eligibility stop names the reviewer reason after eligibility\'s own', async () => {
+  const refused = (over, issue) => {
+    const h = harness({ policy: { ...WIDENED, ...over }, script: [boundsIssue({ risk: 'medium', size: 'medium', ...issue }), ...REAL_GATES] });
+    return run(['#7'], h.deps).then(() => h);
+  };
+  const h = await refused({ 'express-driver-review': 'off' }, { keyFiles: 4 });
+  assert.deepStrictEqual([lastLine(h).stop.step, lastLine(h).stop.class], ['eligibility', 'refused']);
+  assert.equal(lastLine(h).stop.detail, `risk is not low; ${ADMISSION_REASONS.reviewerOff}`);
+  assert.equal(h.reviewerCalls.length, 1);
+  assert.equal(calls(h, 'admission').length, 0);
+  // Beyond the driver's bounds (6 Key Files over a limit of 5), or with the reviewer on, eligibility's reasons stand alone.
+  assert.equal(lastLine(await refused({ 'express-driver-review': 'off' }, { keyFiles: 6 })).stop.detail, 'risk is not low; more than 5 Key Files');
+  assert.equal(lastLine(await refused({}, { keyFiles: 4 })).stop.detail, 'risk is not low');
+});
+
+test('AC6 (#5224): a reviewer answer that is not a boolean refuses the record at admission', async () => {
+  const h = harness({ reviewRequired: () => ({ on: 'yes', reason: 'x' }), script: [boundsIssue(), ...REAL_GATES] });
+  await run(['#7'], h.deps);
+  assert.deepStrictEqual([lastLine(h).stop.step, lastLine(h).outcome, lastLine(h).stop.detail], ['admission', 'refused', ADMISSION_REASONS.reviewerUnreadable]);
+  assert.deepStrictEqual(admissionInputs(h).map((i) => i.reviewerOn), ['yes']);
+  assert.equal(calls(h, 'worker').length, 0);
+});
+
+test('AC5.5 (#5224): with express-driver-max-lines unset the lane bound is auto-merge-max-lines, whatever it holds', async () => {
+  const h = harness({ policy: { 'auto-merge-max-lines': 77, 'express-driver-review': 'on' } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepStrictEqual(checkFlags(h), [null]);
+  assert.match(workerCall(h).args[0].prompt, /within 77 implementation lines/);
+});
+
+test('AC6.1 (#5224): an unreadable lane bound key stops the driver before any record', async () => {
+  for (const key of ['express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines']) {
+    for (const [why, entry] of [['missing', undefined], ['unknown-key', { error: 'unknown-key' }]]) {
+      const reply = (c) => {
+        const resolved = Object.fromEntries(c.args.map((k) => [k, { value: POLICY[k], source: 'policy' }]));
+        if (entry) resolved[key] = entry;
+        else delete resolved[key];
+        return resolved;
+      };
+      const h = harness({ script: [[on('policy'), reply]] });
+      assert.equal(await run(['#7', '#8'], h.deps), 1, key);
+      const final = h.lines().at(-1);
+      assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused'], key);
+      assert.ok(final.stop.detail.includes(`${key} (${why})`), final.stop.detail);
+      assert.equal(h.lines().filter((l) => l.record === 8).length, 0, key);
+      assert.equal(h.calls.filter((c) => c.kind === 'gh').length, 0, key);
+    }
+  }
+});
+
+test('Review Focus 3 (#5224): a driver bound below the express bound narrows reviewer-on records', async () => {
+  const h = harness({ policy: { 'auto-merge-max-lines': 200, 'express-driver-max-lines': 20, 'express-driver-review': 'on' } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '20']]);
+  assert.match(workerCall(h).args[0].prompt, /within 20 implementation lines/);
+});
+
+test('Review Focus 4 (#5224): the worker prompt states the line bound check applies', async () => {
+  const flagged = harness({ policy: { 'express-driver-max-lines': 120, 'express-driver-review': 'on' } });
+  await run(['#7'], flagged.deps);
+  assert.deepStrictEqual(checkFlags(flagged), [['--max-lines', '120']]);
+  assert.match(workerCall(flagged).args[0].prompt, /within 120 implementation lines/);
+  assert.doesNotMatch(workerCall(flagged).args[0].prompt, /within 200 implementation lines/);
+  const plain = harness({ policy: { 'express-driver-max-lines': 120, 'express-driver-review': 'off' } });
+  await run(['#7'], plain.deps);
+  assert.deepStrictEqual(checkFlags(plain), [null]);
+  assert.match(workerCall(plain).args[0].prompt, /within 200 implementation lines/);
+  // The label names no one bound: it is the driver's under the flag and the express one without it.
+  for (const h of [flagged, plain]) {
+    assert.match(workerCall(h).args[0].prompt, /implementation lines \(the diff bound check applies; deleted test lines count toward it\)/);
+    assert.doesNotMatch(workerCall(h).args[0].prompt, /express diff bound/);
+  }
+});
+
+test('(#5224) the eligibility step passes the size ceiling and Key File limit it read; admission gets the same bounds', async () => {
+  const h = harness({ policy: { ...WIDENED } });
+  await run(['#7'], h.deps);
+  const opts = calls(h, 'eligibility')[0].args[1];
+  assert.deepStrictEqual([opts.sizeCeiling, opts.maxKeyFiles], ['medium', 5]);
+  const [input] = admissionInputs(h);
+  assert.deepStrictEqual([input.bounds, input.keyFiles], [{ sizeCeiling: 'medium', maxKeyFiles: 5 }, ['a.js']]);
+  // Unset, the express values reach both.
+  const plain = harness();
+  await run(['#7'], plain.deps);
+  assert.deepStrictEqual(calls(plain, 'eligibility')[0].args[1], {
+    enabled: true, allowAbsentCeremony: true, integrationModel: 'pr-first', sensitivePaths: [], sizeCeiling: 'low', maxKeyFiles: 3,
+  });
+  assert.deepStrictEqual(admissionInputs(plain)[0].bounds, { sizeCeiling: 'low', maxKeyFiles: EXPRESS_MAX_KEY_FILES });
+});
+
+test('AC2.1/AC2.2 (#5224): with every key unset the run refuses and admits as today (hand-written table, real gates)', async () => {
+  // Written by hand from the express rules before #5224, not computed by the code under test: the
+  // eligibility stop's reasons, or [] for a record the run takes to a draft PR.
+  const EXPECTED = {
+    'low|0': ['no Key Files'],
+    'low|1': [],
+    'low|2': [],
+    'low|3': [],
+    'low|4': ['more than 3 Key Files'],
+    'low|5': ['more than 3 Key Files'],
+    'medium|0': ['size is not low', 'no Key Files'],
+    'medium|1': ['size is not low'],
+    'medium|2': ['size is not low'],
+    'medium|3': ['size is not low'],
+    'medium|4': ['size is not low', 'more than 3 Key Files'],
+    'medium|5': ['size is not low', 'more than 3 Key Files'],
+    'high|0': ['size is not low', 'no Key Files'],
+    'high|1': ['size is not low'],
+    'high|2': ['size is not low'],
+    'high|3': ['size is not low'],
+    'high|4': ['size is not low', 'more than 3 Key Files'],
+    'high|5': ['size is not low', 'more than 3 Key Files'],
+    'absent|0': ['size is not low', 'no Key Files'],
+    'absent|1': ['size is not low'],
+    'absent|2': ['size is not low'],
+    'absent|3': ['size is not low'],
+    'absent|4': ['size is not low', 'more than 3 Key Files'],
+    'absent|5': ['size is not low', 'more than 3 Key Files'],
+  };
+  let rows = 0;
+  for (const size of ['low', 'medium', 'high', 'absent']) {
+    for (let keyFiles = 0; keyFiles <= 5; keyFiles += 1) {
+      const key = `${size}|${keyFiles}`;
+      const want = EXPECTED[key];
+      for (const review of ['off', 'beyond-express', 'on']) {
+        const h = harness({
+          policy: { 'express-driver-review': review },
+          script: [boundsIssue({ size: size === 'absent' ? null : size, keyFiles }), ...REAL_GATES],
+        });
+        const code = await run(['#7'], h.deps);
+        const final = lastLine(h);
+        const got = final.stop.step === null ? [code, final.outcome] : [final.stop.step, final.stop.detail];
+        assert.deepStrictEqual(got, want.length ? [STEP.eligibility, want.join('; ')] : [0, 'pending-review'], `${key} review=${review}`);
+        rows += 1;
+      }
+    }
+  }
+  assert.strictEqual(rows, 72);
+});
+
+test('(#5224) a policy reply whose express-driver-max-lines is set but not an integer of at least 1 stops the driver before any record (defensive: the real resolver never sends these)', async () => {
+  for (const review of ['on', 'off']) {
+    for (const value of ['x', 0, 2.5, null]) {
+      const name = `${JSON.stringify(value)} review=${review}`;
+      const malformed = [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+        ? { value, source: 'policy' }
+        : { value: { ...POLICY, 'express-driver-review': review }[k], source: 'policy' }]))];
+      const h = harness({ script: [malformed] });
+      assert.equal(await run(['#7', '#8'], h.deps), 1, name);
+      const final = h.lines().at(-1);
+      assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused'], name);
+      assert.equal(final.stop.detail, `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(value)})`, name);
+      assert.equal(h.lines().filter((l) => l.record === 8).length, 0, name);
+      assert.equal(h.calls.filter((c) => c.kind === 'gh').length, 0, name);
+    }
+  }
+});
+
+test('(#5224) through the real resolver: a malformed express-driver-max-lines falls back to no flag, a value past 2^53 stops the driver', async () => {
+  const { resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+  const resolvedLine = (raw) => resolvePolicyKeys(['express-driver-max-lines'], { policyRaw: `express-driver-max-lines: ${raw}\n` })['express-driver-max-lines'];
+  const withLine = (reply) => [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+    ? reply
+    : { value: { ...POLICY, 'express-driver-review': 'on' }[k], source: 'policy' }]))];
+  for (const raw of ['0', 'x', '2.5']) {
+    const reply = resolvedLine(raw);
+    assert.deepStrictEqual([reply.source, reply.invalid], ['default', true], raw);
+    const h = harness({ script: [withLine(reply)] });
+    assert.equal(await run(['#7'], h.deps), 0, raw);
+    assert.notEqual(h.lines().find((l) => l.step === 'policy').status, 'fail', raw);
+    assert.deepStrictEqual(checkFlags(h), [null], raw);
+  }
+  const huge = resolvedLine('9007199254740993');
+  assert.deepStrictEqual([huge.source, Number.isSafeInteger(huge.value)], ['policy', false]);
+  const h = harness({ script: [withLine(huge)] });
+  assert.equal(await run(['#7'], h.deps), 1);
+  const final = h.lines().at(-1);
+  assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused']);
+  assert.equal(final.stop.detail, `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(huge.value)})`);
+});
+
+test('(#5224) the fix round of a widened record passes the driver bound to its second check', async () => {
+  const h = fixRig({
+    policy: { ...WIDENED, 'express-driver-review': 'on', 'express-driver-max-lines': 120 },
+    script: [boundsIssue({ size: 'medium', keyFiles: 4 }), ...REAL_GATES],
+  });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(implementerCalls(h).length, 2, 'the fix round ran');
+  assert.deepStrictEqual(checkFlags(h), [['--max-lines', '120'], ['--max-lines', '120']]);
+  assert.equal(lastLine(h).outcome, 'pending-review');
 });
 
 test('skip: a skipped step emits no line and the loop goes on', async () => {
@@ -4503,8 +5479,8 @@ function mergeHarness(over = {}) {
       [on('resolveRunDir'), { ok: true, created: true, reason: null, message: '', path: MERGE_RUN }],
       [(c) => c.kind === 'lstatType' && c.args[0].startsWith(path.join(MAIN, '.claude-tweaks')), (c) => realLstatType(c.args[0])],
       [(c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args[1] === 'view' && c.args.at(-1) === 'labels', JSON.stringify({ labels: [{ name: 'auto:merge' }] })],
-      [(c) => isNode('resolve-policy.js')(c) && c.args.includes('--values'), { code: 0, stdout: 'pr-first\n', stderr: '' }],
-      [isNode('resolve-policy.js'), { code: 0, stdout: JSON.stringify({ 'merge-verification': { value: 'wait', source: 'run-config' } }), stderr: '' }],
+      [(c) => c.kind === 'policyCore' && c.args.includes('integration-model'), { code: 0, result: { 'integration-model': { value: 'pr-first', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
+      [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'), { code: 0, result: { 'merge-verification': { value: 'wait', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
       [(c) => c.kind === 'readFile' && path.basename(c.args[0]) === 'run-state.json', JSON.stringify({ pr: { number: 9 } })],
       [isNode('closing-links.js'), { code: 0, stdout: JSON.stringify({ action: 'clean', keepOpen: [] }), stderr: '' }],
       [isNode('compose-subject.js'), { code: 0, stdout: "SUBJECT_TITLE='x'\n", stderr: '' }],
@@ -4617,8 +5593,8 @@ test('merge step, run level: the merge line for each outcome reads the outcome w
   // merge-when-green with a pending, BLOCKED PR arms auto-merge; the confirmation read shows it armed.
   const armed = mergeHarness({
     script: [
-      [(c) => c.kind === 'node' && path.basename(c.args[0]) === 'resolve-policy.js' && !c.args.includes('--values'),
-        { code: 0, stdout: JSON.stringify({ 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }), stderr: '' }],
+      [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'),
+        { code: 0, result: { 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
       [isPrViewOf(GATE_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA, statusCheckRollup: [PENDING_CHECK] })],
       [isPrViewOf(CONFIRM_FIELDS), JSON.stringify({ state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, statusCheckRollup: [PENDING_CHECK], mergeCommit: null })],
     ],
