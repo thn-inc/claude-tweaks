@@ -2045,7 +2045,8 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     for (const cmd of ["env -S 'cp a /main/f.js'", "env --split-string='cp a /main/f.js'", 'env --split-string x cp a /main/f.js',
       'env -P /x cp a /main/f.js',
       "env -iS 'cp a /main/f.js'", 'sudo -e /main/f.js', 'sudo --edit /main/f.js', 'sudo -R /x cp a /main/f.js',
-      'sudo -i cp a /main/f.js', 'sudo -l cp a /main/f.js', 'doas -C /x cp a /main/f.js', 'doas -s']) {
+      'sudo -i cp a /main/f.js', 'sudo -l cp a /main/f.js', 'sudo -v cp a /main/f.js', 'sudo -K cp a /main/f.js',
+      'doas -C /x cp a /main/f.js', 'doas -s', 'doas -L cp a /main/f.js']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
     }
   });
@@ -2172,8 +2173,9 @@ test('#4303: the cd after an assignment word that never closes is not followed',
   });
 
   // all: `command -v git -C M commit -m x` and the `-V` spelling look names up and run no git
-  // (exit 0, nothing wrote, no git call). The rows carry a subcommand and `-C`, since a bare `git`
-  // resolves no target on its own and would pin nothing.
+  // (exit 0, nothing wrote, no git call), and so does `command -v git commit -m x` (bash 3.2, 5 and
+  // zsh: exit 0, no commit). The rows carry a subcommand, since a bare `git` resolves no target on
+  // its own and would pin nothing.
   test('#4448: command -v git and command -V git run no git', () => {
     for (const cmd of ['command -v git -C /main commit -m x', 'command -V git -C /main commit -m x', 'command -v git commit -m x']) {
       assert.deepStrictEqual(gitTargets(cmd, '/r'), [], cmd);
@@ -3649,6 +3651,35 @@ test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main ch
   ];
   for (const [shape, command] of denied) assert.strictEqual(decisionFor(command), 'deny', `${shape}: ${command.slice(-60)}`);
   assert.notStrictEqual(decisionFor(`cd ${wt} && cp a f.js`), 'deny');
+});
+// #4448: a write or commit behind a stripped prefix, run from a linked worktree into the main
+// checkout. Bash 3.2, 5 and zsh, started in the worktree, write `main/f.js` (or `main/b`) for each cp, tee and sed -i
+// row, and run `git commit` in main for the git rows (`x+=1 git -C M commit`, and `x+=1 git commit`
+// after `cd M`). The `!`, time, command, nohup, nice and exec rows write `main/b` in all three. `sudo`
+// and `doas` cannot run in the oracle; their rows follow sudo(8) and doas(1), which run the command
+// after their options. `X=1 cp a W/f.js` writes `wt/f.js`, so it stays allowed. Skipped on win32 for the
+// reason of the #4303 e2e above.
+test('AC1.1 e2e #4448: a write or commit behind a stripped prefix from a linked worktree into the main checkout is DENIED', {
+  skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const { main, wt, decisionFor } = linkedWorktree4303();
+  const denied = [
+    `X=1 cp a ${main}/f.js`,
+    `sudo cp a ${main}/f.js`,
+    `X=1 tee ${main}/f.js`,
+    `X=1 sed -i s/a/b/ ${main}/f.js`,
+    `cd ${main}; x+=1 git commit -m x`,
+    `x+=1 git -C ${main} commit -m x`,
+    `! cp x ${main}/b`,
+    `time cp x ${main}/b`,
+    `command cp x ${main}/b`,
+    `nohup cp x ${main}/b`,
+    `nice cp x ${main}/b`,
+    `doas cp x ${main}/b`,
+    `exec cp x ${main}/b`,
+  ];
+  for (const command of denied) assert.strictEqual(decisionFor(command), 'deny', command);
+  assert.notStrictEqual(decisionFor(`X=1 cp a ${wt}/f.js`), 'deny');
 });
 // #4303: a `|` between case patterns is no pipe, so the arm's cd into the main checkout reaches the
 // write after `esac`. Bash 3.2 and 5, started in the worktree, write `main/f.js` for each; base

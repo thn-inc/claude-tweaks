@@ -87,10 +87,10 @@ files:
   | Shape | Record |
   |---|---|
   | The command inside `$( … )` or backticks | #4446 |
-  | A NAME=value, `env` or `sudo` prefix | #4448 |
   | `cd -`, `$OLDPWD`, a symlinked dir or a failing cd | #4450 |
-  | Compound-command bodies (including a case or `cd` inside an `if`/`while`/`for` body), `pushd` and `builtin cd` | #4244 |
-  | zsh-only forms (redirects, a pipeline's last element) | #4455 |
+  | Compound-command bodies (including a case or `cd` inside an `if`/`while`/`for` body) and `pushd` | #4244 |
+  | A command behind `env -S`, `sudo -e` or `doas -s`, and the output file of the external `time -o` | #4572 |
+  | zsh-only forms (redirects, a pipeline's last element, `command cd`, `time -p cd`) | #4455 |
   | A function called after a later cd | #4487 |
 - **Red flags:** A skill or procedure that tells agents to use one of these shapes because the gate misses it.
 
