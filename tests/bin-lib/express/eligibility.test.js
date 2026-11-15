@@ -160,6 +160,8 @@ test('#4618 risk flags: a flagged, unreadable or unknown-slug line is ineligible
 test('consumer-portability: protected paths are project-agnostic', () => {
   assert.strictEqual(isProtectedPath('.claude/hooks/x.sh'), true);
   assert.strictEqual(isProtectedPath('lib/hooks.js'), true);
+  // #5392: every hooks.json registration runs bin/hooks.sh, so it is hook code too.
+  assert.strictEqual(isProtectedPath('plugin/bin/hooks.sh'), true);
   assert.strictEqual(isProtectedPath('skills/_shared/a.md'), true);
   assert.strictEqual(isProtectedPath('.claude-tweaks/policy.yml'), true);
   assert.strictEqual(isProtectedPath('.github/CODEOWNERS'), true);
@@ -169,6 +171,7 @@ test('consumer-portability: protected paths are project-agnostic', () => {
   assert.strictEqual(isProtectedPath('docs/hookshot.md'), false);
   assert.strictEqual(isProtectedPath('src/webhooks/a.js'), false);
   assert.strictEqual(isProtectedPath('src/webhooks.js'), false);
+  assert.strictEqual(isProtectedPath('src/webhooks.sh'), false);
 });
 
 const BOUNDS = { keyFiles: ELIGIBLE_KEYS, sensitivePaths: [], maxLines: 40 };
