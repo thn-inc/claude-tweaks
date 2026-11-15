@@ -18,8 +18,8 @@ function mkTmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-async function run(args, { cwd, deps } = {}) {
-  const { code, stdout, stderr } = await runCli(BIN, args, { cwd, deps });
+async function run(args, { cwd, env, deps } = {}) {
+  const { code, stdout, stderr } = await runCli(BIN, args, { cwd, env, deps });
   return { code, out: stdout, err: stderr };
 }
 
@@ -42,8 +42,10 @@ function inProcessDaemon() {
   const { startServer } = require(SERVER_LIB);
   let current = null;
   const closes = [];
+  const spawnOpts = [];
   const deps = {
-    spawn: (cmd, args) => {
+    spawn: (cmd, args, options) => {
+      spawnOpts.push(options);
       const { opts } = parseArgs(args.slice(1));
       startServer({ dir: opts.dir, stateDir: opts.state, port: 0, idleMinutes: Number(opts['idle-minutes']) }).then(
         (started) => {
@@ -63,6 +65,8 @@ function inProcessDaemon() {
   };
   return {
     opts: { deps },
+    // The options each fake spawn call received, in call order.
+    spawnOpts,
     // The latest server's own http.Server, for closing it without the marker.
     server: () => current.server,
     // Resolves once every server this stand-in started has closed.
@@ -131,9 +135,19 @@ test('AC1: start returns detached-running server-info (mode 0600, url has ?key=)
   const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
   const daemon = inProcessDaemon();
-  const first = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '2'], daemon.opts);
+  const first = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '2'], {
+    ...daemon.opts,
+    cwd: dir,
+    env: { VD_SENTINEL: 'ac1' },
+  });
   try {
     assert.equal(first.code, 0, first.err);
+    // The daemon child gets the injected cwd and env, detached and with no console window.
+    const [spawned] = daemon.spawnOpts;
+    assert.equal(spawned.cwd, dir);
+    assert.equal(spawned.env.VD_SENTINEL, 'ac1');
+    assert.equal(spawned.detached, true);
+    assert.equal(spawned.windowsHide, true);
     const info = JSON.parse(first.out);
     assert.match(info.url, /\?key=/);
 
