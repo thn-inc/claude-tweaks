@@ -371,8 +371,8 @@ function inFlightNumbers(parsed) {
   if (!Array.isArray(parsed)) return null;
   const numbers = [];
   for (const e of parsed) {
-    const n = isPositiveInteger(e) ? e : (isObject(e) && isPositiveInteger(e.number) ? e.number : null);
-    if (n === null) return null;
+    const n = isObject(e) ? e.number : e;
+    if (!isPositiveInteger(n)) return null;
     if (!numbers.includes(n)) numbers.push(n);
   }
   return numbers;
@@ -1261,7 +1261,9 @@ function reconcile(s) {
 // post-merge close-out owns the removal, so nothing local is touched, but the remote delete and the
 // close proceed, as they do for `gone`).
 const WORKTREE = Object.freeze({ GONE: 'gone', KEPT: 'kept', CALLER: 'caller' });
-const worktreeProceeds = (state) => state === WORKTREE.GONE || state === WORKTREE.CALLER;
+function worktreeProceeds(state) {
+  return state === WORKTREE.GONE || state === WORKTREE.CALLER;
+}
 
 // Ports Step 4's teardown: remove the record's worktree, then its local branch. No force flag: a
 // worktree with modified or untracked files refuses removal, stays, and is named in the event.

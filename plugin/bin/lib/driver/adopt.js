@@ -58,8 +58,8 @@ function runStateMismatch(real, top, platform) {
   // A Windows path is case-insensitive (drive letter and directories) and fs.realpathSync keeps the
   // spelling it was given, so win32 compares folded; the platform is deps.platform, never process's.
   if (platform === 'win32') {
-    const fold = (p) => p.toLowerCase();
-    return fold(safeReal(recorded) || path.resolve(recorded)) === fold(top) ? null : 'names a different worktree';
+    const recordedReal = safeReal(recorded) || path.resolve(recorded);
+    return recordedReal.toLowerCase() === top.toLowerCase() ? null : 'names a different worktree';
   }
   return safeReal(recorded) === top ? null : 'names a different worktree';
 }

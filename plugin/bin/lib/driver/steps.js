@@ -281,7 +281,7 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
     if (reviewer) reasons.push(reviewer);
     // A refusal always carries a reason: a verdict with none reads as the stop detail's own fallback.
     ctx.eligibilityReasons = reasons.length > 0 ? reasons : ['not eligible'];
-    return { status: 'stop', detail: reasons.join('; ') || 'not eligible' };
+    return { status: 'stop', detail: ctx.eligibilityReasons.join('; ') };
   }
   ctx.eligibilityReasons = [];
   return { status: 'ok' };
