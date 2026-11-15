@@ -404,3 +404,27 @@ test('isReadableSizeCeiling and isReadableKeyFileLimit are the checks eligibilit
   for (const v of [1, 3, 99]) assert.strictEqual(isReadableKeyFileLimit(v), true, String(v));
   for (const v of [0, -1, 2.5, '4', null, undefined, Infinity, NaN, 2 ** 53]) assert.strictEqual(isReadableKeyFileLimit(v), false, String(v));
 });
+
+const { isInsideLaneBounds } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
+const { POLICY_KEYS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+
+test('isInsideLaneBounds: a size the ceiling accepts and at most the Key File limit, the same comparisons eligibility refuses on (#5224)', () => {
+  const bounds = { sizeCeiling: 'medium', maxKeyFiles: 5 };
+  assert.strictEqual(isInsideLaneBounds({ size: 'medium', keyFiles: keyFilesN(5), bounds }), true);
+  assert.strictEqual(isInsideLaneBounds({ size: 'low', keyFiles: keyFilesN(1), bounds }), true);
+  assert.strictEqual(isInsideLaneBounds({ size: 'medium', keyFiles: keyFilesN(6), bounds }), false);
+  assert.strictEqual(isInsideLaneBounds({ size: 'high', keyFiles: keyFilesN(1), bounds }), false);
+  assert.strictEqual(isInsideLaneBounds({ size: 'medium', keyFiles: keyFilesN(1), bounds: { sizeCeiling: 'low', maxKeyFiles: 5 } }), false);
+  // Every row agrees with eligibility's own verdict on the two bound reasons.
+  for (const [size, n] of [['low', 1], ['medium', 5], ['medium', 6], ['high', 1]]) {
+    const labels = ['risk:low', `size:${size}`, 'ceremony:fast-lane', 'type:task'];
+    const { reasons } = evaluateRecordEligibility(record(labels, keyFilesN(n)), { ...OPTS, sizeCeiling: 'medium', maxKeyFiles: 5 });
+    const refusedOnBounds = reasons.includes(BOUND_REASONS.size('medium')) || reasons.includes(BOUND_REASONS.tooManyKeyFiles(5));
+    assert.strictEqual(isInsideLaneBounds({ size, keyFiles: keyFilesN(n), bounds }), !refusedOnBounds, `${size} x ${n}`);
+  }
+});
+
+test('express-driver-max-size accepts exactly the SIZE_CEILINGS keys, so no accepted value refuses every record (#5224)', () => {
+  const row = POLICY_KEYS.find((k) => k.key === 'express-driver-max-size');
+  assert.deepStrictEqual([...row.values].sort(), Object.keys(SIZE_CEILINGS).sort());
+});

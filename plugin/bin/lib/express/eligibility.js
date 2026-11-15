@@ -35,6 +35,19 @@ function isBeyondExpressBounds({ size, keyFiles } = {}) {
   return size !== 'low' || !Array.isArray(keyFiles) || keyFiles.length > EXPRESS_MAX_KEY_FILES;
 }
 
+// The two driver-lane bound comparisons, stated once: eligibility refuses on each, and admission's
+// reviewer rule composes them as isInsideLaneBounds. Callers check readability first.
+function sizeWithinCeiling(size, sizeCeiling) {
+  return SIZE_CEILINGS[sizeCeiling].includes(size);
+}
+function keyFilesWithinLimit(keyFiles, maxKeyFiles) {
+  return keyFiles.length <= maxKeyFiles;
+}
+// Inside the driver's lane bounds ({ sizeCeiling, maxKeyFiles }, both readable).
+function isInsideLaneBounds({ size, keyFiles, bounds }) {
+  return sizeWithinCeiling(size, bounds.sizeCeiling) && keyFilesWithinLimit(keyFiles, bounds.maxKeyFiles);
+}
+
 // Reasons for the two bounds the driver lane can widen. REASONS.size and
 // REASONS.tooManyKeyFiles are built from these at the express defaults, so the express
 // strings cannot drift from the parameterised ones.
@@ -151,7 +164,7 @@ function evaluateRecordEligibility(issue, opts) {
     if (facets.size !== 'low') reasons.push(REASONS.size);
   } else if (!isReadableSizeCeiling(sizeCeiling)) {
     reasons.push(BOUND_REASONS.sizeCeilingUnreadable(sizeCeiling));
-  } else if (!SIZE_CEILINGS[sizeCeiling].includes(facets.size)) {
+  } else if (!sizeWithinCeiling(facets.size, sizeCeiling)) {
     reasons.push(BOUND_REASONS.size(sizeCeiling));
   }
   // allowAbsentCeremony relaxes only this rule, for the pipeline driver lane (#5216; its
@@ -169,7 +182,7 @@ function evaluateRecordEligibility(issue, opts) {
     if (keyFiles.length > EXPRESS_MAX_KEY_FILES) reasons.push(REASONS.tooManyKeyFiles);
   } else if (!isReadableKeyFileLimit(maxKeyFiles)) {
     reasons.push(BOUND_REASONS.keyFileLimitUnreadable(maxKeyFiles));
-  } else if (keyFiles.length > maxKeyFiles) {
+  } else if (!keyFilesWithinLimit(keyFiles, maxKeyFiles)) {
     reasons.push(BOUND_REASONS.tooManyKeyFiles(maxKeyFiles));
   }
   if (isFrontend(body, keyFiles)) reasons.push(REASONS.frontend);
@@ -237,6 +250,6 @@ function expressMergeVerification(resolved) {
 }
 
 module.exports = {
-  EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS,
+  EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS,
   BOUND_REASONS, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
 };

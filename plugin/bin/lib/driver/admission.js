@@ -26,7 +26,8 @@
 // `low` or it has more than EXPRESS_MAX_KEY_FILES Key Files (eligibility.js's isBeyondExpressBounds,
 // which review.js's reviewRequired shares), and inside the driver's bounds when
 // its size is one `bounds.sizeCeiling` accepts (SIZE_CEILINGS) and it has at most
-// `bounds.maxKeyFiles` Key Files. `keyFiles` is the eligibility verdict's own extraction and
+// `bounds.maxKeyFiles` Key Files (eligibility.js's isInsideLaneBounds, built from the same two
+// comparisons eligibility refuses on). `keyFiles` is the eligibility verdict's own extraction and
 // `reviewerOn` is review.js's reviewRequired answer, computed once per record by the caller.
 // Its states, and no others:
 //   beyond the express bounds and the reviewer on      admitted by this rule
@@ -42,7 +43,7 @@
 
 const { normalizeLabelNames, parseRecordFacets, LABELS } = require('../issues/record');
 const {
-  SIZE_CEILINGS, isBeyondExpressBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
+  isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
 } = require('../express/eligibility');
 
 const ADMISSION_REASONS = Object.freeze({
@@ -99,7 +100,7 @@ function reviewerGateReason(facts) {
   if (!Array.isArray(labels) || !Array.isArray(keyFiles) || !boundsReadable(bounds)) return null;
   const { size } = parseRecordFacets(labels);
   const beyond = isBeyondExpressBounds({ size, keyFiles });
-  const inside = SIZE_CEILINGS[bounds.sizeCeiling].includes(size) && keyFiles.length <= bounds.maxKeyFiles;
+  const inside = isInsideLaneBounds({ size, keyFiles, bounds });
   return beyond && inside && reviewerOn === false ? R.reviewerOff : null;
 }
 
