@@ -1,9 +1,15 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
   parseAllowedTools, reachForTool, auditSkillManifest, auditMcpServerConfig,
 } = require('../../../plugin/bin/lib/issues/reachability-audit');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
+
+const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'reachability-audit.js');
 
 // --- parseAllowedTools ---
 
@@ -162,4 +168,108 @@ test('auditMcpServerConfig: a non-object config fails closed rather than throwin
   assert.doesNotThrow(() => auditMcpServerConfig('not an object'));
   assert.doesNotThrow(() => auditMcpServerConfig([1, 2, 3]));
   assert.strictEqual(auditMcpServerConfig(null).clean, false);
+});
+
+// --- CLI script entry (#5386) ---
+
+// Real process: proves the script entry, exit code 0 and the one JSON line on stdout.
+test('AC5.1 AC7.1: --skill on a clean fixture exits 0 with one JSON line', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-reach-script-')));
+  const skill = path.join(tmp, 'SKILL.md');
+  fs.writeFileSync(skill, '---\nname: narrow\nallowed-tools: Read, Grep, Glob\n---\nbody\n');
+  const res = spawnCli(CLI, ['--skill', skill], { env: { PATH: process.env.PATH } });
+  fs.rmSync(tmp, { recursive: true, force: true });
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.strictEqual(res.stderr, '');
+  assert.ok(res.stdout.endsWith('\n') && res.stdout.indexOf('\n') === res.stdout.length - 1, 'one line');
+  assert.strictEqual(JSON.parse(res.stdout).clean, true);
+});
+
+// Real process: proves the script entry's exit code 2 and the usage text on stderr.
+test('AC7.1: no arguments exits 2 with the usage on stderr', () => {
+  const res = spawnCli(CLI, [], { env: { PATH: process.env.PATH } });
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.stdout, '');
+  assert.strictEqual(
+    res.stderr,
+    'reachability-audit: usage: reachability-audit.js --skill <path> | --mcp-server <path> [--server-name <name>]\n',
+  );
+});
+
+// --- In-process entry (#5386) ---
+
+function tmpDir() {
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-reach-')));
+}
+
+test('AC3.1: require() prints nothing and leaves process.exitCode undefined', () => {
+  const origWrite = process.stdout.write;
+  const origExit = process.exitCode;
+  const writes = [];
+  delete require.cache[CLI];
+  process.stdout.write = function capture(chunk) { writes.push(String(chunk)); return true; };
+  let exitCode;
+  try {
+    require(CLI);
+    exitCode = process.exitCode;
+  } finally {
+    process.stdout.write = origWrite;
+    delete require.cache[CLI];
+    process.exitCode = origExit;
+  }
+  assert.deepStrictEqual(writes, []);
+  assert.strictEqual(exitCode, undefined);
+});
+
+test('AC8.1: a relative --skill path resolves against deps.cwd()', () => {
+  const tmp = tmpDir();
+  fs.writeFileSync(path.join(tmp, 'SKILL.md'), '---\nname: narrow\nallowed-tools: Read, Grep\n---\nbody\n');
+  const res = runCliSync(CLI, ['--skill', 'SKILL.md'], { cwd: tmp });
+  fs.rmSync(tmp, { recursive: true, force: true });
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.strictEqual(JSON.parse(res.stdout).clean, true);
+});
+
+test('a missing relative --skill path prints the absolute path resolved against deps.cwd()', () => {
+  const tmp = tmpDir();
+  const res = runCliSync(CLI, ['--skill', 'nope/SKILL.md'], { cwd: tmp });
+  fs.rmSync(tmp, { recursive: true, force: true });
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.stdout, '');
+  assert.strictEqual(
+    res.stderr,
+    `reachability-audit: cannot read --skill path: ${path.resolve(tmp, 'nope/SKILL.md')} (ENOENT)\n`,
+  );
+});
+
+test('a missing relative --mcp-server path prints err.message with the path as typed', () => {
+  const tmp = tmpDir();
+  const inProc = runCliSync(CLI, ['--mcp-server', 'nope.json'], { cwd: tmp });
+  const spawned = spawnCli(CLI, ['--mcp-server', 'nope.json'], { cwd: tmp, env: { PATH: process.env.PATH } });
+  fs.rmSync(tmp, { recursive: true, force: true });
+  assert.strictEqual(inProc.code, 2);
+  assert.strictEqual(inProc.stdout, '');
+  assert.match(inProc.stderr, /\(ENOENT: no such file or directory, open 'nope\.json'\)\n$/);
+  assert.strictEqual(inProc.code, spawned.code);
+  assert.strictEqual(inProc.stdout, spawned.stdout);
+  assert.strictEqual(inProc.stderr, spawned.stderr);
+});
+
+// A deleted working directory: process.cwd() throws ENOENT. An absolute path never needs it.
+const deletedCwd = () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); };
+
+test('an absolute --skill / --mcp-server path works when deps.cwd() throws (deleted cwd)', () => {
+  const tmp = tmpDir();
+  const skill = path.join(tmp, 'SKILL.md');
+  fs.writeFileSync(skill, '---\nname: narrow\nallowed-tools: Read, Grep\n---\nbody\n');
+  const ok = runCliSync(CLI, ['--skill', skill], { deps: { cwd: deletedCwd } });
+  const missingSkill = runCliSync(CLI, ['--skill', path.join(tmp, 'nope', 'SKILL.md')], { deps: { cwd: deletedCwd } });
+  const missingMcp = runCliSync(CLI, ['--mcp-server', path.join(tmp, 'nope.json')], { deps: { cwd: deletedCwd } });
+  fs.rmSync(tmp, { recursive: true, force: true });
+  assert.strictEqual(ok.code, 0, ok.stderr);
+  assert.strictEqual(JSON.parse(ok.stdout).clean, true);
+  assert.strictEqual(missingSkill.code, 2);
+  assert.strictEqual(missingSkill.stderr, `reachability-audit: cannot read --skill path: ${path.join(tmp, 'nope', 'SKILL.md')} (ENOENT)\n`);
+  assert.strictEqual(missingMcp.code, 2);
+  assert.match(missingMcp.stderr, /^reachability-audit: cannot read\/parse --mcp-server path: .*nope\.json \(ENOENT: /);
 });

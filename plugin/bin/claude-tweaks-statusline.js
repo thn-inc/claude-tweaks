@@ -224,6 +224,7 @@ function resolveMainProjectDir(dir, opts = {}) {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd: dir,
+      env: opts.env || process.env,
       windowsHide: true,
     }).trim();
     if (!commonDir) return dir;
@@ -355,6 +356,7 @@ function readOriginRemote(dir, opts = {}) {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd: dir,
+      env: opts.env || process.env,
       windowsHide: true,
     }).trim();
     return url || null;
@@ -449,12 +451,13 @@ function parseStatusBranch(output) {
   return { branch: branch || null, dirty: lines.length > 1 };
 }
 
-function renderGit(cwd) {
+function renderGit(cwd, { env = process.env } = {}) {
   try {
     const output = execFileSync('git', ['--no-optional-locks', 'status', '--porcelain', '-b'], { // git-path-read: not a path list (branch and dirty flag only)
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd,
+      env,
       windowsHide: true,
     });
     const { branch, dirty } = parseStatusBranch(output);
@@ -681,43 +684,68 @@ function renderSessionSegment(input, { home = os.homedir(), now = Date.now() } =
   return text;
 }
 
-async function main() {
-  const raw = await readStdin();
-  let input = {};
+// The entry contract (.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md):
+// run reaches stdin, stdout, the working directory, the environment, the home
+// directory and the clock only through deps. It never rejects: a throw prints
+// nothing and returns 0, as the status line always has.
+async function run(argv, deps) {
   try {
-    input = JSON.parse(raw || '{}');
+    const raw = await deps.stdin();
+    let input = {};
+    try {
+      input = JSON.parse(raw || '{}');
+    } catch {
+      /* empty input is fine */
+    }
+
+    // The payload's directory wins, as it always has; deps.cwd() stands in only
+    // when the payload carries none.
+    const cwd = (input.workspace && input.workspace.current_dir) || input.cwd || deps.cwd();
+    const now = deps.now();
+    const home = deps.homeDir();
+    const { env } = deps;
+    const rateLimits = input.rate_limits || {};
+
+    // Every renderer runs inside withEnv, so colour follows deps.env's NO_COLOR.
+    const segments = color.withEnv(env, () => [
+      renderProject(input, cwd, { env }),
+      renderModel(input),
+      renderContext(input),
+      renderEffort(input),
+      renderGit(cwd, { env }),
+      renderPorts(cwd, { home }),
+      renderRateLimit('sess', rateLimits.five_hour, now),
+      renderRateLimit('week', rateLimits.seven_day, now),
+      findActiveSpec(cwd),
+      findOpenLedger(cwd),
+      renderCost(input),
+      renderAccount(input, { env, home }),
+      renderSessionSegment(input, { home, now }),
+    ].filter((s) => s !== null && s !== undefined && s !== ''));
+
+    deps.stdout(segments.join(SEPARATOR));
   } catch {
-    /* empty input is fine */
+    deps.stdout('');
   }
-
-  const cwd = (input.workspace && input.workspace.current_dir) || input.cwd || process.cwd();
-  const now = Date.now();
-  const rateLimits = input.rate_limits || {};
-
-  const segments = [
-    renderProject(input, cwd),
-    renderModel(input),
-    renderContext(input),
-    renderEffort(input),
-    renderGit(cwd),
-    renderPorts(cwd),
-    renderRateLimit('sess', rateLimits.five_hour, now),
-    renderRateLimit('week', rateLimits.seven_day, now),
-    findActiveSpec(cwd),
-    findOpenLedger(cwd),
-    renderCost(input),
-    renderAccount(input),
-    renderSessionSegment(input, { now }),
-  ].filter((s) => s !== null && s !== undefined && s !== '');
-
-  process.stdout.write(segments.join(SEPARATOR));
+  return 0;
 }
 
-if (require.main === module) {
-  main().catch(() => process.stdout.write(''));
-}
+const realDeps = {
+  stdin: readStdin,
+  stdout: (s) => process.stdout.write(s),
+  cwd: () => process.cwd(),
+  env: process.env,
+  homeDir: () => os.homedir(),
+  now: () => Date.now(),
+};
+
+// The generated wrapper (lib/statusline-wrapper-source.js) requires this file and
+// calls main() with no arguments on every render.
+const main = () => run([], realDeps);
 
 module.exports = {
+  run,
+  realDeps,
   main,
   commonDirFromFs,
   resolveMainProjectDir,
@@ -742,3 +770,5 @@ module.exports = {
   parseStatusBranch,
   readStdin,
 };
+
+if (require.main === module) run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; });
