@@ -53,6 +53,7 @@ function callSubstop(lastText, opts = {}) {
   const { toolUse, ...extraInput } = opts;
   const run = mkRun();
   const out = substop.run({
+    env: process.env,
     input: { agent_transcript_path: transcriptWithToolUse(lastText, { toolUse }), ...extraInput },
     runDir: run,
     runState: null,
@@ -363,6 +364,7 @@ function writeTranscript(entries) {
 function runOn(transcriptPath, extraInput = {}) {
   const run = mkRun();
   const out = substop.run({
+    env: process.env,
     input: { agent_transcript_path: transcriptPath, ...extraInput },
     runDir: run,
     runState: null,

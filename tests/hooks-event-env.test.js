@@ -178,3 +178,157 @@ test('pre-tool-use helpers only a hook event calls throw TypeError when env is l
   assert.throws(() => preToolUse.shadowPipelineRunDir(path.join(abs, 'y')), TypeError);
   assert.throws(() => preToolUse.readConsoleCeiling(abs, abs), TypeError);
 });
+
+// --- the six light event modules (post-tool-use, post-tool-use-failure, session-end, pre-compact,
+// subagent-stop, user-prompt-submit) read the context too ---
+
+const postToolUse = require('../plugin/bin/lib/hooks/post-tool-use');
+const postToolUseFailure = require('../plugin/bin/lib/hooks/post-tool-use-failure');
+const sessionEnd = require('../plugin/bin/lib/hooks/session-end');
+const preCompact = require('../plugin/bin/lib/hooks/pre-compact');
+const subagentStop = require('../plugin/bin/lib/hooks/subagent-stop');
+const userPromptSubmit = require('../plugin/bin/lib/hooks/user-prompt-submit');
+
+const SESSION = 'sess-5377';
+const eventPayload = (extra, cwd) => JSON.stringify({ session_id: SESSION, cwd, ...extra });
+
+// A project whose one run dir is owned by SESSION (and by ownerPid, when given).
+function ownedProject({ ownerPid } = {}) {
+  const project = gitRepo();
+  const run = mkRunAt(project, '2026-11-15T000000-spec-5377', project);
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active', worktree: project, sessionId: SESSION, ...(ownerPid ? { ownerPid } : {}) }));
+  return { project, run };
+}
+
+function eventsOf(run) {
+  const file = path.join(run, 'events.jsonl');
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+}
+
+function stateOf(run) {
+  return JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
+}
+
+test('post-tool-use reads nothing from process.env', async () => {
+  const { project, run } = ownedProject();
+  const res = await runHookCli(['post-tool-use'], {
+    input: eventPayload({ tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'q?', header: 'h', options: [{ label: 'a' }] }] }, tool_response: 'a' }, project),
+    cwd: project,
+    env: hookEnv(),
+  });
+  assert.strictEqual(res.code, 0);
+  assert.ok(eventsOf(run).length > 0, 'an event reached the owned run');
+});
+
+test('post-tool-use runs its git children under the injected env (a commit check)', async () => {
+  const { project } = ownedProject();
+  const res = await runHookCli(['post-tool-use'], {
+    input: eventPayload({ tool_name: 'Bash', tool_input: { command: 'git commit -m "x"' } }, project),
+    cwd: project,
+    env: hookEnv(),
+  });
+  assert.strictEqual(res.code, 0);
+});
+
+test('post-tool-use stamps the owner pid from the injected env', async () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const injected = String(process.pid);
+  await withProcessEnv({ CLAUDE_PID: String(process.ppid) }, async () => {
+    // A fresh session id: the non-EnterWorktree ad-hoc check leaves a once-per-session marker in the tmp dir.
+    const input = eventPayload({ session_id: `sess-5377-${process.pid}-${Date.now()}`, tool_name: 'Write', tool_input: { file_path: path.join(wt, 'a.txt') } }, wt);
+    const res = await runHookCli(['post-tool-use'], { input, cwd: wt, env: hookEnv({ CLAUDE_PID: injected }) });
+    assert.strictEqual(res.code, 0);
+  });
+  const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
+  const dirs = fs.readdirSync(pipelines).filter((n) => n.endsWith('-adhoc-standalone'));
+  assert.strictEqual(dirs.length, 1, 'one ad-hoc run dir is minted');
+  assert.strictEqual(stateOf(path.join(pipelines, dirs[0])).ownerPid, Number(injected));
+});
+
+const REFUSAL = (wt) => `This session is isolated in the worktree ${wt}, but this command … cannot be shown not to be git. Refusing to run it — a worktree-isolated session's git operations must target its own worktree.`;
+const refusalPayload = (wt) => eventPayload({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: { command: 'd=.; sed -n 1,2p $d/README.md' }, error: REFUSAL(wt) }, wt);
+
+test('post-tool-use-failure reads nothing from process.env', async () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const res = await runHookCli(['post-tool-use-failure'], { input: refusalPayload(wt), cwd: wt, env: hookEnv() });
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(readRefusalEvents(main).length, 1);
+});
+
+test('post-tool-use-failure tags its event from the injected CT_HOOKS_TEST_MODE only', async () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  await withProcessEnv({ CT_HOOKS_TEST_MODE: undefined }, async () => {
+    await runHookCli(['post-tool-use-failure'], { input: refusalPayload(wt), cwd: wt, env: hookEnv({ CT_HOOKS_TEST_MODE: '1' }) });
+  });
+  assert.strictEqual(readRefusalEvents(main)[0].test, true);
+
+  const main2 = gitRepo();
+  const wt2 = linkedWorktreeOf(main2);
+  const bare = hookEnv();
+  delete bare.CT_HOOKS_TEST_MODE;
+  await withProcessEnv({ CT_HOOKS_TEST_MODE: '1' }, async () => {
+    await runHookCli(['post-tool-use-failure'], { input: refusalPayload(wt2), cwd: wt2, env: bare });
+  });
+  assert.ok(!('test' in readRefusalEvents(main2)[0]), 'process.env alone does not tag the event');
+});
+
+test('session-end reads nothing from process.env', async () => {
+  const { project, run } = ownedProject();
+  const res = await runHookCli(['session-end'], { input: eventPayload({ reason: 'exit' }, project), cwd: project, env: hookEnv() });
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(stateOf(run).status, 'interrupted');
+  assert.ok(eventsOf(run).some((e) => e.type === 'session-end'));
+});
+
+test('session-end treats a nested session by the injected CLAUDE_PID', async () => {
+  const { project, run } = ownedProject({ ownerPid: process.pid });
+  const input = eventPayload({ reason: 'other' }, project);
+  // process.env names the owner's pid; the injected env names another process, so the run is a nested session's.
+  await withProcessEnv({ CLAUDE_PID: String(process.pid) }, async () => {
+    await runHookCli(['session-end'], { input, cwd: project, env: hookEnv({ CLAUDE_PID: String(process.pid + 1) }) });
+  });
+  assert.strictEqual(stateOf(run).status, 'active', 'a nested process ending must not stamp the parent run');
+  await withProcessEnv({ CLAUDE_PID: String(process.pid + 1) }, async () => {
+    await runHookCli(['session-end'], { input, cwd: project, env: hookEnv({ CLAUDE_PID: String(process.pid) }) });
+  });
+  assert.strictEqual(stateOf(run).status, 'interrupted', 'the owner process ending still stamps interrupted');
+});
+
+test('pre-compact reads nothing from process.env', async () => {
+  const { project, run } = ownedProject();
+  const res = await runHookCli(['pre-compact'], { input: eventPayload({ trigger: 'auto' }, project), cwd: project, env: hookEnv() });
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(stateOf(run).lastEvent, 'pre-compact');
+  assert.ok(eventsOf(run).some((e) => e.type === 'pre-compact'));
+});
+
+test('subagent-stop reads nothing from process.env', async () => {
+  const { project, run } = ownedProject();
+  const transcript = path.join(project, 'agent.jsonl');
+  fs.writeFileSync(transcript, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'task' }] } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'All done.\n\nSTATUS: DONE' }] } }),
+  ].join('\n') + '\n');
+  const res = await runHookCli(['subagent-stop'], { input: eventPayload({ agent_transcript_path: transcript, agent_id: 'a1' }, project), cwd: project, env: hookEnv() });
+  assert.strictEqual(res.code, 0);
+  assert.deepStrictEqual(eventsOf(run).filter((e) => e.type === 'contract-violation'), []);
+});
+
+test('user-prompt-submit reads nothing from process.env', async () => {
+  const { project, run } = ownedProject();
+  const res = await runHookCli(['user-prompt-submit'], { input: eventPayload({ prompt: '/claude-tweaks:help' }, project), cwd: project, env: hookEnv() });
+  assert.strictEqual(res.code, 0);
+  assert.ok(eventsOf(run).some((e) => e.type === 'skill_invoked' && e.source === 'user'));
+});
+
+test('the six light event modules throw TypeError on a context without env', () => {
+  const ctx = { input: {}, ownedRun: {}, cwd: os.tmpdir() };
+  for (const mod of [postToolUse, postToolUseFailure, sessionEnd, preCompact, subagentStop, userPromptSubmit]) {
+    assert.throws(() => mod.run(ctx), TypeError);
+  }
+});

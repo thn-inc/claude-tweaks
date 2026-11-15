@@ -21,6 +21,7 @@
 // object (`runGit(a, b, opts)` is flagged: spell `{ env }` in the call, or list the line in
 // NAMED_EXCEPTIONS with its reason), a call reached through an alias (`const g = runGit`), an `env`
 // that is only a different value under the same word at the top level (`runGit(a, b, other.env)` passes),
+// an `env` inside the body of an object method shorthand, a getter or a class body (it still counts),
 // and an arrow or function body ended by anything but a top-level comma or the call's close.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -29,7 +30,15 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 const { readText } = require('./helpers/read-skill');
 
 const REPO = path.join(__dirname, '..');
-const EVENT_MODULES = ['plugin/bin/lib/hooks/pre-tool-use.js'];
+const EVENT_MODULES = [
+  'plugin/bin/lib/hooks/pre-tool-use.js',
+  'plugin/bin/lib/hooks/post-tool-use.js',
+  'plugin/bin/lib/hooks/post-tool-use-failure.js',
+  'plugin/bin/lib/hooks/session-end.js',
+  'plugin/bin/lib/hooks/pre-compact.js',
+  'plugin/bin/lib/hooks/subagent-stop.js',
+  'plugin/bin/lib/hooks/user-prompt-submit.js',
+];
 const CALL_NAMES = ['repoInfo', 'runGit', 'writeRunState'];
 
 // A call that legitimately reaches its env under another name goes here, keyed by module path then
@@ -39,6 +48,12 @@ const NAMED_EXCEPTIONS = {};
 // Calls the module holds today, per call name, per module. A matcher that stops matching drops below.
 const FLOORS = {
   'plugin/bin/lib/hooks/pre-tool-use.js': { repoInfo: 9, runGit: 11, writeRunState: 5 },
+  'plugin/bin/lib/hooks/post-tool-use.js': { repoInfo: 0, runGit: 5, writeRunState: 1 },
+  'plugin/bin/lib/hooks/post-tool-use-failure.js': { repoInfo: 0, runGit: 0, writeRunState: 0 },
+  'plugin/bin/lib/hooks/session-end.js': { repoInfo: 0, runGit: 0, writeRunState: 1 },
+  'plugin/bin/lib/hooks/pre-compact.js': { repoInfo: 0, runGit: 0, writeRunState: 1 },
+  'plugin/bin/lib/hooks/subagent-stop.js': { repoInfo: 0, runGit: 0, writeRunState: 0 },
+  'plugin/bin/lib/hooks/user-prompt-submit.js': { repoInfo: 0, runGit: 0, writeRunState: 0 },
 };
 
 function lineOf(src, offset) {

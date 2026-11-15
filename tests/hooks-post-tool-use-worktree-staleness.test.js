@@ -58,7 +58,7 @@ function advance(main, n) {
 function enterWorktreeCtx(wt, { toolResponse, ownedRun, platform } = {}) {
   const input = { tool_name: 'EnterWorktree', cwd: wt };
   if (toolResponse !== undefined) input.tool_response = toolResponse;
-  const ctx = { input, cwd: wt, ownedRun };
+  const ctx = { input, cwd: wt, env: process.env, ownedRun };
   if (platform !== undefined) ctx.platform = platform;
   return ctx;
 }
@@ -145,7 +145,7 @@ test('recognizes "Entered worktree at" (an existing worktree), not only "Created
   // `main` instead means the ONLY way to resolve `wt` is the primary
   // tool-result parse actually recognizing "Entered worktree at".
   const input = { tool_name: 'EnterWorktree', cwd: main, tool_response: toolResponse };
-  const out = post.run({ input, cwd: main });
+  const out = post.run({ env: process.env, input, cwd: main });
   assert.ok(out.json && typeof out.json.systemMessage === 'string');
   assert.match(out.json.systemMessage, /\b1\b/);
 });
@@ -154,7 +154,7 @@ test('does not fire for a tool other than EnterWorktree', () => {
   const { main } = setupProject();
   const wt = harnessWorktreeOf(main);
   advance(main, 5);
-  const out = post.run({ input: { tool_name: 'ExitWorktree', cwd: wt }, cwd: wt });
+  const out = post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: wt }, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
@@ -219,7 +219,7 @@ test('does not execute an injected --upload-pack value when integration-branch s
 // this file's Deliverable 4 ("fail open on any error... never throw"),
 // exercised end-to-end via post.run() rather than asserted only in prose.
 test('an unusable cwd (no tool result, no resolvable worktree) never throws — returns {} rather than crashing', () => {
-  const out = post.run({ input: { tool_name: 'EnterWorktree', cwd: '/this/path/does/not/exist/at/all' } });
+  const out = post.run({ env: process.env, input: { tool_name: 'EnterWorktree', cwd: '/this/path/does/not/exist/at/all' } });
   assert.deepStrictEqual(out, {});
 });
 

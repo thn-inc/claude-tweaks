@@ -3,6 +3,7 @@
 const ctxLib = require('./context');
 
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
   // Scoped to a run this session may write to, NOT ctx.runDir (#62). When every
   // non-terminal run belongs to another session there is nothing here to record.
   const owned = ctx.ownedRun || {};
@@ -14,7 +15,7 @@ function run(ctx) {
   // belongs to this run — the same treatment as a bystander (#3845).
   // Deliberately before the attribution check: another process ending is not
   // this run's event, even on a `fallback` guess.
-  if (ctxLib.isNestedSession(state, process.env)) return {};
+  if (ctxLib.isNestedSession(state, ctx.env)) return {};
   const status = state?.status;
   // Only stamp `interrupted` on a run this session is known to own.
   //
@@ -30,7 +31,7 @@ function run(ctx) {
   // interrupted run whose ownership was never recorded. The cost of stamping
   // wrongly is a permanent false one that finishing the work does not clear.
   if (status !== 'clean' && owned.attribution !== 'fallback') {
-    ctxLib.writeRunState(owned.dir, { status: 'interrupted', lastEvent: 'session-end' });
+    ctxLib.writeRunState(owned.dir, { status: 'interrupted', lastEvent: 'session-end' }, { env: ctx.env });
   }
   ctxLib.appendEvent(
     owned.dir,

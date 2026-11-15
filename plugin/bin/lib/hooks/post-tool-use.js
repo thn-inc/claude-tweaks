@@ -42,9 +42,9 @@ const REC_SEP = '\x1e';
 // commit for every one of them, so only the last of several real commits
 // was ever actually evaluated. Returns newest-first (git log's own order),
 // each entry `{ hash, ts, message }` (ts null if unparseable).
-function recentCommits(dir, count) {
+function recentCommits(dir, count, env) {
   if (count <= 0) return [];
-  const { stdout: out } = runGit(['log', '-n', String(count), `--format=%h${FIELD_SEP}%ct${FIELD_SEP}%B${REC_SEP}`], dir);
+  const { stdout: out } = runGit(['log', '-n', String(count), `--format=%h${FIELD_SEP}%ct${FIELD_SEP}%B${REC_SEP}`], dir, { env });
   if (out === null) return [];
   return out
     .split(REC_SEP)
@@ -235,7 +235,7 @@ function extractToolResponseText(toolResponse) {
 // worktree-reap.js's `findWorktreeEntry`, so a win32 forward-slash porcelain path matches a
 // backslash cwd (#3811).
 function resolveWorktreePathViaPorcelain(ctx, deps = {}) {
-  return ctxLib.listedWorktreeForCwd(ctx.cwd, deps);
+  return ctxLib.listedWorktreeForCwd(ctx.cwd, { env: ctx.env, ...deps });
 }
 
 function resolveCreatedWorktreePath(ctx) {
@@ -327,8 +327,8 @@ function stampAdHocRunDir(ctx) {
     // silently reassign the dir mid-session.
     const existing = ctxLib.readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return;
-    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(process.env) };
-    const written = ctxLib.writeRunState(result.path, ctxLib.patchWithOwnerBlock(todaysPatch, sessionId));
+    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(ctx.env) };
+    const written = ctxLib.writeRunState(result.path, ctxLib.patchWithOwnerBlock(todaysPatch, sessionId, { env: ctx.env }), { env: ctx.env });
     if (!written) {
       // writeRunState failed (I/O error). The mint above already touched
       // decisions.md, which isUnadoptedMint (context.js) treats as evidence
@@ -381,7 +381,7 @@ function checkWindowsLongpaths(ctx) {
     // Read-only: `--get` never writes. A non-zero exit (key unset) and an
     // explicit `false` are both treated as "not enabled" — only a literal
     // `true` skips the nudge.
-    const result = runGit(['config', '--get', 'core.longpaths'], worktreePath);
+    const result = runGit(['config', '--get', 'core.longpaths'], worktreePath, { env: ctx.env });
     // An unset key is a definitive answer from git itself (`config --get`
     // exits 1 with no output) — classified 'git-error', not indeterminate.
     // Only a real check failure (timeout/spawn/no-git — the question was
@@ -436,13 +436,13 @@ function checkWorktreeStaleness(ctx) {
     // which warns and ignores it, but not every consumer of this plugin uses
     // https remotes). `--` forces everything after it to be read as a
     // positional refspec regardless of leading characters.
-    const fetch = runGit(['fetch', 'origin', '--', branch], worktreePath, { timeoutMs: WORKTREE_FETCH_TIMEOUT_MS });
+    const fetch = runGit(['fetch', 'origin', '--', branch], worktreePath, { timeoutMs: WORKTREE_FETCH_TIMEOUT_MS, env: ctx.env });
     if (fetch.failure) {
       logWorktreeStalenessEvent(ctx, { worktree: worktreePath, branch, result: 'check-failed', reason: fetch.failure });
       return null;
     }
 
-    const revList = runGit(['rev-list', '--count', `HEAD..origin/${branch}`], worktreePath);
+    const revList = runGit(['rev-list', '--count', `HEAD..origin/${branch}`], worktreePath, { env: ctx.env });
     if (revList.failure || revList.stdout === null) {
       logWorktreeStalenessEvent(ctx, {
         worktree: worktreePath, branch, result: 'check-failed', reason: revList.failure || 'unparseable-count',
@@ -526,7 +526,7 @@ function checkPostTeardownReanchor(ctx) {
     // `toplevel()` above) it still resolves correctly even though that exact
     // directory is now gone. Fails closed to null (skip silently) rather
     // than guessing when the walk-up can't find a `.git` at all.
-    const runRoot = wtDetect.mainCheckoutRoot(ctx.cwd || process.cwd());
+    const runRoot = wtDetect.mainCheckoutRoot(ctx.cwd);
     const reanchor = runRoot
       ? `Re-anchor there (\`cd ${runRoot}\`) before issuing any further git-dependent command.`
       : 'Re-anchor to this project\'s main checkout before issuing any further git-dependent command ' +
@@ -591,6 +591,7 @@ function logAskUserQuestion(ctx) {
 }
 
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
   if (ctx.input.tool_name === 'Skill') return skillInvocation.run(ctx);
   if (ctx.input.tool_name === 'AskUserQuestion') return logAskUserQuestion(ctx);
 
@@ -613,7 +614,7 @@ function run(ctx) {
   const checkoutsByMain = new Map();
   const checkoutsOf = (main) => {
     if (!checkoutsByMain.has(main)) {
-      const listed = runGit(['worktree', 'list', '--porcelain'], main).stdout;
+      const listed = runGit(['worktree', 'list', '--porcelain'], main, { env: ctx.env }).stdout;
       checkoutsByMain.set(main, [main, ...parseWorktreeList(listed).filter((e) => !e.bare && !e.prunable).map((e) => e.path)]);
     }
     return checkoutsByMain.get(main);
@@ -644,7 +645,7 @@ function run(ctx) {
     commitCountByDir.set(t.dir, (commitCountByDir.get(t.dir) || 0) + 1);
   }
   const recentByDir = new Map();
-  for (const [dir, count] of commitCountByDir) recentByDir.set(dir, recentCommits(dir, count).reverse());
+  for (const [dir, count] of commitCountByDir) recentByDir.set(dir, recentCommits(dir, count, ctx.env).reverse());
   const dirCursor = new Map();
   function nextCommitFor(dir) {
     const list = recentByDir.get(dir) || [];
@@ -671,7 +672,7 @@ function run(ctx) {
     const offers = new Map();
     const offerOf = (dir) => {
       if (!offers.has(dir)) {
-        const recent = recentCommits(dir, (commitCountByDir.get(dir) || 0) + lostCommitTargets.length);
+        const recent = recentCommits(dir, (commitCountByDir.get(dir) || 0) + lostCommitTargets.length, ctx.env);
         offers.set(dir, recent.filter((c) => c.hash && isFresh(c) && !held.has(c.hash)).reverse());
       }
       return offers.get(dir);
@@ -705,7 +706,7 @@ function run(ctx) {
   const pushHeadByDir = new Map();
   function headHashFor(dir) {
     if (!pushHeadByDir.has(dir)) {
-      const head = recentCommits(dir, 1);
+      const head = recentCommits(dir, 1, ctx.env);
       pushHeadByDir.set(dir, head.length ? head[0].hash : null);
     }
     return pushHeadByDir.get(dir);

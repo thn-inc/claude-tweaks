@@ -117,7 +117,7 @@ test("a bystander session's session-end cannot stamp interrupted on another sess
   const theirs = mkRun(cwd, '2026-07-01T090000-theirs', { status: 'active', sessionId: 'them' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'bystander');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'bystander' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'bystander' }, ownedRun: owned, cwd });
 
   assert.strictEqual(readState(theirs).status, 'active', 'a finished run must not be flagged by a passer-by');
   assert.deepStrictEqual(readEvents(theirs), [], "and must not receive the bystander's events");
@@ -128,7 +128,7 @@ test('session-end does not stamp interrupted on a guessed run, but still records
   const unowned = mkRun(cwd, '2026-07-01T090000-unowned', { status: 'active' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'someone');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'someone' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'someone' }, ownedRun: owned, cwd });
 
   // The stamp is the self-perpetuating part — withheld. The breadcrumb is not.
   assert.strictEqual(readState(unowned).status, 'active');
@@ -143,7 +143,7 @@ test('session-end DOES stamp interrupted on a run this session owns', () => {
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd });
 
   assert.strictEqual(readState(mine).status, 'interrupted', 'the warning must still fire for a real interruption');
   assert.strictEqual(readEvents(mine)[0].attribution, undefined, 'a known-owner event carries no guess tag');
@@ -171,7 +171,7 @@ test('AC1.1 #3845: a nested session ending (same session id, different CLAUDE_PI
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: process.pid });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'active', 'a nested claude -p ending is not the owner session ending');
   assert.deepStrictEqual(readEvents(mine), [], 'and leaves no breadcrumb on the parent run');
@@ -182,7 +182,7 @@ test('AC2.1 #3845: the owner process ending still stamps interrupted', () => {
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: process.pid });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(String(process.pid), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'interrupted');
   const ev = readEvents(mine);
@@ -200,7 +200,7 @@ test('#3845: crash + resume — a dead ownerPid does not suppress the resumed ow
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: deadPid() });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(String(process.pid), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'interrupted', 'the original owner died; the resumed process ending is the real interruption');
 });
@@ -211,7 +211,7 @@ test('#3845: a nested session on an env-attributed run also writes nothing', () 
 
   const owned = ctxLib.resolveRun(cwd, { PIPELINE_RUN_DIR: pinned }, 'me');
   assert.strictEqual(owned.attribution, 'env');
-  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(pinned).status, 'active');
   assert.deepStrictEqual(readEvents(pinned), []);
@@ -223,7 +223,7 @@ test('#3845: a nested session on a fallback-attributed run writes neither the st
 
   const owned = ctxLib.resolveRun(cwd, {}, 'someone');
   assert.strictEqual(owned.attribution, 'fallback');
-  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'someone' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'someone' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(guessed).status, 'active');
   assert.deepStrictEqual(readEvents(guessed), [], 'the guard sits before the attribution check, so the fallback breadcrumb is withheld too');
@@ -234,7 +234,7 @@ test('#3845: an unstamped run (no ownerPid) fails open — the session ending st
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'interrupted');
 });
@@ -244,7 +244,7 @@ test('#3845: an unknown CLAUDE_PID at session end fails open — the stamp is wr
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: process.pid });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(null, () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(null, () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'interrupted');
 });
@@ -254,7 +254,7 @@ test('pre-compact does not overwrite lastEvent on a guessed run', () => {
   const unowned = mkRun(cwd, '2026-07-01T090000-unowned', { status: 'active', lastEvent: 'build-start' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'someone');
-  preCompact.run({ input: { trigger: 'auto' }, ownedRun: owned, cwd });
+  preCompact.run({ env: process.env, input: { trigger: 'auto' }, ownedRun: owned, cwd });
 
   assert.strictEqual(readState(unowned).lastEvent, 'build-start');
   assert.strictEqual(readEvents(unowned)[0].attribution, 'fallback');
@@ -265,7 +265,7 @@ test('a run that already went interrupted is not re-stamped by its owner', () =>
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'interrupted', sessionId: 'me' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd });
 
   assert.strictEqual(readState(mine).status, 'interrupted');
 });
@@ -350,7 +350,7 @@ test('AC1.1: a foreign session\'s hook event never lands in a claim-log-only min
   const mint = mkClaimedMint(cwd);
 
   const owned = ctxLib.resolveRun(cwd, {}, 'other-session');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'other-session' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'other-session' }, ownedRun: owned, cwd });
 
   assert.deepStrictEqual(readEvents(mint), []);
 });

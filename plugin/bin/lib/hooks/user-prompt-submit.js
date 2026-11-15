@@ -54,6 +54,7 @@ function skillExists(name, { skillsDir = path.resolve(__dirname, '..', '..', '..
 }
 
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
   const name = parseTypedSkill(ctx.input && ctx.input.prompt);
   if (!name || !skillExists(name)) return {};
   const ownedRun = ctx.ownedRun || {};

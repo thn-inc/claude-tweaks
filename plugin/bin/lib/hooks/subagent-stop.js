@@ -450,6 +450,7 @@ function lastAssistantText(transcriptPath) {
 }
 
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
   // Scoped to ctx.ownedRun, NEVER ctx.runDir: the latter is the session-agnostic
   // newest-non-terminal resolution, so with parallel sessions active a sibling
   // session's Task-agent stop would stamp whichever run dir happens to be newest

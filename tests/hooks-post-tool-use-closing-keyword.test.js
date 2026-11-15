@@ -32,6 +32,7 @@ function gitRepoWithMessage(message, dateOverride) {
 
 function runPostToolUse(repo, runDir = null) {
   return post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: 'git commit -m "..."' }, cwd: repo },
     runDir,
     runState: null,
@@ -73,6 +74,7 @@ test('fires even when a runDir IS set (both checks run independently)', () => {
   const repo = gitRepoWithMessage('Addresses #7');
   const runDir = tmpDir('ct-ck-run-');
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: 'git commit -m "..."' }, cwd: repo },
     runDir, runState: { status: 'active' }, ownedRun: { dir: runDir, attribution: 'session' }, cwd: repo,
   });
@@ -85,6 +87,7 @@ test('fires even when a runDir IS set (both checks run independently)', () => {
 test('does not warn when the Bash command is not a git commit', () => {
   const repo = gitRepoWithMessage('Addresses #7'); // real repo state irrelevant — command isn't a commit
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: 'npm test' }, cwd: repo },
     runDir: null, runState: null, cwd: repo,
   });
@@ -139,6 +142,7 @@ test('two real commits to the SAME dir in one Bash invocation are each evaluated
     env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
   }); // the NEWER commit — fully closes its own ref, but must not mask the older one's
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: 'git commit -m "a" && git commit --allow-empty -m "b"' }, cwd: repo },
     runDir: null, runState: null, cwd: repo,
   });
@@ -163,6 +167,7 @@ test('#4303: a commit past the cwd cap that lands in the main checkout is still 
     env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
   });
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}cd ../../..; git commit --allow-empty -qm "work on #12"` }, cwd: wt },
     runDir: null, runState: null, cwd: wt,
   });
@@ -187,6 +192,7 @@ test('#4303: a commit past the cwd cap that lands in a linked worktree is still 
   });
   const chain = Array.from({ length: 16 }, (_, i) => `cd /tmp/ct-4303-a${i + 1} && `).join('');
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${chain}cd ${wt}/sub; git commit --allow-empty -qm "work on #12"` }, cwd: main },
     runDir: null, runState: null, cwd: main,
   });
@@ -209,6 +215,7 @@ test('#4303: a commit past the cwd cap is not warned about for another checkout\
   execFileSync('git', ['-C', w2, 'commit', '--allow-empty', '-qm', 'sibling work on #99'], { env });
   execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-qm', 'Fixes #12'], { env });
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}git commit --allow-empty -qm "Fixes #12"` }, cwd: wt },
     runDir: null, runState: null, cwd: wt,
   });
@@ -237,6 +244,7 @@ test('#4303: a commit past the cwd cap from outside any repo is still checked in
   const outside = tmpDir('ct-4303-out-', { real: true });
   const chain = Array.from({ length: 16 }, (_, i) => `cd /tmp/ct-4303-a${i + 1} && `).join('');
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${chain}cd ${wt}/sub; git commit --allow-empty -qm "work on #12"` }, cwd: outside },
     runDir: null, runState: null, cwd: outside,
   });
@@ -257,6 +265,7 @@ test('#4303: a commit past the cwd cap is not warned about for the main checkout
   execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-qm', 'other session on #99'], { env });
   execFileSync('git', ['-C', w2, 'commit', '--allow-empty', '-qm', 'Fixes #12'], { env });
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}cd ../y; git commit --allow-empty -qm "Fixes #12"` }, cwd: wt },
     runDir: null, runState: null, cwd: wt,
   });
@@ -280,6 +289,7 @@ for (const [holder, otherAt] of [['another worktree', 'w2'], ['the main checkout
     execFileSync('git', ['-C', other, 'commit', '--allow-empty', '-qm', 'other session on #99'], { env });
     const runDir = tmpDir('ct-4303-run-');
     const out = post.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}git commit -qm "Fixes #12"` }, cwd: wt },
       runDir, runState: { status: 'active' }, ownedRun: { dir: runDir, attribution: 'session' }, cwd: wt,
     });
@@ -308,6 +318,7 @@ test('#4303: a commit past the cwd cap whose subject two checkouts offer logs ne
   for (const d of [w2, main]) execFileSync('git', ['-C', d, 'commit', '--allow-empty', '-qm', 'work on #12'], { env });
   const runDir = tmpDir('ct-4303-run-');
   post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}cd ../../..; git commit --allow-empty -qm "work on #12"` }, cwd: wt },
     runDir, runState: { status: 'active' }, ownedRun: { dir: runDir, attribution: 'session' }, cwd: wt,
   });
@@ -328,6 +339,7 @@ test('#4303: a commit past the cwd cap whose message is read from a file is stil
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
   execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-qm', 'work on #12'], { env });
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}cd ../../..; git commit --allow-empty -qF msg` }, cwd: wt },
     runDir: null, runState: null, cwd: wt,
   });
@@ -352,6 +364,7 @@ test('#4303: a commit past the cwd cap behind a relative git -C is checked where
   const outside = path.join(parent, 'a0');
   fs.mkdirSync(outside);
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(16)}git -C ../wt commit --allow-empty -qm "work on #12"` }, cwd: outside },
     runDir: null, runState: null, cwd: outside,
   });
@@ -370,7 +383,7 @@ test('#4303: a commit past the cwd cap from a subdirectory of the worktree is st
     env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
   });
   const cwd = path.join(wt, 'sub');
-  const out = post.run({ input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}git commit --allow-empty -qm "work on #12"` }, cwd }, runDir: null, runState: null, cwd });
+  const out = post.run({ env: process.env, input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}git commit --allow-empty -qm "work on #12"` }, cwd }, runDir: null, runState: null, cwd });
   assert.ok(out.json && /closing keyword/i.test(String(out.json.systemMessage)), JSON.stringify(out));
 });
 
@@ -386,6 +399,7 @@ test('#4303: a commit past the cwd cap is checked even beside the command\'s own
   execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-qm', 'a'], { env });
   execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-qm', 'work on #12'], { env });
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `git commit --allow-empty -qm a; ${groups4303(20)}cd ../../..; git commit --allow-empty -qm "work on #12"` }, cwd: wt },
     runDir: null, runState: null, cwd: wt,
   });
