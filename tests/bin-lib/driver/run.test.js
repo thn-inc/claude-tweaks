@@ -6734,6 +6734,21 @@ test('#5232 Review Focus 5: an adopted worktree on a detached HEAD is refused', 
   }
 });
 
+test('#5232 an adopted worktree on the integration branch is refused before the claim, nothing written or pushed', async () => {
+  const h = adoptHarness(ADOPT_WT, [[isAdoptBranchRead, 'main\n']]);
+  assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 1, h.err.join(''));
+  const final = lastLine(h);
+  assert.equal(final.outcome, 'refused');
+  assert.equal(final.stop.step, 'policy');
+  assert.equal(final.stop.class, 'refused');
+  assert.match(final.stop.detail, /adopted worktree is on the integration branch main/);
+  assert.deepEqual(h.writes(), []);
+  assert.equal(h.calls.filter((c) => c.kind === 'node').length, 0, 'no claim, claim log or record-worktree call');
+  assert.equal(h.calls.filter(onGit('push')).length, 0, 'no push');
+  assert.equal(h.calls.filter(onGit('fetch')).length, 0);
+  assert.equal(h.calls.filter((c) => c.kind === 'ghCreate').length, 0);
+});
+
 const claimCall = (h) => h.calls.find((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0]));
 const claimLogCall = (h) => h.calls.find((c) => c.kind === 'node' && /log-decision\.js$/.test(c.args[0]) && c.args.includes('--section'));
 const argAfter = (c, flag) => c.args[c.args.indexOf(flag) + 1];

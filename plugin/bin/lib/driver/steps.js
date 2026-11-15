@@ -205,6 +205,12 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     }
     const { ref, why } = resolveIntegrationRef(resolved, mainRoot, deps);
     if (!ref) return fatal(`integration branch unresolvable: ${why}`);
+    // Under --run (#5232) adopt.js cannot see the integration branch, so the check lives here, before
+    // the claim and any write: pushStep would otherwise push an adopted worktree on the integration
+    // branch itself, with no PR or review. Only `ref`, a validated name, goes in the detail.
+    if (shared.adopted && shared.adopted.branch === ref) {
+      return fatal(`adopted worktree is on the integration branch ${ref}: nothing to build or push`);
+    }
     shared.policy = resolved;
     shared.mainRoot = mainRoot;
     shared.repo = repo;
