@@ -2242,7 +2242,8 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     for (const t of [['X=1', 'cp'], ['x+=1', 'cp']]) {
       assert.deepStrictEqual(gitCommand.commandWord(t, null, '/r'), { index: 1, dir: '/r', unprovable: false, split: false }, t.join(' '));
     }
-    for (const t of [['command', '-v', 'cp'], ['command', '-V', 'cp'], ['env', '-S', 'cp a b'], ['env', '-P', '/x', 'cp'], ['time']]) {
+    for (const t of [['command', '-v', 'cp'], ['command', '-V', 'cp'], ['env', '-S', 'cp a b'], ['env', '-P', '/x', 'cp'], ['time'],
+      ['env', '--split-string=cp a b'], ['command', '-x', 'cp']]) {
       assert.deepStrictEqual(gitCommand.commandWord(t, undefined, '/r'), { index: -1, dir: '/r', unprovable: false, split: false }, t.join(' '));
     }
   });
