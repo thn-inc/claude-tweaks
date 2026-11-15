@@ -62,8 +62,6 @@ function resolveFrom(d, p) {
   return path.isAbsolute(p) ? path.resolve(p) : path.resolve(d.cwd(), p);
 }
 
-// The daemon's cwd, or undefined when d.cwd() throws (a deleted working directory): the child
-// then inherits it, as before the entry contract; its --dir/--state are absolute either way.
 function pidAlive(pid, kill = (p, s) => process.kill(p, s)) {
   try {
     kill(pid, 0);
@@ -155,6 +153,8 @@ async function cmdStart(opts, d) {
   const requestedPort = opts.port ? Number(opts.port) : await findFreePortFrom(DEFAULT_PORT_BASE);
   const idleMinutes = opts['idle-minutes'] ? Number(opts['idle-minutes']) : DEFAULT_IDLE_MINUTES;
 
+  // The daemon's cwd is undefined when d.cwd() throws (a deleted working directory): the child
+  // then inherits it, as before the entry contract; its --dir/--state are absolute either way.
   const child = d.spawn(
     process.execPath,
     [

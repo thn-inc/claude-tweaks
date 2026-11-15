@@ -69,8 +69,9 @@ function computeFingerprint(source, description) {
   return createFingerprint(source, ['description']).fingerprint({ description });
 }
 
-// The store's anchor directory is undefined when d.cwd() throws (a deleted working directory):
-// the store's own anchorRoot() then degrades open exactly as it did before the entry contract.
+// Both subcommands pass the store cwdOrUndefined(d): its anchor directory is undefined when d.cwd()
+// throws (a deleted working directory), and the store's own anchorRoot() then degrades open exactly
+// as it did before the entry contract.
 function runLookup(args, d) {
   if (!args.source) return usageExit(d);
   const read = readDescriptionPayload('lookup', d);
