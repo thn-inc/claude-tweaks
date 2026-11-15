@@ -77,6 +77,29 @@ test('AC2.1 AC4.1: runCli(hooks, [verb, "--help"]) resolves to the usage line fo
   }
 });
 
+test('#5375: realDeps.stderr writes every byte, retries EAGAIN and never throws on another error', () => {
+  const { realDeps } = require('../plugin/bin/hooks.js');
+  const text = 'claude-tweaks: ledger-row: refused — nothing written\n';
+  const original = fs.writeSync;
+  const delivered = [];
+  let call = 0;
+  fs.writeSync = (fd, buf, off) => {
+    call += 1;
+    assert.strictEqual(fd, 2);
+    if (call === 1) { delivered.push(buf.subarray(off, off + 10)); return 10; } // short write
+    if (call === 2) { const e = new Error('full'); e.code = 'EAGAIN'; throw e; }
+    if (call === 3) { delivered.push(buf.subarray(off, off + 5)); return 5; }
+    const e = new Error('closed'); e.code = 'EBADF'; throw e; // unusable from here on
+  };
+  try {
+    assert.doesNotThrow(() => realDeps.stderr(text));
+  } finally {
+    fs.writeSync = original;
+  }
+  assert.strictEqual(call, 4, 'short write, EAGAIN retry, second short write, then the EBADF stops it');
+  assert.strictEqual(Buffer.concat(delivered).toString(), text.slice(0, 15));
+});
+
 test('#1143: --help anywhere in the argument list intercepts, not just as the first arg', () => {
   // record-pr's real shape is `record-pr [--run <dir>] <number> <url>` — a
   // --help buried after other-looking positionals must still intercept

@@ -387,7 +387,7 @@ function pipelinesRunIdShape(root, resolved) {
 function resolveImplicitRunUnambiguous(cwd, env, callerIdentity) {
   if (env && env.PIPELINE_RUN_DIR) {
     try {
-      if (fs.statSync(env.PIPELINE_RUN_DIR).isDirectory()) {
+      if (fs.statSync(path.resolve(cwd, env.PIPELINE_RUN_DIR)).isDirectory()) {
         return { runDir: env.PIPELINE_RUN_DIR, candidates: null };
       }
     } catch { /* fall through */ }
@@ -729,7 +729,7 @@ async function runRecordWorktree(argv, deps) {
     // Stamp the owning session so E1 can scope enforcement to it. Absent env
     // var: omit the key rather than write null — an env-less re-record must
     // not clobber a previous stamp.
-    const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
+    const patch = { worktree: path.resolve(deps.cwd(), worktreeArg), status: 'active' };
     if (deps.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = deps.env.CLAUDE_CODE_SESSION_ID;
     // #3845: the owning Claude Code process, so session-end can tell a nested
     // `claude -p` from the owner. Omitted when absent, like sessionId.
@@ -1154,7 +1154,7 @@ async function runDeleteLedger(argv, deps) {
   } else {
     const { resolveLedgerPath, describeRunLedgers } = require('./lib/wrap-up/ledger-write');
     const worktree = ctxLib.readRunState(runDir)?.worktree || deps.cwd();
-    const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
+    const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg ? path.resolve(deps.cwd(), ledgerArg) : null });
     // #4026: a report that leaves the ledger on disk logs its own SKIP line
     // (cleanup-procedures.md Item 2), only into an anchored run dir. A
     // failed append is one stderr line; stdout and the exit code stay as-is.
@@ -1250,7 +1250,7 @@ function firstStrayArg(args) {
 // #4439: one ledger-row text value, from its argv flag or its `--*-file` twin (the file is how a value
 // carrying `|`, a backtick or `$` reaches the row without shell quoting). A text-file usage error comes
 // back as `usageError` (the verb exits 2 on it).
-function ledgerRowText(args, flag, fileFlag) {
+function ledgerRowText(args, flag, fileFlag, cwd) {
   const fromArgv = args.includes(flag);
   const fromFile = args.includes(fileFlag);
   const fail = (usageError) => ({ present: true, text: null, usageError });
@@ -1260,7 +1260,7 @@ function ledgerRowText(args, flag, fileFlag) {
   if (typeof file !== 'string' || file.trim() === '') return fail(`${fileFlag} needs a path`);
   let text;
   try {
-    text = fs.readFileSync(file, 'utf8');
+    text = fs.readFileSync(path.resolve(cwd, file), 'utf8');
   } catch (err) {
     return fail(`${fileFlag} ${file} is unreadable (${err && err.code ? err.code : err && err.message})`);
   }
@@ -1299,8 +1299,8 @@ async function runLedgerRow(argv, deps) {
   const stray = firstStrayArg(rest);
   if (stray !== null) return refuse(`unexpected argument '${stray}' — quote a value that contains spaces, or pass it with --item-file/--resolution-file`);
 
-  const item = ledgerRowText(rest, '--item', '--item-file');
-  const resolution = ledgerRowText(rest, '--resolution', '--resolution-file');
+  const item = ledgerRowText(rest, '--item', '--item-file', deps.cwd());
+  const resolution = ledgerRowText(rest, '--resolution', '--resolution-file', deps.cwd());
   for (const source of [item, resolution]) {
     if (source.usageError) return refuse(source.usageError, 2);
   }
@@ -2232,6 +2232,30 @@ async function run(argv, deps) {
   return typeof out.exit === 'number' ? out.exit : 0;
 }
 
+// A full write to fd 2 that never throws. `fs.writeSync` can return a short count (a non-blocking
+// fd 2) or throw EAGAIN (a full pipe), and ledger-row's refusal line was a flush site that waited
+// for its bytes, so one write is not enough: loop to the end, pausing briefly on EAGAIN. Any other
+// error (EBADF, EPIPE …) ends the write silently, since a thrown error would reach the entry catch
+// and turn a refusal into exit 0 (#4834). `fs.writeSync` is looked up at call time so a test can
+// patch it.
+function writeAllToStderr(text) {
+  const buf = Buffer.from(text);
+  let off = 0;
+  let stalled = 0;
+  while (off < buf.length) {
+    try {
+      const n = fs.writeSync(2, buf, off, buf.length - off);
+      if (n > 0) { off += n; stalled = 0; continue; }
+    } catch (err) {
+      if (!err || err.code !== 'EAGAIN') return;
+    }
+    // EAGAIN or a zero-byte write: wait briefly and retry, giving up after about four seconds.
+    stalled += 1;
+    if (stalled > 2000) return;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+  }
+}
+
 // Real io for the script entry. `stdout` returns a Promise so a verb that must see its
 // bytes flushed before the process exits (resolve-ledger, ledger-row, check-pass-reentry)
 // can `await` it; every other caller drops the Promise, as the bare write always did.
@@ -2240,9 +2264,7 @@ async function run(argv, deps) {
 // it sees the call. `stdoutSync` is the event tail's JSON: it may throw into the entry catch.
 const realDeps = {
   stdout: (text) => new Promise((resolve) => { process.stdout.write(text, () => resolve()); }),
-  stderr: (text) => {
-    try { fs.writeSync(2, text); } catch { /* unusable stderr: the exit code carries the refusal */ }
-  },
+  stderr: writeAllToStderr,
   stdoutSync: (text) => { fs.writeSync(1, text); },
   cwd: () => process.cwd(),
   env: process.env,
