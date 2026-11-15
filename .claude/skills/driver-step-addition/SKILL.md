@@ -73,6 +73,24 @@ The review step's fix round (#5222, `plugin/bin/lib/driver/review.js`) is the fi
 - Propagate a re-run step's own status and class unchanged, and list each re-run step's stops in the new module's header.
 - The worker had write access between the steps, so judge its output again before using it: the fix round re-checks each evidence path's canonical location and reads its bytes from disk before running it, never through git status.
 
+### A check of git state around a worker launch
+
+The worker step and the review fix round both launch through `steps.js`'s `runImplementer`, which reads HEAD on both sides of the launch (#5414, `headOf` and `headFail`) and then, if HEAD has not moved, the index flags (#5415; the method is `headless-worker-launch`'s "What the consumer owes"). A new check of git state around a launch follows the same shape:
+- Read immediately before `launchTracked` (after the settings directory's `mkdirSync`, so nothing sits between the read and the `worker` call) and again as soon as the launch settles. A before-read that fails stops the step with no launch. A launcher that throws gets the after-read too: a failed check is returned in place of the throw, and a clean one rethrows it.
+- Judge the after-read before the envelope. A moved HEAD outranks a missing or failed envelope, and the envelope's `extra` (usage, turns, denials) still rides on the stop.
+- The stop is `fail`, and its detail names only values the check validated: `headOf` returns a sha only when it matches `FULL_SHA_RE` and `null` otherwise, so neither git nor worker text reaches the detail. A read that cannot be made is its own `fail`, never a pass.
+- An interrupt during the launch is still reported as the interrupt (run.js's handler writes it at once; see "Interrupts at await points"). At an evidence run the order is the interrupt, then the flag check, then the tree check.
+- Never recover by resetting HEAD or clearing a flag. A baseline the check keeps on `ctx` (`ctx.indexFlags`) starts as `null` in `newCtx` and gets no `interruptClass` rung: it is a read, not a side effect. The review module gets the check through the wiring object (`indexFlagCheck`), and `reviewPass` throws without it.
+- Pin each new read's position and leave the rest of the run as it was. Capture the happy path's call signatures, event `[step, status]` pairs and per-line key sets on the unmodified code as literal constants (`BASE_CALLS_PLAIN`, `BASE_CALLS_FIX`, `BASE_LINES_*`, `BASE_KEYS_*` in `run.test.js`). Then assert the new run equals them with the new reads filtered out, and that a read sits right before and right after each launch. Fault the n-th read with `nthCall(isHeadRead, n, reply)`. A later check that reads at the same points filters its own reads first (`withoutFlagReads`) and pins their count and order in its own test, as `AC8.1 (#5415)` does over #5414's captures.
+
+### An answer more than one step reads
+
+The reviewer on-or-off answer (#5224, `review.js`'s `reviewRequired`) is read by admission, by the worker prompt and check's `--max-lines` (`driverLineBound`), and by the review step. A decision of this shape follows the same rules:
+- Ask it once per record, in the earliest step that reads it: the eligibility step sets `ctx.reviewer`. It starts as `null` in `newCtx` and gets no `interruptClass` rung, because it is a read, not a side effect.
+- Later steps read the `ctx` field and never call again, so two steps cannot act on different answers. A reader that needs it fails closed on a missing or malformed value: `reviewRecord` returns a `pre-push` `fail` (`reviewer-on answer missing`), and admission refuses a non-boolean `on` as unreadable.
+- A predicate two steps both apply is exported by the module that owns it and called by both, never re-derived. Admission's first `reviewerGateReason` restated the bound comparisons eligibility refuses on, and review moved both onto `eligibility.js`'s `isInsideLaneBounds` (`b338f4b74`).
+- In `run.test.js` the call goes through a `deps` member whose harness default is the real function, and the harness records it outside `calls` (`reviewerCalls`), so the `BASE_CALLS_*` captures stay as they were. A test pins one call per record.
+
 ## Adding a settle step
 
 A settle call is not a `STEPS` entry; it is a handler in one of `settle.js`'s `SETTLE_ROWS` rows (#5219). The rules for adding one:
@@ -88,6 +106,7 @@ The merge step (#5226) runs a procedure with sub-steps of its own, so its body l
 - **An interrupt check after every await.** The module calls `deps.interrupted()` after each await and makes no further call once it is set: merge.js does so after the supplier call and after each watch sleep. `docs/driver.md`'s "The merge step" section names those yield points, so a new await adds one there.
 - **No import from `steps.js`.** `steps.js` requires the module, so the reverse import is a require cycle. The module keeps its own copies of the helpers it needs (merge.js's `logDecision` and `bin`, which diverge from `steps.js`'s `logDecisionFile` and `binScript`) and exports its own time constants (see "A step that waits on time").
 - **A result for every stop, never a throw.** `merge()` turns an unexpected throw into `pending-review` / `unclassified` naming the sub-step, so the step never halts and its class (`none`) covers only a throw in the entry itself. `finalEvent` takes the record's outcome from `ctx.merge` when nothing stopped. A wait the module measures goes on its sub-step events (`extra.ciWaitMs` on each `merge-watch` event, summed by `finalEvent`), never on the step's own line, so it is counted once.
+- **One deps namespace with the driver.** The entry passes `{ ...deps, … }`, so a seam the module adds is a new member of run.js's `realDeps`. Grep `realDeps` for the name before choosing it: #5432's spec named merge.js's policy seam `deps.resolvePolicy`, which is already the keys-only express resolver `steps.js` calls (`deps.resolvePolicy(POLICY_KEYS.slice())`), so the seam became `deps.resolvePolicyCore`. Add the member to `realDeps`, to `run.test.js`'s `harness` and to `merge.test.js`'s `mergeHarness`, then route one test through `realDeps`' own member (`merge.test.js`'s `real core:` test passes `deps: { resolvePolicyCore: realDeps.resolvePolicyCore }`). Every harness replaces the member, so without that test a broken `realDeps` wiring stays green (#5432 review).
 
 ## Anti-Patterns
 

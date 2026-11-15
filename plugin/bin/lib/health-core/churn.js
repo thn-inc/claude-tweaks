@@ -29,7 +29,10 @@ const { execFileSync } = require('child_process');
 // alongside this module for the explicit, deliberately-tested contract.
 const churnCache = new Map(); // "root relPaths sinceMs" -> count
 
-function domainChurn(root, relPaths, sinceMs) {
+// `env` (optional, #5380) is the child git's environment, omitted = inherited.
+// It is deliberately not part of the memo key: an env-only change to the same
+// (root, relPaths, sinceMs) within one process is not a case this supports.
+function domainChurn(root, relPaths, sinceMs, { env } = {}) {
   if (!relPaths || relPaths.length === 0) return 0;
   const key = `${root} ${relPaths.join(' ')} ${sinceMs || 0}`;
   if (churnCache.has(key)) return churnCache.get(key);
@@ -52,7 +55,9 @@ function domainChurn(root, relPaths, sinceMs) {
     const out = execFileSync(
       'git',
       ['-C', root, 'log', '--oneline', `--since=${since}`, '--', ...relPaths],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true },
+      {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true, ...(env !== undefined ? { env } : {}),
+      },
     );
     count = out.split('\n').filter(Boolean).length;
   } catch {

@@ -22,9 +22,29 @@
 // check): true refuses, false passes, and anything that is not a boolean (null for an
 // unreadable comment list) refuses as unreadable, never read as "not escalated".
 //
+// The reviewer rule (#5224). A record is beyond the express bounds when its size label is not
+// `low` or it has more than EXPRESS_MAX_KEY_FILES Key Files (eligibility.js's isBeyondExpressBounds,
+// which review.js's reviewRequired shares), and inside the driver's bounds when
+// its size is one `bounds.sizeCeiling` accepts (SIZE_CEILINGS) and it has at most
+// `bounds.maxKeyFiles` Key Files (eligibility.js's isInsideLaneBounds, built from the same two
+// comparisons eligibility refuses on). `keyFiles` is the eligibility verdict's own extraction and
+// `reviewerOn` is review.js's reviewRequired answer, computed once per record by the caller.
+// Its states, and no others:
+//   beyond the express bounds and the reviewer on      admitted by this rule
+//   beyond the express bounds and the reviewer not on  refused, reviewerOff
+//   inside the express bounds                          the rule does not apply
+// A record beyond the driver's bounds adds nothing here: eligibility owns that refusal. A
+// `reviewerOn` that is not a boolean, unreadable bounds (not an object, a ceiling that is not a
+// SIZE_CEILINGS key, a limit that is not a safe integer of at least 1) and a `keyFiles` that is
+// not an array each refuse with their own reason, never read as "off" or "none".
+// reviewerGateReason is the rule alone, for the eligibility step to append to a refusal.
+//
 // Every gate runs on every call, so one verdict names every reason that applies.
 
 const { normalizeLabelNames, parseRecordFacets, LABELS } = require('../issues/record');
+const {
+  isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
+} = require('../express/eligibility');
 
 const ADMISSION_REASONS = Object.freeze({
   noBuildGrant: 'record lacks auto:build',
@@ -43,6 +63,10 @@ const ADMISSION_REASONS = Object.freeze({
   escalatedByDriver: 'already escalated by the driver',
   commentsUnreadable: 'record comments unreadable',
   routingUnknown: (value) => `express-driver value not recognised: ${value}`,
+  reviewerOff: 'record is beyond the express bounds and the reviewer step is off for it',
+  reviewerUnreadable: 'reviewer-on answer unreadable',
+  boundsUnreadable: 'lane bounds unreadable',
+  keyFilesUnreadable: 'record Key Files unreadable',
 });
 
 const R = ADMISSION_REASONS;
@@ -63,10 +87,28 @@ function routingReason(routing, number) {
   return R.routingUnknown(routing);
 }
 
-// { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated } -> { admitted, reasons }.
+// The checks eligibility applies to the same two values.
+function boundsReadable(bounds) {
+  if (!bounds || typeof bounds !== 'object') return false;
+  return isReadableSizeCeiling(bounds.sizeCeiling) && isReadableKeyFileLimit(bounds.maxKeyFiles);
+}
+
+// { labels, keyFiles, bounds, reviewerOn } -> R.reviewerOff, or null (the rule does not refuse,
+// or an input is unreadable: those reasons are evaluateAdmission's).
+function reviewerGateReason(facts) {
+  const { labels, keyFiles, bounds, reviewerOn } = (facts && typeof facts === 'object') ? facts : {};
+  if (!Array.isArray(labels) || !Array.isArray(keyFiles) || !boundsReadable(bounds)) return null;
+  const { size } = parseRecordFacets(labels);
+  const beyond = isBeyondExpressBounds({ size, keyFiles });
+  const inside = isInsideLaneBounds({ size, keyFiles, bounds });
+  return beyond && inside && reviewerOn === false ? R.reviewerOff : null;
+}
+
+// { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles,
+//   bounds: { sizeCeiling, maxKeyFiles }, reviewerOn } -> { admitted, reasons }.
 function evaluateAdmission(facts) {
   // A null or non-object argument reads as no facts at all: every unreadable reason fires.
-  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated } =
+  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles, bounds, reviewerOn } =
     (facts && typeof facts === 'object') ? facts : {};
   const reasons = [];
 
@@ -99,7 +141,13 @@ function evaluateAdmission(facts) {
   const routed = routingReason(routing, number);
   if (routed) reasons.push(routed);
 
+  if (typeof reviewerOn !== 'boolean') reasons.push(R.reviewerUnreadable);
+  if (!boundsReadable(bounds)) reasons.push(R.boundsUnreadable);
+  if (!Array.isArray(keyFiles)) reasons.push(R.keyFilesUnreadable);
+  const reviewer = reviewerGateReason({ labels, keyFiles, bounds, reviewerOn });
+  if (reviewer) reasons.push(reviewer);
+
   return { admitted: reasons.length === 0, reasons };
 }
 
-module.exports = { ADMISSION_REASONS, evaluateAdmission };
+module.exports = { ADMISSION_REASONS, evaluateAdmission, reviewerGateReason };

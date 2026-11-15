@@ -194,6 +194,23 @@ test('AC13: reviewRequired', () => {
   expect({ issue: issue('size:low'), keyFiles: within, policyValue: 'on' }, true);
 });
 
+test('reviewRequired: each answer\'s reason, verbatim (#5224)', () => {
+  const issue = (...names) => ({ labels: names.map((name) => ({ name })) });
+  const keys = (n) => Array.from({ length: n }, (_, i) => `src/f${i}.js`);
+  const rows = [
+    [{ issue: issue('size:high'), keyFiles: keys(9), policyValue: 'off' }, { on: false, reason: 'express-driver-review is off' }],
+    [{ issue: issue('size:low'), keyFiles: keys(1), policyValue: 'on' }, { on: true, reason: 'express-driver-review is on' }],
+    [{ issue: issue('size:medium'), keyFiles: keys(1) }, { on: true, reason: 'size medium is beyond size:low' }],
+    [{ issue: issue(), keyFiles: keys(1) }, { on: true, reason: 'size unlabelled is beyond size:low' }],
+    [{ issue: issue('size:medium'), keyFiles: null }, { on: true, reason: 'size medium is beyond size:low' }],
+    [{ issue: issue('size:low'), keyFiles: null }, { on: true, reason: 'Key Files unreadable' }],
+    [{ issue: issue('size:low'), keyFiles: keys(4) }, { on: true, reason: '4 Key Files is beyond 3' }],
+    [{ issue: issue('size:low'), keyFiles: keys(3) }, { on: false, reason: 'size:low and 3 Key Files are inside the express bounds' }],
+    [{ issue: issue('size:low'), keyFiles: [] }, { on: false, reason: 'size:low and 0 Key Files are inside the express bounds' }],
+  ];
+  for (const [args, want] of rows) assert.deepStrictEqual(reviewRequired({ policyValue: 'beyond-express', ...args }), want, JSON.stringify(args));
+});
+
 const VALID_EVIDENCE = Object.freeze({ path: 'tests/a.test.js', content: "require('node:test')('x', () => { throw new Error('x'); });\n" });
 
 test('AC2: finding shape', () => {
@@ -910,12 +927,13 @@ const okEnvelope = (findings, over = {}) => ({
 });
 const reviewDest = (i) => path.join(RUN_DIR, 'review', `review-evidence-${i}.tap`);
 
-function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrows = false, real = {}, dirs = ['tests'], status = () => '', onRun = () => {}, handleFor, fail = {}, platform = 'darwin', launch, timers } = {}) {
+function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrows = false, real = {}, dirs = ['tests'], status = () => '', flags = () => null, onRun = () => {}, handleFor, fail = {}, platform = 'darwin', launch, timers } = {}) {
   const calls = [];
   const types = new Map([[WT, 'directory'], ...dirs.map((d) => [at(d), 'directory'])]);
   const realOf = new Map(Object.entries(real).map(([rel, r]) => [at(rel), at(r)]));
   const taps = new Map();
   const statusReplies = [];
+  const flagChecks = [];
   let runIndex = 0;
   const canonical = (p) => (realOf.has(p) ? realOf.get(p) : (types.has(p) ? p : null));
   const gitName = (abs) => path.relative(WT, path.join(canonical(path.dirname(abs)), path.basename(abs))).split(path.sep).join('/');
@@ -925,6 +943,7 @@ function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrow
     record: 5222,
     issue: { number: 5222, title: 'Fix the total', body: 'The total is wrong.', labels: [] },
     keyFiles: ['src/a.js'],
+    reviewer: { on: true, reason: 'test' },
     wt: WT,
     runDir: RUN_DIR,
     changedFiles: ['src/a.js', 'tests/a.test.js'],
@@ -1000,13 +1019,29 @@ function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrow
       return envelope || okEnvelope(findings);
     },
   };
-  const run = (o = {}) => reviewPass(ctx, deps, { testCommand: 'npm test', isRunArtifact: isPipelineArtifact, ...o });
-  return { ctx, deps, calls, types, statusReplies, run };
+  // The flag check stands in for steps.js newIndexFlagStop: it records where in the call log it ran.
+  const indexFlagCheck = () => { flagChecks.push(calls.length); return flags(flagChecks.length - 1); };
+  const run = (o = {}) => reviewPass(ctx, deps, { testCommand: 'npm test', isRunArtifact: isPipelineArtifact, indexFlagCheck, ...o });
+  return { ctx, deps, calls, types, statusReplies, flagChecks, run };
 }
 const evidenceSpawns = (calls) => calls.filter((c) => c.kind === 'runner' && c.file === EXEC_PATH);
 const destsOf = (calls) => evidenceSpawns(calls).map((c) => c.args.find((a) => a.startsWith(DEST_FLAG)).slice(DEST_FLAG.length));
 const ofKind = (calls, kind) => calls.filter((c) => c.kind === kind);
 const statusReads = (calls) => calls.filter((c) => c.kind === 'git' && c.args.includes('status'));
+
+test('reviewRecord with no ctx.reviewer fails closed and launches no worker', async () => {
+  // The record's one reviewer answer is the eligibility step's (#5224): reviewRecord never computes its own.
+  for (const reviewer of [undefined, null, true, { on: 'yes' }, { reason: 'no on' }]) {
+    const rig = passRig();
+    rig.ctx.reviewer = reviewer;
+    const res = await reviewRecord(rig.ctx, rig.deps, { testCommand: 'npm test', isRunArtifact: isPipelineArtifact, indexFlagCheck: () => null });
+    assert.deepStrictEqual(res, {
+      status: 'fail', stopClass: 'pre-push', detail: 'reviewer-on answer missing',
+      extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null },
+    }, JSON.stringify(reviewer));
+    assert.deepStrictEqual(rig.calls, [], JSON.stringify(reviewer));
+  }
+});
 
 test('AC1: the reviewer is launched with role reviewer and its result schema', async () => {
   for (const platform of ['darwin', 'win32']) {
@@ -1278,6 +1313,50 @@ test('AC7: a tree changed outside the evidence files stops (Review Focus 3: a mo
     assert.deepStrictEqual(out.confirmed, [], extra);
     assert.strictEqual(evidenceSpawns(rig.calls).length, 1, extra);
   }
+});
+
+test('AC3.1 (#5415): reviewPass checks the index flags after each evidence run, before its tree check', async () => {
+  const rig = passRig({ findings: [reviewFinding(0), reviewFinding(1)], runs: ['reproduced', 'passed'] });
+  const out = await rig.run();
+  assert.strictEqual(out.result, null, out.result && out.result.detail);
+  assert.strictEqual(rig.flagChecks.length, 2);
+  rig.flagChecks.forEach((at0, k) => {
+    // The check ran with the evidence spawn as the last call before it: no git call between, and the tree check (a status read) follows.
+    const spawnIdx = rig.calls.map((c, i) => [c, i]).filter(([c, i]) => i < at0 && c.kind === 'runner' && c.file === EXEC_PATH).map(([, i]) => i).at(-1);
+    assert.ok(spawnIdx !== undefined, `check ${k} follows an evidence spawn`);
+    assert.ok(!rig.calls.slice(spawnIdx + 1, at0).some((c) => c.kind === 'git'), `no git call between the spawn and check ${k}`);
+    const next = rig.calls[at0];
+    assert.ok(next && next.kind === 'git' && next.args.includes('status'), `a status read follows check ${k}`);
+  });
+});
+
+test('AC3.1 (#5415): a newly set flag after an evidence run stops the pass before its tree check', async () => {
+  const rig = passRig({ findings: [reviewFinding(0), reviewFinding(1)], runs: ['reproduced'], flags: (k) => (k === 0 ? { status: 'fail', detail: 'FLAGGED' } : null) });
+  const out = await rig.run();
+  assert.deepStrictEqual([out.result.status, out.result.stopClass, out.result.detail], ['fail', 'pre-push', 'evidence run: FLAGGED']);
+  assert.deepStrictEqual(out.confirmed, []);
+  assert.strictEqual(ofKind(rig.calls, 'rmFile').filter((c) => c.p === at('tests/new/r0.test.js')).length, 1);
+  // Only the clean check before the first write read the status: the tree check never ran.
+  assert.strictEqual(statusReads(rig.calls).length, 1);
+  assert.strictEqual(evidenceSpawns(rig.calls).length, 1);
+});
+
+test('AC3.1 (#5415): an evidence run that is interrupted and leaves a newly set flag reports the interrupt, not the flag stop', async () => {
+  const rig = passRig({
+    findings: [reviewFinding(0), reviewFinding(1)],
+    onRun: (n, { ctx }) => { ctx.shared.interrupted = 'SIGTERM'; },
+    flags: (k) => (k === 0 ? { status: 'fail', detail: 'FLAGGED' } : null),
+  });
+  const out = await rig.run();
+  assert.strictEqual(out.result.status, 'fail');
+  assert.strictEqual(out.result.detail, 'interrupted by SIGTERM');
+  assert.strictEqual(evidenceSpawns(rig.calls).length, 1);
+});
+
+test('(#5415) reviewPass needs indexFlagCheck', async () => {
+  const rig = passRig({ findings: [reviewFinding(0)] });
+  await assert.rejects(rig.run({ indexFlagCheck: undefined }), { name: 'TypeError', message: 'reviewPass needs indexFlagCheck' });
+  assert.strictEqual(ofKind(rig.calls, 'launchWorker').length, 0);
 });
 
 test('Review Focus 4: a dirty tree before any evidence is written stops', async () => {
@@ -1792,6 +1871,7 @@ async function fixOnDisk(t, swap) {
   const wiring = {
     testCommand: 'npm test',
     isRunArtifact: isPipelineArtifact,
+    indexFlagCheck: () => null,
     launchImplementer: async (ctx) => { steps.push('launch'); swap(wt, outside, state); ctx.worker = { title: 'Fix', summary: 'Fixed.' }; return { status: 'ok' }; },
     commit: { run: async (ctx) => { steps.push('commit'); ctx.changedFiles = untracked(); for (const p of ctx.changedFiles) { committed.add(p); atHead.set(p, fs.readFileSync(path.join(wt, ...p.split('/')), 'utf8')); } return { status: 'ok' }; } },
     test: { run: async () => { steps.push('test'); return { status: 'ok' }; } },
