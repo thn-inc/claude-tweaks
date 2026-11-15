@@ -11,6 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const os = require('node:os');
 const { readText } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 
@@ -350,7 +351,7 @@ const ROUTE_FACTS = [
   [/`\{drain-prs\}` is the path `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value dispatch-drain-prs\.json` prints/, 'the drain-PR list path'],
   [/When that file does not exist yet, write `\[\]` to it with the Write tool first/, 'Review Focus 1: [] written when the list is absent'],
   [/When this firing's queue pull wrote `dispatch-near-dup-pairs\.json`, pass `--near-dup-pairs "\{near-dup-pairs\}"` too/, 'near-dup pairs passed whenever the firing wrote them'],
-  [/The queue pull writes that file on every firing, so a bare drain passes it too and gets the near-duplicate hold that `drain-pr-overlap\.md` Step 6 applies only to explicit-list firings: deliberate, since it holds more, never less\./, '#5232 Minor 4: a bare drain gets the near-duplicate hold, deliberately'],
+  [/The queue pull's `near-dup-pairs` pass writes that file \(`\[\]` when no pair is strong\) unless that pass is omitted or fails, and `bin\/queue-pull\.js` omits no pass, so a bare drain passes it too and gets the near-duplicate hold that `drain-pr-overlap\.md` Step 6 applies only to explicit-list firings: deliberate, since it holds more, never less\./, '#5232 Minor 4: a bare drain gets the near-duplicate hold, deliberately'],
   [/Always pass `--in-flight-prs`: without it the driver applies no drain-overlap hold/, 'AC9.2: the route always passes --in-flight-prs'],
   [/The hold and the merge are driver code/, 'AC5.9/AC5.10: the hold and the merge are driver code'],
   [/No model performs the merge/, 'AC5.11: no model performs the merge'],
@@ -378,6 +379,28 @@ test('go-red control: each route fact stripped reports exactly itself', () => {
   assertEachFactGoesRed(routeText(), ROUTE_FACTS);
 });
 
+// #5232 R2: the near-dup-pairs write is conditional on the pass running (queue-pull.js's
+// runNearDupPairs returns early on an omitted pass), and the CLI is what makes "a bare drain passes
+// it" true: it omits no pass.
+const NEAR_DUP_FACT = '#5232 Minor 4: a bare drain gets the near-duplicate hold, deliberately';
+const queuePullCli = require('../plugin/bin/queue-pull');
+
+test('#5232 R2: bin/queue-pull.js omits no pass, as driver-route.md says', () => {
+  const seen = [];
+  const code = queuePullCli.run(['--transport', 'files'], {
+    stdout: () => {}, stderr: () => {}, env: {}, cwd: os.tmpdir(), queuePull: (o) => { seen.push(o); return {}; },
+  });
+  assert.equal(code, 0);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].omit, []);
+});
+
+test('#5232 R2 go-red control: the unconditional "on every firing" sentence fails', () => {
+  const text = routeText();
+  const old = mutate(text, "The queue pull's `near-dup-pairs` pass writes that file (`[]` when no pair is strong) unless that pass is omitted or fails, and `bin/queue-pull.js` omits no pass, so", 'The queue pull writes that file on every firing, so');
+  assert.deepEqual(missingFactsOf(ROUTE_FACTS)(old), [NEAR_DUP_FACT]);
+});
+
 // AC5: each outcome word's own row carries its mapping.
 const outcomeTable = (text) => sectionOf(text, '## Outcome words');
 const OUTCOME_ROWS = [
@@ -395,7 +418,7 @@ const OUTCOME_ROWS = [
   ['| `refused` |', /on anything but an eligible verdict, re-bind with `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" record-worktree --run "\{minted-run-dir\}" "\{worktree\}" --dispatch` before the ordinary first call/, 'AC5.6: refused re-binds with --dispatch before the ordinary first call'],
   ['| `express-escalated` |', /The driver still wrote the run's escalation line \(`Express lane: escalated #\{n\} to \/flow`, or `check` did\), so that call's `\/build` judges "already shipped" against `origin\/\{integration-branch\}` only/, '#5232 Important 1: the driver wrote the escalation line /build reads'],
   ['| `blocked` |', /after a claim stop \(`stop\.step` is `claim`\) whose `stop\.reason` is `claim-exit-3` or `claim-exit-6`, the stops that case names, which wrote no claim, only its Claim-contest special case;/, '#5232 Minor 3: only claim-exit-3 and claim-exit-6 take the Claim-contest special case'],
-  ['| `blocked` |', /any other claim stop, `claim-exit-5` and `claim-exit-none` included \(a claim may have been written, `bin\/lib\/driver\/claim-exit\.js`\), runs no Settle and takes the catch-all below, whose §5 release runs because a final line exists;/, '#5232 Minor 3: claim-exit-5, claim-exit-none and any other claim stop take the catch-all, whose release runs'],
+  ['| `blocked` |', /any other claim stop, `claim-exit-5` and `claim-exit-none` included \(a claim may have been written, `bin\/lib\/driver\/claim-exit\.js`\), runs no Settle and takes the catch-all below, whose §5 release runs because a final line exists, except after `claim-exit-2`;/, '#5232 Minor 3: claim-exit-5, claim-exit-none and any other claim stop take the catch-all, whose release runs'],
 ];
 
 test('driver-route.md: each outcome word\'s row carries its mapping', () => {
@@ -430,6 +453,9 @@ function claimClauses(row) {
 }
 const UNVERIFIED_REASONS = [null, ...Array.from({ length: 256 }, (_, i) => i)]
   .map(readClaimExit).filter((c) => c.kind === CLAIM_KIND.UNVERIFIED).map((c) => c.reason);
+// #5232 R3: exactly these, not any reason that wrote no claim — claim-exit-2 also wrote none, yet
+// Settle's Claim-contest special case names only the contested/in-flight and claims-branch-missing stops.
+const CONTEST_REASONS = ['claim-exit-3', 'claim-exit-6'];
 function assertClaimMapping(row) {
   const { contest, catchAll } = claimClauses(row);
   assert.ok(contest.length > 0, 'the Claim-contest clause names a reason');
@@ -437,6 +463,7 @@ function assertClaimMapping(row) {
     const claim = readClaimReason(reason);
     assert.ok(claim && [CLAIM_KIND.CONTESTED, CLAIM_KIND.SHARED_CAUSE].includes(claim.kind), `${reason} wrote no claim`);
   }
+  assert.deepEqual([...contest].sort(), CONTEST_REASONS, 'the Claim-contest clause names exactly claim-exit-3 and claim-exit-6');
   assert.deepEqual([...catchAll].sort(), [...UNVERIFIED_REASONS].sort(), 'the catch-all names every possibly-written claim reason');
 }
 
@@ -453,6 +480,16 @@ test('#5232 go-red control: an unverified reason in the Claim-contest clause, or
   const dropped = row.replace('`claim-exit-5` and `claim-exit-none` included', '`claim-exit-5` included');
   assert.notEqual(dropped, row);
   assert.throws(() => assertClaimMapping(dropped), /every possibly-written claim reason/);
+});
+
+test('#5232 R3 go-red control: claim-exit-2 added to the Claim-contest clause, or claim-exit-6 dropped from it, fails', () => {
+  const row = blockedRow(routeText());
+  const added = row.replace('`claim-exit-3` or `claim-exit-6`', '`claim-exit-2`, `claim-exit-3` or `claim-exit-6`');
+  assert.notEqual(added, row);
+  assert.throws(() => assertClaimMapping(added), /exactly claim-exit-3 and claim-exit-6/);
+  const dropped = row.replace('`claim-exit-3` or `claim-exit-6`', '`claim-exit-3`');
+  assert.notEqual(dropped, row);
+  assert.throws(() => assertClaimMapping(dropped), /exactly claim-exit-3 and claim-exit-6/);
 });
 
 // AC5.4: the table's words, both directions, against the driver's own vocabulary.
@@ -608,4 +645,67 @@ test('go-red control: the phrase dropped from any one site fails', () => {
   const regressedRoute = mutate(files[0], "An absent `decisions.md` carries no such line, so the release is skipped — Step 4's mint writes none, and nothing on the admitted path writes one before `--run`; one that exists but cannot be read counts as claimed.", 'A `decisions.md` that cannot be read counts as claimed.');
   assert.throws(() => assertDriverSkip(regressedRoute, gate, files[2], files[3]), /absent/);
   assert.throws(() => assertDriverSkip(files[0], gate, mutate(files[2], ', an absent `decisions.md` carrying none', ''), files[3]), /absent/);
+});
+
+// #5232 R4: after a driver claim stop whose claim-targets.js exit wrote no claim of this run's, the
+// cleanup-only call skips the release at every site: release-claim.js would post a false comment on
+// an absent blob (exit 2), and on exit 3's in-flight tombstone it comments on and unlabels another
+// run's record. Exits 4 and 5 may have written a claim, so their release runs.
+const NO_CLAIM_REASONS = ['claim-exit-2', 'claim-exit-3', 'claim-exit-6'];
+// claim-exit.js's reading: a contested stop met another run's claim, and a shared cause stops before
+// any claim write. 7 has its own phrase; 4 (failed), 5 and none (unverified) may have written one.
+const DERIVED_NO_CLAIM = Array.from({ length: 256 }, (_, i) => readClaimExit(i))
+  .filter((c) => [CLAIM_KIND.CONTESTED, CLAIM_KIND.SHARED_CAUSE].includes(c.kind)).map((c) => c.reason);
+const sectionEOf = (text) => between(text, '## E. Issue claim release', 'This spec\'s record is identified whenever this section runs');
+const KEEPS_RELEASE = '`claim-exit-4` and `claim-exit-5` may have written one, so their release runs';
+
+function assertNoClaimSkip(route, gate, sectionE) {
+  const catchAll = route.split('\n').find((l) => l.startsWith('Any other word, no final line')) || '';
+  const para = between(gate, '## 5.', '## 6.').split('\n').find((l) => l.trim().startsWith('**Driver run with no claim (#5232).**')) || '';
+  const SITES = [
+    ['blocked row', blockedRow(route), /whose cleanup-only call appends `\(driver-no-claim: skip the claim release\)` after a claim stop whose `stop\.reason` is ([^:]*?): those exits wrote no claim of this run's, while `claim-exit-4` and `claim-exit-5` may have written one, so their release runs/],
+    ['catch-all', catchAll, /The `blocked` row's claim stops that wrote no claim \(([^)]*)\) append the same parenthetical, keyed on the final line's `stop\.reason`, not on `decisions\.md`/],
+    ['section 5', para, /Append it too when the call's final line is a claim stop \(`stop\.step` is `claim`\) whose `stop\.reason` is ([^:]*?), whatever Settle ran: those `claim-targets\.js` exits wrote no claim of this run's/],
+    ['Section E', sectionEOf(sectionE), /or whose final line is a claim stop with `stop\.reason` ([^(]*?) \(`dispatch\/two-call-gate\.md` §5\): the driver took no claim/],
+  ];
+  for (const [site, text, re] of SITES) {
+    const m = re.exec(text);
+    assert.ok(m, `${site}: the no-claim skip clause is missing`);
+    assert.deepEqual(claimReasonsIn(m[1]).sort(), NO_CLAIM_REASONS, `${site}: the skip names exactly claim-exit-2, claim-exit-3 and claim-exit-6`);
+  }
+  assert.ok(para.includes(KEEPS_RELEASE), 'section 5: exits 4 and 5 must keep their release');
+}
+
+test('#5232 R4: the no-claim reasons are exactly claim-exit.js\'s contested and shared-cause exits', () => {
+  assert.deepEqual([...DERIVED_NO_CLAIM].sort(), NO_CLAIM_REASONS);
+});
+
+test('#5232 R4: a driver claim stop that wrote no claim skips the claim release at every site', () => {
+  assertNoClaimSkip(routeText(), readText(GATE_FILE), readText(SECTION_E_FILE));
+});
+
+test('#5232 R4 go-red control: a no-claim exit dropped, or claim-exit-4 or claim-exit-5 added, at any site fails', () => {
+  const files = [routeText(), readText(GATE_FILE), readText(SECTION_E_FILE)];
+  const OR = {
+    list: '`claim-exit-2`, `claim-exit-3` or `claim-exit-6`',
+    variants: ['`claim-exit-2` or `claim-exit-6`', '`claim-exit-3` or `claim-exit-6`', '`claim-exit-2`, `claim-exit-3`, `claim-exit-4` or `claim-exit-6`', '`claim-exit-2`, `claim-exit-3`, `claim-exit-5` or `claim-exit-6`'],
+  };
+  const COMMA = {
+    list: '`claim-exit-2`, `claim-exit-3`, `claim-exit-6`',
+    variants: ['`claim-exit-2`, `claim-exit-6`', '`claim-exit-3`, `claim-exit-6`', '`claim-exit-2`, `claim-exit-3`, `claim-exit-4`, `claim-exit-6`', '`claim-exit-2`, `claim-exit-3`, `claim-exit-5`, `claim-exit-6`'],
+  };
+  const SITES = [
+    ['blocked row', 0, 'after a claim stop whose `stop.reason` is {list}:', OR],
+    ['catch-all', 0, 'claim stops that wrote no claim ({list})', COMMA],
+    ['section 5', 1, 'whose `stop.reason` is {list}, whatever Settle ran', OR],
+    ['Section E', 2, 'with `stop.reason` {list} (`dispatch', OR],
+  ];
+  for (const [site, i, shape, form] of SITES) {
+    const clause = shape.replace('{list}', form.list);
+    for (const variant of form.variants) {
+      const args = files.map((f, j) => (j === i ? mutate(f, clause, shape.replace('{list}', variant)) : f));
+      assert.throws(() => assertNoClaimSkip(...args), new RegExp(`${site}: the skip names exactly`), `${site}: ${variant}`);
+    }
+  }
+  assert.throws(() => assertNoClaimSkip(files[0], mutate(files[1], KEEPS_RELEASE, '`claim-exit-4` may have written one'), files[2]), /exits 4 and 5 must keep their release/);
 });

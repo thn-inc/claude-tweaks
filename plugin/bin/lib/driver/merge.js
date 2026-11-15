@@ -356,12 +356,13 @@ function compose(s) {
 // near-duplicate pairs, `dispatch-near-dup-pairs.json`'s shape, #3520). Runs inside entry(), after the
 // authorization checks and before the judgment supplier, so a held record launches no merge-check or
 // acceptance worker and its PR stays in draft (compose and mark ready come later). Two deliberate
-// differences from the prose: path equality is plain (no `detectCrossPRFileOverlap` hub filter, which would let a hub file pass), and
-// every read fails closed: an unreadable list, an unreadable PR, or a files list that may be cut at
-// GitHub's 100-entry cap is a hold, never a pass. A deliberate exception to "an absent flag takes the
-// safe route" (spec AC9): with `--in-flight-prs` absent no hold is applied, because that is the
-// standalone case of one record at a time, which has no in-flight neighbours to name; the caller
-// that runs a drain (dispatch's driver route) is the one that passes the list.
+// differences from the prose: path equality is plain (no `detectCrossPRFileOverlap` hub filter,
+// which would let a hub file pass), and every read fails closed: an unreadable list, an unreadable
+// PR, or a files list that may be cut at GitHub's 100-entry cap is a hold, never a pass. A
+// deliberate exception to "an absent flag takes the safe route" (spec AC9): with `--in-flight-prs`
+// absent no hold is applied, because that is the standalone case of one record at a time, which has
+// no in-flight neighbours to name; the caller that runs a drain (dispatch's driver route) is the
+// one that passes the list.
 const FILES_CAP = 100;
 
 // The PR numbers of a parsed in-flight list, de-duplicated in order; null when any entry is neither a
