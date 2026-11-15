@@ -154,4 +154,4 @@ function setConfigLever({ runDir, key, value }) {
   return { file, previous };
 }
 
-module.exports = { MANIFESTO_LEVERS, LEVER_LABELS, RUN_PINS, isConfigKey, leverValues, validateLever, setConfigLever };
+module.exports = { MANIFESTO_LEVERS, LEVER_LABELS, RUN_PINS, PIN_PATTERNS, isConfigKey, leverValues, validateLever, setConfigLever };

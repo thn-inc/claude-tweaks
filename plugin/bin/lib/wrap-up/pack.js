@@ -24,6 +24,7 @@ const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
 const { isTimeoutError } = require('../shared-primitives');
 const { parseWorkBackend } = require('../work-backend');
+const { PIN_PATTERNS } = require('../set-config/write');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -194,6 +195,18 @@ function closingRecords({ records, source }) {
   return CLOSING_RECORD_SOURCES.has(source) ? records : [];
 }
 
+// Which rungs may name the unattended console's merge members (Reading A,
+// #5347): the header and manifest rungs. Members are wider than the closing
+// set (a manifest's not-run spec is still a member), but the `config` rung
+// names only a run's lowest record and carries no header-stated intent, so it
+// never grants members. An allowlist, like CLOSING_RECORD_SOURCES, so a new
+// rung grants nothing until it is listed here.
+const MEMBER_RECORD_SOURCES = new Set(['headers', 'worktree-headers', 'manifest', 'worktree-manifest']);
+
+function memberRecords({ records, source }) {
+  return MEMBER_RECORD_SOURCES.has(source) ? records : [];
+}
+
 // The worktree's own mirror of a run dir: everything from the
 // `.claude-tweaks/pipelines` segment onward, re-rooted under the worktree.
 // Materialized headers are committed on the feature branch, so on a real
@@ -229,9 +242,19 @@ function manifestRecords(deps, dir) {
 // Rung (e)'s read: the run dir's config.yml `spec:` pin as a one-element list,
 // or [] when absent or not a positive integer. parseFlatLines keeps the last
 // occurrence, the same semantics set-config.js's setConfigLever documents.
+// The shape test is the writer's own PIN_PATTERNS.spec, so what set-config
+// accepts and what this rung reads back cannot drift apart.
 function configRecords(deps, dir) {
   const spec = parseFlatLines(readText(deps, path.join(dir, 'config.yml'))).spec;
-  return typeof spec === 'string' && /^[1-9][0-9]*$/.test(spec) ? [Number(spec)] : [];
+  return typeof spec === 'string' && PIN_PATTERNS.spec.re.test(spec) ? [Number(spec)] : [];
+}
+
+// True only when `dir` provably holds no manifest.yml: a missing file (ENOENT)
+// or a deps.readFile that signals absence by returning null. Any other read
+// error (EACCES, EISDIR, EIO) is a manifest that exists but cannot be read —
+// a possibly broken multi-spec parent — so it is not absent (fail closed).
+function manifestAbsent(deps, dir) {
+  try { return deps.readFile(path.join(dir, 'manifest.yml')) === null; } catch (err) { return Boolean(err) && err.code === 'ENOENT'; }
 }
 
 // The record-resolution ladder, in order, reporting which rung won:
@@ -274,8 +297,9 @@ function resolveRecords(deps, runDir, worktree) {
   // header or manifest. Never for a spec-* subdirectory: its config.yml is a
   // byte copy of the parent's, so `spec:` names the parent's lowest record.
   // Nor when a manifest.yml is present: an empty or unparseable one is a broken
-  // multi-spec parent, which the pin would hide behind its lowest record.
-  if (!/^spec-/.test(path.basename(runDir)) && readText(deps, path.join(runDir, 'manifest.yml')) === null) {
+  // multi-spec parent, which the pin would hide behind its lowest record — and
+  // an unreadable manifest.yml counts as present, never absent.
+  if (!/^spec-/.test(path.basename(runDir)) && manifestAbsent(deps, runDir)) {
     const pinned = configRecords(deps, runDir);
     if (pinned.length) return { records: pinned, source: 'config', parkedAtShaping: {} };
   }
@@ -869,6 +893,6 @@ function ownRecordNumbers(runDir, worktree) {
 }
 
 module.exports = {
-  gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, worktreeMirror,
+  gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, worktreeMirror,
   LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers,
 };

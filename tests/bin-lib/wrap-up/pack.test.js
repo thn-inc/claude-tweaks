@@ -7,7 +7,7 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 
 const {
-  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger, namesRecordReference, isDeferredUnstaged,
+  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, parseLedger, namesRecordReference, isDeferredUnstaged,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
@@ -437,6 +437,28 @@ test('the config rung never runs for a multi-spec spec-{N} subdirectory', () => 
   const inputs = resolveInputs({ runDir: child, cwd: '/w/tree', deps: okDeps() });
   assert.strictEqual(inputs.sources.records, 'unavailable');
   assert.deepStrictEqual(inputs.records, []);
+});
+
+test('the config rung never runs when manifest.yml exists but cannot be read (unreadable is not absent)', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  const realFs = (p) => fs.readFileSync(p, 'utf8');
+  const unreadable = (p) => {
+    if (path.basename(p) === 'manifest.yml') { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+    return realFs(p);
+  };
+  const deps = { readFile: unreadable, readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  assert.deepStrictEqual(resolveRecords(deps, runDir, null), { records: [], source: 'unavailable', parkedAtShaping: {} });
+  const absent = { ...deps, readFile: realFs };
+  assert.deepStrictEqual(resolveRecords(absent, runDir, null).source, 'config');
+});
+
+test('memberRecords: header and manifest rungs name members; the config rung and an unknown rung never do (Reading A, #5347)', () => {
+  for (const source of ['headers', 'worktree-headers', 'manifest', 'worktree-manifest']) {
+    assert.deepStrictEqual(memberRecords({ records: [7, 8], source }), [7, 8], source);
+  }
+  for (const source of ['config', 'unavailable', 'some-future-rung']) {
+    assert.deepStrictEqual(memberRecords({ records: [7], source }), [], source);
+  }
 });
 
 test('resolveInputs: a spec-* subdirectory whose own run-state.json lacks worktree/pr falls back to the parent run\'s (#1930 review C1)', () => {
