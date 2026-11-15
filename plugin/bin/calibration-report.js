@@ -32,6 +32,9 @@ function parseArgs(argv, cwd) {
       out.runs = parsed;
     } else if (a === '--json') out.json = true;
     else if (a === '--root') {
+      // A missing value used to reach resolveAgainst(cwd, undefined) and throw
+      // an uncaught TypeError (exit 1); refuse it like --runs does.
+      if (argv[i + 1] === undefined) return { error: '--root requires a value' };
       out.displayRoot = argv[++i];
       out.root = resolveAgainst(cwd, out.displayRoot);
     } else return { error: `unknown flag: ${a}` };

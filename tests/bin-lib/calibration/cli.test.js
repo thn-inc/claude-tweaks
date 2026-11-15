@@ -290,6 +290,13 @@ test('--runs as the last argument with no value exits 2 rather than reading unde
   assert.strictEqual(r.stderr, '--runs requires a positive number, got: undefined\n');
 });
 
+test('--root as the last argument with no value exits 2 naming the flag, not an uncaught TypeError', () => {
+  const r = runRaw(['--runs', '5', '--root']);
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(r.stderr, '--root requires a value\n');
+});
+
 test('autonomy-raising signal fires at 100% approve-all over >=10 stops under the schema-default (supervised) ceiling', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-ceiling-'));
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
