@@ -82,9 +82,10 @@ function anchored(relPath, root = anchorRoot()) {
 
 // Runs `fn` under the store lock with the store file already resolved. A read-modify-write
 // resolves the anchor once, so its lock, read and write can never target different checkouts if a
-// later resolution fails transiently.
-function locked(deps, fn) {
-  const root = anchorRoot();
+// later resolution fails transiently. `deps.cwd` (a CLI that was handed its working directory)
+// is the one anchor for both paths; it is not passed on to the fs calls.
+function locked({ cwd, ...deps }, fn) {
+  const root = anchorRoot(cwd);
   return withLock(anchored(LOCK_REL, root), () => fn({ ...deps, storeFile: anchored(STORE_REL, root) }));
 }
 

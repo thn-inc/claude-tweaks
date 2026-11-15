@@ -28,7 +28,6 @@ const NOT_YET = [
   'claude-tweaks-statusline.js',
   'code-health.js',
   'compose-subject.js',
-  'declined-learning.js',
   'design-detect.js',
   'docs-health.js',
   'hooks.js',
