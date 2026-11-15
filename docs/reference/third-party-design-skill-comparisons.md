@@ -4,6 +4,10 @@ One file for every evaluation of a third-party design skill against Impeccable, 
 section per skill. Read this before proposing that `design-wrapper` route any mode to something
 other than Impeccable. Reference only — no mode's dispatch logic loads it.
 
+Moved here from `plugin/skills/design-wrapper/` (#5550). A bare file name below, such as
+`critics.md` or `impeccable-cli.md`, names a file in that directory unless the sentence says it
+belongs to the skill being compared.
+
 Anthropic's native `/design` skill is deliberately **not** here: its record (#2690,
 `claude-design-skill-comparison.md`) is a first-party skill decided on a structural invocation
 block, not a feature comparison, and folding it in would bury that argument. Later third-party

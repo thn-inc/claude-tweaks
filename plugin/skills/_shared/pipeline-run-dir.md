@@ -165,12 +165,6 @@ sanctioned-write family, the fourth a single documented exception:
   `/claude-tweaks:dispatch`'s `$RUN_ID`, or a `<dir>` copied from the SessionStart notice's run
   list, passes — and the anchoring check above still runs on that resolved path.
 
-### Initialized-run-dir requirement (#1566) — moved
-
-Moved to `_shared/pipeline-run-dir-initialized-check.md` (#2722) — `bin/*.js`-author detail (which
-of `resolveRunArg`'s 8 shared callers opt out via `resolveOpts.allowUninitialized`, and why) not
-needed by an ordinary skill-following worktree-creation catch-up. Read there.
-
 ### Worktree-local `--run` fallback (#280)
 
 `resolveRunArg` (`bin/hooks.js`, shared by `record-worktree`, `record-pr`, `spec-status`,
