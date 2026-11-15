@@ -5,10 +5,9 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'plan-audit.js');
-const { spawnCli } = require('../../helpers/run-cli');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 const { RAIL_BYTES } = require(path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'skill-audit', 'budgets'));
 
 function makeTmpRepo() {
@@ -21,13 +20,14 @@ function writePlan(repo, text) {
   return p;
 }
 
-function runCli(planFile, repoRoot) {
-  try {
-    const stdout = execFileSync('node', [CLI, planFile, '--repo-root', repoRoot], { encoding: 'utf8' });
-    return { exitCode: 0, stdout };
-  } catch (err) {
-    return { exitCode: err.status, stdout: err.stdout || '' };
-  }
+// The complete environment each in-process call sees.
+function cliEnv(extra = {}) {
+  return { ...process.env, ...extra };
+}
+
+function audit(planFile, repoRoot) {
+  const r = runCliSync(CLI, [planFile, '--repo-root', repoRoot], { env: cliEnv() });
+  return { exitCode: r.code, stdout: r.stdout };
 }
 
 // AC1 — missing Files: path
@@ -39,7 +39,7 @@ test('AC1: a fixture plan naming a missing Files: path fails Check A and exits n
       '**Files:**',
       '- Modify: `does/not/exist.js`',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.notStrictEqual(exitCode, 0);
     const report = JSON.parse(stdout.split('\n')[0]);
     assert.strictEqual(report.checkA.ok, false);
@@ -60,7 +60,7 @@ test('AC2: a fixture plan with a Scope keywords match outside the plan fails Che
       '**Files:**',
       '- Modify: `plan.md`',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.notStrictEqual(exitCode, 0);
     const report = JSON.parse(stdout.split('\n')[0]);
     assert.strictEqual(report.checkB.ok, false);
@@ -83,7 +83,7 @@ test('AC3: a fixture plan adding prose to a near-ceiling governed file gets a so
       '**Files:**',
       `- Modify: \`${rel}\``,
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.strictEqual(exitCode, 0);
     const [jsonLine, summaryLine] = stdout.split('\n');
     const report = JSON.parse(jsonLine);
@@ -109,7 +109,7 @@ test('AC4: a fixture plan adding prose to a governed file already over the ceili
       '**Files:**',
       `- Modify: \`${rel}\``,
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.notStrictEqual(exitCode, 0);
     const report = JSON.parse(stdout.split('\n')[0]);
     assert.strictEqual(report.headroom.ok, false);
@@ -130,7 +130,7 @@ test('AC5: a clean fixture plan has no failures, no flags, exits 0', () => {
       '**Files:**',
       '- Modify: `plugin/bin/existing.js`',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.strictEqual(exitCode, 0);
     const report = JSON.parse(stdout.split('\n')[0]);
     assert.ok(report.checkA.ok && report.checkB.ok && report.checkC.ok && report.headroom.ok);
@@ -158,7 +158,7 @@ test('AC6: a fixture plan whose Step 2 command already passes despite declaring 
       'Run: `node -e "process.exit(0)"`',
       'Expected: FAIL with "guard not present"',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.notStrictEqual(exitCode, 0);
     const report = JSON.parse(stdout.split('\n')[0]);
     assert.strictEqual(report.checkC.ok, false);
@@ -192,7 +192,7 @@ test('#1594: a fixture plan reproducing the real fenced-code-block Step 2 drift 
       '',
       '- [ ] **Step 3: Add the row**',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.strictEqual(exitCode, 0);
     const report = JSON.parse(stdout.split('\n')[0]);
     assert.strictEqual(report.checkC.ok, true);
@@ -218,7 +218,7 @@ test('a task declaring Expected: FAIL whose command genuinely fails pre-dispatch
       'Run: `node -e "process.exit(1)"`',
       'Expected: FAIL with "not defined"',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.strictEqual(exitCode, 0);
     const report = JSON.parse(stdout.split('\n')[0]);
     assert.strictEqual(report.checkC.ok, true);
@@ -248,7 +248,7 @@ test('#2593: a fixture plan whose Step 2 prose only mentions a forbidden git sta
       'Run: never run `git stash push -u -m tag` here; use a WIP commit instead',
       'Expected: FAIL',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.strictEqual(exitCode, 0);
     const [jsonLine, summaryLine] = stdout.split('\n');
     const report = JSON.parse(jsonLine);
@@ -293,7 +293,7 @@ test('AC7: a fixture plan touching a compose call site with a malformed sibling 
       '**Files:**',
       '- Modify: `plugin/skills/_shared/a.md`',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.strictEqual(exitCode, 0);
     const [jsonLine, summaryLine] = stdout.split('\n');
     const report = JSON.parse(jsonLine);
@@ -332,7 +332,7 @@ test('AC7.1 (#3310): a fixture plan touching a compose call site whose bundle is
       '**Files:**',
       '- Modify: `plugin/skills/_shared/a.md`',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.strictEqual(exitCode, 0);
     const [jsonLine, summaryLine] = stdout.split('\n');
     const report = JSON.parse(jsonLine);
@@ -366,7 +366,7 @@ test('AC8 (#1999): an append-shaped task reports appendShaped and the summary li
       'Run: `node --test tests/existing.test.js`',
       'Expected: FAIL — new cases not yet true',
     ].join('\n'));
-    const { exitCode, stdout } = runCli(plan, repo);
+    const { exitCode, stdout } = audit(plan, repo);
     assert.strictEqual(exitCode, 0);
     const [jsonLine, summaryLine] = stdout.split('\n');
     const report = JSON.parse(jsonLine);
@@ -384,21 +384,15 @@ test('#2000: a fixture plan with a raw NUL fails checkD and exits 1 under both t
   try {
     const plan = path.join(repo, 'plan.md');
     fs.writeFileSync(plan, Buffer.from(`### Task 1: X\n**Files:**\n- Modify: \`plan.md\`\n\nsecond${'\0'}line\n`));
-    const full = runCli(plan, repo);
+    const full = audit(plan, repo);
     assert.notStrictEqual(full.exitCode, 0);
     const fullReport = JSON.parse(full.stdout.split('\n')[0]);
     assert.strictEqual(fullReport.checkD.ok, false);
     assert.strictEqual(fullReport.checkD.findings[0].line, 5);
 
-    let bytesResult;
-    try {
-      execFileSync('node', [CLI, plan, '--bytes'], { encoding: 'utf8' });
-      assert.fail('expected --bytes to exit non-zero');
-    } catch (err) {
-      bytesResult = err;
-    }
-    assert.strictEqual(bytesResult.status, 1);
-    const bytesReport = JSON.parse((bytesResult.stdout || '').split('\n')[0]);
+    const bytesResult = runCliArgs([plan, '--bytes']);
+    assert.strictEqual(bytesResult.exitCode, 1);
+    const bytesReport = JSON.parse(bytesResult.stdout.split('\n')[0]);
     assert.strictEqual(bytesReport.checkD.ok, false);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
@@ -411,11 +405,12 @@ test('#2000: a clean plan reports checkD.ok === true under the full audit and --
   fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'existing.js'), '// existing\n');
   try {
     const plan = writePlan(repo, ['### Task 1: Do a thing', '**Files:**', '- Modify: `plugin/bin/existing.js`'].join('\n'));
-    const { stdout } = runCli(plan, repo);
+    const { stdout } = audit(plan, repo);
     const report = JSON.parse(stdout.split('\n')[0]);
     assert.strictEqual(report.checkD.ok, true);
-    const bytesOut = execFileSync('node', [CLI, plan, '--bytes'], { encoding: 'utf8' });
-    assert.deepStrictEqual(JSON.parse(bytesOut.trim()), { checkD: { ok: true, findings: [] } });
+    const bytesOut = runCliArgs([plan, '--bytes']);
+    assert.strictEqual(bytesOut.exitCode, 0);
+    assert.deepStrictEqual(JSON.parse(bytesOut.stdout.trim()), { checkD: { ok: true, findings: [] } });
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -448,12 +443,8 @@ test('AC5.1, AC8.1: --count-tasks prints its JSON line (script entry)', () => {
 });
 
 function runCount(planFile) {
-  try {
-    const stdout = execFileSync('node', [CLI, planFile, '--count-tasks'], { encoding: 'utf8' });
-    return { exitCode: 0, stdout, stderr: '' };
-  } catch (err) {
-    return { exitCode: err.status, stdout: err.stdout || '', stderr: err.stderr || '' };
-  }
+  const r = runCliSync(CLI, [planFile, '--count-tasks'], { env: cliEnv() });
+  return { exitCode: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 test('--count-tasks prints {"tasks": 1, "batched": false} for a one-task plan, 3 for three, batched:true for a batched plan; exit 0 (#1926 AC2)', () => {
@@ -499,8 +490,8 @@ test('--count-tasks never runs Checks A/B/C — a plan naming a missing path sti
 // ── #3378 — --task-markers ───────────────────────────────────────────────────
 
 function runTaskMarkers(planFile) {
-  const r = spawnSync('node', [CLI, planFile, '--task-markers'], { encoding: 'utf8' });
-  return { exitCode: r.status, stdout: r.stdout, stderr: r.stderr };
+  const r = runCliSync(CLI, [planFile, '--task-markers'], { env: cliEnv() });
+  return { exitCode: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 test('--task-markers prints markers:false and every role/risk null for an unmarked plan (#3378 AC1)', () => {
@@ -691,13 +682,9 @@ function makeERepo() {
   return repo;
 }
 
-function runCliArgs(args) {
-  try {
-    const stdout = execFileSync('node', [CLI, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    return { exitCode: 0, stdout, stderr: '' };
-  } catch (err) {
-    return { exitCode: err.status, stdout: err.stdout || '', stderr: err.stderr || '' };
-  }
+function runCliArgs(args, opts = {}) {
+  const r = runCliSync(CLI, args, { env: cliEnv(opts.env), cwd: opts.cwd });
+  return { exitCode: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 test('AC1.1 + AC5.2 (#3099): --spec reports the dropped clause AC2.3 with its text, and the audit still exits 0', () => {
@@ -886,13 +873,13 @@ test('#3099: Check B never reports the audited plan file itself as unplanned, bu
       '**Files:**',
       '- Modify: `a.js`',
     ].join('\n'));
-    const first = runCli(plan, repo);
+    const first = audit(plan, repo);
     const reportFirst = JSON.parse(first.stdout.split('\n')[0]);
     assert.deepStrictEqual(reportFirst.checkB.unplanned, []);
     assert.strictEqual(first.exitCode, 0);
 
     fs.writeFileSync(path.join(repo, 'stray.js'), '// zebrakeyword\n');
-    const second = runCli(plan, repo);
+    const second = audit(plan, repo);
     const reportSecond = JSON.parse(second.stdout.split('\n')[0]);
     assert.deepStrictEqual(reportSecond.checkB.unplanned, ['stray.js']);
     assert.notStrictEqual(second.exitCode, 0);
@@ -1189,4 +1176,50 @@ test('#4618: --risk-proofs exits 2 when the policy cannot be read, as the full a
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+});
+
+// ── #5382 — the injected cwd and the entry contract ─────────────────────────
+
+test('AC9.1: a relative plan path resolves against the injected cwd', () => {
+  const repo = makeTmpRepo();
+  try {
+    writePlan(repo, '### Task 1: A\n\n### Task 2: B\n');
+    // The test runner's real cwd has no plan.md; only deps.cwd() can find it.
+    const r = runCliArgs(['plan.md', '--count-tasks'], { cwd: repo });
+    assert.strictEqual(r.exitCode, 0);
+    assert.strictEqual(r.stdout, '{"tasks": 2, "batched": false}\n');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('resolveRepoRoot: outside a git repo, git\'s fatal line goes to deps.stderr', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, '### Task 1: Do a thing\n**Files:**\n- Modify: `plan.md`\n');
+    // No --repo-root: git runs in the non-git cwd. A process.stderr write would trip the leak guard.
+    const r = runCliArgs([plan], { cwd: repo, env: { GIT_CEILING_DIRECTORIES: os.tmpdir() } });
+    assert.match(r.stderr, /not a git repository/i);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC6.1: require() prints nothing and leaves process.exitCode undefined', () => {
+  delete require.cache[CLI];
+  const writes = [];
+  const outWrite = process.stdout.write;
+  const errWrite = process.stderr.write;
+  const before = process.exitCode;
+  process.stdout.write = (t) => { writes.push(t); return true; };
+  process.stderr.write = (t) => { writes.push(t); return true; };
+  try {
+    require(CLI);
+  } finally {
+    process.stdout.write = outWrite;
+    process.stderr.write = errWrite;
+  }
+  assert.deepStrictEqual(writes, []);
+  assert.strictEqual(process.exitCode, before);
+  assert.strictEqual(process.exitCode, undefined);
 });
