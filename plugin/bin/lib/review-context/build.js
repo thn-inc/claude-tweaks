@@ -7,10 +7,10 @@
 'use strict';
 
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { splitNul } = require('../git-z');
+const { envTmpdir } = require('../session-tmp');
 
 // Full diffs plus touched-file contents can reach tens of MB on long branches.
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -44,20 +44,8 @@ function realLsof({ exec = execFileSync, cwd, env } = {}) {
 // then a fresh mkdtemp dir (per-invocation unique by construction). Never a fixed
 // shared /tmp name — two concurrent reviews clobbering each other's lens outputs is
 // the defect this module exists to close.
-// `cwd` (a relative --dir/--run resolves against it) and `env` (the mkdtemp parent, resolved the
-// way os.tmpdir() does: win32 reads TEMP, TMP, then SystemRoot\temp and ignores TMPDIR; POSIX
-// reads TMPDIR, TMP, TEMP, then /tmp) default to the process's own when absent.
-function envTmpdir(env, platform = process.platform) {
-  if (!env) return os.tmpdir();
-  const win = platform === 'win32';
-  const sysRoot = env.SystemRoot || env.windir;
-  let t = win ? env.TEMP || env.TMP || (sysRoot ? sysRoot + '\\temp' : '') : env.TMPDIR || env.TMP || env.TEMP || '/tmp';
-  if (!t) return os.tmpdir();
-  const sep = win ? '\\' : '/';
-  if (t.length > 1 && t.endsWith(sep) && !(win && t.endsWith(':' + sep))) t = t.slice(0, -1);
-  return t;
-}
-
+// `cwd` (a relative --dir/--run resolves against it) and `env` (the mkdtemp parent, resolved by
+// session-tmp's envTmpdir) default to the process's own when absent.
 function resolveDir({ dir, run, cwd, env, tmpdir = envTmpdir(env), mkdtemp = fs.mkdtempSync, mkdir = fs.mkdirSync } = {}) {
   if (dir) {
     if (cwd) dir = path.resolve(cwd, dir);

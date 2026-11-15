@@ -39,7 +39,6 @@ const NOT_YET = [
   'release-notes-publish.js',
   'residue.js',
   'resolve-profile.js',
-  'session-tmp-resolve.js',
   'sweep-stray-run-dirs.js',
   'verify.js',
   'visual-decide.js',
