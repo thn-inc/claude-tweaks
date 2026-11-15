@@ -13,6 +13,17 @@
 ## Global Constraints
 
 - Ceiling: the four converted files together start **at most 20** `hooks.js` processes (baseline measured 2026-11-15 on this branch at `6a43cd434`, `CT_TEST_CONCURRENCY=6`: archive-run-verb 56, hooks-help-guard 66, hooks-js-flag-strict 52, hooks-ledger-row 93 = **267**; evidence `{run-dir}/evidence/baseline-procs.txt`). Every `spawnCli`/`spawnSync` of `hooks.js` that stays counts toward the 20, and the 20 is binding.
+- Process budget (default plan, 17 of 20; smoke tests are counted per verb family, as the spec's Plan Review Clarifications decide):
+
+  | File | Tests that stay on a real process | `hooks.js` processes |
+  |---|---|---|
+  | `tests/hooks-help-guard.test.js` | AC5.1 `ledger-row --help`; AC5.1 `no-such-verb`; AC7.1 `session-end`; `#1143: --help on a non-USAGE-table command is not intercepted` (`session-start` event) | 4 |
+  | `tests/hooks-js-flag-strict.test.js` | `#4834: an unusable stderr still refuses with exit 1` (converted to a real process, AC6); AC9.1 `resolve-run-dir --root-only` success; `#4834: a captured resolve-run-dir --root-only with a typo yields an empty value and exit 1` (dispatcher refusal) | 3 |
+  | `tests/hooks-ledger-row.test.js` | AC3.1 two concurrent appends (2); `ledger-row` success + refusal; `record-worktree` success + refusal | 6 |
+  | `tests/archive-run-verb.test.js` | `archive-run` success + refusal; `close-run` success + refusal | 4 |
+  | **Total** | | **17** |
+
+  Every other test converts, the reconcile-running tests in `tests/hooks-js-flag-strict.test.js` included (Task 3 Step 1). The 3 spare processes are for the conditional fallbacks only: the `AC1.1 lock` lock-wait test (Task 4 Step 1), `answer 6` (Task 4 Step 2) and the `#3721` push-state tests (Task 5 Step 2). A fallback that would push the total over 20 is not taken: thread `env` instead. If that cannot be done without a wider change, Task 6 Step 1 escalates.
 - No verb's output text, exit code or flag handling changes. Byte-for-byte.
 - The require-time prefilter (`EARLY`, top of `hooks.js`) and the script entry line stay exactly as they are; `run` does not catch on the event path, and the VERBS try/catch (exit 1, #4932) stays where `main` has it today.
 - `hooks.js` stays on `NOT_YET` in `tests/bin-lib/cli-entry-conformance.test.js`; no other CLI is converted.
@@ -25,15 +36,15 @@
 - Quoted from `.claude/skills/hooks-js-verb-registration/SKILL.md` (governs `VERBS`/`KNOWN_FLAGS`/handlers), verbatim: "A guard regression must never reach a mutating handler against the developer's checkout (#4834)." Its row 3 and decision 5 describe the handler signature and `main()`; Task 1 updates them.
 - Quoted from `.claude/skills/git-ground-truth-test-env/SKILL.md` (governs tests of code whose `env` defaults to `process.env`, and `repoInfo`), verbatim: "**A reader call in a test passes an explicit env.** Build it from `process.env` minus the variables the reader keys on." / "**Prove both under the runner.** Run `node tools/run-tests.js --files-from <list>`, never only a bare `node --test`: the runner's env is part of the test's input." / "**Prove a fallback test with a mutation.** Remove the check its trigger depends on and see the test go red under the runner." Each task's run step therefore runs its file both ways: `node --test {file}` and `node tools/run-tests.js --files-from {list-with-that-file}`.
 - `.claude/skills/suite-slot-test-env` does not apply: no converted test spawns `verify.js` or `tools/run-tests.js`.
-- `repoInfo` cache (#5294): its memo key is `uid + dir + envFingerprint` with a per-entry signature check, so two in-process calls with different `cwd` values never share an answer (confirmed by source read, `decisions.md` 13:45:48). `worktree-detect.js` passes `process.env`, not an injected env, and `storePath()` falls back to `os.homedir()`: an in-process test that injects a different `HOME` must also carry `CT_HOOKS_REPO_INFO_STORE` (absolute) in its `env`, or the helper's homedir guard fires.
+- `repoInfo` cache (#5294): its memo key is `uid + dir + envFingerprint` with a per-entry signature check, so two in-process calls with different `cwd` values never share an answer (confirmed by source read, `decisions.md` 13:45:48). `worktree-detect.js` passes the real `process.env` to the store (`lookupRepoInfo(dir, process.env)` at line 151, `rememberRepoInfo(dir, process.env, …)` at line 91), and `storePath(env)` falls back to `os.homedir()`. An injected `CT_HOOKS_REPO_INFO_STORE` therefore never reaches the store. This record does not thread `env` into `repoInfo`, for two reasons: its git child goes through `git-exec.js`'s `runGit`, which inherits the real environment and is #5377's to thread ("`plugin/bin/lib/hooks/git-exec.js` — take `env` as a parameter"); and any `opts` key bypasses the #5294 memo, which changes the hook hot path. No converted test injects a `HOME` different from the runner's. `repoInfo` (`worktree-detect.js:91,151` → `repo-info-cache.js` `storePath` → `os.homedir()`) is listed in the PR body as an ambient read on every converted verb's path, and Task 6 Step 2 names it on #5377.
 
 ## Review Focus
 
 1. A verb that prints and returns without awaiting, run in-process: the three flush-before-exit sites (`runResolveLedger`'s, `runLedgerRow`'s and `runCheckPassReentry`'s `await new Promise(... process.stdout.write(text, resolve))`, lines ~1235/1369/1739) must `await deps.stdout(text)`, and `realDeps.stdout` must resolve only after the write callback — a piped `ledger-row` reader expects its JSON line before exit. Task 1's spawned suites cover this; the reviewer checks the three sites by name.
-2. A closed or unwritable stderr on a refusal: exit stays 1, never 0 (#4834). Task 3 adds the real-process read-only-fd-2 test.
+2. A closed or unwritable stderr on a refusal: exit stays 1, never 0 (#4834). Task 3 turns the existing `#4834: an unusable stderr still refuses with exit 1` test into the real-process read-only-fd-2 test.
 3. A handler exception: still exit 1 with `claude-tweaks: {verb}: {message}` on stderr, and a hook event exception still exit 0 through the entry catch (`tests/hooks-verb-exception-exit.test.js`, run unchanged in Task 1).
 4. A test env that carries `GIT_DIR`/`GIT_WORK_TREE` from the runner (a git hook running the suite): git children on the converted paths must read the injected env, not the runner's — each converted file's env-only test (Tasks 4–5) pins it.
-5. An in-process `reconcile` or `reconcile-background` call: it would start real `gh`/`git` children and a detached `hooks.js reconcile-background` with the runner's environment (neither `reconcile()` nor `spawnBackgroundIfStale` takes an `env`). Task 3 keeps every test whose subject runs reconcile for real on a real process unless an `env` option is threaded and proven.
+5. An in-process `reconcile` or `reconcile-background` call: it would start real `gh`/`git` children and a detached `hooks.js reconcile-background` with the runner's environment (neither `reconcile()` nor `spawnBackgroundIfStale` takes an `env`). Task 3 converts every such test in-process: either the env is threaded and proven, or `reconcile` and `spawnBackgroundIfStale` are stubbed so no real child starts.
 
 ---
 
@@ -82,7 +93,7 @@ Expected: FAIL with `runCli: hooks.js exports no run`
 
 - [ ] **Step 3: Implement `run`, `realDeps`, and the deps thread-through in `plugin/bin/hooks.js`**
 
-Move `main`'s body into `run` (`cmd = argv[0]`, `argsAfterCmd = argv.slice(1)`, `return await verb.run(argv, deps)` — keep the `await` and its comment). In `run` and every handler replace: `process.stdout.write(x)` → `deps.stdout(x)` (the three `await new Promise(...)` flush sites → `await deps.stdout(x)`); `process.stderr.write(x)` and each `try { fs.writeSync(2, x) } catch {}` → `deps.stderr(x)` (same bytes, one call per former write); `process.cwd()` → `deps.cwd()`; `process.env` → `deps.env` (including `resolveRunArg(args, deps.cwd(), deps.env, …)`, `ctxLib.resolveRunDir(cwd, deps.env)`, `ctxLib.resolveRun(cwd, deps.env, …)`, `pluginRoot(deps.env)`, session-id reads). Event tail: `ctxLib.parseInput(deps.stdin())`, attribution diagnostic → `deps.stderr`, JSON → `deps.stdoutSync`. A child process `hooks.js` itself starts (`execFile` in `runResolveConsole`, the reconcile handlers) gets `{ cwd: deps.cwd(), env: deps.env }` where the call takes options; a lib call with no `env` option is left as is here (Tasks 3–5 decide it). Then update the comments listed in Files to say `run()` / `run(argv, deps)`.
+Move `main`'s body into `run` (`cmd = argv[0]`, `argsAfterCmd = argv.slice(1)`, `return await verb.run(argv, deps)` — keep the `await` and its comment). In `run` and every handler replace: `process.stdout.write(x)` → `deps.stdout(x)` (the three `await new Promise(...)` flush sites → `await deps.stdout(x)`); `process.stderr.write(x)` and each `try { fs.writeSync(2, x) } catch {}` → `deps.stderr(x)` (same bytes, one call per former write); `process.cwd()` → `deps.cwd()`; `process.env` → `deps.env` (including `resolveRunArg(args, deps.cwd(), deps.env, …)`, `ctxLib.resolveRunDir(cwd, deps.env)`, `ctxLib.resolveRun(cwd, deps.env, …)`, `pluginRoot(deps.env)`, session-id reads). Event tail: `ctxLib.parseInput(deps.stdin())`, attribution diagnostic → `deps.stderr`, JSON → `deps.stdoutSync`. A child process `hooks.js` itself starts (`execFile` in `runResolveConsole`, the reconcile handlers) gets `{ cwd: deps.cwd(), env: deps.env }` where the call takes options; a lib call with no `env` option is left as is here (Tasks 3–5 decide it). `reportWorktreeLocalFallback(runDir, worktreeLocalFallback, stream = process.stdout)` (line ~642, above `VERBS`) becomes `reportWorktreeLocalFallback(runDir, worktreeLocalFallback, write)`, a required write function called as `write(text)` instead of `stream.write(text)`. Its callers pass `deps.stdout` where they relied on the default, and `deps.stderr` at the three sites that pass `process.stderr` today (lines ~1224, ~1284, ~1734). Then update the comments listed in Files to say `run()` / `run(argv, deps)`.
 
 - [ ] **Step 4: Write `docs/hooks.md`'s `## In-process entry (#5375)` section** — state: `run(argv, deps)` with `argv = process.argv.slice(2)`; `main` delegates; the `realDeps` keys above and why each exists (Promise-returning `stdout` awaited at the flush sites — the shape #5376 and #5377 reuse; non-throwing `stderr` for #4834; `stdoutSync` for the event tail so a failed write still reaches the entry catch); the script entry and the prefilter are unchanged; event modules still read process globals until #5377.
 
@@ -95,8 +106,8 @@ Expected: PASS, 0 failures — the spawned files prove no output, exit-code or f
 
 - [ ] **Step 7: Confirm no process global is left in a handler**
 
-Run: `grep -n -E 'process\.(stdout|stderr)\.write|process\.cwd\(\)' plugin/bin/hooks.js`
-Expected: no line between the `VERBS` table and the `require.main` guard except inside `realDeps`. Control: the same grep at `6a43cd434` (`git show 6a43cd434:plugin/bin/hooks.js | grep -c -E 'process\.(stdout|stderr)\.write|process\.cwd\(\)'`) prints `180` (run 2026-11-15 at plan time).
+Run: `grep -n -E 'process\.(stdout|stderr)\b|process\.cwd\(\)' plugin/bin/hooks.js` (bare `process.stdout`/`process.stderr`, not only `.write`, so a stream passed as a value is caught; the whole file, not only the handlers)
+Expected: every remaining match is inside `realDeps` or a comment, and none is in `reportWorktreeLocalFallback` or any `run{Verb}`. Control: the same grep at `6a43cd434` (`git show 6a43cd434:plugin/bin/hooks.js > {scratchpad}/hooks-6a43.js`, then `grep -c -E 'process\.(stdout|stderr)\b|process\.cwd\(\)' {scratchpad}/hooks-6a43.js`) prints `184`, including line 642's `stream = process.stdout` (run 2026-11-15 at plan review).
 
 - [ ] **Step 8: Commit**
 
@@ -130,9 +141,7 @@ test('AC5.1: node hooks.js ledger-row --help prints the usage line and exits 0',
 // script entry: an unknown verb's exit 1 through process.exit
 test('AC5.1: node hooks.js no-such-verb exits 1 with the unrecognized line and the usage text', () => {
   const r = spawnCli(HOOKS, ['no-such-verb'], { cwd: HOOK_SANDBOX, env: { ...process.env, PIPELINE_RUN_DIR: '' } });
-  assert.equal(r.code, 1);
-  assert.equal(r.stdout, '');
-  assert.match(r.stderr, /^claude-tweaks: unrecognized hooks\.js subcommand 'no-such-verb'/);
+  assert.deepStrictEqual(r, { code: 1, stdout: '', stderr: NO_SUCH_VERB_STDERR });
 });
 // hook event: the event path still exits 0 through the entry catch
 test('AC7.1: echo {} | node hooks.js session-end exits 0 with empty stdout', () => {
@@ -142,6 +151,8 @@ test('AC7.1: echo {} | node hooks.js session-end exits 0 with empty stdout', () 
 ```
 
 (Probed 2026-11-15 against the unconverted file: `session-end` with stdin `{}` in a sandbox printed `status 0 stdout "" stderr ""`.)
+
+`NO_SUCH_VERB_STDERR` holds the exact bytes AC5 compares against ("the same bytes and exit codes as before"). Build it in the test file from the error line plus the exported `USAGE`, in the order and format `hooks.js` prints them. Before relying on it, capture the real stderr of `node plugin/bin/hooks.js no-such-verb` at `6a43cd434` in the scratch `git archive` extract to `{run-dir}/evidence/ac5-no-such-verb-base.txt`, and confirm the constant equals those bytes exactly (a byte-equal diff into the same evidence file). A constant that only matches the first line fails this step.
 
 - [ ] **Step 3: Write the injected-env test**
 
@@ -174,13 +185,19 @@ Expected: PASS, same test titles as before plus the new ones.
 **Interfaces:**
 - Consumes: Task 1's `run`/`realDeps`/`main`; `runCli`, `spawnCli`.
 
-- [ ] **Step 1: Convert `runHook(args, { cwd, env })` to `runCli`** with the complete env `{ ...process.env, PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env }` (delete `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` from it). A test whose subject runs `reconcile` or `reconcile-background` for real (the `--json` positive control, `reconcile-background ... writes its status file`, and any other that reaches `reconcileLib.reconcile` or `spawnBackgroundIfStale`) stays on `spawnCli` with the comment "reconcile starts gh/git children and a detached reconcile-background with the inherited env; reconcile() takes no env option" — unless the implementer threads an `env` option through that path with an env-only test, in which case convert it. Refusal tests that stop at the unknown-flag guard convert (they never reach a handler).
+- [ ] **Step 1: Convert `runHook(args, { cwd, env })` to `runCli`** with the complete env `{ ...process.env, PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env }` (delete `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` from it). Every test whose subject runs `reconcile` or `reconcile-background` for real must convert too. Today these are the lines-172 `declared` control, `#4777: reconcile --json with no typo runs for real`, `#4777: declared value flags consume their value token`, `#4777: a flagless verb still runs bare` and `#4777: reconcile-background with no typo writes its status file`, plus any other test that reaches `reconcileLib.reconcile` or `spawnBackgroundIfStale`. The process budget in Global Constraints has no room for them. Convert each one in one of two ways, whichever is smaller:
+  - Thread an `env` option through `reconcile()` and `spawnBackgroundIfStale` (default `process.env`) and every child they start, pinned with an env-only test.
+  - Stub `require('../plugin/bin/lib/reconcile').reconcile` and `require('../plugin/bin/lib/reconcile/background-spawn').spawnBackgroundIfStale` around the `runCli` call, as `runReconcileVerbStubbed` does at `tests/reconcile-dispatch.test.js:671`. `runCli` shares loaded modules within the file, so the stub reaches `hooks.js` only if it calls them through the module object. Confirm it does, or make it do so. Restore the stubs in a `finally`.
 
-- [ ] **Step 2: Write the real-process unusable-stderr test, keeping the in-process `#4834` test**
+  A stubbed positive control asserts the stub was called with the parsed flags (e.g. `{ dryRun: true, json: true }` for `reconcile --dry-run --json`) in place of the real pass's side effect, such as `reconcile-cache.json` being stamped. It keeps its title. Its refusal twin still asserts the stub was never called. Refusal tests that stop at the unknown-flag guard convert too, since they never reach a handler.
+
+- [ ] **Step 2: Write the AC6.1 real-process test by converting the named `#4834` test itself, keeping its title**
+
+The spec's Plan Review Clarifications decide this. Replace the body of the existing `test('#4834: an unusable stderr still refuses with exit 1', async () => { … })` at line ~354. Today it calls `main()` in-process with `fs.writeSync` patched. Its new body spawns a real process whose fd 2 is read-only. The title stays byte-identical, no second test is added, and the in-process `main()` version is removed. AC6 is named in the trailing comment, not the title:
 
 ```js
-// closed stderr: a real fd 2 that refuses writes
-test('AC6.1: an unusable stderr still refuses with exit 1 in a real process', () => {
+// closed stderr: a real fd 2 that refuses writes (AC6)
+test('#4834: an unusable stderr still refuses with exit 1', () => {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ro-')), 'ro');
   fs.writeFileSync(f, '');
   const fd = fs.openSync(f, 'r');
@@ -227,7 +244,7 @@ The refusal half of AC9.1 is the existing `#4834: a captured resolve-run-dir --r
 
 **Files:**
 - Modify: `tests/hooks-ledger-row.test.js`
-- Modify (only where a converted test shows a global read, each named in the PR body): e.g. `plugin/bin/lib/file-lock.js` (`resolveLockWaitMs` reads `process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS`), the `origin` URL reader behind the `/pull/N` check, `plugin/bin/lib/hooks/worktree-detect.js` (`repoInfo` passes `process.env`)
+- Modify (only where a converted test shows a global read, each named in the PR body): e.g. `plugin/bin/lib/file-lock.js` (`resolveLockWaitMs` reads `process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS`), the `origin` URL reader behind the `/pull/N` check. Not `plugin/bin/lib/hooks/worktree-detect.js`: its `repoInfo` read is listed as an ambient read, per Global Constraints.
 
 **Interfaces:**
 - Consumes: Task 1's `run`/`realDeps`; `runCli`, `spawnCli`.
@@ -261,7 +278,7 @@ The refusal half of AC9.1 is the existing `#4834: a captured resolve-run-dir --r
 
 - [ ] **Step 2: Write the env-only git child test** — the `#3721` push-state tests read the branch through git: `test('AC10.1: archive-run reports the injected-env repo\'s branch, not the cwd repo\'s', …)` with the A/B fixture (B on branch `ct-env-only`, `GIT_DIR=<B>/.git` only in env); or, if the archive path's git calls cannot take `env` without a wider change, keep the `#3721` tests on `spawnCli` with the reason and pin AC10.1 with an injected-`cwd` test instead (run fixture in a temp repo, `cwd` = that repo, assert the `committed` line names its branch).
 
-- [ ] **Step 3: Write the family smoke tests** — archive-run: `AC3.1 AC9.1: archive-run on a clean fixture through runCli and spawnCli prints the same moved: lines and exit 0` (twin fixtures) plus the spawned refusal `AC9.1: node hooks.js archive-run on an active run exits non-zero naming close-run`. close-run has no fixture in the four files today: add `AC3.1 AC9.1: close-run on a recorded run through runCli and spawnCli returns the same code and stdout` (twin fixtures stamped by `record-worktree`) and a spawned refusal (an unusable `--run`).
+- [ ] **Step 3: Write the family smoke tests** — archive-run: `AC3.1 AC9.1: archive-run on a clean fixture through runCli and spawnCli prints the same moved: lines and exit 0` (twin fixtures) plus the spawned refusal `AC9.1: node hooks.js archive-run on an active run exits non-zero naming close-run`. None of the four files has a `close-run` fixture today. The spec's Plan Review Clarifications decide that new twins cover it, counted in the budget. Add `AC3.1 AC9.1: close-run on a recorded run through runCli and spawnCli returns the same code and stdout`, using twin fixtures stamped by `record-worktree` and asserting `assert.deepStrictEqual` on `{ code, stdout }` with the run path normalized. Also add a spawned refusal: `AC9.1: node hooks.js close-run with an unusable --run exits non-zero naming the --run value`, which asserts the exact stderr.
 
 - [ ] **Step 4: Run** — `node --test tests/archive-run-verb.test.js` → PASS.
 
@@ -281,12 +298,14 @@ The refusal half of AC9.1 is the existing `#4834: a captured resolve-run-dir --r
 Run: `CT_TEST_CONCURRENCY=6 node tools/count-node-procs.js --files-from {scratchpad}/converted-files.txt --json {run-dir}/evidence/after-procs.json > {run-dir}/evidence/after-procs.txt 2>&1`
 Expected: all tests pass; `hooks.js` processes summed over the four files ≤ 20 (AC1.1); every test title present at baseline still present.
 
-- [ ] **Step 2: Ambient-read audit (scratch, uncommitted)** — for each converted verb (`record-worktree`, `ledger-row`, `archive-run`, `close-run`, `resolve-run-dir`), run one documented invocation through `runCli` and `spawnCli` against the same fixture with an injected `cwd`, `env` and `HOME` (plus `CT_HOOKS_REPO_INFO_STORE`) that differ from the real ones, and compare; full output to `{run-dir}/evidence/ambient-read-audit.txt`.
+- [ ] **Step 1b: Over 20 → convert, else escalate.** If Step 1's per-file counts differ from the budget table in Global Constraints, name each extra real-process test. When the total is over 20, convert the extras one at a time, starting with the fallbacks: thread `env` to the child, or inject a stub as in Task 3 Step 1. Re-run Step 1 after each conversion. If a test cannot convert without a wider change and the total stays over 20, stop and escalate. Per the spec ("take the overage to the maintainer before merging"), log `log-decision.js --status STAGED --step "AC1.1 overage"` with the count, the tests and the reasons, and stage it for the Review Console. Never report AC1.1 met over 20.
+
+- [ ] **Step 2: Ambient-read audit (scratch, uncommitted)** — for each converted verb (`record-worktree`, `ledger-row`, `archive-run`, `close-run`, `resolve-run-dir`), run one documented invocation through `runCli` and `spawnCli` against the same fixture and compare. Inject a `cwd` and an `env` that differ from the real ones. `HOME` stays the runner's: `repoInfo`'s store reads `os.homedir()` through the real `process.env`, and the helper's homedir guard would reject every call (Global Constraints). Write the full output to `{run-dir}/evidence/ambient-read-audit.txt`. List `repoInfo` (`worktree-detect.js:91,151`) as an ambient read in the PR body. Post one comment on #5377 naming `worktree-detect.js:91,151` and `repo-info-cache.js`'s `storePath` → `os.homedir()` as reads that #5377's `git-exec.js`/`env` thread-through must cover. Use a body file from `session-tmp-resolve.js` and `gh issue comment 5377 --body-file`.
 
 - [ ] **Step 3: Revert proofs (AC10.1)** — in a `git archive HEAD` extract (git init + snapshot commit), revert each thread-through an AC10.1 test covers (`pluginRoot(deps.env)`, the `deps.cwd()` in `resolve-run-dir`, each lib `env` option) one at a time, run that test file, see it red, restore. Output to `{run-dir}/evidence/revert-proofs.txt`.
 
 - [ ] **Step 4: Log the evidence** — one `log-decision.js --status AUTO --step "AC evidence" --text-file {file}` entry per item: AC1.1 (before/after totals), AC4.1 (four files green under `runCli`, whose leak guard rejects on any leak), AC10.1 (each revert proof red→green), each citing its evidence path.
 
-- [ ] **Step 5: Write and verify the PR body table (AC11.1)** — add to the PR description: the before/after table from `count-node-procs` (file, `hooks.js` before, after, wall-ms before/after; `CT_TEST_CONCURRENCY=6`, same machine, timestamps), the measured baseline (267), every test left on a real process with its reason, and every `plugin/bin/lib` file changed to pass an injected value.
+- [ ] **Step 5: Write and verify the PR body table (AC11.1)** — add to the PR description: the before/after table from `count-node-procs` (file, `hooks.js` before, after, wall-ms before/after; `CT_TEST_CONCURRENCY=6`, same machine, timestamps), the measured baseline (267), every test left on a real process with its reason, every `plugin/bin/lib` file changed to pass an injected value, and every ambient read left in place (at least `repoInfo`, pointing to #5377).
 
 - [ ] **Step 6: Verification — full suite and Windows (AC12.1)** — owned by `/claude-tweaks:build` Common Step 5 (`verify.js` full run) and the review phase's Windows CI dispatch (AC12.1); this task only records that they are pending.
