@@ -16,7 +16,7 @@ const { CLI_TIMEOUT_MS } = require('./events');
 const { reduceDetail } = require('./settle');
 const { MERGE_CHECK_RESULT_SCHEMA } = require('./roles');
 const { loadMergeCheckRules, buildMergeCheckPrompt } = require('./judgment-prompts');
-const { bin, isPlainObject, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
+const { bin, isPlainObject, isInterrupted, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
 const { verdictText, VERDICT_STEPS, confirmFromFile } = require('../dispatch/merge-verdict');
 
 // One merge-check event.
@@ -130,6 +130,8 @@ async function judgeMergeCheck(env, ctx) {
         policy: { 'auto-merge-max-lines': blast.limits.lines, 'auto-merge-max-files': blast.limits.files }, checks: inputs.checks, reviewFindings: [], rules: rules.text,
       });
       const judged = await launchAndValidate(env, ctx, prompt);
+      // A signal during the launch was already reported by run.js's handler: log nothing, emit nothing.
+      if (isInterrupted(deps)) return { verdict: 'unconfirmed', floor, detail: 'interrupted' };
       if (judged.stop) {
         reached = 'needs-human';
         detail = judged.stop;
@@ -181,6 +183,7 @@ function createJudgments({ deps, shared, readFile, runAcceptance } = {}) {
   return async function judgments(ctx) {
     try {
       const mc = await judgeMergeCheck({ deps, shared, readFile: read }, ctx);
+      if (isInterrupted(deps)) return { mergeCheck: { verdict: 'unconfirmed' }, acceptance: { completed: false } };
       if (mc.verdict !== 'auto-merge') {
         return { mergeCheck: { verdict: mc.verdict }, acceptance: { completed: false } };
       }

@@ -7,9 +7,9 @@
 // The closed rule. Exactly these routes; anything else is `route: null` with an `error`:
 //   parent-gate state incomplete | gated | resolved        -> try-it-only
 //   state due, exceeds === false                           -> try-it-only
-//   state due, exceeds === true                            -> due-exceeds (demo:pending on the parent)
+//   state due, exceeds === true                            -> due-exceeds (accept:pending on the parent)
 //   state no-parent, floor not exceeded                    -> no-parent-exempt
-//   state no-parent, floor exceeded (incl. unscored)       -> no-parent-gated (demo:pending on the record)
+//   state no-parent, floor exceeded (incl. unscored)       -> no-parent-gated (accept:pending on the record)
 // A non-zero parent-gate exit, or stdout that did not parse (verdict null), fails open to the
 // no-parent rows with `fallback: 'parent-gate failed'` (verification-brief-parent-gate.md,
 // "Fail open on every gh call"): never a skip, never `route: null`.
@@ -19,26 +19,28 @@
 // `acceptance` worker (which returns only tryIt / observationPlan / claims / parentBrief, validated
 // here; any labels it returns are never read), and then code does every forge write. Worker text
 // reaches a posted body only through `inline` (packet-render.js), line by line, or through the
-// packet's own `render`, which owns the narrative's validation and escaping. It never throws.
+// packet's own `render`, which owns the narrative's and the observation plan's validation and escaping. It never throws.
 
 const path = require('node:path');
 const { exceedsOversightFloor } = require('../issues/oversight-floor');
 const { CLI_TIMEOUT_MS } = require('./events');
 const { ACCEPTANCE_RESULT_SCHEMA } = require('./roles');
-const { bin, isPlainObject, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
+const { bin, isPlainObject, isInterrupted, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
 const { readSection, loadAcceptanceRules, buildAcceptancePrompt } = require('./judgment-prompts');
 const { inline, codeSpan } = require('../wrap-up/packet-render');
 const { findRunComments } = require('../../find-run-comment');
 const { isTrustedComment } = require('../issues/comment-trust');
 const { parseRecordFacets } = require('../issues/record');
+const { LABELS } = require('../issues/record-vocabulary');
 
-const DEMO_PENDING = 'demo:pending';
+// The successor spelling (#4610): the driver writes `accept:pending`; readers accept either spelling.
+const ACCEPT_PENDING = LABELS.ACCEPT_PENDING;
 const TRY_IT_STATES = Object.freeze(['incomplete', 'gated', 'resolved']);
 
 function noParentRoute(facets, floors) {
   const { exceeds } = exceedsOversightFloor(facets, floors);
   return exceeds
-    ? { route: 'no-parent-gated', labels: [{ on: 'record', label: DEMO_PENDING }] }
+    ? { route: 'no-parent-gated', labels: [{ on: 'record', label: ACCEPT_PENDING }] }
     : { route: 'no-parent-exempt', labels: [] };
 }
 
@@ -53,7 +55,7 @@ function decideRoute({ gate, facets, floors }) {
   if (TRY_IT_STATES.includes(state)) return { route: 'try-it-only', labels: [] };
   if (state === 'due') {
     if (exceeds === false) return { route: 'try-it-only', labels: [] };
-    if (exceeds === true) return { route: 'due-exceeds', labels: [{ on: 'parent', label: DEMO_PENDING }] };
+    if (exceeds === true) return { route: 'due-exceeds', labels: [{ on: 'parent', label: ACCEPT_PENDING }] };
     return { route: null, error: `parent-gate state due with a non-boolean exceeds (${JSON.stringify(exceeds)})` };
   }
   if (state === 'no-parent') return noParentRoute(facets, floors);
@@ -72,7 +74,7 @@ const FLOOR_VALUES = Object.freeze(['low', 'medium', 'high', 'always']);
 // to the `-F query=@file` pair here.
 const EDIT_COMMENT_MUTATION = 'mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id url}}}';
 const LABEL_SPECS = Object.freeze({
-  [DEMO_PENDING]: { description: 'Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo', color: '006B75' },
+  [ACCEPT_PENDING]: { description: "Acceptance: built and verified — awaiting the human's acceptance verdict", color: '006B75' },
 });
 
 // _shared/try-it.md's Shape; `heading` is `### Try it` or the end-to-end variant's.
@@ -89,13 +91,16 @@ function renderTryIt(groups, heading = '### Try it') {
   return [heading, '', blocks.join('\n\n')].join('\n');
 }
 
-// _shared/observation-plan.md's Schema lines.
+// _shared/observation-plan.md's Schema lines. The values go in raw: the packet's `render` escapes plan
+// text and keeps a whole backtick span as a code span, because /claude-tweaks:demo reads this text and runs
+// the Prepare commands. Only line breaks are collapsed here, per value, so a value cannot add list lines.
 function renderObservationPlan(plan) {
-  const list = (label, items) => (items.length === 0 ? [`- ${label}: none`] : [`- ${label}:`, ...items.map((item) => `  - ${inline(item)}`)]);
+  const one = (v) => String(v).replace(/\s+/g, (run) => (/[\r\n]/.test(run) ? ' ' : run)).trim();
+  const list = (label, items) => (items.length === 0 ? [`- ${label}: none`] : [`- ${label}:`, ...items.map((item) => `  - ${one(item)}`)]);
   return [
     '### Observation plan',
-    `- Surface: ${inline(plan.kind)}`,
-    `- Entry point: ${inline(plan.entryPoint)}`,
+    `- Surface: ${one(plan.kind)}`,
+    `- Entry point: ${one(plan.entryPoint)}`,
     ...list('Prepare', plan.prepare),
     ...list('Inspect', plan.inspect),
   ].join('\n');
@@ -267,10 +272,11 @@ async function judge(env, ctx, route, extra, endToEnd = false) {
     role: 'acceptance', dir: 'acceptance-worker', label: 'acceptance worker', prompt, schema: ACCEPTANCE_RESULT_SCHEMA,
   });
   if (launched.stop) return launched;
+  if (isInterrupted(env.deps)) return { stop: 'interrupted' };
   const { envelope } = launched;
   if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result' };
   const invalid = validateResult(route, envelope.result, endToEnd);
-  return invalid || { result: envelope.result };
+  return invalid || { result: envelope.result, body: inputs.body };
 }
 
 // The verdict's parent: { read } with its title, body and comments, or { stop }.
@@ -405,12 +411,12 @@ function testGuideClaims(groups) {
 }
 
 async function noParent(env, ctx, decision, tmp) {
-  const files = Object.fromEntries(['facts.json', 'links.json', 'narrative.json', 'plan.md', 'packet.md'].map((f) => [f.split('.')[0], path.join(tmp, f)]));
-  const gather = (withLinks) => cli(env, 'acceptance-packet.js', [
+  const files = Object.fromEntries(['facts.json', 'links.json', 'narrative.json', 'plan.md', 'packet.md', 'spec.md'].map((f) => [f.split('.')[0], path.join(tmp, f)]));
+  const gather = (extra) => cli(env, 'acceptance-packet.js', [
     'gather', '--record', String(ctx.record), '--out', files.facts, '--run', ctx.runDir, '--base', `origin/${ctx.base}`, '--head', ctx.head,
-    ...(withLinks ? ['--links', files.links] : []), '--surface', 'backend',
+    ...extra, '--surface', 'backend',
   ], ctx.worktree);
-  const g1 = gather(false);
+  const g1 = gather([]);
   if (!g1 || g1.code !== 0) return { stop: exitText('gather', g1) };
   let facts;
   try {
@@ -422,9 +428,12 @@ async function noParent(env, ctx, decision, tmp) {
   if (judged.stop) return judged;
   const { tryIt, observationPlan, claims } = judged.result;
   const links = tryIt.map((g, n) => ({ id: `entry-point-${n + 1}`, label: g.name, command: g.entryPoint }));
-  const linksFailed = writeText(env, files.links, JSON.stringify(links), 'links');
+  // The record body is the spec on this lane (verification-brief.md's `--spec`): without it the packet's
+  // acceptance criteria are not derived. The body the worker already read is written, not read again.
+  const linksFailed = writeText(env, files.links, JSON.stringify(links), 'links')
+    || writeText(env, files.spec, judged.body, 'spec');
   if (linksFailed) return linksFailed;
-  const g2 = gather(true);
+  const g2 = gather(['--links', files.links, '--spec', files.spec]);
   if (!g2 || g2.code !== 0) return { stop: exitText('gather', g2) };
   const narrative = { schemaVersion: 1, claims: [...claims, ...testGuideClaims(tryIt)] };
   const failed = writeText(env, files.narrative, JSON.stringify(narrative), 'narrative')
@@ -486,6 +495,8 @@ async function runAcceptance(env, ctx) {
   } catch {
     out = { stop: 'acceptance failed unexpectedly' };
   }
+  // A signal during the worker launch was already reported by run.js's handler: no event, nothing more.
+  if (isInterrupted(deps)) return { completed: false, route: state.route, detail: 'interrupted' };
   const completed = !out.stop;
   // Untrusted marker comments that were not acted on are named, so a planted one is never silent.
   const skipped = state.skipped > 0 ? `; skipped ${state.skipped} untrusted comment(s)` : '';

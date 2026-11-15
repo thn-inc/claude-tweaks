@@ -111,7 +111,7 @@ files:
 - **URL:** the `merge-entry` … `merge-*` sub-step event lines, the `merge` event line, and the final line's `merge: { outcome, reason, mergeCommit, postMerge }` field
 - **Action:** read the `merge` field. After a green CI wait, a record without `auto:merge` reads `pending-review` / `not-authorized`, and a deps object with no supplier reads `pending-review` / `no-supplier` with no call made at all. The step runs only after the CI wait ended `green`. The driver then:
   - re-reads the record's live labels for `auto:merge`;
-  - takes the judgment supplier's verdict (a read-only merge-check worker, then an acceptance worker that posts the Try it) and confirms the verdict line in `decisions.md`;
+  - takes the judgment supplier's verdict (a read-only merge-check worker, then a read-only acceptance worker whose Try it, packet or parent brief the driver's own code posts) and confirms the verdict line in `decisions.md`;
   - checks closing links and composes the subject;
   - marks the PR ready;
   - reads the merge state and checks, then merges, arms or stops.

@@ -20,6 +20,7 @@ const { formatEntry, STATUSES } = require(path.join(LIB, 'log-decision', 'append
 const { aggregateReproductionProblem } = require(path.join(LIB, 'log-decision', 'aggregate-reproduction'));
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
+const { BAD_MERGE_CHECK_ENVELOPES } = require('../../helpers/merge-check-envelopes');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
@@ -2804,7 +2805,7 @@ function supplierScript(f) {
     [(c) => isGh('issue', 'view')(c) && flag(c, '--json') === 'title,body', JSON.stringify({ title: 'Rec', body: 'Rec body' })],
     [isGh('pr', 'checks'), JSON.stringify([{ name: 'ci', bucket: 'pass' }])],
     [(c) => isGh('pr', 'view')(c) && flag(c, '--json') === 'comments', JSON.stringify({ comments: [] })],
-    [(c) => c.kind === 'git' && c.args.includes('diff'), (c) => (c.args.includes('--name-only') ? 'plugin/bin/x.js\n' : 'diff --git a/x b/x\n+line\n')],
+    [(c) => c.kind === 'git' && c.args.includes('diff'), (c) => (c.args.includes('--name-only') ? 'plugin/bin/x.js\0' : 'diff --git a/x b/x\n+line\n')],
   ];
 }
 
@@ -2843,13 +2844,16 @@ test('AC10: the real supplier drives a record to merged and express-lane verify 
   assert.deepEqual(JSON.parse(v.stdout), { ok: true, missing: [] });
 });
 
-test('AC2 over merge: a failed merge-check launch through the real supplier is pending-review with no ready and no merge', async () => {
-  const f = fixture();
-  const h = realSupplierHarness(f, { 'merge-check': { status: 'fail', reason: 'launch-error' } });
-  const r = await merge(f.ctx, h.deps);
-  assert.equal(r.outcome, 'pending-review');
-  assert.equal(r.reason, 'verdict-not-confirmed');
-  assert.deepEqual(h.launched.map((o) => o.role), ['merge-check'], 'acceptance never launched');
-  assert.ok(!h.calls.some(isGh('pr', 'ready')), 'no gh pr ready');
-  assert.ok(!h.calls.some(isMergeCall), 'no gh pr merge');
-});
+// AC2's last sentence, for every envelope that must not read as auto-merge (the supplier suite's own table).
+for (const [name, envelope] of BAD_MERGE_CHECK_ENVELOPES) {
+  test(`AC2 over merge: ${name} through the real supplier is pending-review with no ready and no merge`, async () => {
+    const f = fixture();
+    const h = realSupplierHarness(f, { 'merge-check': envelope });
+    const r = await merge(f.ctx, h.deps);
+    assert.equal(r.outcome, 'pending-review');
+    assert.equal(r.reason, 'verdict-not-confirmed');
+    assert.deepEqual(h.launched.map((o) => o.role), ['merge-check'], 'acceptance never launched');
+    assert.ok(!h.calls.some(isGh('pr', 'ready')), 'no gh pr ready');
+    assert.ok(!h.calls.some(isMergeCall), 'no gh pr merge');
+  });
+}

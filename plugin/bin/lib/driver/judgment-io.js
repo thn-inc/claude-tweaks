@@ -6,6 +6,7 @@
 const path = require('node:path');
 const { neutralize } = require('./events');
 const { readCeilings, launchTracked } = require('./launch');
+const { splitNul } = require('../git-z');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
 const EVENT_DETAIL_MAX = 200;
@@ -23,6 +24,17 @@ function clock(deps) {
     return deps && typeof deps.now === 'function' ? deps.now() : 0;
   } catch {
     return 0;
+  }
+}
+
+// True once run.js's signal handler has set the run's interrupt (merge deps carry `interrupted`). A judgment
+// that finds it set after a worker launch makes no further call and emits nothing: the handler already
+// reported the interrupt, and the final line stays last.
+function isInterrupted(deps) {
+  try {
+    return !!deps && typeof deps.interrupted === 'function' && !!deps.interrupted();
+  } catch {
+    return false;
   }
 }
 
@@ -54,12 +66,13 @@ function readRecordAndDiff(deps, ctx, { files = false } = {}) {
   } catch {
     return { stop: 'record read failed' };
   }
-  const diffArgs = (flags) => ['-C', ctx.worktree, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', ...flags,
-    '--end-of-options', `origin/${ctx.base}...HEAD`, '--'];
+  const range = `origin/${ctx.base}...HEAD`;
   try {
-    const diff = String(deps.git(diffArgs([]), { cwd: ctx.worktree }));
+    const diff = String(deps.git(['-C', ctx.worktree, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--end-of-options', range, '--'], { cwd: ctx.worktree }));
     if (!files) return { title, body, diff };
-    return { title, body, diff, changedFiles: String(deps.git(diffArgs(['--name-only']), { cwd: ctx.worktree })).split('\n').filter(Boolean) };
+    // -z: git prints a non-ASCII path raw, NUL-delimited, instead of C-quoted (_shared/git-path-read.md).
+    const names = String(deps.git(['-C', ctx.worktree, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--name-only', '-z', '--end-of-options', range, '--'], { cwd: ctx.worktree }));
+    return { title, body, diff, changedFiles: splitNul(names) };
   } catch {
     return { stop: 'diff read failed' };
   }
@@ -82,4 +95,4 @@ async function launchJudge({ deps, shared }, ctx, { role, dir, label, prompt, sc
   }
 }
 
-module.exports = { bin, isPlainObject, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge };
+module.exports = { bin, isPlainObject, isInterrupted, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge };

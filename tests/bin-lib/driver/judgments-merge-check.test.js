@@ -18,7 +18,7 @@ const POLICY = {
   'express-driver-spend-ceiling-dollars': { value: 5 },
   'auto-merge-max-lines': { value: 200 },
 };
-const OK_ENVELOPE = (verdict, rationale = 'small and safe') => ({ status: 'ok', result: { verdict, rationale } });
+const { OK_ENVELOPE, BAD_MERGE_CHECK_ENVELOPES } = require('../../helpers/merge-check-envelopes');
 
 // Fake deps recording every call; `node` routed by script basename; log-decision.js appends a real
 // formatEntry line to the run dir's decisions.md, as the CLI does.
@@ -113,22 +113,7 @@ describe('merge-check path', () => {
     assert.strictEqual(h.decisionLines().length, 1);
   });
 
-  const BAD = [
-    ['launch-error', { status: 'fail', reason: 'launch-error' }],
-    ['timeout', { status: 'timeout' }],
-    ['null result', { status: 'ok', result: null }],
-    ['string result', { status: 'ok', result: 'not json' }],
-    ['no verdict', { status: 'ok', result: {} }],
-    ['Auto-Merge', OK_ENVELOPE('Auto-Merge')],
-    ['trailing space', OK_ENVELOPE('auto-merge ')],
-    ['merge', OK_ENVELOPE('merge')],
-    ['approve', OK_ENVELOPE('approve')],
-    ['numeric verdict', { status: 'ok', result: { verdict: 1, rationale: 'r' } }],
-    ['boolean verdict', { status: 'ok', result: { verdict: true, rationale: 'r' } }],
-    ['schema fail with auto-merge', { status: 'fail', reason: 'schema', result: { verdict: 'auto-merge' } }],
-    ['array result', { status: 'ok', result: [{ verdict: 'auto-merge' }] }],
-  ];
-  for (const [name, envelope] of BAD) {
+  for (const [name, envelope] of BAD_MERGE_CHECK_ENVELOPES) {
     test(`AC2: ${name} never reads as auto-merge`, async () => {
       const h = harness({ envelope });
       const r = await supplierOf(h, async () => { throw new Error('acceptance must not run'); })(h.ctx);
@@ -343,6 +328,24 @@ describe('merge-check path', () => {
     const r = await supplierOf(h, async () => { throw new Error('boom'); })(h.ctx);
     assert.deepStrictEqual(r, { mergeCheck: { verdict: 'unconfirmed' }, acceptance: { completed: false } });
   });
+
+  // A signal that lands during the worker launch was reported by run.js's handler: nothing is logged, emitted or run after it.
+  for (const verdict of ['auto-merge', 'needs-human']) {
+    test(`an interrupt during the launch (worker verdict ${verdict}) logs nothing, emits nothing and runs no acceptance`, async () => {
+      const h = harness({ envelope: OK_ENVELOPE(verdict) });
+      let signal = false;
+      h.env.deps.interrupted = () => signal;
+      const launch = h.env.deps.launchWorker;
+      h.env.deps.launchWorker = async (opts) => { const e = await launch(opts); signal = true; return e; };
+      let ran = 0;
+      const r = await supplierOf(h, async () => { ran += 1; return { completed: true }; })(h.ctx);
+      assert.deepStrictEqual(r, { mergeCheck: { verdict: 'unconfirmed' }, acceptance: { completed: false } });
+      assert.strictEqual(ran, 0);
+      assert.strictEqual(h.decisionLines().length, 0);
+      assert.strictEqual(h.calls.filter((c) => c.script === 'log-decision.js').length, 0);
+      assert.strictEqual(h.events.length, 0);
+    });
+  }
 
   test('createJudgments with only { deps, shared } builds (readFile and acceptance default lazily)', () => {
     const h = harness();
