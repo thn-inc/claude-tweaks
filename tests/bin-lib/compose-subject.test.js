@@ -1115,6 +1115,18 @@ test('AC8.1: realDeps.gitRunner starts git in the injected cwd with the injected
   assert.match(realDeps.gitRunner(['var', 'GIT_AUTHOR_IDENT'], { cwd: repo, env }), /^Env Proof <env-proof@example\.invalid> /);
 });
 
+test('AC8.1: realDeps.remoteUrl runs git with the injected env', (t) => {
+  const repo = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-remote-env-')));
+  t.after(() => nodeFs.rmSync(repo, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q'], { cwd: repo, env: envWithoutGitRepoVars(), stdio: 'ignore', windowsHide: true });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/real/repo.git'], { cwd: repo, env: envWithoutGitRepoVars(), stdio: 'ignore', windowsHide: true });
+  // Only the injected env (GIT_CONFIG_GLOBAL naming a config file with an insteadOf rewrite) changes the answer.
+  const globalConfig = nodePath.join(repo, 'global-gitconfig');
+  nodeFs.writeFileSync(globalConfig, '[url "https://github.com/envonly/"]\n\tinsteadOf = https://github.com/real/\n');
+  const env = envWithoutGitRepoVars({ GIT_CONFIG_GLOBAL: globalConfig });
+  assert.equal(realDeps.remoteUrl({ cwd: repo, env }).trim(), 'https://github.com/envonly/repo.git');
+});
+
 test('AC8.1: realDeps.cwd and realDeps.env are the ambient values', () => {
   assert.equal(realDeps.cwd(), process.cwd());
   assert.equal(realDeps.env, process.env);
