@@ -34,12 +34,12 @@ function loadIssueIndex(file, toolName, { stderr = DEFAULT_IO.stderr, cwd } = {}
       continue;
     }
     if (issue.fingerprint) {
-      const { names, dropped: n } = normalizeLabels(issue.labels);
-      dropped += n;
+      const normalized = normalizeLabels(issue.labels);
+      dropped += normalized.dropped;
       index[issue.fingerprint] = {
         number: issue.number,
         state: typeof issue.state === 'string' ? issue.state.toLowerCase() : '',
-        labels: names,
+        labels: normalized.names,
       };
     }
   }
