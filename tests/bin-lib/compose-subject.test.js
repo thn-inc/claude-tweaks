@@ -533,7 +533,8 @@ test('--scope (#3028): parsed, threaded into the subject, breaking keeps ! after
 
 test('realDeps.runner (#3028) pipes gh stderr instead of inheriting it, and keeps windowsHide', () => {
   const src = require('node:fs').readFileSync(require.resolve('../../plugin/bin/lib/compose-subject.js'), 'utf8');
-  const line = src.split('\n').find((l) => l.includes("runner: (args, injected) => execFileSync('gh'"));
+  // Any parameter list: the pin is that the runner key calls execFileSync('gh', ...), not its parameter names.
+  const line = src.split('\n').find((l) => /^\s*runner:\s*\([^)]*\)\s*=>\s*execFileSync\('gh'/.test(l));
   assert.ok(line, 'realDeps.runner line must exist');
   assert.ok(line.includes("stdio: ['ignore', 'pipe', 'pipe']"), line);
   assert.ok(line.includes('windowsHide: true'), line);

@@ -361,6 +361,10 @@ function traceCommands(file) {
     .map((m) => m[1]);
 }
 
+// A copy of a trace's subcommand list, sorted: the assertions pin which git children ran and how
+// many times each, not the order the archive code happens to start them in.
+const sorted = (list) => [...list].sort();
+
 test('AC8.1: git children get the injected env — a failing commit in deps.env refuses and reverts', () => {
   withRepos(1, (root) => {
     const runId = '2026-08-01T090000-spec-1';
@@ -396,7 +400,7 @@ test('AC8.1: every git child on the archive path runs under the injected env (GI
       assert.equal(res.code, 0);
       const seen = traceCommands(trace).filter((c) => ['ls-files', 'mv', 'commit', 'show', 'symbolic-ref'].includes(c));
       // hasTrackedWork, the work/ move, the commit, readArchiveCommit's two reads, the tracked-entry guard.
-      assert.deepEqual(seen, ['ls-files', 'mv', 'commit', 'show', 'symbolic-ref', 'ls-files']);
+      assert.deepEqual(sorted(seen), sorted(['ls-files', 'mv', 'commit', 'show', 'symbolic-ref', 'ls-files']));
     } finally {
       fs.rmSync(traceDir, { recursive: true, force: true });
     }
@@ -417,7 +421,7 @@ test('AC8.1: the identical-twin resolution children run under the injected env t
       assert.equal(res.code, 0, res.stdout);
       const seen = traceCommands(trace).filter((c) => ['ls-files', 'hash-object', 'rm', 'commit'].includes(c));
       // hasTrackedWork, the two twin hashes, isTracked's two reads, git rm, the commit (the emptied run dir is gone, so no guard read).
-      assert.deepEqual(seen, ['ls-files', 'hash-object', 'hash-object', 'ls-files', 'ls-files', 'rm', 'commit']);
+      assert.deepEqual(sorted(seen), sorted(['ls-files', 'hash-object', 'hash-object', 'ls-files', 'ls-files', 'rm', 'commit']));
     } finally {
       fs.rmSync(traceDir, { recursive: true, force: true });
     }
@@ -425,7 +429,7 @@ test('AC8.1: the identical-twin resolution children run under the injected env t
 });
 
 // Runs the CLI in-process with GIT_TRACE set only in deps.env and returns the exit code plus the git
-// subcommands that wrote a trace line (those given in `watch`, in order). A git child that did not
+// subcommands that wrote a trace line (those given in `watch`, in trace order). A git child that did not
 // get deps.env writes nothing, so a missing entry names the child that lost the env.
 function traceSweep(root, watch, extraEnv = {}) {
   const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-trace-'));
@@ -451,7 +455,7 @@ test('AC8.1: the empty-work/ checks of a multi-spec run dir run under the inject
     const { res, seen } = traceSweep(root, ['ls-files', 'mv', 'commit']);
     assert.equal(res.code, 0, res.stdout);
     // hasTrackedWork, the empty top work/, the empty spec-3/work, the spec-2 move, the commit, the tracked-entry guard.
-    assert.deepEqual(seen, ['ls-files', 'ls-files', 'ls-files', 'mv', 'commit', 'ls-files']);
+    assert.deepEqual(sorted(seen), sorted(['ls-files', 'ls-files', 'ls-files', 'mv', 'commit', 'ls-files']));
   });
 });
 
@@ -463,7 +467,7 @@ test('AC8.1: a tidy-standalone run dir\'s audit-file tracked checks run under th
     const { res, seen } = traceSweep(root, ['ls-files', 'mv', 'commit']);
     assert.equal(res.code, 0, res.stdout);
     // hasTrackedWork, decisions.md's two isTracked reads, the two moves (work/, decisions.md), the commit, the guard.
-    assert.deepEqual(seen, ['ls-files', 'ls-files', 'ls-files', 'mv', 'mv', 'commit', 'ls-files']);
+    assert.deepEqual(sorted(seen), sorted(['ls-files', 'ls-files', 'ls-files', 'mv', 'mv', 'commit', 'ls-files']));
   });
 });
 
@@ -473,7 +477,7 @@ test('AC8.1: an identical twin under a spec dir, and a twin copy that is untrack
     commitPath(specTwin, `${PIPELINES}/archive/${RUN_ID}/spec-2/work/2-spec.md`, '# 2\n');
     const a = traceSweep(specTwin, ['ls-files', 'hash-object', 'rm', 'mv']);
     assert.equal(a.res.code, 0, a.res.stdout);
-    assert.deepEqual(a.seen, ['ls-files', 'hash-object', 'hash-object', 'ls-files', 'ls-files', 'rm']);
+    assert.deepEqual(sorted(a.seen), sorted(['ls-files', 'hash-object', 'hash-object', 'ls-files', 'ls-files', 'rm']));
 
     commitPath(untrackedTwin, `${PIPELINES}/${RUN_ID}/work/1-spec.md`, '# 1\n');
     const twinFile = path.join(untrackedTwin, PIPELINES, 'archive', RUN_ID, 'work', '1-spec.md');
@@ -481,7 +485,7 @@ test('AC8.1: an identical twin under a spec dir, and a twin copy that is untrack
     fs.writeFileSync(twinFile, '# 1\n');
     const b = traceSweep(untrackedTwin, ['ls-files', 'hash-object', 'rm', 'mv']);
     assert.equal(b.res.code, 0, b.res.stdout);
-    assert.deepEqual(b.seen, ['ls-files', 'hash-object', 'hash-object', 'ls-files', 'mv', 'ls-files']);
+    assert.deepEqual(sorted(b.seen), sorted(['ls-files', 'hash-object', 'hash-object', 'ls-files', 'mv', 'ls-files']));
   });
 });
 
@@ -491,7 +495,7 @@ test('AC8.1: reverting a failed commit — twin removal and twin move — runs u
     commitPath(tracked, `${PIPELINES}/archive/${RUN_ID}/work/1-spec.md`, '# 1\n');
     const a = traceSweep(tracked, ['checkout', 'reset'], FAIL_COMMIT);
     assert.equal(a.res.code, 1);
-    assert.deepEqual(a.seen, ['checkout']);
+    assert.deepEqual(sorted(a.seen), sorted(['checkout']));
     assert.equal(fs.existsSync(path.join(tracked, PIPELINES, RUN_ID, 'work', '1-spec.md')), true);
 
     commitPath(untracked, `${PIPELINES}/${RUN_ID}/work/1-spec.md`, '# 1\n');
@@ -500,6 +504,6 @@ test('AC8.1: reverting a failed commit — twin removal and twin move — runs u
     fs.writeFileSync(twinFile, '# 1\n');
     const b = traceSweep(untracked, ['checkout', 'reset'], FAIL_COMMIT);
     assert.equal(b.res.code, 1);
-    assert.deepEqual(b.seen, ['reset']);
+    assert.deepEqual(sorted(b.seen), sorted(['reset']));
   });
 });
