@@ -43,10 +43,12 @@
 ### Task 1: Timing as a function
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/timing/run-timing.js`
 - Modify: `plugin/bin/phase-timing.js`
+- Modify: `plugin/bin/lib/timing/transcript.js` (`readUsage` gains an optional `signal`)
 - Test: `tests/bin-lib/timing/run-timing.test.js`
 - Waived `tests/bin-lib/timing/cli.test.js`: run unchanged in Step 4 (AC6.1), never edited.
 - Waived `tests/bin-lib/timing/golden.test.js`: run unchanged in Step 4 (AC6.1), never edited; its fixture is Step 1's input.
@@ -57,7 +59,8 @@
 - Produces:
   - `readEvents(file) -> { ok: true, events } | { ok: false, error }` (moved from `phase-timing.js`, same behavior).
   - `derivePhaseTiming(runDir) -> { ok: true, timing, out, events, runState } | { ok: false, error }` — sync; no transcript; `timing` is exactly what `phase-timing.js` writes without a transcript flag, minus `budget`.
-  - `async deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl } = {}) -> { ok: true, timing, out, tokens, guard, notes, deadlineHit } | { ok: false, error }` — with `transcriptPaths` empty and no auto-transcript it equals `derivePhaseTiming`'s `timing`; otherwise adds `unattributed`, the token totals, `guard`, `transcripts`, `notes`, `dispatches` exactly as `phase-timing.js` does today, keys in today's order. `deadlineAt` (epoch ms) is checked before each transcript read and each read is raced against the remaining time; when it passes, stop reading, set `deadlineHit: true`, and return the timing built from rows read so far with no token keys at all (phase rows only). `readUsageImpl` defaults to `require('./transcript').readUsage` looked up at call time.
+  - `async deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl } = {}) -> { ok: true, timing, out, tokens, guard, notes, deadlineHit } | { ok: false, error }` — with `transcriptPaths` empty and no auto-transcript it equals `derivePhaseTiming`'s `timing`; otherwise adds `unattributed`, the token totals, `guard`, `transcripts`, `notes`, `dispatches` exactly as `phase-timing.js` does today, keys in today's order. `deadlineAt` (epoch ms) is checked before each transcript read and each read is raced against the remaining time; when it passes, abort the in-flight read through an `AbortController` (`readUsage(p, { worktree, signal })`), stop reading, set `deadlineHit: true`, and return the timing with no token keys at all (phase rows only). A lost race never leaves a stream open: a typed `close-run` process must be able to exit inside the bound. `readUsageImpl` defaults to `require('./transcript').readUsage` looked up at call time. `collectDispatches` honours the same deadline and signal.
+  - `readUsage(filePath, { fsImpl, worktree, signal })` (transcript.js) — when `signal` aborts (or is already aborted), close the readline, destroy the stream and reject with an `Error` whose `code` is `'ABORT_ERR'`; without `signal` behavior is unchanged. `readDispatches` passes a given `signal` through to its `readUsage` calls.
   - `collectDispatches(paths, events, cwd, { deadlineAt })` (moved).
   - `hasTokenTotals(timing) -> boolean` (the Global Constraints definition).
   - `writeTimingFile(runDir, timing) -> string` — carries `budget` forward from an existing parseable `timing.json` when `timing` has no own `budget` key, writes `timing.json.tmp-{pid}-{random}` in `runDir` then renames over `timing.json`; returns the path. Throws on failure (callers catch). Never creates `runDir`.
@@ -71,6 +74,8 @@
   - `writeTimingFile carries budget forward and leaves no temp file` — existing file `{ budget: { profile: 'standard' } }`, write a new timing → result has that `budget`; `fs.readdirSync(runDir)` holds no `timing.json.tmp-` entry.
   - `writeTimingFile throws and creates nothing when runDir is gone`.
   - `deriveTiming with a readUsageImpl that never resolves returns deadlineHit within the deadline` — `deadlineAt: Date.now() + 200`, assert it resolves in under 2000 ms with `deadlineHit: true` and no `totals.tokens`.
+  - `readUsage with an aborted signal destroys a real slow stream` — an `fsImpl` whose `createReadStream` returns a real `Readable` that pushes one line every 50 ms and never ends (and a `statSync` reporting a file); abort after 100 ms; assert the promise rejects with `code: 'ABORT_ERR'` and the stream's `destroyed` is `true`.
+  - `readUsage without a signal is unchanged` — the existing `tests/bin-lib/timing/transcript.test.js` cases, unedited, cover it.
 
 - [ ] **Step 2: Run** `node --test tests/bin-lib/timing/run-timing.test.js` — Expected: FAIL (`Cannot find module '…/run-timing'`).
 
@@ -87,7 +92,7 @@
 
 **Files:**
 - Create: `plugin/bin/lib/timing/at-close.js`
-- Modify: `plugin/bin/lib/timing/transcript.js` only if `locateTranscripts` needs no change — expected none; waived otherwise: `locateTranscripts({ cwd, sessionId, configDir })` already returns only `{configDir}/projects/{slug(cwd)}/{sessionId}.jsonl`.
+- No change to `locateTranscripts`: `locateTranscripts({ cwd, sessionId, configDir })` already returns only `{configDir}/projects/{slug(cwd)}/{sessionId}.jsonl` (Task 1 owns the `readUsage` `signal` change).
 - Test: `tests/bin-lib/timing/at-close.test.js`
 
 **Interfaces:**
@@ -175,7 +180,7 @@
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/reconcile/archive-merged.js` (the `closeRunState` call in the `abandoned-interrupted` branch, and `archiveRunDir`'s own `status: 'clean'` write when the run was not already clean)
+- Modify: `plugin/bin/lib/reconcile/archive-merged.js` (`archiveRunDir` only: its `status: 'clean'` write keeps the prior worktree as `worktreeAtClose`, and it writes timing when the run was not already clean — the one site, which every archive path reaches: abandoned-interrupted, merged-PR, ad-hoc, and `hooks.js archive-run`)
 - Test: `tests/bin-lib/reconcile/archive-merged.test.js`
 - Waived `plugin/bin/lib/reconcile/background-spawn.js`: read only — the token pass is its own detached child (`spawnTokenPass`), not the reconcile-background pass, because `archiveMerged` also runs inline under `hooks.js reconcile`.
 
@@ -183,25 +188,29 @@
 - Consumes: Task 2's `writePhaseTimingSync`, `spawnTokenPass`; Task 3's CLI as the child.
 
 - [ ] **Step 1: Write the failing tests:**
-  - `AC1.1/AC1.3 reconciler: an abandoned-interrupted run archived by archiveMerged has timing.json phase rows when archiveMerged returns; after the token pass (spawn stubbed to record, then timing-at-close.js run in-process with the recorded argv) it has token totals`.
+  - `AC1.1/AC1.3 reconciler: an abandoned-interrupted run archived by archiveMerged has timing.json phase rows when archiveMerged returns; after the token pass (spawn stubbed to record, then timing-at-close.js run in-process with the recorded argv) it has token totals` — fixture state `status: 'interrupted'` with `worktree` set and no `worktreeAtClose` (written by the real `record-worktree` writer, `context.js`'s `writeRunState`), so the test proves `archiveRunDir` carries the worktree into `worktreeAtClose`.
+  - `AC1.1 reconciler, merged-PR path: a non-clean run archived through archiveRunDir gets phase rows and exactly one recorded spawn`.
+  - `one pass over an abandoned-interrupted run spawns the token pass exactly once`.
+  - `archiveRunDir keeps the prior worktree as worktreeAtClose, and a repeat keeps the first one` (the `close-run-state.js` rule).
+  - `AC4.2 reconciler: writePhaseTimingSync stubbed to throw → archiveMerged returns the same archived/skipped lists as with timing stubbed to a no-op, and the archived decisions.md gains one SKIP line`.
   - `AC11.1: spawnTokenPass's spawn stubbed to throw → phase rows kept, no token totals, one SKIP line`.
   - `AC8.1: archiveMerged never calls readUsage` — `transcript.readUsage` stubbed to throw.
   - `archiveRunDir on a run that was already clean writes no timing.json and spawns nothing` (so `hooks.js archive-run` after `close-run` changes nothing).
   - `AC12.3: archiving a multi-record parent writes one timing.json at the archive parent and none into spec-N`.
 - [ ] **Step 2: Run** `node --test tests/bin-lib/reconcile/archive-merged.test.js` — Expected: new cases FAIL.
-- [ ] **Step 3: Implement.** After `closeResult.writeOk` in the `abandoned-interrupted` branch, and in `archiveRunDir` right after its `writeRunState(archiveDir, { status: 'clean', worktree: null })` succeeds when the run-state read before the move was not `clean`: `const t = require('../timing/at-close'); t.writePhaseTimingSync(archiveDir); t.spawnTokenPass(archiveDir);` — both never throw; nothing else in the file changes. `archiveRunDir` keeps the prior worktree as it is (the writer reads `worktreeAtClose` or, when the archived state never had one, records the no-transcript `SKIP` from the child).
+- [ ] **Step 3: Implement.** In `archiveRunDir` only: read the run-state before the move; the clean write becomes `{ status: 'clean', worktree: null, worktreeAtClose: prior }` when `prior` (`prev.worktree` or `prev.worktreeAtClose`, a non-empty string) exists, else today's patch; right after it succeeds, when the pre-move status was not `clean`: `try { const t = require('../timing/at-close'); t.writePhaseTimingSync(archiveDir); t.spawnTokenPass(archiveDir); } catch (err) { /* logTimingSkip */ }`. The abandoned-interrupted branch's own `closeRunState` call is untouched (it runs after `archiveRunDir`, finds `worktreeAtClose` and keeps it).
 - [ ] **Step 4: Run** `node --test tests/bin-lib/reconcile/ tests/archive-run-verb.test.js` — Expected: PASS. An existing assertion that lists an archive dir's exact contents may now see `timing.json`; update only that listing, and name each such edit in the commit body.
 - [ ] **Step 5: Commit** — `Write timing.json on the reconciler's archive close — phase rows inline, tokens in a detached pass`.
 
 ### Task 6: Docs
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `docs/hooks.md` (the run-dir state files paragraph: who writes `timing.json` and when)
 - Modify: `docs/plugin-structure.md` (`plugin/bin/lib/timing/` line: `run-timing.js`, `at-close.js`; the CLI list: `timing-at-close.js`)
 
-- [ ] **Step 1:** Add to `docs/hooks.md`: `timing.json` is written by `bin/phase-timing.js` when a step runs it, and in code when a run closes — `hooks.js close-run` and `hooks.js teardown-run` (whole file, token totals included, before they return, inside `TIMING_BOUND_MS`), the reconciler's archive close (phase rows inline, token totals from a detached `bin/timing-at-close.js`); a file that already has token totals is kept; a failure is one `SKIP` line; no hook event reads a transcript.
+- [ ] **Step 1:** Add to `docs/hooks.md`: `timing.json` is written by `bin/phase-timing.js` when a step runs it, and in code when a run closes — `hooks.js close-run` and `hooks.js teardown-run` (whole file, token totals included, before they return, inside `TIMING_BOUND_MS`), an archive that closes a not-yet-closed run (`reconcile/archive-merged.js`'s `archiveRunDir`, reached by every reconciler archive path and `hooks.js archive-run`: phase rows inline, token totals from a detached `bin/timing-at-close.js`); `archiveRunDir` now keeps the prior worktree as `worktreeAtClose`; a file that already has token totals is kept; a failure is one `SKIP` line; no hook event reads a transcript.
 - [ ] **Step 2:** Update `docs/plugin-structure.md` the same way, one clause each.
 - [ ] **Step 3: Run** `node --test tests/docs-*.test.js 2>&1 | tail -5` (whatever doc conformance suites exist) — Expected: PASS.
 - [ ] **Step 4: Commit** — `Document who writes timing.json and when — phase-timing.js and every closing path`.
@@ -220,7 +229,7 @@ Waived AC7.4: Step 3 names each run with no totals and why.
 Waived AC8.2: Step 4 writes how AC8.1 was checked into the PR.
 
 - [ ] **Step 1 (D1):** Re-derive the cause table over this machine's run directories (`.claude-tweaks/pipelines/` and `archive/`, November `spec-`/`record-` runs): with/without `timing.json`, status split, `dispatched`, `close-without-wrapup`, wrap-up line in `decisions.md`, transcript on disk under the own slug, `worktreeAtClose` vs `worktree`, files with no token totals; plus closed runs whose only close was `archiveRunDir`'s flip (no `close-without-wrapup`, no `close-run` evidence). Independent count: `ls | wc -l` and a `jq` over `run-state.json` for the status split. Output to `$PIPELINE_RUN_DIR/evidence/cause-table.txt`.
-- [ ] **Step 2 (Technical Approach verify):** For every dispatched November run, check a transcript `{slug(worktreeAtClose||worktree)}/{sessionId}.jsonl` exists; count the ones where it does not, and compare with `tools/guard-refusals/transcripts.js`'s attribution for a sample. Output to `evidence/dispatched-slug-check.txt`.
+- [ ] **Step 2 (Technical Approach verify):** For every dispatched November run, check a transcript `{slug(worktreeAtClose||worktree)}/{sessionId}.jsonl` exists; count the ones where it does not, and compare with `tools/guard-refusals/transcripts.js`'s attribution for a sample. Output to `evidence/dispatched-slug-check.txt`. **Measured at plan time (2026-11-16):** of 94 closed November runs with no `timing.json`, 93 have a `{sessionId}.jsonl` somewhere, but only 20 have it under the run's own worktree slug; for the other 73 the session transcript sits under the main checkout's slug (or another run's worktree slug). The premise "a transcript under the run's own worktree slug" does not hold for most dispatched runs. AC9.1/AC9.2 fix the rule as own-slug only (a run whose slug has no transcript gets phase rows and a `SKIP`), so this build keeps it; the PR states the 20/93 coverage, and the gap (attributing a dispatched run's own Task-call subagent transcripts under the dispatching session's slug by the run id they name, the `tools/guard-refusals/transcripts.js` rule) goes to the ledger as a follow-up record.
 - [ ] **Step 3 (AC7, real-input probe):** Copy the November closed runs with no `timing.json` into a scratch dir, run `node plugin/bin/timing-at-close.js --run <copy>` on each, report: copies with ≥1 event that got a file (must be all), copies with an own-slug transcript that got token totals (≥90%), each run that got none and why; for 3 sampled runs, recount tokens independently with `jq` over the transcript (unique `message.id`, max usage per id) and compare. Output to `evidence/replay.txt`.
 - [ ] **Step 4 (AC8):** State how it was checked: `git grep` that no module required by `plugin/bin/lib/hooks/{session-start,pre-tool-use,post-tool-use,stop,session-end}.js` requires `at-close`/`run-timing` (the only requirers are `hooks.js`'s two verbs, `archive-merged.js` and `timing-at-close.js`), plus Task 5's `AC8` test, plus `session-start`'s `FAST_CHECKS` not including `archive`. Output to `evidence/ac8.txt`.
 - [ ] **Step 5:** One `log-decision.js --status AUTO --step "AC evidence"` entry per step, each with `--text-file`, citing the evidence path and counts; the PR body gets the cause table, the closing-path call-site list, the replay result, the headless-driver-worker statement (a driver run's workers are headless sessions: their `timing.json` has phase rows, and token totals only when the worker's transcript sits under the run's own slug), and the multi-record directory statement.
