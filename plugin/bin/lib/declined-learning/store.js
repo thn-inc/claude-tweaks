@@ -29,7 +29,7 @@
 // read/write pair). writeStore (and therefore recordDecline/clearDecline, which read-modify-write
 // through it) lets a real write failure propagate; the caller decides how to degrade. Every fs
 // call in readStore/writeStore is an injectable default param so tests never touch real disk. The
-// checkout anchoring is the exception: anchorRoot() reads process.cwd() and, through
+// checkout anchoring is the exception: with no `cwd` given, anchorRoot() reads process.cwd() and, through
 // mainCheckoutRoot, the real .git, so a test that fakes the other fs calls first moves the process
 // to a directory outside any repository, where every path stays cwd-relative.
 //
@@ -66,13 +66,15 @@ const LOCK_REL = path.join('.claude-tweaks', 'declined-learning', '.store.lock')
 // The main checkout root the store lives under (#4360), or null. Resolved per call, not at module
 // load, so the anchor follows the process's current cwd. A null root (no repo, or a .git that
 // can't be parsed) and a deleted cwd (process.cwd() throws) both give null, and `anchored` then
-// keeps the relative path: the store degrades open on read rather than throwing.
+// keeps the relative path: the store degrades open on read rather than throwing. A caller-given
+// `from` outside any repository anchors at `from` itself, so the path never falls back to the
+// process's own cwd.
 function anchorRoot(from) {
   let cwd = from;
   if (cwd === undefined) {
     try { cwd = process.cwd(); } catch { return null; }
   }
-  return mainCheckoutRoot(cwd) || null;
+  return mainCheckoutRoot(cwd) || (from !== undefined ? from : null);
 }
 
 // Joins a checkout-relative path onto `root`, or keeps it relative when there is none.
@@ -144,6 +146,8 @@ function writeStore(data, { mkdirSync = fs.mkdirSync, writeFile = fs.writeFileSy
 // readStore/writeStore under the store's lock, so it inherits both their degrade-open (read) and
 // propagate (write) behavior, plus protection from a concurrent recordDecline/clearDecline
 // clobbering it mid-write. Returns the entry that was written.
+// `deps.cwd` anchors the lock and the store from that directory instead of the process's (a CLI
+// that was handed its working directory); absent, both resolve from process.cwd() as before.
 //
 // `subject` (#1033, rationale in this file's header) is the human-legible text a consumer already
 // has on hand when it declines something — the draft's `fingerprintBasis.summary` for feedback,

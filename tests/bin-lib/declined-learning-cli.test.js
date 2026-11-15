@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('../helpers/run-cli');
-const { storePath } = require('../../plugin/bin/lib/declined-learning/store');
+const { lookupDecline } = require('../../plugin/bin/lib/declined-learning/store');
 
 const CLI = path.join(__dirname, '..', '..', 'plugin', 'bin', 'declined-learning.js');
 // The complete environment for a call; NODE_OPTIONS and the counter's log path ride along on
@@ -38,10 +38,6 @@ beforeEach(() => {
 function run(args, { input = '' } = {}) {
   const r = runCliSync(CLI, args, { cwd: sandbox, env: CLI_ENV, stdin: input });
   return { status: r.code, stdout: r.stdout, stderr: r.stderr };
-}
-
-function mtimeOrNull(p) {
-  try { return fs.statSync(p).mtimeMs; } catch { return null; }
 }
 
 test('lookup with no prior decline prints the computed fingerprint and a null decline', () => {
@@ -140,18 +136,31 @@ test('AC3.1: an in-process lookup reads stdin and matches the spawned call', () 
   assert.strictEqual(a.code, 0, a.stderr);
   assert.strictEqual(b.code, 0, b.stderr);
   assert.strictEqual(a.stdout, b.stdout);
+  assert.match(b.stdout, /"fingerprint": "reflect-[0-9a-f]{8}"/);
 });
 
 test('AC9.1: record-decline writes the store under the injected cwd, not this checkout', () => {
-  const here = storePath(process.cwd());
-  const before = mtimeOrNull(here);
-  const r = run(['record-decline', '--source', 'reflect'], { input: '{"description":"d","reason":"r"}' });
+  const description = `ac9-1 ${process.pid} ${Date.now()}`;
+  const r = run(['record-decline', '--source', 'reflect'], { input: JSON.stringify({ description, reason: 'r' }) });
   assert.strictEqual(r.status, 0, r.stderr);
   const { fingerprint } = JSON.parse(r.stdout);
   const store = JSON.parse(fs.readFileSync(path.join(sandbox, '.claude-tweaks', 'declined-learning', 'store.json'), 'utf8'));
   assert.strictEqual(store[fingerprint].reason, 'r');
-  assert.strictEqual(mtimeOrNull(here), before, "this checkout's store must be untouched");
+  assert.strictEqual(lookupDecline(fingerprint, { cwd: process.cwd() }), null, "this checkout's store must hold no entry for it");
   assert.ok(!fs.existsSync(path.join(sandbox, '.claude-tweaks', 'declined-learning', '.store.lock')), 'the lock was released');
+});
+
+test('record-decline under a non-git injected cwd lands the store there, not under the process cwd', () => {
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'declined-learning-plain-'));
+  const description = `non-git ${process.pid} ${Date.now()}`;
+  const r = runCliSync(CLI, ['record-decline', '--source', 'reflect'], {
+    cwd: plain, env: CLI_ENV, stdin: JSON.stringify({ description, reason: 'r' }),
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const { fingerprint } = JSON.parse(r.stdout);
+  const store = JSON.parse(fs.readFileSync(path.join(plain, '.claude-tweaks', 'declined-learning', 'store.json'), 'utf8'));
+  assert.strictEqual(store[fingerprint].reason, 'r');
+  assert.strictEqual(lookupDecline(fingerprint, { cwd: process.cwd() }), null, 'the process cwd store must hold no entry for it');
 });
 
 test('empty stdin keeps the not-valid-JSON exit 1', () => {
