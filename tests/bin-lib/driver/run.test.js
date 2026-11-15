@@ -507,6 +507,7 @@ function harness(over = {}) {
     git: (args, opts = {}) => dispatch('git', args, opts.cwd, undefined, undefined, { remoteWrite: opts.remoteWrite }),
     node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, opts.env, opts.timeout),
     resolvePolicy: (keys) => dispatch('policy', keys),
+    resolvePolicyCore: (opts, coreDeps) => dispatch('policyCore', opts.keys, coreDeps.cwd(), coreDeps.env, undefined, { runDir: opts.runDir }),
     evaluateRecordEligibility: (issue, opts) => dispatch('eligibility', [issue, opts]),
     fetchNativeDependencies: (opts) => dispatch('native-deps', [opts]),
     fetchLinkedPRs: (opts) => dispatch('linked-prs', [opts]),
@@ -5139,8 +5140,8 @@ function mergeHarness(over = {}) {
       [on('resolveRunDir'), { ok: true, created: true, reason: null, message: '', path: MERGE_RUN }],
       [(c) => c.kind === 'lstatType' && c.args[0].startsWith(path.join(MAIN, '.claude-tweaks')), (c) => realLstatType(c.args[0])],
       [(c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args[1] === 'view' && c.args.at(-1) === 'labels', JSON.stringify({ labels: [{ name: 'auto:merge' }] })],
-      [(c) => isNode('resolve-policy.js')(c) && c.args.includes('--values'), { code: 0, stdout: 'pr-first\n', stderr: '' }],
-      [isNode('resolve-policy.js'), { code: 0, stdout: JSON.stringify({ 'merge-verification': { value: 'wait', source: 'run-config' } }), stderr: '' }],
+      [(c) => c.kind === 'policyCore' && c.args.includes('integration-model'), { code: 0, result: { 'integration-model': { value: 'pr-first', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
+      [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'), { code: 0, result: { 'merge-verification': { value: 'wait', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
       [(c) => c.kind === 'readFile' && path.basename(c.args[0]) === 'run-state.json', JSON.stringify({ pr: { number: 9 } })],
       [isNode('closing-links.js'), { code: 0, stdout: JSON.stringify({ action: 'clean', keepOpen: [] }), stderr: '' }],
       [isNode('compose-subject.js'), { code: 0, stdout: "SUBJECT_TITLE='x'\n", stderr: '' }],
@@ -5253,8 +5254,8 @@ test('merge step, run level: the merge line for each outcome reads the outcome w
   // merge-when-green with a pending, BLOCKED PR arms auto-merge; the confirmation read shows it armed.
   const armed = mergeHarness({
     script: [
-      [(c) => c.kind === 'node' && path.basename(c.args[0]) === 'resolve-policy.js' && !c.args.includes('--values'),
-        { code: 0, stdout: JSON.stringify({ 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }), stderr: '' }],
+      [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'),
+        { code: 0, result: { 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
       [isPrViewOf(GATE_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA, statusCheckRollup: [PENDING_CHECK] })],
       [isPrViewOf(CONFIRM_FIELDS), JSON.stringify({ state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, statusCheckRollup: [PENDING_CHECK], mergeCommit: null })],
     ],
