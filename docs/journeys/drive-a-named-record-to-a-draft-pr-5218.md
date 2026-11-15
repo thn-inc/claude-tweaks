@@ -132,6 +132,12 @@ files:
     4. Worktree and local branch removal.
     5. The remote branch delete.
   - Watch time counts as CI wait, so `msWithoutCi` still excludes it. A signal during the supplier call or the watch makes no further call.
+  - The judgment workers fail closed. Any of these returns `needs-human`, which ends `pending-review` / `verdict-not-confirmed`, with no ready or merge call:
+    - a worker that timed out, failed, was killed at a ceiling or returned anything but an exact `auto-merge` / `needs-human`;
+    - a verdict line `decisions.md` does not confirm;
+    - a sensitive path or a failed blast radius, decided by code before any launch.
+  - An acceptance that did not complete ends `pending-review` / `acceptance-not-completed`.
+  - The pending label the driver applies is `accept:pending`, on the parent for a `due` gate above the oversight floor and on the record for an above-floor record with no parent.
 - **Red flags:**
   - A merge or ready call for a record without `auto:merge`, or after a judgment worker's verdict that was not a confirmed `auto-merge`.
   - A merge after a red or pending read.
@@ -152,3 +158,4 @@ files:
 - Updated during the build of #5222 (run `2026-11-13T093607-spec-5222`). Step 3 now covers the `review` step: when the policy runs it, what its line carries, the red-test rule and the one fix round, with matching red flags.
 - Updated during the build of #5414 (run `2026-11-14T153732-spec-5414-5415`). Step 3 now lists the moved-HEAD or unreadable-HEAD stop after a worker launch, says the fix round stops when its commit finds nothing to commit, and adds a red flag for a worker's own commit reaching the branch.
 - Updated during the build of #5415 (run `2026-11-14T153732-spec-5414-5415`). Step 3 now lists the newly-set index-flag stop and the `core.ignoreStat` worktree refusal.
+- Updated during the build of #5228 (run `2026-11-14T212212-spec-5228`). The production deps now carry the judgment supplier, so the goal, the success state and step 7 describe a driven record that can merge. Step 7 names the read-only merge-check and acceptance workers, their fail-closed outcomes and the `accept:pending` label. Measuring the judge after a prompt change is journey `re-measure-the-merge-check-judge-after-a-prompt-change-5228`.
