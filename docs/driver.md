@@ -1,26 +1,52 @@
 # The pipeline driver (`drive.js`)
 
-`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read. A program owns every step; a headless worker only writes the change. A record merges only when a judgment supplier is configured (none is by default) — see "The merge step". This page is documentation, not a contract: no test reads it, so update it by hand when the code below changes. The code is the source of truth.
+`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read; with `--budget` it picks the records itself from the dispatch queue (see "Picking records: `--budget`"). A program owns every step; a headless worker only writes the change. A record merges only when a judgment supplier is configured (none is by default) — see "The merge step". This page is documentation, not a contract: a few tests in `tests/bin-lib/driver/run.test.js` pin named rules in it, but nothing checks the rest, so update it by hand when the code below changes. The code is the source of truth.
 
 ## Running it
 
 ```
 node plugin/bin/drive.js #N [#M…]
 node plugin/bin/drive.js --no-settle #N [#M…]
+node plugin/bin/drive.js [--no-settle] --budget <n|all>
 node plugin/bin/drive.js --help
 ```
 
 - `#N` (or a bare `N`) is a positive record number; duplicates are dropped, order is kept.
 - `--no-settle` turns the driver's own settle off, for a caller that settles stops itself. A stop then makes none of the settle calls; the final line carries the structured `stop` object and `settle: left-to-caller` when the stop's row has calls (`none` otherwise). Default is on.
+- `--budget` takes a positive integer (no leading zero) or `all`, is exclusive with named records, and may be given once. `--no-settle` then applies to each driven record. See "Picking records: `--budget`".
 - `--help` (or `-h`) prints the usage and exits 0 before any probe of `gh`, `git` or policy.
 
 Exit codes:
 
 | Code | Meaning |
 |---|---|
-| 0 | Every named record reached its final event, whatever its outcome. Outcomes are data. |
-| 1 | The policy, or the run's repository or integration branch, cannot be resolved; no further record is attempted. |
-| 2 | Malformed invocation (no record reference, a non-numeric one), `gh` or `git` absent, or an internal error. |
+| 0 | Every named record reached its final event, whatever its outcome. Outcomes are data. With `--budget`, also a loop that ended normally: `budget`, `exhausted`, `permission-stop`, `claim-stop` or `policy-refused`. |
+| 1 | The policy, or the run's repository or integration branch, cannot be resolved; no further record is attempted. With `--budget`, also a failed queue pull. |
+| 2 | Malformed invocation (no record reference, a non-numeric one; with `--budget`, a bad or repeated value, or a named record beside it), `gh` or `git` absent, or an internal error. |
+
+## Picking records: `--budget`
+
+`--budget <n|all>` picks the records itself instead of taking names. The loop is `plugin/bin/lib/driver/budget.js`'s `runBudget`; the queue-pull module and ranking are `plugin/bin/lib/dispatch/queue-pull.js`'s.
+
+Selection:
+
+- Each round is a fresh queue pull, then the `next` ranking over the pulled groups. The grouping is the one the module applies under the project's `express-lane` value. A bundle's members are driven one at a time, in the bundle's order. The loop never reorders or filters beyond the pre-screen and its own `firing` set.
+- The pre-screen is the eligibility step's own call over the pulled record. It may skip a record, never admit one: an admitted record still takes the full per-record path (fetch, eligibility, admission, claim). It runs only over groups the ranking could select. A group the pull excluded for a reason the ranking never selects (`UNSELECTABLE_REASONS`: today `oversized` and `neighbour-in-flight`, tied to the queue-pull module's PASSES registry) is never pre-screened, counted or added to `firing`. A selectable group whose every member the pre-screen rules out is counted `skipped` and joins `firing` without costing a pull; that count is taken as each pull arrives, including groups beyond where the run stopped (whatever its `ended` reason), while the skip members of a mixed group are counted only when the loop reaches them. Each counted skip writes `drive.js: pre-screen skipped #N (…); no live fetch` to stderr, naming the eligibility reasons. A record the pre-screen cannot read (no `labels`, a non-string `body`, or an eligibility call that throws) writes `drive.js: pre-screen could not read #N (…); taking the full path` to stderr and takes the full path.
+- An empty pulled group, or a group member that is not an object with a positive integer `number`, makes the pull malformed: `ended: pull-failed`, exit 1.
+- `express-driver: off` refuses before the pull (`policy-refused`).
+
+Counting: a record consumes budget when its claim was obtained and its run directory minted (`driven`), whatever its outcome. A refused, pre-screen-skipped or contested record, or a claim that fails any other way, consumes nothing.
+
+Termination: every handled record joins this invocation's `firing` set and is never selected twice, so a queue that never shrinks still ends. The run ends when:
+
+- the budget is spent (`budget`);
+- the ranking returns `null` (`exhausted`);
+- a pull fails or is malformed, or the ranking throws (`pull-failed`);
+- a claim stop ends it: `claim-targets.js` exit 7 gives `permission-stop`, counted in `permissionStopped`; exit 2 or 6 gives `claim-stop`, counted in `claimFailed`. That record gets the claim row's settle (one comment and `bot:blocked`, no release call; under `--no-settle` none of it runs and the record's final line carries `settle: left-to-caller`), and the rest of the budget goes unused. Exits 4 and 5, a killed claim, an exit 0 that claimed nothing and a failed mint count `claimFailed` and the loop goes on; exit 3 counts `contested` and the loop goes on.
+
+When no summary line is written: an unreadable policy or a refused origin exits 1, and an interrupt ends the process by its signal. The loop yields to the event loop and checks for an interrupt after the policy step, before and after each queue pull, and after each driven record; a pending signal ends the process at any of those points with no summary line. The hub reads the exit code, or the death by signal.
+
+What the queue pull itself writes, accepted as dispatch has it: the target-missing and shipped passes log decisions and stage Close proposals into the newest `dispatch-standalone` run directory (or an inherited `PIPELINE_RUN_DIR`), and the write-back pass rewrites the queue-order cache. The pull's own session files sit under `os.tmpdir()`. The module's stdout (warnings, AUTO lines) goes to the driver's stderr, so stdout carries JSON event lines only.
 
 ## Outcome words
 
@@ -59,6 +85,18 @@ The final line (`step: "final"`) adds:
 | `eventsFile` | `stdout-only` when neither the run directory nor its archive twin existed after the merge step's reconcile, so the events went to stdout alone. Absent otherwise. |
 
 The `stop` object: `step`, `class` (`refused`, `claim`, `pre-push`, `blocked`, `none`), `pushed`, `created` (`{ worktree, branch }`, what this run created), `reason`, `detail`, `checkLogged` (`check`'s `logged` value: whether `check` wrote its own decision line, proceed or escalate; `null` when `check` did not run). A pre-push `reason` is always one of `failing-test`, `out-of-bounds`, `gate-denial` or `express-error`, so a `--no-settle` caller need not re-derive it. A claim stop's reason is `claim-exit-{code}`, `claim-exit-none` when `claim-targets.js` was killed or timed out, or `fail` when it exited 0 without claiming the record, when the run directory could not be minted, or for an interrupt after the claim.
+
+A `--budget` run writes one more line, last (the summary line, `step: "budget"`, with `run` and `record` `null`; it goes to stdout only, never to a run directory's jsonl). Every handled record is in exactly one counter. Fields are added and never renamed: a consumer in another repository, the hub, reads this line.
+
+| Field | Meaning |
+|---|---|
+| `budget` | The value given: a positive integer or `all`. |
+| `driven`, `refused`, `skipped`, `contested`, `claimFailed`, `permissionStopped` | The six counters. `driven` is the records that consumed budget (claim obtained, run directory minted); `refused` a record refused before the claim (a failed live fetch, eligibility or admission); `skipped` a record the pre-screen ruled out (a whole-group skip is counted as each pull arrives, including groups beyond where the run stopped, whatever its `ended` reason; the skip members of a mixed group are counted only when the loop reaches them); `contested` a claim lost (`claim-targets.js` exit 3); `claimFailed` any other claim failure; `permissionStopped` an exit 7. |
+| `ended` | Why the loop ended: `budget`, `exhausted`, `permission-stop`, `claim-stop`, `pull-failed` or `policy-refused`. |
+| `status` | From `ended`: `ok` for `budget`, `exhausted` and `policy-refused`; `stop` for `permission-stop` and `claim-stop`; `fail` for `pull-failed`. |
+| `detail` | Present with `permission-stop`, `claim-stop` (the exit code and record) and `pull-failed` (`queue pull failed: ` followed by the first line of the failure). |
+
+`policy-refused` is preceded by a `policy` line with status `stop` and `detail` `express-driver off: --budget drives nothing`. `tests/bin-lib/driver/run.test.js` pins the exit codes and the `ended` to `status` mapping (`budget AC9.5`); `tests/bin-lib/driver/budget.test.js` pins the loop.
 
 Settle calls are step lines named `settle-escalate`, `settle-comment-pr`, `settle-comment-record`, `settle-label`, `settle-release`, `settle-remove-worktree`, `settle-delete-branch` and `settle-close`, emitted before the final line. A failed call has status `fail`, is never retried, and does not stop the calls after it (one exception, below).
 
@@ -186,5 +224,6 @@ Per role (`plugin/bin/lib/driver/roles.js`); the launcher is `worker.js`.
 - Sandbox: on a probed platform (`darwin` today) the implementer runs inside the Bash sandbox with the network denied and writes confined to the working directory and the CLI's own scratch root. Reads are confined too (`permissions.blockReadsOutsideWorkingDirectories`, #5268): code the worker runs, such as its tests, can read only the working directory, the CLI's own carve-outs and the test command's toolchain. The launcher derives that toolchain at launch (`toolchainReadPaths` in `roles.js`: the install root above the command's `bin/`, plus the root of the interpreter its shebang names) and re-opens it through `sandbox.filesystem.allowRead`, never `/`, the home directory or an ancestor of it. On any other platform the implementer has no Bash at all.
 - HEAD: the driver reads HEAD before and after every implementer launch (the implementer step and the review fix round alike). A worker launch after which HEAD has moved, by a commit or a reset, stops the record with status `fail`, naming both shas. A launch after which HEAD cannot be read stops it the same way, naming the earlier sha. When HEAD cannot be read before the launch, the worker is not launched at all: the record stops with status `fail`, naming no sha. A branch switch is caught only when it changes the commit HEAD points at: a switch to another branch, or a detached HEAD, at the same commit is not detected by this check. An interrupt during the launch is reported as the interrupt. The driver never resets HEAD to recover.
 - Index flags: once the worktree is created, the driver reads which paths the index flags (`git ls-files -v`), and it reads them again after each point where worker-written code has run: every implementer launch (the implementer step and the review fix round alike), the test step and every evidence run. A path flagged skip-worktree or assume-unchanged that was not flagged when the worktree was created stops the record with status `fail`, naming at most five of the new paths and their count. A read that fails stops it the same way. Flags present when the worktree is created, such as a sparse checkout's skip-worktree flags, never count, and a flag cleared since then is no stop. Every check compares with that first read, so a flag set between two check points, by a commit hook for example, is caught at the next one. The driver never clears a flag to recover. Before that first read, the driver refuses a worktree whose git config sets `core.ignoreStat` true, stopping the record with status `fail`: git would then mark every path the driver stages assume-unchanged, so the check would stop every record. A `core.ignoreStat` read that fails other than as not set stops it the same way. CI on push runs HEAD and remains the backstop for what this check cannot see, such as a `.gitattributes` filter, `core.fsmonitor`, or a path already flagged when the worktree is created, whose bytes code the driver runs can rewrite without the commit ever staging them.
+- Tree after the tests: after the test step's `verify.js` run and its index-flag read, a run with red tests keeps its red-tests stop. For any other run, green or one that gave no verdict, the driver reads `git status` of the worktree, untracked files included. A tracked path that differs from HEAD, or an untracked file, stops the record with status `fail`, naming at most five of the paths and their count. Paths under `.claude-tweaks/pipelines/`, which the commit step also skips, never count, tracked or not. A read that fails stops it the same way, with a fixed detail. The driver's own `git commit` runs the project's git hooks, so a file a hook writes (a post-commit cache file that is not gitignored, say) is first seen by this check and reported as left after the test step. A verdict-less run's stop also names why the run gave no verdict. A newly set index flag outranks this stop. The review fix round's test run is checked the same way. The driver never cleans the tree to recover. Some changes are not caught: a change to an ignored file or an empty directory, which `git status` does not list; a rewrite of a tracked file under `.claude-tweaks/pipelines/`; and anything a red run left. CI on push runs HEAD and remains the backstop.
 - Ceilings: `express-driver-wall-clock-minutes` and `express-driver-spend-ceiling-dollars` bound each worker launch, not the record: with the reviewer step on, a record can launch up to three workers (reviewer, implementer, fix implementer), each under the full ceilings. The launcher enforces the wall-clock ceiling by killing the worker (reason `wall-clock-ceiling`) and passes the spend ceiling as `--max-budget-usd` (reason `spend-ceiling`). Either is settled as a pre-push `express-error`. A spend overrun reported after a normal return is named only in the final line (`spendOverrun`), and only for the implementer launches: a reviewer overrun reaches no line, though the `review` line's `costUsd` shows what the reviewer spent.
 - The worker's own text is untrusted input; the driver takes the changed files from git, not from the worker.

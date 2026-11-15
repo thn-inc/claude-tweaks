@@ -51,6 +51,16 @@
 // and a path already flagged when the worktree is created (code the driver runs can rewrite it, git
 // status does not report it, and the commit never stages it).
 //
+// Tree after the tests (#5454): the commit step runs before the tests, so worker-written test code could
+// rewrite a tracked file the commit never holds while a green verdict reads it. After the verify.js call
+// and its flag check, a red run keeps its failing-test stop. Any other run, green or verdict-less, then
+// has git status read through review.js's treeDelta. Untracked files are included. The paths isRunArtifact
+// names, which the commit step also skips, are excluded whether they are tracked or not. A path that
+// differs from HEAD, or an untracked file, is a `fail` ahead of that verdict. A newly set flag outranks
+// it, since git status cannot see a flagged path. A failed or unparseable read is a `fail` with fixed
+// text. Not covered: ignored files and empty directories, which git status does not list; a tracked file
+// under `.claude-tweaks/pipelines/`; and a red run's tree. CI on push is the backstop.
+//
 // Every external call goes through `deps`; nothing here reads process state.
 //
 // The ci step holds every read other than `pending` or `stale` to a settle window of 2 minutes,
@@ -78,7 +88,7 @@ const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
-const { reviewRecord } = require('./review');
+const { reviewRecord, treeDelta } = require('./review');
 const { reviewerGateReason } = require('./admission');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
 
@@ -239,6 +249,20 @@ function driverLineBound(ctx) {
   return source !== 'default' && ctx.reviewer && ctx.reviewer.on === true ? value : null;
 }
 
+// The options the eligibility step hands deps.evaluateRecordEligibility, lane bounds included, so a
+// caller that pre-screens a record (the budget loop) asks the same question the step does.
+function eligibilityOptions(policy) {
+  const bounds = laneBounds(policy);
+  return {
+    enabled: true,
+    allowAbsentCeremony: true,
+    integrationModel: policy['integration-model'].value,
+    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
+    sizeCeiling: bounds.sizeCeiling,
+    maxKeyFiles: bounds.maxKeyFiles,
+  };
+}
+
 // Ports express-lane.md's Eligibility section, with the driver's relaxed ceremony gate and the lane
 // bounds. It also makes the record's one reviewRequired call (ctx.reviewer, #5224): admission, the check
 // flag and the review step read that answer, never a second call. A refusal names the reviewer reason
@@ -247,14 +271,7 @@ function driverLineBound(ctx) {
 const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async (ctx, deps) => {
   const { policy } = ctx.shared;
   const bounds = laneBounds(policy);
-  const verdict = deps.evaluateRecordEligibility(ctx.issue, {
-    enabled: true,
-    allowAbsentCeremony: true,
-    integrationModel: policy['integration-model'].value,
-    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
-    sizeCeiling: bounds.sizeCeiling,
-    maxKeyFiles: bounds.maxKeyFiles,
-  });
+  const verdict = deps.evaluateRecordEligibility(ctx.issue, eligibilityOptions(policy));
   ctx.keyFiles = (verdict && verdict.keyFiles) || [];
   ctx.reviewer = deps.reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: policy['express-driver-review'].value });
   if (!verdict || verdict.eligible !== true) {
@@ -338,6 +355,10 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   const r = deps.node(binScript('claim-targets.js'),
     ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
     { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  // A recorded fact, not a side effect: the budget loop reads it to tell a contested claim (3) from
+  // other claim failures (4, 5, an exit 0 that claimed nothing, a killed claim with a null exit, a
+  // failed mint) and from the run-ending claim stops (7, and 2 and 6).
+  ctx.claimExit = Number.isInteger(r.code) ? r.code : null;
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
@@ -528,7 +549,7 @@ function headFail(before, after, extra) {
 
 const IGNORE_STAT_REFUSED = 'core.ignoreStat is true for the new worktree, so git would mark every path the driver stages assume-unchanged; the driver refuses such a worktree';
 const IGNORE_STAT_UNREADABLE = 'core.ignoreStat of the new worktree is unreadable';
-const INDEX_FLAG_PATHS_SHOWN = 5;
+const NAMED_PATHS_SHOWN = 5;
 const INDEX_FLAGS_BASELINE_UNREADABLE = 'the index flags of the new worktree are unreadable';
 const INDEX_FLAGS_UNREADABLE = 'the index flags of the worktree are unreadable';
 
@@ -567,6 +588,13 @@ function readIndexFlags(deps, wt) {
   return flagged;
 }
 
+// The first NAMED_PATHS_SHOWN paths, each through neutralize (worker-shaped), then the rest as a count.
+function namedPaths(paths) {
+  const shown = paths.slice(0, NAMED_PATHS_SHOWN).map(neutralize).join(', ');
+  const more = paths.length > NAMED_PATHS_SHOWN ? `, and ${paths.length - NAMED_PATHS_SHOWN} more` : '';
+  return `${shown}${more}`;
+}
+
 // The fail for a path flagged since the worktree was created; null when there is none. Paths are
 // worker-shaped, so each goes through neutralize.
 function newIndexFlagStop(ctx, deps) {
@@ -575,9 +603,7 @@ function newIndexFlagStop(ctx, deps) {
   if (now === null) return { status: 'fail', detail: INDEX_FLAGS_UNREADABLE };
   const added = [...now].filter((p) => !ctx.indexFlags.has(p));
   if (added.length === 0) return null;
-  const shown = added.slice(0, INDEX_FLAG_PATHS_SHOWN).map(neutralize).join(', ');
-  const more = added.length > INDEX_FLAG_PATHS_SHOWN ? `, and ${added.length - INDEX_FLAG_PATHS_SHOWN} more` : '';
-  return { status: 'fail', detail: `skip-worktree or assume-unchanged newly set on ${added.length} path(s) since the worktree was created: ${shown}${more}` };
+  return { status: 'fail', detail: `skip-worktree or assume-unchanged newly set on ${added.length} path(s) since the worktree was created: ${namedPaths(added)}` };
 }
 
 // Ports express-lane.md step 2 (the edit): the headless implementer, launched through
@@ -681,6 +707,30 @@ function isRunArtifact(p) {
   return p === PIPELINES_DIR || p.startsWith(`${PIPELINES_DIR}/`);
 }
 
+// The fail detail when git status cannot be read after the test step: fixed text, never git's words.
+const TEST_TREE_UNREADABLE = 'the worktree status is unreadable after the test step';
+// The fail for a worktree that differs from HEAD after the test step (tracked or untracked, outside the
+// run artifacts); null when the tree is clean. Paths are worker-shaped, so each goes through neutralize.
+function testTreeStop(ctx, deps) {
+  let changed;
+  try {
+    changed = treeDelta({ wt: ctx.wt, expected: new Set(), deps, isRunArtifact });
+  } catch {
+    return { status: 'fail', detail: TEST_TREE_UNREADABLE };
+  }
+  if (changed.length === 0) return null;
+  return { status: 'fail', detail: `the worktree differs from HEAD after the test step on ${changed.length} path(s): ${namedPaths(changed)}` };
+}
+
+// Why a verify.js run gave no verdict: a null code is no exit at all (a timeout, a spawn error), any
+// other non-zero code that is not a red run (2: usage or infrastructure error) names its own stderr.
+function verdictlessDetail(r) {
+  if (r.code === null || r.code === undefined) {
+    return `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}`;
+  }
+  return neutralize(firstLine(r.stderr)) || `verify exited ${r.code}`;
+}
+
 // Ports express-lane.md step 3: the driver commits, by explicit path, from what git
 // reports changed in the worktree (never from the worker's result), before any test runs.
 // Both sides of a rename are staged; a deleted path stages as a deletion. The message is
@@ -779,6 +829,8 @@ function scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel) {
 // The step runs before the push and before any PR exists (STEPS order), so CI cannot answer;
 // the scoped call passes `--local` so verify.js never exits 3 ("no verdict yet") under a
 // declaration's localRuns, and it is harmless without one (#5370). express-lane.md step 4 says the same.
+// After the run, a newly set index flag stops the step, then red tests do, then, for any other run, a
+// worktree that differs from HEAD, all before the remaining verdicts are read (#5415, #5454).
 const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const { wt, runDir } = ctx;
   const { policy, ref } = ctx.shared;
@@ -828,14 +880,16 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   // The run executed worker code: a flag it set outranks the verdict.
   const flagStop = newIndexFlagStop(ctx, deps);
   if (flagStop) return flagStop;
-  // A null code is no exit at all (a timeout, a spawn error): the suite never gave a verdict.
-  if (r.code === null || r.code === undefined) {
-    return { status: 'fail', detail: `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}` };
-  }
-  // verify.js: exit 1 is a failed check (red tests); any other non-zero exit (2: usage or
-  // infrastructure error) means the run itself failed, so it is a `fail`, not a gate saying no.
+  // Red tests stop the record with nothing pushed, so their tree is not read (#5454).
   if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests' };
-  if (r.code !== 0) return { status: 'fail', detail: neutralize(firstLine(r.stderr)) || `verify exited ${r.code}` };
+  // A green or verdict-less run: a worktree that differs from HEAD means the verdict is not about the commit (#5454).
+  const treeStop = testTreeStop(ctx, deps);
+  // A verdict-less run keeps its cause beside the tree detail, which stays the prefix.
+  if (treeStop) return r.code === 0 ? treeStop : { ...treeStop, detail: `${treeStop.detail}; ${verdictlessDetail(r)}` };
+  // verify.js: exit 1 is a failed check (red tests, handled above, before the tree read). No exit at
+  // all (a timeout, a spawn error) or any other non-zero exit (2: usage or infrastructure error) means
+  // the run itself gave no verdict, so it is a `fail`, not a gate saying no.
+  if (r.code !== 0) return { status: 'fail', detail: verdictlessDetail(r) };
   return { status: 'ok', detail };
 });
 
@@ -1217,6 +1271,7 @@ const STEPS = Object.freeze([
 ]);
 
 module.exports = {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
-  VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
+  VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
+  testTreeStop, TEST_TREE_UNREADABLE,
 };

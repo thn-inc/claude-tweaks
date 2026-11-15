@@ -18,7 +18,7 @@ const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies, withoutCrossRepoBlockers, foreignBlockerBlocks, DEFER_REASONS } = require('../issues/record');
 const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign, distinctCrossRepoRefs } = require('../issues/cross-repo-refs');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
-const { gateOriginRepo, repoSlug, ghOptions } = require('../repo-resolve');
+const { gateOriginRepo, repoSlug, ghOptions, injectedGhDeps } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
@@ -74,8 +74,10 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // `err.stderr` for any consumer module that classifies a failure by message.
 // `wrap` transforms the options, as execBounded's does: identity by default,
 // ghOptions (#4505's GH_HOST seam) for a gh spawn.
-function execSync(bin, args, { cwd } = {}, wrap = keepOptions) {
-  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+// `env` (from the opts) is the caller's injected environment (#5379); absent, the child inherits the real one.
+// `stderr` is the caller's injected note sink for ghOptions's repo-resolution note; absent, the note goes to the real stderr.
+function execSync(bin, args, { cwd, env, stderr } = {}, wrap = keepOptions) {
+  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) }, injectedGhDeps({ env, stderr })));
 }
 
 function defaultGit(args, opts) {
@@ -92,12 +94,16 @@ function defaultGhSync(args, opts) {
 // review I8). Same scalar semantics as that CLI's --values mode: an unknown
 // key, an error entry, or a null/absent value all read as ''. One call
 // resolves every key the pack needs.
-function defaultResolvePolicy(keys, cwd) {
+// `env` is the caller's injected environment (#5379); absent, the git child inherits the real one.
+// `cwd` is the repo-root fallback when `git rev-parse --show-toplevel` fails (it replaces
+// `process.cwd()` there, policy-schema.js), so an in-process caller's policy read never falls back
+// to the test runner's cwd.
+function defaultResolvePolicy(keys, cwd, env) {
   const out = {};
-  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   try {
-    const { result } = resolvePolicyConfig({ git, readFile, keys });
+    const { result } = resolvePolicyConfig({ git, readFile, keys, cwd });
     for (const key of keys) {
       const entry = result[key];
       out[key] = !entry || entry.error !== undefined || entry.value === null || entry.value === undefined ? '' : String(entry.value);
@@ -108,15 +114,18 @@ function defaultResolvePolicy(keys, cwd) {
   return out;
 }
 
-function defaultDeps(cwd) {
+// `{ env }` is the caller's injected environment (#5379): it reaches `git`, `ghSync` and `resolvePolicy`'s
+// own git, each of which merges it into the options its caller passes. Absent, behavior is unchanged.
+// `{ stderr }` is the sink for `ghSync`'s repo-resolution note; absent, the note goes to the real stderr.
+function defaultDeps(cwd, { env, stderr } = {}) {
   return {
     now: () => Date.now(),
-    git: defaultGit,
-    ghSync: defaultGhSync,
+    git: env ? (args, opts) => defaultGit(args, { ...opts, env }) : defaultGit,
+    ghSync: env || stderr ? (args, opts) => defaultGhSync(args, { ...opts, ...(env ? { env } : {}), ...(stderr ? { stderr } : {}) }) : defaultGhSync,
     execFile: promisify(execFileCb),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
-    resolvePolicy: (keys, policyCwd) => defaultResolvePolicy(keys, policyCwd || cwd),
+    resolvePolicy: (keys, policyCwd) => defaultResolvePolicy(keys, policyCwd || cwd, env),
     computeBlastRadius: require('../blast-radius-cli').computeBlastRadius,
     readClaimBlob: require('../issues/claim-store').readClaimBlob,
     classifyClaimBlob: require('../issues/claims').classifyClaimBlob,
@@ -898,5 +907,5 @@ function ownRecordNumbers(runDir, worktree) {
 
 module.exports = {
   gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, worktreeMirror,
-  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers,
+  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers, defaultDeps,
 };

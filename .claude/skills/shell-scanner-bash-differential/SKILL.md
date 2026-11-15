@@ -1,6 +1,6 @@
 ---
 name: shell-scanner-bash-differential
-description: Use when changing or reviewing the write gate's shell scanner in `plugin/bin/lib/hooks/git-command.js` (heredoc stripping, quoting and nesting spans, the segment and cwd walk, `fileWriteTargets`/`gitTargets`/`mkdirTargets`) or the prefilter that shares it — judge each case against real bash 3.2 and 5, check base for regressions, fuzz differentially, time adversarial shapes through the real hook, and prove every rule with a mutant. Keywords - shell scanner, heredoc, stripHeredocBodies, forEachShellSegment, bash 3.2, bash 5, differential, fuzz, mutant, fail closed, spurious deny, leak, step budget, cwd cap, routine table.
+description: Use when changing or reviewing the write gate's shell scanner in `plugin/bin/lib/hooks/git-command.js` (heredoc stripping, quoting and nesting spans, the segment and cwd walk, `fileWriteTargets`/`gitTargets`/`mkdirTargets`) or the prefilter that shares it, or `plugin/bin/hooks.sh`'s shell copies of JS parsers (`policy_verdict`, `main_root`) — judge each case against real bash 3.2 and 5, check base for regressions, fuzz differentially, time adversarial shapes through the real hook, and prove every rule with a mutant. Keywords - shell scanner, heredoc, stripHeredocBodies, forEachShellSegment, bash 3.2, bash 5, differential, fuzz, mutant, fail closed, spurious deny, leak, step budget, cwd cap, routine table, hooks.sh, policy_verdict, dash, mawk, gawk.
 ---
 
 # Shell scanner: judge it against real bash
@@ -303,6 +303,17 @@ module.exports = { runBash, sweepSurvivors, RUN_TAG };
 Leftover check, after a session and after any driver run that was killed: `ps -ax -o pid=,ppid=,etime=,command= | awk '$2 == 1 && $4 ~ /(^|\/)g?(dd|cat)$/'` lists PPID-1 writers. `ps` shows the bare word (`dd if=/dev/zero …`) as argv[0], not the stub path, so match the command word. For each pid, `lsof -p <pid>` shows its open output file; if that sits under a `scratchpad/` or `agent-scratch/` path, `kill -9 <pid>`. `lsof +D <scratch dir>` lists every process whose cwd or open file is under that dir, which finds a case's bash and its children, since they inherit the cwd. Freed space can stay pinned by a Time Machine local snapshot: check `tmutil listlocalsnapshots /`.
 
 Orphaned oracle shells: `pgrep -lf '[r]unBash-'` lists every bash a driver run left behind, and `pgrep -lf 'ulimit -f [0-9]'` lists those left by an older copy of the driver, which carries no tag. The bracket stops the pattern from matching the shell that runs it. The number after `runBash-` is the driver's pid. If `ps -p <pid>` shows no driver, stop that run's processes and then kill them: `pkill -STOP -f '[r]unBash-<pid>-'`, then `pkill -KILL -f '[r]unBash-<pid>-'`. Repeat both until `pgrep` lists nothing. Kill by the run's tag, never by the bare `runBash-` pattern, which also matches a sibling session's live run. An untagged chain is orphaned when its top process has PPID 1; stop and kill its pids the same way. Whenever `ps` output in any task shows one of these, run this check and tell the user. In #4716, a subagent's `ps` listed one of about 2,940 orphans a day into the incident, and nobody acted on it.
+
+## Shell mirror of a JS oracle
+
+`plugin/bin/hooks.sh` carries shell copies of JS parsers, because its no-node branch runs where no node exists: `policy_verdict` mirrors `resolveWorktreeAlways`/`parseFlatLines`, and `main_root` mirrors `mainCheckoutRoot`. A copy like that drifts silently unless the differential covers four axes (#5392):
+
+- **Every shell and every awk.** Run the shell side under each POSIX shell found on PATH (sh, dash, bash) and each awk (BWK awk on macOS, mawk on Debian/Ubuntu, gawk on Fedora/Arch and in Git Bash). A variant that is absent, or that cannot be measured on a platform, is skipped with a named reason, never dropped silently.
+- **Bytes, not characters.** JS `\s` matches non-ASCII whitespace. awk under a UTF-8 locale behaves differently across implementations, so run awk with `LC_ALL=C` and spell each non-ASCII whitespace character as its UTF-8 byte sequence (`\302\240` for U+00A0, and so on).
+- **An oracle-drift guard.** Each fixture states its expected verdict. Assert the JS oracle still returns it before comparing the shell, so a change to the JS side fails as `oracle drift`, not as a confusing shell mismatch.
+- **Go-red controls per pinned literal.** For each literal the copy depends on (a whitespace member such as `\r`, an alias key), copy the script, mutate that one literal, and assert the parity check fails on the fixture that pins it.
+
+Worked example: `tests/hooks-launcher.test.js`, `AC9_FIXTURES` with `assertPolicyParity` (the `perShell` and `perAwk` `hooks.sh AC9` tests and the `\r` go-red).
 
 ## Anti-Patterns
 
