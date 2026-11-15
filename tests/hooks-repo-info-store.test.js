@@ -13,7 +13,9 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const MODULE = path.resolve(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'worktree-detect.js');
-const { rememberRepoInfo, envFingerprint, MAX_STORE_ENTRIES } = require('../plugin/bin/lib/hooks/repo-info-cache');
+const {
+  rememberRepoInfo, lookupRepoInfo, repoSignature, resetMemo, envFingerprint, MAX_STORE_ENTRIES,
+} = require('../plugin/bin/lib/hooks/repo-info-cache');
 const { gitRepo, linkedWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 
 const DISCOVERY = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM'];
@@ -30,6 +32,19 @@ const { repoInfo } = require(process.argv[1]);
 const info = repoInfo(process.argv[2]);
 process.stdout.write(JSON.stringify({ info, spawns }));
 `;
+
+// The same child, but every git spawn dies of SIGKILL (status null), as the OOM killer would.
+const KILLED_CHILD = `
+const cp = require('child_process');
+cp.execFileSync = function () {
+  throw Object.assign(new Error('Command failed: git'), { status: null, signal: 'SIGKILL', stderr: '' });
+};
+const { repoInfo } = require(process.argv[1]);
+process.stdout.write(JSON.stringify({ info: repoInfo(process.argv[2]) }));
+`;
+
+const UID = typeof process.getuid === 'function' ? process.getuid() : null;
+const keyOf = (dir, env) => crypto.createHash('sha1').update(`${UID}\0${dir}\0${envFingerprint(env)}`).digest('hex');
 
 const scratch = [];
 after(() => {
@@ -48,8 +63,8 @@ function childEnv(storeFile, extra = {}) {
 }
 
 // A fresh child process: -> { info, spawns }. Throws on a non-zero exit.
-function runChild(dir, env) {
-  const out = execFileSync(process.execPath, ['-e', CHILD, MODULE, dir], { env, encoding: 'utf8' });
+function runChild(dir, env, source = CHILD) {
+  const out = execFileSync(process.execPath, ['-e', source, MODULE, dir], { env, encoding: 'utf8' });
   return JSON.parse(out);
 }
 
@@ -109,6 +124,38 @@ test('AC5.1: an unreadable store leaves repoInfo\'s answer unchanged', () => {
   const asDir = scratchDir('ct-ris-dirstore-'); // the store path names a directory: EISDIR
   const got = runChild(wt, childEnv(asDir));
   assert.deepStrictEqual(got.info, cold);
+  assert.strictEqual(got.spawns, 1);
+  assert.strictEqual(runChild(wt, childEnv(asDir)).spawns, 1, 'nothing was stored');
+});
+
+test('#5294: a git killed by a signal is not carried to a fresh process', () => {
+  const main = gitRepo();
+  const env = childEnv(storeIn(scratchDir('ct-ris-')));
+  const killed = runChild(main, env, KILLED_CHILD);
+  assert.deepStrictEqual(killed.info, { repoRoot: null, isLinkedWorktree: false, indeterminate: false });
+  const next = runChild(main, env);
+  assert.strictEqual(next.spawns, 1);
+  assert.deepStrictEqual(next.info, { repoRoot: main, isLinkedWorktree: false, indeterminate: false });
+});
+
+test('#5294: tests/helpers/git-fixtures.js points a bare run at a temp store, and keeps one already set', () => {
+  const probe = `
+const os = require('os');
+require(process.argv[1]);
+process.stdout.write(JSON.stringify({ store: process.env.CT_HOOKS_REPO_INFO_STORE, tmp: os.tmpdir() }));
+`;
+  const helper = path.resolve(__dirname, 'helpers', 'git-fixtures.js');
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (k.toUpperCase() === 'CT_HOOKS_REPO_INFO_STORE') delete env[k];
+  const bare = JSON.parse(execFileSync(process.execPath, ['-e', probe, helper], { env, encoding: 'utf8' }));
+  assert.strictEqual(typeof bare.store, 'string');
+  assert.ok(bare.store.startsWith(bare.tmp + path.sep), `${bare.store} is under ${bare.tmp}`);
+  assert.notStrictEqual(bare.store, path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json'));
+  const pinned = path.join(scratchDir('ct-ris-'), 'pinned.json');
+  const kept = JSON.parse(execFileSync(process.execPath, ['-e', probe, helper], {
+    env: { ...env, CT_HOOKS_REPO_INFO_STORE: pinned }, encoding: 'utf8',
+  }));
+  assert.strictEqual(kept.store, pinned);
 });
 
 test('AC5.1: an unwritable store leaves repoInfo\'s answer unchanged', () => {
@@ -163,9 +210,33 @@ test('#5294: the store keeps at most MAX_STORE_ENTRIES entries, evicting the old
     dirs.push(dir);
     rememberRepoInfo(dir, env, { n: i }, answer);
   }
-  const keyOf = (dir) => crypto.createHash('sha1').update(`${dir}\0${envFingerprint(env)}`).digest('hex');
   const { entries } = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.strictEqual(Object.keys(entries).length, MAX_STORE_ENTRIES);
-  assert.ok(!(keyOf(dirs[0]) in entries), 'the first entry was evicted');
-  assert.ok(keyOf(dirs[MAX_STORE_ENTRIES]) in entries, 'the newest entry is present');
+  assert.ok(!(keyOf(dirs[0], env) in entries), 'the first entry was evicted');
+  assert.ok(keyOf(dirs[MAX_STORE_ENTRIES], env) in entries, 'the newest entry is present');
+});
+
+test('#5294: a store hit refreshes its entry, so eviction drops the least recently used', () => {
+  const file = storeIn(scratchDir('ct-ris-'));
+  const env = childEnv(file);
+  const answer = { repoRoot: null, isLinkedWorktree: false, indeterminate: false };
+  const hit = scratchDir('ct-ris-lru-'); // a real directory, so its signature can match
+  rememberRepoInfo(hit, env, repoSignature(hit, env), answer);
+  const dirs = [hit];
+  for (let i = 1; i < MAX_STORE_ENTRIES; i++) {
+    const dir = path.join(os.tmpdir(), `ct-ris-lru-${process.pid}-${i}`);
+    dirs.push(dir);
+    rememberRepoInfo(dir, env, { n: i }, answer);
+  }
+  // Age every entry well past the refresh interval, `hit` the oldest of all.
+  const store = JSON.parse(fs.readFileSync(file, 'utf8'));
+  dirs.forEach((d, i) => { store.entries[keyOf(d, env)].at = 1 + i; });
+  fs.writeFileSync(file, JSON.stringify(store));
+  resetMemo(); // answer from the store, not this process's memo
+  assert.deepStrictEqual(lookupRepoInfo(hit, env).answer, answer);
+  rememberRepoInfo(path.join(os.tmpdir(), `ct-ris-lru-${process.pid}-new`), env, { n: 'new' }, answer);
+  const { entries } = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.strictEqual(Object.keys(entries).length, MAX_STORE_ENTRIES);
+  assert.ok(keyOf(hit, env) in entries, 'the entry hit after aging survived');
+  assert.ok(!(keyOf(dirs[1], env) in entries), 'the least recently used entry was evicted');
 });

@@ -28,8 +28,9 @@
 // so the next lookup mismatches and re-asks; a signature taken after the spawn
 // could pair an answer about the old state with the new state's signature.
 //
-// The memo is keyed on directory + the git-relevant environment (envFingerprint),
-// since the same directory answers differently under another GIT_DIR or HOME.
+// The memo is keyed on uid + directory + the git-relevant environment
+// (envFingerprint), since the same directory answers differently under another
+// GIT_DIR or HOME, or for another user.
 // A per-user JSON store (below) carries answers across processes under the same
 // signature check; docs/hooks.md's "repoInfo cache" section has the contract.
 'use strict';
@@ -38,6 +39,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readJsonFile, writeJsonFile } = require('../json-store');
+const { canonicalRealpath } = require('../path-guard');
 
 const MEMO_LIMIT = 500;
 const memo = new Map();
@@ -122,7 +124,11 @@ function kindOf(st) {
 }
 
 function buildSignature(dir, env, platform) {
-  let d = path.resolve(dir);
+  // git walks the real path (it chdirs into `-C`, then reads getcwd), so the
+  // signature walks it too: a symlink into a repo subdirectory would otherwise
+  // walk the link's own parents and never see the repo's `.git`.
+  let d = canonicalRealpath(dir);
+  if (!d) throw new Unknown();
   let gitStat = null;
   for (;;) {
     gitStat = statOrMissing(path.join(d, '.git'));
@@ -180,7 +186,11 @@ function signatureMatches(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-const memoKey = (dir, env) => `${dir}\0${envFingerprint(env)}`;
+// The process uid is part of every key: git's ownership check (safe.directory)
+// depends on it, and a `sudo` run that keeps HOME reads the same store file.
+const currentUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
+
+const memoKey = (dir, env, uid) => `${uid}\0${dir}\0${envFingerprint(env)}`;
 
 const copyAnswer = (a) => ({ repoRoot: a.repoRoot, isLinkedWorktree: a.isLinkedWorktree, indeterminate: false });
 
@@ -214,7 +224,11 @@ function storeBypassed(env = process.env) {
   return DISCOVERY_ENV_NAMES.some((name) => envGet(env, name) !== undefined);
 }
 
-const storeKey = (dir, env) => crypto.createHash('sha1').update(`${dir}\0${envFingerprint(env)}`).digest('hex');
+const storeKey = (dir, env, uid) => crypto.createHash('sha1').update(memoKey(dir, env, uid)).digest('hex');
+
+// A hit refreshes its entry's `at` (so eviction drops the least recently used),
+// but writes at most once per this many ms per entry.
+const TOUCH_INTERVAL_MS = 60 * 1000;
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -234,22 +248,38 @@ function readStoreEntries(env) {
   return raw.entries;
 }
 
-function storeLookup(dir, env, signature) {
+function storeLookup(dir, env, signature, uid) {
   try {
     const entries = readStoreEntries(env);
-    const entry = entries && entries[storeKey(dir, env)];
-    if (validEntry(entry) && signatureMatches(entry.signature, signature)) return entry.answer;
+    const key = storeKey(dir, env, uid);
+    const entry = entries && entries[key];
+    if (validEntry(entry) && signatureMatches(entry.signature, signature)) {
+      if (Date.now() - entry.at > TOUCH_INTERVAL_MS) storeTouch(env, key);
+      return entry.answer;
+    }
   } catch (_) {
     // a broken store is a miss
   }
   return null;
 }
 
-function storeRemember(dir, env, signature, answer) {
+// Refreshes one entry's `at`, re-reading first so a sibling's entries are kept.
+function storeTouch(env, key) {
+  try {
+    const entries = readStoreEntries(env);
+    if (!entries || !validEntry(entries[key])) return;
+    entries[key].at = Date.now();
+    writeJsonFile(storePath(env), { version: STORE_VERSION, entries });
+  } catch (_) {
+    // a failed refresh only costs recency
+  }
+}
+
+function storeRemember(dir, env, signature, answer, uid) {
   try {
     // Re-read so entries a sibling process wrote meanwhile are kept.
     const entries = readStoreEntries(env) || {};
-    const key = storeKey(dir, env);
+    const key = storeKey(dir, env, uid);
     delete entries[key]; // delete then set: insertion order tracks recency
     entries[key] = { answer: { repoRoot: answer.repoRoot, isLinkedWorktree: answer.isLinkedWorktree }, signature, at: Date.now() };
     const keys = Object.keys(entries);
@@ -268,16 +298,16 @@ function storeRemember(dir, env, signature, answer) {
 // -> { answer, signature }: `answer` is a fresh copy of the remembered result
 // when the signature still matches, else null; `signature` is the one taken now
 // (null when it could not be computed), for rememberRepoInfo after the spawn.
-function lookupRepoInfo(dir, env = process.env) {
+function lookupRepoInfo(dir, env = process.env, uid = currentUid()) {
   const signature = repoSignature(dir, env);
   if (!signature) return { answer: null, signature: null };
-  const key = memoKey(dir, env);
+  const key = memoKey(dir, env, uid);
   const entry = memo.get(key);
   if (entry && signatureMatches(entry.signature, signature)) {
     return { answer: copyAnswer(entry.answer), signature };
   }
   if (!storeBypassed(env)) {
-    const stored = storeLookup(dir, env, signature);
+    const stored = storeLookup(dir, env, signature, uid);
     if (stored) {
       memoSet(key, signature, stored);
       return { answer: copyAnswer(stored), signature };
@@ -287,10 +317,10 @@ function lookupRepoInfo(dir, env = process.env) {
 }
 
 // No-op for a null signature or an indeterminate answer: neither may be cached.
-function rememberRepoInfo(dir, env, signature, answer) {
+function rememberRepoInfo(dir, env, signature, answer, uid = currentUid()) {
   if (!signature || !answer || answer.indeterminate) return;
-  memoSet(memoKey(dir, env), signature, answer);
-  if (!storeBypassed(env)) storeRemember(dir, env, signature, answer);
+  memoSet(memoKey(dir, env, uid), signature, answer);
+  if (!storeBypassed(env)) storeRemember(dir, env, signature, answer, uid);
 }
 
 // Tests only. A test that fakes git's output or failure (a mocked execFileSync)

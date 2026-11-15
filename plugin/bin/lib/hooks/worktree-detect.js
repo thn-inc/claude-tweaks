@@ -83,6 +83,24 @@ function mainCheckoutRoot(p) {
   return null;
 }
 
+// #5294: repoInfo's remember step. A throw costs only the cache.
+function remember(dir, signature, result) {
+  try {
+    rememberRepoInfo(dir, process.env, signature, result);
+  } catch (_) {
+    // the answer returned is git's own
+  }
+}
+
+// #5294: git's own "not a repo" answer — exit 128 with that text. Every other
+// git-error (a git killed by a signal, whose exitCode is null; an EACCES/EPERM
+// spawn error; any other non-zero exit) still returns a definitive negative for
+// THIS call (#134's classification is unchanged) but is not remembered, so a
+// transient failure cannot become a lasting "not a repo" for later calls and
+// processes. A localized git message is a miss, never a wrong answer.
+const NOT_A_REPO = /not a git repository/i;
+const isNotARepoAnswer = (exitCode, stderr) => exitCode === 128 && NOT_A_REPO.test(stderr || '');
+
 // Single git subprocess spawn querying toplevel + git-dir + git-common-dir +
 // superproject in one invocation instead of four separate spawns — every
 // caller of this module needs both the repo root and the linked-worktree
@@ -112,7 +130,11 @@ function mainCheckoutRoot(p) {
 //
 // #5294: a call with no opts keys is answered from repo-info-cache.js's memo
 // while the directory's filesystem signature is unchanged; a call passing any
-// opts key bypasses the memo entirely. Only definitive answers are remembered.
+// opts key bypasses the memo entirely. Only definitive answers are remembered,
+// and a negative only when git itself said "not a git repository"
+// (isNotARepoAnswer above). A cache fault costs only the cache: a lookup that
+// throws is a miss, a remember that throws is ignored (the
+// never-break-a-session invariant).
 function repoInfo(p, opts = {}) {
   const dir = nearestExistingDir(p);
   // A path with no existing ancestor is a definitive negative, not a failure to
@@ -120,11 +142,15 @@ function repoInfo(p, opts = {}) {
   if (!dir) return { repoRoot: null, isLinkedWorktree: false, indeterminate: false };
   let signature = null;
   if (Object.keys(opts).length === 0) {
-    const hit = lookupRepoInfo(dir, process.env);
-    if (hit.answer) return hit.answer;
-    signature = hit.signature;
+    try {
+      const hit = lookupRepoInfo(dir, process.env);
+      if (hit.answer) return hit.answer;
+      signature = hit.signature;
+    } catch (_) {
+      signature = null; // a miss, and nothing will be remembered
+    }
   }
-  const { stdout: out, failure } = runGit(
+  const { stdout: out, failure, exitCode, stderr } = runGit(
     ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir', '--show-superproject-working-tree'],
     dir,
     opts,
@@ -133,7 +159,7 @@ function repoInfo(p, opts = {}) {
     // git-error == git ran and said "not a git repository": a real answer.
     // timeout/spawn/no-git == we never got one.
     const result = { repoRoot: null, isLinkedWorktree: false, indeterminate: isIndeterminate(failure) };
-    if (!result.indeterminate) rememberRepoInfo(dir, process.env, signature, result);
+    if (!result.indeterminate && isNotARepoAnswer(exitCode, stderr)) remember(dir, signature, result);
     return result;
   }
   const [top, gitDir, gitCommon, superproject] = out.split('\n');
@@ -151,7 +177,7 @@ function repoInfo(p, opts = {}) {
   // calls). Also a failure to determine, not a negative.
   if (!repoRoot) return { repoRoot: null, isLinkedWorktree: false, indeterminate: true };
   const result = { repoRoot, isLinkedWorktree: isLinked, indeterminate: false };
-  rememberRepoInfo(dir, process.env, signature, result);
+  remember(dir, signature, result);
   return result;
 }
 

@@ -11,7 +11,7 @@ const path = require('path');
 
 const cp = require('child_process');
 const { repoInfo } = require('../plugin/bin/lib/hooks/worktree-detect');
-const { resetMemo } = require('../plugin/bin/lib/hooks/repo-info-cache');
+const { resetMemo, lookupRepoInfo, rememberRepoInfo, repoSignature } = require('../plugin/bin/lib/hooks/repo-info-cache');
 const { gitRepo, linkedWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 const { isolateRepoInfoCache } = require('./helpers/repo-info-cache');
 
@@ -198,6 +198,74 @@ test('AC4.1: an indeterminate answer is never cached and the next call answers d
   const next = repoInfo(wt);
   assert.deepStrictEqual(next, { repoRoot: wt, isLinkedWorktree: true, indeterminate: false });
   assert.ok(counter.n > spawnedBefore, 'the call after an indeterminate one spawned git');
+});
+
+test('#5294: git\'s own "not a git repository" answer is remembered', (t) => {
+  isolateRepoInfoCache(t);
+  const dir = scratchDir('ct-ric-nongit-');
+  const counter = countRevParse(t);
+  const negative = { repoRoot: null, isLinkedWorktree: false, indeterminate: false };
+  assert.deepStrictEqual(repoInfo(dir), negative);
+  assert.deepStrictEqual(repoInfo(dir), negative);
+  assert.strictEqual(counter.n, 1);
+});
+
+test('#5294: a git killed by a signal is answered as today but not remembered', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  let killing = true;
+  const counter = countRevParse(t, () => (killing
+    ? Object.assign(new Error('Command failed: git rev-parse'), { status: null, signal: 'SIGKILL', stderr: '' })
+    : null));
+  // The returned answer is unchanged: git-error is a definitive negative (#134).
+  assert.deepStrictEqual(repoInfo(main), { repoRoot: null, isLinkedWorktree: false, indeterminate: false });
+  killing = false;
+  assert.deepStrictEqual(repoInfo(main), { repoRoot: main, isLinkedWorktree: false, indeterminate: false });
+  assert.strictEqual(counter.n, 2, 'the call after the killed git spawned git');
+});
+
+test('#5294: a directory reached through a symlink into a repo subdirectory is re-asked once the repo is gone', (t) => {
+  isolateRepoInfoCache(t);
+  const base = scratchDir('ct-ric-link-');
+  const repo = path.join(base, 'repo');
+  fixtureGit(['init', '-q', repo]);
+  fs.mkdirSync(path.join(repo, 'inner'));
+  const link = path.join(base, 'link');
+  fs.symlinkSync(path.join(repo, 'inner'), link, 'dir');
+  const counter = countRevParse(t);
+  assert.strictEqual(repoInfo(link).repoRoot, repo);
+  fs.rmSync(path.join(repo, '.git'), { recursive: true, force: true });
+  const after = repoInfo(link);
+  assert.strictEqual(counter.n, 2);
+  assert.deepStrictEqual(after, fresh(link));
+});
+
+test('#5294: an entry remembered under one uid does not answer another', (t) => {
+  isolateRepoInfoCache(t);
+  const dir = scratchDir('ct-ric-uid-');
+  const signature = repoSignature(dir);
+  const answer = { repoRoot: null, isLinkedWorktree: false, indeterminate: false };
+  rememberRepoInfo(dir, process.env, signature, answer, 1001);
+  assert.strictEqual(lookupRepoInfo(dir, process.env, 0).answer, null, 'memo: another uid misses');
+  resetMemo();
+  assert.strictEqual(lookupRepoInfo(dir, process.env, 0).answer, null, 'store: another uid misses');
+  assert.deepStrictEqual(lookupRepoInfo(dir, process.env, 1001).answer, answer, 'the same uid hits');
+});
+
+test('#5294: a cache lookup that throws falls back to git', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const counter = countRevParse(t);
+  repoInfo(main); // warm the memo, so the next lookup compares signatures
+  const stringify = t.mock.method(JSON, 'stringify', () => { throw new Error('cache fault'); });
+  let got;
+  try {
+    got = repoInfo(main);
+  } finally {
+    stringify.mock.restore();
+  }
+  assert.deepStrictEqual(got, { repoRoot: main, isLinkedWorktree: false, indeterminate: false });
+  assert.strictEqual(counter.n, 2);
 });
 
 test('#5294: a call with opts bypasses the memo', (t) => {

@@ -24,6 +24,18 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { fromTemplate, disableReceiveAutoGc } = require('./git-template');
 
+// #5294: repoInfo remembers answers in a per-user store (~/.claude-tweaks/repo-info-cache.json).
+// tools/run-tests.js points CT_HOOKS_REPO_INFO_STORE into its run root before any suite loads;
+// a bare `node --test` run has no runner, so a suite that loads this helper gets a fresh temp
+// store here instead (child processes inherit it). A value already set wins.
+if (!process.env.CT_HOOKS_REPO_INFO_STORE) {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ris-store-'));
+  process.env.CT_HOOKS_REPO_INFO_STORE = path.join(storeDir, 'repo-info-cache.json');
+  process.once('exit', () => {
+    try { fs.rmSync(storeDir, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+  });
+}
+
 // Ceiling for a single fixture git spawn.
 //
 // These calls previously passed no `timeout` at all, so they were unbounded by
