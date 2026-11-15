@@ -1936,6 +1936,204 @@ test('#4303: the cd after an assignment word that never closes is not followed',
   }
 });
 
+// #4448: the write gate reads the command word bash runs behind the stripped prefixes (assignment
+// words, redirections, and STRIPPED_PREFIX_WORDS with their options). Every verdict below was taken
+// under bash 3.2, bash 5 and zsh from a worktree W with M the main checkout; "all" means the three
+// agree. sudo and doas cannot run in the oracle: their rows cite sudo(8)'s and doas(1)'s argv
+// contract (sudo reads options, value-taking short letters a C c D g h p R r T t U u, then VAR=value
+// words, then the command; doas reads -L -n -s and value-taking -C and -u, then the command).
+{
+  const MAIN_B = path.resolve('/main/b');
+  const files = (cmd, cwd = '/r') => fileWriteTargets(cmd, cwd).map((x) => x.file);
+  const includesFor = (cmds, file) => {
+    for (const cmd of cmds) assert.ok(files(cmd).includes(file), `${cmd}: ${JSON.stringify(files(cmd))}`);
+  };
+  const copyMain = [{ action: 'copy', file: MAIN_F }];
+  const copyHere = [{ action: 'copy', file: path.resolve('/r/f.js') }];
+  const writeG = { action: 'write', file: path.resolve('/r/g') };
+
+  // all: M for each (`X=1 sed -i.bak s/a/b/ M/x` is the sed row's verdict); sudo per sudo(8).
+  test('AC1.1 #4448: a write shape behind a NAME=value or NAME+=value prefix resolves the main-checkout write', () => {
+    includesFor(['X=1 cp a /main/f.js', 'X=1 tee /main/f.js', 'x+=1 tee /main/f.js', 'X=1 sed -i s/a/b/ /main/f.js',
+      'x=$(echo a b) cp a /main/f.js', 'a=( 1 2 ) cp a /main/f.js', 'sudo cp a /main/f.js'], MAIN_F);
+  });
+
+  // all: M/b for each bare prefix and option row, except `time -p cp` (bash 3.2 and 5 write M/b,
+  // zsh runs `-p` and writes nothing: side with bash). `builtin cp x M/b` writes nothing in any
+  // shell (`builtin: cp: not a shell builtin`): reading cp is the accepted fail-closed tradeoff.
+  // `nice --adjustment=5` and `nice --adjustment 5` pin GNU nice's reading (macOS nice rejects
+  // them and writes nothing). sudo and doas rows per sudo(8) and doas(1).
+  test('AC1.2 #4448: a write shape behind each stripped prefix resolves the main-checkout write', () => {
+    includesFor(['! cp x /main/b', 'time cp x /main/b', 'command cp x /main/b', 'nohup cp x /main/b', 'nice cp x /main/b',
+      'doas cp x /main/b', 'exec cp x /main/b', 'builtin cp x /main/b',
+      'time -p cp x /main/b', 'command -p -- cp x /main/b', 'nohup -- cp x /main/b', 'nice -n 5 cp x /main/b',
+      'nice -n5 cp x /main/b', 'nice -5 cp x /main/b', 'nice --adjustment=5 cp x /main/b', 'nice --adjustment 5 cp x /main/b',
+      'exec -a foo cp x /main/b',
+      'exec -cl cp x /main/b', 'sudo -u bob cp x /main/b', 'sudo -E X=1 tee /main/b', 'doas -u bob cp x /main/b',
+      'doas -n cp x /main/b'], MAIN_B);
+  });
+
+  // all: M/f.js, except `X=1 time cp` (zsh: parse error, nothing; side with bash) and `! ! cp`
+  // (bash 5 writes M/f.js, bash 3.2 and zsh refuse to parse it: side with bash 5). sudo per sudo(8).
+  test('#4448: stripped prefixes chain and combine with assignments', () => {
+    includesFor(['nice nohup env X=1 cp a /main/f.js', 'command nice cp a /main/f.js', 'time ! cp a /main/f.js',
+      '! time cp a /main/f.js', 'X=1 time cp a /main/f.js', 'X=1 command cp a /main/f.js', 'sudo env X=1 cp a /main/f.js',
+      'env sudo cp a /main/f.js', '! ! cp a /main/f.js'], MAIN_F);
+  });
+
+  // all: M/f.js for each (a quoted or path-qualified time is /usr/bin/time, which runs cp too).
+  test('#4448: a quoted, escaped or path-qualified prefix word still strips', () => {
+    includesFor(['\\time cp a /main/f.js', "'time' cp a /main/f.js", '"nice" cp a /main/f.js', 'co\\mmand cp a /main/f.js',
+      '/usr/bin/nice cp a /main/f.js', '/usr/bin/env cp a /main/f.js'], MAIN_F);
+  });
+
+  // all: nothing written (`!: command not found`, `X=1: command not found`, exit 127); zsh cannot
+  // parse `X=1 !`. Reading cp anyway is the accepted fail-closed tradeoff.
+  test('#4448: a prefix word bash runs as a command name strips anyway (deliberate fail-closed tradeoff)', () => {
+    includesFor(['X=1 ! cp a /main/f.js', '\\! cp a /main/f.js', 'command X=1 cp a /main/f.js'], MAIN_F);
+  });
+
+  // all: M/f.js for each (macOS env). `env --unset=X` and `env --unset X` pin GNU env's reading
+  // (macOS env rejects the first and runs `X` for the second).
+  test('#4448: an env prefix with its options resolves the main-checkout write', () => {
+    includesFor(['env cp a /main/f.js', 'env -i X=1 cp a /main/f.js', 'env -u X cp a /main/f.js', 'env -iuX cp a /main/f.js',
+      'env - cp a /main/f.js', 'env -- cp a /main/f.js', 'env a.b=1 cp a /main/f.js', 'env "x"=1 cp a /main/f.js',
+      'env --unset=X cp a /main/f.js', 'env --unset X cp a /main/f.js', 'X=1 env Y=2 tee /main/f.js'], MAIN_F);
+  });
+
+  // all: M/f.js for `env -C M cp a f.js` and `env -iC M cp a f.js`; `--chdir`/`--ch` pin GNU env's
+  // reading (macOS env rejects them); sudo -D/--chdir per sudo(8). An unresolvable -C value leaves
+  // a relative target unprovable, while an absolute one still resolves.
+  test('#4448: env -C and sudo -D move the cwd a relative write resolves in', () => {
+    for (const cmd of ['env -C /main cp a f.js', 'env --chdir=/main cp a f.js', 'env -iC /main cp a f.js', 'env --ch /main cp a f.js',
+      'sudo -D /main cp a f.js', 'sudo --chdir=/main cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyMain, cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('env -C $X cp a f.js', '/r'), []);
+    assert.deepStrictEqual(fileWriteTargets('env -C $X cp a /main/f.js', '/r'), copyMain);
+  });
+
+  // all: M/f.js and W/g for each: bash reads a redirection anywhere among the prefix words and
+  // their options, and opens it in the shell's own cwd.
+  test('#4448: a redirect before or among the prefix words keeps its own cwd, and the command after it is read', () => {
+    for (const cmd of ['X=1 >g cp a /main/f.js', '>g X=1 cp a /main/f.js', 'env >g -u X cp a /main/f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [writeG, ...copyMain], cmd);
+    }
+    // all: M/b and W/g.
+    for (const cmd of ['nice >g -n 5 cp x /main/b', 'nice -n >g 5 cp x /main/b', 'nice >g cp x /main/b']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [writeG, { action: 'copy', file: MAIN_B }], cmd);
+    }
+    // all: M/f.js. A heredoc operator glued to its delimiter is one word, so the word after it is read.
+    for (const cmd of ['<<EOF tee /main/f.js\nx\nEOF', 'nice <<EOF tee /main/f.js\nx\nEOF', 'tee <<EOF /main/f.js\nx\nEOF']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'write', file: MAIN_F }], JSON.stringify(cmd));
+    }
+  });
+
+  // all: nothing for each lookup and bare prefix; `exec >g` writes W/g.
+  test('AC2.1 #4448: a lookup or a bare prefix resolves no target', () => {
+    for (const cmd of ['command -v cp', 'command -V cp', 'command -pv cp', 'builtin', 'time', '!', 'nice', 'env', 'sudo']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('exec >g', '/r'), [writeG]);
+  });
+
+  // `env -S 'cp a M/f.js'` writes M/f.js (macOS env) and `env -P /nope cp …` nothing (exit 127);
+  // sudo and doas per sudo(8)/doas(1); `env --split-string x cp …` per GNU env, which splits `x`
+  // into the command it runs. No command word is read behind these options: base parity, a
+  // left-out shape owned by #4572.
+  test('#4448: an opaque prefix option resolves no target (base parity, owned by #4572)', () => {
+    for (const cmd of ["env -S 'cp a /main/f.js'", "env --split-string='cp a /main/f.js'", 'env --split-string x cp a /main/f.js',
+      'env -P /x cp a /main/f.js',
+      "env -iS 'cp a /main/f.js'", 'sudo -e /main/f.js', 'sudo --edit /main/f.js', 'sudo -R /x cp a /main/f.js',
+      'sudo -i cp a /main/f.js', 'sudo -l cp a /main/f.js', 'doas -C /x cp a /main/f.js', 'doas -s']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+    }
+  });
+
+  // bash 3.2 and 5 write M/f.js for each moving row (zsh writes W/f.js for `builtin --`, `command`,
+  // `command -p -p` and `time -p` before cd: side with bash); `time -- cd` moves under bash 5 only (bash 3.2 and zsh
+  // run `--`): side with bash 5, which writes into M. All three write W/f.js for `nice cd` and
+  // `env cd` (an external cd), and nothing for `exec cd` (exit 127): the scanner reads on under the
+  // unmoved cwd there, a target in the shell's own cwd, never M.
+  test('#4448: builtin, command, ! and time before cd move the cwd; other prefixes do not', () => {
+    for (const cmd of ['builtin cd /main; cp a f.js', '\\builtin cd /main; cp a f.js', 'builtin -- cd /main; cp a f.js',
+      'command cd /main; cp a f.js', 'command -p cd /main; cp a f.js', 'command -p -p cd /main; cp a f.js', '! cd /main; cp a f.js',
+      'time cd /main; cp a f.js',
+      'time -p cd /main; cp a f.js', 'time -- cd /main; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyMain, cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('>g cd /main; cp a f.js', '/r'), [writeG, ...copyMain]);
+    for (const cmd of ['nice cd /main; cp a f.js', 'env cd /main; cp a f.js', 'exec cd /main; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyHere, cmd);
+    }
+  });
+
+  // From M, all three write M/f.js for each (`X=1 time`, `X=1 !` and `>g !`: zsh refuses to parse
+  // and writes nothing; `>g time cd`: zsh writes W/f.js; side with bash): a `time` or `!` that is
+  // quoted, escaped, path-qualified, or after an assignment, redirection or `command` is no
+  // reserved word, so its cd is the external one or a command name; `time` the keyword takes one
+  // `-p` only; `builtin -p`, `command -x` and `command --x` are usage errors (builtin reads `--`
+  // only, command `-p -v -V`); `/usr/bin/command` is a script. Following such a cd would resolve
+  // W/f.js: a leak.
+  // Base moved no cwd behind any prefix, so these pass there too: they hold commandWord's
+  // shell-only reading to the words bash runs in the current shell.
+  test('#4448 (pre-existing pin): a time or ! bash runs as a command name, and a path-qualified command, move no cwd before cd', () => {
+    for (const cmd of ['\\time cd /wt; cp a f.js', "'time' cd /wt; cp a f.js", '/usr/bin/time cd /wt; cp a f.js',
+      'X=1 time cd /wt; cp a f.js', '\\! cd /wt; cp a f.js', 'X=1 ! cd /wt; cp a f.js', 'command time cd /wt; cp a f.js',
+      '/usr/bin/command cd /wt; cp a f.js', 'time -l cd /wt; cp a f.js', 'time -p -p cd /wt; cp a f.js',
+      'builtin -p cd /wt; cp a f.js', 'command -x cd /wt; cp a f.js', 'command --x cd /wt; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), copyMain, cmd);
+    }
+    for (const cmd of ['>g time cd /wt; cp a f.js', '>g ! cd /wt; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), [{ action: 'write', file: path.resolve('/main/g') }, ...copyMain], cmd);
+    }
+  });
+
+  // all: nothing (`x=1: command not found`, exit 127).
+  test('#4448: a quoted or escaped assignment name is the command word, so no shape is read', () => {
+    for (const cmd of ['"x"=1 cp a /main/f.js', 'x\\=1 cp a /main/f.js']) assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+  });
+
+  // From M, all three write M/f.js: `"x"=1` is the command `x=1`, and the cd is its argument.
+  test('AC3.1 #4448 (pre-existing pin): a quoted-name assignment before cd changes no cwd', () => {
+    assert.deepStrictEqual(fileWriteTargets('"x"=1 cd /wt; cp a f.js', '/main'), copyMain);
+  });
+
+  // all: M/f.js for `\time -l` and `/usr/bin/time -p` (macOS /usr/bin/time); `X=1 time -a -o log`
+  // writes M/f.js and W/log under bash 3.2 and 5 (zsh: parse error; side with bash); `-f` and
+  // `--output=` pin GNU time's reading (macOS time rejects them). `\time -o M/log cp a b` writes
+  // M/log (time's own output file) and W/b in all three: that -o file is a left-out shape (#4572).
+  test('#4448: the external time program\'s options are read, and its -o file is a left-out shape (#4572)', () => {
+    includesFor(['\\time -l cp a /main/f.js', '/usr/bin/time -p cp a /main/f.js', 'X=1 time -a -o log cp a /main/f.js',
+      '\\time -f %e cp a /main/f.js', '\\time --output=log cp a /main/f.js'], MAIN_F);
+    assert.ok(!files('\\time -o /main/log cp a b').includes(path.resolve('/main/log')), JSON.stringify(files('\\time -o /main/log cp a b')));
+  });
+
+  // all: `X=1 mkdir M/px` and `time mkdir M/px` create M/px; `env -C M mkdir px` creates M/px too
+  // (macOS env); sudo per sudo(8). `command -v mkdir` creates nothing.
+  test('#4448: mkdir behind a stripped prefix resolves its directory', () => {
+    const shadow = path.resolve('/main/.claude-tweaks/pipelines/x');
+    for (const cmd of ['X=1 mkdir /main/.claude-tweaks/pipelines/x', 'sudo mkdir -p /main/.claude-tweaks/pipelines/x',
+      'time mkdir /main/.claude-tweaks/pipelines/x', 'env -C /main mkdir .claude-tweaks/pipelines/x']) {
+      assert.ok(mkdirTargets(cmd, '/r').map((x) => x.file).includes(shadow), `${cmd}: ${JSON.stringify(mkdirTargets(cmd, '/r'))}`);
+    }
+    assert.deepStrictEqual(mkdirTargets('command -v mkdir', '/r'), []);
+  });
+
+  // The record's body, "Scope under ADR 0028", lists the stripped prefixes: assignment words and
+  // these ten words. The exported set and reader are the one copy #4572 and #4244 reuse.
+  test('AC4.1 #4448: the exported stripped-prefix rule matches the record\'s list', () => {
+    assert.deepStrictEqual([...gitCommand.STRIPPED_PREFIX_WORDS].sort(),
+      ['!', 'builtin', 'command', 'doas', 'env', 'exec', 'nice', 'nohup', 'sudo', 'time']);
+    assert.ok(Object.isFrozen(gitCommand.STRIPPED_PREFIX_WORDS));
+    const q = (t) => ({ raw: t, spanKinds: t.map((w) => 'b'.repeat(w.length)), leadQuoted: t.map(() => false), pathImpl: path });
+    for (const t of [['X=1', 'cp'], ['x+=1', 'cp']]) assert.strictEqual(gitCommand.commandWord(t, q(t), '/r').index, 1, t.join(' '));
+    for (const t of [['command', '-v', 'cp'], ['command', '-V', 'cp'], ['env', '-S', 'cp a b'], ['env', '-P', '/x', 'cp']]) {
+      assert.strictEqual(gitCommand.commandWord(t, q(t), '/r').index, -1, t.join(' '));
+    }
+  });
+}
+
 // #4149: the write walk cuts at an unquoted lone `&`, so the command after it is
 // read as a command; the backgrounded and-or list runs in a subshell, so its `cd` does not move the
 // cwd for what follows. `&&`, `&>`, `>&`, `<&`, `|&` and an `&` inside `$( )` are not cuts.
