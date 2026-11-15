@@ -120,3 +120,26 @@ describe('scrubLocalPaths', () => {
     assert.strictEqual(scrubLocalPaths('plugin/bin/x.js'), 'plugin/bin/x.js');
   });
 });
+
+describe("the committed verdict fixtures", () => {
+  const file = path.join(__dirname, "fixtures", "merge-check-verdicts.json");
+  const raw = require("node:fs").readFileSync(file, "utf8");
+  const fixtures = JSON.parse(raw);
+
+  test("meet the AC9 floor and carry the documented shape", () => {
+    assert.ok(fixtures.entries.length >= 30, "at least 30 entries");
+    assert.ok(fixtures.entries.filter((e) => e.verdict !== "auto-merge").length >= 10, "at least 10 non-auto-merge entries");
+    assert.deepStrictEqual(Object.keys(fixtures), ["extractedAt", "divergence", "policy", "excluded", "entries"]);
+    for (const e of fixtures.entries) {
+      assert.deepStrictEqual(Object.keys(e), ["record", "verdict", "mergeSha", "title", "body", "blastRadius", "reviewFindings"]);
+      assert.ok(["auto-merge", "needs-human"].includes(e.verdict));
+      assert.match(e.mergeSha, /^[0-9a-f]{40}$/);
+    }
+  });
+
+  test("carry no local filesystem path and no rationale text", () => {
+    const os = require("node:os");
+    for (const needle of ["/Users/", os.tmpdir(), "/var/folders/", "/private/var/"]) assert.ok(!raw.includes(needle), "leaked " + needle);
+    assert.ok(!/rationale/i.test(Object.keys(fixtures.entries[0]).join(" ")));
+  });
+});
