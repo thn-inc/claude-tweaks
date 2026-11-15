@@ -96,3 +96,10 @@ test('no durableDeclined match and no cache/issueIndex match -> falls through to
 test('durableDeclined omitted entirely (opts has no durableDeclined key) -> behaves exactly as before this fix', () => {
   assert.deepStrictEqual(decide(F('codehealth-mmm', 'high'), {}, {}, { threshold: 'high' }), { action: 'file' });
 });
+
+test('AC4.1: an uppercase CLOSED state with no wontfix label -> reopen', () => {
+  const index = { 'codehealth-upper': { number: 8, state: 'CLOSED', labels: [] } };
+  const result = decide(F('codehealth-upper'), index, {});
+  assert.strictEqual(result.action, 'reopen');
+  assert.strictEqual(result.issue, 8);
+});
