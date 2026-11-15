@@ -42,6 +42,15 @@ test('AC9.1: a relative <json> path and --out resolve against the injected cwd',
   assert.ok(fs.existsSync(path.join(dir, 'out.d2')));
 });
 
+test('render takes the default generatedAt from the injected now', () => {
+  const jsonPath = tmpJson(FIXTURE_RECORDS);
+  const res = cli(['render', jsonPath, '--format', 'd2', '--work-links', 'native'], {
+    deps: { now: () => new Date('2026-01-02T03:04:05.000Z') },
+  });
+  assert.strictEqual(res.status, 0);
+  assert.match(res.stdout, /# Generated 2026-01-02T03:04:05\.000Z — /);
+});
+
 // real process: proves the script entry and exit code
 test('script entry: render writes D2 to stdout and exits 0', () => {
   const jsonPath = tmpJson(FIXTURE_RECORDS);
