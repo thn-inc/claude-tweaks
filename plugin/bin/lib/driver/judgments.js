@@ -19,10 +19,7 @@ const { loadMergeCheckRules, buildMergeCheckPrompt } = require('./judgment-promp
 const { bin, isPlainObject, isInterrupted, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
 const { verdictText, VERDICT_STEPS, confirmFromFile } = require('../dispatch/merge-verdict');
 const { runAcceptance: defaultRunAcceptance } = require('./acceptance');
-
-// A sanitized error code for a stop detail: the error's own `code` when it is an upper-case token, never its
-// message (mirrors review.js's codeSuffix, which is not exported).
-const codeSuffix = (err) => (err && typeof err.code === 'string' && /^[A-Z0-9_]+$/.test(err.code) ? ` (${err.code})` : '');
+const { codeSuffix } = require('./review');
 
 // One merge-check event.
 function emitEvent(deps, startedAt, verdict, floor, detail) {

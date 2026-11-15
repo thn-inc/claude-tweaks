@@ -32,6 +32,7 @@ const { findRunComments } = require('../../find-run-comment');
 const { isTrustedComment } = require('../issues/comment-trust');
 const { parseRecordFacets } = require('../issues/record');
 const { LABELS } = require('../issues/record-vocabulary');
+const { codeSuffix } = require('./review');
 
 // The successor spelling (#4610): the driver writes `accept:pending`; readers accept either spelling.
 const ACCEPT_PENDING = LABELS.ACCEPT_PENDING;
@@ -545,12 +546,6 @@ async function execute(env, ctx, state) {
   return out.stop ? { stop: `${out.stop}${note}` } : { detail: `route ${decision.route} complete${note}` };
 }
 
-// The thrown error's code (or, failing that, its name) as a bounded token, never its message.
-const errorSuffix = (err) => {
-  const token = err && [err.code, err.name].find((v) => typeof v === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(v));
-  return token ? ` (${token})` : '';
-};
-
 // The driver's acceptance step: { completed, route, detail }, one `merge-acceptance` event, never throws.
 async function runAcceptance(env, ctx) {
   const deps = env && env.deps;
@@ -560,7 +555,7 @@ async function runAcceptance(env, ctx) {
   try {
     out = await execute(env, ctx, state);
   } catch (err) {
-    out = { stop: `acceptance failed unexpectedly at ${state.step}${errorSuffix(err)}` };
+    out = { stop: `acceptance failed unexpectedly at ${state.step}${codeSuffix(err)}` };
   }
   // A signal during the worker launch was already reported by run.js's handler: no event, nothing more.
   if (isInterrupted(deps)) return { completed: false, route: state.route, detail: 'interrupted' };
