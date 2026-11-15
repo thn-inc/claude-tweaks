@@ -40,7 +40,14 @@ const { readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingReru
 // and commit to whatever repo it names (e.g. a linked worktree's branch). Pin
 // the spawn env so `-C <root>` stays in charge.
 function runGit(args, cwd, opts = {}) {
-  return runGitInherited(args, cwd, { ...opts, env: repoPinnedEnv() });
+  return runGitInherited(args, cwd, { ...opts, env: repoPinnedEnv(opts.env) });
+}
+
+// #5375: runGit over a caller's own environment (a CLI's injected `deps.env`),
+// still pinned the same way, for helpers that take a runner rather than an
+// `env` — archive-run passes it to archiveCommitLine.
+function pinnedGit(env = process.env) {
+  return (args, cwd, opts = {}) => runGit(args, cwd, { ...opts, env });
 }
 
 // Orphan case introduced by the dispatch/flow run-identity unification:
@@ -881,10 +888,10 @@ function listSpecDirs(runDir) {
 // supervising human). Returns true only when every pair ended back at its
 // original path in both index and disk; false means the tree is left partially
 // moved, which the caller reports as a distinct reason.
-function revertWorkMoves(root, workMoves) {
+function revertWorkMoves(root, workMoves, env) {
   let fullyReverted = true;
   for (const [src, dest] of workMoves) {
-    const reset = runGit(['reset', '--', src, dest], root);
+    const reset = runGit(['reset', '--', src, dest], root, { env });
     if (reset.failure) {
       // The index still matches what `git mv` staged (src removed, dest
       // added) — leave the file where `git mv` physically put it too, so
@@ -935,10 +942,10 @@ function revertPlainMoves(movedPairs) {
 // whole directory (the `topStaged` case below) needs "fully tracked," not
 // "partially tracked" — so a second check confirms no untracked file exists
 // anywhere under targetPath.
-function isTracked(root, targetPath) {
-  const check = runGit(['ls-files', '--error-unmatch', targetPath], root); // git-path-read: not a path list (exit code only)
+function isTracked(root, targetPath, env) {
+  const check = runGit(['ls-files', '--error-unmatch', targetPath], root, { env }); // git-path-read: not a path list (exit code only)
   if (check.failure) return false;
-  const untracked = runGit(['ls-files', '--others', '--exclude-standard', targetPath], root); // git-path-read: not a path list (emptiness only)
+  const untracked = runGit(['ls-files', '--others', '--exclude-standard', targetPath], root, { env }); // git-path-read: not a path list (emptiness only)
   return !untracked.failure && !untracked.stdout;
 }
 
@@ -957,7 +964,7 @@ function isTracked(root, targetPath) {
 // removes it (best-effort) and returns true so the caller treats it as
 // absent; otherwise leaves it alone and returns false — including for a
 // missing or unreadable directory (never throws).
-function removeIfEmptyUntrackedDir(root, dir) {
+function removeIfEmptyUntrackedDir(root, dir, env) {
   let entries;
   try {
     entries = fs.readdirSync(dir);
@@ -965,7 +972,7 @@ function removeIfEmptyUntrackedDir(root, dir) {
     return false;
   }
   if (entries.length !== 0) return false;
-  const tracked = runGit(['ls-files', dir], root); // git-path-read: not a path list (emptiness only)
+  const tracked = runGit(['ls-files', dir], root, { env }); // git-path-read: not a path list (emptiness only)
   if (tracked.failure || tracked.stdout) return false;
   try { fs.rmdirSync(dir); } catch { /* best-effort — already gone, or non-empty for an unexpected reason */ }
   return true;
@@ -1006,8 +1013,8 @@ function listFilesRecursive(dir) {
 // "genuinely diverged, refuse rather than guess" (the Technical Approach's
 // own choice of tool). Null on any failure (unreadable file, no git) — a
 // caller treats null as "not provably identical," never as a match.
-function fileHashObject(root, filePath) {
-  const r = runGit(['hash-object', filePath], root);
+function fileHashObject(root, filePath, env) {
+  const r = runGit(['hash-object', filePath], root, { env });
   if (r.failure) return null;
   const hash = (r.stdout || '').trim();
   return hash || null;
@@ -1019,14 +1026,14 @@ function fileHashObject(root, filePath) {
 // does a hash-object failure on either side (fail toward "not identical"
 // rather than silently treating an unreadable file as a safe dedupe).
 // -> { identical: boolean, differing: string[] } (relative paths).
-function compareWorkTwin(root, srcDir, destDir) {
+function compareWorkTwin(root, srcDir, destDir, env) {
   const differing = [];
   for (const rel of listFilesRecursive(srcDir)) {
     const srcFile = path.join(srcDir, rel);
     const destFile = path.join(destDir, rel);
     if (!fs.existsSync(destFile)) { differing.push(rel); continue; }
-    const srcHash = fileHashObject(root, srcFile);
-    const destHash = fileHashObject(root, destFile);
+    const srcHash = fileHashObject(root, srcFile, env);
+    const destHash = fileHashObject(root, destFile, env);
     if (!srcHash || !destHash || srcHash !== destHash) differing.push(rel);
   }
   return { identical: differing.length === 0, differing };
@@ -1043,17 +1050,17 @@ function compareWorkTwin(root, srcDir, destDir) {
 // batch can be undone via `revertStagedOps` below.
 // -> { ok: true, resolved: [{kind, srcFile, destFile}] } |
 //    { ok: false, reason, lastError, resolved (partial) }
-function resolveIdenticalWorkTwin(root, srcDir, destDir) {
+function resolveIdenticalWorkTwin(root, srcDir, destDir, env) {
   const resolved = [];
   for (const rel of listFilesRecursive(srcDir)) {
     const srcFile = path.join(srcDir, rel);
     const destFile = path.join(destDir, rel);
-    if (isTracked(root, destFile)) {
-      const rm = runGit(['rm', '-q', '--', srcFile], root);
+    if (isTracked(root, destFile, env)) {
+      const rm = runGit(['rm', '-q', '--', srcFile], root, { env });
       if (rm.failure) return refusal('work-twin-resolve-failed', { lastError: rm.stderr, hint: rm.stderr || null, resolved });
       resolved.push({ kind: 'twin-rm', srcFile, destFile });
     } else {
-      const mv = runGit(['mv', '-f', srcFile, destFile], root);
+      const mv = runGit(['mv', '-f', srcFile, destFile], root, { env });
       if (mv.failure) return refusal('work-twin-resolve-failed', { lastError: mv.stderr, hint: mv.stderr || null, resolved });
       resolved.push({ kind: 'twin-mv', srcFile, destFile });
     }
@@ -1069,18 +1076,18 @@ function resolveIdenticalWorkTwin(root, srcDir, destDir) {
 // as one LIFO unit, not just the sub-batch that happened to fail. Best-effort
 // and never throws, matching every other revert helper in this file; returns
 // whether every operation in `ops` ended back at its original state.
-function revertStagedOps(root, ops) {
+function revertStagedOps(root, ops, env) {
   let fullyReverted = true;
   for (const op of [...ops].reverse()) {
     if (op.kind === 'mv') {
-      if (!revertWorkMoves(root, [[op.src, op.dest]])) fullyReverted = false;
+      if (!revertWorkMoves(root, [[op.src, op.dest]], env)) fullyReverted = false;
     } else if (op.kind === 'twin-rm') {
       // `git rm` only staged the removal (nothing committed yet) — checking
       // out HEAD's copy restores both the index entry and the working file.
-      const co = runGit(['checkout', 'HEAD', '--', op.srcFile], root);
+      const co = runGit(['checkout', 'HEAD', '--', op.srcFile], root, { env });
       if (co.failure) fullyReverted = false;
     } else if (op.kind === 'twin-mv') {
-      const reset = runGit(['reset', '--', op.srcFile, op.destFile], root);
+      const reset = runGit(['reset', '--', op.srcFile, op.destFile], root, { env });
       if (reset.failure) { fullyReverted = false; continue; }
       try {
         // Pre-op, srcFile and destFile were two independent physical files
@@ -1328,7 +1335,8 @@ function findRefusingArchiveCollision(runDir, archiveDir, runStateDestIsRealPrio
   return null;
 }
 
-function archiveRunDir(root, runDir) {
+// opts.env: the environment every git child inherits (default process.env, as before).
+function archiveRunDir(root, runDir, { env } = {}) {
   const runId = path.basename(runDir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
   // #2816 follow-up: captured before mkdirSync below so `refuseAfterMarker`
@@ -1466,10 +1474,10 @@ function archiveRunDir(root, runDir) {
   // into `workMoves`/`twinPlan`. A non-empty untracked `work/` (#953) falls
   // through unchanged to the twin/workMoves classification below.
   const topWork = path.join(runDir, 'work');
-  if (fs.existsSync(topWork) && !removeIfEmptyUntrackedDir(root, topWork)) {
+  if (fs.existsSync(topWork) && !removeIfEmptyUntrackedDir(root, topWork, env)) {
     const topWorkDest = path.join(archiveDir, 'work');
     if (path.resolve(topWork) !== path.resolve(topWorkDest) && fs.existsSync(topWorkDest)) {
-      const twin = compareWorkTwin(root, topWork, topWorkDest);
+      const twin = compareWorkTwin(root, topWork, topWorkDest, env);
       if (!twin.identical) {
         return refuseAfterMarker('work-twin-conflict', {
           conflict: { src: topWork, dest: topWorkDest, differing: twin.differing },
@@ -1518,7 +1526,7 @@ function archiveRunDir(root, runDir) {
     for (const auditFile of ['decisions.md', 'report.md', 'staged']) {
       const src = path.join(runDir, auditFile);
       if (!fs.existsSync(src)) continue;
-      if (isTracked(root, src)) workMoves.push([src, path.join(archiveDir, auditFile)]);
+      if (isTracked(root, src, env)) workMoves.push([src, path.join(archiveDir, auditFile)]);
       else untrackedAuditFiles.push(auditFile);
     }
   }
@@ -1546,7 +1554,7 @@ function archiveRunDir(root, runDir) {
     // #2816: same empty-untracked-directory treatment as topWork above,
     // for the multi-spec-parent shape of the identical materialize
     // hard-gate-stop leftover.
-    if (removeIfEmptyUntrackedDir(root, specWork)) continue;
+    if (removeIfEmptyUntrackedDir(root, specWork, env)) continue;
     const specArchiveDir = path.join(archiveDir, specName);
     try {
       fs.mkdirSync(specArchiveDir, { recursive: true });
@@ -1556,7 +1564,7 @@ function archiveRunDir(root, runDir) {
     const specWorkDest = path.join(specArchiveDir, 'work');
     // #1323: same same-path guard as topWork above.
     if (path.resolve(specWork) !== path.resolve(specWorkDest) && fs.existsSync(specWorkDest)) {
-      const twin = compareWorkTwin(root, specWork, specWorkDest);
+      const twin = compareWorkTwin(root, specWork, specWorkDest, env);
       if (!twin.identical) {
         return refuseAfterMarker('work-twin-conflict', {
           conflict: { src: specWork, dest: specWorkDest, differing: twin.differing },
@@ -1575,10 +1583,10 @@ function archiveRunDir(root, runDir) {
     // just the sub-batch that happened to fail.
     const stagedOps = [];
     for (const [src, dest] of twinPlan) {
-      const result = resolveIdenticalWorkTwin(root, src, dest);
+      const result = resolveIdenticalWorkTwin(root, src, dest, env);
       stagedOps.push(...result.resolved);
       if (!result.ok) {
-        const fullyReverted = revertStagedOps(root, stagedOps);
+        const fullyReverted = revertStagedOps(root, stagedOps, env);
         return refuseAfterMarker(fullyReverted ? result.reason : 'work-twin-resolve-failed-partial-revert', {
           lastError: result.lastError,
           hint: result.lastError || null,
@@ -1600,9 +1608,9 @@ function archiveRunDir(root, runDir) {
     // reasoning as the commit-failure branch below, applied one loop
     // iteration earlier.
     for (const [src, dest] of workMoves) {
-      const mv = runGit(['mv', src, dest], root);
+      const mv = runGit(['mv', src, dest], root, { env });
       if (mv.failure) {
-        const fullyReverted = revertStagedOps(root, stagedOps);
+        const fullyReverted = revertStagedOps(root, stagedOps, env);
         const reason = fullyReverted ? 'git-mv-failed' : 'git-mv-failed-partial-revert';
         return refuseAfterMarker(reason, { lastError: mv.stderr, hint: mv.stderr || null });
       }
@@ -1620,7 +1628,7 @@ function archiveRunDir(root, runDir) {
     // rather than sweeping whatever else a human or sibling session happens
     // to have staged in this shared main checkout at the same moment.
     const commitPaths = workMoves.flatMap(([src, dest]) => [src, dest]);
-    const commit = commitGit(['commit', '-m', archiveCommitSubject(runId), '--', ...commitPaths], root);
+    const commit = commitGit(['commit', '-m', archiveCommitSubject(runId), '--', ...commitPaths], root, { env });
     if (commit.failure) {
       // A partial revert (some ops' `git reset`/`git checkout` or disk move
       // failed) is a distinct outcome from a clean one: the retry guard
@@ -1629,10 +1637,10 @@ function archiveRunDir(root, runDir) {
       // `commit-failed-partial-revert` makes that distinction visible to
       // callers/logs rather than collapsing both into the same reason
       // string.
-      const fullyReverted = revertStagedOps(root, stagedOps);
+      const fullyReverted = revertStagedOps(root, stagedOps, env);
       return refuseAfterMarker(fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert');
     }
-    archiveCommit = readArchiveCommit(root, runId);
+    archiveCommit = readArchiveCommit(root, runId, (args, cwd) => runGit(args, cwd, { env }));
   }
 
   // Tracked-entry guard: a git-tracked file in the run dir outside work/
@@ -1645,7 +1653,7 @@ function archiveRunDir(root, runDir) {
   // tracked file this function doesn't know how to move, on either a
   // tidy-standalone run or any other — still refuses exactly as before.
   if (fs.existsSync(runDir)) {
-    const lsFiles = runGit(['ls-files', '-z', '--', runDir], root, { raw: true });
+    const lsFiles = runGit(['ls-files', '-z', '--', runDir], root, { raw: true, env });
     if (lsFiles.failure) return refuseAfterMarker('ls-files-failed');
     const workDir = path.join(runDir, 'work');
     const trackedOutsideWork = splitNul(lsFiles.stdout)
@@ -2805,7 +2813,7 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,

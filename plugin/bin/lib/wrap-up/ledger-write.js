@@ -17,6 +17,7 @@ const { execFileSync } = require('child_process');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { splitLedgerRow, escapeLedgerCell, collapseLineBreaks } = require('./ledger-cells');
 const { isPathContained } = require('../shared-primitives');
+const { resolveAgainst } = require('../health-core/io');
 
 const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation'];
 
@@ -43,7 +44,7 @@ function defaultGit(args, { cwd, env } = {}) {
 // `ledger.md` or `*-ledger.md` and its real path must sit under `runDir` or
 // `worktree` — otherwise `{ ok: false, reason: 'rejected', detail }`, since
 // callers unlink or overwrite whatever it names.
-function resolveLedgerPath({ runDir, worktree, explicit, env, deps = {} } = {}) {
+function resolveLedgerPath({ runDir, worktree, explicit, env, deps = {}, cwd } = {}) {
   const existsSync = deps.existsSync || fs.existsSync;
   const readdirSync = deps.readdirSync || fs.readdirSync;
   const realpathSync = deps.realpathSync || fs.realpathSync;
@@ -51,13 +52,16 @@ function resolveLedgerPath({ runDir, worktree, explicit, env, deps = {} } = {}) 
   // Lazy: pack.js is a heavy module, and only the docs/plans fallback needs it.
   const resolveBase = deps.resolveBase || ((wt) => { const pack = require('./pack'); return pack.resolveWorktreeBase(wt, pack.defaultDeps(wt, { env })); });
 
+  // `cwd` (optional): the directory a relative `explicit` is read against. The fs calls get the path joined onto
+  // it without normalizing (resolveAgainst); `explicit` itself is echoed back as given. Absent, fs sees `explicit` as is.
+  const at = (p) => (cwd === undefined ? p : resolveAgainst(cwd, p));
   if (explicit) {
     const base = path.basename(explicit);
     if (base !== 'ledger.md' && !base.endsWith('-ledger.md')) {
       return { ok: false, reason: 'rejected', detail: 'not a ledger file name (expected ledger.md or *-ledger.md)', candidates: [explicit] };
     }
-    if (!existsSync(explicit)) return { ok: false, reason: 'not-found', candidates: [explicit] };
-    const real = (p) => { try { return realpathSync(p); } catch { return null; } };
+    if (!existsSync(at(explicit))) return { ok: false, reason: 'not-found', candidates: [explicit] };
+    const real = (p) => { try { return realpathSync(at(p)); } catch { return null; } };
     const target = real(explicit);
     const roots = [runDir, worktree].filter(Boolean).map(real).filter(Boolean);
     if (!target || !roots.some((r) => isPathContained(target, r))) {
@@ -95,8 +99,10 @@ function resolveLedgerPath({ runDir, worktree, explicit, env, deps = {} } = {}) 
 // another run — for a caller that must show the split rather than act on one
 // target. `report` mirrors the resolve outcome: found | none | ambiguous |
 // unattributable. An unattributable run names no this-run/other-run entries
-// (ownership is unknown), only `unattributed`.
-function describeRunLedgers({ runDir, worktree, deps = {} } = {}) {
+// (ownership is unknown), only `unattributed`. `env` is forwarded to
+// resolveLedgerPath, so its ownership git children see the caller's injected
+// environment (#5375); absent, they inherit the real one.
+function describeRunLedgers({ runDir, worktree, env = process.env, deps = {} } = {}) {
   const readdirSync = deps.readdirSync || fs.readdirSync;
   const plansDir = path.join(worktree, 'docs', 'plans');
   let entries = [];
@@ -104,7 +110,7 @@ function describeRunLedgers({ runDir, worktree, deps = {} } = {}) {
   const plans = entries.filter((f) => f.endsWith('-ledger.md')).map((f) => path.join(plansDir, f));
   const without = (taken) => plans.filter((p) => !taken.includes(p));
 
-  const r = resolveLedgerPath({ runDir, worktree, deps });
+  const r = resolveLedgerPath({ runDir, worktree, env, deps });
   if (r.ok) return { report: 'found', ledgers: [r.path], others: without([r.path]), unattributed: [], detail: null };
   if (r.reason === 'ambiguous') return { report: 'ambiguous', ledgers: r.candidates, others: without(r.candidates), unattributed: [], detail: null };
   if (r.reason === 'unattributable') return { report: 'unattributable', ledgers: [], others: [], unattributed: r.candidates, detail: r.detail };

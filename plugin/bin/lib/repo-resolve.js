@@ -56,8 +56,12 @@ function ghAvailable(deps = {}) {
   }
 }
 
-function remoteUrl() {
-  return execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true });
+// `cwd` and `env` (optional) are where the git child runs and the environment it runs in; absent,
+// the process's own, so an existing caller is unchanged.
+function remoteUrl({ cwd, env } = {}) {
+  return execFileSync('git', ['remote', 'get-url', 'origin'], {
+    encoding: 'utf8', windowsHide: true, ...(cwd ? { cwd } : {}), ...(env ? { env } : {}),
+  });
 }
 
 // A parseRepo result (or any { host, owner, repo }) -> the slug `gh --repo`
@@ -370,19 +374,32 @@ function explicitRepoGhHost(repoSpec, cwd, deps = {}) {
   return host === (resolveGhHost(cwd || process.cwd(), deps) || 'github.com') ? null : host;
 }
 
+// Own properties of `over` laid over a copy of `base`, copied as descriptors: injectedGhDeps's lazy
+// `homedir` getter stays a getter, where an object spread would call it here and run `homeDir()`
+// even when the lookup never falls through to the home.
+function withDescriptors(base, over) {
+  return Object.defineProperties({}, { ...Object.getOwnPropertyDescriptors(base), ...Object.getOwnPropertyDescriptors(over || {}) });
+}
+
 // For a single-invocation CLI whose every gh call targets its explicit --repo:
 // records explicitRepoGhHost's answer (or null) as this module's explicit repo
 // host, which ghOptions adds as GH_HOST to each wrapped call's own env. Writes
 // neither process.env nor `deps.env`, so a gh spawn that skips ghOptions is not
-// reached by it. -> the host recorded, or null. Called from a CLI's realDeps only.
+// reached by it. `deps` carries `cwd`, `env` and `homeDir`: a `homeDir` function becomes
+// injectedGhDeps's lazy `homedir` getter, so `homeDir()` runs only when the lookup falls
+// through to the home (an exported GH_HOST returns before it). -> the host recorded,
+// or null. Called from a CLI's realDeps only.
 function pinExplicitRepoHost(repoSpec, deps = {}) {
   const env = deps.env || process.env;
-  explicitRepoHost = explicitRepoGhHost(repoSpec, deps.cwd, { ...deps, env });
+  const withHome = typeof deps.homeDir === 'function' && !('homedir' in deps)
+    ? withDescriptors(deps, injectedGhDeps({ homeDir: deps.homeDir }))
+    : deps;
+  explicitRepoHost = explicitRepoGhHost(repoSpec, deps.cwd, withDescriptors(withHome, { env }));
   return explicitRepoHost;
 }
 
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
-  ghOptions, injectedGhDeps, pickInjected, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
+  ghOptions, injectedGhDeps, pickInjected, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, withDescriptors, _resetGhHostCache,
   isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget, hostPathOf, originSpecOf,
 };
