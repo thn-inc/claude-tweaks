@@ -136,7 +136,7 @@ Files: `plugin/skills/review/step3-tiebreak.md`, `step3-routing.md`, `plugin/bin
 
 ## Phase 3 — Guard: reads are never refused
 
-**3.1 Classify the refusals.** A maintainer-side tool reads transcripts and prints refused commands grouped by shape, with a count and whether the command writes. Done when the table covers at least 95% of refusals in a 30-day window.
+**3.1 Classify the refusals.** `tools/guard-refusals.js` (#4028) already reads transcripts and counts refused commands by reason and by detector shape. This unit adds what it lacks: for each shape, whether the command writes. Done when the table covers at least 95% of refusals in a 30-day window.
 
 **3.2 Admit read-only shapes.** For each shape in the table that only reads, the scanner admits it. A shape the scanner cannot prove read-only stays refused. Every change passes the differential run in `.claude/skills/shell-scanner-bash-differential`. Done when a replay of the window's refused commands shows no read-only command refused and no write newly admitted.
 
@@ -150,17 +150,17 @@ The existing records that teach callers to avoid refused shapes (#4990, #4931) s
 
 ## Phase 5 — Per-step facts and replay tools
 
-**5.1 Timing for every run.** `timing.json` exists in 406 of 2,947 run directories. The record finds why and closes the gap for new runs.
+**5.1 Timing for every run.** `timing.json` exists in 406 of 2,948 run directories. It is written only when a model step runs `phase-timing.js`. Of 255 November runs, 106 have none; 90 of those are dispatched runs and 93 are closed. The record writes the file in code when a run closes.
 
 **5.2 Step yield.** One run artifact holds, per step: tokens, minutes, agents, and what the step produced. For review: findings raised, reported by both reviewers, confirmed and refuted by tiebreak. For any step: questions asked and minutes waited on each. Written by code from the decision log and the timing data; no model turn.
 
-**5.3 Replay tools.** Move the three scratch scripts behind this design into `tools/`, with tests sized like the neighbouring tools: review yield from decision logs, the single-reviewer counterfactual from lens tables, and the tiebreak replay harness. `tools/` is maintainer-side and does not ship.
+**5.3 Replay tools.** Move the scratch scripts behind this design into `tools/`, with tests sized like the neighbouring tools: the single-reviewer counterfactual from lens tables and the tiebreak replay harness. The judges stay agents of a Workflow script, so the replay's token totals compare with the archive's. Review yield across the archive is not a third tool: 5.2's function is run over archived run directories by a small report. `tools/` is maintainer-side and does not ship.
 
 **5.4 Scoreboard view.** One record in the dispatch repository: the scoreboard reads the 5.2 artifact and shows cost against yield per step and lane. Filed there, designed there.
 
 ## Phase 6 — Review fan-out as a plugin workflow
 
-One workflow script in `plugin/workflows/` runs the lens reviewers for a review: the composed brief unchanged, both reviewers of each pair, model and effort per lens as today. The script returns each reviewer's findings as structured output. Pairing, the ground-truth checks and the decision-log lines stay in the existing CLIs, called after the workflow returns, because a script cannot require a module. `/claude-tweaks:review` Step 3 names the workflow; that is the opt-in the tool requires.
+One workflow script in `plugin/workflows/` runs the lens reviewers for a review: the composed brief unchanged, both reviewers of each pair, model and effort per lens as today. The script returns each reviewer's findings as structured output. Pairing, the ground-truth checks and the decision-log lines stay in the existing CLIs, called after the workflow returns, because a script cannot require a module. One of those is not in a CLI today: the per-finding pair lines (`Reproduction: … reproduced. Confirmed.` and five more forms) are written by the reviewing session from templates in `step3-lens-dispatch.md`. This phase moves that write into `review-coordination.js categorise-reproduction`, the way `resolve-tiebreak --run` already logs its own line. `/claude-tweaks:review` Step 3 names the workflow; that is the opt-in the tool requires.
 
 Done when, over at least 20 reviews run both ways, the workflow path's confirmed findings are no fewer and the main session's tokens for Step 3 are lower, both read from the 5.2 artifact.
 
