@@ -36,20 +36,28 @@ function findOnPath(name) {
   return null;
 }
 
+// win32 skips dash even when one is on PATH: the windows-latest runner has a dash
+// that cannot exec a Windows-form path such as C:\...\node.exe (exit 127, measured
+// in windows-regression run 43647466952). Claude Code runs Windows hooks under Git
+// Bash's sh, which the [sh] variant covers.
+const WIN32_DASH_SKIP = 'win32: dash cannot exec a Windows-form path (C:\\...\\node.exe), measured in windows-regression run 43647466952; Claude Code runs Windows hooks under Git Bash sh, covered by [sh]';
+
 const SHELLS = [
   { name: 'sh', file: findOnPath('sh') },
-  { name: 'dash', file: findOnPath('dash') },
+  process.platform === 'win32'
+    ? { name: 'dash', file: null, skipReason: WIN32_DASH_SKIP }
+    : { name: 'dash', file: findOnPath('dash') },
   { name: 'bash', file: findOnPath('bash') },
 ];
 
-const NOT_ON_PATH = (name) => `${name} not on PATH (windows-latest Git Bash ships no dash)`;
+const NOT_ON_PATH = (name) => `${name} not on PATH`;
 
 // One test per shell; sh is required, dash and bash skip by name when missing.
 function perShell(title, fn, extra = {}) {
   for (const sh of SHELLS) {
     const missing = !sh.file;
     if (missing && sh.name === 'sh') throw new Error('sh not found on PATH');
-    test(`${title} [${sh.name}]`, { skip: (missing && NOT_ON_PATH(sh.name)) || extra.skip }, (t) => fn(sh, t));
+    test(`${title} [${sh.name}]`, { skip: (missing && (sh.skipReason || NOT_ON_PATH(sh.name))) || extra.skip }, (t) => fn(sh, t));
   }
 }
 
@@ -448,10 +456,16 @@ perShell('hooks.sh AC9: the shell policy check agrees with resolveWorktreeAlways
   assertPolicyParity(AC9_FIXTURES, LAUNCHER_ARG, [sh]);
 });
 
+// win32: the mutant leaves AC9.7 green there on every shell (measured in
+// windows-regression run 43647466952), so the CR never reaches the awk program
+// and the \r member cannot be discriminated. AC9.7's parity row itself still
+// runs and passes on win32.
+const WIN32_CR_GO_RED_SKIP = 'win32: dropping \\r leaves AC9.7 green (measured in windows-regression run 43647466952): the CR never reaches the awk program there; AC9.7 parity itself passes on win32';
+
 perShell('hooks.sh AC9 go-red: deleting \\r from the whitespace class flips AC9.7', (sh) => {
   const copy = launcherCopy('ws = "([ \\t\\r\\f\\v]|', 'ws = "([ \\t\\f\\v]|');
   assert.throws(() => assertPolicyParity(AC9_FIXTURES, copy, [sh]), /policy parity: AC9\.7 /);
-});
+}, { skip: process.platform === 'win32' && WIN32_CR_GO_RED_SKIP });
 
 const EDGE_FIXTURES = [
   ['E1', 'worktree-always: true\nworktree-always:\n', 'on'],
