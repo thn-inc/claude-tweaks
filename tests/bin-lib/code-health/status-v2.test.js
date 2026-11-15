@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { seedDurableState } = require('./seed-durable-state');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
@@ -299,9 +300,9 @@ test('refuses a cache entry that is a string ({"a":"open"})', () => {
   assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
 });
 
-const cannotChmod = process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0);
+const cannotChmod = chmodDenialSkip('root bypasses permission bits, so the EACCES cannot be simulated');
 
-test('refuses when the cache\'s parent directory is unreadable (lstat EACCES)', { skip: cannotChmod }, () => {
+test('refuses when the cache\'s parent directory is unreadable (lstat EACCES)', cannotChmod, () => {
   const root = tmp();
   writeRaw(root, '{}');
   const dir = path.dirname(cacheFile(root));
@@ -313,7 +314,7 @@ test('refuses when the cache\'s parent directory is unreadable (lstat EACCES)', 
   }
 });
 
-test('refuses when the cache file itself is unreadable (read EACCES)', { skip: cannotChmod }, () => {
+test('refuses when the cache file itself is unreadable (read EACCES)', cannotChmod, () => {
   const root = tmp();
   writeRaw(root, '{}');
   fs.chmodSync(cacheFile(root), 0o000);
