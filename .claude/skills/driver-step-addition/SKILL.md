@@ -121,6 +121,7 @@ The merge step (#5226) runs a procedure with sub-steps of its own, so its body l
 | Keeping every intermediate read on `ctx` for the interrupt handler | The interrupted line reports it as the record's word, though the loop would not have ended on it. The ci step keeps `ctx.ci` at `pending` until a read is final (`AC14: an interrupt after an unsettled early read reports pending, never that read`) |
 | A new stop class added to `STOP_CLASSES` and `OUTCOME_BY_CLASS` only | `selectRow` has no case for it, so settle runs the `blocked` row: the record is labelled `bot:blocked`, the final line's outcome reads `blocked` whatever the class maps to, and `unclassified` is the only sign |
 | Adding a second call of a shape existing tests script as `[match, reply]` | The harness answers every call an entry matches, so the new call gets the old reply: #5454's test-step `git status` read got `AC3.1`'s commit-step porcelain and stopped the run on the tree. Move such entries to `nthCall(match, 1, reply)` |
+| Guarding a remote write on HEAD alone when the write names a ref | `git push origin {branch}` sends `refs/heads/{branch}`, not HEAD. A switch to another branch, or a detached HEAD, at the same commit before the driver commits passes a HEAD check, while the commit lands off the pushed branch. The push step also reads `refs/heads/{branch}` and stops pre-push when it is not the checked head or cannot be read (#5458) |
 
 ## Reference
 
