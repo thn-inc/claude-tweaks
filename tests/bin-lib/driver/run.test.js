@@ -12,13 +12,15 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const DRIVE = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'drive.js');
 const {
-  STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
+  STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, neutralize, normalizeTitle, createEventSink, MERGE_STEP_NAMES,
 } = require(path.join(LIB, 'driver', 'events'));
-const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
+const { run, parseArgs, USAGE, driveRecord, driveRecordFacts, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE,
 } = require(path.join(LIB, 'driver', 'steps'));
+const { ENDED, STATUS_BY_ENDED } = require(path.join(LIB, 'driver', 'budget'));
+const { rankNext } = require(path.join(LIB, 'dispatch', 'queue-pull'));
 // Polls taken before the first one at or past the settle window (the harness clock moves 1 per now(), ms per sleep).
 const WINDOW_POLLS = CI_SETTLE_WINDOW_MS / CI_POLL_INTERVAL_MS + 1;
 const { openBlockerRefs } = require(path.join(LIB, 'issues', 'record-dependencies'));
@@ -241,6 +243,8 @@ test('constants: step vocabulary, camelCase map and frozen shapes', () => {
   assert.equal(STEP_NAMES[STEP_NAMES.length - 1], 'merge');
   assert.equal(STEP_NAMES.indexOf('review'), STEP_NAMES.indexOf('check') + 1, 'the reviewer sits right after check');
   assert.equal(FINAL_STEP, 'final');
+  assert.equal(BUDGET_STEP, 'budget');
+  assert.ok(!STEP_NAMES.includes(BUDGET_STEP) && !SETTLE_STEP_NAMES.includes(BUDGET_STEP) && !MERGE_STEP_NAMES.includes(BUDGET_STEP) && BUDGET_STEP !== FINAL_STEP);
   assert.equal(STEP.runDir, 'run-dir');
   assert.equal(STEP.recordPr, 'record-pr');
   assert.equal(STEP.setConfig, 'set-config');
@@ -466,6 +470,8 @@ function defaultScript(over, fx) {
     [on('native-deps'), (c) => new Map(c.args[0].numbers.map((n) => [n, { blockedBy: [], openBlocker: false, openBlockerIds: [], ...pick(over.nativeDeps, c) }]))],
     [on('linked-prs'), (c) => new Map(c.args[0].numbers.map((n) => [n, { openPR: null, mentions: [], ...pick(over.linkedPRs, c) }]))],
     [on('admission'), (c) => ({ admitted: true, reasons: [], ...pick(over.admission, c) })],
+    // The --budget loop's pull: an empty queue unless a test scripts one.
+    [on('queuePull'), { groups: [], exclusions: [] }],
   ];
 }
 
@@ -524,6 +530,8 @@ function harness(over = {}) {
     fetchNativeDependencies: (opts) => dispatch('native-deps', [opts]),
     fetchLinkedPRs: (opts) => dispatch('linked-prs', [opts]),
     evaluateAdmission: (input) => dispatch('admission', [input]),
+    queuePull: (options, d) => dispatch('queuePull', [options, d]),
+    rankNext: (groups, entries, opts) => { record('rankNext', [groups, entries, opts]); return rankNext(groups, entries, opts); },
     reviewRequired: (opts) => { reviewerCalls.push(opts); return (over.reviewRequired || realReviewRequired)(opts); },
     launchWorker: (opts, d) => dispatch('worker', [opts, d]),
     resolveRunDir: (opts) => dispatch('resolveRunDir', [opts]),
@@ -572,6 +580,13 @@ function harness(over = {}) {
 }
 
 const finals = (h) => h.lines().filter((l) => l.step === FINAL_STEP);
+
+// Singleton groups of pulled records, createdAt ascending by position (the pull's record shape).
+const pulledRecord = (n, i) => ({
+  number: n, title: `record ${n}`, body: `Body of #${n}.`, labels: [{ name: 'risk:low' }], state: 'OPEN',
+  createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(), facets: { priority: null },
+});
+const queueOf = (...numbers) => numbers.map((n, i) => [pulledRecord(n, i)]);
 
 // --- invocation -----------------------------------------------------------------------
 
@@ -957,7 +972,7 @@ test('codeOf self-test: a comment never matches, code after a literal opener sti
   // The mis-parse only blank mode shows (bin-source-scan-conformance): a regex after `)` reads as division.
   const misparse = "if (b) /'/.test(b); const c = 'x'; f(c);";
   assert.equal(stripperVerdict(misparse, stripComments(misparse, { literals: 'blank' })), 'misparsed');
-  for (const file of ['run.js', 'steps.js']) assert.ok(codeOf(path.join(LIB, 'driver', file)).length > 1000, file);
+  for (const file of ['run.js', 'steps.js', 'budget.js']) assert.ok(codeOf(path.join(LIB, 'driver', file)).length > 1000, file);
 });
 
 test('step constants', () => {
@@ -5126,11 +5141,13 @@ test('AC9.3: first driven, second refused, and the reverse', async () => {
   assert.deepEqual(finals(refuseFirst).map((f) => f.outcome), ['refused', 'pending-review']);
 });
 
-test('AC13.1: STEPS names equal STEP_NAMES and run.js names no step', () => {
+test('AC13.1: STEPS names equal STEP_NAMES and run.js and budget.js name no step', () => {
   assert.deepEqual(STEPS.map((s) => s.name), STEP_NAMES);
   assert.ok(Object.isFrozen(STEPS));
-  const src = codeOf(path.join(LIB, 'driver', 'run.js'));
-  for (const name of STEP_NAMES) assert.doesNotMatch(src, new RegExp(`['"\`]${name}['"\`]`), name);
+  for (const file of ['run.js', 'budget.js']) {
+    const src = codeOf(path.join(LIB, 'driver', file));
+    for (const name of STEP_NAMES) assert.doesNotMatch(src, new RegExp(`['"\`]${name}['"\`]`), `${file}: ${name}`);
+  }
 });
 
 test('realDeps.ghCreate runs under GH_BATCH_TIMEOUT_MS', () => {
@@ -5140,6 +5157,13 @@ test('realDeps.ghCreate runs under GH_BATCH_TIMEOUT_MS', () => {
 
 test('AC11: docs/plugin-structure.md lists drive.js', () => {
   assert.match(readText(DOC), /node plugin\/bin\/drive\.js #N/);
+});
+
+test('budget AC10.1: docs/plugin-structure.md names drive.js --budget and budget.js', () => {
+  const doc = readText(DOC);
+  assert.match(doc, /node plugin\/bin\/drive\.js --budget <n\|all>/);
+  assert.match(doc, /budget\.js — `runBudget/);
+  assert.match(doc, /budget\.test\.js/);
 });
 
 // --- gh repo target, transient classification, interrupt during the retry wait -----------------
@@ -5258,6 +5282,45 @@ test('AC4.4: parseArgs accepts --no-settle in any position and still refuses oth
   assert.equal(lines[0], 'Usage: drive.js #N [#M…]');
   assert.equal(lines[lines.indexOf('       drive.js --help | -h   (prints this text; exit 0, before any probe)') + 1],
     '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)');
+});
+
+test('budget AC2.1: a bad --budget value is a usage error with no call at all', async () => {
+  for (const argv of [['--budget', '0'], ['--budget', '-1'], ['--budget', '1.5'], ['--budget', ''], ['--budget', 'abc'], ['--budget', 'ALL'], ['--budget', '01'], ['--budget', '--no-settle'], ['--budget']]) {
+    const h = harness();
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.match(h.err.join(''), /Usage: drive\.js #N/);
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.probes, 0);
+    assert.deepEqual(h.out, []);
+  }
+});
+
+test('budget AC3.1, AC3.2, AC3.3: --budget with a record, --budget twice, and neither form are usage errors', async () => {
+  for (const argv of [['--budget', '2', '#12'], ['#12', '--budget', '2'], ['--budget', '2', '--budget', '3'], ['--budget', 'all', '--budget', 'all'], [], ['--no-settle']]) {
+    const h = harness();
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.probes, 0);
+  }
+});
+
+test('budget parseArgs: the accepted forms', () => {
+  assert.deepEqual(parseArgs(['--budget', '3']), { budget: 3, settle: true });
+  assert.deepEqual(parseArgs(['--budget', 'all']), { budget: 'all', settle: true });
+  assert.deepEqual(parseArgs(['--no-settle', '--budget', '1']), { budget: 1, settle: false });
+  assert.deepEqual(parseArgs(['--budget', '2', '--no-settle']), { budget: 2, settle: false });
+  assert.deepEqual(parseArgs(['--budget', '0', '--help']), { help: true });
+  assert.match(parseArgs(['--budget', '2', '#12']).error, /exclusive/);
+  assert.match(parseArgs(['--budget', '2', '--budget', '3']).error, /more than once/);
+});
+
+test('budget usage: USAGE and the drive.js header state the --budget form and that --no-settle applies to each driven record', () => {
+  const header = readText(DRIVE).split('\n').filter((l) => l.startsWith('//')).join('\n');
+  for (const text of [USAGE, header]) {
+    assert.match(text, /drive\.js \[--no-settle\] --budget <n\|all>/);
+    assert.match(text, /--no-settle applies to each driven record/);
+    assert.match(text, /with --budget, also a failed queue pull/);
+  }
 });
 
 test('AC4.1: --no-settle makes no settle call and leaves the stop to the caller', async () => {
@@ -5538,6 +5601,292 @@ test('settle notes ride the final line: a claim that may lapse by TTL', async ()
   const killed = harness({ script: [[on('node', /claim-targets\.js$/), { code: null, stdout: '', stderr: '' }]] });
   await run(['#7'], killed.deps);
   assert.match(lastLine(killed).settleNote, /lapses by its TTL/);
+});
+
+const policyOnce = async (h) => { const shared = newShared(); await driveRecordFacts(1, shared, h.deps, [STEPS[0]]); return shared; };
+
+test('budget AC4.1: a record whose claim was obtained and run dir minted counts as claimed, whatever its outcome', async () => {
+  const cases = [
+    [{}, 'pending-review'],
+    [REDTESTS, 'express-escalated'],
+    [{ script: [[on('node', /express-lane\.js$/, 'check'), { code: 1, stdout: '', stderr: 'boom' }]] }, 'blocked'],
+    [{ script: [[on('node', /log-decision\.js$/), { code: 1, stdout: '', stderr: 'nope' }]] }, 'express-escalated'],
+  ];
+  for (const [over, outcome] of cases) {
+    const h = harness(over);
+    const shared = await policyOnce(h);
+    const facts = await driveRecordFacts(7, shared, h.deps);
+    assert.equal(facts.outcome, outcome);
+    assert.equal(facts.claimed, true);
+    assert.equal(facts.claimExit, 0);
+    assert.equal(facts.final.step, FINAL_STEP);
+  }
+});
+
+test('budget AC4.2: refused, contested, other claim failures and a failed mint are not claimed', async () => {
+  const claimExit = (code) => ({ script: [[on('node', /claim-targets\.js$/), { code, stdout: '{}', stderr: '' }]] });
+  const cases = [
+    [{ admission: { admitted: false, reasons: ['no'] } }, 'refused', null],
+    [claimExit(2), 'blocked', 2],
+    [claimExit(3), 'blocked', 3], [claimExit(4), 'blocked', 4], [claimExit(5), 'blocked', 5],
+    [claimExit(6), 'blocked', 6], [claimExit(7), 'blocked', 7], [claimExit(null), 'blocked', null],
+    [{ script: [[on('resolveRunDir'), { ok: false, message: 'no' }]] }, 'blocked', 0],
+    // Exit 0 without claiming #7.
+    [{ script: [[on('node', /claim-targets\.js$/), { code: 0, stdout: '{"claimed":[],"transportByIssue":{}}', stderr: '' }]] }, 'blocked', 0],
+    // A mint whose basename does not match the claim's run id.
+    [{ script: [[on('resolveRunDir'), { ok: true, path: path.join(MAIN, '.claude-tweaks', 'pipelines', '2026-01-01T000000-drive-7') }]] }, 'blocked', 0],
+  ];
+  for (const [over, outcome, exit] of cases) {
+    const h = harness(over);
+    const facts = await driveRecordFacts(7, await policyOnce(h), h.deps);
+    assert.equal(facts.outcome, outcome, JSON.stringify(over));
+    assert.equal(facts.claimed, false);
+    assert.equal(facts.claimExit, exit);
+  }
+});
+
+test('budget: driveRecord still resolves to the same final event driveRecordFacts carries', async () => {
+  const a = harness(); const b = harness();
+  const final = await driveRecord(7, await policyOnce(a), a.deps);
+  const facts = await driveRecordFacts(7, await policyOnce(b), b.deps);
+  assert.equal(final.step, FINAL_STEP);
+  const untimed = (e) => { const { ts, ms, msTotal, msWithoutCi, ...rest } = e; return rest; };
+  assert.deepEqual(untimed(final), untimed(facts.final));
+});
+
+test('budget: driveRecordFacts on an interrupt before the first step has no final and no claim', async () => {
+  const h = harness();
+  const shared = await policyOnce(h);
+  shared.interrupted = 'SIGINT';
+  const facts = await driveRecordFacts(7, shared, h.deps);
+  assert.deepEqual(facts, { final: null, outcome: null, claimed: false, claimExit: null });
+});
+
+test('budget: driveRecordFacts on an interrupt after the run directory exists is claimed', async () => {
+  let shared = null;
+  const h = harness({
+    script: [[on('node', /log-decision\.js$/), () => { setImmediate(() => { shared.interrupted = 'SIGINT'; }); return { code: 0, stdout: '', stderr: '' }; }]],
+  });
+  shared = await policyOnce(h);
+  const facts = await driveRecordFacts(7, shared, h.deps);
+  assert.equal(facts.final.step, FINAL_STEP);
+  assert.equal(facts.final.stop.step, 'worktree');
+  assert.equal(facts.final.stop.class, STOP_CLASSES.PRE_PUSH);
+  assert.equal(facts.outcome, outcomeFor(STOP_CLASSES.PRE_PUSH));
+  assert.equal(facts.outcome, 'express-escalated');
+  assert.equal(facts.claimed, true);
+  assert.equal(facts.claimExit, 0);
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGINT']]);
+});
+
+test('budget pre-screen: eligibilityOptions is exactly what the eligibility step passes', async () => {
+  const h = harness();
+  await run(['#7'], h.deps);
+  const live = h.calls.find((c) => c.kind === 'eligibility').args[1];
+  const shared = await policyOnce(harness());
+  assert.deepEqual(eligibilityOptions(shared.policy), live);
+});
+
+// --- --budget through run() (record #5229) ----------------------------------------------------
+
+const budgetPull = (...numbers) => [on('queuePull'), { groups: queueOf(...numbers), exclusions: [] }];
+const issueViews = (h, n) => h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args[1] === 'view' && c.args.at(-1) === String(n));
+const claimsOf = (h, n) => h.calls.filter((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0]) && claimTarget(c) === n);
+const claimExits = (n, code) => [(c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0]) && claimTarget(c) === n, { code, stdout: '{}', stderr: '' }];
+const COUNTER_KEYS = ['driven', 'refused', 'skipped', 'contested', 'claimFailed', 'permissionStopped'];
+const zeroCounters = Object.fromEntries(COUNTER_KEYS.map((k) => [k, 0]));
+const untimedSummary = (h) => ({ ...h.lines().at(-1), ts: 0, ms: 0 });
+
+test('budget AC4.4: --budget 2 over refused, blocked, contested, pending-review, pending-review drives the second and fourth and leaves the fifth', async () => {
+  const h = harness({
+    admission: (c) => (c.args[0].number === 1 ? { admitted: false, reasons: ['no'] } : {}),
+    script: [
+      [on('queuePull'), { groups: queueOf(1, 2, 3, 4, 5), exclusions: [] }],
+      [(c) => c.kind === 'node' && /express-lane\.js$/.test(c.args[0]) && c.args[1] === 'check' && c.args.includes('2'), { code: 1, stdout: '', stderr: 'x' }],
+      [(c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0]) && claimTarget(c) === 3, { code: 3, stdout: JSON.stringify({ contested: [3] }), stderr: '' }],
+    ],
+  });
+  assert.equal(await run(['--budget', '2'], h.deps), 0);
+  assert.deepEqual(finals(h).map((f) => [f.record, f.outcome]), [[1, 'refused'], [2, 'blocked'], [3, 'blocked'], [4, 'pending-review']]);
+  const summary = h.lines().at(-1);
+  assert.deepEqual({ ...summary, ts: 0, ms: 0 }, { ts: 0, run: null, record: null, step: 'budget', status: 'ok', ms: 0, budget: 2, driven: 2, refused: 1, skipped: 0, contested: 1, claimFailed: 0, permissionStopped: 0, ended: 'budget' });
+  // AC9: every record handed to the loop is in exactly one counter.
+  assert.equal(COUNTER_KEYS.reduce((sum, k) => sum + summary[k], 0), finals(h).length);
+  assert.ok(!h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args.at(-1) === '5'), 'no live fetch of #5');
+  assert.ok(!h.calls.some((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0]) && claimTarget(c) === 5), 'no claim of #5');
+  assert.equal(h.calls.filter((c) => c.kind === 'queuePull').length, 4);
+});
+
+test('budget AC5.1, AC5.2: express-driver off reads policy first and drives nothing', async () => {
+  const h = harness({ policy: { 'express-driver': 'off' } });
+  assert.equal(await run(['--budget', '2'], h.deps), 0);
+  for (const kind of ['queuePull', 'rankNext', 'gh', 'eligibility', 'node']) assert.equal(h.calls.filter((c) => c.kind === kind).length, 0, kind);
+  assert.deepEqual(h.writes(), []);
+  const lines = h.lines();
+  assert.equal(lines.length, 2);
+  assert.deepEqual([lines[0].step, lines[0].status, lines[0].record, lines[0].run], ['policy', 'stop', null, null]);
+  assert.match(lines[0].detail, /express-driver off/);
+  assert.deepEqual({ ...lines[1], ts: 0, ms: 0 }, { ts: 0, run: null, record: null, step: 'budget', status: 'ok', ms: 0, budget: 2, ...zeroCounters, ended: 'policy-refused' });
+});
+
+test('budget AC7.2: a claim permission stop settles the record by the claim row and ends the run', async () => {
+  const h = harness({ script: [budgetPull(1, 2, 3), claimExits(2, 7)] });
+  assert.equal(await run(['--budget', 'all'], h.deps), 0);
+  const settle = settleCalls(h);
+  assert.deepEqual(settle.map((c) => [c.kind, c.args[0], c.args[1]]), [['gh', 'issue', 'comment'], ['gh', 'issue', 'edit']]);
+  assert.ok(settle[1].args.includes('bot:blocked'));
+  assert.equal(calls(h, 'node', /release-claim\.js$/).length, 0);
+  assert.equal(issueViews(h, 3).length, 0);
+  assert.equal(claimsOf(h, 3).length, 0);
+  assert.deepEqual(untimedSummary(h), {
+    ts: 0, run: null, record: null, step: 'budget', status: 'stop', ms: 0, detail: 'claim-targets.js exit 7 on #2', budget: 'all',
+    ...zeroCounters, driven: 1, permissionStopped: 1, ended: 'permission-stop',
+  });
+});
+
+test('budget AC8.3: an unreadable policy exits 1 with nothing driven', async () => {
+  const h = harness({ script: [[on('policy'), { 'express-driver': { error: 'unknown-key' } }]] });
+  assert.equal(await run(['--budget', '2'], h.deps), 1);
+  assert.equal(h.calls.filter((c) => c.kind === 'queuePull').length, 0);
+  assert.equal(h.lines().filter((l) => l.step === FINAL_STEP).length, 0);
+  assert.equal(h.lines().filter((l) => l.step === BUDGET_STEP).length, 0);
+});
+
+test('budget AC8.1, AC9.2: a failed pull exits 1 through run()', async () => {
+  const h = harness({ script: [[on('queuePull'), new Error('boom')]] });
+  assert.equal(await run(['--budget', '2'], h.deps), 1);
+  assert.match(h.err.join(''), /queue pull failed: boom/);
+  const summary = h.lines().at(-1);
+  assert.deepEqual([summary.step, summary.ended, summary.status], ['budget', 'pull-failed', 'fail']);
+});
+
+test('budget AC9.1, AC9.3: exit 0 whatever the outcomes; exit 2 with gh or git absent', async () => {
+  const h = harness({
+    admission: (c) => (c.args[0].number === 1 ? { admitted: false, reasons: ['no'] } : {}),
+    script: [budgetPull(1, 2, 3), claimExits(3, 3)],
+  });
+  assert.equal(await run(['--budget', 'all'], h.deps), 0);
+  for (const over of [{ ghAvailable: false }, { gitAvailable: false }]) {
+    const absent = harness(over);
+    assert.equal(await run(['--budget', '1'], absent.deps), 2, JSON.stringify(over));
+    assert.equal(absent.calls.length, 0);
+  }
+});
+
+test('budget AC11.1: a record the pre-screen skips gets no live fetch and no claim', async () => {
+  const h = harness({
+    script: [budgetPull(1, 2)],
+    eligibility: (c) => (c.args[0].comments === undefined && c.args[0].number === 1 ? { eligible: false, reasons: ['risk is not low'] } : {}),
+  });
+  assert.equal(await run(['--budget', 'all'], h.deps), 0);
+  assert.equal(issueViews(h, 1).length, 0);
+  assert.equal(claimsOf(h, 1).length, 0);
+  assert.deepEqual(finals(h).map((f) => [f.record, f.outcome]), [[2, 'pending-review']]);
+  const summary = untimedSummary(h);
+  assert.deepEqual([summary.skipped, summary.driven, summary.ended], [1, 1, 'exhausted']);
+});
+
+test('budget AC11.1: a pulled record with no labels or a non-string body takes the full path', async () => {
+  const queue = queueOf(1, 2);
+  delete queue[0][0].labels;
+  queue[1][0].body = 7;
+  const h = harness({ script: [[on('queuePull'), { groups: queue, exclusions: [] }]] });
+  assert.equal(await run(['--budget', 'all'], h.deps), 0);
+  for (const n of [1, 2]) {
+    assert.equal(issueViews(h, n).length, 1, `#${n} fetched`);
+    assert.equal(claimsOf(h, n).length, 1, `#${n} claimed`);
+  }
+  const summary = untimedSummary(h);
+  assert.deepEqual([summary.skipped, summary.driven], [0, 2]);
+});
+
+for (const code of [6, 2]) {
+  test(`budget PRC1: claim exit ${code} ends the run`, async () => {
+    const h = harness({ script: [budgetPull(1, 2, 3, 4), claimExits(2, code)] });
+    assert.equal(await run(['--budget', 'all'], h.deps), 0);
+    const settle = settleCalls(h);
+    assert.deepEqual(settle.map((c) => [c.kind, c.args[0], c.args[1]]), [['gh', 'issue', 'comment'], ['gh', 'issue', 'edit']]);
+    assert.ok(settle[1].args.includes('bot:blocked'));
+    assert.equal(calls(h, 'node', /release-claim\.js$/).length, 0);
+    for (const n of [3, 4]) {
+      assert.equal(issueViews(h, n).length, 0, `no fetch of #${n}`);
+      assert.equal(claimsOf(h, n).length, 0, `no claim of #${n}`);
+    }
+    assert.equal(h.calls.filter((c) => c.kind === 'queuePull').length, 2);
+    const summary = untimedSummary(h);
+    assert.deepEqual([summary.ended, summary.status, summary.claimFailed, summary.permissionStopped, summary.driven], ['claim-stop', 'stop', 1, 0, 1]);
+  });
+}
+
+test('budget AC9.5: ENDED and STATUS_BY_ENDED are the full closed mapping', () => {
+  assert.deepEqual(ENDED, { BUDGET: 'budget', EXHAUSTED: 'exhausted', PERMISSION_STOP: 'permission-stop', CLAIM_STOP: 'claim-stop', PULL_FAILED: 'pull-failed', POLICY_REFUSED: 'policy-refused' });
+  assert.deepEqual(STATUS_BY_ENDED, { budget: 'ok', exhausted: 'ok', 'permission-stop': 'stop', 'claim-stop': 'stop', 'pull-failed': 'fail', 'policy-refused': 'ok' });
+});
+
+test('budget AC6.3: an empty queue ends exhausted through run()', async () => {
+  const h = harness();
+  assert.equal(await run(['--budget', 'all'], h.deps), 0);
+  const lines = h.lines();
+  assert.equal(lines.length, 1);
+  assert.deepEqual({ ...lines[0], ts: 0, ms: 0 }, { ts: 0, run: null, record: null, step: 'budget', status: 'ok', ms: 0, budget: 'all', ...zeroCounters, ended: 'exhausted' });
+  assert.equal(h.calls.filter((c) => c.kind === 'gh').length, 0);
+});
+
+test('budget: a signal queued during the last record\'s final synchronous call ends the run with no summary', async () => {
+  let handler = null;
+  const h = harness({
+    script: [budgetPull(1), [on('node', /pr-checks\.js$/), () => { setImmediate(() => handler('SIGTERM')); return { code: 0, stderr: '', stdout: JSON.stringify({ state: 'green' }) }; }]],
+  });
+  h.deps.onSignal = (fn) => { handler = fn; return () => {}; };
+  assert.equal(await run(['--budget', '1'], h.deps), 0);
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGTERM']]);
+  assert.deepEqual(finals(h).map((f) => [f.record, f.outcome]), [[1, 'pending-review']]);
+  assert.equal(h.lines().filter((l) => l.step === BUDGET_STEP).length, 0);
+});
+
+test('budget: --no-settle applies to each driven record', async () => {
+  const h = harness({ script: [budgetPull(1), ...REDTESTS.script] });
+  assert.equal(await run(['--no-settle', '--budget', '1'], h.deps), 0);
+  const lines = h.lines();
+  const final = lines.at(-2);
+  assert.equal(final.step, FINAL_STEP);
+  assert.equal(final.settle, 'left-to-caller');
+  assert.deepEqual(settleCalls(h), []);
+  assert.equal(lines.at(-1).step, BUDGET_STEP);
+});
+
+test('budget: an unknown origin exits 1 before any pull', async () => {
+  const h = harness({
+    remoteUrl: 'https://git.corp.invalid/acme/widgets.git',
+    deps: { env: { GH_CONFIG_DIR: tmpDir('drive-budget-gh-config-') } },
+  });
+  assert.equal(await run(['--budget', '1'], h.deps), 1);
+  const policyLine = h.lines().find((l) => l.step === STEP.policy);
+  assert.equal(policyLine.status, 'fail');
+  assert.match(policyLine.detail, /origin host git\.corp\.invalid is not a known GitHub host/);
+  assert.equal(h.calls.filter((c) => c.kind === 'queuePull').length, 0);
+  assert.equal(h.calls.filter((c) => c.kind === 'gh').length, 0);
+  assert.equal(h.lines().filter((l) => l.step === BUDGET_STEP).length, 0);
+});
+
+test('budget: a signal during the pull ends the run with nothing further', async () => {
+  const signalled = harness({ script: [[on('queuePull'), () => { signalled.signals[0]('SIGTERM'); return { groups: queueOf(1), exclusions: [] }; }]] });
+  assert.equal(await run(['--budget', '1'], signalled.deps), 0);
+  assert.deepEqual(signalled.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGTERM']]);
+  assert.equal(issueViews(signalled, 1).length, 0);
+  assert.equal(signalled.calls.filter((c) => ['eligibility', 'rankNext'].includes(c.kind)).length, 0, 'no pre-screen or ranking after the signal');
+  assert.equal(signalled.lines().filter((l) => l.step === BUDGET_STEP).length, 0);
+});
+
+test('budget: a signal inside a record\'s check reply writes its final line and fetches nothing further', async () => {
+  const h = harness({
+    script: [budgetPull(1, 2), [on('node', /express-lane\.js$/, 'check'), () => { h.signals[0]('SIGTERM'); return { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) }; }]],
+  });
+  assert.equal(await run(['--budget', 'all'], h.deps), 0);
+  assert.deepEqual(finals(h).map((f) => f.record), [1]);
+  assert.equal(issueViews(h, 2).length, 0);
+  assert.equal(h.lines().filter((l) => l.step === BUDGET_STEP).length, 0);
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGTERM']]);
 });
 
 // --- the merge step (#5226, Task 7) ---------------------------------------------------
@@ -5847,4 +6196,14 @@ test('merge step, run level: an unclassified stop names the failing sub-step on 
   assert.equal(final.merge.reason, 'unclassified');
   assert.equal(final.outcome, 'pending-review');
   assert.ok(!h.calls.some((c) => c.kind === 'ghCreate' && c.args[1] === 'merge'), 'nothing merged');
+});
+
+test('budget AC4.1: a record that ends merged, its run directory followed into the archive, is claimed and counts driven', async () => {
+  const { classifyFacts } = require(path.join(LIB, 'driver', 'budget'));
+  const h = mergeHarness({ reconcile: archiveRunDir });
+  const facts = await driveRecordFacts(7, newShared(), h.deps);
+  assert.equal(facts.outcome, 'merged');
+  assert.equal(facts.claimed, true);
+  assert.equal(facts.claimExit, 0);
+  assert.equal(classifyFacts(facts), 'driven');
 });

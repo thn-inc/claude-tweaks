@@ -15,10 +15,11 @@ const { resolvePolicy: corePolicy, scalarValue, callerDeps } = require('../../re
 
 // `trim: false` for a `-z` path stream: trimming would eat a leading space off
 // the first path.
-function makeGitRunner(cwd) {
+// `env` is the caller's injected environment (#5379); absent, the child inherits the real one.
+function makeGitRunner(cwd, env) {
   return (args, { trim = true } = {}) => {
     try {
-      const out = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      const out = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });
       return trim ? out.trim() : out;
     } catch {
       return null;
@@ -109,9 +110,9 @@ function computeClaudeMdCommandRenamed(git, cwd, base) {
 // harness-health-analysis.md Step 1 check 4's own `wc -l` invocation exactly,
 // so this fact and that check never disagree about what "over budget" means
 // for the same file.
-function lineCount(filePath) {
+function lineCount(filePath, env) {
   try {
-    const out = execFileSync('wc', ['-l', filePath], { encoding: 'utf8', windowsHide: true });
+    const out = execFileSync('wc', ['-l', filePath], { encoding: 'utf8', windowsHide: true, ...(env ? { env } : {}) });
     return Number(out.trim().split(/\s+/)[0]);
   } catch {
     return 0;
@@ -156,11 +157,11 @@ function computeClaudeMdBudgetTargets(cwd, { env, resolvePolicy } = {}) {
       budget: t.pathGlobs.length > 0 ? scopedRuleBudget : alwaysLoadedBudget,
     })),
   ];
-  return targets.map((t) => ({ path: t.path, lines: lineCount(t.path), budget: t.budget }));
+  return targets.map((t) => ({ path: t.path, lines: lineCount(t.path, env), budget: t.budget }));
 }
 
 function gatherFacts({ cwd, base, env, resolvePolicy } = {}) {
-  const git = makeGitRunner(cwd);
+  const git = makeGitRunner(cwd, env);
   const isRepo = git(['rev-parse', '--is-inside-work-tree']) === 'true';
 
   let changedFiles = [];

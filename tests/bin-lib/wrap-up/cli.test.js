@@ -18,18 +18,17 @@
 // branch moves.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnCli, runCliSync } = require('../../helpers/run-cli');
+const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-state.js');
 
 function run(args, cwd) {
-  const r = spawnSync(process.execPath, [CLI, ...args], {
-    cwd: cwd || process.cwd(), encoding: 'utf8',
-  });
-  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+  const r = runCliSync(CLI, args, { cwd: cwd || process.cwd(), env: { ...process.env } });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 test('exits 2 with a usage message when --since is missing', () => {
@@ -102,5 +101,61 @@ test('outside a git repository the fields render unknown and the exit stays 0', 
     assert.match(r.stdout, /Worktree\s+unknown/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC7.1 script: missing --since exits 2 with usage on stderr', () => {
+  // real process: proves the shebang, the require.main guard and the exit code of the script entry
+  const r = spawnCli(CLI, []);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /usage: wrap-up-state\.js --since/);
+  assert.strictEqual(r.stdout, '');
+});
+
+test('AC7.1 script: a valid --since exits 0 and renders the Branch line', () => {
+  // real process: the script entry reaches real git and prints through real stdout
+  const r = spawnCli(CLI, ['--since', 'HEAD~1'], { cwd: path.join(__dirname, '..', '..', '..') });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^Branch\s+\S/m);
+});
+
+test('AC8.1: an injected env reaches every git child (GIT_DIR only in env)', () => {
+  // cwd is repo A (branch a-side); the injected env points GIT_DIR at repo B (branch b-side).
+  // A git child that ignored the injected env would read A and report a-side.
+  const a = committedRepo({ prefix: 'wrapup-env-a-', branch: 'a-side' });
+  const b = committedRepo({ prefix: 'wrapup-env-b-', branch: 'b-side' });
+  try {
+    const r = runCliSync(CLI, ['--since', 'HEAD', '--json'], {
+      cwd: a.dir, env: { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') },
+    });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.strictEqual(JSON.parse(r.stdout).state.branch, 'b-side');
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+});
+
+test('AC8.1: the show, HEAD reflog and remote reflog children each read the injected env (GIT_DIR only in env)', () => {
+  // Repo B holds the base commit, an amend (a HEAD reflog op) and an origin/b-side ref whose own reflog
+  // carries a push op; repo A (cwd) has none of them. Each child below can only produce its part of the
+  // result from B: a `show` that ignored env cannot resolve B's base sha in A (exit 2), a HEAD reflog that
+  // ignored it reports no amend, and a remote reflog that ignored it reports no push.
+  const a = committedRepo({ prefix: 'wrapup-env-a-', branch: 'a-side' });
+  const b = committedRepo({ prefix: 'wrapup-env-b-', branch: 'b-side' });
+  try {
+    b.git('commit', '-q', '--amend', '--allow-empty', '-m', 'amended');
+    b.git('update-ref', '--create-reflog', '-m', 'update by push', 'refs/remotes/origin/b-side', 'HEAD');
+    const r = runCliSync(CLI, ['--since', b.head, '--json'], {
+      cwd: a.dir, env: { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') },
+    });
+    assert.strictEqual(r.code, 0, r.stderr);
+    const o = JSON.parse(r.stdout);
+    assert.ok(typeof o.sinceDate === 'string' && o.sinceDate.length > 0, 'show resolved B\'s base sha');
+    assert.ok(o.ops.some((op) => op.op === 'amend'), 'HEAD reflog read B: ' + JSON.stringify(o.ops));
+    assert.ok(o.ops.some((op) => op.op === 'push'), 'remote reflog read B: ' + JSON.stringify(o.ops));
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
   }
 });

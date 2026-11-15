@@ -9,7 +9,8 @@ const { renderVerifyTable, runVerify, registerCheck, resolvePrNumber, resolveArc
 const { evaluateParentGate } = require('../../../plugin/bin/lib/issues/parent-gate');
 const { buildNativeSubIssuesQuery } = require('../../../plugin/bin/lib/issues/record');
 const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
-const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf, cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
+const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
 const { readText } = require('../../helpers/read-skill');
 
 // Every tmp root this file creates is registered here and removed once, after the
@@ -3694,7 +3695,7 @@ test('runVerify short-circuits to an all-unknown row set when runDir is null, ne
   }
 });
 
-// #790/[IL-127]: wrap-up-engine.js's main() rejects any --run-dir that doesn't
+// #790/[IL-127]: wrap-up-engine.js's run() rejects any --run-dir that doesn't
 // resolve under the main checkout (bin/lib/hooks/worktree-detect.js's
 // isAnchoredUnderRoot) for EVERY verb, including this new `verify` one — a
 // bare os.tmpdir() path like /tmp/anything never anchors, so this test uses a
@@ -3977,4 +3978,64 @@ test('#3595 AC3.1: carrier-commit matches Fixes/Closes and rejects Refs through 
   const source = readText(path.join(__dirname, '../../../plugin/bin/lib/wrap-up/engine-verify.js'));
   assert.match(source, /\{[^}]*\bCLOSING_KEYWORD_ALTERNATION\b[^}]*\}\s*=\s*require\('\.\.\/issue-branch-tracking'\)/);
   assert.doesNotMatch(source, /CLOSING_KEYWORDS_PATTERN/);
+});
+
+// #5379: an injected process context reaches the git and gh children (the in-process CLI entry hands
+// the engine its own `env`); absent, both inherit the real one. Two repos, A and B, tell them apart:
+// only B holds `GIT_DIR`'s HEAD, so a child that reads B's HEAD got the injected env.
+function commitRepo(prefix, file) {
+  const repo = committedRepo({ prefix, file });
+  trackTmp(repo.dir);
+  return repo;
+}
+
+test('defaultGit: the git child gets ctx.env (#5379)', () => {
+  const { defaultGit } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+  const a = commitRepo('env-a-', 'a.txt');
+  const b = commitRepo('env-b-', 'b.txt');
+  assert.notStrictEqual(a.head, b.head);
+  const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+  assert.strictEqual(defaultGit(['rev-parse', 'HEAD'], a.dir, { env }).trim(), b.head);
+  assert.strictEqual(defaultGit(['rev-parse', 'HEAD'], a.dir).trim(), a.head, 'no ctx: the inherited environment, as before');
+});
+
+test('defaultGh: the gh child gets ctx.env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const { defaultGh } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+  const a = commitRepo('env-gh-a-', 'a.txt');
+  const stubDir = makeTmpDir('env-gh-stub-');
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho stubbed\n', { mode: 0o755 });
+  // GH_HOST set makes ghOptions hand the options back untouched.
+  const env = { ...cleanGitEnv(), PATH: stubDir + path.delimiter + process.env.PATH, GH_HOST: 'github.com' };
+  assert.match(defaultGh(['--version'], a.dir, { env }), /stubbed/);
+});
+
+// With GH_HOST unset, ghOptions resolves the host from the origin remote: it must read it under the
+// injected env (B's origin through GIT_DIR, while cwd is A, which has none) and look hosts.yml up in the
+// injected env's gh config dir. A `gh` stub that prints $GH_HOST shows what the child was handed.
+function hostEcho({ originUrl, hostsYml }) {
+  const a = commitRepo('env-host-a-', 'a.txt');
+  const b = commitRepo('env-host-b-', 'b.txt');
+  b.git('remote', 'add', 'origin', originUrl);
+  const stubDir = makeTmpDir('env-host-stub-');
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho "$GH_HOST"\n', { mode: 0o755 });
+  const ghConfig = makeTmpDir('env-host-cfg-');
+  if (hostsYml) fs.writeFileSync(path.join(ghConfig, 'hosts.yml'), hostsYml);
+  const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), GH_CONFIG_DIR: ghConfig, PATH: stubDir + path.delimiter + process.env.PATH };
+  delete env.GH_HOST;
+  delete env.GH_REPO;
+  _resetGhHostCache();
+  try {
+    return require('../../../plugin/bin/lib/wrap-up/engine-verify').defaultGh(['--version'], a.dir, { env, stderr: () => {} }).trim();
+  } finally {
+    _resetGhHostCache();
+  }
+}
+
+test('defaultGh: GH_HOST resolves from the origin read under ctx.env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  assert.strictEqual(hostEcho({ originUrl: 'https://acme.ghe.com/o/r.git' }), 'acme.ghe.com');
+});
+
+test('defaultGh: the host lookup reads hosts.yml under the injected gh config dir (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  assert.strictEqual(hostEcho({ originUrl: 'https://git.corp.example/o/r.git', hostsYml: 'git.corp.example:\n' }), 'git.corp.example');
+  assert.strictEqual(hostEcho({ originUrl: 'https://git.corp.example/o/r.git' }), '', 'a host no hosts.yml lists stays unset');
 });

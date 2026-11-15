@@ -249,6 +249,20 @@ function driverLineBound(ctx) {
   return source !== 'default' && ctx.reviewer && ctx.reviewer.on === true ? value : null;
 }
 
+// The options the eligibility step hands deps.evaluateRecordEligibility, lane bounds included, so a
+// caller that pre-screens a record (the budget loop) asks the same question the step does.
+function eligibilityOptions(policy) {
+  const bounds = laneBounds(policy);
+  return {
+    enabled: true,
+    allowAbsentCeremony: true,
+    integrationModel: policy['integration-model'].value,
+    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
+    sizeCeiling: bounds.sizeCeiling,
+    maxKeyFiles: bounds.maxKeyFiles,
+  };
+}
+
 // Ports express-lane.md's Eligibility section, with the driver's relaxed ceremony gate and the lane
 // bounds. It also makes the record's one reviewRequired call (ctx.reviewer, #5224): admission, the check
 // flag and the review step read that answer, never a second call. A refusal names the reviewer reason
@@ -257,14 +271,7 @@ function driverLineBound(ctx) {
 const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async (ctx, deps) => {
   const { policy } = ctx.shared;
   const bounds = laneBounds(policy);
-  const verdict = deps.evaluateRecordEligibility(ctx.issue, {
-    enabled: true,
-    allowAbsentCeremony: true,
-    integrationModel: policy['integration-model'].value,
-    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
-    sizeCeiling: bounds.sizeCeiling,
-    maxKeyFiles: bounds.maxKeyFiles,
-  });
+  const verdict = deps.evaluateRecordEligibility(ctx.issue, eligibilityOptions(policy));
   ctx.keyFiles = (verdict && verdict.keyFiles) || [];
   ctx.reviewer = deps.reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: policy['express-driver-review'].value });
   if (!verdict || verdict.eligible !== true) {
@@ -348,6 +355,10 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   const r = deps.node(binScript('claim-targets.js'),
     ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
     { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  // A recorded fact, not a side effect: the budget loop reads it to tell a contested claim (3) from
+  // other claim failures (4, 5, an exit 0 that claimed nothing, a killed claim with a null exit, a
+  // failed mint) and from the run-ending claim stops (7, and 2 and 6).
+  ctx.claimExit = Number.isInteger(r.code) ? r.code : null;
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
@@ -1260,7 +1271,7 @@ const STEPS = Object.freeze([
 ]);
 
 module.exports = {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
   testTreeStop, TEST_TREE_UNREADABLE,
 };
