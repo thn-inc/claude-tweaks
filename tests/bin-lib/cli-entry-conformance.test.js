@@ -34,7 +34,6 @@ const NOT_YET = [
   'init-verify-scope.js',
   'record-graph.js',
   'release-bootstrap.js',
-  'release-notes-publish.js',
   'residue.js',
   'session-tmp-resolve.js',
   'sweep-stray-run-dirs.js',

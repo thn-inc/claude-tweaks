@@ -4,9 +4,11 @@
 // real subprocess, a real GitHub release, or a real `git push` (AC5).
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { readText } = require('../helpers/read-skill');
-const { spawnCli } =require('../helpers/run-cli');
+const { runCliSync, spawnCli } = require('../helpers/run-cli');
 const {
   run, resolveTagPair, parseReleaseNotesFromLog, applyToReleaseBody, applyToChangelogEntry,
 } = require('../../plugin/bin/lib/release-notes-publish.js');
@@ -223,4 +225,39 @@ test('AC7.1: an unknown argument exits 2 with the usage on stderr', () => {
   assert.strictEqual(res.code, 2);
   assert.strictEqual(res.stdout, '');
   assert.strictEqual(res.stderr, `unknown argument: --bogus\n${CLI_USAGE}\n`);
+});
+
+test('AC8.1: a relative --root resolves against deps.cwd() for file reads and gh/git cwd', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rnp-'));
+  try {
+    const env = { MARKER: '1' };
+    const seen = { gh: [], git: [], reads: [], writes: [] };
+    const gh = (args, input, opts) => {
+      seen.gh.push(opts);
+      const key = args.join(' ');
+      if (key.startsWith('release list')) return JSON.stringify([{ tagName: 'v1.3.0', publishedAt: '2026-10-02T00:00:00Z' }, { tagName: 'v1.2.0', publishedAt: '2026-09-01T00:00:00Z' }]);
+      if (key.startsWith('release view')) return 'Auto-generated release-please body.';
+      if (key.startsWith('release edit')) return '';
+      throw new Error(`unexpected gh: ${key}`);
+    };
+    const git = (args, opts) => {
+      seen.git.push(opts);
+      if (args[0] === 'log') return logOf(['feat: a\n\nRelease-Note: Added the thing.']);
+      return '';
+    };
+    const readFile = (abs) => { seen.reads.push(abs); return '# Changelog\n\n## 1.3.0 (2026-10-02)\n\n### Features\n\n* a thing\n'; };
+    const writeFile = (abs) => { seen.writes.push(abs); };
+    const res = runCliSync(CLI, ['--root', 'repo'], { cwd: tmp, env, deps: { gh, git, readFile, writeFile } });
+    const root = path.join(tmp, 'repo');
+    assert.strictEqual(res.code, 0, res.stderr);
+    assert.ok(seen.gh.length > 0 && seen.git.length > 0);
+    for (const o of [...seen.gh, ...seen.git]) {
+      assert.strictEqual(o.cwd, root);
+      assert.deepStrictEqual(o.env, env);
+    }
+    assert.deepStrictEqual(seen.reads, [path.join(root, 'CHANGELOG.md')]);
+    assert.deepStrictEqual(seen.writes, [path.join(root, 'CHANGELOG.md')]);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
