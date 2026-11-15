@@ -8,6 +8,7 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'plan-audit.js');
+const { spawnCli } = require('../../helpers/run-cli');
 const { RAIL_BYTES } = require(path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'skill-audit', 'budgets'));
 
 function makeTmpRepo() {
@@ -420,13 +421,29 @@ test('#2000: a clean plan reports checkD.ok === true under the full audit and --
   }
 });
 
-test('usage error on a missing plan-file argument exits 2', () => {
+// Proves the refusal path's exit code and stderr survive the real entry.
+test('AC5.1, AC8.1: no arguments exits 2 with the usage text (script entry)', () => {
+  const r = spawnCli(CLI, [], { env: { ...process.env } });
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(r.stderr, [
+    'plan-file is required',
+    'usage: plan-audit.js <plan-file> [--repo-root <dir>] [--spec <spec-file>] [--count-tasks] [--bytes] [--task-markers] [--risk-proofs]',
+    '',
+  ].join('\n'));
+});
+
+// Proves stdout is flushed on exit 0.
+test('AC5.1, AC8.1: --count-tasks prints its JSON line (script entry)', () => {
+  const repo = makeTmpRepo();
   try {
-    execFileSync('node', [CLI], { encoding: 'utf8' });
-    assert.fail('expected a non-zero exit');
-  } catch (err) {
-    assert.strictEqual(err.status, 2);
-    assert.match(err.stderr, /usage: plan-audit\.js/);
+    const plan = writePlan(repo, '### Task 1: A\n\n### Task 2: B\n');
+    const r = spawnCli(CLI, [plan, '--count-tasks'], { env: { ...process.env } });
+    assert.strictEqual(r.code, 0);
+    assert.strictEqual(r.stdout, '{"tasks": 2, "batched": false}\n');
+    assert.strictEqual(r.stderr, '');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
   }
 });
 
