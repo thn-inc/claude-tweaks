@@ -49,6 +49,7 @@ const REASONS = Object.freeze({
 const PROTECTED_PATH_RES = [
   /(^|\/)hooks\//,
   /(^|\/)hooks\.js$/,
+  /(^|\/)hooks\.sh$/,
   /(^|\/)skills\/_shared\//,
   /(^|\/)\.github\//,
   /(^|\/)\.gitlab-ci\.yml$/,
