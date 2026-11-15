@@ -419,4 +419,9 @@ const realDeps = {
 async function main(argv) { return run(argv, realDeps); }
 
 module.exports = { run, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
-if (require.main === module) run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; }).catch((err) => { process.stderr.write(`phase-timing.js: ${err && err.message}\n`); process.exitCode = 2; });
+if (require.main === module) {
+  run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; }).catch((err) => {
+    process.stderr.write(`phase-timing.js: ${err && err.message}\n`);
+    process.exitCode = 2;
+  });
+}
