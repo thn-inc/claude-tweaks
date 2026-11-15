@@ -14,7 +14,7 @@
 
 - Every line number in the spec is at commit `869785424`. Locate each edit by its heading or quoted text, never by line number.
 - No file under `plugin/skills` may grow, except `transcript-judge.md`, which changes by exactly -2 bytes (`subagent-output-contract` to `subagent-dispatch-core`). Byte sizes at the build base: `pipeline-run-dir.md` 24366, `pr-early-run-lifecycle.md` 35340, `subagent-output-contract.md` 30074, `policy-schema.md` 49189, `design-wrapper/SKILL.md` 38787, `transcript-judge.md` 18681.
-- Do not rename or renumber any surviving heading. A stub deletion removes the heading line, its body and one of the two blank lines around it, nothing else.
+- Do not rename or renumber any surviving heading. A stub deletion removes the heading line, its body and one of the two blank lines around it, nothing else. The one exception is the pointer Task 2 Step 3 re-resolves in `pipeline-run-dir.md` ("the order below"), which named stub 1.
 - Do not edit: `_shared/auto-mode-anti-patterns.md`, `_shared/policy-schema-model-profiles.md`, `_shared/github-pr-scan.md`, `_shared/work-record.md`, the `## Key naming` stub in `policy-schema.md`, any "Extracted to" stub, `CLAUDE.md`, `docs/incident-log.md`, anything under `docs/superpowers/` other than this plan, or any `(contract § Model Selection)` phrase.
 - `git grep -E` with `\b` matches nothing on this machine. Use `-F`, `-w` or `-P`.
 - One plain command per Bash call in this worktree: no `&&`, no `git` inside `$(...)`, no pipes into `node -e`.
@@ -29,7 +29,7 @@
 - Citers naming a stub's file together with its section, from a whitespace-collapsed sweep over every tracked `.md`/`.js`/`.json`/`.yml` file outside `docs/incident-log.md`, `docs/superpowers/`, `docs/plans/`, `.claude-tweaks/` and `CHANGELOG.md` (file basename followed within 60 characters by a section name): exactly two need repointing, `plugin/skills/_shared/transcript-judge.md` and `docs/skill-authoring.md`, both for stub 6. `docs/skill-graph.md:247` says "#2019 renamed this citation's target from `_shared/pipeline-run-dir.md`'s moved Resolution order section": a statement about history that stays true, no change. `plugin/skills/build/plan-review.md` already names `_shared/subagent-dispatch-core.md`'s Model Selection section. The other eleven hits are files citing `policy-schema.md` beside the word "coverage" for the sibling file, not a stub.
 - `_shared/subagent-dispatch-core.md` has `## Model Selection` (line 208), `## Working Directory Discipline`, `## Template A — Review-style (returns findings)`, `## Failed-agent retrieval` and `## How to integrate at a dispatch site`. `_shared/run-dir-resolution.md` has `## Resolution order` and `## Bash snippet (resolution)`. `_shared/pr-checklist-refresh.md` has `## Phase-checklist update (every phase exit)` and `## Pre-merge title/description refresh`.
 - `plugin/bin/lib/model-profiles/profiles.js:25` reads `POLICY_KEYS_READ = ['model-profiles', 'model-stance', 'model-ceiling', 'frontier-run-cap']`: four keys. The table under `policy-schema.md`'s `## Model profiles` lists five, `research-mode` last.
-- `docs/REGISTRY.md` convention: of the six files in `docs/reference/`, four have a row of their own and two (`claude-quality-levers.md`, `skill-description-audit.md`) rely on the generic `docs/reference/*.md` row, which has no auto-detect pattern. The spec's condition for adding a row ("a reference doc with a row of its own") is met. Ruling: add one row, for `pipeline-run-dir-initialized-check.md`, because it documents code (`plugin/bin/hooks.js`'s `resolveRunArg`) and only a row with that auto-detect pattern makes a later change to the resolver prompt a review of the doc. The two comparison files are decision records with no code trigger and stay on the generic row.
+- `docs/REGISTRY.md` convention: of the six files in `docs/reference/`, four have a row of their own and two (`claude-quality-levers.md`, `skill-description-audit.md`) rely on the generic `docs/reference/*.md` row, which has no auto-detect pattern. The spec's condition for adding a row ("a reference doc with a row of its own") is met. Decided by the user at plan review (spec's `## Plan Review Clarifications`): add one row, for `pipeline-run-dir-initialized-check.md`, because it documents code (`plugin/bin/hooks.js`'s `resolveRunArg`) and only a row with that auto-detect pattern makes a later change to the resolver prompt a review of the doc. The two comparison files are decision records with no code trigger and stay on the generic row.
 - Composed bundle sizes before the change (`node plugin/bin/context-cost-report.js --plugin-root plugin`, twelve call sites, max bytes): `worktree-setup` 52476, `claims` 50392 (four sites), `merge` 52454 (four sites), `manifesto` 27962, `review-dispatch` 52234, `pr-scan` 51650.
 
 Waived plugin/skills/_shared/policy-schema-model-profiles.md: read only, to confirm it already says "these four"; the spec forbids editing it.
@@ -161,9 +161,6 @@ Expected: 1 line.
 `git grep -n -F "reads these five" -- plugin/skills/_shared/policy-schema.md`
 Expected: 1 line.
 
-`git grep -n -E "^#{1,6} " -- plugin/skills/_shared/pipeline-run-dir.md plugin/skills/_shared/pr-early-run-lifecycle.md plugin/skills/_shared/subagent-output-contract.md plugin/skills/_shared/policy-schema.md plugin/skills/design-wrapper/SKILL.md`
-Save the output to a scratch file as the "before" heading list.
-
 - [ ] **Step 2: Repoint the two citers of stub 6**
 
 - `plugin/skills/_shared/transcript-judge.md`: in the sentence "per `_shared/subagent-output-contract.md`'s Model Selection section" (wrapped across two lines), change the file name to `_shared/subagent-dispatch-core.md`. Nothing else on either line changes.
@@ -185,6 +182,8 @@ For each, delete the heading line, every body line up to the blank line before t
 | `policy-schema.md` | `` ## `resolveValue` — canonical coercion contract `` | `## Metadata fields` |
 | `policy-schema.md` | `` ### `worktree-always` coverage — canonical `` | `## Integration model` |
 | `policy-schema.md` | `` ### `merge-verification` derivation — canonical `` | `## Project facts` |
+
+Deleting stub 1 leaves one pointer at nothing. In `pipeline-run-dir.md`'s "**Not the hook-side algorithm.**" paragraph, the sentence "A change to the order below does not change hook behavior, and vice versa." named that stub: change "the order below" to "that order" (the Resolution order the paragraph before it assigns to `_shared/run-dir-resolution.md`). No other above/below pointer in the four files names a stub; a grep of each stub's section name beside "above"/"below" found only this one.
 
 `subagent-output-contract.md`'s opening paragraph ("Five sections — Working Directory Discipline, Model Selection, Template A, Failed-agent retrieval, and the fan-out section … moved to `_shared/subagent-dispatch-core.md` (#2019)") stays unchanged: it is what "the contract's Model Selection section" resolves through once the stubs are gone.
 
@@ -213,8 +212,12 @@ Expected: no output, exit 1 (AC3.1; Step 1 showed 7).
 `git grep -n -F -e "canonical coercion contract" -e "coverage — canonical" -e "derivation — canonical" -- plugin/skills/_shared/policy-schema.md`
 Expected: no output, exit 1 (AC3.2; Step 1 showed 3).
 
-Re-run Step 1's heading-list command, save it as "after", and `diff` the two files.
-Expected: exactly ten removed lines, the ten headings in Step 3's table, and no added line (AC3.3; Task 1 removed the eleventh).
+Heading lists without line numbers, the "before" one read from the build base so it covers Task 1's edits too. Each is its own call, redirected to a scratch file:
+
+`git grep -h -E "^#{1,6} " 026e203f3 -- plugin/skills/_shared/pipeline-run-dir.md plugin/skills/_shared/pr-early-run-lifecycle.md plugin/skills/_shared/subagent-output-contract.md plugin/skills/_shared/policy-schema.md plugin/skills/design-wrapper/SKILL.md` (81 lines at the base)
+
+the same command without `026e203f3`, then `diff` the two files.
+Expected: exactly eleven removed lines, the ten headings in Step 3's table plus `### Initialized-run-dir requirement (#1566) — moved`, and no added line (AC3.3).
 
 `git grep -n -F "subagent-output-contract.md\`'s Model Selection" -- docs/skill-authoring.md`
 Expected: no output, exit 1 (AC4.1).
@@ -269,3 +272,7 @@ The run's `verify.js` invocation (Common Step 5) is the check for AC9.1; `npm te
 - [ ] **Step 4: Record the AC evidence**
 
 Write the output of Tasks 1-2's verification greps, the heading diff, the `wc -c` table and Step 2's comparison to `$PIPELINE_RUN_DIR/evidence/ac-5550.txt`, and log one `AC evidence` decision naming AC1-AC8, the commands and the counts.
+
+- [ ] **Step 5: State the byte sizes in the pull request (AC6.2)**
+
+Add a `### Byte sizes (#5550)` section to PR #5583's body, below the fixes block: the before and after `wc -c` of the five shrinking files, and `transcript-judge.md`'s change of -2 bytes (18681 to 18679), the length difference between `subagent-output-contract` and `subagent-dispatch-core`.
