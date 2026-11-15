@@ -253,5 +253,8 @@
   },
   "doc:decisions/0031-baseline-reruns-run-serially-and-reuse-one-scratch-path-per-slot": {
     "lastAuditedMs": 1794550416590
+  },
+  "doc:decisions/0032-whole-suite-runs-in-ci-local-runs-on-request": {
+    "lastAuditedMs": 1794723207919
   }
 }
