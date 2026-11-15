@@ -30,7 +30,7 @@ files:
 ### 2. Run the real evaluation — three judged runs per fixture
 - **URL:** the full `evaluate` command from the entry point, its stdout, and the `--out` file
 - **Action:** start the run and wait. Every fixture is a past record with a recorded `auto-merge` or `needs-human` verdict.
-  - Its blast radius is checked against judgments.js's own two code floors first: sensitive paths touched, or a failed blast radius. A floor decides the fixture with no launch.
+  - Its blast radius is checked against judgments.js's own code floors first: sensitive paths touched, or a failed blast radius. Once the merged diff is read, a diff over the prompt cap is the third floor (`diff-truncated`). A floor decides the fixture with no launch.
   - Otherwise the read-only `merge-check` worker judges it `--repeat` times, in a detached checkout at the merge commit. It gets the record body, the merged diff, the fixture's review findings and the PR's checks, and it reads them through the same `buildMergeCheckPrompt` production uses.
 - **Should feel:** like a measurement, not a demo. Each launch runs under its own wall-clock and spend ceiling (`--minutes`, `--dollars`, default 10 and 2). The 33 committed fixtures at 3 runs each are 99 launches.
 - **Should understand:**
@@ -63,7 +63,7 @@ files:
 - **Should understand:** the gate measures the merge-check judge only. A change to an acceptance prompt source triggers the same re-run rule (`docs/driver.md`), but its own effect is judged in review.
 - **Red flags:**
   - A fixture deleted or re-labelled to make the list empty.
-  - A prompt line softened to raise agreement, such as the rule that a truncated diff is judged `needs-human`.
+  - A prompt line softened to raise agreement.
 
 ### 5. Record the figures — the closing comment
 - **URL:** the record's closing comment (or the run ledger row wrap-up reads it from)

@@ -5,8 +5,8 @@
 // what the verdict is worth. A verdict reaches merge.js only after code wrote the one logged line
 // (`log-decision.js`, no `--section`) and re-read it with `confirmFromFile`; a worker that returns
 // anything but the exact string `auto-merge` is `needs-human`, and every failure on the way is a
-// stop, never a pass. The floors that need no judgment (a failed or sensitive blast radius) are
-// decided here before any launch.
+// stop, never a pass. The floors that need no judgment (a failed or sensitive blast radius, a diff
+// over the prompt cap) are decided here before any launch.
 //
 // `judgeMergeCheck` and `createJudgments` never throw.
 
@@ -19,7 +19,7 @@ const { loadMergeCheckRules, buildMergeCheckPrompt } = require('./judgment-promp
 const { bin, isPlainObject, isInterrupted, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
 const { verdictText, VERDICT_STEPS, confirmFromFile } = require('../dispatch/merge-verdict');
 const { runAcceptance: defaultRunAcceptance } = require('./acceptance');
-const { codeSuffix } = require('./review');
+const { codeSuffix, DIFF_PROMPT_MAX_BYTES, truncateUtf8 } = require('./review');
 
 // One merge-check event.
 function emitEvent(deps, startedAt, verdict, floor, detail) {
@@ -62,6 +62,14 @@ function blastFloor(parsed) {
     return { floor: 'blast-radius-failed', detail: 'blast radius reported no size ceilings' };
   }
   return { floor: null, summary, limits: { lines: cfg.autoMergeMaxLines, files: cfg.autoMergeMaxFiles } };
+}
+
+// The third code floor: a diff over the prompt cap. The judge would be shown only part of the change and could still
+// return `auto-merge`, with only a prompt sentence against it, so code decides it. { floor, detail } or null. Exported so
+// the verdict-fixture harness applies the same floor (tools/driver-merge-check-eval.js).
+function diffFloor(diff) {
+  if (!truncateUtf8(typeof diff === 'string' ? diff : '', DIFF_PROMPT_MAX_BYTES).truncated) return null;
+  return { floor: 'diff-truncated', detail: 'the diff exceeds the prompt cap' };
 }
 
 // Step 3: the record, the diff and the check state. { stop } on a failed record or diff read.
@@ -127,6 +135,8 @@ async function judgeMergeCheck(env, ctx) {
       if (inputs.stop) {
         return finish(deps, startedAt, ctx, env, 'needs-human', 'none', inputs.stop);
       }
+      const cut = diffFloor(inputs.diff);
+      if (cut) return finish(deps, startedAt, ctx, env, 'needs-human', cut.floor, cut.detail);
       const prompt = buildMergeCheckPrompt({
         record: ctx.record, title: inputs.title, body: inputs.body, diff: inputs.diff, summary: blast.summary,
         policy: { 'auto-merge-max-lines': blast.limits.lines, 'auto-merge-max-files': blast.limits.files }, checks: inputs.checks, reviewFindings: [], rules: rules.text,
@@ -198,4 +208,4 @@ function createJudgments({ deps, shared, readFile, runAcceptance } = {}) {
   };
 }
 
-module.exports = { judgeMergeCheck, createJudgments, blastFloor, launchAndValidate };
+module.exports = { judgeMergeCheck, createJudgments, blastFloor, diffFloor, launchAndValidate };

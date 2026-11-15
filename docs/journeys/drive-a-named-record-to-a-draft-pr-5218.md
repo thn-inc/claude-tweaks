@@ -146,7 +146,7 @@ files:
   - The judgment workers fail closed. Any of these returns `needs-human`, which ends `pending-review` / `verdict-not-confirmed`, with no ready or merge call:
     - a worker that timed out, failed, was killed at a ceiling or returned anything but an exact `auto-merge` / `needs-human`;
     - a verdict line `decisions.md` does not confirm;
-    - a sensitive path or a failed blast radius, decided by code before any launch.
+    - a sensitive path, a failed blast radius or a diff over the prompt cap (`diff-truncated`), decided by code before any launch.
   - An acceptance that did not complete ends `pending-review` / `acceptance-not-completed`.
   - The pending label the driver applies is `accept:pending`, on the parent for a `due` gate above the oversight floor and on the record for an above-floor record with no parent.
 - **Red flags:**

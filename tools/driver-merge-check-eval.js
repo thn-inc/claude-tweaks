@@ -14,8 +14,8 @@
 // cannot be put in a fixture is excluded with a reason, never guessed at. The fixture file carries no
 // rationale text and no local filesystem path.
 //
-// evaluate: replays each fixture through the production merge-check path — the two code floors first (judgments.js's
-// blastFloor), else `merge-check` workers (judgments.js's launchAndValidate: the production launch and verdict check) --repeat times in a detached scratch checkout at the merge commit — and
+// evaluate: replays each fixture through the production merge-check path — the code floors first (judgments.js's
+// blastFloor, then diffFloor once the merged diff is read), else `merge-check` workers (judgments.js's launchAndValidate: the production launch and verdict check) --repeat times in a detached scratch checkout at the merge commit — and
 // prints { total, autoMergeFixtures, needsHumanFixtures, floorDecided, excluded, excludedByReason, ac9, agreement,
 // falseAutoMerge, notJudged, byReviewFindings, ... }. A launch that failed, or returned no valid verdict, is never a
 // judged run: it counts toward launchFailures and the record's notJudged status, not toward agreement. --dry-run
@@ -41,7 +41,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const DRIVER = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'driver');
 const { confirmPassingVerdicts } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'dispatch', 'merge-verdict.js'));
 const { loadMergeCheckRules, buildMergeCheckPrompt } = require(path.join(DRIVER, 'judgment-prompts.js'));
-const { blastFloor, launchAndValidate } = require(path.join(DRIVER, 'judgments.js'));
+const { blastFloor, diffFloor, launchAndValidate } =require(path.join(DRIVER, 'judgments.js'));
 const { WIN32_CLAUDE_BIN } = require(path.join(DRIVER, 'launch.js'));
 
 const BLAST_RADIUS = path.join(__dirname, '..', 'plugin', 'bin', 'blast-radius.js');
@@ -419,6 +419,9 @@ async function judgeFixture(fx, floor, opts, deps, rules) {
   const policy = { 'auto-merge-max-lines': floor.limits.lines, 'auto-merge-max-files': floor.limits.files };
   return withScratch(deps, fx.mergeSha, async (dir) => {
     const diff = deps.git(['-C', dir, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--end-of-options', `${fx.mergeSha}^1`, fx.mergeSha, '--']);
+    // The same diff floor production applies after reading the diff, before any launch.
+    const cut = diffFloor(diff);
+    if (cut) return { floorDecided: true, floor: cut.floor, verdicts: [], failures: 0 };
     const prompt = buildMergeCheckPrompt({
       record: fx.record, title: fx.title, body: fx.body, diff, summary: floor.summary, policy,
       checks: fx.checks === undefined ? CHECKS_UNREADABLE : fx.checks, reviewFindings: fx.reviewFindings, rules,

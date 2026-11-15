@@ -11,6 +11,7 @@ const path = require('node:path');
 const { formatEntry } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'log-decision', 'append'));
 const { verdictText, VERDICT_STEPS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'dispatch', 'merge-verdict'));
 const { classifyReviewSection, scrubLocalPaths, run } = require(path.join(__dirname, '..', '..', '..', 'tools', 'driver-merge-check-eval.js'));
+const { DIFF_PROMPT_MAX_BYTES } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'driver', 'review.js'));
 
 const roots = [];
 after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -139,7 +140,7 @@ describe('evaluate: counting, floors and the exit code', () => {
   });
 
   // Fake gh-free deps: git answers the worktree add / diff / remove calls, launchWorker is the test's.
-  function setup({ entries, excluded = [], launch = () => ok('needs-human') }) {
+  function setup({ entries, excluded = [], launch = () => ok('needs-human'), diffs = {} }) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-eval-test-'));
     roots.push(dir);
     const file = path.join(dir, 'fixtures.json');
@@ -150,7 +151,9 @@ describe('evaluate: counting, floors and the exit code', () => {
       fs, tmpdir: dir, worktree: dir, active: new Set(), platform: process.platform, env: {},
       git: (args) => {
         if (args.includes('remove')) fs.rmSync(args[args.length - 1], { recursive: true, force: true });
-        return args.includes('diff') ? 'diff --git a/x b/x\n+x\n' : '';
+        if (!args.includes('diff')) return '';
+        const sha = args.find((a) => /^[0-9a-f]{40}$/.test(a));
+        return diffs[sha] || 'diff --git a/x b/x\n+x\n';
       },
       launchWorker: async (o) => { prompts.push(o.prompt); return launch(prompts.length, o); },
       log: (l) => logs.push(l), err: () => {},
@@ -196,6 +199,22 @@ describe('evaluate: counting, floors and the exit code', () => {
     assert.strictEqual(summary.floorDecided, 2);
     assert.strictEqual(t.prompts.length, 0);
     assert.strictEqual(summary.agreement.runs, 0);
+  });
+
+  test('a fixture whose merged diff is over the prompt cap is floor-decided before any launch; one at the cap launches', async () => {
+    const over = entry(1, 'auto-merge', { mergeSha: '1'.repeat(40) });
+    const atCap = entry(2, 'needs-human', { mergeSha: '2'.repeat(40) });
+    const t = setup({
+      entries: [over, atCap],
+      diffs: { ['1'.repeat(40)]: 'a'.repeat(DIFF_PROMPT_MAX_BYTES + 1), ['2'.repeat(40)]: 'a'.repeat(DIFF_PROMPT_MAX_BYTES) },
+    });
+    const { code, summary } = await t.go('--repeat', '3');
+    assert.strictEqual(code, 0);
+    assert.strictEqual(summary.floorDecided, 1);
+    assert.strictEqual(t.prompts.length, 3);
+    assert.strictEqual(summary.agreement.runs, 3);
+    assert.strictEqual(summary.agreement.byExpected['auto-merge'].runs, 0);
+    assert.deepStrictEqual(summary.notJudged, []);
   });
 
   test('a run where every launch failed judged nothing: exit 3, no agreement, the record is notJudged', async () => {

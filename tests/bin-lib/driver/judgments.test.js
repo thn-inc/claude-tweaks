@@ -174,13 +174,12 @@ describe('judgment-prompts', () => {
       assert.match(p.trimEnd().split('\n').pop(), /\{ verdict, rationale \}/);
     });
 
-    test('a diff over the cap is truncated and marked, and the judge is told a truncated diff is needs-human', () => {
+    test('a diff over the cap is truncated and marked (judgments.js floors it before a launch, so the prompt carries no needs-human sentence)', () => {
       const p = buildMergeCheckPrompt(mergeArgs({ diff: 'a'.repeat(DIFF_PROMPT_MAX_BYTES + 10) }));
       assert.ok(p.includes('[diff truncated]'));
-      assert.match(p, /not shown the whole change: judge it needs-human, never auto-merge/);
+      assert.doesNotMatch(p, /not shown the whole change/);
       const whole = buildMergeCheckPrompt(mergeArgs());
       assert.ok(!whole.includes('[diff truncated]'));
-      assert.doesNotMatch(whole, /not shown the whole change/);
     });
 
     test('a diff cannot close its own fence', () => {

@@ -9,6 +9,7 @@ const { formatEntry } = require(path.join(LIB, 'log-decision', 'append'));
 const { verdictText } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
 const { MERGE_CHECK_RESULT_SCHEMA, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
 const { judgeMergeCheck, createJudgments } = require(path.join(LIB, 'driver', 'judgments.js'));
+const { DIFF_PROMPT_MAX_BYTES } = require(path.join(LIB, 'driver', 'review.js'));
 
 const roots = [];
 after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -111,6 +112,33 @@ describe('merge-check path', () => {
     assert.strictEqual(r.floor, 'sensitive-path');
     assert.strictEqual(h.launches().length, 0);
     assert.strictEqual(h.decisionLines().length, 1);
+  });
+
+  test('a diff one byte over the prompt cap is a needs-human diff-truncated floor, logged, no launch', async () => {
+    const h = harness({ diffText: 'a'.repeat(DIFF_PROMPT_MAX_BYTES + 1) });
+    const r = await judgeMergeCheck(h.env, h.ctx);
+    assert.strictEqual(r.verdict, 'needs-human');
+    assert.strictEqual(r.floor, 'diff-truncated');
+    assert.strictEqual(h.launches().length, 0);
+    assert.deepStrictEqual(h.decisionLines().map((l) => l.replace(/^- AUTO \d\d:\d\d:\d\d — /, '')),
+      ['Auto-merge gate: #7 assess-agent-autonomy verdict needs-human. Reversibility: n/a.']);
+    assert.strictEqual(h.events.length, 1);
+    assert.strictEqual(h.events[0].extra.floor, 'diff-truncated');
+  });
+
+  test('a multi-byte diff over the cap in bytes, though under it in characters, is the same floor', async () => {
+    const h = harness({ diffText: 'é'.repeat(DIFF_PROMPT_MAX_BYTES / 2 + 1) });
+    const r = await judgeMergeCheck(h.env, h.ctx);
+    assert.strictEqual(r.floor, 'diff-truncated');
+    assert.strictEqual(h.launches().length, 0);
+  });
+
+  test('a diff exactly at the prompt cap still reaches the judge', async () => {
+    const h = harness({ diffText: 'a'.repeat(DIFF_PROMPT_MAX_BYTES) });
+    const r = await judgeMergeCheck(h.env, h.ctx);
+    assert.strictEqual(r.verdict, 'auto-merge');
+    assert.strictEqual(r.floor, 'none');
+    assert.strictEqual(h.launches().length, 1);
   });
 
   for (const [name, envelope] of BAD_MERGE_CHECK_ENVELOPES) {
