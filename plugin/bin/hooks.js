@@ -55,6 +55,7 @@ const stagedInventory = require('./lib/hooks/staged-inventory');
 const sessionResidue = require('./lib/hooks/session-residue');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { isPathContained } = require('./lib/shared-primitives');
+const { resolveAgainst } = require('./lib/health-core/io');
 const { closeRunState } = require('./lib/hooks/close-run-state');
 const { teardownRun } = require('./lib/hooks/teardown-run');
 const { deriveBranch, repoRootOf } = require('./lib/hooks/run-integrity');
@@ -387,7 +388,12 @@ function pipelinesRunIdShape(root, resolved) {
 function resolveImplicitRunUnambiguous(cwd, env, callerIdentity) {
   if (env && env.PIPELINE_RUN_DIR) {
     try {
-      if (fs.statSync(path.resolve(cwd, env.PIPELINE_RUN_DIR)).isDirectory()) {
+      // The returned value stays the raw env value (it is printed in paste-ready hints), and every later
+      // fs call on it resolves against the real cwd, so a relative value counts only when the injected cwd
+      // and the real one reach the same directory: the check and the later use then agree.
+      const joined = fs.statSync(resolveAgainst(cwd, env.PIPELINE_RUN_DIR));
+      const own = fs.statSync(env.PIPELINE_RUN_DIR);
+      if (joined.isDirectory() && own.dev === joined.dev && own.ino === joined.ino) {
         return { runDir: env.PIPELINE_RUN_DIR, candidates: null };
       }
     } catch { /* fall through */ }
@@ -1154,7 +1160,14 @@ async function runDeleteLedger(argv, deps) {
   } else {
     const { resolveLedgerPath, describeRunLedgers } = require('./lib/wrap-up/ledger-write');
     const worktree = ctxLib.readRunState(runDir)?.worktree || deps.cwd();
-    const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg ? path.resolve(deps.cwd(), ledgerArg) : null });
+    // `explicit` stays the typed value (resolveLedgerPath echoes it as candidates[0] and path, and a skill parses
+    // the printed path); its fs calls join it onto cwd without normalizing, as a bare read would.
+    const resolved = resolveLedgerPath({
+      runDir,
+      worktree,
+      explicit: ledgerArg || null,
+      cwd: deps.cwd(),
+    });
     // #4026: a report that leaves the ledger on disk logs its own SKIP line
     // (cleanup-procedures.md Item 2), only into an anchored run dir. A
     // failed append is one stderr line; stdout and the exit code stay as-is.
@@ -1199,7 +1212,7 @@ async function runDeleteLedger(argv, deps) {
       deps.stdout(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)}${inherited} — not found\n`);
     } else {
       try {
-        fs.unlinkSync(resolved.path);
+        fs.unlinkSync(resolveAgainst(deps.cwd(), resolved.path));
         deps.stdout(`claude-tweaks: deleted ledger ${resolved.path}\n`);
       } catch (e) {
         deps.stdout(`claude-tweaks: delete-ledger: failed to delete ${resolved.path} (${e.message})\n`);
@@ -1260,7 +1273,7 @@ function ledgerRowText(args, flag, fileFlag, cwd) {
   if (typeof file !== 'string' || file.trim() === '') return fail(`${fileFlag} needs a path`);
   let text;
   try {
-    text = fs.readFileSync(path.resolve(cwd, file), 'utf8');
+    text = fs.readFileSync(resolveAgainst(cwd, file), 'utf8');
   } catch (err) {
     return fail(`${fileFlag} ${file} is unreadable (${err && err.code ? err.code : err && err.message})`);
   }
@@ -2133,7 +2146,8 @@ async function run(argv, deps) {
       const reason = unknown.valueFlag
         ? `${unknown.valueFlag} needs a value, got '${unknown.token}'`
         : `unknown flag '${unknown.token}'`;
-      // deps.stderr never throws (realDeps.stderr is fs.writeSync in a try/catch, not process.stderr.write): a closed (EBADF)
+      // deps.stderr never throws (realDeps.stderr is a full-write loop over fs.writeSync that retries EAGAIN
+      // and swallows every other error, not process.stderr.write): a closed (EBADF)
       // or broken (EPIPE) stderr would otherwise throw into the entry's
       // `.catch(() => process.exit(0))` and turn this refusal back into the
       // silent exit 0 that #4834 removed. Pinned by tests/hooks-js-flag-strict

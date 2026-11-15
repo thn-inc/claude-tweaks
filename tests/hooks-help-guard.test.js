@@ -100,6 +100,31 @@ test('#5375: realDeps.stderr writes every byte, retries EAGAIN and never throws 
   assert.strictEqual(Buffer.concat(delivered).toString(), text.slice(0, 15));
 });
 
+// #5375: a relative path argument is joined onto the injected cwd WITHOUT normalizing (resolveAgainst),
+// so the kernel sees a trailing slash exactly as a bare relative read did at base.
+test('#5375: ledger-row --item-file item.txt/ (trailing slash) still refuses with exit 2 and ENOTDIR', async () => {
+  const { dir, run } = projectWithRun();
+  fs.writeFileSync(path.join(dir, 'item.txt'), 'a row\n');
+  const r = await runCli(HOOKS, ['ledger-row', '--run', run, '--phase', 'build', '--status', 'observation', '--item-file', 'item.txt/'], {
+    cwd: dir,
+    env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+  });
+  assert.deepStrictEqual(r, { code: 2, stdout: '', stderr: 'claude-tweaks: ledger-row: --item-file item.txt/ is unreadable (ENOTDIR) — nothing written\n' });
+});
+
+test('#5375: delete-ledger --ledger <relative> deletes against the injected cwd and prints the typed path', async () => {
+  const { run } = projectWithRun();
+  fs.writeFileSync(path.join(run, 'x-ledger.md'), '# ledger\n');
+  const env = { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' };
+  // A trailing slash is not a file at base (not-found) and must stay one.
+  const slash = await runCli(HOOKS, ['delete-ledger', '--run', run, '--ledger', 'x-ledger.md/'], { cwd: run, env });
+  assert.deepStrictEqual(slash, { code: 0, stdout: `claude-tweaks: delete-ledger: no ledger found for ${path.basename(run)} — not found\n`, stderr: '' });
+  assert.ok(fs.existsSync(path.join(run, 'x-ledger.md')), 'the trailing-slash call must delete nothing');
+  const r = await runCli(HOOKS, ['delete-ledger', '--run', run, '--ledger', 'x-ledger.md'], { cwd: run, env });
+  assert.deepStrictEqual(r, { code: 0, stdout: 'claude-tweaks: deleted ledger x-ledger.md\n', stderr: '' });
+  assert.ok(!fs.existsSync(path.join(run, 'x-ledger.md')));
+});
+
 test('#1143: --help anywhere in the argument list intercepts, not just as the first arg', () => {
   // record-pr's real shape is `record-pr [--run <dir>] <number> <url>` — a
   // --help buried after other-looking positionals must still intercept

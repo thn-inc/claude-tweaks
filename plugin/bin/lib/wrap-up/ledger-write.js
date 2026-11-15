@@ -17,6 +17,7 @@ const { execFileSync } = require('child_process');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { splitLedgerRow, escapeLedgerCell, collapseLineBreaks } = require('./ledger-cells');
 const { isPathContained } = require('../shared-primitives');
+const { resolveAgainst } = require('../health-core/io');
 
 const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation'];
 
@@ -42,7 +43,7 @@ function defaultGit(args, { cwd } = {}) {
 // `ledger.md` or `*-ledger.md` and its real path must sit under `runDir` or
 // `worktree` — otherwise `{ ok: false, reason: 'rejected', detail }`, since
 // callers unlink or overwrite whatever it names.
-function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
+function resolveLedgerPath({ runDir, worktree, explicit, deps = {}, cwd } = {}) {
   const existsSync = deps.existsSync || fs.existsSync;
   const readdirSync = deps.readdirSync || fs.readdirSync;
   const realpathSync = deps.realpathSync || fs.realpathSync;
@@ -50,13 +51,16 @@ function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
   // Lazy: pack.js is a heavy module, and only the docs/plans fallback needs it.
   const resolveBase = deps.resolveBase || ((wt) => require('./pack').resolveWorktreeBase(wt));
 
+  // `cwd` (optional): the directory a relative `explicit` is read against. The fs calls get the path joined onto
+  // it without normalizing (resolveAgainst); `explicit` itself is echoed back as given. Absent, fs sees `explicit` as is.
+  const at = (p) => (cwd === undefined ? p : resolveAgainst(cwd, p));
   if (explicit) {
     const base = path.basename(explicit);
     if (base !== 'ledger.md' && !base.endsWith('-ledger.md')) {
       return { ok: false, reason: 'rejected', detail: 'not a ledger file name (expected ledger.md or *-ledger.md)', candidates: [explicit] };
     }
-    if (!existsSync(explicit)) return { ok: false, reason: 'not-found', candidates: [explicit] };
-    const real = (p) => { try { return realpathSync(p); } catch { return null; } };
+    if (!existsSync(at(explicit))) return { ok: false, reason: 'not-found', candidates: [explicit] };
+    const real = (p) => { try { return realpathSync(at(p)); } catch { return null; } };
     const target = real(explicit);
     const roots = [runDir, worktree].filter(Boolean).map(real).filter(Boolean);
     if (!target || !roots.some((r) => isPathContained(target, r))) {
