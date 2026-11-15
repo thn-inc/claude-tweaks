@@ -2,42 +2,134 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const { execFile, execFileSync, spawn } = require('node:child_process');
-const util = require('node:util');
+const { spawn } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
 const { MODE_BITS_HONORED } = require('../../helpers/root');
+const { runCli, spawnCli } = require('../../helpers/run-cli');
 
 const BIN = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'visual-decide.js');
 const CLI_LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'cli.js');
-const execFileAsync = util.promisify(execFile);
+const SERVER_LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'server.js');
 
 function mkTmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-function run(args) {
-  try {
-    const out = execFileSync(process.execPath, [BIN, ...args], { encoding: 'utf8' });
-    return { code: 0, out };
-  } catch (err) {
-    return { code: err.status, out: err.stdout || '', err: err.stderr || '' };
-  }
+async function run(args, { cwd, deps } = {}) {
+  const { code, stdout, stderr } = await runCli(BIN, args, { cwd, deps });
+  return { code, out: stdout, err: stderr };
 }
 
-async function stopQuiet(stateDir) {
+async function stopQuiet(stateDir, opts) {
   try {
-    run(['stop', '--state', stateDir]);
+    await run(['stop', '--state', stateDir], opts);
   } catch {
     // best-effort cleanup
   }
 }
 
+// In-process stand-in for start's detached daemon. The fake spawn runs the server in this
+// process with the resolved args start gave it; the fake kill answers signal 0 as alive and
+// calls that server's own stop for SIGTERM. The server records this process's pid in
+// server-info, so these deps must never fall through to the real process.kill.
+function inProcessDaemon() {
+  // eslint-disable-next-line global-require
+  const { parseArgs } = require(CLI_LIB);
+  // eslint-disable-next-line global-require
+  const { startServer } = require(SERVER_LIB);
+  let current = null;
+  const closes = [];
+  const deps = {
+    spawn: (cmd, args) => {
+      const { opts } = parseArgs(args.slice(1));
+      startServer({ dir: opts.dir, stateDir: opts.state, port: 0, idleMinutes: Number(opts['idle-minutes']) }).then(
+        (started) => {
+          current = started;
+          closes.push(new Promise((resolve) => {
+            started.server.once('close', resolve);
+          }));
+        },
+        () => {},
+      );
+      return { unref() {} };
+    },
+    kill: (pid, signal) => {
+      if (signal === 'SIGTERM') current.stop();
+      return true;
+    },
+  };
+  return {
+    opts: { deps },
+    // The latest server's own http.Server, for closing it without the marker.
+    server: () => current.server,
+    // Resolves once every server this stand-in started has closed.
+    closed: () => Promise.all(closes),
+  };
+}
+
+test('AC4.1: an in-process daemon start-and-stop leaves SIGTERM/SIGINT listener counts unchanged', async () => {
+  const D = mkTmp('vd-content-');
+  const S = mkTmp('vd-state-');
+  const resources = (type) => process.getActiveResourcesInfo().filter((r) => r === type).length;
+  const before = {
+    sigterm: process.listenerCount('SIGTERM'),
+    sigint: process.listenerCount('SIGINT'),
+    servers: resources('TCPServerWrap'),
+    timeouts: resources('Timeout'),
+  };
+  const res = await runCli(BIN, ['start', '--dir', D, '--state', S, '--port', '0', '--idle-minutes', '5', '--__daemon__'], {
+    cwd: D,
+    deps: { onStarted: ({ stop }) => setImmediate(stop) },
+  });
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(process.listenerCount('SIGTERM'), before.sigterm);
+  assert.equal(process.listenerCount('SIGINT'), before.sigint);
+  assert.equal(fs.existsSync(path.join(S, 'server-stopped')), true);
+  assert.ok(resources('TCPServerWrap') <= before.servers, 'the daemon server must be closed before run resolves');
+  assert.ok(resources('Timeout') <= before.timeouts, 'run must leave no timer behind');
+});
+
+test('AC5.1: require() of visual-decide.js prints nothing and leaves process.exitCode undefined', async () => {
+  const D = mkTmp('vd-state-');
+  // fresh: true re-requires the CLI inside the helper's snapshot, so a require-time
+  // stdout/stderr write or process.exitCode change fails this call.
+  const res = await runCli(BIN, ['status', '--state', D], { fresh: true });
+  assert.equal(res.code, 0);
+  assert.equal(process.exitCode, undefined);
+});
+
+test('AC9.1: relative --state resolves against the injected cwd', async () => {
+  const D = mkTmp('vd-cwd-');
+  assert.notEqual(fs.realpathSync(D), fs.realpathSync(process.cwd()));
+  const neverStarted = await runCli(BIN, ['status', '--state', 'st'], { cwd: D });
+  assert.equal(neverStarted.stdout, 'never-started\n');
+
+  // A port nothing listens on: bind an ephemeral one, then close it.
+  const closedPort = await new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+  fs.mkdirSync(path.join(D, 'st'));
+  fs.writeFileSync(
+    path.join(D, 'st', 'server-info'),
+    JSON.stringify({ pid: 0, port: closedPort, url: `http://127.0.0.1:${closedPort}/`, key: 'test' }),
+  );
+  fs.writeFileSync(path.join(D, 'st', 'server-stopped'), '');
+  const stopped = await runCli(BIN, ['status', '--state', 'st'], { cwd: D });
+  assert.equal(stopped.stdout, 'stopped\n');
+});
+
 test('AC1: start returns detached-running server-info (mode 0600, url has ?key=); second start refuses naming the URL', async () => {
   const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
-  const first = run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '2']);
+  const daemon = inProcessDaemon();
+  const first = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '2'], daemon.opts);
   try {
     assert.equal(first.code, 0, first.err);
     const info = JSON.parse(first.out);
@@ -51,11 +143,12 @@ test('AC1: start returns detached-running server-info (mode 0600, url has ?key=)
       assert.equal(mode, 0o600);
     }
 
-    const second = run(['start', '--dir', dir, '--state', stateDir]);
+    const second = await run(['start', '--dir', dir, '--state', stateDir], daemon.opts);
     assert.notEqual(second.code, 0);
     assert.match(second.err, new RegExp(info.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   } finally {
-    await stopQuiet(stateDir);
+    await stopQuiet(stateDir, daemon.opts);
+    await daemon.closed();
   }
 });
 
@@ -63,45 +156,42 @@ test('status: never-started, running, stopped, crashed', async () => {
   const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
 
-  const neverStarted = run(['status', '--state', stateDir]);
+  const daemon = inProcessDaemon();
+
+  const neverStarted = await run(['status', '--state', stateDir]);
   assert.equal(neverStarted.out.trim(), 'never-started');
 
-  const started = run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5']);
+  const started = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5'], daemon.opts);
   assert.equal(started.code, 0, started.err);
-  const info = JSON.parse(started.out);
 
-  const running = run(['status', '--state', stateDir]);
+  const running = await run(['status', '--state', stateDir]);
   assert.equal(running.out.trim(), 'running');
 
-  // crashed: SIGKILL the daemon directly, bypassing stop's own marker write
-  process.kill(info.pid, 'SIGKILL');
+  // crashed: close the server directly, bypassing stop's own marker write
+  // (its unref'd idle and watch timers stay armed and cannot hold the process)
   await new Promise((resolve) => {
-    setTimeout(resolve, 300);
+    daemon.server().close(resolve);
   });
-  const crashed = run(['status', '--state', stateDir]);
+  const crashed = await run(['status', '--state', stateDir]);
   assert.equal(crashed.out.trim(), 'crashed');
 
   // stopped: start again, then stop cleanly
-  const restarted = run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5']);
+  const restarted = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5'], daemon.opts);
   assert.equal(restarted.code, 0, restarted.err);
-  const stopResult = run(['stop', '--state', stateDir]);
+  const stopResult = await run(['stop', '--state', stateDir], daemon.opts);
   assert.equal(stopResult.code, 0);
-  const stoppedStatus = run(['status', '--state', stateDir]);
+  const stoppedStatus = await run(['status', '--state', stateDir]);
   assert.equal(stoppedStatus.out.trim(), 'stopped');
+  await daemon.closed();
 });
 
-test('review fix: --idle-minutes 0 is honored by the daemon, not silently replaced by the 240min default', async () => {
-  // idleMinutes=0 makes the daemon self-exit within ~1ms of starting — too
-  // fast for `start`'s own probe to reliably observe as "running" (a race
-  // inherent to the value itself, not the bug under test), so this checks
-  // the effect (the stopped marker appears promptly) rather than gating on
-  // `start`'s own exit code.
+test('review fix: --idle-minutes 0 is honored by the daemon, not silently replaced by the 240min default', { timeout: 10000 }, async () => {
+  // The daemon path runs in-process: run resolves only once the server has
+  // stopped, so with idleMinutes=0 it resolves within ~1ms of starting, and
+  // the 240-minute default would instead hit this test's timeout.
   const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
-  run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '0']);
-  await new Promise((resolve) => {
-    setTimeout(resolve, 1000);
-  });
+  await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '0', '--__daemon__']);
   assert.equal(
     fs.existsSync(path.join(stateDir, 'server-stopped')),
     true,
@@ -110,15 +200,22 @@ test('review fix: --idle-minutes 0 is honored by the daemon, not silently replac
 });
 
 test('stop is stale-PID tolerant (dead PID -> already-stopped, exit 0)', async () => {
-  const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
-  const started = run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5']);
-  const info = JSON.parse(started.out);
-  process.kill(info.pid, 'SIGKILL');
+  // A dead pid: a non-CLI child this test spawned, SIGKILLed and saw exit.
+  const victim = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
   await new Promise((resolve) => {
-    setTimeout(resolve, 300);
+    victim.once('spawn', resolve);
   });
-  const stopResult = run(['stop', '--state', stateDir]);
+  const exited = new Promise((resolve) => {
+    victim.once('exit', resolve);
+  });
+  victim.kill('SIGKILL');
+  await exited;
+  fs.writeFileSync(
+    path.join(stateDir, 'server-info'),
+    JSON.stringify({ pid: victim.pid, port: 0, url: 'http://127.0.0.1:0/', key: 'test' }),
+  );
+  const stopResult = await run(['stop', '--state', stateDir]);
   assert.equal(stopResult.code, 0);
   assert.equal(fs.existsSync(path.join(stateDir, 'server-stopped')), true);
 });
@@ -141,11 +238,13 @@ test(
     // never exits and never writes the marker itself -- the same shape a
     // zombie child presents to pidAlive() under a non-reaping init, without
     // needing an actual zombie (this sandbox's PID 1 reaps normally).
-    const stuck = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'], {
-      stdio: 'ignore',
+    // It prints once its handler is installed: the in-process stop below signals
+    // at once, and a SIGTERM that lands before the handler would kill it.
+    const stuck = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000); process.stdout.write("ready");'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     await new Promise((resolve) => {
-      stuck.once('spawn', resolve);
+      stuck.stdout.once('data', resolve);
     });
 
     fs.writeFileSync(
@@ -154,7 +253,7 @@ test(
     );
 
     try {
-      const stopResult = run(['stop', '--state', stateDir]);
+      const stopResult = await run(['stop', '--state', stateDir]);
       assert.equal(stopResult.code, 0, stopResult.err);
       assert.equal(stopResult.out.trim(), 'stopped');
       assert.equal(
@@ -184,19 +283,19 @@ test('stop leaves server-stopped and status reports stopped when the daemon exit
   );
 
   try {
-    // Async, not the sync run() helper: the victim is a child of this test
-    // process, and only the event loop lets libuv reap it once it dies. An
+    // In-process with the real kill, and awaited: the victim is a child of this
+    // test process, and only the event loop lets libuv reap it once it dies. An
     // unreaped zombie still answers kill(pid, 0), so waitFor would time out
     // and the timeout branch would write the marker, masking the handler-less
     // exit this test is about.
-    const { stdout } = await execFileAsync(process.execPath, [BIN, 'stop', '--state', stateDir], { encoding: 'utf8' });
+    const { out: stdout } = await run(['stop', '--state', stateDir]);
     assert.equal(stdout.trim(), 'stopped');
     assert.equal(
       fs.existsSync(path.join(stateDir, 'server-stopped')),
       true,
       'server-stopped marker must be written when the PID exits without its handler running',
     );
-    const status = run(['status', '--state', stateDir]);
+    const status = await run(['status', '--state', stateDir]);
     assert.equal(status.out.trim(), 'stopped');
   } finally {
     try {
@@ -207,15 +306,13 @@ test('stop leaves server-stopped and status reports stopped when the daemon exit
   }
 });
 
-test('AC6 (CLI path): fractional --idle-minutes self-exits and status reflects stopped', async () => {
+test('AC6 (CLI path): fractional --idle-minutes self-exits and status reflects stopped', { timeout: 10000 }, async () => {
   const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
-  const started = run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '0.05']);
+  // The daemon path in-process: run resolves once the 3s idle timeout has stopped the server.
+  const started = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '0.05', '--__daemon__']);
   assert.equal(started.code, 0, started.err);
-  await new Promise((resolve) => {
-    setTimeout(resolve, 4000);
-  });
-  const status = run(['status', '--state', stateDir]);
+  const status = await run(['status', '--state', stateDir]);
   assert.equal(status.out.trim(), 'stopped');
 });
 
@@ -247,7 +344,8 @@ test('#1231: pidAlive treats EPERM as alive (unsignalable, not dead) and ESRCH a
 test('#1232: server-info persists a real key, and readInfo (the function cmdStatus reads info.key through) resolves it — never undefined', async () => {
   const dir = mkTmp('vd-content-');
   const stateDir = mkTmp('vd-state-');
-  const started = run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5']);
+  const daemon = inProcessDaemon();
+  const started = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5'], daemon.opts);
   try {
     assert.equal(started.code, 0, started.err);
     const info = JSON.parse(started.out);
@@ -260,8 +358,43 @@ test('#1232: server-info persists a real key, and readInfo (the function cmdStat
     assert.notEqual(reread.key, undefined, 'readInfo (cmdStatus\'s own read path) must resolve a real, non-undefined key');
     assert.equal(reread.key, info.key);
   } finally {
-    await stopQuiet(stateDir);
+    await stopQuiet(stateDir, daemon.opts);
+    await daemon.closed();
   }
+});
+
+// real process: a detached daemon stopped by a real SIGTERM — AC4.2
+test('AC4.2: a real start detaches a daemon that an in-process stop ends with a real SIGTERM', async () => {
+  // eslint-disable-next-line global-require
+  const { pidAlive, waitFor, readInfo } = require(CLI_LIB);
+  const D = mkTmp('vd-content-');
+  const S = mkTmp('vd-state-');
+  const started = spawnCli(BIN, ['start', '--dir', D, '--state', S]);
+  const daemonPid = (readInfo(S) || {}).pid;
+  try {
+    assert.equal(started.code, 0, started.stderr);
+    const info = JSON.parse(started.stdout);
+    assert.match(info.url, /\?key=/);
+    assert.equal(info.pid, daemonPid);
+    assert.notEqual(daemonPid, process.pid);
+
+    const stopped = await run(['stop', '--state', S]);
+    assert.equal(stopped.code, 0, stopped.err);
+    assert.equal(stopped.out, 'stopped\n');
+    assert.equal(fs.existsSync(path.join(S, 'server-stopped')), true);
+    assert.ok(await waitFor(() => !pidAlive(daemonPid), { timeoutMs: 3000 }), 'the daemon must exit on the SIGTERM stop sent it');
+  } finally {
+    // Never leave the daemon running: SIGKILL the pid captured above if the stop did not end it.
+    if (Number.isInteger(daemonPid) && daemonPid !== process.pid && pidAlive(daemonPid)) process.kill(daemonPid, 'SIGKILL');
+  }
+});
+
+// Real process: proves the script entry turns run's unknown-command refusal into the exit code (AC6.1).
+test('AC6.1: no arguments is an unknown-command refusal — exit 1, empty stdout, the baseline stderr', () => {
+  const res = spawnCli(BIN, []);
+  assert.equal(res.code, 1);
+  assert.equal(res.stdout, '');
+  assert.equal(res.stderr, 'visual-decide: unknown command: (none) — expected start|stop|status\n');
 });
 
 test('AC8: cli.js and bin entry have zero non-builtin imports', () => {

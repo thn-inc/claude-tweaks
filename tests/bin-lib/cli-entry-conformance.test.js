@@ -39,7 +39,6 @@ const NOT_YET = [
   'resolve-profile.js',
   'sweep-stray-run-dirs.js',
   'verify.js',
-  'visual-decide.js',
   'wrap-up-engine.js',
   'wrap-up-state.js',
 ];
