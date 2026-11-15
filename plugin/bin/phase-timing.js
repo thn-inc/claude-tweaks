@@ -284,7 +284,7 @@ async function run(argv, deps) {
 
   const wantTokens = o.transcripts.length > 0 || o.autoTranscript;
   const { paths, notes: found } = wantTokens ? resolveTranscripts(o, base.runState, deps) : { paths: [], notes: [] };
-  const derived = await deriveTiming(runDir, { transcriptPaths: paths, notes: found, cwd, wantTokens });
+  const derived = await deriveTiming(runDir, { transcriptPaths: paths, notes: found, cwd, wantTokens, base });
   if (!derived.ok) { deps.stderr(`phase-timing.js: ${derived.error}\n`); return 2; }
   const { timing, out, tokens, guard, notes } = derived;
   // #4029: the efficiency-budget check. A transcript that yielded no rows leaves

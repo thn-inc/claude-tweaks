@@ -8,8 +8,8 @@ const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
 const { runCli } = require('../../helpers/run-cli');
-const { derivePhaseTiming, deriveTiming, hasTokenTotals, writeTimingFile } = require('../../../plugin/bin/lib/timing/run-timing');
-const { readUsage } = require('../../../plugin/bin/lib/timing/transcript');
+const { derivePhaseTiming, deriveTiming, collectDispatches, hasTokenTotals, writeTimingFile } = require('../../../plugin/bin/lib/timing/run-timing');
+const { readUsage, readDispatches } =require('../../../plugin/bin/lib/timing/transcript');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
@@ -117,7 +117,7 @@ test('writeTimingFile throws and creates nothing when runDir is gone', () => {
   }
 });
 
-test('deriveTiming with a readUsageImpl that never resolves returns deadlineHit within the deadline', async () => {
+test('deriveTiming with a readUsageImpl that never resolves returns deadlineHit within the deadline', { timeout: 5000 }, async () => {
   const dir = fixtureCopy();
   try {
     const started = Date.now();
@@ -138,7 +138,7 @@ test('deriveTiming with a readUsageImpl that never resolves returns deadlineHit 
   }
 });
 
-test('deriveTiming passes an abort signal to readUsageImpl and aborts it at the deadline', async () => {
+test('deriveTiming passes an abort signal to readUsageImpl and aborts it at the deadline', { timeout: 5000 }, async () => {
   const dir = fixtureCopy();
   try {
     let seen = null;
@@ -170,7 +170,7 @@ test('deriveTiming wantTokens true with no transcript still yields the zero-row 
   }
 });
 
-test('readUsage with an aborted signal destroys a real slow stream', async () => {
+test('readUsage with an aborted signal destroys a real slow stream', { timeout: 5000 }, async () => {
   let stream = null;
   const fsImpl = {
     statSync: () => ({ isFile: () => true }),
@@ -194,4 +194,49 @@ test('readUsage with an already-aborted signal rejects without opening a stream'
   ctl.abort();
   await assert.rejects(readUsage('x.jsonl', { fsImpl, signal: ctl.signal }), (err) => err.code === 'ABORT_ERR');
   assert.equal(opened, false);
+});
+
+test('collectDispatches past its deadline, or with an aborted signal, returns null', { timeout: 5000 }, async () => {
+  const dir = fixtureCopy();
+  try {
+    const events = [{ ts: '2026-09-05T14:00:00.000Z', type: 'session-end' }];
+    const transcript = path.join(dir, 'main.jsonl');
+    assert.equal(await collectDispatches([transcript], events, dir, { deadlineAt: Date.now() - 1 }), null);
+    const ctl = new AbortController();
+    ctl.abort();
+    assert.equal(await collectDispatches([transcript], events, dir, { signal: ctl.signal }), null);
+    // Control: unbounded, the same call resolves to a dispatches value, not null.
+    const free = await collectDispatches([transcript], events, dir);
+    assert.equal(typeof free.notFound, 'string');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readDispatches passes its signal to readUsage', { timeout: 5000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-run-timing-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'agent-a.jsonl'), '');
+    const ctl = new AbortController();
+    ctl.abort();
+    const r = await readDispatches(dir, { signal: ctl.signal });
+    assert.match(r.items[0].notFound, /transcript not readable \(ABORT_ERR\)/);
+    const free = await readDispatches(dir);
+    assert.doesNotMatch(free.items[0].notFound, /ABORT_ERR/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('deriveTiming uses a given base instead of reading the run directory again', async () => {
+  const dir = fixtureCopy();
+  try {
+    const base = derivePhaseTiming(dir);
+    fs.rmSync(path.join(dir, 'events.jsonl'));
+    const r = await deriveTiming(dir, { base });
+    assert.equal(r.ok, true);
+    assert.deepStrictEqual(r.timing, base.timing);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

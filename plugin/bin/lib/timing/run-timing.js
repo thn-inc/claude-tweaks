@@ -131,9 +131,11 @@ function derivePhaseTiming(runDir) {
 // outcomes appended. deadlineAt (epoch ms) is checked before each transcript
 // read and each read races it: past it the in-flight read is aborted through
 // its signal, reading stops and the timing comes back with phase rows only
-// (no token keys at all) and deadlineHit true.
-async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens } = {}) {
-  const base = derivePhaseTiming(runDir);
+// (no token keys at all) and deadlineHit true. `base` (a derivePhaseTiming
+// result the caller already holds, e.g. to resolve transcripts from its
+// runState) is used instead of reading the run directory a second time.
+async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given } = {}) {
+  const base = given || derivePhaseTiming(runDir);
   if (!base.ok) return base;
   const { timing, out, events, runState } = base;
   const withTokens = wantTokens === undefined ? transcriptPaths.length > 0 : wantTokens;
