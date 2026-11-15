@@ -1,6 +1,6 @@
 'use strict';
 // The --budget loop (record #5229): pull, pre-screen, rank, drive, count, one summary line.
-// A light fixture: no gh harness. `driveOne` stands in for run.js's driveRecordFacts, and
+// A light fixture: no gh harness. `driveOne` stands in for run.js's driveRecord, and
 // `rankNext` is the module's real ranking, so the expected order is never re-derived here.
 const test = require('node:test');
 const assert = require('node:assert');

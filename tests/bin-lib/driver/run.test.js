@@ -15,7 +15,7 @@ const {
   STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, neutralize, normalizeTitle, createEventSink, MERGE_STEP_NAMES,
 } = require(path.join(LIB, 'driver', 'events'));
-const { run, parseArgs, USAGE, driveRecord, driveRecordFacts, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
+const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
   STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE,
 } = require(path.join(LIB, 'driver', 'steps'));
@@ -992,7 +992,7 @@ test('defineStep: a throw is a fail with the step class', async () => {
   // The table is about the step's own stop, not its settle (a bare table has no main root to settle in).
   const shared = newShared();
   shared.settle = false;
-  const final = await driveRecord(7, shared, h.deps, table);
+  const { final } = await driveRecord(7, shared, h.deps, table);
   assert.deepEqual(h.lines().map((l) => [l.step, l.status]), [['one', 'ok'], ['two', 'fail'], [FINAL_STEP, 'fail']]);
   assert.equal(final.outcome, 'express-escalated');
   assert.deepEqual([final.stop.step, final.stop.class, final.stop.reason, final.stop.detail], ['two', 'pre-push', 'express-error', 'boom']);
@@ -1004,7 +1004,7 @@ test('defineStep: a result may override its class, carry extra fields and declin
     defineStep('gate', 'pre-push', async () => ({ status: 'stop', stopClass: 'blocked', detail: 'no' })),
   ];
   const h = harness();
-  const final = await driveRecord(7, newShared(), h.deps, table);
+  const { final } = await driveRecord(7, newShared(), h.deps, table);
   const [soft, gate] = h.lines();
   assert.equal(soft.step, 'soft');
   assert.ok(soft.ms >= 0);
@@ -1019,7 +1019,7 @@ test('defineStep: a result may override its class, carry extra fields and declin
 test('defineStep: a result with no valid status or stop class is a fail with the step class', async () => {
   for (const [result, re] of [[{ status: 'maybe' }, /invalid status/], [undefined, /invalid status/], [{ status: 'stop', stopClass: 'other' }, /invalid stop class/]]) {
     const h = harness();
-    const final = await driveRecord(7, newShared(), h.deps, [defineStep('odd', 'refused', async () => result)]);
+    const { final } = await driveRecord(7, newShared(), h.deps, [defineStep('odd', 'refused', async () => result)]);
     assert.equal(final.stop.step, 'odd');
     assert.equal(final.stop.class, 'refused');
     assert.equal(h.lines()[0].status, 'fail');
@@ -1035,7 +1035,7 @@ test('the loop binds the sink when a step first sets ctx.runDir; earlier events 
     defineStep('after', 'pre-push', async () => ({ status: 'ok' })),
   ];
   const h = harness();
-  const final = await driveRecord(7, newShared(), h.deps, table);
+  const { final } = await driveRecord(7, newShared(), h.deps, table);
   assert.deepEqual(h.lines().map((l) => l.run), [null, 'rid-7', 'rid-7', 'rid-7']);
   assert.equal(h.files[path.join('/runs/rid-7', 'driver-events.jsonl')], h.out.join(''));
   assert.equal(final.run, 'rid-7');
@@ -1064,7 +1064,7 @@ test('a failing events file never aborts the record; the final line names the er
     defineStep('after', 'pre-push', async () => ({ status: 'ok' })),
   ];
   const h = harness({ deps: { appendFile: () => { throw new Error('EACCES: permission denied'); } } });
-  const final = await driveRecord(7, newShared(), h.deps, table);
+  const { final } = await driveRecord(7, newShared(), h.deps, table);
   assert.deepEqual(h.lines().map((l) => l.step), ['mint', 'after', FINAL_STEP]);
   assert.equal(final.outcome, 'pending-review');
   assert.equal(final.eventsFileError, 'EACCES: permission denied');
@@ -1491,7 +1491,7 @@ test('a failed worktree add still names the intended worktree and branch on ctx'
     const ctxs = [];
     const h = harness({ script: [[failing, new Error('git said no')]] });
     const grab = defineStep('grab', 'none', async (ctx) => { ctxs.push(ctx); return { status: 'ok' }; });
-    const final = await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, 6), grab, STEPS[6]]);
+    const { final } = await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, 6), grab, STEPS[6]]);
     assert.equal(final.stop.step, 'worktree');
     assert.deepEqual([ctxs[0].wt, ctxs[0].branch], [WT, 'drive-record-7']);
     assert.deepEqual(ctxs[0].created, { worktree: false, branch: false });
@@ -1506,7 +1506,7 @@ const commitGit = (h) => gitCalls(h).filter((c) => c.cwd === WT && ['add', 'comm
 // Every driven ctx, captured by a step appended after the table (it runs only when nothing halts).
 async function driveCapturing(h, shared = newShared()) {
   const ctxs = [];
-  const final = await driveRecord(7, shared, h.deps, [...STEPS, defineStep('look', 'none', async (ctx) => { ctxs.push(ctx); return { status: 'ok' }; })]);
+  const { final } = await driveRecord(7, shared, h.deps, [...STEPS, defineStep('look', 'none', async (ctx) => { ctxs.push(ctx); return { status: 'ok' }; })]);
   return { final, ctx: ctxs[0] };
 }
 
@@ -1590,7 +1590,7 @@ test('the worker\'s runner handle is the active worker for the length of the lau
   assert.equal(shared.activeWorker, null);
   const rejecting = harness({ deps: { runner: () => handle }, script: [[on('worker'), (c) => { c.args[1].runner({ file: 'claude' }); return Promise.reject(new Error('launch blew up')); }]] });
   const s2 = newShared();
-  const final = await driveRecord(7, s2, rejecting.deps);
+  const { final } = await driveRecord(7, s2, rejecting.deps);
   assert.equal(s2.activeWorker, null);
   assert.deepEqual([final.stop.step, final.status, final.outcome], ['worker', 'fail', 'express-escalated']);
   assert.match(final.stop.detail, /launch blew up/);
@@ -4728,7 +4728,7 @@ test('skip: a skipped step emits no line and the loop goes on', async () => {
     defineStep('two', STOP_CLASSES.PRE_PUSH, () => { ran.push('two'); return { status: 'ok' }; }),
   ];
   const h = harness();
-  const final = await driveRecord(7, newShared(), h.deps, table);
+  const { final } = await driveRecord(7, newShared(), h.deps, table);
   assert.deepEqual(ran, ['one', 'two']);
   assert.deepEqual(h.lines().map((l) => l.step), ['two', FINAL_STEP]);
   assert.equal(final.outcome, 'pending-review');
@@ -4738,7 +4738,7 @@ test('skip: a skipped step emits no line and the loop goes on', async () => {
     defineStep('two', STOP_CLASSES.PRE_PUSH, () => { ran.push('never'); return { status: 'ok' }; }),
   ];
   const g = harness();
-  const stopped = await driveRecord(7, newShared(), g.deps, stopping);
+  const { final: stopped } = await driveRecord(7, newShared(), g.deps, stopping);
   assert.deepEqual(g.lines().filter((l) => !SETTLE_STEP_NAMES.includes(l.step)).map((l) => [l.step, l.status]), [['one', 'stop'], [FINAL_STEP, 'stop']]);
   assert.equal(stopped.stop.step, 'one');
   assert.ok(!ran.includes('never'));
@@ -5105,7 +5105,7 @@ test('AC5.5: final line carries outcome, totals, pr and ci; msWithoutCi excludes
   // A step appended after ci changes nothing: run.js names no step.
   const h2 = harness({ script: [prChecksReply('pending')] });
   const late = defineStep('late', 'none', async (ctx, deps) => { await deps.sleep(5000); return { status: 'ok' }; });
-  const final = await driveRecord(7, newShared(), h2.deps, [...STEPS, late]);
+  const { final } = await driveRecord(7, newShared(), h2.deps, [...STEPS, late]);
   const ciWait = h2.lines().find((l) => l.step === 'ci').ciWaitMs;
   assert.equal(final.msWithoutCi, final.msTotal - ciWait);
 });
@@ -5349,7 +5349,7 @@ test('AC4.1: a stop outside pre-push keeps its class outcome under --no-settle, 
   const odd = harness();
   const shared = newShared();
   shared.settle = false;
-  const final = await driveRecord(7, shared, odd.deps, [{ name: 'claim', run: async () => ({ status: 'fail', halt: true, stopClass: 'bogus', reason: 'fail', extra: {} }) }]);
+  const { final } = await driveRecord(7, shared, odd.deps, [{ name: 'claim', run: async () => ({ status: 'fail', halt: true, stopClass: 'bogus', reason: 'fail', extra: {} }) }]);
   assert.deepEqual([final.settle, final.settleRow, final.unclassified, final.outcome, final.stop.class], ['left-to-caller', 'blocked', true, 'blocked', 'bogus']);
   assert.deepEqual(settleCalls(odd), []);
 });
@@ -5384,7 +5384,7 @@ test('AC4.1: under --no-settle a pre-push stop that holds a recorded PR names th
     { name: 'pr', run: async (ctx) => { ctx.pr = { number: 9 }; return { status: 'ok', halt: false, stopClass: 'none', reason: 'ok', extra: {} }; } },
     { name: 'ci', run: async () => ({ status: 'fail', halt: true, stopClass: 'pre-push', reason: 'fail', extra: {} }) },
   ];
-  const final = await driveRecord(7, shared, h.deps, steps);
+  const { final } = await driveRecord(7, shared, h.deps, steps);
   assert.deepEqual([final.settle, final.settleRow, final.stop.class, final.pr], ['left-to-caller', 'blocked', 'pre-push', 9]);
   assert.equal(final.outcome, 'blocked', 'the outcome follows the planned row, as it does when settle runs');
   assert.deepEqual(settleCalls(h), []);
@@ -5586,7 +5586,7 @@ test('AC8.3: an unclassified stop through the run loop is settled by the blocked
     { name: 'run-dir', run: async (ctx) => { ctx.runDir = runDir; ctx.runId = 'seam-run'; ctx.claimed = true; return { status: 'ok', halt: false, stopClass: 'none', reason: 'ok', extra: {} }; } },
     { name: 'test', run: async () => ({ status: 'fail', halt: true, stopClass: 'bogus', reason: 'fail', extra: {} }) },
   ];
-  const final = await driveRecord(7, shared, h.deps, steps);
+  const { final } = await driveRecord(7, shared, h.deps, steps);
   assert.deepEqual([final.settleRow, final.unclassified, final.outcome, final.settle], ['blocked', true, 'blocked', 'done']);
   assert.equal(final.stop.class, 'bogus');
   assert.deepEqual(settleLines(h).map((l) => l.step), ['settle-comment-record', 'settle-label', 'settle-release']);
@@ -5603,7 +5603,7 @@ test('settle notes ride the final line: a claim that may lapse by TTL', async ()
   assert.match(lastLine(killed).settleNote, /lapses by its TTL/);
 });
 
-const policyOnce = async (h) => { const shared = newShared(); await driveRecordFacts(1, shared, h.deps, [STEPS[0]]); return shared; };
+const policyOnce = async (h) => { const shared = newShared(); await driveRecord(1, shared, h.deps, [STEPS[0]]); return shared; };
 
 test('budget AC4.1: a record whose claim was obtained and run dir minted counts as claimed, whatever its outcome', async () => {
   const cases = [
@@ -5615,7 +5615,7 @@ test('budget AC4.1: a record whose claim was obtained and run dir minted counts 
   for (const [over, outcome] of cases) {
     const h = harness(over);
     const shared = await policyOnce(h);
-    const facts = await driveRecordFacts(7, shared, h.deps);
+    const facts = await driveRecord(7, shared, h.deps);
     assert.equal(facts.outcome, outcome);
     assert.equal(facts.claimed, true);
     assert.equal(facts.claimExit, 0);
@@ -5638,37 +5638,28 @@ test('budget AC4.2: refused, contested, other claim failures and a failed mint a
   ];
   for (const [over, outcome, exit] of cases) {
     const h = harness(over);
-    const facts = await driveRecordFacts(7, await policyOnce(h), h.deps);
+    const facts = await driveRecord(7, await policyOnce(h), h.deps);
     assert.equal(facts.outcome, outcome, JSON.stringify(over));
     assert.equal(facts.claimed, false);
     assert.equal(facts.claimExit, exit);
   }
 });
 
-test('budget: driveRecord still resolves to the same final event driveRecordFacts carries', async () => {
-  const a = harness(); const b = harness();
-  const final = await driveRecord(7, await policyOnce(a), a.deps);
-  const facts = await driveRecordFacts(7, await policyOnce(b), b.deps);
-  assert.equal(final.step, FINAL_STEP);
-  const untimed = (e) => { const { ts, ms, msTotal, msWithoutCi, ...rest } = e; return rest; };
-  assert.deepEqual(untimed(final), untimed(facts.final));
-});
-
-test('budget: driveRecordFacts on an interrupt before the first step has no final and no claim', async () => {
+test('budget: driveRecord on an interrupt before the first step has no final and no claim', async () => {
   const h = harness();
   const shared = await policyOnce(h);
   shared.interrupted = 'SIGINT';
-  const facts = await driveRecordFacts(7, shared, h.deps);
+  const facts = await driveRecord(7, shared, h.deps);
   assert.deepEqual(facts, { final: null, outcome: null, claimed: false, claimExit: null });
 });
 
-test('budget: driveRecordFacts on an interrupt after the run directory exists is claimed', async () => {
+test('budget: driveRecord on an interrupt after the run directory exists is claimed', async () => {
   let shared = null;
   const h = harness({
     script: [[on('node', /log-decision\.js$/), () => { setImmediate(() => { shared.interrupted = 'SIGINT'; }); return { code: 0, stdout: '', stderr: '' }; }]],
   });
   shared = await policyOnce(h);
-  const facts = await driveRecordFacts(7, shared, h.deps);
+  const facts = await driveRecord(7, shared, h.deps);
   assert.equal(facts.final.step, FINAL_STEP);
   assert.equal(facts.final.stop.step, 'worktree');
   assert.equal(facts.final.stop.class, STOP_CLASSES.PRE_PUSH);
@@ -5958,7 +5949,7 @@ test('AC4.11, AC10.3, AC12.10: the final line takes the merge outcome, excludes 
     ctx.merge = { outcome: 'merged', reason: null, detail: null, mergeCommit: 'c'.repeat(40), runDir: ctx.runDir, eventsStdoutOnly: true, ciWaitMs: 5000, postMerge: { verdict: 'clean', failedSteps: [], failures: [] } };
     return { status: 'ok' };
   });
-  const final = await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, -1), fake]);
+  const { final } = await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, -1), fake]);
   const ciEvent = h.lines().find((l) => l.step === 'ci');
   assert.equal(final.outcome, 'merged');
   assert.equal(final.merge.mergeCommit, 'c'.repeat(40));
@@ -5973,7 +5964,7 @@ test('the merge step carries the watch time on its sub-events only, never on its
     ctx.merge = { outcome: 'armed', reason: null, detail: '', mergeCommit: null, runDir: ctx.runDir, eventsStdoutOnly: false, ciWaitMs: 7, postMerge: null };
     return { status: 'ok', detail: 'armed', extra: {} };
   });
-  const final = await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, -1), fake]);
+  const { final } = await driveRecord(7, newShared(), h.deps, [...STEPS.slice(0, -1), fake]);
   assert.equal(final.outcome, 'armed');
   assert.equal('ciWaitMs' in h.lines().find((l) => l.step === 'merge'), false);
   assert.equal('eventsFile' in final, false);
@@ -6089,7 +6080,7 @@ test('merge step, run level: the merge call, teardown and event file come from t
   const h = mergeHarness({ reconcile: archiveRunDir });
   const seen = [];
   const look = defineStep('look', 'none', async (ctx) => { seen.push(ctx.runDir); return { status: 'ok' }; });
-  const final = await driveRecord(7, newShared(), h.deps, [...STEPS, look]);
+  const { final } = await driveRecord(7, newShared(), h.deps, [...STEPS, look]);
   assert.equal(final.outcome, 'merged');
   assert.equal(final.merge.mergeCommit, MERGE_SHA);
   assert.deepEqual(final.merge.postMerge, { verdict: 'clean', failedSteps: [], failures: [] });
@@ -6170,7 +6161,7 @@ test('merge step, run level: the merge line for each outcome reads the outcome w
       [isPrViewOf(CONFIRM_FIELDS), JSON.stringify({ state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, statusCheckRollup: [PENDING_CHECK], mergeCommit: null })],
     ],
   });
-  const af = await driveRecord(7, newShared(), armed.deps, STEPS);
+  const { final: af } = await driveRecord(7, newShared(), armed.deps, STEPS);
   assert.equal(af.outcome, 'armed');
   assert.equal(armed.lines().find((l) => l.step === 'merge').detail,
     'armed — auto-merge armed, the forge holds the merge; the reconciler completes cleanup');
@@ -6190,7 +6181,7 @@ test('merge step, run level: an unclassified stop names the failing sub-step on 
     const inMerge = h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(GATE_FIELDS));
     if (inMerge) throw new Error('watch sleep failed');
   };
-  const final = await driveRecord(7, newShared(), h.deps, STEPS);
+  const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
   const line = h.lines().find((l) => l.step === 'merge');
   assert.equal(line.detail, 'pending-review: unclassified — merge-watch: watch sleep failed');
   assert.equal(final.merge.reason, 'unclassified');
@@ -6201,7 +6192,7 @@ test('merge step, run level: an unclassified stop names the failing sub-step on 
 test('budget AC4.1: a record that ends merged, its run directory followed into the archive, is claimed and counts driven', async () => {
   const { classifyFacts } = require(path.join(LIB, 'driver', 'budget'));
   const h = mergeHarness({ reconcile: archiveRunDir });
-  const facts = await driveRecordFacts(7, newShared(), h.deps);
+  const facts = await driveRecord(7, newShared(), h.deps);
   assert.equal(facts.outcome, 'merged');
   assert.equal(facts.claimed, true);
   assert.equal(facts.claimExit, 0);

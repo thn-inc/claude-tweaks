@@ -6,7 +6,7 @@
 // UNSELECTABLE_REASONS reason is left alone) with the eligibility step's own call, rank
 // (deps.rankNext) against the pull's exclusions plus this invocation's in-memory `firing`
 // entry, and drive the top group's members one at a time, in the group's own order, through
-// `driveOne` (run.js's driveRecordFacts). It never reorders, filters or re-derives the
+// `driveOne` (run.js's driveRecord). It never reorders, filters or re-derives the
 // selection beyond the pre-screen and the `firing` entry. One summary line (BUDGET_STEP) closes
 // the run, except on the exit-1 policy path and after an interrupt, where nothing further is
 // emitted.

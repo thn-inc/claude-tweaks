@@ -384,15 +384,10 @@ async function driveWithCtx(record, shared, deps, steps) {
   }
 }
 
-// One record through the table; returns its final event (null when an interrupt landed
-// before its first step).
+// One record through the table; resolves to its final event (null when an interrupt landed
+// before its first step) plus the claim facts the budget loop counts from: whether the claim
+// was obtained and its run dir minted, and the claim step's exit code.
 async function driveRecord(record, shared, deps, steps = STEPS) {
-  return (await driveWithCtx(record, shared, deps, steps)).final;
-}
-
-// The final event plus the claim facts the budget loop counts from: whether the claim was
-// obtained and its run dir minted, and the claim step's exit code.
-async function driveRecordFacts(record, shared, deps, steps = STEPS) {
   const { final, ctx } = await driveWithCtx(record, shared, deps, steps);
   return {
     final,
@@ -468,7 +463,7 @@ async function run(argv, deps) {
   try {
     if (parsed.budget !== undefined) {
       const { runBudget } = require('./budget');
-      return await runBudget(parsed.budget, shared, deps, { driveOne: (n) => driveRecordFacts(n, shared, deps) });
+      return await runBudget(parsed.budget, shared, deps, { driveOne: (n) => driveRecord(n, shared, deps) });
     }
     for (const record of parsed.records) {
       await driveRecord(record, shared, deps);
@@ -579,4 +574,4 @@ const realDeps = {
   remoteUrl: () => remoteUrl(),
 };
 
-module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, driveRecordFacts, newShared, interruptClass, reraiseAfterFlush };
+module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, newShared, interruptClass, reraiseAfterFlush };
