@@ -110,10 +110,13 @@ function run(argv, deps = realDeps) {
   if (args.surfaceLinesPath) {
     if (args.mode) return fail('--surface-lines and --mode are mutually exclusive');
     let diffText;
+    const resolved = args.surfaceLinesPath === '-' ? null : resolveAgainst(deps.cwd(), args.surfaceLinesPath);
     try {
-      diffText = args.surfaceLinesPath === '-' ? deps.stdin() : fs.readFileSync(resolveAgainst(deps.cwd(), args.surfaceLinesPath), 'utf8');
+      diffText = resolved === null ? deps.stdin() : fs.readFileSync(resolved, 'utf8');
     } catch (err) {
-      return fail(`could not read diff at "${args.surfaceLinesPath}": ${err.message}`);
+      // Node's message names the opened path; print the caller's own spelling instead of the joined one.
+      const message = resolved === null ? err.message : err.message.split(resolved).join(args.surfaceLinesPath);
+      return fail(`could not read diff at "${args.surfaceLinesPath}": ${message}`);
     }
     const files = analyzeDiff(diffText);
     const surface = files.some((f) => f.surface);
@@ -153,6 +156,6 @@ function main(argv) {
   return run(argv.slice(2), realDeps);
 }
 
-module.exports = { main, run, realDeps, parseArgs };
+module.exports = { main, run, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

@@ -14,7 +14,7 @@ const path = require('node:path');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'design-detect.js');
 
 function run(args, opts = {}) {
-  return runCliSync(CLI, args, { env: { ...process.env }, cwd: opts.cwd, stdin: opts.input });
+  return runCliSync(CLI, args, { env: opts.env || { ...process.env }, cwd: opts.cwd, stdin: opts.input });
 }
 
 test('CLI: --mode required', () => {
@@ -235,11 +235,42 @@ function gitRepoWithFlag(value) {
 test('AC8.1: with no --design-integration/--claude-md the decision follows the injected cwd repo', () => {
   const repo = gitRepoWithFlag('enabled');
   try {
-    const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: repo });
+    const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: repo, env: withoutAmbientGitVars(process.env) });
     assert.equal(r.code, 0);
     assert.equal(JSON.parse(r.stdout).decision, 'proceed'); // this worktree's own CLAUDE.md skips
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('repoRoot falls back to deps.cwd() when cwd is not a git repo', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-nogit-')));
+  fs.writeFileSync(path.join(tmp, 'CLAUDE.md'), '## Design integration\n\ndesign-integration: enabled\n');
+  try {
+    // GIT_CEILING_DIRECTORIES keeps git from finding a repo above the temp dir.
+    const env = { ...withoutAmbientGitVars(process.env), GIT_CEILING_DIRECTORIES: path.dirname(tmp) };
+    const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: tmp, env });
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.stdout).decision, 'proceed'); // a process.cwd() fallback would read this worktree and skip
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('--surface-lines with a relative unreadable path prints the caller spelling, not the joined path', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-rel-')));
+  try {
+    const env = { ...process.env };
+    const args = ['--surface-lines', 'sub/missing.patch'];
+    const a = runCliSync(CLI, args, { env, cwd: tmp });
+    // Real process: its stderr is the byte-identical reference for the unreadable-diff line.
+    const b = spawnCli(CLI, args, { env, cwd: tmp });
+    const line = 'design-detect: could not read diff at "sub/missing.patch": ENOENT: no such file or directory, open \'sub/missing.patch\'\n';
+    assert.equal(a.code, 1);
+    assert.equal(a.stderr, line);
+    assert.equal(b.stderr, line);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 
