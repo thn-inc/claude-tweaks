@@ -3057,8 +3057,38 @@ test('#5232 Review Focus 2, AC9.11: a 100-file list is treated as possibly trunc
   assert.equal((await merge(holdCtx(), ninetyNine.deps)).outcome, 'merged', '99 entries are a complete list');
 });
 
+// The pairs file as the real producer writes it: queue-pull.js's own near-dup-pairs pass run over two
+// groups, so the entries have the real `{ records, signals, sharedAnchors }` shape and no `strong` field.
+const NEAR_DUP_BODY = '## Current State\n\nThe `WidgetScheduler.flush` path and `schedulerCache.evict` disagree on ordering.\n';
+function realWriterPairs(groups) {
+  const { PASSES, runPasses } = require(path.join(LIB, 'dispatch', 'queue-pull'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-writer-'));
+  roots.push(dir);
+  const paths = { 'dispatch-groups.json': path.join(dir, 'groups.json'), 'dispatch-near-dup-pairs.json': path.join(dir, 'pairs.json') };
+  fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify(groups));
+  runPasses(PASSES.filter((p) => p.id === 'near-dup-pairs'), { deps: { stderr: () => {} }, paths, options: {} });
+  return fs.readFileSync(paths['dispatch-near-dup-pairs.json'], 'utf8');
+}
+const rec = (number, title, body) => ({ number, title, body, labels: [], state: 'OPEN' });
+
+test('#5232 near-dup: the real producer\'s file (strong pairs, no strong field) holds', async () => {
+  const text = realWriterPairs([[rec(7, 'Fix the scheduler flush ordering', NEAR_DUP_BODY)], [rec(30, 'Tidy the release notes generator', NEAR_DUP_BODY)]]);
+  const parsed = JSON.parse(text);
+  assert.equal(parsed.length, 1, text);
+  assert.deepEqual(Object.keys(parsed[0]), ['records', 'signals', 'sharedAnchors'], 'the real shape: no strong field');
+  assert.deepEqual([...parsed[0].records].sort((a, b) => a - b), [7, 30]);
+  const h = mergeHarness({ script: holdScript({ others: { 12: { state: 'OPEN', files: ['c.js'], closing: [30] } }, pairs: text }) });
+  const { e } = await assertHeld(h, holdCtx({ nearDupPairsFile: PAIRS_FILE }), 'near-duplicate');
+  assert.match(e.detail, /in-flight PR 12 \(near-duplicate of record 30\)/);
+  // With no strong pair the producer writes [], and the same PR is no hold.
+  const none = realWriterPairs([[rec(7, 'Alpha', 'unrelated')], [rec(30, 'Zeta', 'other things')]]);
+  assert.equal(none, '[]');
+  const clear = mergeHarness({ script: holdScript({ others: { 12: { state: 'OPEN', files: ['c.js'], closing: [30] } }, pairs: none }) });
+  assert.equal((await merge(holdCtx({ nearDupPairsFile: PAIRS_FILE }), clear.deps)).outcome, 'merged');
+});
+
 test('#5232 near-dup: a still-open listed PR closing a strong partner holds', async () => {
-  const pairs = [{ records: [7, 30], strong: true }];
+  const pairs = [{ records: [7, 30], signals: ['body-anchor-overlap'], sharedAnchors: ['a', 'b'] }];
   const pr = (state) => ({ 12: { state, files: ['c.js'], closing: [30] } });
   const h = mergeHarness({ script: holdScript({ others: pr('OPEN'), pairs }) });
   const { e } = await assertHeld(h, holdCtx({ nearDupPairsFile: PAIRS_FILE }), 'near-duplicate');
@@ -3069,22 +3099,22 @@ test('#5232 near-dup: a still-open listed PR closing a strong partner holds', as
   const closed = mergeHarness({ script: holdScript({ others: pr('CLOSED'), pairs }) });
   assert.equal((await merge(holdCtx({ nearDupPairsFile: PAIRS_FILE }), closed.deps)).outcome, 'merged');
   // The partner is the other way round in the pair.
-  const flipped = mergeHarness({ script: holdScript({ others: pr('OPEN'), pairs: [{ records: [30, 7], strong: true }] }) });
+  const flipped = mergeHarness({ script: holdScript({ others: pr('OPEN'), pairs: [{ records: [30, 7], signals: [], sharedAnchors: [] }] }) });
   await assertHeld(flipped, holdCtx({ nearDupPairsFile: PAIRS_FILE }), 'near-duplicate');
   // No pairs file: the same listed PR is no hold, and its read asks no closing references.
   const none = mergeHarness({ script: holdScript({ others: pr('OPEN') }) });
   assert.equal((await merge(holdCtx({ nearDupPairsFile: null }), none.deps)).outcome, 'merged');
   const noneView = none.calls.find(isBatchView(12));
   assert.equal(noneView.args[noneView.args.indexOf('--json') + 1], 'state,files');
-  // A weak pair is never a hold; a pair about other records is not this record's.
-  for (const p of [[{ records: [7, 30], strong: false }], [{ records: [8, 30], strong: true }]]) {
-    const weak = mergeHarness({ script: holdScript({ others: pr('OPEN'), pairs: p }) });
-    assert.equal((await merge(holdCtx({ nearDupPairsFile: PAIRS_FILE }), weak.deps)).outcome, 'merged', JSON.stringify(p));
+  // A pair about other records is not this record's, and an empty file is no hold.
+  for (const p of [[{ records: [8, 30] }], []]) {
+    const other = mergeHarness({ script: holdScript({ others: pr('OPEN'), pairs: p }) });
+    assert.equal((await merge(holdCtx({ nearDupPairsFile: PAIRS_FILE }), other.deps)).outcome, 'merged', JSON.stringify(p));
   }
 });
 
 test('#5232 near-dup: an unusable pairs file holds in-flight-unreadable before any PR read', async () => {
-  for (const pairs of ['not json', '{"records":[7,30]}', '[{"records":[7],"strong":true}]', '[{"records":[7,30]}]', '[null]', '[{"records":[7,"30"],"strong":true}]']) {
+  for (const pairs of ['not json', '{"records":[7,30]}', '[{"records":[7]}]', '[{"signals":[]}]', '[null]', '[{"records":[7,"30"]}]', '[{"records":[8,30]},{"records":[7]}]']) {
     const h = mergeHarness({ script: holdScript({ pairs }) });
     await assertHeld(h, holdCtx({ nearDupPairsFile: PAIRS_FILE }), 'in-flight-unreadable');
     assert.ok(!h.calls.some((c) => c.kind === 'ghBatch'), `${pairs}: no PR read`);

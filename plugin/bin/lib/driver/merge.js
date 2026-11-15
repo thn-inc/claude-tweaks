@@ -371,8 +371,12 @@ function inFlightNumbers(parsed) {
   return numbers;
 }
 
-// `{ ok: true, pairs }` for a pairs file holding an array of `{ records: [a, b], strong }` entries (each
-// checked: a malformed one makes the whole file unusable, never a silent drop), else `{ bad }`.
+// `{ ok: true, pairs }` for a pairs file holding an array of `{ records: [a, b], … }` entries, else `{ bad }`.
+// The file holds strong pairs only and entries carry no `strong` field: queue-pull.js's runNearDupPairs
+// writes `pairs.filter((p) => p.strong).map(({ records, signals, sharedAnchors }) => …)`, so every entry
+// is a hold candidate. Each entry is checked against drainNearDuplicateHits' own validPair rule (`records`
+// two finite numbers; here positive integers). A malformed entry inside an otherwise valid array fails
+// the whole file closed (in-flight-unreadable) rather than being skipped: a skipped pair is a hold lost.
 function readPairs(deps, file) {
   let parsed;
   try {
@@ -381,10 +385,9 @@ function readPairs(deps, file) {
     return { bad: `near-duplicate pairs file unreadable: ${errorText(err)}` };
   }
   const valid = Array.isArray(parsed) && parsed.every((p) => isObject(p) && Array.isArray(p.records)
-    && p.records.length === 2 && p.records.every(isPositiveInteger) && typeof p.strong === 'boolean');
-  if (!valid) return { bad: 'near-duplicate pairs file is not an array of { records: [a, b], strong } entries' };
-  // Dispatch's own source is strong pairs only; a weak pair is never a hold.
-  return { ok: true, pairs: parsed.filter((p) => p.strong === true) };
+    && p.records.length === 2 && p.records.every(isPositiveInteger));
+  if (!valid) return { bad: 'near-duplicate pairs file is not an array of { records: [a, b] } entries' };
+  return { ok: true, pairs: parsed };
 }
 
 // One `gh pr view --json {fields}` read of a PR's changed paths, through the batch bound (a files list
