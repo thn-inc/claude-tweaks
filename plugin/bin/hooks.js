@@ -1879,6 +1879,8 @@ async function runReconcile(argv, deps) {
             root: wtDetect.mainCheckoutRoot(cwd),
             cwd,
             sessionId: deps.env.CLAUDE_CODE_SESSION_ID || undefined,
+            spawn: deps.spawn,
+            env: deps.env,
           });
           background = { checks: CLI_DEFERRED_CHECKS, spawned: r.spawned, reason: r.reason };
         }
@@ -2244,9 +2246,9 @@ async function run(argv, deps) {
   // #3973: the owner's own events keep the run's owner block fresh. session-start
   // refreshes it itself, before its reconcile spawn.
   if (cmd !== 'session-start') {
-    try { ctxLib.refreshOwnerBlock({ input, ownedRun }); } catch { /* never breaks a session */ }
+    try { ctxLib.refreshOwnerBlock({ input, ownedRun }, { env: deps.env }); } catch { /* never breaks a session */ }
   }
-  const out = (await mod.run({ input, runDir, runState, ownedRun, cwd })) || {};
+  const out = (await mod.run({ input, runDir, runState, ownedRun, cwd, env: deps.env, homeDir: deps.homeDir, spawn: deps.spawn })) || {};
   if (out.json) deps.stdoutSync(JSON.stringify(out.json));
   return typeof out.exit === 'number' ? out.exit : 0;
 }
@@ -2291,6 +2293,9 @@ const realDeps = {
   cwd: () => process.cwd(),
   env: process.env,
   stdin: () => (EARLY ? EARLY.raw : ctxLib.readStdin()),
+  homeDir: () => require('os').homedir(),
+  // Looked up at call time so a test that patches child_process.spawn sees the call.
+  spawn: (file, args, options) => require('child_process').spawn(file, args, { windowsHide: true, ...options }),
 };
 
 // The script entry's `argv` is the full process.argv; `run` takes it without the two leading

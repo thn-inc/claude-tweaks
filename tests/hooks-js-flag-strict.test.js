@@ -209,7 +209,12 @@ test('#4777: reconcile --json with no typo runs for real (positive control for t
   // In place of the real pass's cache stamp and fast-forward: reconcile() got the parsed flags,
   // and the converged pass handed the deferred checks to the background spawn.
   assert.deepStrictEqual(calls.map(defined), [{ dryRun: false, cwd: root, mcpReachable: false, checks: INLINE_CHECKS }]);
-  assert.deepStrictEqual(spawnCalls, [{ root, cwd: root, sessionId: 'flag-strict-session' }]);
+  // #5377: the verb also hands the injected spawn and env on, so the background spawn uses them.
+  assert.equal(spawnCalls.length, 1);
+  const { spawn, env, ...spawnArgs } = spawnCalls[0];
+  assert.deepStrictEqual(spawnArgs, { root, cwd: root, sessionId: 'flag-strict-session' });
+  assert.equal(typeof spawn, 'function');
+  assert.equal(env.CLAUDE_CODE_SESSION_ID, 'flag-strict-session');
   assert.deepStrictEqual(JSON.parse(result.stdout).background, { checks: CLI_DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
 });
 

@@ -11,6 +11,8 @@ const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { linkedWorktreeOf } = require('./helpers/git-fixtures');
 const { chmodDenialSkip } = require('./helpers/root');
 const { shellQuote } = require('./helpers/shell-quote');
+const { spawnCli } = require('./helpers/run-cli');
+const { hookEnv } = require('./helpers/hook-event');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -1936,4 +1938,53 @@ test('#2783: an ad-hoc dir is never a step-3 candidate — it cannot turn one re
   assert.doesNotMatch(result.stdout, /multiple candidate runs/);
   assert.strictEqual(readRunState(formal).status, 'clean', result.stdout);
   assert.strictEqual(readRunState(adhoc).status, 'active');
+});
+
+// #5377: the three real-process smoke tests. Every other hook-event test runs in-process; these stay
+// on a real `node hooks.js` child because the process is their subject (script entry, stdin payload,
+// exit code). Each stores what it ran under its own key so the in-process parity check can replay the
+// same call and compare. They are never edited again in this plan: that is what makes "same as
+// before" provable.
+const SMOKE = {};
+
+test('AC6.1 AC8.1 smoke: pre-tool-use deny through the script entry', () => {
+  // Real process proves: the script entry reads the Edit payload from stdin and the deny JSON reaches
+  // stdout with exit 0.
+  const project = gitRepo();
+  writeWorktreeAlwaysPolicy(project);
+  const input = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: path.join(project, 'a.txt') } });
+  const args = ['pre-tool-use'];
+  const env = hookEnv();
+  const result = spawnCli(HOOKS, args, { cwd: project, env, stdin: input });
+  SMOKE.deny = { args, input, cwd: project, env, result };
+  const reason = "claude-tweaks: this project requires an isolated worktree for Edit/Write/NotebookEdit, git commit/push/mv/rm/update-ref/apply, Bash cp/mv/tee/sed/perl/install/ln/truncate/dd writes, and Bash >/>>/>|/&>/&>>/>& redirects (not every possible Bash write shape — see _shared/policy-schema-coverage.md's worktree-always coverage block; exempt: .claude-tweaks/pipelines/, .claude-tweaks/policy.yml, an allowlisted (policy-only) commit, an allowlisted (delete-only or ff-integration-branch) push, and a write target that is gitignored in its own repo) (policy: worktree-always in .claude-tweaks/policy.yml). "
+    + `You're currently working in a non-isolated checkout (${project}). Set one up first: invoke /superpowers:using-git-worktrees, then follow \`_shared/worktree-setup.md\`'s post-creation catch-up before any other action, then retry this edit inside the new worktree.`;
+  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.stderr, '');
+  assert.strictEqual(result.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
+});
+
+test('AC6.1 AC8.1 smoke: pre-tool-use allow through the script entry', () => {
+  // Real process proves: the script entry exits 0 with nothing on stdout for an allowed Bash call.
+  const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi' } });
+  const args = ['pre-tool-use'];
+  const env = hookEnv();
+  const result = spawnCli(HOOKS, args, { cwd: HOOK_SANDBOX, env, stdin: input });
+  SMOKE.allow = { args, input, cwd: HOOK_SANDBOX, env, result };
+  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.stderr, '');
+  assert.strictEqual(result.stdout, '');
+});
+
+test('AC8.1 smoke: session-end through the script entry', () => {
+  // Real process proves: the script entry reads the session-end payload from stdin and exits 0 with
+  // nothing on stdout. The event has no non-zero refusal path, so it has no refusal test.
+  const input = JSON.stringify({ reason: 'other', session_id: 'sess-5377-smoke' });
+  const args = ['session-end'];
+  const env = hookEnv();
+  const result = spawnCli(HOOKS, args, { cwd: HOOK_SANDBOX, env, stdin: input });
+  SMOKE.sessionEnd = { args, input, cwd: HOOK_SANDBOX, env, result };
+  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.stderr, '');
+  assert.strictEqual(result.stdout, '');
 });
