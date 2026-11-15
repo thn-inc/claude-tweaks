@@ -35,7 +35,6 @@ const NOT_YET = [
   'hooks.js',
   'init-verify-scope.js',
   'install-statusline-wrapper.js',
-  'phase-timing.js',
   'reachability-audit.js',
   'record-graph.js',
   'release-bootstrap.js',
