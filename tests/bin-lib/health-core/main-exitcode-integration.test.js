@@ -1,12 +1,13 @@
 'use strict';
 // #2053, AC2: `churn-report.js`, `mark.js`, and `retry-cli.js`'s `update` no
 // longer call `process.exit()` directly -- they return a numeric code (or
-// undefined) and each of the four health-suite CLIs' own `main()` applies
-// that return value to `process.exitCode`, mirroring every other branch in
-// the same `main()`. This file exercises that wiring end-to-end through each
-// CLI's real `main()` function -- in-process (`require` + call, not a
-// subprocess), so `process.exitCode` is asserted directly rather than a
-// subprocess's own exit status.
+// undefined) and each of the four health-suite CLIs' own `main()` returns the
+// sub-command's exit code without ever setting `process.exitCode` (#5374's
+// entry contract; the process-level assignment lives in the file's guard).
+// This file exercises that wiring end-to-end through each CLI's real `main()`
+// function -- in-process (`require` + call, not a subprocess): every row
+// asserts the returned code via `returnedCode`, which also checks that
+// `process.exitCode` was left untouched.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
