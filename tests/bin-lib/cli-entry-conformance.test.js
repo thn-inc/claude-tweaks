@@ -25,10 +25,7 @@ const BIN_DIR = path.join(__dirname, '..', '..', 'plugin', 'bin');
 // test, with its reason, kept apart from this list.
 const NOT_YET = [
   'claude-tweaks-statusline.js',
-  'code-health.js',
   'compose-subject.js',
-  'design-detect.js',
-  'docs-health.js',
   'hooks.js',
   'install-statusline-wrapper.js',
   'reachability-audit.js',

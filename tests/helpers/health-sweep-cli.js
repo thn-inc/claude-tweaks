@@ -4,7 +4,7 @@
 // `sweepCli` runs a CLI through runCliSync, with two guards against a cwd or
 // --root thread-through regression reaching anything real:
 // - Network transports: the ambient environment (minus any inherited GIT_DIR,
-//   GIT_WORK_TREE and GIT_INDEX_FILE, e.g. from a git hook, which would point the
+//   GIT_WORK_TREE, GIT_INDEX_FILE and GIT_COMMON_DIR, e.g. from a git hook, which would point the
 //   CLI's git at the real repo; a caller's own opts.env may still set them) plus
 //   GIT_ALLOW_PROTOCOL=file
 //   (spread last, so a caller's own env cannot restore a looser value). The
@@ -19,26 +19,26 @@
 //   neither commit to a shared git ref (refs are shared by every worktree, and a
 //   later push-cursor would publish them) nor write .claude-tweaks/ files into
 //   whichever checkout the test happens to run from.
+// `opts.deps` is passed through to runCliSync (extra deps, e.g. a counting `lock`).
 // `code` is mapped to `status` to match the spawnSync shape.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runCliSync } = require('./run-cli');
+const { cleanGitEnv } = require('./git-fixtures');
 
 function sweepCli(cliPath, argv, opts = {}) {
   const emptyCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'health-sweep-cwd-'));
   const prev = process.cwd();
   process.chdir(emptyCwd);
   try {
-    const ambient = { ...process.env };
-    delete ambient.GIT_DIR;
-    delete ambient.GIT_WORK_TREE;
-    delete ambient.GIT_INDEX_FILE;
+    const ambient = cleanGitEnv(process.env);
     const res = runCliSync(cliPath, argv, {
       env: { ...ambient, ...opts.env, GIT_ALLOW_PROTOCOL: 'file' },
       cwd: opts.cwd,
       fresh: opts.fresh,
+      deps: opts.deps,
     });
     return { status: res.code, stdout: res.stdout, stderr: res.stderr };
   } finally {

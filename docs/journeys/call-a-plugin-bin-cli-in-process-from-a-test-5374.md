@@ -41,7 +41,7 @@ files:
   - `cliPath` must be absolute.
   - `env` is the complete environment the CLI sees and defaults to `{}`. A CLI that starts `git` or `gh` needs `PATH` (and `SystemRoot` on Windows) in it, so a test that relied on the inherited environment passes `{ ...process.env }`.
   - The helper merges `{ ...realDeps, ...fakes, ...deps }`. The fakes collect stdout and stderr and supply `cwd`, a frozen `env`, `stdin` and `homeDir`.
-  - When several test files drive the same family of CLIs, give them one shared adapter instead of a copy per file. The health sweeps' ten files (#5380) all call `sweepCli` from `tests/helpers/health-sweep-cli.js`.
+  - When several test files drive the same family of CLIs, give them one shared adapter instead of a copy per file. The four health sweeps' twenty-one files (ten from #5380, eleven from #5381) all call `sweepCli` from `tests/helpers/health-sweep-cli.js`. Its `opts.deps` reaches `runCliSync`, so a test that needs a fake seam passes it there (#5381's counting `lock`).
 - **Red flags:**
   - `runCli: … exports no realDeps` or `exports no run`. The CLI does not meet the entry contract yet. Convert the CLI first; that is a change to `plugin/bin`, with its own script-output tests.
   - A failure that reads `git not found`. The test passed a partial `env` without `PATH`.
@@ -78,13 +78,14 @@ files:
 ### 5. Measure again and report the difference
 - **URL:** `node tools/count-node-procs.js --files-from <list> --json <after.json>`
 - **Action:** Run it at the converted commit and put the two tables side by side in the pull request.
-- **Should feel:** Like the receipt from step 1 with smaller numbers. For `plugin/bin/resolve-policy.js` (#5374) the two converted files went from 87 CLI processes to 4. For `harness-health.js` and `journey-health.js` (#5380) the ten converted files went from 120 to 5. For `plan-audit.js`, `phase-timing.js`, `resolve-profile.js` and `calibration-report.js` (#5382) the five converted files went from 189 CLI processes to 8, and from 19 nested `resolve-policy.js` processes to 0 once `calibration-report.js` called that CLI's exported core instead of spawning it. For eight small CLIs (#5385) the eight converted files went from 116 to 19, of which visual-decide's real daemon smoke accounts for 2.
+- **Should feel:** Like the receipt from step 1 with smaller numbers. For `plugin/bin/resolve-policy.js` (#5374) the two converted files went from 87 CLI processes to 4. For `harness-health.js` and `journey-health.js` (#5380) the ten converted files went from 120 to 5. For `plan-audit.js`, `phase-timing.js`, `resolve-profile.js` and `calibration-report.js` (#5382) the five converted files went from 189 CLI processes to 8, and from 19 nested `resolve-policy.js` processes to 0 once `calibration-report.js` called that CLI's exported core instead of spawning it. For `code-health.js`, `docs-health.js` and `design-detect.js` (#5381) the eleven converted files went from 112 CLI processes to 8. For eight small CLIs (#5385) the eight converted files went from 116 to 19, of which visual-decide's real daemon smoke accounts for 2.
 - **Should understand:** Wall time falls by the process starts saved, not by time the tests spend waiting. A test that waits on a stubbed tool's timeout takes just as long in-process.
 - **Red flags:**
   - The same CLI count as before. The adapter still spawns, or a second local helper in the file was missed.
   - A different test count from step 1. A test was dropped or skipped during the conversion.
 
 ## Origin
+- Updated during build of #5381, which converted `plugin/bin/code-health.js`, `docs-health.js` and `design-detect.js` and their eleven test files: the shared-adapter count and the `opts.deps` note in step 2, and the fourth measurement in step 5.
 - Updated during build of #5382, which converted `plugin/bin/plan-audit.js`, `phase-timing.js`, `resolve-profile.js` and `calibration-report.js` and their five test files: the `err.message` red flag in step 3 and the third measurement in step 5.
 - Updated during build of #5380, which converted `plugin/bin/harness-health.js` and `plugin/bin/journey-health.js` and their ten test files: the shared-adapter note in step 2, the git-writing-CLI and path-normalization red flags in step 3, and the second measurement in step 5.
 - Created during build of #5374, which added `tests/helpers/run-cli.js` and `tools/count-node-procs.js`, converted `plugin/bin/resolve-policy.js` to the entry contract and moved `tests/resolve-policy-cli.test.js` and `tests/resolve-policy-control-mode.test.js` onto the helper.
