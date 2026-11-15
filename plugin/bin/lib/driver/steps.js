@@ -494,7 +494,7 @@ function headFail(before, after, extra) {
 
 const IGNORE_STAT_REFUSED = 'core.ignoreStat is true for the new worktree, so git would mark every path the driver stages assume-unchanged; the driver refuses such a worktree';
 const IGNORE_STAT_UNREADABLE = 'core.ignoreStat of the new worktree is unreadable';
-const INDEX_FLAG_PATHS_SHOWN = 5;
+const NAMED_PATHS_SHOWN = 5;
 const INDEX_FLAGS_BASELINE_UNREADABLE = 'the index flags of the new worktree are unreadable';
 const INDEX_FLAGS_UNREADABLE = 'the index flags of the worktree are unreadable';
 
@@ -533,10 +533,10 @@ function readIndexFlags(deps, wt) {
   return flagged;
 }
 
-// The first INDEX_FLAG_PATHS_SHOWN paths, each through neutralize (worker-shaped), then the rest as a count.
+// The first NAMED_PATHS_SHOWN paths, each through neutralize (worker-shaped), then the rest as a count.
 function namedPaths(paths) {
-  const shown = paths.slice(0, INDEX_FLAG_PATHS_SHOWN).map(neutralize).join(', ');
-  const more = paths.length > INDEX_FLAG_PATHS_SHOWN ? `, and ${paths.length - INDEX_FLAG_PATHS_SHOWN} more` : '';
+  const shown = paths.slice(0, NAMED_PATHS_SHOWN).map(neutralize).join(', ');
+  const more = paths.length > NAMED_PATHS_SHOWN ? `, and ${paths.length - NAMED_PATHS_SHOWN} more` : '';
   return `${shown}${more}`;
 }
 
@@ -663,6 +663,15 @@ function testTreeStop(ctx, deps) {
   }
   if (changed.length === 0) return null;
   return { status: 'fail', detail: `the worktree differs from HEAD after the test step on ${changed.length} path(s): ${namedPaths(changed)}` };
+}
+
+// Why a verify.js run gave no verdict: a null code is no exit at all (a timeout, a spawn error), any
+// other non-zero code that is not a red run (2: usage or infrastructure error) names its own stderr.
+function verdictlessDetail(r) {
+  if (r.code === null || r.code === undefined) {
+    return `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}`;
+  }
+  return neutralize(firstLine(r.stderr)) || `verify exited ${r.code}`;
 }
 
 // Ports express-lane.md step 3: the driver commits, by explicit path, from what git
@@ -818,15 +827,14 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests' };
   // A green or verdict-less run: a worktree that differs from HEAD means the verdict is not about the commit (#5454).
   const treeStop = testTreeStop(ctx, deps);
-  if (treeStop) return treeStop;
+  // A verdict-less run keeps its cause beside the tree detail, which stays the prefix.
+  if (treeStop) return r.code === 0 ? treeStop : { ...treeStop, detail: `${treeStop.detail}; ${verdictlessDetail(r)}` };
   // A null code is no exit at all (a timeout, a spawn error): the suite never gave a verdict.
-  if (r.code === null || r.code === undefined) {
-    return { status: 'fail', detail: `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}` };
-  }
+  if (r.code === null || r.code === undefined) return { status: 'fail', detail: verdictlessDetail(r) };
   // verify.js: exit 1 is a failed check (red tests, handled above, before the tree read); any other
   // non-zero exit (2: usage or infrastructure error) means the run itself failed, so it is a `fail`,
   // not a gate saying no.
-  if (r.code !== 0) return { status: 'fail', detail: neutralize(firstLine(r.stderr)) || `verify exited ${r.code}` };
+  if (r.code !== 0) return { status: 'fail', detail: verdictlessDetail(r) };
   return { status: 'ok', detail };
 });
 
@@ -1206,6 +1214,6 @@ const STEPS = Object.freeze([
 
 module.exports = {
   STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
-  VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
+  VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
   testTreeStop, TEST_TREE_UNREADABLE,
 };

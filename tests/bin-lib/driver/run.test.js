@@ -17,7 +17,7 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, INDEX_FLAG_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE,
+  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE,
 } = require(path.join(LIB, 'driver', 'steps'));
 // Polls taken before the first one at or past the settle window (the harness clock moves 1 per now(), ms per sleep).
 const WINDOW_POLLS = CI_SETTLE_WINDOW_MS / CI_POLL_INTERVAL_MS + 1;
@@ -1823,8 +1823,8 @@ test('AC6.1 (#5415): an unreadable read after the launch stops at worker', async
   assert.equal(commitGit(h).length, 0);
 });
 
-test('AC7.1 (#5415): the detail lists at most INDEX_FLAG_PATHS_SHOWN paths plus the count, neutralized', async () => {
-  assert.equal(INDEX_FLAG_PATHS_SHOWN, 5);
+test('AC7.1 (#5415): the detail lists at most NAMED_PATHS_SHOWN paths plus the count, neutralized', async () => {
+  assert.equal(NAMED_PATHS_SHOWN, 5);
   const paths = (n) => Array.from({ length: n }, (_, i) => `src/n${i}.js`);
   const index = (ps) => `H a.js\0${ps.map((p) => `S ${p}\0`).join('')}`;
   const seven = harness({ script: [nthCall(isFlagRead, 2, index(paths(7)))] });
@@ -2872,13 +2872,23 @@ test('(#5454) a red run keeps its failing-test stop and reads no tree; an unfini
   assert.deepEqual([redStop.stop.step, redStop.status, redStop.stop.reason, redStop.stop.detail], ['test', 'stop', 'failing-test', 'red tests']);
   assert.equal(red.calls.filter(isStatusReadInWt).length, 1, 'the commit step\'s read only');
 
-  for (const reply of [{ code: null, stdout: '', stderr: 'killed' }, { code: 2, stdout: '', stderr: 'boom' }]) {
+  // A verdict-less run keeps its cause: the tree detail leads, the run's own detail follows.
+  for (const [reply, cause] of [
+    [{ code: null, stdout: '', stderr: 'killed' }, 'verify.js did not finish: killed'],
+    [{ code: 2, stdout: '', stderr: 'boom' }, 'boom'],
+  ]) {
     const h = rig(reply);
     assert.equal(await run(['#7'], h.deps), 0);
     const { stop, status } = lastLine(h);
-    assert.deepEqual([stop.step, status, stop.reason, stop.detail], ['test', 'fail', 'express-error', treeDetail(1, 'src/a.js')], JSON.stringify(reply));
+    assert.deepEqual([stop.step, status, stop.reason, stop.detail], ['test', 'fail', 'express-error', `${treeDetail(1, 'src/a.js')}; ${cause}`], JSON.stringify(reply));
     assert.equal(h.calls.filter(isStatusReadInWt).length, 2, JSON.stringify(reply));
   }
+
+  // A green run that changed the tree keeps the tree detail alone: nothing to add.
+  const green = rig({ code: 0, stdout: '', stderr: '' });
+  assert.equal(await run(['#7'], green.deps), 0);
+  assert.equal(lastLine(green).stop.detail, treeDetail(1, 'src/a.js'));
+  assert.ok(!lastLine(green).stop.detail.includes('; '), 'no verdict-less suffix on a green run');
 
   // Controls on a clean tree: the verdict-less details are as before.
   const killed = rig({ code: null, stdout: '', stderr: 'killed' }, '');
