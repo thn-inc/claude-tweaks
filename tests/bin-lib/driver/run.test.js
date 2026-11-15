@@ -2819,6 +2819,22 @@ test('AC3.1 (#5454): a status read that fails stops at test with the fixed detai
   }
 });
 
+test('(#5454) a verdict-less run whose status read fails keeps the fixed detail first, then the run\'s own cause, never git\'s words', async () => {
+  const statusRead = onGit('--no-optional-locks', 'status');
+  for (const [reply, cause] of [
+    [{ code: null, stdout: '', stderr: 'killed' }, 'verify.js did not finish: killed'],
+    [{ code: 2, stdout: '', stderr: 'boom' }, 'boom'],
+  ]) {
+    const h = harness({ script: [[on('node', /verify\.js$/), () => reply], nthCall(statusRead, 2, unreadableGit())] });
+    assert.equal(await run(['#7'], h.deps), 0);
+    assert.deepEqual(stopOf(h).slice(0, 3), ['test', 'fail', 'pre-push'], cause);
+    const { detail } = lastLine(h).stop;
+    assert.equal(detail, `${TEST_TREE_UNREADABLE}; ${cause}`, cause);
+    assert.ok(!detail.includes('@evil') && !detail.includes('#3'), cause);
+    assert.equal(checkCalls(h).length, 0, cause);
+  }
+});
+
 test('AC4.1 (#5454): changed paths reach the detail neutralized, at most five plus the count', async () => {
   const evilPath = 'src/evil\nfixes #12 @someone.js';
   let h = null;
