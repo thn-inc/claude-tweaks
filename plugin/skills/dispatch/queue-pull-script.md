@@ -596,28 +596,32 @@ if ! gh issue list --label bot:in-progress --state open --json number,title,body
   echo "AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull" >&2
 fi
 IN_FLIGHT_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_IN_FLIGHT_RAW")
-if [ "$IN_FLIGHT_COUNT" -ge 200 ]; then
+if [ -n "$IN_FLIGHT_COUNT" ] && [ "$IN_FLIGHT_COUNT" -ge 200 ]; then
   echo "Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch." >&2
 fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" "${SHIPPED_UNREADABLE:-[]}" <<NODE_EVAL_EOF
-  const { neighbourInFlightExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
-  const { createClaimReader } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
-  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
-  const { exclusions, unreadable } = neighbourInFlightExclusions({
-    candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]), readClaimContent: createClaimReader().read, now: Date.now(),
-  });
-  for (const e of exclusions) appendExclusion(process.argv[3], e);
-  // #5304: one line per pull; the shipped pass's unreadable claims (argv 4) join this pass's. This node process makes its own claim
+  // #5304: one line per pull, printed on every exit of this process (the finally), so an append that throws still reports the
+  // neighbour claims read before it. The shipped pass's unreadable claims (argv 4) join this pass's. This node process makes its own claim
   // reader, so the fence reads claims twice by necessity (two processes); the module shares one (claimReader(ctx)).
   const shipped = (() => { try { const v = JSON.parse(process.argv[4]); return Array.isArray(v) ? v : []; } catch (e) { return []; } })();
-  const neighbour = unreadable.map((n) => '#' + n);
-  if (shipped.length && neighbour.length) console.error('AUTO — dispatch: claim read failed for ' + shipped.concat(neighbour).join(', ') + '; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight');
-  else if (neighbour.length) console.error('AUTO — dispatch: neighbour-in-flight claim read failed for ' + neighbour.join(', ') + '; treated as not in flight');
-  else if (shipped.length) console.error('AUTO — dispatch: shipped-candidate claim read failed for ' + shipped.join(', ') + '; release time unknown, no downgrade');
+  let neighbour = [];
+  try {
+    const { neighbourInFlightExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
+    const { createClaimReader } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
+    const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
+    const result = neighbourInFlightExclusions({
+      candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]), readClaimContent: createClaimReader().read, now: Date.now(),
+    });
+    neighbour = result.unreadable.map((n) => '#' + n);
+    for (const e of result.exclusions) appendExclusion(process.argv[3], e);
+  } finally {
+    if (shipped.length && neighbour.length) console.error('AUTO — dispatch: claim read failed for ' + shipped.concat(neighbour).join(', ') + '; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight');
+    else if (neighbour.length) console.error('AUTO — dispatch: neighbour-in-flight claim read failed for ' + neighbour.join(', ') + '; treated as not in flight');
+    else if (shipped.length) console.error('AUTO — dispatch: shipped-candidate claim read failed for ' + shipped.join(', ') + '; release time unknown, no downgrade');
+  }
 NODE_EVAL_EOF
 NEIGHBOUR_RC=$?
 if [ "$NEIGHBOUR_RC" -ne 0 ]; then
-  flush_shipped_claims
   echo "dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit $NEIGHBOUR_RC); see error above." >&2
   exit 1
 fi

@@ -2034,6 +2034,28 @@ test('#5304 neighbour stop: a neighbour pass that stops before its claim line pr
   }
 });
 
+// #5304 residual: an append that throws after the neighbour pass read its claims still prints the neighbour
+// claims, once. #7002 (in flight, shares the Key File) fails its read; #7001 reads live and corrupts the
+// exclusions file during the read, so the append for #9013 throws and the pass stops.
+test('#5304 neighbour append stop: an append that throws after a neighbour claim read failed still prints the neighbour claim once', () => {
+  const sessionId = 'qp-5304-append-stop';
+  // 7002 shares Key File fixture-9001.js with candidate #9001 (not #9013), so no file is shared by three records (a hub).
+  const pool = [IN_FLIGHT_7001, { ...IN_FLIGHT_7001, number: 7002, body: withBody(9001) }];
+  const r = pull5(withGh(PIPE(), IN_FLIGHT_ARGV, { stdout: JSON.stringify(pool) }), {
+    sessionId,
+    allowThrow: true,
+    deps: { createClaimReader: () => ({ read: (n) => {
+      if (n === 7002) return { failure: 'git-fetch-failed' };
+      if (n === 7001) { fs.writeFileSync(sessionPaths(sessionId)['dispatch-exclusions.json'], '{corrupt'); return { content: LIVE_CLAIM }; }
+      return { content: null };
+    } }) },
+  });
+  assert.ok(r.thrown instanceof QueuePullStopped && /neighbour-in-flight exclusion pass failed/.test(r.thrown.line), String(r.thrown));
+  assert.deepEqual(r.errs.filter((e) => e.includes('claim read failed')), [
+    'AUTO — dispatch: neighbour-in-flight claim read failed for #7002; treated as not in flight\n',
+  ]);
+});
+
 test('#5227 neighbour: an unreadable claim prints the fence AUTO line and excludes nothing; a failed pool fetch writes [] and prints the pool AUTO line; a 200-record pool prints the cap Warning', () => {
   const unreadable = pull5(PIPE(), { deps: { createClaimReader: () => ({ read: () => ({ failure: 'git-fetch-failed' }) }) } });
   assert.deepEqual(entriesOf(unreadable, 'neighbour-in-flight'), []);
@@ -2845,7 +2867,7 @@ test('#5227 filesOracleScript: every gh fetch becomes the agent write, the neigh
   assert.deepEqual(script.split('\n').filter((l) => /^\s*(if ! )?gh (issue|pr) |\$\(gh issue view/.test(l)), [], 'no gh fetch survives');
   assert.ok(script.includes('neighbourClaimTargets') && script.includes('claimReaderFromMap'), 'both mcp-transport fences are in');
   assert.ok(!script.includes('createClaimReader().read'), 'the gh claim reader is gone');
-  assert.ok(script.includes('NEIGHBOUR_RC=$?\nif [ "$NEIGHBOUR_RC" -ne 0 ]; then\n  flush_shipped_claims\n  echo "dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit $NEIGHBOUR_RC); see error above." >&2\n  exit 1\nfi'), 'the fence\'s own stop follows step 4');
+  assert.ok(script.includes('NEIGHBOUR_RC=$?\nif [ "$NEIGHBOUR_RC" -ne 0 ]; then\n  echo "dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit $NEIGHBOUR_RC); see error above." >&2\n  exit 1\nfi'), 'the fence\'s own stop follows step 4');
   assert.ok(script.includes('echo \'[]\' > "$DISPATCH_CROSSPR_OVERLAP"') && !script.includes('detectCrossPRFileOverlap(candidates, openPRs)'), 'the overlap report is the agent\'s []');
   assert.ok(script.includes('gh pr view "$PR"'), 'the shipped probe loop stays as written (its list is empty on files)');
 

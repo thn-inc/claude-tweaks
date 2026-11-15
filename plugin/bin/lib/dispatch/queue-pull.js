@@ -330,6 +330,7 @@ function makeContext(options = {}, deps = {}) {
     foreignStates: inputs.foreignStates || env.DISPATCH_FOREIGN_STATES,
     shippedUnreadable: [], // #5304: '#N (cause)' claims the shipped pass could not read; the neighbour pass reports them
     claimLineReported: false, // #5304: set when reportClaimReadFailures runs; a stop before it flushes the shipped list
+    neighbourUnreadable: [], // #5304: the neighbour pass's unreadable claims, kept before its appends so a throwing append still reports them
     claimReader: null, // #5304: the pull's one claim reader, built on its first read (claimReader(ctx))
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     standaloneDir: '',
@@ -982,19 +983,18 @@ function runNeighbourInFlight(ctx) {
     const count = step(ctx, 'in-flight-count', () => readJson(f.inFlightRaw).length);
     if (count.ok && count.value >= 200) deps.stderr(`${IN_FLIGHT_CAP_WARNING}\n`);
   }
-  let unreadable = [];
   if (!omit.has('neighbour-in-flight')) {
     const computed = step(ctx, 'neighbour-in-flight', () => {
       const candidates = readJson(paths['dispatch-groups.json']).flat();
       const inFlight = readJson(f.inFlightRaw);
       const readClaimContent = onGh ? claimReader(ctx).read : claimReaderFromMap(readJson(f.inFlightClaims));
       const result = neighbourInFlightExclusions({ candidates, inFlight, readClaimContent, now: deps.now().getTime() });
+      state.neighbourUnreadable = result.unreadable;
       for (const e of result.exclusions) appendExclusion(paths['dispatch-exclusions.json'], e);
-      unreadable = result.unreadable;
     });
     if (!computed.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit 1); see error above.');
   }
-  reportClaimReadFailures(ctx, unreadable);
+  reportClaimReadFailures(ctx, state.neighbourUnreadable);
 }
 
 const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
@@ -1081,7 +1081,7 @@ function runPasses(passes, ctx) {
     }
   } catch (err) {
     // #5304: a stop before the claim line prints (the neighbour pass stops before it, or never ran) still prints the shipped claims read so far, once.
-    if (ctx.state && !ctx.state.claimLineReported) reportClaimReadFailures(ctx, []);
+    if (ctx.state && !ctx.state.claimLineReported) reportClaimReadFailures(ctx, ctx.state.neighbourUnreadable);
     throw err;
   }
 }
