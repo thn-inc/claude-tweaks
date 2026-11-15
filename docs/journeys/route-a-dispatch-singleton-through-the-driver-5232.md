@@ -63,6 +63,7 @@ files:
     - the working directory is not a linked worktree of the main checkout;
     - `run-state.json` names another worktree;
     - HEAD is detached.
+  - A worktree on the integration branch itself passes that guard. The driver's policy step refuses it instead, before the claim: exit 1, a final line with outcome `refused`, and nothing written.
   - `--run` requires `--no-settle` and exactly one record.
 - **Red flags:**
   - A claim taken by dispatch before `--run`.
@@ -93,7 +94,8 @@ files:
   - **`refused`:** today's path.
 - **Should feel:** mechanical. Dispatch reads nothing but the final line, and the report says `driver: {outcome}` with no hand-composed timing line.
 - **Should understand:**
-  - A non-zero exit that leaves no parseable final line, the `--run` guard's exit 3 included, is `blocked` through §5 with no Settle.
+  - On `blocked`, the final line's `stop` decides which Settle case runs. A claim stop on `claim-exit-3` or `claim-exit-6` gets only Settle's Claim-contest case. `claim-exit-7` is dispatch's Claim permission stop, and the firing ends. Any other claim stop runs no Settle. Every other stop runs Settle's numbered steps.
+  - A non-zero exit that leaves no parseable final line, the `--run` guard's exit 3 included, is `blocked` through §5 with no Settle. A non-zero exit that does leave one is routed by its outcome word.
   - After a driver call that took no claim, or a claim stop on `claim-exit-2`, `-3` or `-6`, §5's cleanup-only call appends `(driver-no-claim: skip the claim release)`. Whether a claim was taken is judged by the absence of the `Step 2.8: claimed #{n}` line, and an absent `decisions.md` counts as no line. With that phrase appended, Section E releases nothing.
   - `claim-exit-4` and `claim-exit-5` may have written a claim, so they still release.
 - **Red flags:**
