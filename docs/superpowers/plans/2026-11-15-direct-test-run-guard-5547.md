@@ -50,6 +50,7 @@ Facts established while planning (2026-11-15), which tasks rely on:
 ### Task 1: Runner accepts test-file operands and node test flags
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tools/run-tests.js`
@@ -147,12 +148,13 @@ git commit -m "Accept test-file operands and node test flags in run-tests.js —
 
 Decisions the implementer cannot make alone:
 
-- **Direct test run.** In a segment's tokens, skip leading `NAME=value` assignments and a leading `do`, `then` or `else`. The program is a direct test run when it is `node` (the token's basename is `node` or `node.exe`), or `npx` followed, after its own options, by `node@<anything>`; and either `--test` appears among the node options before the first script operand, or the first script operand ends in `.test.js`. Node options before the script are read with `NODE_TEST_VALUE_FLAGS` plus `-r`, `--require`, `--import` and `--loader` as value-taking in space form, so a flag value is never counted as a file.
+- **Direct test run.** In a segment's tokens, skip leading `NAME=value` assignments and a leading `do`, `then` or `else`. The program is a direct test run when it is `node` (the token's basename is `node` or `node.exe`), or `npx` followed, after its own options, by `node@<anything>`; and either `--test` appears among the node options before the first script operand, or the first script operand ends in `.test.js`. Node options before the script are read with `NODE_TEST_VALUE_FLAGS` plus `-r`, `--require`, `--import` and `--loader` as value-taking in space form, so a flag value is never counted as a file. Inside a `for` loop, a `node` program whose first script operand is that loop's variable (`$f`, `"$f"` or `${f}`) is also a direct test run when any word of the loop's word list ends in `.test.js`: the scanner leaves a loop variable unsubstituted, so this is the only way `for f in tests/*.test.js; do node "$f"; done` is seen. A loop-variable script in a `for` loop whose word list holds no `.test.js` word, or in a `while`/`until` loop with no `--test`, is not a direct test run (the files cannot be known).
 - **File operands** are the non-option tokens after `--test` (for the `--test` form), or the single script token (for the `node x.test.js` form).
 - **Deny when** a direct test run has two or more file operands; or an operand holds one of `* ? [ {`; or an operand holds `$` or a backtick (an expansion the scanner could not resolve); or an operand resolves to a directory or ends in `/`; or the `--test` form has no file operand; or the direct test run is repeated. Repeated means: its segment lies inside a loop, that is after a segment starting with `for`, `while` or `until` and before that loop's own `done` segment (nesting counted); or the segment is led by `xargs`, `parallel`, or `find` with `-exec`/`-execdir`/`-ok` before the `node` token. A direct test run after a loop has closed is not repeated.
-- **Wrappers.** For a segment led by `sh`, `bash` or `zsh` with `-c`, classify the next token's text recursively with the same options (depth limit 3; deeper allows). A deny from inside a wrapper is returned as is.
+- **Wrappers.** A wrapper is `sh`, `bash` or `zsh` followed by `-c`, as the segment's own program or as the command an `xargs`, `parallel` or `find -exec` segment runs. Classify the token after `-c` recursively with the same options, plus a `repeated` flag that is true when the wrapper's segment is itself repeated (inside a loop, or led by `xargs`, `parallel` or `find -exec`). With the flag set, any direct test run in the inner text denies, a single-file one included. Depth limit 3; deeper allows. A deny from inside a wrapper is returned as is.
 - **Allow when** none of the above denies; when the segment's effective cwd or any operand resolves under `<checkout>/evals`; or when `hasRunner(effectiveCwd)` is `null`.
-- **Replacement line.** The denied segment's own text from its first token to its last, with the node program and `--test` replaced by `node <rel>` where `<rel>` is the path from the segment's effective cwd to `<checkout>/tools/run-tests.js` (`tools/run-tests.js` at the root), leading assignments kept, every other token kept in order and re-quoted only where the original was quoted. For the `node x.test.js` loop form and for `xargs`/`find` forms, the replacement is `node <rel> <the files or the glob the loop iterates>` when the loop's word list is literal, otherwise the fixed text `node <rel> <the test files this loop runs>`.
+- **Replacement line.** The denied segment's own text from its first token to its last, with the node program and `--test` replaced by `node <rel>` where `<rel>` is the path from the segment's effective cwd to `<checkout>/tools/run-tests.js` (`tools/run-tests.js` at the root), leading assignments kept, every other token kept in order and re-quoted only where the original was quoted. An unresolved expansion is kept as typed (`node --test $(git diff --name-only main)` gives `node tools/run-tests.js $(git diff --name-only main)`). Inside a `for` loop, a loop-variable operand is replaced by the loop's word list when every word is literal or a glob (no `$`, no backtick), with the body's other tokens kept. For `while`/`until` loops over a variable, `xargs`/`find` forms, and a `for` loop whose word list holds an expansion, the replacement is the fixed text `node <rel> <the test files this loop runs>`.
+- **Directory prefix (decided by the user at plan review).** When the denied segment's effective cwd differs from the Bash call's cwd, the replacement line starts with `cd <dir> && `, where `<dir>` is the effective cwd relative to the call's cwd, double-quoted when it holds a space. The line then runs as pasted from the call's own directory.
 - **Reason text** (exact; `{replacement}` on its own line):
 
 ```
@@ -166,6 +168,8 @@ A single test file outside a loop can still be run directly.
 ```
 
 `SAFEGUARDS_TEXT` is: `A direct node --test over several files, or in a loop, skips what tools/run-tests.js gives a run: git auto-maintenance off for fixture repos, a per-run TMPDIR removed on exit, the machine-wide suite slot, and bounded file concurrency.`
+
+When the deny came from an unresolved expansion (an operand holding `$` or a backtick), the reason carries one more line, directly above the `In a checkout older than this guard` line (decided by the user at plan review): `The runner takes *.test.js files only and refuses anything else the expansion names, so make it name test files only.`
 
 - [ ] **Step 1: Write the failing tests** in a new `tests/direct-test-run-guard.test.js`. Use `cwd: '/repo'`, `hasRunner: (d) => (d === '/repo' || d.startsWith('/repo/') ? '/repo' : null)`, `isDirectory: (p) => p === '/repo/tests' || p === '/repo/evals/tests'`, `pathImpl: path.posix`.
 
@@ -186,6 +190,12 @@ A single test file outside a loop can still be run directly.
 | `echo "node --test a.test.js b.test.js"` | allow |
 | `git grep -n "node --test" -- docs` | allow |
 | `for f in a b; do :; done && node --test tests/a.test.js` | allow |
+| `for f in scripts/a.js scripts/b.js; do node "$f"; done` | allow |
+| `while read f; do node "$f"; done < list.txt` | allow |
+| `node --test "$TEST_FILE"` | deny |
+| `for i in 1 2 3; do node --test tests/a.test.js; done` | deny |
+| `for i in 1 2 3; do sh -c "node --test tests/a.test.js"; done` | deny |
+| `seq 3 \| xargs -n1 sh -c 'node --test tests/a.test.js'` | deny |
 | `node --test tests/a.test.js tests/b.test.js` | deny |
 | `node --test --test-reporter=tap tests/bin-lib/verify/*.test.js` | deny |
 | `node --test` | deny |
@@ -209,12 +219,16 @@ Further tests:
   - `node --test tests/a.test.js tests/b.test.js` gives `node tools/run-tests.js tests/a.test.js tests/b.test.js`
   - `node --test --test-reporter=tap tests/bin-lib/verify/*.test.js` gives `node tools/run-tests.js --test-reporter=tap tests/bin-lib/verify/*.test.js`
   - `FOO=1 /opt/homebrew/bin/node --test tests/a.test.js tests/b.test.js | tail -5` gives `FOO=1 node tools/run-tests.js tests/a.test.js tests/b.test.js`
-  - `cd tests && node --test a.test.js b.test.js` gives `node ../tools/run-tests.js a.test.js b.test.js`
+  - `cd tests && node --test a.test.js b.test.js` gives `cd tests && node ../tools/run-tests.js a.test.js b.test.js`
+  - `node --test $(git diff --name-only main)` gives `node tools/run-tests.js $(git diff --name-only main)`
+  - `for f in tests/*.test.js; do node "$f"; done` gives `node tools/run-tests.js tests/*.test.js`
+  - `for i in 1 2 3; do node --test tests/a.test.js; done` gives `node tools/run-tests.js tests/a.test.js`
   - `npx -y node@20 --test tests/a.test.js tests/b.test.js` gives `npx -y node@20 tools/run-tests.js tests/a.test.js tests/b.test.js`
   - `for f in tests/a.test.js tests/b.test.js; do node --test "$f"; done` gives `node tools/run-tests.js tests/a.test.js tests/b.test.js`
   - `node --test "tests/my file.test.js" tests/b.test.js` gives `node tools/run-tests.js "tests/my file.test.js" tests/b.test.js`
 - `the reason names the four safeguards, the replacement on its own line, --files-from, and the single-file allowance`: for the first deny row, assert the full reason string equals the template above with that row's replacement.
-- `AC9.1 AC9.2: every replacement line is allowed by the classifier and accepted by the runner's parser`: for each deny row whose replacement is a concrete command (every deny row except the `while read`, `xargs`, `find` and `$(...)` rows), assert `classifyCommand(replacement, opts).decision === 'allow'`, then tokenize the part of the replacement after `tools/run-tests.js` and assert `parseRunnerOperands(tokens, { cwd, repoRoot: '/repo', isFile: () => true, pathImpl: path.posix })` does not throw. Glob tokens are first replaced by two literal file names, as the shell would.
+- `AC9.1 AC9.2: every replacement line is allowed by the classifier and accepted by the runner's parser`: for each deny row whose replacement is a concrete command (every deny row except the `while read`, `xargs` and `find` rows, whose replacement is the fixed placeholder text), assert `classifyCommand(replacement, opts).decision === 'allow'`, then tokenize the part of the replacement after `tools/run-tests.js` and assert `parseRunnerOperands(tokens, { cwd, repoRoot: '/repo', isFile: () => true, pathImpl: path.posix })` does not throw. Before tokenizing, a glob token and a `$(...)` or `"$NAME"` expansion are each replaced by two literal test file names, as the shell would produce (the `node --test $(git diff --name-only main)` and `node --test "$TEST_FILE"` rows are covered this way; decided by the user at plan review). For a replacement that starts with `cd <dir> && `, the classifier gets the whole line and the parser gets the part after `&&` with `cwd` set to that directory.
+- `the unresolved-expansion reason says the runner takes test files only`: the reason for `node --test $(git diff --name-only main)` equals the template with the extra line in place; the reason for `node --test tests/a.test.js tests/b.test.js` does not contain that line.
 - `win32 paths`: with `pathImpl: path.win32`, `cwd: 'C:/repo'` and a `hasRunner` that returns `'C:\\repo'` for it, `node --test tests/a.test.js tests/b.test.js` denies and `"C:/nodejs/node.exe" --test tests/a.test.js` allows.
 - `hasDirectTestRun finds a single-file run and ignores quoted text`: true for `node --test tests/a.test.js`, for `sh -c "node tests/a.test.js"` and for `for f in x; do node --test "$f"; done`; false for `echo "node --test a.test.js"` and for `node tools/run-tests.js tests/a.test.js`.
 
@@ -227,10 +241,13 @@ Guard-branch discrimination, stated for the reviewer: each deny rule has an inpu
 | No operand | `node --test` |
 | Directory by `isDirectory` | `node --test tests` (no trailing slash) |
 | Trailing slash | `node --test tests/`, asserted a second time with `isDirectory: () => false` |
-| Unresolved expansion | `node --test $(git diff --name-only main)` |
-| Inside a loop | `for f in tests/a.test.js tests/b.test.js; do node --test "$f"; done` (one operand per pass), with the closed-loop allow row as its counterpart |
+| Unresolved expansion | `node --test "$TEST_FILE"` (one operand, no loop; the `$(git diff ...)` row also trips the operand count) |
+| Inside a loop | `for i in 1 2 3; do node --test tests/a.test.js; done` (one literal operand per pass; the `"$f"` row also trips the expansion rule), with the closed-loop allow row as its counterpart |
+| Loop variable as the script | `for f in tests/*.test.js; do node "$f"; done`, with the `scripts/a.js scripts/b.js` allow row as its counterpart |
 | `xargs` and `find -exec` | their own rows |
 | Wrapper recursion | the `sh -c` row |
+| Repeated wrapper | `for i in 1 2 3; do sh -c "node --test tests/a.test.js"; done` and the `seq 3 \| xargs -n1 sh -c` row (one literal operand inside; only the `repeated` flag decides) |
+| Directory prefix | the `cd tests &&` replacement pin |
 | `evals/` exemption | `cd evals && node --test tests/`, which denies if the exemption is deleted |
 | No runner above the cwd | the `hasRunner: () => null` test |
 
@@ -276,7 +293,7 @@ git commit -m "Add the direct test run classifier — denies multi-file and loop
 Decisions the implementer cannot make alone:
 
 - **Which calls are scanned.** Only `payload.tool_name === 'Bash'`. For each command segment (same walker): the script is the first non-option operand of a program whose basename is `node`, `bash`, `sh` or `zsh` (not `-c` forms, which Task 2 handles), or the program token itself when it holds a `/` and ends in `.sh`, `.js`, `.mjs` or `.cjs`. Kind is `'js'` for `.js`/`.mjs`/`.cjs` or a `node` program, else `'shell'`.
-- **Which scripts are skipped without being read.** A script that resolves inside the checkout (`hasRunner(dirname)` non-null) under `tools/`, `plugin/`, `tests/`, `perf/`, `evals/`, `scripts/` or `node_modules/`. Everything else is read through `readScript`, which returns `null` for a missing file, a directory, a file over 262,144 bytes, or any error; `null` allows.
+- **Which scripts are skipped without being read.** A script that resolves inside the checkout (`hasRunner(dirname)` non-null) under `tools/`, `plugin/`, `tests/`, `perf/`, `evals/` or `scripts/` (the spec's list, no other directory). Everything else is read through `readScript`, which returns `null` for a missing file, a directory, a file over 262,144 bytes, or any error; `null` allows.
 - **Scope.** The scan runs only when `hasRunner(payload.cwd)` is non-null.
 - **Script deny reason** (exact):
 
@@ -344,7 +361,9 @@ git commit -m "Scan script-spawned test runs and register the guard as a project
 **Files:**
 - Modify: `.claude/skills/shell-scanner-bash-differential/SKILL.md:97`
 - Modify: `.claude/skills/pretooluse-updatedinput-normalizer/SKILL.md:71`
-- Modify: `.claude/skills/node-test-output-evidence/SKILL.md:116`
+- Modify: `.claude/skills/node-test-output-evidence/SKILL.md:116` (and the glob example at line 47)
+- Modify: `.claude-tweaks/verify-scope.json` (the `checks.tests.journeys` command only)
+- Read-only, run in Step 4: `tests/verify-scope-declaration.test.js` must stay green with the rewritten `journeys` command.
 - Modify: `.claude/skills/dispatch-queue-exclusion-addition/SKILL.md:49`
 - Modify: `.claude/skills/upstream-repin/SKILL.md:73`
 - Modify: `docs/journeys/document-a-flag-a-person-never-types-2964.md:56`
@@ -365,6 +384,8 @@ git commit -m "Scan script-spawned test runs and register the guard as a project
 Decisions the implementer cannot make alone:
 
 - **Rewrite rule.** Each listed command keeps its files, globs, flags and trailing comment, with `node --test` replaced by `node tools/run-tests.js`. Example: `node --test tests/bin-lib/code-health/*.test.js   # Code-health unit suite only` becomes `node tools/run-tests.js tests/bin-lib/code-health/*.test.js   # Code-health unit suite only`. Single-file commands in the same files stay as they are. `docs/plugin-structure.md:312` (`cd evals && npm install && node --test tests/`) stays as it is.
+- **`.claude-tweaks/verify-scope.json`** (added while planning; not in the spec's file list). Its `checks.tests.journeys` command is a ten-file direct `node --test` that `plugin/bin/verify.js` starts for a journey-only change, so it is the same bypass, launched by a tool where no Bash hook sees it. Replace its leading `node --test` with `node tools/run-tests.js` and keep the ten files in order. Change nothing else in the file: the `retry` templates (`node --test {file}`) are single-file and stay.
+- **`node-test-output-evidence/SKILL.md:47`** holds the illustrative span `` `node --test '[ab].test.js'` ``, which the guard denies (a glob character) and which cannot take the runner form without losing its point. Reword only that clause so the example is no longer one `node` command span: `` passing `'[ab].test.js'` to `node --test` runs `a.test.js` ``. The rest of the sentence and the line stay.
 - **`shell-scanner-bash-differential/SKILL.md:97`** becomes: `- mutant: edit a copy in a scratch worktree and run `node tools/run-tests.js tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/teardown-gate.test.js` there. A mutation loop or script calls that same command once per mutant, from inside the mutant's own checkout (add `--test-reporter=tap` to parse the result); it never starts `node --test` itself.`
 - **`docs/donts.md`**, one new rule beside the existing rule about dispatching agents that run `git` or `node --test` (line 22), in the file's "rule plus one clause of why" style: `- Don't run two or more test files, a loop over test files, or a script that spawns `node --test` outside `tools/run-tests.js` — a direct run skips the runner's git-maintenance-off env, per-run TMPDIR, suite slot and bounded concurrency; `node tools/run-tests.js <flags> <files>` takes the same arguments, and `tools/direct-test-run-guard.js` denies the direct form (#5547)`
 - **`docs/plugin-structure.md` line 101** (`tools/` entry): after the existing `--files-from` clause add that explicit `*.test.js` operands and node test flags (`--test-*`, `--experimental-test-*`) are accepted and run on the subset lane, resolved against the caller's working directory; and add an entry for `direct-test-run-guard.js` (#5547): the repo-local PreToolUse guard registered in `.claude/settings.json`, what it denies, what it allows, that it prints a deny JSON or nothing and always exits 0, and that its tests are in `tests/direct-test-run-guard.test.js`. Also update the `npm test` comment at line 158 only if it states that positional arguments are roots only.
@@ -373,7 +394,11 @@ Decisions the implementer cannot make alone:
 
 - [ ] **Step 1: Write the failing test**, appended to `tests/direct-test-run-guard.test.js`.
 
-`AC12.1: every documented node --test command is one the guard allows`. A helper `documentedTestCommands(text)` returns every fenced-code line and every inline code span that starts with `node ` (optionally after `cd <dir> && ` or `NAME=value `) and contains ` --test`. The test reads, through `readText`, every `.claude/skills/**/SKILL.md`, `docs/plugin-structure.md`, every `docs/journeys/*.md`, `docs/donts.md` and `CLAUDE.md`; asserts the total number of extracted commands is at least 10 (a floor, so an extractor that finds nothing cannot pass); and asserts `classifyCommand(cmd, opts).decision === 'allow'` for each, with `opts` built from the real repo root, naming the file and command on failure. Placeholders such as `{file}` or `path/to/file.test.js` count as one literal operand.
+`AC12.1: every documented node --test command is one the guard allows`. A helper `documentedTestCommands(text)` returns every fenced-code line and every inline code span that starts with a node program (`node`, a path ending in `node`, or `npx ... node@<version>`; optionally after `cd <dir> && ` or `NAME=value ` words) and contains `--test` as a whole word. An inline span with nothing after `--test` is a mention of the tool, not a command, and is skipped: 39 such spans exist today (`CLAUDE.md:14` and `:25`, `docs/donts.md:22`, several skill descriptions), and this plan edits none of them. A fenced line is always a command, bare or not. Before classifying, each placeholder is replaced by the literal word `placeholder`: `<name>` and `{name}`, where the name is letters, digits, `-` or `_` and the `{` is not preceded by `$` (today: `node --test <file>`, `node --test {file}`, `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`). The test reads, through `readText`, every `.claude/skills/**/SKILL.md`, `docs/plugin-structure.md`, every `docs/journeys/*.md`, `docs/donts.md` and `CLAUDE.md`; asserts the total number of extracted commands is at least 10 (a floor, so an extractor that finds nothing cannot pass); and asserts `classifyCommand(cmd, opts).decision === 'allow'` for each, with `opts` built from the real repo root, naming the file and command on failure. `path/to/file.test.js` counts as one literal operand.
+
+The same test also reads `.claude-tweaks/verify-scope.json` through `readText` and applies the shared assertion to every command string in it: each value of `checks.tests`, each value of `retry`, and `impact.command`, placeholders normalized the same way.
+
+`the extractor skips a bare mention and keeps a real command`: `documentedTestCommands` returns nothing for the text ``a bare `node --test` run``; one command for ``run `node --test <file>` ``, which the shared assertion accepts; and one command for a fenced block holding the single line `node --test`, which the shared assertion rejects.
 
 `AC12.2: the conformance check fails on the pre-change mutant instruction`. Freeze the pre-change line as a constant in the test:
 
@@ -395,12 +420,12 @@ Expected: FAIL after Step 1 (the AC12.1 test names `shell-scanner-bash-different
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test tests/direct-test-run-guard.test.js`
-Expected: PASS, 0 failures. Then, one file at a time: `node --test tests/claude-md-budget.test.js` (AC13.1) and `node --test tests/raw-markdown-read-conformance.test.js`. Expected: PASS for each.
+Expected: PASS, 0 failures. Then, one file at a time: `node --test tests/claude-md-budget.test.js` (AC13.1), `node --test tests/raw-markdown-read-conformance.test.js` and `node --test tests/verify-scope-declaration.test.js`. Expected: PASS for each. Do not run the rewritten journeys command here: it takes the machine-wide subset slot, and the build's final verification runs that suite once through `verify.js`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .claude/skills docs/journeys/document-a-flag-a-person-never-types-2964.md docs/plugin-structure.md docs/donts.md docs/hooks.md tests/direct-test-run-guard.test.js
+git add .claude/skills .claude-tweaks/verify-scope.json docs/journeys/document-a-flag-a-person-never-types-2964.md docs/plugin-structure.md docs/donts.md docs/hooks.md tests/direct-test-run-guard.test.js
 git commit -m "Rewrite documented multi-file test commands to the runner form — pinned by a guard conformance test, refs #5547" -m "Claude-Session: https://claude.ai/code/session_01Ngy9oWebZDKZcjphy4K2Sc"
 ```
 
