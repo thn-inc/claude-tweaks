@@ -2280,7 +2280,10 @@ function writeAllToStderr(text) {
 // can `await` it; every other caller drops the Promise, as the bare write always did.
 // `stderr` never throws (a closed or broken fd 2 must not turn a refusal into exit 0, #4834)
 // and reaches `fs.writeSync` through the module object at call time, so a test that patches
-// it sees the call. `stdoutSync` is the event tail's JSON: it may throw into the entry catch.
+// it sees the call. Every `deps.stderr` write is that full-write loop (writeAllToStderr) —
+// verb refusals, the event tail's attribution diagnostic and the verb-exception catch alike —
+// so on a full stderr pipe nobody drains it can stall for up to its ~4 s cap before it gives
+// up. `stdoutSync` is the event tail's JSON: it may throw into the entry catch.
 const realDeps = {
   stdout: (text) => new Promise((resolve) => { process.stdout.write(text, () => resolve()); }),
   stderr: writeAllToStderr,
