@@ -254,7 +254,11 @@ function configRecords(deps, dir) {
 // error (EACCES, EISDIR, EIO) is a manifest that exists but cannot be read —
 // a possibly broken multi-spec parent — so it is not absent (fail closed).
 function manifestAbsent(deps, dir) {
-  try { return deps.readFile(path.join(dir, 'manifest.yml')) === null; } catch (err) { return Boolean(err) && err.code === 'ENOENT'; }
+  try {
+    return deps.readFile(path.join(dir, 'manifest.yml')) === null;
+  } catch (err) {
+    return Boolean(err) && err.code === 'ENOENT';
+  }
 }
 
 // The record-resolution ladder, in order, reporting which rung won:
