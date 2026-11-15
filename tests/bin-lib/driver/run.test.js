@@ -4199,6 +4199,22 @@ test('AC9.1 (#5415): docs/driver.md names the newly-set-flag stop and the core.i
   assert.ok(refusal && refusal.includes('refuses') && refusal.includes('`fail`'), 'the first core.ignoreStat sentence names the refusal and fail');
 });
 
+test('(#5454) docs/driver.md names the test-step tree stop beside the index-flag rule', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  const start = docs.indexOf('\n## Worker rights');
+  assert.notEqual(start, -1, 'the Worker rights section exists');
+  const rights = docs.slice(start, docs.indexOf('\n## ', start + 1));
+  const lines = rights.split('\n');
+  const i = lines.findIndex((l) => l.startsWith('- Index flags:'));
+  assert.notEqual(i, -1, 'the Index flags bullet exists');
+  const bullet = lines[i + 1];
+  assert.ok(bullet.startsWith('- Tree after the tests:'), 'the tree bullet follows the Index flags bullet');
+  for (const part of ['git status', 'HEAD', '`fail`', '`.claude-tweaks/pipelines/`', 'the commit step also skips', 'red tests', 'fix round', 'CI on push']) {
+    assert.ok(bullet.includes(part), `the tree bullet names ${part}`);
+  }
+  assert.ok(!bullet.includes("run's own"), "the tree bullet does not call the pipelines paths the run's own");
+});
+
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {
   // A TAP destination the run cannot use: fixed text, never the error's own words.
   const thrown = fixRig({ script: [[(c) => c.kind === 'lstatType' && String(c.args[0]).endsWith('fix-evidence-0.tap'), { type: 'file', code: null }]] });
