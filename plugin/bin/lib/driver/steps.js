@@ -279,8 +279,10 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
     const reasons = [...((verdict && verdict.reasons) || [])];
     const reviewer = reviewerGateReason({ labels: ctx.issue.labels, keyFiles: ctx.keyFiles, bounds, reviewerOn: ctx.reviewer && ctx.reviewer.on });
     if (reviewer) reasons.push(reviewer);
+    ctx.eligibilityReasons = reasons;
     return { status: 'stop', detail: reasons.join('; ') || 'not eligible' };
   }
+  ctx.eligibilityReasons = [];
   return { status: 'ok' };
 });
 
@@ -323,8 +325,9 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     bounds: laneBounds(policy),
     reviewerOn: ctx.reviewer ? ctx.reviewer.on : undefined,
   });
+  ctx.admissionReasons = (verdict && verdict.reasons) || [];
   if (!verdict || verdict.admitted !== true) {
-    return { status: 'stop', detail: ((verdict && verdict.reasons) || []).join('; ') || 'not admitted' };
+    return { status: 'stop', detail: ctx.admissionReasons.join('; ') || 'not admitted' };
   }
   return { status: 'ok' };
 });
@@ -1290,8 +1293,12 @@ const STEPS = Object.freeze([
   testStep, checkStep, reviewStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep, mergeStep,
 ]);
 
+// The read-only head of STEPS: the steps that decide whether a record is admitted, none of which writes.
+// `drive.js --check` (run.js's checkRecord) walks exactly these.
+const CHECK_STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admissionStep]);
+
 module.exports = {
-  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
+  STEPS, CHECK_STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
   testTreeStop, TEST_TREE_UNREADABLE,
 };

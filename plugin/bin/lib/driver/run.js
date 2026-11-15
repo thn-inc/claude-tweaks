@@ -65,7 +65,7 @@
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { createEventSink, outcomeFor, neutralize, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
-const { STEPS } = require('./steps');
+const { STEPS, CHECK_STEPS } = require('./steps');
 const { toEscalationReason, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType, canonicalRealpath } = require('../path-guard');
@@ -78,6 +78,7 @@ const USAGE = [
   '       drive.js --help | -h   (prints this text; exit 0, before any probe)',
   '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)',
   '       drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record)',
+  '       drive.js --check #N   (prints the admission verdict as one JSON line; no write of any kind)',
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
@@ -86,6 +87,7 @@ const USAGE = [
   '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
   '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record',
+  '  --check: 0 a verdict was printed (admitted or not); 1 no verdict could be computed (nothing on stdout); 2 malformed (anything but exactly one record reference)',
   '',
 ].join('\n');
 
@@ -96,12 +98,20 @@ const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 // argv -> { records, settle } | { budget, settle } | { help: true } | { error }. `#N` or `N`,
 // positive integers only, de-duplicated in the order given. `--budget <n|all>` (n a positive
 // integer without a leading zero) names a queue-pulled run instead of records and is exclusive
-// with them. --help (or -h) anywhere wins. `--no-settle` anywhere sets settle false (the caller
+// with them. `--check` (anywhere) takes exactly one record reference and no other option: `{ check }`.
+// --help (or -h) anywhere wins. `--no-settle` anywhere sets settle false (the caller
 // settles stops); any other option is an error.
 const BUDGET_NEEDS_RECORD = 'a record reference (#N) or --budget <n|all> is required';
+const CHECK_GRAMMAR = '--check takes exactly one record reference (#N) and no other option';
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
   if (argv.length === 0) return { error: BUDGET_NEEDS_RECORD };
+  if (argv.includes('--check')) {
+    const rest = argv.filter((a) => a !== '--check');
+    const m = rest.length === 1 ? RECORD_RE.exec(String(rest[0])) : null;
+    const n = m ? Number(m[1]) : NaN;
+    return Number.isSafeInteger(n) && n > 0 ? { check: n } : { error: CHECK_GRAMMAR };
+  }
   const records = [];
   let budget;
   let settleStops = true;
@@ -151,6 +161,7 @@ function newCtx(record, shared) {
     record, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
+    eligibilityReasons: null, admissionReasons: null,
     summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
     shared,
   };
@@ -397,6 +408,36 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
   };
 }
 
+// `drive.js --check #N`: walks CHECK_STEPS (the read-only head of the table; it names no step) and
+// prints the admission verdict as one JSON line. Exit 0 once a verdict printed, admitted or not;
+// exit 1, nothing on stdout, when none could be computed: a step failed, or a step stopped before
+// the eligibility and admission steps recorded their reasons (ctx.eligibilityReasons and
+// ctx.admissionReasons stay null until then). An eligibility stop still runs admission, so every
+// reason is reported. No claim, run directory, worktree or forge write is in CHECK_STEPS.
+async function checkRecord(n, shared, deps, steps = CHECK_STEPS) {
+  const ctx = newCtx(n, shared);
+  let admitted = true;
+  let last = null;
+  const noVerdict = (name, status, detail) => {
+    deps.stderr(`drive.js --check: ${name} ${status}: ${detail}\n`);
+    return 1;
+  };
+  for (const step of steps) {
+    last = step;
+    const result = await step.run(ctx, deps);
+    if (result.status === 'fail') return noVerdict(step.name, result.status, result.detail);
+    if (result.status === 'ok') continue;
+    // A stop is a verdict only from a step that recorded its reasons.
+    if (ctx.eligibilityReasons === null && ctx.admissionReasons === null) return noVerdict(step.name, result.status, result.detail);
+    admitted = false;
+  }
+  if (!Array.isArray(ctx.eligibilityReasons) || !Array.isArray(ctx.admissionReasons)) {
+    return noVerdict(last ? last.name : 'none', 'no-verdict', 'the eligibility and admission verdicts were not both read');
+  }
+  deps.stdout(`${JSON.stringify({ record: n, admitted, reasons: [...ctx.eligibilityReasons, ...ctx.admissionReasons] })}\n`);
+  return 0;
+}
+
 // The signal handler run() subscribes (see the header's Interrupts paragraph). A second
 // signal is ignored: the first one's terminate already drops the subscription.
 function interrupt(shared, signal, deps) {
@@ -457,6 +498,7 @@ async function run(argv, deps) {
     deps.stderr('drive.js: git is not available (git --version failed)\n');
     return 2;
   }
+  if (parsed.check !== undefined) return checkRecord(parsed.check, newShared(), deps);
   const shared = newShared();
   shared.settle = parsed.settle;
   const unsubscribe = deps.onSignal((signal) => interrupt(shared, signal, deps));
@@ -576,4 +618,4 @@ const realDeps = {
   remoteUrl: () => remoteUrl(),
 };
 
-module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, newShared, interruptClass, reraiseAfterFlush };
+module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, checkRecord, newShared, interruptClass, reraiseAfterFlush };

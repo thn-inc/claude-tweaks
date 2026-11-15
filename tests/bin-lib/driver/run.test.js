@@ -6266,3 +6266,134 @@ test('budget AC4.1: a record that ends merged, its run directory followed into t
   assert.equal(facts.claimExit, 0);
   assert.equal(classifyFacts(facts), 'driven');
 });
+
+// --- drive.js --check (#5232) -----------------------------------------------------------
+
+const realEvaluateAdmission = evaluateAdmission;
+const realEligibility = evaluateRecordEligibility;
+const buildGranted = (n) => [on('gh', 'issue', 'view'), () => JSON.stringify({ ...issueFor(n), labels: [...issueFor(n).labels, { name: 'auto:build' }] })];
+
+// Every call a --check run may make: the policy read, the record read, the integration-ref read,
+// and the four verdict seams. Anything else (a claim, a run-dir mint, a worker, a forge write) fails.
+function isCheckRead(c) {
+  if (c.kind === 'gh') return c.args[0] === 'issue' && c.args[1] === 'view';
+  if (c.kind === 'git') return gitSub(c)[0] === 'symbolic-ref';
+  return ['policy', 'eligibility', 'native-deps', 'linked-prs', 'admission'].includes(c.kind);
+}
+const WRITE_KINDS = ['node', 'ghCreate', 'resolveRunDir', 'worker', 'writeFile', 'appendFile', 'mkdirSync', 'writeFileExclusive'];
+function assertWriteFree(calls, writes) {
+  const stray = calls.filter((c) => !isCheckRead(c));
+  assert.deepEqual(stray.map((c) => `${c.kind} ${describeArgs(c.args)}`), [], 'only read calls');
+  assert.deepEqual(calls.filter((c) => WRITE_KINDS.includes(c.kind)), [], 'no write kind');
+  assert.deepEqual(writes, [], 'no recorded write');
+}
+
+const CHECK_CASES = {
+  admitted: { n: 7, over: {} },
+  eligibilityRefused: { n: 7, over: { eligibility: { eligible: false, reasons: ['risk is not low'] }, admission: { admitted: false, reasons: ['record lacks auto:build'] } } },
+  admissionRefused: { n: 7, over: { admission: { admitted: false, reasons: ['record lacks auto:build'] } } },
+  splitOdd: { n: 7, over: { policy: { 'express-driver': 'split' }, deps: { evaluateAdmission: (i) => realEvaluateAdmission(i) } } },
+  localMerge: { n: 7, over: { policy: { 'integration-model': 'local-merge' }, deps: { evaluateRecordEligibility: (i, o) => realEligibility(i, o) } } },
+};
+const checkHarness = ({ over }, n) => harness({ ...over, script: [buildGranted(n), ...(over.script || [])] });
+
+test('#5232 AC1.1: --check prints one JSON line with the verdict and every reason', async () => {
+  const h = harness();
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  const text = h.out.join('');
+  assert.equal(text.split('\n').filter(Boolean).length, 1);
+  assert.ok(text.endsWith('\n'));
+  assert.deepEqual(JSON.parse(text), { record: 7, admitted: true, reasons: [] });
+});
+
+test('#5232 AC1.1: --check on a refused record reports eligibility and admission reasons together', async () => {
+  const h = checkHarness(CHECK_CASES.eligibilityRefused, 7);
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  assert.deepEqual(JSON.parse(h.out.join('')), { record: 7, admitted: false, reasons: ['risk is not low', 'record lacks auto:build'] });
+});
+
+test('#5232 AC4.1: --check under split admits an even record and refuses an odd one', async () => {
+  const even = checkHarness(CHECK_CASES.splitOdd, 8);
+  assert.equal(await run(['--check', '#8'], even.deps), 0);
+  assert.equal(JSON.parse(even.out.join('')).admitted, true);
+  const odd = checkHarness(CHECK_CASES.splitOdd, 7);
+  assert.equal(await run(['--check', '#7'], odd.deps), 0);
+  const verdict = JSON.parse(odd.out.join(''));
+  assert.equal(verdict.admitted, false);
+  assert.ok(verdict.reasons.includes('express-driver split: issue number is odd'), JSON.stringify(verdict));
+});
+
+test('#5232 AC1.1: --check refuses a local-merge project', async () => {
+  const h = checkHarness(CHECK_CASES.localMerge, 7);
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  const verdict = JSON.parse(h.out.join(''));
+  assert.equal(verdict.admitted, false);
+  assert.ok(verdict.reasons.includes('integration-model is not pr-first'), JSON.stringify(verdict));
+});
+
+test('#5232 AC1.2: --check makes no write of any kind, for an admitted record and for each refused class', async () => {
+  for (const [name, c] of Object.entries(CHECK_CASES)) {
+    const h = checkHarness(c, c.n);
+    assert.equal(await run(['--check', `#${c.n}`], h.deps), 0, name);
+    assert.ok(h.calls.length > 0, name);
+    assertWriteFree(h.calls, h.writes());
+  }
+});
+
+test('#5232 AC1.2 go-red: the write-free assertion fails on an injected claim call', async () => {
+  const h = checkHarness(CHECK_CASES.admitted, 7);
+  await run(['--check', '#7'], h.deps);
+  assertWriteFree(h.calls, h.writes());
+  const tainted = [...h.calls, { kind: 'node', args: ['/x/claim-targets.js'] }];
+  assert.throws(() => assertWriteFree(tainted, h.writes()));
+});
+
+test('#5232 AC1.1: --check with no computable verdict exits 1 and prints nothing', async () => {
+  const policyReply = (c) => Object.fromEntries(c.args.map((k) => [k, k === 'integration-model' ? { error: 'boom' } : { value: POLICY[k], source: 'policy' }]));
+  const bad = harness({ script: [[on('policy'), policyReply]] });
+  assert.equal(await run(['--check', '#7'], bad.deps), 1);
+  assert.deepEqual(bad.out, []);
+  assert.match(bad.err.join(''), /policy/);
+  assert.ok(!bad.calls.some((c) => c.kind === 'gh'), 'no step runs after a failed policy step');
+  const down = harness({ script: [[on('gh', 'issue', 'view'), new Error('gh down')]] });
+  assert.equal(await run(['--check', '#7'], down.deps), 1);
+  assert.deepEqual(down.out, []);
+  assert.match(down.err.join(''), /fetch/);
+});
+
+test('#5232 --check grammar', async () => {
+  for (const argv of [['--check'], ['--check', '#7', '#8'], ['--check', '#7', '--no-settle'], ['--check', '--budget', '1']]) {
+    const h = harness();
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.deepEqual(h.out, []);
+    assert.equal(h.calls.length, 0);
+  }
+  assert.deepEqual(parseArgs(['#7', '--check']), { check: 7 });
+  assert.deepEqual(parseArgs(['--check', '7']), { check: 7 });
+});
+
+test('#5232 CHECK_STEPS is the head of STEPS', () => {
+  const { CHECK_STEPS } = require(path.join(LIB, 'driver', 'steps'));
+  assert.deepEqual(CHECK_STEPS.map((s) => s.name), STEPS.slice(0, 4).map((s) => s.name));
+  CHECK_STEPS.forEach((s, i) => assert.equal(s, STEPS[i]));
+});
+
+test('#5232 AC1.1: checkRecord prints no verdict for a stop before the reasons are read, or a failed step after them', async () => {
+  const { checkRecord } = require(path.join(LIB, 'driver', 'run'));
+  const reasonsSet = (ctx) => { ctx.eligibilityReasons = []; ctx.admissionReasons = []; };
+  let ranAfter = false;
+  const cases = {
+    'a stop that recorded no reasons': [
+      defineStep('early', STOP_CLASSES.REFUSED, async () => ({ status: 'stop', detail: 'nope' })),
+      defineStep('after', STOP_CLASSES.REFUSED, async () => { ranAfter = true; return { status: 'ok' }; }),
+    ],
+    'a fail after both reasons were set': [defineStep('late', STOP_CLASSES.REFUSED, async (ctx) => { reasonsSet(ctx); return { status: 'fail', detail: 'boom' }; })],
+  };
+  for (const [name, steps] of Object.entries(cases)) {
+    const h = harness();
+    assert.equal(await checkRecord(7, newShared(), h.deps, steps), 1, name);
+    assert.deepEqual(h.out, [], name);
+    assert.match(h.err.join(''), /drive\.js --check: (early|late) /, name);
+  }
+  assert.equal(ranAfter, false, 'no step runs after a stop that read nothing');
+});

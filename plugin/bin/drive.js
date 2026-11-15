@@ -12,6 +12,7 @@
 //          drive.js --help | -h
 //          drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)
 //          drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record)
+//          drive.js --check #N   (prints the admission verdict as one JSON line; no write of any kind)
 //
 // One JSON event line per step on stdout (and, once the run directory exists, in
 // {run-dir}/driver-events.jsonl); each record's final line carries its outcome word.
@@ -21,6 +22,7 @@
 //   2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record
 //      (exit 2 is overloaded on purpose; revisit if a caller needs to retry an internal error
 //      differently from a usage error)
+// --check exit codes: 0 a verdict was printed (admitted or not); 1 no verdict could be computed (nothing on stdout); 2 malformed (anything but exactly one record reference).
 // --help (or -h) exits 0 before any probe of gh, git or policy.
 'use strict';
 

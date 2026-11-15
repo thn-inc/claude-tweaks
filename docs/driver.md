@@ -8,12 +8,14 @@
 node plugin/bin/drive.js #N [#M…]
 node plugin/bin/drive.js --no-settle #N [#M…]
 node plugin/bin/drive.js [--no-settle] --budget <n|all>
+node plugin/bin/drive.js --check #N
 node plugin/bin/drive.js --help
 ```
 
 - `#N` (or a bare `N`) is a positive record number; duplicates are dropped, order is kept.
 - `--no-settle` turns the driver's own settle off, for a caller that settles stops itself. A stop then makes none of the settle calls; the final line carries the structured `stop` object and `settle: left-to-caller` when the stop's row has calls (`none` otherwise). Default is on.
 - `--budget` takes a positive integer (no leading zero) or `all`, is exclusive with named records, and may be given once. `--no-settle` then applies to each driven record. See "Picking records: `--budget`".
+- `--check #N` is the read-only verdict: it runs the policy, fetch, eligibility and admission steps (`steps.js`'s `CHECK_STEPS`, the head of the table) and prints one line, `{"record":N,"admitted":bool,"reasons":[…]}`, the eligibility reasons then the admission reasons (admission still runs after an eligibility refusal, so every reason is reported). It takes exactly one record reference and no other option, and makes no write of any kind: no claim, run directory, worktree, comment or label. Exit 0 once a verdict was printed, admitted or not; exit 1, nothing on stdout, when none could be computed (a step failed); exit 2 when malformed.
 - `--help` (or `-h`) prints the usage and exits 0 before any probe of `gh`, `git` or policy.
 
 Exit codes:
