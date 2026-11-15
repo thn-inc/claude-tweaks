@@ -325,6 +325,7 @@ function run(argv, deps = realDeps) {
   let repoSpec;
   if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
   else {
+    // withDescriptors, not a spread: a spread would call injectedGhDeps' lazy homedir getter eagerly.
     const gated = gateOriginRepo(remote, withDescriptors(injectedGhDeps(pickInjected(deps)), deps.gateDeps));
     if (gated.refusal) { deps.stderr(`compose-subject.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;

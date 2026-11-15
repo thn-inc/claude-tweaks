@@ -15,12 +15,19 @@ function colorEnabled(env = activeEnv) {
 }
 
 // Runs fn synchronously with `env` as the default colorEnabled reads, and
-// restores the previous one afterwards, even when fn throws.
+// restores the previous one afterwards, even when fn throws. fn must be
+// synchronous: the env is scoped only for the synchronous call, so anything an
+// async fn renders after its first await would read the restored module-level
+// env, not `env`. A thenable return is therefore refused with a TypeError.
 function withEnv(env, fn) {
   const previous = activeEnv;
   activeEnv = env;
   try {
-    return fn();
+    const result = fn();
+    if (result !== null && (typeof result === 'object' || typeof result === 'function') && typeof result.then === 'function') {
+      throw new TypeError('color.withEnv: fn returned a thenable — it must run synchronously, since the injected env is scoped only for the synchronous call');
+    }
+    return result;
   } finally {
     activeEnv = previous;
   }
