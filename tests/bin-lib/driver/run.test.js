@@ -6772,12 +6772,15 @@ test('#5232 AC2.3: the adopted run\'s claim runId is the given directory\'s base
   assert.equal(argAfter(claimLogCall(h), '--run'), fs.realpathSync(ADOPT_RUN));
 });
 
+const isEscalateCall = on('node', /express-lane\.js$/, 'escalate');
+
 test('#5232 (Deliverable 2): a --run --no-settle stop leaves the claim, worktree, branch and run directory', async () => {
+  // A pre-push stop still writes its escalation line (one escalate call), and nothing else.
   const cases = [
-    ['a failed push (pre-push)', [onGit('push'), () => { throw new Error('rejected'); }], 'express-escalated'],
-    ['a failed gh pr create (blocked)', [on('ghCreate', 'pr', 'create'), () => { throw new Error('rejected'); }], 'blocked'],
+    ['a failed push (pre-push)', [onGit('push'), () => { throw new Error('rejected'); }], 'express-escalated', 1],
+    ['a failed gh pr create (blocked)', [on('ghCreate', 'pr', 'create'), () => { throw new Error('rejected'); }], 'blocked', 0],
   ];
-  for (const [name, entry, outcome] of cases) {
+  for (const [name, entry, outcome, escalates] of cases) {
     const h = adoptHarness(ADOPT_WT, [...ADOPTED_OK, entry]);
     assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 0, name);
     const final = lastLine(h);
@@ -6788,9 +6791,96 @@ test('#5232 (Deliverable 2): a --run --no-settle stop leaves the claim, worktree
     assert.equal(h.calls.filter(onGit('worktree', 'add')).length, 0, name);
     assert.equal(h.calls.filter((c) => c.kind === 'resolveRunDir').length, 0, name);
     assert.equal(final.run, ADOPT_RUN_ID, name);
-    assert.deepEqual(settleCalls(h).map((c) => `${c.kind} ${describeArgs(c.args)}`), [], name);
-    assert.deepEqual(settleLines(h), [], name);
+    assert.equal(h.calls.filter(isEscalateCall).length, escalates, name);
+    assert.deepEqual(settleCalls(h).filter((c) => !isEscalateCall(c)).map((c) => `${c.kind} ${describeArgs(c.args)}`), [], name);
+    assert.deepEqual(settleLines(h).map((l) => l.step), escalates ? ['settle-escalate'] : [], name);
   }
+});
+
+// --- #5232 final review, Important 1: under --run a pre-push stop still writes the escalation line ---
+// dispatch's ordinary first call after `express-escalated` runs /build, whose already-shipped check
+// reads that line (`hasEscalation`) to judge against origin only. The line is written by the real
+// express-lane.js escalate, run in-process against a real run directory, and read back by the real
+// `hasEscalation`.
+const expressCli = require(path.join(LIB, 'express', 'cli.js'));
+const readOrNull = (p) => {
+  try { return fs.readFileSync(p, 'utf8'); } catch (err) { if (err && err.code === 'ENOENT') return null; throw err; }
+};
+// An escalate reply that runs the real CLI; `box.h` is the harness, whose writeFile holds the detail file.
+const realEscalate = (box) => (c) => {
+  const out = [];
+  const err = [];
+  const code = expressCli.run(c.args.slice(1), {
+    ...expressCli.realDeps,
+    readFile: (p) => (Object.prototype.hasOwnProperty.call(box.h.files, p) ? box.h.files[p] : readOrNull(p)),
+    cwd: () => ADOPT_WT, mainRoot: ADOPT_MAIN, now: () => NOW,
+    stdout: (s) => out.push(s), stderr: (s) => err.push(s),
+  });
+  return { code, stdout: out.join(''), stderr: err.join('') };
+};
+const FAILED_PUSH = [onGit('push'), () => { throw new Error('rejected'); }];
+const decisionsOf = (dir) => readOrNull(path.join(dir, 'decisions.md'));
+// The decisions.md lines the real hasEscalation counts as #7's escalation.
+const escalationLines = (text) => String(text || '').split('\n').filter((l) => expressCli.hasEscalation(l, 7));
+
+test('#5232 a --run --no-settle pre-push stop writes one escalation line the real hasEscalation matches', async () => {
+  const { dir } = stateRun(ADOPT_STATE);
+  const box = {};
+  box.h = adoptHarness(ADOPT_WT, [...ADOPTED_OK, FAILED_PUSH, [isEscalateCall, realEscalate(box)]]);
+  const { h } = box;
+  assert.equal(await run(adoptArgv(dir), h.deps), 0, h.err.join(''));
+  assert.equal(h.calls.filter(isEscalateCall).length, 1, 'escalate runs exactly once');
+  const text = decisionsOf(dir);
+  assert.equal(expressCli.hasEscalation(text, 7), true, `decisions.md: ${text}`);
+  assert.equal(escalationLines(text).length, 1, 'one escalation line');
+  const final = lastLine(h);
+  assert.deepEqual([final.outcome, final.settle, final.settleRow, final.settleFailed], ['express-escalated', 'left-to-caller', 'pre-push', []]);
+  // Every other settle call stays the caller's: no comment, label, release, removal or close-run.
+  assert.deepEqual(settleCalls(h).filter((c) => !isEscalateCall(c)).map((c) => `${c.kind} ${describeArgs(c.args)}`), []);
+  assert.deepEqual(settleLines(h).map((l) => [l.step, l.status]), [['settle-escalate', 'ok']]);
+});
+
+test('#5232 a --no-settle pre-push stop without --run still makes no settle call at all', async () => {
+  for (const script of [[FAILED_PUSH], REDTESTS.script]) {
+    const h = harness({ script });
+    assert.equal(await run(['--no-settle', '#7'], h.deps), 0);
+    const final = lastLine(h);
+    assert.deepEqual([final.outcome, final.settle, final.settleRow], ['express-escalated', 'left-to-caller', 'pre-push']);
+    assert.equal(h.calls.filter(isEscalateCall).length, 0, 'no escalate call');
+    assert.deepEqual(settleCalls(h), []);
+    assert.deepEqual(settleLines(h), []);
+  }
+});
+
+test('#5232 under --run a check that logged its own escalation gets no second line', async () => {
+  const { dir } = stateRun(ADOPT_STATE);
+  const box = {};
+  // check's own escalate verdict, writing its line the way express-lane.js check does (append, then logged).
+  const checkEscalates = [on('node', /express-lane\.js$/, 'check'), (c) => {
+    const runDir = c.args[c.args.indexOf('--run') + 1];
+    box.h.files[path.join(runDir, 'check-detail.txt')] = 'outside Key Files: x.js\n';
+    const r = realEscalate(box)({ args: [c.args[0], 'escalate', '--run', runDir, '--issue', '7', '--reason', 'out-of-bounds', '--detail-file', path.join(runDir, 'check-detail.txt')] });
+    assert.equal(r.code, 0, r.stderr);
+    return { code: 0, stderr: '', stdout: JSON.stringify({ action: 'escalate', reason: 'out-of-bounds', detail: 'outside Key Files: x.js' }) };
+  }];
+  box.h = adoptHarness(ADOPT_WT, [...ADOPTED_OK, checkEscalates, [isEscalateCall, realEscalate(box)]]);
+  const { h } = box;
+  assert.equal(await run(adoptArgv(dir), h.deps), 0, h.err.join(''));
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.stop.checkLogged, final.outcome], ['check', true, 'express-escalated']);
+  assert.equal(h.calls.filter(isEscalateCall).length, 0, 'the driver makes no escalate call');
+  assert.equal(escalationLines(decisionsOf(dir)).length, 1, 'only check\'s own line');
+  assert.deepEqual(settleLines(h), []);
+});
+
+test('#5232 under --run a failed escalate reads blocked, the rest of the blocked row left to the caller', async () => {
+  const { dir } = stateRun(ADOPT_STATE);
+  const h = adoptHarness(ADOPT_WT, [...ADOPTED_OK, FAILED_PUSH, [isEscalateCall, { code: 3, stdout: '', stderr: 'could not write decisions.md\n' }]]);
+  assert.equal(await run(adoptArgv(dir), h.deps), 0, h.err.join(''));
+  const final = lastLine(h);
+  assert.deepEqual([final.outcome, final.settle, final.settleRow, final.settleFailed], ['blocked', 'left-to-caller', 'blocked', ['settle-escalate']]);
+  assert.equal(h.calls.filter(isEscalateCall).length, 1);
+  assert.deepEqual(settleCalls(h).filter((c) => !isEscalateCall(c)), [], 'no blocked-row call is made');
 });
 
 test('#5232 --run grammar', async () => {

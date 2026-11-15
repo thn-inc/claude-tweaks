@@ -18,7 +18,8 @@
 // nothing stopped; otherwise it is the word for the stop's class (events.js's outcomeFor;
 // `none` when nothing stopped). A halted record is then settled by settle.js
 // (comment, label, release the claim, remove what this run created), unless the run was
-// started with --no-settle, which leaves the stop to the caller; settle's events come before
+// started with --no-settle, which leaves the stop to the caller (under --run a pre-push stop's
+// escalate still runs, writing only the escalation line); settle's events come before
 // the final line, and the final line's `settle` word says what happened (`done`,
 // `left-to-caller`, `none` or `interrupted`). An interrupted record settles nothing: a
 // signal queued during the halting step's synchronous child is delivered at the loop's yield
@@ -341,21 +342,30 @@ function reportInterrupt(shared, current, step, detail, ms, deps) {
 async function settleStop(ctx, stop, record, shared, sink, deps) {
   const stopObj = stopObject(ctx, stop);
   const pr = ctx.pr && ctx.pr.number;
+  // A successful call has no detail: the line omits the field, like any other step line.
+  const emit = (name, status, ms, detail) => { sink.emit(eventFor(ctx, name, { status, detail: detail || undefined, extra: {} }, ms, deps)); };
+  const input = {
+    stop: stopObj, record, runId: ctx.runId, runDir: ctx.runDir, wt: ctx.wt, branch: ctx.branch,
+    pr, claimed: ctx.claimed, mainRoot: shared.mainRoot, ghRepo: shared.ghRepo, emit,
+    interrupted: () => shared.interrupted,
+  };
+  const reported = (result, mode) => ({
+    mode: result.interrupted ? 'interrupted' : mode, row: result.row, failed: result.failed,
+    settledClass: result.settledClass, unclassified: result.unclassified, note: result.note,
+  });
   if (shared.settle === true) {
-    // A successful call has no detail: the line omits the field, like any other step line.
-    const emit = (name, status, ms, detail) => { sink.emit(eventFor(ctx, name, { status, detail: detail || undefined, extra: {} }, ms, deps)); };
-    const result = await settle({
-      stop: stopObj, record, runId: ctx.runId, runDir: ctx.runDir, wt: ctx.wt, branch: ctx.branch,
-      pr, claimed: ctx.claimed, mainRoot: shared.mainRoot, ghRepo: shared.ghRepo, emit,
-      interrupted: () => shared.interrupted,
-    }, deps);
-    return {
-      mode: result.interrupted ? 'interrupted' : (result.calls.length > 0 ? 'done' : 'none'), row: result.row, failed: result.failed,
-      settledClass: result.settledClass, unclassified: result.unclassified, note: result.note,
-    };
+    const result = await settle(input, deps);
+    return reported(result, result.calls.length > 0 ? 'done' : 'none');
   }
   // The row settle would use, from the same run-state read.
   const plan = planRow({ stop: stopObj, runDir: ctx.runDir, pr }, deps);
+  // Under --run (#5232) the pre-push row's escalate still runs: it writes only the escalation line
+  // to dispatch's run directory, which the ordinary first call after `express-escalated` reads
+  // (build's already-shipped check, `hasEscalation`); the rest of the row stays the caller's. Its
+  // own precondition skips it when check already wrote the line. A failed escalate reads `blocked`.
+  if (shared.adopted && plan.row === 'pre-push') {
+    return reported(await settle({ ...input, only: ['settle-escalate'] }, deps), 'left-to-caller');
+  }
   return {
     mode: SETTLE_ROWS[plan.row].length > 0 ? 'left-to-caller' : 'none', row: plan.row, failed: [],
     settledClass: CLASS_BY_ROW[plan.row], unclassified: plan.unclassified, note: plan.unreadableNote,

@@ -202,9 +202,13 @@ function planRow(input, deps) {
 // at most once and a failure never stops the next; a worker is never launched (settle is
 // mechanical). When the caller passes `input.interrupted` (a predicate), settle yields to the
 // event loop before each call and stops, with no further call, once it returns truthy: the
-// result then carries `interrupted: true` and the calls and failures made so far.
+// result then carries `interrupted: true` and the calls and failures made so far. `input.only`
+// (optional, a list of settle step names) makes only those steps of the row: run.js passes
+// ['settle-escalate'] under --run --no-settle. A failed escalate still switches the row to
+// `blocked`, whose steps `only` leaves out as well.
 async function settle(input, deps) {
   const { stop, record, runDir, wt, branch, mainRoot, ghRepo } = input;
+  const only = Array.isArray(input.only) ? input.only : null;
   const calls = [];
   const failed = [];
   const plan = planRow(input, deps);
@@ -342,6 +346,7 @@ async function settle(input, deps) {
   async function runRow(names) {
     for (const name of names) {
       const h = HANDLERS[name];
+      if (only && !only.includes(name)) continue;
       if (h.when && !h.when()) continue;
       if (typeof input.interrupted === 'function') {
         await yieldToEventLoop();

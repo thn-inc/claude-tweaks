@@ -350,6 +350,7 @@ const ROUTE_FACTS = [
   [/`\{drain-prs\}` is the path `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value dispatch-drain-prs\.json` prints/, 'the drain-PR list path'],
   [/When that file does not exist yet, write `\[\]` to it with the Write tool first/, 'Review Focus 1: [] written when the list is absent'],
   [/When this firing's queue pull wrote `dispatch-near-dup-pairs\.json`, pass `--near-dup-pairs "\{near-dup-pairs\}"` too/, 'near-dup pairs passed whenever the firing wrote them'],
+  [/The queue pull writes that file on every firing, so a bare drain passes it too and gets the near-duplicate hold that `drain-pr-overlap\.md` Step 6 applies only to explicit-list firings: deliberate, since it holds more, never less\./, '#5232 Minor 4: a bare drain gets the near-duplicate hold, deliberately'],
   [/Always pass `--in-flight-prs`: without it the driver applies no drain-overlap hold/, 'AC9.2: the route always passes --in-flight-prs'],
   [/The hold and the merge are driver code/, 'AC5.9/AC5.10: the hold and the merge are driver code'],
   [/No model performs the merge/, 'AC5.11: no model performs the merge'],
@@ -392,6 +393,9 @@ const OUTCOME_ROWS = [
   ['| `refused` |', /take today's path for the record, with one `SKIP` line/, 'AC5.6: refused → today\'s path plus one SKIP'],
   ['| `refused` |', /when `express-lane` resolves `true`, the express gate runs/, 'AC5.6: refused re-decides the bind through the express gate'],
   ['| `refused` |', /on anything but an eligible verdict, re-bind with `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" record-worktree --run "\{minted-run-dir\}" "\{worktree\}" --dispatch` before the ordinary first call/, 'AC5.6: refused re-binds with --dispatch before the ordinary first call'],
+  ['| `express-escalated` |', /The driver still wrote the run's escalation line \(`Express lane: escalated #\{n\} to \/flow`, or `check` did\), so that call's `\/build` judges "already shipped" against `origin\/\{integration-branch\}` only/, '#5232 Important 1: the driver wrote the escalation line /build reads'],
+  ['| `blocked` |', /after a claim stop \(`stop\.step` is `claim`\) whose `stop\.reason` is `claim-exit-3` or `claim-exit-6`, the stops that case names, which wrote no claim, only its Claim-contest special case;/, '#5232 Minor 3: only claim-exit-3 and claim-exit-6 take the Claim-contest special case'],
+  ['| `blocked` |', /any other claim stop, `claim-exit-5` and `claim-exit-none` included \(a claim may have been written, `bin\/lib\/driver\/claim-exit\.js`\), runs no Settle and takes the catch-all below, whose §5 release runs because a final line exists;/, '#5232 Minor 3: claim-exit-5, claim-exit-none and any other claim stop take the catch-all, whose release runs'],
 ];
 
 test('driver-route.md: each outcome word\'s row carries its mapping', () => {
@@ -408,7 +412,47 @@ test('go-red control: each outcome mapping stripped from its row, or moved to an
   const escalated = lineStartingWith(table, '| `express-escalated` |');
   const swap = (l, other) => `${l.slice(0, l.indexOf(' |', 2) + 2)}${other.slice(other.indexOf(' |', 2) + 2)}`;
   const swapped = mutate(mutate(table, merged, swap(merged, escalated)), escalated, swap(escalated, merged));
-  assert.deepEqual(missingRowsOf(OUTCOME_ROWS)(swapped), [OUTCOME_ROWS[0][2], OUTCOME_ROWS[3][2]]);
+  const movedFacts = OUTCOME_ROWS.filter(([prefix]) => prefix === '| `merged` |' || prefix === '| `express-escalated` |').map(([, , fact]) => fact);
+  assert.deepEqual(missingRowsOf(OUTCOME_ROWS)(swapped), movedFacts);
+});
+
+// #5232 Minor 3: the claim reasons the blocked row names, against claim-exit.js's own reading of them.
+// The Claim-contest codes are the ones that wrote no claim (contested, claims branch missing); the
+// catch-all's named codes are exactly the reasons claim-exit.js reads as a claim that may have been written.
+const { CLAIM_KIND, readClaimExit, readClaimReason } = require('../plugin/bin/lib/driver/claim-exit');
+const blockedRow = (text) => lineStartingWith(outcomeTable(text), '| `blocked` |');
+const claimReasonsIn = (clause) => [...clause.matchAll(/`(claim-exit-(?:\d+|none))`/g)].map((m) => m[1]);
+function claimClauses(row) {
+  const contest = /whose `stop\.reason` is ([^;]*?), the stops that case names/.exec(row);
+  const catchAll = /any other claim stop, ([^(]*?) included \(a claim may have been written/.exec(row);
+  assert.ok(contest && catchAll, 'the blocked row names its Claim-contest and catch-all claim reasons');
+  return { contest: claimReasonsIn(contest[1]), catchAll: claimReasonsIn(catchAll[1]) };
+}
+const UNVERIFIED_REASONS = [null, ...Array.from({ length: 256 }, (_, i) => i)]
+  .map(readClaimExit).filter((c) => c.kind === CLAIM_KIND.UNVERIFIED).map((c) => c.reason);
+function assertClaimMapping(row) {
+  const { contest, catchAll } = claimClauses(row);
+  assert.ok(contest.length > 0, 'the Claim-contest clause names a reason');
+  for (const reason of contest) {
+    const claim = readClaimReason(reason);
+    assert.ok(claim && [CLAIM_KIND.CONTESTED, CLAIM_KIND.SHARED_CAUSE].includes(claim.kind), `${reason} wrote no claim`);
+  }
+  assert.deepEqual([...catchAll].sort(), [...UNVERIFIED_REASONS].sort(), 'the catch-all names every possibly-written claim reason');
+}
+
+test('#5232 Minor 3: the blocked row\'s claim reasons match claim-exit.js', () => {
+  assert.deepEqual([...UNVERIFIED_REASONS].sort(), ['claim-exit-5', 'claim-exit-none']);
+  assertClaimMapping(blockedRow(routeText()));
+});
+
+test('#5232 go-red control: an unverified reason in the Claim-contest clause, or one dropped from the catch-all, fails', () => {
+  const row = blockedRow(routeText());
+  const intoContest = row.replace('`claim-exit-3` or `claim-exit-6`', '`claim-exit-3` or `claim-exit-5`');
+  assert.notEqual(intoContest, row);
+  assert.throws(() => assertClaimMapping(intoContest), /claim-exit-5 wrote no claim/);
+  const dropped = row.replace('`claim-exit-5` and `claim-exit-none` included', '`claim-exit-5` included');
+  assert.notEqual(dropped, row);
+  assert.throws(() => assertClaimMapping(dropped), /every possibly-written claim reason/);
 });
 
 // AC5.4: the table's words, both directions, against the driver's own vocabulary.

@@ -353,9 +353,10 @@ function compose(s) {
 // The drain-overlap hold (#5232): ports `dispatch/drain-pr-overlap.md` Step 6's hold into code, for a
 // driver run started with `--in-flight-prs <file>` (a JSON array of the other drain PRs in flight:
 // numbers or `{ number }` objects) and, optionally, `--near-dup-pairs <file>` (dispatch's strong
-// near-duplicate pairs, `dispatch-near-dup-pairs.json`'s shape, #3520). Runs after compose and before
-// mark ready, so a hold leaves the PR in draft. Two deliberate differences from the prose: path
-// equality is plain (no `detectCrossPRFileOverlap` hub filter, which would let a hub file pass), and
+// near-duplicate pairs, `dispatch-near-dup-pairs.json`'s shape, #3520). Runs inside entry(), after the
+// authorization checks and before the judgment supplier, so a held record launches no merge-check or
+// acceptance worker and its PR stays in draft (compose and mark ready come later). Two deliberate
+// differences from the prose: path equality is plain (no `detectCrossPRFileOverlap` hub filter, which would let a hub file pass), and
 // every read fails closed: an unreadable list, an unreadable PR, or a files list that may be cut at
 // GitHub's 100-entry cap is a hold, never a pass. A deliberate exception to "an absent flag takes the
 // safe route" (spec AC9): with `--in-flight-prs` absent no hold is applied, because that is the
@@ -428,6 +429,17 @@ function readPrFiles(s, pr, fields, wantState, wantClosing) {
   return { state: wantState ? parsed.state : null, paths: parsed.files.map((f) => f.path), closing };
 }
 
+// Before a hold on open listed PR `pr` stops: the prose hold's decisions.md line (`drain-pr-overlap.md`
+// Step 6, both its forms), whose `held — overlaps drain PR #{pr}` the Review Console's resolver parses
+// (`console/resolve.js`'s drainOverlapHoldPrs). Returns the event-detail note naming a failed log; a
+// failed log never lifts the hold. The fail-closed holds name no PR, so they write no line.
+function logHold(s, pr, what) {
+  if (!s.runDir) return '';
+  const failuresBefore = s.logFailures.length;
+  logDecision(s, 'Auto-merge gate', `group [#${s.ctx.record}] held — overlaps drain PR #${pr} ${what}; merge order is a human call.`, 'AUTO', 'n/a');
+  return logNote(s, failuresBefore);
+}
+
 // The details name numbers without a `#`: every event detail passes `neutralize`, which strips a bare
 // `#N` reference by design (it must not link or close anything), so `#12` would reach the line as nothing.
 function overlapHold(s) {
@@ -463,10 +475,18 @@ function overlapHold(s) {
     if (other.failed) return halt('in-flight-read-failed', reduceDetail(other.failed));
     if (other.state !== 'OPEN') continue;
     const common = own.paths.filter((p) => other.paths.includes(p));
-    if (common.length > 0) return halt('drain-overlap', `overlaps in-flight PR ${n} on ${reduceDetail(common.join(', '))}`);
+    if (common.length > 0) {
+      const files = reduceDetail(common.join(', '));
+      const note = logHold(s, n, `on ${files}`);
+      return halt('drain-overlap', `overlaps in-flight PR ${n} on ${files}${note}`);
+    }
     if (pairs) {
       const hits = drainNearDuplicateHits([ctx.record], pairs, [{ number: n, closingIssueNumbers: other.closing }]);
-      if (hits.length > 0) return halt('near-duplicate', `overlaps in-flight PR ${n} (near-duplicate of record ${hits[0].partner})`);
+      if (hits.length > 0) {
+        const { partner } = hits[0];
+        const note = logHold(s, n, `(near-duplicate of #${partner})`);
+        return halt('near-duplicate', `overlaps in-flight PR ${n} (near-duplicate of record ${partner})${note}`);
+      }
     }
   }
   emit(s, 'merge-overlap', 'ok', `read ${others.length} in-flight PR${others.length === 1 ? '' : 's'}; none overlaps`);

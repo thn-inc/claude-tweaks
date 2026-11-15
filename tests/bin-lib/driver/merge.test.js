@@ -3182,6 +3182,61 @@ test('#5232 a hold detail is inert: a shared path with markup is reduced', async
   assert.doesNotMatch(e.detail, /<b>|<\/b>|@/);
 });
 
+// #5232 final review, Minor 5: a drain-overlap or near-duplicate hold also writes the prose hold's
+// decisions.md line (`drain-pr-overlap.md` Step 6), which the Review Console's resolver parses
+// (`console/resolve.js`'s drainOverlapHoldPrs). The line goes through the real log-decision.js, run
+// in-process against a real run directory, and is read back by the real parser.
+const { drainOverlapHoldPrs } = require(path.join(LIB, 'console', 'resolve'));
+const logDecisionCli = require(path.join(LIB, '..', 'log-decision.js'));
+const isHoldLog = (c) => isNode('log-decision.js')(c) && c.args.includes('Auto-merge gate');
+function realLogHarness(over) {
+  const own = fixture();
+  const real = [isNode('log-decision.js'), (c) => {
+    const out = [];
+    const err = [];
+    const code = logDecisionCli.run(c.args.slice(1), { cwd: () => own.main, mainRoot: own.main, now: () => MAIN_NOW.getTime(), stdout: (s) => out.push(s), stderr: (s) => err.push(s) });
+    return { code, stdout: out.join(''), stderr: err.join('') };
+  }];
+  const h = mergeHarness({ ...over, fx: own, script: [...(over.script || []), real], deps: { writeFile: (p, s) => fs.writeFileSync(p, s) } });
+  return { h, own, ctx: { ...own.ctx, inFlightPrsFile: IN_FLIGHT, ...(over.ctx || {}) } };
+}
+
+test('#5232 a drain-overlap hold writes the decisions.md line drainOverlapHoldPrs parses', async () => {
+  const { h, own, ctx } = realLogHarness({ script: holdScript() });
+  assert.equal((await merge(ctx, h.deps)).reason, 'drain-overlap');
+  const text = fs.readFileSync(own.decisions, 'utf8');
+  assert.deepEqual(drainOverlapHoldPrs(text), [12], text);
+  assert.match(text, /^- AUTO \d{2}:\d{2}:\d{2} — Auto-merge gate: group \[#7\] held — overlaps drain PR #12 on b\.js; merge order is a human call\. Reversibility: n\/a\.$/m);
+  assert.equal(h.calls.filter(isHoldLog).length, 1);
+});
+
+test('#5232 a near-duplicate hold writes the decisions.md line drainOverlapHoldPrs parses', async () => {
+  const pairs = [{ records: [7, 30], signals: ['body-anchor-overlap'], sharedAnchors: ['a', 'b'] }];
+  const { h, own, ctx } = realLogHarness({ script: holdScript({ others: { 12: { state: 'OPEN', files: ['c.js'], closing: [30] } }, pairs }), ctx: { nearDupPairsFile: PAIRS_FILE } });
+  assert.equal((await merge(ctx, h.deps)).reason, 'near-duplicate');
+  const text = fs.readFileSync(own.decisions, 'utf8');
+  assert.deepEqual(drainOverlapHoldPrs(text), [12], text);
+  assert.match(text, /^- AUTO \d{2}:\d{2}:\d{2} — Auto-merge gate: group \[#7\] held — overlaps drain PR #12 \(near-duplicate of #30\); merge order is a human call\. Reversibility: n\/a\.$/m);
+});
+
+test('#5232 a fail-closed hold names no PR, so it writes no hold line; a disjoint list writes none either', async () => {
+  for (const script of [[[isFile(IN_FLIGHT), 'not json']], holdScript({ others: { 12: new Error('gh: HTTP 502') } })]) {
+    const { h, own, ctx } = realLogHarness({ script });
+    assert.equal((await merge(ctx, h.deps)).outcome, 'pending-review');
+    assert.equal(h.calls.filter(isHoldLog).length, 0);
+    assert.deepEqual(drainOverlapHoldPrs(fs.readFileSync(own.decisions, 'utf8')), []);
+  }
+  const disjoint = mergeHarness({ script: holdScript({ others: { 12: { state: 'OPEN', files: ['c.js'] } } }) });
+  assert.equal((await merge(holdCtx(), disjoint.deps)).outcome, 'merged');
+  assert.equal(disjoint.calls.filter(isHoldLog).length, 0);
+});
+
+test('#5232 a hold line that cannot be written still holds, and the hold event names the failed log', async () => {
+  const h = mergeHarness({ script: [[isHoldLog, { code: 3, stdout: '', stderr: 'unanchored\n' }], ...holdScript()] });
+  const { e } = await assertHeld(h, holdCtx(), 'drain-overlap');
+  assert.match(e.detail, /\(log:Auto-merge gate\)$/);
+});
+
 test('#5232 adopted: a --run merge keeps the worktree and local branch', async () => {
   const h = mergeHarness();
   const r = await merge({ ...CTX, adopted: true }, h.deps);
