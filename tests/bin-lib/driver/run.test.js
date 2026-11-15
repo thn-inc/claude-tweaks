@@ -6603,6 +6603,29 @@ test('#5232 (review fix): run-state.json\'s worktree is compared after realpath'
   assert.equal(result.wt, ADOPT_WT);
 });
 
+// A run-state.json worktree path differing from the adopted worktree only in case (the last
+// component, plus the drive letter a Windows path would carry); a lowercase `w` on disk.
+const adoptCaseDiffering = () => {
+  const folded = path.join(path.dirname(ADOPT_WT), path.basename(ADOPT_WT).toUpperCase());
+  return stateRun(`${JSON.stringify({ worktree: folded })}\n`).dir;
+};
+
+test('#5232 (review fix): on win32 run-state.json\'s worktree is compared case-insensitively', () => {
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  const result = adoptModule().adoptRun({ runDir: adoptCaseDiffering(), cwd: ADOPT_WT }, { ...h.deps, platform: 'win32' });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.wt, ADOPT_WT);
+});
+
+test('#5232 (review fix): off win32 run-state.json\'s worktree comparison stays case-sensitive', () => {
+  for (const platform of ['linux', 'darwin']) {
+    const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+    const result = adoptModule().adoptRun({ runDir: adoptCaseDiffering(), cwd: ADOPT_WT }, { ...h.deps, platform });
+    assert.equal(result.ok, false, platform);
+    assert.match(result.why, /names a different worktree/, platform);
+  }
+});
+
 test('#5232 Review Focus 5: an adopted worktree on a detached HEAD is refused', async () => {
   for (const reply of ['', '\n', new Error('fatal: not a git repository')]) {
     const h = adoptHarness(ADOPT_WT, [[isAdoptBranchRead, reply]]);

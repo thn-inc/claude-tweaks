@@ -45,7 +45,7 @@ function nearestGitEntry(start) {
 
 // Why the run directory's run-state.json does not bind it to worktree `top`, or null when it does.
 // One direct read: a missing or unparseable file is caught here, never checked for first.
-function runStateMismatch(real, top) {
+function runStateMismatch(real, top, platform) {
   let state;
   try {
     state = JSON.parse(fs.readFileSync(path.join(real, 'run-state.json'), 'utf8'));
@@ -55,6 +55,12 @@ function runStateMismatch(real, top) {
   const recorded = state && typeof state === 'object' ? state.worktree : undefined;
   if (typeof recorded !== 'string' || !recorded) return 'names no worktree';
   // record-worktree writes path.resolve of its argument, not a realpath.
+  // A Windows path is case-insensitive (drive letter and directories) and fs.realpathSync keeps the
+  // spelling it was given, so win32 compares folded; the platform is deps.platform, never process's.
+  if (platform === 'win32') {
+    const fold = (p) => p.toLowerCase();
+    return fold(safeReal(recorded) || path.resolve(recorded)) === fold(top) ? null : 'names a different worktree';
+  }
   return safeReal(recorded) === top ? null : 'names a different worktree';
 }
 
@@ -71,7 +77,7 @@ function adoptRun({ runDir, cwd }, deps) {
     return { ok: false, why: 'working directory is not a linked worktree of the main checkout' };
   }
   const top = found.dir;
-  const mismatch = runStateMismatch(real, top);
+  const mismatch = runStateMismatch(real, top, deps.platform);
   if (mismatch) return { ok: false, why: `run-state.json of the run directory ${mismatch}: not bound to this worktree` };
   let branch = '';
   try {
