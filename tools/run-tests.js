@@ -16,6 +16,20 @@
 // whatever the caller's cwd) — verify.js's impact-selected subset (#4024). An empty list, a
 // missing file or a non-`*.test.js` entry exits 1, never handing `node --test` zero files.
 //
+// Test files named on the command line are the drop-in form of a direct `node --test <flags> <files>`
+// (#5547): `node tools/run-tests.js [<node test flags>] <file.test.js>...` runs exactly those files as a
+// subset (the same lane, slot and environment as `--files-from`), so a run never loses the safeguards
+// below. A file operand is resolved against the caller's cwd, absolute or relative, and must be an
+// existing `*.test.js` file inside this checkout with no glob character in its name; it does not combine
+// with directory roots, `--files-from`, `--shard`, `--record-durations` or `--full`. Node test flags
+// (`--test-*`, `--experimental-test-*`, e.g. `--test-reporter=tap`, `--test-name-pattern x`) are passed
+// through to `node --test`, a value flag typed in space form joined to `--flag=value`; they combine with
+// roots, `--files-from` and file operands. The child's working directory is the checkout root, so a
+// relative path inside a flag value (`--test-reporter-destination=out/r.tap`) is read from there.
+// `--test-concurrency=<n>` (a positive integer) replaces the computed concurrency for the run, over
+// CT_TEST_CONCURRENCY. A checkout from before this change reads none of this: there, write the files to
+// a list and run `node tools/run-tests.js --files-from <list>`.
+//
 // A bare local run (no arguments, `CI` unset or empty) selects by impact (#5319): it reads the
 // test-impact map for the changes since the integration base (the selection `bin/verify.js` makes
 // for a scoped run) and runs only the test files that read a changed path, printing one stderr line
@@ -153,19 +167,101 @@ function resolveConcurrency(env, cpus) {
   return Math.max(1, Math.floor(cpus / 2));
 }
 
+// The node test flags that take a value (`node --help`, Node 26.13.1; Node 20's list is a subset).
+// A value flag typed as `--flag value` is joined to `--flag=value`, so its value is never read as a
+// file operand (#5547). Sorted.
+const NODE_TEST_VALUE_FLAGS = Object.freeze([
+  '--experimental-test-isolation', '--experimental-test-tag-filter', '--test-concurrency', '--test-coverage-branches',
+  '--test-coverage-exclude', '--test-coverage-functions', '--test-coverage-include', '--test-coverage-lines',
+  '--test-global-setup', '--test-isolation', '--test-name-pattern', '--test-random-seed', '--test-reporter',
+  '--test-reporter-destination', '--test-rerun-failures', '--test-shard', '--test-skip-pattern', '--test-timeout',
+]);
+
+// What a glob-aware `node --test` (Node 21+) would expand inside a file operand.
+const GLOB_CHARS = /[[\]{}()!+@*?]/;
+
+// Reads the arguments left after `extractRunFlags` (#5547): directory roots (as always), `--files-from
+// <list>`, test-file operands (`*.test.js`, resolved against `cwd`, returned repo-relative) and node
+// test flags (`--test-*`, `--experimental-test-*`, passed through; a value flag in space form is joined
+// to `--flag=value`). `--test-concurrency` is taken out of the flags and returned as a number. Every
+// refusal throws an Error whose message is the text after `run-tests.js: `. File operands refuse
+// to mix with roots or `--files-from`, to hold a glob character, to leave the checkout, or to be absent;
+// a non-test operand that is a file is refused (it would otherwise die in a directory walk).
+// Pure apart from `isFile(absPath)`; OS path rules come from `pathImpl`.
+function parseRunnerOperands(rest, { cwd, repoRoot, isFile, pathImpl = path }) {
+  const FILES_FROM_USAGE = '--files-from <list> takes exactly one list file and no root arguments.';
+  const valueFlags = new Set(NODE_TEST_VALUE_FLAGS);
+  const roots = [];
+  const files = [];
+  const nodeFlags = [];
+  let filesFrom = null;
+  let concurrency = null;
+  let firstFile = null;
+  const setConcurrency = (value) => {
+    if (!POSITIVE_INT.test(String(value))) throw new Error('--test-concurrency needs a positive integer');
+    concurrency = Number(value);
+  };
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === '--files-from') {
+      if (filesFrom !== null || i + 1 >= rest.length) throw new Error(FILES_FROM_USAGE);
+      filesFrom = rest[i + 1];
+      i += 1;
+    } else if (arg.startsWith('--test-') || arg.startsWith('--experimental-test-')) {
+      const eq = arg.indexOf('=');
+      if (eq !== -1) {
+        if (arg.slice(0, eq) === '--test-concurrency') setConcurrency(arg.slice(eq + 1));
+        else nodeFlags.push(arg);
+      } else if (valueFlags.has(arg)) {
+        const value = rest[i + 1];
+        if (value === undefined && arg !== '--test-concurrency') throw new Error(`${arg} needs a value`);
+        i += 1;
+        if (arg === '--test-concurrency') setConcurrency(value);
+        else nodeFlags.push(`${arg}=${value}`);
+      } else {
+        nodeFlags.push(arg);
+      }
+    } else if (arg.startsWith('-')) {
+      throw new Error(`unknown option ${arg}`);
+    } else if (arg.endsWith('.test.js')) {
+      if (GLOB_CHARS.test(arg)) {
+        throw new Error(`${arg} holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand`);
+      }
+      const abs = pathImpl.resolve(cwd, arg);
+      const rel = pathImpl.relative(repoRoot, abs);
+      if (rel === '' || rel === '..' || rel.startsWith('..' + pathImpl.sep) || pathImpl.isAbsolute(rel)) {
+        throw new Error(`${arg} is outside the checkout`);
+      }
+      if (!isFile(abs)) throw new Error(`${arg} does not exist`);
+      if (firstFile === null) firstFile = arg;
+      if (!files.includes(rel)) files.push(rel);
+    } else if (isFile(pathImpl.resolve(cwd, arg)) || isFile(pathImpl.resolve(repoRoot, arg))) {
+      throw new Error(`${arg} is not a *.test.js file`);
+    } else {
+      roots.push(arg);
+    }
+  }
+  if (firstFile !== null && roots.length > 0) {
+    throw new Error(`${firstFile} cannot be combined with the directory root ${roots[0]}`);
+  }
+  if (firstFile !== null && filesFrom !== null) throw new Error(`${firstFile} cannot be combined with --files-from`);
+  return { roots, files, filesFrom, nodeFlags, concurrency };
+}
+
 // Returns the argv (after the node binary) for `node --test`. The explicit file list is the
 // default — `node --test` glob args don't work on Node 20 (#407). On win32 that list overflows
 // the 32,767-char command line (#3316), so there it passes the root globs, which needs Node >= 22.
-// `--test-concurrency=<n>` follows `--test` on both branches (#3969); `concurrency` must be a
-// positive integer, checked before the win32/Node<22 error so that error keeps its own message.
+// `--test-concurrency=<n>` follows `--test` on both branches (#3969), then `nodeFlags` (the caller's
+// node test flags, #5547); `concurrency` must be a positive integer, checked before the
+// win32/Node<22 error so that error keeps its own message.
 // `roots === null` is an explicit `--files-from` subset, which has no root globs to fall back to:
 // its file list is passed on every platform.
 // Pure: `platform`, `nodeMajor` and `concurrency` are parameters, never read from `process`.
-function buildTestArgs(files, roots, { platform, nodeMajor, concurrency }) {
+function buildTestArgs(files, roots, { platform, nodeMajor, concurrency, nodeFlags = [] }) {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new Error(`buildTestArgs: concurrency must be a positive integer (got ${String(concurrency)}).`);
   }
-  const head = ['--test', `--test-concurrency=${concurrency}`];
+  const head = ['--test', `--test-concurrency=${concurrency}`, ...nodeFlags];
   if (platform !== 'win32' || roots === null) return [...head, ...files];
   if (nodeMajor < 22) {
     throw new Error(
@@ -185,13 +281,14 @@ const WIN32_COMMAND_LINE_MAX = 32767;
 // two quotes and a separator, and the last separator does not exist. That is an upper bound, not
 // the exact length: libuv quotes an argument only when it holds a space, tab or quote, so most
 // arguments cost two characters less. Keep the estimate pessimistic. `args` is `--test`,
-// `--test-concurrency=<n>` and then the files, so the file count is `args.length - 2`.
+// `--test-concurrency=<n>`, any node test flags and then the files, so the file count is the
+// arguments that do not start with `-`.
 // Pure: `platform` is a parameter, never read from `process`.
 function subsetFallbackReason(execPath, args, { platform }) {
   if (platform !== 'win32') return null;
   const len = [execPath, ...args].reduce((n, a) => n + a.length + 3, 0) - 1;
   if (len < WIN32_COMMAND_LINE_MAX) return null;
-  return `a ${args.length - 2}-file subset needs a ${len}-character command line, over the Windows limit of ${WIN32_COMMAND_LINE_MAX}`;
+  return `a ${args.filter((a) => !a.startsWith('-')).length}-file subset needs a ${len}-character command line, over the Windows limit of ${WIN32_COMMAND_LINE_MAX}`;
 }
 
 // The per-run temp root: a pid-tagged directory under `realTmp` that the suite's children use as
@@ -472,7 +569,7 @@ module.exports = {
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
   resolveRunMode, selectChangedTests, realSelectionDeps, planDefaultRun, applyDefaultSelection,
-  DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS,
+  DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS, NODE_TEST_VALUE_FLAGS, parseRunnerOperands,
 };
 
 if (require.main === module) {
@@ -480,16 +577,33 @@ if (require.main === module) {
   let shard = null;
   let recordDurations = null;
   let mode;
+  let parsed;
   try {
     const flags = extractRunFlags(process.argv.slice(2));
     argv = flags.rest;
     shard = flags.shard === null ? null : parseShard(flags.shard);
     recordDurations = flags.recordDurations;
     mode = resolveRunMode({ ...flags, env: process.env });
+    parsed = parseRunnerOperands(argv, {
+      cwd: process.cwd(),
+      repoRoot: REPO_ROOT,
+      isFile: (abs) => {
+        try {
+          return fs.statSync(abs).isFile();
+        } catch (_) {
+          return false;
+        }
+      },
+    });
     // A partial run must never overwrite the committed durations, and a subset has no shards.
     if (shard && argv.includes('--files-from')) throw new Error('--shard cannot be combined with --files-from');
     if (recordDurations !== null && (shard || argv.includes('--files-from'))) {
       throw new Error('--record-durations needs the whole root set, so it cannot be combined with --shard or --files-from');
+    }
+    // Named test files are a subset too: no shards, no recording, no whole-suite run.
+    if (parsed.files.length > 0) {
+      const clash = flags.full ? '--full' : shard ? '--shard' : recordDurations !== null ? '--record-durations' : null;
+      if (clash) throw new Error(`${clash} needs the whole root set, so it cannot be combined with test file operands`);
     }
   } catch (err) {
     console.error(`run-tests.js: ${err.message}`);
@@ -510,9 +624,9 @@ if (require.main === module) {
   if (impactSubset !== null) {
     roots = null;
     files = impactSubset;
-  } else if (argv.includes('--files-from')) {
+  } else if (parsed.filesFrom !== null) {
     // A subset plus roots would be ambiguous (which wins?), so the flag stands alone.
-    if (argv.length !== 2 || argv[0] !== '--files-from') {
+    if (parsed.roots.length > 0) {
       console.error('run-tests.js: --files-from <list> takes exactly one list file and no root arguments.');
       process.exit(1);
     }
@@ -524,15 +638,18 @@ if (require.main === module) {
           return false;
         }
       };
-      files = readFileList(fs.readFileSync(argv[1], 'utf8'), { exists: isFile })
+      files = readFileList(fs.readFileSync(parsed.filesFrom, 'utf8'), { exists: isFile })
         .map((entry) => path.relative(REPO_ROOT, path.resolve(REPO_ROOT, entry)));
     } catch (err) {
-      console.error(`run-tests.js: --files-from ${argv[1]}: ${err.message}`);
+      console.error(`run-tests.js: --files-from ${parsed.filesFrom}: ${err.message}`);
       process.exit(1);
     }
     roots = null;
+  } else if (parsed.files.length > 0) {
+    roots = null;
+    files = parsed.files;
   } else {
-    roots = argv.length ? argv : DEFAULT_ROOTS;
+    roots = parsed.roots.length ? parsed.roots : DEFAULT_ROOTS;
     files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
   }
 
@@ -577,7 +694,8 @@ if (require.main === module) {
     const argOptions = {
       platform: process.platform,
       nodeMajor: Number(process.versions.node.split('.')[0]),
-      concurrency: resolveConcurrency(process.env, os.availableParallelism()),
+      concurrency: parsed.concurrency === null ? resolveConcurrency(process.env, os.availableParallelism()) : parsed.concurrency,
+      nodeFlags: parsed.nodeFlags,
     };
     // A shard is an explicit file list on every platform: its root globs would select the whole set.
     testArgs = buildTestArgs(files, shard ? null : roots, argOptions);
@@ -603,7 +721,9 @@ if (require.main === module) {
     // full suite (and takes the full-suite slot lane below) rather than failing to spawn (#4134).
     const reason = roots === null ? subsetFallbackReason(process.execPath, testArgs, { platform: process.platform }) : null;
     if (reason) {
-      const what = impactSubset !== null ? 'the impact-selected subset' : `--files-from ${argv[1]}`;
+      const what = impactSubset !== null
+        ? 'the impact-selected subset'
+        : parsed.filesFrom !== null ? `--files-from ${parsed.filesFrom}` : `the ${files.length} named test files`;
       console.error(`run-tests.js: ${what}: ${reason} — running the full suite instead.`);
       roots = DEFAULT_ROOTS;
       files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
