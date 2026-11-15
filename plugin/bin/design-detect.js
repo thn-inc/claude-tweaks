@@ -130,7 +130,13 @@ function run(argv, deps = realDeps) {
       diffText = resolved === null ? deps.stdin() : fs.readFileSync(resolved, 'utf8');
     } catch (err) {
       // Node's message names the opened path; print the caller's own spelling instead of the joined one.
-      const message = resolved === null ? err.message : err.message.split(resolved).join(args.surfaceLinesPath);
+      // On win32 the message carries the path normalized (`sub/x` joined as `C:\cwd\sub/x` is
+      // reported as `C:\cwd\sub\x`), so a rooted join that is absent verbatim is matched normalized.
+      let message = err.message;
+      if (resolved !== null) {
+        const from = message.includes(resolved) || !path.parse(resolved).root ? resolved : path.normalize(resolved);
+        message = message.split(from).join(args.surfaceLinesPath);
+      }
       return fail(`could not read diff at "${args.surfaceLinesPath}": ${message}`);
     }
     const files = analyzeDiff(diffText);

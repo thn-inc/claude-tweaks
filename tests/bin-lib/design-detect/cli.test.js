@@ -338,7 +338,10 @@ test('relative --surface-lines with a throwing cwd() prints the could-not-read l
   const r = run(['--surface-lines', 'sub/missing.patch'], { deps: { cwd: throwingCwd } });
   assert.equal(r.code, 1);
   assert.equal(r.stdout, '');
-  assert.equal(r.stderr, 'design-detect: could not read diff at "sub/missing.patch": ENOENT: no such file or directory, open \'sub/missing.patch\'\n');
+  // The operand reaches fs as written, so the message is fs's own: the bare spelling on POSIX, and
+  // on win32 the path fs resolved against the real working directory (as the unconverted CLI printed).
+  const opened = process.platform === 'win32' ? path.resolve('sub/missing.patch') : 'sub/missing.patch';
+  assert.equal(r.stderr, `design-detect: could not read diff at "sub/missing.patch": ENOENT: no such file or directory, open '${opened}'\n`);
 });
 
 test('--surface-lines with a relative unreadable path prints the caller spelling, not the joined path', () => {
