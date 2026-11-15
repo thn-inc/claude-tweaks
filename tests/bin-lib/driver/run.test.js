@@ -6804,7 +6804,7 @@ test('#5232 (Deliverable 2): a --run --no-settle stop leaves the claim, worktree
 // `hasEscalation`.
 const expressCli = require(path.join(LIB, 'express', 'cli.js'));
 const readOrNull = (p) => {
-  try { return fs.readFileSync(p, 'utf8'); } catch (err) { if (err && err.code === 'ENOENT') return null; throw err; }
+  try { return readText(p); } catch (err) { if (err && err.code === 'ENOENT') return null; throw err; }
 };
 // An escalate reply that runs the real CLI; `box.h` is the harness, whose writeFile holds the detail file.
 const realEscalate = (box) => (c) => {
