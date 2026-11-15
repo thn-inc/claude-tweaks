@@ -82,4 +82,4 @@ async function launchJudge({ deps, shared }, ctx, { role, dir, label, prompt, sc
   }
 }
 
-module.exports = { EVENT_DETAIL_MAX, bin, isPlainObject, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge };
+module.exports = { bin, isPlainObject, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge };
