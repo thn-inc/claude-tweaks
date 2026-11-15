@@ -32,7 +32,7 @@ files:
 - **Action:** start the run and wait. Every fixture is a past record with a recorded `auto-merge` or `needs-human` verdict.
   - Its blast radius is checked against judgments.js's own code floors first: sensitive paths touched, or a failed blast radius. Once the merged diff is read, a diff over the prompt cap is the third floor (`diff-truncated`). A floor decides the fixture with no launch.
   - Otherwise the read-only `merge-check` worker judges it `--repeat` times, in a detached checkout at the merge commit. It gets the record body, the merged diff, the fixture's review findings and the PR's checks, and it reads them through the same `buildMergeCheckPrompt` production uses.
-- **Should feel:** like a measurement, not a demo. Each launch runs under its own wall-clock and spend ceiling (`--minutes`, `--dollars`, default 10 and 2). The 33 committed fixtures at 3 runs each are 99 launches.
+- **Should feel:** like a measurement, not a demo. Each launch runs under its own wall-clock and spend ceiling (`--minutes`, `--dollars`, default 10 and 2). The 33 committed fixtures at 3 runs each are at most 99 launches; a fixture a code floor decides launches none (one, #3313, is over the prompt cap, so a full run makes 96).
 - **Should understand:**
   - The record bodies and check states are as of extraction. The fixture header names that as a divergence.
   - A fixture whose recorded verdict was neither `auto-merge` nor `needs-human` is not in the file; the header's `excluded` list holds it with its reason.
