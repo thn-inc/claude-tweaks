@@ -40,6 +40,7 @@ const { readPacket } = require('./packet-gather');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { splitNul, parseStatusPorcelainZ } = require('../git-z');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
+const { learnedSkillsDelivered } = require('../learned-skills/delivered');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -623,8 +624,15 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
     return { result: 'unknown', detail: `could not parse engine-state.json: ${err.message}` };
   }
   const findings = (state.results && state.results.references && state.results.references.findings) || [];
-  const applied = findings.filter((f) => f.action === 'applied').map((f) => f.targetPath).filter(Boolean);
-  if (!applied.length) return { result: 'skip', detail: 'no applied reference-repair findings this run' };
+  // A repair whose file a learned-skills capture took (`pr` set, #5290) rode that PR's commit, with no
+  // Initiative-Fix: trailer and nothing on the run branch: not this check's to scope.
+  const appliedAll = findings.filter((f) => f.action === 'applied');
+  const applied = appliedAll.filter((f) => !f.pr).map((f) => f.targetPath).filter(Boolean);
+  if (!applied.length) {
+    return appliedAll.some((f) => f.pr)
+      ? { result: 'skip', detail: 'every applied reference repair rode the learned-skills PR, not the run branch' }
+      : { result: 'skip', detail: 'no applied reference-repair findings this run' };
+  }
   const appliedSet = new Set(applied);
 
   const prNumber = resolvePrNumber(runDir);
@@ -652,6 +660,11 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
   if (extra.length) return { result: 'fail', detail: `Initiative-Fix: commit touches unrelated file(s): ${extra.join(', ')}` };
   return { result: 'pass', detail: '' };
 });
+
+// ---- learned-skills delivery (#5290) ----------------------------------------------
+// An entry still `captured` in {run}/learned-skills/manifest.json was never delivered; the verdict
+// lives in bin/lib/learned-skills/delivered.js, which console-residue.js runs on a multi-spec parent.
+registerCheck('learned-skills-delivered', ({ runDir }) => learnedSkillsDelivered(runDir));
 
 // ---- gh availability probe ------------------------------------------------
 // Delegates to the shared plugin/bin/lib/repo-resolve.js helper (the
