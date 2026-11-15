@@ -172,8 +172,8 @@ function cleanGitEnv(base = process.env) {
 // A fresh repository with one commit of `file` (content `${prefix}\n`, so two repos built with distinct
 // prefixes hold distinct commits): `{ dir, head, git }`. `git(...args)` runs in `dir` under cleanGitEnv()
 // with a fixed identity and returns trimmed stdout; the caller removes `dir`.
-function committedRepo({ prefix = 'ct-fx-', file = 'seed.txt', branch, parent = os.tmpdir() } = {}) {
-  const dir = fs.mkdtempSync(path.join(parent, prefix));
+function committedRepo({ prefix = 'ct-fx-', file = 'seed.txt', branch } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const env = cleanGitEnv();
   const git = (...args) => fixtureGit(['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env, encoding: 'utf8' }).trim();
   git('init', '-q', ...(branch ? ['-b', branch] : []));

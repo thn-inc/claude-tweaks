@@ -18,19 +18,17 @@
 // branch moves.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnCli } = require('../../helpers/run-cli');
+const { spawnCli, runCliSync } = require('../../helpers/run-cli');
+const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-state.js');
 
 function run(args, cwd) {
-  const r = spawnSync(process.execPath, [CLI, ...args], {
-    cwd: cwd || process.cwd(), encoding: 'utf8',
-  });
-  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+  const r = runCliSync(CLI, args, { cwd: cwd || process.cwd(), env: { ...process.env } });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 test('exits 2 with a usage message when --since is missing', () => {
@@ -119,4 +117,21 @@ test('AC7.1 script: a valid --since exits 0 and renders the Branch line', () => 
   const r = spawnCli(CLI, ['--since', 'HEAD~1'], { cwd: path.join(__dirname, '..', '..', '..') });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /^Branch\s+\S/m);
+});
+
+test('AC8.1: an injected env reaches every git child (GIT_DIR only in env)', () => {
+  // cwd is repo A (branch a-side); the injected env points GIT_DIR at repo B (branch b-side).
+  // A git child that ignored the injected env would read A and report a-side.
+  const a = committedRepo({ prefix: 'wrapup-env-a-', branch: 'a-side' });
+  const b = committedRepo({ prefix: 'wrapup-env-b-', branch: 'b-side' });
+  try {
+    const r = runCliSync(CLI, ['--since', 'HEAD', '--json'], {
+      cwd: a.dir, env: { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') },
+    });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.strictEqual(JSON.parse(r.stdout).state.branch, 'b-side');
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
 });

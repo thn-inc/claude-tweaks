@@ -74,8 +74,9 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // `wrap` transforms the options, as execBounded's does: identity by default,
 // ghOptions (#4505's GH_HOST seam) for a gh spawn.
 // `env` (from the opts) is the caller's injected environment (#5379); absent, the child inherits the real one.
-function execSync(bin, args, { cwd, env } = {}, wrap = keepOptions) {
-  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) }, injectedGhDeps({ env })));
+// `stderr` is the caller's injected note sink for ghOptions's repo-resolution note; absent, the note goes to the real stderr.
+function execSync(bin, args, { cwd, env, stderr } = {}, wrap = keepOptions) {
+  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) }, injectedGhDeps({ env, stderr })));
 }
 
 function defaultGit(args, opts) {
@@ -111,11 +112,12 @@ function defaultResolvePolicy(keys, cwd, env) {
 
 // `{ env }` is the caller's injected environment (#5379): it reaches `git`, `ghSync` and `resolvePolicy`'s
 // own git, each of which merges it into the options its caller passes. Absent, behavior is unchanged.
-function defaultDeps(cwd, { env } = {}) {
+// `{ stderr }` is the sink for `ghSync`'s repo-resolution note; absent, the note goes to the real stderr.
+function defaultDeps(cwd, { env, stderr } = {}) {
   return {
     now: () => Date.now(),
     git: env ? (args, opts) => defaultGit(args, { ...opts, env }) : defaultGit,
-    ghSync: env ? (args, opts) => defaultGhSync(args, { ...opts, env }) : defaultGhSync,
+    ghSync: env || stderr ? (args, opts) => defaultGhSync(args, { ...opts, ...(env ? { env } : {}), ...(stderr ? { stderr } : {}) }) : defaultGhSync,
     execFile: promisify(execFileCb),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },

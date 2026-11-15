@@ -21,23 +21,31 @@ function parseArgs(argv) {
   return out;
 }
 
-function git(args, cwd) {
+function git(args, cwd, env) {
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+    return execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
   } catch {
     return null;
   }
 }
 
-function main() {
-  const { since, json } = parseArgs(process.argv.slice(2));
+const realDeps = {
+  cwd: () => process.cwd(),
+  get env() { return process.env; },
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+};
+
+function run(argv, deps = {}) {
+  const d = { ...realDeps, ...deps };
+  const { since, json } = parseArgs(argv);
   if (!since) {
-    process.stderr.write('usage: wrap-up-state.js --since <base-sha> [--json]\n');
-    process.exitCode = 2;
-    return;
+    d.stderr('usage: wrap-up-state.js --since <base-sha> [--json]\n');
+    return 2;
   }
-  const cwd = process.cwd();
-  const state = readState({ cwd, since });
+  const cwd = d.cwd();
+  const env = d.env;
+  const state = readState({ cwd, since, run: (args) => git(args, cwd, env) });
 
   // `since` is a commit-ish (a base sha). Resolve it TO a full ISO 8601
   // datetime for git reflog's --since=, and echo the base back so a wrong base
@@ -55,21 +63,20 @@ function main() {
   // occurred." Error loudly instead of reproducing [IL-47].
   let sinceDate = since;
   if (state.isRepo) {
-    sinceDate = git(['show', '-s', '--format=%cI', since], cwd);
+    sinceDate = git(['show', '-s', '--format=%cI', since], cwd, env);
     if (!sinceDate) {
-      process.stderr.write(`wrap-up-state.js: --since value is not a resolvable commit-ish: ${since}\n`);
-      process.exitCode = 2;
-      return;
+      d.stderr(`wrap-up-state.js: --since value is not a resolvable commit-ish: ${since}\n`);
+      return 2;
     }
   }
-  const head = git(['reflog', '--date=iso', `--since=${sinceDate}`], cwd) || '';
+  const head = git(['reflog', '--date=iso', `--since=${sinceDate}`], cwd, env) || '';
   // Prefer the configured upstream's reflog; when there is none, fall back to
   // the branch's own origin/{branch} remote-tracking ref (state.js's
   // remote-ref fallback, #1869) so the concatenated-reflog logic below sees
   // that ref's updates too, on a pr-first branch pushed without `-u`.
   const remoteRef = state.upstream || state.remoteRef;
   const remote = remoteRef
-    ? git(['reflog', 'show', remoteRef, '--date=iso', `--since=${sinceDate}`], cwd) || ''
+    ? git(['reflog', 'show', remoteRef, '--date=iso', `--since=${sinceDate}`], cwd, env) || ''
     : '';
   // Concatenating the two reflogs (HEAD's and, when it exists, the upstream's)
   // is non-monotonic whenever both contribute — sort newest-first so the
@@ -86,10 +93,13 @@ function main() {
   // silently made it possible.
   const rendered = renderState({ state, ops, since, sinceDate });
   if (json) {
-    process.stdout.write(`${JSON.stringify({ state, ops, since, sinceDate, rendered }, null, 2)}\n`);
+    d.stdout(`${JSON.stringify({ state, ops, since, sinceDate, rendered }, null, 2)}\n`);
   } else {
-    process.stdout.write(`${rendered}\n`);
+    d.stdout(`${rendered}\n`);
   }
+  return 0;
 }
 
-main();
+module.exports = { run, realDeps, parseArgs };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

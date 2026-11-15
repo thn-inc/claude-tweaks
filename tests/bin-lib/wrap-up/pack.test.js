@@ -1889,7 +1889,7 @@ test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read un
       const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), PATH: stubDir + path.delimiter + process.env.PATH };
       delete env.GH_HOST;
       delete env.GH_REPO;
-      assert.strictEqual(packDefaultDeps()(a.dir, { env }).ghSync(['--version'], { cwd: a.dir }).trim(), 'acme.ghe.com');
+      assert.strictEqual(packDefaultDeps()(a.dir, { env, stderr: () => {} }).ghSync(['--version'], { cwd: a.dir }).trim(), 'acme.ghe.com');
     });
   } finally {
     _resetGhHostCache();

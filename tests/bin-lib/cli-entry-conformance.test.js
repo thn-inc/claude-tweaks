@@ -48,7 +48,6 @@ const NOT_YET = [
   'verify.js',
   'visual-decide.js',
   'wrap-up-engine.js',
-  'wrap-up-state.js',
 ];
 
 const GUARD = 'require.main === module';
