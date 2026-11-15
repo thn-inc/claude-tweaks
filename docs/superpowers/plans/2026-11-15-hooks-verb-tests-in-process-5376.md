@@ -30,29 +30,31 @@ Measured baseline at the branch base (`8646f7c5e`, 2026-11-15, `CT_TEST_CONCURRE
 - Do not change what any existing assertion checks. A conversion that needs a changed assertion is a STOP (see below).
 - Never pass a real run directory of this checkout to a verb: `archive-run` archives for real and ignores `--dry-run`. Every run dir is a temp fixture.
 
-**Real-process ceiling (AC1.1, binding).** The fifteen files together start at most 25 `hooks.js` processes. The spec's amendment makes the smoke tests per converted CLI, not per file, so the allotment below gives every file with its own verb one success smoke test and adds a refusal smoke test only where the verb has a non-zero-exit refusal no `spawnCli` test elsewhere proves. Allotment (maximum real `hooks.js` processes per file, total 24):
+**Real-process ceiling (AC1.1, binding).** The fifteen files together start at most 25 `hooks.js` processes. The spec's amendment makes the smoke tests per converted CLI, not per file, so the rule is per verb: each verb these files exercise is proven through the script entry by a `spawnCli` success test, and by a refusal test where the verb has a non-zero-exit refusal. A file whose verb already has both in a file #5375 converted adds none: `record-worktree` (`tests/hooks-ledger-row.test.js`), `resolve-run-dir` (`tests/hooks-js-flag-strict.test.js`), `archive-run` and `close-run` (`tests/archive-run-verb.test.js`). Allotment (maximum real `hooks.js` processes per file, total 20, which leaves 5 under the ceiling for the controller to rebalance):
 
 | File | Max | What stays real |
 |---|---|---|
-| `tests/hooks-run-arg-anchoring.test.js` | 1 | one accept-path smoke |
-| `tests/hooks-resolve-run-dir-cli.test.js` | 1 | one success smoke |
-| `tests/hooks-worktree-local-fallback-disclosure.test.js` | 1 | one success smoke |
-| `tests/hooks-archive-run-1452.test.js` | 1 | one success smoke |
+| `tests/hooks-run-arg-anchoring.test.js` | 0 | nothing; `record-worktree`'s smoke tests are in `tests/hooks-ledger-row.test.js` |
+| `tests/hooks-resolve-run-dir-cli.test.js` | 0 | nothing; `resolve-run-dir`'s smoke tests are in `tests/hooks-js-flag-strict.test.js` |
+| `tests/hooks-worktree-local-fallback-disclosure.test.js` | 0 | nothing; `close-run`'s and `archive-run`'s smoke tests are in `tests/archive-run-verb.test.js` |
+| `tests/hooks-archive-run-1452.test.js` | 0 | nothing; `archive-run`'s smoke tests are in `tests/archive-run-verb.test.js` |
 | `tests/delete-ledger-verb.test.js` | 1 | one success smoke |
 | `tests/resolve-ledger-verb.test.js` | 1 | one success smoke |
 | `tests/hooks-adopt-run-dir.test.js` | 2 | success, and the usage refusal (exit 2, stderr) |
-| `tests/hooks-check-pass-reentry.test.js` | 2 | success, and the unknown-flag refusal (exit 1, stderr) |
+| `tests/hooks-check-pass-reentry.test.js` | 2 | success, and the unknown-flag refusal (exit 1, stderr); 3 only under Task 2's stated fallback |
 | `tests/hooks-spec-status.test.js` | 1 | one success smoke |
 | `tests/hooks-resolve-console.test.js` | 2 | `--help` success, and the unknown-flag refusal (exit 1, stderr) |
 | `tests/curation-judge-stagepath.test.js` | 2 | success, and the unset-worktree refusal (exit 1, stderr) |
-| `tests/hooks-dispatch-prompt-gate.test.js` | 1 | one `record-worktree --dispatch` success smoke |
+| `tests/hooks-dispatch-prompt-gate.test.js` | 0 | nothing; `record-worktree`'s smoke tests are in `tests/hooks-ledger-row.test.js` |
 | `tests/local-merge-close-run-ordering.test.js` | 4 | only the `hooks.js` calls the skill's own bash fences make |
-| `tests/reconcile-dispatch.test.js` | 1 | one success smoke |
+| `tests/reconcile-dispatch.test.js` | 2 | one success smoke, and the #4897 module-load-fault test (a preload) |
 | `tests/hooks-verb-exception-exit.test.js` | 3 | the two AC2.1 cases, plus one more only if it cannot run in-process |
+
+A real process started with a replaced `NODE_OPTIONS` (a preload passed through `env`) is not logged by `tools/count-node-procs.js`. It still counts toward the ceiling: every such test carries its `// real process:` comment and Task 6 adds it to the measured total by hand.
 
 If a file cannot meet its number, STOP and report the count and the reason; the controller rebalances within 25. Never exceed a file's number silently.
 
-**Injected-value proof (AC6.1).** Each converted file has at least one in-process test that passes a `cwd` or `env` differing from the test runner's and fails when `run` ignores it. Name an existing converted test when the proof below shows it qualifies; otherwise add one named `AC6.1: {verb} {what} against the injected {cwd|env}`, modelled on `tests/hooks-adopt-run-dir.test.js`'s `AC10.1: a relative --worktree resolves against the injected cwd`. Prove it once, after the file's conversion is committed: with the Edit tool, replace the verb's `deps.cwd()` with `process.cwd()` (or `deps.env` with `process.env`, or revert the lib thread-through this task added) on the path the test exercises, run `node --test --test-name-pattern "<test name>" <file>`, confirm that named test is the one that fails, restore with `git -C <worktree> checkout -- <mutated path>`, and confirm `git -C <worktree> status --porcelain` prints nothing. Report, per file: the test name, the mutated line before and after, and the raw failing line of the run. A test that stays green under the mutation does not qualify: pick or write another.
+**Injected-value proof (AC6.1).** Each converted file has at least one in-process test that passes a `cwd` or `env` differing from the test runner's and fails when `run` ignores it. Name an existing converted test when the proof below shows it qualifies; otherwise add one named `AC6.1: {verb} {what} against the injected {cwd|env}`, modelled on `tests/hooks-adopt-run-dir.test.js`'s `AC10.1: a relative --worktree resolves against the injected cwd`. Prove it once, after the file's conversion is committed, in a scratch copy of HEAD outside the worktree, never by editing the shared worktree (the dispatch prompt carries the scratch-copy steps and the scratch location). In the copy: run `node --test --test-name-pattern "<test name>" <file>` and see it pass; replace the verb's `deps.cwd()` with `process.cwd()` (or `deps.env` with `process.env`, or revert the lib thread-through this task added) on the path the test exercises; run the same command and confirm that named test is the one that fails; then delete the copy. Report, per file: the test name, the mutated line before and after, and the raw failing line of the run. A test that stays green under the mutation does not qualify: pick or write another.
 
 **A global read a converted test exposes.** When an in-process test fails because a function under `plugin/bin` reads `process.cwd()`, `process.env` or `os.homedir()` itself, that function takes the value as a parameter whose default is the inherited one, and its caller on this verb's path passes `deps.cwd()` / `deps.env`. In scope only on a path this record's tests exercise. List every `plugin/bin` file changed this way in the task report. If the change needs more than the function's signature and the call sites on this verb's path, leave the test on `spawnCli` with the reason in its comment, and report it.
 
@@ -95,7 +97,7 @@ Waived tests/bin-lib/cli-entry-conformance.test.js: read only; a task that edits
 
 ## Review Focus
 
-- **Module-level stubs now reach the verb.** `tests/reconcile-dispatch.test.js` line 30 replaces `declined-learning/store`'s `pruneDeclines` for the whole test process. A spawned `hooks.js` never saw that stub; an in-process call does. Expected: a converted test's result does not depend on the stub. Pinned in Task 5.
+- **Module-level stubs now reach the verb.** `tests/reconcile-dispatch.test.js` line 30 replaces `declined-learning/store`'s `pruneDeclines` for the whole test process. A spawned `hooks.js` never saw that stub; an in-process call does, and it must: the real prune resolves its store from `process.cwd()`, which an injected `cwd` does not move, so it would rewrite the maintainer's own store. Expected: a non-dry in-process `reconcile` call reaches the stub, never the real function. Pinned in Task 5 with a counting stub.
 - **A stubbed `gh` on the injected `PATH` is actually used.** `hooks-resolve-console`'s three stub tests and `hooks-check-pass-reentry`'s gh-absent test pass a `PATH` through `env`. Expected: in-process, the verb's `gh` child reads that `PATH`, so the stub answers and the real `gh` is never started. Pinned in Tasks 2 and 3 (the existing assertions on the stub's output fail if the stub is skipped).
 - **State carried between calls of one file.** `hooks-dispatch-prompt-gate` makes 39 `record-worktree` calls in one process after conversion. Expected: every test passes alone under `--test-name-pattern` and in file order. Pinned in Task 4.
 - **A relative path argument under an injected cwd.** Expected: a relative `--run`, `--worktree` or `--ledger` resolves against the injected `cwd`, not the runner's. Pinned by each file's AC6.1 test where the verb takes a path.
@@ -136,22 +138,18 @@ Each becomes `async` and calls `runCli`; signatures and return fields stay as th
 
 AC3.1: in `runRecordWorktree`, before the call, assert the injected `cwd` is not the test runner's working directory (`assert.notEqual(fs.realpathSync(cwd), fs.realpathSync(process.cwd()))`), so every worktree-local `--run` refusal case in the file runs in-process under a cwd that differs from the runner's.
 
-- [ ] **Step 4: Add the smoke and injected-value tests**
+- [ ] **Step 4: Add the injected-value tests**
 
-One test per file, each a real process compared with the in-process call on an identical fixture and env:
-- `AC5.1: record-worktree with an anchored --run through runCli and spawnCli returns the same code and stdout`
-- `AC5.1: resolve-run-dir with a matching main-checkout run through runCli and spawnCli prints the same path, exit 0`
-- `AC5.1: close-run through runCli and spawnCli prints the same worktree-local fallback disclosure, exit 0`
-- `AC5.1: archive-run on a worktree-local fallback run dir through runCli and spawnCli returns the same code and stdout`
+AC5.1: these four files add no smoke test. Their verbs' script-entry tests already exist (allotment table); add to each file's header comment one line naming the file that holds them.
 
-Then name or add each file's AC6.1 test and run the injected-value proof from Global Constraints.
+Name or add each file's AC6.1 test and run the injected-value proof from Global Constraints.
 
 - [ ] **Step 5: Run the four files and count processes**
 
 Run: `node --test tests/hooks-run-arg-anchoring.test.js tests/hooks-resolve-run-dir-cli.test.js tests/hooks-worktree-local-fallback-disclosure.test.js tests/hooks-archive-run-1452.test.js`
 Expected: PASS, with at least Step 1's test count per file and no `runCli: hooks.js leaked process state` error (AC4.1)
 
-Then count with `tools/count-node-procs.js`: each file's `hooks.js` count is at most 1.
+Then count with `tools/count-node-procs.js`: each file's `hooks.js` count is 0.
 
 - [ ] **Step 6: Commit**
 
@@ -163,13 +161,17 @@ git commit -m "Run the run-dir argument verb tests in-process — refs #5376"
 ### Task 2: Ledger verbs, adopt-run-dir and check-pass-reentry
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/delete-ledger-verb.test.js`
 - Modify: `tests/resolve-ledger-verb.test.js`
 - Modify: `tests/hooks-adopt-run-dir.test.js`
 - Modify: `tests/hooks-check-pass-reentry.test.js`
-- Modify: `plugin/bin/hooks.js` (only for a global read a converted test exposes)
+- Modify: `plugin/bin/hooks.js` (`runCheckPassReentry` passes `env: deps.env`; otherwise only for a global read a converted test exposes)
+- Modify: `plugin/bin/lib/flow/consolidated-pass.js` (`checkPassReentry` takes an `env` option, default the inherited environment)
+- Modify: `plugin/bin/lib/reconcile/pr-state.js` (only if its `gh` lookup on this path needs the `env`)
+- Modify: `plugin/bin/lib/hooks/run-integrity.js` (only if its `git` or `gh` child on this path needs the `env`)
 
 **Interfaces:**
 - Consumes: `runCli`, `spawnCli`; `cleanGitEnv`; the `inProcessEnv`/`runInProcess` helpers #5375 already added to the two ledger files.
@@ -187,7 +189,7 @@ Expected: FAIL with "not converted: tests/hooks-check-pass-reentry.test.js"
 - `delete-ledger-verb`: `runHook(args, { cwd })` → `Promise<{ code, stdout }>` and `runHookFull(args, { cwd, env })` → `Promise<{ code, stdout, stderr }>`, both through the file's existing `runInProcess`. One in-process helper family in the file, not two.
 - `resolve-ledger-verb`: `runHook(args, { cwd })` → `Promise<{ code, stdout, stderr }>` through the existing `runInProcess`; keep whatever fields the current `runHook` returns.
 - `hooks-adopt-run-dir`: `runHook(args, { input, cwd, env })` → `Promise<{ code, stdout, stderr }>`, env `{ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env }`.
-- `hooks-check-pass-reentry`: the local helper is named `runCli`, which collides with the import. Rename it `runHook(args, { cwd, env })` → `Promise<{ code, stdout, stderr }>`, env `{ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: 'cpr-test', ...env }`. The gh-absent test passes `PATH` holding only a symlink to git: it must still report the gh-absent degrade in-process, which proves the verb's `gh` lookup reads the injected `PATH`.
+- `hooks-check-pass-reentry`: the local helper is named `runCli`, which collides with the import. Rename it `runHook(args, { cwd, env })` → `Promise<{ code, stdout, stderr }>`, env `{ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: 'cpr-test', ...env }`. The gh-absent test (`#3553: --online is threaded through …`) passes a `PATH` holding only a symlink to git. Today `runCheckPassReentry` hands `checkPassReentry` only `{ online, sessionId }`, so in-process its `gh` and `git` lookups would read the runner's `PATH`, reach the real `gh`, and skip the stub `PATH` silently, which the spec forbids. Thread it: `checkPassReentry(runDir, { online, sessionId, env })`, with `env` passed on to each `gh`/`git` child it starts on the `--online` path (`prResolver`, `landedCheck`, and what they call in `pr-state.js` and `run-integrity.js`), every new parameter defaulting to the inherited environment so no other caller changes. Write the characterization test first (the maturity rule in the dispatch rules): the existing spawned gh-absent test is that characterization; run it green before the change and keep its assertions. **Fallback:** if the thread-through needs more than an added `env` option on those functions and their calls on this path, change no lib file, leave this one test on `spawnCli` with the comment `// real process: the gh lookup reads the process PATH, which an in-process env cannot replace`, and report it; the file's allotment is then 3.
 
 - [ ] **Step 4: Add the smoke and injected-value tests**
 
@@ -205,9 +207,11 @@ AC6.1: the three #5375 tests named `AC10.1: …` in the first three files qualif
 Run: `node --test tests/delete-ledger-verb.test.js tests/resolve-ledger-verb.test.js tests/hooks-adopt-run-dir.test.js tests/hooks-check-pass-reentry.test.js`
 Expected: PASS, with at least Step 1's test count per file and no leaked-process-state error (AC4.1)
 
-Then count: `delete-ledger-verb` ≤ 1, `resolve-ledger-verb` ≤ 1, `hooks-adopt-run-dir` ≤ 2, `hooks-check-pass-reentry` ≤ 2.
+Then count: `delete-ledger-verb` ≤ 1, `resolve-ledger-verb` ≤ 1, `hooks-adopt-run-dir` ≤ 2, `hooks-check-pass-reentry` ≤ 2 (3 under the fallback). The gh-absent test's env-threading is its own AC6.1 proof: in the scratch copy, drop the `env` this task threaded and the test must fail.
 
 - [ ] **Step 6: Commit**
+
+Stage the four test files and every `plugin/bin` file this task changed, each by path.
 
 ```bash
 git add tests/delete-ledger-verb.test.js tests/resolve-ledger-verb.test.js tests/hooks-adopt-run-dir.test.js tests/hooks-check-pass-reentry.test.js
@@ -268,6 +272,7 @@ git commit -m "Run the spec-status, resolve-console and sweep-shadow tests in-pr
 ### Task 4: Fixture record-worktree and close-run calls
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/hooks-dispatch-prompt-gate.test.js`
@@ -292,7 +297,7 @@ Expected: FAIL with "not converted:" naming both files
 
 - [ ] **Step 4: Add the smoke and injected-value tests**
 
-- `AC5.1: record-worktree --dispatch through runCli and spawnCli returns the same code and stdout` in `hooks-dispatch-prompt-gate`.
+- AC5.1: `hooks-dispatch-prompt-gate` adds no smoke test (`record-worktree`'s are in `tests/hooks-ledger-row.test.js`; say so in the file's header comment).
 - `local-merge-close-run-ordering` adds no smoke test: its fence runs are its real-process coverage of `record-worktree`.
 
 Name or add each file's AC6.1 test and run the injected-value proof. Then run every test of `hooks-dispatch-prompt-gate` alone once (`--test-name-pattern` per test name, driven by a small scratch script outside the worktree) to show no test depends on state an earlier one left.
@@ -302,7 +307,7 @@ Name or add each file's AC6.1 test and run the injected-value proof. Then run ev
 Run: `node --test tests/hooks-dispatch-prompt-gate.test.js tests/local-merge-close-run-ordering.test.js`
 Expected: PASS, with at least Step 1's test count per file and no leaked-process-state error (AC4.1)
 
-Then count: `hooks-dispatch-prompt-gate` ≤ 1, `local-merge-close-run-ordering` ≤ 4.
+Then count: `hooks-dispatch-prompt-gate` is 0, `local-merge-close-run-ordering` ≤ 4.
 
 - [ ] **Step 6: Commit**
 
@@ -336,7 +341,8 @@ Expected: FAIL with "not converted:" naming both files
 
 - `runHook(args, { input, cwd = HOOK_SANDBOX, env })` → `Promise<{ code, stdout }>`, env `{ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', ...env }`.
 - `runReconcileVerbStubbed` calls `runCli(HOOKS, argv, { cwd, env })` per argv instead of `main(...)` with `process.stdout.write` patched; it keeps its `reconcile` and `spawnBackgroundIfStale` module stubs and its return shape `{ calls, spawnCalls, outputs }`, parsing each call's `stdout`. No `fresh: true` on these calls: a reload would drop the stubs.
-- Review Focus pin: the file's module-level `pruneDeclines = () => 0` stub now reaches in-process verb calls. Add the test `a reconcile verb call returns the same JSON with the file's pruneDeclines stub restored to the real function`, which runs one `reconcile --json` call on a no-remote fixture with the stub in place and once with the real function restored in a `try`/`finally`, and asserts the two stdouts are equal.
+- Review Focus pin: the file's module-level `pruneDeclines = () => 0` stub now reaches in-process verb calls, and it must stay in place for every one of them: the real prune resolves its store from `process.cwd()`, so it would lock and rewrite the maintainer's own declined-learning store. Never restore or call the real `pruneDeclines` in this file. Add the test `an in-process reconcile verb call reaches the file's pruneDeclines stub, and a --dry-run call does not`, which swaps in a counting stub (restoring the file's `() => 0` stub in `finally`), runs `reconcile --json` on a no-remote fixture and asserts the count is 1, then runs `reconcile --dry-run --json` and asserts the count is still 1.
+- `reconcile verb: a post-merge.js load fault still renders the reconcile-threw line in the compact output, not a silent exit 0 (#4897)` stays on a real process through `spawnCli`, unchanged in what it asserts, with the comment `// real process: the fault is injected at module load, which only a preload can do`. Its `NODE_OPTIONS` preload replaces the counting tool's own, so the tool does not log it: name it in the task report so Task 6 counts it.
 - The real `reconcile` on these fixtures starts `git` and may probe `gh`: every such child must get the injected `cwd` and `env`. A test that only passes when a child reads the real environment exposes a global read; handle it per Global Constraints.
 
 - [ ] **Step 4: Convert `hooks-verb-exception-exit`**
@@ -363,7 +369,7 @@ Name or add each file's AC6.1 test and run the injected-value proof.
 Run: `node --test tests/reconcile-dispatch.test.js tests/hooks-verb-exception-exit.test.js`
 Expected: PASS, with at least Step 1's test count per file and no leaked-process-state error (AC4.1)
 
-Then count: `reconcile-dispatch` ≤ 1, `hooks-verb-exception-exit` ≤ 3.
+Then count: `reconcile-dispatch` ≤ 2 (the tool logs 1; the #4897 preload test is the second), `hooks-verb-exception-exit` ≤ 3.
 
 - [ ] **Step 7: Commit**
 
@@ -399,7 +405,7 @@ Both runs on this machine within the same hour, `CT_TEST_CONCURRENCY=6`, the sam
 
 - [ ] **Step 3: Check the ceiling against the raw counts**
 
-Read the after run's `--json` output and sum its `cliProcs["hooks.js"]` values with a small script in the scratch directory: the sum equals the table's after total and is at most 25 (AC1.1). A sum over 25 is a STOP: report the per-file counts against the allotment table, and do not edit a test to make the number fit.
+Read the after run's `--json` output and sum its `cliProcs["hooks.js"]` values with a small script in the scratch directory, then add one for every real-process test the tool cannot log (a test whose `// real process:` comment sits on a call that passes its own `NODE_OPTIONS` through `env`; list each). That total is the table's after total and is at most 25 (AC1.1). Apply the same addition to the before run, reading the merge-base copies of the files, so the two columns count the same way. A sum over 25 is a STOP: report the per-file counts against the allotment table, and do not edit a test to make the number fit.
 
 - [ ] **Step 4: Report**
 
