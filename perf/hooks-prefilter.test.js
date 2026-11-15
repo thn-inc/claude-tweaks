@@ -34,20 +34,7 @@ const payload = (command) => JSON.stringify({ tool_name: 'Bash', tool_input: { c
 const SKIP_PAYLOAD = payload('echo hi');
 const FULL_PAYLOAD = payload('git commit -m x');
 
-function findOnPath(name) {
-  const names = process.platform === 'win32' ? [name, name + '.exe'] : [name];
-  for (const dir of (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean)) {
-    for (const n of names) {
-      const f = path.join(dir, n);
-      try {
-        if (fs.statSync(f).isFile()) return f;
-      } catch {
-        // not here
-      }
-    }
-  }
-  return null;
-}
+const { findOnPath } = require('../tests/helpers/path-stub');
 
 const SH = findOnPath('sh');
 // The spelling every registration uses: the launcher path always ends in /bin/hooks.sh.

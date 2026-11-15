@@ -45,6 +45,8 @@ function nearestExistingDir(p) {
 // .git/worktrees/ — notably a submodule's .git/modules/<name>, where the
 // superproject root is NOT the right anchor). Callers fall back to their
 // existing cwd-relative behavior on null rather than guessing.
+// bin/hooks.sh's main_root mirrors this walk for sessions with no node
+// (#5392): change both, plus the hooks.sh root-parity rows (R1-R13).
 const WORKTREE_ADMIN_MARKER = `${path.sep}.git${path.sep}worktrees${path.sep}`;
 
 function mainCheckoutRoot(p) {

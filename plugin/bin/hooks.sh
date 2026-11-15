@@ -42,6 +42,11 @@ default_candidates() {
   nvm=${NVM_DIR:-$HOME/.nvm}
   a=
   { IFS= read -r a < "$nvm/alias/default"; } 2>/dev/null
+  # Only a literal version is used. An alias with a `/` (`lts/*`) names no
+  # directory; `node` or `22` names one that does not exist, so its candidate
+  # just misses. An alias can hold `22.1.0` without the `v` its
+  # versions/node/v22.1.0 directory carries, so a bare version also tries
+  # the `v` spelling: the same version, not a guess.
   if [ -n "$a" ]; then
     case $a in
       */*) ;;
@@ -69,6 +74,9 @@ default_candidates() {
 if [ "${CLAUDE_TWEAKS_NODE_CANDIDATES+set}" = set ]; then cands=$CLAUDE_TWEAKS_NODE_CANDIDATES
 else cands=$(default_candidates)
 fi
+# Split on newlines only, with globbing off: a candidate path can hold spaces
+# (`Library/Application Support/fnm`) or glob characters. Both are restored
+# before the exec and after the loop.
 nl='
 '
 saved_ifs=$IFS; IFS=$nl; set -f
@@ -128,6 +136,11 @@ main_root() {
       [ -r "$d/.git" ] || return 1
       g=$(LC_ALL=C awk '{ if (sub(/^gitdir:[ \t\r\f\v]*/, "")) { sub(/[ \t\r\f\v]+$/, ""); if ($0 != "") { print; exit } } }' "$d/.git" 2>/dev/null) || return 1
       [ -n "$g" ] || return 1
+      # Absolute (POSIX, or a Windows drive path in Git Bash) or relative to
+      # the .git file. Only a linked worktree's gitdir, under .git/worktrees/,
+      # names a main checkout: the text before it is that checkout, the same
+      # split mainCheckoutRoot makes on WORKTREE_ADMIN_MARKER. A submodule's
+      # .git/modules/ gitdir or any other shape is unresolved (cwd fallback).
       case $g in /*|[A-Za-z]:*) ;; *) g=$d/$g ;; esac
       case $g in
         */.git/worktrees/*) (cd "${g%%/.git/worktrees/*}" 2>/dev/null && pwd -P); return ;;
@@ -142,13 +155,19 @@ main_root() {
 }
 
 # tool_class: reads stdin to EOF; `write` for a Bash, Edit, Write or
-# NotebookEdit tool_name, else `other`.
+# NotebookEdit tool_name, else `other`. A line match, not a JSON parse: it
+# needs the unescaped `"tool_name"` key and its value on one line, as Claude
+# Code's compact payload has them, so a `\"tool_name\"` inside a string value
+# never matches. Widening the pattern widens the deny.
 tool_class() {
   LC_ALL=C awk '
 !w && /"tool_name"[ \t\r]*:[ \t\r]*"(Bash|Edit|Write|NotebookEdit)"/ { w = 1 }
 END { print (w ? "write" : "other") }' 2>/dev/null || printf '%s\n' other
 }
 
+# The deny is decided before the drain: tool_class reads stdin only when the
+# policy is on (the && short-circuit), and the cat below drains whatever is
+# left on every path. Any new stdin reader goes before that cat.
 deny=
 if [ "$1" = pre-tool-use ]; then
   root=$(main_root) || root=

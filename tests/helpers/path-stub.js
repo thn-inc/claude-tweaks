@@ -70,6 +70,20 @@ function isFile(p) {
   }
 }
 
+// findOnPath(name) returns the first `name` (or `name.exe` on win32) file on
+// this process's PATH, or null. Used by the hooks.sh launcher suites to pick
+// the shells and awks they run (#5392).
+function findOnPath(name) {
+  const names = process.platform === 'win32' ? [name, name + '.exe'] : [name];
+  for (const dir of (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean)) {
+    for (const n of names) {
+      const f = path.join(dir, n);
+      if (isFile(f)) return f;
+    }
+  }
+  return null;
+}
+
 // findEntry(dir, candidates, isWin) returns the first candidate file in dir.
 // win32 file names are case-insensitive, so there it folds case — also on a
 // POSIX host simulating win32 — and returns the entry's real name.
@@ -140,5 +154,6 @@ module.exports = {
   STUB_SKIP,
   installStub,
   pathWithOnly,
+  findOnPath,
   findColonPathJoins,
 };

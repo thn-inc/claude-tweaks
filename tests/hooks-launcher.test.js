@@ -10,7 +10,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { gitRepo, linkedWorktreeOf, harnessWorktreeOf } = require('./helpers/git-fixtures');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
-const { pathWithOnly } = require('./helpers/path-stub');
+const { pathWithOnly, findOnPath } = require('./helpers/path-stub');
 const { readText } = require('./helpers/read-skill');
 const { chmodDenialSkip } = require('./helpers/root');
 const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
@@ -20,21 +20,6 @@ const { resolveWorktreeAlways } = require('../plugin/bin/lib/policy');
 const ROOT = path.resolve(__dirname, '..');
 const LAUNCHER_ARG = path.join(ROOT, 'plugin') + '/bin/hooks.sh';
 const HOOKS_JS = path.join(ROOT, 'plugin', 'bin', 'hooks.js');
-
-function findOnPath(name) {
-  const names = process.platform === 'win32' ? [name, name + '.exe'] : [name];
-  for (const dir of (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean)) {
-    for (const n of names) {
-      const f = path.join(dir, n);
-      try {
-        if (fs.statSync(f).isFile()) return f;
-      } catch {
-        // not here
-      }
-    }
-  }
-  return null;
-}
 
 // win32 skips dash even when one is on PATH: the windows-latest runner has a dash
 // that cannot exec a Windows-form path such as C:\...\node.exe (exit 127, measured
@@ -97,8 +82,23 @@ function fakeNode(dir, marker) {
   return f;
 }
 
+// Every tmp() dir is removed once the file's tests finish. Best-effort: a
+// directory a test left unreadable, or a file Windows still holds open, stays.
+const TMP_DIRS = [];
+require('node:test').after(() => {
+  for (const dir of TMP_DIRS) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // left for the OS to reap
+    }
+  }
+});
+
 function tmp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  TMP_DIRS.push(dir);
+  return dir;
 }
 
 function withPathNode() {
@@ -150,6 +150,43 @@ perShell('hooks.sh AC3.1: a saved node-path is used when PATH has no node', (sh)
   const ctx = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
   assert.ok(ctx.includes(INTERACTION_STYLE_DIRECTIVE));
   assert.ok(!ctx.includes('restart Claude Code'));
+});
+
+// The well-known-list rung (hooks.sh's candidate loop) must exec the node it
+// finds on hooks.js with the event and stdin, as the PATH and saved-path rungs
+// do: a real node through the seam, compared byte for byte with node hooks.js.
+perShell('hooks.sh: a well-known-list hit runs hooks.js with the event and stdin', (sh) => {
+  const main = gitRepo();
+  writePolicy(main, 'worktree-always: true\n');
+  const env = {
+    ...noNodeEnv(tmp('hl-list-home-'), {
+      CLAUDE_TWEAKS_NODE_CANDIDATES: process.execPath,
+      PATH: pathWithOnly(['sh', 'cat', 'awk', 'git'], { exclude: ['node'] }),
+    }),
+    PIPELINE_RUN_DIR: '',
+    CT_HOOKS_TEST_MODE: '1',
+  };
+  const input = bashPayload('git commit -m x', main);
+  const viaSh = runLauncher(sh, ['pre-tool-use'], { input, cwd: main, env });
+  const viaNode = nodeRun(['pre-tool-use'], { input, cwd: main, env });
+  assert.equal(viaSh.stdout, viaNode.stdout, 'stdout');
+  assert.equal(viaSh.stderr, viaNode.stderr, 'stderr');
+  assert.equal(viaSh.status, viaNode.status, 'status');
+  assert.notEqual(viaSh.stdout, '', 'expected hooks.js to answer the payload');
+  const start = runLauncher(sh, ['session-start'], { input: '{"session_id":"s","source":"startup"}', env });
+  assert.equal(start.status, 0, start.stderr);
+  assert.ok(JSON.parse(start.stdout).hookSpecificOutput.additionalContext.includes(INTERACTION_STYLE_DIRECTIVE));
+});
+
+perShell('hooks.sh: the saved node path is tried before the well-known list', (sh) => {
+  const base = tmp('hl-rungs-');
+  const home = path.join(base, 'home');
+  fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
+  const saved = fakeNode(path.join(base, 'saved'), 'saved');
+  fs.writeFileSync(path.join(home, '.claude-tweaks', 'node-path'), saved + '\n');
+  const listed = fakeNode(path.join(base, 'listed'), 'listed');
+  const r = runLauncher(sh, ['post-tool-use'], { env: noNodeEnv(home, { CLAUDE_TWEAKS_NODE_CANDIDATES: listed }) });
+  assert.equal(r.stdout, 'saved\n');
 });
 
 perShell('hooks.sh: a saved path naming a missing file falls through', (sh) => {
@@ -212,17 +249,17 @@ perShell('hooks.sh: nvm default alias naming a literal version dir wins over vol
   assert.equal(runLauncher(sh, ['post-tool-use'], { env: { ...env, NVM_DIR: nvmDir } }).stdout, 'nvm-dir\n', 'NVM_DIR');
 });
 
-const FIXED_NODES = ['/opt/homebrew/bin/node', '/usr/local/bin/node'].filter((f) => {
-  try {
-    return fs.statSync(f).isFile();
-  } catch {
-    return false;
-  }
-});
-const FIXED_NODE_SKIP = {
-  skip: FIXED_NODES.length > 0
-    && `${FIXED_NODES.join(', ')} exists: the fixed rungs ahead of fnm are machine state (ubuntu CI skips this: /usr/local/bin/node exists there)`,
-};
+// The fixed /opt/homebrew and /usr/local rungs ahead of fnm are machine state
+// (ubuntu CI has /usr/local/bin/node), so the fnm tests run a launcher copy
+// with exactly those two lines removed: the fnm rung runs on every host. The
+// fake nodes ignore the copy's missing hooks.js.
+const FIXED_RUNGS = "  printf '%s\\n' /opt/homebrew/bin/node\n  printf '%s\\n' /usr/local/bin/node\n";
+let noFixedRungs = null;
+function launcherWithoutFixedRungs() {
+  if (!noFixedRungs) noFixedRungs = launcherCopy(FIXED_RUNGS, '');
+  return noFixedRungs;
+}
+
 perShell('hooks.sh: fnm default alias is tried last', (sh) => {
   const base = tmp('hl-fnm-');
   const home = path.join(base, 'home');
@@ -231,8 +268,8 @@ perShell('hooks.sh: fnm default alias is tried last', (sh) => {
   fakeNode(path.join(fnmDir, 'aliases', 'default', 'bin'), 'fnm');
   const env = noNodeEnv(home, { FNM_DIR: fnmDir });
   delete env.CLAUDE_TWEAKS_NODE_CANDIDATES;
-  assert.equal(runLauncher(sh, ['post-tool-use'], { env }).stdout, 'fnm\n');
-}, FIXED_NODE_SKIP);
+  assert.equal(runLauncher(sh, ['post-tool-use'], { env, launcher: launcherWithoutFixedRungs() }).stdout, 'fnm\n');
+});
 
 perShell('hooks.sh: with FNM_DIR unset, the three fnm default homes are tried in order', (sh) => {
   const home = tmp('hl-fnmhome-');
@@ -245,12 +282,13 @@ perShell('hooks.sh: with FNM_DIR unset, the three fnm default homes are tried in
   const env = noNodeEnv(home);
   delete env.CLAUDE_TWEAKS_NODE_CANDIDATES;
   assert.equal(env.FNM_DIR, undefined, 'precondition: FNM_DIR is unset');
+  const launcher = launcherWithoutFixedRungs();
   for (const [dir, marker] of homes) {
-    assert.equal(runLauncher(sh, ['post-tool-use'], { env }).stdout, marker + '\n', marker);
+    assert.equal(runLauncher(sh, ['post-tool-use'], { env, launcher }).stdout, marker + '\n', marker);
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  assert.equal(runLauncher(sh, ['post-tool-use'], { env }).stdout, '', 'no fnm home left');
-}, FIXED_NODE_SKIP);
+  assert.equal(runLauncher(sh, ['post-tool-use'], { env, launcher }).stdout, '', 'no fnm home left');
+});
 
 perShell('hooks.sh AC8.1 (drain): the no-node branch reads stdin to EOF', (sh) => {
   const home = tmp('hl-drain-');
@@ -347,6 +385,7 @@ function launcherCopy(from, to) {
 
 perShell('hooks.sh AC4.1: no node: session-start and user-prompt-submit print one warning object', (sh) => {
   const env = noNodeEnv(tmp('hl-home-'));
+  const contexts = [];
   for (const [event, name] of [['session-start', 'SessionStart'], ['user-prompt-submit', 'UserPromptSubmit']]) {
     const r = runLauncher(sh, [event], { input: 'not json', env });
     assert.equal(r.status, 0, `${event}: ${r.stderr}`);
@@ -361,7 +400,10 @@ perShell('hooks.sh AC4.1: no node: session-start and user-prompt-submit print on
     // The launcher's own deny still fires in a worktree-always project.
     assert.ok(ctx.includes('in a worktree-always project the launcher instead denies Bash, Edit, Write and NotebookEdit'), `${event}: names the launcher deny`);
     assert.ok(!ctx.includes('the worktree-always deny'), `${event}: does not list the worktree-always deny as off`);
+    contexts.push(ctx);
   }
+  // hooks.sh spells the warning out once per event: the two copies must not drift.
+  assert.equal(contexts[1], contexts[0], 'session-start and user-prompt-submit carry the same warning');
 });
 
 perShell('hooks.sh AC5.1: no node + worktree-always: pre-tool-use denies Bash, Edit, Write, NotebookEdit from main and from a linked worktree', (sh) => {
@@ -424,6 +466,21 @@ perShell('hooks.sh AC7.1: no node: pre-tool-use is silent when the policy is abs
     const r = runLauncher(sh, ['pre-tool-use'], { input: toolPayload('Bash', { command: 'echo hi' }, cwd), cwd, env });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, '', cwd === absent ? 'policy absent' : 'policy false');
+  }
+});
+
+// Q2 ruling: the policy root comes from the process cwd, never the payload's
+// `cwd`. Each row points the two at checkouts with opposite policies.
+perShell('hooks.sh: no node: the policy is read from the process cwd, not the payload cwd', (sh) => {
+  const { main } = policyOnMain();
+  const off = policyDir(null);
+  assert.equal(mainCheckoutRoot(off), null, 'precondition: the policy-off dir sits outside any repository');
+  const env = sharedNoNodeEnv();
+  for (const [id, cwd, payloadCwd, want] of [['process on, payload off', main, off, 'deny'], ['process off, payload on', off, main, 'silent']]) {
+    const r = runLauncher(sh, ['pre-tool-use'], { input: toolPayload('Bash', { command: 'echo hi' }, payloadCwd), cwd, env });
+    assert.equal(r.status, 0, `${id}: ${r.stderr}`);
+    if (want === 'deny') assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny', id);
+    else assert.equal(r.stdout, '', id);
   }
 });
 
