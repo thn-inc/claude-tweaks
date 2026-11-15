@@ -11,7 +11,7 @@
 
 | Doc | Covers | Auto-detect |
 |-----|--------|-------------|
-| README.md | Project overview, install, skill index | `plugin/.claude-plugin/plugin.json`, `plugin/skills/**/SKILL.md` |
+| README.md | Project overview, install, skill index | `plugin/.claude-plugin/plugin.json`, `plugin/skills/**/SKILL.md`, `plugin/hooks/hooks.json`, `plugin/bin/hooks.sh` |
 | CLAUDE.md | How to work in this codebase — stack, structure, conventions, philosophy, releasing, Don'ts | `plugin/.claude-plugin/plugin.json`, `package.json`, `plugin/skills/_shared/*.md` |
 | docs/getting-started.md | Full skill reference — every `/claude-tweaks:*` command with its behavior | `plugin/skills/**/*.md` |
 | docs/plugin-structure.md | Directory tree, per-skill sub-file table, command reference | `plugin/skills/**/*.md`, `plugin/skills/**/*.yml`, `plugin/skills/**/*.html`, `plugin/skills/**/*.mjs`, `plugin/bin/**/*.js`, `plugin/bin/hooks.sh`, `tools/**/*.js` |

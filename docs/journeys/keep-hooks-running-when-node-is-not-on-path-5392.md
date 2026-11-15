@@ -9,7 +9,7 @@ files:
 
 # Keep claude-tweaks Hooks Running When `node` Is Not on the Session's PATH
 
-**Persona:** a developer on macOS whose `node` comes from nvm (or fnm, asdf, Volta) loaded lazily in `~/.zshrc`. Some days they start Claude Code from an app launcher or an IDE terminal whose PATH has no `node`. Their project sets `worktree-always: true` in `.claude-tweaks/policy.yml`.
+**Persona:** a developer on macOS whose `node` comes from nvm (or fnm, asdf, Volta) loaded lazily in `~/.zshrc`. Some days they start Claude Code from an app launcher or an IDE terminal whose PATH has no `node`. Their project sets `worktree-always: true` in `.claude-tweaks/policy.yml`. Step 5 follows a teammate on the same project who runs Claude Code on Windows with Git for Windows installed.
 **Goal:** every claude-tweaks hook either runs under a real `node` or says loudly that it cannot. A session never runs on with every guard silently off.
 **Entry point:** any Claude Code session start with the claude-tweaks plugin enabled.
 **Success state:** in the common case the hooks run exactly as before, through the node that `sh "${CLAUDE_PLUGIN_ROOT}/bin/hooks.sh"` found. When no node is findable anywhere, the session's first context tells the model (and so the user) that the guards are off and to restart from a shell where `command -v node` prints a path. In a `worktree-always` project, Bash, Edit, Write and NotebookEdit are denied until that restart. AskUserQuestion and ExitWorktree still work.
@@ -34,7 +34,7 @@ files:
 - **URL:** `claude` started with PATH lacking `node`, no `~/.claude-tweaks/node-path`, and no install at a well-known location
 - **Action:** start the session and send the first prompt.
 - **Should feel:** loud and unambiguous, not broken. The model's first reply says claude-tweaks hooks cannot run because no `node` was found, that the guards are off, and that the fix is to quit and restart Claude Code from a shell where `node` resolves. Nothing else about the session errors out.
-- **Should understand:** with no node, `hooks.sh` reads stdin to EOF, always exits 0, and prints only fixed JSON literals. `session-start` and `user-prompt-submit` print one `additionalContext` warning. `session-end`, `pre-compact`, `post-tool-use`, `post-tool-use-failure` and `subagent-stop` print nothing. Outside a `worktree-always` project the session is warned, never blocked, because the plugin is often enabled user-wide.
+- **Should understand:** with no node, `hooks.sh` reads stdin to EOF, always exits 0, and prints only fixed JSON literals. `session-start` and `user-prompt-submit` print one `additionalContext` warning. `session-end`, `pre-compact`, `post-tool-use`, `post-tool-use-failure` and `subagent-stop` print nothing. Outside a `worktree-always` project the session is warned, never blocked, because the plugin is often enabled user-wide. The full per-event contract, the resolution order and the Windows requirement are `docs/hooks.md`'s "Node launcher (#5392)" bullet.
 - **Red flags:** a session that runs on with no warning at all, which is the 2026-11-13 ungated build this record exists to prevent. A non-zero hook exit. Any text from the stdin payload echoed into hook output.
 
 ### 4. Try to edit in a `worktree-always` project with no node — main checkout or a linked worktree
