@@ -71,7 +71,7 @@ const {
   parseRecordFacets, typeOf, extractSection: extractSectionShared,
 } = require('./issues/record');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo, injectedGhDeps, pickInjected,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo, injectedGhDeps, pickInjected, withDescriptors,
 } = require('./repo-resolve');
 const { resolveAgainst } = require('./health-core/io');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
@@ -280,11 +280,6 @@ function aggregateType(records) {
 // A child process's working directory and environment, each only when injected (#5386): absent, the
 // spawn inherits the process's own, as it did before `run` took them from deps.
 const childOptions = ({ cwd, env } = {}) => ({ ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) });
-
-// Own properties of `over` laid over a copy of `base`, copied as descriptors: injectedGhDeps's lazy
-// `homedir` getter (repo-resolve.js) stays a getter, where an object spread would call it here and run
-// `homeDir()` even when the lookup never falls through to the home.
-const withDescriptors = (base, over) => Object.defineProperties({}, { ...Object.getOwnPropertyDescriptors(base), ...Object.getOwnPropertyDescriptors(over || {}) });
 
 const realDeps = {
   ghAvailable,
