@@ -9,6 +9,7 @@
 // hooks' shared shell scanner (forEachCommandSegment), so quoted text (`echo "node --test a b"`) is one
 // word and never a command.
 
+const fs = require('fs');
 const path = require('path');
 const { NODE_TEST_VALUE_FLAGS } = require('./run-tests');
 const { forEachCommandSegment } = require('../plugin/bin/lib/hooks/git-command');
@@ -437,6 +438,53 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
   return { decision: 'deny', kind: 'typed', reason, replacement: line };
 }
 
+// The script a segment runs, as the word typed, or null: the first non-option operand of a `node`, `bash`,
+// `sh` or `zsh` program (a `-c` shell form runs text, not a file, and inline node code runs no file), or the
+// program word itself when it holds a `/` and ends in a script extension.
+function scriptOperand(seg, prog) {
+  const { t } = seg;
+  const name = seg.name(prog.at);
+  const isNode = NODE_NAMES.has(name);
+  if (isNode || SHELLS.has(name)) {
+    if (!isNode && wrapperText(seg, prog.at, prog.end) !== null) return null;
+    for (let i = prog.at + 1; i < prog.end; i += 1) {
+      const w = t[i];
+      if (seg.isRedirect(i)) {
+        if (seg.isRedirectOp(i)) i += 1;
+        continue;
+      }
+      if (w === '--') return i + 1 < prog.end ? i + 1 : null;
+      if (isNode) {
+        if (w.length > 1 && w[0] === '-') {
+          if (INLINE_CODE_OPTIONS.has(w.split('=')[0])) return null;
+          if (!w.includes('=') && (NODE_TEST_VALUE_SET.has(w) || NODE_VALUE_OPTIONS.has(w))) i += 1;
+          continue;
+        }
+      } else if (SHELL_CLUSTER_RE.test(w)) {
+        if (w.endsWith('o')) i += 1;
+        continue;
+      } else if (w.startsWith('--')) {
+        continue;
+      }
+      return i;
+    }
+    return null;
+  }
+  return /\/.*\.(?:sh|js|mjs|cjs)$/.test(t[prog.at]) ? prog.at : null;
+}
+
+// Records the script file a segment runs in `ctx.scripts`, resolved against the segment's working directory.
+function collectScript(seg, prog, segCwd, ctx) {
+  if (segCwd === null || prog.at >= seg.t.length) return;
+  const i = scriptOperand(seg, prog);
+  if (i === null || i >= seg.t.length) return;
+  const word = seg.t[i];
+  if (word === '' || EXPANSION_RE.test(word)) return;
+  const name = seg.name(prog.at);
+  const kind = NODE_NAMES.has(name) || /\.(?:js|mjs|cjs)$/.test(word) ? 'js' : 'shell';
+  ctx.scripts.push({ word, kind, abs: ctx.pathImpl.resolve(segCwd, word) });
+}
+
 // Walks `text` segment by segment. In 'detect' mode it records whether any segment is a direct test run;
 // in 'classify' mode it records the first deny. Loop nesting is tracked across segments: a segment is
 // inside a loop after a `for` segment, or from a `while`/`until` segment (its condition included), up to
@@ -484,6 +532,7 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirMoved: false }) {
     const repeated = state.loops.length > 0 || prog.ledRepeat || ctx.repeated;
     const segCwd = typeof effCwd === 'string' ? effCwd : null;
     const isEval = !prog.ledRepeat && t[prog.at] === 'eval' && seg.bare(prog.at);
+    if (ctx.mode === 'scripts' && !isEval) collectScript(seg, prog, segCwd, ctx);
     if (isEval || SHELLS.has(seg.name(prog.at))) {
       // `eval` runs its arguments joined by a space; a shell its `-c` script.
       const inner = isEval ? t.slice(prog.at + 1, prog.end).join(' ') : wrapperText(seg, prog.at, prog.end);
@@ -494,6 +543,7 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirMoved: false }) {
       state.result = sub.result;
       return;
     }
+    if (ctx.mode === 'scripts') return;
     const run = readRun(seg, prog.at, prog.end, state.loops);
     if (!run) return;
     if (ctx.mode === 'detect') {
@@ -536,4 +586,137 @@ function hasDirectTestRun(text, { cwd, pathImpl = path } = {}) {
   }
 }
 
-module.exports = { classifyCommand, classifyCommandOrThrow, hasDirectTestRun, SAFEGUARDS_TEXT };
+// Whether a script's text starts node --test itself. `kind` 'js': the exact string literal `--test` in
+// single, double or backtick quotes and the substring `child_process`. `kind` 'shell': any direct test run
+// (a script is a repeatable run by nature, so a single-file one is enough). Never throws.
+function scanScript(text, kind, { cwd, pathImpl = path } = {}) {
+  try {
+    if (typeof text !== 'string') return false;
+    if (kind === 'js') return /(['"`])--test\1/.test(text) && text.includes('child_process');
+    if (kind === 'shell') return hasDirectTestRun(text, { cwd, pathImpl });
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+// The checkout directories whose scripts are repo tooling: never read by the script scan.
+const SKIPPED_SCRIPT_DIRS = new Set(['tools', 'plugin', 'tests', 'perf', 'evals', 'scripts']);
+
+function scriptReason(word) {
+  return [
+    `This repository's guard blocked a script that starts node --test itself: ${word}. ${SAFEGUARDS_TEXT}`,
+    'Have the script start the runner instead, from inside the checkout it tests, with the same flags and files:',
+    '',
+    'node tools/run-tests.js --test-reporter=tap <files>',
+    '',
+    'In JavaScript: spawnSync(process.execPath, [\'tools/run-tests.js\', ...flags, ...files], { cwd: checkoutRoot }). The exit code and stdout are node\'s own.',
+    'In a checkout older than this guard, write the files to a list and use: node tools/run-tests.js --files-from <list>',
+  ].join('\n');
+}
+
+// The hook's verdict for one PreToolUse payload: `{ decision: 'allow' }` or `{ decision: 'deny', reason }`.
+// `deps` is { hasRunner, isDirectory, readScript(absPath) -> string|null, pathImpl }. A non-Bash call, or one
+// outside a checkout holding tools/run-tests.js, is allowed. Lets any error through (judge catches it).
+function judgeOrThrow(payload, deps) {
+  const { hasRunner, readScript, pathImpl = path } = deps;
+  if (!payload || payload.tool_name !== 'Bash') return ALLOW();
+  const command = payload.tool_input && payload.tool_input.command;
+  const cwd = payload.cwd;
+  if (typeof command !== 'string' || command === '' || typeof cwd !== 'string') return ALLOW();
+  const typed = classifyCommandOrThrow(command, { ...deps, cwd });
+  if (typed.decision === 'deny') return { decision: 'deny', reason: typed.reason };
+  if (!hasRunner(cwd)) return ALLOW();
+
+  const ctx = { mode: 'scripts', depth: 0, repeated: false, callCwd: cwd, pathImpl, scripts: [] };
+  walk(command, cwd, ctx);
+  for (const { word, kind, abs } of ctx.scripts) {
+    const root = hasRunner(pathImpl.dirname(abs));
+    if (root) {
+      const first = toSlash(pathImpl.relative(root, abs), pathImpl).split('/')[0];
+      if (SKIPPED_SCRIPT_DIRS.has(first)) continue;
+    }
+    const text = readScript(abs);
+    if (typeof text === 'string' && scanScript(text, kind, { cwd: pathImpl.dirname(abs), pathImpl })) {
+      return { decision: 'deny', reason: scriptReason(word) };
+    }
+  }
+  return ALLOW();
+}
+
+// judgeOrThrow for the hook: never throws, and any internal error allows.
+function judge(payload, deps) {
+  try {
+    return judgeOrThrow(payload, deps);
+  } catch (_) {
+    return ALLOW();
+  }
+}
+
+const MAX_SCRIPT_BYTES = 262144;
+
+// The file-system answers the hook reads through. None of the three throws.
+function realDeps() {
+  return {
+    pathImpl: path,
+    // The checkout root holding tools/run-tests.js at or above `dir`, or null.
+    hasRunner(dir) {
+      try {
+        let d = path.resolve(dir);
+        for (;;) {
+          try {
+            if (fs.statSync(path.join(d, 'tools', 'run-tests.js')).isFile()) return d;
+          } catch (_) { /* not here: look one level up */ }
+          const parent = path.dirname(d);
+          if (parent === d) return null;
+          d = parent;
+        }
+      } catch (_) {
+        return null;
+      }
+    },
+    isDirectory(p) {
+      try {
+        return fs.statSync(p).isDirectory();
+      } catch (_) {
+        return false;
+      }
+    },
+    // The text of a regular file of at most MAX_SCRIPT_BYTES, else null.
+    readScript(p) {
+      try {
+        const st = fs.statSync(p);
+        if (!st.isFile() || st.size > MAX_SCRIPT_BYTES) return null;
+        return fs.readFileSync(p, 'utf8');
+      } catch (_) {
+        return null;
+      }
+    },
+  };
+}
+
+// The hook entry: stdin to end, then a deny JSON on stdout or nothing. Every failure prints nothing, and the
+// exit status stays 0; the process ends on its own (an explicit exit can truncate a pending stdout write).
+function main() {
+  const chunks = [];
+  process.stdout.on('error', () => {});
+  process.stdin.on('error', () => {});
+  process.stdin.on('data', (c) => chunks.push(c));
+  process.stdin.on('end', () => {
+    try {
+      const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const verdict = judge(payload, realDeps());
+      if (verdict.decision === 'deny') {
+        process.stdout.write(JSON.stringify({
+          hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: verdict.reason },
+        }));
+      }
+    } catch (_) { /* prints nothing */ }
+  });
+}
+
+if (require.main === module) main();
+
+module.exports = {
+  classifyCommand, classifyCommandOrThrow, hasDirectTestRun, scanScript, judge, judgeOrThrow, realDeps, SAFEGUARDS_TEXT,
+};
