@@ -12,7 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const os = require('node:os');
-const { readText } = require('./helpers/read-skill');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
@@ -361,8 +361,8 @@ const ROUTE_FACTS = [
   [/appends a blank line and `\[exited with code N\]`/, 'Review Focus 4: the harness marker named'],
   [/Any other word, no final line, a final line that is not one JSON object, or a non-zero exit that left no parseable final line \(the `--run` guard's exit 3 included\) is `blocked` through `two-call-gate\.md` §5/, 'AC5: the catch-all is blocked through §5'],
   [/a guard failure is a dispatch-side defect, never routed onward to today's path/, 'AC5: a guard failure is a dispatch-side defect'],
-  [/When `\{minted-run-dir\}\/decisions\.md` carries no `Step 2\.8: claimed #\{n\}` line — always so after exit 3, which writes nothing — the driver took no claim: §5's cleanup-only call appends `\(driver-no-claim: skip the claim release\)`/, 'no final line and no claim log → the skip parenthetical'],
-  [/An absent `decisions\.md` carries no such line, so the release is skipped[^;]*; one that exists but cannot be read counts as claimed\. A non-zero exit that did leave a parseable final line is not this case: route its outcome word by the table/, 'an absent log skips the release, an unreadable one counts as claimed; a non-zero exit with a final line routes by its word'],
+  [/Whether the driver took a claim in that case, and so whether §5's cleanup-only call appends `\(driver-no-claim: skip the claim release\)`, is §5's Driver run with no claim paragraph's rule alone/, 'no final line: whether the skip parenthetical applies is §5\'s rule alone'],
+  [/A non-zero exit that did leave a parseable final line is not this case: route its outcome word by the table/, 'a non-zero exit with a final line routes by its word'],
   [/A record that takes today's path after a `--check` that did not admit, after a bind that printed no `worktree recorded` line, or after `refused`, gets one `SKIP` line/, 'the decline SKIP covers the failed bind'],
   [/run `drain-pr-overlap\.md`'s Step 5 list write as it runs after the express call/, 'AC5.7: the Step 5 list write after the call'],
   [/The group counts for `settle-and-merge\.md`'s Drain-overlap hold like any auto-merge group/, 'AC5.8: counts for the Drain-overlap hold'],
@@ -410,16 +410,36 @@ const OUTCOME_ROWS = [
   ['| `express-escalated` |', /re-bind with `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" record-worktree --run "\{minted-run-dir\}" "\{worktree\}" --dispatch`, then the ordinary first call on the same run dir and the same worktree/, 'AC5.3: express-escalated re-binds with --dispatch, then the ordinary first call'],
   ['| `blocked` |', /this session runs `settle-and-merge\.md`'s Step 6 Settle for the record/, 'AC5.5: blocked → dispatch\'s Settle'],
   ['| `blocked` |', /the deliberate exception to that file's rule that Settle never runs in dispatch's main thread: no Task call exists for this group, and the driver ran with its settle off/, 'blocked: Settle in this thread is the named exception'],
-  ['| `blocked` |', /`stop\.reason` is `claim-exit-7`, it is dispatch's Claim permission stop/, 'claim-exit-7 → the Claim permission stop'],
-  ['| `blocked` |', /the firing ends, as for `failed:claim-permission-denied`/, 'claim-exit-7 ends the firing'],
+  ['| `blocked` |', /which Settle case runs is the Blocked stops list below/, '#5232 blocked row points to the Blocked stops list'],
+  ['| `blocked` |', /whose cleanup-only call appends `\(driver-no-claim: skip the claim release\)` when §5's Driver run with no claim paragraph says so \|/, '#5232 blocked row points to §5\'s Driver run with no claim paragraph'],
   ['| `blocked` |', /Then `two-call-gate\.md` §5/, 'AC5.5: blocked → then §5'],
   ['| `refused` |', /take today's path for the record, with one `SKIP` line/, 'AC5.6: refused → today\'s path plus one SKIP'],
   ['| `refused` |', /when `express-lane` resolves `true`, the express gate runs/, 'AC5.6: refused re-decides the bind through the express gate'],
   ['| `refused` |', /on anything but an eligible verdict, re-bind with `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" record-worktree --run "\{minted-run-dir\}" "\{worktree\}" --dispatch` before the ordinary first call/, 'AC5.6: refused re-binds with --dispatch before the ordinary first call'],
   ['| `express-escalated` |', /The driver still wrote the run's escalation line \(`Express lane: escalated #\{n\} to \/flow`, or `check` did\), so that call's `\/build` judges "already shipped" against `origin\/\{integration-branch\}` only/, '#5232 Important 1: the driver wrote the escalation line /build reads'],
-  ['| `blocked` |', /after a claim stop \(`stop\.step` is `claim`\) whose `stop\.reason` is `claim-exit-3` or `claim-exit-6`, the stops that case names, which wrote no claim, only its Claim-contest special case;/, '#5232 Minor 3: only claim-exit-3 and claim-exit-6 take the Claim-contest special case'],
-  ['| `blocked` |', /any other claim stop, `claim-exit-5` and `claim-exit-none` included \(a claim may have been written, `bin\/lib\/driver\/claim-exit\.js`\), runs no Settle and takes the catch-all below, whose §5 release runs because a final line exists, except after `claim-exit-2`;/, '#5232 Minor 3: claim-exit-5, claim-exit-none and any other claim stop take the catch-all, whose release runs'],
 ];
+
+// #5232: the `blocked` row's Settle partition by claim stop lives in its own list, a different rule from
+// §5's release skip (which Settle case runs, not whether the release runs).
+const blockedStops = (text) => sectionOf(text, '## Blocked stops');
+const BLOCKED_STOP_ROWS = [
+  ['| a claim stop (`stop.step` is `claim`) whose `stop.reason` is `claim-exit-3`', /the stops Settle's Claim-contest case names, which wrote no claim: only its Claim-contest special case \|/, '#5232 Minor 3: only claim-exit-3 and claim-exit-6 take the Claim-contest special case'],
+  ['| a claim stop whose `stop.reason` is `claim-exit-7`', /dispatch's Claim permission stop: its Claim permission denied paragraph, §5's `\(claim-permission-denied: skip the claim release\)`, and the firing ends, as for `failed:claim-permission-denied`/, 'claim-exit-7 → the Claim permission stop, and the firing ends'],
+  ['| any other claim stop,', /no Settle; the catch-all paragraph above applies, and §5's release runs because a final line exists, unless §5's Driver run with no claim paragraph skips it/, '#5232 Minor 3: claim-exit-5, claim-exit-none and any other claim stop take the catch-all, whose release runs'],
+  ['| any other stop |', /Settle's numbered steps 1-7, with `--reason "failed: driver-\{stop\.step\}"`/, 'any other stop → Settle steps 1-7'],
+];
+
+test('#5232 driver-route.md: the Blocked stops list maps each claim stop to its Settle case', () => {
+  assert.deepEqual(missingRowsOf(BLOCKED_STOP_ROWS)(blockedStops(routeText())), []);
+});
+
+test('#5232 go-red control: each Blocked stops mapping stripped from its row reports itself', () => {
+  const section = blockedStops(routeText());
+  for (const [prefix, pattern, fact] of BLOCKED_STOP_ROWS) {
+    const line = lineStartingWith(section, prefix);
+    assert.deepEqual(missingRowsOf(BLOCKED_STOP_ROWS)(mutate(section, line, line.replace(pattern, 'x'))), [fact]);
+  }
+});
 
 test('driver-route.md: each outcome word\'s row carries its mapping', () => {
   assert.deepEqual(missingRowsOf(OUTCOME_ROWS)(outcomeTable(routeText())), []);
@@ -443,12 +463,11 @@ test('go-red control: each outcome mapping stripped from its row, or moved to an
 // The Claim-contest codes are the ones that wrote no claim (contested, claims branch missing); the
 // catch-all's named codes are exactly the reasons claim-exit.js reads as a claim that may have been written.
 const { CLAIM_KIND, readClaimExit, readClaimReason } = require('../plugin/bin/lib/driver/claim-exit');
-const blockedRow = (text) => lineStartingWith(outcomeTable(text), '| `blocked` |');
 const claimReasonsIn = (clause) => [...clause.matchAll(/`(claim-exit-(?:\d+|none))`/g)].map((m) => m[1]);
 function claimClauses(row) {
-  const contest = /whose `stop\.reason` is ([^;]*?), the stops that case names/.exec(row);
-  const catchAll = /any other claim stop, ([^(]*?) included \(a claim may have been written/.exec(row);
-  assert.ok(contest && catchAll, 'the blocked row names its Claim-contest and catch-all claim reasons');
+  const contest = /^\| a claim stop \(`stop\.step` is `claim`\) whose `stop\.reason` is ([^|]*?) \| the stops Settle's Claim-contest case names/m.exec(row);
+  const catchAll = /^\| any other claim stop, ([^(]*?) included \(a claim may have been written/m.exec(row);
+  assert.ok(contest && catchAll, 'the Blocked stops list names its Claim-contest and catch-all claim reasons');
   return { contest: claimReasonsIn(contest[1]), catchAll: claimReasonsIn(catchAll[1]) };
 }
 const UNVERIFIED_REASONS = [null, ...Array.from({ length: 256 }, (_, i) => i)]
@@ -469,11 +488,11 @@ function assertClaimMapping(row) {
 
 test('#5232 Minor 3: the blocked row\'s claim reasons match claim-exit.js', () => {
   assert.deepEqual([...UNVERIFIED_REASONS].sort(), ['claim-exit-5', 'claim-exit-none']);
-  assertClaimMapping(blockedRow(routeText()));
+  assertClaimMapping(blockedStops(routeText()));
 });
 
 test('#5232 go-red control: an unverified reason in the Claim-contest clause, or one dropped from the catch-all, fails', () => {
-  const row = blockedRow(routeText());
+  const row = blockedStops(routeText());
   const intoContest = row.replace('`claim-exit-3` or `claim-exit-6`', '`claim-exit-3` or `claim-exit-5`');
   assert.notEqual(intoContest, row);
   assert.throws(() => assertClaimMapping(intoContest), /claim-exit-5 wrote no claim/);
@@ -483,7 +502,7 @@ test('#5232 go-red control: an unverified reason in the Claim-contest clause, or
 });
 
 test('#5232 R3 go-red control: claim-exit-2 added to the Claim-contest clause, or claim-exit-6 dropped from it, fails', () => {
-  const row = blockedRow(routeText());
+  const row = blockedStops(routeText());
   const added = row.replace('`claim-exit-3` or `claim-exit-6`', '`claim-exit-2`, `claim-exit-3` or `claim-exit-6`');
   assert.notEqual(added, row);
   assert.throws(() => assertClaimMapping(added), /exactly claim-exit-3 and claim-exit-6/);
@@ -603,20 +622,20 @@ const FLAGS_FILE = path.join(WRAP_UP, 'flags.md');
 const DRIVER_SKIP = 'driver-no-claim: skip the claim release';
 // Step 4's mint writes no decisions.md, so absent is the normal no-claim state: it must skip, never count as claimed.
 const ABSENT_SKIPS = 'An absent `decisions.md` carries no such line, so the release is skipped';
+// Why an unreadable decisions.md counts as claimed: release when unsure.
+const UNREADABLE_REASON = 'release when unsure, as `claim-exit-5` does, since a claim may exist';
 
 function assertDriverSkip(route, gate, sectionE, flags) {
   assert.ok(route.includes(`\`(${DRIVER_SKIP})\``), 'driver-route.md must name the parenthetical');
   const s5 = between(gate, '## 5.', '## 6.');
   const para = s5.split('\n').find((l) => l.trim().startsWith('**Driver run with no claim (#5232).**'));
   assert.ok(para, 'two-call-gate.md section 5 paragraph missing');
-  assert.ok(route.includes(ABSENT_SKIPS), 'driver-route.md must say an absent decisions.md skips the release');
-  for (const needle of [`\`(${DRIVER_SKIP})\``, 'carries no `Step 2.8: claimed #{n}` line', 'Section E skips its release', ABSENT_SKIPS, 'one that exists but cannot be read counts as claimed, and the release runs']) {
+  for (const needle of [`\`(${DRIVER_SKIP})\``, 'carries no `Step 2.8: claimed #{n}` line', 'Section E skips its release', ABSENT_SKIPS, 'one that exists but cannot be read counts as claimed, and the release runs', UNREADABLE_REASON]) {
     assert.ok(para.includes(needle), `section 5 paragraph must carry: ${needle}`);
   }
   assert.ok(!between(gate, '## 6.', '## 7.').includes(DRIVER_SKIP), 'a second call (section 6) must not append it');
   const e = between(sectionE, '## E. Issue claim release', 'This spec\'s record is identified whenever this section runs');
   assert.ok(e.includes(`**Skip it too when the invocation names \`${DRIVER_SKIP}\` (#5232)**`), 'Section E clause missing');
-  assert.ok(e.includes('an absent `decisions.md` carrying none'), 'Section E must say an absent decisions.md carries no claim line');
   assert.ok(e.includes('--text "condition: driver-no-claim named by the cleanup-only call → fallback: claim release skipped"'), 'Section E skip log line missing');
   assert.ok(flags.includes(`\`(${DRIVER_SKIP})\` (#5232)`), 'flags.md must declare the phrase');
 }
@@ -638,13 +657,12 @@ test('go-red control: the phrase dropped from any one site fails', () => {
     assert.throws(() => assertDriverSkip(...args), messages[i]);
   });
   const gate = files[1];
-  assert.throws(() => assertDriverSkip(files[0], mutate(gate, ' one that exists but cannot be read counts as claimed, and the release runs.', ''), files[2], files[3]), /counts as claimed/);
+  assert.throws(() => assertDriverSkip(files[0], mutate(gate, `, and the release runs: ${UNREADABLE_REASON}.`, '.'), files[2], files[3]), /counts as claimed/);
+  // #5232: the reason an unreadable decisions.md counts as claimed rides with the rule.
+  assert.throws(() => assertDriverSkip(files[0], mutate(gate, `: ${UNREADABLE_REASON}`, ''), files[2], files[3]), /release when unsure/);
   // The fix-round-2 regression: "cannot be read" covering an absent file brings back the false release.
-  const regressedGate = mutate(gate, "An absent `decisions.md` carries no such line, so the release is skipped (Step 4's mint writes none); one that exists but cannot be read counts as claimed, and the release runs.", 'A `decisions.md` that cannot be read counts as claimed, and the release runs.');
+  const regressedGate = mutate(gate, "An absent `decisions.md` carries no such line, so the release is skipped (Step 4's mint writes none); one that exists but cannot be read counts as claimed, and the release runs", 'A `decisions.md` that cannot be read counts as claimed, and the release runs');
   assert.throws(() => assertDriverSkip(files[0], regressedGate, files[2], files[3]), /absent/);
-  const regressedRoute = mutate(files[0], "An absent `decisions.md` carries no such line, so the release is skipped — Step 4's mint writes none, and nothing on the admitted path writes one before `--run`; one that exists but cannot be read counts as claimed.", 'A `decisions.md` that cannot be read counts as claimed.');
-  assert.throws(() => assertDriverSkip(regressedRoute, gate, files[2], files[3]), /absent/);
-  assert.throws(() => assertDriverSkip(files[0], gate, mutate(files[2], ', an absent `decisions.md` carrying none', ''), files[3]), /absent/);
 });
 
 // #5232 R4: after a driver claim stop whose claim-targets.js exit wrote no claim of this run's, the
@@ -658,22 +676,26 @@ const DERIVED_NO_CLAIM = Array.from({ length: 256 }, (_, i) => readClaimExit(i))
   .filter((c) => [CLAIM_KIND.CONTESTED, CLAIM_KIND.SHARED_CAUSE].includes(c.kind)).map((c) => c.reason);
 const sectionEOf = (text) => between(text, '## E. Issue claim release', 'This spec\'s record is identified whenever this section runs');
 const KEEPS_RELEASE = '`claim-exit-4` and `claim-exit-5` may have written one, so their release runs';
+// #5232: driver-route.md and Section E carry a pointer to the owning paragraph, not the rule.
+const ROUTE_POINTERS = ["when §5's Driver run with no claim paragraph says so", "is §5's Driver run with no claim paragraph's rule alone"];
+const SECTION_E_POINTER = "`dispatch/two-call-gate.md` §5's Driver run with no claim paragraph owns which calls those are";
+// Word-bounded: the claim-exit-2/-4 members, the decisions.md probe and the keep-release clause stay in §5.
+const RESTATED = [/`claim-exit-(?:2|4)`/, /\babsent `decisions\.md`/, /\bcounts as claimed\b/, /\bmay have written one\b/];
 
 function assertNoClaimSkip(route, gate, sectionE) {
-  const catchAll = route.split('\n').find((l) => l.startsWith('Any other word, no final line')) || '';
   const para = between(gate, '## 5.', '## 6.').split('\n').find((l) => l.trim().startsWith('**Driver run with no claim (#5232).**')) || '';
-  const SITES = [
-    ['blocked row', blockedRow(route), /whose cleanup-only call appends `\(driver-no-claim: skip the claim release\)` after a claim stop whose `stop\.reason` is ([^:]*?): those exits wrote no claim of this run's, while `claim-exit-4` and `claim-exit-5` may have written one, so their release runs/],
-    ['catch-all', catchAll, /The `blocked` row's claim stops that wrote no claim \(([^)]*)\) append the same parenthetical, keyed on the final line's `stop\.reason`, not on `decisions\.md`/],
-    ['section 5', para, /Append it too when the call's final line is a claim stop \(`stop\.step` is `claim`\) whose `stop\.reason` is ([^:]*?), whatever Settle ran: those `claim-targets\.js` exits wrote no claim of this run's/],
-    ['Section E', sectionEOf(sectionE), /or whose final line is a claim stop with `stop\.reason` ([^(]*?) \(`dispatch\/two-call-gate\.md` §5\): the driver took no claim/],
-  ];
-  for (const [site, text, re] of SITES) {
-    const m = re.exec(text);
-    assert.ok(m, `${site}: the no-claim skip clause is missing`);
-    assert.deepEqual(claimReasonsIn(m[1]).sort(), NO_CLAIM_REASONS, `${site}: the skip names exactly claim-exit-2, claim-exit-3 and claim-exit-6`);
-  }
+  // The one owner: §5's Driver run with no claim paragraph states the claim-exit set and the 4/5 release.
+  const m = /Append it too when the call's final line is a claim stop \(`stop\.step` is `claim`\) whose `stop\.reason` is ([^:]*?), whatever Settle ran: those `claim-targets\.js` exits wrote no claim of this run's/.exec(para);
+  assert.ok(m, 'section 5: the no-claim skip clause is missing');
+  assert.deepEqual(claimReasonsIn(m[1]).sort(), NO_CLAIM_REASONS, 'section 5: the skip names exactly claim-exit-2, claim-exit-3 and claim-exit-6');
   assert.ok(para.includes(KEEPS_RELEASE), 'section 5: exits 4 and 5 must keep their release');
+  // driver-route.md points at it and restates none of it.
+  for (const pointer of ROUTE_POINTERS) assert.ok(route.includes(pointer), `driver-route.md pointer to section 5 missing: ${pointer}`);
+  for (const re of RESTATED) assert.ok(!re.test(route), `driver-route.md restates the no-claim rule: ${re}`);
+  // Section E keeps what it needs to act on the parenthetical, and no set.
+  const e = sectionEOf(sectionE);
+  assert.ok(e.includes(SECTION_E_POINTER), 'Section E must point to section 5\'s Driver run with no claim paragraph');
+  assert.ok(!/\bclaim-exit-\d/.test(e), 'Section E restates the claim-exit set');
 }
 
 test('#5232 R4: the no-claim reasons are exactly claim-exit.js\'s contested and shared-cause exits', () => {
@@ -690,22 +712,63 @@ test('#5232 R4 go-red control: a no-claim exit dropped, or claim-exit-4 or claim
     list: '`claim-exit-2`, `claim-exit-3` or `claim-exit-6`',
     variants: ['`claim-exit-2` or `claim-exit-6`', '`claim-exit-3` or `claim-exit-6`', '`claim-exit-2`, `claim-exit-3`, `claim-exit-4` or `claim-exit-6`', '`claim-exit-2`, `claim-exit-3`, `claim-exit-5` or `claim-exit-6`'],
   };
-  const COMMA = {
-    list: '`claim-exit-2`, `claim-exit-3`, `claim-exit-6`',
-    variants: ['`claim-exit-2`, `claim-exit-6`', '`claim-exit-3`, `claim-exit-6`', '`claim-exit-2`, `claim-exit-3`, `claim-exit-4`, `claim-exit-6`', '`claim-exit-2`, `claim-exit-3`, `claim-exit-5`, `claim-exit-6`'],
-  };
-  const SITES = [
-    ['blocked row', 0, 'after a claim stop whose `stop.reason` is {list}:', OR],
-    ['catch-all', 0, 'claim stops that wrote no claim ({list})', COMMA],
-    ['section 5', 1, 'whose `stop.reason` is {list}, whatever Settle ran', OR],
-    ['Section E', 2, 'with `stop.reason` {list} (`dispatch', OR],
-  ];
-  for (const [site, i, shape, form] of SITES) {
-    const clause = shape.replace('{list}', form.list);
-    for (const variant of form.variants) {
-      const args = files.map((f, j) => (j === i ? mutate(f, clause, shape.replace('{list}', variant)) : f));
-      assert.throws(() => assertNoClaimSkip(...args), new RegExp(`${site}: the skip names exactly`), `${site}: ${variant}`);
-    }
+  const shape = 'whose `stop.reason` is {list}, whatever Settle ran';
+  const clause = shape.replace('{list}', OR.list);
+  for (const variant of OR.variants) {
+    const args = files.map((f, j) => (j === 1 ? mutate(f, clause, shape.replace('{list}', variant)) : f));
+    assert.throws(() => assertNoClaimSkip(...args), /section 5: the skip names exactly/, `section 5: ${variant}`);
   }
   assert.throws(() => assertNoClaimSkip(files[0], mutate(files[1], KEEPS_RELEASE, '`claim-exit-4` may have written one'), files[2]), /exits 4 and 5 must keep their release/);
+  // A restated rule in driver-route.md goes red: the set, the probe, the unreadable rule, the keep-release clause.
+  for (const restated of ['`claim-exit-2`', '`claim-exit-4`', 'An absent `decisions.md` carries no such line.', 'An unreadable one counts as claimed.', KEEPS_RELEASE]) {
+    assert.throws(() => assertNoClaimSkip(`${files[0]}\n\n${restated}\n`, files[1], files[2]), /driver-route\.md restates the no-claim rule/, restated);
+  }
+  // A dropped pointer goes red, at each of its two sites in driver-route.md and in Section E.
+  for (const pointer of ROUTE_POINTERS) {
+    assert.throws(() => assertNoClaimSkip(mutate(files[0], pointer, 'x'), files[1], files[2]), /driver-route\.md pointer to section 5 missing/, pointer);
+  }
+  assert.throws(() => assertNoClaimSkip(files[0], files[1], mutate(files[2], SECTION_E_POINTER, 'x')), /Section E must point/);
+  // Section E re-listing a claim-exit goes red.
+  assert.throws(() => assertNoClaimSkip(files[0], files[1], mutate(files[2], 'that took no claim (', 'that took no claim after `claim-exit-3` (')), /Section E restates/);
+});
+
+test('#5232 the no-claim pointer and Blocked stops extractions hold on a CRLF checkout', () => {
+  const { raw, text } = crlfCheckoutRead(ROUTE);
+  assert.notEqual(raw, text, 'the raw copy carries CRLF');
+  assert.ok(raw.includes('\r\n'));
+  assert.deepEqual(blockedStops(text), blockedStops(routeText()));
+  assertNoClaimSkip(text, readText(GATE_FILE), readText(SECTION_E_FILE));
+});
+
+// #5232: the driver route's blocked stop is the one named exception to "Settle never runs in dispatch's main thread",
+// stated where that rule is, in settle-and-merge.md and SKILL.md Step 6; and Step 5 names the one policy call.
+const SETTLE_FILE = path.join(DISPATCH, 'settle-and-merge.md');
+const SETTLE_EXCEPTION_FACTS = [
+  [/never in dispatch's main thread, except the driver route's `blocked` stop \(`driver-route\.md`'s Outcome words\), where no Task call exists for the group/, 'settle-and-merge.md names the driver route blocked stop as the exception'],
+];
+const STEP6_EXCEPTION_FACTS = [
+  [/never reads it on their behalf and gains nothing by reading it up front \(#2423\) — except the driver route's `blocked` stop, which runs Settle here because no Task call exists for that group \(the driver route's Outcome words\)/, 'SKILL.md Step 6 names the driver route blocked stop as the exception'],
+];
+const ONE_CALL_FACTS = [
+  [/read in the one `--values express-lane express-driver` call above, not a second one/, 'the Express lane paragraph names the one express-lane express-driver call'],
+];
+const step6 = (text) => between(text, 
+'### Step 6: Settle', '## Reporting');
+
+test('#5232 settle-and-merge.md names the driver route blocked stop as the exception to its main-thread rule', () => {
+  const text = readText(SETTLE_FILE);
+  assert.deepEqual(missingFactsOf(SETTLE_EXCEPTION_FACTS)(text), []);
+  assertEachFactGoesRed(text, SETTLE_EXCEPTION_FACTS);
+});
+
+test('#5232 SKILL.md Step 6 names the driver route blocked stop as the exception to the dispatching session never running Settle', () => {
+  const text = step6(readText(SKILL));
+  assert.deepEqual(missingFactsOf(STEP6_EXCEPTION_FACTS)(text), []);
+  assertEachFactGoesRed(text, STEP6_EXCEPTION_FACTS);
+});
+
+test('#5232 SKILL.md Step 5 names the one express-lane express-driver policy call in the Express lane paragraph', () => {
+  const text = step5(readText(SKILL));
+  assert.deepEqual(missingFactsOf(ONE_CALL_FACTS)(text), []);
+  assertEachFactGoesRed(text, ONE_CALL_FACTS);
 });
