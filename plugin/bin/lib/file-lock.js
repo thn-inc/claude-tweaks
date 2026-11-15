@@ -11,11 +11,11 @@
 const fs = require('fs');
 const path = require('path');
 
-// Overridable via CLAUDE_TWEAKS_LOCK_WAIT_MS — same test-only knob
-// context.js's resolveLockWaitMs documents. The env var is that test-only
-// knob: a caller that holds the lock across a long call passes `waitMs` to
-// acquireLock/withLock instead (plugin/bin/lib/docs-health/commit-ref.js's
-// deepenShallowClone does, #2988), never an env swap.
+// Overridable via CLAUDE_TWEAKS_LOCK_WAIT_MS — the same test-only knob
+// context.js's resolveLockWaitMs documents; a caller that holds the lock across
+// a long call passes `waitMs` to acquireLock/withLock instead
+// (plugin/bin/lib/docs-health/commit-ref.js's deepenShallowClone does, #2988),
+// never an env swap.
 function resolveLockWaitMs() {
   const raw = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   const n = Number(raw);

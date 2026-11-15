@@ -10,9 +10,18 @@ const { execFileSync } = require('child_process');
 // FIXTURE_TIMEOUT_MS rationale).
 const GIT_TIMEOUT_MS = 30000;
 
+// A copy of `env` without the four variables that repoint git at another
+// repository, so one the test runner inherited cannot redirect a fixture call.
+function withoutAmbientGitVars(env) {
+  const out = { ...env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete out[k];
+  return out;
+}
+
 function git(cwd, args, input) {
   return execFileSync('git', args, {
     cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: 'pipe', input,
+    env: withoutAmbientGitVars(process.env),
   });
 }
 
@@ -80,4 +89,6 @@ function makeAmbiguousRepo() {
   throw new Error('makeAmbiguousRepo: no shared 4-character commit prefix — fixture is broken');
 }
 
-module.exports = { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo };
+module.exports = {
+  git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo, withoutAmbientGitVars,
+};

@@ -38,14 +38,23 @@ test('acquireLock: parent directory missing -> creates it and still acquires the
 function acquireOnVirtualClock(lockPath, opts) {
   const realNow = Date.now;
   let virtual = 0;
-  Date.now = () => { virtual += 25; return virtual; };
+  let first = null;
+  Date.now = () => { virtual += CLOCK_STEP_MS; if (first === null) first = virtual; return virtual; };
   try {
     const result = acquireLock(lockPath, opts);
-    return { result, elapsed: virtual };
+    // The first read is the one that sets the deadline, so `waited` is the
+    // wait acquireLock chose, independent of how often its loop reads the clock.
+    return { result, waited: virtual - first };
   } finally {
     Date.now = realNow;
   }
 }
+const CLOCK_STEP_MS = 25;
+// The loop exits on the first read at or past the deadline: at most a few steps over.
+const assertWaited = (waited, wait) => assert.ok(
+  waited >= wait && waited <= wait + 4 * CLOCK_STEP_MS,
+  `waited ${waited} virtual ms, expected ${wait}..${wait + 4 * CLOCK_STEP_MS}`,
+);
 
 test('acquireLock: an explicit waitMs wins over CLAUDE_TWEAKS_LOCK_WAIT_MS', () => {
   const lockPath = path.join(tmpDir(), '.x.lock');
@@ -53,9 +62,9 @@ test('acquireLock: an explicit waitMs wins over CLAUDE_TWEAKS_LOCK_WAIT_MS', () 
   const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '0';
   try {
-    const { result, elapsed } = acquireOnVirtualClock(lockPath, { waitMs: 150 });
+    const { result, waited } = acquireOnVirtualClock(lockPath, { waitMs: 150 });
     assert.equal(result, null);
-    assert.ok(elapsed >= 150, `gave up after only ${elapsed} virtual ms`);
+    assertWaited(waited, 150);
   } finally {
     if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
     else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prev;
@@ -69,13 +78,40 @@ test('acquireLock: with no waitMs the env var still applies', () => {
   const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '0';
   try {
-    const { result, elapsed } = acquireOnVirtualClock(lockPath, {});
+    const { result, waited } = acquireOnVirtualClock(lockPath, {});
     assert.equal(result, null);
-    assert.ok(elapsed < 100, `waited ${elapsed} virtual ms despite CLAUDE_TWEAKS_LOCK_WAIT_MS=0`);
+    assertWaited(waited, 0);
   } finally {
     if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
     else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prev;
     releaseLock(held);
+  }
+});
+
+test('acquireLock: waitMs 0 is honoured; a negative, fractional or string waitMs falls back to the env rule', () => {
+  const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '200';
+  try {
+    const cases = [
+      [{ waitMs: 0 }, 0],
+      [{ waitMs: -5 }, 200],
+      [{ waitMs: 1.5 }, 200],
+      [{ waitMs: '1000' }, 200],
+    ];
+    for (const [opts, expected] of cases) {
+      const lockPath = path.join(tmpDir(), '.x.lock');
+      const held = acquireLock(lockPath);
+      try {
+        const { result, waited } = acquireOnVirtualClock(lockPath, opts);
+        assert.equal(result, null);
+        assertWaited(waited, expected);
+      } finally {
+        releaseLock(held);
+      }
+    }
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+    else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prev;
   }
 });
 

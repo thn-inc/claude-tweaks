@@ -8,7 +8,9 @@ const {
   verifyCommits, defaultGit, OUTCOMES, DEEPEN_LOCK_FILENAME, TIMEOUT_MARKER_FILENAME,
   DEEPEN_TIMEOUT_MS, LOCK_WAIT_MARGIN_MS,
 } = require('../../../plugin/bin/lib/docs-health/commit-ref');
-const { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo } = require('./commit-fixtures');
+const {
+  git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo, withoutAmbientGitVars,
+} = require('./commit-fixtures');
 
 const outcomeOf = (result, input) => result.commits.find((c) => c.input === input).outcome;
 
@@ -291,7 +293,12 @@ test('AC3.1, AC3.2: the deepen lock is acquired with waitMs DEEPEN_TIMEOUT_MS + 
     return defaultGit(args, opts);
   };
   const calls = [];
-  const lock = (lockPath, opts) => { calls.push({ lockPath, opts }); return null; };
+  // Records the env var as seen at call time: a write put back after the call
+  // (the old set-then-restore swap) is invisible to the post-call comparison.
+  const lock = (lockPath, opts) => {
+    calls.push({ lockPath, opts, envAtCall: process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS });
+    return null;
+  };
   const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '42';
   try {
@@ -299,6 +306,7 @@ test('AC3.1, AC3.2: the deepen lock is acquired with waitMs DEEPEN_TIMEOUT_MS + 
     verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: failingGit, lock });
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0].opts.waitMs, DEEPEN_TIMEOUT_MS + LOCK_WAIT_MARGIN_MS);
+    assert.strictEqual(calls[0].envAtCall, '42');
     assert.deepStrictEqual({ ...process.env }, before);
   } finally {
     if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
@@ -314,7 +322,7 @@ test('verifyCommits runs git with the injected env', () => {
     root,
     hashes: [head],
     integrationBranch: 'main',
-    env: { ...process.env, GIT_DIR: path.join(origin.dir, '.git') },
+    env: { ...withoutAmbientGitVars(process.env), GIT_DIR: path.join(origin.dir, '.git') },
   });
   assert.strictEqual(outcomeOf(r, head), 'reachable');
 });
