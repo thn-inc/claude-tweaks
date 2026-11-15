@@ -4,11 +4,16 @@
 // bin/lib/init/release-bootstrap.js's bootstrapRelease: one JSON line on
 // stdout, exit 0 on every verdict (conflict and skipped are outcomes the
 // step reports, not failures), 2 on usage, 1 on an unexpected throw.
+// Exports { run, main, parseArgs, realDeps }: run(argv, deps) returns the exit code and
+// reaches the outside world only through deps (stdout, stderr, cwd, env) — the entry
+// contract is .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md; main(argv)
+// is run(argv, realDeps).
 //
 //   node bin/release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type> --extra-file <path>] [--dry-run]
 'use strict';
 
 const fs = require('fs');
+const { fsPath } = require('./lib/health-core/io');
 const { bootstrapRelease, containsActionsExpression, RELEASE_TYPE_VALUES } = require('./lib/init/release-bootstrap');
 const { isValidBranchName } = require('./lib/branch-name');
 
@@ -17,7 +22,7 @@ const VALUE_FLAGS = new Set(['--root', '--branch', '--integration-model', '--rel
 const VALID_INTEGRATION_MODELS = new Set(['pr-first', 'local-merge', 'unresolved', '']);
 
 function parseArgs(argv) {
-  const opts = { root: process.cwd(), branch: 'main', dryRun: false, integrationModel: undefined, releaseType: undefined, extraFile: undefined, help: false };
+  const opts = { root: undefined, branch: 'main', dryRun: false, integrationModel: undefined, releaseType: undefined, extraFile: undefined, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; continue; }
@@ -57,29 +62,46 @@ function parseArgs(argv) {
   return opts;
 }
 
-function main(argv) {
+function run(argv, deps = {}) {
+  const d = { ...realDeps, ...deps };
   const opts = parseArgs(argv);
-  if (opts.error) { process.stderr.write(`${opts.error}\n${USAGE}`); return 2; }
-  if (opts.help) { process.stdout.write(USAGE); return 0; }
+  if (opts.error) { d.stderr(`${opts.error}\n${USAGE}`); return 2; }
+  if (opts.help) { d.stdout(USAGE); return 0; }
+  // The injected cwd is read only when it is needed (no --root, or a relative one), so an absolute
+  // --root never touches a deleted working directory; the message keeps the argument as typed. An
+  // empty string stays "not a directory" (the join would turn it into the cwd).
+  let root;
+  if (opts.root === '') root = '';
+  else if (opts.root === undefined) root = d.cwd();
+  else root = fsPath(d, opts.root);
   let stat;
-  try { stat = fs.statSync(opts.root); } catch { stat = null; }
+  try { stat = fs.statSync(root); } catch { stat = null; }
   if (!stat || !stat.isDirectory()) {
-    process.stderr.write(`root is not a directory: ${opts.root}\n${USAGE}`);
+    d.stderr(`root is not a directory: ${opts.root === undefined ? root : opts.root}\n${USAGE}`);
     return 2;
   }
   try {
     const result = bootstrapRelease({
-      root: opts.root, integrationModel: opts.integrationModel, branch: opts.branch, dryRun: opts.dryRun,
-      releaseType: opts.releaseType, extraFile: opts.extraFile,
+      root, integrationModel: opts.integrationModel, branch: opts.branch, dryRun: opts.dryRun,
+      releaseType: opts.releaseType, extraFile: opts.extraFile, env: d.env,
     });
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    d.stdout(`${JSON.stringify(result)}\n`);
     return 0;
   } catch (e) {
-    process.stderr.write(`release-bootstrap: ${e && e.message ? e.message : String(e)}\n`);
+    d.stderr(`release-bootstrap: ${e && e.message ? e.message : String(e)}\n`);
     return 1;
   }
 }
 
-if (require.main === module) process.exitCode = main(process.argv.slice(2));
+function main(argv) { return run(argv, realDeps); }
 
-module.exports = { main, parseArgs };
+const realDeps = {
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  get env() { return process.env; },
+};
+
+module.exports = { run, main, parseArgs, realDeps };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

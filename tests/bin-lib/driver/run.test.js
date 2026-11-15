@@ -5975,6 +5975,37 @@ test('merge is entered on green: with a supplier, the live label read comes firs
   assert.ok(!ghMergeCalls(h));
 });
 
+test('realDeps.createJudgments builds the production supplier: a function from { deps, shared }', () => {
+  const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+  assert.equal(typeof realDeps.createJudgments, 'function');
+  assert.equal(typeof realDeps.createJudgments({ deps: {}, shared: {} }), 'function');
+});
+
+test('mergeStep builds the supplier from deps.createJudgments over the merge deps and the run\'s shared state, and it beats deps.judgments', async () => {
+  const seen = [];
+  const judged = [];
+  const h = harness({
+    deps: {
+      createJudgments: (opts) => { seen.push(opts); return async () => { judged.push(1); }; },
+      judgments: async () => { throw new Error('the injected supplier must not be consulted'); },
+    },
+    script: [[on('gh', 'issue', 'view'), (c) => JSON.stringify(c.args.at(-1) === 'labels' ? { labels: [] } : issueFor(7))]],
+  });
+  const shared = newShared();
+  await driveRecord(7, shared, h.deps, STEPS);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].shared, shared);
+  assert.equal(typeof seen[0].deps.emit, 'function', 'the merge deps, with the step\'s emit');
+  assert.equal(h.lines().at(-1).merge.reason, 'not-authorized');
+  assert.deepEqual(judged, []);
+});
+
+test('mergeStep with neither deps.createJudgments nor deps.judgments still reports no-supplier', async () => {
+  const h = harness({ deps: { createJudgments: undefined, judgments: undefined } });
+  await driveRecord(7, newShared(), h.deps, STEPS);
+  assert.equal(h.lines().at(-1).merge.reason, 'no-supplier');
+});
+
 test('the summary step sets ctx.summaryLogged: true on the ok path, false when its log entry fails', async () => {
   const seen = async (script) => {
     const ctxs = [];

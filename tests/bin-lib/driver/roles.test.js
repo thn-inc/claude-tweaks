@@ -3,7 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling } = require(path.join(LIB, 'driver', 'roles.js'));
+const { conformsTo } = require(path.join(LIB, 'driver', 'worker.js'));
+const { ROLES, RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling } = require(path.join(LIB, 'driver', 'roles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
 const ALLOW_EDIT_ONLY = ['Read', 'Edit', 'Write'];
@@ -213,6 +214,62 @@ test('AC1: no role ever carries a bypass, in arguments or settings', () => {
     assert.ok(!text.includes('bypassPermissions'));
     assert.ok(!text.includes('--setting-sources'));
   }
+});
+
+test('AC1: every role but the implementer launches with no Bash, Edit or Write', () => {
+  for (const role of Object.keys(ROLES)) {
+    if (role === 'implementer') continue;
+    for (const p of ['darwin', 'linux', 'win32']) {
+      assert.deepEqual(toolsFor(role, p).filter((t) => ['Bash', 'Edit', 'Write'].includes(t)), [], role + ' on ' + p);
+    }
+  }
+  for (const [role, schema] of [['merge-check', MERGE_CHECK_RESULT_SCHEMA], ['acceptance', ACCEPTANCE_RESULT_SCHEMA]]) {
+    assert.deepEqual(ROLES[role], { tools: ['Read', 'Grep', 'Glob'], settings: false });
+    const args = composeArgs({ role, schema, platform: 'darwin' });
+    assert.ok(args.includes('--restricted'), role);
+    assert.equal(args[args.indexOf('--tools') + 1], 'Read,Grep,Glob', role);
+    assert.ok(!args.includes('--settings'), role);
+  }
+});
+
+test('AC1: no role has an allow rule that can run gh', () => {
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    const allow = implementerSettings({ testCommand: 'npm test', platform, readPaths: [] }).permissions.allow;
+    for (const rule of allow) {
+      assert.ok(!/^Bash\(\s*gh\b/.test(rule), rule);
+      assert.ok(!['Bash', 'Bash(*)'].includes(rule), rule);
+      assert.ok(!/^Bash\(\s*\*/.test(rule), rule);
+    }
+  }
+  for (const role of Object.keys(ROLES)) if (role !== 'implementer') assert.strictEqual(ROLES[role].settings, false, role);
+});
+
+test('merge-check and acceptance result schemas use only the launcher subset', () => {
+  assert.ok(conformsTo(MERGE_CHECK_RESULT_SCHEMA, { verdict: 'auto-merge', rationale: 'x' }));
+  assert.ok(conformsTo(MERGE_CHECK_RESULT_SCHEMA, { verdict: 'needs-human', rationale: 'x' }));
+  assert.ok(!conformsTo(MERGE_CHECK_RESULT_SCHEMA, { verdict: 'Auto-Merge', rationale: 'x' }));
+  assert.ok(!conformsTo(MERGE_CHECK_RESULT_SCHEMA, { verdict: 'auto-merge' }));
+  assert.ok(!conformsTo(MERGE_CHECK_RESULT_SCHEMA, { verdict: 'auto-merge', rationale: 'x', extra: 'y' }));
+  assert.ok(conformsTo(ACCEPTANCE_RESULT_SCHEMA, { tryIt: [], observationPlan: {}, claims: [], parentBrief: {} }));
+  assert.ok(!conformsTo(ACCEPTANCE_RESULT_SCHEMA, { tryIt: [], observationPlan: {}, claims: [] }));
+  assert.ok(!conformsTo(ACCEPTANCE_RESULT_SCHEMA, { tryIt: {}, observationPlan: {}, claims: [], parentBrief: {} }));
+  assert.deepEqual(MERGE_CHECK_RESULT_SCHEMA.required, ['verdict', 'rationale']);
+  assert.deepEqual(ACCEPTANCE_RESULT_SCHEMA.required, ['tryIt', 'observationPlan', 'claims', 'parentBrief']);
+  const types = [];
+  const walk = (n) => { if (n && typeof n === 'object') { if (typeof n.type === 'string') types.push(n.type); Object.values(n.properties || {}).forEach(walk); } };
+  for (const s of [MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA]) {
+    assert.strictEqual(s.additionalProperties, false);
+    assert.ok(Object.isFrozen(s) && Object.isFrozen(s.properties.verdict || s.properties.tryIt));
+    walk(s);
+  }
+  assert.ok(types.length >= 6);
+  for (const t of types) assert.ok(['object', 'string', 'array'].includes(t), t);
+});
+
+test('events: MERGE_STEP_NAMES carries merge-check and merge-acceptance after merge-supplier', () => {
+  const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events.js'));
+  const i = MERGE_STEP_NAMES.indexOf('merge-supplier');
+  assert.deepEqual(MERGE_STEP_NAMES.slice(i + 1, i + 3), ['merge-check', 'merge-acceptance']);
 });
 
 test('composeArgs refuses an unknown role', () => {

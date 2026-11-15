@@ -24,16 +24,8 @@ const BIN_DIR = path.join(__dirname, '..', '..', 'plugin', 'bin');
 // leaves it through #5377, which replaces its entry with a named exemption in this
 // test, with its reason, kept apart from this list.
 const NOT_YET = [
-  'blast-radius.js',
-  'declined-learning.js',
   'hooks.js',
-  'init-verify-scope.js',
-  'record-graph.js',
-  'release-bootstrap.js',
-  'residue.js',
-  'session-tmp-resolve.js',
   'verify.js',
-  'visual-decide.js',
 ];
 
 const GUARD = 'require.main === module';

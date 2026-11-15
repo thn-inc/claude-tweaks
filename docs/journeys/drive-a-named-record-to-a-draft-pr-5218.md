@@ -8,6 +8,8 @@ files:
   - plugin/bin/lib/driver/events.js
   - plugin/bin/lib/driver/settle.js
   - plugin/bin/lib/driver/merge.js
+  - plugin/bin/lib/driver/judgments.js
+  - plugin/bin/lib/driver/acceptance.js
   - plugin/bin/lib/driver/review.js
   - plugin/bin/lib/driver/launch.js
 ---
@@ -15,9 +17,9 @@ files:
 # Drive a Named Record to a Draft PR
 
 **Persona:** a maintainer who has an eligible, express-sized record. They want it built and opened as a draft PR with CI read, with no model session in charge of the steps, and they will judge the cost and wall clock from the report afterwards.
-**Goal:** name one or more records on the command line and get back, for each, a draft PR (or a clear reason there is none) and a one-line outcome. Nothing merges unless a judgment supplier is configured (none is by default), and no step runs twice.
+**Goal:** name one or more records on the command line and get back, for each, a draft PR (or a clear reason there is none) and a one-line outcome. Nothing merges unless the record carries `auto:merge` and the judgment workers clear it, and no step runs twice.
 **Entry point:** `node plugin/bin/drive.js #N [#M…]` in the main checkout of a repository whose `.claude-tweaks/policy.yml` enables `express-driver`.
-**Success state:** each record's final event line reads `pending-review` with a PR number and a `ci` word, and `{run-dir}/driver-events.jsonl` holds the same lines that stdout showed. With no supplier configured (the default), the draft PR waits for a human and the driver has merged and marked ready nothing; step 7 covers a run with a supplier.
+**Success state:** each record's final event line reads `pending-review` with a PR number and a `ci` word, and `{run-dir}/driver-events.jsonl` holds the same lines that stdout showed. For a record without `auto:merge`, or one the judgment workers do not clear, the draft PR waits for a human and the driver has merged and marked ready nothing; step 7 covers a run that merges.
 
 ## Steps
 
@@ -82,7 +84,7 @@ files:
 - **Should understand:**
   - Once the branch is pushed, a failure of `gh pr create` (after its one retry, which first looks for an open PR on the branch), `record-pr` or `set-config` ends the record `blocked`, because a pushed branch cannot escalate. So does a `git push` that reported a failure while `origin/drive-record-{n}` already holds the checked HEAD.
   - A failed summary entry still ends the record `pending-review`.
-- **Red flags:** two PRs for one record after a transient `gh` failure; a PR that is not a draft at this step; a ready-for-review flip or a merge call before step 7, or at all when no supplier is configured.
+- **Red flags:** two PRs for one record after a transient `gh` failure; a PR that is not a draft at this step; a ready-for-review flip or a merge call before step 7, or at all for a record without `auto:merge`.
 
 ### 5. Read the outcome — the CI wait and the final line
 - **URL:** the `ci` event line and the final line `{ outcome, msTotal, msWithoutCi, pr, ci, stop, … }`
@@ -116,11 +118,11 @@ files:
   An interrupt inside the settle window reports `ci: pending`, never the unsettled read that came just before it.
 - **Red flags:** a worker process still running after the driver exited; an interrupt during the CI wait reported `blocked`, or reported with a `green` read taken before the window passed.
 
-### 7. Merge it — when a judgment supplier is configured
+### 7. Merge it — when the judgment workers clear the record
 - **URL:** the `merge-entry` … `merge-*` sub-step event lines, the `merge` event line, and the final line's `merge: { outcome, reason, mergeCommit, postMerge }` field
-- **Action:** read the `merge` field. After a green CI wait with no supplier configured, it reads `pending-review` / `no-supplier`, and the merge step made no call at all. With one, the step runs only after the CI wait ended `green`. The driver then:
+- **Action:** read the `merge` field. After a green CI wait, a record without `auto:merge` reads `pending-review` / `not-authorized`, and a deps object with no supplier reads `pending-review` / `no-supplier` with no call made at all. The step runs only after the CI wait ended `green`. The driver then:
   - re-reads the record's live labels for `auto:merge`;
-  - takes the supplier's verdict and confirms the verdict line in `decisions.md`;
+  - takes the judgment supplier's verdict (a read-only merge-check worker, then a read-only acceptance worker whose Try it, packet or parent brief the driver's own code posts) and confirms the verdict line in `decisions.md`;
   - checks closing links and composes the subject;
   - marks the PR ready;
   - reads the merge state and checks, then merges, arms or stops.
@@ -141,13 +143,20 @@ files:
     4. Worktree and local branch removal.
     5. The remote branch delete.
   - Watch time counts as CI wait, so `msWithoutCi` still excludes it. A signal during the supplier call or the watch makes no further call.
+  - The judgment workers fail closed. Any of these returns `needs-human`, which ends `pending-review` / `verdict-not-confirmed`, with no ready or merge call:
+    - a worker that timed out, failed, was killed at a ceiling or returned anything but an exact `auto-merge` / `needs-human`;
+    - a verdict line `decisions.md` does not confirm;
+    - a sensitive path, a failed blast radius or a diff over the prompt cap (`diff-truncated`), decided by code before any launch.
+  - An acceptance that did not complete ends `pending-review` / `acceptance-not-completed`.
+  - The pending label the driver applies is `accept:pending`, on the parent for a `due` gate above the oversight floor and on the record for an above-floor record with no parent.
 - **Red flags:**
-  - A merge or ready call with no supplier configured.
+  - A merge or ready call for a record without `auto:merge`, or after a judgment worker's verdict that was not a confirmed `auto-merge`.
   - A merge after a red or pending read.
   - A `--match-head-commit` other than the checked head.
   - `--admin` or `--delete-branch` anywhere.
   - A remote delete of the integration branch.
   - `merged` reported from a merge call's exit code without the confirmation read.
+  - A Try it comment, parent brief or acceptance packet posted, or `accept:pending` applied, after a worker-written field carried a credential-shaped value or the packet's render dropped or screened a claim. Each of these stops the acceptance before any label or post, so the record ends `pending-review` / `acceptance-not-completed`.
 
 ## Origin
 - Created during the build of #5218 (run `2026-11-12T104316-spec-5218`), the pipeline driver's second unit. It drives the express lane's steps 1–8 and 10 as code over the #5217 worker launcher; step 9 (merge) is deliberately absent.
@@ -162,5 +171,7 @@ files:
 - Updated during the build of #5414 (run `2026-11-14T153732-spec-5414-5415`). Step 3 now lists the moved-HEAD or unreadable-HEAD stop after a worker launch, says the fix round stops when its commit finds nothing to commit, and adds a red flag for a worker's own commit reaching the branch.
 - Updated during the build of #5415 (run `2026-11-14T153732-spec-5414-5415`). Step 3 now lists the newly-set index-flag stop and the `core.ignoreStat` worktree refusal.
 - Updated during the build of #5224 (run `2026-11-14T212211-spec-5224`). Step 2 now covers the driver's lane bounds and the refusal of a record beyond the express bounds when the reviewer step is off for it, including the eligibility stop that names both reasons. Step 3 now covers when `check` gets `--max-lines`, and no longer says the review step never runs under its default. Matching red flags were added.
+- Updated during the build of #5228 (run `2026-11-14T212212-spec-5228`). The production deps now carry the judgment supplier, so the goal, the success state and step 7 describe a driven record that can merge. Step 7 names the read-only merge-check and acceptance workers, their fail-closed outcomes and the `accept:pending` label. Measuring the judge after a prompt change is journey `re-measure-the-merge-check-judge-after-a-prompt-change-5228`.
+- Updated at wrap-up of #5228, after the review fixes: step 7 gains a red flag for an acceptance post or label made after a credential-shaped worker field or a partial packet, both of which now stop the acceptance before any label or post.
 - Updated during the build of #5454 (run `2026-11-14T213352-spec-5454`). Step 3 now lists the test-step tree stop. After a green or verdict-less test run, a tracked file that differs from HEAD, or a new file in the worktree, stops the record. A red run keeps its red-tests stop, and a verdict-less stop also names why the run gave no verdict.
 - Updated during the build of #5458 (run `2026-11-15T122114-spec-5458`). Step 3 now says the push also needs the branch ref at the checked `head`, and lists the branch-ref stop, which catches a branch switch or detached HEAD at the same commit made before the driver commits. The matching red flag was widened.

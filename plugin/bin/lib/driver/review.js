@@ -1175,6 +1175,7 @@ async function reviewRecord(ctx, deps, wiring) {
 }
 
 module.exports = {
+  codeSuffix,
   MAX_FINDINGS,
   EVIDENCE_PATH_MAX_CHARS,
   EVIDENCE_CONTENT_MAX_BYTES,
@@ -1197,6 +1198,7 @@ module.exports = {
   runEvidence,
   treeDelta,
   normalizeEventText,
+  truncateUtf8,
   buildReviewerPrompt,
   buildFixPrompt,
   reviewPass,
