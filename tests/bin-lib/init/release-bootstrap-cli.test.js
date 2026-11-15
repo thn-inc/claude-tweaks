@@ -107,6 +107,23 @@ test('--help prints the usage line on stdout and exits 0', () => {
   assert.equal(r.stderr, '');
 });
 
+// A deleted working directory makes the real cwd() throw; the CLI reads it only where a default or relative root needs it.
+const THROWING_CWD = { cwd: () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); } };
+
+test('a throwing deps.cwd() does not break an absolute --root or --help', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"name":"x"}');
+  const r = run(['--root', root, '--integration-model', 'local-merge', '--dry-run'], { deps: THROWING_CWD });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.verdict, 'fresh');
+  assert.equal(out.releaseType, 'node');
+  assert.deepEqual(out.written, ['release-please-config.json', '.release-please-manifest.json']);
+  const h = run(['--help'], { deps: THROWING_CWD });
+  assert.equal(h.status, 0, h.stderr);
+  assert.ok(h.stdout.startsWith('usage: release-bootstrap.js'), h.stdout);
+});
+
 test('a relative --root that is not a directory prints the argument as given', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
   const r = run(['--integration-model', 'local-merge', '--root', 'nope'], { cwd: parent });

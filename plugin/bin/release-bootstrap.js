@@ -13,6 +13,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { resolveAgainst } = require('./lib/health-core/io');
 const { bootstrapRelease, containsActionsExpression, RELEASE_TYPE_VALUES } = require('./lib/init/release-bootstrap');
 const { isValidBranchName } = require('./lib/branch-name');
@@ -21,8 +22,8 @@ const USAGE = 'usage: release-bootstrap.js --integration-model <pr-first|local-m
 const VALUE_FLAGS = new Set(['--root', '--branch', '--integration-model', '--release-type', '--extra-file']);
 const VALID_INTEGRATION_MODELS = new Set(['pr-first', 'local-merge', 'unresolved', '']);
 
-function parseArgs(argv, { cwd } = realDeps) {
-  const opts = { root: cwd(), branch: 'main', dryRun: false, integrationModel: undefined, releaseType: undefined, extraFile: undefined, help: false };
+function parseArgs(argv) {
+  const opts = { root: undefined, branch: 'main', dryRun: false, integrationModel: undefined, releaseType: undefined, extraFile: undefined, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; continue; }
@@ -64,12 +65,17 @@ function parseArgs(argv, { cwd } = realDeps) {
 
 function run(argv, deps = {}) {
   const d = { ...realDeps, ...deps };
-  const opts = parseArgs(argv, d);
+  const opts = parseArgs(argv);
   if (opts.error) { d.stderr(`${opts.error}\n${USAGE}`); return 2; }
   if (opts.help) { d.stdout(USAGE); return 0; }
-  // A given --root joins onto the injected cwd for the stat and the bootstrap; the message keeps the
-  // argument as typed. An empty string stays "not a directory" (the join would turn it into the cwd).
-  const root = opts.root === '' ? '' : resolveAgainst(d.cwd(), opts.root);
+  // The injected cwd is read only when it is needed (no --root, or a relative one), so an absolute
+  // --root never touches a deleted working directory; the message keeps the argument as typed. An
+  // empty string stays "not a directory" (the join would turn it into the cwd).
+  let root;
+  if (opts.root === '') root = '';
+  else if (opts.root === undefined) root = d.cwd();
+  else if (path.parse(opts.root).root) root = opts.root;
+  else root = resolveAgainst(d.cwd(), opts.root);
   let stat;
   try { stat = fs.statSync(root); } catch { stat = null; }
   if (!stat || !stat.isDirectory()) {
