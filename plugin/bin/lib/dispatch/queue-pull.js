@@ -328,6 +328,7 @@ function makeContext(options = {}, deps = {}) {
     groupSizeGuard: '',
     bundleCap: '',
     foreignStates: inputs.foreignStates || env.DISPATCH_FOREIGN_STATES,
+    shippedUnreadable: [], // #5304: '#N (cause)' claims the shipped pass could not read; the neighbour pass reports them
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     standaloneDir: '',
     integrationBranch: '',
@@ -459,9 +460,17 @@ function runBlocked(ctx) {
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
     // resolve-foreign-blockers.js through the library's own bounded spawn (tests inject
     // deps.foreignDeps.spawn).
+    // #5304: on files the ignored states file's Warning stays; the CLI lookup it falls through to
+    // (gh absent there) adds a second one, which is dropped here. The library is unchanged.
+    let statesIgnored = false;
+    const foreignStderr = (line) => {
+      if (line.startsWith('Warning: foreign blocker states file ')) statesIgnored = true;
+      else if (statesIgnored && ctx.options.transport === 'files' && line.startsWith('Warning: foreign blocker state lookup failed ')) return;
+      deps.stderr(line);
+    };
     const foreign = bodyForeignBlockers(eligiblePreDep, {
       statesFile: state.foreignStates,
-      stderr: deps.stderr,
+      stderr: foreignStderr,
       ...deps.foreignDeps,
     });
     const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers, foreign);
@@ -787,10 +796,9 @@ function runTargetMissing(ctx) {
   }
 }
 
-// The claim reader writeReleaseTimes asks for, built only when a candidate has a merged mention.
-function lazyClaimReader(ctx) {
-  let reader = null;
-  return { read: (n) => { if (!reader) reader = ctx.deps.createClaimReader(); return reader.read(n); } };
+// The one claim reader of a pull, shared by the shipped and neighbour-in-flight passes; built on its first read.
+function claimReader(ctx) {
+  return { read: (n) => { if (!ctx.state.claimReader) ctx.state.claimReader = ctx.deps.createClaimReader(); return ctx.state.claimReader.read(n); } };
 }
 
 // Fence 551-580: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
@@ -838,7 +846,7 @@ function runShipped(ctx) {
   step(ctx, 'shipped-probe', () => {
     const groups = readJson(paths['dispatch-groups.json']);
     const linkedPRs = readJson(linkedFile);
-    const releases = writeReleaseTimes(releasesFile, groups.flat(), linkedPRs, { log: (line) => deps.stderr(`${line}\n`), reader: lazyClaimReader(ctx) });
+    const releases = writeReleaseTimes(releasesFile, groups.flat(), linkedPRs, { log: (line) => deps.stderr(`${line}\n`), reader: claimReader(ctx), unreadable: ctx.state.shippedUnreadable });
     const toProbe = [];
     for (const c of groups.flat()) {
       const entry = linkedPRs[c.number];
@@ -932,6 +940,17 @@ const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch f
 // fence 595, byte for byte
 const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
 
+// #5304: one AUTO line per pull for the claims the two claim-reading passes could not read. The
+// shipped pass's list waits in state.shippedUnreadable for this pass, which runs after it on both
+// transports and prints the single line, also when omitted (the shipped list is then all there is).
+function reportClaimReadFailures(ctx, neighbourUnreadable) {
+  const shipped = ctx.state.shippedUnreadable;
+  const neighbour = neighbourUnreadable.map((n) => `#${n}`);
+  if (shipped.length && neighbour.length) ctx.deps.stderr(`AUTO — dispatch: claim read failed for ${[...shipped, ...neighbour].join(', ')}; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight\n`);
+  else if (neighbour.length) ctx.deps.stderr(`AUTO — dispatch: neighbour-in-flight claim read failed for ${neighbour.join(', ')}; treated as not in flight\n`);
+  else if (shipped.length) ctx.deps.stderr(`AUTO — dispatch: shipped-candidate claim read failed for ${shipped.join(', ')}; release time unknown, no downgrade\n`);
+}
+
 // Fence 591-618 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
 // written pool and claim-map FILES this pass reads (steps 1-3 are the agent's). Only the compute
 // is this pass's own: omitting the pass skips it (and so its appends and AUTO line), while the pool
@@ -956,16 +975,19 @@ function runNeighbourInFlight(ctx) {
     const count = step(ctx, 'in-flight-count', () => readJson(f.inFlightRaw).length);
     if (count.ok && count.value >= 200) deps.stderr(`${IN_FLIGHT_CAP_WARNING}\n`);
   }
-  if (omit.has('neighbour-in-flight')) return;
-  const computed = step(ctx, 'neighbour-in-flight', () => {
-    const candidates = readJson(paths['dispatch-groups.json']).flat();
-    const inFlight = readJson(f.inFlightRaw);
-    const readClaimContent = onGh ? deps.createClaimReader().read : claimReaderFromMap(readJson(f.inFlightClaims));
-    const { exclusions, unreadable } = neighbourInFlightExclusions({ candidates, inFlight, readClaimContent, now: deps.now().getTime() });
-    for (const e of exclusions) appendExclusion(paths['dispatch-exclusions.json'], e);
-    if (unreadable.length) deps.stderr(`AUTO — dispatch: neighbour-in-flight claim read failed for #${unreadable.join(', #')}; treated as not in flight\n`);
-  });
-  if (!computed.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit 1); see error above.');
+  let unreadable = [];
+  if (!omit.has('neighbour-in-flight')) {
+    const computed = step(ctx, 'neighbour-in-flight', () => {
+      const candidates = readJson(paths['dispatch-groups.json']).flat();
+      const inFlight = readJson(f.inFlightRaw);
+      const readClaimContent = onGh ? claimReader(ctx).read : claimReaderFromMap(readJson(f.inFlightClaims));
+      const result = neighbourInFlightExclusions({ candidates, inFlight, readClaimContent, now: deps.now().getTime() });
+      for (const e of result.exclusions) appendExclusion(paths['dispatch-exclusions.json'], e);
+      unreadable = result.unreadable;
+    });
+    if (!computed.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit 1); see error above.');
+  }
+  reportClaimReadFailures(ctx, unreadable);
 }
 
 const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];

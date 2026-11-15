@@ -30,10 +30,11 @@
 //     would hit the cache on them (NEW: beyond ledger row 1, which names the session files only).
 //   - One failed native-dependency GraphQL call (F-native) turns off two passes: the blocked pass's
 //     native filtering and, through preflight-records.js's native read, the unlanded-blocker pass
-//     (a Warning each). One failed claim fetch (F-claim) prints an AUTO line for the shipped pass and
-//     one for the neighbour pass. (NEW cross-pass effects; each pass still fails open.)
-//   - A missing or malformed DISPATCH_FOREIGN_STATES file on files prints two fail-closed Warnings:
-//     the ignored file, then the gh lookup bodyForeignBlockers still attempts with no gh.
+//     (a Warning each). (NEW cross-pass effects; each pass still fails open.)
+//   - One failed claim fetch (F-claim) printed an AUTO line for the shipped pass and one for the
+//     neighbour pass; #5304 prints one combined line per pull (both fence and module).
+//   - A missing or malformed DISPATCH_FOREIGN_STATES file on files printed two fail-closed Warnings
+//     (the ignored file, then the gh lookup with no gh); #5304 prints the ignored file's only.
 //   - A failed queue or open-numbers fetch stops the pull at the group-building check (the fetch
 //     pass's `stop`), a third and fourth stop beside Q3's corrupt-exclusions and unreadable-groups.
 //   - F-linked's single Warning (the open-linked-PR lookup failed) also turns off the shipped pass:
@@ -1958,11 +1959,37 @@ test('AC2.2 neighbour-in-flight: #9013 (a Key File shared with in-flight #7001, 
   assert.deepEqual(entriesOf(tombstone, 'neighbour-in-flight'), [], 'a released claim is not live');
 });
 
+// #5304 D1: "once per pull" must not degrade to "once per session". Two pulls over one session id
+// in one TMPDIR, both with every claim read failing: each prints its own combined line.
+test('#5304 D1: a second pull in the same session and TMPDIR prints its own combined claim line', () => {
+  inOwnTmp((own) => {
+    const sessionId = 'qp-5304-d1';
+    const sessionDir = path.dirname(sessionPaths(sessionId)['dispatch-groups.json']);
+    const pullOnce = () => {
+      const errs = [];
+      const scenario = PIPE();
+      queuePull({ sessionId, cwd: own }, {
+        run: fakeRun(scenario, { sessionDir }),
+        spawnCli: fakeSpawnCli(scenario, { 'hooks.js': { status: 0, stdout: '', stderr: '' }, 'dispatch-unlanded-blockers.js': cannedLanding([]) }),
+        queueOrder: { readOrder: () => null, writeOrder: () => ({ ok: true }) },
+        expressQueuePolicy: EXPRESS_OFF,
+        createClaimReader: () => ({ read: () => ({ failure: 'network-failure' }) }),
+        now: () => NOW,
+        stderr: (s) => errs.push(s),
+      });
+      return errs.filter((e) => e.includes('claim read failed'));
+    };
+    assert.deepEqual(pullOnce(), [`${CLAIM_READ_COMBINED}\n`]);
+    assert.deepEqual(pullOnce(), [`${CLAIM_READ_COMBINED}\n`], 'the second pull prints its own line');
+  });
+});
+
 test('#5227 neighbour: an unreadable claim prints the fence AUTO line and excludes nothing; a failed pool fetch writes [] and prints the pool AUTO line; a 200-record pool prints the cap Warning', () => {
   const unreadable = pull5(PIPE(), { deps: { createClaimReader: () => ({ read: () => ({ failure: 'git-fetch-failed' }) }) } });
   assert.deepEqual(entriesOf(unreadable, 'neighbour-in-flight'), []);
-  assert.ok(unreadable.stderr.includes('AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight\n'), unreadable.stderr);
-  assert.ok(FENCE.includes("'AUTO — dispatch: neighbour-in-flight claim read failed for #' + unreadable.join(', #') + '; treated as not in flight'"));
+  assert.ok(unreadable.stderr.includes('AUTO — dispatch: claim read failed for #9010 (git-fetch-failed), #9016 (git-fetch-failed), #7001; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight\n'), unreadable.stderr);
+  assert.equal(unreadable.errs.filter((e) => e.includes('claim read failed')).length, 1, 'one combined line per pull (#5304)');
+  assert.ok(FENCE.includes("'AUTO — dispatch: neighbour-in-flight claim read failed for ' + neighbour.join(', ') + '; treated as not in flight'"));
 
   const poolFail = pull5(withGh(PIPE(), IN_FLIGHT_ARGV, { status: 1, stdout: 'partial garbage' }));
   assert.equal(poolFail.text['dispatch-in-flight-raw.json'], '[]\n', "the fence's echo '[]' overwrites whatever the failed call printed");
@@ -3121,7 +3148,8 @@ const STOP_LINE = {
 const LANDING_SKIPPED = 'Warning: unlanded-blocker pass skipped — ';
 const LANDING_EXITED = `${LANDING_SKIPPED}preflight-records.js exited 1; no unlanded-blocker exclusions this pull`;
 const CLAIM_READ_FAILED_7001 = 'AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight';
-const FOREIGN_LOOKUP_NO_GH = 'Warning: foreign blocker state lookup failed (exit 2: resolve-foreign-blockers.js: `gh` is required) — every body-declared foreign blocker reads state unreadable (fail closed)';
+// #5304: one line per pull when both passes read unreadable claims (F-claim), naming each and both consequences.
+const CLAIM_READ_COMBINED = 'AUTO — dispatch: claim read failed for #9010 (network-failure), #9016 (network-failure), #7001; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight';
 const NEAR_DUP = 'AUTO — dispatch: near-duplicate candidates across groups: ';
 const FOREIGN_UNREADABLE = 'acme-corp/other#12 (state unreadable)';
 
@@ -3156,18 +3184,14 @@ const FAULT_EXPECT = {
   'F-prview': { status: 0, stderr: [], drops: [] },
   'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
   'F-inflight': { status: 0, stderr: [IN_FLIGHT_POOL_AUTO], drops: ['neighbour-in-flight:9013'] },
-  'F-claim': {
-    status: 0,
-    stderr: ['AUTO — dispatch: shipped-candidate claim read failed for #9010 (network-failure), #9016 (network-failure); release time unknown, no downgrade', CLAIM_READ_FAILED_7001],
-    drops: ['neighbour-in-flight:9013'],
-  },
+  'F-claim': { status: 0, stderr: [CLAIM_READ_COMBINED], drops: ['neighbour-in-flight:9013'] },
   'F-openprs': { status: 0, stderr: [], drops: [] },
   'F-writeback': { status: 0, stderr: ['Queue-order cache write-back failed (non-blocking): Command failed: git -C <SCR>/proj push origin '], drops: [] },
   'F-corrupt': { status: 1, stderr: [OPEN_STOP], entries: '{corrupt' },
   'F-groups': { status: 1, stderr: [OPEN_FILTER_WARNING, STOP_LINE.target], entries: ['blocked:9002', 'oversized:9001+9003+9016', 'not-spec-shaped:9004', 'not-spec-shaped:9007'] },
 };
 const FILES_STOPPED_NEIGHBOUR = { status: 1, stderr: [STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] };
-const FILES_FOREIGN = (why) => ({ status: 0, base: 'S2-files-miss', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`, FOREIGN_LOOKUP_NO_GH], drops: [] });
+const FILES_FOREIGN = (why) => ({ status: 0, base: 'S2-files-miss', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`], drops: [] });
 const FILES_EXPECT = {
   'files-queueRaw-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-queueRaw-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
@@ -3438,6 +3462,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
       for (const [side, r] of sides(R[id])) {
         assert.equal(r.status, 0, `${id} ${side}`);
         assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9031).detail.blockedBy, [FOREIGN_UNREADABLE], `${id} ${side}: fail closed`);
+        assert.equal(reported(r.stderr).filter((l) => l.startsWith('Warning: foreign blocker')).length, 1, `${id} ${side}: one foreign-states Warning, the ignored file's (#5304)`);
         assert.ok(reported(r.stderr).some((l) => l.startsWith('Warning: ') && l.endsWith('(fail closed)')), `${id} ${side}: a fail-closed Warning`);
       }
     }

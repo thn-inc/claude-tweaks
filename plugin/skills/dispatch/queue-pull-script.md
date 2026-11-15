@@ -54,10 +54,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" <<NODE
   fs.writeFileSync(process.argv[1], JSON.stringify(kept));
 NODE_EVAL_EOF
 
-# #3691: the MCP list_issues/issue_read tools return snake_case created_at/updated_at;
-# every reader below wants camelCase createdAt/updatedAt. This adds the camelCase keys
-# in place to each JSON file it is given, unconditionally after each fetch -- a no-op
-# on gh-shaped input, so the gh and MCP paths run the same line.
+# #3691: MCP tools return snake_case created_at/updated_at; readers want camelCase. Adds the camelCase
+# keys in place after each fetch -- a no-op on gh-shaped input, so both transports run the same line.
 alias_mcp_timestamps() {
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$@" <<NODE_EVAL_EOF
   const fs = require('fs');
@@ -187,7 +185,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" 
     : [];
   for (const dep of verifiedOpen) openNumbers.add(dep);
   // #4793: DISPATCH_FOREIGN_STATES is set only on the MCP path (mcp-transport.md); unset asks gh.
-  const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers, bodyForeignBlockers(eligiblePreDep, { statesFile: process.env.DISPATCH_FOREIGN_STATES }));
+  // #5304: after an ignored states file, the gh-less CLI lookup's Warning is dropped (the states file's stays).
+  let statesIgnored = false;
+  const stderr = (line) => { if (line.startsWith('Warning: foreign blocker states file ')) statesIgnored = true; else if (statesIgnored && line.startsWith('Warning: foreign blocker state lookup failed ')) return; process.stderr.write(line); };
+  const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers, bodyForeignBlockers(eligiblePreDep, { statesFile: process.env.DISPATCH_FOREIGN_STATES, stderr }));
   fs.writeFileSync(process.argv[4], JSON.stringify(eligible));
   fs.writeFileSync(process.argv[5], JSON.stringify(excluded));
 NODE_EVAL_EOF
@@ -465,26 +466,18 @@ NODE_EVAL_EOF
   node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_STANDALONE_DIR" --id "dispatch-target-missing-${NUM}" --file "$TMP_PROPOSAL"
 done
 
-# #1984: shipped-candidate classification. Runs unconditionally, right after
-# the #1224 open-PR and #1983 target-missing exclusions above (a candidate
-# excluded there is never re-classified here) and before the #1579 cross-PR
-# overlap report below.
-# #4314: when a mention's PR was opened before the record was created,
-# classifyShipped skips it -- a follow-up filed during that PR's build,
-# never its target.
-# #4432: a mention merged before the record's latest claim release rates weak
-# at most (a run saw the merge and left the record open). An unreadable claim
-# never downgrades.
-# Reuses $DISPATCH_LINKED_PRS's mentions (every same-repo PR that ever cross-referenced the candidate, closing keyword or not), so the base signal costs no second network round trip.
+# #1984: shipped-candidate classification, unconditional, after the #1224 and #1983 exclusions above.
+# #4314: a mention whose PR predates the record never counts. #4432: a mention merged before the latest
+# claim release rates weak at most; an unreadable claim never downgrades.
+# Reuses $DISPATCH_LINKED_PRS's mentions: no second network round trip.
 #
-# First pass: title-only classification (no changed-files fetch yet). Only a
-# `weak` result not predating the claim release is a probe candidate for the files-based upgrade below; a
-# `strong`/`none` result is final. Capped at 5 live `gh pr view` calls per pull.
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED_RELEASES" <<NODE_EVAL_EOF
+# First pass: title-only. Only a `weak` result not predating the claim release is probed (5 live `gh pr view` calls per pull at most).
+SHIPPED_UNREADABLE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED_RELEASES" <<NODE_EVAL_EOF
   const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
-  const releases = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/shipped-releases.js').writeReleaseTimes(process.argv[4], groups.flat(), linkedPRs);
+  const unreadable = [];
+  const releases = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/shipped-releases.js').writeReleaseTimes(process.argv[4], groups.flat(), linkedPRs, { unreadable });
   const toProbe = [];
   for (const c of groups.flat()) {
     const entry = linkedPRs[c.number];
@@ -494,7 +487,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
     if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
   }
   require('fs').writeFileSync(process.argv[3], JSON.stringify([...new Set(toProbe)].slice(0, 5)));
+  console.log(JSON.stringify(unreadable));
 NODE_EVAL_EOF
+)
 
 : > "$DISPATCH_SHIPPED_PR_FILES"
 for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_SHIPPED_PROBE_PRS"); do
@@ -502,10 +497,8 @@ for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPA
   node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" -- "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
 done
 
-# Second pass: final tier, with the probed files. `strong` is excluded from
-# $DISPATCH_GROUPS for this pull and logged for a staged Close proposal
-# (dispatch never closes on GitHub itself). `weak` stays eligible, logged for
-# build-time context. `none` is silent.
+# Second pass: final tier, with the probed files. `strong` is excluded and logged for a staged Close
+# proposal (dispatch never closes on GitHub itself); `weak` stays eligible; `none` is silent.
 if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" "$DISPATCH_SHIPPED_RELEASES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
@@ -548,9 +541,7 @@ else
   exit 1
 fi
 
-# Stage one Close proposal per strong-tier exclusion into this firing's own
-# standalone run dir (Step 1's $RUN_ID, resolved again here), never onto
-# GitHub directly -- the same posture as tidy's Close (GitHub) shape.
+# Stage one Close proposal per strong-tier exclusion into this firing's standalone run dir, never onto GitHub.
 DISPATCH_FIRING_RUN_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug dispatch-standalone 2>/dev/null || true)
 if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
   node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" "$(dirname "$DISPATCH_EXCLUSIONS")" <<NODE_EVAL_EOF | while IFS='=' read -r NUM FILE; do
@@ -601,7 +592,7 @@ IN_FLIGHT_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DI
 if [ "$IN_FLIGHT_COUNT" -ge 200 ]; then
   echo "Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch." >&2
 fi
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" "${SHIPPED_UNREADABLE:-[]}" <<NODE_EVAL_EOF
   const { neighbourInFlightExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
   const { createClaimReader } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -609,7 +600,12 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
     candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]), readClaimContent: createClaimReader().read, now: Date.now(),
   });
   for (const e of exclusions) appendExclusion(process.argv[3], e);
-  if (unreadable.length) console.error('AUTO — dispatch: neighbour-in-flight claim read failed for #' + unreadable.join(', #') + '; treated as not in flight');
+  // #5304: one line per pull; the shipped pass's unreadable claims (argv 4) join this pass's.
+  const shipped = JSON.parse(process.argv[4]);
+  const neighbour = unreadable.map((n) => '#' + n);
+  if (shipped.length && neighbour.length) console.error('AUTO — dispatch: claim read failed for ' + shipped.concat(neighbour).join(', ') + '; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight');
+  else if (neighbour.length) console.error('AUTO — dispatch: neighbour-in-flight claim read failed for ' + neighbour.join(', ') + '; treated as not in flight');
+  else if (shipped.length) console.error('AUTO — dispatch: shipped-candidate claim read failed for ' + shipped.join(', ') + '; release time unknown, no downgrade');
 NODE_EVAL_EOF
 NEIGHBOUR_RC=$?
 if [ "$NEIGHBOUR_RC" -ne 0 ]; then
@@ -617,21 +613,10 @@ if [ "$NEIGHBOUR_RC" -ne 0 ]; then
   exit 1
 fi
 
-# #1579: cross-PR root-cause overlap report. Runs unconditionally (both the
-# cache-hit and cache-miss branches above leave $DISPATCH_GROUPS populated),
-# read-only, and never removes anything from $DISPATCH_GROUPS or gates
-# eligibility (AC2) -- SKILL.md Step 3's Cross-PR overlap report is what
-# surfaces this file's contents, the same non-gating convention the
-# Blocked-exclusion/Oversized-group reports already use. Fetches every open
-# PR's changed files and the issue(s) it already closes/links -- a candidate
-# whose key files overlap an UNRELATED open PR (one that does not already
-# close/link that same candidate -- that pair is a re-dispatch guard, not
-# this signal's job, see grouping.js's detectCrossPRFileOverlap doc comment)
-# is a possible duplicate root-cause fix. `--limit 100` caps this to the 100
-# most-recently-updated open PRs, same truncation posture as the queue pulls
-# above (queue-pull-notes.md) -- a real risk on a repo with a large open-PR
-# backlog, accepted for the same reason: this is one informational signal
-# among several, not a correctness-critical filter.
+# #1579: cross-PR root-cause overlap report. Runs unconditionally, read-only, never gates eligibility
+# (AC2); SKILL.md Step 3 surfaces its file. A candidate whose key files overlap an UNRELATED open PR
+# (grouping.js's detectCrossPRFileOverlap) is a possible duplicate fix. `--limit 100`: the same
+# truncation posture as the queue pulls (queue-pull-notes.md), one informational signal among several.
 gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || echo '[]' > "$DISPATCH_OPEN_PRS"
 OPEN_PR_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_OPEN_PRS")
 if [ "$OPEN_PR_COUNT" -ge 100 ]; then
@@ -651,18 +636,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
   require('fs').writeFileSync(process.argv[3], JSON.stringify(overlaps));
 NODE_EVAL_EOF
 
-# #1944: cross-group near-duplicate candidate warning. Never removes anything
-# from $DISPATCH_GROUPS, so never a selection change (AC4) -- near-dup-pairs.js runs findNearDuplicates pairwise
-# across every pair of records that landed in DIFFERENT groups (a same-group
-# pair is a fast-lane bundle's members, already co-built together, and has
-# nothing new to warn about here). Each candidate that fires is logged once to
-# this firing's own decisions.md as an AUTO line naming both records and the
-# signals that fired -- the dispatcher's cue to look before dispatching both
-# in the same firing. It still removes nothing from $DISPATCH_GROUPS. Since
-# #3520 the STRONG pairs (isStrongNearDuplicate) are also written to
-# $DISPATCH_NEAR_DUP_PAIRS -- always, [] when there are none, so an earlier
-# pull's pairs are never read -- for Step 4/6 and the explicit-list line to
-# act on.
+# #1944: cross-group near-duplicate warning. Removes nothing from $DISPATCH_GROUPS (AC4). Pairs span
+# DIFFERENT groups only (a same-group pair is a fast-lane bundle, already co-built). Each firing pair is
+# logged to decisions.md as an AUTO line. Since #3520 the STRONG pairs (isStrongNearDuplicate) also go to
+# $DISPATCH_NEAR_DUP_PAIRS, always written ([] when none), for Step 4/6 and the explicit-list line.
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_NEAR_DUP_PAIRS" <<NODE_EVAL_EOF
   const { nearDuplicatePairsAcrossGroups } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/near-dup-pairs.js');
   const pairs = nearDuplicatePairsAcrossGroups(require(process.argv[1]));
