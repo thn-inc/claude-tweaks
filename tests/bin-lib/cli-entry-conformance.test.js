@@ -26,11 +26,8 @@ const BIN_DIR = path.join(__dirname, '..', '..', 'plugin', 'bin');
 const NOT_YET = [
   'blast-radius.js',
   'claude-tweaks-statusline.js',
-  'code-health.js',
   'compose-subject.js',
   'declined-learning.js',
-  'design-detect.js',
-  'docs-health.js',
   'hooks.js',
   'init-verify-scope.js',
   'install-statusline-wrapper.js',
