@@ -869,3 +869,79 @@ test('exit 1: an unclosed fence with no Release Note heading behind it keeps the
   assert.match(out.stderr, /record\(s\) #2282 carry no non-empty "## Release Note" section/);
   assert.doesNotMatch(out.stderr, /unclosed-fence/);
 });
+
+// ---- Script-entry pins (#5386): the CLI run as a real script, committed before the entry split. ----
+const { spawnCli } = require('../helpers/run-cli');
+const { STUB_SKIP } = require('../helpers/path-stub');
+
+const CLI_PATH = require('node:path').join(__dirname, '..', '..', 'plugin', 'bin', 'compose-subject.js');
+const STUB_ISSUE = {
+  number: 7,
+  title: 'Fix the widget',
+  body: '## Overview\n\nFixes the widget.\n\n## Release Note\n\nThe widget works.\n',
+  labels: [{ name: 'type:bug' }],
+  issueType: null,
+};
+// The four git variables that would point a child at the test runner's own repository.
+const GIT_REPO_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
+
+// A `gh` stub that answers exactly the calls compose-subject's success path makes for
+// `7 --repo owner/name`: `gh --version` and `gh issue view 7 …`; any other call exits 1.
+// -> { dir, env, log, cleanup }; env is process.env minus GIT_*/GH_HOST, with the stub dir first on PATH.
+function ghStubFixture() {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-subject-ghstub-'));
+  const log = path.join(dir, 'gh.log');
+  try {
+    fs.writeFileSync(path.join(dir, 'issue.json'), JSON.stringify(STUB_ISSUE));
+    const script = [
+      '#!/bin/sh',
+      `printf '%s\\n' "$*" >> '${log}'`,
+      'if [ "$1" = "--version" ]; then echo "gh version 2.0.0"; exit 0; fi',
+      `if [ "$1 $2 $3" = "issue view 7" ]; then cat '${path.join(dir, 'issue.json')}'; exit 0; fi`,
+      'echo "stub gh: unexpected call: $*" >&2',
+      'exit 1',
+      '',
+    ].join('\n');
+    fs.writeFileSync(path.join(dir, 'gh'), script);
+    fs.chmodSync(path.join(dir, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  const env = { ...process.env, PATH: dir + path.delimiter + (process.env.PATH || '') };
+  for (const k of [...GIT_REPO_VARS, 'GH_HOST']) delete env[k];
+  return { dir, env, log, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+// Proves the script entry: a real process composes a subject from a record read through a stub gh on PATH.
+test('AC5.1 AC7.1: a record with a Type and a Release Note composes a subject — exit 0, stdout asserted', { skip: STUB_SKIP }, () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const stub = ghStubFixture();
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-subject-cwd-'));
+  try {
+    const res = spawnCli(CLI_PATH, ['7', '--repo', 'owner/name'], { env: stub.env, cwd });
+    assert.equal(res.code, 0, res.stderr);
+    assert.equal(res.stdout, `${JSON.stringify({
+      title: 'fix: Fix the widget (#7)',
+      body: 'Fixes the widget.\n\nRelease-Note: The widget works.\n\nFixes #7',
+    })}\n`);
+    assert.equal(res.stderr, '');
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    stub.cleanup();
+  }
+});
+
+// Proves the script entry's refusal path: a real process exits non-zero and prints the usage on stderr.
+test('AC7.1: --bogus exits 1 with the usage on stderr', () => {
+  const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
+  const res = spawnCli(CLI_PATH, ['--bogus']);
+  assert.equal(res.code, 1);
+  assert.equal(res.stdout, '');
+  assert.equal(res.stderr, `unknown argument: --bogus\n${USAGE}`);
+});
