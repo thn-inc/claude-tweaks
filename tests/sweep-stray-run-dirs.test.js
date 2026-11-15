@@ -275,6 +275,15 @@ test('AC4.1: in-process with a fixture cwd sweeps only under that directory', ()
     const runId = '2026-08-01T090000-spec-1';
     commitPath(a, `${PIPELINES}/${runId}/work/1-spec.md`, '# 1\n');
     commitPath(b, `${PIPELINES}/${runId}/work/1-spec.md`, '# 1\n');
+    // Guard: a dry run first, so a `run` that ignores deps.cwd() fails here (it would otherwise sweep
+    // and commit in whichever checkout contains the test runner's cwd) before anything is written to git.
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-guard-'));
+    try {
+      const guard = runCliSync(CLI, ['--dry-run', '--log', path.join(logDir, 'guard.log')], { cwd: a, env: cleanEnv() });
+      assert.equal(guard.stdout.split('\n')[0], `root: ${a}`);
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
     const res = runCliSync(CLI, [], { cwd: a, env: cleanEnv() });
     assert.equal(res.code, 0);
     assert.equal(res.stderr, '');
