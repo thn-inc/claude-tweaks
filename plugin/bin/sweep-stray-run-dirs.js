@@ -34,7 +34,7 @@ const fs = require('fs');
 const path = require('path');
 const { runGit, repoPinnedEnv } = require('./lib/hooks/git-exec');
 const { splitNul } = require('./lib/git-z');
-const { resolveAgainst } = require('./lib/health-core/io');
+const { fsPath } = require('./lib/health-core/io');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { archiveRunDir, listSpecDirs } = require('./lib/reconcile/archive-merged');
 
@@ -176,13 +176,19 @@ function sweep({ root, dryRun, logPath, env = process.env }) {
 
 // Reaches the outside world only through `deps`: cwd(), env, stdout(text). The scan root, a relative
 // --root and a relative --log all resolve against deps.cwd(); the `log:` line prints the path as typed.
+// deps.cwd() is read only for those three, so an absolute --root and --log work from a deleted cwd.
 function run(argv, deps) {
   const args = parseArgs(argv);
-  const cwd = deps.cwd();
-  const root = args.root ? path.resolve(cwd, args.root) : (mainCheckoutRoot(cwd) || cwd);
+  let root;
+  if (!args.root) {
+    const cwd = deps.cwd();
+    root = mainCheckoutRoot(cwd) || cwd;
+  } else {
+    root = path.isAbsolute(args.root) ? path.resolve(args.root) : path.resolve(deps.cwd(), args.root);
+  }
   const logPath = args.logPath || path.join(root, '.claude-tweaks', 'sweep-stray-run-dirs.log');
   const result = sweep({
-    root, dryRun: args.dryRun, logPath: resolveAgainst(cwd, logPath), env: deps.env,
+    root, dryRun: args.dryRun, logPath: fsPath(deps, logPath), env: deps.env,
   });
 
   const out = (line) => deps.stdout(`${line}\n`);

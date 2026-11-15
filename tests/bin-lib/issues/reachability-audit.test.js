@@ -254,3 +254,22 @@ test('a missing relative --mcp-server path prints err.message with the path as t
   assert.strictEqual(inProc.stdout, spawned.stdout);
   assert.strictEqual(inProc.stderr, spawned.stderr);
 });
+
+// A deleted working directory: process.cwd() throws ENOENT. An absolute path never needs it.
+const deletedCwd = () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); };
+
+test('an absolute --skill / --mcp-server path works when deps.cwd() throws (deleted cwd)', () => {
+  const tmp = tmpDir();
+  const skill = path.join(tmp, 'SKILL.md');
+  fs.writeFileSync(skill, '---\nname: narrow\nallowed-tools: Read, Grep\n---\nbody\n');
+  const ok = runCliSync(CLI, ['--skill', skill], { deps: { cwd: deletedCwd } });
+  const missingSkill = runCliSync(CLI, ['--skill', path.join(tmp, 'nope', 'SKILL.md')], { deps: { cwd: deletedCwd } });
+  const missingMcp = runCliSync(CLI, ['--mcp-server', path.join(tmp, 'nope.json')], { deps: { cwd: deletedCwd } });
+  fs.rmSync(tmp, { recursive: true, force: true });
+  assert.strictEqual(ok.code, 0, ok.stderr);
+  assert.strictEqual(JSON.parse(ok.stdout).clean, true);
+  assert.strictEqual(missingSkill.code, 2);
+  assert.strictEqual(missingSkill.stderr, `reachability-audit: cannot read --skill path: ${path.join(tmp, 'nope', 'SKILL.md')} (ENOENT)\n`);
+  assert.strictEqual(missingMcp.code, 2);
+  assert.match(missingMcp.stderr, /^reachability-audit: cannot read\/parse --mcp-server path: .*nope\.json \(ENOENT: /);
+});

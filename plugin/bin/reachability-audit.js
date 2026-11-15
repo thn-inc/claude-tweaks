@@ -33,7 +33,7 @@ const path = require('path');
 const {
   auditSkillManifest, auditMcpServerConfig,
 } = require('./lib/issues/reachability-audit.js');
-const { resolveAgainst } = require('./lib/health-core/io.js');
+const { fsPath } = require('./lib/health-core/io.js');
 
 const USAGE = 'usage: reachability-audit.js --skill <path> | --mcp-server <path> [--server-name <name>]';
 
@@ -44,9 +44,10 @@ function run(argv, deps = realDeps) {
     return 2;
   };
   // Reads a relative path against deps.cwd(); a thrown fs error names the joined path, so
-  // swap it back to the spelling the caller typed.
+  // swap it back to the spelling the caller typed. An absolute path never reads deps.cwd(),
+  // so it still works from a deleted working directory.
   const read = (p) => {
-    const resolved = resolveAgainst(deps.cwd(), p);
+    const resolved = fsPath(deps, p);
     try {
       return deps.readFile(resolved);
     } catch (err) {
@@ -54,6 +55,8 @@ function run(argv, deps = realDeps) {
       throw err;
     }
   };
+  // The path a failure message names: path.resolve of an absolute path needs no cwd.
+  const shown = (p) => (path.isAbsolute(p) ? path.resolve(p) : path.resolve(deps.cwd(), p));
 
   const args = argv.slice();
   const opts = {};
@@ -75,7 +78,7 @@ function run(argv, deps = realDeps) {
     try {
       content = read(opts.skill);
     } catch (err) {
-      return fail(`cannot read --skill path: ${path.resolve(deps.cwd(), opts.skill)} (${err.code || err.message})`);
+      return fail(`cannot read --skill path: ${shown(opts.skill)} (${err.code || err.message})`);
     }
     result = auditSkillManifest(content);
   } else {
@@ -83,7 +86,7 @@ function run(argv, deps = realDeps) {
     try {
       parsed = JSON.parse(read(opts.mcpServer));
     } catch (err) {
-      return fail(`cannot read/parse --mcp-server path: ${path.resolve(deps.cwd(), opts.mcpServer)} (${err.message})`);
+      return fail(`cannot read/parse --mcp-server path: ${shown(opts.mcpServer)} (${err.message})`);
     }
     let entry = parsed;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.mcpServers) {

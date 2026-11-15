@@ -63,7 +63,10 @@ function run(argv, deps) {
   const opts = parseArgs(argv);
   if (opts.error) { deps.stderr(`${opts.error}\n${USAGE}\n`); return 2; }
   if (opts.help) { deps.stdout(`${USAGE}\n`); return 0; }
-  const root = opts.root ? path.resolve(deps.cwd(), opts.root) : deps.cwd();
+  // deps.cwd() only for a relative or absent --root: an absolute one works from a deleted cwd.
+  let root;
+  if (!opts.root) root = deps.cwd();
+  else root = path.isAbsolute(opts.root) ? path.resolve(opts.root) : path.resolve(deps.cwd(), opts.root);
   return publish(argv, {
     gh: (args, input) => deps.gh(args, input, { cwd: root, ...pickInjected(deps) }),
     git: (args) => deps.git(args, { cwd: root, env: deps.env }),

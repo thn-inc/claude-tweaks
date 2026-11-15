@@ -1121,6 +1121,25 @@ test('AC8.1: an absolute --out-dir is handed to fs unchanged even with a deps.cw
   assert.deepEqual(out.dirs, [abs]);
 });
 
+// A deleted working directory: process.cwd() throws ENOENT. `--repo --scope` and an absolute --out-dir
+// need no cwd, so the compose still exits 0, as it did before #5386 took cwd from deps. pinGhHost is
+// left out, as in fakeDeps: its real host lookup is not what this pins.
+test('--repo --scope with an absolute --out-dir composes when deps.cwd() throws (deleted cwd)', () => {
+  const { runCliSync } = require('../helpers/run-cli');
+  const abs = nodePath.join(nodeOs.tmpdir(), 'compose-subject-deleted-cwd-out');
+  const deletedCwd = () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); };
+  const { deps, out } = fakeDeps();
+  delete deps.stdout; // the helper's own collectors capture stdout and stderr
+  delete deps.stderr;
+  const res = runCliSync(CLI_PATH, ['2251', '--repo', 'o/r', '--scope', 'x', '--out-dir', abs], {
+    deps: { ...deps, cwd: deletedCwd, pinGhHost: undefined },
+  });
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(res.stdout, "'feat(x): Merge-time conventional subject (#2251)'\n");
+  assert.deepEqual(out.dirs, [abs]);
+  assert.deepEqual(Object.keys(out.files), ['title.txt', 'body.md', 'message.txt'].map((f) => nodePath.join(abs, f)));
+});
+
 // The real children, not faked seams: each gets the injected values from an env-only or cwd-only fixture.
 test('AC8.1: realDeps.ghAvailable looks `gh` up on the injected PATH', { skip: STUB_SKIP }, (t) => {
   const withGh = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-gh-present-'));

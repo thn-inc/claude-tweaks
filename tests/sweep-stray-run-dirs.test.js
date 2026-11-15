@@ -322,6 +322,24 @@ test('AC8.1: a relative --root and --log resolve against deps.cwd()', () => {
   }
 });
 
+// A deleted working directory: process.cwd() throws ENOENT. An absolute --root and --log never need it.
+test('an absolute --root and --log work when deps.cwd() throws (deleted cwd)', () => {
+  withRepos(1, (root) => {
+    commitPath(root, `${PIPELINES}/2026-08-01T090000-spec-1/work/1-spec.md`, '# 1\n');
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-deleted-cwd-'));
+    try {
+      const deletedCwd = () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); };
+      const res = runCliSync(CLI, ['--dry-run', '--root', root, '--log', path.join(logDir, 'sweep.log')], {
+        env: cleanEnv(), deps: { cwd: deletedCwd },
+      });
+      assert.equal(res.code, 0, res.stderr);
+      assert.equal(res.stdout, `root: ${root}\narchived: 1\nskipped: 0\nfailed: 0\n`);
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+});
+
 // A repo whose --root is a subdirectory, so git discovery has to ascend: an env-only
 // GIT_CEILING_DIRECTORIES (a variable repoPinnedEnv keeps) stops it, and process.env has none.
 function withSubdirRoot(body) {

@@ -272,6 +272,23 @@ test('AC8.1: a relative --root resolves against deps.cwd() for file reads and gh
   }
 });
 
+// A deleted working directory: process.cwd() throws ENOENT. An absolute --root never needs it.
+test('an absolute --root works when deps.cwd() throws (deleted cwd)', () => {
+  const root = path.join(os.tmpdir(), 'rnp-absolute-root');
+  const seen = [];
+  const deletedCwd = () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); };
+  const gh = (args, input, opts) => {
+    seen.push(opts.cwd);
+    if (args.join(' ').startsWith('release list')) return JSON.stringify([{ tagName: 'v1.3.0', publishedAt: '2026-10-02T00:00:00Z' }]);
+    throw new Error(`unexpected gh: ${args.join(' ')}`);
+  };
+  const git = (args) => { throw new Error(`unexpected git: ${args.join(' ')}`); };
+  const fail = () => { throw new Error('unexpected file access'); };
+  const res = runCliSync(CLI, ['--root', root], { deps: { cwd: deletedCwd, gh, git, readFile: fail, writeFile: fail } });
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.deepStrictEqual(seen, [root]);
+});
+
 // --- the real gh and git seams (#5386). The gh child is a stub script on an injected PATH only;
 // the real `gh` is never started. ---
 const ENTRY = require(CLI);

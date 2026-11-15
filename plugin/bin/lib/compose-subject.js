@@ -73,7 +73,7 @@ const {
 const {
   parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo, injectedGhDeps, pickInjected, withDescriptors,
 } = require('./repo-resolve');
-const { resolveAgainst } = require('./health-core/io');
+const { resolveAgainst, cwdOrUndefined } = require('./health-core/io');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
 const { parseScopePaths, resolveCommitScope, CommitScopeError } = require('./commit-scope');
@@ -314,7 +314,9 @@ function run(argv, deps = realDeps) {
   if (opts.help) { deps.stdout(USAGE); return 0; }
   // The working directory, environment, home directory and stderr every seam below runs in (#5386):
   // spawns read cwd and env; the gh host and hosts.yml lookups read env, homeDir and stderr too.
-  const cwd = deps.cwd();
+  // A cwd() that throws (a deleted working directory) degrades to undefined: each seam then falls
+  // back to the process's own cwd, as before #5386, so `--repo o/r --scope x` still composes there.
+  const cwd = cwdOrUndefined(deps);
   const injected = { cwd, ...pickInjected(deps) };
   if (!deps.ghAvailable(injected)) { deps.stderr('compose-subject.js: `gh` is required\n'); return 2; }
 
@@ -449,7 +451,8 @@ function run(argv, deps = realDeps) {
   if (opts.outDir !== null) {
     // A relative --out-dir is resolved against the injected cwd (#5386); fs sees the resolved
     // path, so an error message naming it is swapped back to the spelling the caller typed.
-    const outDir = resolveAgainst(cwd, opts.outDir);
+    // With no cwd, fs gets the path as typed, as before #5386.
+    const outDir = cwd === undefined ? opts.outDir : resolveAgainst(cwd, opts.outDir);
     const names = ['title.txt', 'body.md', 'message.txt'];
     const texts = [composed.title, composed.body, `${composed.title}\n\n${composed.body}`];
     const files = names.map((name, i) => ({ resolved: path.join(outDir, name), typed: path.join(opts.outDir, name), text: texts[i] }));
