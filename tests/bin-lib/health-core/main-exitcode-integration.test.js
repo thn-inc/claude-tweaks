@@ -84,10 +84,35 @@ function captureStdio(fn) {
   }
 }
 
+// harness-health.js and journey-health.js are on the entry contract (#5380): main() returns the
+// exit code and never sets process.exitCode, so their rows assert the return value and that
+// process.exitCode is untouched.
+function returnedCode(fn) {
+  const original = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    const code = fn();
+    assert.strictEqual(process.exitCode, undefined, 'main() must not set process.exitCode');
+    return code;
+  } finally {
+    process.exitCode = original;
+  }
+}
+
+test('harness-health.js main(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
+  const root = tmpGitRootWithOneRun('harness-health-churn-', 'harness-health');
+  const code = returnedCode(() => captureStdio(() => harnessHealth.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
+test('journey-health.js main(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
+  const root = tmpGitRootWithOneRun('journey-health-churn-', 'journey-health');
+  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
 const CHURN_REPORT_CLIS = [
   ['code-health', codeHealth],
-  ['harness-health', harnessHealth],
-  ['journey-health', journeyHealth],
   ['docs-health', docsHealth],
 ];
 
@@ -101,9 +126,19 @@ for (const [name, mod] of CHURN_REPORT_CLIS) {
   });
 }
 
+test('harness-health.js main(): mark <fingerprint> <bad-status> returns 2', () => {
+  const root = tmpRoot('harness-health-mark-');
+  const code = returnedCode(() => captureStdio(() => harnessHealth.main(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
+test('journey-health.js main(): mark <fingerprint> <bad-status> returns 2', () => {
+  const root = tmpRoot('journey-health-mark-');
+  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
 const MARK_CLIS = [
-  ['harness-health', harnessHealth],
-  ['journey-health', journeyHealth],
   ['docs-health', docsHealth],
   // code-health.js has no `mark` command (confirmed: cmdMark is not
   // required/dispatched there) -- deliberately excluded, per the record's
@@ -120,10 +155,36 @@ for (const [name, mod] of MARK_CLIS) {
   });
 }
 
+test('harness-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
+  const root = tmpRoot('harness-health-retryq-missing-');
+  const code = returnedCode(() => captureStdio(() => harnessHealth.main(['retry-queue', 'update', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
+test('harness-health.js main(): retry-queue update with an unparseable results file returns 1', () => {
+  const root = tmpRoot('harness-health-retryq-malformed-');
+  const resultsPath = path.join(root, 'results.json');
+  fs.writeFileSync(resultsPath, 'not valid json {{{');
+  const code = returnedCode(() => captureStdio(() => harnessHealth.main(['retry-queue', 'update', resultsPath, '--root', root])));
+  assert.strictEqual(code, 1);
+});
+
+test('journey-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
+  const root = tmpRoot('journey-health-retryq-missing-');
+  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['retry-queue', 'update', '--root', root])));
+  assert.strictEqual(code, 2);
+});
+
+test('journey-health.js main(): retry-queue update with an unparseable results file returns 1', () => {
+  const root = tmpRoot('journey-health-retryq-malformed-');
+  const resultsPath = path.join(root, 'results.json');
+  fs.writeFileSync(resultsPath, 'not valid json {{{');
+  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['retry-queue', 'update', resultsPath, '--root', root])));
+  assert.strictEqual(code, 1);
+});
+
 const ALL_CLIS = [
   ['code-health', codeHealth],
-  ['harness-health', harnessHealth],
-  ['journey-health', journeyHealth],
   ['docs-health', docsHealth],
 ];
 
