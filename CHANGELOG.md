@@ -72,6 +72,20 @@ Three conventions follow from how this repo works, and all are visible below:
 * Wrap-up's learned-skill edits block the run's own… ([#5290](https://github.com/thn-inc/claude-tweaks/issues/5290)) ([c38bf1d](https://github.com/thn-inc/claude-tweaks/commit/c38bf1d6bedb94f20ec65e151faa9d866809f9da))
 * Write gate reads &lt;&lt; inside ${…} or a same-line $(… &lt;&lt;EOF)… ([#4246](https://github.com/thn-inc/claude-tweaks/issues/4246)) ([22b363a](https://github.com/thn-inc/claude-tweaks/commit/22b363a7af2595df973ff6dd1dc80279f26938e2))
 
+### Highlights
+* Added read-only judgment workers to the pipeline driver, so a driven record with merge authority gets its merge-check verdict and its acceptance brief without any model holding merge rights.
+* The worktree write guard no longer misses commands that follow text it wrongly took for the start of a heredoc.
+* The pipeline driver now refuses to push when its branch no longer points at the commit it checked, so a branch switch during a worker run cannot ship a branch without its latest commit.
+* Express-lane runs record which issue they are for, so merging one with wrap-up merge mode binds it without a manual check.
+* Added a `--budget` option to the pipeline driver so it can pick and drive its own records without a Claude session.
+* The status line starts one git process per refresh instead of up to three shell-wrapped ones, and shows exactly what it showed before — except on Windows in a repo owned by another account, which git refuses to open, where it can now show the GitHub link.
+* Tool calls start faster, because the claude-tweaks hooks stop re-asking git the same question several times on every call. What the hooks allow or deny does not change.
+* The pipeline driver now stops a record when its test run leaves a tracked file changed, instead of reporting green tests for bytes that are never committed.
+* claude-tweaks hooks now find node even when it's missing from the session's PATH, and when it can't be found they warn the session, and block edits in worktree-always projects, instead of silently switching every guard off.
+* Reconcile's residue-error line now shows why a GitHub call failed instead of a cut-off echo of the command.
+* Made the pipeline driver's size, Key File and diff-line limits configurable policy values, with the reviewer required for anything beyond the express limits.
+* Stop wrap-up's learned-skill edits from blocking a record's own auto-merge — they now open their own PR for a human to review.
+
 ## [6.169.0](https://github.com/thn-inc/claude-tweaks/compare/v6.168.0...v6.169.0) (2026-11-14)
 
 
