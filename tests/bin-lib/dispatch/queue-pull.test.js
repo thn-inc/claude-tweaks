@@ -2057,7 +2057,9 @@ test('#5304 neighbour append stop: an append that throws after a neighbour claim
 });
 
 test('#5227 neighbour: an unreadable claim prints the fence AUTO line and excludes nothing; a failed pool fetch writes [] and prints the pool AUTO line; a 200-record pool prints the cap Warning', () => {
-  const unreadable = pull5(PIPE(), { deps: { createClaimReader: () => ({ read: () => ({ failure: 'git-fetch-failed' }) }) } });
+  let readerBuilds = 0;
+  const unreadable = pull5(PIPE(), { deps: { createClaimReader: () => { readerBuilds += 1; return { read: () => ({ failure: 'git-fetch-failed' }) }; } } });
+  assert.equal(readerBuilds, 1, 'the shipped and neighbour passes share one claim reader per pull (#5304)');
   assert.deepEqual(entriesOf(unreadable, 'neighbour-in-flight'), []);
   assert.ok(unreadable.stderr.includes('AUTO — dispatch: claim read failed for #9010 (git-fetch-failed), #9016 (git-fetch-failed), #7001; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight\n'), unreadable.stderr);
   assert.equal(unreadable.errs.filter((e) => e.includes('claim read failed')).length, 1, 'one combined line per pull (#5304)');
@@ -3222,6 +3224,8 @@ const LANDING_EXITED = `${LANDING_SKIPPED}preflight-records.js exited 1; no unla
 const CLAIM_READ_FAILED_7001 = 'AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight';
 // #5304: one line per pull when both passes read unreadable claims (F-claim), naming each and both consequences.
 const CLAIM_READ_COMBINED = 'AUTO — dispatch: claim read failed for #9010 (network-failure), #9016 (network-failure), #7001; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight';
+// #5304: the shipped pass's unreadable claims printed alone, by the fence's flush_shipped_claims at a stop between the passes.
+const CLAIM_READ_SHIPPED_ONLY = 'AUTO — dispatch: shipped-candidate claim read failed for #9010 (network-failure), #9016 (network-failure); release time unknown, no downgrade';
 const NEAR_DUP = 'AUTO — dispatch: near-duplicate candidates across groups: ';
 const FOREIGN_UNREADABLE = 'acme-corp/other#12 (state unreadable)';
 
@@ -3258,6 +3262,8 @@ const FAULT_EXPECT = {
   'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
   'F-inflight': { status: 0, stderr: [IN_FLIGHT_POOL_AUTO], drops: ['neighbour-in-flight:9013'] },
   'F-claim': { status: 0, stderr: [CLAIM_READ_COMBINED], drops: ['neighbour-in-flight:9013'] },
+  'F-claim-stop': { status: 1, stderr: [CLAIM_READ_SHIPPED_ONLY, UNLANDED_STOP], entries: '{corrupt' },
+  'F-claim-neighbour-stop': { status: 1, stderr: [CLAIM_READ_SHIPPED_ONLY, STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] },
   'F-openprs': { status: 0, stderr: [], drops: [] },
   'F-writeback': { status: 0, stderr: ['Queue-order cache write-back failed (non-blocking): Command failed: git -C <SCR>/proj push origin '], drops: [] },
   'F-corrupt': { status: 1, stderr: [OPEN_STOP], entries: '{corrupt' },
@@ -3470,7 +3476,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
   });
 
   test('AC4.4: the oracle stops on exactly the observed stop set, and every other fault exits 0', () => {
-    const STOP_SET = ['F-corrupt', 'F-groups', 'F-opennum', 'F-queue'];
+    const STOP_SET = ['F-claim-neighbour-stop', 'F-claim-stop', 'F-corrupt', 'F-groups', 'F-opennum', 'F-queue'];
     assert.deepEqual(FAULTS.filter((f) => R[f.id].oracle.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the oracle');
     assert.deepEqual(FAULTS.filter((f) => R[f.id].module.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the module');
     for (const f of FAULTS) {
@@ -3740,6 +3746,21 @@ test('#5230 foreign blocker: a supplied states key matches a body ref in another
   const warnings = r.errs.filter((e) => e.startsWith('Warning:'));
   assert.equal(warnings.length, 1, r.stderr);
   assert.match(warnings[0], /foreign blocker state lookup failed \(exit 2: resolve-foreign-blockers\.js: `gh` is required\)/);
+});
+
+// #5304: the module-only twin of the oracle's files-foreignStates rows (which skip without bash): an ignored
+// states file prints its own fail-closed Warning, and the CLI lookup's gh-absent Warning that follows is dropped.
+test('#5304 foreign blocker: an ignored states file with no gh prints exactly one Warning, the states file\'s, and still fails closed', () => {
+  const noGh = { 'resolve-foreign-blockers.js': { status: 2, stdout: '', stderr: 'resolve-foreign-blockers.js: `gh` is required' } };
+  const r = pull(foreignCaseScenario(), {
+    spawn: noGh,
+    prepare: (own) => ({ inputs: { foreignStates: writeInput(own, 'states.json', 'this is not json') } }),
+  });
+  const foreignWarnings = r.errs.filter((e) => e.startsWith('Warning: foreign blocker'));
+  assert.equal(foreignWarnings.length, 1, r.stderr);
+  assert.match(foreignWarnings[0], /^Warning: foreign blocker states file .*states\.json ignored \(.*\) — supplied states not used \(fail closed\)/);
+  assert.ok(r.cliCalls.some(([n]) => n === 'resolve-foreign-blockers.js'), 'the CLI lookup ran, so its dropped Warning is the dedupe under test');
+  assert.deepEqual(entriesOf(r, 'blocked').map((e) => e.records[0]), [31, 32, 33], 'every foreign ref fails closed');
 });
 
 test('#5230 near-dup: a stale dispatch-near-dup-pairs.json from an earlier pull is rewritten to [] when no strong pair remains', () => {

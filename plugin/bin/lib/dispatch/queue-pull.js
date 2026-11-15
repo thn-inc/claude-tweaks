@@ -944,7 +944,7 @@ function runBlockerLanding(ctx) {
 
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
 const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
-// fence 595, byte for byte
+// fence 600, byte for byte
 const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
 
 // #5304: one AUTO line per pull for the claims the two claim-reading passes could not read. The
@@ -959,7 +959,7 @@ function reportClaimReadFailures(ctx, neighbourUnreadable) {
   else if (shipped.length) ctx.deps.stderr(`AUTO — dispatch: shipped-candidate claim read failed for ${shipped.join(', ')}; release time unknown, no downgrade\n`);
 }
 
-// Fence 591-618 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
+// Fence 589-627 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
 // written pool and claim-map FILES this pass reads (steps 1-3 are the agent's). Only the compute
 // is this pass's own: omitting the pass skips it (and so its appends and AUTO line), while the pool
 // fetch and its cap Warning are shared setup. A missing or malformed pool or claim-map file throws

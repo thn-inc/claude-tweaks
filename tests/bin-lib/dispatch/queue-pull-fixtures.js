@@ -668,6 +668,28 @@ const FAULTS = [
       return Object.assign(s, { gitFail: [['fetch', '-q', 'origin']] });
     },
   },
+  {
+    // #5304: the shipped pass's claim reads fail (#9010, #9016), then the pull stops between the shipped and
+    // neighbour passes: the landing answer corrupts the exclusions file, so the unlanded-blocker CLI cannot
+    // append #9011 and exits non-zero. The fence's flush_shipped_claims prints the shipped claim line once.
+    id: 'F-claim-stop', pass: '(stop)',
+    scenario: () => {
+      const s = effectOn(P1(), 'landing', 'corrupt-exclusions');
+      for (const n of [9010, 9016]) failGh(s, contentsApiArgv(n));
+      return Object.assign(s, { gitFail: [['fetch', '-q', 'origin']] });
+    },
+  },
+  {
+    // #5304: the shipped pass's claim reads fail, then the neighbour pass throws before its claim line (the in-flight
+    // pool answers exit 0 with non-JSON), so the neighbour block's finally is the only place the shipped line can print.
+    id: 'F-claim-neighbour-stop', pass: '(stop)',
+    scenario: () => {
+      const s = P1();
+      for (const n of [9010, 9016]) failGh(s, contentsApiArgv(n));
+      s.gh = s.gh.map((e) => (sameArgv(e.argv, IN_FLIGHT_ARGV) ? { ...e, stdout: NOT_JSON } : e));
+      return Object.assign(s, { gitFail: [['fetch', '-q', 'origin']] });
+    },
+  },
   { id: 'F-openprs', pass: 'cross-pr-overlap', scenario: () => failGh(P1(), OPEN_PRS_ARGV) },
   { id: 'F-writeback', pass: 'write-back', scenario: () => Object.assign(P1(), { gitFail: [['push']] }) },
   { id: 'F-corrupt', pass: '(stop)', scenario: () => effectOn(P1(), 'linked', 'corrupt-exclusions') },
