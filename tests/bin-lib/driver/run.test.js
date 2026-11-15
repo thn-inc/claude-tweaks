@@ -304,7 +304,7 @@ test('sink: an appendFile that always throws never aborts, stdout keeps every li
 //   cwd), node ([script, ...args], cwd), and the object-taking deps
 //   with their arguments as `args`: policy (keys), eligibility ([issue, opts]),
 //   native-deps ([opts]), linked-prs ([opts]), admission ([input]), worker ([opts, deps]),
-//   resolveRunDir ([opts]), lstatType ([p]), readdir ([p]); plus the write seams
+//   resolveRunDir ([opts]), adoptRun ([opts]), lstatType ([p]), readdir ([p]); plus the write seams
 //   writeFile, appendFile, mkdirSync ([path, …]) and terminate ([signal]).
 // A call is answered by the first `script` entry whose matcher accepts it. An entry is
 // [matcher, reply]: reply is a value, an Error (thrown) or fn(call) -> value (may throw).
@@ -537,6 +537,8 @@ function harness(over = {}) {
     reviewRequired: (opts) => { reviewerCalls.push(opts); return (over.reviewRequired || realReviewRequired)(opts); },
     launchWorker: (opts, d) => dispatch('worker', [opts, d]),
     resolveRunDir: (opts) => dispatch('resolveRunDir', [opts]),
+    // The --run guard (#5232): recorded, and a refusal unless a test passes over.deps.adoptRun.
+    adoptRun: (opts) => { record('adoptRun', [opts]); return { ok: false, why: 'adoptRun not scripted' }; },
     lstatType: (p) => dispatch('lstatType', [p]),
     readdir: (p) => dispatch('readdir', [p]),
     readFile: (p) => dispatch('readFile', [p]),
@@ -6411,4 +6413,255 @@ test('#5232 AC1.1: checkRecord prints no verdict for a stop before the reasons a
     assert.match(h.err.join(''), /drive\.js --check: (early|late) /, name);
   }
   assert.equal(ranAfter, false, 'no step runs after a stop that read nothing');
+});
+
+// --- drive.js #N --run <dir> (#5232): adopt dispatch's run directory and worktree --------------
+
+// A real main checkout (a `.git` directory; the space in its name is deliberate), a linked
+// worktree of it (a `.git` file naming {main}/.git/worktrees/w) and a run directory under its
+// pipelines directory. The guard reads the file system itself, so these are real directories.
+const ADOPT_MAIN = tmpDir('drive adopt main-');
+fs.mkdirSync(path.join(ADOPT_MAIN, '.git', 'worktrees', 'w'), { recursive: true });
+const ADOPT_WT = path.join(ADOPT_MAIN, '.claude', 'worktrees', 'w');
+fs.mkdirSync(ADOPT_WT, { recursive: true });
+fs.writeFileSync(path.join(ADOPT_WT, '.git'), `gitdir: ${path.join(ADOPT_MAIN, '.git', 'worktrees', 'w')}\n`);
+const ADOPT_RUN_ID = '2026-11-15T000000-spec-7';
+const ADOPT_PIPELINES = path.join(ADOPT_MAIN, '.claude-tweaks', 'pipelines');
+const ADOPT_RUN = path.join(ADOPT_PIPELINES, ADOPT_RUN_ID);
+fs.mkdirSync(ADOPT_RUN, { recursive: true });
+// So `x/..` resolves the same lexically and in the kernel.
+fs.mkdirSync(path.join(ADOPT_PIPELINES, 'x'));
+const ADOPT_BRANCH = 'worktree-dispatch-record-7';
+// A directory outside the checkout, beside it in the temp directory.
+const ADOPT_OUTSIDE = tmpDir('drive adopt outside-');
+
+const adoptModule = () => require(path.join(LIB, 'driver', 'adopt'));
+const realAdoptRun = (opts, d) => adoptModule().adoptRun(opts, d);
+const isAdoptBranchRead = onGit('branch', '--show-current');
+const adoptArgv = (dir) => ['#7', '--run', dir, '--no-settle'];
+// A harness run from `cwd` with the real guard; `script` entries come first.
+const adoptHarness = (cwd, script = [], deps = {}) => harness({ script, deps: { cwd: () => cwd, adoptRun: realAdoptRun, ...deps } });
+// The adopted worktree's branch read answered, and record-worktree left unscripted: dispatch's
+// bind is the only bind, so a call to it throws (the default script would answer it).
+const ADOPTED_OK = [
+  [isAdoptBranchRead, `${ADOPT_BRANCH}\n`],
+  [on('node', /hooks\.js$/, 'record-worktree'), () => { throw new Error('unexpected record-worktree for an adopted run'); }],
+];
+
+// Exit 3, nothing on stdout, no write, and no call at all but (with `branchRead`) the guard's one
+// branch read; stderr names the refusal and `why`.
+function assertRefusedNothingWritten(h, code, why, { branchRead = false } = {}) {
+  assert.equal(code, 3);
+  assert.deepEqual(h.out, []);
+  assert.deepEqual(h.writes(), []);
+  const stray = h.calls.filter((c) => !(branchRead && isAdoptBranchRead(c)) && c.kind !== 'adoptRun');
+  assert.deepEqual(stray.map((c) => `${c.kind} ${describeArgs(c.args)}`), [], 'no node, ghCreate, worker, git or other call');
+  if (branchRead) {
+    const reads = h.calls.filter(isAdoptBranchRead);
+    assert.equal(reads.length, 1);
+    assert.deepEqual(reads[0].args, ['-C', ADOPT_WT, 'branch', '--show-current']);
+    assert.equal(reads[0].cwd, ADOPT_WT);
+  }
+  const err = h.err.join('');
+  assert.ok(err.startsWith('drive.js: --run refused: '), err);
+  assert.ok(err.includes(why), `${JSON.stringify(err)} names ${JSON.stringify(why)}`);
+}
+
+const WHY_MISSING = 'run directory missing';
+const WHY_NOT_ANCHORED = 'run directory not-anchored';
+const WHY_NOT_RUN_DIR = 'not a run directory under the main checkout';
+const WHY_NOT_WORKTREE = 'working directory is not a linked worktree of the main checkout';
+const WHY_NO_BRANCH = 'adopted worktree has no branch (detached HEAD or unreadable)';
+
+test('#5232 AC2.2, AC2.10: a missing run directory is refused', async () => {
+  const h = adoptHarness(ADOPT_WT);
+  assertRefusedNothingWritten(h, await run(adoptArgv(`${ADOPT_RUN}-absent`), h.deps), WHY_MISSING);
+});
+
+test('#5232 realDeps.adoptRun is the adopt.js guard', async () => {
+  const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+  assert.equal(typeof realDeps.adoptRun, 'function');
+  const h = adoptHarness(ADOPT_WT, [], { adoptRun: realDeps.adoptRun });
+  assertRefusedNothingWritten(h, await run(adoptArgv(`${ADOPT_RUN}-absent`), h.deps), WHY_MISSING);
+});
+
+// Inside the checkout but not a run directory; and four `..` segments, ending outside the checkout.
+// Joined by hand: path.join would normalize the dot segments away before the guard saw them.
+fs.mkdirSync(path.join(ADOPT_MAIN, 'elsewhere'));
+const dotted = (...segments) => [ADOPT_PIPELINES, ...segments].join(path.sep);
+const DOT_CASES = [
+  [dotted('x', '..', '..', '..', 'elsewhere'), path.join(ADOPT_MAIN, 'elsewhere'), WHY_NOT_RUN_DIR],
+  [dotted('x', '..', '..', '..', '..', path.basename(ADOPT_OUTSIDE)), ADOPT_OUTSIDE, WHY_NOT_ANCHORED],
+];
+
+test('#5232 AC2.4, AC2.10: a dot-segment path is refused once normalized', async () => {
+  for (const [dir, normalized, why] of DOT_CASES) {
+    assert.ok(dir.includes(`${path.sep}..${path.sep}`), dir);
+    assert.equal(path.normalize(dir), normalized);
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), why);
+  }
+});
+
+test('#5232 AC2.5, AC2.10: the same path with a trailing slash is refused', async () => {
+  for (const [dir, , why] of DOT_CASES) {
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(`${dir}/`), h.deps), why);
+  }
+});
+
+test('#5232 AC2.6, AC2.10: a symlink under the pipelines directory that resolves outside the checkout is refused', async () => {
+  const link = path.join(ADOPT_PIPELINES, 'link');
+  fs.symlinkSync(ADOPT_OUTSIDE, link, 'junction');
+  const h = adoptHarness(ADOPT_WT);
+  assertRefusedNothingWritten(h, await run(adoptArgv(link), h.deps), WHY_NOT_ANCHORED);
+});
+
+test('#5232 AC2.7, AC2.10: a worktree-local shadow pipelines directory is refused', async () => {
+  const shadow = path.join(ADOPT_WT, '.claude-tweaks', 'pipelines', ADOPT_RUN_ID);
+  fs.mkdirSync(shadow, { recursive: true });
+  const bytes = '- AUTO 10:00:00 — shadow: known bytes. Reversibility: n/a.\n';
+  fs.writeFileSync(path.join(shadow, 'decisions.md'), bytes);
+  const h = adoptHarness(ADOPT_WT);
+  assertRefusedNothingWritten(h, await run(adoptArgv(shadow), h.deps), WHY_NOT_ANCHORED);
+  assert.equal(fs.readFileSync(path.join(shadow, 'decisions.md'), 'utf8'), bytes);
+  assert.deepEqual(fs.readdirSync(shadow), ['decisions.md']);
+  assert.deepEqual(fs.readdirSync(ADOPT_RUN), [], 'the real run directory is untouched too');
+});
+
+test('#5232 AC2.8, AC2.10: a path holding the main checkout\'s path as a substring of another component is refused', async () => {
+  const evil = `${ADOPT_MAIN}-evil`;
+  FIXTURE_ROOTS.push(evil);
+  fs.mkdirSync(path.join(evil, '.git'), { recursive: true });
+  const dir = path.join(evil, '.claude-tweaks', 'pipelines', ADOPT_RUN_ID);
+  fs.mkdirSync(dir, { recursive: true });
+  const h = adoptHarness(ADOPT_WT);
+  assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), WHY_NOT_ANCHORED);
+});
+
+test('#5232 AC2.2, AC2.9, AC2.10: a working directory that is the main checkout itself is refused', async () => {
+  const h = adoptHarness(ADOPT_MAIN);
+  assertRefusedNothingWritten(h, await run(adoptArgv(ADOPT_RUN), h.deps), WHY_NOT_WORKTREE);
+});
+
+test('#5232 Review Focus 5: an adopted worktree on a detached HEAD is refused', async () => {
+  for (const reply of ['', '\n', new Error('fatal: not a git repository')]) {
+    const h = adoptHarness(ADOPT_WT, [[isAdoptBranchRead, reply]]);
+    assertRefusedNothingWritten(h, await run(adoptArgv(ADOPT_RUN), h.deps), WHY_NO_BRANCH, { branchRead: true });
+  }
+});
+
+const claimCall = (h) => h.calls.find((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0]));
+const claimLogCall = (h) => h.calls.find((c) => c.kind === 'node' && /log-decision\.js$/.test(c.args[0]) && c.args.includes('--section'));
+const argAfter = (c, flag) => c.args[c.args.indexOf(flag) + 1];
+
+test('#5232 AC2.1: --run adopts the run directory and the worktree, minting and creating neither', async () => {
+  const h = adoptHarness(ADOPT_WT, ADOPTED_OK);
+  assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 0, h.err.join(''));
+  assert.equal(h.calls.filter((c) => c.kind === 'resolveRunDir').length, 0, 'no run directory minted');
+  assert.equal(h.calls.filter(onGit('worktree', 'add')).length, 0, 'no worktree created');
+  assert.equal(h.calls.filter(on('node', /hooks\.js$/, 'record-worktree')).length, 0, 'no record-worktree bind');
+  assert.equal(h.calls.filter((c) => c.kind === 'lstatType' && c.args[0] === path.join(ADOPT_MAIN, '.claude', 'worktrees', 'drive-record-7')).length, 0, 'no leftover check');
+  const fetch = h.calls.find(onGit('fetch'));
+  const merge = h.calls.find(onGit('merge'));
+  assert.equal(fetch.cwd, ADOPT_WT);
+  assert.deepEqual(fetch.args, ['-C', ADOPT_WT, 'fetch', '--end-of-options', 'origin', 'main']);
+  assert.equal(merge.cwd, ADOPT_WT);
+  assert.deepEqual(merge.args, ['-C', ADOPT_WT, 'merge', '--end-of-options', 'origin/main']);
+  const push = h.calls.find(onGit('push'));
+  assert.equal(push.cwd, ADOPT_WT);
+  assert.deepEqual(gitSub(push), ['push', '--end-of-options', 'origin', ADOPT_BRANCH]);
+  assert.equal(argAfter(h.calls.find(on('ghCreate', 'pr', 'create')), '--head'), ADOPT_BRANCH);
+  const final = lastLine(h);
+  assert.equal(final.step, FINAL_STEP);
+  assert.equal(final.run, path.basename(ADOPT_RUN));
+  assert.equal(final.outcome, 'pending-review');
+  assert.deepEqual(final.stop.created, { worktree: false, branch: false });
+  assert.ok(h.lines().every((l) => l.run === null || l.run === ADOPT_RUN_ID));
+  // The event file is the adopted directory's.
+  assert.ok(h.calls.some((c) => c.kind === 'appendFile' && c.args[0] === path.join(ADOPT_RUN, 'driver-events.jsonl')));
+});
+
+test('#5232 AC2.3: the adopted run\'s claim runId is the given directory\'s basename', async () => {
+  const h = adoptHarness(ADOPT_WT, ADOPTED_OK);
+  assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 0, h.err.join(''));
+  assert.equal(argAfter(claimCall(h), '--run-id'), '2026-11-15T000000-spec-7');
+  assert.equal(argAfter(claimLogCall(h), '--run'), fs.realpathSync(ADOPT_RUN));
+});
+
+test('#5232 (Deliverable 2): a --run --no-settle stop leaves the claim, worktree, branch and run directory', async () => {
+  const cases = [
+    ['a failed push (pre-push)', [onGit('push'), () => { throw new Error('rejected'); }], 'express-escalated'],
+    ['a failed gh pr create (blocked)', [on('ghCreate', 'pr', 'create'), () => { throw new Error('rejected'); }], 'blocked'],
+  ];
+  for (const [name, entry, outcome] of cases) {
+    const h = adoptHarness(ADOPT_WT, [...ADOPTED_OK, entry]);
+    assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 0, name);
+    const final = lastLine(h);
+    assert.equal(final.settle, 'left-to-caller', name);
+    assert.equal(final.outcome, outcome, name);
+    assert.deepEqual(final.stop.created, { worktree: false, branch: false }, name);
+    assert.deepEqual(settleCalls(h).map((c) => `${c.kind} ${describeArgs(c.args)}`), [], name);
+    assert.deepEqual(settleLines(h), [], name);
+  }
+});
+
+test('#5232 --run grammar', async () => {
+  const d = ADOPT_RUN;
+  const bad = [
+    [['#7', '--run', d], /--run requires --no-settle/],
+    [['#7', '#8', '--run', d, '--no-settle'], /--run takes exactly one record reference/],
+    [['--run', d, '--no-settle', '--budget', '1'], /--run and --budget are exclusive/],
+    [['--check', '#7', '--run', d], /--check takes exactly one record reference/],
+    [['#7', '--no-settle', '--run'], /--run needs a value/],
+    [['#7', '--run', '', '--no-settle'], /--run needs a value/],
+    [['#7', '--run', '   ', '--no-settle'], /--run needs a value/],
+    [['#7', '--run', '--no-settle'], /--run needs a value/],
+    [['#7', '--run', d, '--run', d, '--no-settle'], /--run given more than once/],
+  ];
+  for (const [argv, re] of bad) {
+    const h = adoptHarness(ADOPT_WT);
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.match(h.err.join(''), re, JSON.stringify(argv));
+    assert.match(h.err.join(''), /Usage: drive\.js #N/);
+    assert.deepEqual(h.out, []);
+    assert.equal(h.calls.length, 0, JSON.stringify(argv));
+    assert.equal(h.probes, 0, JSON.stringify(argv));
+  }
+  assert.deepEqual(parseArgs(['#7', '--run', d, '--no-settle']), { records: [7], settle: false, runDir: d });
+  assert.deepEqual(parseArgs(['--no-settle', '--run', d, '7']), { records: [7], settle: false, runDir: d });
+  // The value is returned raw: run() resolves it.
+  assert.deepEqual(parseArgs(['#7', '--run', 'rel/dir', '--no-settle']), { records: [7], settle: false, runDir: 'rel/dir' });
+});
+
+test('#5232 --run resolves a relative directory against deps.cwd()', async () => {
+  const rel = path.join('..', '..', '..', '.claude-tweaks', 'pipelines', ADOPT_RUN_ID);
+  const h = adoptHarness(ADOPT_WT, ADOPTED_OK);
+  assert.equal(await run(adoptArgv(rel), h.deps), 0, h.err.join(''));
+  assert.equal(argAfter(claimCall(h), '--run-id'), ADOPT_RUN_ID);
+  assert.equal(argAfter(claimLogCall(h), '--run'), ADOPT_RUN);
+  // An unnormalized join of deps.cwd() and the value reaches the guard (resolveAgainst); its realpath normalizes.
+  const recorded = harness({ deps: { cwd: () => ADOPT_WT } });
+  assert.equal(await run(adoptArgv(rel), recorded.deps), 3);
+  assert.deepEqual(recorded.calls.map((c) => [c.kind, ...c.args]), [['adoptRun', { runDir: `${ADOPT_WT}${path.sep}${rel}`, cwd: ADOPT_WT }]]);
+  assert.match(recorded.err.join(''), /^drive\.js: --run refused: adoptRun not scripted\n$/);
+});
+
+test('#5232 adoptRun returns the adopted run for a linked worktree of the main checkout', () => {
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  assert.deepEqual(adoptModule().adoptRun({ runDir: ADOPT_RUN, cwd: ADOPT_WT }, h.deps), {
+    ok: true, runDir: ADOPT_RUN, runId: ADOPT_RUN_ID, wt: ADOPT_WT, branch: ADOPT_BRANCH, mainRoot: ADOPT_MAIN,
+  });
+  // A run from a subdirectory of the worktree adopts the worktree's top.
+  const sub = path.join(ADOPT_WT, 'src');
+  fs.mkdirSync(sub, { recursive: true });
+  assert.equal(adoptModule().adoptRun({ runDir: ADOPT_RUN, cwd: sub }, h.deps).wt, ADOPT_WT);
+});
+
+test('#5232 a thrown guard is a refusal naming the error, exit 3', async () => {
+  const h = harness({ deps: { cwd: () => ADOPT_WT, adoptRun: () => { throw new Error('guard exploded'); } } });
+  assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 3);
+  assert.equal(h.err.join(''), 'drive.js: --run refused: guard exploded\n');
+  assert.deepEqual(h.out, []);
+  assert.deepEqual(h.calls, []);
 });

@@ -69,6 +69,7 @@ const { STEPS, CHECK_STEPS } = require('./steps');
 const { toEscalationReason, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType, canonicalRealpath } = require('../path-guard');
+const { resolveAgainst } = require('../health-core/io');
 const { defaultResolvePolicy } = require('../express/policy');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
@@ -79,6 +80,7 @@ const USAGE = [
   '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)',
   '       drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record)',
   '       drive.js --check #N   (prints the admission verdict as one JSON line; no write of any kind)',
+  '       drive.js #N --run <dir> --no-settle   (adopts the run directory <dir> and the linked worktree it is run from, minting and creating neither; requires --no-settle and one record)',
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
@@ -86,7 +88,8 @@ const USAGE = [
   'Exit codes (Combined-2):',
   '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
-  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record',
+  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record; a missing, empty or repeated --run value, or --run without --no-settle, with more than one record, or with --budget or --check',
+  '  3  --run refused: the run directory is missing or not a run directory under the main checkout, or the working directory is not a linked worktree of it, or that worktree has no branch; nothing written',
   '  --check: 0 a verdict was printed (admitted or not); 1 no verdict could be computed (nothing on stdout); 2 malformed (anything but exactly one record reference)',
   '',
 ].join('\n');
@@ -99,10 +102,14 @@ const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 // positive integers only, de-duplicated in the order given. `--budget <n|all>` (n a positive
 // integer without a leading zero) names a queue-pulled run instead of records and is exclusive
 // with them. `--check` (anywhere) takes exactly one record reference and no other option: `{ check }`.
+// `--run <dir>` (once, with exactly one record and --no-settle, never with --budget or --check)
+// adds `runDir`, the raw value; run() resolves it. The key is present only when the flag was given.
 // --help (or -h) anywhere wins. `--no-settle` anywhere sets settle false (the caller
 // settles stops); any other option is an error.
 const BUDGET_NEEDS_RECORD = 'a record reference (#N) or --budget <n|all> is required';
 const CHECK_GRAMMAR = '--check takes exactly one record reference (#N) and no other option';
+// The value-taking-flag rule: a trailing bare flag reads undefined, and an empty or flag-shaped value is no value.
+const isFlagValue = (v) => typeof v === 'string' && v.trim() !== '' && !v.startsWith('--');
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
   if (argv.length === 0) return { error: BUDGET_NEEDS_RECORD };
@@ -114,11 +121,20 @@ function parseArgs(argv) {
   }
   const records = [];
   let budget;
+  let runDir;
   let settleStops = true;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--no-settle') {
       settleStops = false;
+      continue;
+    }
+    if (a === '--run') {
+      if (runDir !== undefined) return { error: '--run given more than once' };
+      const v = argv[i + 1];
+      if (!isFlagValue(v)) return { error: '--run needs a value: the run directory to adopt' };
+      runDir = v;
+      i += 1;
       continue;
     }
     if (a === '--budget') {
@@ -138,6 +154,12 @@ function parseArgs(argv) {
     }
     if (!records.includes(n)) records.push(n);
   }
+  if (runDir !== undefined) {
+    if (budget !== undefined) return { error: '--run and --budget are exclusive' };
+    if (records.length !== 1) return { error: '--run takes exactly one record reference (#N)' };
+    if (settleStops) return { error: '--run requires --no-settle (the caller settles stops)' };
+    return { records, settle: false, runDir };
+  }
   if (budget !== undefined) {
     if (records.length > 0) return { error: '--budget and a named record (#N) are exclusive' };
     return { budget, settle: settleStops };
@@ -151,9 +173,9 @@ function parseArgs(argv) {
 // handler can reach that record's context, event sink and clocks: `step` is the table
 // entry running or last run (null before the first), `inStep` is true while it is pending,
 // and `final` holds the final line an interrupt wrote. `interrupted` is the signal's name
-// once the handler has run, else false.
+// once the handler has run, else false. `adopted` is adopt.js's ok result under --run, else null.
 function newShared() {
-  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true };
+  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true, adopted: null };
 }
 
 function newCtx(record, shared) {
@@ -480,6 +502,23 @@ function reraiseAfterFlush(sig, { stdout, kill, setTimer }) {
   }
 }
 
+// `--run <dir>`: the guard's ok result (adopt.js), or null once the refusal is on stderr. A relative
+// <dir> is joined to deps.cwd() unnormalized (resolveAgainst), so a `..` after a symlink still
+// reaches the guard's realpath. A throw (deps.cwd() of a deleted directory included) is a refusal
+// naming the error. Nothing is written either way.
+function adoptRunDir(runDir, deps) {
+  let result;
+  try {
+    const cwd = deps.cwd();
+    result = deps.adoptRun({ runDir: resolveAgainst(cwd, runDir), cwd }, deps);
+  } catch (err) {
+    result = { ok: false, why: (err && err.message) || String(err) };
+  }
+  if (result && result.ok === true) return result;
+  deps.stderr(`drive.js: --run refused: ${(result && result.why) || 'no result'}\n`);
+  return null;
+}
+
 async function run(argv, deps) {
   const parsed = parseArgs(argv);
   if (parsed.help) {
@@ -501,6 +540,11 @@ async function run(argv, deps) {
   if (parsed.check !== undefined) return checkRecord(parsed.check, newShared(), deps);
   const shared = newShared();
   shared.settle = parsed.settle;
+  if (parsed.runDir !== undefined) {
+    const adopted = adoptRunDir(parsed.runDir, deps);
+    if (!adopted) return 3;
+    shared.adopted = adopted;
+  }
   const unsubscribe = deps.onSignal((signal) => interrupt(shared, signal, deps));
   try {
     if (parsed.budget !== undefined) {
@@ -569,6 +613,8 @@ const realDeps = {
   createJudgments: (opts) => require('./judgments').createJudgments(opts),
   runner: (call) => require('./worker').defaultRunner(call),
   resolveRunDir: (opts) => require('../hooks/run-dir-resolve').resolve(opts),
+  // The --run guard (#5232): adopts dispatch's run directory and worktree, or refuses.
+  adoptRun: (opts, d) => require('./adopt').adoptRun(opts, d),
   lstatType: (p) => lstatType(p),
   readdir: (p) => fs.readdirSync(p),
   readFile: (p) => fs.readFileSync(p, 'utf8'),

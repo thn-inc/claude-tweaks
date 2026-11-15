@@ -9,6 +9,7 @@ node plugin/bin/drive.js #N [#M…]
 node plugin/bin/drive.js --no-settle #N [#M…]
 node plugin/bin/drive.js [--no-settle] --budget <n|all>
 node plugin/bin/drive.js --check #N
+node plugin/bin/drive.js #N --run <dir> --no-settle
 node plugin/bin/drive.js --help
 ```
 
@@ -16,6 +17,7 @@ node plugin/bin/drive.js --help
 - `--no-settle` turns the driver's own settle off, for a caller that settles stops itself. A stop then makes none of the settle calls; the final line carries the structured `stop` object and `settle: left-to-caller` when the stop's row has calls (`none` otherwise). Default is on.
 - `--budget` takes a positive integer (no leading zero) or `all`, is exclusive with named records, and may be given once. `--no-settle` then applies to each driven record. See "Picking records: `--budget`".
 - `--check #N` is the read-only verdict: it runs the policy, fetch, eligibility and admission steps (`steps.js`'s `CHECK_STEPS`, the head of the table) and prints one line, `{"record":N,"admitted":bool,"reasons":[…]}`, the eligibility reasons then the admission reasons (admission still runs after an eligibility refusal, so every reason is reported). It takes exactly one record reference and no other option, and makes no write of any kind: no claim, run directory, worktree, comment or label. Exit 0 once a verdict was printed, admitted or not; exit 1, nothing on stdout, when none could be computed (a step failed); exit 2 when malformed.
+- `--run <dir>` adopts a run directory and worktree that `/claude-tweaks:dispatch` already made, instead of minting `drive-{n}` and creating `drive-record-{n}`. It requires `--no-settle` and exactly one record, may be given once, and is exclusive with `--budget` and `--check`. A relative `<dir>` is read against the working directory. Before any step, `bin/lib/driver/adopt.js` checks that `<dir>` resolves (by `log-decision.js`'s own anchoring guard) to a direct child of the main checkout's `.claude-tweaks/pipelines/`, that the working directory is inside a linked worktree of that same checkout (not the checkout itself), and that the worktree is on a branch. Any failure exits 3 and writes nothing. Once adopted, the claim's run id is `<dir>`'s basename, the claim log goes to `<dir>`, and the record is built, pushed and opened as a PR from the worktree's own branch. No `git worktree add`, leftover check or `hooks.js record-worktree` call is made, since dispatch's bind is the only one, and the final line's `stop.created` is all false.
 - `--help` (or `-h`) prints the usage and exits 0 before any probe of `gh`, `git` or policy.
 
 Exit codes:
@@ -24,7 +26,8 @@ Exit codes:
 |---|---|
 | 0 | Every named record reached its final event, whatever its outcome. Outcomes are data. With `--budget`, also a loop that ended normally: `budget`, `exhausted`, `permission-stop`, `claim-stop` or `policy-refused`. |
 | 1 | The policy, or the run's repository or integration branch, cannot be resolved; no further record is attempted. With `--budget`, also a failed queue pull. |
-| 2 | Malformed invocation (no record reference, a non-numeric one; with `--budget`, a bad or repeated value, or a named record beside it), `gh` or `git` absent, or an internal error. |
+| 2 | Malformed invocation (no record reference, a non-numeric one; with `--budget`, a bad or repeated value, or a named record beside it; with `--run`, a missing, empty or repeated value, no `--no-settle`, more than one record, or `--budget` or `--check` beside it), `gh` or `git` absent, or an internal error. |
+| 3 | `--run` refused: the run directory is missing or not a run directory under the main checkout, or the working directory is not a linked worktree of it, or that worktree has no branch. Nothing is written. This is a per-CLI code (as `log-decision.js` and `express-lane.js` use 3 for an unanchored run directory). No caller treats it differently from other non-zero exits: dispatch's driver route reads every non-zero exit as `blocked`. |
 
 With `--check`, the codes mean: 0 a verdict was printed (admitted or not); 1 none could be computed (nothing on stdout); 2 malformed (anything but exactly one record reference).
 
@@ -213,6 +216,8 @@ The `try-it-only` routes post the Try it block as the `try-it` run comment on th
 ## When a run stops
 
 The source of truth is `SETTLE_ROWS` in `plugin/bin/lib/driver/settle.js`; this table is copied by hand.
+
+Under `--run --no-settle` none of the rows below runs. The claim, the worktree, its branch and the run directory all stay for the caller, and so does the draft PR if there is one. The final line names the row the caller settles by (`settleRow`; `settle` is `left-to-caller` when that row has calls), and `stop.created` is all false because the driver created neither the worktree nor the branch.
 
 | Stop | Settle calls, in order |
 |---|---|
