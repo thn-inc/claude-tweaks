@@ -5,6 +5,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
+const { withoutAmbientGitVars } = require('../../helpers/git-env');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -12,12 +14,7 @@ const path = require('node:path');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'design-detect.js');
 
 function run(args, opts = {}) {
-  try {
-    const out = execFileSync('node', [CLI, ...args], { encoding: 'utf8', ...opts });
-    return { code: 0, stdout: out };
-  } catch (err) {
-    return { code: err.status, stdout: err.stdout, stderr: err.stderr };
-  }
+  return runCliSync(CLI, args, { env: { ...process.env }, cwd: opts.cwd, stdin: opts.input });
 }
 
 test('CLI: --mode required', () => {
@@ -81,11 +78,8 @@ test('CLI: malformed --signals file degrades to no-signals (platform null) rathe
 });
 
 test('CLI: --signals - reads Layer 0 JSON from stdin', () => {
-  const out = execFileSync('node', [CLI, '--mode', 'review', '--design-integration', 'enabled', '--surface', 'web', '--files', 'a.tsx', '--signals', '-'], {
-    input: JSON.stringify({ setup: { platform: 'web' } }),
-    encoding: 'utf8',
-  });
-  const parsed = JSON.parse(out);
+  const r = run(['--mode', 'review', '--design-integration', 'enabled', '--surface', 'web', '--files', 'a.tsx', '--signals', '-'], { input: JSON.stringify({ setup: { platform: 'web' } }) });
+  const parsed = JSON.parse(r.stdout);
   assert.deepEqual(parsed, { decision: 'proceed', track: 'web' });
 });
 
@@ -147,8 +141,8 @@ test('CLI: --surface-lines reads from stdin with -', () => {
     '+.a { color: blue; }',
     '',
   ].join('\n');
-  const out = execFileSync('node', [CLI, '--surface-lines', '-'], { input: diff, encoding: 'utf8' });
-  const parsed = JSON.parse(out);
+  const r = run(['--surface-lines', '-'], { input: diff });
+  const parsed = JSON.parse(r.stdout);
   assert.equal(parsed.surface, true);
 });
 
@@ -180,7 +174,6 @@ test('CLI: --claude-md reads design-integration from an explicit file path', () 
 // Real-process pin of the script entry (#5381): the missing-mode refusal on an empty stdin is
 // byte-identical before and after the in-process entry conversion.
 test('AC5.1, AC7.1: design-detect.js with no arguments and an empty stdin exits 1 with --mode is required (real process)', () => {
-  const { spawnCli } = require('../../helpers/run-cli');
   const r = spawnCli(CLI, [], { env: { ...process.env }, stdin: '' });
   assert.equal(r.code, 1);
   assert.equal(r.stdout, '');
@@ -189,9 +182,77 @@ test('AC5.1, AC7.1: design-detect.js with no arguments and an empty stdin exits 
 
 // Same pin for the success path: the decision JSON on stdout, nothing on stderr.
 test('AC7.1: design-detect.js --mode review … prints the decision JSON and exits 0 (real process)', () => {
-  const { spawnCli } = require('../../helpers/run-cli');
   const r = spawnCli(CLI, ['--mode', 'review', '--design-integration', 'enabled', '--surface', 'backend'], { env: { ...process.env }, stdin: '' });
   assert.equal(r.code, 0);
   assert.equal(r.stdout, '{"decision":"skip","reason":"non-frontend spec (surface declared)"}\n');
   assert.equal(r.stderr, '');
+});
+
+// --- in-process entry (#5381) ---
+
+test('AC2.1: a valid --mode payload returns 0 when process.exitCode is already 1', () => {
+  const prev = process.exitCode;
+  process.exitCode = 1;
+  try {
+    // snapshot() records exitCode 1, so a run that returns 0 without touching it is leak-free.
+    const r = run(['--mode', 'review', '--design-integration', 'enabled', '--surface', 'backend']);
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.stdout).decision, 'skip');
+  } finally {
+    process.exitCode = prev;
+  }
+});
+
+test('AC4.1: --signals - reads the payload from deps.stdin and matches the spawned output', () => {
+  const args = ['--mode', 'review', '--design-integration', 'enabled', '--surface', 'mobile', '--signals', '-'];
+  const env = { ...process.env };
+  const stdin = JSON.stringify({ setup: { platform: 'android' } });
+  const a = runCliSync(CLI, args, { env, stdin });
+  // Real process: proves the script entry reads fd 0 to the same bytes.
+  const b = spawnCli(CLI, args, { env, stdin });
+  assert.equal(a.stdout, b.stdout);
+  assert.equal(JSON.parse(a.stdout).platform, 'android');
+});
+
+test('AC4.1: --surface-lines - with an empty stdin matches the spawned output', () => {
+  const env = { ...process.env };
+  const a = runCliSync(CLI, ['--surface-lines', '-'], { env, stdin: '' });
+  // Real process: the empty-stdin read of fd 0 yields the same bytes.
+  const b = spawnCli(CLI, ['--surface-lines', '-'], { env, stdin: '' });
+  assert.equal(a.code, b.code);
+  assert.equal(a.stdout, b.stdout);
+  assert.equal(a.stdout, '{"surface":false,"files":[]}\n');
+});
+
+function gitRepoWithFlag(value) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-repo-'));
+  const real = fs.realpathSync(tmp);
+  fs.writeFileSync(path.join(real, 'CLAUDE.md'), `## Design integration\n\ndesign-integration: ${value}\n`);
+  execFileSync('git', ['init', '-q'], { cwd: real, env: withoutAmbientGitVars(process.env), stdio: 'ignore' });
+  return real;
+}
+
+test('AC8.1: with no --design-integration/--claude-md the decision follows the injected cwd repo', () => {
+  const repo = gitRepoWithFlag('enabled');
+  try {
+    const r = run(['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { cwd: repo });
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.stdout).decision, 'proceed'); // this worktree's own CLAUDE.md skips
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('repoRoot runs git with the injected env', () => {
+  const repoB = gitRepoWithFlag('enabled');
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'design-detect-plain-'));
+  try {
+    const env = { ...withoutAmbientGitVars(process.env), GIT_DIR: path.join(repoB, '.git'), GIT_WORK_TREE: repoB };
+    const r = runCliSync(CLI, ['--mode', 'review', '--surface', 'web', '--files', 'a.tsx'], { env, cwd: plain });
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.stdout).decision, 'proceed');
+  } finally {
+    fs.rmSync(repoB, { recursive: true, force: true });
+    fs.rmSync(plain, { recursive: true, force: true });
+  }
 });

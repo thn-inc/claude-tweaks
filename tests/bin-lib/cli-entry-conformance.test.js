@@ -29,7 +29,6 @@ const NOT_YET = [
   'claude-tweaks-statusline.js',
   'compose-subject.js',
   'declined-learning.js',
-  'design-detect.js',
   'hooks.js',
   'init-verify-scope.js',
   'install-statusline-wrapper.js',
