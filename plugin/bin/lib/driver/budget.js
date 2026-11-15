@@ -35,6 +35,7 @@ const { STEP, BUDGET_STEP, createEventSink, yieldToEventLoop, firstLine, errorTe
 const { STEPS, eligibilityOptions } = require('./steps');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { groupIsExcluded } = require('../dispatch/exclusions');
+const { CLAIM_KIND, readClaimExit } = require('./claim-exit');
 
 // The pull's exclusion reasons whose groups stay in the pulled groups yet are never selectable
 // (rankNext skips them too): the queue-pull module's own list, never a copy. `firing` is this
@@ -61,17 +62,13 @@ const STATUS_BY_ENDED = Object.freeze({
 
 const COUNTERS = Object.freeze(['driven', 'refused', 'skipped', 'contested', 'claimFailed', 'permissionStopped']);
 
-// claim-targets.js exits whose cause is shared by every later claim (Plan Review Clarification 1):
-// 2 malformed invocation or missing dependency, 6 claims branch missing. Exit 7 has its own end.
-const CLAIM_STOP_EXITS = Object.freeze([2, 6]);
-const PERMISSION_EXIT = 7;
-const CONTESTED_EXIT = 3;
-
 // One counter per handled record. Whether the run then ends is the loop's decision, not this one.
+// What a claim-targets.js exit means is claim-exit.js's reading.
 function classifyFacts(facts) {
   if (facts.claimed === true) return 'driven';
-  if (facts.claimExit === PERMISSION_EXIT) return 'permissionStopped';
-  if (facts.claimExit === CONTESTED_EXIT) return 'contested';
+  const { kind } = readClaimExit(facts.claimExit);
+  if (kind === CLAIM_KIND.PERMISSION_DENIED) return 'permissionStopped';
+  if (kind === CLAIM_KIND.CONTESTED) return 'contested';
   if (facts.outcome === 'refused' && facts.claimExit === null) return 'refused';
   // Exits 2, 4, 5 and 6, an exit 0 that claimed nothing, a killed claim, a failed mint.
   return 'claimFailed';
@@ -231,9 +228,10 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
       const counter = classifyFacts(facts);
       counters[counter] += 1;
       if (counter === 'permissionStopped') {
-        return finish(ENDED.PERMISSION_STOP, `claim-targets.js exit ${PERMISSION_EXIT} on #${n}`);
+        return finish(ENDED.PERMISSION_STOP, `claim-targets.js exit ${facts.claimExit} on #${n}`);
       }
-      if (facts.claimed !== true && CLAIM_STOP_EXITS.includes(facts.claimExit)) {
+      // A cause every later claim would meet too (Plan Review Clarification 1) ends the run.
+      if (facts.claimed !== true && readClaimExit(facts.claimExit).kind === CLAIM_KIND.SHARED_CAUSE) {
         return finish(ENDED.CLAIM_STOP, `claim-targets.js exit ${facts.claimExit} on #${n}`);
       }
       if (budget !== 'all' && counters.driven >= budget) return finish(ENDED.BUDGET);
@@ -241,4 +239,4 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
   }
 }
 
-module.exports = { runBudget, ENDED, STATUS_BY_ENDED, COUNTERS, CLAIM_STOP_EXITS, UNSELECTABLE_REASONS, classifyFacts, preScreen };
+module.exports = { runBudget, ENDED, STATUS_BY_ENDED, COUNTERS, UNSELECTABLE_REASONS, classifyFacts, preScreen };

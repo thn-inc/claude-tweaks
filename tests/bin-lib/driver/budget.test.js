@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
-  runBudget, ENDED, STATUS_BY_ENDED, COUNTERS, CLAIM_STOP_EXITS, UNSELECTABLE_REASONS, classifyFacts, preScreen,
+  runBudget, ENDED, STATUS_BY_ENDED, COUNTERS, UNSELECTABLE_REASONS, classifyFacts, preScreen,
 } = require(path.join(LIB, 'driver', 'budget'));
 const { BUDGET_STEP, STEP } = require(path.join(LIB, 'driver', 'events'));
 const { defineStep, eligibilityOptions } = require(path.join(LIB, 'driver', 'steps'));
@@ -354,8 +354,7 @@ test('AC9.5: status follows ended', () => {
   assert.deepEqual(STATUS_BY_ENDED, { budget: 'ok', exhausted: 'ok', 'permission-stop': 'stop', 'claim-stop': 'stop', 'pull-failed': 'fail', 'policy-refused': 'ok' });
   assert.deepEqual(Object.values(ENDED).sort(), Object.keys(STATUS_BY_ENDED).sort());
   assert.deepEqual(COUNTERS, ['driven', 'refused', 'skipped', 'contested', 'claimFailed', 'permissionStopped']);
-  assert.deepEqual(CLAIM_STOP_EXITS, [2, 6]);
-  for (const o of [ENDED, STATUS_BY_ENDED, COUNTERS, CLAIM_STOP_EXITS]) assert.ok(Object.isFrozen(o));
+  for (const o of [ENDED, STATUS_BY_ENDED, COUNTERS]) assert.ok(Object.isFrozen(o));
   assert.equal(BUDGET_STEP, 'budget');
 });
 
@@ -367,7 +366,7 @@ test('PRC1: claim exits 2 and 6 end the run; exits 4 and 5 do not', async () => 
     });
     assert.equal(await run(f), 0, `exit ${exit}`);
     const summary = summaryOf(f);
-    if (CLAIM_STOP_EXITS.includes(exit)) {
+    if ([2, 6].includes(exit)) {
       assert.deepEqual(f.driven(), [1, 2], `exit ${exit}`);
       assert.deepEqual([summary.ended, summary.status, summary.claimFailed, summary.permissionStopped], ['claim-stop', 'stop', 1, 0], `exit ${exit}`);
       assert.match(summary.detail, new RegExp(`exit ${exit} on #2`));
