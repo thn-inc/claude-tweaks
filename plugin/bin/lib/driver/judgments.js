@@ -150,7 +150,7 @@ async function judgeMergeCheck(env, ctx) {
 // Steps 6 to 8 for a verdict reached: log it, confirm an auto-merge from decisions.md, emit once.
 function finish(deps, startedAt, ctx, env, reached, floor, detail) {
   let verdict = reached;
-  let logged = false;
+  let logged;
   try {
     logged = logVerdict(env, ctx, reached);
   } catch {

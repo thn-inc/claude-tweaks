@@ -13,7 +13,6 @@
 // A non-zero parent-gate exit, or stdout that did not parse (verdict null), fails open to the
 // no-parent rows with `fallback: 'parent-gate failed'` (verification-brief-parent-gate.md,
 // "Fail open on every gh call"): never a skip, never `route: null`.
-
 //
 // runAcceptance executes the routed state: it reads the route's inputs, launches the read-only
 // `acceptance` worker (which returns only tryIt / observationPlan / claims / parentBrief, validated
@@ -350,6 +349,15 @@ function postTryIt(env, ctx, state, groups, endToEnd, tmp) {
 
 const labelsOn = (decision, on) => decision.labels.filter((l) => l.on === on).map((l) => l.label);
 
+// { stop } for the first label that could not be bootstrapped, else null.
+function ensureLabels(env, ctx, names) {
+  for (const name of names) {
+    const bootstrapped = ensureLabel(env, ctx, name);
+    if (bootstrapped) return bootstrapped;
+  }
+  return null;
+}
+
 // try-it-only: the record's Try it, plus the end-to-end variant when the parent gate is `due` below the floor.
 async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   if (verdict.state !== 'due') {
@@ -372,10 +380,8 @@ async function dueExceeds(env, ctx, state, decision, verdict, tmp) {
   const judged = await judge(env, ctx, decision.route, parentInputs(read, verdict), true);
   if (judged.stop) return judged;
   const labels = labelsOn(decision, 'parent');
-  for (const name of labels) {
-    const bootstrapped = ensureLabel(env, ctx, name);
-    if (bootstrapped) return bootstrapped;
-  }
+  const bootstrapped = ensureLabels(env, ctx, labels);
+  if (bootstrapped) return bootstrapped;
   const comments = Array.isArray(read.comments) ? read.comments : [];
   const isBrief = (c) => c && typeof c.body === 'string' && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed');
   state.skipped += comments.filter((c) => isBrief(c) && !isTrustedComment(c)).length;
@@ -444,10 +450,8 @@ async function noParent(env, ctx, decision, tmp) {
   ], ctx.worktree);
   if (!rendered || rendered.code !== 0) return { stop: exitText('render', rendered) };
   const labels = labelsOn(decision, 'record');
-  for (const name of labels) {
-    const bootstrapped = ensureLabel(env, ctx, name);
-    if (bootstrapped) return bootstrapped;
-  }
+  const bootstrapped = ensureLabels(env, ctx, labels);
+  if (bootstrapped) return bootstrapped;
   const posted = cli(env, 'acceptance-packet.js', [
     'post', '--record', String(ctx.record), '--body-file', files.packet, '--pr', String(ctx.pr), '--repo', ctx.repo,
     ...labels.flatMap((name) => ['--label', name]),
