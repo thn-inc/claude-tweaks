@@ -183,6 +183,12 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     if (unreadable.length) {
       return fatal(`policy unreadable: ${unreadable.map((k) => `${k} (${(resolved[k] && resolved[k].error) || 'missing'})`).join(', ')}`);
     }
+    // A set driver line bound (#5224) that is not an integer of at least 1 is fatal here, before any
+    // record is claimed, whatever the reviewer answer: driverLineBound then reads only a valid value.
+    const lineBound = resolved['express-driver-max-lines'];
+    if (lineBound.source !== 'default' && !(Number.isSafeInteger(lineBound.value) && lineBound.value >= 1)) {
+      return fatal(`driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(lineBound.value)})`);
+    }
     const { ref, why } = resolveIntegrationRef(resolved, mainRoot, deps);
     if (!ref) return fatal(`integration branch unresolvable: ${why}`);
     shared.policy = resolved;
@@ -220,18 +226,14 @@ function laneBounds(policy) {
   return { sizeCeiling: policy['express-driver-max-size'].value, maxKeyFiles: policy['express-driver-max-key-files'].value };
 }
 
-// The implementation-line bound for check's --max-lines (#5224), as { bound } or { bad }: bound is
-// express-driver-max-lines when it is set (its source is not the default) and the reviewer is on for the
-// record, else null, so check reads auto-merge-max-lines itself (the express bound is read in one place
-// only). A set value that is not an integer of at least 1 is `bad`, whatever the reviewer answer, and the
-// record stops on it: the worker step and check both read this, so the prompt and check never disagree.
+// The implementation-line bound for check's --max-lines (#5224): express-driver-max-lines when it is
+// set (its source is not the default) and the reviewer is on for the record, else null, so check reads
+// auto-merge-max-lines itself (the express bound is read in one place only). The policy step has already
+// refused a set value that is not an integer of at least 1. The worker step and check both read this, so
+// the prompt and check never disagree.
 function driverLineBound(ctx) {
   const { value, source } = ctx.shared.policy['express-driver-max-lines'];
-  if (source === 'default') return { bound: null };
-  if (!Number.isSafeInteger(value) || value < 1) {
-    return { bad: `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(value)})` };
-  }
-  return { bound: ctx.reviewer && ctx.reviewer.on === true ? value : null };
+  return source !== 'default' && ctx.reviewer && ctx.reviewer.on === true ? value : null;
 }
 
 // Ports express-lane.md's Eligibility section, with the driver's relaxed ceremony gate and the lane
@@ -595,8 +597,7 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   // --max-lines flag, else auto-merge-max-lines as check reads it (blast-radius-cli.js's
   // resolveBlastRadiusConfig: Number() of the same policy value).
   const linesKey = 'auto-merge-max-lines';
-  const { bound: driverBound, bad } = driverLineBound(ctx);
-  if (bad) return { status: 'fail', detail: bad };
+  const driverBound = driverLineBound(ctx);
   const maxLines = driverBound ?? Number(shared.policy[linesKey].value);
   if (driverBound === null && !Number.isFinite(maxLines)) {
     return { status: 'fail', detail: `express diff bound not a number: ${linesKey} (${JSON.stringify(shared.policy[linesKey].value)})` };
@@ -850,11 +851,10 @@ function logDecisionFile(ctx, deps, fileName, text, step, extraArgs) {
 // (no escalation line landed, so the normal path would not know the record left the lane).
 // Escalate is a `pre-push` stop. `head` is kept as-is: whether it may pass is the push
 // step's guard, which a malformed envelope must never get through. The driver's line bound rides
-// as --max-lines only when driverLineBound gives one (#5224); a malformed one fails before any write.
+// as --max-lines only when driverLineBound gives one (#5224).
 const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const n = ctx.record;
-  const { bound, bad } = driverLineBound(ctx);
-  if (bad) return { status: 'fail', detail: bad };
+  const bound = driverLineBound(ctx);
   const recordFile = path.join(ctx.runDir, 'record.json');
   // The record's comments are untrusted text and grow with the thread; check reads only these fields.
   const { number, title, body, labels, state } = ctx.issue;

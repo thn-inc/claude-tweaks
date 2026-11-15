@@ -4430,7 +4430,7 @@ test('AC2.1/AC2.2 (#5224): with every key unset the run refuses and admits as to
   assert.strictEqual(rows, 72);
 });
 
-test('(#5224) a set express-driver-max-lines that is not an integer of at least 1 refuses the record before any check call', async () => {
+test('(#5224) a set express-driver-max-lines that is not an integer of at least 1 stops the driver before any record', async () => {
   for (const review of ['on', 'off']) {
     for (const value of ['x', 0, 2.5, null]) {
       const name = `${JSON.stringify(value)} review=${review}`;
@@ -4438,22 +4438,14 @@ test('(#5224) a set express-driver-max-lines that is not an integer of at least 
         ? { value, source: 'policy' }
         : { value: { ...POLICY, 'express-driver-review': review }[k], source: 'policy' }]))];
       const h = harness({ script: [malformed] });
-      await run(['#7'], h.deps);
-      const final = lastLine(h);
-      assert.deepStrictEqual([final.stop.step, final.status], [STEP.worker, 'fail'], name);
+      assert.equal(await run(['#7', '#8'], h.deps), 1, name);
+      const final = h.lines().at(-1);
+      assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused'], name);
       assert.equal(final.stop.detail, `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(value)})`, name);
-      assert.equal(calls(h, 'worker').length, 0, name);
-      assert.equal(checkCalls(h).length, 0, name);
+      assert.equal(h.lines().filter((l) => l.record === 8).length, 0, name);
+      assert.equal(h.calls.filter((c) => c.kind === 'gh').length, 0, name);
     }
   }
-  // The check step reads the same guard and fails before its first write, never passing the value on.
-  const checkRun = STEPS.find((s) => s.name === STEP.check).run;
-  const touched = [];
-  const deps = new Proxy({}, { get: (_, k) => (...a) => { touched.push([k, a]); return { code: 0, stdout: '', stderr: '' }; } });
-  const ctx = { record: 7, reviewer: { on: true, reason: 'test' }, shared: { policy: { 'express-driver-max-lines': { value: 'x', source: 'policy' } } } };
-  const res = await checkRun(ctx, deps);
-  assert.deepStrictEqual([res.status, res.detail], ['fail', 'driver diff bound not an integer of at least 1: express-driver-max-lines ("x")']);
-  assert.deepStrictEqual(touched, []);
 });
 
 test('(#5224) the fix round of a widened record passes the driver bound to its second check', async () => {
