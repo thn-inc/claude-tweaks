@@ -18,6 +18,7 @@ const { ESCALATION_REASONS } = require('../express/cli');
 const { LABELS } = require('../issues/record-vocabulary');
 const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
 const { safeReal } = require('../hooks/worktree-detect');
+const { CLAIM_KIND, readClaimReason } = require('./claim-exit');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
 
@@ -123,10 +124,12 @@ const toEscalationReason = (reason) => (ESCALATION_REASONS.includes(reason) ? re
 function selectRow(stop, { prRecorded }) {
   switch (stop.class) {
     case STOP_CLASSES.REFUSED: return { row: 'refused', unclassified: false };
-    case STOP_CLASSES.CLAIM:
-      // claim-exit-3 is claim-targets.js exit 3 (contested or in flight): another run holds
+    case STOP_CLASSES.CLAIM: {
+      // A contested claim (claim-targets.js exit 3, contested or in flight): another run holds
       // the claim, so the row writes nothing.
-      return { row: stop.reason === 'claim-exit-3' ? 'claim-contested' : 'claim', unclassified: false };
+      const claim = readClaimReason(stop.reason);
+      return { row: claim && claim.kind === CLAIM_KIND.CONTESTED ? 'claim-contested' : 'claim', unclassified: false };
+    }
     case STOP_CLASSES.PRE_PUSH:
       return { row: stop.pushed || prRecorded ? 'blocked' : 'pre-push', unclassified: false };
     case STOP_CLASSES.BLOCKED: return { row: 'blocked', unclassified: false };
@@ -211,6 +214,8 @@ async function settle(input, deps) {
   const created = stop.created || {};
   const stepName = oneOf(STEP_NAMES, stop.step);
   const reason = toEscalationReason(stop.reason);
+  // What the claim step's exit means, when the stop's reason is one it wrote; else null.
+  const claim = readClaimReason(stop.reason);
   const gitIn = (args) => deps.git(['-C', mainRoot, ...args], { cwd: mainRoot });
   const nodeOpts = { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env };
   const bin = (name) => path.join(BIN_DIR, name);
@@ -247,8 +252,8 @@ async function settle(input, deps) {
 
   const recordBody = () => {
     if (row === 'claim') {
-      const m = /^claim-exit-(\d+)$/.exec(String(stop.reason));
-      return commentFor('claim', { step: stop.step, outcome: outcome(), exitCode: m ? Number(m[1]) : undefined, detail: stop.detail });
+      const exitCode = claim && claim.exit !== null ? claim.exit : undefined;
+      return commentFor('claim', { step: stop.step, outcome: outcome(), exitCode, detail: stop.detail });
     }
     if (row === 'pre-push') return commentFor('escalated', { step: stop.step, outcome: outcome(), reason, detail: stop.detail });
     const kept = { pr: pr.number !== null, branch: created.branch === true, worktree: created.worktree === true };
@@ -354,8 +359,8 @@ async function settle(input, deps) {
   await runRow(SETTLE_ROWS[row]);
 
   let note = null;
-  // claim-exit-5 is claim-targets.js exit 5, an unverified write: a claim may have been written.
-  if (row === 'claim' && (stop.reason === 'claim-exit-5' || stop.reason === 'claim-exit-none' || input.claimed === true)) note = CLAIM_NOTE;
+  // An unverified claim (claim-targets.js exit 5, or no exit): a claim may have been written.
+  if (row === 'claim' && ((claim && claim.kind === CLAIM_KIND.UNVERIFIED) || input.claimed === true)) note = CLAIM_NOTE;
   else if (plan.unreadableNote) note = plan.unreadableNote;
   return { row, settledClass: CLASS_BY_ROW[row], calls, failed, unclassified: plan.unclassified, note, ...(interrupted ? { interrupted: true } : {}) };
 }
