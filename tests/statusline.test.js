@@ -12,7 +12,7 @@ const sl = require('../plugin/bin/claude-tweaks-statusline.js');
 const color = require('../plugin/bin/lib/color');
 const { readText } = require('./helpers/read-skill');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
-const { spawnCli } = require('./helpers/run-cli');
+const { runCli, spawnCli } = require('./helpers/run-cli');
 const { chmodDenialSkip } = require('./helpers/root');
 
 // The project segment wraps text in OSC 8 hyperlinks (\x1b]8;;URL\x07text\x1b]8;;\x07).
@@ -32,15 +32,14 @@ function linkedName(dir) {
 
 // Hermetic: a throwaway $HOME, and the running session's own CLAUDE_CONFIG_DIR
 // dropped so the acct segment sees only what `seedHome` put in that HOME.
-function runStatusline(input, env = {}, seedHome = () => {}) {
+// In-process through runCli (#5386); cwd defaults to process.cwd(), as the
+// spawned child it replaces inherited.
+async function runStatusline(input, env = {}, seedHome = () => {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-'));
   try {
     seedHome(home);
-    return execFileSync('node', [STATUSLINE], {
-      input: JSON.stringify(input),
-      encoding: 'utf8',
-      env: { ...fixtureHomeEnv(home), ...env },
-    });
+    const res = await runCli(STATUSLINE, [], { env: { ...fixtureHomeEnv(home), ...env }, stdin: JSON.stringify(input) });
+    return res.stdout;
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -471,6 +470,18 @@ function gitCommonMain(dir) {
   return path.dirname(fs.realpathSync(path.resolve(dir, out)));
 }
 
+// What resolveMainProjectDir's git fallback answers when it is given `env`: its git
+// child runs under that env (#5386), so git's main dir under it, or `dir` itself when
+// git refuses or cannot start (the fallback's catch).
+function gitFallbackMain(dir, env) {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return path.dirname(fs.realpathSync(path.resolve(dir, out)));
+  } catch {
+    return dir;
+  }
+}
+
 // A --relative-paths worktree is left out: its main config carries [extensions],
 // so the reader defers to git for it (pinned in its own test below).
 function shapeDirs(f) {
@@ -746,7 +757,10 @@ test('resolveMainProjectDir: an env redirect reaches git, not the file read', ()
   withWorktrees((f) => {
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { env: { GIT_DIR: '' } }));
     assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
-    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
+    // The git child runs under that env, and git refuses an empty GIT_DIR, so the
+    // git path answers the worktree dir.
+    assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: f.wt, stdio: 'pipe', env: { ...process.env, GIT_DIR: '' } }), /not a git repository/);
+    assert.strictEqual(result, f.wt);
   });
 });
 
@@ -922,7 +936,8 @@ function assertFallbackOrigin(dir, env = READER_ENV) {
   assert.strictEqual(sl.originUrlFromConfig(dir, env), null);
   const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env }));
   assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
-  assert.strictEqual(result, gitOrigin(dir));
+  // The git child runs under the same env the reader got (#5386).
+  assert.strictEqual(result, gitOrigin(dir, env));
 }
 
 test('originUrlFromConfig: plain origin matches git config --get', () => {
@@ -1225,6 +1240,7 @@ test('commonDirFromFs: a FIFO at .git returns null promptly (git refuses it as n
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-fifo-'));
   try {
     execFileSync('mkfifo', [path.join(dir, '.git')]);
+    // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
     assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', dir), null);
     assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: dir, stdio: 'pipe' }), /not a regular file/);
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
@@ -1241,6 +1257,7 @@ test('commonDirFromFs: a FIFO at commondir returns null promptly', FIFO_OPTS, ()
     const commondir = path.join(dir, 'admin', 'commondir');
     fs.rmSync(commondir);
     execFileSync('mkfifo', [commondir]);
+    // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
     assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', dir), null);
   });
 });
@@ -1249,6 +1266,7 @@ test('originUrlFromConfig: a FIFO at .git/config returns null promptly', FIFO_OP
   withRepo(LOCAL_URL, (dir) => {
     fs.rmSync(origCfg(dir));
     execFileSync('mkfifo', [origCfg(dir)]);
+    // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
     assert.strictEqual(readerInChild('sl.originUrlFromConfig(p, {})', dir), null);
   });
 });
@@ -1295,6 +1313,7 @@ test('commonDirFromFs: a FIFO main config returns null promptly', FIFO_OPTS, () 
     fs.rmSync(cfg);
     execFileSync('mkfifo', [cfg]);
     try {
+      // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
       assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', f.wt), null);
     } finally {
       fs.rmSync(cfg); // git blocks on it too, and the fixture's cleanup runs git
@@ -1318,7 +1337,7 @@ test('commonDirFromFs: env names match case-insensitively, as on win32', () => {
       assert.strictEqual(sl.commonDirFromFs(f.wt, { [name]: '' }), null, name);
       const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { env: { [name]: '' } }));
       assert.deepStrictEqual(launches, [GIT_LAUNCH], name);
-      assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)), name);
+      assert.strictEqual(dirKey(result), dirKey(gitFallbackMain(f.wt, { [name]: '' })), name);
     }
   });
 });
@@ -1802,8 +1821,8 @@ test('findActiveSpec skips a file raced out between readdir and stat, instead of
   );
 });
 
-test('end-to-end: real Claude Code schema renders model + context', () => {
-  const out = runStatusline(
+test('end-to-end: real Claude Code schema renders model + context', async () => {
+  const out = await runStatusline(
     {
       model: { id: 'claude-sonnet-5', display_name: 'Sonnet 5' },
       context_window: { used_percentage: 18, context_window_size: 200000 },
@@ -1814,8 +1833,8 @@ test('end-to-end: real Claude Code schema renders model + context', () => {
   assert.ok(out.includes('ctx: 18%'), `missing ctx: ${out}`);
 });
 
-test('end-to-end: project segment renders before model', () => {
-  const out = runStatusline(
+test('end-to-end: project segment renders before model', async () => {
+  const out = await runStatusline(
     {
       workspace: { project_dir: '/Users/x/Code/claude-tweaks' },
       model: { display_name: 'Sonnet 5' },
@@ -1826,9 +1845,9 @@ test('end-to-end: project segment renders before model', () => {
   assert.ok(out.includes('Sonnet 5'), `missing model: ${out}`);
 });
 
-test('end-to-end: rate_limits flow through to sess/week segments', () => {
+test('end-to-end: rate_limits flow through to sess/week segments', async () => {
   const sec = Math.floor(Date.now() / 1000);
-  const out = runStatusline(
+  const out = await runStatusline(
     {
       model: { display_name: 'Sonnet 5' },
       rate_limits: {
@@ -1842,21 +1861,21 @@ test('end-to-end: rate_limits flow through to sess/week segments', () => {
   assert.ok(out.includes('week: 71%'), `missing week: ${out}`);
 });
 
-test('end-to-end: effort segment renders when level is set', () => {
-  const out = runStatusline(
+test('end-to-end: effort segment renders when level is set', async () => {
+  const out = await runStatusline(
     { model: { display_name: 'Sonnet 5' }, effort: { level: 'high' } },
     { NO_COLOR: '1' },
   );
   assert.ok(out.includes('eff: high'), `missing eff: ${out}`);
 });
 
-test('end-to-end: empty input does not crash', () => {
-  const out = runStatusline({}, { NO_COLOR: '1' });
+test('end-to-end: empty input does not crash', async () => {
+  const out = await runStatusline({}, { NO_COLOR: '1' });
   assert.ok(typeof out === 'string');
 });
 
-test('end-to-end: project segment is always present, even with empty input', () => {
-  const out = runStatusline({}, { NO_COLOR: '1' });
+test('end-to-end: project segment is always present, even with empty input', async () => {
+  const out = await runStatusline({}, { NO_COLOR: '1' });
   // Derived independently of the implementation (not via resolveMainProjectDir)
   // so this stays a real regression check: when the test itself runs from
   // inside a linked worktree, the expected name is the main checkout's, not
@@ -1870,8 +1889,8 @@ test('end-to-end: project segment is always present, even with empty input', () 
   assert.ok(stripLinks(out).startsWith(expectedName), `expected project segment: ${out}`);
 });
 
-test('end-to-end: transcript_path under .claude-accounts renders the acct segment at the end', () => {
-  const out = runStatusline(
+test('end-to-end: transcript_path under .claude-accounts renders the acct segment at the end', async () => {
+  const out = await runStatusline(
     {
       model: { display_name: 'Sonnet 5' },
       transcript_path: '/Users/x/.claude-accounts/personal-gmail/projects/foo/session.jsonl',
@@ -1881,8 +1900,8 @@ test('end-to-end: transcript_path under .claude-accounts renders the acct segmen
   assert.ok(out.endsWith('acct: personal-gmail'), `expected acct segment at end: ${out}`);
 });
 
-test('end-to-end: default ~/.claude layout renders the acct segment from ~/.claude.json', () => {
-  const out = runStatusline(
+test('end-to-end: default ~/.claude layout renders the acct segment from ~/.claude.json', async () => {
+  const out = await runStatusline(
     { model: { display_name: 'Sonnet 5' }, transcript_path: '/Users/x/.claude/projects/foo/s.jsonl' },
     { NO_COLOR: '1' },
     (home) =>
@@ -1894,16 +1913,16 @@ test('end-to-end: default ~/.claude layout renders the acct segment from ~/.clau
   assert.ok(out.endsWith('acct: a@outlook.com'), `expected acct segment at end: ${out}`);
 });
 
-test('end-to-end: the cost segment sits just before acct:', () => {
+test('end-to-end: the cost segment sits just before acct:', async () => {
   const seedHome = (home) =>
     fs.writeFileSync(
       path.join(home, '.claude.json'),
       JSON.stringify({ oauthAccount: { emailAddress: 'a@example.com' } }),
     );
   const base = { session_id: 'sess-1', transcript_path: '/Users/x/.claude/projects/foo/s.jsonl' };
-  const out = runStatusline({ ...base, cost: { total_cost_usd: 0.42 } }, { NO_COLOR: '1' }, seedHome);
+  const out = await runStatusline({ ...base, cost: { total_cost_usd: 0.42 } }, { NO_COLOR: '1' }, seedHome);
   assert.ok(stripLinks(out).endsWith('$0.42  acct: a@example.com'), `expected cost before acct: ${out}`);
-  const zero = runStatusline({ ...base, cost: { total_cost_usd: 0 } }, { NO_COLOR: '1' }, seedHome);
+  const zero = await runStatusline({ ...base, cost: { total_cost_usd: 0 } }, { NO_COLOR: '1' }, seedHome);
   assert.ok(!zero.includes('$'), `zero cost must render nothing: ${zero}`);
 });
 
@@ -1998,18 +2017,18 @@ test('renderSessionSegment: NO_COLOR strips SGR but keeps the link', () => {
   }
 });
 
-test('end-to-end: the session segment sits after acct:', () => {
+test('end-to-end: the session segment sits after acct:', async () => {
   const seedHome = (home) => {
     fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@example.com' } }));
     writeSessionSegment(home, 'sess-1', { text: 'hub off', stale_text: 'hub off', at: new Date().toISOString(), ttl_s: 10 });
   };
   const base = { session_id: 'sess-1', transcript_path: '/Users/x/.claude/projects/foo/s.jsonl' };
-  const out = runStatusline({ ...base, cost: { total_cost_usd: 0.42 } }, { NO_COLOR: '1' }, seedHome);
+  const out = await runStatusline({ ...base, cost: { total_cost_usd: 0.42 } }, { NO_COLOR: '1' }, seedHome);
   assert.ok(stripLinks(out).endsWith('$0.42  acct: a@example.com  hub off'), `expected the segment after acct: ${out}`);
 });
 
-test('end-to-end: NO_COLOR strips ANSI codes even at high context', () => {
-  const out = runStatusline(
+test('end-to-end: NO_COLOR strips ANSI codes even at high context', async () => {
+  const out = await runStatusline(
     { model: { display_name: 'Sonnet 5' }, context_window: { used_percentage: 95 } },
     { NO_COLOR: '1' },
   );
@@ -2020,7 +2039,9 @@ test('end-to-end: NO_COLOR strips ANSI codes even at high context', () => {
 // temp dir with no git, so the project segment's macOS /private/var spelling
 // matches, and the four repo-redirecting GIT_* names dropped, since the expected
 // output depends on git finding no repository there.
-function withScriptFixture(fn) {
+// The in-process AC8.1 tests below share the fixture: `root` holds `dir` and
+// `home`, and `base` is process.env minus those four GIT_* names.
+async function withScriptFixture(fn) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-script-')));
   const dir = path.join(root, 'proj');
   const home = path.join(root, 'home');
@@ -2028,7 +2049,7 @@ function withScriptFixture(fn) {
   fs.mkdirSync(home);
   const { GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR, ...base } = process.env;
   try {
-    return fn({ dir, env: { ...fixtureHomeEnv(home, base), NO_COLOR: '1' } });
+    return await fn({ root, dir, home, base, env: { ...fixtureHomeEnv(home, base), NO_COLOR: '1' } });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -2041,23 +2062,112 @@ const SCRIPT_PAYLOAD = (dir) => ({
 });
 
 // Real process: proves the script entry, shebang and exit code (the wrapper starts this file as a script).
-test('AC5.1 AC7.1: script renders the payload and exits 0', () => {
-  withScriptFixture(({ dir, env }) => {
-    const res = spawnCli(STATUSLINE, [], { env, stdin: JSON.stringify(SCRIPT_PAYLOAD(dir)) });
+// AC2.1 rides on the same spawn: the in-process call gets the identical env and stdin.
+test('AC2.1 AC5.1 AC7.1: script renders the payload and exits 0, and run matches it in-process', async () => {
+  await withScriptFixture(async ({ dir, env }) => {
+    const stdin = JSON.stringify(SCRIPT_PAYLOAD(dir));
+    const res = spawnCli(STATUSLINE, [], { env, stdin });
     assert.strictEqual(res.code, 0, res.stderr);
     assert.strictEqual(res.stdout, `${linkedName(dir)}  Sonnet 5  ctx: 18%`);
     assert.strictEqual(res.stderr, '');
+    const inProcess = await runCli(STATUSLINE, [], { env, stdin, cwd: dir });
+    assert.strictEqual(inProcess.code, 0);
+    assert.strictEqual(inProcess.stdout, res.stdout);
+    assert.strictEqual(inProcess.stderr, '');
   });
 });
 
 // Real process: proves malformed stdin still exits 0 with output — the status line has no refusal path, so no non-zero smoke test exists.
-test('AC7.1: script given malformed JSON on stdin exits 0', () => {
-  withScriptFixture(({ dir, env }) => {
+test('AC7.1: script given malformed JSON on stdin exits 0', async () => {
+  await withScriptFixture(({ dir, env }) => {
     const res = spawnCli(STATUSLINE, [], { env, cwd: dir, stdin: 'not json' });
     assert.strictEqual(res.code, 0, res.stderr);
     assert.strictEqual(res.stdout, linkedName(dir));
     assert.strictEqual(res.stderr, '');
   });
+});
+
+test('AC8.1: payload directory wins over deps.cwd()', async () => {
+  await withScriptFixture(async ({ root, dir, env }) => {
+    const other = path.join(root, 'other');
+    fs.mkdirSync(other);
+    const res = await runCli(STATUSLINE, [], { env, cwd: other, stdin: JSON.stringify({ workspace: { current_dir: dir } }) });
+    assert.strictEqual(res.stdout, linkedName(dir));
+  });
+});
+
+test('AC8.1: deps.cwd() is used when the payload has no directory', async () => {
+  await withScriptFixture(async ({ dir, env }) => {
+    const res = await runCli(STATUSLINE, [], { env, cwd: dir, stdin: '{}' });
+    assert.strictEqual(res.stdout, linkedName(dir));
+  });
+});
+
+test('AC8.1: session segment reads the injected HOME through deps.homeDir()', async () => {
+  await withScriptFixture(async ({ dir, home, env }) => {
+    writeSessionSegment(home, 'sess-1', { text: 'hub on', stale_text: 'hub on', at: new Date().toISOString(), ttl_s: 60 });
+    const stdin = JSON.stringify({ session_id: 'sess-1', workspace: { current_dir: dir } });
+    const res = await runCli(STATUSLINE, [], { env, cwd: dir, stdin });
+    assert.strictEqual(res.stdout, `${linkedName(dir)}  hub on`);
+  });
+});
+
+test('AC8.1: NO_COLOR in the injected env only turns colour off in-process', async () => {
+  await withScriptFixture(async ({ dir, env }) => {
+    // process.env is never touched (the leak guard would fail the call): the
+    // coloured run's env simply has no NO_COLOR, whatever the ambient one says.
+    const { NO_COLOR, ...colorEnv } = env;
+    const stdin = JSON.stringify({ workspace: { current_dir: dir }, context_window: { used_percentage: 95 } });
+    const off = await runCli(STATUSLINE, [], { env, cwd: dir, stdin });
+    assert.ok(off.stdout.includes('ctx: 95%'), off.stdout);
+    assert.doesNotMatch(off.stdout, /\x1b\[/);
+    const on = await runCli(STATUSLINE, [], { env: colorEnv, cwd: dir, stdin });
+    assert.match(on.stdout, /\x1b\[31mctx: 95%\x1b\[0m/);
+  });
+});
+
+test('AC8.1: git child gets the injected env (env-only GIT_DIR fixture)', async () => {
+  await withScriptFixture(async ({ root, dir, base, env }) => {
+    // Setup git calls run without the four repo-redirecting names (base), so an
+    // ambient GIT_DIR cannot point them at another repository.
+    const git = (args, cwd) => execFileSync('git', args, { cwd, env: base, stdio: ['ignore', 'pipe', 'pipe'] });
+    const other = path.join(root, 'other');
+    fs.mkdirSync(other);
+    for (const [repo, branch] of [[dir, 'a-branch'], [other, 'b-branch']]) {
+      git(['init', '-q', '-b', branch], repo);
+      fs.writeFileSync(path.join(repo, 'file.txt'), 'hello\n');
+      git(['add', 'file.txt'], repo);
+      git(['-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'], repo);
+    }
+    // GIT_DIR exists only in the injected env: renderGit's `status --porcelain -b`
+    // child reports b-branch only when it was started with that env.
+    const res = await runCli(STATUSLINE, [], { env: { ...env, GIT_DIR: path.join(other, '.git') }, cwd: dir, stdin: JSON.stringify({ workspace: { current_dir: dir } }) });
+    const segments = res.stdout.split('  ');
+    assert.ok(segments.some((s) => /^b-branch●?$/.test(s)), res.stdout);
+    assert.ok(!segments.some((s) => s.startsWith('a-branch')), res.stdout);
+  });
+});
+
+test('run swallows a render throw and returns 0', async () => {
+  await withScriptFixture(async ({ dir, env }) => {
+    const res = await runCli(STATUSLINE, [], { env, cwd: dir, deps: { stdin: () => { throw new Error('boom'); } } });
+    assert.strictEqual(res.code, 0);
+    assert.strictEqual(res.stdout, '');
+    assert.strictEqual(res.stderr, '');
+  });
+});
+
+// The generated wrapper requires this file and calls mod.main() with no arguments
+// on every render, and falls back to starting it as a script.
+test('main() with no arguments still renders through realDeps', () => {
+  assert.strictEqual(typeof sl.main, 'function');
+  assert.strictEqual(sl.main.length, 0);
+  assert.deepStrictEqual(Object.keys(sl.realDeps).sort(), ['cwd', 'env', 'homeDir', 'now', 'stdin', 'stdout']);
+  assert.strictEqual(sl.realDeps.stdin, sl.readStdin);
+  assert.strictEqual(sl.realDeps.env, process.env);
+  const wrapper = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'statusline-wrapper-source.js'));
+  assert.match(wrapper, /\.main\(\)/);
+  assert.match(wrapper, /spawn\('node', \[target\]/);
 });
 
 // #1793 AC1: renderPorts and its toplevel-resolution helper.
