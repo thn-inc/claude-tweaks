@@ -1818,35 +1818,81 @@ test('isDeferredUnstaged: the one definition parseLedger counts and the ledger-r
 // #5379: defaultDeps(cwd, { env }) hands the injected environment to the git children resolveWorktreeBase
 // runs. B alone carries `origin/HEAD` at its base commit (plus one more commit); A has no remote, so a
 // child that answers B's base ran under `GIT_DIR=B/.git`.
-test('defaultDeps(cwd, { env }): resolveWorktreeBase reads the env-only repo (#5379)', () => {
-  const { execFileSync } = require('node:child_process');
-  const { defaultDeps } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
-  const clean = { ...process.env };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete clean[k];
-  const mk = (prefix) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-    const g = (...args) => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env: clean, encoding: 'utf8' }).trim();
-    g('init', '-q', '-b', 'main');
-    fs.writeFileSync(path.join(dir, 'seed.txt'), `${prefix}\n`);
-    g('add', '.');
-    g('commit', '-q', '-m', prefix);
-    return { dir, g };
-  };
-  const a = mk('pack-env-a-');
-  const b = mk('pack-env-b-');
+const packDefaultDeps = () => require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js')).defaultDeps;
+
+// Repos A (no remote) and B (the env-only one), removed after `fn(a, b)`.
+function withTwoRepos(fn) {
+  const { committedRepo } = require('../../helpers/git-fixtures');
+  const a = committedRepo({ prefix: 'pack-env-a-', branch: 'main' });
+  const b = committedRepo({ prefix: 'pack-env-b-', branch: 'main' });
   try {
-    const bBase = b.g('rev-parse', 'HEAD');
-    b.g('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
-    b.g('update-ref', 'refs/remotes/origin/main', bBase);
-    b.g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
-    fs.writeFileSync(path.join(b.dir, 'more.txt'), 'more\n');
-    b.g('add', '.');
-    b.g('commit', '-q', '-m', 'b second');
-    const env = { ...clean, GIT_DIR: path.join(b.dir, '.git') };
-    assert.strictEqual(resolveWorktreeBase(a.dir, defaultDeps(a.dir, { env })), bBase);
-    assert.notStrictEqual(resolveWorktreeBase(a.dir, defaultDeps(a.dir)), bBase, 'no env: the children read A');
+    return fn(a, b);
   } finally {
     fs.rmSync(a.dir, { recursive: true, force: true });
     fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+}
+
+function commitFile(repo, name, text) {
+  fs.mkdirSync(path.dirname(path.join(repo.dir, name)), { recursive: true });
+  fs.writeFileSync(path.join(repo.dir, name), text);
+  repo.git('add', '.');
+  repo.git('commit', '-q', '-m', name);
+  return repo.git('rev-parse', 'HEAD');
+}
+
+test('defaultDeps(cwd, { env }): resolveWorktreeBase reads the env-only repo (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const bBase = b.head;
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', bBase);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    commitFile(b, 'more.txt', 'more\n');
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), bBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), bBase, 'no env: the children read A');
+  });
+});
+
+// The `integration-branch` policy read is resolveWorktreeBase's first git child. B's policy.yml names a
+// branch at a commit distinct from origin/HEAD's, so the result moves only when defaultResolvePolicy's git
+// ran under env (GIT_WORK_TREE makes B the policy root while cwd stays A, which has no policy).
+test('defaultDeps(cwd, { env }): the integration-branch policy is read through the injected env (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const originMain = commitFile(b, path.join('.claude-tweaks', 'policy.yml'), 'integration-branch: pbranch\n');
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', originMain);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    const policyBase = commitFile(b, 'p.txt', 'p\n');
+    b.git('branch', 'pbranch');
+    commitFile(b, 'q.txt', 'q\n');
+    assert.notStrictEqual(policyBase, originMain);
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), GIT_WORK_TREE: b.dir };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), policyBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), policyBase, 'no env: the policy is read from A, which has none');
+  });
+});
+
+// ghSync wraps its options in ghOptions with the injected env: with GH_HOST unset, B's origin (read under
+// GIT_DIR while cwd is A) decides the GH_HOST the stub `gh` prints.
+test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read under env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-env-stub-'));
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho "$GH_HOST"\n', { mode: 0o755 });
+  _resetGhHostCache();
+  try {
+    withTwoRepos((a, b) => {
+      b.git('remote', 'add', 'origin', 'https://acme.ghe.com/o/r.git');
+      const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), PATH: stubDir + path.delimiter + process.env.PATH };
+      delete env.GH_HOST;
+      delete env.GH_REPO;
+      assert.strictEqual(packDefaultDeps()(a.dir, { env }).ghSync(['--version'], { cwd: a.dir }).trim(), 'acme.ghe.com');
+    });
+  } finally {
+    _resetGhHostCache();
+    fs.rmSync(stubDir, { recursive: true, force: true });
   }
 });

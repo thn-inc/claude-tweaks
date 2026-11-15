@@ -13,6 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { gatherFacts } = require('../../../plugin/bin/lib/wrap-up/facts');
+const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
 
 let repoDir;
 let baseSha;
@@ -402,29 +403,36 @@ test('gatherFacts claudeMdOverBudget is true when a scoped rule exceeds the scop
 // #5379: gatherFacts' git children take the injected `env`. B alone holds `b-only.txt` after its
 // base commit, so reading it proves the child ran under `GIT_DIR=B/.git` while `cwd` stayed A.
 test('gatherFacts: git children get env (#5379)', () => {
-  const clean = { ...process.env };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete clean[k];
-  const mk = (prefix, file) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-    const g = (...args) => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env: clean, encoding: 'utf8' }).trim();
-    g('init', '-q');
-    fs.writeFileSync(path.join(dir, file), `${prefix}\n`);
-    g('add', '.');
-    g('commit', '-q', '-m', prefix);
-    return { dir, g };
-  };
-  const a = mk('wrapup-facts-env-a-', 'a.txt');
-  const b = mk('wrapup-facts-env-b-', 'b-base.txt');
+  const a = committedRepo({ prefix: 'wrapup-facts-env-a-', file: 'a.txt' });
+  const b = committedRepo({ prefix: 'wrapup-facts-env-b-', file: 'b-base.txt' });
   try {
-    const bBase = b.g('rev-parse', 'HEAD');
+    const bBase = b.head;
     fs.writeFileSync(path.join(b.dir, 'b-only.txt'), 'b\n');
-    b.g('add', '.');
-    b.g('commit', '-q', '-m', 'b second');
-    const env = { ...clean, GIT_DIR: path.join(b.dir, '.git') };
+    b.git('add', '.');
+    b.git('commit', '-q', '-m', 'b second');
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
     assert.ok(gatherFacts({ cwd: a.dir, base: bBase, env }).changedFiles.includes('b-only.txt'));
     assert.ok(!gatherFacts({ cwd: a.dir, base: bBase }).changedFiles.includes('b-only.txt'), 'no env: the child reads A, which has no such base');
   } finally {
     fs.rmSync(a.dir, { recursive: true, force: true });
     fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+});
+
+// lineCount's `wc` child gets the env too: a `wc` first on the injected PATH prints a fixed count, so the
+// measured `lines` is 999 only when that env reached the spawn (the inherited PATH finds the real wc: 1).
+test('gatherFacts: the wc child gets env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-wc-'));
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-wc-stub-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'one line\n');
+    fs.writeFileSync(path.join(stubDir, 'wc'), '#!/bin/sh\necho "999 $2"\n', { mode: 0o755 });
+    const env = { ...cleanGitEnv(), PATH: stubDir + path.delimiter + process.env.PATH };
+    const lines = (facts) => facts.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md')).lines;
+    assert.strictEqual(lines(gatherFacts({ cwd: dir, base: 'HEAD', env })), 999);
+    assert.strictEqual(lines(gatherFacts({ cwd: dir, base: 'HEAD' })), 1, 'no env: the real wc');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(stubDir, { recursive: true, force: true });
   }
 });

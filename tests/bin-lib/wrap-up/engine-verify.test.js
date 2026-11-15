@@ -9,7 +9,8 @@ const { renderVerifyTable, runVerify, registerCheck, resolvePrNumber, resolveArc
 const { evaluateParentGate } = require('../../../plugin/bin/lib/issues/parent-gate');
 const { buildNativeSubIssuesQuery } = require('../../../plugin/bin/lib/issues/record');
 const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
-const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf, cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
+const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
 const { readText } = require('../../helpers/read-skill');
 
 // Every tmp root this file creates is registered here and removed once, after the
@@ -3866,20 +3867,10 @@ test('#3595 AC3.1: carrier-commit matches Fixes/Closes and rejects Refs through 
 // #5379: an injected process context reaches the git and gh children (the in-process CLI entry hands
 // the engine its own `env`); absent, both inherit the real one. Two repos, A and B, tell them apart:
 // only B holds `GIT_DIR`'s HEAD, so a child that reads B's HEAD got the injected env.
-function cleanGitEnv() {
-  const env = { ...process.env };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
-  return env;
-}
 function commitRepo(prefix, file) {
-  const dir = makeTmpDir(prefix);
-  const env = cleanGitEnv();
-  const g = (...args) => realExecFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env, encoding: 'utf8' }).trim();
-  g('init', '-q');
-  fs.writeFileSync(path.join(dir, file), `${prefix}\n`);
-  g('add', '.');
-  g('commit', '-q', '-m', prefix);
-  return { dir, head: g('rev-parse', 'HEAD') };
+  const repo = committedRepo({ prefix, file });
+  trackTmp(repo.dir);
+  return repo;
 }
 
 test('defaultGit: the git child gets ctx.env (#5379)', () => {
@@ -3900,4 +3891,35 @@ test('defaultGh: the gh child gets ctx.env (#5379)', { skip: process.platform ==
   // GH_HOST set makes ghOptions hand the options back untouched.
   const env = { ...cleanGitEnv(), PATH: stubDir + path.delimiter + process.env.PATH, GH_HOST: 'github.com' };
   assert.match(defaultGh(['--version'], a.dir, { env }), /stubbed/);
+});
+
+// With GH_HOST unset, ghOptions resolves the host from the origin remote: it must read it under the
+// injected env (B's origin through GIT_DIR, while cwd is A, which has none) and look hosts.yml up in the
+// injected env's gh config dir. A `gh` stub that prints $GH_HOST shows what the child was handed.
+function hostEcho({ originUrl, hostsYml }) {
+  const a = commitRepo('env-host-a-', 'a.txt');
+  const b = commitRepo('env-host-b-', 'b.txt');
+  b.git('remote', 'add', 'origin', originUrl);
+  const stubDir = makeTmpDir('env-host-stub-');
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho "$GH_HOST"\n', { mode: 0o755 });
+  const ghConfig = makeTmpDir('env-host-cfg-');
+  if (hostsYml) fs.writeFileSync(path.join(ghConfig, 'hosts.yml'), hostsYml);
+  const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), GH_CONFIG_DIR: ghConfig, PATH: stubDir + path.delimiter + process.env.PATH };
+  delete env.GH_HOST;
+  delete env.GH_REPO;
+  _resetGhHostCache();
+  try {
+    return require('../../../plugin/bin/lib/wrap-up/engine-verify').defaultGh(['--version'], a.dir, { env, stderr: () => {} }).trim();
+  } finally {
+    _resetGhHostCache();
+  }
+}
+
+test('defaultGh: GH_HOST resolves from the origin read under ctx.env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  assert.strictEqual(hostEcho({ originUrl: 'https://acme.ghe.com/o/r.git' }), 'acme.ghe.com');
+});
+
+test('defaultGh: the host lookup reads hosts.yml under the injected gh config dir (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  assert.strictEqual(hostEcho({ originUrl: 'https://git.corp.example/o/r.git', hostsYml: 'git.corp.example:\n' }), 'git.corp.example');
+  assert.strictEqual(hostEcho({ originUrl: 'https://git.corp.example/o/r.git' }), '', 'a host no hosts.yml lists stays unset');
 });
