@@ -1325,7 +1325,7 @@ test('AC1.1: a file operand is compared by canonical path through the injected r
   const withReal = { ...operandOptions(p, '/repo', { existing: ['tests/a.test.js'] }), realpath };
   assert.deepStrictEqual(parseRunnerOperands(['/link/tests/a.test.js'], withReal).files, ['tests/a.test.js']);
   assert.deepStrictEqual(parseRunnerOperands(['/link/tests/a.test.js', 'tests/a.test.js'], withReal).files, ['tests/a.test.js']);
-  assert.throws(() => parseRunnerOperands(['/link/tests/missing.test.js'], withReal), { message: '/link/tests/missing.test.js does not exist' });
+  assert.throws(() => parseRunnerOperands(['/link/tests/missing.test.js'], withReal), { message: '/link/tests/missing.test.js does not exist or is not a file' });
   // The default realpath is identity: the symlinked spelling is then outside the checkout.
   assert.throws(
     () => parseRunnerOperands(['/link/tests/a.test.js'], operandOptions(p, '/repo', { existing: ['tests/a.test.js'] })),
@@ -1401,13 +1401,31 @@ test('AC4.1 AC4.2 AC4.3 AC4.4 AC4.5 AC4.6: refuses a missing file, a file outsid
     const known = opts.isFile;
     opts.isFile = (abs) => known(abs) || abs === otherDrive;
     const refuse = (rest, message) => assert.throws(() => parseRunnerOperands(rest, opts), { message }, `${label}: ${rest.join(' ')}`);
-    refuse(['tests/missing.test.js'], 'tests/missing.test.js does not exist');
+    refuse(['tests/missing.test.js'], 'tests/missing.test.js does not exist or is not a file');
+    // A directory named like a test file is not a regular file: `isFile` says false for it.
+    refuse(['tests/dir.test.js'], 'tests/dir.test.js does not exist or is not a file');
     refuse(['../other/x.test.js'], '../other/x.test.js is outside the checkout');
     refuse([otherDrive], `${otherDrive} is outside the checkout`);
     refuse(['tests/helpers/util.js'], 'tests/helpers/util.js is not a *.test.js file');
     refuse(['tests', 'tests/a.test.js'], 'tests/a.test.js cannot be combined with the directory root tests');
     refuse(['--files-from', 'l.txt', 'tests/a.test.js'], 'tests/a.test.js cannot be combined with --files-from');
     refuse(['--watch', 'tests/a.test.js'], 'unknown option --watch');
+  }
+});
+
+test('the glob check reads the path handed to node --test: a glob directory in cwd is refused, a glob in the checkout path is not', () => {
+  for (const [label, p, root] of OPERAND_FLAVOURS) {
+    // cwd inside a bracket directory: the repo-relative path `t/[a]/x.test.js` would run `t/a/x.test.js`.
+    const bracketCwd = p.join(root, 't', '[a]');
+    assert.throws(
+      () => parseRunnerOperands(['x.test.js'], operandOptions(p, root, { cwd: bracketCwd, existing: ['t/[a]/x.test.js'] })),
+      { message: 'x.test.js holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand' },
+      label,
+    );
+    // A checkout whose own path holds `(`: the repo-relative path `tests/a.test.js` is safe.
+    const oddRoot = p.join(p.dirname(root), 'proj (copy)');
+    const out = parseRunnerOperands([p.join(oddRoot, 'tests', 'a.test.js')], operandOptions(p, oddRoot, { existing: ['tests/a.test.js'] }));
+    assert.deepStrictEqual(out.files, [p.join('tests', 'a.test.js')], label);
   }
 });
 
@@ -1519,6 +1537,11 @@ test('AC1.1 AC1.2 AC1.3 AC3.1: file operands run exactly those files on the subs
     assert.strictEqual(fromSub.status, 0, fromSub.stdout + fromSub.stderr);
     assert.match(fromSub.stdout, TESTS_RAN(2), fromSub.stdout);
     assert.ok(fs.existsSync(sb.probeOut), 'the probe ran');
+
+    // The run exits with the child's code: a failing file operand makes the runner exit 1.
+    const failing = runOperands(sb, layout, ['tests/unlisted.test.js'], { timeout: 30000 });
+    assert.strictEqual(failing.status, 1, failing.stdout + failing.stderr);
+    assert.match(failing.stdout, TESTS_RAN(1), failing.stdout);
   });
 });
 
@@ -1534,7 +1557,7 @@ test('a file operand typed through a symlinked spelling of the checkout runs; a 
     assert.match(ran.stdout, TESTS_RAN(1), ran.stdout);
     const missing = runOperands(sb, layout, [path.join(link, 'tests', 'missing.test.js')], { timeout: 30000 });
     assert.strictEqual(missing.status, 1, missing.stdout + missing.stderr);
-    assert.match(missing.stderr, /missing\.test\.js does not exist/, missing.stderr);
+    assert.match(missing.stderr, /missing\.test\.js does not exist or is not a file/, missing.stderr);
     const outside = path.join(sb.suiteRoot, 'outside.test.js');
     fs.writeFileSync(outside, '');
     fs.symlinkSync(outside, path.join(layout.root, 'tests', 'escape.test.js'));
@@ -1559,6 +1582,7 @@ test('AC4.1 AC4.2 AC4.3 AC4.4 AC4.5 AC4.6: argument errors exit 1 with one run-t
   await withSandbox(...PROBE, (sb) => {
     const layout = operandLayout(sb);
     fs.writeFileSync(path.join(layout.root, 'tests', 'helper.js'), '');
+    fs.mkdirSync(path.join(layout.root, 'tests', 'dir.test.js'));
     fs.writeFileSync(path.join(sb.suiteRoot, 'outside.test.js'), '');
     const list = path.join(sb.suiteRoot, 'list.txt');
     fs.writeFileSync(list, 'tests/one.test.js\n');
@@ -1572,6 +1596,10 @@ test('AC4.1 AC4.2 AC4.3 AC4.4 AC4.5 AC4.6: argument errors exit 1 with one run-t
       ['tests/one.test.js', '--record-durations', 'out.json'],
       ['tests/one.test.js', '--full'],
       ['--watch', 'tests/one.test.js'],
+      ['tests/dir.test.js'],
+      // --record-durations adds its own reporter pairs, so a typed reporter flag cannot ride along.
+      ['tests', '--record-durations', 'out.json', '--test-reporter=tap'],
+      ['tests', '--record-durations', 'out.json', '--test-reporter-destination', 'r.tap'],
     ]) {
       const r = runOperands(sb, layout, args, { timeout: 30000 });
       assert.strictEqual(r.status, 1, `${args.join(' ')}: ${r.stdout}${r.stderr}`);
@@ -1581,6 +1609,13 @@ test('AC4.1 AC4.2 AC4.3 AC4.4 AC4.5 AC4.6: argument errors exit 1 with one run-t
       assert.doesNotMatch(r.stdout, /tests \d/, `${args.join(' ')}: no test run started`);
     }
     assert.ok(!fs.existsSync(sb.probeOut), 'no probe ran');
+    for (const [args, line] of [
+      [['tests/dir.test.js'], 'run-tests.js: tests/dir.test.js does not exist or is not a file'],
+      [['tests', '--record-durations', 'out.json', '--test-reporter=tap'], 'run-tests.js: --test-reporter cannot be combined with --record-durations'],
+      [['tests', '--record-durations', 'out.json', '--test-reporter-destination', 'r.tap'], 'run-tests.js: --test-reporter-destination cannot be combined with --record-durations'],
+    ]) {
+      assert.strictEqual(runOperands(sb, layout, args, { timeout: 30000 }).stderr.trim(), line);
+    }
   });
 });
 

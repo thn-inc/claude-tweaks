@@ -246,15 +246,18 @@ function parseRunnerOperands(rest, { cwd, repoRoot, isFile, realpath = (p) => p,
     } else if (arg.startsWith('-')) {
       throw new Error(`unknown option ${arg}`);
     } else if (arg.endsWith('.test.js')) {
-      if (GLOB_CHARS.test(arg)) {
-        throw new Error(`${arg} holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand`);
-      }
       const abs = realpath(pathImpl.resolve(cwd, arg));
       const rel = pathImpl.relative(repoRoot, abs);
       if (rel === '' || rel === '..' || rel.startsWith('..' + pathImpl.sep) || pathImpl.isAbsolute(rel)) {
         throw new Error(`${arg} is outside the checkout`);
       }
-      if (!isFile(abs)) throw new Error(`${arg} does not exist`);
+      // The glob check reads `rel`, the path `node --test` receives, not the operand as typed: a cwd or
+      // symlink target holding a glob character would otherwise run a different file, and a checkout whose
+      // own path holds one is harmless.
+      if (GLOB_CHARS.test(rel)) {
+        throw new Error(`${arg} holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand`);
+      }
+      if (!isFile(abs)) throw new Error(`${arg} does not exist or is not a file`);
       if (firstFile === null) firstFile = arg;
       if (!files.includes(rel)) files.push(rel);
     } else if (isFile(pathImpl.resolve(cwd, arg)) || isFile(pathImpl.resolve(repoRoot, arg))) {
@@ -622,6 +625,14 @@ if (require.main === module) {
     if (shard && argv.includes('--files-from')) throw new Error('--shard cannot be combined with --files-from');
     if (recordDurations !== null && (shard || argv.includes('--files-from'))) {
       throw new Error('--record-durations needs the whole root set, so it cannot be combined with --shard or --files-from');
+    }
+    // --record-durations puts its own reporter pairs on the command line, so a typed one cannot ride along.
+    if (recordDurations !== null) {
+      for (const name of ['--test-reporter-destination', '--test-reporter']) {
+        if (parsed.nodeFlags.some((f) => f.startsWith(`${name}=`))) {
+          throw new Error(`${name} cannot be combined with --record-durations`);
+        }
+      }
     }
     // Named test files are a subset too: no shards, no recording, no whole-suite run.
     if (parsed.files.length > 0) {
