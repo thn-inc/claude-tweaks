@@ -1,0 +1,219 @@
+// bin/lib/timing/run-timing.js — a run's timing.json as a function (#5555).
+//
+// The events -> timing derivation phase-timing.js used to own, so a closing
+// path can call it in-process (no spawn) and phase-timing.js can keep calling
+// it too. derivePhaseTiming is the synchronous, transcript-free half;
+// deriveTiming adds the transcript-backed token keys, optionally bounded by a
+// deadline; writeTimingFile is the one place timing.json is written.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches } = require('./derive');
+const { subagentsDirFor, readDispatches } = require('./transcript');
+const { readManifest } = require('../flow/manifest');
+const { resolveAgainst } = require('../health-core/io');
+
+function readEvents(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (err) {
+    if (err && err.code === 'ENOENT') return { ok: true, events: [] };
+    return { ok: false, error: err.message };
+  }
+  const events = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    try { events.push(JSON.parse(line)); } catch { /* per-row skip, never fatal */ }
+  }
+  return { ok: true, events };
+}
+
+function readJsonOrNull(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+const EXPIRED = Symbol('expired');
+
+// Runs work(signal) bounded by deadlineAt (epoch ms) and/or an outer AbortSignal.
+// -> { hit: true } when the bound passed before the work finished (the work's own
+// signal is aborted and its late settlement ignored — a lost race never leaves
+// the work running unobserved), else { hit: false, value }; a rejection of the
+// work itself propagates. With neither bound the work runs unraced.
+async function bounded(deadlineAt, outer, work) {
+  if (deadlineAt === null && !outer) return { hit: false, value: await work(undefined) };
+  const ctl = new AbortController();
+  let timer = null;
+  const expire = () => ctl.abort();
+  const expired = new Promise((resolve) => {
+    ctl.signal.addEventListener('abort', () => resolve(EXPIRED), { once: true });
+    if (outer) {
+      if (outer.aborted) { expire(); return; }
+      outer.addEventListener('abort', expire, { once: true });
+    }
+    if (deadlineAt !== null) {
+      const left = deadlineAt - Date.now();
+      if (left <= 0) expire(); else timer = setTimeout(expire, left);
+    }
+  });
+  try {
+    if (ctl.signal.aborted) return { hit: true };
+    const running = (async () => work(ctl.signal))();
+    running.catch(() => {}); // a read that loses the race may still reject later
+    const v = await Promise.race([running, expired]);
+    return v === EXPIRED ? { hit: true } : { hit: false, value: v };
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (outer) outer.removeEventListener('abort', expire);
+  }
+}
+
+// paths: the resolved transcript paths; events: parsed events.jsonl rows. The
+// window is the earliest..latest event ts (no event with a ts -> the whole
+// session), leaving out worktree-reaped: it fires hours after the session
+// ends, so its ts would stretch the window over the idle gap (derive.js's
+// endOfRun rule, #1928). Subagents dirs are deduped by fs.realpathSync (path.resolve when
+// the dir does not resolve) so a transcript passed twice, or reached through a
+// symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
+// { deadlineAt, signal } (both optional): past the deadline, or once the signal
+// aborts, reading stops and the result is null (not a dispatches value).
+async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null } = {}) {
+  const stamps = events.filter((e) => !(e && e.type === 'worktree-reaped')).map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
+  // reduce, not Math.min(...stamps): a spread of a very large array can throw RangeError.
+  const window = stamps.length
+    ? { start: stamps.reduce((a, b) => Math.min(a, b)), end: stamps.reduce((a, b) => Math.max(a, b)) }
+    : null;
+  // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
+  // link and refuses it instead of reading wherever it points.
+  const canonical = (p) => {
+    const dir = path.resolve(cwd, subagentsDirFor(p));
+    try { return fs.lstatSync(dir).isSymbolicLink() ? dir : fs.realpathSync(dir); } catch { return dir; }
+  };
+  const dirs = [...new Set(paths.map(canonical))];
+  const items = [];
+  const reasons = [];
+  let excludedOutsideWindow = 0;
+  let found = 0;
+  for (const dir of dirs) {
+    const r = await bounded(deadlineAt, signal, (sig) => readDispatches(dir, sig ? { window, signal: sig } : { window }));
+    if (r.hit) return null;
+    if (r.value.notFound) { reasons.push(r.value.notFound); continue; }
+    found += 1;
+    items.push(...r.value.items);
+    excludedOutsideWindow += r.value.excludedOutsideWindow;
+  }
+  if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
+  const agg = aggregateDispatches(items);
+  const out = { scope: window ? 'run-window' : 'whole-session', items: agg.items, byTier: agg.byTier, byRole: agg.byRole, excludedOutsideWindow };
+  // A dir that yielded nothing beside one that did is still named, not dropped.
+  if (reasons.length) out.notFoundDirs = reasons;
+  return out;
+}
+
+// runDir -> { ok: true, timing, out, events, runState } | { ok: false, error }.
+// Sync, no transcript: `timing` is the timing.json phase-timing.js writes
+// without a transcript flag, minus `budget`. `out` is derivePhases' result,
+// `events` the parsed events.jsonl rows.
+function derivePhaseTiming(runDir) {
+  const read = readEvents(path.join(runDir, 'events.jsonl'));
+  if (!read.ok) return { ok: false, error: `events.jsonl unreadable (${read.error})` };
+  const runState = readJsonOrNull(path.join(runDir, 'run-state.json'));
+  const out = derivePhases({ events: read.events, manifest: readManifest(runDir), runState });
+  const timing = { runDir, generatedAt: new Date().toISOString(), phases: out.phases, totals: { ...out.totals } };
+  if (out.ciGate) timing.ciGate = out.ciGate;
+  return { ok: true, timing, out, events: read.events, runState };
+}
+
+// runDir, opts -> Promise<{ ok: true, timing, out, tokens, guard, notes, deadlineHit } | { ok: false, error }>.
+// Without tokens wanted the timing equals derivePhaseTiming's. wantTokens
+// (default: transcriptPaths is non-empty) adds the token keys, in the order
+// phase-timing.js has always written them; with it true and no transcript the
+// zero-row token object still results. `notes` come back with the read
+// outcomes appended. deadlineAt (epoch ms) is checked before each transcript
+// read and each read races it: past it the in-flight read is aborted through
+// its signal, reading stops and the timing comes back with phase rows only
+// (no token keys at all) and deadlineHit true.
+async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens } = {}) {
+  const base = derivePhaseTiming(runDir);
+  if (!base.ok) return base;
+  const { timing, out, events, runState } = base;
+  const withTokens = wantTokens === undefined ? transcriptPaths.length > 0 : wantTokens;
+  const outNotes = [...notes];
+  if (!withTokens) return { ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: false };
+
+  const read = readUsageImpl || ((p, o) => require('./transcript').readUsage(p, o));
+  const worktree = runState && runState.worktree ? runState.worktree : null;
+  const at = cwd === undefined ? process.cwd() : cwd;
+  const hit = () => ({ ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: true });
+  const transcripts = [];
+  let rows = [];
+  for (const p of transcriptPaths) {
+    let r;
+    try {
+      r = await bounded(deadlineAt, null, (signal) => read(resolveAgainst(at, p), signal ? { worktree, signal } : { worktree }));
+    } catch (err) {
+      const reason = `${err && err.code ? err.code : 'unreadable'}: ${p}`;
+      transcripts.push({ path: p, rows: 0, note: `transcript not found (${reason})` });
+      outNotes.push(`tokens: transcript not found (${reason})`);
+      continue;
+    }
+    if (r.hit) return hit();
+    if (r.value.length === 0) {
+      const note = `transcript had no usage rows (${p})`;
+      transcripts.push({ path: p, rows: 0, note });
+      outNotes.push(`tokens: ${note}`);
+    } else {
+      transcripts.push({ path: p, rows: r.value.length });
+    }
+    rows = rows.concat(r.value);
+  }
+  const tokens = joinTokens(out.phases, rows);
+  tokens.totals.rows = rows.length;
+  const guard = countGuardEvents(events);
+  const dispatches = await collectDispatches(transcriptPaths, events, at, { deadlineAt });
+  if (dispatches === null) return hit();
+
+  timing.phases = tokens.phases;
+  timing.unattributed = tokens.unattributed;
+  timing.totals.tokens = tokens.totals.tokens;
+  timing.totals.procedureBytes = tokens.totals.procedureBytes;
+  timing.totals.toolRoundTrips = tokens.totals.toolRoundTrips;
+  for (const k of ['turnClasses', 'context', 'modelMix', 'subagents', 'ceremonyShare']) timing.totals[k] = tokens.totals[k];
+  timing.totals.guard = guard;
+  timing.transcripts = transcripts;
+  if (outNotes.length) timing.notes = outNotes;
+  timing.dispatches = dispatches;
+  return { ok: true, timing, out, tokens, guard, notes: outNotes, deadlineHit: false };
+}
+
+// "Has token totals": totals.tokens is present and input + output + cacheRead +
+// cacheCreate > 0.
+function hasTokenTotals(timing) {
+  const t = timing && timing.totals && timing.totals.tokens;
+  if (!t || typeof t !== 'object') return false;
+  const n = (v) => (Number.isFinite(v) ? v : 0);
+  return n(t.input) + n(t.output) + n(t.cacheRead) + n(t.cacheCreate) > 0;
+}
+
+// runDir, timing -> the written path. A timing without its own `budget` key
+// takes the budget of an existing parseable timing.json (set on `timing`
+// itself, so a caller printing it shows what was written); nothing else is
+// carried. Written to a temp file in runDir, then renamed over timing.json, so
+// a reader never sees half a file. Never creates runDir: a missing one throws.
+function writeTimingFile(runDir, timing) {
+  const timingPath = path.join(runDir, 'timing.json');
+  if (!Object.hasOwn(timing, 'budget')) {
+    const previous = readJsonOrNull(timingPath);
+    if (previous && typeof previous === 'object' && Object.hasOwn(previous, 'budget')) timing.budget = previous.budget;
+  }
+  const tmp = path.join(runDir, `timing.json.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(timing, null, 2) + '\n', { flag: 'wx' });
+    fs.renameSync(tmp, timingPath);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch { /* nothing was written */ }
+    throw err;
+  }
+  return timingPath;
+}
+
+module.exports = { readEvents, derivePhaseTiming, deriveTiming, collectDispatches, hasTokenTotals, writeTimingFile };

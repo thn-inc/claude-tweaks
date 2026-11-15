@@ -126,7 +126,13 @@ function resultText(content) {
   return '';
 }
 
-// path, { fsImpl?, worktree? } -> Promise<rows>. Streams line by line;
+function abortError() {
+  const e = new Error('transcript read aborted');
+  e.code = 'ABORT_ERR';
+  return e;
+}
+
+// path, { fsImpl?, worktree?, signal? } -> Promise<rows>. Streams line by line;
 // malformed lines (bad JSON, no timestamp, no message.role) are skipped.
 // Every row also carries (#4029): turnClasses ({ [class]: count }, sparse — a
 // user row counts its tool_result blocks by class, an assistant row is {}),
@@ -140,7 +146,12 @@ function resultText(content) {
 // succeeds but the subsequent read fails (e.g. a mode-000 file, or a
 // mid-file I/O error) — with whatever code the stream/readline error
 // carries.
-async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
+// `signal` (an AbortSignal, optional): when it aborts — or is already aborted —
+// the readline is closed, the stream destroyed and the promise rejects with an
+// Error whose code is 'ABORT_ERR' (#5555), so a deadline-bound caller never
+// leaves a stream open. Without it nothing changes.
+async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null } = {}) {
+  if (signal && signal.aborted) throw abortError();
   statTranscriptOrThrow(fsImpl, filePath);
   const rows = [];
   const procedureReads = new Set(); // tool_use ids of Reads on procedure files
@@ -154,9 +165,15 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
   const firstRowById = new Map();
   const stream = fsImpl.createReadStream(filePath, { encoding: 'utf8' });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  let onAbort = null;
   await new Promise((resolve, reject) => {
     stream.on('error', reject);
     rl.on('error', reject);
+    if (signal) {
+      // reject first: rl.close() emits 'close' synchronously, which would resolve.
+      onAbort = () => { reject(abortError()); rl.close(); stream.destroy(); };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
     rl.on('line', (line) => {
       if (!line.trim()) return;
       let entry;
@@ -207,7 +224,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
       rows.push(row);
     });
     rl.on('close', resolve);
-  });
+  }).finally(() => { if (onAbort) signal.removeEventListener('abort', onAbort); });
   // After the stream closes, so a turn's first row holds the per-id max.
   for (const r of rows) if (r.turnStart) r.contextTokens = r.inputTokens + r.cacheRead + r.cacheCreate;
   return rows;
@@ -265,7 +282,7 @@ function transcriptModelOf(rows) {
 // rows is notFound 'transcript has no usage rows' (numbers null), decided
 // before clipping. A symlinked subagents/ directory is never followed, and one
 // with no agent-* files is notFound rather than an empty table. Never throws.
-async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {}) {
+async function readDispatches(subagentsDir, { fsImpl = fs, window = null, signal = null } = {}) {
   // Absent or unreadable falls through: readdirSync below names the code.
   if (lstatType(subagentsDir, { fsImpl }).type === 'symlink') {
     return { items: [], notFound: `subagents/ directory is a symlink (not followed) at ${subagentsDir}`, excludedOutsideWindow: 0 };
@@ -324,7 +341,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       fail(`transcript not readable (${skipped.get(jsonlName)})`);
     } else {
       try {
-        rows = await readUsage(path.join(subagentsDir, jsonlName), { fsImpl });
+        rows = await readUsage(path.join(subagentsDir, jsonlName), { fsImpl, signal });
       } catch (err) {
         fail(`transcript not readable (${(err && err.code) || 'EUNKNOWN'})`);
       }
