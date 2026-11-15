@@ -1984,6 +1984,28 @@ test('#5304 D1: a second pull in the same session and TMPDIR prints its own comb
   });
 });
 
+// #5304 ruling: a shipped claim read fails, then the pull stops between the shipped and neighbour
+// passes (here the unlanded-blocker CLI exits 1). The shipped claims read so far print once, at the stop.
+test('#5304 stop: a shipped claim read that fails before a stop between the passes prints the claim line once', () => {
+  inOwnTmp((own) => {
+    const errs = [];
+    const scenario = PIPE();
+    const shippedClaimsFail = (n) => (n === 9010 || n === 9016 ? { failure: 'network-failure' } : { content: null });
+    assert.throws(() => queuePull({ sessionId: 'qp-5304-stop', cwd: own }, {
+      run: fakeRun(scenario, { sessionDir: path.dirname(sessionPaths('qp-5304-stop')['dispatch-groups.json']) }),
+      spawnCli: fakeSpawnCli(scenario, { 'hooks.js': { status: 0, stdout: '', stderr: '' }, 'dispatch-unlanded-blockers.js': { status: 1, stdout: '', stderr: 'boom' } }),
+      queueOrder: { readOrder: () => null, writeOrder: () => ({ ok: true }) },
+      expressQueuePolicy: EXPRESS_OFF,
+      createClaimReader: () => ({ read: shippedClaimsFail }),
+      now: () => NOW,
+      stderr: (s) => errs.push(s),
+    }), (err) => err instanceof QueuePullStopped && err.line === UNLANDED_STOP);
+    assert.deepEqual(errs.filter((e) => e.includes('claim read failed')), [
+      'AUTO — dispatch: shipped-candidate claim read failed for #9010 (network-failure), #9016 (network-failure); release time unknown, no downgrade\n',
+    ]);
+  });
+});
+
 test('#5227 neighbour: an unreadable claim prints the fence AUTO line and excludes nothing; a failed pool fetch writes [] and prints the pool AUTO line; a 200-record pool prints the cap Warning', () => {
   const unreadable = pull5(PIPE(), { deps: { createClaimReader: () => ({ read: () => ({ failure: 'git-fetch-failed' }) }) } });
   assert.deepEqual(entriesOf(unreadable, 'neighbour-in-flight'), []);

@@ -329,6 +329,7 @@ function makeContext(options = {}, deps = {}) {
     bundleCap: '',
     foreignStates: inputs.foreignStates || env.DISPATCH_FOREIGN_STATES,
     shippedUnreadable: [], // #5304: '#N (cause)' claims the shipped pass could not read; the neighbour pass reports them
+    neighbourReached: false, // #5304: set when the neighbour pass starts; a stop before it flushes the shipped list
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     standaloneDir: '',
     integrationBranch: '',
@@ -962,6 +963,7 @@ function reportClaimReadFailures(ctx, neighbourUnreadable) {
 // options.env are not threaded to it (createClaimReader takes only gitRunner/ghApi/runGh seams).
 function runNeighbourInFlight(ctx) {
   const { deps, paths, omit, state } = ctx;
+  state.neighbourReached = true;
   const f = state.files;
   const onGh = ctx.options.transport !== 'files';
   if (onGh) {
@@ -1063,13 +1065,19 @@ function runPasses(passes, ctx) {
   const runners = ctx.runners || RUNNERS;
   const passCtx = { ...ctx, omit: ctx.omit ?? new Set() };
   const seen = new Set();
-  for (const pass of passes) {
-    if (seen.has(pass.id)) continue;
-    seen.add(pass.id);
-    const runner = runners[pass.id];
-    if (typeof runner !== 'function') throw new Error(`queue-pull: pass not implemented: ${pass.id}`);
-    if (ctx.deps.onPass) ctx.deps.onPass(pass.id);
-    runner(passCtx);
+  try {
+    for (const pass of passes) {
+      if (seen.has(pass.id)) continue;
+      seen.add(pass.id);
+      const runner = runners[pass.id];
+      if (typeof runner !== 'function') throw new Error(`queue-pull: pass not implemented: ${pass.id}`);
+      if (ctx.deps.onPass) ctx.deps.onPass(pass.id);
+      runner(passCtx);
+    }
+  } catch (err) {
+    // #5304: a stop before the neighbour pass still prints the shipped claims read so far (once: that pass never ran).
+    if (ctx.state && !ctx.state.neighbourReached) reportClaimReadFailures(ctx, []);
+    throw err;
   }
 }
 

@@ -466,6 +466,11 @@ NODE_EVAL_EOF
   node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_STANDALONE_DIR" --id "dispatch-target-missing-${NUM}" --file "$TMP_PROPOSAL"
 done
 
+# #5304: a stop before the neighbour pass prints the shipped claims read so far, once (here and at the two stops below).
+flush_shipped_claims() {
+  node -e "const s = JSON.parse(process.argv[1]); if (s.length) console.error('AUTO — dispatch: shipped-candidate claim read failed for ' + s.join(', ') + '; release time unknown, no downgrade')" -- "${SHIPPED_UNREADABLE:-[]}"
+}
+
 # #1984: shipped-candidate classification, unconditional, after the #1224 and #1983 exclusions above.
 # #4314: a mention whose PR predates the record never counts. #4432: a mention merged before the latest
 # claim release rates weak at most; an unreadable claim never downgrades.
@@ -536,6 +541,7 @@ then
 else
   # #3110: stop -- this pass's shipped-candidate exclusions may be only
   # partially written (e.g. appendExclusion refusing a corrupt file).
+  flush_shipped_claims
   echo "dispatch: queue-pull stopped -- shipped-candidate exclusion pass failed; see error above." >&2
   rm -f "${DISPATCH_GROUPS}.tmp"
   exit 1
@@ -575,6 +581,7 @@ if node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-unlanded-blockers.js" --groups "$DIS
   mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
 else
   rm -f "${DISPATCH_GROUPS}.tmp"
+  flush_shipped_claims
   echo "dispatch: queue-pull stopped -- unlanded-blocker exclusion pass failed; see error above." >&2
   exit 1
 fi
