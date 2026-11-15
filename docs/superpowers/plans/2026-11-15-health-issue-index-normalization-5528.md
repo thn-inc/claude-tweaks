@@ -40,11 +40,14 @@ Inputs the spec is silent on. Each has a test in Task 1.
 - **Size:** `plugin/skills/_shared/health-issue-index.md` is 6,983 B against the 52,500 B rail. No test reads this file (`git grep health-issue-index -- tests` is empty).
 - **Spec assumptions (`ASSUMPTION — verify at build`):** probed and logged at Spec Step 3 in the run's `decisions.md`. `gh` returns `CLOSED` and label objects (seen on #1633). The MCP projection could not be probed in this session. Neither changes the plan: the fix is correct for both shapes.
 - **Full-suite gotcha:** implementers run only the files their task names. The controller's Common Step 5 verification and the `test` job on PR #5532 are the full-suite proof, and the build is not called done before that job is green on the head commit.
+- **Plan review (spec `## Plan Review Clarifications`):** the user decided both open questions. A non-array `labels` value is dropped and reported (Review Focus item 1 as written), and the doc sentence in Task 1 Step 4 gets no prose-conformance test.
 - **Pull request note (spec Gotchas):** the PR summary already says a code-health sweep will now reopen matched closed issues it used to skip.
 
 ---
 
 ### Task 1: Normalize `state` and `labels` in `loadIssueIndex`
+
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/bin/lib/health-core/issue-index.js`
@@ -249,6 +252,8 @@ git commit -m "Normalize issue state and labels in the health issue index — cl
 ---
 
 ### Task 2: Compare the state case-insensitively in code-health's `decide()`
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/code-health/dedup.js`
