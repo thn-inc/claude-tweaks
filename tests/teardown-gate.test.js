@@ -9,7 +9,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { findRunByWorktreePath, findRunsByWorktreePath, classifyOwnership, resolveRun, readRunState } = require('../plugin/bin/lib/hooks/context');
 const { fixtureGit } = require('./helpers/git-fixtures');
-const preToolUse = require('./helpers/pre-tool-use').withCtxEnv(require('../plugin/bin/lib/hooks/pre-tool-use'));
+const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { caseInsensitiveFs } = require('./helpers/case-insensitive-fs');
 const { readText } = require('./helpers/read-skill');
 const { shellQuote } = require('./helpers/shell-quote');
@@ -174,6 +174,7 @@ function caseFixture3769() {
 function assertRemovalDenied3769({ root, wt, fsImpl }, removeTarget) {
   const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: wt, sessionId: 's1' }));
   const out = preToolUse.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(removeTarget)}` }, session_id: 's1' },
     cwd: root, runDir: null, runState: null,
   }, { fsImpl });
@@ -236,6 +237,7 @@ test('ExitWorktree(remove) (#3836): a same-session remove whose recorded binding
     const { root, wt, fsImpl } = fixture;
     const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: fixture[recorded], sessionId: 's1' }));
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'ExitWorktree', tool_input: { action: 'remove' }, session_id: 's1' },
       cwd: wt, runDir: null, runState: null,
     }, { fsImpl });
@@ -854,7 +856,7 @@ test('#4303: past the cwd cap, a relative `git worktree remove` of the session\'
   const chain = Array.from({ length: 16 }, (_, i) => `cd /tmp/ct-4303-a${i + 1} && `).join('');
   const ok15 = Array.from({ length: 15 }, (_, i) => `{ cd /tmp/ct-4303-a${i}; }; `).join('');
   const fail15 = Array.from({ length: 15 }, (_, i) => `{ cd /tmp/ct-4303-n${i}; }; `).join('');
-  const decide = (command) => preToolUse.run({ input: { tool_name: 'Bash', tool_input: { command }, cwd: wt }, runDir: null, runState: null, ownedRun: {}, cwd: wt });
+  const decide = (command) => preToolUse.run({ env: process.env, input: { tool_name: 'Bash', tool_input: { command }, cwd: wt }, runDir: null, runState: null, ownedRun: {}, cwd: wt });
   for (const [shape, command] of [
     ['T3', `${chain}cd ${parent}; git worktree remove --force x`],
     ['T1', `${ok15}{ cd ${parent}; }; git worktree remove --force x`],

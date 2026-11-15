@@ -357,8 +357,8 @@ function listRunDirs(cwd, opts) {
 // event (e.g. an AskUserQuestion answered in one session) from landing in an
 // unrelated run's events.jsonl, without touching the 'env'/'session' arms
 // above, or #413's console-execution exception, at all.
-function isForeignWorktreeCandidate(cwd, sessionId, state) {
-  return classifyOwnership({ sessionId, cwd }, state) === 'foreign';
+function isForeignWorktreeCandidate(cwd, sessionId, state, env) {
+  return classifyOwnership({ sessionId, cwd }, state, { env }) === 'foreign';
 }
 // Shared by both resolveRun fallback arms below: a candidate is never
 // eligible to be guessed into if it's an unadopted mint (#721). It is also
@@ -378,12 +378,12 @@ function isForeignWorktreeCandidate(cwd, sessionId, state) {
 // `dropped` list. `includeWorktreeForeign` disables the worktree-binding
 // guards, (b) included. `callerRepoInfo` is the lazy memo isOtherWorktreeBound
 // reads (see there).
-function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo, fsImpl) {
+function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo, fsImpl, env) {
   if (isClaimLogOnlyMint(dir, state)) return { reason: 'claim-log-only mint', dropped: true };
   if (isUnadoptedMint(dir, state)) return { reason: 'unadopted-mint', dropped: false };
   if (isAdHocRunDir(dir)) return { reason: 'ad-hoc', dropped: false };
   if (includeWorktreeForeign) return null;
-  if (isForeignWorktreeCandidate(cwd, sessionId, state)) return { reason: 'worktree-foreign', dropped: false };
+  if (isForeignWorktreeCandidate(cwd, sessionId, state, env)) return { reason: 'worktree-foreign', dropped: false };
   if (strict && isOtherWorktreeBound(callerRepoInfo, state, fsImpl)) return { reason: `bound to ${state.worktree}`, dropped: true };
   return null;
 }
@@ -418,11 +418,11 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
   const dropped = [];
   let callerInfo;
   const callerRepoInfo = () => {
-    if (callerInfo === undefined) callerInfo = wtDetect.repoInfo(resolvedCwd);
+    if (callerInfo === undefined) callerInfo = wtDetect.repoInfo(resolvedCwd, {}, { env });
     return callerInfo;
   };
   const skipReason = (dir, state) => {
-    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo, opts.fsImpl);
+    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo, opts.fsImpl, env);
     if (skip && skip.dropped) dropped.push(`${path.basename(dir)} (${skip.reason})`);
     return skip;
   };
@@ -459,7 +459,7 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     // 'indeterminate' (unprovable — a deleted binding, an unresolved cwd) both
     // preserve today's behavior and still return 'session' attribution, which
     // is what keeps single-session resolution byte-identical (#1099's Deliverables).
-    const verdict = owner === me ? classifyOwnership({ sessionId: me, cwd: resolvedCwd }, state) : null;
+    const verdict = owner === me ? classifyOwnership({ sessionId: me, cwd: resolvedCwd }, state, { env }) : null;
     if (owner === me && verdict !== 'foreign') {
       // #2783: an ad-hoc dir is a placeholder minted when no owned run existed
       // yet. The first session match that is NOT ad-hoc returns at once (the
@@ -525,7 +525,7 @@ function classifyOwnership(caller, runState, opts = {}) {
   if (!cwd) return 'indeterminate';
   if (!path.isAbsolute(cwd)) return 'indeterminate'; // relative input must never resolve against the hook process's own cwd
   const binding = runState && typeof runState.worktree === 'string' && runState.worktree ? runState.worktree : null;
-  const info = wtDetect.repoInfo(cwd);
+  const info = wtDetect.repoInfo(cwd, {}, { env: opts.env });
   if (info.indeterminate) return 'indeterminate';
   if (binding) {
     // Both sides resolve through path-guard's .native canonicalRealpath, bound
@@ -830,7 +830,7 @@ function ownerBlock({ sessionId, env = process.env, now = Date.now(), deps = {} 
     host: (deps.hostname || os.hostname)(),
     pid,
     pidSource,
-    pidStartedAt: pid === null ? null : (deps.pidStartTime || processProbe.pidStartTime)(pid),
+    pidStartedAt: pid === null ? null : (deps.pidStartTime || processProbe.pidStartTime)(pid, { env }),
     heartbeatAt: new Date(now).toISOString(),
   };
 }
@@ -909,7 +909,7 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env, deps = {}, restampWhile
     let result;
     if (cur.pid !== owner.pid) {
       if (!Number.isInteger(cur.pid)) return null;
-      const startFn = deps.pidStartTime || processProbe.pidStartTime;
+      const startFn = deps.pidStartTime || ((p) => processProbe.pidStartTime(p, { env }));
       const provablyAlive = stampedOwnerProvablyAlive(owner, {
         hostname,
         aliveFn: deps.isPidAlive || isPidAlive,

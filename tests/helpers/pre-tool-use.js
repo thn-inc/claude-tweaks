@@ -41,10 +41,4 @@ function unpinnedRepoWithOrigin() {
   return repo;
 }
 
-// A hook event's context always carries env (hooks.js builds it); a hand-built context in a test
-// passes the live process.env, unless the test gives its own. Wraps only `run`.
-function withCtxEnv(mod) {
-  return { ...mod, run: (ctx, deps) => mod.run({ env: process.env, ...ctx }, deps) };
-}
-
-module.exports = { withCtxEnv, gitRepo, gitRepoWithCommit, GH_TIMEOUT_ENV, withoutGhTimeoutEnv, unpinnedRepoWithOrigin };
+module.exports = { gitRepo, gitRepoWithCommit, GH_TIMEOUT_ENV, withoutGhTimeoutEnv, unpinnedRepoWithOrigin };

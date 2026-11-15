@@ -369,7 +369,7 @@ test('#976: deliberately-excluded git subcommands (stash, reset, checkout, merge
 // — proving the classification change actually reaches the enforcement gate,
 // not just gitTargets()'s own parser output.
 test('#976 AC1: `git mv` inside a worktree-always project triggers the same E1 deny a commit would', () => {
-  const preToolUse = require('./helpers/pre-tool-use').withCtxEnv(require('../plugin/bin/lib/hooks/pre-tool-use'));
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const fsMod = require('fs');
   const osMod = require('os');
   const { execFileSync } = require('child_process');
@@ -384,6 +384,7 @@ test('#976 AC1: `git mv` inside a worktree-always project triggers the same E1 d
   fsMod.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
 
   const out = preToolUse.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: 'git mv a.txt b.txt' }, cwd: main },
     runDir: null,
     runState: null,
@@ -3275,7 +3276,7 @@ for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bas
 }
 
 test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED, matching cp/tee', () => {
-  const preToolUse = require('./helpers/pre-tool-use').withCtxEnv(require('../plugin/bin/lib/hooks/pre-tool-use'));
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
   const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3080-main-'));
@@ -3284,6 +3285,7 @@ test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
       runDir: null, runState: null, ownedRun: {}, cwd: main,
     });
@@ -3302,7 +3304,7 @@ test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED
 // the worktree), so from a linked worktree a relative write, a push and a shadow mkdir after many
 // distinct `cd`s are DENIED; an absolute write outside the repo and a handful of groups are not.
 test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for a relative write, a push and a shadow mkdir', () => {
-  const preToolUse = require('./helpers/pre-tool-use').withCtxEnv(require('../plugin/bin/lib/hooks/pre-tool-use'));
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4149-cap-')));
@@ -3317,6 +3319,7 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   git('worktree', 'add', '-q', wt);
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: wt },
       runDir: null, runState: null, ownedRun: {}, cwd: wt,
     });
@@ -3340,7 +3343,7 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
 // (the worktree by default); `outputFor` returns the whole hookSpecificOutput. The main checkout
 // ignores `.claude/worktrees/`, as this repo does. `policy` is its worktree-always value.
 function linkedWorktree4303({ nested = false, policy = true } = {}) {
-  const preToolUse = require('./helpers/pre-tool-use').withCtxEnv(require('../plugin/bin/lib/hooks/pre-tool-use'));
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const { execFileSync } = require('child_process');
   const tmp = tmpDir4303('ct-4303-e2e-');
   const main = path.join(tmp, 'main');
@@ -3355,6 +3358,7 @@ function linkedWorktree4303({ nested = false, policy = true } = {}) {
   git('worktree', 'add', '-q', wt);
   const outputFor = (command, cwd = wt) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd },
       runDir: null, runState: null, ownedRun: {}, cwd,
     });
@@ -3799,9 +3803,10 @@ test('#4303: past the cwd cap, a lost target\'s readings ask git no more than ba
 // session cwd. Denying it would cite a worktree-always policy that does not exist; base
 // d9aa6b82d allows it.
 test('e2e #4303: past the cwd cap with no policy file anywhere, a relative write is not denied', () => {
-  const preToolUse = require('./helpers/pre-tool-use').withCtxEnv(require('../plugin/bin/lib/hooks/pre-tool-use'));
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const plain = tmpDir4303('ct-4303-plain-');
   const out = preToolUse.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(16)}echo x > out.txt` }, cwd: plain },
     runDir: null, runState: null, ownedRun: {}, cwd: plain,
   });
@@ -3889,7 +3894,7 @@ test('e2e #4303: past the cwd cap, a relative `git worktree remove` of the sessi
 });
 
 test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is ALLOWED; a top-level redirect after the delimiter is DENIED', () => {
-  const preToolUse = require('./helpers/pre-tool-use').withCtxEnv(require('../plugin/bin/lib/hooks/pre-tool-use'));
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
   const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-main-'));
@@ -3898,6 +3903,7 @@ test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
       runDir: null, runState: null, ownedRun: {}, cwd: main,
     });
