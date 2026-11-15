@@ -23,9 +23,9 @@
 
 const path = require('node:path');
 const { exceedsOversightFloor } = require('../issues/oversight-floor');
-const { neutralize, CLI_TIMEOUT_MS } = require('./events');
-const { readCeilings, launchTracked } = require('./launch');
+const { CLI_TIMEOUT_MS } = require('./events');
 const { ACCEPTANCE_RESULT_SCHEMA } = require('./roles');
+const { bin, isPlainObject, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
 const { readSection, loadAcceptanceRules, buildAcceptancePrompt } = require('./judgment-prompts');
 const { inline, codeSpan } = require('../wrap-up/packet-render');
 const { findRunComments } = require('../../find-run-comment');
@@ -68,19 +68,12 @@ const TRY_IT_MARKER = '<!-- run-comment: try-it -->';
 const OBSERVATION_KINDS = Object.freeze(['cli', 'flow', 'diff', 'app-route', 'rendered-page']);
 const VISUAL_KINDS = Object.freeze(['app-route', 'rendered-page']);
 const FLOOR_VALUES = Object.freeze(['low', 'medium', 'high', 'always']);
-const EVENT_DETAIL_MAX = 200;
 // The mutation text packet-post.js's EDIT_COMMENT_QUERY carries after its `query=` prefix, which belongs
 // to the `-F query=@file` pair here.
 const EDIT_COMMENT_MUTATION = 'mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id url}}}';
 const LABEL_SPECS = Object.freeze({
   [DEMO_PENDING]: { description: 'Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo', color: '006B75' },
 });
-
-// Worker text, one line at a time, through packet-render's inline: no mention, issue reference, live
-// link, heading or block opener survives.
-function neutralizeLines(text) {
-  return String(text).split('\n').map(inline).join('\n');
-}
 
 // _shared/try-it.md's Shape; `heading` is `### Try it` or the end-to-end variant's.
 function renderTryIt(groups, heading = '### Try it') {
@@ -139,7 +132,6 @@ function confirmedLines(parentBody) {
 
 // ---- worker output validation ----
 
-const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
 
 // null when `groups` is a non-empty array of well-formed Try it groups, else the first violation.
@@ -162,29 +154,44 @@ function planError(plan) {
   if (!OBSERVATION_KINDS.includes(plan.kind)) return 'observationPlan.kind is not one of cli, flow, diff, app-route, rendered-page';
   if (!nonEmpty(plan.entryPoint)) return 'observationPlan.entryPoint is not a non-empty string';
   for (const key of ['prepare', 'inspect']) {
-    if (!Array.isArray(plan[key]) || !plan[key].every((s) => typeof s === 'string')) return `observationPlan.${key} is not an array of strings`;
+    if (!Array.isArray(plan[key]) || !plan[key].every(nonEmpty)) return `observationPlan.${key} is not an array of non-empty strings`;
+  }
+  // observation-plan.md: Inspect is optional only for the `diff` floor.
+  if (plan.kind !== 'diff' && plan.inspect.length === 0) return `observationPlan.inspect needs at least one pointer for kind ${plan.kind}`;
+  return null;
+}
+
+// The end-to-end variant: tryIt-shaped groups whose every step names the sub-issue it exercises.
+function endToEndError(groups) {
+  const shape = groupsError(groups, 'parentBrief.tryItEndToEnd');
+  if (shape) return shape;
+  for (const [i, g] of groups.entries()) {
+    const bare = g.steps.findIndex((s) => !/\(#\d+\)\s*$/.test(s));
+    if (bare !== -1) return `parentBrief.tryItEndToEnd[${i}].steps[${bare}] has no (#N) suffix`;
   }
   return null;
 }
 
-// { stop } naming the first violated field of the route's worker output, else null.
-function validateResult(route, result) {
+// { stop } naming the first violated field of the route's worker output, else null. `endToEnd` is true
+// when the route also owes the end-to-end Try it variant (the parent gate is `due`).
+function validateResult(route, result, endToEnd) {
   const bad = (error) => ({ stop: `worker ${error}` });
   const tryIt = groupsError(result.tryIt, 'tryIt');
   if (tryIt) return bad(`tryIt invalid: ${tryIt}`);
-  if (route === 'due-exceeds') {
+  if (endToEnd) {
     const b = result.parentBrief;
     if (!isPlainObject(b)) return bad('parentBrief invalid: parentBrief is not an object');
-    if (!nonEmpty(b.ask) || !nonEmpty(b.whatShipped)) return bad('parentBrief invalid: ask and whatShipped must be non-empty strings');
-    const e2e = groupsError(b.tryItEndToEnd, 'parentBrief.tryItEndToEnd');
+    if (route === 'due-exceeds' && (!nonEmpty(b.ask) || !nonEmpty(b.whatShipped))) return bad('parentBrief invalid: ask and whatShipped must be non-empty strings');
+    const e2e = endToEndError(b.tryItEndToEnd);
     if (e2e) return bad(`parentBrief invalid: ${e2e}`);
   }
   if (route.startsWith('no-parent')) {
-    const plan = planError(result.observationPlan);
-    if (plan) return bad(`observationPlan invalid: ${plan}`);
-    if (VISUAL_KINDS.includes(result.observationPlan.kind)) {
-      return { stop: `observation plan kind ${result.observationPlan.kind} needs the visual-review safety net` };
+    const plan = result.observationPlan;
+    if (isPlainObject(plan) && VISUAL_KINDS.includes(plan.kind)) {
+      return { stop: `observation plan kind ${plan.kind} needs the visual-review safety net` };
     }
+    const planInvalid = planError(plan);
+    if (planInvalid) return bad(`observationPlan invalid: ${planInvalid}`);
     if (!Array.isArray(result.claims)) return bad('claims invalid: claims is not an array');
   }
   return null;
@@ -192,31 +199,19 @@ function validateResult(route, result) {
 
 // ---- execution ----
 
-const BIN_DIR = path.join(__dirname, '..', '..');
-const bin = (name) => path.join(BIN_DIR, name);
+// A step's exit named for the detail; a throw or a null status (a killed child) is named too.
+const exitText = (step, r) => {
+  if (r && Number.isInteger(r.code)) return `${step} exit ${r.code}`;
+  return r && r.threw ? `${step} did not run (the call threw)` : `${step} ended without an exit status`;
+};
 
-function clock(deps) {
-  try {
-    return deps && typeof deps.now === 'function' ? deps.now() : 0;
-  } catch {
-    return 0;
-  }
-}
-
-// An emit that throws never changes the result it reports.
-function emitEvent(deps, startedAt, completed, route, detail) {
-  try {
-    if (!deps || typeof deps.emit !== 'function') return;
-    deps.emit('merge-acceptance', completed ? 'ok' : 'stop', clock(deps) - startedAt, detail, { route });
-  } catch {
-    // an event is a report about the step, never part of it
-  }
-}
-
-const exitText = (step, r) => (r && Number.isInteger(r.code) ? `${step} exit ${r.code}` : `${step} did not run`);
-
+// A plugin/bin CLI through deps.node. A throw comes back as { threw: true } so the caller names its step.
 function cli(env, script, args, cwd) {
-  return env.deps.node(bin(script), args, { cwd, timeout: CLI_TIMEOUT_MS, env: env.deps.env });
+  try {
+    return env.deps.node(bin(script), args, { cwd, timeout: CLI_TIMEOUT_MS, env: env.deps.env });
+  } catch {
+    return { threw: true };
+  }
 }
 
 function readFloors(env, ctx) {
@@ -239,12 +234,7 @@ function readFacets({ deps }, ctx) {
 
 function readGate(env, ctx) {
   const n = String(ctx.record);
-  let r = null;
-  try {
-    r = cli(env, 'parent-gate.js', ['--sub-issue', n, '--closing', n, '--backend', 'github-issues'], ctx.worktree);
-  } catch {
-    r = null;
-  }
+  const r = cli(env, 'parent-gate.js', ['--sub-issue', n, '--closing', n, '--backend', 'github-issues'], ctx.worktree);
   let verdict = null;
   if (r && r.code === 0) {
     try {
@@ -265,52 +255,41 @@ function writeText({ deps }, file, text, what) {
   }
 }
 
-// The record, the diff and the changed files for the prompt. { stop } on a failed read.
-function readRecordInputs({ deps }, ctx) {
-  let title;
-  let body;
+// Rules, prompt, launch, validate. { result } or { stop }. `extra` carries the route's own prompt inputs;
+// `endToEnd` marks a route that also owes the end-to-end Try it variant (the parent gate is `due`).
+async function judge(env, ctx, route, extra, endToEnd = false) {
+  const rules = loadAcceptanceRules(env.readFile, route);
+  if (!rules.ok) return { stop: `skill section missing: ${rules.missing}` };
+  const inputs = readRecordAndDiff(env.deps, ctx, { files: true });
+  if (inputs.stop) return inputs;
+  const prompt = buildAcceptancePrompt({ route, record: ctx.record, ...inputs, ...extra, endToEnd, rules: rules.text });
+  const launched = await launchJudge(env, ctx, {
+    role: 'acceptance', dir: 'acceptance-worker', label: 'acceptance worker', prompt, schema: ACCEPTANCE_RESULT_SCHEMA,
+  });
+  if (launched.stop) return launched;
+  const { envelope } = launched;
+  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result' };
+  const invalid = validateResult(route, envelope.result, endToEnd);
+  return invalid || { result: envelope.result };
+}
+
+// The verdict's parent: { read } with its title, body and comments, or { stop }.
+function readParent({ deps }, ctx, verdict) {
+  const parent = verdict.parent;
+  if (!Number.isSafeInteger(parent) || parent <= 0) return { stop: 'parent read failed: the verdict names no parent' };
   try {
-    const rec = JSON.parse(deps.gh(['issue', 'view', String(ctx.record), '--repo', ctx.repo, '--json', 'title,body']));
-    if (!isPlainObject(rec)) throw new Error('shape');
-    title = String(rec.title ?? '');
-    body = String(rec.body ?? '');
+    const read = JSON.parse(deps.gh(['issue', 'view', String(parent), '--repo', ctx.repo, '--json', 'title,body,comments']));
+    if (!isPlainObject(read)) throw new Error('shape');
+    return { parent, read };
   } catch {
-    return { stop: 'record read failed' };
-  }
-  const diffArgs = (flags) => ['-C', ctx.worktree, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', ...flags, '--end-of-options', `origin/${ctx.base}...HEAD`, '--'];
-  try {
-    const diff = String(deps.git(diffArgs([]), { cwd: ctx.worktree }));
-    const changedFiles = String(deps.git(diffArgs(['--name-only']), { cwd: ctx.worktree })).split('\n').filter(Boolean);
-    return { title, body, diff, changedFiles };
-  } catch {
-    return { stop: 'diff read failed' };
+    return { stop: 'parent read failed' };
   }
 }
 
-// Rules, prompt, launch, validate. { result } or { stop }.
-async function judge(env, ctx, route, extra) {
-  const { deps, shared, readFile } = env;
-  const rules = loadAcceptanceRules(readFile, route);
-  if (!rules.ok) return { stop: `skill section missing: ${rules.missing}` };
-  const inputs = readRecordInputs(env, ctx);
-  if (inputs.stop) return inputs;
-  const prompt = buildAcceptancePrompt({ route, record: ctx.record, ...inputs, ...extra, rules: rules.text });
-  const ceilings = readCeilings(shared.policy);
-  if (ceilings.bad) return { stop: 'acceptance worker ceiling is not a positive number' };
-  const settingsDir = path.join(ctx.runDir, 'acceptance-worker');
-  let envelope;
-  try {
-    deps.mkdirSync(settingsDir, { recursive: true });
-    envelope = await launchTracked(shared, deps, { minutes: ceilings.minutes, dollars: ceilings.dollars }, {
-      role: 'acceptance', cwd: ctx.worktree, prompt, schema: ACCEPTANCE_RESULT_SCHEMA, settingsDir,
-    });
-  } catch {
-    return { stop: 'acceptance worker launch failed' };
-  }
-  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result' };
-  const invalid = validateResult(route, envelope.result);
-  return invalid || { result: envelope.result };
-}
+const parentInputs = (read, verdict) => ({
+  parent: { title: String(read.title ?? ''), body: String(read.body ?? '') },
+  subIssues: Array.isArray(verdict.subIssues) ? verdict.subIssues : [],
+});
 
 // Check-then-create (_shared/label-bootstrap.md) for a label the route applies.
 function ensureLabel({ deps }, ctx, name) {
@@ -328,11 +307,13 @@ function ensureLabel({ deps }, ctx, name) {
   }
 }
 
-// The `try-it` PR run comment: update the trusted one in place, else create it.
-function postTryIt(env, ctx, groups, tmp) {
+// The `try-it` PR run comment: update the trusted one in place, else create it. On a `due` parent gate
+// `endToEnd` is appended after the record's own block, so both post in one comment.
+function postTryIt(env, ctx, state, groups, endToEnd, tmp) {
   const { deps } = env;
   const bodyFile = path.join(tmp, 'try-it.md');
-  const failed = writeText(env, bodyFile, `${TRY_IT_MARKER}\n\n${renderTryIt(groups)}\n`, 'try-it body');
+  const blocks = [renderTryIt(groups), ...(endToEnd ? [renderTryIt(endToEnd, '### Try it — end to end')] : [])];
+  const failed = writeText(env, bodyFile, `${TRY_IT_MARKER}\n\n${blocks.join('\n\n')}\n`, 'try-it body');
   if (failed) return failed;
   let found;
   try {
@@ -341,6 +322,7 @@ function postTryIt(env, ctx, groups, tmp) {
   } catch {
     return { stop: 'try-it post: gh pr view failed' };
   }
+  state.skipped += found.skipped.length;
   if (found.id !== null) {
     const queryFile = path.join(tmp, 'edit-comment.graphql');
     const wrote = writeText(env, queryFile, EDIT_COMMENT_MUTATION, 'try-it mutation');
@@ -362,27 +344,26 @@ function postTryIt(env, ctx, groups, tmp) {
 
 const labelsOn = (decision, on) => decision.labels.filter((l) => l.on === on).map((l) => l.label);
 
-async function tryItOnly(env, ctx, decision, tmp) {
-  const judged = await judge(env, ctx, decision.route, {});
+// try-it-only: the record's Try it, plus the end-to-end variant when the parent gate is `due` below the floor.
+async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
+  if (verdict.state !== 'due') {
+    const judged = await judge(env, ctx, decision.route, {});
+    if (judged.stop) return judged;
+    return postTryIt(env, ctx, state, judged.result.tryIt, null, tmp) || {};
+  }
+  const parent = readParent(env, ctx, verdict);
+  if (parent.stop) return parent;
+  const judged = await judge(env, ctx, decision.route, parentInputs(parent.read, verdict), true);
   if (judged.stop) return judged;
-  return postTryIt(env, ctx, judged.result.tryIt, tmp) || {};
+  return postTryIt(env, ctx, state, judged.result.tryIt, judged.result.parentBrief.tryItEndToEnd, tmp) || {};
 }
 
-async function dueExceeds(env, ctx, decision, verdict, tmp) {
+async function dueExceeds(env, ctx, state, decision, verdict, tmp) {
   const { deps } = env;
-  const parent = verdict.parent;
-  if (!Number.isSafeInteger(parent) || parent <= 0) return { stop: 'parent read failed: the verdict names no parent' };
-  let read;
-  try {
-    read = JSON.parse(deps.gh(['issue', 'view', String(parent), '--repo', ctx.repo, '--json', 'title,body,comments']));
-    if (!isPlainObject(read)) throw new Error('shape');
-  } catch {
-    return { stop: 'parent read failed' };
-  }
-  const judged = await judge(env, ctx, decision.route, {
-    parent: { title: String(read.title ?? ''), body: String(read.body ?? '') },
-    subIssues: Array.isArray(verdict.subIssues) ? verdict.subIssues : [],
-  });
+  const found = readParent(env, ctx, verdict);
+  if (found.stop) return found;
+  const { parent, read } = found;
+  const judged = await judge(env, ctx, decision.route, parentInputs(read, verdict), true);
   if (judged.stop) return judged;
   const labels = labelsOn(decision, 'parent');
   for (const name of labels) {
@@ -390,8 +371,9 @@ async function dueExceeds(env, ctx, decision, verdict, tmp) {
     if (bootstrapped) return bootstrapped;
   }
   const comments = Array.isArray(read.comments) ? read.comments : [];
-  const posted = comments.some((c) => c && isTrustedComment(c) && typeof c.body === 'string'
-    && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed'));
+  const isBrief = (c) => c && typeof c.body === 'string' && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed');
+  state.skipped += comments.filter((c) => isBrief(c) && !isTrustedComment(c)).length;
+  const posted = comments.some((c) => isBrief(c) && isTrustedComment(c));
   if (!posted) {
     const briefFile = path.join(tmp, 'parent-brief.md');
     const text = renderParentBrief(judged.result.parentBrief, { confirmed: confirmedLines(read.body), poster: POSTER });
@@ -410,7 +392,7 @@ async function dueExceeds(env, ctx, decision, verdict, tmp) {
       return { stop: `parent label ${name}: gh issue edit failed` };
     }
   }
-  return postTryIt(env, ctx, judged.result.tryIt, tmp) || {};
+  return postTryIt(env, ctx, state, judged.result.tryIt, judged.result.parentBrief.tryItEndToEnd, tmp) || {};
 }
 
 // The narrative's own claims plus one test-guide claim per Try it step, citing its group's link.
@@ -487,8 +469,8 @@ async function execute(env, ctx, state) {
     return { stop: `acceptance temp dir not created${note}` };
   }
   let out;
-  if (decision.route === 'try-it-only') out = await tryItOnly(env, ctx, decision, tmp);
-  else if (decision.route === 'due-exceeds') out = await dueExceeds(env, ctx, decision, gate.verdict, tmp);
+  if (decision.route === 'try-it-only') out = await tryItOnly(env, ctx, state, decision, gate.verdict, tmp);
+  else if (decision.route === 'due-exceeds') out = await dueExceeds(env, ctx, state, decision, gate.verdict, tmp);
   else out = await noParent(env, ctx, decision, tmp);
   return out.stop ? { stop: `${out.stop}${note}` } : { detail: `route ${decision.route} complete${note}` };
 }
@@ -497,7 +479,7 @@ async function execute(env, ctx, state) {
 async function runAcceptance(env, ctx) {
   const deps = env && env.deps;
   const startedAt = clock(deps);
-  const state = { route: null };
+  const state = { route: null, skipped: 0 };
   let out;
   try {
     out = await execute(env, ctx, state);
@@ -505,9 +487,11 @@ async function runAcceptance(env, ctx) {
     out = { stop: 'acceptance failed unexpectedly' };
   }
   const completed = !out.stop;
-  const detail = neutralize(String(completed ? out.detail : out.stop)).slice(0, EVENT_DETAIL_MAX);
-  emitEvent(deps, startedAt, completed, state.route, detail);
-  return { completed, route: state.route, detail };
+  // Untrusted marker comments that were not acted on are named, so a planted one is never silent.
+  const skipped = state.skipped > 0 ? `; skipped ${state.skipped} untrusted comment(s)` : '';
+  const raw = `${completed ? out.detail : out.stop}${skipped}`;
+  emitStep(deps, 'merge-acceptance', completed ? 'ok' : 'stop', startedAt, raw, { route: state.route });
+  return { completed, route: state.route, detail: cleanDetail(raw) };
 }
 
-module.exports = { decideRoute, runAcceptance, renderTryIt, renderParentBrief, renderObservationPlan, neutralizeLines };
+module.exports = { decideRoute, runAcceptance, renderTryIt, renderParentBrief, renderObservationPlan };

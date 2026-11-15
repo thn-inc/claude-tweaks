@@ -180,9 +180,15 @@ const NO_PARENT_FIELDS = [
   '`parentBrief`: return `{}`.',
 ];
 
-function buildAcceptancePrompt({ route, record, title, body, diff, changedFiles, facts, parent, subIssues, rules }) {
-  const fields = ROUTE_FIELDS[route] === null ? NO_PARENT_FIELDS : ROUTE_FIELDS[route];
-  if (!fields) throw new Error('unknown acceptance route');
+// The `try-it-only` route on a `due` parent gate: the record's own Try it plus the end-to-end variant
+// (verification-brief-parent-gate.md, "one rule for both outcomes"), and no parent brief.
+const END_TO_END_FIELD = '`parentBrief`: an object holding only `tryItEndToEnd`: an array of one tryIt-shaped group walking the primary path across the parent\'s assembled sub-issues (`_shared/try-it.md`\'s end-to-end variant), each step suffixed with `(#N)`, the sub-issue it exercises. Do not return `ask` or `whatShipped`.';
+
+function buildAcceptancePrompt({ route, record, title, body, diff, changedFiles, facts, parent, subIssues, endToEnd, rules }) {
+  const base = ROUTE_FIELDS[route] === null ? NO_PARENT_FIELDS : ROUTE_FIELDS[route];
+  if (!base) throw new Error('unknown acceptance route');
+  const withParent = route === 'due-exceeds' || (route === 'try-it-only' && endToEnd === true);
+  const fields = route === 'try-it-only' && endToEnd === true ? [...base.slice(0, -1), END_TO_END_FIELD] : base;
   const files = Array.isArray(changedFiles) && changedFiles.length > 0 ? changedFiles.map(String).join('\n') : '(none listed)';
   const lines = [
     `Record #${record}: write the acceptance material for a human who will verify this change (route: ${route}).`,
@@ -207,7 +213,7 @@ function buildAcceptancePrompt({ route, record, title, body, diff, changedFiles,
     '',
     wrapUntrusted('the acceptance brief', 'the acceptance rules above', title, body),
   );
-  if (route === 'due-exceeds') {
+  if (withParent) {
     const par = parent || {};
     lines.push(
       '',

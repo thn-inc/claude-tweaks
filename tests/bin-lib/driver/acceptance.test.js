@@ -159,7 +159,7 @@ test('decideRoute', async (t) => {
 const { describe, after } = require('node:test');
 const fs = require('node:fs');
 const os = require('node:os');
-const { runAcceptance, renderTryIt, renderParentBrief, renderObservationPlan, neutralizeLines } = require(path.join(LIB, 'driver', 'acceptance'));
+const { runAcceptance, renderTryIt, renderParentBrief, renderObservationPlan } = require(path.join(LIB, 'driver', 'acceptance'));
 const { ACCEPTANCE_RESULT_SCHEMA } = require(path.join(LIB, 'driver', 'roles.js'));
 
 const roots = [];
@@ -176,11 +176,13 @@ const result = (extra) => ({ tryIt: [], observationPlan: {}, claims: [], parentB
 const ok = (extra) => ({ status: 'ok', result: result(extra) });
 
 // Each route: the parent-gate verdict and record labels that make decideRoute pick it, and a valid worker envelope.
+const E2E = { ...GROUP, name: 'End to end', steps: ['Do it (#7)'] };
 const ROUTES = {
   'try-it-only': { verdict: verdictFor('incomplete'), envelope: ok({ tryIt: [GROUP] }) },
+  'due-below': { verdict: verdictFor('due', { exceeds: false }), envelope: ok({ tryIt: [GROUP], parentBrief: { tryItEndToEnd: [E2E] } }) },
   'due-exceeds': {
     verdict: verdictFor('due', { exceeds: true }),
-    envelope: ok({ tryIt: [GROUP], parentBrief: { ask: 'The ask', whatShipped: 'What shipped', tryItEndToEnd: [{ ...GROUP, name: 'End to end', steps: ['Do it (#7)'] }] } }),
+    envelope: ok({ tryIt: [GROUP], parentBrief: { ask: 'The ask', whatShipped: 'What shipped', tryItEndToEnd: [E2E] } }),
   },
   'no-parent-exempt': { verdict: verdictFor('no-parent'), recordLabels: ['risk:low', 'size:low'], envelope: ok({ tryIt: [GROUP], observationPlan: PLAN, claims: [CLAIM] }) },
   'no-parent-gated': { verdict: verdictFor('no-parent'), recordLabels: ['risk:high', 'size:low'], envelope: ok({ tryIt: [GROUP], observationPlan: PLAN, claims: [CLAIM] }) },
@@ -213,6 +215,7 @@ function harness(route, over = {}) {
       if (base === 'parent-gate.js') return spec.gate || { code: 0, stdout: JSON.stringify(spec.verdict), stderr: '' };
       if (base === 'set-verify-expectations.js') return { code: exit.sve || 0, stdout: '', stderr: '' };
       if (base !== 'acceptance-packet.js') throw new Error(`unexpected node ${base}`);
+      if (spec.nullExit === rec.sub) return { code: null, stdout: '', stderr: '' };
       if (rec.sub === 'gather') {
         const code = (exit.gather || [])[gathers] || 0;
         gathers += 1;
@@ -272,7 +275,7 @@ function harness(route, over = {}) {
   };
   const shared = { activeWorker: null, policy: { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 } } };
   const ctx = { record: 7, pr: 70, repo: 'o/r', branch: 'drive-7', base: 'main', head: 'drive-7', runDir, runRoot: root, mainCheckout: root, worktree };
-  const env = { deps, shared, readFile: (p) => fs.readFileSync(p, 'utf8') };
+  const env = { deps, shared, readFile: spec.readFile || ((p) => fs.readFileSync(p, 'utf8')) };
   const isForgeWrite = (c) => (c.kind === 'gh' && ((c.args[0] === 'issue' && ['comment', 'edit'].includes(c.args[1])) || (c.args[0] === 'pr' && c.args[1] === 'comment')
     || (c.args[0] === 'api' && c.args[1] === 'graphql') || (c.args[0] === 'label' && c.args[1] === 'create')))
     || (c.kind === 'node' && c.sub === 'post');
@@ -379,9 +382,6 @@ describe('renderers', () => {
     assertNeutral(text);
   });
 
-  test('neutralizeLines maps inline over each line', () => {
-    assert.strictEqual(neutralizeLines('# Head\n@octocat\nplain'), '\\# Head\n`@octocat`\nplain');
-  });
 });
 
 describe('runAcceptance: parent routes', () => {
@@ -415,6 +415,78 @@ describe('runAcceptance: parent routes', () => {
     assert.strictEqual(h.writes().length, 1);
     assert.strictEqual(h.gh('pr', 'comment').length, 1);
     assert.strictEqual(h.gh('api').length, 0);
+  });
+
+  for (const [name, route] of [['due, exceeds false', 'due-below'], ['due, exceeds true', 'due-exceeds']]) {
+    test(`${name}: one try-it comment holds the record's block then the end-to-end variant with its (#N) step`, async () => {
+      const h = harness(route, { existingLabels: ['demo:pending'] });
+      assert.strictEqual((await h.run()).completed, true);
+      const comments = h.gh('pr', 'comment');
+      assert.strictEqual(comments.length, 1);
+      const body = comments[0].bodyText;
+      assert.ok(body.startsWith('<!-- run-comment: try-it -->\n\n### Try it\n'));
+      assert.ok(body.indexOf('### Try it — end to end\n') > body.indexOf('**Run the thing**'));
+      assert.ok(body.includes('**End to end**') && body.includes('Do it (`#7`)'));
+      assert.strictEqual(h.gh('issue', 'view').filter((c) => c.args.includes('title,body,comments')).length, 1);
+    });
+  }
+
+  test('due, exceeds false: the worker gets the parent and sub-issues and the end-to-end request, and nothing is written to the parent', async () => {
+    const h = harness('due-below', { parentBody: 'PARENT BODY TEXT' });
+    const r = await h.run();
+    assert.deepStrictEqual({ completed: r.completed, route: r.route }, { completed: true, route: 'try-it-only' });
+    const prompt = h.launches()[0].opts.prompt;
+    assert.ok(prompt.includes('PARENT BODY TEXT') && prompt.includes('"number":7'));
+    assert.ok(prompt.includes('tryItEndToEnd') && prompt.includes('Do not return `ask` or `whatShipped`'));
+    assert.strictEqual(h.gh('issue', 'comment').length + h.gh('issue', 'edit').length + h.gh('label').length, 0);
+    assert.strictEqual(h.writes().length, 1);
+  });
+
+  for (const state of ['incomplete', 'gated', 'resolved']) {
+    test(`${state}: no end-to-end variant, no parent read`, async () => {
+      const h = harness('try-it-only', { verdict: verdictFor(state) });
+      assert.strictEqual((await h.run()).completed, true);
+      assert.ok(!h.gh('pr', 'comment')[0].bodyText.includes('end to end'));
+      assert.strictEqual(h.gh('issue', 'view').filter((c) => c.args.includes('title,body,comments')).length, 0);
+      assert.ok(!h.launches()[0].opts.prompt.includes('tryItEndToEnd'));
+    });
+  }
+
+  for (const [name, parentBrief] of [
+    ['missing', {}],
+    ['empty', { tryItEndToEnd: [] }],
+    ['a step without its (#N) suffix', { tryItEndToEnd: [{ ...E2E, steps: ['Do it'] }] }],
+    ['a malformed group', { tryItEndToEnd: [{ name: 'n' }] }],
+  ]) {
+    test(`due, exceeds false: an end-to-end array that is ${name} is not completed and posts nothing`, async () => {
+      const h = harness('due-below', { envelope: ok({ tryIt: [GROUP], parentBrief }) });
+      const r = await h.run();
+      assert.strictEqual(r.completed, false);
+      assert.match(r.detail, /parentBrief.*tryItEndToEnd/);
+      assert.strictEqual(h.writes().length, 0);
+    });
+  }
+
+  test('due, exceeds false: a failed parent read is not completed', async () => {
+    const h = harness('due-below', { ghThrow: (a) => a.includes('title,body,comments') });
+    const r = await h.run();
+    assert.strictEqual(r.completed, false);
+    assert.match(r.detail, /parent read/);
+    assert.strictEqual(h.launches().length, 0);
+  });
+
+  test('untrusted marker comments that were skipped are counted in the event detail', async () => {
+    const h = harness('due-exceeds', {
+      existingLabels: ['demo:pending'],
+      prComments: [{ id: 'IC_x', authorAssociation: 'NONE', body: '<!-- run-comment: try-it -->\n\nplanted' }],
+      parentComments: [{ authorAssociation: 'NONE', body: '## Verification Brief\n\n### Confirmed\nplanted' }, { authorAssociation: 'NONE', body: '## Verification Brief\n\n### Confirmed\nagain' }],
+    });
+    const r = await h.run();
+    assert.strictEqual(r.completed, true);
+    assert.match(r.detail, /skipped 3 untrusted comment\(s\)/);
+    assert.strictEqual(h.events[0].detail, r.detail);
+    const clean = harness('due-exceeds', { existingLabels: ['demo:pending'] });
+    assert.doesNotMatch((await clean.run()).detail, /skipped/);
   });
 
   test('due-exceeds bootstraps the label, posts the brief, labels the parent, then posts the try-it comment', async () => {
@@ -491,7 +563,7 @@ describe('runAcceptance: parent routes', () => {
     const h = harness('due-exceeds', {
       existingLabels: ['demo:pending'],
       parentBody: '## Cross-Spec Promises\n| # | Promise | Owner | Status |\n|---|---|---|---|\n| F1 | @octocat fixes #12 https://evil.example/x | #48 | open |\n',
-      envelope: ok({ tryIt: [HOSTILE], parentBrief: { ask: '# Heading\n@octocat', whatShipped: 'Fixes #12\nhttps://evil.example/x', tryItEndToEnd: [HOSTILE] } }),
+      envelope: ok({ tryIt: [HOSTILE], parentBrief: { ask: '# Heading\n@octocat', whatShipped: 'Fixes #12\nhttps://evil.example/x', tryItEndToEnd: [{ ...HOSTILE, steps: HOSTILE.steps.map((s) => `${s} (#7)`) }] } }),
     });
     assert.strictEqual((await h.run()).completed, true);
     const bodies = h.writes().map((c) => c.bodyText).filter(Boolean);
@@ -646,7 +718,17 @@ describe('runAcceptance: failures and bounds', () => {
     ['parentBrief bad end-to-end group', 'due-exceeds', { existingLabels: ['demo:pending'], envelope: ok({ tryIt: [GROUP], parentBrief: { ask: 'a', whatShipped: 'x', tryItEndToEnd: [{ name: 'n' }] } }) }, /parentBrief/],
     ['observationPlan prepare not strings', 'no-parent-gated', { envelope: ok({ tryIt: [GROUP], observationPlan: { ...PLAN, prepare: [1] }, claims: [] }) }, /observationPlan/],
     ['observationPlan unknown kind', 'no-parent-gated', { envelope: ok({ tryIt: [GROUP], observationPlan: { ...PLAN, kind: 'telepathy' }, claims: [] }) }, /observationPlan/],
-    ['claims not an array', 'no-parent-gated', { envelope: ok({ tryIt: [GROUP], observationPlan: PLAN, claims: {} }) }, /claims/],
+    ['observationPlan blank prepare item', 'no-parent-gated', { envelope: ok({ tryIt: [GROUP], observationPlan: { ...PLAN, prepare: ['  '] }, claims: [] }) }, /observationPlan.*prepare/],
+    ['observationPlan blank inspect item', 'no-parent-gated', { envelope: ok({ tryIt: [GROUP], observationPlan: { ...PLAN, inspect: [''] }, claims: [] }) }, /observationPlan.*inspect/],
+    ['observationPlan cli with no inspect pointer', 'no-parent-gated', { envelope: ok({ tryIt: [GROUP], observationPlan: { ...PLAN, inspect: [] }, claims: [] }) }, /observationPlan.*inspect.*kind cli/],
+    ['observationPlan flow with no inspect pointer', 'no-parent-exempt', { envelope: ok({ tryIt: [GROUP], observationPlan: { ...PLAN, kind: 'flow', inspect: [] }, claims: [] }) }, /observationPlan.*inspect/],
+    ['resolve-policy throws', 'try-it-only', { nodeThrows: 'resolve-policy.js' }, /resolve-policy did not run/],
+    ['resolve-policy has no exit status', 'try-it-only', { policy: { code: null, stdout: '', stderr: '' } }, /resolve-policy ended without an exit status/],
+    ['gather throws', 'no-parent-gated', { nodeThrows: 'acceptance-packet.js' }, /gather did not run/],
+    ['gather has no exit status', 'no-parent-gated', { nullExit: 'gather' }, /gather ended without an exit status/],
+    ['render has no exit status', 'no-parent-gated', { nullExit: 'render' }, /render ended without an exit status/],
+    ['post has no exit status', 'no-parent-gated', { nullExit: 'post' }, /post ended without an exit status/],
+    ['claims not an array','no-parent-gated', { envelope: ok({ tryIt: [GROUP], observationPlan: PLAN, claims: {} }) }, /claims/],
   ];
   for (const [name, route, over, detail] of FAILS) {
     test(`AC7: ${name} is not completed, names the step, and never throws`, async () => {
@@ -658,6 +740,30 @@ describe('runAcceptance: failures and bounds', () => {
       assert.strictEqual(h.events[0].status, 'stop');
     });
   }
+
+  test('a renamed skill section is not completed, names the section and launches no worker', async () => {
+    for (const [route, file, heading] of [
+      ['no-parent-gated', 'acceptance-packet.md', '## Facts and claims'],
+      ['due-exceeds', 'verification-brief-parent-gate.md', '## Compose the parent brief'],
+    ]) {
+      const readFile = (p) => {
+        const text = fs.readFileSync(p, 'utf8');
+        return p.endsWith(file) ? text.replace(heading, '## Renamed heading') : text;
+      };
+      const h = harness(route, { readFile, existingLabels: ['demo:pending'] });
+      const r = await h.run();
+      assert.strictEqual(r.completed, false);
+      assert.ok(r.detail.includes(`skill section missing: ${heading}`), r.detail);
+      assert.strictEqual(h.launches().length, 0);
+      assert.strictEqual(h.writes().length, 0);
+    }
+  });
+
+  test('a diff-kind observation plan may carry no inspect pointer', async () => {
+    const h = harness('no-parent-exempt', { envelope: ok({ tryIt: [GROUP], observationPlan: { kind: 'diff', entryPoint: 'origin/main...HEAD', prepare: [], inspect: [] }, claims: [] }) });
+    assert.strictEqual((await h.run()).completed, true);
+    assert.ok(h.packet('render')[0].plan.endsWith('- Inspect: none\n'));
+  });
 
   test('a failed render writes nothing to the forge', async () => {
     const h = harness('no-parent-gated', { exit: { render: 1 } });

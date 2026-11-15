@@ -12,41 +12,16 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { neutralize, CLI_TIMEOUT_MS } = require('./events');
+const { CLI_TIMEOUT_MS } = require('./events');
 const { reduceDetail } = require('./settle');
-const { readCeilings, launchTracked } = require('./launch');
 const { MERGE_CHECK_RESULT_SCHEMA } = require('./roles');
 const { loadMergeCheckRules, buildMergeCheckPrompt } = require('./judgment-prompts');
+const { bin, isPlainObject, clock, cleanDetail, emitStep, readRecordAndDiff, launchJudge } = require('./judgment-io');
 const { verdictText, VERDICT_STEPS, confirmFromFile } = require('../dispatch/merge-verdict');
 
-const BIN_DIR = path.join(__dirname, '..', '..');
-const EVENT_DETAIL_MAX = 200;
-
-function bin(name) {
-  return path.join(BIN_DIR, name);
-}
-
-function isPlainObject(v) {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
-}
-
-function clock(deps) {
-  try {
-    return deps && typeof deps.now === 'function' ? deps.now() : 0;
-  } catch {
-    return 0;
-  }
-}
-
-// One merge-check event. An emit that throws never changes the verdict it reports.
+// One merge-check event.
 function emitEvent(deps, startedAt, verdict, floor, detail) {
-  try {
-    if (!deps || typeof deps.emit !== 'function') return;
-    const text = neutralize(String(detail || '')).slice(0, EVENT_DETAIL_MAX);
-    deps.emit('merge-check', verdict === 'auto-merge' ? 'ok' : 'stop', clock(deps) - startedAt, text, { verdict, floor });
-  } catch {
-    // an event is a report about the step, never part of it
-  }
+  emitStep(deps, 'merge-check', verdict === 'auto-merge' ? 'ok' : 'stop', startedAt, detail, { verdict, floor });
 }
 
 // Step 1: the blast radius, run as the CLI. { floor, detail, summary }; floor is null when neither floor fires.
@@ -83,23 +58,9 @@ function readBlastRadius({ deps }, ctx) {
 
 // Step 3: the record, the diff and the check state. { stop } on a failed record or diff read.
 function gatherInputs({ deps }, ctx) {
-  let title;
-  let body;
-  try {
-    const rec = JSON.parse(deps.gh(['issue', 'view', String(ctx.record), '--repo', ctx.repo, '--json', 'title,body']));
-    if (!isPlainObject(rec)) throw new Error('shape');
-    title = String(rec.title ?? '');
-    body = String(rec.body ?? '');
-  } catch {
-    return { stop: 'record read failed' };
-  }
-  let diff;
-  try {
-    diff = String(deps.git(['-C', ctx.worktree, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv',
-      '--end-of-options', `origin/${ctx.base}...HEAD`, '--'], { cwd: ctx.worktree }));
-  } catch {
-    return { stop: 'diff read failed' };
-  }
+  const read = readRecordAndDiff(deps, ctx);
+  if (read.stop) return read;
+  const { title, body, diff } = read;
   let checks;
   try {
     checks = JSON.parse(deps.gh(['pr', 'checks', String(ctx.pr), '--repo', ctx.repo, '--json', 'name,bucket']));
@@ -112,22 +73,11 @@ function gatherInputs({ deps }, ctx) {
 // Steps 4 and 5: launch, then validate. { verdict, rationale } or { stop }. Only the exact string
 // `auto-merge` or `needs-human` from a status-ok envelope is a verdict.
 async function launchAndValidate({ deps, shared }, ctx, prompt) {
-  const ceilings = readCeilings(shared.policy);
-  if (ceilings.bad) return { stop: 'merge-check ceiling is not a positive number' };
-  const settingsDir = path.join(ctx.runDir, 'merge-check');
-  let envelope;
-  try {
-    deps.mkdirSync(settingsDir, { recursive: true });
-    envelope = await launchTracked(shared, deps, { minutes: ceilings.minutes, dollars: ceilings.dollars }, {
-      role: 'merge-check',
-      cwd: ctx.worktree,
-      prompt,
-      schema: MERGE_CHECK_RESULT_SCHEMA,
-      settingsDir,
-    });
-  } catch {
-    return { stop: 'merge-check launch failed' };
-  }
+  const launched = await launchJudge({ deps, shared }, ctx, {
+    role: 'merge-check', dir: 'merge-check', label: 'merge-check', prompt, schema: MERGE_CHECK_RESULT_SCHEMA,
+  });
+  if (launched.stop) return launched;
+  const { envelope } = launched;
   const result = envelope && envelope.status === 'ok' ? envelope.result : undefined;
   if (!isPlainObject(result) || typeof result.verdict !== 'string'
     || (result.verdict !== 'auto-merge' && result.verdict !== 'needs-human')) {
@@ -215,7 +165,7 @@ function finish(deps, startedAt, ctx, env, reached, floor, detail) {
     }
   }
   emitEvent(deps, startedAt, verdict, floor, detail);
-  return { verdict, floor, detail: neutralize(String(detail || '')).slice(0, EVENT_DETAIL_MAX) };
+  return { verdict, floor, detail: cleanDetail(detail) };
 }
 
 // The supplier merge.js takes as `deps.judgments`. `runAcceptance` (acceptance.js, resolved lazily so
