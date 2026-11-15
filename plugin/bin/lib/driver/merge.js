@@ -9,10 +9,11 @@
 // No test reads that prose, and drift between it and this module is accepted by design (the
 // spec's Gotchas); each step function's comment names the section it ports, by symbol.
 //
-// Every external call except two in-process reads goes through `deps` (gh, git, node, readFile,
-// lstatType, ...), so this module spawns nothing itself. The two: the decisions.md read
-// (`confirmFromFile`, spec AC3), and teardown's worktree-path realpath, which falls back to the
-// imported `safeReal` (`fs.realpathSync`) when no `deps.realpath` is given.
+// Every external call goes through `deps` (gh, git, node, readFile, lstatType, resolvePolicyCore,
+// ...), so this module spawns nothing itself. Three in-process exceptions: the decisions.md read
+// (`confirmFromFile`, spec AC3), teardown's worktree-path realpath, which falls back to the imported
+// `safeReal` (`fs.realpathSync`) when no `deps.realpath` is given, and the policy core's own git root
+// lookup inside `callerDeps`. The policy core itself is reached through `deps.resolvePolicyCore`.
 // `merge` never throws: an unexpected throw in any step becomes `pending-review` /
 // `unclassified` naming the sub-step.
 
@@ -27,6 +28,7 @@ const { ensureLabelPayload } = require('../issues/labels');
 const { LABELS } = require('../issues/record-vocabulary');
 const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
 const { safeReal } = require('../hooks/worktree-detect');
+const { callerDeps, scalarValue, EXIT_OK } = require('../../resolve-policy');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
 const AUTHORIZING_LABEL = LABELS.AUTO_MERGE;
@@ -116,25 +118,31 @@ function isPositiveInteger(n) {
   return typeof n === 'number' && Number.isInteger(n) && n > 0;
 }
 
+// The policy core's read of one key, in-process through `deps.resolvePolicyCore`. The core runs
+// against the main checkout with the step's env; its stderr is discarded, since a degrade or invalid
+// value line is not this step's to print.
+function readPolicy(s, key) {
+  return s.deps.resolvePolicyCore({ keys: [key], runDir: s.runDir },
+    callerDeps({ cwd: s.ctx.mainCheckout, env: s.deps.env, stderr: () => {} }));
+}
+
 // Ports pr-first-merge.md Step 2's entry condition: the run resolves `integration-model` to
 // `pr-first` and run-state.json carries the PR the run opened. Any failure of this read is a
 // stop (`not-pr-first`); the lever read below is a separate call so it never decides this one.
-// A resolver that throws (a spawn failure) is such a failure too, never the run-level catch's.
+// A core that throws is such a failure too, never the run-level catch's.
 function readIntegrationModel(s) {
-  const { ctx, deps } = s;
-  let r;
+  let out;
   try {
-    r = deps.node(bin('resolve-policy.js'), ['--run', s.runDir, '--values', 'integration-model'],
-      { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+    out = readPolicy(s, 'integration-model');
   } catch (err) {
     return `integration-model read failed: ${errorText(err)}`;
   }
-  if (r.code !== 0 || String(r.stdout).trim() !== 'pr-first') {
-    return `integration-model did not resolve pr-first (${r.code === 0 ? neutralize(String(r.stdout).trim()) || 'empty' : `exit ${r.code}`})`;
-  }
+  if (out.code !== EXIT_OK) return `integration-model did not resolve pr-first (exit ${out.code})`;
+  const v = scalarValue(out.result && out.result['integration-model']).trim();
+  if (v !== 'pr-first') return `integration-model did not resolve pr-first (${neutralize(v) || 'empty'})`;
   let state;
   try {
-    state = JSON.parse(deps.readFile(path.join(s.runDir, 'run-state.json')));
+    state = JSON.parse(s.deps.readFile(path.join(s.runDir, 'run-state.json')));
   } catch (err) {
     return `run-state.json unreadable: ${errorText(err)}`;
   }
@@ -145,30 +153,23 @@ function readIntegrationModel(s) {
 }
 
 // Ports pr-first-merge.md Step 3's lever read (merge-verification). Never a stop: every failure
-// of the read, and the value `off`, runs as `wait`. The JSON form of the `--values` read, so the
-// source rides along for the `--lever` log field. A resolver that throws is a failed read
+// of the read, and the value `off`, runs as `wait`. The core's entry for the key, so the source
+// rides along for the `--lever` log field. A core that throws is a failed read
 // (AC8: "a resolver error … run as wait"), so it reads as unresolved like a non-zero exit.
 function readLever(s) {
-  const { ctx, deps } = s;
-  let r;
+  let out;
   try {
-    r = deps.node(bin('resolve-policy.js'), ['--run', s.runDir, 'merge-verification'],
-      { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+    out = readPolicy(s, 'merge-verification');
   } catch {
-    r = { code: null, stdout: '', stderr: '' };
+    out = { code: null };
   }
   let raw = '';
   let source = 'unresolved';
-  if (r.code === 0) {
-    try {
-      const parsed = JSON.parse(r.stdout);
-      const entry = parsed && typeof parsed === 'object' ? parsed['merge-verification'] : undefined;
-      if (entry && typeof entry === 'object' && !entry.error && typeof entry.value === 'string') {
-        raw = entry.value;
-        source = entry.source || 'unresolved';
-      }
-    } catch {
-      // unparseable: stays unresolved
+  if (out.code === EXIT_OK && out.result) {
+    const entry = out.result['merge-verification'];
+    if (entry && typeof entry === 'object' && !entry.error && typeof entry.value === 'string') {
+      raw = entry.value;
+      source = entry.source || 'unresolved';
     }
   }
   s.valueRaw = raw;
