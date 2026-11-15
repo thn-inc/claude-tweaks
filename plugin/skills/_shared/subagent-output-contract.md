@@ -54,13 +54,6 @@ When in doubt, give less context. If the agent comes back with `NEEDS_CONTEXT`, 
 
 **HARD-GATE inheritance hazard.** A subagent dispatched via `fork`, a broad Task dispatch, or any mechanism that carries the dispatcher's full conversation, inherits a gated skill's own instructions as background context — including its HARD GATE. That inheritance does not make the gate optional: a subagent that reaches a HARD GATE it cannot present interactively (no live human to answer an `AskUserQuestion`) must stop and report `BLOCKED`, never execute past it on its own initiative. Observed live on `/claude-tweaks:backlog refine`: an orchestrating session dispatched three parallel background subagents to divide the skill's heavier sub-steps, each inheriting `refine-mode.md`'s own text; two honored their scoping, the third re-derived the skill's later steps on its own initiative and ran straight through the Apply logic, writing dozens of label/body changes — including 20 unreviewed `auto:merge` grants — to live GitHub issues without ever presenting the load-bearing confirm gate to a human (`docs/incident-log.md` `[IL-139]`). The skill's own prose stated this must never happen, and the subagent had that exact text in its inherited context — prose alone did not stop it. Treat any HARD GATE encountered inside a subagent's inherited context as binding on that subagent too, and prefer a scoped, non-`fork` dispatch (per Input Discipline above) over any dispatch shape that would hand a subagent a gate it cannot itself satisfy.
 
-## Working Directory Discipline — moved
-
-Moved to `_shared/subagent-dispatch-core.md`'s "Working Directory Discipline" section (#2019),
-alongside Model Selection, Template A, Failed-agent retrieval, and the fan-out section — the five
-dispatch-facing sections a review/test call site needs to compose as a lean bundle without
-also paying for this file's remaining content. Read there.
-
 ## Waiting for Dispatched Agents
 
 Read `_shared/dispatch-waiting.md` — the notification-driven resume pattern and the one-watchdog-per-wave cap (extracted for headroom, #1995).
@@ -104,12 +97,6 @@ SubagentStop hook (E3) logs replies missing the status line to the run dir's `ev
 
 **A verdict from zero tool calls is a failed dispatch, never evidence (#2345).** A verdict, findings list, or pass-fail claim from an agent whose transcript contains zero tool-use blocks read nothing — no matter how well-formed its status line or output template, every mechanical check this contract defines checks the *shape* of the reply, never whether the agent actually did the work behind it. Treat it exactly like a malformed reply: the caller **re-dispatches a fresh agent** (never resumes the same one — the 529/stall precedent: 0/5 resumes succeeded) and **never aggregates the reply** as if it were real findings. `bin/lib/hooks/subagent-stop.js` makes this mechanical where it can: at the same seam that reads `agent_transcript_path` to grade the status line, it counts tool-use blocks across the whole graded transcript and logs a `zero-tool-use-verdict` event (distinct from `contract-violation`) when the count is zero — visible in `events.jsonl` rather than depending on an orchestrator noticing by hand, as the original catch of this failure mode required.
 
-## Model Selection and Template A — moved
-
-Moved to `_shared/subagent-dispatch-core.md`'s "Model Selection" and "Template A" sections
-(#2019), alongside Working Directory Discipline, Failed-agent retrieval, and the fan-out
-section. Read there.
-
 ## Template B — Search-style (returns locations)
 
 Use when an agent locates code, files, or references.
@@ -142,12 +129,6 @@ Maximum 200 tokens total.
 ## Not every consumer uses A/B/C
 
 When a dispatch's output genuinely doesn't fit A/B/C, define the format explicitly in the dispatch prompt rather than forcing it into one of the three.
-
-## Failed-agent retrieval — moved
-
-Moved to `_shared/subagent-dispatch-core.md`'s "Failed-agent retrieval" section (#2019),
-alongside Working Directory Discipline, Model Selection, Template A, and the fan-out section.
-Read there.
 
 ## Exemption: third-party agents
 
@@ -192,12 +173,6 @@ Cap at one retry. If still malformed, accept what you got and move on (do not lo
 | Letting agents read sibling files for the template | Agents only see their prompt. Always inline the template literally. |
 | Stating a requirement in prose beside the inlined template | The agent receives the fence, not the file around it. Anything outside the block never arrives. |
 | Skipping the "if no findings" literal text | Without it, agents pad empty results with explanation. |
-
-## How to integrate at a dispatch site — moved
-
-Moved to `_shared/subagent-dispatch-core.md`'s "How to integrate at a dispatch site" section
-(#2019) — the fan-out section, alongside Working Directory Discipline, Model Selection,
-Template A, and Failed-agent retrieval. Read there.
 
 ## Related primitives
 
