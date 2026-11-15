@@ -8,6 +8,9 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const { installWrapper, buildWrapperSource } = require('../plugin/bin/install-statusline-wrapper.js');
 const { MODE_BITS_HONORED } = require('./helpers/root');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
+
+const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'install-statusline-wrapper.js');
 
 // Every spawn below runs a real `node` process. The budget used to be 5s, which
 // is generous idle and far too tight under this repo's normal working mode:
@@ -297,4 +300,21 @@ test('CLAUDE_CONFIG_DIR unset, empty, or whitespace-only falls back to HOME/.cla
   }
 
   fs.rmSync(tmpHome, { recursive: true, force: true });
+});
+
+// Real process: proves the script entry and exit code; no refusal path exists (argv is ignored).
+test('AC5.1 AC7.1: script installs the wrapper under the injected home and prints its path', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-install-sl-script-')));
+  const realWrapper = path.join(os.homedir(), '.claude-tweaks', 'bin', 'statusline.js');
+  const statBefore = fs.existsSync(realWrapper) ? fs.statSync(realWrapper).mtimeMs : null;
+
+  const res = spawnCli(CLI, [], { env: { HOME: tmp, USERPROFILE: tmp, PATH: process.env.PATH } });
+
+  const expected = path.join(tmp, '.claude-tweaks', 'bin', 'statusline.js');
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.strictEqual(res.stdout, expected);
+  assert.strictEqual(fs.readFileSync(expected, 'utf8'), buildWrapperSource());
+  const statAfter = fs.existsSync(realWrapper) ? fs.statSync(realWrapper).mtimeMs : null;
+  assert.strictEqual(statAfter, statBefore, 'the real home wrapper must be untouched');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
