@@ -252,20 +252,73 @@ test('#5294: an entry remembered under one uid does not answer another', (t) => 
   assert.deepStrictEqual(lookupRepoInfo(dir, process.env, 1001).answer, answer, 'the same uid hits');
 });
 
-test('#5294: a cache lookup that throws falls back to git', (t) => {
+// The cache reads process.getuid() once per lookup and once per remember (each
+// entry point's default `uid`), so replacing it is a fault seam into either
+// step. `throwOn(callNo)` decides, per 1-based call, whether to throw; it is
+// installed whether or not the platform has getuid (win32 does not).
+function uidSeam(t, throwOn = () => false) {
+  const had = Object.prototype.hasOwnProperty.call(process, 'getuid');
+  const original = process.getuid;
+  const seam = { calls: 0 };
+  process.getuid = () => {
+    seam.calls++;
+    if (throwOn(seam.calls)) throw new Error('cache fault');
+    return 4242;
+  };
+  t.after(() => {
+    if (had) process.getuid = original;
+    else delete process.getuid;
+  });
+  return seam;
+}
+
+test('#5294: rememberRepoInfo drops an indeterminate answer', (t) => {
+  isolateRepoInfoCache(t);
+  const dir = scratchDir('ct-ric-indet-');
+  rememberRepoInfo(dir, process.env, repoSignature(dir), { repoRoot: null, isLinkedWorktree: false, indeterminate: true });
+  assert.strictEqual(lookupRepoInfo(dir).answer, null, 'nothing in the memo');
+  assert.strictEqual(fs.existsSync(process.env.CT_HOOKS_REPO_INFO_STORE), false, 'nothing written to the store');
+});
+
+test('#5294: an indeterminate failure is not remembered even when it carries a not-a-repo exit', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const seam = uidSeam(t);
+  let failing = true;
+  const counter = countRevParse(t, () => (failing
+    ? Object.assign(new Error('spawnSync git ETIMEDOUT'), {
+      code: 'ETIMEDOUT', status: 128, stderr: 'fatal: not a git repository (or any of the parent directories): .git',
+    })
+    : null));
+  assert.deepStrictEqual(repoInfo(main), { repoRoot: null, isLinkedWorktree: false, indeterminate: true });
+  assert.strictEqual(seam.calls, 1, 'only the lookup ran; repoInfo never tried to remember');
+  failing = false;
+  assert.deepStrictEqual(repoInfo(main), { repoRoot: main, isLinkedWorktree: false, indeterminate: false });
+  assert.strictEqual(counter.n, 2, 'the call after the indeterminate one spawned git');
+});
+
+test('#5294: a cache lookup that throws falls back to git and remembers nothing', (t) => {
   isolateRepoInfoCache(t);
   const main = gitRepo();
   const counter = countRevParse(t);
-  repoInfo(main); // warm the memo, so the next lookup compares signatures
-  const stringify = t.mock.method(JSON, 'stringify', () => { throw new Error('cache fault'); });
-  let got;
-  try {
-    got = repoInfo(main);
-  } finally {
-    stringify.mock.restore();
-  }
+  uidSeam(t, (n) => n === 1); // the lookup throws; the remember after the spawn does not
+  const got = repoInfo(main);
   assert.deepStrictEqual(got, { repoRoot: main, isLinkedWorktree: false, indeterminate: false });
-  assert.strictEqual(counter.n, 2);
+  assert.strictEqual(counter.n, 1);
+  // The remember ran with the null signature the failed lookup left: it must store nothing.
+  assert.strictEqual(fs.existsSync(process.env.CT_HOOKS_REPO_INFO_STORE), false, 'no store entry under a null signature');
+  repoInfo(main);
+  assert.strictEqual(counter.n, 2, 'no memo entry either: the next call spawned');
+});
+
+test('#5294: a cache remember that throws still returns git\'s answer', (t) => {
+  isolateRepoInfoCache(t);
+  const main = gitRepo();
+  const counter = countRevParse(t);
+  uidSeam(t, (n) => n === 2); // the lookup succeeds (a miss); the remember throws
+  assert.deepStrictEqual(repoInfo(main), { repoRoot: main, isLinkedWorktree: false, indeterminate: false });
+  assert.strictEqual(counter.n, 1);
+  assert.strictEqual(fs.existsSync(process.env.CT_HOOKS_REPO_INFO_STORE), false, 'nothing was stored');
 });
 
 test('#5294: a call with opts bypasses the memo', (t) => {

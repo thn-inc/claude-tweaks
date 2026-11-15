@@ -138,24 +138,28 @@ test('#5294: a git killed by a signal is not carried to a fresh process', () => 
   assert.deepStrictEqual(next.info, { repoRoot: main, isLinkedWorktree: false, indeterminate: false });
 });
 
-test('#5294: tests/helpers/git-fixtures.js points a bare run at a temp store, and keeps one already set', () => {
+// git-template.js holds the block; git-fixtures.js and pre-tool-use.js reach it by requiring it
+// (tests/hooks-session-start.test.js loads git-template.js directly).
+test('#5294: the git test helpers point a bare run at a temp store, and keep one already set', () => {
   const probe = `
 const os = require('os');
 require(process.argv[1]);
 process.stdout.write(JSON.stringify({ store: process.env.CT_HOOKS_REPO_INFO_STORE, tmp: os.tmpdir() }));
 `;
-  const helper = path.resolve(__dirname, 'helpers', 'git-fixtures.js');
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.toUpperCase() === 'CT_HOOKS_REPO_INFO_STORE') delete env[k];
-  const bare = JSON.parse(execFileSync(process.execPath, ['-e', probe, helper], { env, encoding: 'utf8' }));
-  assert.strictEqual(typeof bare.store, 'string');
-  assert.ok(bare.store.startsWith(bare.tmp + path.sep), `${bare.store} is under ${bare.tmp}`);
-  assert.notStrictEqual(bare.store, path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json'));
-  const pinned = path.join(scratchDir('ct-ris-'), 'pinned.json');
-  const kept = JSON.parse(execFileSync(process.execPath, ['-e', probe, helper], {
-    env: { ...env, CT_HOOKS_REPO_INFO_STORE: pinned }, encoding: 'utf8',
-  }));
-  assert.strictEqual(kept.store, pinned);
+  for (const name of ['git-template.js', 'git-fixtures.js', 'pre-tool-use.js']) {
+    const helper = path.resolve(__dirname, 'helpers', name);
+    const bare = JSON.parse(execFileSync(process.execPath, ['-e', probe, helper], { env, encoding: 'utf8' }));
+    assert.strictEqual(typeof bare.store, 'string', `${name} sets the store`);
+    assert.ok(bare.store.startsWith(bare.tmp + path.sep), `${name}: ${bare.store} is under ${bare.tmp}`);
+    assert.notStrictEqual(bare.store, path.join(os.homedir(), '.claude-tweaks', 'repo-info-cache.json'));
+    const pinned = path.join(scratchDir('ct-ris-'), 'pinned.json');
+    const kept = JSON.parse(execFileSync(process.execPath, ['-e', probe, helper], {
+      env: { ...env, CT_HOOKS_REPO_INFO_STORE: pinned }, encoding: 'utf8',
+    }));
+    assert.strictEqual(kept.store, pinned, `${name} keeps a store already set`);
+  }
 });
 
 test('AC5.1: an unwritable store leaves repoInfo\'s answer unchanged', () => {
