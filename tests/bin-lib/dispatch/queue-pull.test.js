@@ -1224,7 +1224,7 @@ test('#5307 D3: a non-array queue file such as {issues:[...]} is a failed read: 
   // The pull's own session root is its per-test temp dir, so the Warning is matched on its tail.
   const warnings = reported(r.stderr).filter((l) => l.startsWith('Warning: '));
   assert.equal(warnings.length, 1, r.stderr);
-  assert.ok(warnings[0].endsWith('/ct-session-qp-t3/dispatch-queue-raw.json is not a JSON array — treated as a failed read'), warnings[0]);
+  assert.ok(warnings[0].endsWith(path.sep + path.join('ct-session-qp-t3', 'dispatch-queue-raw.json') + ' is not a JSON array — treated as a failed read'), warnings[0]);
   const [, head, tail] = FENCE.match(GROUPING_STOP_RE);
   assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
   assert.equal(r.thrown.line, `${head}1${tail}`);
@@ -1245,9 +1245,28 @@ test('#5307 files: a dependency-freshness file holding a JSON string is a failed
     },
   });
   assert.ok(!r.stderr.includes(HIT_MESSAGE), 'the string is not a freshness signal, so the cache is not hit');
+  const warnings = reported(r.stderr).filter((l) => l.startsWith('Warning: '));
+  assert.equal(warnings.length, 1, r.stderr);
+  assert.ok(warnings[0].endsWith(path.sep + 'dispatch-dep-freshness.json is not a JSON array — treated as a failed read'), warnings[0]);
   const [, head, tail] = FENCE.match(CACHE_HIT_STOP_RE);
   assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
   assert.equal(r.thrown.line, `${head}1${tail}`);
+});
+
+test('#5307 D3: a JSON-string queue file of 500+ characters prints no cap Warning (a non-array counts 0)', () => {
+  const r = pull(S1(), {
+    transport: 'files', run: () => { throw new Error('no gh on files'); }, allowThrow: true,
+    prepare: (own) => {
+      return { inputs: {
+        queueRaw: writeInput(own, 'queue.json', JSON.stringify('x'.repeat(600))),
+        openNumbers: writeInput(own, 'open.json', '[]'),
+        depFreshness: writeInput(own, 'dep.json', '[]'),
+        verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+      } };
+    },
+  });
+  assert.ok(!r.stderr.includes('exactly the --limit cap'), r.stderr);
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
 });
 
 test('#5227 files: a queue file the agent never wrote removes the session copy (the agent write\'s rm -f) and stops the pull at group-building, as AC7.2 pins', () => {
@@ -3200,7 +3219,7 @@ describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_0
 });
 
 // ---- Task 9: fetch-failure faults (AC4), files-input faults (AC7.2) and the reproduced script
-// defects (D1, D3, D4). Each FAULTS row (queue-pull-fixtures.js) fails one gh fetch, and each
+// defects (D1, D4; D3 is fixed, #5307). Each FAULTS row (queue-pull-fixtures.js) fails one gh fetch, and each
 // FILES_FAULTS row one files input, on both sides through the shared table. Its base is the same
 // scenario un-faulted: the AC1 matrix's own run of it where the matrix has one (S1 and S2, reused
 // through the pair memo), else a base run in the fault pool. One pool runs both transports' rows,
@@ -3313,6 +3332,7 @@ const FILES_EXPECT = {
   'files-inFlightClaims-malformed': FILES_STOPPED_NEIGHBOUR,
   'files-queueRaw-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-queueRaw-wrapper/dispatch-queue-raw.json is not a JSON array — treated as a failed read', STOP_LINE.grouping], entries: [] },
   'files-depFreshness-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
+  'files-depFreshness-string': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-string/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
   'files-depFreshness-wrapper-cold': { status: 0, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper-cold/dispatch-dep-freshness.json is not a JSON array — treated as a failed read'], drops: [] },
   'files-inFlightRaw-empty': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
   'files-inFlightClaims-empty': { status: 0, stderr: [CLAIM_READ_FAILED_7001], drops: ['neighbour-in-flight:9013'] },
@@ -3590,6 +3610,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
     assert.deepEqual(carved, {
       'files-queueRaw-missing': inFlight, 'files-queueRaw-malformed': inFlight, 'files-queueRaw-wrapper': inFlight,
       'files-depFreshness-missing': cacheStop, 'files-depFreshness-malformed': cacheStop, 'files-depFreshness-wrapper': cacheStop,
+      'files-depFreshness-string': cacheStop,
       'files-openNumbers-missing': inFlight, 'files-openNumbers-malformed': inFlight,
     });
   });
@@ -3618,7 +3639,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
   });
 
   test('#5307 D3: a wrapper-object queue or dependency-freshness file is a failed read on both sides: exit 1, one Warning naming the file, the matching stop last', () => {
-    for (const [id, file, stop] of [['files-queueRaw-wrapper', 'dispatch-queue-raw.json', STOP_LINE.grouping], ['files-depFreshness-wrapper', 'dispatch-dep-freshness.json', STOP_LINE.cacheHit]]) {
+    for (const [id, file, stop] of [['files-queueRaw-wrapper', 'dispatch-queue-raw.json', STOP_LINE.grouping], ['files-depFreshness-wrapper', 'dispatch-dep-freshness.json', STOP_LINE.cacheHit], ['files-depFreshness-string', 'dispatch-dep-freshness.json', STOP_LINE.cacheHit]]) {
       stopMapped(R[id].oracle, R[id].module);
       for (const [side, r] of sides(R[id])) {
         const warnings = reported(r.stderr).filter((l) => l.startsWith('Warning: '));

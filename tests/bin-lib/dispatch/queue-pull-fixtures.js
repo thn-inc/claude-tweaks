@@ -698,8 +698,8 @@ const FAULTS = [
 
 // FILES_FAULTS (files transport): { id, input, mode, pass, scenario(), agent(base agent files) ->
 // agent files, warm? }. `missing` leaves the file unwritten (the agent wrote none), `malformed`
-// writes NOT_JSON; the queue's and the dependency-freshness `wrapper` (D3), the claim map's `non-JSON string` (D4) and the
-// agent-written `[]` / `{}` values are the shapes the Plan Review Clarifications name.
+// writes NOT_JSON; the queue's and the dependency-freshness `wrapper` (D3), the claim map's
+// `non-JSON string` (D4) and the agent-written `[]` / `{}` values are the shapes the Plan Review Clarifications name.
 const withAgent = (name, content) => (files) => {
   const out = { ...files };
   if (content === undefined) delete out[name];
@@ -729,6 +729,8 @@ FILES_FAULTS.push(
   // #5307: the dependency-freshness wrapper, warm (the cache check stops) and cold (the write-back does).
   { id: 'files-depFreshness-wrapper', input: 'depFreshness', mode: 'wrapper', pass: 'fetch', warm: true, scenario: P1,
     agent: (files) => ({ ...files, 'dispatch-dep-freshness.json': JSON.stringify({ issues: JSON.parse(files['dispatch-dep-freshness.json']) }) }) },
+  { id: 'files-depFreshness-string', input: 'depFreshness', mode: 'JSON string', pass: 'fetch', warm: true, scenario: P1,
+    agent: withAgent('dispatch-dep-freshness.json', JSON.stringify('not an array')) },
   { id: 'files-depFreshness-wrapper-cold', input: 'depFreshness', mode: 'wrapper (cold cache)', pass: 'fetch', warm: false, scenario: P1,
     agent: (files) => ({ ...files, 'dispatch-dep-freshness.json': JSON.stringify({ issues: JSON.parse(files['dispatch-dep-freshness.json']) }) }) },
   { id: 'files-inFlightRaw-empty', input: 'inFlightRaw', mode: 'empty []', pass: 'neighbour-in-flight', scenario: P1, agent: withAgent('dispatch-in-flight-raw.json', '[]') },

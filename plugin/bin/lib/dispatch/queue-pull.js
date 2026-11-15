@@ -377,7 +377,7 @@ function runFetch(ctx) {
   if (onGh) put(ctx, queueFile, ghRun(ctx, QUEUE_ARGV).stdout);
   else agentQueueRaw(ctx, f.queueRaw, queueFile);
   aliasFile(ctx, 'alias-queue', queueFile);
-  const count = step(ctx, 'queue-count', () => readJson(queueFile).length);
+  const count = step(ctx, 'queue-count', () => { const v = readJson(queueFile); return Array.isArray(v) ? v.length : 0; });
   if (count.ok && count.value >= 500) deps.stderr(`${QUEUE_CAP_WARNING}\n`);
 
   const depNumbers = step(ctx, 'dep-numbers', () => {

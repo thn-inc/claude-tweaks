@@ -71,7 +71,7 @@ NODE_EVAL_EOF
 
 gh issue list --label auto:build --state open --json number,title,body,labels,createdAt,updatedAt,state --limit 500 > "$DISPATCH_QUEUE_RAW"
 alias_mcp_timestamps "$DISPATCH_QUEUE_RAW"
-QUEUE_RAW_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_QUEUE_RAW")
+QUEUE_RAW_COUNT=$(node -e "const v = require(process.argv[1]); console.log(Array.isArray(v) ? v.length : 0)" -- "$DISPATCH_QUEUE_RAW")
 if [ "$QUEUE_RAW_COUNT" -ge 500 ]; then
   echo "Warning: the auto:build queue pull returned exactly the --limit cap (500) — this repo may have more open auto:build records than fetched. gh issue list returns newest-first, so any records beyond the cap are the OLDEST same-priority ones, exactly what next's own oldest-first tie-break (Step 3) exists to surface first. Consider raising the cap, or filing this as a signal to re-triage the queue down." >&2
 fi
