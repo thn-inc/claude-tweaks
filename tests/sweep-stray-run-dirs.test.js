@@ -260,7 +260,9 @@ test('AC7.1: a failed archive exits 1 with a FAILED line on stdout and empty std
 
 // --- in-process entry (#5386) ---
 
-const PIPELINES = path.join('.claude-tweaks', 'pipelines');
+// A POSIX literal, not path.join: it is compared against `git ls-files` output, which uses
+// forward slashes on Windows too; path.join(root, PIPELINES, …) still yields a native fs path.
+const PIPELINES = '.claude-tweaks/pipelines';
 
 function withRepos(count, body) {
   const roots = [];

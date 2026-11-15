@@ -1168,7 +1168,8 @@ test('AC8.1: realDeps.gitRunner starts git in the injected cwd with the injected
   t.after(() => nodeFs.rmSync(repo, { recursive: true, force: true }));
   const env = envWithoutGitRepoVars({ GIT_AUTHOR_NAME: 'Env Proof', GIT_AUTHOR_EMAIL: 'env-proof@example.invalid' });
   execFileSync('git', ['init', '-q'], { cwd: repo, env, stdio: 'ignore', windowsHide: true });
-  assert.equal(realDeps.gitRunner(['rev-parse', '--show-toplevel'], { cwd: repo, env }).trim(), repo);
+  // git prints the toplevel with forward slashes on Windows; path.resolve gives the native spelling.
+  assert.equal(nodePath.resolve(realDeps.gitRunner(['rev-parse', '--show-toplevel'], { cwd: repo, env }).trim()), repo);
   assert.match(realDeps.gitRunner(['var', 'GIT_AUTHOR_IDENT'], { cwd: repo, env }), /^Env Proof <env-proof@example\.invalid> /);
 });
 
