@@ -5,6 +5,7 @@ files:
   - plugin/skills/dispatch/queue-pull-script.md
   - plugin/skills/dispatch/next-ranking.md
   - plugin/skills/dispatch/mcp-transport.md
+  - plugin/bin/lib/dispatch/shipped-releases.js
   - tests/bin-lib/dispatch/queue-pull.test.js
   - tests/bin-lib/dispatch/queue-pull-oracle.js
 ---
@@ -36,15 +37,15 @@ files:
 - **URL:** `plugin/bin/queue-pull.js --transport files --queue-raw … --dep-freshness … --open-numbers … --verified-open-deps … --in-flight-raw … --in-flight-claims … --foreign-states …`; `plugin/skills/dispatch/mcp-transport.md`
 - **Action:** The **agent** fetches the records through MCP tools and writes each input file (each flag but `--foreign-states` defaults to its session-scoped path; `--foreign-states` has no default, so the agent passes it whenever it wrote a states file). The claims file covers the claim of every record in the in-flight pool file. It then runs the CLI with `--transport files`. The module copies the queue file into the session file before aliasing its timestamps, so the agent's own file is left as written.
 - **Should feel:** Like the gh path, with the agent doing the fetching and Node doing the computing.
-- **Should understand:** The documented MCP gaps are behaviour. `dispatch-crosspr-overlap.json` is `[]`, `dispatch-linked-prs.json` stays `{}`, and `open-pr`, `shipped` and `unlanded-blocker` cannot fire on this transport. A missing or malformed in-flight pool or claims file stops the pull (exit 4). A bad `--foreign-states` file (the states file the MCP path passes on the call) excludes each foreign-blocked record as `owner/name#N (state unreadable)`, with fail-closed `Warning:` lines.
+- **Should understand:** The documented MCP gaps are behaviour. `dispatch-crosspr-overlap.json` is `[]`, `dispatch-linked-prs.json` stays `{}`, and `open-pr`, `shipped` and `unlanded-blocker` cannot fire on this transport. A missing or malformed in-flight pool or claims file stops the pull (exit 4). A bad `--foreign-states` file (the states file the MCP path passes on the call) excludes each foreign-blocked record as `owner/name#N (state unreadable)`, with one fail-closed `ignored (...)` `Warning:` line: the follow-up lookup's own `gh`-absent Warning is not printed a second time (#5304). A lookup that fails for any other reason still prints its own Warning.
 - **Red flags:** `--transport gh` silently falling back to files. With `gh` absent it must exit 2 and name the files transport. A claims file covering only the queue's targets, which leaves in-flight neighbours read as not in flight.
 
 ### 4. Read a stop and recover
 - **URL:** `plugin/bin/queue-pull.js` (exit codes in the header and USAGE)
-- **Action:** A pull that cannot continue exits 4 and prints its stop line on stderr. That happens on a corrupt `dispatch-exclusions.json` (left as it was, and no later pass runs), an unreadable `dispatch-groups.json`, a failed queue or open-numbers fetch, or any internal throw, which prints as `queue-pull: <message>`. A fetch the script fails open on prints the script's zero or one `Warning:`/`AUTO` line and the pull exits 0. A failed cache write-back never fails the pull.
-- **Should feel:** Diagnosable from the exit code and one stderr line, with no guessing whether a partial run is safe to rank.
+- **Action:** A pull that cannot continue exits 4 and prints its stop line on stderr. That happens on a corrupt `dispatch-exclusions.json` (left as it was, and no later pass runs), an unreadable `dispatch-groups.json`, a failed queue or open-numbers fetch, or any internal throw, which prints as `queue-pull: <message>`. A fetch the script fails open on prints the script's zero or one `Warning:`/`AUTO` line and the pull exits 0. A failed cache write-back never fails the pull. Unreadable claims are reported once per pull (#5304): one `AUTO` line names every claim the shipped pass and the neighbour-in-flight pass could not read, with both consequences (release time unknown, no downgrade; treated as not in flight), and a pull that stops partway still prints that line once for the claims read so far.
+- **Should feel:** Diagnosable from the exit code and one stderr line, with no guessing whether a partial run is safe to rank, and no fetch failure reported twice or not at all.
 - **Should understand:** Exit 3 is reserved and never produced: every remote failure either fails open or stops with 4, exactly as the script does. Exit 1 is a malformed invocation and prints the usage.
-- **Red flags:** A partial `dispatch-groups.json` ranked after an exit 4. An exit 4 on a fetch the script fails open on.
+- **Red flags:** A partial `dispatch-groups.json` ranked after an exit 4. An exit 4 on a fetch the script fails open on. Two claim-read `AUTO` lines in one pull, or none on a pull whose claim reads failed.
 
 ### 5. Keep the two implementations equal
 - **URL:** `tests/bin-lib/dispatch/queue-pull.test.js` (the parity describes); `tests/bin-lib/dispatch/queue-pull-oracle.js`; the oracle's two bash fences, `plugin/skills/dispatch/queue-pull-script.md` and `plugin/skills/dispatch/next-ranking.md`
@@ -56,4 +57,5 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #5227 (2026-11-12), step 1 of 3 of the queue-selection strangler-fig in `docs/superpowers/specs/2026-11-11-pipeline-driver-design.md`, "Phase 5 — Queue selection in the driver". `/claude-tweaks:dispatch` still runs the embedded scripts; the cutover and the scripts' removal are later records.
 - Updated during #5230 (the cutover): `/claude-tweaks:dispatch` now runs this CLI, and step 3's MCP path passes the foreign states as `--foreign-states` rather than `DISPATCH_FOREIGN_STATES`.
+- Updated during #5304: each fetch failure prints one line per pull (one combined claim-read `AUTO` line, also on stop paths; one foreign-states `Warning:` on a `gh`-absent run).
 - Related journeys: `dispatch-the-oldest-record-from-a-gh-absent-sandbox-3691.md` (the MCP timestamp alias this module reproduces), `drain-the-queue-past-a-chain-of-overlapping-records-3278.md`.
