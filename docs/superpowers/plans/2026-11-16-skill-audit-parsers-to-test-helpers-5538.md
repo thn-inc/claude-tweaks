@@ -144,9 +144,9 @@ Run: `git mv plugin/bin/lib/skill-audit/option-description.js tests/helpers/opti
 In `tests/helpers/option-description.js`, insert these three lines directly above the existing first comment line (`// Parser for \`AskUserQuestion\` option \`description\` fields authored in skill`), followed by a line holding only `//`:
 
 ```js
-// Test tooling, not plugin code: used by the corpus-wide conformance test in
-// tests/bin-lib/skill-audit/option-description.test.js. It lives in
-// tests/helpers/ so the installed plugin does not ship it (#5538).
+// Test tooling, not plugin code: a parser for the corpus-wide conformance
+// suite under tests/. It lives in tests/helpers/ so the installed plugin does
+// not ship it (#5538).
 //
 ```
 
