@@ -332,8 +332,10 @@ function runCheck(deps, flags) {
     const { files } = gatherDiffFiles({ base: flags['--base'], integrationBranch: flags['--integration-branch'] }, { git });
     const config = deps.blastRadiusConfig({ git, readFile: deps.readFile, runDir });
     // The same two policy keys the normal auto-merge path weighs (`merge-sensitive-paths`,
-    // `auto-merge-max-lines`): the lane's bounds are those limits, made hard.
-    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines: flags['--max-lines'] !== undefined ? flags['--max-lines'] : config.autoMergeMaxLines });
+    // `auto-merge-max-lines`): the lane's bounds are those limits, made hard. The driver's --max-lines
+    // replaces the line limit.
+    const maxLines = flags['--max-lines'] !== undefined ? flags['--max-lines'] : config.autoMergeMaxLines;
+    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines });
     if (bounds.withinBounds) mergeVerification = expressMergeVerification(deps.resolvePolicy(['merge-verification'], { runDir })['merge-verification'].value);
   } catch (err) {
     return escalate(deps, runDir, n, 'express-error', String(err && err.message), state);
