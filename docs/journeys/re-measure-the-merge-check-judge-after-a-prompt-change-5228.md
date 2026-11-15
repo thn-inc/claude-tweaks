@@ -81,3 +81,4 @@ files:
 
 ## Origin
 - Created during the build of #5228 (run `2026-11-14T212212-spec-5228`), which added the driver's read-only merge-check and acceptance judgment workers, the committed verdict fixtures and this harness. Its first two real runs, at a65e108 and 81a2e8f, exited 0 with no false auto-merge in 99 judged runs (agreement 87/99, then 86/99).
+- Updated at wrap-up of #5228: after the review's structural defang of the untrusted-record wrap, the harness launches through production's own launch and verdict check (`launchAndValidate` in judgments.js), and a third real run, at 181c6ffc3, exited 0 with no false auto-merge (agreement 87/99).
