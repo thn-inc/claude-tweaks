@@ -8,6 +8,7 @@ const { spawnSync } = require('child_process');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { readText } = require('../../helpers/read-skill');
 const { fixtureHomeEnv } = require('../../helpers/fixture-home');
+const { spawnCli } = require('../../helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
@@ -30,6 +31,39 @@ test('#1928 AC4: --markdown prints the table and writes timing.json', () => {
   assert.equal(json.runDir, dir);
   assert.equal(typeof json.generatedAt, 'string');
   assert.equal(json.totals.verifyRuns, 2);
+});
+
+// A real process, to prove stdout is flushed on exit 0.
+test('AC8.1: --markdown on a fixture run prints the table and exits 0 (script entry)', () => {
+  const dir = tmpRun(true);
+  const r = spawnCli(CLI, ['--run', dir, '--markdown'], { env: { ...process.env } });
+  assert.equal(r.code, 0);
+  assert.equal(r.stderr, '');
+  assert.equal(r.stdout, [
+    '| Phase | Minutes | Verify |',
+    '|---|---|---|',
+    '| call-1 | 25 (own 1) | — |',
+    '| call-2 | 48 (own 24) | — |',
+    '| build | 22 (own 2) | — |',
+    '| plan | 6 | — |',
+    '| tasks | 14 | scoped ×1 |',
+    '| test | 2 | full ×1 |',
+    '| review | 8 | — |',
+    '| polish | 0 | unattributed |',
+    '| wrap-up | 15 | — |',
+    '| merge | 1 | — |',
+    '| total | 73 | 2 run(s) (scoped, full) |',
+    '',
+  ].join('\n'));
+});
+
+// A real process, to prove the entry's .catch maps a rejection to exit 2.
+test('AC8.1: a rejected run exits 2 with the phase-timing.js: line (script entry)', () => {
+  const dir = tmpRun(true);
+  fs.mkdirSync(path.join(dir, 'timing.json')); // the timing.json write throws EISDIR
+  const r = spawnCli(CLI, ['--run', dir, '--markdown'], { env: { ...process.env } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /^phase-timing\.js: EISDIR/);
 });
 
 test('#2550: an events file with only session-end collapses to a one-line summary instead of a 12-row all-unattributed table, and exits 0', () => {
