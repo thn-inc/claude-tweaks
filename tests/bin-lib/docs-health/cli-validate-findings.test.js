@@ -295,3 +295,20 @@ test('validate-findings: a real run still succeeds and emits its payload when du
     'cursors are durable now — no local cursors.json is ever written',
   );
 });
+
+// Real-process pin of the script entry (#5381): the tier refusal's code, stdout and stderr are
+// byte-identical before and after the in-process entry conversion.
+test('AC7.1: validate-findings --min-confidence bogus --dry-run exits 2 with the tier message (real process)', () => {
+  const { spawnCli } = require('../../helpers/run-cli');
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([]));
+
+  const r = spawnCli(CLI, ['validate-findings', findingsFile, '--root', root, '--min-confidence', 'bogus', '--dry-run'], { env: { ...process.env } });
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(
+    r.stderr,
+    'fatal: not a git repository (or any of the parent directories): .git\nvalidate-findings: --min-confidence "bogus" is not a recognized confidence tier (must be one of high|med|low) — an unrecognized value would silently file every finding regardless of confidence, defeating the floor.\n',
+  );
+});

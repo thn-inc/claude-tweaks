@@ -111,3 +111,16 @@ test('pull-issues: default --label selects only by:code-health issues, not an un
   const briefs = JSON.parse(result.stdout);
   assert.deepStrictEqual(briefs.map((b) => b.number), [201]);
 });
+
+// Real-process pin of the script entry (#5381): the refusal path's code, stdout and stderr are
+// byte-identical before and after the in-process entry conversion.
+test('AC5.1, AC7.1: code-health.js no-such-command exits 2 with the usage text on stderr (real process)', () => {
+  const { spawnCli } = require('../../helpers/run-cli');
+  const r = spawnCli(CLI, ['no-such-command'], { env: { ...process.env }, cwd: tmp() });
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(
+    r.stderr,
+    'usage: code-health.js <command> [options]\ncommands: validate-findings [--slice <id>], classify, next-slice, status, churn-report, pull-issues, retry-queue drain, retry-queue update <results.json>\n',
+  );
+});

@@ -176,3 +176,22 @@ test('CLI: --claude-md reads design-integration from an explicit file path', () 
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+// Real-process pin of the script entry (#5381): the missing-mode refusal on an empty stdin is
+// byte-identical before and after the in-process entry conversion.
+test('AC5.1, AC7.1: design-detect.js with no arguments and an empty stdin exits 1 with --mode is required (real process)', () => {
+  const { spawnCli } = require('../../helpers/run-cli');
+  const r = spawnCli(CLI, [], { env: { ...process.env }, stdin: '' });
+  assert.equal(r.code, 1);
+  assert.equal(r.stdout, '');
+  assert.equal(r.stderr, 'design-detect: --mode is required\n');
+});
+
+// Same pin for the success path: the decision JSON on stdout, nothing on stderr.
+test('AC7.1: design-detect.js --mode review … prints the decision JSON and exits 0 (real process)', () => {
+  const { spawnCli } = require('../../helpers/run-cli');
+  const r = spawnCli(CLI, ['--mode', 'review', '--design-integration', 'enabled', '--surface', 'backend'], { env: { ...process.env }, stdin: '' });
+  assert.equal(r.code, 0);
+  assert.equal(r.stdout, '{"decision":"skip","reason":"non-frontend spec (surface declared)"}\n');
+  assert.equal(r.stderr, '');
+});

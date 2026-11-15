@@ -541,3 +541,23 @@ test('validate-findings: gh-absent MCP transport — an HTML-comment-stripped bo
     'identical finding must be suppressed, not re-filed, once dedup uses the MCP-recovered fingerprint',
   );
 });
+
+// Real-process pin of the script entry (#5381): a dry-run success prints the payload array on
+// stdout and the run summary on stderr, byte-identical before and after the entry conversion.
+test('AC7.1: validate-findings --dry-run on a valid finding exits 0 and prints the payload array (real process)', () => {
+  const { spawnCli } = require('../../helpers/run-cli');
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+
+  const r = spawnCli(CLI, ['validate-findings', findingsFile, '--root', root, '--dry-run', '--run-id', 'fixed-run'], { env: { ...process.env } });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(
+    r.stdout,
+    '[\n  {\n    "title": "getUser is a passthrough",\n    "body": "**Criterion:** simplification | **Risk:** high | **Severity:** high | **Likelihood:** medium | **Effort:** medium | **Confidence:** high | **Area:** src/api\\n\\n## Current State\\n\\nAnchor: `src/api/user.js#getUser`\\n\\ngetUser delegates directly to UserRepository.find with no added logic.\\n\\n## Deliverables\\n\\nInline the call or add caching.\\n\\n## Acceptance Criteria\\n\\ngetUser adds caching or is removed.\\n\\n## Release Note\\n\\nNo user-visible change — internal code-quality fix.\\n\\n## Technical Approach\\n\\n### Key Files\\n\\n- `src/api/user.js` — address the finding at this anchor\\n\\n_Filed by `/claude-tweaks:code-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\\n\\n<!-- work-fingerprint: codehealth-a7f87202 -->\\nwork-fingerprint: codehealth-a7f87202",\n    "labels": [\n      "by:code-health",\n      "risk:high",\n      "size:medium",\n      "ready"\n    ],\n    "type": "task"\n  }\n]\n',
+  );
+  assert.strictEqual(
+    r.stderr.split(root).join('{ROOT}'),
+    'fatal: not a git repository (or any of the parent directories): .git\nfatal: not a git repository (or any of the parent directories): .git\nhealth-state: fetch failed, treating as empty state: Command failed: git -C {ROOT} fetch origin health-state\nfatal: not a git repository (or any of the parent directories): .git\n\n[code-health] validate-findings fixed-run: 1 valid finding(s), 1 payload(s) after dedup\n',
+  );
+});

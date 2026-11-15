@@ -9,12 +9,17 @@ const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'docs-hea
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-word-count-')); }
 
-test('word-count returns a word count for a plain doc', () => {
+// Real-process pin of the script entry (#5381): the success envelope's code, stdout and stderr are
+// byte-identical before and after the in-process entry conversion.
+test('AC5.1, AC7.1: docs-health.js word-count <file> prints the result envelope and exits 0 (real process)', () => {
+  const { spawnCli } = require('../../helpers/run-cli');
   const root = tmp();
   const docPath = path.join(root, 'doc.md');
   fs.writeFileSync(docPath, 'one two three four five');
-  const output = JSON.parse(execFileSync('node', [CLI, 'word-count', docPath], { encoding: 'utf8' }));
-  assert.strictEqual(output.result, 5);
+  const r = spawnCli(CLI, ['word-count', docPath], { env: { ...process.env } });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout, '{\n  "result": 5\n}\n');
+  assert.strictEqual(r.stderr, '');
 });
 
 test('word-count returns the depth-hint frontmatter value as-is', () => {
