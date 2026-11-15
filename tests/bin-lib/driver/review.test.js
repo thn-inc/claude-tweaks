@@ -194,6 +194,23 @@ test('AC13: reviewRequired', () => {
   expect({ issue: issue('size:low'), keyFiles: within, policyValue: 'on' }, true);
 });
 
+test('reviewRequired: each answer\'s reason, verbatim (#5224)', () => {
+  const issue = (...names) => ({ labels: names.map((name) => ({ name })) });
+  const keys = (n) => Array.from({ length: n }, (_, i) => `src/f${i}.js`);
+  const rows = [
+    [{ issue: issue('size:high'), keyFiles: keys(9), policyValue: 'off' }, { on: false, reason: 'express-driver-review is off' }],
+    [{ issue: issue('size:low'), keyFiles: keys(1), policyValue: 'on' }, { on: true, reason: 'express-driver-review is on' }],
+    [{ issue: issue('size:medium'), keyFiles: keys(1) }, { on: true, reason: 'size medium is beyond size:low' }],
+    [{ issue: issue(), keyFiles: keys(1) }, { on: true, reason: 'size unlabelled is beyond size:low' }],
+    [{ issue: issue('size:medium'), keyFiles: null }, { on: true, reason: 'size medium is beyond size:low' }],
+    [{ issue: issue('size:low'), keyFiles: null }, { on: true, reason: 'Key Files unreadable' }],
+    [{ issue: issue('size:low'), keyFiles: keys(4) }, { on: true, reason: '4 Key Files is beyond 3' }],
+    [{ issue: issue('size:low'), keyFiles: keys(3) }, { on: false, reason: 'size:low and 3 Key Files are inside the express bounds' }],
+    [{ issue: issue('size:low'), keyFiles: [] }, { on: false, reason: 'size:low and 0 Key Files are inside the express bounds' }],
+  ];
+  for (const [args, want] of rows) assert.deepStrictEqual(reviewRequired({ policyValue: 'beyond-express', ...args }), want, JSON.stringify(args));
+});
+
 const VALID_EVIDENCE = Object.freeze({ path: 'tests/a.test.js', content: "require('node:test')('x', () => { throw new Error('x'); });\n" });
 
 test('AC2: finding shape', () => {
@@ -926,6 +943,7 @@ function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrow
     record: 5222,
     issue: { number: 5222, title: 'Fix the total', body: 'The total is wrong.', labels: [] },
     keyFiles: ['src/a.js'],
+    reviewer: { on: true, reason: 'test' },
     wt: WT,
     runDir: RUN_DIR,
     changedFiles: ['src/a.js', 'tests/a.test.js'],
@@ -1010,6 +1028,20 @@ const evidenceSpawns = (calls) => calls.filter((c) => c.kind === 'runner' && c.f
 const destsOf = (calls) => evidenceSpawns(calls).map((c) => c.args.find((a) => a.startsWith(DEST_FLAG)).slice(DEST_FLAG.length));
 const ofKind = (calls, kind) => calls.filter((c) => c.kind === kind);
 const statusReads = (calls) => calls.filter((c) => c.kind === 'git' && c.args.includes('status'));
+
+test('reviewRecord with no ctx.reviewer fails closed and launches no worker', async () => {
+  // The record's one reviewer answer is the eligibility step's (#5224): reviewRecord never computes its own.
+  for (const reviewer of [undefined, null, true, { on: 'yes' }, { reason: 'no on' }]) {
+    const rig = passRig();
+    rig.ctx.reviewer = reviewer;
+    const res = await reviewRecord(rig.ctx, rig.deps, { testCommand: 'npm test', isRunArtifact: isPipelineArtifact, indexFlagCheck: () => null });
+    assert.deepStrictEqual(res, {
+      status: 'fail', stopClass: 'pre-push', detail: 'reviewer-on answer missing',
+      extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null },
+    }, JSON.stringify(reviewer));
+    assert.deepStrictEqual(rig.calls, [], JSON.stringify(reviewer));
+  }
+});
 
 test('AC1: the reviewer is launched with role reviewer and its result schema', async () => {
   for (const platform of ['darwin', 'win32']) {
