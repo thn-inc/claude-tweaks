@@ -8,6 +8,9 @@ const path = require('path');
 const {
   sweep, hasTrackedWork, foldEventsJsonl, listStrayRunDirs,
 } = require('../plugin/bin/sweep-stray-run-dirs');
+const { spawnCli } = require('./helpers/run-cli');
+
+const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'sweep-stray-run-dirs.js');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -205,4 +208,50 @@ test('sweep: dry-run reports without mutating anything', () => {
   assert.equal(result.archived.length, 1);
   assert.equal(fs.existsSync(runDir), true, 'dry-run must not move anything');
   assert.ok(trackedFiles(root).includes('.claude-tweaks/pipelines/2026-08-01T090000-spec-1/work/1-spec.md'));
+});
+
+// --- CLI script entry (#5386) ---
+
+// The four GIT_* location variables stripped, so an ambient GIT_DIR cannot redirect the fixtures' git.
+function cleanEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
+  return env;
+}
+
+// Real process: proves the script entry, exit code 0 and the four-line dry-run summary on stdout.
+test('AC5.1 AC7.1: --dry-run --root <fixture> prints the summary lines and exits 0', () => {
+  const root = fs.realpathSync(makeRepo());
+  try {
+    commitPath(root, '.claude-tweaks/pipelines/2026-08-01T090000-spec-1/work/1-spec.md', '# 1\n');
+    fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', '2026-08-03T090000-spec-9', 'staged'), { recursive: true });
+    const res = spawnCli(CLI, ['--dry-run', '--root', root], { env: cleanEnv() });
+    assert.equal(res.code, 0, res.stderr);
+    assert.equal(res.stderr, '');
+    assert.equal(res.stdout, `root: ${root}\narchived: 1\nskipped: 1\nfailed: 0\n`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Real process: proves the script entry's exit code 1, the FAILED line on stdout and the empty stderr.
+test('AC7.1: a failed archive exits 1 with a FAILED line on stdout and empty stderr', () => {
+  const root = fs.realpathSync(makeRepo());
+  try {
+    const runId = '2026-08-01T090000-spec-1';
+    commitPath(root, `.claude-tweaks/pipelines/${runId}/work/1-spec.md`, '# 1\n');
+    // A regular file where the archive twin directory belongs: archiveRunDir's mkdir refuses.
+    fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId), 'in the way\n');
+    const logPath = path.join(root, 'sweep.log');
+    const res = spawnCli(CLI, ['--root', root, '--log', logPath], { env: cleanEnv() });
+    assert.equal(res.code, 1);
+    assert.equal(res.stderr, '');
+    assert.equal(
+      res.stdout,
+      `root: ${root}\narchived: 0\nskipped: 0\nfailed: 1\n  FAILED ${runId}: mkdir-failed\nlog: ${logPath}\n`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
