@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/driver/settle.js
+  - plugin/bin/lib/driver/claim-exit.js
   - plugin/bin/lib/driver/run.js
   - plugin/bin/lib/driver/admission.js
   - plugin/bin/drive.js
@@ -96,3 +97,4 @@ files:
 - Step 5 follows the plan-review decision that an interrupt settles nothing.
 - Step 4's `none` versus `left-to-caller` follows the plan-review decision that a row with no calls settles `none` even under `--no-settle`.
 - Updated at wrap-up of #5219: Step 3 names the `settle-close` call the review fixes added to the end of the pre-push row, so a removed worktree no longer leaves the run active.
+- Updated at the wrap-up of the driver's claim-exit deepening (daa4a8f87): `files:` now lists `plugin/bin/lib/driver/claim-exit.js`. The settle reads from it whether a claim stop is contested (step 1's `none` row, step 2's exit-3 red flag) and whether a claim may have been written (step 2's TTL note), so a change there now flags this journey. No step changed.
