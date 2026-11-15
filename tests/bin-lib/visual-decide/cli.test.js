@@ -259,31 +259,35 @@ test('status: never-started, running, stopped, crashed', async () => {
 
   const daemon = inProcessDaemon();
 
-  const neverStarted = await run(['status', '--state', stateDir]);
-  assert.equal(neverStarted.out.trim(), 'never-started');
+  try {
+    const neverStarted = await run(['status', '--state', stateDir]);
+    assert.equal(neverStarted.out.trim(), 'never-started');
 
-  const started = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5'], daemon.opts);
-  assert.equal(started.code, 0, started.err);
+    const started = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5'], daemon.opts);
+    assert.equal(started.code, 0, started.err);
 
-  const running = await run(['status', '--state', stateDir]);
-  assert.equal(running.out.trim(), 'running');
+    const running = await run(['status', '--state', stateDir]);
+    assert.equal(running.out.trim(), 'running');
 
-  // crashed: close the server directly, bypassing stop's own marker write
-  // (its unref'd idle and watch timers stay armed and cannot hold the process)
-  await new Promise((resolve) => {
-    daemon.server().close(resolve);
-  });
-  const crashed = await run(['status', '--state', stateDir]);
-  assert.equal(crashed.out.trim(), 'crashed');
+    // crashed: close the server directly, bypassing stop's own marker write
+    // (its unref'd idle and watch timers stay armed and cannot hold the process)
+    await new Promise((resolve) => {
+      daemon.server().close(resolve);
+    });
+    const crashed = await run(['status', '--state', stateDir]);
+    assert.equal(crashed.out.trim(), 'crashed');
 
-  // stopped: start again, then stop cleanly
-  const restarted = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5'], daemon.opts);
-  assert.equal(restarted.code, 0, restarted.err);
-  const stopResult = await run(['stop', '--state', stateDir], daemon.opts);
-  assert.equal(stopResult.code, 0);
-  const stoppedStatus = await run(['status', '--state', stateDir]);
-  assert.equal(stoppedStatus.out.trim(), 'stopped');
-  await daemon.closed();
+    // stopped: start again, then stop cleanly
+    const restarted = await run(['start', '--dir', dir, '--state', stateDir, '--idle-minutes', '5'], daemon.opts);
+    assert.equal(restarted.code, 0, restarted.err);
+    const stopResult = await run(['stop', '--state', stateDir], daemon.opts);
+    assert.equal(stopResult.code, 0);
+    const stoppedStatus = await run(['status', '--state', stateDir]);
+    assert.equal(stoppedStatus.out.trim(), 'stopped');
+  } finally {
+    daemon.stopAll();
+    await daemon.closed();
+  }
 });
 
 test('review fix: --idle-minutes 0 is honored by the daemon, not silently replaced by the 240min default', { timeout: 10000 }, async () => {
