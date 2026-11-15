@@ -80,9 +80,11 @@ test('AC4.1: an in-process daemon start-and-stop leaves SIGTERM/SIGINT listener 
     servers: resources('TCPServerWrap'),
     timeouts: resources('Timeout'),
   };
+  // stop lands well after a loop turn, so a run that resolves without waiting
+  // for the server to close is caught whatever the timer/immediate order.
   const res = await runCli(BIN, ['start', '--dir', D, '--state', S, '--port', '0', '--idle-minutes', '5', '--__daemon__'], {
     cwd: D,
-    deps: { onStarted: ({ stop }) => setImmediate(stop) },
+    deps: { onStarted: ({ stop }) => setTimeout(stop, 50) },
   });
   assert.equal(res.code, 0, res.stderr);
   assert.equal(process.listenerCount('SIGTERM'), before.sigterm);
