@@ -32,6 +32,53 @@ test('acquireLock: parent directory missing -> creates it and still acquires the
   assert.ok(fs.existsSync(lockPath));
 });
 
+// Runs acquireLock against a Date.now that advances 25 ms per read, so the
+// wait it honoured is read off a virtual clock, not a real-time budget that
+// flakes under load (tests/wall-clock-budget-conformance.test.js).
+function acquireOnVirtualClock(lockPath, opts) {
+  const realNow = Date.now;
+  let virtual = 0;
+  Date.now = () => { virtual += 25; return virtual; };
+  try {
+    const result = acquireLock(lockPath, opts);
+    return { result, elapsed: virtual };
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+test('acquireLock: an explicit waitMs wins over CLAUDE_TWEAKS_LOCK_WAIT_MS', () => {
+  const lockPath = path.join(tmpDir(), '.x.lock');
+  const held = acquireLock(lockPath);
+  const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '0';
+  try {
+    const { result, elapsed } = acquireOnVirtualClock(lockPath, { waitMs: 150 });
+    assert.equal(result, null);
+    assert.ok(elapsed >= 150, `gave up after only ${elapsed} virtual ms`);
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+    else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prev;
+    releaseLock(held);
+  }
+});
+
+test('acquireLock: with no waitMs the env var still applies', () => {
+  const lockPath = path.join(tmpDir(), '.x.lock');
+  const held = acquireLock(lockPath);
+  const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '0';
+  try {
+    const { result, elapsed } = acquireOnVirtualClock(lockPath, {});
+    assert.equal(result, null);
+    assert.ok(elapsed < 100, `waited ${elapsed} virtual ms despite CLAUDE_TWEAKS_LOCK_WAIT_MS=0`);
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+    else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prev;
+    releaseLock(held);
+  }
+});
+
 test('releaseLock: removes the lock directory; a no-op on null is safe', () => {
   const dir = tmpDir();
   const lockPath = path.join(dir, '.x.lock');
