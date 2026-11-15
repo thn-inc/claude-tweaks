@@ -299,6 +299,31 @@ test('refuses a cache entry that is a string ({"a":"open"})', () => {
   assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
 });
 
+const cannotChmod = process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0);
+
+test('refuses when the cache\'s parent directory is unreadable (lstat EACCES)', { skip: cannotChmod }, () => {
+  const root = tmp();
+  writeRaw(root, '{}');
+  const dir = path.dirname(cacheFile(root));
+  fs.chmodSync(dir, 0o000);
+  try {
+    assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+  } finally {
+    fs.chmodSync(dir, 0o755);
+  }
+});
+
+test('refuses when the cache file itself is unreadable (read EACCES)', { skip: cannotChmod }, () => {
+  const root = tmp();
+  writeRaw(root, '{}');
+  fs.chmodSync(cacheFile(root), 0o000);
+  try {
+    assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+  } finally {
+    fs.chmodSync(cacheFile(root), 0o644);
+  }
+});
+
 test('refuses when .claude-tweaks is a regular file', () => {
   const root = tmp();
   fs.writeFileSync(path.join(root, '.claude-tweaks'), 'x', 'utf8');
