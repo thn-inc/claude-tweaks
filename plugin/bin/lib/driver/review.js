@@ -73,8 +73,12 @@
 // lines, with anchored per-line regexes only, because the evidence test controls part of the text.
 //
 // On or off (reviewRequired): policy `off` and `on` decide alone; any other value is the beyond
-// rule, on when the size label is not `low` or the Key Files (the eligibility verdict's own
-// extraction; a non-array counts as beyond) exceed EXPRESS_MAX_KEY_FILES.
+// rule (eligibility.js's isBeyondExpressBounds, which admission shares), on when the size label is
+// not `low` or the Key Files (the eligibility verdict's own extraction; a non-array counts as
+// beyond) exceed EXPRESS_MAX_KEY_FILES. The run asks it once
+// per record, in the eligibility step (ctx.reviewer, #5224), and admission, the check flag and
+// reviewRecord all read that one answer; reviewRecord never calls it, and fails closed (a
+// pre-push `fail`) when ctx.reviewer is not an object with a boolean `on`.
 //
 // The reviewer's result is untrusted, and an evidence path names a file the driver writes into the
 // worktree, so every rule here fails closed and no reason string echoes reviewer text.
@@ -203,9 +207,9 @@
 //   read (before or after it), the worker's `fail`/`timeout`, a rewrite refused or failed,
 //   the commit failing, an evidence file not at HEAD as recorded, a kept path no longer resolving where
 //   it was confirmed or a kept file not in the worktree as recorded before its run, a kept run that throws or survives
-//   its kill, an index flag newly set after a kept run (the launch and test-step flag stops arrive as
-//   the fix-round launch and test results), the tree changed during the checks (after the scoped run
-//   and each kept run; neither is singled out), the name-only diff failing (it ends with `--`, so a
+//   its kill, an index flag newly set after a kept run (the launch and test-step flag stops, and the
+//   test step's tree stop after the scoped run, arrive as the fix-round launch and test results), the
+//   tree changed after a kept run, the name-only diff failing (it ends with `--`, so a
 //   file named HEAD or after the sha is never read as a revision). `stop`: the worker's
 //   cannot-complete, the commit step's own stop (no changed files, or the worker's title
 //   empty once normalized), a kept evidence test that does not pass (reason failing-test), no path outside
@@ -217,7 +221,7 @@
 
 const path = require('path');
 const { parseRecordFacets } = require('../issues/record');
-const { EXPRESS_MAX_KEY_FILES, isProtectedPath } = require('../express/eligibility');
+const { EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isProtectedPath } = require('../express/eligibility');
 const { classifyDiffFiles, isSensitivePath } = require('../issues/blast-radius');
 const { isAncestorOrSelf } = require('../path-guard');
 const { relativeDisplayId } = require('../shared-primitives');
@@ -314,12 +318,13 @@ function reviewRequired({ issue, keyFiles, policyValue } = {}) {
   if (policyValue === 'off') return { on: false, reason: 'express-driver-review is off' };
   if (policyValue === 'on') return { on: true, reason: 'express-driver-review is on' };
   const { size } = parseRecordFacets((issue && issue.labels) || []);
+  if (!isBeyondExpressBounds({ size, keyFiles })) {
+    return { on: false, reason: `size:low and ${keyFiles.length} Key Files are inside the express bounds` };
+  }
+  // Beyond: the reason names the first rule the record breaks.
   if (size !== 'low') return { on: true, reason: `size ${size || 'unlabelled'} is beyond size:low` };
   if (!Array.isArray(keyFiles)) return { on: true, reason: 'Key Files unreadable' };
-  if (keyFiles.length > EXPRESS_MAX_KEY_FILES) {
-    return { on: true, reason: `${keyFiles.length} Key Files is beyond ${EXPRESS_MAX_KEY_FILES}` };
-  }
-  return { on: false, reason: `size:low and ${keyFiles.length} Key Files are inside the express bounds` };
+  return { on: true, reason: `${keyFiles.length} Key Files is beyond ${EXPRESS_MAX_KEY_FILES}` };
 }
 
 function isPlainObject(v) {
@@ -1109,7 +1114,7 @@ async function fixRound(ctx, deps, wiring, pass) {
       } catch {
         return end('fail', 'git status failed after a kept evidence run', { c });
       }
-      // The scoped test run or this evidence run may have left it: neither is singled out.
+      // The test step has already checked the tree after the scoped run, so this evidence run left it.
       if (changed.length) return end('fail', `the tree changed during the fix-round checks: ${normalizeEventText(changed.join(', '))}`);
       if (run.verdict !== 'passed') return end('stop', `the kept evidence test did not pass (${run.verdict})`, { c, reason: 'failing-test' });
     }
@@ -1150,16 +1155,19 @@ async function fixRound(ctx, deps, wiring, pass) {
 // A stop carries the pass's counts. A confirmed finding takes the one fix round.
 async function reviewRecord(ctx, deps, wiring) {
   const { testCommand, isRunArtifact, indexFlagCheck } = wiring;
-  const need = reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: ctx.shared.policy['express-driver-review'].value });
+  // A stop before any pass: the line keeps the seven keys.
+  const notStarted = (detail) => ({ status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null } });
+  // The eligibility step's answer (see the header's "On or off").
+  const need = ctx.reviewer;
+  if (!need || typeof need !== 'object' || typeof need.on !== 'boolean') return notStarted('reviewer-on answer missing');
   if (!need.on) return { status: 'ok', skip: true };
   let pass;
   try {
     pass = await reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagCheck });
   } catch (err) {
     // A throw before the pass can take anything back (its setup, a missing wiring member) writes nothing: the
-    // pass's own catch covers every throw after its first evidence write. The line keeps the seven keys.
-    const detail = `the review pass failed before it started${codeSuffix(err)}`;
-    return { status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null } };
+    // pass's own catch covers every throw after its first evidence write.
+    return notStarted(`the review pass failed before it started${codeSuffix(err)}`);
   }
   if (pass.result) return pass.result;
   if (pass.confirmed.length === 0) return { status: 'ok', detail: pass.detail, extra: pass.extra };

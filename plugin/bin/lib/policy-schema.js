@@ -94,6 +94,10 @@ const POLICY_KEYS = [
   { key: 'express-driver-wall-clock-minutes', type: 'integer', min: 1, default: 30, policyOnly: true, summary: "Wall-clock ceiling in minutes for each driver worker launch, not the whole record.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-driver-spend-ceiling-dollars', type: 'integer', min: 1, default: 10, policyOnly: true, summary: "Spend ceiling in whole dollars for each driver worker launch, not the whole record.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-driver-review', type: 'enum', values: ['off', 'on', 'beyond-express'], default: 'beyond-express', policyOnly: true, summary: "Whether the pipeline driver runs its evidence reviewer: off, on, or only for records beyond the express bounds.", category: 'merge-safety', tier: 'advanced' },
+  // #5224: the driver's lane bounds — policyOnly like its siblings, since they bound what autonomous machinery may take on. A record beyond the express bounds is admitted only with the reviewer step on. express-driver-max-lines is a Shape B derived default (_shared/policy-schema-read-path.md): the base default 40 equals auto-merge-max-lines' own, and resolvePolicyKeys derives the value from the resolved auto-merge-max-lines whenever it resolves source 'default' (deriveExpressDriverMaxLines); the driver reads source !== 'default' to decide whether to pass check --max-lines.
+  { key: 'express-driver-max-size', type: 'enum', values: ['low', 'medium'], default: 'low', policyOnly: true, summary: "Largest size label the driver admits into its lane: low (the express bound) or medium; size:high is never admitted.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-max-key-files', type: 'integer', min: 1, default: 3, policyOnly: true, summary: "Most Key Files a record may list for the driver to admit it; the default equals the express lane's own limit.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-max-lines', type: 'integer', min: 1, default: 40, policyOnly: true, summary: "Diff-line bound the driver's check applies to a record the reviewer step is on for; unset, the express bound applies.", category: 'merge-safety', tier: 'advanced' },
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
@@ -400,6 +404,8 @@ function readFileSafe(filePath) {
 
 // Flat `key: value` line matcher, tolerant of a trailing `# comment` and of
 // living inside a fenced code block — matches bin/lib/policy.js's convention.
+// bin/hooks.sh's policy_verdict mirrors this for `worktree-always` (#5392):
+// change both, plus its hooks.sh AC9 differential fixtures.
 function parseFlatLines(raw) {
   const result = {};
   if (!raw) return result;
@@ -600,6 +606,25 @@ function deriveHousekeepingAutoMerge(sources) {
   return autonomy === 'trusted' || autonomy === 'unattended';
 }
 
+// express-driver-max-lines' effective default (#5224, Shape B): the resolved
+// auto-merge-max-lines value, read through the same sources with the same
+// invalid handling as the main loop — the first source holding the key wins,
+// and an invalid value resolves that key's schema default, never the next
+// source's value. Unlike express-driver-max-lines itself, auto-merge-max-lines
+// is not policyOnly, so the --run overlay reaches this read, as it reaches
+// express-lane.js check.
+function deriveExpressDriverMaxLines(sources) {
+  const schemaEntry = SCHEMA_BY_KEY.get('auto-merge-max-lines');
+  let value = schemaEntry.default;
+  for (const source of sources) {
+    if (!hasOwn(source.values, 'auto-merge-max-lines')) continue;
+    const raw = source.values['auto-merge-max-lines'];
+    if (isValidValue(schemaEntry, raw)) value = resolveValue('auto-merge-max-lines', raw);
+    break;
+  }
+  return value;
+}
+
 function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid } = {}) {
   const sources = [
     { name: 'run-config', raw: typeof runConfigRaw === 'string' ? runConfigRaw : null },
@@ -698,6 +723,12 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
     // same set-but-invalid posture resolveIntegrationModel documents.
     if (canonical === 'housekeeping-auto-merge' && resolved.source === 'default') {
       resolved = { ...resolved, value: deriveHousekeepingAutoMerge(sources) };
+    }
+    // Shape B derived default (#5224): unset and set-but-invalid both take the
+    // auto-merge-max-lines value; source stays 'default' (the driver's signal
+    // to pass no --max-lines) and invalid: true survives the spread.
+    if (canonical === 'express-driver-max-lines' && resolved.source === 'default') {
+      resolved = { ...resolved, value: deriveExpressDriverMaxLines(sources) };
     }
     // policySourceExcluded (generalized from #715's merge-authorization-only
     // special case — #839): a key so flagged is never validly sourced from

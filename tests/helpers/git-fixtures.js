@@ -22,6 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+// Loading git-template.js also points a bare run's repoInfo store at a temp file (#5294).
 const { fromTemplate, disableReceiveAutoGc } = require('./git-template');
 
 // Ceiling for a single fixture git spawn.

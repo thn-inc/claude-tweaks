@@ -19,7 +19,30 @@ const { fromTemplate, disableReceiveAutoGc } = require('./helpers/git-template')
 const NO_INSTALL = { readFile: () => { throw Object.assign(new Error('no install (test)'), { code: 'ENOENT' }); } };
 // The default is applied after the spread, so a caller passing
 // `superpowersDeps: undefined` still gets NO_INSTALL, never the real file.
-const runSessionStart = (ctx) => sessionStart.run({ ...ctx, superpowersDeps: ctx.superpowersDeps || NO_INSTALL });
+// #5392: run() saves process.execPath under ~/.claude-tweaks/node-path unless
+// ctx.nodePathHome names another home; every in-process run here passes a
+// temp one so no test writes the developer's real home. HOME itself is left
+// alone: the git commits below need the global identity in ~/.gitconfig.
+const NODE_PATH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-nodepath-'));
+const runSessionStart = (ctx) => sessionStart.run({
+  ...ctx, superpowersDeps: ctx.superpowersDeps || NO_INSTALL, nodePathHome: ctx.nodePathHome || NODE_PATH_HOME,
+});
+
+test('#5392: run() writes the node path under ctx.nodePathHome, never under HOME', async () => {
+  const project = tmpProject();
+  const seamHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-seam-'));
+  const decoyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-decoy-'));
+  const prior = process.env.HOME;
+  process.env.HOME = decoyHome;
+  try {
+    await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project, nodePathHome: seamHome });
+  } finally {
+    if (prior === undefined) delete process.env.HOME;
+    else process.env.HOME = prior;
+  }
+  assert.strictEqual(fs.readFileSync(path.join(seamHome, '.claude-tweaks', 'node-path'), 'utf8'), process.execPath + '\n');
+  assert.ok(!fs.existsSync(path.join(decoyHome, '.claude-tweaks', 'node-path')), 'nothing written under HOME');
+});
 
 function tmpProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-'));
@@ -539,7 +562,7 @@ test('#561: a redTip finding from reconcile() renders as its own additionalConte
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    const out = await freshSessionStart.run({ superpowersDeps: NO_INSTALL, input: {}, runDir: null, runState: null, cwd: project });
+    const out = await freshSessionStart.run({ superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
     assert.ok(out.json, 'a redTip finding must render additionalContext');
     assert.match(out.json.hookSpecificOutput.additionalContext, /CI is red on main tip at 0123456 — ci\/tests/);
   } finally {
@@ -571,7 +594,7 @@ test('#4578: SessionStart passes HOOK_FORGE_PROBE_TIMEOUT_MS into its inline rec
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    await freshSessionStart.run({ superpowersDeps: NO_INSTALL, input: {}, runDir: null, runState: null, cwd: project });
+    await freshSessionStart.run({ superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
     assert.strictEqual(seen.length, 1, 'the inline reconcile() must have been called exactly once');
     assert.strictEqual(typeof HOOK_FORGE_PROBE_TIMEOUT_MS, 'number');
     assert.strictEqual(seen[0].forgeProbeTimeoutMs, HOOK_FORGE_PROBE_TIMEOUT_MS);
@@ -1526,7 +1549,7 @@ test('#3380: a throwing superpowersNotice is swallowed — the rest of the conte
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    const out = await freshSessionStart.run(spCtx(project, { source: 'startup' }, sp));
+    const out = await freshSessionStart.run({ ...spCtx(project, { source: 'startup' }, sp), nodePathHome: NODE_PATH_HOME });
     assert.match(out.json.hookSpecificOutput.additionalContext, /^> \*\*Interaction style:\*\*/);
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /superpowers 6\.3\.0/);
   } finally {

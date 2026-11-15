@@ -9,7 +9,8 @@
 //             both against the worktree run-state.json records (never the process
 //             cwd); logs a proceed line (naming the HEAD sha the stamp verified, which
 //             the envelope's `head` carries for the push) or an escalation line under
-//             ## /express-lane.
+//             ## /express-lane. `--max-lines` (the driver's flag) replaces
+//             `auto-merge-max-lines` as the line bound.
 //   escalate  writes the escalation line; the detail comes from a file, never argv.
 //   verify    the express path's bookend artifacts (claim log, an unsuperseded check
 //             line, PR), read from the archived run dir once a merged run's reconcile
@@ -52,10 +53,11 @@ const sharedPrimitives = require('../shared-primitives');
 
 const USAGE = [
   'usage: express-lane.js gate (--issue <n> | --records-json <file>) [--run <dir>] [--repo owner/name]',
-  '       express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name]',
+  '       express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name] [--max-lines <n>]',
   '       express-lane.js escalate --run <dir> --issue <n> --reason <failing-test|out-of-bounds|gate-denial|express-error> --detail-file <file>',
   '       express-lane.js verify --run <dir> --issue <n>',
   '       express-lane.js samples [--every <n>] [--repo owner/name]',
+  "       --max-lines: the pipeline driver's implementation-line bound (bin/drive.js); absent, check applies auto-merge-max-lines",
   'exit: 0 success (gate/check: verdict JSON on stdout whatever it is); 1 verify found an artifact missing, an escalation was refused',
   '      because run-state.json already records the PR, or an upstream fetch failed (samples: also a search at its 1000-result cap within one second);',
   '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout, or (escalate) decisions.md unwritable;',
@@ -93,7 +95,7 @@ const NO_HEAD = 'the runner stamp names no HEAD sha';
 const REPO_RE = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*\/[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
 const VERB_FLAGS = {
   gate: ['--issue', '--records-json', '--run', '--repo'],
-  check: ['--run', '--issue', '--integration-branch', '--base', '--record-json', '--repo'],
+  check: ['--run', '--issue', '--integration-branch', '--base', '--record-json', '--repo', '--max-lines'],
   escalate: ['--run', '--issue', '--reason', '--detail-file'],
   verify: ['--run', '--issue'],
   samples: ['--every', '--repo'],
@@ -122,6 +124,7 @@ function parseArgs(argv) {
   }
   if (flags['--issue'] !== undefined) flags['--issue'] = positiveInt('--issue', flags['--issue']);
   if (flags['--every'] !== undefined) flags['--every'] = positiveInt('--every', flags['--every']);
+  if (flags['--max-lines'] !== undefined) flags['--max-lines'] = positiveInt('--max-lines', flags['--max-lines']);
   if (flags['--repo'] !== undefined && !REPO_RE.test(flags['--repo'])) throw new UsageError(`--repo must be owner/name, got "${flags['--repo']}"`);
   if (flags['--reason'] !== undefined && !ESCALATION_REASONS.includes(flags['--reason'])) {
     throw new UsageError(`--reason must be one of ${ESCALATION_REASONS.join('|')}`);
@@ -329,8 +332,10 @@ function runCheck(deps, flags) {
     const { files } = gatherDiffFiles({ base: flags['--base'], integrationBranch: flags['--integration-branch'] }, { git });
     const config = deps.blastRadiusConfig({ git, readFile: deps.readFile, runDir });
     // The same two policy keys the normal auto-merge path weighs (`merge-sensitive-paths`,
-    // `auto-merge-max-lines`): the lane's bounds are those limits, made hard.
-    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines: config.autoMergeMaxLines });
+    // `auto-merge-max-lines`): the lane's bounds are those limits, made hard. The driver's --max-lines
+    // replaces the line limit.
+    const maxLines = flags['--max-lines'] !== undefined ? flags['--max-lines'] : config.autoMergeMaxLines;
+    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines });
     if (bounds.withinBounds) mergeVerification = expressMergeVerification(deps.resolvePolicy(['merge-verification'], { runDir })['merge-verification'].value);
   } catch (err) {
     return escalate(deps, runDir, n, 'express-error', String(err && err.message), state);
