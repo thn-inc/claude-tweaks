@@ -829,11 +829,9 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   const treeStop = testTreeStop(ctx, deps);
   // A verdict-less run keeps its cause beside the tree detail, which stays the prefix.
   if (treeStop) return r.code === 0 ? treeStop : { ...treeStop, detail: `${treeStop.detail}; ${verdictlessDetail(r)}` };
-  // A null code is no exit at all (a timeout, a spawn error): the suite never gave a verdict.
-  if (r.code === null || r.code === undefined) return { status: 'fail', detail: verdictlessDetail(r) };
-  // verify.js: exit 1 is a failed check (red tests, handled above, before the tree read); any other
-  // non-zero exit (2: usage or infrastructure error) means the run itself failed, so it is a `fail`,
-  // not a gate saying no.
+  // verify.js: exit 1 is a failed check (red tests, handled above, before the tree read). No exit at
+  // all (a timeout, a spawn error) or any other non-zero exit (2: usage or infrastructure error) means
+  // the run itself gave no verdict, so it is a `fail`, not a gate saying no.
   if (r.code !== 0) return { status: 'fail', detail: verdictlessDetail(r) };
   return { status: 'ok', detail };
 });
