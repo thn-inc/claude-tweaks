@@ -183,8 +183,11 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     if (unreadable.length) {
       return fatal(`policy unreadable: ${unreadable.map((k) => `${k} (${(resolved[k] && resolved[k].error) || 'missing'})`).join(', ')}`);
     }
-    // A set driver line bound (#5224) that is not an integer of at least 1 is fatal here, before any
-    // record is claimed, whatever the reviewer answer: driverLineBound then reads only a valid value.
+    // A malformed express-driver-max-lines never reaches this guard: the resolver turns it into the
+    // default with `invalid: true` (spec AC4/AC5), so the driver passes no --max-lines. What does reach
+    // it is a set value the resolver accepted but that is not a safe integer of at least 1 (an all-digit
+    // value past 2^53 parses to an unsafe number): fatal here, before any record is claimed, whatever
+    // the reviewer answer, so driverLineBound reads only a usable value.
     const lineBound = resolved['express-driver-max-lines'];
     if (lineBound.source !== 'default' && !(Number.isSafeInteger(lineBound.value) && lineBound.value >= 1)) {
       return fatal(`driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(lineBound.value)})`);
@@ -229,7 +232,7 @@ function laneBounds(policy) {
 // The implementation-line bound for check's --max-lines (#5224): express-driver-max-lines when it is
 // set (its source is not the default) and the reviewer is on for the record, else null, so check reads
 // auto-merge-max-lines itself (the express bound is read in one place only). The policy step has already
-// refused a set value that is not an integer of at least 1. The worker step and check both read this, so
+// refused a set value that is not a safe integer of at least 1. The worker step and check both read this, so
 // the prompt and check never disagree.
 function driverLineBound(ctx) {
   const { value, source } = ctx.shared.policy['express-driver-max-lines'];

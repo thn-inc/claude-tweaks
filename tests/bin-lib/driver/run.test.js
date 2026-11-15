@@ -4211,7 +4211,8 @@ test('AC12.1 (#5224): one reviewRequired call per record feeds admission, the ch
   assert.deepStrictEqual(h.reviewerCalls, [7, 8].map((n) => ({ issue: issueFor(n), keyFiles: ['a.js'], policyValue: 'beyond-express' })));
   assert.deepStrictEqual(admissionInputs(h).map((i) => i.reviewerOn), [true, true]);
   assert.deepStrictEqual(checkFlags(h), [['--max-lines', '90'], ['--max-lines', '90']]);
-  // The review step reads the same answer: the real rule leaves a size:low, one-Key-File record off.
+  // The review step reads the same answer: the sentinel turns the reviewer on for both records, so each
+  // runs a reviewer role (the real rule would leave a size:low, one-Key-File record off).
   assert.deepStrictEqual(rolesOf(h), ['implementer', 'reviewer', 'implementer', 'reviewer']);
   const off = harness({ policy: { 'express-driver-max-lines': 90 }, reviewRequired: () => ({ on: false, reason: 'sentinel' }) });
   assert.equal(await run(['#7'], off.deps), 0);
@@ -4430,7 +4431,7 @@ test('AC2.1/AC2.2 (#5224): with every key unset the run refuses and admits as to
   assert.strictEqual(rows, 72);
 });
 
-test('(#5224) a set express-driver-max-lines that is not an integer of at least 1 stops the driver before any record', async () => {
+test('(#5224) a policy reply whose express-driver-max-lines is set but not an integer of at least 1 stops the driver before any record (defensive: the real resolver never sends these)', async () => {
   for (const review of ['on', 'off']) {
     for (const value of ['x', 0, 2.5, null]) {
       const name = `${JSON.stringify(value)} review=${review}`;
@@ -4446,6 +4447,29 @@ test('(#5224) a set express-driver-max-lines that is not an integer of at least 
       assert.equal(h.calls.filter((c) => c.kind === 'gh').length, 0, name);
     }
   }
+});
+
+test('(#5224) through the real resolver: a malformed express-driver-max-lines falls back to no flag, a value past 2^53 stops the driver', async () => {
+  const { resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+  const resolvedLine = (raw) => resolvePolicyKeys(['express-driver-max-lines'], { policyRaw: `express-driver-max-lines: ${raw}\n` })['express-driver-max-lines'];
+  const withLine = (reply) => [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+    ? reply
+    : { value: { ...POLICY, 'express-driver-review': 'on' }[k], source: 'policy' }]))];
+  for (const raw of ['0', 'x', '2.5']) {
+    const reply = resolvedLine(raw);
+    assert.deepStrictEqual([reply.source, reply.invalid], ['default', true], raw);
+    const h = harness({ script: [withLine(reply)] });
+    assert.equal(await run(['#7'], h.deps), 0, raw);
+    assert.notEqual(h.lines().find((l) => l.step === 'policy').status, 'fail', raw);
+    assert.deepStrictEqual(checkFlags(h), [null], raw);
+  }
+  const huge = resolvedLine('9007199254740993');
+  assert.deepStrictEqual([huge.source, Number.isSafeInteger(huge.value)], ['policy', false]);
+  const h = harness({ script: [withLine(huge)] });
+  assert.equal(await run(['#7'], h.deps), 1);
+  const final = h.lines().at(-1);
+  assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused']);
+  assert.equal(final.stop.detail, `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(huge.value)})`);
 });
 
 test('(#5224) the fix round of a widened record passes the driver bound to its second check', async () => {
