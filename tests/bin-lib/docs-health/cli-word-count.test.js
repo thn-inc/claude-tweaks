@@ -30,6 +30,20 @@ test('word-count returns the depth-hint frontmatter value as-is', () => {
   assert.strictEqual(output.result, 'deep-dive');
 });
 
+// In-process (#5381): a relative path resolves against the injected cwd, and an unreadable one is
+// named as the caller spelled it. One in-process test, no extra process.
+test('word-count resolves a relative path against the injected cwd and names a missing one as written', () => {
+  const { sweepCli } = require('../../helpers/health-sweep-cli');
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'doc.md'), 'one two three four five');
+  const ok = sweepCli(CLI, ['word-count', 'doc.md'], { cwd: root });
+  assert.strictEqual(ok.status, 0, `stderr: ${ok.stderr}`);
+  assert.strictEqual(ok.stdout, '{\n  "result": 5\n}\n');
+  const missing = sweepCli(CLI, ['word-count', 'nope.md'], { cwd: root });
+  assert.strictEqual(missing.status, 1);
+  assert.strictEqual(missing.stderr, 'word-count: could not read file: nope.md\n');
+});
+
 test('word-count exits non-zero when the path arg is missing', () => {
   const result = spawnSync('node', [CLI, 'word-count'], { encoding: 'utf8' });
   assert.notStrictEqual(result.status, 0);

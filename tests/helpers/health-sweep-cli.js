@@ -19,6 +19,7 @@
 //   neither commit to a shared git ref (refs are shared by every worktree, and a
 //   later push-cursor would publish them) nor write .claude-tweaks/ files into
 //   whichever checkout the test happens to run from.
+// `opts.deps` is passed through to runCliSync (extra deps, e.g. a counting `lock`).
 // `code` is mapped to `status` to match the spawnSync shape.
 
 const fs = require('fs');
@@ -37,6 +38,7 @@ function sweepCli(cliPath, argv, opts = {}) {
       env: { ...ambient, ...opts.env, GIT_ALLOW_PROTOCOL: 'file' },
       cwd: opts.cwd,
       fresh: opts.fresh,
+      deps: opts.deps,
     });
     return { status: res.code, stdout: res.stdout, stderr: res.stderr };
   } finally {
