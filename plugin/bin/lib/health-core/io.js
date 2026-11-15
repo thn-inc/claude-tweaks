@@ -25,6 +25,12 @@ function resolveAgainst(cwd, p, pathImpl = path) {
   return pathImpl.parse(p).root ? p : cwd + pathImpl.sep + p;
 }
 
+// fsPath(d, p) -> resolveAgainst(d.cwd(), p), except that a p with a root never reads d.cwd(): a
+// deleted working directory then fails only a relative path.
+function fsPath(d, p) {
+  return path.parse(p).root ? p : resolveAgainst(d.cwd(), p);
+}
+
 // cwdOrUndefined(d) -> d.cwd(), or undefined when it throws (a deleted working directory), for
 // the CLIs that degrade rather than refuse there.
 function cwdOrUndefined(d) {
@@ -81,4 +87,4 @@ function makeExec({ env, stderr = DEFAULT_IO.stderr } = {}) {
   };
 }
 
-module.exports = { DEFAULT_IO, makeExec, resolveAgainst, cwdOrUndefined };
+module.exports = { DEFAULT_IO, makeExec, resolveAgainst, fsPath, cwdOrUndefined };

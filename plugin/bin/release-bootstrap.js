@@ -13,8 +13,7 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
-const { resolveAgainst } = require('./lib/health-core/io');
+const { fsPath } = require('./lib/health-core/io');
 const { bootstrapRelease, containsActionsExpression, RELEASE_TYPE_VALUES } = require('./lib/init/release-bootstrap');
 const { isValidBranchName } = require('./lib/branch-name');
 
@@ -74,8 +73,7 @@ function run(argv, deps = {}) {
   let root;
   if (opts.root === '') root = '';
   else if (opts.root === undefined) root = d.cwd();
-  else if (path.parse(opts.root).root) root = opts.root;
-  else root = resolveAgainst(d.cwd(), opts.root);
+  else root = fsPath(d, opts.root);
   let stat;
   try { stat = fs.statSync(root); } catch { stat = null; }
   if (!stat || !stat.isDirectory()) {

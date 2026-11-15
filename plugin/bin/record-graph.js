@@ -9,17 +9,10 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
-const { resolveAgainst } = require('./lib/health-core/io');
+const { fsPath } = require('./lib/health-core/io');
 const { buildGraph } = require('./lib/record-graph/layout');
 const { renderD2 } = require('./lib/record-graph/render-d2');
 const { renderSvg } = require('./lib/record-graph/render-svg');
-
-// The path to hand fs: a path with a root never reads d.cwd() (resolveAgainst leaves it unchanged
-// anyway), so a deleted working directory fails only a relative path.
-function fsPath(d, p) {
-  return path.parse(p).root ? p : resolveAgainst(d.cwd(), p);
-}
 
 function parseArgs(argv, { now } = realDeps) {
   const args = { _: [], generatedAt: now().toISOString() };
