@@ -4,8 +4,14 @@
 // real subprocess, a real GitHub release, or a real `git push` (AC5).
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { readText } = require('../helpers/read-skill');
+const { runCliSync, spawnCli } = require('../helpers/run-cli');
+const { STUB_SKIP } = require('../helpers/path-stub');
+const { committedRepo, cleanGitEnv } = require('../helpers/git-fixtures');
+const { _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve.js');
 const {
   run, resolveTagPair, parseReleaseNotesFromLog, applyToReleaseBody, applyToChangelogEntry,
 } = require('../../plugin/bin/lib/release-notes-publish.js');
@@ -201,4 +207,159 @@ test('AC6.2: only No user-visible change notes in range is a no-op on both targe
   assert.ok(!state.gh.some((c) => c.key.startsWith('release edit')), 'no Release edit');
   assert.deepStrictEqual(state.writes, []);
   assert.ok(!state.git.some((k) => k.startsWith('commit ')), 'no CHANGELOG commit');
+});
+
+// --- the script entry (#5386). The real-process tests use only --help and a bad
+// argument, which exit before any gh or git call; the in-process test fakes both. ---
+const CLI = path.join(__dirname, '..', '..', 'plugin', 'bin', 'release-notes-publish.js');
+const CLI_USAGE = 'usage: release-notes-publish.js [--root <dir>]\nexit 0 applied/no-op; 1 a gh/git call failed';
+
+// Proves the script's exit code and stdout through a real process.
+test('AC5.1 AC7.1: --help exits 0 and prints the usage', () => {
+  const res = spawnCli(CLI, ['--help'], { env: { PATH: process.env.PATH } });
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(res.stdout, `${CLI_USAGE}\n`);
+  assert.strictEqual(res.stderr, '');
+});
+
+// Proves the script's exit code and stderr through a real process.
+test('AC7.1: an unknown argument exits 2 with the usage on stderr', () => {
+  const res = spawnCli(CLI, ['--bogus'], { env: { PATH: process.env.PATH } });
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.stdout, '');
+  assert.strictEqual(res.stderr, `unknown argument: --bogus\n${CLI_USAGE}\n`);
+});
+
+test('AC8.1: a relative --root resolves against deps.cwd() for file reads and gh/git cwd', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rnp-'));
+  try {
+    const env = { MARKER: '1', HOME: tmp, USERPROFILE: tmp };
+    const seen = { gh: [], git: [], reads: [], writes: [] };
+    const gh = (args, input, opts) => {
+      seen.gh.push(opts);
+      opts.stderr(`gh-stderr-probe ${seen.gh.length}\n`); // lands in the run's injected collector only
+      const key = args.join(' ');
+      if (key.startsWith('release list')) return JSON.stringify([{ tagName: 'v1.3.0', publishedAt: '2026-10-02T00:00:00Z' }, { tagName: 'v1.2.0', publishedAt: '2026-09-01T00:00:00Z' }]);
+      if (key.startsWith('release view')) return 'Auto-generated release-please body.';
+      if (key.startsWith('release edit')) return '';
+      throw new Error(`unexpected gh: ${key}`);
+    };
+    const git = (args, opts) => {
+      seen.git.push(opts);
+      if (args[0] === 'log') return logOf(['feat: a\n\nRelease-Note: Added the thing.']);
+      return '';
+    };
+    const readFile = (abs) => { seen.reads.push(abs); return '# Changelog\n\n## 1.3.0 (2026-10-02)\n\n### Features\n\n* a thing\n'; };
+    const writeFile = (abs) => { seen.writes.push(abs); };
+    const res = runCliSync(CLI, ['--root', 'repo'], { cwd: tmp, env, deps: { gh, git, readFile, writeFile } });
+    const root = path.join(tmp, 'repo');
+    assert.strictEqual(res.code, 0, res.stderr);
+    assert.ok(seen.gh.length > 0 && seen.git.length > 0);
+    for (const o of [...seen.gh, ...seen.git]) {
+      assert.strictEqual(o.cwd, root);
+      assert.deepStrictEqual(o.env, env);
+    }
+    // gh's host and config lookups read the injected home and stderr, not the process's.
+    for (const o of seen.gh) {
+      assert.strictEqual(o.homeDir(), tmp);
+    }
+    // The stderr handed to gh is the run's own collector: each probe written in the gh fake landed in res.stderr.
+    for (let i = 1; i <= seen.gh.length; i++) assert.ok(res.stderr.includes(`gh-stderr-probe ${i}\n`), res.stderr);
+    assert.deepStrictEqual(seen.reads, [path.join(root, 'CHANGELOG.md')]);
+    assert.deepStrictEqual(seen.writes, [path.join(root, 'CHANGELOG.md')]);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// A deleted working directory: process.cwd() throws ENOENT. An absolute --root never needs it.
+test('an absolute --root works when deps.cwd() throws (deleted cwd)', () => {
+  const root = path.join(os.tmpdir(), 'rnp-absolute-root');
+  const seen = [];
+  const deletedCwd = () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); };
+  const gh = (args, input, opts) => {
+    seen.push(opts.cwd);
+    if (args.join(' ').startsWith('release list')) return JSON.stringify([{ tagName: 'v1.3.0', publishedAt: '2026-10-02T00:00:00Z' }]);
+    throw new Error(`unexpected gh: ${args.join(' ')}`);
+  };
+  const git = (args) => { throw new Error(`unexpected git: ${args.join(' ')}`); };
+  const fail = () => { throw new Error('unexpected file access'); };
+  const res = runCliSync(CLI, ['--root', root], { deps: { cwd: deletedCwd, gh, git, readFile: fail, writeFile: fail } });
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.deepStrictEqual(seen, [root]);
+});
+
+// --- the real gh and git seams (#5386). The gh child is a stub script on an injected PATH only;
+// the real `gh` is never started. ---
+const ENTRY = require(CLI);
+const GHE_HOST = 'ghe.example.test';
+
+function tmpDir(prefix) {
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+// A `gh` script in its own directory, for an injected-only PATH (installStub would edit process.env.PATH).
+function ghStubDir(body) {
+  const dir = tmpDir('rnp-gh-stub-');
+  const file = path.join(dir, 'gh');
+  fs.writeFileSync(file, `#!/bin/sh\n${body}\n`);
+  fs.chmodSync(file, 0o755); // root-safe: exec-bit stub, not a denial simulation
+  return dir;
+}
+
+// Proves each hand-off of the injected context on realDeps.gh's path: the origin read runs with
+// the injected env (GIT_DIR only there: repo A has no remote, repo B has the GHE origin), the
+// hosts.yml lookup uses the injected homeDir, the host note goes to the injected stderr, and the
+// gh child gets the injected env (the stub resolves only through its PATH).
+test('realDeps.gh: the origin probe, hosts.yml lookup and host note use the injected env, homeDir and stderr', { skip: STUB_SKIP }, () => {
+  const a = committedRepo({ prefix: 'rnp-a-' });
+  const b = committedRepo({ prefix: 'rnp-b-' });
+  const home = tmpDir('rnp-home-');
+  const stub = ghStubDir('printf %s "$GH_HOST"');
+  try {
+    b.git('remote', 'add', 'origin', `https://${GHE_HOST}/o/r.git`);
+    fs.mkdirSync(path.join(home, '.config', 'gh'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.config', 'gh', 'hosts.yml'), `${GHE_HOST}:\n`);
+    const env = { ...cleanGitEnv(), PATH: stub + path.delimiter + process.env.PATH, GIT_DIR: path.join(b.dir, '.git') };
+    for (const k of ['GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR', 'XDG_CONFIG_HOME']) delete env[k];
+    const notes = [];
+
+    _resetGhHostCache();
+    const out = ENTRY.realDeps.gh(['release', 'list'], undefined, { cwd: a.dir, env, stderr: (t) => notes.push(t), homeDir: () => home });
+
+    assert.strictEqual(out, GHE_HOST);
+    assert.strictEqual(notes.length, 1);
+    assert.match(notes[0], new RegExp(GHE_HOST));
+  } finally {
+    _resetGhHostCache();
+    for (const d of [a.dir, b.dir, home, stub]) fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+// Proves realDeps.git starts its child with the injected env: the author identity exists only there.
+test('realDeps.git: the child runs with the injected env', () => {
+  const a = committedRepo({ prefix: 'rnp-git-' });
+  try {
+    const env = { ...cleanGitEnv(), GIT_AUTHOR_NAME: 'Injected Author', GIT_AUTHOR_EMAIL: 'injected@example.test' };
+    const out = ENTRY.realDeps.git(['var', 'GIT_AUTHOR_IDENT'], { cwd: a.dir, env });
+    assert.match(out, /^Injected Author <injected@example\.test> /);
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+  }
+});
+
+// Proves the script entry through a real process on a success input that reaches gh: the stub
+// answers `release list` with one release, so the run is a no-op that exits 0.
+test('AC5.1: the script reaches gh and exits 0 on fewer than 2 releases', { skip: STUB_SKIP }, () => {
+  const cwd = tmpDir('rnp-script-');
+  const stub = ghStubDir(`printf '%s' '[{"tagName":"v1.0.0","publishedAt":"2026-01-01T00:00:00Z"}]'`);
+  try {
+    const env = { PATH: stub + path.delimiter + process.env.PATH, HOME: cwd, USERPROFILE: cwd };
+    const res = spawnCli(CLI, [], { env, cwd });
+    assert.strictEqual(res.code, 0, res.stderr);
+    assert.strictEqual(res.stdout, 'release-notes-publish: fewer than 2 published releases — no-op\n');
+    assert.strictEqual(res.stderr, '');
+  } finally {
+    for (const d of [cwd, stub]) fs.rmSync(d, { recursive: true, force: true });
+  }
 });
