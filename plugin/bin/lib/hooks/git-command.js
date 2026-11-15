@@ -894,13 +894,18 @@ function longOptionName(word, names) {
 // `time` count only as reserved words (bare spelling, at the command's start or after another
 // reserved word: bash 3.2, 5 and zsh run `\time cd`, `X=1 time cd`, `>g ! cd` and `command time cd`
 // as an external program or a missing command, which changes no cwd), the `time` keyword reads one
-// `-p` and a `--` (`time -l cd` runs `-l`; `--` is bash 5's, which 3.2 runs as a command: the pin
-// sides with bash 5), and no path-qualified word strips (`/usr/bin/command` is a script). `dir`
-// never moves there.
+// `-p` and a `--` (`time -l cd` runs `-l`), and no path-qualified word strips (`/usr/bin/command` is
+// a script). `dir` never moves there. Where the bash versions split on reaching the command word,
+// `split` is true on the returned command word: bash 5 reads `time`'s `--` as an option end and a
+// reserved word after `!` (`! time`, `! !`; zsh too for `! time`), while bash 3.2 runs `--` or the
+// second word as a command (zsh runs `--` too). visitSegment then walks on under the cwd before
+// such a cd and the cwd after it, failing closed for whichever shell runs the command.
 function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
   const { raw, spanKinds, leadQuoted, pathImpl = path } = quoting;
   let unprovable = false;
   let reserved = true; // shellOnly: still where bash reads `!` and `time` as reserved words
+  let afterBang = false; // shellOnly: a `!` was read, after which only bash 5 and zsh read another reserved word
+  let split = false; // shellOnly: the bash versions disagree on whether the command word is reached
   const skipRedirections = (i) => {
     for (let width; i < t.length && (width = redirectionWidth(raw[i], spanKinds[i], leadQuoted[i])) > 0;) {
       i += width;
@@ -934,17 +939,22 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       const isReserved = name === '!' || name === 'time';
       const bare = raw[i] === word && spanKinds[i] === 'b'.repeat(word.length);
       if (!SHELL_PREFIX_WORDS.includes(name) || (isReserved && !(reserved && bare))) name = null;
+      else if (isReserved && afterBang) split = true; // bash 3.2 runs it as a command (`! time`, `! !`)
     }
-    if (name === null) return { index: i, dir, unprovable };
+    if (name === null) return { index: i, dir, unprovable, split };
     i += 1;
     if (shellOnly) {
       if (name === 'time') {
         i = skipRedirections(i);
         if (t[i] === '-p') i = skipRedirections(i + 1);
-        if (t[i] === '--') i += 1;
+        if (t[i] === '--') {
+          i += 1;
+          split = true; // bash 5's option end; bash 3.2 and zsh run `--` as the command
+        }
         continue;
       }
-      if (name !== '!') reserved = false; // builtin and command: a `!` or `time` after them is a command name
+      if (name === '!') afterBang = true;
+      else reserved = false; // builtin and command: a `!` or `time` after them is a command name
     }
     const spec = PREFIX_OPTIONS[name];
     if (spec === null) continue;
@@ -997,14 +1007,15 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
 
 // One segment of forEachShellSegment's walk, already tokenized (`tok`, from tokenize, and
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
-// non-assignment segment (a cd one included), and returns the effective cwd after it.
+// non-assignment segment (a cd one included), and returns the effective cwds after it: one, or
+// two for a cd the bash versions split on (#4448, commandWord's `split`).
 function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
   const { typed, singleQuoted, doubleQuoted, leadQuoted } = tok;
   const { tokens: rawT, spanKinds } = settleStrayBackslash(tok.tokens, tok.spanKinds, pathImpl);
-  if (!rawT.length) return effCwd;
+  if (!rawT.length) return [effCwd];
   // An assignment word ended by a bare `<`/`>` (bareWordEnd) carries a redirect, so it still
   // reaches the handler; bash assigns before it expands that redirect (`A=f0; A=x>$A` writes x).
-  if (updateAssignment(vars, rawT, spanKinds[0]) && bareWordEnd(rawT[0], spanKinds[0]) === rawT[0].length) return effCwd;
+  if (updateAssignment(vars, rawT, spanKinds[0]) && bareWordEnd(rawT[0], spanKinds[0]) === rawT[0].length) return [effCwd];
   const t = substituteVars(rawT, vars, singleQuoted, spanKinds);
   // `FOO=1 cd /path` really does change the shell's cwd — a preceding
   // assignment on a regular (non-special) builtin like `cd` is scoped only
@@ -1019,7 +1030,7 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
   // assignment is read from the raw word, whose spanKinds it is aligned with: bash decides it
   // before any `$` expands (#4281).
   const quoting = { raw: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl };
-  const cdLead = commandWord(t, quoting, effCwd, { shellOnly: true }).index;
+  const { index: cdLead, split } = commandWord(t, quoting, effCwd, { shellOnly: true });
   // #4281: bash applies a cd line's redirections before the builtin runs, so `cd sub > f1`
   // writes f1 in the cwd before the cd: the handler sees the cd segment under that cwd. Its
   // redirect words are no argument of cd (`cd > f1 sub` changes to sub). Only the words after
@@ -1032,10 +1043,11 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
     const arg = from >= t.length || leadQuoted[from] || !REDIRECTION_LEAD_RE.test(rawT[from]) ? t[from]
       : dropRedirections(t.slice(from), { raw: rawT.slice(from), leadQuoted: leadQuoted.slice(from), spanKinds: spanKinds.slice(from) })[0];
     handler(t, effCwd, quoting);
-    return resolveCd(effCwd, arg, pathImpl);
+    const moved = resolveCd(effCwd, arg, pathImpl);
+    return split ? [effCwd, moved] : [moved];
   }
   handler(t, effCwd, quoting);
-  return effCwd;
+  return [effCwd];
 }
 
 // Consumes every leading global git flag (-C <dir>, -c <k>=<v>, --exec-path,
@@ -2805,7 +2817,9 @@ function closesDoubled(match, str, open, from = 0) {
 // `handler` gets a fourth argument, true on every visit of the piece after the first, so a
 // consumer can drop a target that does not depend on the cwd (`git -C /x`) the second time.
 // The piece is tokenized once; `nest.value` is the chunk's nesting state (advanceNesting,
-// #4210), read at the piece's start and advanced past it once, however many cwds visit it.
+// #4210), read at the piece's start and advanced past it once, however many cwds visit it. A cd the
+// bash versions split on adds a cwd (#4448); the separator after the piece joins the set and
+// collapses it past CWD_SET_CAP, as it does for an `&&` list.
 function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
   const tok = tokenize(text.trim());
   const nestAt = tok.tokens.map((w, i) => {
@@ -2815,8 +2829,8 @@ function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
   });
   const next = [];
   cwds.forEach((c, k) => {
-    const n = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true), pathImpl);
-    if (!next.some((x) => sameCwd(x, n))) next.push(n);
+    const after = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true), pathImpl);
+    for (const n of after) if (!next.some((x) => sameCwd(x, n))) next.push(n);
   });
   return next;
 }

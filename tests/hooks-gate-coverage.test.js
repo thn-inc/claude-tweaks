@@ -2051,24 +2051,40 @@ test('#4303: the cd after an assignment word that never closes is not followed',
   });
 
   // bash 3.2 and 5 write M/f.js for each moving row (zsh writes W/f.js for `builtin --`, `command`,
-  // `command -p -p` and `time -p` before cd: side with bash); `time -- cd` moves under bash 5 only (bash 3.2 and zsh
-  // run `--`): side with bash 5, which writes into M. `! time cd` and `! ! cd` follow a reserved
-  // word after `!`: bash 5 and zsh write M/f.js for `! time cd M; cp a f.js` (bash 3.2 W/f.js), and
-  // bash 5 writes M/f.js for `! ! cd M; cp a f.js` (bash 3.2 and zsh cannot parse it): side with
-  // the shells that write into M. All three write W/f.js for `nice cd` and
+  // `command -p -p` and `time -p` before cd: side with bash). All three write W/f.js for `nice cd` and
   // `env cd` (an external cd), and nothing for `exec cd` (exit 127): the scanner reads on under the
   // unmoved cwd there, a target in the shell's own cwd, never M.
   test('#4448: builtin, command, ! and time before cd move the cwd; other prefixes do not', () => {
     for (const cmd of ['builtin cd /main; cp a f.js', '\\builtin cd /main; cp a f.js', 'builtin -- cd /main; cp a f.js',
       'command cd /main; cp a f.js', 'command -p cd /main; cp a f.js', 'command -p -p cd /main; cp a f.js', '! cd /main; cp a f.js',
-      'time cd /main; cp a f.js', '! time cd /main; cp a f.js', '! ! cd /main; cp a f.js',
-      'time -p cd /main; cp a f.js', 'time -- cd /main; cp a f.js']) {
+      'time cd /main; cp a f.js', 'time -p cd /main; cp a f.js', 'time ! cd /main; cp a f.js']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyMain, cmd);
     }
     assert.deepStrictEqual(fileWriteTargets('>g cd /main; cp a f.js', '/r'), [writeG, ...copyMain]);
     for (const cmd of ['nice cd /main; cp a f.js', 'env cd /main; cp a f.js', 'exec cd /main; cp a f.js']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyHere, cmd);
     }
+  });
+
+  // The bash versions split on whether these reach the cd, so the walk goes on under the cwd before it
+  // and after it, failing closed in both directions. From W, `cd M`: `! time cd` writes M/f.js
+  // under bash 5 and zsh and W/f.js under bash 3.2; `time -- cd` and `time -p -- cd` write M/f.js
+  // under bash 5 and W/f.js under bash 3.2 and zsh; `! ! cd` writes M/f.js under bash 5 (bash 3.2 and
+  // zsh cannot parse it). From M, `cd W`: `! time cd` writes M/f.js under bash 3.2 and W/f.js under
+  // bash 5 and zsh; `time -- cd` and `time -p -- cd` write M/f.js under bash 3.2 and zsh and W/f.js
+  // under bash 5; `! ! cd` writes W/f.js under bash 5 and nothing under bash 3.2 and zsh. Following
+  // one cwd either way leaks a main-checkout write (`! ! cd` from M only adds a spurious deny).
+  test('#4448: a cd the bash versions split on is walked under both cwds', () => {
+    for (const shape of ['! time', 'time --', 'time -p --', '! !']) {
+      assert.deepStrictEqual(fileWriteTargets(`${shape} cd /main; cp a f.js`, '/r'), [...copyHere, ...copyMain], shape);
+      assert.deepStrictEqual(fileWriteTargets(`${shape} cd /wt; cp a f.js`, '/main'),
+        [...copyMain, { action: 'copy', file: path.resolve('/wt/f.js') }], shape);
+    }
+    // Each split cd adds a cwd, so five relative ones make 32, and the join at each `;` collapses the
+    // set at CWD_SET_CAP (16) to the lost cwd its consumers deny on: a timing-free pin that the split
+    // cwds go through the cap.
+    const many = [1, 2, 3, 4, 5].map((k) => `! time cd d${k}; `).join('') + 'cp a f.js';
+    assert.ok(fileWriteTargets(many, '/r').some((x) => x.lost), JSON.stringify(fileWriteTargets(many, '/r')));
   });
 
   // From M, all three write M/f.js for each (`X=1 time`, `X=1 !` and `>g !`: zsh refuses to parse
