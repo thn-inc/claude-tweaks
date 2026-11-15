@@ -23,7 +23,7 @@
 // Never-break-a-session: only the require() can throw, and it runs before any
 // stdin read, so a failure leaves EARLY = null and realDeps.stdin() reads stdin itself.
 // earlyGate never throws and always returns the stdin it read as `raw` (`''`
-// on a read failure); realDeps.stdin() hands the event tail that rather than re-reading a drained stdin.
+// on a read failure); realDeps.stdin() returns that rather than re-reading a drained stdin.
 // process.exit(0) on the skip path is safe for the same reason this file is
 // allowlisted in tests/bin-lib/exit-code-conformance.test.js: nothing is
 // pending on stdout to truncate. That test reads a file's LAST require.main
@@ -1296,7 +1296,7 @@ async function runLedgerRow(argv, deps) {
     runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
   } = resolveRunArg(argv.slice(1), deps.cwd(), deps.env, { unambiguousOnly: true, callerIdentity });
   reportWorktreeLocalFallback(runDir, worktreeLocalFallback, deps.stderr);
-  const fail = async (text, code = 1) => {
+  const fail = (text, code = 1) => {
     deps.stderr(`${text}\n`);
     return code;
   };

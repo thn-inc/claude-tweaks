@@ -120,14 +120,6 @@ function runDirFixture(status) {
   return { root, runDir, runId };
 }
 
-// The repo the reconcile verbs run in. reconcile() and the background spawn
-// are stubbed for every one of them (withReconcileStubbed), so no real pass
-// runs and the fixture needs no origin or policy: whether a call reached the
-// stub is the observable effect.
-function reconcileFixture() {
-  return runDirFixture('clean');
-}
-
 // A repo with one empty commit and no run dirs.
 function freshRepo() {
   const root = tracked(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-fresh-'))));
@@ -183,7 +175,7 @@ test('#4777: every VERBS verb refuses an undeclared flag on stderr with exit 1',
 });
 
 test('#4777 AC1.1 AC1.2: reconcile --dryrun refuses on stderr with exit 1 and runs no check', async () => {
-  const { root } = reconcileFixture();
+  const { root } = runDirFixture('clean');
   const refused = await withReconcileStubbed(async () => {
     for (const args of [['reconcile', '--dryrun'], ['reconcile', '--json', '--dryrun']]) {
       const result = await runHook(args, { cwd: root });
@@ -206,7 +198,7 @@ test('#4777 AC1.1 AC1.2: reconcile --dryrun refuses on stderr with exit 1 and ru
 });
 
 test('#4777: reconcile --json with no typo runs for real (positive control for the reconcile tests)', async () => {
-  const { root } = reconcileFixture();
+  const { root } = runDirFixture('clean');
   let result;
   const { calls, spawnCalls } = await withReconcileStubbed(async () => {
     result = await runHook(['reconcile', '--json'], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'flag-strict-session' } });
@@ -220,7 +212,7 @@ test('#4777: reconcile --json with no typo runs for real (positive control for t
 });
 
 test('#4777: declared value flags consume their value token', async () => {
-  const { root } = reconcileFixture();
+  const { root } = runDirFixture('clean');
   const cases = [
     ['reconcile', '--dry-run', '--checks', 'mirror'],
     ['reconcile', '--dry-run', '--checks', ''],
@@ -237,7 +229,7 @@ test('#4777: declared value flags consume their value token', async () => {
 });
 
 test('#4777: a value flag followed by a flag is refused as a missing value', async () => {
-  const { root } = reconcileFixture();
+  const { root } = runDirFixture('clean');
   const reconcileCases = [
     [['reconcile', '--dry-run', '--checks', '--json'], "claude-tweaks: reconcile: --checks needs a value, got '--json'"],
     [['reconcile', '--dry-run', '--checks', '--bogus'], "claude-tweaks: reconcile: --checks needs a value, got '--bogus'"],
@@ -262,7 +254,7 @@ test('#4777: a value flag followed by a flag is refused as a missing value', asy
 });
 
 test('#4777: a flagless verb still runs bare', async () => {
-  const { root } = reconcileFixture();
+  const { root } = runDirFixture('clean');
   let result;
   const { calls } = await withReconcileStubbed(async () => {
     result = await runHook(['reconcile-summary'], { cwd: root });
@@ -276,7 +268,7 @@ test('#4777: a flagless verb still runs bare', async () => {
 });
 
 test('#4777: reconcile-background and reconcile-summary refuse an undeclared flag and change nothing', async () => {
-  const { root } = reconcileFixture();
+  const { root } = runDirFixture('clean');
   const { calls, spawnCalls } = await withReconcileStubbed(async () => {
     for (const verb of ['reconcile-background', 'reconcile-summary']) {
       const result = await runHook([verb, '--bogus'], { cwd: root });
@@ -288,7 +280,7 @@ test('#4777: reconcile-background and reconcile-summary refuse an undeclared fla
 });
 
 test('#4777: reconcile-background with no typo writes its status file (positive control)', async () => {
-  const { root } = reconcileFixture();
+  const { root } = runDirFixture('clean');
   let result;
   const { calls } = await withReconcileStubbed(async () => {
     result = await runHook(['reconcile-background'], { cwd: root, env: { CLAUDE_TWEAKS_SESSION_ID: 'flag-strict-bg' } });
@@ -443,7 +435,7 @@ test('AC10.1: check-sibling-sessions skips a live claim the injected session hol
 });
 
 test('#4834: help wins over an unknown flag in the same call', async () => {
-  const { root } = reconcileFixture();
+  const { root } = runDirFixture('clean');
   const { calls } = await withReconcileStubbed(async () => {
     for (const args of [['reconcile', '--dryrun', '--help'], ['reconcile', '-h', '--dryrun']]) {
       const result = await runHook(args, { cwd: root });
