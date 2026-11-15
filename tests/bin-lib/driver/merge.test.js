@@ -66,7 +66,7 @@ const isNode = (name) => (c) => c.kind === 'node' && base(c.args[0]) === name;
 const isGh = (...words) => (c) => c.kind === 'gh' && words.every((w, i) => c.args[i] === w);
 // `gh pr merge` goes out through the write-bound ghCreate kind; any kind is matched so a merge on the
 // wrong kind still counts as a merge.
-const isMergeCall = (c) => ['gh', 'ghCreate'].includes(c.kind) && c.args[0] === 'pr' && c.args[1] === 'merge';
+const isMergeCall = (c) => ['gh', 'ghBatch', 'ghCreate'].includes(c.kind) && c.args[0] === 'pr' && c.args[1] === 'merge';
 const describeArgs = (args) => args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
 
 // The lever read's core reply (resolvePolicy's shape): `{ 'merge-verification': entry }`, or `{}` when entry is undefined.
@@ -291,6 +291,7 @@ function mergeHarness(over = {}) {
     : over.supplier;
   const deps = {
     gh: (args) => dispatch('gh', args),
+    ghBatch: (args) => dispatch('ghBatch', args),
     ghCreate: (args) => dispatch('ghCreate', args),
     git: (args, opts = {}) => dispatch('git', args, opts.cwd, { remoteWrite: opts.remoteWrite, env: opts.env }),
     node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, { env: opts.env, timeout: opts.timeout }),
@@ -329,7 +330,7 @@ const kindsOf = (h) => h.calls.map((c) => c.kind);
 // nothing merged. A write would be an `issue edit`/`issue comment`/`pr comment`/`pr ready`/`pr merge`.
 function assertNoReadyNoMerge(h) {
   for (const c of h.calls) {
-    if (!['gh', 'ghCreate', 'git'].includes(c.kind)) continue;
+    if (!['gh', 'ghBatch', 'ghCreate', 'git'].includes(c.kind)) continue;
     const j = describeArgs(c.args);
     assert.doesNotMatch(j, /\bpr ready\b|\bpr merge\b|\bissue edit\b|\bissue comment\b|\bpr comment\b|\bpr edit\b|\bpush\b/, `forbidden call: ${c.kind} ${j}`);
   }
@@ -2710,7 +2711,7 @@ test('AC6.2: merge.js names no rebase, no --force, and passes no merge or push t
 // only forwards a value some literal site produced. Recall limits: a reason built from a constant, or
 // handed out through any other call or property name, is invisible here, and review owns it.
 const REASON_PASSTHROUGHS = {
-  stop: ['reason', 'g.stop'], halt: [], park: [], gateReads: [], result: ['e.stop', 'c.stop', 'ready.stop', 'g.stop', 'null'],
+  stop: ['reason', 'g.stop'], halt: [], park: [], gateReads: [], result: ['e.stop', 'c.stop', 'hold.stop', 'ready.stop', 'g.stop', 'null'],
   'stop:': ['reason', 'word', 'out.step.stop'],
 };
 const REASON_SHAPES = [
@@ -2740,7 +2741,7 @@ const reasonOk = (site) => (site.literal === null
   ? REASON_PASSTHROUGHS[site.shape].includes(site.expr)
   : (site.literal.endsWith(':') ? PREFIXED_REASONS.includes(site.literal.slice(0, -1)) : isReason(site.literal)));
 
-test('REASONS: the frozen closed set is the spec\'s 20 reasons plus unclassified, and isReason reads both prefix forms', () => {
+test('REASONS: the frozen closed set is the spec\'s 24 reasons plus unclassified, and isReason reads both prefix forms', () => {
   assert.ok(Object.isFrozen(REASONS) && Object.isFrozen(PREFIXED_REASONS));
   // The spec's closed list (Acceptance Criteria, "Closed rule"), word for word and in its order; a
   // `:{…}` form is held in REASONS by its stem and listed in PREFIXED_REASONS.
@@ -2749,8 +2750,10 @@ test('REASONS: the frozen closed set is the spec\'s 20 reasons plus unclassified
     'supplier-failed', 'verdict-not-confirmed', 'acceptance-not-completed', 'compose-refused', 'ready-failed',
     'state-read-failed', 'pr-not-open', 'moving-target', 'checks-read-failed', 'check-failed:{names}', 'checks-pending-timeout',
     'draft-skip-without-ready-trigger:{files}', 'conflict', 'merge-refused',
+    // #5232: the drain-overlap hold's four words.
+    'drain-overlap', 'near-duplicate', 'in-flight-unreadable', 'in-flight-read-failed',
   ];
-  assert.equal(SPEC_REASONS.length, 20);
+  assert.equal(SPEC_REASONS.length, 24);
   const stem = (w) => w.replace(/:\{[a-z]+\}$/, '');
   assert.deepEqual([...REASONS], [...SPEC_REASONS.map(stem), 'unclassified']);
   assert.deepEqual([...PREFIXED_REASONS], SPEC_REASONS.filter((w) => w.includes(':')).map(stem));
@@ -2937,3 +2940,230 @@ for (const [name, envelope] of BAD_MERGE_CHECK_ENVELOPES) {
     assert.ok(!h.calls.some(isMergeCall), 'no gh pr merge');
   });
 }
+
+// ---- #5232: the drain-overlap hold (--in-flight-prs / --near-dup-pairs) and the adopted-worktree keep ----
+
+const IN_FLIGHT = path.join(fx.main, 'in-flight.json');
+const PAIRS_FILE = path.join(fx.main, 'near-dup-pairs.json');
+const holdCtx = (extra = {}) => ({ ...CTX, inFlightPrsFile: IN_FLIGHT, ...extra });
+const isFile = (file) => (c) => c.kind === 'readFile' && c.args[0] === file;
+// A `gh pr view {n} --json …` read through the batch bound. `isGh` matches only kind gh, so it must not answer these.
+const isBatchView = (n) => (c) => c.kind === 'ghBatch' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args[2] === String(n);
+const pathList = (paths) => paths.map((p) => ({ path: p }));
+const throwing = (err) => () => { throw err; };
+// Replies for a hold run: the list file, the own PR's files, and each listed PR ({ state, files, closing } or an Error / raw string).
+function holdScript({ list = [{ number: 12 }], own = ['a.js', 'b.js'], others = { 12: { state: 'OPEN', files: ['b.js'] } }, pairs } = {}) {
+  const reply = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
+  const script = [[isFile(IN_FLIGHT), reply(list)]];
+  if (pairs !== undefined) script.push([isFile(PAIRS_FILE), reply(pairs)]);
+  script.push([isBatchView(CTX.pr), own instanceof Error ? throwing(own) : reply({ files: pathList(own) })]);
+  for (const [n, o] of Object.entries(others)) {
+    if (o instanceof Error) script.push([isBatchView(n), throwing(o)]);
+    else if (typeof o === 'string') script.push([isBatchView(n), o]);
+    else script.push([isBatchView(n), reply({ state: o.state, files: pathList(o.files), closingIssuesReferences: (o.closing || []).map((number) => ({ number })) })]);
+  }
+  return script;
+}
+const overlapStop = (h) => h.events.find((e) => e.step === 'merge-overlap' && e.status === 'stop');
+const readyCalls = (h) => h.calls.filter((c) => isGh('pr', 'ready')(c) || c.args.includes('isDraft'));
+async function assertHeld(h, ctx, reason) {
+  const r = await merge(ctx, h.deps);
+  assert.equal(r.outcome, 'pending-review');
+  assert.equal(r.reason, reason);
+  assertNoReadyNoMerge(h);
+  assert.deepEqual(readyCalls(h), [], 'the PR was never read for draft state, so never marked ready');
+  assert.ok(!h.events.some((e) => e.step === 'merge-ready' || e.step === 'merge-gate'), 'no sub-step past the hold ran');
+  return { r, e: overlapStop(h) };
+}
+
+test('#5232 AC9.1, AC9.3, AC9.4, AC9.7, AC9.11: a path shared with an open in-flight PR holds at pending-review, PR left in draft', async () => {
+  const h = mergeHarness({ script: holdScript() });
+  const { e } = await assertHeld(h, holdCtx(), 'drain-overlap');
+  // A `#N` would be stripped by neutralize, so the PR is named by its number.
+  assert.match(e.detail, /in-flight PR 12 on b\.js/);
+  assert.doesNotMatch(e.detail, /a\.js/, 'only the shared path is named');
+});
+
+test('#5232 AC9.8: disjoint paths proceed to the merge', async () => {
+  const h = mergeHarness({ script: holdScript({ others: { 12: { state: 'OPEN', files: ['c.js'] } } }) });
+  const r = await merge(holdCtx(), h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.ok(h.events.some((e) => e.step === 'merge-overlap' && e.status === 'ok' && /read 1 in-flight PR; none overlaps/.test(e.detail)));
+  const steps = h.events.map((e) => e.step);
+  assert.ok(steps.indexOf('merge-overlap') > steps.indexOf('merge-compose') && steps.indexOf('merge-overlap') < steps.indexOf('merge-ready'));
+  assert.ok(h.calls.some(isMergeCall));
+});
+
+test('#5232 AC9.5, AC9.9, AC9.11: a malformed in-flight file holds', async () => {
+  for (const content of ['not json', '{"number":12}', '[0]', '["12"]', '[{ "number": -1 }]', '[1.5]', '[null]']) {
+    const h = mergeHarness({ script: [[isFile(IN_FLIGHT), content]] });
+    await assertHeld(h, holdCtx(), 'in-flight-unreadable');
+    assert.ok(!h.calls.some((c) => c.kind === 'ghBatch'), `${content}: no PR read after an unusable list`);
+  }
+});
+
+test('#5232 AC9.5, AC9.11: an unreadable in-flight file holds', async () => {
+  const h = mergeHarness({ script: [[isFile(IN_FLIGHT), Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' })]] });
+  await assertHeld(h, holdCtx(), 'in-flight-unreadable');
+});
+
+test('#5232 AC9.5, AC9.10, AC9.11: a failed read of the own PR or of a listed PR holds', async () => {
+  const own = mergeHarness({ script: holdScript({ own: new Error('gh: HTTP 502') }) });
+  await assertHeld(own, holdCtx(), 'in-flight-read-failed');
+  const listed = mergeHarness({ script: holdScript({ others: { 12: new Error('gh: HTTP 502') } }) });
+  await assertHeld(listed, holdCtx(), 'in-flight-read-failed');
+  for (const bad of ['not json', '[]', '{"state":"OPEN"}', '{"state":"OPEN","files":[{"path":3}]}']) {
+    const h = mergeHarness({ script: holdScript({ others: { 12: bad } }) });
+    await assertHeld(h, holdCtx(), 'in-flight-read-failed');
+  }
+});
+
+test('#5232 AC9.6: with the flag absent no hold is applied', async () => {
+  const h = mergeHarness();
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.ok(!h.calls.some((c) => c.kind === 'ghBatch' || c.args.includes('files') || c.args.includes('state,files')), 'no files read');
+  assert.ok(!h.calls.some((c) => c.kind === 'readFile' && c.args[0] === IN_FLIGHT));
+  assert.ok(!h.events.some((e) => e.step === 'merge-overlap'), 'no merge-overlap event at all');
+  const empty = mergeHarness();
+  assert.equal((await merge({ ...CTX, inFlightPrsFile: '' }, empty.deps)).outcome, 'merged', 'an empty path is no flag');
+});
+
+test('#5232 paths compare by plain equality: a shared basename is no overlap, a shared hub file is', async () => {
+  const sameName = mergeHarness({ script: holdScript({ own: ['src/a.js'], others: { 12: { state: 'OPEN', files: ['lib/a.js', 'a.js'] } } }) });
+  assert.equal((await merge(holdCtx(), sameName.deps)).outcome, 'merged');
+  for (const hub of ['package.json', 'CHANGELOG.md', 'docs/index.md']) {
+    const h = mergeHarness({ script: holdScript({ own: [hub, 'src/a.js'], others: { 12: { state: 'OPEN', files: [hub] } } }) });
+    const { e } = await assertHeld(h, holdCtx(), 'drain-overlap');
+    assert.ok(e.detail.includes(hub), `${hub}: ${e.detail}`);
+  }
+});
+
+test('#5232 Review Focus 3: a listed PR no longer open is skipped', async () => {
+  for (const state of ['MERGED', 'CLOSED']) {
+    const h = mergeHarness({ script: holdScript({ others: { 12: { state, files: ['b.js'] } } }) });
+    assert.equal((await merge(holdCtx(), h.deps)).outcome, 'merged', state);
+  }
+});
+
+test('#5232 Review Focus 2, AC9.11: a 100-file list is treated as possibly truncated and holds', async () => {
+  const hundred = Array.from({ length: 100 }, (_, i) => `f${i}.js`);
+  const own = mergeHarness({ script: holdScript({ own: hundred, others: { 12: { state: 'OPEN', files: ['x.js'] } } }) });
+  const { e } = await assertHeld(own, holdCtx(), 'in-flight-read-failed');
+  assert.match(e.detail, /may be truncated/);
+  const listed = mergeHarness({ script: holdScript({ others: { 12: { state: 'OPEN', files: hundred } } }) });
+  await assertHeld(listed, holdCtx(), 'in-flight-read-failed');
+  const ninetyNine = mergeHarness({ script: holdScript({ own: hundred.slice(1), others: { 12: { state: 'OPEN', files: ['x.js'] } } }) });
+  assert.equal((await merge(holdCtx(), ninetyNine.deps)).outcome, 'merged', '99 entries are a complete list');
+});
+
+test('#5232 near-dup: a still-open listed PR closing a strong partner holds', async () => {
+  const pairs = [{ records: [7, 30], strong: true }];
+  const pr = (state) => ({ 12: { state, files: ['c.js'], closing: [30] } });
+  const h = mergeHarness({ script: holdScript({ others: pr('OPEN'), pairs }) });
+  const { e } = await assertHeld(h, holdCtx({ nearDupPairsFile: PAIRS_FILE }), 'near-duplicate');
+  assert.match(e.detail, /in-flight PR 12 \(near-duplicate of record 30\)/);
+  const view = h.calls.find(isBatchView(12));
+  assert.equal(view.args[view.args.indexOf('--json') + 1], 'state,files,closingIssuesReferences');
+  // The same PR shut: no hold.
+  const closed = mergeHarness({ script: holdScript({ others: pr('CLOSED'), pairs }) });
+  assert.equal((await merge(holdCtx({ nearDupPairsFile: PAIRS_FILE }), closed.deps)).outcome, 'merged');
+  // The partner is the other way round in the pair.
+  const flipped = mergeHarness({ script: holdScript({ others: pr('OPEN'), pairs: [{ records: [30, 7], strong: true }] }) });
+  await assertHeld(flipped, holdCtx({ nearDupPairsFile: PAIRS_FILE }), 'near-duplicate');
+  // No pairs file: the same listed PR is no hold, and its read asks no closing references.
+  const none = mergeHarness({ script: holdScript({ others: pr('OPEN') }) });
+  assert.equal((await merge(holdCtx({ nearDupPairsFile: null }), none.deps)).outcome, 'merged');
+  const noneView = none.calls.find(isBatchView(12));
+  assert.equal(noneView.args[noneView.args.indexOf('--json') + 1], 'state,files');
+  // A weak pair is never a hold; a pair about other records is not this record's.
+  for (const p of [[{ records: [7, 30], strong: false }], [{ records: [8, 30], strong: true }]]) {
+    const weak = mergeHarness({ script: holdScript({ others: pr('OPEN'), pairs: p }) });
+    assert.equal((await merge(holdCtx({ nearDupPairsFile: PAIRS_FILE }), weak.deps)).outcome, 'merged', JSON.stringify(p));
+  }
+});
+
+test('#5232 near-dup: an unusable pairs file holds in-flight-unreadable before any PR read', async () => {
+  for (const pairs of ['not json', '{"records":[7,30]}', '[{"records":[7],"strong":true}]', '[{"records":[7,30]}]', '[null]', '[{"records":[7,"30"],"strong":true}]']) {
+    const h = mergeHarness({ script: holdScript({ pairs }) });
+    await assertHeld(h, holdCtx({ nearDupPairsFile: PAIRS_FILE }), 'in-flight-unreadable');
+    assert.ok(!h.calls.some((c) => c.kind === 'ghBatch'), `${pairs}: no PR read`);
+  }
+  const absent = mergeHarness({ script: [[isFile(PAIRS_FILE), new Error('ENOENT')], ...holdScript()] });
+  await assertHeld(absent, holdCtx({ nearDupPairsFile: PAIRS_FILE }), 'in-flight-unreadable');
+});
+
+test('#5232 the own PR in the list is excluded', async () => {
+  const h = mergeHarness({ script: holdScript({ list: [9, 12, { number: 12 }], others: { 12: { state: 'OPEN', files: ['c.js'] } } }) });
+  assert.equal((await merge(holdCtx(), h.deps)).outcome, 'merged');
+  const nine = h.calls.filter(isBatchView(9));
+  assert.equal(nine.length, 1, 'the own PR is read once, as the own PR');
+  assert.equal(nine[0].args[nine[0].args.indexOf('--json') + 1], 'files');
+  assert.equal(h.calls.filter(isBatchView(12)).length, 1, 'a duplicate entry is read once');
+  const only = mergeHarness({ script: [[isFile(IN_FLIGHT), '[9]']] });
+  assert.equal((await merge(holdCtx(), only.deps)).outcome, 'merged');
+  assert.ok(only.events.some((e) => e.step === 'merge-overlap' && e.status === 'ok' && /no in-flight PR besides this one/.test(e.detail)));
+  assert.ok(!only.calls.some((c) => c.kind === 'ghBatch'));
+});
+
+test('#5232 the files reads use the batch bound', async () => {
+  const h = mergeHarness({ script: holdScript({ others: { 12: { state: 'OPEN', files: ['c.js'], closing: [] } }, pairs: [] }) });
+  assert.equal((await merge(holdCtx({ nearDupPairsFile: PAIRS_FILE }), h.deps)).outcome, 'merged');
+  const reads = h.calls.filter((c) => c.args.includes('--json') && /files/.test(c.args[c.args.indexOf('--json') + 1]));
+  assert.equal(reads.length, 2, 'the own PR and the one listed PR');
+  for (const c of reads) {
+    assert.equal(c.kind, 'ghBatch', describeArgs(c.args));
+    assert.equal(c.args[c.args.indexOf('--repo') + 1], CTX.repo);
+  }
+});
+
+test('#5232 a hold detail is inert: a shared path with markup is reduced', async () => {
+  const h = mergeHarness({ script: holdScript({ own: ['@evil/<b>x</b>.js'], others: { 12: { state: 'OPEN', files: ['@evil/<b>x</b>.js'] } } }) });
+  const { e } = await assertHeld(h, holdCtx(), 'drain-overlap');
+  assert.doesNotMatch(e.detail, /<b>|<\/b>|@/);
+});
+
+test('#5232 adopted: a --run merge keeps the worktree and local branch', async () => {
+  const h = mergeHarness();
+  const r = await merge({ ...CTX, adopted: true }, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.deepEqual(r.postMerge.failures, []);
+  const gitSubs = h.calls.filter((c) => c.kind === 'git').map((c) => c.args[2]);
+  for (const forbidden of ['worktree', 'branch', 'rev-parse']) assert.ok(!gitSubs.includes(forbidden), `no git ${forbidden}: ${gitSubs}`);
+  assert.ok(h.calls.some((c) => isGh('api')(c) && c.args[1] === '-X' && c.args[2] === 'DELETE'), 'the remote branch is still deleted');
+  assert.ok(h.calls.some((c) => isNode('hooks.js')(c) && c.args[1] === 'close-run'), 'the run is still closed');
+  const tear = h.events.find((e) => e.step === 'merge-teardown');
+  assert.equal(tear.status, 'ok');
+  assert.match(tear.detail, /adopted worktree and local branch kept for the caller/);
+  assert.ok(h.events.some((e) => e.step === 'merge-delete-branch' && e.status === 'ok'));
+  assert.ok(h.events.some((e) => e.step === 'merge-close-run' && e.status === 'ok'));
+  // Standalone is unchanged: the worktree and the branch go.
+  const standalone = mergeHarness();
+  await merge(CTX, standalone.deps);
+  assert.ok(standalone.calls.some(isGit('worktree', 'remove')) && standalone.calls.some(isGit('branch')));
+  const falsey = mergeHarness();
+  await merge({ ...CTX, adopted: false }, falsey.deps);
+  assert.ok(falsey.calls.some(isGit('worktree', 'remove')));
+});
+
+// docs/driver.md's "Event lines" list, MERGE_STEP_NAMES and the module's emit guard are three hand-kept
+// places for one vocabulary: pin the docs pair (the guard is pinned by emit throwing on an unknown name).
+const DRIVER_DOCS = path.join(__dirname, '..', '..', '..', 'docs', 'driver.md');
+const docMergeSteps = (text) => [...new Set([...text.matchAll(/`(merge-[a-z-]+)`/g)].map((m) => m[1]))].sort();
+function eventLinesSection(text) {
+  const start = text.indexOf('## Event lines');
+  assert.notEqual(start, -1, 'docs/driver.md has an "Event lines" section');
+  const rest = text.slice(start + 3);
+  const next = rest.search(/\n## /);
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
+test('#5232 docs/driver.md\'s merge sub-step list equals MERGE_STEP_NAMES', () => {
+  const names = docMergeSteps(eventLinesSection(readText(DRIVER_DOCS)));
+  assert.ok(names.length > 10, `sub-step names parsed: ${names.length}`);
+  assert.deepEqual(names, [...MERGE_STEP_NAMES].sort());
+  // go-red controls: a name only in the code, and one only in the docs, each fail the comparison.
+  assert.throws(() => assert.deepEqual(names, [...MERGE_STEP_NAMES, 'merge-bogus'].sort()));
+  assert.throws(() => assert.deepEqual([...names, 'merge-bogus'].sort(), [...MERGE_STEP_NAMES].sort()));
+  assert.throws(() => assert.deepEqual(docMergeSteps(eventLinesSection(readText(DRIVER_DOCS)).replace('`merge-overlap`, ', '')), [...MERGE_STEP_NAMES].sort()));
+});

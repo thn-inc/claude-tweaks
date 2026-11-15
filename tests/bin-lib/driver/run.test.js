@@ -6269,6 +6269,94 @@ test('budget AC4.1: a record that ends merged, its run directory followed into t
   assert.equal(classifyFacts(facts), 'driven');
 });
 
+// --- drive.js --in-flight-prs / --near-dup-pairs (#5232): the merge step's drain-overlap hold ---
+
+const readFileOf = (file) => (c) => c.kind === 'readFile' && c.args[0] === file;
+
+test('#5232 AC9.2: --in-flight-prs reaches the merge step', async () => {
+  const h = mergeHarness({ reconcile: archiveRunDir, script: [[readFileOf('/f.json'), '[]']] });
+  assert.equal(await run(['#7', '--in-flight-prs', '/f.json'], h.deps), 0, h.err.join(''));
+  assert.equal(finals(h)[0].outcome, 'merged');
+  assert.equal(h.calls.filter(readFileOf('/f.json')).length, 1, 'the in-flight file was read once, by the merge step');
+  assert.ok(h.lines().some((l) => l.step === 'merge-overlap' && l.status === 'ok' && /no in-flight PR besides this one/.test(l.detail)));
+});
+
+test('#5232 AC9.2: a listed PR sharing a path holds the run at the merge step, PR left in draft', async () => {
+  const h = mergeHarness({
+    script: [
+      [readFileOf('/f.json'), '[12]'],
+      [(c) => c.kind === 'ghBatch' && c.args[2] === '9', JSON.stringify({ files: [{ path: 'a.js' }] })],
+      [(c) => c.kind === 'ghBatch' && c.args[2] === '12', JSON.stringify({ state: 'OPEN', files: [{ path: 'a.js' }] })],
+    ],
+  });
+  assert.equal(await run(['#7', '--in-flight-prs', '/f.json'], h.deps), 0, h.err.join(''));
+  const final = finals(h)[0];
+  assert.equal(final.outcome, 'pending-review');
+  assert.equal(final.merge.reason, 'drain-overlap');
+  assert.ok(!h.calls.some((c) => c.kind === 'ghCreate' && c.args[1] === 'merge'), 'nothing merged');
+  assert.ok(!h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'ready'), 'never marked ready');
+});
+
+test('#5232 --in-flight-prs and --near-dup-pairs resolve a relative file against deps.cwd()', async () => {
+  const h = mergeHarness({
+    reconcile: archiveRunDir,
+    script: [[readFileOf(path.join(MAIN, 'f.json')), '[12]'], [readFileOf(path.join(MAIN, 'p.json')), '[]'],
+      [(c) => c.kind === 'ghBatch', (c) => JSON.stringify(c.args[2] === '9' ? { files: [{ path: 'a.js' }] } : { state: 'MERGED', files: [], closingIssuesReferences: [] })]],
+    deps: { cwd: () => MAIN },
+  });
+  assert.equal(await run(['#7', '--in-flight-prs', 'f.json', '--near-dup-pairs', 'p.json'], h.deps), 0, h.err.join(''));
+  assert.equal(finals(h)[0].outcome, 'merged');
+  assert.equal(h.calls.filter(readFileOf(path.join(MAIN, 'f.json'))).length, 1);
+  assert.equal(h.calls.filter(readFileOf(path.join(MAIN, 'p.json'))).length, 1);
+});
+
+test('#5232 an adopted --run merge keeps the worktree and local branch through the real merge step', async () => {
+  const h = mergeHarness({ reconcile: archiveRunDir });
+  const shared = newShared();
+  shared.adopted = { ok: true, runDir: MERGE_RUN, runId: MERGE_RUN_ID, wt: WT, branch: 'drive-record-7', mainRoot: MAIN };
+  const { final } = await driveRecord(7, shared, h.deps);
+  assert.equal(final.outcome, 'merged');
+  assert.deepEqual(final.merge.postMerge.failures, []);
+  assert.deepEqual(h.calls.filter(onGit('worktree', 'remove')), []);
+  assert.deepEqual(h.calls.filter(onGit('worktree', 'unlock')), []);
+  assert.deepEqual(h.calls.filter((c) => onGit('branch', '-D')(c)), []);
+  assert.ok(h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'api' && c.args.includes('repos/acme/widgets/git/refs/heads/drive-record-7')), 'the remote branch is deleted');
+});
+
+test('#5232 parseArgs: --in-flight-prs and --near-dup-pairs, each key present only when given', () => {
+  assert.deepEqual(parseArgs(['#7']), { records: [7], settle: true });
+  assert.deepEqual(parseArgs(['#7', '--in-flight-prs', 'f.json']), { records: [7], settle: true, inFlightPrsFile: 'f.json' });
+  assert.deepEqual(parseArgs(['--near-dup-pairs', 'p.json', '#7']), { records: [7], settle: true, nearDupPairsFile: 'p.json' });
+  assert.deepEqual(parseArgs(['#7', '--in-flight-prs', 'f', '--near-dup-pairs', 'p', '#8']),
+    { records: [7, 8], settle: true, inFlightPrsFile: 'f', nearDupPairsFile: 'p' });
+  assert.deepEqual(parseArgs(['#7', '--run', '/r', '--no-settle', '--in-flight-prs', 'f']),
+    { records: [7], settle: false, runDir: '/r', inFlightPrsFile: 'f' });
+  assert.deepEqual(parseArgs(['#7', '--no-settle', '--near-dup-pairs', 'p']), { records: [7], settle: false, nearDupPairsFile: 'p' });
+});
+
+test('#5232 parseArgs grammar: the hold flags are refused in every malformed shape (exit 2)', async () => {
+  const bad = [
+    ['--check', '#7', '--in-flight-prs', 'f.json'], ['--check', '#7', '--near-dup-pairs', 'p.json'],
+    ['#7', '--in-flight-prs'], ['#7', '--in-flight-prs', ''], ['#7', '--in-flight-prs', '--no-settle'],
+    ['#7', '--near-dup-pairs'], ['#7', '--near-dup-pairs', ' '], ['#7', '--near-dup-pairs', '--no-settle'],
+    ['#7', '--in-flight-prs', 'a', '--in-flight-prs', 'b'], ['#7', '--near-dup-pairs', 'a', '--near-dup-pairs', 'b'],
+    ['--budget', '2', '--in-flight-prs', 'f.json'], ['--budget', '2', '--near-dup-pairs', 'p.json'],
+  ];
+  for (const argv of bad) {
+    assert.ok(parseArgs(argv).error, `parseArgs ${JSON.stringify(argv)} is an error`);
+    const h = harness();
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.deepEqual(h.out, [], JSON.stringify(argv));
+  }
+});
+
+test('#5232 the hold flags are in the usage text', () => {
+  assert.match(USAGE, /--in-flight-prs <file>/);
+  assert.match(USAGE, /--near-dup-pairs <file>/);
+  assert.equal(newShared().inFlightPrsFile, null);
+  assert.equal(newShared().nearDupPairsFile, null);
+});
+
 // --- drive.js --check (#5232) -----------------------------------------------------------
 
 const realEvaluateAdmission = evaluateAdmission;

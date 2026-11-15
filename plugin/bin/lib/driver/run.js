@@ -80,6 +80,7 @@ const USAGE = [
   '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)',
   '       drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record)',
   '       drive.js --check #N   (prints the admission verdict as one JSON line; no write of any kind)',
+  '       drive.js #N [--in-flight-prs <file>] [--near-dup-pairs <file>]   (holds the merge before mark-ready when a PR in the JSON list <file> shares a changed path, or closes a strong near-duplicate partner of the record from the pairs <file>; unreadable input holds too; with no --in-flight-prs no hold is applied; not with --budget or --check)',
   '       drive.js #N --run <dir> --no-settle   (adopts the run directory <dir> and the linked worktree it is run from, minting and creating neither; requires --no-settle and one record)',
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
@@ -104,6 +105,9 @@ const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 // with them. `--check` (anywhere) takes exactly one record reference and no other option: `{ check }`.
 // `--run <dir>` (once, with exactly one record and --no-settle, never with --budget or --check)
 // adds `runDir`, the raw value; run() resolves it. The key is present only when the flag was given.
+// `--in-flight-prs <file>` and `--near-dup-pairs <file>` (once each, with records or --run, never with
+// --budget or --check) add `inFlightPrsFile` / `nearDupPairsFile`, the raw values, on the same terms;
+// run() resolves them against deps.cwd(). They feed merge.js's drain-overlap hold.
 // --help (or -h) anywhere wins. `--no-settle` anywhere sets settle false (the caller
 // settles stops); any other option is an error.
 const BUDGET_NEEDS_RECORD = 'a record reference (#N) or --budget <n|all> is required';
@@ -124,6 +128,8 @@ function parseArgs(argv) {
   const records = [];
   let budget;
   let runDir;
+  let inFlightPrsFile;
+  let nearDupPairsFile;
   let settleStops = true;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -136,6 +142,16 @@ function parseArgs(argv) {
       const v = argv[i + 1];
       if (!isFlagValue(v)) return { error: '--run needs a value: the run directory to adopt' };
       runDir = v;
+      i += 1;
+      continue;
+    }
+    if (a === '--in-flight-prs' || a === '--near-dup-pairs') {
+      const isPrs = a === '--in-flight-prs';
+      if ((isPrs ? inFlightPrsFile : nearDupPairsFile) !== undefined) return { error: `${a} given more than once` };
+      const v = argv[i + 1];
+      if (!isFlagValue(v)) return { error: `${a} needs a value: ${isPrs ? 'a JSON file listing the in-flight drain PRs' : 'a JSON file of dispatch\'s strong near-duplicate pairs'}` };
+      if (isPrs) inFlightPrsFile = v;
+      else nearDupPairsFile = v;
       i += 1;
       continue;
     }
@@ -156,18 +172,23 @@ function parseArgs(argv) {
     }
     if (!records.includes(n)) records.push(n);
   }
+  const hold = {
+    ...(inFlightPrsFile !== undefined ? { inFlightPrsFile } : {}),
+    ...(nearDupPairsFile !== undefined ? { nearDupPairsFile } : {}),
+  };
   if (runDir !== undefined) {
     if (budget !== undefined) return { error: '--run and --budget are exclusive' };
     if (records.length !== 1) return { error: '--run takes exactly one record reference (#N)' };
     if (settleStops) return { error: '--run requires --no-settle (the caller settles stops)' };
-    return { records, settle: false, runDir };
+    return { records, settle: false, runDir, ...hold };
   }
   if (budget !== undefined) {
     if (records.length > 0) return { error: '--budget and a named record (#N) are exclusive' };
+    if (Object.keys(hold).length > 0) return { error: '--in-flight-prs and --near-dup-pairs are exclusive with --budget' };
     return { budget, settle: settleStops };
   }
   if (records.length === 0) return { error: BUDGET_NEEDS_RECORD };
-  return { records, settle: settleStops };
+  return { records, settle: settleStops, ...hold };
 }
 
 // `current` is the record being driven, `{ ctx, sink, started, step, inStep, stepStarted,
@@ -177,7 +198,7 @@ function parseArgs(argv) {
 // and `final` holds the final line an interrupt wrote. `interrupted` is the signal's name
 // once the handler has run, else false. `adopted` is adopt.js's ok result under --run, else null.
 function newShared() {
-  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true, adopted: null };
+  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true, adopted: null, inFlightPrsFile: null, nearDupPairsFile: null };
 }
 
 function newCtx(record, shared) {
@@ -542,6 +563,17 @@ async function run(argv, deps) {
   if (parsed.check !== undefined) return checkRecord(parsed.check, newShared(), deps);
   const shared = newShared();
   shared.settle = parsed.settle;
+  if (parsed.inFlightPrsFile !== undefined || parsed.nearDupPairsFile !== undefined) {
+    // Resolved against the caller's working directory, as --run's value is, before any step reads it.
+    try {
+      const cwd = deps.cwd();
+      if (parsed.inFlightPrsFile !== undefined) shared.inFlightPrsFile = resolveAgainst(cwd, parsed.inFlightPrsFile);
+      if (parsed.nearDupPairsFile !== undefined) shared.nearDupPairsFile = resolveAgainst(cwd, parsed.nearDupPairsFile);
+    } catch (err) {
+      deps.stderr(`drive.js: cannot resolve --in-flight-prs / --near-dup-pairs against the working directory: ${(err && err.message) || String(err)}\n`);
+      return 2;
+    }
+  }
   if (parsed.runDir !== undefined) {
     const adopted = adoptRunDir(parsed.runDir, deps);
     if (!adopted) return 3;

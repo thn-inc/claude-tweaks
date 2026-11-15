@@ -1290,6 +1290,8 @@ const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) =>
     record: ctx.record, pr: ctx.pr.number, repo: ctx.shared.ghRepo, branch: ctx.branch, base: ctx.shared.ref,
     head: ctx.check.head, runDir: ctx.runDir, runRoot: ctx.shared.mainRoot, mainCheckout: ctx.shared.mainRoot,
     worktree: ctx.wt, summaryLogged: ctx.summaryLogged,
+    inFlightPrsFile: ctx.shared.inFlightPrsFile || null, nearDupPairsFile: ctx.shared.nearDupPairsFile || null,
+    adopted: Boolean(ctx.shared.adopted),
   };
   const mdeps = {
     ...deps,
