@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const { computeBlastRadius, BlastRadiusError, defaultGit } = require('./lib/blast-radius-cli.js');
-const { resolveAgainst, cwdOrUndefined } =require('./lib/health-core/io.js');
+const { resolveAgainst, cwdOrUndefined } = require('./lib/health-core/io.js');
 
 const USAGE = 'usage: blast-radius.js (--base <ref> | --integration-branch <branch>) [--run <dir>]';
 

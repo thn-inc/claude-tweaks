@@ -79,7 +79,7 @@ function run(argv, deps = {}) {
   let stat;
   try { stat = fs.statSync(root); } catch { stat = null; }
   if (!stat || !stat.isDirectory()) {
-    d.stderr(`root is not a directory: ${opts.root}\n${USAGE}`);
+    d.stderr(`root is not a directory: ${opts.root === undefined ? root : opts.root}\n${USAGE}`);
     return 2;
   }
   try {

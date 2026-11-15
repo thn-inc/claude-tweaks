@@ -132,6 +132,13 @@ test('a relative --root that is not a directory prints the argument as given', (
   assert.ok(r.stderr.startsWith('root is not a directory: nope\n'), r.stderr);
 });
 
+test('with no --root, a cwd that is not a directory is named by its path', () => {
+  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-')), 'gone');
+  const r = run(['--integration-model', 'local-merge'], { cwd: missing });
+  assert.equal(r.status, 2);
+  assert.ok(r.stderr.startsWith(`root is not a directory: ${missing}\n`), r.stderr);
+});
+
 test('--root "" stays a not-a-directory failure, as before', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
   const r = run(['--integration-model', 'local-merge', '--root', ''], { cwd: parent });
