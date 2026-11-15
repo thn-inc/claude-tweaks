@@ -73,8 +73,9 @@
 // lines, with anchored per-line regexes only, because the evidence test controls part of the text.
 //
 // On or off (reviewRequired): policy `off` and `on` decide alone; any other value is the beyond
-// rule (eligibility.js's isBeyondExpressBounds, which admission shares), on when the size label is not `low` or the Key Files (the eligibility verdict's own
-// extraction; a non-array counts as beyond) exceed EXPRESS_MAX_KEY_FILES. The run asks it once
+// rule (eligibility.js's isBeyondExpressBounds, which admission shares), on when the size label is
+// not `low` or the Key Files (the eligibility verdict's own extraction; a non-array counts as
+// beyond) exceed EXPRESS_MAX_KEY_FILES. The run asks it once
 // per record, in the eligibility step (ctx.reviewer, #5224), and admission, the check flag and
 // reviewRecord all read that one answer; reviewRecord never calls it, and fails closed (a
 // pre-push `fail`) when ctx.reviewer is not an object with a boolean `on`.

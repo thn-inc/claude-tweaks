@@ -237,5 +237,6 @@ function expressMergeVerification(resolved) {
 }
 
 module.exports = {
-  EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS, BOUND_REASONS, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
+  EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS,
+  BOUND_REASONS, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
 };
