@@ -10,10 +10,10 @@ out of this check.
 Anchoring under the main checkout is necessary but not sufficient — `resolveRunArg`'s plain
 anchored-directory branch also requires the resolved `--run` value to already be an
 **initialized** run dir (carrying at least one of `decisions.md`/`run-state.json`/`config.yml`,
-the same bar the `#280` fallback (`plugin/skills/_shared/pipeline-run-dir.md`'s "Worktree-local `--run` fallback")
-already applies to its own narrower case). A real, anchored, but wholly empty directory (a stray
-`--run .` from a bare repo root, a caller bug interpolating `$RUN_ROOT` instead of the run dir) is
-rejected rather than silently accepted and written to.
+the same bar the `#280` fallback (`plugin/skills/_shared/pipeline-run-dir.md`'s "Worktree-local
+`--run` fallback") already applies to its own narrower case). A real, anchored, but wholly empty
+directory (a stray `--run .` from a bare repo root, a caller bug interpolating `$RUN_ROOT` instead
+of the run dir) is rejected rather than silently accepted and written to.
 
 Two of the 8 shared callers opt out of this requirement via `resolveOpts.allowUninitialized`:
 **`record-worktree`**, the sole legitimate first-writer in the dispatch mint-then-claim handoff
