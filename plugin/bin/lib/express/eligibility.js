@@ -16,17 +16,62 @@ const { classifyDiffFiles, isSensitivePath } = require('../issues/blast-radius')
 
 const EXPRESS_MAX_KEY_FILES = 3;
 
+// The size labels each ceiling accepts. The express lane is fixed at `low`; the pipeline
+// driver lane (#5224) may pass `medium`.
+const SIZE_CEILINGS = Object.freeze({ low: Object.freeze(['low']), medium: Object.freeze(['low', 'medium']) });
+
+// The driver lane's bound values as eligibility reads them: a ceiling is an own key of SIZE_CEILINGS
+// (`toString` is not one), and a Key File limit is a safe integer of at least 1.
+function isReadableSizeCeiling(v) {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(SIZE_CEILINGS, v);
+}
+function isReadableKeyFileLimit(v) {
+  return Number.isSafeInteger(v) && v >= 1;
+}
+
+// Beyond the express bounds: a size label that is not `low`, or more than EXPRESS_MAX_KEY_FILES Key
+// Files. A `keyFiles` that is not an array counts as beyond.
+function isBeyondExpressBounds({ size, keyFiles } = {}) {
+  return size !== 'low' || !Array.isArray(keyFiles) || keyFiles.length > EXPRESS_MAX_KEY_FILES;
+}
+
+// The two driver-lane bound comparisons, stated once: eligibility refuses on each, and admission's
+// reviewer rule composes them as isInsideLaneBounds. Callers check readability first.
+function sizeWithinCeiling(size, sizeCeiling) {
+  return SIZE_CEILINGS[sizeCeiling].includes(size);
+}
+function keyFilesWithinLimit(keyFiles, maxKeyFiles) {
+  return keyFiles.length <= maxKeyFiles;
+}
+// Inside the driver's lane bounds ({ sizeCeiling, maxKeyFiles }, both readable).
+function isInsideLaneBounds({ size, keyFiles, bounds }) {
+  return sizeWithinCeiling(size, bounds.sizeCeiling) && keyFilesWithinLimit(keyFiles, bounds.maxKeyFiles);
+}
+
+// Reasons for the two bounds the driver lane can widen. REASONS.size and
+// REASONS.tooManyKeyFiles are built from these at the express defaults, so the express
+// strings cannot drift from the parameterised ones.
+const BOUND_REASONS = Object.freeze({
+  // A ceiling that is not a SIZE_CEILINGS key gets the unreadable reason, never a throw.
+  size: (ceiling) => (isReadableSizeCeiling(ceiling)
+    ? `size is not ${SIZE_CEILINGS[ceiling].join(' or ')}`
+    : BOUND_REASONS.sizeCeilingUnreadable(ceiling)),
+  tooManyKeyFiles: (limit) => `more than ${limit} Key Files`,
+  sizeCeilingUnreadable: (v) => `size ceiling unreadable: ${String(v)}`,
+  keyFileLimitUnreadable: (v) => `Key File limit unreadable: ${String(v)}`,
+});
+
 // Wire contract: callers and reports match these verbatim — never paraphrase.
 const REASONS = Object.freeze({
   disabled: 'express-lane disabled',
   notPrFirst: 'integration-model is not pr-first',
   risk: 'risk is not low',
-  size: 'size is not low',
+  size: BOUND_REASONS.size('low'),
   ceremony: 'ceremony is not fast-lane',
   type: 'no type:* label',
   mergePending: 'auto:merge-pending grant matures only on the normal path',
   noKeyFiles: 'no Key Files',
-  tooManyKeyFiles: `more than ${EXPRESS_MAX_KEY_FILES} Key Files`,
+  tooManyKeyFiles: BOUND_REASONS.tooManyKeyFiles(EXPRESS_MAX_KEY_FILES),
   frontend: 'frontend surface',
   notShaped: 'not spec-shaped',
   escalated: 'already escalated in this run',
@@ -98,10 +143,13 @@ function isFrontend(body, keyFiles) {
 // compose the merge subject; `auto:merge-pending` is a grant that matures only on
 // the normal path's wrap-up; a kept risk flag (#4618) needs a plan step proving it, and
 // the lane composes no plan — parseRiskFlags reads a malformed line as every category
-// flagged, so an unreadable line is ineligible too.
+// flagged, so an unreadable line is ineligible too. sizeCeiling and maxKeyFiles exist for
+// the pipeline driver lane (#5224; its admission is ../driver/admission.js) — every express
+// caller omits them, and an unreadable value refuses rather than falls back.
 function evaluateRecordEligibility(issue, opts) {
   const {
     enabled, integrationModel, sensitivePaths = [], escalated = false, allowAbsentCeremony = false,
+    sizeCeiling, maxKeyFiles,
   } = opts || {};
   const body = (issue && issue.body) || '';
   const labels = (issue && issue.labels) || [];
@@ -112,7 +160,13 @@ function evaluateRecordEligibility(issue, opts) {
   if (enabled !== true) reasons.push(REASONS.disabled);
   if (integrationModel !== 'pr-first') reasons.push(REASONS.notPrFirst);
   if (facets.risk !== 'low') reasons.push(REASONS.risk);
-  if (facets.size !== 'low') reasons.push(REASONS.size);
+  if (sizeCeiling === undefined) {
+    if (facets.size !== 'low') reasons.push(REASONS.size);
+  } else if (!isReadableSizeCeiling(sizeCeiling)) {
+    reasons.push(BOUND_REASONS.sizeCeilingUnreadable(sizeCeiling));
+  } else if (!sizeWithinCeiling(facets.size, sizeCeiling)) {
+    reasons.push(BOUND_REASONS.size(sizeCeiling));
+  }
   // allowAbsentCeremony relaxes only this rule, for the pipeline driver lane (#5216; its
   // admission is ../driver/admission.js): no ceremony:* label at all passes, since the lane's
   // other gates (risk, size, type, Key Files, shape) still apply. It reads raw label names, any
@@ -124,7 +178,13 @@ function evaluateRecordEligibility(issue, opts) {
   if (!typeOf(issue || {})) reasons.push(REASONS.type);
   if (normalizeLabelNames(labels).includes('auto:merge-pending')) reasons.push(REASONS.mergePending);
   if (keyFiles.length === 0) reasons.push(REASONS.noKeyFiles);
-  if (keyFiles.length > EXPRESS_MAX_KEY_FILES) reasons.push(REASONS.tooManyKeyFiles);
+  if (maxKeyFiles === undefined) {
+    if (keyFiles.length > EXPRESS_MAX_KEY_FILES) reasons.push(REASONS.tooManyKeyFiles);
+  } else if (!isReadableKeyFileLimit(maxKeyFiles)) {
+    reasons.push(BOUND_REASONS.keyFileLimitUnreadable(maxKeyFiles));
+  } else if (!keyFilesWithinLimit(keyFiles, maxKeyFiles)) {
+    reasons.push(BOUND_REASONS.tooManyKeyFiles(maxKeyFiles));
+  }
   if (isFrontend(body, keyFiles)) reasons.push(REASONS.frontend);
   for (const p of keyFiles) {
     if (isProtectedPath(p)) reasons.push(REASONS.protectedPath(p));
@@ -190,5 +250,6 @@ function expressMergeVerification(resolved) {
 }
 
 module.exports = {
-  EXPRESS_MAX_KEY_FILES, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
+  EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS,
+  BOUND_REASONS, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
 };

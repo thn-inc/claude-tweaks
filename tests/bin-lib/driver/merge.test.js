@@ -20,6 +20,7 @@ const { aggregateReproductionProblem } = require(path.join(LIB, 'log-decision', 
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
+const { realDeps } = require(path.join(LIB, 'driver', 'run'));
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
 const CLOCK_START = 1000;
@@ -66,9 +67,13 @@ const isGh = (...words) => (c) => c.kind === 'gh' && words.every((w, i) => c.arg
 const isMergeCall = (c) => ['gh', 'ghCreate'].includes(c.kind) && c.args[0] === 'pr' && c.args[1] === 'merge';
 const describeArgs = (args) => args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
 
-// The lever read's JSON reply: `{ "merge-verification": entry }`, or `{}` when entry is undefined.
+// The lever read's core reply (resolvePolicy's shape): `{ 'merge-verification': entry }`, or `{}` when entry is undefined.
 function leverReply(entry) {
-  return { code: 0, stdout: JSON.stringify(entry === undefined ? {} : { 'merge-verification': entry }), stderr: '' };
+  return { code: 0, result: entry === undefined ? {} : { 'merge-verification': entry }, invalidRaw: new Map(), degrades: new Map() };
+}
+// The integration-model read's core reply, the same shape.
+function modelReply(value) {
+  return { code: 0, result: { 'integration-model': { value, source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() };
 }
 
 // The gate's two pr view field sets: the first read and the `wait` row's re-read.
@@ -116,9 +121,10 @@ function defaultMergeScript(over, files, logs, applied) {
       if (typeof labels === 'string') return labels;
       return JSON.stringify({ labels: [...labels, ...applied.map((name) => ({ name }))] });
     }],
-    [(c) => isNode('resolve-policy.js')(c) && c.args.includes('--values'),
-      over.integrationModel || { code: 0, stdout: 'pr-first\n', stderr: '' }],
-    [isNode('resolve-policy.js'), over.verification || leverReply({ value: 'merge-when-green', source: 'run-config' })],
+    [(c) => c.kind === 'policyCore' && c.args.includes('integration-model'),
+      over.integrationModel || modelReply('pr-first')],
+    [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'),
+      over.verification || leverReply({ value: 'merge-when-green', source: 'run-config' })],
     [isNode('log-decision.js'), (c) => {
       const a = c.args;
       const file = a[a.indexOf('--text-file') + 1];
@@ -286,6 +292,7 @@ function mergeHarness(over = {}) {
     ghCreate: (args) => dispatch('ghCreate', args),
     git: (args, opts = {}) => dispatch('git', args, opts.cwd, { remoteWrite: opts.remoteWrite, env: opts.env }),
     node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, { env: opts.env, timeout: opts.timeout }),
+    resolvePolicyCore: (opts, coreDeps) => dispatch('policyCore', opts.keys, coreDeps.cwd(), { runDir: opts.runDir, env: coreDeps.env, coreDeps }),
     readFile: (p) => dispatch('readFile', [p]),
     lstatType: (p) => dispatch('lstatType', [p]),
     writeFile: (p, s) => { files[p] = s; },
@@ -347,18 +354,18 @@ test('entry passing: the happy path merges, every entry call as specified', asyn
   assert.equal(r.runDir, CTX.runDir);
   assert.equal(r.ciWaitMs, 0);
   assert.equal(r.eventsStdoutOnly, false);
-  assert.deepEqual(kindsOf(h).slice(0, 6), ['ghAvailable', 'gh', 'node', 'readFile', 'node', 'judgments']);
+  assert.deepEqual(kindsOf(h).slice(0, 6), ['ghAvailable', 'gh', 'policyCore', 'readFile', 'policyCore', 'judgments']);
   assert.deepEqual(h.calls[1].args, ['issue', 'view', '7', '--repo', 'o/r', '--json', 'labels']);
   const a = h.calls[2];
   const b = h.calls[4];
-  assert.equal(path.basename(a.args[0]), 'resolve-policy.js');
-  assert.deepEqual(a.args.slice(1), ['--run', CTX.runDir, '--values', 'integration-model']);
-  assert.deepEqual(b.args.slice(1), ['--run', CTX.runDir, 'merge-verification']);
+  assert.deepEqual(a.args, ['integration-model']);
+  assert.deepEqual(b.args, ['merge-verification']);
   for (const c of [a, b]) {
+    assert.equal(c.runDir, CTX.runDir);
     assert.equal(c.cwd, CTX.mainCheckout);
-    assert.equal(c.timeout, 120000);
     assert.deepEqual(c.env, { HARNESS: '1' });
   }
+  assert.ok(!h.calls.some((c) => c.kind === 'node' && base(c.args[0]) === 'resolve-policy.js'), 'no node call names resolve-policy.js');
   assert.equal(h.calls[3].args[0], path.join(CTX.runDir, 'run-state.json'));
   assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5'), []);
   assert.equal(h.events[0].step, 'merge-entry');
@@ -397,7 +404,7 @@ test('AC1.2, AC1.3: labels without auto:merge, empty, auto:merge-pending only �
     assert.equal(r.reason, reason, String(labels));
     assertNoReadyNoMerge(h);
     assert.ok(!kindsOf(h).includes('judgments'));
-    assert.ok(!kindsOf(h).includes('node'), 'labels are read before any policy read');
+    assert.ok(!kindsOf(h).includes('policyCore'), 'labels are read before any policy read');
   }
   const ok = mergeHarness({ labels: [{ name: 'bug' }, { name: 'auto:merge' }] });
   assert.equal((await merge(CTX, ok.deps)).outcome, 'merged');
@@ -410,10 +417,10 @@ test('AC2.1–AC2.6: entry refusals with their residue', async () => {
     ['summaryLogged false', {}, { summaryLogged: false }, 'summary-entry-missing'],
     ['summaryLogged "true"', {}, { summaryLogged: 'true' }, 'summary-entry-missing'],
     ['summaryLogged undefined', {}, { summaryLogged: undefined }, 'summary-entry-missing'],
-    ['local-merge', { integrationModel: { code: 0, stdout: 'local-merge\n', stderr: '' } }, {}, 'not-pr-first'],
-    ['resolver exit 1', { integrationModel: { code: 1, stdout: '', stderr: 'boom' } }, {}, 'not-pr-first'],
-    ['resolver timeout', { integrationModel: { code: null, stdout: 'pr-first\n', stderr: 'timed out' } }, {}, 'not-pr-first'],
-    ['empty value', { integrationModel: { code: 0, stdout: '\n', stderr: '' } }, {}, 'not-pr-first'],
+    ['local-merge', { integrationModel: modelReply('local-merge') }, {}, 'not-pr-first'],
+    ['resolver exit 1', { integrationModel: { code: 1, message: 'x' } }, {}, 'not-pr-first'],
+    ['resolver timeout', { integrationModel: { code: null, message: 'x' } }, {}, 'not-pr-first'],
+    ['empty value', { integrationModel: modelReply('') }, {}, 'not-pr-first'],
     ['run-state without pr', { runState: { other: 1 } }, {}, 'not-pr-first'],
     ['run-state pr.number 0', { runState: { pr: { number: 0 } } }, {}, 'not-pr-first'],
     ['run-state pr.number string', { runState: { pr: { number: '9' } } }, {}, 'not-pr-first'],
@@ -453,14 +460,14 @@ test('AC2: gh-absent is decided before any label read; summary is decided after 
   assert.equal(r.reason, 'not-authorized');
   const noSummary = mergeHarness();
   await merge({ ...CTX, summaryLogged: false }, noSummary.deps);
-  assert.ok(!kindsOf(noSummary).includes('node'), 'no policy read before the summary check');
+  assert.ok(!kindsOf(noSummary).includes('policyCore'), 'no policy read before the summary check');
 });
 
 test('AC2: a not-pr-first integration-model read stops before the lever read and the supplier', async () => {
-  const h = mergeHarness({ integrationModel: { code: 1, stdout: '', stderr: 'x' } });
+  const h = mergeHarness({ integrationModel: { code: 1, message: 'x' } });
   const r = await merge(CTX, h.deps);
   assert.equal(r.reason, 'not-pr-first');
-  assert.equal(h.calls.filter((c) => c.kind === 'node').length, 1);
+  assert.equal(h.calls.filter((c) => c.kind === 'policyCore').length, 1);
   assert.ok(!kindsOf(h).includes('judgments'));
 });
 
@@ -491,9 +498,8 @@ test('AC8.1: merge-verification off, empty, unparseable and a resolver error all
     ['entry error', leverReply({ error: 'boom' }), /^lever unresolved \(""\) — proceeding as wait$/, 'unresolved'],
     ['missing key', leverReply(undefined), /^lever unresolved \(""\)/, 'unresolved'],
     ['non-string value', leverReply({ value: 3, source: 'run-config' }), /^lever unresolved \(""\)/, 'unresolved'],
-    ['exit 1', { code: 1, stdout: '', stderr: 'resolver failed' }, /^lever unresolved \(""\)/, 'unresolved'],
-    ['unparseable', { code: 0, stdout: 'not json', stderr: '' }, /^lever unresolved \(""\)/, 'unresolved'],
-    ['timeout', { code: null, stdout: '', stderr: 'timed out' }, /^lever unresolved \(""\)/, 'unresolved'],
+    ['exit 1', { code: 1, message: 'x' }, /^lever unresolved \(""\)/, 'unresolved'],
+    ['timeout', { code: null, message: 'x' }, /^lever unresolved \(""\)/, 'unresolved'],
     ['unknown value', leverReply({ value: 'merge-when-gren', source: 'policy' }), /^lever unresolved \("merge-when-gren"\) — proceeding as wait$/, 'policy'],
     ['value with a closing ref', leverReply({ value: 'closes #5', source: 'policy' }), /^lever unresolved \(""\)/, 'policy'],
   ];
@@ -524,20 +530,20 @@ test('AC8.1: merge-when-green and wait are taken as given, and no lever line is 
 });
 
 test('AC8.1: a failed merge-verification read never stops entry; a failed integration-model read is not-pr-first', async () => {
-  const lever = mergeHarness({ verification: { code: 1, stdout: '', stderr: 'resolver failed' } });
+  const lever = mergeHarness({ verification: { code: 1, message: 'x' } });
   const r = await merge(CTX, lever.deps);
   assert.notEqual(r.reason, 'not-pr-first');
   assert.ok(kindsOf(lever).includes('judgments'));
-  const model = mergeHarness({ integrationModel: { code: 1, stdout: '', stderr: 'x' } });
+  const model = mergeHarness({ integrationModel: { code: 1, message: 'x' } });
   const r2 = await merge(CTX, model.deps);
   assert.equal(r2.reason, 'not-pr-first');
-  assert.ok(!model.calls.some((c) => c.kind === 'node' && !c.args.includes('--values')), 'no merge-verification read');
+  assert.ok(!model.calls.some(isLeverRead), 'no merge-verification read');
   assert.ok(!kindsOf(model).includes('judgments'));
 });
 
-const isLeverRead = (c) => isNode('resolve-policy.js')(c) && !c.args.includes('--values');
-const isModelRead = (c) => isNode('resolve-policy.js')(c) && c.args.includes('--values');
-const resolverThrow = () => Object.assign(new Error('Command failed: node resolve-policy.js --run /x'), { stderr: 'spawn exploded\n' });
+const isLeverRead = (c) => c.kind === 'policyCore' && c.args.includes('merge-verification');
+const isModelRead = (c) => c.kind === 'policyCore' && c.args.includes('integration-model');
+const resolverThrow = () => Object.assign(new Error('Command failed: policy core --run /x'), { stderr: 'spawn exploded\n' });
 
 test('AC2: a throwing integration-model resolver is not-pr-first, never unclassified, and reads no lever', async () => {
   const h = mergeHarness({ script: [[isModelRead, resolverThrow()]] });
@@ -563,6 +569,80 @@ test('AC8.1: a throwing merge-verification resolver runs as wait: state reads be
   const reads = h.calls.filter((c) => isGh('pr', 'view')(c) && (c.args.includes(GATE_FIELDS) || c.args.includes(REREAD_FIELDS)));
   assert.equal(reads.length, 2, 'the gate read and the wait row re-read');
   assert.ok(reads.every((c) => h.calls.indexOf(c) < first), 'both state reads precede the merge call');
+});
+
+test('seam: both reads pass the harness env and the main checkout through callerDeps, with a discarding stderr', async () => {
+  const h = mergeHarness({ deps: { env: { HARNESS: 'custom' } } });
+  await merge(CTX, h.deps);
+  const reads = h.calls.filter((c) => c.kind === 'policyCore');
+  assert.equal(reads.length, 2);
+  for (const call of reads) {
+    assert.equal(call.env, h.deps.env);
+    assert.deepEqual(call.env, { HARNESS: 'custom' });
+    assert.equal(call.coreDeps.cwd(), CTX.mainCheckout);
+    assert.equal(typeof call.coreDeps.stderr, 'function');
+    const written = [];
+    const realWrite = process.stderr.write;
+    process.stderr.write = (chunk) => { written.push(String(chunk)); return true; };
+    try {
+      call.coreDeps.stderr('note');
+    } finally {
+      process.stderr.write = realWrite;
+    }
+    assert.deepEqual(written, []);
+  }
+});
+
+test('AC2: a non-OK core result is not-pr-first with the exit code', async () => {
+  const h = mergeHarness({ integrationModel: { code: 1, message: '--run dir does not exist or is not a directory: /x' } });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'not-pr-first');
+  assert.equal(r.detail, 'integration-model did not resolve pr-first (exit 1)');
+  assert.ok(!h.calls.some(isLeverRead), 'no lever read');
+});
+
+test('AC2: an error-entry or null integration-model value reads (empty)', async () => {
+  for (const reply of [{ code: 0, result: { 'integration-model': { error: 'x' } } }, modelReply(null)]) {
+    const h = mergeHarness({ integrationModel: reply });
+    const r = await merge(CTX, h.deps);
+    assert.equal(r.reason, 'not-pr-first');
+    assert.equal(r.detail, 'integration-model did not resolve pr-first (empty)');
+  }
+});
+
+test('AC2: a non-OK core result for merge-verification runs as wait (unresolved)', async () => {
+  const h = mergeHarness({ verification: { code: 1, message: 'x' } });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(unresolved\)/);
+  assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5').map((l) => l.text), ['lever unresolved ("") — proceeding as wait']);
+});
+
+test('AC2: a core reply with no result reads integration-model (empty), never unclassified', async () => {
+  const h = mergeHarness({ integrationModel: { code: 0 } });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'not-pr-first');
+  assert.equal(r.detail, 'integration-model did not resolve pr-first (empty)');
+});
+
+test('AC8.1: a core reply with no result runs merge-verification as wait (unresolved), never unclassified', async () => {
+  const h = mergeHarness({ verification: { code: 0 } });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(unresolved\)/);
+  assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5').map((l) => l.text), ['lever unresolved ("") — proceeding as wait']);
+});
+
+// The production seam (run.js realDeps.resolvePolicyCore), not a fake: a broken wiring there
+// fails this test instead of shipping green behind every harness's injected core.
+test('real core: both reads resolve through realDeps.resolvePolicyCore from the run dir config.yml', async () => {
+  const f = fixture();
+  fs.writeFileSync(path.join(f.runDir, 'config.yml'), 'integration-model: pr-first\nmerge-verification: wait\n');
+  const h = mergeHarness({ fx: f, deps: { resolvePolicyCore: realDeps.resolvePolicyCore } });
+  const r = await merge(f.ctx, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(run-config\)/);
+  assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5'), []);
 });
 
 test('AC8.1: a lever log that fails never stops entry; it is named in the entry event detail', async () => {
@@ -1182,7 +1262,7 @@ test('AC8.4: a state read always precedes the first merge call under every lever
     WAIT,
     leverReply({ value: 'off', source: 'run-config' }),
     leverReply({ value: '', source: 'default' }),
-    { code: 1, stdout: '', stderr: 'resolver failed' },
+    { code: 1, message: 'x' },
   ];
   for (const verification of levers) {
     const h = mergeHarness({ verification });
