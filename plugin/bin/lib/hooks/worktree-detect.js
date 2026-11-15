@@ -99,7 +99,9 @@ function remember(dir, signature, result) {
 // transient failure cannot become a lasting "not a repo" for later calls and
 // processes. A localized git message is a miss, never a wrong answer.
 const NOT_A_REPO = /not a git repository/i;
-const isNotARepoAnswer = (exitCode, stderr) => exitCode === 128 && NOT_A_REPO.test(stderr || '');
+function isNotARepoAnswer(exitCode, stderr) {
+  return exitCode === 128 && NOT_A_REPO.test(stderr || '');
+}
 
 // Single git subprocess spawn querying toplevel + git-dir + git-common-dir +
 // superproject in one invocation instead of four separate spawns — every
@@ -147,7 +149,7 @@ function repoInfo(p, opts = {}) {
       if (hit.answer) return hit.answer;
       signature = hit.signature;
     } catch (_) {
-      signature = null; // a miss, and nothing will be remembered
+      // a miss, and nothing will be remembered (signature stays null)
     }
   }
   const { stdout: out, failure, exitCode, stderr } = runGit(
