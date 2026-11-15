@@ -180,3 +180,127 @@ test('status reads the durable remembered store through the injected env: GIT_DI
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   assert.ok(result.stdout.includes('remembered:1'), `expected remembered:1 from the injected repo, got: ${result.stdout}`);
 });
+
+// ── --fail-on refuses an untrusted cache (#5529) ────────────────────────────
+
+function cacheFile(root) { return path.join(root, '.claude-tweaks', 'code-health', 'cache.json'); }
+
+function writeRaw(root, text) {
+  fs.mkdirSync(path.dirname(cacheFile(root)), { recursive: true });
+  fs.writeFileSync(cacheFile(root), text, 'utf8');
+}
+
+function assertRefused(result, root) {
+  assert.strictEqual(result.status, 2, `expected exit 2: ${result.stdout}${result.stderr}`);
+  assert.strictEqual(result.stdout, '');
+  const lines = result.stderr.split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 1, `expected one stderr line: ${result.stderr}`);
+  assert.ok(lines[0].includes(cacheFile(root)), `expected cache path in: ${lines[0]}`);
+}
+
+test('AC1: status --fail-on regressed and risk-high exit 2 when no cache file exists', () => {
+  for (const value of ['regressed', 'risk-high']) {
+    const root = tmp();
+    assertRefused(cli(['status', '--fail-on', value, '--root', root]), root);
+  }
+});
+
+test('AC2: status --fail-on regressed and risk-high exit 0 on an empty {} cache', () => {
+  for (const value of ['regressed', 'risk-high']) {
+    const root = tmp();
+    writeRaw(root, '{}');
+    const result = cli(['status', '--fail-on', value, '--root', root]);
+    assert.strictEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.ok(result.stdout.includes('open:0 regressed:0 closed:0 wontfix:0'), `got: ${result.stdout}`);
+  }
+});
+
+test('AC3: plain status with no cache file exits 0 and prints the counts line', () => {
+  const root = tmp();
+  const result = cli(['status', '--root', root]);
+  assert.strictEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.ok(result.stdout.includes('open:0 regressed:0'), `got: ${result.stdout}`);
+});
+
+test('AC6: refuses a dangling symlink at the cache path', () => {
+  const root = tmp();
+  fs.mkdirSync(path.dirname(cacheFile(root)), { recursive: true });
+  fs.symlinkSync(path.join(root, 'nowhere.json'), cacheFile(root));
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('AC6: refuses a symlink to a JSON file outside the root holding a regressed entry', () => {
+  const root = tmp();
+  const outside = tmp();
+  const target = path.join(outside, 'cache.json');
+  fs.writeFileSync(target, '{"x":{"status":"regressed"}}', 'utf8');
+  fs.mkdirSync(path.dirname(cacheFile(root)), { recursive: true });
+  fs.symlinkSync(target, cacheFile(root));
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('AC6: refuses a symlink to a regular JSON file inside the root', () => {
+  const root = tmp();
+  const target = path.join(root, 'real.json');
+  fs.writeFileSync(target, '{}', 'utf8');
+  fs.mkdirSync(path.dirname(cacheFile(root)), { recursive: true });
+  fs.symlinkSync(target, cacheFile(root));
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('AC6: refuses when .claude-tweaks/code-health is a symlink to an outside directory holding cache.json', () => {
+  const root = tmp();
+  const outsideDir = tmp();
+  fs.writeFileSync(path.join(outsideDir, 'cache.json'), '{}', 'utf8');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.symlinkSync(outsideDir, path.join(root, '.claude-tweaks', 'code-health'), 'dir');
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('AC6: refuses a directory at the cache path', () => {
+  const root = tmp();
+  fs.mkdirSync(cacheFile(root), { recursive: true });
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('AC6: refuses a cache file containing "not json"', () => {
+  const root = tmp();
+  writeRaw(root, 'not json');
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('AC6: refuses a cache file containing []', () => {
+  const root = tmp();
+  writeRaw(root, '[]');
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('AC6: refuses a cache file containing {"a":null}', () => {
+  const root = tmp();
+  writeRaw(root, '{"a":null}');
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('refuses an empty 0-byte cache file', () => {
+  const root = tmp();
+  writeRaw(root, '');
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('refuses a cache entry that is an array ({"a":[]})', () => {
+  const root = tmp();
+  writeRaw(root, '{"a":[]}');
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('refuses a cache entry that is a string ({"a":"open"})', () => {
+  const root = tmp();
+  writeRaw(root, '{"a":"open"}');
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
+
+test('refuses when .claude-tweaks is a regular file', () => {
+  const root = tmp();
+  fs.writeFileSync(path.join(root, '.claude-tweaks'), 'x', 'utf8');
+  assertRefused(cli(['status', '--fail-on', 'regressed', '--root', root]), root);
+});
