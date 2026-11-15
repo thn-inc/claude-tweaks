@@ -3,12 +3,16 @@ files:
   - plugin/bin/claude-tweaks-statusline.js
   - tests/statusline.test.js
   - tests/statusline-no-shell-conformance.test.js
+  - plugin/bin/lib/hooks/repo-info-cache.js
+  - plugin/bin/lib/hooks/worktree-detect.js
+  - tests/hooks-repo-info-cache.test.js
+  - tests/hooks-repo-info-store.test.js
 ---
 
 # Keep Many Sessions Open Without a Git Process Storm
 
 **Persona:** A developer who runs claude-tweaks with the statusline wired in (`~/.claude-tweaks/bin/statusline.js`), with dozens of Claude Code sessions open on one Mac: a main checkout, many worktree-isolated sessions, and sibling sessions in other repos. Every session re-renders its statusline around each tool call.
-**Goal:** The statusline costs as little as possible per render, so dozens of sessions don't add up to a constant stream of process spawns, and it still shows exactly what it showed before.
+**Goal:** The statusline costs as little as possible per render, and the claude-tweaks hooks as little as possible per tool call, so dozens of sessions don't add up to a constant stream of process spawns, and it still shows exactly what it showed before.
 **Entry point:** Any session where the statusline renders its project and git segments: the project name with its `file://` link, the GitHub glyph linked to the repo page, and the branch with its dirty dot.
 **Success state:**
 - In a main checkout or a linked worktree with a plain GitHub `origin`, one render starts exactly one child process, `git --no-optional-locks status --porcelain -b`, and no `/bin/sh`. That is two processes counting node, down from 5 in a main checkout and 7 in a linked worktree.
@@ -49,7 +53,20 @@ files:
   - A glyph or project name appears that `git config --get remote.origin.url` or `git rev-parse --git-common-dir` would not give.
   - The statusline hangs. The one exception is a FIFO in place of `.git/config` or `commondir`, where git itself blocks too.
 
+### 4. Let the hooks run on every tool call
+- **URL:** the claude-tweaks `PreToolUse` and `PostToolUse` hooks (`bin/hooks.js pre-tool-use` / `post-tool-use`), which fire around every tool call in every session.
+- **Action:** Keep working in a linked worktree: edit files, run `npm test > out.txt`, commit; then ask a question or dispatch an agent from the main checkout.
+- **Should feel:** Tool calls start promptly even with many sessions busy. Every allow or deny is exactly what it was before.
+- **Should understand:**
+  - The hooks ask git `rev-parse --show-toplevel --git-dir --git-common-dir --show-superproject-working-tree` once per directory, then reuse the answer within the hook process and, through `~/.claude-tweaks/repo-info-cache.json`, in every later hook process.
+  - Each reuse is checked first against a filesystem signature (the nearest `.git` entry, a worktree's admin dir and `commondir`, the repo and global config files). Removing or re-adding a worktree, `git init`, pruning an admin dir or editing git config makes the next call ask git again.
+  - A timeout, a killed git, or any failure other than git's own "not a git repository" is never remembered, and a set `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_CEILING_DIRECTORIES` or `GIT_DISCOVERY_ACROSS_FILESYSTEM` keeps the answer out of the shared file.
+- **Red flags:**
+  - A hook allows a write the worktree gate denied before the change, or denies one it allowed, for the same repo state.
+  - After `git worktree remove`, `git init`, or a `safe.directory` edit in `~/.gitconfig`, a hook still acts on the old answer.
+  - A corrupt, unreadable or unwritable `~/.claude-tweaks/repo-info-cache.json` makes a hook error or change its verdict; it should only cost the cache.
+
 ## Origin
 - Created during build of #5266 in flow run `2026-11-13T004054-spec-5266-5294`. The statusline's common dir and origin URL come from the filesystem, with a git fallback whenever git's answer could differ, and `git status` runs without a shell.
 - Measured on this Mac, 5 renders each: a main checkout went from 5 to 2 processes and a linked worktree from 7 to 2, with the rendered line byte-identical.
-- #5294, the pre-tool-use and post-tool-use hooks' repeated `git rev-parse` calls, is the other half of the same goal and extends this journey.
+- Extended during build of #5294 in the same flow run (step 4): the hooks' `repoInfo` answer is cached per process and per user behind a filesystem signature. Measured back to back on 2026-11-15, 5 runs each, base vs this branch: pre-tool-use for an Edit in a linked worktree went from 15 processes to 1 (node only, warm), `npm test > out.txt` in the worktree from 15 to 2 cold and 1 warm, and post-tool-use for `git commit` in the worktree from 15 to 2. Every verdict was unchanged.
