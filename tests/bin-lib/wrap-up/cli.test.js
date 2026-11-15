@@ -135,3 +135,27 @@ test('AC8.1: an injected env reaches every git child (GIT_DIR only in env)', () 
     fs.rmSync(b.dir, { recursive: true, force: true });
   }
 });
+
+test('AC8.1: the show, HEAD reflog and remote reflog children each read the injected env (GIT_DIR only in env)', () => {
+  // Repo B holds the base commit, an amend (a HEAD reflog op) and an origin/b-side ref whose own reflog
+  // carries a push op; repo A (cwd) has none of them. Each child below can only produce its part of the
+  // result from B: a `show` that ignored env cannot resolve B's base sha in A (exit 2), a HEAD reflog that
+  // ignored it reports no amend, and a remote reflog that ignored it reports no push.
+  const a = committedRepo({ prefix: 'wrapup-env-a-', branch: 'a-side' });
+  const b = committedRepo({ prefix: 'wrapup-env-b-', branch: 'b-side' });
+  try {
+    b.git('commit', '-q', '--amend', '--allow-empty', '-m', 'amended');
+    b.git('update-ref', '--create-reflog', '-m', 'update by push', 'refs/remotes/origin/b-side', 'HEAD');
+    const r = runCliSync(CLI, ['--since', b.head, '--json'], {
+      cwd: a.dir, env: { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') },
+    });
+    assert.strictEqual(r.code, 0, r.stderr);
+    const o = JSON.parse(r.stdout);
+    assert.ok(typeof o.sinceDate === 'string' && o.sinceDate.length > 0, 'show resolved B\'s base sha');
+    assert.ok(o.ops.some((op) => op.op === 'amend'), 'HEAD reflog read B: ' + JSON.stringify(o.ops));
+    assert.ok(o.ops.some((op) => op.op === 'push'), 'remote reflog read B: ' + JSON.stringify(o.ops));
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+});
