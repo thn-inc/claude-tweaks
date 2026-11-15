@@ -12,6 +12,7 @@ files:
   - plugin/bin/lib/driver/acceptance.js
   - plugin/bin/lib/driver/review.js
   - plugin/bin/lib/driver/launch.js
+  - plugin/bin/lib/driver/adopt.js
 ---
 
 # Drive a Named Record to a Draft PR
@@ -32,6 +33,8 @@ files:
   - Exit 0 means every record reached its final line, whatever its outcome; the outcome is in the data.
   - Exit 1 means the policy, repository or integration branch could not be resolved, so no record went further. The repository is checked first: an origin whose host the origin-host gate refuses exits 1 before any `gh` call, the policy read included.
   - Exit 2 is a malformed command (no reference, or a non-numeric one), an absent `gh` or `git`, or an internal error.
+  - `--check #N` prints only the admission verdict as one JSON line (`{"record":N,"admitted":bool,"reasons":[…]}`) and writes nothing; exit 0 means a verdict was printed.
+  - `--run <dir> --no-settle` adopts a caller's run directory and the linked worktree it is run from, and exit 3 refuses a bad one with nothing written. `--in-flight-prs` and `--near-dup-pairs` hold the merge on an overlapping in-flight PR. Dispatch's driver route uses all three (journey `route-a-dispatch-singleton-through-the-driver-5232`).
 - **Red flags:**
   - A non-zero exit for a record that was merely refused or escalated.
   - Any record started before the previous one's final line.
@@ -175,3 +178,4 @@ files:
 - Updated at wrap-up of #5228, after the review fixes: step 7 gains a red flag for an acceptance post or label made after a credential-shaped worker field or a partial packet, both of which now stop the acceptance before any label or post.
 - Updated during the build of #5454 (run `2026-11-14T213352-spec-5454`). Step 3 now lists the test-step tree stop. After a green or verdict-less test run, a tracked file that differs from HEAD, or a new file in the worktree, stops the record. A red run keeps its red-tests stop, and a verdict-less stop also names why the run gave no verdict.
 - Updated during the build of #5458 (run `2026-11-15T122114-spec-5458`). Step 3 now says the push also needs the branch ref at the checked `head`, and lists the branch-ref stop, which catches a branch switch or detached HEAD at the same commit made before the driver commits. The matching red flag was widened.
+- Updated during the build of #5232 (run `2026-11-15T173500-spec-5232`): step 1 names `--check`, `--run` and the `--in-flight-prs`/`--near-dup-pairs` hold, which dispatch's driver route uses.
