@@ -6,7 +6,7 @@
 //   adoptRun({ runDir, cwd }, deps)
 //     -> { ok: true, runDir, runId, wt, branch, mainRoot } | { ok: false, why }
 //
-// Four checks, in order, each a refusal:
+// Five checks, in order, each a refusal:
 //   1. the run directory resolves under the main checkout by the guard log-decision.js applies
 //      (resolveTarget, the copy beside the claim-log writer the run-dir step calls): it exists, and
 //      the nearest `.git` above its real path is the main checkout's directory, never a worktree's
@@ -16,9 +16,15 @@
 //   3. the working directory sits in a linked worktree of that main checkout: the nearest `.git`
 //      above it is a file whose gitdir names the same main checkout, and it is not the main
 //      checkout itself;
-//   4. that worktree is on a branch (`git branch --show-current` prints one), since the push names it.
-// It writes nothing. Checks 1-3 read the file system directly, as policyStep's mainCheckoutRoot does;
-// check 4 is the one call through deps (a read).
+//   4. the pair belongs together: the run directory's run-state.json, which dispatch's bind
+//      (`hooks.js record-worktree`) wrote, names that worktree once both are realpath'd;
+//   5. that worktree is on a branch (`git branch --show-current` prints one), since the push names it.
+// The run directory's anchor and the worktree's are one main checkout without a further check:
+// resolveTarget anchors the run directory to mainCheckoutRoot(cwd), and check 3 requires
+// mainCheckoutRoot(top) to equal that same root.
+// It writes nothing. Checks 1-4 read the file system directly, as policyStep's mainCheckoutRoot does;
+// check 5 is the one call through deps (a read).
+const fs = require('node:fs');
 const path = require('node:path');
 const { resolveTarget } = require('../log-decision/append');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
@@ -37,6 +43,21 @@ function nearestGitEntry(start) {
   return null;
 }
 
+// Why the run directory's run-state.json does not bind it to worktree `top`, or null when it does.
+// One direct read: a missing or unparseable file is caught here, never checked for first.
+function runStateMismatch(real, top) {
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(path.join(real, 'run-state.json'), 'utf8'));
+  } catch {
+    return 'is unreadable';
+  }
+  const recorded = state && typeof state === 'object' ? state.worktree : undefined;
+  if (typeof recorded !== 'string' || !recorded) return 'names no worktree';
+  // record-worktree writes path.resolve of its argument, not a realpath.
+  return safeReal(recorded) === top ? null : 'names a different worktree';
+}
+
 function adoptRun({ runDir, cwd }, deps) {
   const target = resolveTarget({ runDir, cwd });
   if (!target.ok) return { ok: false, why: `run directory ${target.reason}` };
@@ -50,6 +71,8 @@ function adoptRun({ runDir, cwd }, deps) {
     return { ok: false, why: 'working directory is not a linked worktree of the main checkout' };
   }
   const top = found.dir;
+  const mismatch = runStateMismatch(real, top);
+  if (mismatch) return { ok: false, why: `run-state.json of the run directory ${mismatch}: not bound to this worktree` };
   let branch = '';
   try {
     branch = String(deps.git(['-C', top, 'branch', '--show-current'], { cwd: top })).trim();

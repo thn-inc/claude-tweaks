@@ -89,7 +89,7 @@ const USAGE = [
   '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
   '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record; a missing, empty or repeated --run value, or --run without --no-settle, with more than one record, or with --budget or --check',
-  '  3  --run refused: the run directory is missing or not a run directory under the main checkout, or the working directory is not a linked worktree of it, or that worktree has no branch; nothing written',
+  '  3  --run refused: the run directory is missing or not a run directory under the main checkout, or the working directory is not a linked worktree of it, or the run directory\'s run-state.json does not name that worktree, or the worktree has no branch; nothing written',
   '  --check: 0 a verdict was printed (admitted or not); 1 no verdict could be computed (nothing on stdout); 2 malformed (anything but exactly one record reference)',
   '',
 ].join('\n');
@@ -108,12 +108,14 @@ const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 // settles stops); any other option is an error.
 const BUDGET_NEEDS_RECORD = 'a record reference (#N) or --budget <n|all> is required';
 const CHECK_GRAMMAR = '--check takes exactly one record reference (#N) and no other option';
+const CHECK_RUN_EXCLUSIVE = '--check and --run are exclusive';
 // The value-taking-flag rule: a trailing bare flag reads undefined, and an empty or flag-shaped value is no value.
 const isFlagValue = (v) => typeof v === 'string' && v.trim() !== '' && !v.startsWith('--');
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
   if (argv.length === 0) return { error: BUDGET_NEEDS_RECORD };
   if (argv.includes('--check')) {
+    if (argv.includes('--run')) return { error: CHECK_RUN_EXCLUSIVE };
     const rest = argv.filter((a) => a !== '--check');
     const m = rest.length === 1 && argv.length === 2 ? RECORD_RE.exec(String(rest[0])) : null;
     const n = m ? Number(m[1]) : NaN;

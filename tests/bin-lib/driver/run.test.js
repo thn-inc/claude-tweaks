@@ -6429,6 +6429,9 @@ const ADOPT_RUN_ID = '2026-11-15T000000-spec-7';
 const ADOPT_PIPELINES = path.join(ADOPT_MAIN, '.claude-tweaks', 'pipelines');
 const ADOPT_RUN = path.join(ADOPT_PIPELINES, ADOPT_RUN_ID);
 fs.mkdirSync(ADOPT_RUN, { recursive: true });
+// Dispatch's bind (hooks.js record-worktree) names the worktree in the run's state.
+const ADOPT_STATE = `${JSON.stringify({ worktree: ADOPT_WT, status: 'active' })}\n`;
+fs.writeFileSync(path.join(ADOPT_RUN, 'run-state.json'), ADOPT_STATE);
 // So `x/..` resolves the same lexically and in the kernel.
 fs.mkdirSync(path.join(ADOPT_PIPELINES, 'x'));
 const ADOPT_BRANCH = 'worktree-dispatch-record-7';
@@ -6526,7 +6529,8 @@ test('#5232 AC2.7, AC2.10: a worktree-local shadow pipelines directory is refuse
   assertRefusedNothingWritten(h, await run(adoptArgv(shadow), h.deps), WHY_NOT_ANCHORED);
   assert.equal(fs.readFileSync(path.join(shadow, 'decisions.md'), 'utf8'), bytes);
   assert.deepEqual(fs.readdirSync(shadow), ['decisions.md']);
-  assert.deepEqual(fs.readdirSync(ADOPT_RUN), [], 'the real run directory is untouched too');
+  assert.deepEqual(fs.readdirSync(ADOPT_RUN), ['run-state.json'], 'the real run directory is untouched too');
+  assert.equal(fs.readFileSync(path.join(ADOPT_RUN, 'run-state.json'), 'utf8'), ADOPT_STATE);
 });
 
 test('#5232 AC2.8, AC2.10: a path holding the main checkout\'s path as a substring of another component is refused', async () => {
@@ -6542,6 +6546,61 @@ test('#5232 AC2.8, AC2.10: a path holding the main checkout\'s path as a substri
 test('#5232 AC2.2, AC2.9, AC2.10: a working directory that is the main checkout itself is refused', async () => {
   const h = adoptHarness(ADOPT_MAIN);
   assertRefusedNothingWritten(h, await run(adoptArgv(ADOPT_RUN), h.deps), WHY_NOT_WORKTREE);
+});
+
+// A run directory under the main checkout's pipelines directory whose run-state.json holds `state`
+// (no file when undefined); returns the directory and a check that it is byte-unchanged.
+let stateRuns = 0;
+function stateRun(state) {
+  stateRuns += 1;
+  const dir = path.join(ADOPT_PIPELINES, `2026-11-15T00000${stateRuns}-spec-${stateRuns + 100}`);
+  fs.mkdirSync(dir);
+  if (state !== undefined) fs.writeFileSync(path.join(dir, 'run-state.json'), state);
+  const unchanged = () => {
+    assert.deepEqual(fs.readdirSync(dir), state === undefined ? [] : ['run-state.json']);
+    if (state !== undefined) assert.equal(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'), state);
+  };
+  return { dir, unchanged };
+}
+const WHY_STATE = (mismatch) => `run-state.json of the run directory ${mismatch}: not bound to this worktree`;
+
+test('#5232 (review fix): a run directory whose run-state.json is missing or unparseable is refused', async () => {
+  for (const state of [undefined, '{not json', '']) {
+    const { dir, unchanged } = stateRun(state);
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), WHY_STATE('is unreadable'));
+    unchanged();
+  }
+});
+
+test('#5232 (review fix): a run directory whose run-state.json names no worktree is refused', async () => {
+  for (const state of ['{}\n', 'null\n', '[]\n', '{"worktree":5}\n', '{"worktree":""}\n']) {
+    const { dir, unchanged } = stateRun(state);
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), WHY_STATE('names no worktree'));
+    unchanged();
+  }
+});
+
+test('#5232 (review fix): a run directory whose run-state.json names a different worktree is refused', async () => {
+  const other = path.join(ADOPT_MAIN, '.claude', 'worktrees', 'other');
+  fs.mkdirSync(other, { recursive: true });
+  for (const wt of [ADOPT_MAIN, other, path.join(ADOPT_WT, 'src-absent')]) {
+    const { dir, unchanged } = stateRun(`${JSON.stringify({ worktree: wt })}\n`);
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), WHY_STATE('names a different worktree'));
+    unchanged();
+  }
+});
+
+test('#5232 (review fix): run-state.json\'s worktree is compared after realpath', () => {
+  const link = path.join(ADOPT_MAIN, 'wt-link');
+  fs.symlinkSync(ADOPT_WT, link, 'junction');
+  const { dir } = stateRun(`${JSON.stringify({ worktree: link })}\n`);
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  const result = adoptModule().adoptRun({ runDir: dir, cwd: ADOPT_WT }, h.deps);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.wt, ADOPT_WT);
 });
 
 test('#5232 Review Focus 5: an adopted worktree on a detached HEAD is refused', async () => {
@@ -6601,6 +6660,10 @@ test('#5232 (Deliverable 2): a --run --no-settle stop leaves the claim, worktree
     assert.equal(final.settle, 'left-to-caller', name);
     assert.equal(final.outcome, outcome, name);
     assert.deepEqual(final.stop.created, { worktree: false, branch: false }, name);
+    // Adoption, not --no-settle, is what keeps these out: nothing was minted or created to leave.
+    assert.equal(h.calls.filter(onGit('worktree', 'add')).length, 0, name);
+    assert.equal(h.calls.filter((c) => c.kind === 'resolveRunDir').length, 0, name);
+    assert.equal(final.run, ADOPT_RUN_ID, name);
     assert.deepEqual(settleCalls(h).map((c) => `${c.kind} ${describeArgs(c.args)}`), [], name);
     assert.deepEqual(settleLines(h), [], name);
   }
@@ -6612,7 +6675,8 @@ test('#5232 --run grammar', async () => {
     [['#7', '--run', d], /--run requires --no-settle/],
     [['#7', '#8', '--run', d, '--no-settle'], /--run takes exactly one record reference/],
     [['--run', d, '--no-settle', '--budget', '1'], /--run and --budget are exclusive/],
-    [['--check', '#7', '--run', d], /--check takes exactly one record reference/],
+    [['--check', '#7', '--run', d], /drive\.js: --check and --run are exclusive\n/],
+    [['#7', '--run', d, '--no-settle', '--check'], /drive\.js: --check and --run are exclusive\n/],
     [['#7', '--no-settle', '--run'], /--run needs a value/],
     [['#7', '--run', '', '--no-settle'], /--run needs a value/],
     [['#7', '--run', '   ', '--no-settle'], /--run needs a value/],

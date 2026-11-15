@@ -23,7 +23,7 @@
 //   2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record; a missing, empty or repeated --run value, or --run without --no-settle, with more than one record, or with --budget or --check
 //      (exit 2 is overloaded on purpose; revisit if a caller needs to retry an internal error
 //      differently from a usage error)
-//   3  --run refused: the run directory is missing or not a run directory under the main checkout, or the working directory is not a linked worktree of it, or that worktree has no branch; nothing written
+//   3  --run refused: the run directory is missing or not a run directory under the main checkout, or the working directory is not a linked worktree of it, or the run directory's run-state.json does not name that worktree, or the worktree has no branch; nothing written
 //      (a per-CLI code above Combined-2, as log-decision.js and express-lane.js use 3 for an unanchored run directory; no caller
 //      branches on it differently: /claude-tweaks:dispatch's driver route reads every non-zero exit as blocked)
 // --check exit codes: 0 a verdict was printed (admitted or not); 1 no verdict could be computed (nothing on stdout); 2 malformed (anything but exactly one record reference).
