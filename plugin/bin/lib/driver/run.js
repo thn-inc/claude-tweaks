@@ -474,6 +474,7 @@ const realDeps = {
     return { code: r.status, stdout: r.stdout || '', stderr: r.error ? `${stderr}${r.error.message}\n` : stderr };
   },
   resolvePolicy: (keys) => defaultResolvePolicy(keys),
+  resolvePolicyCore: (opts, coreDeps) => require('../../resolve-policy').resolvePolicy(opts, coreDeps),
   evaluateRecordEligibility: (issue, opts) => require('../express/eligibility').evaluateRecordEligibility(issue, opts),
   evaluateAdmission: (input) => require('./admission').evaluateAdmission(input),
   fetchNativeDependencies: (opts) => require('../issues/native-dependencies').fetchNativeDependencies(opts),
