@@ -28,7 +28,7 @@ function badgesFor(record) {
   if (scoring) badges.push(scoring);
   if (record.facets.grants.build) badges.push('AUTO-BUILD');
   if (record.facets.grants.merge) badges.push('AUTO-MERGE');
-  if (record.facets.acceptance) badges.push(`demo:${record.facets.acceptance}`);
+  if (record.facets.acceptance) badges.push(`accept:${record.facets.acceptance}`);
   return badges;
 }
 

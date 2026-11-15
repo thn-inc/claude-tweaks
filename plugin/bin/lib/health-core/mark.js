@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_IO } = require('./io');
+
 const MARK_STATUSES = new Set(['declined']);
 
 // Shared `mark <fingerprint> <status>` command — byte-identical across
@@ -26,13 +28,17 @@ const MARK_STATUSES = new Set(['declined']);
 //     dedup to reconstruct from) would silently reappear on the next
 //     Routine firing despite the skill's own documented "suppressed
 //     forever" promise.
-function makeCmdMark({ readCache, writeCache, updateCache, readDurableState, writeDurableState, toolName }) {
+// Every path returns an integer exit code (0 on success) and writes through the
+// injected io (default: the process streams), so an in-process caller owns both.
+function makeCmdMark({
+  readCache, writeCache, updateCache, readDurableState, writeDurableState, toolName, io = DEFAULT_IO,
+}) {
   return function cmdMark(args) {
-    const root = args.root || process.cwd();
+    const root = args.root || io.cwd();
     const fp = args._[1];
     const status = args._[2];
     if (!fp || !MARK_STATUSES.has(status)) {
-      process.stderr.write(`usage: ${toolName}.js mark <fingerprint> <${[...MARK_STATUSES].join('|')}> [--root <dir>]\n`);
+      io.stderr(`usage: ${toolName}.js mark <fingerprint> <${[...MARK_STATUSES].join('|')}> [--root <dir>]\n`);
       return 2;
     }
     const entry = { status, lastSeenMs: Date.now() };
@@ -50,10 +56,11 @@ function makeCmdMark({ readCache, writeCache, updateCache, readDurableState, wri
         declined: { ...(current.declined || {}), [fp]: { lastSeenMs: entry.lastSeenMs } },
       }));
       if (!result.ok) {
-        process.stderr.write(`mark: durable health-state persistence failed (declined mark is still saved locally): ${result.error}\n`);
+        io.stderr(`mark: durable health-state persistence failed (declined mark is still saved locally): ${result.error}\n`);
       }
     }
-    process.stdout.write(JSON.stringify(cache[fp], null, 2) + '\n');
+    io.stdout(JSON.stringify(cache[fp], null, 2) + '\n');
+    return 0;
   };
 }
 

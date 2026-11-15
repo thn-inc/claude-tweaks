@@ -130,7 +130,7 @@ function run(argv, overrides = {}) {
   try { view = deps.resolvePrState(deps.cwd(), n); } catch { return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: 'resolver-threw' }); }
   if (view === null) return report(deps, { state: 'no-pr', phase });
   if (view === 'gh-absent') return reportDegraded(deps, o.run, { state: 'gh-absent', pr: n, phase });
-  if (view === 'network-failure' || view === 'invalid-arguments') return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: view });
+  if (view === 'network-failure' || view === 'invalid-arguments' || view === 'unknown-host') return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: view });
   if (typeof view !== 'object') return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: 'unparseable' });
   const mergeable = isStr(view.mergeable) ? view.mergeable : null;
   const mergeStateStatus = isStr(view.mergeStateStatus) ? view.mergeStateStatus : null;

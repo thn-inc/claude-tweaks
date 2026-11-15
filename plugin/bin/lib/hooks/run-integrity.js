@@ -329,6 +329,9 @@ function checkBranchLanded(runDir, opts = {}) {
 
 module.exports = {
   checkRunIntegrity, checkBranchLanded, repoRootOf, NON_TERMINAL, deriveBranch,
+  // #4387: archive-merged's abandoned-interrupted path re-asks the same ancestor / patch-id
+  // question against the LOCAL integration ref (checkRunIntegrity may have read origin/).
+  mergedEvidence,
   // #4032: reconcile's archive loop reads its own top-level list through the
   // same cache its per-dir checkRunIntegrity calls use, so a pass lists once.
   worktreeListStdout,

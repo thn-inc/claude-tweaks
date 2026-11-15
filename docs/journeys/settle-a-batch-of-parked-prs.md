@@ -27,7 +27,7 @@ files:
 - **Action:** The user reviews each row's park reason and current CI status before deciding which PRs to resume.
 - **Should feel:** Grounded in fresh evidence — the same live-sourcing discipline `resume-confirmation.md`'s single-PR confirm already uses, just batched.
 - **Should understand:** A PR whose freshness probe comes back `BLOCKED` (its worktree is still live, or it was committed to recently) never appears as a selectable row — it's named on its own `excluded — still live` line instead, so nothing is silently dropped from view.
-- **Red flags:** A `BLOCKED` PR appearing as a selectable row; a `BLOCKED` PR vanishing from the output entirely with no `excluded` line naming it; a PR whose rollup is green while a head-sha workflow run is still in progress shown as `passing` instead of `pending`; a failed CI read shown as `passing` instead of `unavailable`.
+- **Red flags:** A `BLOCKED` PR appearing as a selectable row; a `BLOCKED` PR vanishing from the output entirely with no `excluded` line naming it; a PR whose rollup is green while a head-sha workflow run is still in progress shown as `passing` instead of `pending`; a failed CI read shown as `passing` instead of `unavailable`; a PR whose workflow runs on `ready_for_review` but has no counted run since the PR was marked ready shown as `passing` instead of `pending` (`pr-checks.js` applies the merge gate's ready-run rule, #5153).
 
 ### 3. Pick a subset — `AskUserQuestion` (multi-select)
 - **URL:** no page — one `AskUserQuestion` call, header `Settle parked PRs`, `multiSelect: true`, one option per eligible row.
@@ -46,4 +46,5 @@ files:
 ## Origin
 - Created during build of #2428 ("dispatch: no policy lever to relax merge-check's needs-human verdict, and no batch-settle command for parked PRs") — added the `--settle-parked` entry point, batching `resume-confirmation.md`'s per-PR confirm into one multi-select decision over every open `bot:parked` PR.
 - Updated during build of #3469 ("Display-only CI readers still classify the rollup alone"): the CI status column now comes from `bin/pr-checks.js --pr {n}`, which adds the head-sha runs. A partial rollup reads `pending` and a failed read reads `unavailable`.
+- Updated during wrap-up of #5153: the CI read also applies the merge gate's ready-run rule, so a PR still waiting for the run that marking it ready starts reads `pending`, and the park reason can be `draft-skip-without-ready-trigger:{files}`.
 - Related specs: #2428, #3469

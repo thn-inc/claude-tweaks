@@ -29,6 +29,7 @@ const { lstatType } = require('../path-guard');
 const { worktreeMirror } = require('../wrap-up/pack');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
 const { FLOW_STEPS } = require('../claim-targets/claim-targets');
+const { parseRecordSteps } = require('../flow/record-steps');
 
 function defaultReadFile(p) {
   return fs.readFileSync(p, 'utf8');
@@ -335,7 +336,7 @@ function checkFirstCallStamp({ runDir }, deps = {}) {
   return { verified: true, reason: null, status };
 }
 
-// resolveFirstCallGate({ reply, artifact })
+// resolveFirstCallGate({ reply, artifact, targets })
 //   -> 'blocked' | 'already-shipped' | 'handoff' | 'artifact-failed' | 'repair' | 'dispatch'
 //
 // The code twin of `skills/dispatch/two-call-gate.md` section 2's ordering: the first call's
@@ -348,8 +349,9 @@ function checkFirstCallStamp({ runDir }, deps = {}) {
 // `OUTCOME: handoff` plus `NEXT_STEPS:` (`flow/context-handoff.md`'s Dispatched call). It is
 // decided before the artifact check and never reads `artifact` -- the steps that produce
 // those artifacts have not all run yet. Its NEXT_STEPS must parse within the first call's
-// own steps (`FIRST_CALL_STEPS`), else the verdict is `blocked`; `parseNextSteps` with the
-// same list gives the reason.
+// own steps (`FIRST_CALL_STEPS`) and the call's `targets` (forwarded to `parseNextSteps`;
+// absent checks none), else the verdict is `blocked`; `parseNextSteps` with the same
+// arguments gives the reason.
 const STATUS_LINE_RE = /^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$/;
 const OUTCOME_LINE_RE = /^OUTCOME:\s*(\S+)/;
 const NEXT_STEPS_LINE_RE = /^NEXT_STEPS:(.*)$/;
@@ -365,8 +367,8 @@ function replyLines(reply) {
   return String(reply == null ? '' : reply).split('\n').map((l) => l.replace(/\r$/, ''));
 }
 
-// parseNextSteps(reply, allowed = FLOW_STEPS)
-//   -> { ok: true, steps } | { ok: false, reason, message }
+// parseNextSteps(reply, allowed = FLOW_STEPS, { targets = null } = {})
+//   -> { ok: true, steps } | { ok: true, steps, recordSteps, stepArg } | { ok: false, reason, message }
 //
 // Reads a handoff reply's first `NEXT_STEPS:` line. Fails closed, the same strictness as
 // context-gauge.js's own `--next-steps` parse: no line -> next-steps-missing; a blank value ->
@@ -374,11 +376,30 @@ function replyLines(reply) {
 // first call passes FIRST_CALL_STEPS, a second call SECOND_CALL_STEPS) -> next-steps-invalid; a step named twice ->
 // next-steps-duplicate. A mangled list must never become a continuation that skips or
 // repeats a step.
-function parseNextSteps(reply, allowed = FLOW_STEPS) {
+//
+// #4358: a value starting with `#` is the per-record form (`lib/flow/record-steps.js`, what
+// context-gauge.js's --record-steps writes). `allowed` and `targets` (the call's records, as
+// `#N`) go to that grammar, a refusal returns as next-steps-{its reason}, and `steps` is the
+// union; `stepArg` is the `record-steps={canonical}` token a continuation passes to /flow. A
+// flat value under more than one target -> next-steps-flat-multi-record: it cannot say which
+// record each step belongs to. Absent `targets` checks neither, by design. The parse has two
+// code callers: `bin/dispatch-prompt.js` (#4589) always passes `targets`, and
+// `resolveFirstCallGate` below forwards its own `targets`, absent (read here as `null`) when its
+// caller passes none. two-call-gate.md section 8's prose has every group pass its records to either, so a flat
+// value with one target stays flat — no code change.
+function parseNextSteps(reply, allowed = FLOW_STEPS, { targets = null } = {}) {
   const line = replyLines(reply).map((l) => NEXT_STEPS_LINE_RE.exec(l)).find(Boolean);
   if (!line) return fail('next-steps-missing', 'handoff without NEXT_STEPS');
   const raw = line[1].trim();
   if (raw === '') return fail('next-steps-empty', 'handoff with an empty NEXT_STEPS');
+  if (raw.startsWith('#')) {
+    const parsed = parseRecordSteps(raw, { allowed, targets });
+    if (!parsed.ok) return fail(`next-steps-${parsed.reason}`, `handoff NEXT_STEPS: ${parsed.message}`);
+    return { ok: true, steps: parsed.steps, recordSteps: parsed.recordSteps, stepArg: `record-steps=${parsed.canonical}` };
+  }
+  if (targets !== null && targets.length > 1) {
+    return fail('next-steps-flat-multi-record', `handoff NEXT_STEPS is a flat list but this call has several records (${targets.join(', ')}): it needs the per-record form, #N:step[,step];#M:none`);
+  }
   const parts = raw.split(',').map((s) => s.trim());
   const bad = parts.find((p) => !allowed.includes(p));
   if (bad !== undefined) {
@@ -388,7 +409,7 @@ function parseNextSteps(reply, allowed = FLOW_STEPS) {
   return { ok: true, steps: parts };
 }
 
-function resolveFirstCallGate({ reply, artifact }) {
+function resolveFirstCallGate({ reply, artifact, targets }) {
   const lines = replyLines(reply);
   const lastLine = lines.filter((l) => l.trim().length > 0).pop();
   const status = lastLine ? STATUS_LINE_RE.exec(lastLine) : null;
@@ -397,7 +418,7 @@ function resolveFirstCallGate({ reply, artifact }) {
   const outcomeLine = lines.map((l) => OUTCOME_LINE_RE.exec(l)).find(Boolean);
   const outcome = outcomeLine ? outcomeLine[1] : null;
   if (outcome === 'already-shipped') return 'already-shipped';
-  if (outcome === 'handoff') return parseNextSteps(reply, FIRST_CALL_STEPS).ok ? 'handoff' : 'blocked';
+  if (outcome === 'handoff') return parseNextSteps(reply, FIRST_CALL_STEPS, { targets }).ok ? 'handoff' : 'blocked';
   if (outcome !== 'build-test-ok') return 'blocked';
 
   if (artifact && artifact.ok === true) return 'dispatch';

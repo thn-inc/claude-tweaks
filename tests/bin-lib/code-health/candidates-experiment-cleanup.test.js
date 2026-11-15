@@ -94,6 +94,15 @@ test('normalizeBranch: two branches with different whitespace/comments but the s
   assert.strictEqual(normalizeBranch(a), normalizeBranch(b));
 });
 
+test('#3903 AC1.1 AC1.3: normalizeBranch keeps a // inside a string literal, so bodies differing after it stay different', () => {
+  assert.notStrictEqual(normalizeBranch('log("a//b");'), normalizeBranch('log("a//c");'));
+  assert.strictEqual(normalizeBranch('fetch("https://a.example/v1");'), 'fetch("https://a.example/v1");');
+});
+
+test('#3903 AC1.2 AC1.3: normalizeBranch still treats bodies differing only in a real // comment as equal', () => {
+  assert.strictEqual(normalizeBranch('doThing(); // one\n'), normalizeBranch('doThing(); // two\n'));
+});
+
 // ── matchBrace / findGuardBlock ──────────────────────────────────────────
 
 test('matchBrace: finds the matching closing brace, respecting nesting', () => {
@@ -303,6 +312,25 @@ test('identical-branches: a guard whose two branches are token-identical (whites
   const result = scanExperimentCleanup(root, { patterns: [CALL_SITE_PATTERN], excludes: [] });
   assert.deepStrictEqual(result.candidates.map((c) => c.flag), ['convergedFlag']);
   assert.ok(result.candidates[0].signals.includes('identical-branches'));
+});
+
+test('#3903 AC1.1: a guard whose branches differ only after a // inside a URL string is not identical-branches', () => {
+  const root = tmpGitRepo();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'src', 'client.js'),
+    [
+      "if (isEnabled('apiV2')) {",
+      '  fetchJson("https://api-v2.example.com/items");',
+      "} else {",
+      '  fetchJson("https://api.example.com/items");',
+      "}",
+      "",
+    ].join('\n'),
+  );
+  const result = scanExperimentCleanup(root, { patterns: [CALL_SITE_PATTERN], excludes: [] });
+  assert.strictEqual(result.sitesMatched, 1);
+  assert.deepStrictEqual(result.candidates, []);
 });
 
 test('zero-signal flag: substantive, distinct branches with no terminal/dated marker never becomes a candidate', () => {

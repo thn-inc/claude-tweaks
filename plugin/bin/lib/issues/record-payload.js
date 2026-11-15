@@ -2,16 +2,14 @@
 // Pure: record-payload/specShapedBody composition — one of record.js's four
 // split boundaries (#2805). recordPayload (facet values -> emitted labels +
 // body), specShapedBody (the shared Current State/Deliverables/Acceptance
-// Criteria/Release Note composer every born-ready producer uses), the
+// Criteria/Release Note composer every born-ready producer uses), and the
 // body-metadata-line readers that round-trip what specShapedBody writes
-// (Verified-as-of/Premise-check/Template), the generic markdown-section
-// extractor shared by compose-subject.js/decomposition-crossref.js/
-// grouping.js, and the backtick-fence helpers used when composing a body
-// that wraps arbitrary content. No network.
+// (Verified-as-of/Premise-check/Template). No network.
 'use strict';
 
 const nodePath = require('node:path');
 const { ORIGINS, TYPES, TIERS, CEREMONY_TIERS, PRIORITIES, LABELS } = require('./record-vocabulary');
+const { unfencedText } = require('../markdown-blocks');
 
 // The closed Defer-reason: vocabulary — the code twin of
 // skills/_shared/deferral-gate.md's "Defer-reason: vocabulary" section
@@ -29,7 +27,11 @@ const DEFER_REASONS = Object.freeze([
 // Matches a Defer-reason: line on ANY line of the body (the /m flag) — the
 // suppression check is "no line matching", per deferral-gate.md's hard gate;
 // the first line of the body is where the insert path and producers put it
-// (deferral-gate.md's "Where the reason lives").
+// (deferral-gate.md's "Where the reason lives"). Read through unfencedText: a
+// Defer-reason: line quoted inside a fenced block is never the record's own
+// (#4368). Still fence-blind, not covered by #4368: the Origin: readers
+// (provenance.js, trust.js) and the work-fingerprint reader — #4368 scopes to the
+// metadata lines an executor, the drift checks, or this insert path consume.
 const DEFER_REASON_LINE_RE = /^Defer-reason: (\S+)[ \t]*$/m;
 
 // Freshness stamp (#117): the commit each health-sweep skill actually read at
@@ -72,52 +74,6 @@ function oneOf(name, value, allowed) {
   }
 }
 
-// Returns a backtick fence at least one character longer than the longest run
-// of backticks found inside `text`, so a fenced code block wrapping arbitrary
-// finding content (a docs/skill/rule/CLAUDE.md excerpt) can never be closed
-// early by a ``` sequence already present in that content — GitHub's
-// fence-matching rule only treats a run of >= the opening fence's length as
-// a closer.
-function fenceFor(text) {
-  const runs = String(text).match(/`+/g) || [];
-  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
-  return '`'.repeat(Math.max(3, longest + 1));
-}
-
-function fencedBlock(text) {
-  const fence = fenceFor(text);
-  return `${fence}\n${text}\n${fence}`;
-}
-
-// lines -> [start, end] inclusive line-index ranges, one per fenced block: from
-// the opening fence line through its closing fence line, or lines.length - 1
-// when unclosed (a truncated fence is quoted content, the safer direction).
-// The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
-// and extractSection (#4169): an opener is a column-0 run of 3+ backticks or
-// tildes; the closer is the same character, at least the opener's length, and
-// nothing else on its line but trailing whitespace. Matches what fenceFor and
-// fencedBlock write.
-function fencedLineRanges(lines) {
-  const ranges = [];
-  let i = 0;
-  while (i < lines.length) {
-    const fenceMatch = lines[i].match(/^(`{3,}|~{3,})/);
-    if (!fenceMatch) {
-      i++;
-      continue;
-    }
-    const fenceChar = fenceMatch[1][0];
-    const fenceLen = fenceMatch[1].length;
-    const closeRe = new RegExp(`^${fenceChar}{${fenceLen},}\\s*$`);
-    let j = i + 1;
-    while (j < lines.length && !closeRe.test(lines[j])) j++;
-    const end = j < lines.length ? j : lines.length - 1;
-    ranges.push([i, end]);
-    i = end + 1;
-  }
-  return ranges;
-}
-
 // { title, body, type, origin?, risk?, size?, ceremony?, solutionUnjustified?, ready?, parked?, priority?, fingerprint?, deferReason? }
 // -> { title, body, labels: string[], type }
 // Validates supplied enum values; absence of an optional field never throws.
@@ -157,7 +113,7 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
   let reasonBody = body;
   if (deferReason !== undefined) {
     oneOf('deferReason', deferReason, DEFER_REASONS);
-    const existing = DEFER_REASON_LINE_RE.exec(body);
+    const existing = DEFER_REASON_LINE_RE.exec(unfencedText(body));
     if (existing) {
       if (existing[1] !== deferReason) {
         throw new Error(`body already carries "Defer-reason: ${existing[1]}" but deferReason is "${deferReason}"`);
@@ -201,6 +157,10 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
   return { title, body: finalBody, labels, type };
 }
 
+// The three extractors below read only unfenced lines: a metadata line inside
+// a fenced block is quoted content, never the record's own, so it never
+// matches (#4368).
+
 // body -> the git sha the sweep read when it filed this issue, or null when
 // absent (a pre-#117 issue, or a body that was never run through
 // specShapedBody's verifiedAsOf param). Consumers (e.g. bin/materialize.js)
@@ -210,7 +170,7 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
 // this reads recent.
 function extractVerifiedAsOf(body) {
   if (typeof body !== 'string' || !body) return null;
-  const m = VERIFIED_AS_OF_RE.exec(body);
+  const m = VERIFIED_AS_OF_RE.exec(unfencedText(body));
   return m ? m[1].toLowerCase() : null;
 }
 
@@ -220,7 +180,7 @@ function extractVerifiedAsOf(body) {
 // Current State claim still hold at base" before a build starts.
 function extractPremiseCheck(body) {
   if (typeof body !== 'string' || !body) return null;
-  const m = PREMISE_CHECK_RE.exec(body);
+  const m = PREMISE_CHECK_RE.exec(unfencedText(body));
   return m ? m[1].trim() : null;
 }
 
@@ -232,7 +192,7 @@ function extractPremiseCheck(body) {
 // version to decide whether the Proposed block needs re-deriving.
 function extractTemplateStamp(body) {
   if (typeof body !== 'string' || !body) return null;
-  const m = TEMPLATE_STAMP_RE.exec(body);
+  const m = TEMPLATE_STAMP_RE.exec(unfencedText(body));
   return m ? { path: m[1], version: m[2] } : null;
 }
 
@@ -254,48 +214,6 @@ function keyFilePathProblem(filePath) {
 
 function isRepoRelativeKeyFilePath(filePath) {
   return keyFilePathProblem(filePath) === null;
-}
-
-const ANY_HEADING_RE = /^#{1,6}[ \t]/;
-
-// body, heading text, options -> the section text under that heading, or ''
-// when absent. Shared line-boundary finder behind compose-subject.js's
-// Breaking Change/Release Note/Overview extraction, decomposition-crossref.js's
-// Gotchas/Prerequisites extraction, and grouping.js's Key Files extraction —
-// three independent re-implementations of the same "find a heading, walk
-// lines until the next one" loop (#2251 review row 18).
-//   levelPattern: the `{...}` regex-quantifier body for this heading's own
-//     level (default '2,4' — h2 through h4, decomposition-crossref.js's and
-//     grouping.js's shared original range).
-//   stopPattern: the level-class that terminates the section (default
-//     '1,6' — any heading; compose-subject.js overrides to '2' since its own
-//     sections may carry nested subsections that must stay inside them).
-//   trim: trim the joined result (default false, decomposition-crossref.js's
-//     and grouping.js's original behavior; compose-subject.js overrides true).
-// CRLF-normalized before matching — none of the three original
-// implementations did this, so a CRLF file (this repo has at least one,
-// `[IL-160]`) could silently fail every heading match; this fixes that as a
-// side effect rather than as its own goal. Headings inside fenced blocks are
-// quoted content and never match (#4169); a fenced line never stops the section.
-function extractSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false } = {}) {
-  if (typeof body !== 'string') return '';
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const headingRe = new RegExp(`^#{${levelPattern}}[ \\t]+${escaped}[ \\t]*$`);
-  const stopRe = new RegExp(`^#{${stopPattern}}[ \\t]`);
-  const lines = body.replace(/\r\n/g, '\n').split('\n');
-  const fenced = new Array(lines.length).fill(false);
-  for (const [s, e] of fencedLineRanges(lines)) {
-    for (let k = s; k <= e; k += 1) fenced[k] = true;
-  }
-  const start = lines.findIndex((line, idx) => !fenced[idx] && headingRe.test(line));
-  if (start === -1) return '';
-  const out = [];
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (!fenced[i] && stopRe.test(lines[i])) break;
-    out.push(lines[i]);
-  }
-  const joined = out.join('\n');
-  return trim ? joined.trim() : joined;
 }
 
 // { header?, currentState, deliverables, acceptanceCriteria?, openQuestion?, filedBy,
@@ -441,5 +359,4 @@ function specShapedBody({
 module.exports = {
   DEFER_REASONS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp,
-  fenceFor, fencedBlock, fencedLineRanges, extractSection,
 };

@@ -117,6 +117,21 @@ test('entry-paths.md cites buildNativeParentQuery, cross-spec-promise-check.md, 
   );
 });
 
+test('entry-paths.md enumerates siblings through bin/parent-gate.js --parent, never a hand-composed sub_issues call', (t) => {
+  assert.match(entryPaths, /bin\/parent-gate\.js" --parent \$PARENT_NUM/);
+  assert.ok(
+    !entryPaths.includes('issues/$PARENT_NUM/sub_issues'),
+    'the hand-composed sub_issues call must be gone (AC2.1)',
+  );
+  assert.match(entryPaths, /verdict's `state`/);
+  const preChange = countAtPreChangeOrSkip(t, ENTRY_PATHS_PATH, 'bin/parent-gate.js" --parent');
+  if (!preChange.ok) return;
+  assert.strictEqual(
+    preChange.count, 0,
+    'the --parent call must not have existed pre-change',
+  );
+});
+
 test('demo/SKILL.md renders Full verification between Show and Verdict, and has the Anti-Patterns row', (t) => {
   const showIdx = demoSkill.indexOf('**Show** — by Surface kind:');
   const verdictIdx = demoSkill.indexOf('### Verdict');

@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { POLICY_KEYS, RENAMED_KEYS, auditPolicy, resolveValue, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
+const { runCliSync } = require('./helpers/run-cli');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-schema-'));
@@ -142,8 +143,16 @@ test('POLICY_KEYS entries are unique', () => {
   // 75 -> 76, #4041: release-tip-moves — integer, default 2 — caps how far origin/{branch} may move past /release Step 3's reviewed tip before Step 5 holds the release
   // 76 -> 82, #4029: the six {fast-lane,standard}-run-{round-trip,procedure-kb,verify-minutes}-ceiling efficiency budgets — integer, min 0 (0 disables), p90-derived defaults
   // 82 -> 84, #4025 (express lane): express-lane — boolean opt-in, default false; express-review-sample-every — integer >= 1, default 5
-  assert.strictEqual(POLICY_KEYS.length, 84);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 84);
+  // 84 -> 97, #4609 (human-in-control policy keys): thirteen inert flat keys — control-mode, acceptance-target, deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds, owned-owners, trusted-authors, risk-categories
+  // 97 -> 98, #4609 (human-in-control policy keys): risk-path-globs — the second block-style key, a slug-to-glob-list map
+  // 98 -> 99, #4847: declare-claude-tweaks — boolean, default true — false stops /init Step 14 declaring claude-tweaks at project scope
+  // 99 -> 100, #5119: verify-suite-slots — integer >= 1, default 1 — the project-wide default for verify.js's machine-wide suite slots
+  // 100 -> 103, #5216 (pipeline driver admission): express-driver — enum off|split|on, default off; express-driver-wall-clock-minutes, express-driver-spend-ceiling-dollars — integer >= 1, ceilings
+  // 103 -> 104, #5222: express-driver-review — enum off|on|beyond-express, default beyond-express, policyOnly
+  // 104 -> 106, #5291 (trust verdict window bridge): trust-evaluation-window-days — integer >= 1, default 30; trust-follow-up-rate-max-percent — integer 0..100, default 30
+  // 106 -> 109, #5224: express-driver-max-size — enum low|medium, default low; express-driver-max-key-files — integer >= 1, default 3; express-driver-max-lines — integer >= 1, Shape B (base 40, derives auto-merge-max-lines while source is default); all policyOnly
+  assert.strictEqual(POLICY_KEYS.length, 109);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 109);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -655,6 +664,64 @@ test('trust-revert-window-days is a recognized integer key with a floor of 1, de
   assert.strictEqual(auditPolicy(negative).invalidValues.length, 1, 'a negative value must be flagged too');
 });
 
+test('AC6.1: trust-evaluation-window-days is a recognized integer key with a floor of 1, defaulting to 30', () => {
+  const key = POLICY_KEYS.find((k) => k.key === 'trust-evaluation-window-days');
+  assert.ok(key, 'trust-evaluation-window-days missing from POLICY_KEYS');
+  assert.strictEqual(key.type, 'integer');
+  assert.strictEqual(key.min, 1);
+  assert.strictEqual(key.default, 30);
+
+  const repo = tmpRepo();
+  writePolicy(repo, 'trust-evaluation-window-days: 45\n');
+  assert.deepStrictEqual(auditPolicy(repo).invalidValues, []);
+
+  for (const bad of ['0', '-5']) {
+    const dir = tmpRepo();
+    writePolicy(dir, `trust-evaluation-window-days: ${bad}\n`);
+    const result = auditPolicy(dir);
+    assert.strictEqual(result.invalidValues.length, 1, `${bad} is below the floor of 1 and must be flagged`);
+    assert.strictEqual(result.invalidValues[0].key, 'trust-evaluation-window-days');
+  }
+});
+
+test('AC6.1: trust-follow-up-rate-max-percent is an integer key bounded 0..100, defaulting to 30', () => {
+  const key = POLICY_KEYS.find((k) => k.key === 'trust-follow-up-rate-max-percent');
+  assert.ok(key, 'trust-follow-up-rate-max-percent missing from POLICY_KEYS');
+  assert.strictEqual(key.type, 'integer');
+  assert.strictEqual(key.min, 0);
+  assert.strictEqual(key.max, 100);
+  assert.strictEqual(key.default, 30);
+
+  for (const ok of ['0', '100']) {
+    const dir = tmpRepo();
+    writePolicy(dir, `trust-follow-up-rate-max-percent: ${ok}\n`);
+    assert.deepStrictEqual(auditPolicy(dir).invalidValues, [], `${ok} is inside 0..100`);
+  }
+  for (const bad of ['101', '-1', 'banana']) {
+    const dir = tmpRepo();
+    writePolicy(dir, `trust-follow-up-rate-max-percent: ${bad}\n`);
+    const result = auditPolicy(dir);
+    assert.strictEqual(result.invalidValues.length, 1, `${bad} must be flagged`);
+    assert.strictEqual(result.invalidValues[0].key, 'trust-follow-up-rate-max-percent');
+  }
+  assert.strictEqual(resolveValue('trust-follow-up-rate-max-percent', '101'), 30);
+});
+
+test('AC6.1: resolvePolicyKeys flags a malformed trust window and rate and resolves their defaults', () => {
+  const keys = ['trust-evaluation-window-days', 'trust-follow-up-rate-max-percent'];
+  const bad = resolvePolicyKeys(keys, { policyRaw: 'trust-evaluation-window-days: 0\ntrust-follow-up-rate-max-percent: 101\n' });
+  assert.strictEqual(bad['trust-evaluation-window-days'].value, 30);
+  assert.strictEqual(bad['trust-evaluation-window-days'].invalid, true);
+  assert.strictEqual(bad['trust-follow-up-rate-max-percent'].value, 30);
+  assert.strictEqual(bad['trust-follow-up-rate-max-percent'].invalid, true);
+
+  const good = resolvePolicyKeys(keys, { policyRaw: 'trust-evaluation-window-days: 45\ntrust-follow-up-rate-max-percent: 20\n' });
+  assert.strictEqual(good['trust-evaluation-window-days'].value, 45);
+  assert.strictEqual(good['trust-follow-up-rate-max-percent'].value, 20);
+  assert.strictEqual(good['trust-evaluation-window-days'].invalid, undefined);
+  assert.strictEqual(good['trust-follow-up-rate-max-percent'].invalid, undefined);
+});
+
 test('grant-veto-window-hours is a recognized integer key with a floor of 1, defaulting to 24', () => {
   const key = POLICY_KEYS.find((k) => k.key === 'grant-veto-window-hours');
   assert.ok(key, 'grant-veto-window-hours missing from POLICY_KEYS');
@@ -764,6 +831,15 @@ test('model-profiles: an unrecognized sub-field inside a valid row is accepted �
   writePolicy(repo, ['model-profiles:', '  standard:', '    speed: fast', ''].join('\n'));
   const result = auditPolicy(repo);
   assert.deepStrictEqual(result.invalidValues, []);
+});
+
+test('AC1.1: model-profiles audit sees the block when policy.yml has CRLF endings and a trailing comment on the key line (#4816)', () => {
+  const repo = tmpRepo();
+  writePolicy(repo, ['model-profiles:   # project overrides', '  bogus:', '    model: opus', ''].join('\r\n'));
+  const result = auditPolicy(repo);
+  assert.strictEqual(result.invalidValues.length, 1);
+  assert.strictEqual(result.invalidValues[0].key, 'model-profiles');
+  assert.deepStrictEqual(result.invalidValues[0].value, { bogus: true });
 });
 
 test('auditPolicy flags a valid policy.yml value for a source-excluded lever as sourceExcludedKeys, not silently accepted (#839)', () => {
@@ -932,4 +1008,162 @@ test('#4029 M4: the procedure-kb ceiling summaries say a run may read its proced
     assert.doesNotMatch(summary, /may load/, key);
     assert.ok(summary.length <= 140, `${key}: ${summary.length} chars`);
   }
+});
+
+// #5216: the express-driver keys — all policyOnly, so a --run config never sets them.
+const DRIVER_CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
+// In-process (#5384): the child's stdout is what the assertions parse; the cwd is the fixture repo.
+function driverCli(args, cwd) {
+  const r = runCliSync(DRIVER_CLI, args, { cwd, env: { ...process.env } });
+  return { stdout: r.stdout, stderr: r.stderr, status: r.code };
+}
+const DRIVER_KEYS = [
+  { id: 'AC11.1', key: 'express-driver', def: 'off', other: 'on', policyVal: 'split' },
+  { id: 'AC11.2', key: 'express-driver-wall-clock-minutes', def: 30, other: 99, policyVal: 5 },
+  { id: 'AC11.3', key: 'express-driver-spend-ceiling-dollars', def: 10, other: 77, policyVal: 5 },
+  { id: 'AC16.1', key: 'express-driver-review', def: 'beyond-express', other: 'on', policyVal: 'off' },
+  { id: 'AC7.1 (#5224)', key: 'express-driver-max-size', def: 'low', other: 'medium', policyVal: 'medium' },
+  { id: 'AC7.2 (#5224)', key: 'express-driver-max-key-files', def: 3, other: 9, policyVal: 5 },
+  { id: 'AC7.3 (#5224)', key: 'express-driver-max-lines', def: 40, other: 999, policyVal: 120 },
+];
+
+// AC7 (#5384): the fresh-project cwd is the only input that yields `off` — this repo's own policy.yml pins `on`.
+test('AC7.1: express-driver resolves off from the default in a fresh project', () => {
+  const repo = tmpRepo();
+  try {
+    const r = driverCli(['express-driver'], repo);
+    assert.deepStrictEqual(JSON.parse(r.stdout)['express-driver'], { value: 'off', source: 'default' });
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('AC6/express-driver: each value resolves; a malformed one falls back', () => {
+  for (const v of ['split', 'on']) {
+    assert.deepStrictEqual(resolvePolicyKeys(['express-driver'], { policyRaw: `express-driver: ${v}\n`, runConfigRaw: null })['express-driver'], { value: v, source: 'policy' });
+  }
+  assert.deepStrictEqual(resolvePolicyKeys(['express-driver'], { policyRaw: 'express-driver: half\n', runConfigRaw: null })['express-driver'], { value: 'off', source: 'default', invalid: true });
+});
+
+test('AC16: express-driver-review resolves its default from resolve-policy.js in a fresh project', () => {
+  const repo = tmpRepo();
+  try {
+    const r = driverCli(['express-driver-review'], repo);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual(JSON.parse(r.stdout)['express-driver-review'], { value: 'beyond-express', source: 'default' });
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('AC16: express-driver-review values resolve and a malformed one falls back', () => {
+  for (const v of ['off', 'on', 'beyond-express']) {
+    assert.deepStrictEqual(resolvePolicyKeys(['express-driver-review'], { policyRaw: `express-driver-review: ${v}\n`, runConfigRaw: null })['express-driver-review'], { value: v, source: 'policy' });
+  }
+  assert.deepStrictEqual(resolvePolicyKeys(['express-driver-review'], { policyRaw: 'express-driver-review: sometimes\n', runConfigRaw: null })['express-driver-review'], { value: 'beyond-express', source: 'default', invalid: true });
+});
+
+test('AC8.1: each ceiling resolves its default when unset, at or above the design targets', () => {
+  const r = resolvePolicyKeys(['express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars'], { policyRaw: '', runConfigRaw: null });
+  assert.deepStrictEqual(r['express-driver-wall-clock-minutes'], { value: 30, source: 'default' });
+  assert.ok(r['express-driver-wall-clock-minutes'].value >= 15);
+  assert.deepStrictEqual(r['express-driver-spend-ceiling-dollars'], { value: 10, source: 'default' });
+  assert.ok(r['express-driver-spend-ceiling-dollars'].value >= 5);
+});
+
+test('AC8.2: a ceiling below 1, negative or non-integer falls back invalid', () => {
+  const ceilings = ['express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars'];
+  for (const { key, def } of DRIVER_KEYS.filter((k) => ceilings.includes(k.key))) {
+    for (const bad of ['0', '-3', '1.5', 'abc']) {
+      assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${bad}\n`, runConfigRaw: null })[key], { value: def, source: 'default', invalid: true }, `${key}=${bad}`);
+    }
+  }
+});
+
+for (const { id, key, def, other, policyVal } of DRIVER_KEYS) {
+  test(`${id}: a run config cannot set ${key}`, () => {
+    const viaRun = resolvePolicyKeys([key], { policyRaw: '', runConfigRaw: `${key}: ${other}\n` })[key];
+    assert.deepStrictEqual(viaRun, { value: def, source: 'default' });
+    const withPolicy = resolvePolicyKeys([key], { policyRaw: `${key}: ${policyVal}\n`, runConfigRaw: `${key}: ${other}\n` })[key];
+    assert.deepStrictEqual(withPolicy, { value: policyVal, source: 'policy' });
+  });
+
+  test(`${id} via the CLI: resolve-policy.js --run ignores a run config that sets ${key}`, () => {
+    const repo = tmpRepo();
+    const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-driver-run-'));
+    try {
+      fs.writeFileSync(path.join(runDir, 'config.yml'), `${key}: ${other}\n`);
+      const r = driverCli(['--run', runDir, key], repo);
+      assert.deepStrictEqual(JSON.parse(r.stdout)[key], { value: def, source: 'default' });
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('AC8.3: each ceiling\'s doc row states its unit', () => {
+  const lines = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md')).split('\n');
+  // The summary cell alone: the key cell already spells the unit, so matching the whole row could not fail.
+  const summaryOf = (key) => lines.find((l) => l.startsWith(`| \`${key}\` |`)).split('|')[5];
+  assert.match(summaryOf('express-driver-wall-clock-minutes'), /\bminutes\b/i);
+  assert.match(summaryOf('express-driver-spend-ceiling-dollars'), /\bwhole dollars\b/i);
+});
+
+test('AC11.4: the policyOnly bullet names every DRIVER_KEYS key', () => {
+  const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
+  for (const { key } of DRIVER_KEYS) assert.ok(line.includes('`' + key + '`'), key);
+});
+
+// #5224: the driver lane bound keys.
+const LANE_KEYS = ['express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines'];
+const resolveLane = (policyRaw, runConfigRaw = null, keys = LANE_KEYS) => resolvePolicyKeys(keys, { policyRaw, runConfigRaw });
+
+test('AC5.1 (#5224): the size and Key File keys resolve the express values unset', () => {
+  const r = resolveLane('');
+  assert.deepStrictEqual(r['express-driver-max-size'], { value: 'low', source: 'default' });
+  assert.deepStrictEqual(r['express-driver-max-key-files'], { value: 3, source: 'default' });
+  assert.deepStrictEqual(r['express-driver-max-lines'], { value: 40, source: 'default' });
+});
+
+test('AC5.5 (#5224): express-driver-max-lines unset derives whatever auto-merge-max-lines holds', () => {
+  const k = ['express-driver-max-lines'];
+  assert.deepStrictEqual(resolveLane('auto-merge-max-lines: 77\n', null, k)['express-driver-max-lines'], { value: 77, source: 'default' });
+  assert.deepStrictEqual(resolveLane('auto-merge-max-lines: x\n', null, k)['express-driver-max-lines'], { value: 40, source: 'default' });
+  assert.deepStrictEqual(resolveLane('', 'auto-merge-max-lines: 55\n', k)['express-driver-max-lines'], { value: 55, source: 'default' });
+  assert.deepStrictEqual(resolveLane('express-driver-max-lines: 0\nauto-merge-max-lines: 77\n', null, k)['express-driver-max-lines'], { value: 77, source: 'default', invalid: true });
+});
+
+test('AC5.2 (#5224): the Key File default equals EXPRESS_MAX_KEY_FILES', () => {
+  const { EXPRESS_MAX_KEY_FILES } = require('../plugin/bin/lib/express/eligibility');
+  assert.strictEqual(POLICY_KEYS.find((k) => k.key === 'express-driver-max-key-files').default, EXPRESS_MAX_KEY_FILES);
+});
+
+test('AC5.3 (#5224): malformed values never widen', () => {
+  for (const bad of ['high', 'Medium', 'med']) {
+    assert.deepStrictEqual(resolveLane(`express-driver-max-size: ${bad}\n`)['express-driver-max-size'], { value: 'low', source: 'default', invalid: true }, bad);
+  }
+  for (const bad of ['0', '2.5', 'x']) {
+    assert.deepStrictEqual(resolveLane(`express-driver-max-key-files: ${bad}\n`)['express-driver-max-key-files'], { value: 3, source: 'default', invalid: true }, bad);
+  }
+  for (const bad of ['0', '-1', 'x']) {
+    assert.deepStrictEqual(resolveLane(`express-driver-max-lines: ${bad}\n`)['express-driver-max-lines'], { value: 40, source: 'default', invalid: true }, bad);
+  }
+});
+
+test('AC7.3 (#5224): a run config setting express-driver-max-lines and auto-merge-max-lines feeds only the derivation', () => {
+  const k = ['express-driver-max-lines'];
+  const both = 'express-driver-max-lines: 999\nauto-merge-max-lines: 55\n';
+  assert.deepStrictEqual(resolveLane('', both, k)['express-driver-max-lines'], { value: 55, source: 'default' });
+  assert.deepStrictEqual(resolveLane('auto-merge-max-lines: 77\n', both, k)['express-driver-max-lines'], { value: 55, source: 'default' });
+  assert.deepStrictEqual(resolveLane('express-driver-max-lines: 120\n', both, k)['express-driver-max-lines'], { value: 120, source: 'policy' });
+});
+
+test('(#5224) the express-driver-max-lines summary names the reviewer condition', () => {
+  const { summary } = POLICY_KEYS.find((k) => k.key === 'express-driver-max-lines');
+  assert.match(summary, /reviewer step is on/);
+  assert.ok(summary.length <= 140, `${summary.length}`);
+});
+
+test('AC5.4 (#5224): set values resolve from policy', () => {
+  const r = resolveLane('express-driver-max-size: medium\nexpress-driver-max-key-files: 5\nexpress-driver-max-lines: 120\n');
+  assert.deepStrictEqual(r['express-driver-max-size'], { value: 'medium', source: 'policy' });
+  assert.deepStrictEqual(r['express-driver-max-key-files'], { value: 5, source: 'policy' });
+  assert.deepStrictEqual(r['express-driver-max-lines'], { value: 120, source: 'policy' });
 });

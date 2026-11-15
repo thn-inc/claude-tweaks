@@ -24,7 +24,7 @@ const WIN_TRANSIENT_RENAME = new Set(['EPERM', 'EACCES', 'EBUSY']);
 const RENAME_RETRIES = 8;
 function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 
-function renameWithRetry(from, to, { rename, platform, sleep }) {
+function renameWithRetry(from, to, { rename = fs.renameSync, platform = process.platform, sleep = sleepSync } = {}) {
   for (let attempt = 0; ; attempt++) {
     try {
       rename(from, to);
@@ -56,4 +56,4 @@ function writeFileAtomic(filePath, content, {
   }
 }
 
-module.exports = { writeFileAtomic };
+module.exports = { writeFileAtomic, renameWithRetry };

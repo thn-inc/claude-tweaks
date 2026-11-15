@@ -134,7 +134,7 @@ test('update reports each escalated fingerprint exactly once even when the mutat
   assert.strictEqual(escalated[0].fingerprint, 'stuck');
 });
 
-test('update prints [] AND sets a failing exit code (not the computed-but-unpersisted escalation, and never a silent exit 0) when health-state persistence fails after retries', () => {
+test('update prints [] AND returns exit code 1, leaving process.exitCode untouched (not the computed-but-unpersisted escalation, and never a silent exit 0) when health-state persistence fails after retries', () => {
   const ds = fakeDurableStateThatFailsToPersist({
     retryQueue: [
       { fingerprint: 'stuck', payload: { title: 'Stuck' }, firstFailedAt: 'x', attempts: 2, lastError: 'timeout' },
@@ -145,24 +145,48 @@ test('update prints [] AND sets a failing exit code (not the computed-but-unpers
   fs.writeFileSync(resultsPath, JSON.stringify([
     { fingerprint: 'stuck', payload: { title: 'Stuck' }, ok: false, error: 'still failing' },
   ]));
-  // Save/restore process.exitCode around the call: update() sets it as a
-  // real side effect (the fix under test), and leaving it set to 1 would
-  // leak into this whole test FILE's own eventual exit code once node
-  // finishes running it, unrelated to whether every assertion here passes.
-  const originalExitCode = process.exitCode;
-  process.exitCode = undefined;
-  let out;
-  try {
-    out = captureStdout(() => update({ root: '/repo', _: ['update', resultsPath] }));
-    assert.strictEqual(
-      process.exitCode,
-      1,
-      'a genuinely failed durable write must set a non-zero exit code, or a calling shell/Routine checking $? sees success and never surfaces the failure',
-    );
-  } finally {
-    process.exitCode = originalExitCode;
-  }
+  // update() returns the code (the CLI wires it onto process.exitCode); it
+  // must never set process.exitCode itself.
+  const exitCodeBefore = process.exitCode;
+  let code;
+  const out = captureStdout(() => { code = update({ root: '/repo', _: ['update', resultsPath] }); });
+  assert.strictEqual(code, 1, 'a genuinely failed durable write must return a non-zero code, or a calling shell/Routine checking $? sees success and never surfaces the failure');
+  assert.strictEqual(process.exitCode, exitCodeBefore, 'update must not change process.exitCode');
   assert.deepStrictEqual(JSON.parse(out), [], 'must not report an escalation that was never actually persisted to retry-queue.json');
+});
+
+test('drain returns 0 and writes through an injected io', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  let out = '';
+  let err = '';
+  const seen = [];
+  const cmds = makeRetryQueueCommands({
+    readDurableState: (r) => { seen.push(r); return { retryQueue: [{ payload: { a: 1 } }] }; },
+    writeDurableState: () => ({ ok: true }),
+    io: { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => root },
+  });
+  const code = cmds.drain({ _: [] });
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(JSON.parse(out), [{ a: 1 }]);
+  assert.strictEqual(err, '');
+  assert.deepStrictEqual(seen, [root]);
+});
+
+test('update returns 0 on success and 2 on a missing results path, writing through an injected io', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  let out = '';
+  let err = '';
+  const cmds = makeRetryQueueCommands({
+    readDurableState: () => ({ retryQueue: [] }),
+    writeDurableState: (r, mutator) => { mutator({ retryQueue: [] }); return { ok: true }; },
+    io: { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => root },
+  });
+  assert.strictEqual(cmds.update({ _: ['update'] }), 2);
+  assert.match(err, /^usage: <cli>\.js retry-queue update/);
+  const resultsPath = path.join(root, 'results.json');
+  fs.writeFileSync(resultsPath, '[]');
+  assert.strictEqual(cmds.update({ _: ['update', resultsPath] }), 0);
+  assert.deepStrictEqual(JSON.parse(out), []);
 });
 
 test('update skips a malformed (e.g. null) results entry instead of crashing, and still processes well-formed siblings in the same batch', () => {
@@ -229,4 +253,63 @@ test('update prints [] when nothing crosses the escalation threshold', () => {
   fs.writeFileSync(resultsPath, JSON.stringify([{ fingerprint: 'new', payload: { title: 'New' }, ok: false, error: 'timeout' }]));
   const out = captureStdout(() => update({ root: '/repo', _: ['update', resultsPath] }));
   assert.deepStrictEqual(JSON.parse(out), []);
+});
+
+// A relative results path is read against the injected cwd, and a failure message
+// prints it exactly as the caller spelled it (not an absolute rebased path).
+test('update reads a relative results path against the injected cwd and prints that spelling in its error', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  let out = '';
+  let err = '';
+  const cmds = makeRetryQueueCommands({
+    readDurableState: () => ({ retryQueue: [] }),
+    writeDurableState: (r, mutator) => { mutator({ retryQueue: [] }); return { ok: true }; },
+    io: { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => root },
+  });
+  assert.strictEqual(cmds.update({ _: ['update', 'missing-results.json'] }), 1);
+  assert.match(err, /^retry-queue update: could not read or parse missing-results\.json: /);
+  assert.ok(!err.includes(root), 'the message must not print the cwd-resolved absolute path');
+  fs.writeFileSync(path.join(root, 'results.json'), '[]');
+  assert.strictEqual(cmds.update({ _: ['update', 'results.json'] }), 0);
+  assert.deepStrictEqual(JSON.parse(out), []);
+});
+
+// Pre-#5380 outcomes for two malformed inputs, which a textual path.resolve would change:
+// the kernel, not the helper, must see the path exactly as written.
+function updateAgainst(cwd, resultsArg) {
+  let out = '';
+  let err = '';
+  const cmds = makeRetryQueueCommands({
+    readDurableState: () => ({ retryQueue: [] }),
+    writeDurableState: (r, mutator) => { mutator({ retryQueue: [] }); return { ok: true }; },
+    io: { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => cwd },
+  });
+  const code = cmds.update({ _: ['update', resultsArg] });
+  return { code, out, err };
+}
+
+// Win32 strips trailing separators and collapses `..` as text before the
+// filesystem sees a path, for a bare relative read and the joined path alike,
+// so the POSIX kernel behavior the next two tests pin does not exist there.
+const POSIX_KERNEL_ONLY = process.platform === 'win32'
+  ? 'Win32 resolves trailing separators and `..` lexically, so there is no kernel behavior to preserve'
+  : false;
+
+test('update keeps a trailing slash on a file path for the kernel: still exit 1 (ENOTDIR), not a silent []', { skip: POSIX_KERNEL_ONLY }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  fs.writeFileSync(path.join(root, 'results.json'), '[]');
+  const r = updateAgainst(root, 'results.json/');
+  assert.strictEqual(r.code, 1);
+  assert.match(r.err, /^retry-queue update: could not read or parse results\.json\/: /);
+  assert.strictEqual(r.out, '');
+});
+
+test('update leaves a `..` after a symlink to the kernel: link/../x resolves through the link target', { skip: POSIX_KERNEL_ONLY }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  fs.mkdirSync(path.join(root, 'other', 'deep'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'other', 'only-there.json'), '[]');
+  fs.symlinkSync(path.join(root, 'other', 'deep'), path.join(root, 'link'), 'dir');
+  const r = updateAgainst(root, 'link/../only-there.json');
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(JSON.parse(r.out), []);
 });

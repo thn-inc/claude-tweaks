@@ -45,7 +45,7 @@ resolution the Review Console's auto-merge short-circuit already performs.
 Add `--no-suite` when the project's full test command already ran earlier in this same wrap-up
 (e.g. via `/claude-tweaks:test`) and re-running it would only cost time without new information —
 the CLI reports `unknown: skipped via --no-suite` for that probe rather than silently treating a
-skip as a pass. Add `--json` when reading the findings programmatically instead of parsing the
+skip as a pass. Under the declaration's `localRuns: "on-request"` (`test/ci-source.md`) the probe never runs the suite either: it reports `unknown: not run on this machine — …` naming the declared CI job, and this run's suite state comes from the pass stamp, as for a pack-fed residue. Add `--json` when reading the findings programmatically instead of parsing the
 CLI's own markdown table.
 
 ### Resolving `{base}`
@@ -57,7 +57,7 @@ the first the next time either is touched.
 ## Writing findings to the ledger
 
 For each finding the CLI returns, add a row to this run's ledger (`ledger/SKILL.md`'s Add Item
-operation): `Phase: wrap-up`, `Item`: `{kind} — {subject} — {evidence}`, `Status: open`. Apply the
+operation, written with `hooks.js ledger-row` per `_shared/ledger-format.md`'s Writer section): `Phase: wrap-up`, `Item`: `{kind} — {subject} — {evidence}`, `Status: open`. Apply the
 ledger's own semantic-duplicate check first (`ledger/SKILL.md`'s Add Item section) — a finding
 matching an existing item's phase and description is a duplicate, not a second row. If
 `pack.ledger`'s `value.files` is empty (no ledger this run owns yet — the standalone case this
@@ -74,7 +74,7 @@ gate.
 Under `integration-model: pr-first`, `pack.residue`'s `value.results` carries the forge probe's
 result with an `ownPr` field (`{number, headRefName}`, or `null` when unset or not open) — the
 same field the manual CLI's `--own-pr` above produces. When `ownPr` is non-null, add exactly one
-`Phase: wrap-up` ledger row for it: `Item`: `pr — PR #{ownPr.number} — this run's own pr-first PR;
+`Phase: wrap-up` ledger row for it (`hooks.js ledger-row`, `_shared/ledger-format.md`'s Writer section): `Item`: `pr — PR #{ownPr.number} — this run's own pr-first PR;
 disposition is Phase 4's merge decision`, `Status: observation` — never `Status: open`, and never
 routed to a backlog record. The PR is this run's own deliverable, open by design until Phase 4's
 Review Console decides merge/arm/park; that decision, not this preamble, is its disposition. A

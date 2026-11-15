@@ -177,8 +177,16 @@ test('worktreePathForBranch: finds the live linked worktree checked out on the g
   const root = basicRepo();
   const wt = path.join(root, '.claude', 'worktrees', 'feat');
   execFileSync('git', ['worktree', 'add', '-q', '-b', 'feat-branch', wt], { cwd: root });
+  // The expected path comes from git's own listing, spelled the way git prints it
+  // (forward slashes on Git for Windows), so it matches worktreePathForBranch on every platform.
+  const porcelain = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: root, encoding: 'utf8' });
+  const listedWt = porcelain.split('\n')
+    .filter((line) => line.startsWith('worktree '))
+    .map((line) => line.slice('worktree '.length))
+    .find((p) => p.replace(/\\/g, '/').endsWith('/.claude/worktrees/feat'));
+  assert.ok(listedWt, porcelain);
 
-  assert.strictEqual(worktreePathForBranch(root, 'feat-branch'), wt);
+  assert.strictEqual(worktreePathForBranch(root, 'feat-branch'), listedWt);
 });
 
 test('worktreePathForBranch: never returns the main checkout even when its branch is asked for', () => {

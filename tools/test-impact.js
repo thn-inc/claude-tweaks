@@ -3,7 +3,7 @@
 // tools/test-impact.js — refreshes the test-impact map verify.js's impact selection reads (#4024).
 //
 //   trace [--out <path>] [--allow-dirty]
-//     Runs the full suite (`node {repo}/tools/run-tests.js`) under tools/test-impact/tracer.js and folds
+//     Runs the full suite (`node {repo}/tools/run-tests.js --full`) under tools/test-impact/tracer.js and folds
 //     the trace files into a map (tools/test-impact/build-map.js) recording HEAD and the suite's exit
 //     code — a failing suite still writes its map, which verify.js then refuses as
 //     map-from-failing-suite. A run in which a traced process could not record a read (a `.lost` marker)
@@ -191,7 +191,7 @@ async function trace(args, deps) {
     env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${req}` : req;
 
     if (interrupted) return interruptedExit();
-    child = deps.spawn(deps.execPath, [path.join(root, 'tools', 'run-tests.js')], { cwd: root, env });
+    child = deps.spawn(deps.execPath, [path.join(root, 'tools', 'run-tests.js'), '--full'], { cwd: root, env });
     const result = await waitForExit(child);
     // A signal delivered alongside the suite's own exit must run its handler before the check below.
     await new Promise((resolve) => setImmediate(resolve));

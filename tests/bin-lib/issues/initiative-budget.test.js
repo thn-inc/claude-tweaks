@@ -214,3 +214,104 @@ test('a caller-supplied budget can tighten the caps', () => {
   assert.strictEqual(r.allowed, false);
   assert.match(r.reason, /budget exhausted/);
 });
+
+test('#4636: an allowed fix does not hold', () => {
+  const r = permittedInitiative(base());
+  assert.strictEqual(r.allowed, true, r.reason);
+  assert.strictEqual(r.hold, false);
+});
+
+test('#4636: a clean fix denied only by the ceiling, budget or a cap is approvable (hold false)', () => {
+  const cases = [
+    { ...base(), ceiling: 'supervised' },
+    { ...base(), spent: DEFAULT_BUDGET.maxFixes },
+    { ...base(), fix: { ...base().fix, files: ['a.md', 'b.md', 'c.md'] } },
+    { ...base(), fix: { ...base().fix, changedLines: DEFAULT_BUDGET.maxLinesPerFix + 1 } },
+  ];
+  for (const input of cases) {
+    const r = permittedInitiative(input);
+    assert.strictEqual(r.allowed, false, JSON.stringify(input));
+    assert.strictEqual(r.hold, false, r.reason);
+  }
+});
+
+const FLOOR_DENIALS = {
+  'test file': (b) => ({ ...b, fix: { ...b.fix, files: ['tests/a.test.js'] } }),
+  'merge-sensitive path': (b) => ({ ...b, sensitivePaths: ['docs/**'] }),
+  'brokenBy outside the causal set': (b) => ({ ...b, fix: { ...b.fix, brokenBy: 'not/changed.md' } }),
+  'no brokenBy': (b) => ({ ...b, fix: { ...b.fix, brokenBy: '' } }),
+  'untaught kind': (b) => ({ ...b, fix: { ...b.fix, kind: 'typo' } }),
+  'no files': (b) => ({ ...b, fix: { ...b.fix, files: [] } }),
+  'malformed file path': (b) => ({ ...b, fix: { ...b.fix, files: [''] } }),
+  'no changed-line count': (b) => ({ ...b, fix: { ...b.fix, changedLines: undefined } }),
+  'no fix': (b) => ({ ...b, fix: null }),
+};
+
+test('AC1.1 (#4636): every floor denial holds', () => {
+  for (const [label, make] of Object.entries(FLOOR_DENIALS)) {
+    const r = permittedInitiative(make(base()));
+    assert.strictEqual(r.allowed, false, label);
+    assert.strictEqual(r.hold, true, label);
+  }
+  assert.strictEqual(permittedInitiative(undefined).hold, true, 'no input names no fix');
+});
+
+test('AC1.1 (#4636): a floor denial holds whichever check fails first', () => {
+  const earlier = {
+    'ceiling': (i) => ({ ...i, ceiling: 'supervised' }),
+    'budget': (i) => ({ ...i, spent: DEFAULT_BUDGET.maxFixes }),
+    'lines cap': (i) => (i.fix ? { ...i, fix: { ...i.fix, changedLines: DEFAULT_BUDGET.maxLinesPerFix + 1 } } : i),
+    'files cap': (i) => (i.fix ? { ...i, fix: { ...i.fix, files: [...(i.fix.files || []), 'x1.md', 'x2.md', 'x3.md'] } } : i),
+  };
+  for (const [floor, make] of Object.entries(FLOOR_DENIALS)) {
+    for (const [check, worsen] of Object.entries(earlier)) {
+      if (floor === 'no changed-line count' && check === 'lines cap') continue; // lines cap replaces the missing count
+      if (floor === 'no files' && check === 'files cap') continue; // files cap replaces the empty list
+      const r = permittedInitiative(worsen(make(base())));
+      assert.strictEqual(r.allowed, false, `${floor} + ${check}`);
+      assert.strictEqual(r.hold, true, `${floor} + ${check}: ${r.reason}`);
+    }
+  }
+});
+
+test('#4636: an unknown or non-string ceiling holds; supervised does not', () => {
+  for (const ceiling of ['bogus', 'Trusted', 'TRUSTED', 7, null, undefined, {}]) {
+    const r = permittedInitiative({ ...base(), ceiling });
+    assert.strictEqual(r.allowed, false, String(ceiling));
+    assert.strictEqual(r.hold, true, String(ceiling));
+  }
+  assert.strictEqual(permittedInitiative({ ...base(), ceiling: 'supervised' }).hold, false);
+});
+
+test('#4636: a root-level file under a **/ pattern is merge-sensitive', () => {
+  const r = permittedInitiative({ ...base(), fix: { ...base().fix, files: ['package-lock.json'] }, sensitivePaths: ['**/package-lock.json'] });
+  assert.strictEqual(r.allowed, false);
+  assert.strictEqual(r.hold, true);
+});
+
+test('#4636: the reported reason stays the first failing check', () => {
+  const r = permittedInitiative({ ...base(), spent: DEFAULT_BUDGET.maxFixes, fix: { ...base().fix, files: ['tests/a.test.js'] } });
+  assert.match(r.reason, /budget exhausted/);
+  assert.strictEqual(r.hold, true);
+});
+
+test('#4636: a case variant of a merge-sensitive path holds (a case-insensitive filesystem lands it on the sensitive file)', () => {
+  const r = permittedInitiative({ ...base(), fix: { ...base().fix, files: ['Docs/A.md'] }, sensitivePaths: ['docs/**'] });
+  assert.strictEqual(r.allowed, false);
+  assert.strictEqual(r.hold, true);
+  assert.match(r.reason, /merge-sensitive path "Docs\/A\.md"/);
+  assert.strictEqual(permittedInitiative({ ...base(), fix: { ...base().fix, files: ['docs/a.md'] }, sensitivePaths: ['DOCS/**'] }).hold, true, 'an upper-case glob');
+  assert.strictEqual(permittedInitiative({ ...base(), fix: { ...base().fix, files: ['Other/A.md'] }, sensitivePaths: ['docs/**'] }).allowed, true);
+});
+
+test('#4636: an unreadable sensitivePaths holds, an empty list does not', () => {
+  for (const sensitivePaths of [undefined, 'docs/**', [7], null, {}]) {
+    const r = permittedInitiative({ ...base(), sensitivePaths });
+    assert.strictEqual(r.allowed, false, String(sensitivePaths));
+    assert.strictEqual(r.hold, true, String(sensitivePaths));
+    assert.match(r.reason, /merge-sensitive-paths unreadable/, String(sensitivePaths));
+  }
+  const { sensitivePaths: _omitted, ...withoutKey } = base();
+  assert.strictEqual(permittedInitiative(withoutKey).hold, true, 'an omitted key');
+  assert.strictEqual(permittedInitiative({ ...base(), sensitivePaths: [] }).allowed, true);
+});

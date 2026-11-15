@@ -12,11 +12,26 @@ one line before the rest of this step's own output:
 
 `{n} excluded — blocked by an open dependency: #{a} (blocked by #{x}), #{b} (blocked by #{y}, #{z})`
 
+A `blockedBy` entry that is a string — `owner/name#N`, a blocker linked natively or declared by a
+`Blocked by owner/name#N` line, optionally suffixed ` (state unreadable)` when its state could not be read (#4793) —
+renders verbatim, never with a `#` prefix; a number renders as `#N`.
+
 Then read the same file's `reason: 'target-missing'` entries (`records: [number], detail: {path}`
 each, #1983 — `queue-pull-script.md` names this report as their reader) and render one line per
 record, under the same exception and empty-array rules below:
 
 `#{number} excluded — named target {path} no longer exists at the integration tip (Close proposal staged)`
+
+Then read the same file's `reason: 'unlanded-blocker'` entries (`records: [number], detail:
+{blockers: [{blocker, commit}]}` each, #4792 — `queue-pull-script.md`'s unlanded-blocker pass) and
+render one line per record, under the same exception and empty-array rules below:
+
+`#{number} excluded — blocker not landed: #{blocker} (closing commit {commit}), … — eligible again once it reaches the integration branch`
+
+Then its `reason: 'malformed-blocker'` entries (`records: [number], detail: {cause}` each, #4792 —
+the same pass), one line per record, under the same rules:
+
+`#{number} excluded — malformed blocker declaration: {cause} — eligible again once its blocker declaration can be checked`
 
 **Exception — the headless drain steady state.** When this is drain (or `next`) and the
 zero-eligible-groups case (`SKILL.md` Step 3) applies, render nothing here either, same as that

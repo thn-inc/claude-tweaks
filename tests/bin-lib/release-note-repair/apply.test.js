@@ -113,11 +113,11 @@ test('prepareRepair: a line failing a bound is reported, not weakened', () => {
   assert.deepEqual(out, { outcome: 'bounds', violations: ['record-ref', 'conventional-prefix'] });
 });
 
-test('prepareRepair: a live body that is no longer Release-Note-only is stale; a mid-line AC is a failure', () => {
+test('prepareRepair: a live body that is no longer Release-Note-only is stale; a mid-line AC mention is no AC section, so stale (#4367)', () => {
   assert.equal(prepareRepair({ liveBody: F.MISSING_RN_WITH_TBD, expectSha: bodySha(F.MISSING_RN_WITH_TBD), line: F.LINE }).outcome, 'stale');
   const midline = prepareRepair({ liveBody: F.MIDLINE_AC, expectSha: bodySha(F.MIDLINE_AC), line: F.LINE });
-  assert.equal(midline.outcome, 'failed');
-  assert.match(midline.reason, /Acceptance Criteria/);
+  assert.equal(midline.outcome, 'stale');
+  assert.match(midline.reason, /no longer Release-Note-only/);
 });
 
 test('prepareRepair: a checker scan error on the live body is a failure, not stale', () => {
@@ -145,4 +145,28 @@ test('verifyWritten: a body that drifted beyond the Release Note section (e.g. T
   assert.match(checkBody(drifted).verdict, /conforming/);
   const problems = verifyWritten({ before, after: { body: drifted, labels: before.labels }, line: F.LINE });
   assert.ok(problems.some((p) => /more than the Release Note section changed/.test(p)), problems.join('; '));
+});
+
+test('applyReleaseNote reads a backtick opener with a backtick in its info string as prose, as the gate does (#4350)', () => {
+  const body = F.join(F.CS, F.DEL, F.AC, '```foo``` is the command\n', F.TA);
+  const out = applyReleaseNote(body, F.LINE);
+  assert.equal(checkBody(out.body).verdict, 'conforming');
+  assert.ok(out.body.indexOf('## Release Note') < out.body.indexOf('## Technical Approach'));
+});
+
+test('applyReleaseNote reads a 4-space or tab "closer" as no closer, so the fence stays unterminated and repair refuses, as the gate does (#4350)', () => {
+  for (const pad of ['    ', '\t']) {
+    const body = F.join(F.CS, F.DEL, F.AC, `\`\`\`\ncode\n${pad}\`\`\`\n`, F.TA);
+    assert.notEqual(checkBody(body).verdict, 'release-note-only', JSON.stringify(pad));
+    assert.throws(() => applyReleaseNote(body, F.LINE), RepairError, JSON.stringify(pad));
+  }
+});
+
+test('applyReleaseNote reads a 4-space or tab "opener" as no fence, as the gate does (#4350)', () => {
+  for (const pad of ['    ', '\t']) {
+    const body = F.join(F.CS, F.DEL, F.AC, `${pad}\`\`\`\n`, F.TA);
+    const out = applyReleaseNote(body, F.LINE);
+    assert.equal(checkBody(out.body).verdict, 'conforming', JSON.stringify(pad));
+    assert.ok(out.body.indexOf('## Release Note') < out.body.indexOf('## Technical Approach'));
+  }
 });

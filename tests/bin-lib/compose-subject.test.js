@@ -24,7 +24,13 @@ const RECORDS = {
   2269: { number: 2269, title: 'Wontfix footer', body: '## Overview\n\nFooter shape two.\n\n## Release Note\n\nNote with wontfix footer.\n\n_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._', labels: [{ name: 'type:task' }], issueType: null },
   2271: { number: 2271, title: 'Footer-only release note', body: '## Overview\n\nOnly a footer.\n\n## Release Note\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
   2272: { number: 2272, title: 'CRLF footer', body: '## Overview\r\n\r\nCRLF footer.\r\n\r\n## Release Note\r\n\r\nNote with CRLF footer.\r\n\r\n_Filed by `x` via specShapedBody._\r\n', labels: [{ name: 'type:task' }], issueType: null },
+  10: { number: 10, title: 'Bundle lowest', body: '## Overview\n\nLowest record.\n\n## Release Note\n\nAdded the lowest thing.\n', labels: [{ name: 'type:bug' }], issueType: null },
+  11: { number: 11, title: 'Bundle middle', body: '## Overview\n\nMiddle record.\n\n## Release Note\n\nFixed the middle thing.\n', labels: [{ name: 'type:task' }], issueType: null },
+  12: { number: 12, title: 'Bundle top', body: '## Overview\n\nTop record.\n\n## Release Note\n\nChanged the top thing.\n', labels: [{ name: 'type:task' }], issueType: null },
   2273: { number: 2273, title: 'Footer-shaped prose mid-note', body: '## Overview\n\nMid-note line.\n\n## Release Note\n\n_Filed by the planner_\n\nMore note after.\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
+  2280: { number: 2280, title: 'Release Note behind an unclosed fence', body: '## Overview\n\nFenced.\n\n```\nnever closed\n\n## Release Note\n\nHidden note.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2281: { number: 2281, title: 'Breaking Change behind an unclosed fence', body: '## Overview\n\nB.\n\n```\nopen\n\n## Breaking Change\n\nUse --new.\n\n## Release Note\n\nNote.\n', labels: [{ name: 'type:feature' }, { name: 'breaking' }], issueType: null },
+  2282: { number: 2282, title: 'Unclosed fence, no Release Note at all', body: '## Overview\n\nFenced.\n\n```\nnever closed\n', labels: [{ name: 'type:task' }], issueType: null },
 };
 
 function fakeDeps({
@@ -91,12 +97,38 @@ test('single record: conventional subject from type label, summary from Overview
   assert.ok(out.calls[0].includes('number,title,body,labels,issueType'));
 });
 
-test('bundle: releaseNote is derived from the subject record only — a companion record\'s own section is required but never rendered', () => {
+test('bundle: every record\'s Release Note renders, lowest number first (#4634 flips #2580 AC 3)', () => {
   const { deps, out } = fakeDeps();
   assert.equal(run(['2251,2252'], deps), 0, out.stderr);
   const parsed = JSON.parse(out.stdout);
-  assert.match(parsed.body, /Release-Note: Made merge subjects Conventional Commits shaped\./);
-  assert.ok(!parsed.body.includes('Made reconcile squash-aware.'), parsed.body);
+  assert.ok(parsed.body.includes('Release-Note: Made merge subjects Conventional Commits shaped.\nRelease-Note: Made reconcile squash-aware.'), parsed.body);
+});
+
+const BUNDLE_NOTES = 'Release-Note: Added the lowest thing.\nRelease-Note: Fixed the middle thing.\nRelease-Note: Changed the top thing.';
+
+test('AC1.1: compose-subject 10,11,12 writes three Release-Note lines in number order, then the Fixes lines', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['12,10,11'], deps), 0, out.stderr);
+  assert.equal(JSON.parse(out.stdout).body, `Lowest record.\n\n${BUNDLE_NOTES}\n\nFixes #10\nFixes #11\nFixes #12`);
+});
+
+test('AC1.2: with --keep-open 11 the body still has three notes, and #11\'s footer line is Refs #11', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['10,11,12', '--keep-open', '11'], deps), 0, out.stderr);
+  assert.equal(JSON.parse(out.stdout).body, `Lowest record.\n\n${BUNDLE_NOTES}\n\nFixes #10\nRefs #11\nFixes #12`);
+});
+
+test('AC2.1: compose-subject 10 output equals the pre-#4634 composer byte for byte', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['10'], deps), 0, out.stderr);
+  assert.equal(out.stdout, '{"title":"fix: Bundle lowest (#10)","body":"Lowest record.\\n\\nRelease-Note: Added the lowest thing.\\n\\nFixes #10"}\n');
+});
+
+test('AC3.1: a bundle where any record has an empty ## Release Note section still fails with the existing message', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['10,11,2271'], deps), 1);
+  assert.match(out.stderr, /record\(s\) #2271 carry no non-empty "## Release Note" section/);
+  assert.equal(out.stdout, '');
 });
 
 test('exit 1: a record with no ## Release Note section fails loudly, regardless of breaking', () => {
@@ -167,7 +199,7 @@ test('bundle: subject from the lowest number, one Fixes line per record ascendin
   assert.equal(run(['2252,2251', '--tag', 'auto-merge'], deps), 0, out.stderr);
   const parsed = JSON.parse(out.stdout);
   assert.equal(parsed.title, 'feat: Merge-time conventional subject (#2251)');
-  assert.equal(parsed.body, 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\n\nFixes #2251\nFixes #2252');
+  assert.equal(parsed.body, 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\nRelease-Note: Made reconcile squash-aware.\n\nFixes #2251\nFixes #2252');
 });
 
 test('bundle Type aggregation: a type:feature sibling wins over the lowest-numbered type:task record (discriminating: the old lowest-record-only logic yields chore: here)', () => {
@@ -795,15 +827,45 @@ test('--keep-open: a number outside the record list, or a malformed value, exits
   assert.match(out.stderr, /--keep-open names #2252, not in the record list/);
 });
 
-test('--keep-open absent: the body is byte-identical to the pre-#4199 composer, JSON and --out-dir alike', () => {
-  const PRE_4199_BODY = 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\n\nFixes #2251\nFixes #2252';
+test('--keep-open absent: every footer line is Fixes, JSON and --out-dir alike', () => {
+  const NO_KEEP_OPEN_BODY = 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\nRelease-Note: Made reconcile squash-aware.\n\nFixes #2251\nFixes #2252';
   const json = fakeDeps();
   assert.equal(run(['2251,2252', '--tag', 'auto-merge'], json.deps), 0, json.out.stderr);
-  assert.equal(json.out.stdout, `${JSON.stringify({ title: 'feat: Merge-time conventional subject (#2251)', body: PRE_4199_BODY })}\n`);
+  assert.equal(json.out.stdout, `${JSON.stringify({ title: 'feat: Merge-time conventional subject (#2251)', body: NO_KEEP_OPEN_BODY })}\n`);
   const files = fakeDeps();
   assert.equal(run(['2251,2252', '--tag', 'auto-merge', '--out-dir', '/x/subj'], files.deps), 0, files.out.stderr);
-  assert.equal(files.out.files[require('node:path').join('/x/subj', 'body.md')], PRE_4199_BODY);
+  assert.equal(files.out.files[require('node:path').join('/x/subj', 'body.md')], NO_KEEP_OPEN_BODY);
   assert.deepEqual(parseArgs(['2251']).keepOpen, []);
   const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
   assert.match(USAGE, /\[--keep-open <n>\[,<m>\.\.\.\]\]/);
+});
+
+test('exit 1: a Release Note hidden by an unclosed fence is named as the fence, not as missing (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2280'], deps), 1);
+  assert.equal(out.stderr, 'compose-subject.js: record(s) #2280 (unclosed-fence at line 5) hide their "## Release Note" section behind an unclosed code fence — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: a Breaking Change hidden by an unclosed fence is named as the fence (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2281'], deps), 1);
+  assert.equal(out.stderr, 'compose-subject.js: breaking is set on #2281 (unclosed-fence at line 5) but an unclosed code fence hides the "## Breaking Change" section — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: a bundle with both a missing and a hidden Release Note prints both lines, missing first (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2280,2290'], deps), 1);
+  assert.equal(out.stderr,
+    'compose-subject.js: record(s) #2290 carry no non-empty "## Release Note" section\n'
+    + 'compose-subject.js: record(s) #2280 (unclosed-fence at line 5) hide their "## Release Note" section behind an unclosed code fence — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: an unclosed fence with no Release Note heading behind it keeps the missing-section message (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2282'], deps), 1);
+  assert.match(out.stderr, /record\(s\) #2282 carry no non-empty "## Release Note" section/);
+  assert.doesNotMatch(out.stderr, /unclosed-fence/);
 });

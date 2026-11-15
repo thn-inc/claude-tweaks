@@ -59,7 +59,7 @@ function renderSection({ version, previousTag, date, commits, repo }) {
   const notes = breaking.length ? `### ⚠ BREAKING CHANGES\n\n${breaking.map(note).join('')}\n` : '';
   // Positioned after BREAKING CHANGES and before the type-grouped sections —
   // first when there's no breaking block to follow (#2581 AC9/AC10). null
-  // (no commit carries a non-empty releaseNote) omits the block entirely,
+  // (no commit carries a renderable release note) omits the block entirely,
   // never an empty ### Highlights heading with no content (AC11).
   const highlights = renderReleaseNotes(commits);
   const highlightsSection = highlights !== null ? `### Highlights\n\n${highlights}\n\n` : '';

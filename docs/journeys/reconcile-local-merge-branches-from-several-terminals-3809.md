@@ -5,6 +5,7 @@ files:
   - plugin/bin/compose-subject.js
   - plugin/bin/log-decision.js
   - plugin/skills/_shared/scratch-worktree.md
+  - plugin/skills/_shared/local-merge-sequence.md
 ---
 
 # Reconcile `local-merge` Branches From Several Terminals
@@ -32,7 +33,7 @@ files:
 
 ### 3. Close only this branch's run, then merge
 - **URL:** none — main checkout
-- **Action:** `hooks.js close-run --run "{run-dir}"` runs for this branch's run alone, then `git merge --no-ff {branch} -F "{subject-dir}/message.txt"`.
+- **Action:** `hooks.js close-run --run "{run-dir}"` runs for this branch's run alone, then `git merge --no-ff {branch} -F "{subject-dir}/message.txt"` — `_shared/local-merge-sequence.md`'s Steps 2 and 3, run once per branch.
 - **Should feel:** Targeted — other terminals' unrelated runs are never touched.
 - **Should understand:** `git merge` itself is not gated by the working-directory hook. Closing just before the merge keeps the window in which a closed run has no merged branch as short as it can be.
 - **Red flags:** A sweep closing every run under `.claude-tweaks/pipelines/*/`; a sibling session's run losing its worktree assignment.
@@ -46,7 +47,7 @@ files:
 
 ### 5. A failure after the close re-protects the run
 - **URL:** none — main checkout
-- **Action:** A branch-guard abort at the merge (the checkout moved after the close), a failed merge (aborted), a resolution abandoned or stopped before it lands, or a failed push (including no linked worktree left to push from) re-stamps each affected run with `env -u CLAUDE_CODE_SESSION_ID … record-worktree --run "{run-dir}" "{worktree-path}"`, using the path step 1 read.
+- **Action:** A merge-guard abort at the merge (the checkout moved, or another session's merge is in progress, after the close), a failed merge (aborted), a resolution abandoned or stopped before it lands, or a failed push (including no linked worktree left to push from) re-stamps each affected run with `env -u CLAUDE_CODE_SESSION_ID … record-worktree --run "{run-dir}" "{worktree-path}"`, using the path step 1 read.
 - **Should feel:** Self-healing — the worktree is protected again without the maintainer chasing it.
 - **Should understand:** Leaving the session id unset keeps the run's original owner. Otherwise the reconciling terminal would take over another terminal's run. Any output other than `worktree recorded` is logged to that run's `decisions.md` (the text goes through `log-decision.js --text-file`, never shell quoting) and named in the Summary. If that log call fails too, both outputs go in the Summary's `Re-protect failed` row.
 - **Red flags:** A re-protected run whose `sessionId` now names the reconciling session; a re-stamp failure that never reached `decisions.md`.
@@ -55,10 +56,11 @@ files:
 - **URL:** none — `git -C "{worktree-path}" push origin {base-branch}` from a linked worktree, then the Post-Merge Summary table
 - **Action:** The base branch is pushed once, after every branch is merged or skipped. On push failure, or with no linked worktree left to push from, every run closed in this reconciliation is re-protected and the local merges are left for a human to push.
 - **Should feel:** Final and legible — one row per branch, each naming whether its run is still active.
-- **Should understand:** Rows `Skipped (conflict) — run still active`, `Not merged (aborted) — run still active`, `Not merged (checkout moved before the merge) — run re-protected` and `Merged locally, push failed — run re-protected` tell the maintainer which worktrees are still in play; `Re-protect failed: {output line} — run unprotected` names any that are not.
+- **Should understand:** Rows `Skipped (conflict) — run still active`, `Not merged (aborted) — run still active`, `Not merged (checkout moved, or another merge in progress, before the merge) — run re-protected` and `Merged locally, push failed — run re-protected` tell the maintainer which worktrees are still in play; `Re-protect failed: {output line} — run unprotected` names any that are not.
 - **Red flags:** A branch missing from the table; an `active`-claiming row whose run is actually `clean`.
 
 ## Origin
 - Created during build of #3809 (flow worktree-merge closed every run before the multi-run merge, leaving skipped, aborted or failed runs closed)
 - Updated after #3809's review: the branch-guard abort at the merge, a stopped resolution, and a push with no worktree left now re-protect; Resolve-now commits with `--cleanup=strip`; the re-stamp log goes through `--text-file`; the Summary gained the `checkout moved before the merge` and `Re-protect failed` rows
+- Updated during wrap-up of #4073 (shared local-merge sequence): the pre-merge checks, close, merge, push and re-protect now come from `_shared/local-merge-sequence.md`; its merge guard also aborts when another session's merge is in progress, and the Summary row reads `checkout moved, or another merge in progress, before the merge`
 - Related: #3762 (same close-run ordering fix on the three no-human local-merge procedures — see `finish-a-local-merge-run-without-a-human.md`)

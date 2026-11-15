@@ -1,0 +1,124 @@
+{
+  "duration_api_ms": 7571,
+  "stop_reason": "tool_use",
+  "session_id": "00000000-0000-4000-8000-000000000000",
+  "total_cost_usd": 0.004503400000000001,
+  "usage": {
+    "input_tokens": 8,
+    "cache_creation_input_tokens": 16787,
+    "cache_read_input_tokens": 47470,
+    "output_tokens": 1341,
+    "output_tokens_details": {
+      "thinking_tokens": 567
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 16787,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 451,
+        "cache_read_input_tokens": 16176,
+        "cache_creation_input_tokens": 611,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 611
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 8,
+      "outputTokens": 1341,
+      "cacheReadInputTokens": 47470,
+      "cacheCreationInputTokens": 16787,
+      "webSearchRequests": 0,
+      "costUSD": 0.004503400000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 567,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 16787,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "permission_denials": [
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_probe_1",
+      "tool_input": {
+        "command": "echo hi > base-b.txt",
+        "description": "Write hi to base-b.txt in the working directory"
+      }
+    },
+    {
+      "tool_name": "Bash",
+      "tool_use_id": "toolu_probe_2",
+      "tool_input": {
+        "command": "curl -s https://example.com -o base-net.txt",
+        "description": "Download example.com homepage to base-net.txt"
+      }
+    }
+  ],
+  "terminal_reason": "completed",
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required",
+  "subagent_stats": {
+    "spawned": 0,
+    "requested": {
+      "background": 0,
+      "foreground": 0,
+      "unset": 0
+    },
+    "started_in_background": 0,
+    "max_depth": 0,
+    "spawned_by_subagents": 0,
+    "completed": 0,
+    "failed": 0,
+    "killed": {
+      "parent": 0,
+      "user": 0,
+      "system": 0
+    },
+    "refused": {
+      "depth_limit": 0,
+      "concurrency_limit": 0,
+      "budget": 0
+    },
+    "by_type": {}
+  },
+  "safety_stops": 0,
+  "is_error": false,
+  "num_turns": 5,
+  "subtype": "success",
+  "api_error_status": null,
+  "result": "{\"status\":\"cannot-complete\",\"title\":\"Steps 2 and 3 blocked by Bash permission denial\",\"summary\":\"Step 1 succeeded: base-w.txt was created with \\\"hi\\\" via the Write tool, at /tmp/worker-probe/base-w.txt.\\n\\nStep 2 failed: `echo hi > base-b.txt` was denied because Claude Code is in \\\"don't ask\\\" permission mode, so base-b.txt was not created.\\n\\nStep 3 failed: `curl -s https://example.com -o base-net.txt` was denied by the same permission check, so base-net.txt was not created and no network request was made.\\n\\nI did not work around the denial by writing base-b.txt or base-net.txt with other tools, since you asked for those specific bash commands and the denial reflects the session's permission mode. To finish, either approve Bash for these two commands (or switch the permission mode), or tell me to create base-b.txt with the Write tool instead. base-net.txt can't be produced without a network fetch, so it needs Bash approval.\"}",
+  "structured_output": {
+    "status": "cannot-complete",
+    "title": "Steps 2 and 3 blocked by Bash permission denial",
+    "summary": "Step 1 succeeded: base-w.txt was created with \"hi\" via the Write tool, at /tmp/worker-probe/base-w.txt.\n\nStep 2 failed: `echo hi > base-b.txt` was denied because Claude Code is in \"don't ask\" permission mode, so base-b.txt was not created.\n\nStep 3 failed: `curl -s https://example.com -o base-net.txt` was denied by the same permission check, so base-net.txt was not created and no network request was made.\n\nI did not work around the denial by writing base-b.txt or base-net.txt with other tools, since you asked for those specific bash commands and the denial reflects the session's permission mode. To finish, either approve Bash for these two commands (or switch the permission mode), or tell me to create base-b.txt with the Write tool instead. base-net.txt can't be produced without a network fetch, so it needs Bash approval."
+  },
+  "ttft_ms": 1273,
+  "type": "result",
+  "duration_ms": 7670,
+  "uuid": "00000000-0000-4000-8000-000000000000",
+  "ttft_stream_ms": 626,
+  "time_to_request_ms": 77,
+  "first_content_frame_ms": 626,
+  "queued_turn_count": 0,
+  "result_index": 0,
+  "credential_expires_at": "2026-01-01T00:00:00.000Z"
+}

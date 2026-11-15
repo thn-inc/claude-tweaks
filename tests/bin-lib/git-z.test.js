@@ -153,6 +153,18 @@ test('parseStatusPorcelainZ: copy and Y-column rename carry origPath; a token sh
   assert.deepEqual(parseStatusPorcelainZ('M a\u0000 M ok.md\u0000'), [{ xy: ' M', path: 'ok.md' }]);
 });
 
+test('#4815 AC1.1: parseStatusPorcelainZ strict: a token shorter than 4 characters throws; well-formed input still parses', () => {
+  assert.throws(
+    () => parseStatusPorcelainZ('M a\u0000 M ok.md\u0000', { strict: true }),
+    /shorter than "XY path" \("M a"\)/,
+  );
+  assert.deepEqual(parseStatusPorcelainZ('R  new.md\u0000old.md\u0000 M b.md\u0000', { strict: true }), [
+    { xy: 'R ', path: 'new.md', origPath: 'old.md' },
+    { xy: ' M', path: 'b.md' },
+  ]);
+  assert.deepEqual(parseStatusPorcelainZ('', { strict: true }), []);
+});
+
 test('unquoteCPath: the remaining C escapes decode, and an unknown backslash escape is kept literally', () => {
   assert.equal(unquoteCPath('"\\a\\b\\v\\f\\r"'), '\x07\b\v\f\r');
   assert.equal(unquoteCPath('"a\\qb"'), 'a\\qb');

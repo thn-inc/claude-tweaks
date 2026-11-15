@@ -5,10 +5,16 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { runPhaseExit, realDeps } = require('../../../plugin/bin/lib/phase-exit/phase-exit');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
+const phaseExit = require('../../../plugin/bin/lib/phase-exit/phase-exit');
+const { runPhaseExit, realDeps } = phaseExit;
+const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+const RESOLVE_POLICY_CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'resolve-policy.js');
 const { run } = require('../../../plugin/bin/phase-exit');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const { GIT_PUSH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
+const { STUB_SKIP } = require('../../helpers/path-stub');
+const { fakeGh } = require('../../helpers/fake-gh');
 
 const RUN_ID = '2026-10-25T000001-record-1';
 const BRANCH = 'worktree-dispatch-record-1';
@@ -256,6 +262,13 @@ test('AC2.2: commit check — a dirty tree logs the uncommitted-paths line and s
   assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /^## \/review$/m);
 });
 
+test('commit check — a worktree-side rename ( R) counts once, its source path is not a separate dirty entry', () => {
+  const { main, runDir, wt } = fixture();
+  const h = makeDeps(main, wt, { porcelain: ' R new.js\0old.js\0 M a.js\0' });
+  const env = runPhaseExit(opts(runDir, wt, 'review'), h.deps);
+  assert.deepEqual(env.commit, { clean: false, dirty: ['new.js', 'a.js'] });
+});
+
 test('AC2.2: commit check — a throwing git status reports commit.error, logs nothing and still pushes', () => {
   const { main, runDir, wt } = fixture();
   const h = makeDeps(main, wt, { porcelain: Object.assign(new Error('Command failed'), { stderr: 'fatal: index file corrupt\n' }) });
@@ -310,8 +323,14 @@ test('AC2.2: bookkeeping — missing pr with one open PR records it', () => {
   ]);
 });
 
-// The SKIP line a pr-first push with no recorded PR (and no gate release) writes.
-const NO_PR_SKIP = `- SKIP — Phase-exit push: condition: no recorded PR for ${BRANCH} and no PR-early run lifecycle FAILED line → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`;
+// The SKIP line a pr-first push with no recorded PR (and no release) writes for a
+// branch not proven to be a first publish.
+const NO_PR_SKIP = `- SKIP — Phase-exit push: condition: no recorded PR, prExempt or PR-early run lifecycle FAILED line for ${BRANCH} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`;
+// The SKIP line for a first publish (no upstream of its own yet) with no Step 1 line.
+const NO_PR_FIRST_PUBLISH_SKIP = `- SKIP — Phase-exit push: condition: no PR-early run lifecycle Step 1 line for ${BRANCH} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`;
+// decisions.md lines the PR-early run lifecycle logs: the FAILED degrade line and the Step 1 line.
+const FAILED_LINE = '- AUTO 10:00:00 — /build: PR-early run lifecycle: push of x FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.\n';
+const STEP1_LINE = `- AUTO 10:00:00 — PR-early run lifecycle: no existing PR for ${BRANCH}; creating. Reversibility: n/a.\n`;
 
 test('AC2.2: bookkeeping — missing pr with no open PR reports missing, and the push is skipped ([IL-131])', () => {
   const { main, runDir, wt } = fixture({ worktree: '/wt' });
@@ -367,6 +386,46 @@ test('[IL-131] PR precondition — a first publish without its Step 1 line, or a
     assert.equal(env.push.state, 'skipped');
     assert.equal(pushCalls(h.calls).length, 0);
   }
+});
+
+test('[IL-131] PR precondition — a throwing hasNoUpstreamYet reads as tracked: only the FAILED line releases, and the SKIP line uses the tracked wording', () => {
+  for (const c of [{ decisions: null, state: 'skipped' }, { decisions: STEP1_LINE, state: 'skipped' }, { decisions: FAILED_LINE, state: 'pushed' }]) {
+    const { main, runDir, wt } = fixture({ worktree: '/wt' });
+    if (c.decisions) fs.writeFileSync(path.join(runDir, 'decisions.md'), c.decisions);
+    const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => { throw new Error('boom'); } });
+    const env = runPhaseExit(opts(runDir, wt), h.deps);
+    assert.equal(env.push.state, c.state, JSON.stringify(c));
+    if (!c.decisions) assert.deepEqual(entriesOf(runDir).map(stripTime), [NO_PR_SKIP]);
+  }
+});
+
+test('[IL-131] PR precondition — a per-spec first publish whose FAILED and Step 1 lines sit on the parent run dir pushes', () => {
+  const { main, runDir, wt } = fixture({ worktree: '/wt' });
+  const specDir = path.join(runDir, 'spec-4');
+  fs.mkdirSync(specDir);
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), FAILED_LINE + STEP1_LINE);
+  const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => true });
+  const env = runPhaseExit(opts(specDir, wt), h.deps);
+  assert.equal(env.push.state, 'pushed');
+});
+
+test('[IL-131] PR precondition — a first publish with only a FAILED line is skipped, and the SKIP line names the missing Step 1 line', () => {
+  const { main, runDir, wt } = fixture({ worktree: '/wt' });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), FAILED_LINE);
+  const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => true });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.equal(pushCalls(h.calls).length, 0);
+  assert.deepEqual(entriesOf(runDir).map(stripTime), [stripTime(FAILED_LINE.trim()), NO_PR_FIRST_PUBLISH_SKIP]);
+});
+
+test('[IL-131] PR precondition — prExempt does not release a first publish with no Step 1 line', () => {
+  const { main, runDir, wt } = fixture({ worktree: '/wt', prExempt: true });
+  const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => true });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.equal(pushCalls(h.calls).length, 0);
+  assert.deepEqual(entriesOf(runDir).map(stripTime), [NO_PR_FIRST_PUBLISH_SKIP]);
 });
 
 test('bookkeeping — a prExempt run is pr n/a with no lookup', () => {
@@ -698,6 +757,176 @@ test('realDeps.git — output past execFileSync\'s 1 MiB default is returned, no
   assert.ok(out.length >= 2 * 1024 * 1024, `read ${out.length} bytes`);
 });
 
+// ---- the real resolvePolicy seam (#4578 plan review): a degraded integration-model read is unresolved ----
+
+// A real git repo under os.tmpdir() with an `origin` remote (so detection reaches `gh`), and a
+// run dir outside every checkout (resolve-policy.js --run accepts it).
+function forgeFixture(runConfig = null) {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-forge-')));
+  created.push(repo);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', windowsHide: true });
+  git('init', '-q', '-b', 'main');
+  git('remote', 'add', 'origin', 'https://github.com/o/n.git');
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-run-'));
+  created.push(runDir);
+  if (runConfig !== null) fs.writeFileSync(path.join(runDir, 'config.yml'), runConfig);
+  return { repo, runDir };
+}
+
+// The in-process core reads process.env at call time (callerDeps), so set the env per test (never at load).
+function withForgeEnv(fn) {
+  const vars = { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '1000', GH_REPO: '', GH_HOST: '' };
+  const saved = {};
+  for (const k of Object.keys(vars)) { saved[k] = process.env[k]; process.env[k] = vars[k]; }
+  try { return fn(); } finally {
+    for (const k of Object.keys(vars)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+}
+
+test('realDeps.resolvePolicy: a degraded integration-model read throws "forge detection degraded (timeout)" instead of returning local-merge (#4578 plan review)', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withForgeEnv(() => {
+      assert.throws(() => realDeps.resolvePolicy(runDir, 'integration-model', repo), /forge detection degraded \(timeout\)/);
+    });
+    assert.equal(gh.count(), 2);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a timeout then a failed retry throws with the timeout-then-exit reason', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  const gh = fakeGh({ first: 'hang', rest: 'fail' });
+  try {
+    withForgeEnv(() => {
+      assert.throws(() => realDeps.resolvePolicy(runDir, 'integration-model', repo), /forge detection degraded \(timeout-then-exit\)/);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a clean detection returns the plain value', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'pr-first');
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a pinned run returns the pin with no gh call, and a non-forge key still returns its plain value', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture('integration-model: pr-first\n');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'pr-first');
+      // integration-branch has no default: the --values-equivalent empty string
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', repo), '');
+    });
+    assert.equal(gh.count(), 0);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a run-pinned integration-branch returns its string value', () => {
+  const { repo, runDir } = forgeFixture('integration-branch: develop\n');
+  assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', repo), 'develop');
+});
+
+test('AC5 phase-exit: a degraded resolve logs the unresolved SKIP naming the degrade and pushes nothing (#4578 plan review)', () => {
+  const { main, runDir, wt } = fixture();
+  const h = makeDeps(main, wt, {
+    resolvePolicy: (r, key) => {
+      if (key === 'integration-model') throw new Error('forge detection degraded (timeout)');
+      return '';
+    },
+  });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /integration-model unresolved \(forge detection degraded \(timeout\)\)/);
+  assert.equal(pushCalls(h.calls).length, 0);
+});
+
+test('AC3 phase-exit: a config.yml pinning local-merge resolves local-merge through the core, with no gh call', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture('integration-model: local-merge\n');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'local-merge');
+    });
+    assert.equal(gh.count(), 0);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('AC3 phase-exit: a missing run dir reports the same detail line as the subprocess did', () => {
+  const { repo } = forgeFixture();
+  const missingBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-missing-'));
+  created.push(missingBase);
+  const missing = path.join(missingBase, 'never-created');
+  const want = `resolve-policy: --run dir does not exist or is not a directory: ${missing}`;
+  assert.throws(() => realDeps.resolvePolicy(missing, 'integration-model', repo), (e) => e.message === want);
+  const { main, runDir, wt } = fixture();
+  const h = makeDeps(main, wt, { resolvePolicy: (r, key) => realDeps.resolvePolicy(missing, key, repo) });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.ok(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8').includes(`integration-model unresolved (${want})`));
+});
+
+test('AC3 phase-exit: a --run inside a foreign checkout throws the anchoring line the CLI prints', () => {
+  const { repo } = forgeFixture();
+  const inside = path.join(forgeFixture().repo, 'plain-run-dir');
+  fs.mkdirSync(inside);
+  const cli = runCliSync(RESOLVE_POLICY_CLI, ['--run', inside, 'integration-model'], { cwd: repo, env: { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() } });
+  assert.notEqual(cli.code, 0, 'the CLI must refuse the unanchored run dir');
+  const want = cli.stderr.replace(/\r?\n$/, '');
+  assert.match(want, /^resolve-policy: /);
+  assert.throws(() => realDeps.resolvePolicy(inside, 'integration-model', repo), (e) => e.message === want);
+});
+
+// Seam: process.stderr.write is spied around the real call (the forge probe's GHE note goes through repo-resolve's default writer).
+test("AC3 phase-exit: the forge probe's GHE origin note stays off this process's stderr", { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  execFileSync('git', ['-C', repo, 'remote', 'set-url', 'origin', 'https://acme.ghe.com/o/n.git'], { windowsHide: true });
+  const gh = fakeGh({ first: 'ok' });
+  const realWrite = process.stderr.write;
+  const writes = [];
+  _resetGhHostCache();
+  process.stderr.write = (chunk, ...rest) => { writes.push(String(chunk)); return true; };
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'pr-first');
+    });
+  } finally {
+    process.stderr.write = realWrite;
+    gh.restore();
+    _resetGhHostCache();
+  }
+  assert.deepEqual(writes.filter((w) => w.includes('claude-tweaks:')), []);
+});
+
+test("AC7 phase-exit: a subdirectory worktree resolves the checkout's pinned integration-branch", () => {
+  const { repo, runDir } = forgeFixture();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'));
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'integration-branch: develop\n');
+  const sub = path.join(repo, 'packages', 'app');
+  fs.mkdirSync(sub, { recursive: true });
+  assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', sub), 'develop');
+});
+
+test('phase-exit.js no longer exports the retired child-process helpers', () => {
+  assert.equal(phaseExit.policyReadTimeoutMs, undefined);
+  assert.equal(phaseExit.policyEntryValue, undefined);
+});
+
 // ---- checklist ----
 
 test('AC2.2: checklist exit 4/5 is reported in the envelope with exit 0 overall', () => {
@@ -921,4 +1150,16 @@ test('CLI: an archived wrap-up run dir resolves', () => {
   const env = JSON.parse(h.out.join(''));
   assert.equal(env.push.state, 'pushed');
   assert.deepEqual(env.bookkeeping, { worktree: 'n/a', pr: 'n/a' });
+});
+
+// Real process: the script entry turns run()'s return into the child's exit status and puts usage on the right stream (#5384, AC6).
+test('script entry: --help exits 0 with the usage on stdout; a malformed call exits 2 with it on stderr', () => {
+  const entry = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-exit.js');
+  const env = { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() };
+  const help = spawnCli(entry, ['--help'], { env });
+  assert.equal(help.code, 0);
+  assert.ok(help.stdout.startsWith('usage: phase-exit.js'));
+  const refused = spawnCli(entry, [], { env });
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, /--run <run-dir> is required/);
 });

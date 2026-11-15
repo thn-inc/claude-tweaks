@@ -9,12 +9,14 @@
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { ghOptions } = require('./lib/repo-resolve');
 const { resolveScope } = require('./lib/residue/scope');
 const { hasTestScript } = require('./lib/residue/detect-test-script');
 const { probeWorktrees } = require('./lib/residue/probes/worktrees');
 const { probeBranches } = require('./lib/residue/probes/branches');
 const { probeForge } = require('./lib/residue/probes/forge');
-const { probeSuite } = require('./lib/residue/probes/suite');
+const { probeSuite, localRunsSkip } = require('./lib/residue/probes/suite');
+const { readDeclaration, DECLARATION_PATH } = require('./lib/verify/declaration');
 const { probeRelease } = require('./lib/residue/probes/release');
 const { probePipelineRuns } = require('./lib/residue/probes/pipeline-runs');
 const { probeArtifacts } = require('./lib/residue/probes/artifacts');
@@ -62,10 +64,13 @@ function runner(cwd) {
   // `git show HEAD:CHANGELOG.md` in probeRelease) is already a quarter of
   // that and growing; an overflow past the default silently fell into the
   // bare catch below and read as an ordinary degraded probe. `opts` can
-  // still override it per call through the same spread.
+  // still override it per call through the same spread. A `gh` argv also goes
+  // through ghOptions (#4505's GH_HOST seam); git calls get the object as is.
   return (argv, opts = {}) => {
     try {
-      return execFileSync(argv[0], argv.slice(1), { cwd, encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, stdio: ['ignore', 'pipe', 'ignore'], ...opts, windowsHide: true }).trim();
+      const args = argv.slice(1);
+      const wrap = argv[0] === 'gh' ? ghOptions : (_args, o) => o;
+      return execFileSync(argv[0], args, wrap(args, { cwd, encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, stdio: ['ignore', 'pipe', 'ignore'], ...opts, windowsHide: true })).trim();
     } catch {
       return null;
     }
@@ -109,9 +114,17 @@ function main() {
   // code, so check the script exists BEFORE ever invoking npm — verified
   // live: a directory with no package.json used to report a fabricated
   // "test suite exit 254" finding instead of `unknown`.
+  // Under `localRuns` the suite is CI's and a bare `npm test` here may run a
+  // subset or nothing (#5319), so its exit 0 is no green suite (#5370).
+  const gitRoot = git(['rev-parse', '--show-toplevel']);
+  const root = gitRoot || cwd;
+  const read = readDeclaration(path.join(root, DECLARATION_PATH));
+  const skip = localRunsSkip(read.ok ? read.decl : null);
   let suiteResult;
   if (opts.noSuite) {
     suiteResult = { ran: false, reason: 'skipped via --no-suite', findings: [] };
+  } else if (skip) {
+    suiteResult = skip;
   } else if (!hasTestScript(cwd)) {
     suiteResult = { ran: false, reason: 'no test command detected', findings: [] };
   } else {
@@ -144,7 +157,7 @@ function main() {
       // The invoking run's identity, when one is threaded (wrap-up runs
       // inside a pipeline run; standalone invocations have none) — #1118.
       runId: pipelineRunId,
-      worktreeRoot: git(['rev-parse', '--show-toplevel']),
+      worktreeRoot: gitRoot,
       // #1328: lets the probe cross-check a status: clean finding's
       // recorded worktree against the already-resolved locked-worktree
       // list, instead of re-invoking git from inside the probe itself.

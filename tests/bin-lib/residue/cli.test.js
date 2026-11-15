@@ -5,24 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'residue.js');
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-
-// assert.throws(/Command failed/) would pass for ANY nonzero exit code — this
-// captures the error so status and stderr can both be checked directly
-// (tests/bin-lib/record-graph/cli-render.test.js's own pattern).
-function runExpectingFailure(args) {
-  let error;
-  try {
-    execFileSync('node', [CLI, ...args], {
-      cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'],
-    });
-  } catch (e) {
-    error = e;
-  }
-  assert.ok(error, `expected a nonzero exit for: ${args.join(' ')}`);
-  return error;
-}
+const { CLI, REPO_ROOT, runExpectingFailure } = require('./cli-helpers');
 
 test('omitting --base exits 2 with the usage message on stderr', () => {
   const error = runExpectingFailure([]);
@@ -45,26 +28,6 @@ test('#1781: a non-integer --own-pr value is rejected with the usage error', () 
   const error = runExpectingFailure(['--base', 'HEAD', '--own-pr', 'not-a-number']);
   assert.strictEqual(error.status, 2);
   assert.match(error.stderr, /--own-pr must be an integer/);
-});
-
-test('--base HEAD --no-suite runs and renders the Outstanding table', () => {
-  const out = execFileSync('node', [CLI, '--base', 'HEAD', '--no-suite'], {
-    cwd: REPO_ROOT, encoding: 'utf8',
-  });
-  assert.match(out, /^### Outstanding \(\d+\)/);
-});
-
-test('--base HEAD --no-suite --json prints a parseable {scope, results} shape', () => {
-  const out = execFileSync('node', [CLI, '--base', 'HEAD', '--no-suite', '--json'], {
-    cwd: REPO_ROOT, encoding: 'utf8',
-  });
-  const parsed = JSON.parse(out);
-  assert.ok(parsed.scope && typeof parsed.scope === 'object', 'scope is an object');
-  assert.ok(Array.isArray(parsed.results), 'results is an array');
-  assert.ok(parsed.results.length > 0, 'at least one probe result present');
-  for (const r of parsed.results) {
-    assert.strictEqual(typeof r.ran, 'boolean', `result ${JSON.stringify(r).slice(0, 80)} carries a boolean ran field`);
-  }
 });
 
 // End-to-end through the CLI's own env-var wiring (bin/residue.js's
@@ -98,6 +61,40 @@ test('PIPELINE_RUN_DIR env attributes only that run dir under --scope blast-radi
   // the one finding or an extra one, and this pins which of the two it is.
   assert.match(pipelineRunFindings[0].subject, /record-1118/, 'the sibling run dir must not be attributed to this run');
 });
+
+function suiteRepo(declaration) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-cli-suite-'));
+  execFileSync('git', ['-C', root, 'init', '-q']);
+  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
+  execFileSync('git', ['-C', root, 'config', 'user.name', 'Test']);
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "require(\'fs\').writeFileSync(\'suite-ran\', \'x\')"' } }));
+  if (declaration) {
+    fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(declaration));
+  }
+  execFileSync('git', ['-C', root, 'add', '-A']);
+  execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'init']);
+  return root;
+}
+
+const DECL = { checks: { tests: 'npm test' }, rules: [{ match: '**', suites: '*', static: false }], ci: { tests: { workflow: 'test.yml', job: 'test' } } };
+const suiteResult = (out) => JSON.parse(out).results[3]; // worktrees, branches, forge, suite, …
+
+test('AC7.1, AC7.3: with localRuns the probe never starts npm test and names the CI job (#5370)', () => {
+  const root = suiteRepo({ ...DECL, localRuns: 'on-request' });
+  const out = execFileSync('node', [CLI, '--base', 'HEAD', '--json'], { cwd: root, encoding: 'utf8' });
+  assert.strictEqual(suiteResult(out).ran, false);
+  assert.match(suiteResult(out).reason, /^not run on this machine — .*takes tests \(test\.yml \/ test\) from the PR's CI job/);
+  assert.ok(!fs.existsSync(path.join(root, 'suite-ran')), 'npm test must not start');
+});
+
+test('AC7.2, AC7.3: without the key the probe runs npm test as before (#5370)',
+  { skip: process.platform === 'win32' && 'win32: residue.js spawns npm without a shell, and npm is npm.cmd there' }, () => {
+    const root = suiteRepo(DECL);
+    const out = execFileSync('node', [CLI, '--base', 'HEAD', '--json'], { cwd: root, encoding: 'utf8' });
+    assert.strictEqual(suiteResult(out).ran, true);
+    assert.ok(fs.existsSync(path.join(root, 'suite-ran')), 'npm test must run');
+  });
 
 // #1281: runner()'s execFileSync call set no `maxBuffer`, so it silently
 // inherited Node's 1 MiB default; probeRelease's `git show HEAD:CHANGELOG.md`

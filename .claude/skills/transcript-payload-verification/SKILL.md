@@ -111,16 +111,40 @@ probe with scratch hooks showed that Claude Code's own worktree-isolation refusa
 fires `PreToolUse` before and `PostToolUseFailure` after, with `error` holding the full refusal
 text; the module's header comment records the result and its measurement date. When the captured
 value is prose rather than a structured field, two limits follow. The match pattern
-(`HARNESS_ISOLATION_REFUSAL_RE`) fits only that one wording, so a harness rewording stops the
-logging until the constant is updated; it now surfaces as upstream drift on the `claude-code`
-manifest entry (assertions anchored in `plugin/bin/lib/hooks/harness-refusal.js`) when the
-upstream-drift sweep runs. And the wording differs by tool: the Write/Edit refusal reads "Edit the
+(`HARNESS_ISOLATION_REFUSAL_RE`) fits only the wordings someone captured, so a harness rewording,
+or a sibling template nobody probed, goes unlogged until the constant is updated. #2783 captured
+the session template alone; #3819 found two siblings on 2.1.302 (the `This agent` noun in a
+dispatched agent's worktree, and the worktree-gone `Refusing to run there` ending) and widened the
+pattern from `harness-refusal.js`'s fragments, while a third 2.1.302 template ("The
+working-directory isolation context for this agent was lost…") carries neither noun and is still
+unmatched. So before trusting a prose matcher, search the installed binary for the refusal's
+shared tail (`Refusing to run`) to list every sibling template, not only the one captured. A
+rewording surfaces as upstream drift on the `claude-code` manifest entry (assertions anchored in
+`plugin/bin/lib/hooks/harness-refusal.js`) when the upstream-drift sweep runs. And the wording
+differs by tool: the Write/Edit refusal reads "Edit the
 worktree copy…", not "Refusing to run it" — and it does **not** fire `PostToolUseFailure` at all.
 A throwaway-hook probe during #3301 (2026-10-21) showed a `Write` refused with that wording
 produced zero captured events, reproduced twice, while the identical setup correctly captured a
 `Bash` refusal's event in the same run — see `plugin/skills/reflect/full-mode.md`'s Friction Lens
 section for the full measurement. Capture one scenario per tool the pattern is meant to match, and
 keep the measurement date beside the pattern.
+
+**A plugin hook's matcher is probed through a scratch plugin, not `--settings` (#4589).** When the
+question is whether a `plugin/hooks/hooks.json` entry fires (which tool name it sees, whether its
+deny takes effect), load a scratch plugin (`.claude-plugin/plugin.json`, plus `hooks/hooks.json`
+running a stdin logger through `${CLAUDE_PLUGIN_ROOT}`) with `claude -p --plugin-dir <scratch>
+--output-format stream-json --verbose --include-hook-events`. The entry is then a plugin hook like
+the shipped one, and the stream carries each hook's own stdout and exit code beside the tool result.
+`docs/reference/pretooluse-agent-tool-probe.md` is the instance: one scenario per branch the gate
+takes (a main-thread call, a denied call, a nested call, a prompt passed from a file), with an
+`Agent` and a `Task` matcher both registered so the capture shows which name fires (only `Agent`, on
+2.1.322). Two of its checks carry over. Prove a deny by its effect, not by the hook's output: the
+denied stream held zero `"parent_tool_use_id":"toolu_…"` lines, so no subagent started. And a probe
+spawned from inside a Claude Code session removes that session's variables (`CLAUDECODE`,
+`CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID` and the rest the probe doc lists) from the child's
+environment, so it runs as a fresh top-level session rather than a child that could inherit the
+parent's session id. `docs/reference/pretooluse-updatedinput-worktree-guard.md` (#4028) took the same
+`--plugin-dir` route against the real `plugin/` directory.
 
 ## A fixture is a claim, not ground truth
 

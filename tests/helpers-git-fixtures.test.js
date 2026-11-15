@@ -83,3 +83,36 @@ test('a fixture spawn failing for a non-timeout reason rethrows unchanged', () =
     assert.throws(() => helpers.fixtureGit(['-C', '/tmp', 'status']), (err) => err === original);
   });
 });
+
+test('a fixture spawn killed for printing past its maxBuffer reports the overflow, not a timeout (#5227)', () => {
+  // execFileSync kills a child that overflows maxBuffer with SIGTERM, so the timeout branch (which
+  // keys on that signal) used to read it as contention. A real 1 MiB blob through a 1 KiB buffer
+  // overflows while git is still writing, which is what sets the signal.
+  const fs = require('fs');
+  const { fixtureGit, gitRepo } = require('./helpers/git-fixtures');
+  const repo = gitRepo();
+  try {
+    const sha = fixtureGit(['-C', repo, 'hash-object', '-w', '--stdin'], { input: 'x'.repeat(1024 * 1024), encoding: 'utf8' }).trim();
+    assert.throws(
+      () => fixtureGit(['-C', repo, 'cat-file', '-p', sha], { maxBuffer: 1024 }),
+      (err) => err.code === 'ENOBUFS'
+        && err.message === `git-fixtures: \`git -C ${repo} cat-file -p ${sha}\` printed more than its maxBuffer (1024 bytes) and was killed. Pass a larger maxBuffer for a real-sized output.`
+        && err.cause.signal === 'SIGTERM',
+      'the overflow names itself and keeps the spawn error as its cause',
+    );
+    const whole = fixtureGit(['-C', repo, 'cat-file', '-p', sha], { maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' });
+    assert.strictEqual(whole.length, 1024 * 1024, 'a large enough buffer reads it (control)');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('fixtureGit leaves a spawn-level ENOBUFS (no signal: not a maxBuffer overflow) unrelabeled', () => {
+  const { fixtureGit } = require('./helpers/git-fixtures');
+  const spawnFailure = Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+  assert.throws(
+    () => fixtureGit(['status'], { execFileSync: () => { throw spawnFailure; } }),
+    (err) => err === spawnFailure && !/maxBuffer/.test(err.message),
+    'rethrown unchanged',
+  );
+});

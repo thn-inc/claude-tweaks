@@ -1,0 +1,45 @@
+{
+  "organization": "example-org",
+  "timePeriod": {
+    "year": 2026,
+    "month": 11
+  },
+  "usageItems": [
+    {
+      "product": "Actions",
+      "sku": "actions_linux",
+      "unitType": "minutes",
+      "pricePerUnit": 1,
+      "grossQuantity": 70,
+      "grossAmount": 70,
+      "discountQuantity": 10,
+      "discountAmount": 10,
+      "netQuantity": 60,
+      "netAmount": 60
+    },
+    {
+      "product": "Actions",
+      "sku": "actions_windows",
+      "unitType": "minutes",
+      "pricePerUnit": 1,
+      "grossQuantity": 35,
+      "grossAmount": 35,
+      "discountQuantity": 0,
+      "discountAmount": 0,
+      "netQuantity": 35,
+      "netAmount": 35
+    },
+    {
+      "product": "Packages",
+      "sku": "packages_storage",
+      "unitType": "GigabyteHours",
+      "pricePerUnit": 1,
+      "grossQuantity": 7,
+      "grossAmount": 7,
+      "discountQuantity": 0,
+      "discountAmount": 0,
+      "netQuantity": 7,
+      "netAmount": 7
+    }
+  ]
+}

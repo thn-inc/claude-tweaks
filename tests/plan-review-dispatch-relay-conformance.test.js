@@ -62,7 +62,7 @@ const SETTLE_ANCHORS = [
 const RELAY_ANCHORS = [
   'failed:plan-review-needs-human',
   '<!-- plan-review-question -->',
-  "editing #{n}'s body",
+  "adding a `**Decision**` paragraph (or an Acceptance Criterion) to #{n}'s body",
   '/claude-tweaks:dispatch #{n}',
   '/claude-tweaks:backlog refine',
   'no `AskUserQuestion` in a subagent',
@@ -161,7 +161,7 @@ const BLOCKED_CONSUMERS = [
   [path.join('plugin', 'skills', 'backlog', 'SKILL.md'), '- A record hit its retry ceiling', 'line', 'plan-review'],
   [path.join('plugin', 'skills', '_shared', 'label-bootstrap.md'), '  ["bot:blocked",', 'line', 'plan-review question'],
   [path.join('plugin', 'skills', 'help', 'status-scan.md'), '- Blocked: **', 'line', 'plan-review question'],
-  [path.join('plugin', 'skills', '_shared', 'github-pr-scan.md'), 'Render as three lines:', 'line', 'plan-review question'],
+  [path.join('plugin', 'skills', '_shared', 'github-pr-scan-triage.md'), 'Render as three lines:', 'line', 'plan-review question'],
   [path.join('plugin', 'skills', '_shared', 'work-record-permission-matrix.md'), '| **Executors**', 'line', 'build/plan-review.md'],
   [path.join('docs', 'skill-graph.md'), '| `/dispatch` | `/tidy` Step 4.7', 'line', 'plan-review question'],
 ];

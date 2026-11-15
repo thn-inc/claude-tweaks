@@ -3,8 +3,8 @@
 // shape returned by record.js's parseRecordFacets): a record is pending
 // authorization when it carries no auto:* grant and is not already in a
 // bot:* state (in-progress, blocked, or parked). Extracted so /tidy Step 4.8's
-// repo-wide scope and /help Stage 4.6's triage-queue scope (both in
-// _shared/github-pr-scan.md) share one implementation instead of two
+// repo-wide scope and /help Stage 4.6's triage-queue scope (in
+// _shared/github-pr-scan.md and _shared/github-pr-scan-triage.md) share one implementation instead of two
 // independently hand-typed inline node -e boolean expressions — that exact
 // duplication previously caused a real bug (Stage 4.6 once computed "pending"
 // without excluding bot:blocked, so a blocked record double-counted as both

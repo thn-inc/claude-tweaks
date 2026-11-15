@@ -52,7 +52,7 @@ before any `PreToolUse` hook ever runs — see `docs/hooks.md`'s "Observed here,
 harness's own compound-Bash refusal" — or any other denial whose own `appendEvent` call failed or was never
 reached). Before concluding "no friction," resolve this session's own transcript per
 `_shared/transcript-judge.md`'s Transcript resolution section and grep it for the deny-message
-signatures `Refusing to run it` and `requires an isolated worktree` (the literal substrings a
+signatures `Refusing to run it`, `Refusing to run there` and `requires an isolated worktree` (the literal substrings a
 harness-level or gate-level refusal's own message carries). Each match is one denial the log
 missed — report it as its own Friction-lens line (quoting the matched turn), distinct from and
 never merged into `friction-events.js`'s own aggregate count, since a raw transcript hit carries
@@ -110,8 +110,11 @@ text. The non-`EnterWorktree` path is rate-limited to at most one `git worktree 
 finds that ad-hoc run dir back by its recorded `worktree` field (`bin/lib/hooks/context.js`'s
 `findRunsByWorktreePath` — the plural sibling of the teardown gate's `findRunByWorktreePath`, since
 a session can leave behind more than one such stamp before it finally reaches wrap-up) and merges
-its events into the output alongside this run's own. A genuinely frictionless ad-hoc session still
-returns `[]` — nothing is manufactured. "Owns no run dir" excludes `resolveRun`'s `fallback` guess —
+its events into the output alongside this run's own. From the main checkout, where every
+main-checkout session's ad-hoc dir records that same path, the path match keeps only ad-hoc dirs
+owned by the current session id; a linked worktree's match is unchanged (#4704). A genuinely
+frictionless ad-hoc session still returns `[]` — nothing is manufactured. "Owns no run dir"
+excludes `resolveRun`'s `fallback` guess —
 the newest unowned run, routinely a sibling session's — which every friction write path treats as
 not owned (#2783; before that fix the guess silently suppressed the mint and absorbed the session's
 events). A formal `/claude-tweaks:build`/`/claude-tweaks:flow` run is unaffected: once
@@ -119,16 +122,21 @@ events). A formal `/claude-tweaks:build`/`/claude-tweaks:flow` run is unaffected
 ad-hoc dir of the same session only once that formal run is bound to the caller's own worktree
 (`classifyOwnership` `'mine'`) — an older formal run whose binding is merely unprovable never
 displaces the ad-hoc dir. The harness's own worktree-isolation Bash
-guard ("This session is isolated in the worktree … Refusing to run it") is captured too: it reaches
-no `PreToolUse`/`PostToolUse` consumer, so `bin/lib/hooks/post-tool-use-failure.js` reads Claude
-Code's `PostToolUseFailure` event and logs `wd-guard-refusal` (`reason: harness-worktree-isolation`)
-when the error carries that refusal text. Because the ordinary ad-hoc order is `ExitWorktree remove`
+guard ("This session/This agent is isolated in the worktree … Refusing to run it", or "… Refusing
+to run there") is captured too: it reaches no `PreToolUse`/`PostToolUse` consumer, so
+`bin/lib/hooks/post-tool-use-failure.js` reads Claude Code's `PostToolUseFailure` event and logs
+`wd-guard-refusal` (`reason: harness-worktree-isolation`, plus `actor` and `variant`) when the error
+carries that refusal text. A dispatched agent's refusal reaches the same hook (measured 2026-10-28:
+an `isolation: "worktree"` agent's refused Bash call fires the parent session's
+`PostToolUseFailure`). Because the ordinary ad-hoc order is `ExitWorktree remove`
 before wrap-up — after which the recorded worktree path matches nothing — `friction-events.js` also
 unions every ad-hoc dir owned by the current session id (`--session`, default
 `CLAUDE_CODE_SESSION_ID`). **Known limitation:** a session whose id changes between the friction and
 the wrap-up (a resumed or account-switched session that receives a new id) finds the earlier dir
 only by worktree path, i.e. only when wrap-up runs inside that same still-live worktree; otherwise
-those events stay in the earlier session's ad-hoc dir, unread; and since every subagent of a
+those events stay in the earlier session's ad-hoc dir, unread. From the main checkout the path match
+is itself session-scoped (#4704), so a changed id loses the earlier main-checkout dir even though
+the main checkout is always live; and since every subagent of a
 session shares its id, a sibling subagent's dir is unioned too once its worktree was removed (one
 whose worktree still exists is skipped).
 
@@ -160,11 +168,12 @@ before an `appendEvent` call whose target run dir would otherwise be null. It ke
 `worktree` field on whatever `ctx.cwd` resolves to in `git worktree list` — main checkout
 included, unlike the fallback above — which is safe specifically because the trigger is an actual
 denial, never ordinary activity: it cannot fire on a benign `git status` or read. `friction-events.js`
-finds it back the identical way, via `findRunsByWorktreePath`, so a later run dir created in the
-same session (this wrap-up run itself, or an earlier interrupted one) still surfaces it. Together,
-these two mechanisms mean an empty array from this lens's input command is not a false all-clear
-for a session that ran entirely in the main checkout and never entered a worktree — a genuine
-denial there is logged too, confirmed end-to-end by `tests/friction-main-checkout-denial-coverage.test.js`.
+finds it back via `findRunsByWorktreePath`, scoped from the main checkout to this session's own id
+(#4704), so a later run dir created in the same session (this wrap-up run itself, or an earlier
+interrupted one) still surfaces it. Together, these two mechanisms mean that, with a resolvable
+session id, an empty array from this lens's input command is not a false all-clear for a session
+that ran entirely in the main checkout and never entered a worktree — a genuine denial there is
+logged too, confirmed end-to-end by `tests/friction-main-checkout-denial-coverage.test.js`.
 
 **Lifecycle: surviving the orphan-mint sweep (#1117).** An ad-hoc dir never gets a `config.yml` in
 practice either (`/flow`'s Manifesto is what writes one; `bin/set-config.js`'s `setConfigLever`
@@ -233,6 +242,17 @@ stop count looks disproportionate to its own scope — weighed against the recor
 tasks`/Deliverables count as a rough proportionality anchor (a 2-task record with 8 stops reads
 differently than an 8-task record with 8 stops), never against a hardcoded number.
 
+**Isolation-refusal breakdown (#3819).** For `wd-guard-refusal` events with `reason:
+harness-worktree-isolation`, report the count split by `actor`: `session` is the operator's own,
+`agent` a dispatched agent's (still the run's friction, usually traceable to the dispatch prompt the
+run wrote). Name every `variant: worktree-gone` event individually: the refused actor's isolation worktree
+was removed under it — lost isolation, not a command-shape refusal. An event with no `actor`/`variant`
+(logged before #3819) counts as `actor: session`, `variant: guard`. **Known limitation:** an agent
+refusal from its own still-live isolation worktree lands in an ad-hoc dir keyed to that worktree,
+which `friction-events.js` merges only once that worktree is removed (`findAdHocRunsBySessionId`); a
+worktree-gone refusal in a session with no trusted owned run has no listed cwd to key a stamp on, so
+it lands on the fallback guess the primary read drops. Both counts are lower bounds.
+
 A finding from either judgment is an ordinary reflect insight from here on — route it through
 Step 3's `_shared/learning-routing.md` classifier exactly like every other lens's finding. A
 false-positive denial resolves to defect (rule 1); a recurring missing default resolves to gap
@@ -260,9 +280,11 @@ Auto-mode routing is shared across every mode — see the auto-routing table in 
 
 ### Prior-decline annotation
 
-Before rendering the table, compute each insight's fingerprint and look it up in one command —
-`printf '%s' '{"description":"..."}' | node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" lookup --source reflect`
-(#2544), where `description` is the insight's own one-line text; it prints
+Before rendering the table, compute each insight's fingerprint and look it up in one command (#2544).
+The insight text never touches a command line: resolve a payload path with
+`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" D=reflect-decline.json`, `Write`
+`{"description":"..."}` to it (`description` is the insight's own one-line text, JSON-escaped), then run
+`node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" lookup --source reflect < "{D}"`; it prints
 `{fingerprint, decline}` (`decline` is `null` when none was recorded). A non-null `decline` means a human
 already declined an equivalent insight before; render it with a prior-decline annotation
 appended to its `Insight` cell, never silently suppressed:
@@ -374,7 +396,7 @@ that genuinely serves two audiences is two insights, stated separately.
 - **Implement now** — the strong default. If an insight leads to a concrete change (update CLAUDE.md, update a skill, add a rule), make the change. A D4 memory outcome is staged via wrap-up's Memory curation row instead of applied inline — **but only when this run will actually reach wrap-up.** Standalone `/claude-tweaks:reflect`'s Next Actions (`reflect/SKILL.md:183`) only *offer* `/claude-tweaks:wrap-up`, they never require it, so a run that ends here leaves a `staged/` file no Review Console will ever open — a lesson with no consumer. When this is a standalone run and the user does not continue to `/claude-tweaks:wrap-up`, present the D4 proposal inline instead, for the same per-item approval, then write it directly per the contract's "Memory write procedure (D4)" on approval — the same resolution `_shared/ledger-format.md`'s Resolve Gate section applies to a standalone ledger item ("no Review Console will ever read a staged file, so create the record directly instead"). Never leave a D4 proposal staged with no consumer.
 - **Defer** (new work record, `parked`) — the insight leads to a known improvement but it's bigger and not relevant to the current work. Gated by `_shared/deferral-gate.md`: run its fix-now criteria first, and name the `Defer-reason:` in the batch table's Recommended column (e.g. `Defer — genuinely-larger`), chosen per that file's vocabulary — same mapping review Step 3 uses (`review/step3-routing.md`). Compose the body via `specShapedBody` (the insight → Current State, the known improvement → Deliverables, the observable outcome → Acceptance Criteria; `header: 'Trigger: {condition}'`; `filedBy: 'reflect'`; `provenance: { origin: 'reflect {mode} from #{n}', deferReason }`; footer `_Filed by \`reflect\` via specShapedBody._`), then create it directly via the unified record contract (`_shared/work-record.md`) — `gh issue create` (`work-backend: github-issues`) or `local-store.js`'s `writeRecord` (`work-backend: local-files`) — with `recordPayload({ …, type: 'task', risk, size, parked: true })` (a deferred insight is maintenance/follow-up work by construction, so `type` is always `task` here — `recordPayload` requires a resolvable `type` on every call, never an optional one, so this was never actually omittable; what was missing was applying it to the issue). **Type expression branch (#2562).** `recordPayload`'s returned `type` is metadata only — nothing stamps it onto the issue by itself, the same gap `capture/SKILL.md`'s own "Type expression branch" closes for its create path. Under `work-backend: github-issues`, read the project's `work-types` config key once before filing and branch, exactly as that file does: `work-types: native` — append `--type task` to the `gh issue create` call above; `work-types: labels` — bootstrap and add the `type:task` label instead (the pair lives in `record.js`'s `TYPE_LABELS`). Under `work-backend: local-files`, `writeRecord(filePath, {title, body, facets})` takes a `facets` object, not `recordPayload`'s flat `{title, body, labels, type}` return — include `type: 'task'` in the `facets` object passed to `writeRecord` explicitly (`local-store.js`'s frontmatter writer persists whatever `facets.type` it's given; it does not read `recordPayload`'s own return shape). An insight naming an open choice takes the `openQuestion` variant (`needs:definition` — a label with no `recordPayload` parameter, appended at the create call — no scoring, and no `type` stamping either, since an open question is not yet resolvable work). An insight with no valid reason cannot be recommended Defer. Before this recommendation is rendered, apply `_shared/materiality-floor.md`'s floor test to the insight: when it fails to clear the materiality floor (and its `Defer-reason:` is not `tangential`), the batch table's Recommended column shows "Digest — below floor" instead of "Defer — {reason}", and the digest entry is written only when the human approves that row (or an auto path applies it) — never before this recommendation reaches a human, per the contract's recommend-only-path rule. This mode's own insight-routing summary states the digest comment URL and the count routed this run, per `_shared/materiality-floor.md`'s "Digest URL and count surfacing" section.
 - **Capture** — the insight is complex or uncertain and needs brainstorming/exploration before it can be acted on. Routes to `/claude-tweaks:capture`, which files it as a fresh backlog work record — the recommendation names its reason the same way (`Capture — tangential`), invoked with the shaped body and `--defer-reason={value} --source reflect` (capture's Shaped-body branch — `capture/SKILL.md`). An insight with no valid reason cannot be recommended Capture. A Capture recommendation's `Defer-reason:` is usually `tangential`, which `_shared/materiality-floor.md`'s override always clears — a Capture-routed insight with reason `tangential` renders "Capture — tangential" as above, never a "Digest" recommendation. A Capture-routed insight carrying a different `Defer-reason:` (the rarer case) is still subject to the same materiality-floor test as the Defer bullet above, and may render "Digest — below floor" instead.
-- **Don't capture** — only for insights that are genuinely not actionable (one-off observations, context-specific facts, things already documented elsewhere). Must state why. Record the decline via `printf '%s' '{"description":"...","reason":"..."}' | node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" record-decline --source reflect` (#2544) — it computes the same fingerprint as the Prior-decline annotation step above, `reason` the stated why, and stores `subject` (#1033) as the insight's own one-line `description` text (the same text the fingerprint was computed from), so a later run's subject-scan step above has something to compare against for an insight that re-surfaces reworded rather than byte-identical. `source: 'reflect'` names this skill regardless of whether it ran standalone or from `/claude-tweaks:wrap-up` (#1399) — every reader below filters on this same literal. A decline write failure degrades open — log a one-line note and continue; never block the batch resolution over it.
+- **Don't capture** — only for insights that are genuinely not actionable (one-off observations, context-specific facts, things already documented elsewhere). Must state why. Record the decline (#2544) without putting the insight text or the stated reason on a command line: `Write` `{"description":"...","reason":"..."}` (both JSON-escaped) to the `{D}` payload path resolved above, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" record-decline --source reflect < "{D}"` — it computes the same fingerprint as the Prior-decline annotation step above, `reason` the stated why, and stores `subject` (#1033) as the insight's own one-line `description` text (the same text the fingerprint was computed from), so a later run's subject-scan step above has something to compare against for an insight that re-surfaces reworded rather than byte-identical. `source: 'reflect'` names this skill regardless of whether it ran standalone or from `/claude-tweaks:wrap-up` (#1399) — every reader below filters on this same literal. A decline write failure degrades open — log a one-line note and continue; never block the batch resolution over it.
 
 **Standalone / `--source review` path only** (the "otherwise" branch above): if any insight is "Implement now", handle it after the user approves the batch table, before returning control to the parent or presenting Next Actions — **except a D4 outcome**, whose write is gated separately as described above; do not write a memory file at this point. **Under `--source wrap-up`**, none of this section's outcomes (Implement now, Defer, Capture, Don't capture) are applied here at all — they are written to the staged file above and applied later by the Review Console's own Approve all / Override decision, per the `--source wrap-up` branch described there.
 

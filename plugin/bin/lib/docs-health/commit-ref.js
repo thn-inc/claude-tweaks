@@ -256,7 +256,7 @@ function isTimeoutError(err) {
 // Returns { stillShallow: boolean } on success (the fetch outcome,
 // whichever caller actually performed it, or the already-deepened state
 // found on re-check) or { error: string } on failure.
-function deepenShallowClone(git, root, remote) {
+function deepenShallowClone(git, root, remote, env, lock) {
   // By the time this runs, `root` is already a confirmed git repo --
   // verifyCommits only calls here after its own isShallow(git, root)
   // succeeded -- so gitCommonDir failing here is unexpected. Still, a
@@ -280,19 +280,10 @@ function deepenShallowClone(git, root, remote) {
   if (lockPath) {
     // file-lock's default wait (500ms) is far too short to block a waiting
     // caller through another process's own DEEPEN_TIMEOUT_MS-bounded fetch
-    // -- override it (plus LOCK_WAIT_MARGIN_MS, so a waiter's own deadline
-    // can never land moments before the holder's fetch finishes) just for
-    // this acquisition, restoring whatever the calling process had (or
-    // lacked) immediately after, so this module never leaves a
-    // process-wide env mutation behind.
-    const prevWait = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
-    process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = String(DEEPEN_TIMEOUT_MS + LOCK_WAIT_MARGIN_MS);
-    try {
-      held = acquireLock(lockPath);
-    } finally {
-      if (prevWait === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
-      else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prevWait;
-    }
+    // -- pass a longer waitMs by value (plus LOCK_WAIT_MARGIN_MS, so a
+    // waiter's own deadline can never land moments before the holder's
+    // fetch finishes) just for this acquisition.
+    held = lock(lockPath, { waitMs: DEEPEN_TIMEOUT_MS + LOCK_WAIT_MARGIN_MS });
   }
   try {
     // Re-check both the marker and the shallow state after acquiring (or
@@ -315,7 +306,7 @@ function deepenShallowClone(git, root, remote) {
       git(['-C', root, 'fetch', '--quiet', '--unshallow', '--no-tags', remote,
         `+refs/heads/*:refs/remotes/${remote}/*`], {
         timeout: DEEPEN_TIMEOUT_MS,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        env: { ...env, GIT_TERMINAL_PROMPT: '0' },
       });
     } catch (err) {
       const message = errorText(err);
@@ -332,8 +323,14 @@ function deepenShallowClone(git, root, remote) {
   }
 }
 
+// Injection seams (#5381): `env` reaches every git child through the default `git`
+// (a caller that passes its own `git` threads env itself), and the deepen fetch
+// also passes it explicitly. `lock` replaces only the acquire: releaseLock stays
+// hard-wired, so a custom `lock` must return acquireLock's { lockPath, token } handle.
 function verifyCommits({
-  root, hashes, integrationBranch = null, remote = 'origin', deepen = true, git = defaultGit,
+  root, hashes, integrationBranch = null, remote = 'origin', deepen = true,
+  env = process.env, lock = acquireLock,
+  git = (args, opts = {}) => defaultGit(args, { env, ...opts }),
 } = {}) {
   // A non-array hashes value (programmatic misuse — the CLI always passes an
   // array) used to throw the cryptic "hashes.map is not a function" from the
@@ -383,7 +380,7 @@ function verifyCommits({
 
   if (result.shallow.initial) {
     if (!deepen) return allUnverifiable('shallow clone: history is incomplete and deepening was disabled');
-    const deepenOutcome = deepenShallowClone(git, root, remote);
+    const deepenOutcome = deepenShallowClone(git, root, remote, env, lock);
     if (deepenOutcome.error) {
       result.shallow.error = deepenOutcome.error;
       return allUnverifiable(`shallow clone: deepening fetch from ${remote} failed (${deepenOutcome.error})`);
@@ -414,5 +411,5 @@ function verifyCommits({
 }
 
 module.exports = {
-  verifyCommits, defaultGit, OUTCOMES, DEEPEN_TIMEOUT_MS, DEEPEN_LOCK_FILENAME, TIMEOUT_MARKER_FILENAME,
+  verifyCommits, defaultGit, OUTCOMES, DEEPEN_TIMEOUT_MS, LOCK_WAIT_MARGIN_MS, DEEPEN_LOCK_FILENAME, TIMEOUT_MARKER_FILENAME,
 };

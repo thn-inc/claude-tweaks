@@ -5,6 +5,7 @@ const {
   CHECK_HEADER, PROPOSED_ACTION, classifyCheckResult, checkBody, checkReleaseNoteLine,
   bodySha, labelNames, scanRecords, summaryLine,
 } = require('../../../plugin/bin/lib/release-note-repair/detect');
+const { shapeGate } = require('../../../plugin/bin/lib/issues/materialize-format');
 const F = require('./fixtures');
 
 const gapsStderr = (...gaps) => `${CHECK_HEADER}\n${gaps.map((g) => `  - ${g}`).join('\n')}\n`;
@@ -38,6 +39,20 @@ test('checkBody runs the real compose-record.js --check contract', () => {
   assert.equal(checkBody(F.MISSING_RN_AND_AC).verdict, 'other-gaps');
   assert.equal(checkBody(F.CONFORMING).verdict, 'conforming');
   assert.equal(checkBody(F.MISSING_RN_WITH_TBD).verdict, 'other-gaps');
+});
+
+test('checkBody: a Release Note hidden by an unclosed fence is other-gaps naming the fence, never release-note-only (#4350)', () => {
+  const body = F.join(F.CS, F.DEL, '## Acceptance Criteria\n\n- [ ] a\n\n```\nnever closed\n', F.RN);
+  const result = checkBody(body);
+  assert.equal(result.verdict, 'other-gaps');
+  assert.deepEqual(result.gaps, ['unclosed-fence at line 13']);
+});
+
+test('a missing Release Note beside an unterminated fence routes to specify and stays off the repair worklist (#4350)', () => {
+  assert.deepEqual(shapeGate(F.UNTERMINATED_FENCE_BODY), { ok: false, missing: ['Release Note', 'unclosed-fence at line 13'] });
+  const result = checkBody(F.UNTERMINATED_FENCE_BODY);
+  assert.equal(result.verdict, 'other-gaps');
+  assert.deepEqual(result.gaps, ['missing section: ## Release Note', 'unclosed-fence at line 13']);
 });
 
 test('checkBody: a checker that exits 2 or throws is a scan error', () => {
@@ -142,11 +157,16 @@ test('a decision with no association fails closed; every candidate carries skipp
   assert.deepEqual(out[3].skippedUntrusted, [], 'a scan-error candidate carries the field too');
 });
 
-test('scanRecords: a record is not excluded by an untrusted decision but IS by a trusted one in the same thread', () => {
+test('scanRecords: an untrusted tidy decision alone keeps the record (and is reported skipped); a trusted one in the same thread excludes it in either order', () => {
   const body = `<!-- needs-decision: tidy -->\n**Proposed:** ${PROPOSED_ACTION}\n`;
   const planted = { body, url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' };
   const real = { body, authorAssociation: 'OWNER' };
-  assert.deepEqual(scanRecords([gh(7, F.MISSING_RN, { comments: [planted, real] })], { driver: 'github-issues' }), []);
+  const alone = scanRecords([gh(7, F.MISSING_RN, { comments: [planted] })], { driver: 'github-issues' });
+  assert.deepEqual(alone.map((c) => c.ref), ['#7'], 'an untrusted decision alone does not exclude the record');
+  assert.deepEqual(alone[0].skippedUntrusted, ['skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator']);
+  for (const [order, comments] of [['planted, real', [planted, real]], ['real, planted', [real, planted]]]) {
+    assert.deepEqual(scanRecords([gh(7, F.MISSING_RN, { comments })], { driver: 'github-issues' }), [], `a trusted decision excludes the record (order: ${order})`);
+  }
 });
 
 test('scanRecords: a record with no body field, or a checker failure, is a scan-error candidate', () => {

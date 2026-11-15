@@ -168,15 +168,13 @@ test('reapMerged: a closed-unmerged PR is skipped (never reaped) and logs worktr
 });
 
 // #4180: a dry run writes nothing, so the skip is reported but never appended to events.jsonl.
-test('#4180 reapMerged: a dry run reports a closed-unmerged skip without appending a worktree-reap-skipped event', { skip: STUB_SKIP }, () => {
+test('#4180 reapMerged: a dry run reports a closed-unmerged skip without appending a worktree-reap-skipped event', () => {
   const { root, wtPath, runDir } = buildReapableFixture();
-  const wrapper = installGhWrapper([{ number: 7, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' }]);
-  let result;
-  try {
-    result = reapMerged({ cwd: root, dryRun: true });
-  } finally {
-    wrapper.restore();
-  }
+  const prStates = createPrStateResolver({
+    root,
+    deps: { byBranch: () => ({ number: 7, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' }) },
+  });
+  const result = reapMerged({ cwd: root, dryRun: true, prStates });
   assert.deepEqual(result.skipped.map((s) => s.reason), ['pr-closed-unmerged']);
   assert.equal(fs.existsSync(wtPath), true);
   assert.equal(fs.existsSync(path.join(runDir, 'events.jsonl')), false, 'a dry run appends to no run\'s event log');
@@ -559,7 +557,7 @@ function buildReapableFixtureWithRemote() {
   // `origin/HEAD` (what resolveIntegrationBranch reads) is only set by a
   // clone taken AFTER origin already has a commit — a bare `git init` alone
   // has no HEAD to symlink to. Seed origin from a throwaway clone first,
-  // exactly like tests/reconcile.test.js's own pairedFixture() does, then
+  // exactly like tests/helpers/reconcile-fixtures.js's own pairedFixture() does, then
   // clone again into the fixture's real main checkout.
   const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-seed-'));
   execFileSync('git', ['clone', '-q', originDir, seedDir], { stdio: 'ignore' });
@@ -577,7 +575,7 @@ function buildReapableFixtureWithRemote() {
 
   // reconcile()'s pr-first branch is policy-gated, not auto-detected from a
   // local bare-repo origin URL — force it explicitly, same as this repo's
-  // other full-reconcile() fixtures (tests/reconcile.test.js's D2 test).
+  // other full-reconcile() fixtures (tests/reconcile-preflight-fetch.test.js's D2 test).
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
   git(root, 'add', '.claude-tweaks/policy.yml');

@@ -24,7 +24,7 @@ files:
 - **Action:** **Wrap-up agent**, after a record create fails or a `.shadow-dup` composer (`shadow-dup-proposal.js`) exits 2 or 3, runs the rewrite with `{why}` set to `record create failed (exit {code})` or `shadow-dup-proposal.js exited {code}`. The shadow-dup path still logs its own Degrade-trace `SKIP` line too.
 - **Should feel:** one sanctioned command, not a hand edit of `console.json`. It prints `console-resolve.js: {name} rewritten apply → keep-staged in {console.json path}` and logs an `AUTO … Review Console: Console item {name} ({section}): rewritten apply → keep-staged after execution — {why}` line under `## /wrap-up`.
 - **Should understand:**
-  - Only `apply` → `keep-staged` is allowed. The write is atomic and holds `.console.lock`, the same lock `console-residue.js --ack` takes, and it drops a stale `residueAcknowledgedAt`.
+  - For a Queue write, only `apply` → `keep-staged` is allowed. The CLI's one other rewrite, `--resolution pending`, takes only an `approve`d Reference repairs item whose staged diff stopped applying (`reference-repair-stale`, #4636; `resolve-the-unattended-console-in-one-process-1932.md`) and refuses an item in any other section. The write is atomic and holds `.console.lock`, the same lock `console-residue.js --ack` takes, and it drops a stale `residueAcknowledgedAt`.
   - It runs at any autonomy ceiling, because it only records a failure.
   - Rewriting an item that is already `keep-staged` prints `already keep-staged — nothing rewritten` and exits 0.
   - Exit 5 naming `no console.json` means a human-present console, so there is nothing to do. Any other exit 5 (an unknown or duplicate `{name}`, an item no longer `apply`) means nothing was recorded: check `{name}` against `console.json` and re-run.
@@ -69,4 +69,5 @@ files:
 
 ## Origin
 - Created during the build of #4170 (run `2026-10-25T152441-record-4170`): `console-resolve.js --set-item`, `lib/console/item-resolution.js`, the derived `filing-pending` residue word, and the re-run remedy in the archival refusal.
+- Updated during the build of #4636: `--set-item` gained a second rewrite, `approve` → `pending`, for a Reference repairs item only, so step 1 no longer says `apply` → `keep-staged` is the CLI's only rewrite.
 - Related journeys: `review-what-an-unattended-console-left-open-3370.md` covers reading and acking residue in general. `keep-cant-tell-findings-through-a-console-less-auto-merge-4171.md` covers the console-less merge path's `cant-tell-unfiled` guard.

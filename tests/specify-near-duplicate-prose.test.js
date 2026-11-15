@@ -3,8 +3,8 @@
 // Pins record #1944's prose wiring: shaping-mode.md must run the
 // near-duplicate finder before composition and route a ready+in-flight
 // candidate to needs:decision; next-mode-shape.md must cite the same step
-// for the headless drain; dispatch/queue-pull-script.md and SKILL.md must
-// carry the cross-group warning. The mechanical half (the three signals,
+// for the headless drain; dispatch's queue pull and SKILL.md must carry the
+// cross-group warning. The mechanical half (the three signals,
 // exclusions, thresholds) is pinned separately in
 // tests/bin-lib/issues/near-duplicate.test.js.
 'use strict';
@@ -23,7 +23,7 @@ const SHAPING_MODE = read('plugin/skills/specify/shaping-mode.md');
 // Actions Performed moved to shaping-mode-readback.md (#2841's split).
 const SHAPING_STAMPING = read('plugin/skills/specify/shaping-mode-stamping.md') + read('plugin/skills/specify/shaping-mode-readback.md');
 const NEXT_MODE_SHAPE = read('plugin/skills/specify/next-mode-shape.md');
-const QUEUE_PULL = read('plugin/skills/dispatch/queue-pull-script.md');
+const { PASSES } = require('../plugin/bin/lib/dispatch/queue-pull');
 const DISPATCH_SKILL = read('plugin/skills/dispatch/SKILL.md');
 
 test('shaping-mode.md runs the near-duplicate check before composition and cites the module', () => {
@@ -58,14 +58,16 @@ test('next-mode-shape.md cites the near-duplicate check for the headless drain a
   assert.match(section.slice(0, 600), /`failed`\s+bucket/);
 });
 
-test('dispatch/queue-pull-script.md runs the cross-group near-duplicate warning after the cross-PR overlap block', () => {
-  assert.match(QUEUE_PULL, /#1944: cross-group near-duplicate candidate warning/);
-  assert.match(QUEUE_PULL, /findNearDuplicates/);
-  const crossPrIdx = QUEUE_PULL.indexOf('#1579: cross-PR root-cause overlap report');
-  const nearDupIdx = QUEUE_PULL.indexOf('#1944: cross-group near-duplicate candidate warning');
+// #5230: the warning is the queue-pull module's near-dup-pairs pass; its AUTO line is pinned in
+// tests/bin-lib/dispatch/queue-pull.test.js (the `#5227 near-dup` test).
+test('the dispatch queue pull runs the cross-group near-duplicate warning after the cross-PR overlap pass, last', () => {
+  const ids = PASSES.map((p) => p.id);
+  const crossPrIdx = ids.indexOf('cross-pr-overlap');
+  const nearDupIdx = ids.indexOf('near-dup-pairs');
   assert.ok(crossPrIdx !== -1 && nearDupIdx !== -1);
   assert.ok(crossPrIdx < nearDupIdx, 'the cross-group warning runs after the cross-PR overlap report');
-  assert.match(QUEUE_PULL, /near-duplicate candidates across groups/);
+  assert.equal(nearDupIdx, ids.length - 1, 'the cross-group warning is the final pass');
+  assert.equal(PASSES[nearDupIdx].kind, 'informational', 'the pass writes no exclusion reason');
 });
 
 test('dispatch/SKILL.md Step 3 documents the near-duplicate candidate warning, with strong pairs feeding the neighbour guard (#3520)', () => {
@@ -184,6 +186,45 @@ test('AC1.1: an unreadable claim is reported on the output and the happy path st
     fs.writeFileSync(snapshot, JSON.stringify([{ number: 7, labels: ['ready'] }]));
     const out = execFileSync(process.execPath, ['-e', code, hits, snapshot], { encoding: 'utf8', env: { ...process.env, PATH: dir } });
     assert.deepStrictEqual(JSON.parse(out.trim()), { refuse: false, unreadable: [7] });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('shaping-mode.md names deepOverlapHits candidates as likely duplicates before stamping ready (#4701)', () => {
+  const start = SHAPING_MODE.indexOf('Near-duplicate candidate check (#1944)');
+  const end = SHAPING_MODE.indexOf('### Dependency-narration check', start);
+  assert.ok(start !== -1 && end !== -1, 'near-duplicate section anchors must exist');
+  const section = SHAPING_MODE.slice(start, end);
+  assert.match(section, /`deepOverlapHits`/);
+  assert.match(refusalFenceBody().fence, /deepOverlapHits\(hits\)/);
+  assert.match(section, /likely\s+duplicate/);
+  assert.match(section, /before\s+stamping\s+`ready`/);
+  assert.match(section, /at\s+least\s+3\s+shared\s+Current\s+State\s+anchors\s+\(`DEEP_OVERLAP_MIN`/);
+  assert.strictEqual(require('../plugin/bin/lib/issues/near-duplicate').DEEP_OVERLAP_MIN, 3);
+  assert.match(section, /surface-only/);
+  assert.match(section, /never\s+refuses/);
+});
+
+test('the shaping-mode.md refusal fence prints a hit at DEEP_OVERLAP_MIN shared anchors as deep, and one below it not (#4701)', () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  const code = refusalFenceBody().fence.split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-fence-'));
+  const hits = path.join(dir, 'hits.json');
+  const snapshot = path.join(dir, 'snapshot.json');
+  // No hit is title-similar, so the fence makes no claim or GraphQL read — this runs offline.
+  fs.writeFileSync(hits, JSON.stringify([
+    { number: 4093, title: 'Deep', signals: ['body-anchor-overlap'], sharedAnchors: ['a.js', 'b.js', 'c.js'] },
+    { number: 3508, title: 'Shallow', signals: ['body-anchor-overlap'], sharedAnchors: ['a.js', 'b.js'] },
+  ]));
+  fs.writeFileSync(snapshot, JSON.stringify([
+    { number: 4093, labels: ['ready'] },
+    { number: 3508, labels: ['ready'] },
+  ]));
+  try {
+    const out = execFileSync(process.execPath, ['-e', code, hits, snapshot], { encoding: 'utf8' });
+    assert.deepStrictEqual(JSON.parse(out.trim()), { refuse: false, deep: [{ number: 4093, sharedAnchors: 3 }] });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

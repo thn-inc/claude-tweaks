@@ -503,7 +503,8 @@ test('AC2.1: perf/ budgets are real matches but are never scanned', () => {
 // Each budget moved out of tests/ by #3939, by its perf/ file and comparison text.
 // With ALLOWLIST empty, these are the scan's floor: a blinded matcher drops them.
 const MOVED_TO_PERF = {
-  'perf/scale-readiness-linearity.test.js': ['elapsed < 1000', 'elapsed < 1000'],
+  // The middle (second) budget is #3903's braceTracker linearity check, added in perf/ directly, not a moved one.
+  'perf/scale-readiness-linearity.test.js': ['elapsed < 1000', 'elapsed < 1000', 'elapsed < 1000'],
   'perf/dream-redact-latency.test.js': ['Date.now() - started < 500'],
   'perf/gif-quantize-latency.test.js': ['elapsedMs < 5000'],
   'perf/git-retry-bounded-wait.test.js': ['elapsed < 1000'],

@@ -12,6 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = path.join(DISPATCH, 'SKILL.md');
@@ -43,17 +44,8 @@ function fencedBlocks(text) {
   return blocks;
 }
 
-const missingFactsOf = (facts) => (text) => facts.filter(([re]) => !re.test(text)).map(([, name]) => name);
-
 // Strip one fact's match from the live region; the predicate must report exactly that fact.
-function assertEachFactGoesRed(text, facts) {
-  const missing = missingFactsOf(facts);
-  for (const [re, name] of facts) {
-    const doctored = text.replace(re, '');
-    assert.notEqual(doctored, text, `anchor for "${name}" not found — the proof cannot discriminate`);
-    assert.deepEqual(missing(doctored), [name], `removing only "${name}" must turn exactly that fact red`);
-  }
-}
+const assertEachFactGoesRed = (text, facts) => assertEachPatternGoesRed(text, facts, missingFactsOf(facts));
 
 const STEP5_FACTS = [
   [/When `express-lane` resolves `true` \(`resolve-policy\.js --values express-lane`, read once per firing\)/, 'no gate call when the lane is off'],

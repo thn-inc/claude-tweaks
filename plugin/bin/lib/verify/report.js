@@ -59,9 +59,10 @@ function gitInfo(execImpl = execFileSync) {
 // bin/verify.js resolves its default --log-dir/--count-stamp and the #1921
 // stamp location from this; null means "not inside a checkout" and the CLI
 // falls back to its tmpdir behavior.
-function gitDir(execImpl = execFileSync, cwd = process.cwd()) {
+// `env` (optional) is the child's environment; absent, the child inherits process.env.
+function gitDir(execImpl = execFileSync, cwd = process.cwd(), env) {
   try {
-    const out = String(execImpl('git', ['rev-parse', '--git-dir'], { encoding: 'utf8', cwd, windowsHide: true })).trim();
+    const out = String(execImpl('git', ['rev-parse', '--git-dir'], { encoding: 'utf8', cwd, env, windowsHide: true })).trim();
     if (out === '') return null;
     return path.resolve(cwd, out);
   } catch {
@@ -99,6 +100,10 @@ function entryFor(check) {
   // #1837: never disable the count-stamp comparison silently — a tests
   // check whose counts didn't parse (with a stamp in play) says so.
   if (check.countsUnparsed) entry.countsUnparsed = check.countsUnparsed;
+  // #4347: a check whose verdict is a CI job's names that run.
+  if (check.ci) entry.ci = check.ci;
+  // #5119: the suite slot a CI-answered suite's local retry held.
+  if (check.retrySlot) entry.retrySlot = check.retrySlot;
   return entry;
 }
 
