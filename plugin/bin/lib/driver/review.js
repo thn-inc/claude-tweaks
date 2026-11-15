@@ -73,7 +73,7 @@
 // lines, with anchored per-line regexes only, because the evidence test controls part of the text.
 //
 // On or off (reviewRequired): policy `off` and `on` decide alone; any other value is the beyond
-// rule, on when the size label is not `low` or the Key Files (the eligibility verdict's own
+// rule (eligibility.js's isBeyondExpressBounds, which admission shares), on when the size label is not `low` or the Key Files (the eligibility verdict's own
 // extraction; a non-array counts as beyond) exceed EXPRESS_MAX_KEY_FILES. The run asks it once
 // per record, in the eligibility step (ctx.reviewer, #5224), and admission, the check flag and
 // reviewRecord all read that one answer; reviewRecord never calls it, and fails closed (a
@@ -220,7 +220,7 @@
 
 const path = require('path');
 const { parseRecordFacets } = require('../issues/record');
-const { EXPRESS_MAX_KEY_FILES, isProtectedPath } = require('../express/eligibility');
+const { EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isProtectedPath } = require('../express/eligibility');
 const { classifyDiffFiles, isSensitivePath } = require('../issues/blast-radius');
 const { isAncestorOrSelf } = require('../path-guard');
 const { relativeDisplayId } = require('../shared-primitives');
@@ -317,12 +317,13 @@ function reviewRequired({ issue, keyFiles, policyValue } = {}) {
   if (policyValue === 'off') return { on: false, reason: 'express-driver-review is off' };
   if (policyValue === 'on') return { on: true, reason: 'express-driver-review is on' };
   const { size } = parseRecordFacets((issue && issue.labels) || []);
+  if (!isBeyondExpressBounds({ size, keyFiles })) {
+    return { on: false, reason: `size:low and ${keyFiles.length} Key Files are inside the express bounds` };
+  }
+  // Beyond: the reason names the first rule the record breaks.
   if (size !== 'low') return { on: true, reason: `size ${size || 'unlabelled'} is beyond size:low` };
   if (!Array.isArray(keyFiles)) return { on: true, reason: 'Key Files unreadable' };
-  if (keyFiles.length > EXPRESS_MAX_KEY_FILES) {
-    return { on: true, reason: `${keyFiles.length} Key Files is beyond ${EXPRESS_MAX_KEY_FILES}` };
-  }
-  return { on: false, reason: `size:low and ${keyFiles.length} Key Files are inside the express bounds` };
+  return { on: true, reason: `${keyFiles.length} Key Files is beyond ${EXPRESS_MAX_KEY_FILES}` };
 }
 
 function isPlainObject(v) {

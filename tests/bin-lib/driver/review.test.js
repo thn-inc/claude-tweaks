@@ -194,6 +194,23 @@ test('AC13: reviewRequired', () => {
   expect({ issue: issue('size:low'), keyFiles: within, policyValue: 'on' }, true);
 });
 
+test('reviewRequired: each answer\'s reason, verbatim (#5224)', () => {
+  const issue = (...names) => ({ labels: names.map((name) => ({ name })) });
+  const keys = (n) => Array.from({ length: n }, (_, i) => `src/f${i}.js`);
+  const rows = [
+    [{ issue: issue('size:high'), keyFiles: keys(9), policyValue: 'off' }, { on: false, reason: 'express-driver-review is off' }],
+    [{ issue: issue('size:low'), keyFiles: keys(1), policyValue: 'on' }, { on: true, reason: 'express-driver-review is on' }],
+    [{ issue: issue('size:medium'), keyFiles: keys(1) }, { on: true, reason: 'size medium is beyond size:low' }],
+    [{ issue: issue(), keyFiles: keys(1) }, { on: true, reason: 'size unlabelled is beyond size:low' }],
+    [{ issue: issue('size:medium'), keyFiles: null }, { on: true, reason: 'size medium is beyond size:low' }],
+    [{ issue: issue('size:low'), keyFiles: null }, { on: true, reason: 'Key Files unreadable' }],
+    [{ issue: issue('size:low'), keyFiles: keys(4) }, { on: true, reason: '4 Key Files is beyond 3' }],
+    [{ issue: issue('size:low'), keyFiles: keys(3) }, { on: false, reason: 'size:low and 3 Key Files are inside the express bounds' }],
+    [{ issue: issue('size:low'), keyFiles: [] }, { on: false, reason: 'size:low and 0 Key Files are inside the express bounds' }],
+  ];
+  for (const [args, want] of rows) assert.deepStrictEqual(reviewRequired({ policyValue: 'beyond-express', ...args }), want, JSON.stringify(args));
+});
+
 const VALID_EVIDENCE = Object.freeze({ path: 'tests/a.test.js', content: "require('node:test')('x', () => { throw new Error('x'); });\n" });
 
 test('AC2: finding shape', () => {

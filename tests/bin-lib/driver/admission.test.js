@@ -301,7 +301,7 @@ function laneVerdict(issue, { sizeCeiling = 'low', maxKeyFiles = 3, review = 'be
 
 const REVIEW_VALUES = ['off', 'beyond-express', 'on'];
 
-test('AC2.1/AC2.2: with every key unset the lane verdict equals today\'s rules (hand-written table)', () => {
+test('AC2.1/AC2.2 (#5224): with every key unset the lane verdict equals today\'s rules (hand-written table)', () => {
   // Written by hand from the express rules before #5224, not computed by the code under test.
   const EXPECTED = {
     'low|0': ['no Key Files'],
@@ -347,33 +347,41 @@ test('AC2.1/AC2.2: with every key unset the lane verdict equals today\'s rules (
 
 const WIDE = { sizeCeiling: 'medium', maxKeyFiles: 5 };
 
-test('AC3.1: widened, size:medium with 4 Key Files is admitted with the reviewer on or default, refused with it off', () => {
+test('AC3.1 (#5224): widened, size:medium with 4 Key Files is admitted with the reviewer on or default, refused with it off', () => {
   const issue = record({ size: 'medium', keyFileCount: 4 });
   assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review: 'on' }), { admitted: true, reasons: [] });
   assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review: 'beyond-express' }), { admitted: true, reasons: [] });
   assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review: 'off' }), { admitted: false, reasons: [R.reviewerOff] });
 });
 
-test('AC3.2: widened, size:low with 4 Key Files takes the same two outcomes', () => {
+test('AC3.2 (#5224): widened, size:low with 4 Key Files takes the same two outcomes', () => {
   const issue = record({ size: 'low', keyFileCount: 4 });
   assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review: 'on' }), { admitted: true, reasons: [] });
   assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review: 'beyond-express' }), { admitted: true, reasons: [] });
   assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review: 'off' }), { admitted: false, reasons: [R.reviewerOff] });
 });
 
-test('AC3.5: a record inside the express bounds is admitted the same with the reviewer on or off', () => {
+test('(#5224) widened, size:medium with at most 3 Key Files is beyond the express bounds by its size alone', () => {
+  for (const keyFileCount of [1, 3]) {
+    const issue = record({ size: 'medium', keyFileCount });
+    assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review: 'beyond-express' }), { admitted: true, reasons: [] }, `${keyFileCount}`);
+    assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review: 'off' }), { admitted: false, reasons: [R.reviewerOff] }, `${keyFileCount}`);
+  }
+});
+
+test('AC3.5 (#5224): a record inside the express bounds is admitted the same with the reviewer on or off', () => {
   const issue = record({ size: 'low', keyFileCount: 2 });
   for (const review of REVIEW_VALUES) {
     assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review }), { admitted: true, reasons: [] }, `review=${review}`);
   }
 });
 
-test('AC3.6/AC3.7: failing an eligibility bound and the reviewer condition reports eligibility reasons only, outside the driver bounds', () => {
+test('AC3.6/AC3.7 (#5224): failing an eligibility bound and the reviewer condition reports eligibility reasons only, outside the driver bounds', () => {
   const issue = record({ size: 'medium', keyFileCount: 6 });
   assert.deepStrictEqual(laneVerdict(issue, { ...WIDE, review: 'off' }), { admitted: false, reasons: ['more than 5 Key Files'] });
 });
 
-test('AC3.6 (Plan Review Clarification): inside the driver bounds, another eligibility failure is followed by the reviewer reason', () => {
+test('AC3.6 (#5224, Plan Review Clarification): inside the driver bounds, another eligibility failure is followed by the reviewer reason', () => {
   const beyond = record({ risk: 'medium', size: 'medium', keyFileCount: 4 });
   assert.deepStrictEqual(laneVerdict(beyond, { ...WIDE, review: 'off' }).reasons, ['risk is not low', R.reviewerOff]);
   for (const review of ['on', 'beyond-express']) {
@@ -383,7 +391,7 @@ test('AC3.6 (Plan Review Clarification): inside the driver bounds, another eligi
   assert.deepStrictEqual(laneVerdict(inside, { ...WIDE, review: 'off' }).reasons, ['risk is not low']);
 });
 
-test('reviewerGateReason returns null on unreadable input', () => {
+test('(#5224) reviewerGateReason returns null on unreadable input', () => {
   const facts = { labels: ['size:medium'], keyFiles: ['a.js', 'b.js', 'c.js', 'd.js'], bounds: WIDE, reviewerOn: false };
   assert.strictEqual(reviewerGateReason(facts), R.reviewerOff, 'the readable base refuses');
   assert.strictEqual(reviewerGateReason({ ...facts, labels: null }), null);
@@ -393,14 +401,14 @@ test('reviewerGateReason returns null on unreadable input', () => {
   assert.strictEqual(reviewerGateReason(null), null);
 });
 
-test('AC6.2: a missing or non-boolean reviewer-on answer refuses', () => {
+test('AC6.2 (#5224): a missing or non-boolean reviewer-on answer refuses', () => {
   for (const v of [undefined, null, 'true', 1, {}]) {
     assert.ok(reasonsFor({ reviewerOn: v }).includes(R.reviewerUnreadable), `reviewerOn=${JSON.stringify(v)}`);
   }
   assert.deepStrictEqual(evaluateAdmission({ ...ADMIT, reviewerOn: true }), { admitted: true, reasons: [] });
 });
 
-test('AC6.2: missing or malformed bounds refuse', () => {
+test('AC6.2 (#5224): missing or malformed bounds refuse', () => {
   for (const b of [
     undefined, null, {}, { sizeCeiling: 'high', maxKeyFiles: 3 }, { sizeCeiling: 'low', maxKeyFiles: 0 }, { sizeCeiling: 'low', maxKeyFiles: '3' },
     { sizeCeiling: 'toString', maxKeyFiles: 3 }, { sizeCeiling: 'low', maxKeyFiles: 3.5 },
@@ -412,7 +420,7 @@ test('AC6.2: missing or malformed bounds refuse', () => {
   }
 });
 
-test('Review Focus 2: a limit below the express limit narrows', () => {
+test('Review Focus 2 (#5224): a limit below the express limit narrows', () => {
   const three = record({ size: 'low', keyFileCount: 3 });
   for (const review of REVIEW_VALUES) {
     assert.deepStrictEqual(laneVerdict(three, { maxKeyFiles: 2, review }).reasons, ['more than 2 Key Files'], `review=${review}`);

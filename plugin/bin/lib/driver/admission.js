@@ -23,7 +23,8 @@
 // unreadable comment list) refuses as unreadable, never read as "not escalated".
 //
 // The reviewer rule (#5224). A record is beyond the express bounds when its size label is not
-// `low` or it has more than EXPRESS_MAX_KEY_FILES Key Files, and inside the driver's bounds when
+// `low` or it has more than EXPRESS_MAX_KEY_FILES Key Files (eligibility.js's isBeyondExpressBounds,
+// which review.js's reviewRequired shares), and inside the driver's bounds when
 // its size is one `bounds.sizeCeiling` accepts (SIZE_CEILINGS) and it has at most
 // `bounds.maxKeyFiles` Key Files. `keyFiles` is the eligibility verdict's own extraction and
 // `reviewerOn` is review.js's reviewRequired answer, computed once per record by the caller.
@@ -40,7 +41,9 @@
 // Every gate runs on every call, so one verdict names every reason that applies.
 
 const { normalizeLabelNames, parseRecordFacets, LABELS } = require('../issues/record');
-const { SIZE_CEILINGS, EXPRESS_MAX_KEY_FILES } = require('../express/eligibility');
+const {
+  SIZE_CEILINGS, isBeyondExpressBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
+} = require('../express/eligibility');
 
 const ADMISSION_REASONS = Object.freeze({
   noBuildGrant: 'record lacks auto:build',
@@ -83,12 +86,10 @@ function routingReason(routing, number) {
   return R.routingUnknown(routing);
 }
 
-// Own-key check: a ceiling such as `toString` is not a SIZE_CEILINGS key.
+// The checks eligibility applies to the same two values.
 function boundsReadable(bounds) {
   if (!bounds || typeof bounds !== 'object') return false;
-  const { sizeCeiling, maxKeyFiles } = bounds;
-  return typeof sizeCeiling === 'string' && Object.prototype.hasOwnProperty.call(SIZE_CEILINGS, sizeCeiling)
-    && Number.isSafeInteger(maxKeyFiles) && maxKeyFiles >= 1;
+  return isReadableSizeCeiling(bounds.sizeCeiling) && isReadableKeyFileLimit(bounds.maxKeyFiles);
 }
 
 // { labels, keyFiles, bounds, reviewerOn } -> R.reviewerOff, or null (the rule does not refuse,
@@ -97,7 +98,7 @@ function reviewerGateReason(facts) {
   const { labels, keyFiles, bounds, reviewerOn } = (facts && typeof facts === 'object') ? facts : {};
   if (!Array.isArray(labels) || !Array.isArray(keyFiles) || !boundsReadable(bounds)) return null;
   const { size } = parseRecordFacets(labels);
-  const beyond = size !== 'low' || keyFiles.length > EXPRESS_MAX_KEY_FILES;
+  const beyond = isBeyondExpressBounds({ size, keyFiles });
   const inside = SIZE_CEILINGS[bounds.sizeCeiling].includes(size) && keyFiles.length <= bounds.maxKeyFiles;
   return beyond && inside && reviewerOn === false ? R.reviewerOff : null;
 }
