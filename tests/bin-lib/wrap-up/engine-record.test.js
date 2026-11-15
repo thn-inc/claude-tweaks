@@ -254,7 +254,7 @@ test("recordResult still records action:'applied' fine on an apply-or-stage row 
 
   const payload = {
     version: 1, rowId: 'skills', result: 'findings', gapDetection: 'run',
-    findings: [{ kind: 'additive', summary: 'add a note', targetPath: 'skills/x/SKILL.md', action: 'applied', stagePath: null, commit: null }],
+    findings: [{ kind: 'additive', summary: 'add a note', targetPath: 'skills/x/SKILL.md', action: 'applied', stagePath: null, commit: 'abc1234' }],
   };
 
   assert.doesNotThrow(() => recordResult({ runDir, payload, now: FIXED_NOW }));
@@ -262,6 +262,31 @@ test("recordResult still records action:'applied' fine on an apply-or-stage row 
   const state = readState(runDir);
   assert.strictEqual(state.results.skills.result, 'findings');
   assert.strictEqual(state.results.skills.findings[0].action, 'applied');
+});
+
+// #5290 final review I2: a captured Skills-row edit gets its commit from land. An applied finding with
+// none never left capture, and the console would render it as `applied (undefined)`.
+for (const commit of [undefined, null, '', '  ']) {
+  test(`recordResult refuses an applied skills-row finding with commit ${JSON.stringify(commit)} — nothing recorded`, () => {
+    const runDir = makeRunDir();
+    initState({ runDir, worklist: makeWorklist(), now: FIXED_NOW });
+    const finding = { kind: 'additive', summary: 'add a note', targetPath: '.claude/skills/x/SKILL.md', action: 'applied', stagePath: null };
+    if (commit !== undefined) finding.commit = commit;
+    const payload = { version: 1, rowId: 'skills', result: 'findings', gapDetection: 'run', findings: [finding] };
+    assert.throws(() => recordResult({ runDir, payload, now: FIXED_NOW }),
+      /payload\.findings\[0\] is an applied skills-row finding with no commit — run learned-skills-pr\.js land or stage first/);
+    assert.strictEqual(readState(runDir).results.skills, undefined);
+  });
+}
+
+test('recordResult still accepts a staged skills-row finding with no commit', () => {
+  const runDir = makeRunDir();
+  initState({ runDir, worklist: makeWorklist(), now: FIXED_NOW });
+  const payload = {
+    version: 1, rowId: 'skills', result: 'findings', gapDetection: 'run',
+    findings: [{ kind: 'additive', summary: 'add a note', targetPath: '.claude/skills/x/SKILL.md', action: 'staged', stagePath: '/abs/staged/wrap-up-skill-1.md' }],
+  };
+  assert.doesNotThrow(() => recordResult({ runDir, payload, now: FIXED_NOW }));
 });
 
 test('recordResult still accepts a fully valid mixed applied+staged findings payload', () => {
