@@ -2085,6 +2085,12 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     // cwds go through the cap.
     const many = [1, 2, 3, 4, 5].map((k) => `! time cd d${k}; `).join('') + 'cp a f.js';
     assert.ok(fileWriteTargets(many, '/r').some((x) => x.lost), JSON.stringify(fileWriteTargets(many, '/r')));
+    // A walk that lost its cwd is walked again as base read it (BASE_VIEW), and base followed none of
+    // these cds, so that walk splits none: its readings stay within the cap instead of doubling at each
+    // split cd (2^16 of them for sixteen).
+    const sixteen = Array.from({ length: 16 }, (_, k) => `! time cd d${k}; `).join('') + 'cp a f.js';
+    const readings = fileWriteTargets(sixteen, '/r').filter((x) => x.reading);
+    assert.ok(readings.length <= 16, `${readings.length} readings`);
   });
 
   // From M, all three write M/f.js for each (`X=1 time`, `X=1 !` and `>g !`: zsh refuses to parse

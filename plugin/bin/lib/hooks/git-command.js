@@ -1008,8 +1008,10 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
 // One segment of forEachShellSegment's walk, already tokenized (`tok`, from tokenize, and
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
 // non-assignment segment (a cd one included), and returns the effective cwds after it: one, or
-// two for a cd the bash versions split on (#4448, commandWord's `split`).
-function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
+// two for a cd the bash versions split on (#4448, commandWord's `split`). The base-like walk
+// (`baseLike`, BASE_VIEW) splits none: base followed no prefixed cd, and that walk's set grows only
+// where base's grew (it has no join that caps it), so there such a cd changes no cwd, as in base.
+function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path, baseLike = false) {
   const { typed, singleQuoted, doubleQuoted, leadQuoted } = tok;
   const { tokens: rawT, spanKinds } = settleStrayBackslash(tok.tokens, tok.spanKinds, pathImpl);
   if (!rawT.length) return [effCwd];
@@ -1036,7 +1038,7 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
   // redirect words are no argument of cd (`cd > f1 sub` changes to sub). Only the words after
   // `cd` are read for them: an assignment word before it can span tokens that look like a
   // redirection (`x=$(echo >f) cd /m`, #4303), and dropping one there would shift the argument.
-  if (t[cdLead] === 'cd') { // an index of -1 reads undefined: no cd
+  if (t[cdLead] === 'cd' && !(split && baseLike)) { // an index of -1 reads undefined: no cd
     const from = cdLead + 1;
     // The word after `cd` is its argument unless it could start a redirection (dropRedirections'
     // lead test), the common case, which skips the slices.
@@ -2819,8 +2821,8 @@ function closesDoubled(match, str, open, from = 0) {
 // The piece is tokenized once; `nest.value` is the chunk's nesting state (advanceNesting,
 // #4210), read at the piece's start and advanced past it once, however many cwds visit it. A cd the
 // bash versions split on adds a cwd (#4448); the separator after the piece joins the set and
-// collapses it past CWD_SET_CAP, as it does for an `&&` list.
-function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
+// collapses it past CWD_SET_CAP, as it does for an `&&` list. `baseLike` is the walk's (visitSegment).
+function visitUnderEach(text, cwds, vars, handler, nest, pathImpl, baseLike) {
   const tok = tokenize(text.trim());
   const nestAt = tok.tokens.map((w, i) => {
     const at = nest.value;
@@ -2829,7 +2831,7 @@ function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
   });
   const next = [];
   cwds.forEach((c, k) => {
-    const after = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true), pathImpl);
+    const after = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true), pathImpl, baseLike);
     for (const n of after) if (!next.some((x) => sameCwd(x, n))) next.push(n);
   });
   return next;
@@ -3190,8 +3192,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // is dropped, as before the closer cut it (forgetting a name would drop the targets that use it).
   const nest = { value: NOT_NESTED }; // carried across this chunk's pieces in text order (#4210)
   const visitPiece = (ev, pieceCwds, pieceVars) => {
-    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest, pathImpl);
-    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest, pathImpl);
+    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest, pathImpl, baseLike);
+    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest, pathImpl, baseLike);
     return joinCwds(pieceCwds, next, overflow);
   };
   let b = 0;
