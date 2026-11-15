@@ -9,3 +9,4 @@
 | 5 | build | SDD ruling — Task 6 (check-only, no diff) verified centrally instead of a task review: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 6 | build | SDD ruling — Task 4 minor "size facet parsed twice" dropped as not a defect: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
 | 7 | build | SDD ruling — re-review residual Minors sent to one targeted fix dispatch + scoped re-review: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 8 | build/skill | Skill enrichment: .claude/skills/policy-key-addition site 1 says a derived default follows _shared/policy-schema-read-path.md's Shapes A/B, but not that a new Shape B key must also be named in that section's Shape B paragraph, which /claude-tweaks:help policy mode reads as its derived-default list; #5224's express-driver-max-lines missed it (ledger row 2's follow-up) | open | — |
