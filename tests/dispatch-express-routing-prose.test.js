@@ -360,7 +360,8 @@ const ROUTE_FACTS = [
   [/Any other word, no final line, a final line that is not one JSON object, or a non-zero exit that left no parseable final line \(the `--run` guard's exit 3 included\) is `blocked` through `two-call-gate\.md` §5/, 'AC5: the catch-all is blocked through §5'],
   [/a guard failure is a dispatch-side defect, never routed onward to today's path/, 'AC5: a guard failure is a dispatch-side defect'],
   [/When `\{minted-run-dir\}\/decisions\.md` carries no `Step 2\.8: claimed #\{n\}` line — always so after exit 3, which writes nothing — the driver took no claim: §5's cleanup-only call appends `\(driver-no-claim: skip the claim release\)`/, 'no final line and no claim log → the skip parenthetical'],
-  [/A `decisions\.md` that cannot be read counts as claimed\. A non-zero exit that did leave a parseable final line is not this case: route its outcome word by the table/, 'an unreadable log counts as claimed; a non-zero exit with a final line routes by its word'],
+  [/An absent `decisions\.md` carries no such line, so the release is skipped[^;]*; one that exists but cannot be read counts as claimed\. A non-zero exit that did leave a parseable final line is not this case: route its outcome word by the table/, 'an absent log skips the release, an unreadable one counts as claimed; a non-zero exit with a final line routes by its word'],
+  [/A record that takes today's path after a `--check` that did not admit, after a bind that printed no `worktree recorded` line, or after `refused`, gets one `SKIP` line/, 'the decline SKIP covers the failed bind'],
   [/run `drain-pr-overlap\.md`'s Step 5 list write as it runs after the express call/, 'AC5.7: the Step 5 list write after the call'],
   [/The group counts for `settle-and-merge\.md`'s Drain-overlap hold like any auto-merge group/, 'AC5.8: counts for the Drain-overlap hold'],
   [/Report it by `reporting\.md`'s driver-group sentence/, 'the report block per reporting.md'],
@@ -478,8 +479,16 @@ test('go-red control: a dropped --no-settle or an unquoted spaced run dir fails 
 });
 
 // The first bind, in the Order section's fence, is the express form: never --dispatch.
+// Sliced by its own CRLF-tolerant anchors, so a Windows checkout's text extracts the same line.
+function orderSection(text) {
+  const start = text.search(/^## Order\r?$/m);
+  assert.notEqual(start, -1, 'no ## Order heading');
+  const rest = text.slice(start + 1);
+  const next = rest.search(/^## /m);
+  return next === -1 ? rest : rest.slice(0, next);
+}
 function orderBindLines(text) {
-  const order = sectionOf(text, '## Order');
+  const order = orderSection(text);
   const lines = [];
   for (const m of order.matchAll(/^[ \t]*```bash\r?\n([\s\S]*?)\r?\n[ \t]*```/gm)) {
     for (const line of m[1].split(/\r?\n/)) if (line.includes('/bin/hooks.js" record-worktree')) lines.push(line.trim());
@@ -494,6 +503,9 @@ const assertFirstBindWithoutDispatch = (text) => {
 
 test('driver-route.md: the Order bind fence binds without --dispatch', () => {
   assertFirstBindWithoutDispatch(routeText());
+  const crlf = routeText().replace(/\n/g, '\r\n');
+  assert.notEqual(crlf, routeText());
+  assert.deepEqual(orderBindLines(crlf), orderBindLines(routeText()), 'a CRLF copy extracts the same bind line');
 });
 
 test('go-red control: --dispatch appended to the Order bind fence fails', () => {
@@ -508,18 +520,22 @@ const WRAP_UP = path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up');
 const SECTION_E_FILE = path.join(WRAP_UP, 'cleanup-procedures-execution.md');
 const FLAGS_FILE = path.join(WRAP_UP, 'flags.md');
 const DRIVER_SKIP = 'driver-no-claim: skip the claim release';
+// Step 4's mint writes no decisions.md, so absent is the normal no-claim state: it must skip, never count as claimed.
+const ABSENT_SKIPS = 'An absent `decisions.md` carries no such line, so the release is skipped';
 
 function assertDriverSkip(route, gate, sectionE, flags) {
   assert.ok(route.includes(`\`(${DRIVER_SKIP})\``), 'driver-route.md must name the parenthetical');
   const s5 = between(gate, '## 5.', '## 6.');
   const para = s5.split('\n').find((l) => l.trim().startsWith('**Driver run with no claim (#5232).**'));
   assert.ok(para, 'two-call-gate.md section 5 paragraph missing');
-  for (const needle of [`\`(${DRIVER_SKIP})\``, 'carries no `Step 2.8: claimed #{n}` line', 'Section E skips its release', 'A `decisions.md` that cannot be read counts as claimed']) {
+  assert.ok(route.includes(ABSENT_SKIPS), 'driver-route.md must say an absent decisions.md skips the release');
+  for (const needle of [`\`(${DRIVER_SKIP})\``, 'carries no `Step 2.8: claimed #{n}` line', 'Section E skips its release', ABSENT_SKIPS, 'one that exists but cannot be read counts as claimed, and the release runs']) {
     assert.ok(para.includes(needle), `section 5 paragraph must carry: ${needle}`);
   }
   assert.ok(!between(gate, '## 6.', '## 7.').includes(DRIVER_SKIP), 'a second call (section 6) must not append it');
   const e = between(sectionE, '## E. Issue claim release', 'This spec\'s record is identified whenever this section runs');
   assert.ok(e.includes(`**Skip it too when the invocation names \`${DRIVER_SKIP}\` (#5232)**`), 'Section E clause missing');
+  assert.ok(e.includes('an absent `decisions.md` carrying none'), 'Section E must say an absent decisions.md carries no claim line');
   assert.ok(e.includes('--text "condition: driver-no-claim named by the cleanup-only call → fallback: claim release skipped"'), 'Section E skip log line missing');
   assert.ok(flags.includes(`\`(${DRIVER_SKIP})\` (#5232)`), 'flags.md must declare the phrase');
 }
@@ -541,5 +557,11 @@ test('go-red control: the phrase dropped from any one site fails', () => {
     assert.throws(() => assertDriverSkip(...args), messages[i]);
   });
   const gate = files[1];
-  assert.throws(() => assertDriverSkip(files[0], mutate(gate, 'A `decisions.md` that cannot be read counts as claimed, and the release runs.', ''), files[2], files[3]), /counts as claimed/);
+  assert.throws(() => assertDriverSkip(files[0], mutate(gate, ' one that exists but cannot be read counts as claimed, and the release runs.', ''), files[2], files[3]), /counts as claimed/);
+  // The fix-round-2 regression: "cannot be read" covering an absent file brings back the false release.
+  const regressedGate = mutate(gate, "An absent `decisions.md` carries no such line, so the release is skipped (Step 4's mint writes none); one that exists but cannot be read counts as claimed, and the release runs.", 'A `decisions.md` that cannot be read counts as claimed, and the release runs.');
+  assert.throws(() => assertDriverSkip(files[0], regressedGate, files[2], files[3]), /absent/);
+  const regressedRoute = mutate(files[0], "An absent `decisions.md` carries no such line, so the release is skipped — Step 4's mint writes none, and nothing on the admitted path writes one before `--run`; one that exists but cannot be read counts as claimed.", 'A `decisions.md` that cannot be read counts as claimed.');
+  assert.throws(() => assertDriverSkip(regressedRoute, gate, files[2], files[3]), /absent/);
+  assert.throws(() => assertDriverSkip(files[0], gate, mutate(files[2], ', an absent `decisions.md` carrying none', ''), files[3]), /absent/);
 });
