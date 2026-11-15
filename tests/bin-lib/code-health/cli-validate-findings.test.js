@@ -1,12 +1,14 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const { extractFingerprint } = require('../../../plugin/bin/lib/issues/record');
+const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { withoutAmbientGitVars } = require('../docs-health/commit-fixtures');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
@@ -14,13 +16,9 @@ function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-vf-'));
 }
 
-function runValidateFindings(root, findingsFile, extraArgs = []) {
-  const result = spawnSync(
-    'node',
-    [CLI, 'validate-findings', findingsFile, '--root', root, ...extraArgs],
-    { encoding: 'utf8' },
-  );
-  return result;
+// In-process (#5381), with the file-protocol-only git guard and a throwaway real cwd — see tests/helpers/health-sweep-cli.js.
+function runValidateFindings(root, findingsFile, extraArgs = [], opts = {}) {
+  return sweepCli(CLI, ['validate-findings', findingsFile, '--root', root, ...extraArgs], opts);
 }
 
 function validFinding(overrides = {}) {
@@ -563,4 +561,63 @@ test('AC7.1: validate-findings --dry-run on a valid finding exits 0 and prints t
     r.stderr.split('\n').includes('[code-health] validate-findings fixed-run: 1 valid finding(s), 1 payload(s) after dedup'),
     `expected the summary line in stderr: ${r.stderr}`,
   );
+});
+
+// ── in-process entry (#5381) ────────────────────────────────────────────────
+
+// No --root, and a findings path relative to the injected cwd: the root and the findings file
+// both resolve against it. A non-dry-run with --slice '.' writes cache.json under the root, so
+// the cache landing in the injected cwd proves the root default too.
+test('AC8.1: validate-findings without --root and with a relative findings path reads and writes under the injected cwd', () => {
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'index.js'), 'module.exports = 1;\n');
+  fs.writeFileSync(path.join(root, 'findings.json'), JSON.stringify([validFinding({ areaId: '.', anchor: 'index.js#module', severity: 'high' })]));
+
+  const result = sweepCli(CLI, ['validate-findings', 'findings.json', '--slice', '.', '--run-id', 'r-cwd'], { cwd: root });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  assert.strictEqual(JSON.parse(result.stdout).length, 1);
+  assert.ok(
+    fs.existsSync(path.join(root, '.claude-tweaks', 'code-health', 'cache.json')),
+    'the cache must be written under the injected cwd, the default root',
+  );
+});
+
+// The exit code is returned, never read from or written to process.exitCode.
+test('AC2.1: validate-findings returns 0 on a valid findings file when process.exitCode is already 1', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+
+  const prior = process.exitCode;
+  process.exitCode = 1;
+  let result;
+  try {
+    result = runValidateFindings(root, findingsFile, ['--dry-run']);
+  } finally {
+    process.exitCode = prior;
+  }
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.ok(Array.isArray(payloads), 'stdout must be a JSON array');
+  assert.strictEqual(payloads.length, 1);
+});
+
+// env-only fixture: resolveReadCommit's git child sees the injected env, so a GIT_DIR that only
+// the injected env carries (root itself is not a repo) decides the Verified-as-of: line. The
+// fixture's own setup git calls and the injected env are stripped of the ambient git variables.
+test('validate-findings stamps Verified-as-of from the injected env: GIT_DIR names the repo, root is not one', () => {
+  const root = tmp(); // not a git repo
+  const repo = tmp();
+  const setup = { env: withoutAmbientGitVars(process.env) };
+  execFileSync('git', ['init', '-q'], { cwd: repo, ...setup });
+  execFileSync('git', ['-C', repo, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '--allow-empty', '-m', 'seed'], setup);
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8', ...setup }).trim();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+
+  // GIT_COMMON_DIR: undefined drops an inherited value (Node skips undefined env entries).
+  const result = runValidateFindings(root, findingsFile, ['--dry-run'], { env: { GIT_DIR: path.join(repo, '.git'), GIT_COMMON_DIR: undefined } });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  assert.ok(payload.body.includes(`Verified-as-of: ${sha}`), `expected the injected repo's HEAD ${sha}, got body:\n${payload.body}`);
 });
