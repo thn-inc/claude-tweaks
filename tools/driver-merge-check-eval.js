@@ -41,7 +41,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const DRIVER = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'driver');
 const { confirmPassingVerdicts } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'dispatch', 'merge-verdict.js'));
 const { loadMergeCheckRules, buildMergeCheckPrompt } = require(path.join(DRIVER, 'judgment-prompts.js'));
-const { blastFloor, diffFloor, launchAndValidate } =require(path.join(DRIVER, 'judgments.js'));
+const { blastFloor, diffFloor, launchAndValidate } = require(path.join(DRIVER, 'judgments.js'));
 const { WIN32_CLAUDE_BIN } = require(path.join(DRIVER, 'launch.js'));
 
 const BLAST_RADIUS = path.join(__dirname, '..', 'plugin', 'bin', 'blast-radius.js');
