@@ -17,7 +17,7 @@ const ROOT = path.join(__dirname, '..');
 const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
-  subsetFallbackReason, gitFixtureConfigEnv, NODE_TEST_VALUE_FLAGS, parseRunnerOperands,
+  subsetFallbackReason, gitFixtureConfigEnv, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -1319,6 +1319,40 @@ test('AC1.1 AC1.2: file operands become a repo-relative subset, relative or abso
   }
 });
 
+test('AC1.1: a file operand is compared by canonical path through the injected realpath', () => {
+  const p = path.posix;
+  const realpath = (abs) => (abs.startsWith('/link/') ? `/repo/${abs.slice('/link/'.length)}` : abs);
+  const withReal = { ...operandOptions(p, '/repo', { existing: ['tests/a.test.js'] }), realpath };
+  assert.deepStrictEqual(parseRunnerOperands(['/link/tests/a.test.js'], withReal).files, ['tests/a.test.js']);
+  assert.deepStrictEqual(parseRunnerOperands(['/link/tests/a.test.js', 'tests/a.test.js'], withReal).files, ['tests/a.test.js']);
+  assert.throws(() => parseRunnerOperands(['/link/tests/missing.test.js'], withReal), { message: '/link/tests/missing.test.js does not exist' });
+  // The default realpath is identity: the symlinked spelling is then outside the checkout.
+  assert.throws(
+    () => parseRunnerOperands(['/link/tests/a.test.js'], operandOptions(p, '/repo', { existing: ['tests/a.test.js'] })),
+    { message: '/link/tests/a.test.js is outside the checkout' },
+  );
+  // A path inside the checkout whose canonical form leaves it is outside.
+  const escape = { ...operandOptions(p, '/repo', { existing: ['/other/x.test.js'] }), realpath: (abs) => (abs === '/repo/tests/ln.test.js' ? '/other/x.test.js' : abs) };
+  assert.throws(() => parseRunnerOperands(['tests/ln.test.js'], escape), { message: 'tests/ln.test.js is outside the checkout' });
+});
+
+test('canonicalPath: an existing file, a missing file under a symlinked directory, and a path no ancestor of which resolves', () => {
+  const realpathSync = (p) => {
+    if (p === '/link/tests/a.test.js') return '/repo/tests/a.test.js';
+    if (p === '/link/tests') return '/repo/tests';
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  };
+  assert.strictEqual(canonicalPath('/link/tests/a.test.js', { realpathSync, pathImpl: path.posix }), '/repo/tests/a.test.js');
+  assert.strictEqual(canonicalPath('/link/tests/missing.test.js', { realpathSync, pathImpl: path.posix }), '/repo/tests/missing.test.js');
+  assert.strictEqual(canonicalPath('/link/tests/sub/missing.test.js', { realpathSync, pathImpl: path.posix }), '/repo/tests/sub/missing.test.js');
+  assert.strictEqual(canonicalPath('/gone/x/y.test.js', { realpathSync, pathImpl: path.posix }), '/gone/x/y.test.js');
+  const winReal = (p) => {
+    if (p === 'C:\\link\\tests') return 'C:\\repo\\tests';
+    throw new Error('ENOENT');
+  };
+  assert.strictEqual(canonicalPath('C:\\link\\tests\\m.test.js', { realpathSync: winReal, pathImpl: path.win32 }), 'C:\\repo\\tests\\m.test.js');
+});
+
 test('AC2.2: a value flag in space form takes the next argument, never as an operand', () => {
   for (const [label, p, root] of OPERAND_FLAVOURS) {
     const out = parseRunnerOperands(['--test-name-pattern', 'x', 'tests/a.test.js'], operandOptions(p, root, { existing: ['tests/a.test.js'] }));
@@ -1466,9 +1500,9 @@ test('AC1.1 AC1.2 AC1.3 AC3.1: file operands run exactly those files on the subs
     // A live holder (this process) owns the base lane's only slot: a subset must not queue behind it.
     const lockText = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: ROOT });
     fs.writeFileSync(path.join(sb.slotDir, 'slot-0.lock'), lockText);
-    // The absolute spelling is the real path: the runner's checkout root and cwd are realpaths, and the
-    // sandbox lives under a symlinked tmpdir on macOS (/var -> /private/var).
-    const result = runOperands(sb, layout, ['tests/one.test.js', path.join(fs.realpathSync(layout.root), 'tests', 'two.test.js')], { timeout: 30000 });
+    // The absolute spelling is the sandbox's own: on macOS the tmpdir is a symlinked spelling (/var ->
+    // /private/var) of the runner's real checkout root.
+    const result = runOperands(sb, layout, ['tests/one.test.js', path.join(layout.root, 'tests', 'two.test.js')], { timeout: 30000 });
     assert.strictEqual(result.status, 0, result.stdout + result.stderr);
     assert.match(result.stdout, TESTS_RAN(2), result.stdout);
     const recorded = JSON.parse(fs.readFileSync(sb.probeOut, 'utf8'));
@@ -1485,6 +1519,28 @@ test('AC1.1 AC1.2 AC1.3 AC3.1: file operands run exactly those files on the subs
     assert.strictEqual(fromSub.status, 0, fromSub.stdout + fromSub.stderr);
     assert.match(fromSub.stdout, TESTS_RAN(2), fromSub.stdout);
     assert.ok(fs.existsSync(sb.probeOut), 'the probe ran');
+  });
+});
+
+test('a file operand typed through a symlinked spelling of the checkout runs; a symlink inside it that leaves it is refused', {
+  skip: process.platform === 'win32' && 'win32: creating a symlink needs extra privileges',
+}, async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const layout = operandLayout(sb);
+    const link = path.join(sb.suiteRoot, 'checkout-link');
+    fs.symlinkSync(layout.root, link, 'dir');
+    const ran = runOperands(sb, layout, [path.join(link, 'tests', 'one.test.js')], { timeout: 30000 });
+    assert.strictEqual(ran.status, 0, ran.stdout + ran.stderr);
+    assert.match(ran.stdout, TESTS_RAN(1), ran.stdout);
+    const missing = runOperands(sb, layout, [path.join(link, 'tests', 'missing.test.js')], { timeout: 30000 });
+    assert.strictEqual(missing.status, 1, missing.stdout + missing.stderr);
+    assert.match(missing.stderr, /missing\.test\.js does not exist/, missing.stderr);
+    const outside = path.join(sb.suiteRoot, 'outside.test.js');
+    fs.writeFileSync(outside, '');
+    fs.symlinkSync(outside, path.join(layout.root, 'tests', 'escape.test.js'));
+    const escaped = runOperands(sb, layout, ['tests/escape.test.js'], { timeout: 30000 });
+    assert.strictEqual(escaped.status, 1, escaped.stdout + escaped.stderr);
+    assert.match(escaped.stderr, /tests\/escape\.test\.js is outside the checkout/, escaped.stderr);
   });
 });
 

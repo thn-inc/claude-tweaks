@@ -19,7 +19,8 @@
 // Test files named on the command line are the drop-in form of a direct `node --test <flags> <files>`
 // (#5547): `node tools/run-tests.js [<node test flags>] <file.test.js>...` runs exactly those files as a
 // subset (the same lane, slot and environment as `--files-from`), so a run never loses the safeguards
-// below. A file operand is resolved against the caller's cwd, absolute or relative, and must be an
+// below. A file operand is resolved against the caller's cwd, absolute or relative, compared by canonical
+// path (a symlinked spelling of the checkout works), and must be an
 // existing `*.test.js` file inside this checkout with no glob character in its name; it does not combine
 // with directory roots, `--files-from`, `--shard`, `--record-durations` or `--full`. Node test flags
 // (`--test-*`, `--experimental-test-*`, e.g. `--test-reporter=tap`, `--test-name-pattern x`) are passed
@@ -180,6 +181,25 @@ const NODE_TEST_VALUE_FLAGS = Object.freeze([
 // What a glob-aware `node --test` (Node 21+) would expand inside a file operand.
 const GLOB_CHARS = /[[\]{}()!+@*?]/;
 
+// The canonical form of `absPath` for comparing it with the checkout root: `realpathSync` of the deepest
+// ancestor that exists, joined with the segments below it, so a missing file under a symlinked directory
+// (`/tmp/x/missing.test.js`) keeps its canonical spelling and is reported missing, never outside. Never
+// throws. Pure apart from the injected `realpathSync`; OS path rules come from `pathImpl`.
+function canonicalPath(absPath, { realpathSync, pathImpl = path }) {
+  const below = [];
+  let current = absPath;
+  for (;;) {
+    try {
+      return pathImpl.join(realpathSync(current), ...below);
+    } catch (_) {
+      const parent = pathImpl.dirname(current);
+      if (parent === current) return absPath;
+      below.unshift(pathImpl.basename(current));
+      current = parent;
+    }
+  }
+}
+
 // Reads the arguments left after `extractRunFlags` (#5547): directory roots (as always), `--files-from
 // <list>`, test-file operands (`*.test.js`, resolved against `cwd`, returned repo-relative) and node
 // test flags (`--test-*`, `--experimental-test-*`, passed through; a value flag in space form is joined
@@ -187,8 +207,10 @@ const GLOB_CHARS = /[[\]{}()!+@*?]/;
 // refusal throws an Error whose message is the text after `run-tests.js: `. File operands refuse
 // to mix with roots or `--files-from`, to hold a glob character, to leave the checkout, or to be absent;
 // a non-test operand that is a file is refused (it would otherwise die in a directory walk).
-// Pure apart from `isFile(absPath)`; OS path rules come from `pathImpl`.
-function parseRunnerOperands(rest, { cwd, repoRoot, isFile, pathImpl = path }) {
+// A file operand is compared by canonical path: `realpath(absPath)` (default identity) maps a symlinked
+// spelling of the checkout to its real one, and the checks apply to that path, naming the operand as typed.
+// Pure apart from `isFile(absPath)` and `realpath`; OS path rules come from `pathImpl`.
+function parseRunnerOperands(rest, { cwd, repoRoot, isFile, realpath = (p) => p, pathImpl = path }) {
   const FILES_FROM_USAGE = '--files-from <list> takes exactly one list file and no root arguments.';
   const valueFlags = new Set(NODE_TEST_VALUE_FLAGS);
   const roots = [];
@@ -227,7 +249,7 @@ function parseRunnerOperands(rest, { cwd, repoRoot, isFile, pathImpl = path }) {
       if (GLOB_CHARS.test(arg)) {
         throw new Error(`${arg} holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand`);
       }
-      const abs = pathImpl.resolve(cwd, arg);
+      const abs = realpath(pathImpl.resolve(cwd, arg));
       const rel = pathImpl.relative(repoRoot, abs);
       if (rel === '' || rel === '..' || rel.startsWith('..' + pathImpl.sep) || pathImpl.isAbsolute(rel)) {
         throw new Error(`${arg} is outside the checkout`);
@@ -569,7 +591,7 @@ module.exports = {
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
   resolveRunMode, selectChangedTests, realSelectionDeps, planDefaultRun, applyDefaultSelection,
-  DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS, NODE_TEST_VALUE_FLAGS, parseRunnerOperands,
+  DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
 };
 
 if (require.main === module) {
@@ -587,6 +609,7 @@ if (require.main === module) {
     parsed = parseRunnerOperands(argv, {
       cwd: process.cwd(),
       repoRoot: REPO_ROOT,
+      realpath: (abs) => canonicalPath(abs, { realpathSync: fs.realpathSync }),
       isFile: (abs) => {
         try {
           return fs.statSync(abs).isFile();
