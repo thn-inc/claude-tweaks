@@ -39,12 +39,24 @@ test('encodeRecord: fully-badged parked record — type via type:* label fallbac
   const encoded = encodeRecord(FIXTURE_RECORDS[2]);
   assert.strictEqual(encoded.fillKey, 'human');
   assert.strictEqual(encoded.borderStyle, 'blocked');
-  assert.deepStrictEqual(encoded.badges, ['[bug]', 'AUTO-BUILD', 'AUTO-MERGE', 'demo:pending']);
+  assert.deepStrictEqual(encoded.badges, ['[bug]', 'AUTO-BUILD', 'AUTO-MERGE', 'accept:pending']);
+});
+
+test('AC6.1: a record whose acceptance facet is approved renders the badge accept:approved', () => {
+  const approved = { ...FIXTURE_RECORDS[2], facets: { ...FIXTURE_RECORDS[2].facets, acceptance: 'approved' } };
+  assert.deepStrictEqual(encodeRecord(approved).badges, ['[bug]', 'AUTO-BUILD', 'AUTO-MERGE', 'accept:approved']);
+  // The badge follows the facet, whichever label spelling the facet was parsed from.
+  for (const label of ['accept:changes-requested', 'demo:changes-requested']) {
+    const record = { ...FIXTURE_RECORDS[0], facets: parseRecordFacets([label]) };
+    assert.deepStrictEqual(encodeRecord(record).badges, ['accept:changes-requested'], label);
+  }
+  // A record with no acceptance label carries no acceptance badge.
+  assert.ok(!encodeRecord(FIXTURE_RECORDS[0]).badges.some((b) => b.startsWith('accept:')));
 });
 
 test('encodeRecord: native Issue Type takes precedence over any type:* label', () => {
   const record = { ...FIXTURE_RECORDS[2], issueType: { name: 'Feature' } };
-  assert.deepStrictEqual(encodeRecord(record).badges, ['[feature]', 'AUTO-BUILD', 'AUTO-MERGE', 'demo:pending']);
+  assert.deepStrictEqual(encodeRecord(record).badges, ['[feature]', 'AUTO-BUILD', 'AUTO-MERGE', 'accept:pending']);
 });
 
 test('encodeRecord: unrecognized native Issue Type name omits the Type badge rather than guessing', () => {

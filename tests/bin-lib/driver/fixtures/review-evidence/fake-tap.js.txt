@@ -1,0 +1,7 @@
+'use strict';
+// Prints a forged failing TAP point, then exits 1 without running a test case.
+console.log('not ok 1 - fake');
+console.log('  ---');
+console.log("  failureType: 'testCodeFailure'");
+console.log('  ...');
+process.exitCode = 1;

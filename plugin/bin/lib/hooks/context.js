@@ -244,9 +244,7 @@ function* iterRunDirsWithState(cwd, opts = {}) {
   // reads the worktree's own pipelines dir. Deliberately not guarded further —
   // distinguishing the two would cost either a git spawn (this path runs on
   // every hook invocation) or a second walk, and the state it can reach is the
-  // one a worktree with a broken `.git` file actually has. The scenario it
-  // matters for is wrap-up's transitional copy-out guard, which does its own
-  // `pwd -P` resolution rather than trusting this one.
+  // one a worktree with a broken `.git` file actually has.
   const start = cwd || process.cwd();
   const root = wtDetect.mainCheckoutRoot(start) || start;
   const base = path.join(root, '.claude-tweaks', 'pipelines');
@@ -645,8 +643,7 @@ function findAdHocRunsBySessionId(cwd, sessionId, excludeDir) {
   if (excl) { try { excl = fs.realpathSync(excl); } catch { /* keep as-resolved */ } }
   const out = [];
   for (const { dir, state } of iterRunDirsWithState(cwd)) {
-    if (!isAdHocRunDir(dir)) continue;
-    if (!state || state.sessionId !== sessionId) continue;
+    if (!isSessionOwnedAdHocRun(dir, state, sessionId)) continue;
     if (typeof state.worktree === 'string' && path.isAbsolute(state.worktree) && fs.existsSync(state.worktree)) continue;
     if (excl) {
       let d = dir;
@@ -943,6 +940,14 @@ function isAdHocRunDir(dir) {
   return typeof dir === 'string' && path.basename(dir).endsWith('-adhoc-standalone');
 }
 
+// The ownership test shared by findAdHocRunsBySessionId and friction-events.js's
+// main-checkout filter (#4704): an ad-hoc run dir whose state carries this
+// (non-empty) session id. Deliberately excludes findAdHocRunsBySessionId's
+// removed-worktree check — the main-checkout filter keeps live worktrees.
+function isSessionOwnedAdHocRun(runDir, state, sessionId) {
+  return isAdHocRunDir(runDir) && Boolean(sessionId) && state?.sessionId === sessionId;
+}
+
 // The porcelain-lookup half of stampAdHocRunDirForDenial, split out so the compare is testable
 // without minting a run dir. Returns `{ path, isMain }` for the worktree `git worktree list` lists
 // for `cwd`, or null (falsy or non-string cwd, failed listing, no match). The lookup goes through
@@ -1079,6 +1084,6 @@ function appendEvent(runDir, type, data, attribution) {
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
-  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
+  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, isSessionOwnedAdHocRun, resolveDenialRunDir,
   claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
 };

@@ -1,36 +1,25 @@
 // tests/review-dispatched-reviewer-degrade-conformance.test.js — pins #3817: a dispatched /review
 // agent's own lens dispatches degrade to the partner-died single-read treatment (#3078 gave it the
 // path in review/step3-lens-dispatch.md's Foreground note). The note must name every effort tier it
-// holds at, and the partner-died paragraph must state its decisions.md line shape and the
-// coverage-caveat exactly once, so a reader of any tier finds one degrade, not a tier-shaped carve-out.
+// holds at, and the partner-died paragraph (in review/step3-tier-variants.md since #4826) must state
+// its decisions.md line shape and the coverage-caveat exactly once, so a reader of any tier finds one
+// degrade, not a tier-shaped carve-out.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const SKILLS = path.join(PLUGIN, 'skills');
 const STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
-
-// A fact-list predicate: the facts whose pattern the text no longer matches.
-const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
-
-// Per-assertion go-red proof (the 6bb1bb695 shape): strip one pattern's matched phrase from the live
-// text, and the shared predicate must report exactly that one fact missing.
-function assertEachPatternGoesRed(text, patterns, missingOf) {
-  for (const [pattern, fact] of patterns) {
-    const doctored = text.replace(pattern, '');
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
-  }
-}
+const TIER_VARIANTS = path.join(SKILLS, 'review', 'step3-tier-variants.md');
 
 const FOREGROUND_NOTE_PREFIX = '> **Foreground Execution Discipline:**';
 const PARTNER_DIED_PREFIX = '> **Reproduction-pair partner dies or is unavailable.**';
-const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
 
 const DEGRADE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?\(findings `unconfirmed`, logged\)\./;
 function degradeSentence(text) {
@@ -73,17 +62,17 @@ function markdownFilesUnder(dir) {
 }
 
 test('partner-died paragraph states the degrade line shape and caveat once (#3817 AC2.1)', () => {
-  assert.deepEqual(partnerDiedMissing(readText(STEP3)), [], 'the partner-died paragraph must state the log line and the caveat (#3817)');
+  assert.deepEqual(partnerDiedMissing(readText(TIER_VARIANTS)), [], 'the partner-died paragraph must state the log line and the caveat (#3817)');
 
   const files = markdownFilesUnder(SKILLS);
   assert.ok(files.length > 0, 'no skill markdown found — the walk is broken');
   const carriers = files.filter((file) => readText(file).includes(LINE_TAIL));
-  assert.deepEqual(carriers.map((file) => toPosix(path.relative(SKILLS, file))), ['review/step3-lens-dispatch.md'], 'the degrade line shape is stated in exactly one skill file');
+  assert.deepEqual(carriers.map((file) => toPosix(path.relative(SKILLS, file))), ['review/step3-tier-variants.md'], 'the degrade line shape is stated in exactly one skill file');
   assert.equal(readText(carriers[0]).split(LINE_TAIL).length - 1, 1, 'the degrade line shape occurs exactly once in that file');
 });
 
 test('removing the partner-died paragraph turns the AC2.1 pin red', () => {
-  const text = readText(STEP3);
+  const text = readText(TIER_VARIANTS);
   const without = text.split('\n').filter((line) => !line.startsWith(PARTNER_DIED_PREFIX)).join('\n');
   assert.notEqual(without, text, 'anchor text for the partner-died paragraph not found — proof cannot discriminate');
   assert.notDeepEqual(partnerDiedMissing(without), [], 'removing the paragraph must turn the pin red');
@@ -98,7 +87,7 @@ const RESTATED_TAIL = 'single-read coverage. Reversibility';
 
 const SLOT = [
   [/\*\*Coverage caveat:\*\*/, 'the form renders a "**Coverage caveat:**" slot'],
-  [/`step3-lens-dispatch\.md`'s partner-died paragraph:\}/, "the slot's condition cites step3-lens-dispatch.md's partner-died paragraph"],
+  [/`step3-tier-variants\.md`'s partner-died paragraph:\}/, "the slot's condition cites step3-tier-variants.md's partner-died paragraph"],
 ];
 const slotMissing = missingFactsOf(SLOT);
 
@@ -123,7 +112,7 @@ test('the summary slot assertions can go red', () => {
 });
 
 // The compact form's eligibility list must say the caveat is informational, like the skill load delta (3j).
-const COMPACT_ELIGIBLE = [[/A Coverage caveat \(`step3-lens-dispatch\.md`'s partner-died single-read degrade\) is informational and does not disqualify the compact form either\./, 'the compact eligibility list says a Coverage caveat does not disqualify the compact form']];
+const COMPACT_ELIGIBLE = [[/A Coverage caveat \(`step3-tier-variants\.md`'s partner-died single-read degrade\) is informational and does not disqualify the compact form either\./, 'the compact eligibility list says a Coverage caveat does not disqualify the compact form']];
 const compactEligibleMissing = missingFactsOf(COMPACT_ELIGIBLE);
 
 test('a Coverage caveat does not disqualify the compact form (#3817)', () => {
@@ -166,7 +155,7 @@ function item7Block(text) {
 
 const ITEM7_XREF = [
   [/`\/claude-tweaks:review`/, 'item 7 names the `/claude-tweaks:review` lens unit'],
-  [/`review\/step3-lens-dispatch\.md`/, "item 7 cites review/step3-lens-dispatch.md's partner-died paragraph"],
+  [/`review\/step3-tier-variants\.md`'s partner-died/, "item 7 cites review/step3-tier-variants.md's partner-died paragraph"],
 ];
 const item7XrefMissing = missingFactsOf(ITEM7_XREF);
 
@@ -178,4 +167,118 @@ test('task-prompt item 7 cross-references the review degrade (#3817)', () => {
 
 test('the item-7 cross-reference assertions can go red', () => {
   assertEachPatternGoesRed(item7Block(readText(TASK_PROMPT)), ITEM7_XREF, item7XrefMissing);
+});
+
+// #4555: a run-level "no Agent tool in this host" probe at Step 3 start, one run-level SKIP line, and an
+// "Independence: degraded" caveat the summary renders and the verdict comment copies. The per-lens
+// single-read lines and the tiebreak's inline lines are unchanged (they write alongside, never replaced).
+// #4826: the probe stays in step3-lens-dispatch.md (it runs every review); what a none-found
+// result does moved to step3-tier-variants.md's run-level note.
+const PROBE_PREFIX = '> **No-`Agent` probe (run-level, #4555).**';
+const PROBE_FACTS = [
+  [/When Step 3 starts, probe once with `_shared\/subagent-dispatch-core\.md`'s no-`Agent` probe/, 'AC6.1: run-level probe at Step 3 start'],
+  [/None found → read `step3-tier-variants\.md`'s run-level no-`Agent` note/, 'a none-found probe routes to the run-level note'],
+];
+const probeMissing = missingFactsOf(PROBE_FACTS);
+const RUN_LEVEL_PREFIX = '> **No `Agent` tool in this host (run-level, #4555).**';
+const RUN_LEVEL_FACTS = [
+  [/None found by `step3-lens-dispatch\.md`'s Step 3-start no-`Agent` probe → log one line/, 'AC6.1: the note applies when the Step 3-start probe finds none'],
+  [/--run "\$PIPELINE_RUN_DIR" --section "\/review" --step "Step 3 lens dispatch \(degraded\)" /, 'AC6.1: the SKIP line carries the canonical --section and --step flags'],
+  [/--status SKIP --text "condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself"/, 'AC6.1: one run-level log line'],
+  [/render `review-summary-template\.md`'s \*\*Independence: degraded\*\* line, which the PR verdict comment copies/, 'AC6.1: caveat reaches summary and verdict comment'],
+  [/The per-lens single-read lines above and the tiebreak's ` Mode: inline\.`\/`Tiebreak caveat:` lines still write, unchanged/, 'AC6.2: per-lens and tiebreak lines unchanged'],
+  [/Same session as build is known only inside one `\/claude-tweaks:flow` call that ran `build` too/, 'D5: same-session detection scope'],
+  [/effectively unreachable, since flow and build stop a no-dispatch host before building; no session stamp/, 'D5: states it is effectively unreachable, no stamp'],
+  [/\(standalone: one line in the report\)/, 'AC6.1: a standalone review reports the run-level line in its report, not a run directory'],
+];
+const runLevelMissing = missingFactsOf(RUN_LEVEL_FACTS);
+const INDEPENDENCE_SLOT = [
+  [/\{only when Step 3 found no Agent tool — `step3-tier-variants\.md`'s run-level no-Agent note:\}/, 'the slot cites the run-level note'],
+  [/\*\*Independence: degraded\*\* — no Agent tool in this host; every lens and tiebreak was judged by the reviewer itself/, 'AC6.1: the spec caveat text'],
+  [/\{only when this review runs in the same `\/claude-tweaks:flow` call whose step list also ran `build` \(omitted when that is unknown, e\.g\. a standalone review\), append "; the reviewer is the same session that ran this build's implementation"\}/, 'AC6.1: same-session clause with its detection signal and unknown-case omission'],
+];
+const independenceSlotMissing = missingFactsOf(INDEPENDENCE_SLOT);
+const VERDICT_INDEPENDENCE = [[/then its \*\*Independence: degraded\*\* line verbatim when it rendered/, 'AC6.1: verdict comment copies the Independence line']];
+const verdictIndependenceMissing = missingFactsOf(VERDICT_INDEPENDENCE);
+const COMPACT_INDEPENDENCE = [[/An \*\*Independence: degraded\*\* line is informational the same way\./, 'the compact eligibility list says an Independence line does not disqualify the compact form']];
+const compactIndependenceMissing = missingFactsOf(COMPACT_INDEPENDENCE);
+
+function runLevelNote(text) {
+  const note = lineStartingWith(text, RUN_LEVEL_PREFIX);
+  assert.notEqual(note, '', 'the run-level "> **No `Agent` tool in this host (run-level, #4555).**" note line was not found in step3-tier-variants.md');
+  return note;
+}
+
+function probeNote(text) {
+  const note = lineStartingWith(text, PROBE_PREFIX);
+  assert.notEqual(note, '', 'the "> **No-`Agent` probe (run-level, #4555).**" line was not found in step3-lens-dispatch.md');
+  return note;
+}
+
+test('AC6.1: step3-lens-dispatch.md probes once at Step 3 start and routes a none-found result (#4555, #4826)', () => {
+  assert.deepEqual(probeMissing(probeNote(readText(STEP3))), [], 'the probe line must state the probe and route none-found to the run-level note');
+});
+
+test('the probe-line assertions can go red', () => {
+  assertEachPatternGoesRed(probeNote(readText(STEP3)), PROBE_FACTS, probeMissing);
+});
+
+test('AC6.1 AC6.2 AC13.1: step3-tier-variants.md states the run-level no-Agent note (#4555)', () => {
+  assert.deepEqual(runLevelMissing(runLevelNote(readText(TIER_VARIANTS))), [], 'the run-level no-Agent note must state its SKIP line, caveat and unchanged per-lens lines (#4555)');
+});
+
+test('the run-level note assertions can go red', () => {
+  assertEachPatternGoesRed(runLevelNote(readText(TIER_VARIANTS)), RUN_LEVEL_FACTS, runLevelMissing);
+});
+
+test('AC6.1: summary template carries the Independence slot in compact and full forms (#4555)', () => {
+  const { compact, full } = summaryForms(readText(SUMMARY_TEMPLATE));
+  assert.deepEqual(independenceSlotMissing(compact), [], 'the compact form must carry the Independence slot (#4555)');
+  assert.deepEqual(independenceSlotMissing(full), [], 'the full template must carry the Independence slot (#4555)');
+});
+
+test('the Independence slot assertions can go red', () => {
+  const { compact, full } = summaryForms(readText(SUMMARY_TEMPLATE));
+  assertEachPatternGoesRed(compact, INDEPENDENCE_SLOT, independenceSlotMissing);
+  assertEachPatternGoesRed(full, INDEPENDENCE_SLOT, independenceSlotMissing);
+});
+
+test('AC6.1: verdict comment copies the Independence line (#4555)', () => {
+  assert.deepEqual(verdictIndependenceMissing(verdictParagraph(readText(CODE_MODE_STEPS))), [], 'the verdict comment must copy the Independence line (#4555)');
+});
+
+test('the verdict-comment Independence assertion can go red', () => {
+  assertEachPatternGoesRed(verdictParagraph(readText(CODE_MODE_STEPS)), VERDICT_INDEPENDENCE, verdictIndependenceMissing);
+});
+
+test('the compact form says an Independence line does not disqualify it (#4555)', () => {
+  assert.deepEqual(compactIndependenceMissing(summaryForms(readText(SUMMARY_TEMPLATE)).compact), [], 'the compact eligibility list must say an Independence line is informational (#4555)');
+});
+
+test('the compact-Independence assertion can go red', () => {
+  assertEachPatternGoesRed(summaryForms(readText(SUMMARY_TEMPLATE)).compact, COMPACT_INDEPENDENCE, compactIndependenceMissing);
+});
+
+const TIEBREAK_CAVEAT_LINE = '{only when a verdict was read inline — `step3-tiebreak.md`\'s Dispatched reviewer section:} **Tiebreak caveat:** {n} verdict(s) read inline by the reviewer, not an independent agent ({reason, e.g. no `Agent` tool, timed out})';
+const COVERAGE_CAVEAT_LINE = '**Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed';
+
+function unchangedCaveatLinesMissing(text) {
+  const missing = [];
+  if (!text.includes(TIEBREAK_CAVEAT_LINE)) missing.push('the Tiebreak caveat slot line');
+  if (text.split(COVERAGE_CAVEAT_LINE).length - 1 !== 2) missing.push('both Coverage caveat slot lines');
+  return missing;
+}
+
+test('AC6.2: the per-lens and tiebreak caveat lines are unchanged (#4555)', () => {
+  assert.deepEqual(unchangedCaveatLinesMissing(readText(SUMMARY_TEMPLATE)), [], 'the Tiebreak and Coverage caveat slot lines must survive byte-for-byte alongside the Independence line (#4555)');
+});
+
+test('the unchanged-caveat-lines assertion can go red', () => {
+  const text = readText(SUMMARY_TEMPLATE);
+  const noTiebreak = text.replace(TIEBREAK_CAVEAT_LINE, '');
+  assert.notEqual(noTiebreak, text, 'anchor text for the Tiebreak caveat line not found — proof cannot discriminate');
+  assert.deepEqual(unchangedCaveatLinesMissing(noTiebreak), ['the Tiebreak caveat slot line']);
+  const oneCoverage = text.replace(COVERAGE_CAVEAT_LINE, '');
+  assert.notEqual(oneCoverage, text, 'anchor text for the Coverage caveat line not found — proof cannot discriminate');
+  assert.deepEqual(unchangedCaveatLinesMissing(oneCoverage), ['both Coverage caveat slot lines']);
 });

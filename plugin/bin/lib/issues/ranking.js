@@ -16,13 +16,14 @@
 
 const { PRIORITIES, TIERS, parseDependencies } = require('./record');
 const { groupByFileOverlap } = require('./grouping');
+const { parseCrossRepoDependencies, stripCrossRepoRefs } = require('./cross-repo-refs');
 
 const RANK = { high: 0, medium: 1, low: 2 };
 const SIZE_ORDER = { low: 0, medium: 1, high: 2 };
 const priorityBandOf = (c) => (c.facets.priority && PRIORITIES.includes(c.facets.priority) ? RANK[c.facets.priority] : 3);
 const sizeBandOf = (c) => (c.facets.size && TIERS.includes(c.facets.size) ? SIZE_ORDER[c.facets.size] : 3);
 
-// candidate -> number[]. THE single blocker-precedence decision, shared by
+// candidate -> Array<number|string>. THE single blocker-precedence decision, shared by
 // computeUnblocksCount here, funnelBuckets (backlog.js), and #515's import —
 // never re-implement it at a call site. Precedence: an unsynced fallback
 // record (`facets.unsynced === true`) short-circuits to `[]` FIRST — its
@@ -36,7 +37,10 @@ const sizeBandOf = (c) => (c.facets.size && TIERS.includes(c.facets.size) ? SIZE
 // the body (work-links: body-text). Both explicit tiers are authoritative
 // even when empty — `[]` means "confirmed no blockers", never "fall through
 // to prose". Callers must not mutate the returned array — the two explicit
-// tiers return live references into the candidate's own data.
+// tiers return live references into the candidate's own data. A string is a
+// foreign blocker's qualified `owner/name#N` ref (#4793): it never equals a
+// candidate id, so `computeUnblocksCount` credits nothing for it, and it
+// still makes the list non-empty for `findUnresolvedDependencyProse`.
 function blockersOf(candidate) {
   if (candidate.facets && candidate.facets.unsynced === true) return [];
   if (Array.isArray(candidate.blockedBy)) return candidate.blockedBy;
@@ -89,13 +93,19 @@ function computeOverlapSet(candidates) {
 // blockedBy missing some prose-mentioned id) is not flagged — prose #N
 // mentions have no mechanical ground truth, so partial-coverage checking
 // would guess. `mention` is the trimmed full containing line of the first
-// match.
+// match. A qualified `owner/name#N` mention is another repository's issue, never
+// this repository's `#N` (#4793, Plan Review Clarifications): a body with a
+// canonical `Blocked by owner/name#N` line is a wired foreign blocker and is
+// skipped outright, and the prose test runs over the body with every qualified
+// ref stripped, so a mid-line qualified mention never reads as an unwired `#N`.
+// `mention` stays the original line whose stripped form matches.
 const PROSE_DEP_RE = /blocked by\b[^\n#]*#\d+/i;
 function findUnresolvedDependencyProse(candidates) {
   const hits = [];
   for (const c of candidates) {
     const body = c.body || '';
-    if (!PROSE_DEP_RE.test(body)) continue;
+    if (parseCrossRepoDependencies(body).length > 0) continue;
+    if (!PROSE_DEP_RE.test(stripCrossRepoRefs(body))) continue;
     if (blockersOf(c).length > 0) continue;
     // An unsynced record's blockers resolve [] by the namespace rule above,
     // not because nothing is wired — its own facets.blockedBy is the local
@@ -103,7 +113,7 @@ function findUnresolvedDependencyProse(candidates) {
     // unsynced record with prose and NO wired local blockers is a mismatch.
     if (c.facets && c.facets.unsynced === true
       && Array.isArray(c.facets.blockedBy) && c.facets.blockedBy.length > 0) continue;
-    const line = body.split('\n').find((l) => PROSE_DEP_RE.test(l));
+    const line = body.split('\n').find((l) => PROSE_DEP_RE.test(stripCrossRepoRefs(l)));
     hits.push({ id: c.id, mention: line.trim() });
   }
   return hits;

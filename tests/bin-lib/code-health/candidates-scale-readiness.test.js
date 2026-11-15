@@ -210,6 +210,11 @@ function ofKind(root, kind) {
   return scanScaleReadiness(root).candidates.filter((x) => x.kind === kind);
 }
 
+// The `file:line` each candidate of `kind` anchors to, in report order.
+function sitesOf(root, kind) {
+  return ofKind(root, kind).map((c) => c.evidence.match(/^(\S+:\d+) /)[1]);
+}
+
 function prismaRoute(body, rel = 'app/api/users/route.ts') {
   const root = tmpGitRepo();
   write(root, 'package.json', PRISMA_PKG);
@@ -314,6 +319,23 @@ test('unbounded-list-query: only a top-level take/limit key bounds the call', ()
   ].join('\n'));
   const lines = ofKind(root, 'unbounded-list-query').map((c) => Number(c.evidence.match(/:(\d+) /)[1])).sort();
   assert.deepEqual(lines, [1, 2, 5]);
+});
+
+test('#3903 unbounded-list-query: a computed string-literal take/limit key bounds the call; a computed variable key does not', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/posts.js': [
+      "const a = await prisma.post.findMany({ ['take']: 10 });",
+      'const b = await prisma.post.findMany({ ["limit"]: 10 });',
+      'const c = await prisma.post.findMany({ [key]: 10 });',
+      'const d = await prisma.post.findMany({ [`take`]: 10 });',
+      // Line 5 is deliberately invalid JS: mismatched quotes must not read as a literal key.
+      "const e = await prisma.post.findMany({ ['take\"]: 10 });",
+      "const f = await prisma.post.findMany({ ['skip']: 10 });",
+      "const g = await prisma.post.findMany({ [ 'take' ] : 10 });",
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(sitesOf(root, 'unbounded-list-query'), ['routes/posts.js:3', 'routes/posts.js:5', 'routes/posts.js:6']);
 });
 
 const POST_SCHEMA = 'model Post {\n  id Int @id\n  authorId Int\n  title String\n}\n';
@@ -599,6 +621,269 @@ test('unbounded-pool: an unbalanced call is skipped, not guessed at', () => {
   const root = repoWith({ pg: '^8' }, { 'lib/a.js': 'const a = new Pool({ connectionString: x' });
   assert.doesNotThrow(() => scanScaleReadiness(root));
   assert.equal(ofKind(root, 'unbounded-pool').length, 0);
+});
+
+test('#3903 AC3.1 AC3.2: unbounded-pool skips non-DB pools when no DB dependency is declared; a pg Pool still flags', () => {
+  const nonDb = repoWith({ express: '^4', 'generic-pool': '^3', undici: '^6', workerpool: '^9' }, {
+    'routes/health.js': "module.exports = (req, res) => res.send('ok');\n",
+    'lib/pools.js': [
+      "const genericPool = require('generic-pool');",
+      "const { Pool } = require('undici');",
+      'const workers = genericPool.createPool(factory, { min: 2 });',
+      "const upstream = new Pool('http://localhost:3000');",
+      '',
+    ].join('\n'),
+  });
+  assert.equal(ofKind(nonDb, 'unbounded-pool').length, 0);
+  assert.match(scanScaleReadiness(nonDb).checklist.find((x) => x.id === 'pooling').evidence, /no database dependency/);
+  const pg = repoWith({ express: '^4', pg: '^8' }, {
+    'routes/health.js': "module.exports = (req, res) => res.send('ok');\n",
+    'lib/db.js': "const { Pool } = require('pg');\nconst pool = new Pool({ connectionString: process.env.DATABASE_URL });\n",
+  });
+  assert.deepEqual(ofKind(pg, 'unbounded-pool').map((c) => c.file), ['lib/db.js']);
+});
+
+test('#3903 AC4.1: a client held in a module-scope object literal is not per-request; one inside a handler still is', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5', pg: '^8' }, {
+    'routes/users.js': "const { PrismaClient } = require('@prisma/client');\nmodule.exports = { db: new PrismaClient() };\n",
+    'routes/orders.js': [
+      'const deps = { db: new PrismaClient(), cache: new Map() };',
+      'app.use(makeRouter({ db: new PrismaClient() }));',
+      'export default { pool: new Pool({ max: 5 }) };',
+      '',
+    ].join('\n'),
+    'routes/items.js': "router.get('/', async (req, res) => {\n  const deps = { db: new PrismaClient() };\n  res.json(await deps.db.item.findMany({ take: 5 }));\n});\n",
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/items.js:2']);
+});
+
+test('#3903 AC4.1 per-request-db-client: an object an arrow function returns per call (Apollo and tRPC context) is still flagged', () => {
+  const root = repoWith({ next: '^14', '@prisma/client': '^5', '@apollo/server': '^4', '@trpc/server': '^10' }, {
+    'pages/api/graphql.ts': [
+      "import { ApolloServer } from '@apollo/server';",
+      "import { startServerAndCreateNextHandler } from '@as-integrations/next';",
+      "import { PrismaClient } from '@prisma/client';",
+      "import { typeDefs, resolvers } from '../../graphql/schema';",
+      '',
+      'const server = new ApolloServer({',
+      '  typeDefs,',
+      '  resolvers,',
+      '  context: ({ req }) => ({ prisma: new PrismaClient(), user: req.user }),',
+      '});',
+      '',
+      'export default startServerAndCreateNextHandler(server);',
+      '',
+    ].join('\n'),
+    'pages/api/trpc/[trpc].ts': [
+      "import { createNextApiHandler } from '@trpc/server/adapters/next';",
+      "import { PrismaClient } from '@prisma/client';",
+      "import { appRouter } from '../../../server/routers/_app';",
+      '',
+      'export default createNextApiHandler({',
+      '  router: appRouter,',
+      '  createContext: () => ({ db: new PrismaClient() }),',
+      '});',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(
+    sitesOf(root, 'per-request-db-client'),
+    ['pages/api/graphql.ts:9', 'pages/api/trpc/[trpc].ts:7'],
+  );
+});
+
+test('#3903 AC4.1 per-request-db-client: objects after `: [ ? | &` at module scope are skipped, a handler client in the same file is flagged', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/mixed.js': [
+      'const nested = { inner: { db: new PrismaClient() } };',
+      'const list = [{ db: new PrismaClient() }];',
+      'const picked = flag ? { db: new PrismaClient() } : { db: null };',
+      'const shared = globalThis.deps || { db: new PrismaClient() };',
+      'const both = globalThis.deps && { db: new PrismaClient() };',
+      "router.get('/', async (req, res) => {",
+      '  const prisma = new PrismaClient();',
+      '  res.json(await prisma.item.findMany({ take: 5 }));',
+      '});',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/mixed.js:7']);
+});
+
+test('#3903 per-request-db-client: an array of objects an arrow function returns per call is flagged; a spread object at module scope is skipped', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/factory.js': [
+      "const { PrismaClient } = require('@prisma/client');",
+      'const makeDeps = () => [{ db: new PrismaClient() }];',
+      "router.get('/', async (req, res) => res.json(makeDeps()));",
+      '',
+    ].join('\n'),
+    'routes/spread.js': [
+      'const deps = { ...base, ...{ db: new PrismaClient() } };',
+      "router.get('/', async (req, res) => res.json(await deps.db.item.findMany({ take: 5 })));",
+      '',
+    ].join('\n'),
+    // The same spread inside a handler body sits in a block brace: still flagged.
+    'routes/spread-handler.js': [
+      "router.get('/', async (req, res) => {",
+      '  const deps = { ...base, ...{ db: new PrismaClient() } };',
+      '});',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/factory.js:2', 'routes/spread-handler.js:2']);
+});
+
+test('#3903 per-request-db-client: Unicode whitespace (U+2003, U+3000) counts as whitespace before `{` and after `=>`, as /\\s/ does', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    // Positive; flagged either way, so it does not exercise isSpaceCode (the two skipped fixtures below do).
+    'routes/unicode-space.js': 'const makeDeps = () => 　({ db: new PrismaClient() });\n',
+    // `=` then U+3000 then `{`: the previous non-whitespace character is `=`, a module-scope object literal; skipped.
+    'routes/unicode-eq.js': 'const deps =　{ db: new PrismaClient() };\n',
+    // `=>` then U+2003 then `{` is a block body, not an expression body: nothing is marked, so the semicolon-less module-scope object after it is skipped.
+    'routes/unicode-arrow.js': 'const h = () => {\n}\nconst e = { db: new PrismaClient() }\n',
+    // Positive pair: the same spacing in front of a real expression body marks the level, so the object after it is flagged.
+    'routes/unicode-arrow-expr.js': 'const h = () => x\nconst e = { db: new PrismaClient() }\n',
+  });
+  assert.deepEqual(
+    sitesOf(root, 'per-request-db-client'),
+    ['routes/unicode-arrow-expr.js:2', 'routes/unicode-space.js:1'],
+  );
+});
+
+test('#3903 per-request-db-client: a `=>` followed by a newline then `{` is a block body, not an expression body; a real expression body still marks', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    // Skipped: no mark is set, so the semicolon-less module-scope object after the empty body stays module scope.
+    'routes/newline-block.js': 'const h = () =>\n{\n}\nconst e = { db: new PrismaClient() }\n',
+    // Positive pair: `=> x` is an expression body, so the object after it (no `;` yet) reads as per-request.
+    'routes/newline-expr.js': 'const h = () =>\nx\nconst e = { db: new PrismaClient() }\n',
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/newline-expr.js:3']);
+});
+
+test('#3903 per-request-db-client: closers match their own opener within the current `{` scope; a `}` discards unclosed groups above its `{`', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    // An unclosed `(` in a comment inside the handler is discarded by the handler's `}`; the module-scope object after it is skipped. The handler client is the positive.
+    'routes/comment-paren.js': [
+      "router.get('/', async (req, res) => {",
+      '  // TODO (later',
+      '  const prisma = new PrismaClient();',
+      '});',
+      'const deps = { db: new PrismaClient() };',
+      '',
+    ].join('\n'),
+    // Smoke case: after a mismatched `foo(a[ )` the module-scope object is still skipped and the handler client still flagged. A leaked `(`/`[` frame here has no observable effect, so this pins no closer rule; `scoped-closer.js` below does.
+    'routes/mismatch.js': [
+      'foo(a[ );',
+      'const deps = { db: new PrismaClient() };',
+      "router.get('/', async (req, res) => {",
+      '  const prisma = new PrismaClient();',
+      '});',
+      '',
+    ].join('\n'),
+    // A stray `]` inside the handler has no `[` in its own scope, so it must not close the enclosing array and the handler with it.
+    'routes/scoped-closer.js': [
+      'const routes = [',
+      '  async (req, res) => {',
+      '    foo(a( ];',
+      '    const prisma = new PrismaClient();',
+      '  },',
+      '];',
+      'const deps = { db: new PrismaClient() };',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(
+    sitesOf(root, 'per-request-db-client'),
+    ['routes/comment-paren.js:3', 'routes/mismatch.js:4', 'routes/scoped-closer.js:4'],
+  );
+});
+
+test('#3903 per-request-db-client: a `}` discards an unclosed group that carries an arrow mark, so the mark does not leak into module scope', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    // `foo(` stays unclosed inside the handler and `=> 1` marks it as an arrow expression body; the handler's `}` must discard that mark, or the module-scope object after it reads as per-call.
+    'routes/marked-leftover.js': [
+      "router.get('/', async (req, res) => {",
+      '  foo( () => 1',
+      '});',
+      'const deps = { db: new PrismaClient() };',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), []);
+});
+
+test('#3903 review: a brace inside a string or comment is not counted — a string `{` does not flag a module-scope object, a string `}` or comment `}` does not hide a handler client', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/string-brace.js': [
+      "const OPEN = '{';",
+      'const deps = { db: new PrismaClient() };',
+      '',
+    ].join('\n'),
+    'routes/string-close.js': [
+      "router.get('/', async (req, res) => {",
+      "  const s = '}';",
+      '  const prisma = new PrismaClient();',
+      '});',
+      '',
+    ].join('\n'),
+    'routes/comment-brace.js': [
+      "router.get('/', async (req, res) => {",
+      '  // } stray close in a comment',
+      '  const prisma = new PrismaClient();',
+      '});',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/comment-brace.js:3', 'routes/string-close.js:3']);
+});
+
+test('#3903 per-request-db-client: an object inside an arrow expression body is per-call until the group closes or a `,`/`;` at its level; module-scope objects after it are skipped', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/server.js': [
+      "const { PrismaClient } = require('@prisma/client');",
+      "app.get('/x', (req, res) => handle(req, { db: new PrismaClient() }));",
+      'export const createContext = (opts) => createInnerContext({ prisma: new PrismaClient(), ...opts });',
+      'const pick = (cond) => (cond ? { db: new PrismaClient() } : null);',
+      'const deps = { db: new PrismaClient() };',
+      'app.use(makeRouter({ db: new PrismaClient() }));',
+      'const a = () => 1, b = { db: new PrismaClient() };',
+      'const c = [() => 1, { db: new PrismaClient() }];',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(
+    sitesOf(root, 'per-request-db-client'),
+    ['routes/server.js:2', 'routes/server.js:3', 'routes/server.js:4'],
+  );
+});
+
+test('#3903 per-request-db-client: unmatched parens in a comment or string do not close a handler early', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/smiley.js': [
+      "router.get('/', async (req, res) => {",
+      '  // looks fine :) ] )',
+      "  const label = ')';",
+      '  const prisma = new PrismaClient();',
+      '});',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/smiley.js:4']);
+});
+
+test('#3903 per-request-db-client: a stray `}` at module scope does not hide the next handler\'s client', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/tpl.js': [
+      "const tpl = '}';",
+      "router.get('/', async (req, res) => {",
+      '  const prisma = new PrismaClient();',
+      '  res.json(await prisma.item.findMany({ take: 5 }));',
+      '});',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/tpl.js:3']);
 });
 
 test('AC2.1 AC2.2 no-cache-layer: DB-backed routes with no cache signal anchor to package.json', () => {

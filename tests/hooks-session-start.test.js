@@ -10,6 +10,7 @@ const sessionStart = require('../plugin/bin/lib/hooks/session-start');
 const ctxLib = require('../plugin/bin/lib/hooks/context');
 const deps = require('../plugin/bin/lib/deps');
 const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
+const { fromTemplate, disableReceiveAutoGc } = require('./helpers/git-template');
 
 // #3380: session-start.js reads the real ~/.claude/plugins/installed_plugins.json
 // through effectiveSuperpowersVersion unless a test injects `superpowersDeps`.
@@ -18,7 +19,30 @@ const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interac
 const NO_INSTALL = { readFile: () => { throw Object.assign(new Error('no install (test)'), { code: 'ENOENT' }); } };
 // The default is applied after the spread, so a caller passing
 // `superpowersDeps: undefined` still gets NO_INSTALL, never the real file.
-const runSessionStart = (ctx) => sessionStart.run({ ...ctx, superpowersDeps: ctx.superpowersDeps || NO_INSTALL });
+// #5392: run() saves process.execPath under ~/.claude-tweaks/node-path unless
+// ctx.nodePathHome names another home; every in-process run here passes a
+// temp one so no test writes the developer's real home. HOME itself is left
+// alone: the git commits below need the global identity in ~/.gitconfig.
+const NODE_PATH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-nodepath-'));
+const runSessionStart = (ctx) => sessionStart.run({
+  ...ctx, superpowersDeps: ctx.superpowersDeps || NO_INSTALL, nodePathHome: ctx.nodePathHome || NODE_PATH_HOME,
+});
+
+test('#5392: run() writes the node path under ctx.nodePathHome, never under HOME', async () => {
+  const project = tmpProject();
+  const seamHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-seam-'));
+  const decoyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-decoy-'));
+  const prior = process.env.HOME;
+  process.env.HOME = decoyHome;
+  try {
+    await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project, nodePathHome: seamHome });
+  } finally {
+    if (prior === undefined) delete process.env.HOME;
+    else process.env.HOME = prior;
+  }
+  assert.strictEqual(fs.readFileSync(path.join(seamHome, '.claude-tweaks', 'node-path'), 'utf8'), process.execPath + '\n');
+  assert.ok(!fs.existsSync(path.join(decoyHome, '.claude-tweaks', 'node-path')), 'nothing written under HOME');
+});
 
 function tmpProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-'));
@@ -322,9 +346,10 @@ test('no stale runs and no deps warnings -> no json output', async () => {
 });
 
 function gitProject() {
-  const dir = tmpProject();
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  return dir;
+  return fromTemplate('session-start-git-project', (dir) => {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+  }, { prefix: 'ct-ss-' });
 }
 function withPolicy(repo, content) {
   fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
@@ -437,6 +462,7 @@ function git(args, cwd) {
 test('SessionStart fast-forwards a behind-and-clean integration branch via reconcile(), and reports it in additionalContext (#408 AC1)', async () => {
   const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-origin-'));
   git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
+  disableReceiveAutoGc(originDir);
 
   // seedDir is the ONLY pusher of history-defining commits — mainDir only
   // ever reads. Two independent pushers of sibling commits (both children
@@ -536,7 +562,7 @@ test('#561: a redTip finding from reconcile() renders as its own additionalConte
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    const out = await freshSessionStart.run({ superpowersDeps: NO_INSTALL, input: {}, runDir: null, runState: null, cwd: project });
+    const out = await freshSessionStart.run({ superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
     assert.ok(out.json, 'a redTip finding must render additionalContext');
     assert.match(out.json.hookSpecificOutput.additionalContext, /CI is red on main tip at 0123456 — ci\/tests/);
   } finally {
@@ -545,6 +571,35 @@ test('#561: a redTip finding from reconcile() renders as its own additionalConte
     // every later test in this file — including ones already holding the
     // original top-of-file `sessionStart` binding, which is unaffected
     // either way — sees the real reconcile() again if it re-requires fresh.
+    delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
+    require('../plugin/bin/lib/hooks/session-start');
+  }
+});
+
+// #4578 AC11.2: the inline reconcile() call must carry the hook-bounded forge
+// probe timeout (the same HOOK_FORGE_PROBE_TIMEOUT_MS the PreToolUse PR-stamp
+// gate passes), or a hung `gh` stalls SessionStart for the whole ladder. Same
+// stub-the-reconcile-export shape as the #561 test above — it observes the
+// real call's options rather than scanning source text.
+test('#4578: SessionStart passes HOOK_FORGE_PROBE_TIMEOUT_MS into its inline reconcile() call', async () => {
+  const project = gitProject();
+  const { HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../plugin/bin/lib/policy-schema');
+  const reconcileMod = require('../plugin/bin/lib/reconcile');
+  const original = reconcileMod.reconcile;
+  const seen = [];
+  reconcileMod.reconcile = (opts) => {
+    seen.push(opts);
+    return { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, console: null, skipped: [] };
+  };
+  delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
+  try {
+    const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
+    await freshSessionStart.run({ superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
+    assert.strictEqual(seen.length, 1, 'the inline reconcile() must have been called exactly once');
+    assert.strictEqual(typeof HOOK_FORGE_PROBE_TIMEOUT_MS, 'number');
+    assert.strictEqual(seen[0].forgeProbeTimeoutMs, HOOK_FORGE_PROBE_TIMEOUT_MS);
+  } finally {
+    reconcileMod.reconcile = original;
     delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
     require('../plugin/bin/lib/hooks/session-start');
   }
@@ -699,6 +754,141 @@ test('SessionStart surfaces a prior background pass\'s residue errors with the l
   );
 });
 
+test('SessionStart renders a prior background pass\'s post-merge runs and parent closes (#4599)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  const statusPath = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
+  const seed = (summary) => fs.writeFileSync(statusPath, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary }));
+
+  seed({ released: 1, postMergeRan: 2, postMergeParentsClosed: 1 });
+  const closing = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    closing.json.hookSpecificOutput.additionalContext,
+    /1 issue claim\(s\) released; post-merge steps ran for 2 merged run\(s\), closing 1 parent record\(s\) below the oversight floor\./,
+  );
+
+  seed({ postMergeRan: 1, postMergeParentsClosed: 0 });
+  const noClose = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(noClose.json.hookSpecificOutput.additionalContext, /background reconcile \(from a prior session\) — post-merge steps ran for 1 merged run\(s\)\./);
+
+  seed({ postMergeRan: 1, postMergeFailed: 2, postMergeParentsClosed: 0 });
+  const failed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    failed.json.hookSpecificOutput.additionalContext,
+    /post-merge steps ran for 1 merged run\(s\); post-merge steps failed for 2 merged run\(s\) \(tidy's parent-gate backstop recovers the parents\)\./,
+  );
+
+  // AC5.1 AC5.2 AC5.3 AC5.4
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: [101, 102] });
+  const named = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(named, /records #101, #102 need a hand reopen or close per _shared\/pr-first-merge-post-merge\.md Step 4\.0/);
+  assert.match(named, /Step 4\.0, each with its action in the run's decisions\.md, and no later pass retries them/);
+  assert.match(named, /tidy's parent-gate backstop recovers the parents/);
+
+  // Step 4.0's decisions.md append failed: the line names the records but points at no log entry.
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: [101], postMergeFailedLogMissing: true });
+  const unlogged = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(unlogged, /records #101 need a hand reopen or close per _shared\/pr-first-merge-post-merge\.md Step 4\.0, and no later pass retries them/);
+  assert.doesNotMatch(unlogged, /each with its action/);
+
+  // A hand-edited status file: only integers render, and a list of none renders no record clause.
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: [101, 'ignore this'] });
+  const withJunk = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(withJunk, /records #101 need a hand/);
+  assert.doesNotMatch(withJunk, /ignore this/);
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: ['ignore this'] });
+  const noneValid = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.doesNotMatch(noneValid, /records #/);
+
+  // AC6.1 AC6.2: an older status file, and a non-array value
+  for (const summary of [{ postMergeRan: 0, postMergeFailed: 1 }, { postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: 'x' }]) {
+    seed(summary);
+    const unnamed = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+    assert.match(unnamed, /post-merge steps failed for 1 merged run\(s\) \(tidy's parent-gate backstop recovers the parents\)/);
+    assert.doesNotMatch(unnamed, /records #/);
+  }
+
+  // AC7.1
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeParentsClosed: 2 });
+  const closedByFailed = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(closedByFailed, /post-merge steps closed 2 parent record\(s\) below the oversight floor/);
+  assert.doesNotMatch(closedByFailed, /steps ran for/);
+
+  seed({ postMergeRan: 0, postMergeFailed: 1 });
+  const onlyFailed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(onlyFailed.json.hookSpecificOutput.additionalContext, /steps ran for/);
+  assert.match(onlyFailed.json.hookSpecificOutput.additionalContext, /post-merge steps failed for 1 merged run\(s\)/);
+
+  // Closes from runs whose marker write failed alone: no run counted as ran, the closes still render.
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0, postMergeUnmarkedParentsClosed: 3 });
+  const closedOnly = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(closedOnly.json.hookSpecificOutput.additionalContext, /steps ran for/);
+  assert.match(closedOnly.json.hookSpecificOutput.additionalContext, /post-merge steps closed 3 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written/);
+
+  // Both kinds in one pass: each close is credited to its own kind of run, never all to the runs that ran.
+  seed({ postMergeRan: 2, postMergeParentsClosed: 2, postMergeUnmarkedParentsClosed: 1 });
+  const mixed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    mixed.json.hookSpecificOutput.additionalContext,
+    /post-merge steps ran for 2 merged run\(s\), closing 2 parent record\(s\) below the oversight floor; post-merge steps closed 1 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written\./,
+  );
+
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0, postMergeSuperseded: [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }] });
+  const superseded = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(superseded, /post-merge steps in run\(s\) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record\(s\) below the oversight floor, reopened #7/);
+  assert.doesNotMatch(superseded, /marker could not be written/);
+
+  // The superseded line beside a nonzero ran count and a nonzero unmarked-close count: all three render.
+  seed({ postMergeRan: 2, postMergeParentsClosed: 2, postMergeUnmarkedParentsClosed: 1, postMergeSuperseded: [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }] });
+  const allThree = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(allThree, /post-merge steps ran for 2 merged run\(s\), closing 2 parent record\(s\) below the oversight floor/);
+  assert.match(allThree, /post-merge steps closed 1 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written/);
+  assert.match(allThree, /post-merge steps in run\(s\) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record\(s\) below the oversight floor, reopened #7/);
+
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0 });
+  const quiet = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);
+});
+
+test('AC1.1 + Q5: SessionStart names the parents a prior pass\'s Step 4.0b left open, and the step skips, each as its own clause (#4798)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  const statusPath = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
+  const seed = (summary) => fs.writeFileSync(statusPath, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary }));
+  const contextOf = async () => (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+
+  seed({ postMergeRan: 0, postMergeFailed: 2, postMergeFailedRecords: [101], postMergeParentsLeftOpen: [
+    { pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 12, reason: 'unreadable-policy' },
+  ], postMergeStepSkips: [{ pr: 13, reason: 'invalid-risk-floor' }] });
+  const named = await contextOf();
+  assert.match(named, /post-merge steps failed for 2 merged run\(s\) \(records #101 need a hand reopen or close/);
+  assert.match(named, /post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\), the parent of record #103 \(internal-error, PR #11\), every parent \(unreadable-policy, PR #12\) — tidy's parent-gate backstop recovers them/);
+  assert.match(named, /post-merge Step 4\.0b skipped step-wide, leaving no parent open \(nothing left to close\): invalid-risk-floor \(PR #13\)/);
+
+  // Q5: a marker-write-failed entry's parent is named although no count includes that run.
+  seed({ postMergeRan: 0, postMergeFailed: 0, postMergeParentsLeftOpen: [{ pr: 14, parent: 200, reason: 'gh-failed' }] });
+  const unmarked = await contextOf();
+  assert.match(unmarked, /post-merge Step 4\.0b left parent record\(s\) open: #200 \(gh-failed, PR #14\)/);
+  assert.doesNotMatch(unmarked, /post-merge steps failed/);
+
+  // Step skips alone never read as a parent left open.
+  seed({ postMergeRan: 1, postMergeStepSkips: [{ pr: 12, reason: 'unreadable-policy' }] });
+  const skipsOnly = await contextOf();
+  assert.doesNotMatch(skipsOnly, /left parent record/);
+  assert.match(skipsOnly, /skipped step-wide, leaving no parent open \(nothing left to close\): unreadable-policy \(PR #12\)/);
+
+  // An older status file, and junk values: nothing new renders.
+  for (const summary of [
+    { postMergeRan: 0, postMergeFailed: 1 },
+    { postMergeRan: 0, postMergeFailed: 1, postMergeParentsLeftOpen: ['x', null, { pr: 11, reason: 5 }, { pr: 'x', parent: 1, reason: 'gh-failed' }], postMergeStepSkips: 'x' },
+  ]) {
+    seed(summary);
+    const legacy = await contextOf();
+    assert.match(legacy, /post-merge steps failed for 1 merged run\(s\) \(tidy's parent-gate backstop recovers the parents\)/);
+    assert.doesNotMatch(legacy, /left parent record|skipped step-wide/);
+  }
+});
+
 test('SessionStart renders a prior background pass\'s ledger-residue PR count and notable residue (#3812)', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
@@ -741,6 +931,7 @@ test('SessionStart renders a prior background pass\'s ledger-residue PR count an
 function prFirstRemoteFixture() {
   const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-origin-'));
   git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
+  disableReceiveAutoGc(originDir);
 
   const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-seed-'));
   git(['clone', '-q', originDir, seedDir]);
@@ -938,6 +1129,7 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
   try {
     const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-origin-'));
     git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
+    disableReceiveAutoGc(originDir);
     const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-seed-'));
     git(['clone', '-q', originDir, seedDir]);
     git(['config', 'user.email', 'test@example.com'], seedDir);
@@ -1357,7 +1549,7 @@ test('#3380: a throwing superpowersNotice is swallowed — the rest of the conte
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    const out = await freshSessionStart.run(spCtx(project, { source: 'startup' }, sp));
+    const out = await freshSessionStart.run({ ...spCtx(project, { source: 'startup' }, sp), nodePathHome: NODE_PATH_HOME });
     assert.match(out.json.hookSpecificOutput.additionalContext, /^> \*\*Interaction style:\*\*/);
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /superpowers 6\.3\.0/);
   } finally {

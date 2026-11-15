@@ -9,9 +9,8 @@
 // plugin-architecture invariant, not a project opt-in.
 //
 // Deliberately NOT flagged: a write into a run directory that ALREADY EXISTS
-// in the worktree — the pre-anchoring shape wrap-up/cleanup-procedures.md
-// Section C step 3.5's transitional guard still tolerates (sunset
-// 2026-11-07). Only a brand-new creation is denied.
+// in the worktree (an existing directory creates no new shadow). Only a
+// brand-new creation is denied.
 'use strict';
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -71,7 +70,7 @@ test('an Edit into a NEW run directory inside a linked worktree is denied', () =
   assertDenied(out);
 });
 
-test('a write into a run directory that ALREADY EXISTS in the worktree (pre-anchoring, tolerated) is allowed', () => {
+test('a write into a run directory that ALREADY EXISTS in the worktree (no new shadow) is allowed', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const existingRunDir = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-3');
@@ -81,7 +80,7 @@ test('a write into a run directory that ALREADY EXISTS in the worktree (pre-anch
   assertAllowed(out);
 });
 
-test('mkdir of a NEW subdirectory inside an already-existing (pre-anchoring) run directory is allowed', () => {
+test('mkdir of a NEW subdirectory inside an already-existing run directory is allowed', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const existingRunDir = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-4');

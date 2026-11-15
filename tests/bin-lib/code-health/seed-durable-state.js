@@ -4,6 +4,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
+
+// Every setup git call runs without an inherited GIT_DIR and friends, so they cannot land in another repo.
+const GIT_OPTS = { env: cleanGitEnv(process.env) };
+
 // Shared git-fixture-seeding helper for code-health/tests. Seeds a local
 // bare repo as `origin`, commits `code-health/<filename>` directly onto a
 // `health-state` branch, then points `root`'s own `origin` remote at it.
@@ -19,20 +24,21 @@ const path = require('path');
 // filename that varies per call site.
 function seedDurableState(root, filename, data) {
   const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-health-durable-bare-'));
-  execFileSync('git', ['init', '--bare', '-q', bareDir]);
+  execFileSync('git', ['init', '--bare', '-q', bareDir], GIT_OPTS);
   const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-health-durable-seed-'));
-  execFileSync('git', ['init', '-q', seedDir]);
-  execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state']);
+  execFileSync('git', ['init', '-q', seedDir], GIT_OPTS);
+  execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state'], GIT_OPTS);
   fs.mkdirSync(path.join(seedDir, 'code-health'), { recursive: true });
   fs.writeFileSync(path.join(seedDir, 'code-health', filename), JSON.stringify(data));
-  execFileSync('git', ['-C', seedDir, 'add', '-A']);
+  execFileSync('git', ['-C', seedDir, 'add', '-A'], GIT_OPTS);
   execFileSync(
     'git',
     ['-C', seedDir, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '-m', 'seed'],
+    GIT_OPTS,
   );
-  execFileSync('git', ['-C', seedDir, 'push', '-q', bareDir, 'health-state']);
-  execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['remote', 'add', 'origin', bareDir], { cwd: root });
+  execFileSync('git', ['-C', seedDir, 'push', '-q', bareDir, 'health-state'], GIT_OPTS);
+  execFileSync('git', ['init', '-q'], { cwd: root, ...GIT_OPTS });
+  execFileSync('git', ['remote', 'add', 'origin', bareDir], { cwd: root, ...GIT_OPTS });
 }
 
 module.exports = { seedDurableState };

@@ -13,6 +13,7 @@ const { execFileSync } = require('node:child_process');
 
 const { run, renderText } = require('../plugin/bin/load-delta');
 const { readText } = require('./helpers/read-skill');
+const { fromTemplate } = require('./helpers/git-template');
 
 const REPO = path.join(__dirname, '..');
 
@@ -28,16 +29,26 @@ function write(root, rel, text) {
 
 // A repo with one commit on main, recorded as origin/main, then optional head edits.
 function makeRepo(baseFiles, { origin = true } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'load-delta-'));
-  git(dir, 'init', '-q', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@example.com');
-  git(dir, 'config', 'user.name', 't');
-  for (const [rel, text] of Object.entries(baseFiles)) write(dir, rel, text);
-  git(dir, 'add', '-A');
-  git(dir, 'commit', '-q', '-m', 'base');
-  if (origin) git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
-  return dir;
+  return fromTemplate(JSON.stringify([baseFiles, origin]), (dir) => {
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 't@example.com');
+    git(dir, 'config', 'user.name', 't');
+    for (const [rel, text] of Object.entries(baseFiles)) write(dir, rel, text);
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'base');
+    if (origin) git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  }, { prefix: 'load-delta-' });
 }
+
+test('makeRepo templates are keyed by baseFiles and origin', () => {
+  const a = makeRepo({ 'a.md': 'x' });
+  const b = makeRepo({ 'b.md': 'y' });
+  assert.strictEqual(git(a, 'ls-files').trim(), 'a.md');
+  assert.strictEqual(git(b, 'ls-files').trim(), 'b.md');
+  const noOrigin = makeRepo({ 'a.md': 'x' }, { origin: false });
+  assert.throws(() => git(noOrigin, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/main'));
+  assert.doesNotThrow(() => git(a, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/main'));
+});
 
 // Default mock resolver matches the branch every makeRepo() repo records as
 // origin/main (resolveIntegrationBranch's real default would spawn

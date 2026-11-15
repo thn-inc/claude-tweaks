@@ -80,7 +80,7 @@ function makeDeps(o = {}) {
     // resolveTargets() called with no listRoot at all.
     listRoot: () => o.rootFiles || [],
     listPlanFiles: () => o.plans || [],
-    runHook: (cmd) => { state.hooks.push(cmd); return o.hookExit === undefined ? 0 : o.hookExit; },
+    runHook: (cmd) => { state.hooks.push(cmd); return { status: o.hookExit === undefined ? 0 : o.hookExit, stdout: '', stderr: '' }; },
     today: () => '2026-09-12',
     stdout: (t) => { state.out += t; },
     stderr: (t) => { state.err += t; },

@@ -113,6 +113,59 @@ test('#2444 fix: a bare --repo owner/repo still resolves to host: github.com (un
   assert.equal(calls[0].ghHost, 'github.com');
 });
 
+// --- 2.6. #4933: the origin-host gate, and the checks behind it ---
+// An origin-derived repo goes through gateOriginRepo before repair runs; the
+// own-message path for an unreadable origin and the "."/".." owner guard
+// (#1443) sit behind the gate and are pinned here.
+const noHostsYml = () => { throw new Error('ENOENT'); };
+
+test('#4933: an unknown origin host is refused before repair, naming the host and GH_HOST', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ repairResult: { outcome: 'repaired', state: 'unreadable', commentPosted: true }, out, mainRoot: rootOf(runDir) });
+  d.remoteUrl = () => 'https://git.corp.invalid/acme/w.git';
+  d.gateDeps = { env: {}, readFile: noHostsYml };
+  assert.equal(run(['999', '--run', runDir, '--mode', 'release', '--reason', 'r'], d), 2);
+  assert.match(stderrOf(out), /git\.corp\.invalid.*GH_HOST=git\.corp\.invalid/);
+  assert.equal(calls.length, 0);
+});
+
+test('#4933: an unknown origin host with GH_HOST naming it resolves to that host', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ repairResult: { outcome: 'repaired', state: 'unreadable', commentPosted: true }, out, mainRoot: rootOf(runDir) });
+  d.remoteUrl = () => 'https://git.corp.invalid/acme/w.git';
+  d.gateDeps = { env: { GH_HOST: 'git.corp.invalid' }, readFile: noHostsYml };
+  assert.equal(run(['999', '--run', runDir, '--mode', 'release', '--reason', 'r'], d), 0);
+  assert.equal(calls[0].ghHost, 'git.corp.invalid');
+});
+
+test('#4933: an unreadable origin keeps the CLI\'s own could-not-resolve message (exit 2, repair never called)', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ repairResult: { outcome: 'repaired' }, out, mainRoot: rootOf(runDir) });
+  d.remoteUrl = () => { throw new Error('not a git repo'); };
+  assert.equal(run(['999', '--run', runDir, '--mode', 'release', '--reason', 'r'], d), 2);
+  assert.match(stderrOf(out), /could not resolve owner\/repo/);
+  assert.equal(calls.length, 0);
+});
+
+test('#1443: an owner or repo of ".." is rejected before repair, from --repo and from a github.com origin', () => {
+  for (const [label, repoArgs, remote] of [
+    ['--repo owner/..', ['--repo', 'owner/..'], null],
+    ['--repo ../evil', ['--repo', '../evil'], null],
+    ['origin owner ..', [], 'https://github.com/../w.git'],
+  ]) {
+    const runDir = mkRun();
+    const out = [];
+    const { calls, d } = deps({ repairResult: { outcome: 'repaired' }, out, mainRoot: rootOf(runDir) });
+    if (remote) d.remoteUrl = () => remote;
+    assert.equal(run(['999', '--run', runDir, '--mode', 'release', '--reason', 'r', ...repoArgs], d), 2, label);
+    assert.match(stderrOf(out), /invalid --repo value/, label);
+    assert.equal(calls.length, 0, label);
+  }
+});
+
 // --- 3. Exit map ---
 
 test('exit map: repaired->0, cas-rejected->3, refused->4, failed->1', () => {

@@ -1,0 +1,1 @@
+[{"tag":"plan","record":null,"title":"Prune 111 completed execution plans","action":"Prune plan (archive): git rm 111 plans, one commit","command":"git rm the plans listed in staged/tidy-prune-plan-1.md"}]

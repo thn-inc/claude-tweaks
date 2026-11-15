@@ -5,12 +5,17 @@ const path = require('node:path');
 
 const {
   EXPRESS_MAX_KEY_FILES, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
+  BOUND_REASONS, SIZE_CEILINGS, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
 const { resolveBlastRadiusConfig } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js'));
+const { POLICY_KEYS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
 
 const ELIGIBLE_LABELS = ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'];
 const ELIGIBLE_KEYS = ['plugin/skills/init/claude-md-template.md', 'CLAUDE.md'];
 const OPTS = { enabled: true, integrationModel: 'pr-first', sensitivePaths: [] };
+// The driver lane bound tests' (#5224) label and Key File builders.
+const nonSize = (labels) => labels.filter((l) => !l.startsWith('size:'));
+const keyFilesN = (n) => Array.from({ length: n }, (_, i) => `docs/k${i}.md`);
 
 // A spec-shaped body; extraBody is the leading metadata block (e.g. a Surface: line),
 // which liftMetadata reads only before the first blank line.
@@ -125,14 +130,38 @@ test('REASONS is frozen and EXPRESS_MAX_KEY_FILES is 3', () => {
     frontend: 'frontend surface',
     notShaped: 'not spec-shaped',
     escalated: 'already escalated in this run',
+    riskFlags: 'record carries a kept risk flag',
   });
   assert.strictEqual(protectedPath('a/b'), 'protected path: a/b');
   assert.strictEqual(sensitivePath('a/b'), 'merge-sensitive path: a/b');
 });
 
+// #4618: a record carrying a kept risk flag has no audited proof step on the lane, so it
+// takes the normal path. Only a `Risk-flags:` line that reads as flags excludes; `none` and
+// no line (an unclassified legacy record) stay eligible.
+test('#4618 risk flags: a flagged, unreadable or unknown-slug line is ineligible; none and no line stay eligible', async (t) => {
+  await t.test('Risk-flags: auth', () => onlyReason(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: auth'), OPTS, REASONS.riskFlags));
+  await t.test('Risk-flags: migrations, public-contract', () => onlyReason(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: migrations, public-contract'), OPTS, REASONS.riskFlags));
+  await t.test('a malformed line reads as all four categories flagged', () => onlyReason(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: auth;;'), OPTS, REASONS.riskFlags));
+  await t.test('an unknown slug reads as all four categories flagged', () => onlyReason(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: bogus'), OPTS, REASONS.riskFlags));
+  await t.test('Risk-flags: none stays eligible', () => {
+    const out = evaluateRecordEligibility(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: none'), OPTS);
+    assert.deepStrictEqual(out, { number: 3968, eligible: true, reasons: [], keyFiles: ELIGIBLE_KEYS });
+  });
+  await t.test('no Risk-flags line stays eligible', () => {
+    assert.deepStrictEqual(evaluateRecordEligibility(record(), OPTS).reasons, []);
+  });
+  await t.test('the reason is collected beside the others, never short-circuiting', () => {
+    const out = evaluateRecordEligibility(record(['size:medium'], ELIGIBLE_KEYS, 'Risk-flags: auth'), { ...OPTS, enabled: false });
+    for (const r of [REASONS.disabled, REASONS.risk, REASONS.size, REASONS.riskFlags]) assert.ok(out.reasons.includes(r), r);
+  });
+});
+
 test('consumer-portability: protected paths are project-agnostic', () => {
   assert.strictEqual(isProtectedPath('.claude/hooks/x.sh'), true);
   assert.strictEqual(isProtectedPath('lib/hooks.js'), true);
+  // #5392: every hooks.json registration runs bin/hooks.sh, so it is hook code too.
+  assert.strictEqual(isProtectedPath('plugin/bin/hooks.sh'), true);
   assert.strictEqual(isProtectedPath('skills/_shared/a.md'), true);
   assert.strictEqual(isProtectedPath('.claude-tweaks/policy.yml'), true);
   assert.strictEqual(isProtectedPath('.github/CODEOWNERS'), true);
@@ -142,6 +171,7 @@ test('consumer-portability: protected paths are project-agnostic', () => {
   assert.strictEqual(isProtectedPath('docs/hookshot.md'), false);
   assert.strictEqual(isProtectedPath('src/webhooks/a.js'), false);
   assert.strictEqual(isProtectedPath('src/webhooks.js'), false);
+  assert.strictEqual(isProtectedPath('src/webhooks.sh'), false);
 });
 
 const BOUNDS = { keyFiles: ELIGIBLE_KEYS, sensitivePaths: [], maxLines: 40 };
@@ -239,4 +269,163 @@ test('resolveBlastRadiusConfig reads merge-sensitive-paths and auto-merge-max-li
   assert.deepStrictEqual(out.mergeSensitivePaths, ['docs/**', 'bin/**']);
   assert.strictEqual(out.autoMergeMaxLines, 12);
   assert.strictEqual(typeof out.autoMergeMaxFiles, 'number');
+});
+
+const DRIVER = { ...OPTS, allowAbsentCeremony: true };
+
+test('AC2.1: with allowAbsentCeremony, an otherwise-eligible record with no ceremony:* label is eligible', () => {
+  const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'type:task']), DRIVER);
+  assert.strictEqual(out.eligible, true);
+  assert.deepStrictEqual(out.reasons, []);
+});
+
+test('AC2.2: with allowAbsentCeremony, ceremony:standard is not eligible and names the ceremony reason', () => {
+  const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'ceremony:standard', 'type:task']), DRIVER);
+  assert.deepStrictEqual(out.reasons, [REASONS.ceremony]);
+});
+
+test('AC2.3: with allowAbsentCeremony, risk:medium and no ceremony label is not eligible (only ceremony relaxes)', () => {
+  const out = evaluateRecordEligibility(record(['risk:medium', 'size:low', 'type:task']), DRIVER);
+  assert.deepStrictEqual(out.reasons, [REASONS.risk]);
+});
+
+test('AC2.4: with allowAbsentCeremony, an unrecognised ceremony label is not eligible', () => {
+  for (const bad of ['ceremony:fastlane', 'ceremony:Standard', 'Ceremony:fast-lane']) {
+    const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'type:task', bad]), DRIVER);
+    assert.deepStrictEqual(out.reasons, [REASONS.ceremony], bad);
+  }
+});
+
+test('allowAbsentCeremony: ceremony:fast-lane passes with the option set or absent', () => {
+  assert.strictEqual(evaluateRecordEligibility(record(), DRIVER).eligible, true);
+  assert.strictEqual(evaluateRecordEligibility(record(), OPTS).eligible, true);
+});
+
+test('allowAbsentCeremony: only a literal true relaxes', () => {
+  const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'type:task']), { ...OPTS, allowAbsentCeremony: 'yes' });
+  assert.deepStrictEqual(out.reasons, [REASONS.ceremony]);
+});
+
+test('allowAbsentCeremony: gh {name} label objects take the same ceremony rule as strings', () => {
+  const objs = (names) => names.map((name) => ({ name }));
+  const base = ['risk:low', 'size:low', 'type:task'];
+  assert.strictEqual(evaluateRecordEligibility(record(objs(base)), DRIVER).eligible, true);
+  for (const bad of ['ceremony:standard', 'ceremony:Standard', 'Ceremony:fast-lane', 'ceremony:fastlane']) {
+    const out = evaluateRecordEligibility(record(objs([...base, bad])), DRIVER);
+    assert.deepStrictEqual(out.reasons, [REASONS.ceremony], bad);
+  }
+});
+
+// Driver lane bounds (#5224): sizeCeiling / maxKeyFiles options; absent options keep every express verdict.
+
+test('AC3.3: size:high is refused under every ceiling, naming the ceiling', () => {
+  for (const ceiling of ['low', 'medium']) {
+    const out = evaluateRecordEligibility(record(['size:high', ...nonSize(ELIGIBLE_LABELS)], ['a.js']), { ...OPTS, sizeCeiling: ceiling });
+    assert.ok(out.reasons.includes(BOUND_REASONS.size(ceiling)), ceiling);
+  }
+  assert.strictEqual(BOUND_REASONS.size('medium'), 'size is not low or medium');
+  assert.strictEqual(BOUND_REASONS.size('low'), REASONS.size);
+  assert.deepStrictEqual(SIZE_CEILINGS.medium, ['low', 'medium']);
+});
+
+test('medium ceiling accepts size:medium and size:low', () => {
+  for (const s of ['size:low', 'size:medium']) {
+    const out = evaluateRecordEligibility(record([s, ...nonSize(ELIGIBLE_LABELS)]), { ...OPTS, sizeCeiling: 'medium' });
+    assert.strictEqual(out.eligible, true, s);
+  }
+});
+
+test('AC3.4: more Key Files than the widened limit names that limit', () => {
+  const over = evaluateRecordEligibility(record(ELIGIBLE_LABELS, keyFilesN(6)), { ...OPTS, maxKeyFiles: 5 });
+  assert.ok(over.reasons.includes('more than 5 Key Files'));
+  assert.strictEqual(BOUND_REASONS.tooManyKeyFiles(3), REASONS.tooManyKeyFiles);
+  const at = evaluateRecordEligibility(record(ELIGIBLE_LABELS, keyFilesN(5)), { ...OPTS, maxKeyFiles: 5 });
+  assert.ok(!at.reasons.includes('more than 5 Key Files'));
+  assert.strictEqual(at.eligible, true);
+});
+
+test('AC6.4: absent size label still refused with size is not low under the default', () => {
+  const issue = record(nonSize(ELIGIBLE_LABELS));
+  assert.ok(evaluateRecordEligibility(issue, { ...OPTS, sizeCeiling: 'low' }).reasons.includes('size is not low'));
+  assert.ok(evaluateRecordEligibility(issue, OPTS).reasons.includes('size is not low'));
+});
+
+test('AC6.3: an empty Key File list is still refused with no Key Files', () => {
+  const out = evaluateRecordEligibility(record(ELIGIBLE_LABELS, []), { ...OPTS, maxKeyFiles: 5 });
+  assert.ok(out.reasons.includes(REASONS.noKeyFiles));
+});
+
+test('AC6.2: a malformed bound refuses, never accepts', () => {
+  for (const v of ['high', null, 'Medium']) {
+    const out = evaluateRecordEligibility(record(), { ...OPTS, sizeCeiling: v });
+    assert.strictEqual(out.eligible, false, String(v));
+    assert.ok(out.reasons.includes(BOUND_REASONS.sizeCeilingUnreadable(v)), String(v));
+  }
+  for (const v of [0, 2.5, '4', null, -1, Infinity, NaN]) {
+    const out = evaluateRecordEligibility(record(), { ...OPTS, maxKeyFiles: v });
+    assert.strictEqual(out.eligible, false, String(v));
+    assert.ok(out.reasons.includes(BOUND_REASONS.keyFileLimitUnreadable(v)), String(v));
+  }
+});
+
+test('defaults spelled explicitly give byte-identical verdicts to absent options', () => {
+  for (const sizeLabels of [['size:low'], ['size:medium'], ['size:high'], []]) {
+    for (let n = 0; n <= 5; n++) {
+      const r = record([...sizeLabels, ...nonSize(ELIGIBLE_LABELS)], keyFilesN(n));
+      assert.deepStrictEqual(
+        evaluateRecordEligibility(r, { ...OPTS, sizeCeiling: 'low', maxKeyFiles: 3 }),
+        evaluateRecordEligibility(r, OPTS),
+        `${sizeLabels} x ${n}`,
+      );
+    }
+  }
+});
+
+test('the widened size and Key File reasons keep their place in the reasons order (#5224)', () => {
+  const issue = record(['risk:medium', 'size:high', ...nonSize(ELIGIBLE_LABELS).filter((l) => l !== 'risk:low')], keyFilesN(6));
+  assert.deepStrictEqual(evaluateRecordEligibility(issue, { ...OPTS, sizeCeiling: 'medium', maxKeyFiles: 5 }).reasons, [
+    REASONS.risk, 'size is not low or medium', 'more than 5 Key Files',
+  ]);
+});
+
+test('BOUND_REASONS.size names an unreadable ceiling instead of throwing (#5224)', () => {
+  for (const v of ['high', 'toString', 'Medium', null, undefined, 3]) {
+    assert.strictEqual(BOUND_REASONS.size(v), BOUND_REASONS.sizeCeilingUnreadable(v), String(v));
+  }
+});
+
+test('isBeyondExpressBounds: a size other than low, more than the express Key File limit, or an unreadable list (#5224)', () => {
+  assert.strictEqual(isBeyondExpressBounds({ size: 'low', keyFiles: keyFilesN(EXPRESS_MAX_KEY_FILES) }), false);
+  assert.strictEqual(isBeyondExpressBounds({ size: 'low', keyFiles: [] }), false);
+  assert.strictEqual(isBeyondExpressBounds({ size: 'low', keyFiles: keyFilesN(EXPRESS_MAX_KEY_FILES + 1) }), true);
+  for (const size of ['medium', 'high', null, undefined]) assert.strictEqual(isBeyondExpressBounds({ size, keyFiles: keyFilesN(1) }), true, String(size));
+  for (const keyFiles of [null, undefined, 'a.js']) assert.strictEqual(isBeyondExpressBounds({ size: 'low', keyFiles }), true, String(keyFiles));
+});
+
+test('isReadableSizeCeiling and isReadableKeyFileLimit are the checks eligibility applies (#5224)', () => {
+  for (const v of ['low', 'medium']) assert.strictEqual(isReadableSizeCeiling(v), true, v);
+  for (const v of ['high', 'Medium', 'toString', '__proto__', null, undefined, 1]) assert.strictEqual(isReadableSizeCeiling(v), false, String(v));
+  for (const v of [1, 3, 99]) assert.strictEqual(isReadableKeyFileLimit(v), true, String(v));
+  for (const v of [0, -1, 2.5, '4', null, undefined, Infinity, NaN, 2 ** 53]) assert.strictEqual(isReadableKeyFileLimit(v), false, String(v));
+});
+
+test('isInsideLaneBounds: a size the ceiling accepts and at most the Key File limit, the same comparisons eligibility refuses on (#5224)', () => {
+  const bounds = { sizeCeiling: 'medium', maxKeyFiles: 5 };
+  assert.strictEqual(isInsideLaneBounds({ size: 'medium', keyFiles: keyFilesN(5), bounds }), true);
+  assert.strictEqual(isInsideLaneBounds({ size: 'low', keyFiles: keyFilesN(1), bounds }), true);
+  assert.strictEqual(isInsideLaneBounds({ size: 'medium', keyFiles: keyFilesN(6), bounds }), false);
+  assert.strictEqual(isInsideLaneBounds({ size: 'high', keyFiles: keyFilesN(1), bounds }), false);
+  assert.strictEqual(isInsideLaneBounds({ size: 'medium', keyFiles: keyFilesN(1), bounds: { sizeCeiling: 'low', maxKeyFiles: 5 } }), false);
+  // Every row agrees with eligibility's own verdict on the two bound reasons.
+  for (const [size, n] of [['low', 1], ['medium', 5], ['medium', 6], ['high', 1]]) {
+    const labels = ['risk:low', `size:${size}`, 'ceremony:fast-lane', 'type:task'];
+    const { reasons } = evaluateRecordEligibility(record(labels, keyFilesN(n)), { ...OPTS, sizeCeiling: 'medium', maxKeyFiles: 5 });
+    const refusedOnBounds = reasons.includes(BOUND_REASONS.size('medium')) || reasons.includes(BOUND_REASONS.tooManyKeyFiles(5));
+    assert.strictEqual(isInsideLaneBounds({ size, keyFiles: keyFilesN(n), bounds }), !refusedOnBounds, `${size} x ${n}`);
+  }
+});
+
+test('express-driver-max-size accepts exactly the SIZE_CEILINGS keys, so no accepted value refuses every record (#5224)', () => {
+  const row = POLICY_KEYS.find((k) => k.key === 'express-driver-max-size');
+  assert.deepStrictEqual([...row.values].sort(), Object.keys(SIZE_CEILINGS).sort());
 });

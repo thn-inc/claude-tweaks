@@ -16,7 +16,7 @@ cited here, never restated.
 Available whenever browser tools resolve (the same gate Validate uses above — unavailable → skip
 straight to the terminal question below, no error). Compose a single-variant `layout`-scope
 manifest: one variant, whose one file is a small recap page (this record's title, an "Open {entry
-point}" link, and the `### Confirmed`/design-contract text already rendered above) — **not** a
+point}" link, and the Test guide and Tried to break text of a packet, or a legacy brief's `### Confirmed`, plus the design-contract text, already rendered above) — **not** a
 live embed of the entry point itself. Show already handed that to the human directly, and
 compare-shell's manifest schema requires a real local file per variant, never an arbitrary origin.
 Seed it live (`seed-compare.mjs --manifest <manifest.json> --mode live --out <demo-dir>/index.html`),

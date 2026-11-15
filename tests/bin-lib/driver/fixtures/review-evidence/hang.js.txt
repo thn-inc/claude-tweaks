@@ -1,0 +1,6 @@
+'use strict';
+const test = require('node:test');
+
+test('never settles', () => new Promise(() => {
+  setInterval(() => {}, 1000);
+}));

@@ -1,0 +1,79 @@
+'use strict';
+// tests/build-pr-body-claim.test.js — pins #5340: a build decision line that claims the PR body carries
+// something is made true in the same step (body edited before the line is logged), or the line is not written.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+
+const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed, sectionOf } = require('./helpers/conformance-asserts');
+
+const SKILLS = path.join(__dirname, '..', 'plugin', 'skills', 'build');
+const TEXT = readText(path.join(SKILLS, 'architecture-alignment.md'));
+const REGION = sectionOf(TEXT, '## Claims about the PR body');
+const SKILL = readText(path.join(SKILLS, 'SKILL.md'));
+
+const FACTS = [
+  [/applies to every build decision line, not only this step's rows/, 'scope'],
+  [/would say the PR body \(or PR description\) carries something/, 'trigger covers PR description'],
+  [/edit it into the body before logging the line/, 'edit before log'],
+  [/\(`review\/pr-body-deliverables\.md`'s Find the PR\)/, 'shared lookup'],
+  [/`pr\.number` in `run-state\.json` \(a bundle's parent run dir\), else the current branch's PR/, 'PR source matches review Step 1'],
+  [/`gh pr view \{pr\} --json body -q \.body`/, 'read command'],
+  [/a read that exits non-zero or returns no body writes nothing, since writing back would replace the real body/, 'failed read never overwrites the body'],
+  [/Append the content below the `<!-- fixes-end -->` marker \(at the end of the body when the marker is absent\) without touching its run markers/, 'placement outside rewritten spans'],
+  [/\(`fixes #N` closes it at merge; write `issue #N`\)/, 'no closing phrase'],
+  [/a session temp file named `pr-body-claim-\{run-id\}-\{n\}\.md` \(`bin\/session-tmp-resolve\.js`\) with the Write tool/, 'body file'],
+  [/`gh pr edit \{pr\} --body-file \{file\}`/, 'write command'],
+  [/re-read it to confirm your content is there/, 'read back'],
+  [/do the read and the write through `_shared\/pr-checklist-refresh\.md`'s \*\*`gh` absent \(MCP\)\.\*\* paragraph, taking only its repair and run-id check \(the append replaces its row flip, and a run-id mismatch is an edit that cannot land, not a hard stop\)/, 'gh-absent procedure'],
+  [/the closing-phrase rule and the read-back apply either way/, 'rules hold on both transports'],
+  [/anchor on `\[claude-tweaks-fixes-end\]`/, 'MCP anchor'],
+  [/Bundle members share one PR, so if a concurrent edit dropped it, edit once more/, 'concurrent bundle writers'],
+  [/\(no PR, a failed read, a run-id mismatch, the write fails, or the second read-back still lacks it\)/, 'cannot-land triggers'],
+  [/log that the PR body does not carry it — never the claim/, 'failed edit logs the absence'],
+  [/#5297's build logged "PR body names them"/, 'incident cite'],
+];
+
+const POINTER_FACTS = [
+  [/\*\*PR-body claims, any step\.\*\*/, 'pointer heading'],
+  [/follows `architecture-alignment\.md`'s `## Claims about the PR body` first, whether or not Common Step 4\.5 runs/, 'pointer applies even when 4.5 is skipped'],
+];
+
+test('the PR-body claim section states every fact', () => {
+  assert.deepEqual(missingFactsOf(FACTS)(REGION), []);
+});
+
+test('each fact can go red', () => {
+  assertEachPatternGoesRed(REGION, FACTS, missingFactsOf(FACTS));
+});
+
+test('build/SKILL.md points every step at the PR-body claim rule', () => {
+  assert.deepEqual(missingFactsOf(POINTER_FACTS)(SKILL), []);
+});
+
+test('each pointer fact can go red', () => {
+  assertEachPatternGoesRed(SKILL, POINTER_FACTS, missingFactsOf(POINTER_FACTS));
+});
+
+function assertPointerUnderCommonSteps(text) {
+  const at = text.indexOf('**PR-body claims, any step.**');
+  const after = text.indexOf('## Common Steps (both modes)');
+  const before = text.indexOf('### Common Step 1:');
+  assert.ok(at >= 0 && after >= 0 && before >= 0, 'pointer paragraph and both anchoring headings must exist');
+  assert.ok(at > after && at < before, 'the PR-body claims pointer must sit after "## Common Steps (both modes)" and before "### Common Step 1:"');
+}
+
+test('the PR-body pointer sits at the top of Common Steps', () => {
+  assertPointerUnderCommonSteps(SKILL);
+  const lines = SKILL.split('\n');
+  const idx = lines.findIndex((l) => l.startsWith('**PR-body claims, any step.**'));
+  assert.ok(idx >= 0, 'pointer paragraph must exist');
+  const [para] = lines.splice(idx, 1);
+  const gitIdx = lines.findIndex((l) => l === '## Git Strategy');
+  assert.ok(gitIdx > 0, '## Git Strategy heading must exist');
+  lines.splice(gitIdx, 0, para, '');
+  const moved = lines.join('\n');
+  assert.notEqual(moved, SKILL);
+  assert.throws(() => assertPointerUnderCommonSteps(moved), /must sit after "## Common Steps \(both modes\)" and before "### Common Step 1:"/);
+});

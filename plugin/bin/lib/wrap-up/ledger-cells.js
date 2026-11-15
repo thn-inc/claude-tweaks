@@ -16,6 +16,20 @@ function unescapeLedgerCell(text) {
   return String(text).replace(/\\\|/g, '|');
 }
 
+// A raw line break would split the row across lines: every whitespace run that holds a `\n` becomes one
+// space, and the result is trimmed. Byte-identical to `text.replace(/\s*\r?\n\s*/g, ' ').trim()`, which
+// is quadratic on a long run of spaces (`a`, 40k spaces, `b`: over a second) — the run is trimmed in code
+// instead (.claude/skills/regex-scan-linearity). Pinned against that regex in
+// tests/bin-lib/wrap-up/ledger-cells.test.js and against the clock in perf/ledger-row-linearity.test.js.
+function collapseLineBreaks(text) {
+  const parts = [];
+  for (const line of String(text).split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed !== '') parts.push(trimmed);
+  }
+  return parts.join(' ');
+}
+
 // Raw, untrimmed, still-escaped cells with the same slot semantics as
 // `row.split('|')`: slot 0 is the text before the leading `|`, the last slot
 // the text after the trailing `|`. A well-formed row has 7 slots.
@@ -29,4 +43,4 @@ function ledgerRowCells(row) {
   return splitLedgerRow(row).slice(1, -1).map((cell) => unescapeLedgerCell(cell.trim()));
 }
 
-module.exports = { escapeLedgerCell, unescapeLedgerCell, splitLedgerRow, ledgerRowCells };
+module.exports = { escapeLedgerCell, unescapeLedgerCell, collapseLineBreaks, splitLedgerRow, ledgerRowCells };

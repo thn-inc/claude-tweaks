@@ -7,7 +7,7 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 
 const {
-  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger,
+  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, parseLedger, namesRecordReference, isDeferredUnstaged,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
@@ -356,6 +356,111 @@ test('resolveInputs: no headers anywhere and no manifest → records [] and sour
   assert.strictEqual(inputs.sources.records, 'unavailable');
 });
 
+// #5347: an express run writes no materialized header or manifest; its record
+// is the `spec:` line the lane's step 7 pins into the run dir's config.yml.
+function configOnlyRunDir(configText, name = 'wrap-up-pack-config-') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), name));
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
+  if (configText !== null) fs.writeFileSync(path.join(dir, 'config.yml'), configText);
+  return dir;
+}
+
+test('AC2.1: an express run dir (config.yml spec:, no header or manifest) resolves its record from the config rung and the claim probe is ok', async () => {
+  const runDir = configOnlyRunDir('spec: 5338\nceremony-profile: fast-lane\nintegration-model: pr-first\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [5338]);
+  assert.strictEqual(inputs.sources.records, 'config');
+  assert.deepStrictEqual(inputs.closingRecords, []);
+  const pack = await gatherPack({ runDir, cwd: '/w/tree', only: ['claim'], deps: okDeps() });
+  assert.strictEqual(pack.claim.ok, true);
+  assert.deepStrictEqual(pack.claim.value, { 5338: { state: 'live', reclaimable: false, via: 'git' } });
+});
+
+test('AC3.1: a config.yml with no valid spec: still leaves records unresolved', async () => {
+  for (const config of ['', 'spec: 0\n', 'spec: abc\n', 'spec: 12x\n']) {
+    const runDir = configOnlyRunDir(config);
+    const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+    assert.strictEqual(inputs.sources.records, 'unavailable', JSON.stringify(config));
+    assert.deepStrictEqual(inputs.records, [], JSON.stringify(config));
+    const pack = await gatherPack({ runDir, cwd: '/w/tree', only: ['claim'], deps: okDeps() });
+    assert.strictEqual(pack.claim.ok, false, JSON.stringify(config));
+    assert.match(pack.claim.error, /^records unresolved — no materialized header or manifest found$/, JSON.stringify(config));
+  }
+});
+
+test('the config rung is last: a header wins over config.yml spec:', () => {
+  const runDir = fixtureRunDir();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'spec: 9999\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1535]);
+  assert.strictEqual(inputs.sources.records, 'headers');
+});
+
+test('the config rung is last: a worktree-mirror header wins over config.yml spec:', () => {
+  const { runDir } = mirrorFixture();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'spec: 9999\n');
+  const inputs = resolveInputs({ runDir, cwd: '/nowhere', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1930]);
+  assert.strictEqual(inputs.sources.records, 'worktree-headers');
+});
+
+test('the config rung never runs when the run dir holds a manifest.yml, even an empty one', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), '');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.deepStrictEqual(inputs.records, []);
+});
+
+test('the config rung is last: a manifest wins and closingRecords stays empty', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  parent: 1904\n  specs:\n    - id: 1930\n      status: complete\n      subdir: spec-1930\n    - id: 1931\n      status: pending\n      subdir: spec-1931\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'manifest');
+  assert.deepStrictEqual(inputs.records, [1930, 1931]);
+  assert.deepStrictEqual(inputs.closingRecords, []);
+});
+
+test('the config rung reads a CRLF config.yml', () => {
+  const runDir = configOnlyRunDir('spec: 5338\r\nmode: auto\r\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [5338]);
+  assert.strictEqual(inputs.sources.records, 'config');
+});
+
+test('the config rung never runs for a multi-spec spec-{N} subdirectory', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-config-parent-'));
+  const child = path.join(parent, 'spec-1931');
+  fs.mkdirSync(child);
+  fs.writeFileSync(path.join(child, 'config.yml'), 'spec: 1930\n');
+  fs.writeFileSync(path.join(child, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const inputs = resolveInputs({ runDir: child, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.deepStrictEqual(inputs.records, []);
+});
+
+test('the config rung never runs when manifest.yml exists but cannot be read (unreadable is not absent)', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  const realFs = (p) => fs.readFileSync(p, 'utf8');
+  const unreadable = (p) => {
+    if (path.basename(p) === 'manifest.yml') { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+    return realFs(p);
+  };
+  const deps = { readFile: unreadable, readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  assert.deepStrictEqual(resolveRecords(deps, runDir, null), { records: [], source: 'unavailable', parkedAtShaping: {} });
+  const absent = { ...deps, readFile: realFs };
+  assert.deepStrictEqual(resolveRecords(absent, runDir, null).source, 'config');
+});
+
+test('memberRecords: header and manifest rungs name members; the config rung and an unknown rung never do (Reading A, #5347)', () => {
+  for (const source of ['headers', 'worktree-headers', 'manifest', 'worktree-manifest']) {
+    assert.deepStrictEqual(memberRecords({ records: [7, 8], source }), [7, 8], source);
+  }
+  for (const source of ['config', 'unavailable', 'some-future-rung']) {
+    assert.deepStrictEqual(memberRecords({ records: [7], source }), [], source);
+  }
+});
+
 test('resolveInputs: a spec-* subdirectory whose own run-state.json lacks worktree/pr falls back to the parent run\'s (#1930 review C1)', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-parent-'));
   fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', pr: { number: 1901 } }));
@@ -481,10 +586,40 @@ test('recordLabels: gh issue view calls are concurrency-capped, not fired all at
   assert.ok(peak > 0, 'sanity: calls actually happened');
 });
 
+// #4793: resolve-blockers.js entries carry `crossRepoBlockers` ([{number,
+// repository, state}]) for a native blocker linked from another repository. Its
+// number is only another repository's issue number, never this repository's.
+function unblockedWithResolved(entry) {
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) return { stdout: JSON.stringify({ 1600: entry }), stderr: '' };
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  return gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+}
+
+test('#4793 Q2: a dependent blocked only by another repository\'s #1535 is not reported unblocked when this repository closes #1535', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 1535, repository: 'other/repo', state: 'CLOSED' }] });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
+test('#4793 Q2: this repository\'s #1535 beside another repository\'s #1535 still reports the dependent unblocked', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535, 1535], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 1535, repository: 'other/repo', state: 'CLOSED' }] });
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a foreign blocker with no readable state keeps the dependent blocked', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535, 7], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 7, repository: 'other/repo', state: null }] });
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
 test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin`, to resolve-blockers.js — including on a GitHub Enterprise remote', async () => {
   const calls = [];
   const deps = okDeps({
     git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } }, // #4933: ghe.example.com is no known GitHub host without an opt-in
     execFile: async (cmd, args) => {
       if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
         calls.push(args);
@@ -533,6 +668,7 @@ test('#2538: unblocked (work-links: native) also passes --repo to its own direct
   const listCalls = [];
   const deps = okDeps({
     git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } }, // #4933: ghe.example.com is no known GitHub host without an opt-in
     execFile: async (cmd, args) => {
       if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list') {
         listCalls.push(args);
@@ -556,6 +692,7 @@ test('#2538: unblocked (work-links: body-text) passes --repo to BOTH of its dire
   const listCalls = [];
   const deps = okDeps({
     git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } }, // #4933: ghe.example.com is no known GitHub host without an opt-in
     resolvePolicy: policyFake({ 'integration-branch': 'main', 'work-links': 'body-text' }),
     execFile: async (cmd, args) => {
       if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
@@ -579,6 +716,127 @@ test('#2538: unblocked (work-links: body-text) passes --repo to BOTH of its dire
   }
 });
 
+// #4793 Plan Review Clarifications: a body-declared `Blocked by owner/name#N`
+// foreign blocker keeps the dependent blocked while it is OPEN or unreadable,
+// under either work-links value. One batched resolve-foreign-blockers.js call.
+function foreignBodyDeps({ links, body, nativeEntry, foreign, remote, gateDeps, calls = [] }) {
+  return okDeps({
+    ...(remote ? { git: (args) => (args[0] === 'remote' ? remote : okDeps().git(args)) } : {}),
+    ...(gateDeps ? { gateDeps } : {}),
+    resolvePolicy: policyFake({ 'integration-branch': 'main', 'work-links': links }),
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
+        return { stdout: JSON.stringify([{ number: 1600, title: 'Dependent', body }]), stderr: '' };
+      }
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('all')) {
+        return { stdout: JSON.stringify([{ number: 1535, state: 'CLOSED' }]), stderr: '' };
+      }
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) return { stdout: JSON.stringify({ 1600: nativeEntry }), stderr: '' };
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-foreign-blockers.js')) {
+        calls.push(args);
+        if (foreign instanceof Error) throw foreign;
+        return { stdout: foreign, stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+}
+const runUnblocked = (deps) => gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+const BODY_TEXT_BODY = 'Blocked by #1535\nBlocked by other/repo#7\n';
+
+test('#4793 Plan Review Clarifications: a body-declared OPEN foreign blocker keeps the dependent blocked (body-text)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":"OPEN"}', calls }));
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0][1], 'other/repo#7');
+});
+
+test('#4793 Plan Review Clarifications: a body-declared CLOSED foreign blocker lets the dependent report unblocked (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":"CLOSED"}' }));
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a body-declared foreign blocker whose state is null (unreadable) keeps the dependent blocked (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":null}' }));
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
+// A promisified execFile rejection: the message is only `Command failed: ...` plus the stderr
+// text; the exit code and the CLI's own stderr live on `code` and `stderr`.
+const execFileFailure = (code, stderr) => Object.assign(new Error(`Command failed: node /bin/resolve-foreign-blockers.js other/repo#7\n${stderr}`), { code, stderr });
+
+test('#4793 Q5: a failed foreign lookup reports the probe failed with the exit code and stderr cause and no dependent unblocked (fail closed, body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: execFileFailure(3, 'Warning: boom\nstack\n') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.strictEqual(pack.unblocked.value, undefined);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(exit 3: Warning: boom\)/);
+  assert.doesNotMatch(pack.unblocked.error, /stack/);
+});
+
+test('#4793 Q5: a message-only failure (a timeout, no code or stderr) keeps its first message line as the cause (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: new Error('timeout after 30000ms: node resolve-foreign-blockers.js (killed by SIGTERM)\nmore') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(timeout after 30000ms: node resolve-foreign-blockers\.js \(killed by SIGTERM\)\)/);
+  assert.doesNotMatch(pack.unblocked.error, /more/);
+});
+
+test('#4793 Q5: unparseable foreign lookup output also fails the probe closed (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: 'not json' }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed/);
+});
+
+test('#4793: a dependent with no body-declared foreign blocker makes no foreign lookup (body-text)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: 'Blocked by #1535\n', foreign: '{}', calls }));
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+  assert.strictEqual(calls.length, 0);
+});
+
+test('#4793: the foreign lookup carries --repo on a GitHub Enterprise remote (body-text)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({
+    links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":"CLOSED"}', calls,
+    remote: 'git@ghe.example.com:acme/widgets.git\n', gateDeps: { env: { GH_HOST: 'ghe.example.com' } },
+  }));
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.strictEqual(calls.length, 1);
+  const repoIdx = calls[0].indexOf('--repo');
+  assert.notStrictEqual(repoIdx, -1, `the foreign lookup must carry --repo: ${JSON.stringify(calls[0])}`);
+  assert.strictEqual(calls[0][repoIdx + 1], 'ghe.example.com/acme/widgets');
+});
+
+const NATIVE_CLEAR = { blockedBy: [1535], openBlocker: false, openBlockerIds: [] };
+
+test('#4793 Plan Review Clarifications: a body-declared OPEN foreign blocker keeps the dependent blocked (native)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: '{"other/repo#7":"OPEN"}', calls }));
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+  assert.strictEqual(calls.length, 1);
+});
+
+test('#4793 Plan Review Clarifications: a body-declared CLOSED foreign blocker lets the dependent report unblocked (native)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: '{"other/repo#7":"CLOSED"}' }));
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a failed foreign lookup fails the probe closed (native)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: execFileFailure(3, 'Warning: boom\n') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(exit 3: Warning: boom\)/);
+});
+
+test('#4793: a ref both natively linked and declared in the body makes no extra foreign lookup (native)', async () => {
+  const calls = [];
+  const nativeEntry = { ...NATIVE_CLEAR, crossRepoBlockers: [{ number: 7, repository: 'Other/Repo', state: 'CLOSED' }] };
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry, foreign: '{"other/repo#7":"OPEN"}', calls }));
+  assert.strictEqual(calls.length, 0);
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
 test('#2425: no resolvable `origin` remote falls back to calling resolve-blockers.js without --repo (additive, never a hard failure)', async () => {
   const calls = [];
   const deps = okDeps({
@@ -594,6 +852,23 @@ test('#2425: no resolvable `origin` remote falls back to calling resolve-blocker
   const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
   assert.strictEqual(pack.unblocked.ok, true);
   assert.ok(!calls[0].includes('--repo'), `must not pass --repo when origin can't be resolved: ${JSON.stringify(calls[0])}`);
+});
+
+test('AC8.4 pack unblocked probe: an unknown origin host makes no gh call naming it and reports the refusal', async () => {
+  const execCalls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'https://git.corp.invalid/o/r.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      execCalls.push([cmd, ...args]);
+      return okDeps().execFile(cmd, args);
+    },
+    gateDeps: { env: {}, readFile: () => { throw new Error('none'); } },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, false, 'the refusal is the probe\'s reported failure, not a swallowed empty repoArgs');
+  assert.ok(pack.unblocked.error.includes('GH_HOST=git.corp.invalid'), `refusal text: ${pack.unblocked.error}`);
+  assert.deepStrictEqual(execCalls, [], 'a refused origin runs no gh and no resolve-blockers.js call');
+  assert.ok(!JSON.stringify(execCalls).includes('git.corp.invalid'), 'no call names the refused host');
 });
 
 // The two assertions above compare a probe's value against the fake's own
@@ -1459,7 +1734,7 @@ test('AC1.2: a header-resolved pack has inputs.closingRecords equal to inputs.re
 
 test('closingRecords keeps records only for the two header rungs (Ruling R1, decided once)', () => {
   for (const source of ['headers', 'worktree-headers']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), [7, 8]);
-  for (const source of ['manifest', 'worktree-manifest', 'unavailable']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
+  for (const source of ['manifest', 'worktree-manifest', 'config', 'unavailable']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
 });
 
 test('#3399: a worktree-manifest rung yields an empty closing set', () => {
@@ -1493,6 +1768,13 @@ test('#3399: a parked-at-shaping line in the record body below the frontmatter d
   const runDir = mirrorWithHeader('---\nrecord: 1930\n---\n# 1930\n\nparked-at-shaping: true\n');
   const inputs = resolveInputs({ runDir, cwd: '/nowhere', deps: okDeps() });
   assert.strictEqual(inputs.parkedAtShaping[1930], false);
+});
+
+test('#4814 AC1.1: a record: line below the frontmatter never beats the filename', () => {
+  for (const header of ['---\norigin: capture\n---\n# 1930\n\nrecord: 999\n', '# 1930\n\nrecord: 999\n']) {
+    const inputs = resolveInputs({ runDir: mirrorWithHeader(header), cwd: '/nowhere', deps: okDeps() });
+    assert.deepStrictEqual(inputs.records, [1930], header);
+  }
 });
 
 test('#3399: parkedAtShaping is true for a record when any of its header files carries the flag, one entry per record', () => {
@@ -1583,6 +1865,44 @@ test('resolveWorktreeBase returns null when git fails (#3686)', () => {
   assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
 });
 
+// #4439: namesRecordReference's `item` lookback was `/\bitem\s*$/i.test(resolution.slice(0, m.index))`, quadratic on
+// 'item #1 '.repeat(n); it is now a hand walk back over whitespace. The oracle below is the old body verbatim.
+function oldNamesRecordReference(resolution, excludeRecords) {
+  if (/\/(?:issues|pull)\/\d+/.test(resolution)) return true;
+  for (const m of resolution.matchAll(/#(\d+)/g)) {
+    if (excludeRecords.includes(Number(m[1]))) continue;
+    if (/\bitem\s*$/i.test(resolution.slice(0, m.index))) continue;
+    return true;
+  }
+  return false;
+}
+
+test('namesRecordReference: the hand-walked `item` lookback agrees with the old regex on every edge input', () => {
+  const edges = [
+    '#7', 'item #7', 'Item #7', 'ITEM #7', 'item#7', 'item\t#7', 'item \n #7', 'item #7', 'item #7', 'item﻿#7',
+    'items #7', 'subitem #7', 'sub item #7', '_item #7', '9item #7', 'item_ #7', 'ıtem #7', 'İtem #7', 'item', ' item #7', 'tem #7',
+    'item #7 #8', 'item #7, then #8', 'ledger item #1 and item #2', 'see item #1, item #2', 'itemitem #7', 'item  item #7',
+    'xitem #7', 'x item #7', '-item #7', '/item #7', '\nitem #7', 'item #5 and #7', '#7 item #8', 'item #1 '.repeat(50), 'item #1 x'.repeat(50),
+    'https://github.com/o/r/issues/7', 'item https://github.com/o/r/pull/7', '', '   ', '#', '# 7', 'item #', 'item #x',
+  ];
+  for (const text of edges) {
+    for (const exclude of [[], [7], [1], [1, 2, 5, 7, 8]]) {
+      assert.strictEqual(namesRecordReference(text, exclude), oldNamesRecordReference(text, exclude), `${JSON.stringify(text)} excluding ${JSON.stringify(exclude)}`);
+    }
+  }
+  // Seeded fuzz over the alphabet the lookback reads (xorshift32, so a failure replays).
+  let seed = 0x4439;
+  const next = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+  const pieces = ['item', 'Item', 'ITEM', 'it', 'em', 'x', '_', '9', ' ', '  ', '\t', '\n', ' ', ' ', '#', '#1', '#7', '#12', '-', '/'];
+  for (let n = 0; n < 4000; n += 1) {
+    let text = '';
+    for (let k = Math.floor(next() * 9); k >= 0; k -= 1) text += pieces[Math.floor(next() * pieces.length)];
+    for (const exclude of [[], [7]]) {
+      assert.strictEqual(namesRecordReference(text, exclude), oldNamesRecordReference(text, exclude), `${JSON.stringify(text)} excluding ${JSON.stringify(exclude)}`);
+    }
+  }
+});
+
 test('resolveWorktreeBase returns null when the policy read throws (#3686)', () => {
   const deps = {
     resolvePolicy: () => { throw new Error('policy unreadable'); },
@@ -1590,4 +1910,109 @@ test('resolveWorktreeBase returns null when the policy read throws (#3686)', () 
     ghSync: () => { throw new Error('no gh'); },
   };
   assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
+});
+
+test('isDeferredUnstaged: the one definition parseLedger counts and the ledger-row terminal-row guard reuses (#4439)', () => {
+  assert.strictEqual(isDeferredUnstaged('later', []), true);
+  assert.strictEqual(isDeferredUnstaged('Defer-reason: tangential', []), true);
+  assert.strictEqual(isDeferredUnstaged('staged/ledger-record-a.md', []), false);
+  assert.strictEqual(isDeferredUnstaged('see #77', []), false);
+  assert.strictEqual(isDeferredUnstaged('see #5', [5]), true);
+});
+
+// #5379: defaultDeps(cwd, { env }) hands the injected environment to the git children resolveWorktreeBase
+// runs. B alone carries `origin/HEAD` at its base commit (plus one more commit); A has no remote, so a
+// child that answers B's base ran under `GIT_DIR=B/.git`.
+const packDefaultDeps = () => require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js')).defaultDeps;
+
+// Repos A (no remote) and B (the env-only one), removed after `fn(a, b)`.
+function withTwoRepos(fn) {
+  const { committedRepo } = require('../../helpers/git-fixtures');
+  const a = committedRepo({ prefix: 'pack-env-a-', branch: 'main' });
+  const b = committedRepo({ prefix: 'pack-env-b-', branch: 'main' });
+  try {
+    return fn(a, b);
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+}
+
+function commitFile(repo, name, text) {
+  fs.mkdirSync(path.dirname(path.join(repo.dir, name)), { recursive: true });
+  fs.writeFileSync(path.join(repo.dir, name), text);
+  repo.git('add', '.');
+  repo.git('commit', '-q', '-m', name);
+  return repo.git('rev-parse', 'HEAD');
+}
+
+// #5379: when `git rev-parse --show-toplevel` fails, defaultResolvePolicy reads the policy under the injected
+// cwd, not the ambient process.cwd() (whose own policy.yml would answer otherwise).
+test('defaultDeps(cwd): resolvePolicy falls back to the injected cwd when the toplevel lookup fails (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-policy-cwd-'));
+  try {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-branch: injected-cwd-branch\n');
+    const deps = packDefaultDeps()(dir, { env: { ...cleanGitEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir) } });
+    assert.deepStrictEqual(deps.resolvePolicy(['integration-branch']), { 'integration-branch': 'injected-cwd-branch' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('defaultDeps(cwd, { env }): resolveWorktreeBase reads the env-only repo (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const bBase = b.head;
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', bBase);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    commitFile(b, 'more.txt', 'more\n');
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), bBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), bBase, 'no env: the children read A');
+  });
+});
+
+// The `integration-branch` policy read is resolveWorktreeBase's first git child. B's policy.yml names a
+// branch at a commit distinct from origin/HEAD's, so the result moves only when defaultResolvePolicy's git
+// ran under env (GIT_WORK_TREE makes B the policy root while cwd stays A, which has no policy).
+test('defaultDeps(cwd, { env }): the integration-branch policy is read through the injected env (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const originMain = commitFile(b, path.join('.claude-tweaks', 'policy.yml'), 'integration-branch: pbranch\n');
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', originMain);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    const policyBase = commitFile(b, 'p.txt', 'p\n');
+    b.git('branch', 'pbranch');
+    commitFile(b, 'q.txt', 'q\n');
+    assert.notStrictEqual(policyBase, originMain);
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), GIT_WORK_TREE: b.dir };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), policyBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), policyBase, 'no env: the policy is read from A, which has none');
+  });
+});
+
+// ghSync wraps its options in ghOptions with the injected env: with GH_HOST unset, B's origin (read under
+// GIT_DIR while cwd is A) decides the GH_HOST the stub `gh` prints.
+test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read under env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-env-stub-'));
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho "$GH_HOST"\n', { mode: 0o755 });
+  _resetGhHostCache();
+  try {
+    withTwoRepos((a, b) => {
+      b.git('remote', 'add', 'origin', 'https://acme.ghe.com/o/r.git');
+      const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), PATH: stubDir + path.delimiter + process.env.PATH };
+      delete env.GH_HOST;
+      delete env.GH_REPO;
+      assert.strictEqual(packDefaultDeps()(a.dir, { env, stderr: () => {} }).ghSync(['--version'], { cwd: a.dir }).trim(), 'acme.ghe.com');
+    });
+  } finally {
+    _resetGhHostCache();
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
 });

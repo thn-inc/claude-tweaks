@@ -11,7 +11,7 @@ const {
   commandWords, shouldRunFull, earlyGate, hasFileRedirection,
 } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const {
-  WRITE_SHAPES, GUARDED_PROGRAM_WORDS, gitTargets, fileWriteTargets, mkdirTargets, powershellOpaqueCommand,
+  WRITE_SHAPES, GUARDED_PROGRAM_WORDS, gitTargets, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, processKillByName,
 } = require('../plugin/bin/lib/hooks/git-command');
 const { teardownTargets } = require('../plugin/bin/lib/hooks/pre-tool-use');
 
@@ -39,6 +39,8 @@ const DIFFERENTIAL_CORPUS = [
   'echo foo>tracked.js',
   // #4210: a glued redirect after a quoted span.
   'echo "hi">tracked.js',
+  // #4294: a glued redirect after a $NAME word and an escaped blank.
+  'echo $M\\ >tracked.js',
   // #4281: a bare redirect to a quoted native path.
   'echo x > "D:\\r\\tracked.js"',
   // #4281: a redirect on a cd line.
@@ -47,12 +49,20 @@ const DIFFERENTIAL_CORPUS = [
   'A=x>tracked.js', '\\\nA=x>tracked.js',
   // #4281: a backslash-newline inside a program word, which bash and the parsers join.
   'g\\\nit commit -m x', 't\\\nee tracked.js', '"g\\\nit" commit -m x',
+  // #4548: name-based process kills (sole-trigger witnesses for each word first), then the case,
+  // pgrep-fed, filter and wrapper shapes.
+  'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'kill -Name node', 'stop-process -name node',
+  'Stop-Process -Name node', 'TASKKILL /IM node.exe', 'kill $(pgrep node)', 'pgrep -f x | xargs kill',
+  'taskkill /FI "IMAGENAME eq node.exe"', 'Get-Process node | Stop-Process', "sh -c 'pkill node'",
+  'cmd /c taskkill /IM node.exe', 'pwsh -c "Stop-Process -Name node"',
+  "ps aux | grep node | awk '{print $2}' | xargs kill -9", "kill -9 $(ps aux | grep '[n]ode' | awk '{print $2}')",
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);
 // post-tool-use.js runs only the git-family parsers (gitTargets + teardownTargets' Bash branch).
 const PARSERS_BY_EVENT = {
-  'pre-tool-use': [(c) => gitTargets(c, CWD), (c) => fileWriteTargets(c, CWD), (c) => mkdirTargets(c, CWD), teardown, powershell],
+  'pre-tool-use': [(c) => gitTargets(c, CWD), (c) => fileWriteTargets(c, CWD), (c) => mkdirTargets(c, CWD), teardown, powershell,
+    (c) => processKillByName(c, CWD).map((w) => ({ action: w }))],
   'post-tool-use': [(c) => gitTargets(c, CWD), teardown],
 };
 const targeted = (event, command) => PARSERS_BY_EVENT[event].some((parse) => parse(command).length > 0);
@@ -109,6 +119,10 @@ for (const command of [
   'G=gi; ${G}t commit -m x', 'X=it; g$X commit', 'X=c; ${X}p a.txt b.txt', 'X=mk; ${X}dir d',
   'X=t; gi$X push', 'A=tr; ${A}uncate -s 0 f', 'G=gi\n${G}t push',
   ...WRITE_SHAPES.map((s) => `${s} a b`),
+  // #4548: process-kill leads match case-insensitively, and a wrapped kill carries its word to the prefilter.
+  'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'TASKKILL /IM node.exe', 'Stop-process -Name node',
+  'KILLALL node', "sh -c 'pkill node'", 'bash -c "killall node"', 'cmd /c taskkill /IM node.exe',
+  'powershell -c "Stop-Process -Name node"', 'pwsh -Command "Get-Process node | Stop-Process"',
 ]) {
   test(`pre-tool-use runs the full handler for: ${command}`, () => {
     assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true);
@@ -136,6 +150,23 @@ test('post-tool-use skips write shapes it never handled (cp/mkdir/sed)', () => {
   for (const command of ['cp a b', 'mkdir -p d', 'sed -i s/a/b/ f']) {
     assert.strictEqual(shouldRunFull('post-tool-use', bash(command)), false, command);
   }
+});
+
+// #4548 (AC9.2): taskkill and PowerShell cmdlets are case-insensitive on Windows, so only the
+// process-kill family matches case-insensitively; the other families keep their exact spelling.
+test('#4548: the processKill family is all lowercase, and only it matches case-insensitively', () => {
+  for (const word of GUARDED_PROGRAM_WORDS.processKill) assert.strictEqual(word, word.toLowerCase(), word);
+  assert.strictEqual(shouldRunFull('pre-tool-use', bash('GIT commit -m x')), false);
+  assert.strictEqual(shouldRunFull('pre-tool-use', bash('MKDIR d')), false);
+});
+
+test('#4548: post-tool-use stays git-scoped for kill words', () => {
+  assert.strictEqual(shouldRunFull('post-tool-use', bash('pkill node')), false);
+  assert.strictEqual(shouldRunFull('post-tool-use', bash('TASKKILL /IM node.exe')), false);
+});
+
+test('#4548: earlyGate hands a bare pkill node to the full pre-tool-use handler', () => {
+  assert.strictEqual(earlyGate('pre-tool-use', () => JSON.stringify(bash('pkill node'))).skip, false);
 });
 
 // #3080: hasFileRedirection unit cases — run/skip, standalone/glued, and the
@@ -184,6 +215,13 @@ test('#4210 F1 F3: hasFileRedirection skips a nested or quoted leading `>`, and 
 test('AC3.1 #4210: the differential corpus lists the quoted-word shape, and it takes the full-handler path', () => {
   assert.ok(DIFFERENTIAL_CORPUS.includes('echo "hi">tracked.js'));
   assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo "hi">tracked.js')), true);
+});
+
+test('AC1.1 #4294: the differential corpus lists the escaped-blank shape, and it takes the full-handler path', () => {
+  assert.ok(DIFFERENTIAL_CORPUS.includes('echo $M\\ >tracked.js'));
+  assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo $M\\ >tracked.js')), true);
+  assert.strictEqual(hasFileRedirection('echo $M\\ >tracked.js'), true);
+  assert.strictEqual(hasFileRedirection('echo $M>tracked.js'), false);
 });
 
 test('shouldRunFull ORs hasFileRedirection into pre-tool-use only, never post-tool-use', () => {

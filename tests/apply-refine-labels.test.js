@@ -8,7 +8,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const path = require('node:path');
 const { run, parseArgs, validateAction } = require('../plugin/bin/apply-refine-labels');
+
+// The CLI runs path.resolve(cwd, opts.run), so the expected runDir is resolved the same way.
+const RUN_DIR = path.resolve('/repo/.claude-tweaks/pipelines/run-1');
 
 test('parseArgs: missing actions-file argument is an error', () => {
   assert.ok(parseArgs([]).error);
@@ -165,6 +169,7 @@ test('run: on a GitHub Enterprise Server remote, --repo is host-qualified', () =
   const deps = fakeDeps({
     readFile: () => JSON.stringify([{ issue: 118, addLabels: ['auto:build'] }]),
     remoteUrl: () => 'git@ghe.example.com:acme/widgets.git',
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } },
   });
   const code = run(['actions.json'], deps);
   assert.strictEqual(code, 0);
@@ -233,7 +238,7 @@ test('run: --run given logs one AUTO decisions.md line per successfully-applied 
   const code = run(['actions.json', '--run', '/repo/.claude-tweaks/pipelines/run-1'], deps);
   assert.strictEqual(code, 0);
   assert.strictEqual(deps.calls.appendEntry.length, 1);
-  assert.strictEqual(deps.calls.appendEntry[0].runDir, '/repo/.claude-tweaks/pipelines/run-1');
+  assert.strictEqual(deps.calls.appendEntry[0].runDir, RUN_DIR);
   assert.strictEqual(deps.calls.appendEntry[0].section, '/backlog');
   assert.match(deps.calls.appendEntry[0].entry, /#118: applied \+auto:build, -bot:blocked/);
 });
@@ -250,7 +255,7 @@ test('run: --run given logs one FAILED decisions.md line per failed action, unde
   const code = run(['actions.json', '--run', '/repo/.claude-tweaks/pipelines/run-1'], deps);
   assert.strictEqual(code, 0);
   assert.strictEqual(deps.calls.appendEntry.length, 1);
-  assert.strictEqual(deps.calls.appendEntry[0].runDir, '/repo/.claude-tweaks/pipelines/run-1');
+  assert.strictEqual(deps.calls.appendEntry[0].runDir, RUN_DIR);
   assert.strictEqual(deps.calls.appendEntry[0].section, '/backlog');
   assert.match(deps.calls.appendEntry[0].entry, /^- FAILED \d{2}:\d{2}:\d{2} — apply-refine-labels: #1: \+a, -b failed: boom\.$/);
 });
@@ -343,7 +348,7 @@ test('run: edit-only failure (no commentFile) still logs the same FAILED line sh
   const code = run(['actions.json', '--run', '/repo/.claude-tweaks/pipelines/run-1'], deps);
   assert.strictEqual(code, 0);
   assert.strictEqual(deps.calls.appendEntry.length, 1);
-  assert.strictEqual(deps.calls.appendEntry[0].runDir, '/repo/.claude-tweaks/pipelines/run-1');
+  assert.strictEqual(deps.calls.appendEntry[0].runDir, RUN_DIR);
   assert.strictEqual(deps.calls.appendEntry[0].section, '/backlog');
   assert.match(deps.calls.appendEntry[0].entry, /^- FAILED \d{2}:\d{2}:\d{2} — apply-refine-labels: #1: \+a, -b failed: boom\.$/);
   const summary = JSON.parse(deps.calls.stdout.join(''));
@@ -392,5 +397,5 @@ test('run: a later non-empty --run after an earlier empty --run logs normally an
   assert.strictEqual(code, 0);
   assert.doesNotMatch(deps.calls.stderr.join(''), /--run was empty/);
   assert.strictEqual(deps.calls.appendEntry.length, 1);
-  assert.strictEqual(deps.calls.appendEntry[0].runDir, '/repo/.claude-tweaks/pipelines/run-1');
+  assert.strictEqual(deps.calls.appendEntry[0].runDir, RUN_DIR);
 });

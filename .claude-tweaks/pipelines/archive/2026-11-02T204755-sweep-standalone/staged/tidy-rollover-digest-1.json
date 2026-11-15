@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": 1426,
+  "title": "Digest — rolling container (115 comments)",
+  "action": "Rollover digest container (past 100-comment threshold)",
+  "command": "rollover #1426 per tidy/digest-sweep.md"
+ }
+]

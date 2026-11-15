@@ -287,9 +287,11 @@ here.
 
 Population: `findUnresolvedDependencyProse`'s `{ flags }` output (Step 5's Dependency-repair-rows
 section names the detection and both `work-links` branches) — records whose prose names a blocker
-with no resolved `blockedBy`. A flagged record already carrying a row in an earlier lane above gets
-one annotation line under that row instead of a row here — one-lane-per-record; the repair need
-rides along as context, the literal shape:
+with no resolved `blockedBy`. A qualified `owner/name#N` line is a wired foreign blocker and never
+lands here, and a repair never takes a bare `#N` from a qualified `owner/name#N` mention (#4793).
+A flagged record already carrying a row in an earlier lane above gets one annotation line under that
+row instead of a row here — one-lane-per-record; the repair need rides along as context, the literal
+shape:
 
 ```
   # dependency-repair: Wire blocked-by #419 — prose cites #419 but resolved blockers were empty

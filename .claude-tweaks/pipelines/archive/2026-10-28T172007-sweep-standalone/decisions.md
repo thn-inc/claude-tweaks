@@ -1,0 +1,199 @@
+## /tidy
+- SCANNED 18:30:06 — Step 4.5: reconcile --checks mirror,red-tip,reap,release,archive,archive-branches,remote-prune,ledger-residue,console --json: 0 applied; mirror ff declined (untracked sweep run dir, cf. #4462); worktrees 13 pr-open/1 no-pr/1 in-use; run dirs 104 skipped; agent/dispatch branches 12 too-young; remote branches 164 skipped; ledger-residue 32 skipped (29 open rows, 3 run-live); claims 14 skipped; console.ready none. Full JSON: scratchpad tidy-reconcile.json. Reversibility: n/a.
+- AUTO 18:30:06 — Step 6: deleted merged local branch dispatch-record-1725 (was 8d0d15fad; merged into main, not checked out; git branch -d). Reversibility: med (sha 8d0d15fad). [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 18:30:06 — Step 6: deleted net-empty branch worktree-dispatch-record-3062 via -D (was d55f287a8; git diff --quiet vs merge-base exit 0, re-verified). Reversibility: med (sha d55f287a8). [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 18:30:06 — Step 6: archived clean run 2026-10-24T153132-spec-3997-2724. Reversibility: high (archive is a move).
+- AUTO 18:30:06 — Step 6: archived clean run 2026-10-26T114954-tidy-standalone. Reversibility: high (archive is a move).
+- AUTO 18:30:06 — Step 6: archived clean run 2026-10-28T070331-backlog-standalone. Reversibility: high (archive is a move).
+- REFUSED 18:30:06 — Step 6: archive-run refused 2026-10-25T143627-spec-4303: console-residue (48 unresolved items no human has reviewed) — surfaced in Yours, not worked around. Reversibility: n/a.
+- REFUSED 18:30:06 — Step 6: archive-run refused 2026-10-27T184830-spec-4481: console-residue (1 unresolved item) — surfaced in Yours, not worked around. Reversibility: n/a.
+- SKIP 18:30:06 — Step 4: kept 3 plans of closed records (2026-10-25-write-gate-fail-opens-4303.md, 2026-10-26-verify-scope-previous-reader-pin.md, 2026-10-27-write-gate-piped-case-4481.md) instead of the Step 4 auto-delete: superpowers-plans-retention resolves keep-forever (default) and all three are within ADR-0007's recent-work cutoff — the conflict is open record #4465. Reversibility: n/a.
+- SKIP 18:30:06 — Step 4.5: worktree .claude/worktrees/dispatch-record-4459 not removed: re-verify found a live dispatch (run 2026-10-28T172429-record-4459, bot:in-progress) — in-flight Keep. Reversibility: n/a.
+- SKIP 18:30:06 — Step 4.7: #4483 bot:in-progress-without-claim backstop dropped: re-verify found live run 2026-10-28T172100-spec-4483 and open PR #4515 — in-flight, not a missed removal. Reversibility: n/a.
+- STAGED 18:33:01 — Step 6: delete 3 orphan merged remote-tracking refs (local-check/main, local-check/main2, local/main-check); moderate would auto-apply but the worktree-always gate denied git update-ref in the main checkout. Stage path: staged/tidy-delete-1.md. Reversibility: high.
+- STAGED 18:33:01 — Step 6: digest cluster hooks (4 entries) proposed as an absorb into #4405. Stage path: staged/digest-promotion-1.md. Reversibility: med.
+- STAGED 18:33:01 — Step 6: digest cluster reconcile (3 entries) proposed as an absorb into #4403. Stage path: staged/digest-promotion-2.md. Reversibility: med.
+- STAGED 18:33:01 — Step 6: digest cluster tests (3 entries) proposed as an absorb into #4400. Stage path: staged/digest-promotion-3.md. Reversibility: med.
+- STAGED 18:33:01 — Step 6: digest cluster run-liveness (3 entries) proposed as a new settle record (none open for this area). Stage path: staged/digest-promotion-4.md. Reversibility: med.
+- AUTO 05:09:55 — Approve: tidy --approve (human-approved: "go ahead with all the next actions") — re-verified all 7 staged items live: #4405/#4403/#4400 open, 13 #1426 entry lines unmarked, no run-liveness settle record, 3 refs at staged SHAs and ancestors of origin/main. Reversibility: n/a.
+- AUTO 05:09:55 — Approve: digest-promotion-1..3 applied — absorbed 4 hooks entries into #4405 (now 14), 3 reconcile into #4403 (now 18), 3 tests into #4400 (now 64); titles/Current State counts updated, compose-record --check passed, read back. Reversibility: med (body edit).
+- AUTO 05:09:55 — Approve: digest-promotion-4 applied — filed #4560 "Settle 3 below-floor digest findings in run-liveness" (by:capture, type:task, priority:low; Related #4436, #4471). Capture's open-PR (#4541) and recent-commit overlap screens matched only the generic "below-floor digest findings" phrase; hand-triaged false positives (#4541 is code-health only; matched commits are hooks/tidy/wrap-up settles) — no triage comment posted. Reversibility: med (issue created).
+- AUTO 05:09:55 — Approve: 13 #1426 entry lines marked → #4405/#4403/#4400/#4560 across comments 6436927443, 6450608149, 6386645770; read back. Reversibility: high (marker removable).
+- AUTO 05:09:55 — Approve: tidy-delete-1 applied — git update-ref -d (old-value guarded) for refs/remotes/local-check/main, local-check/main2, local/main-check, run via the unlocked run-dir-cleanup-design worktree (refs shared); for-each-ref confirms gone. No working-tree write, so no commit. Reversibility: high (recreate with update-ref <ref> <sha>).
+- AUTO 07:30:27 — approve: tidy --approve (user approved all 7, 2026-10-30): all stale -- digest promotions 1-4 already applied (#4405, #4403, #4400, #4560 carry the entries and every #1426 line its marker); orphan refs local-check/main, local-check/main2, local/main-check already absent. Nothing written; run archived. Reversibility: n/a.
+## /flow
+- AUTO 18:37:06 — Step 2.8: claimed #2724 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:40:12 — Step 2.8: claimed #4398 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:42:23 — Step 2.8: claimed #4399 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:43:25 — Step 2.8: claimed #4400 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:44:30 — Step 2.8: claimed #4401 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:45:29 — Step 2.8: claimed #4402 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:46:28 — Step 2.8: claimed #4403 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:47:28 — Step 2.8: claimed #4404 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:48:28 — Step 2.8: claimed #4405 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:49:29 — Step 2.8: claimed #4406 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:50:27 — Step 2.8: claimed #4407 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:51:28 — Step 2.8: claimed #4408 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:52:28 — Step 2.8: claimed #4409 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:53:29 — Step 2.8: claimed #4410 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:54:29 — Step 2.8: claimed #4411 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:55:35 — Step 2.8: claimed #4412 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:56:40 — Step 2.8: claimed #4413 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:58:59 — Step 2.8: claimed #4414 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 18:59:55 — Step 2.8: claimed #4415 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:00:55 — Step 2.8: claimed #4416 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:03:06 — Step 2.8: claimed #4429 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:05:40 — Step 2.8: claimed #4431 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:07:37 — Step 2.8: claimed #4432 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:09:35 — Step 2.8: claimed #4442 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:11:31 — Step 2.8: claimed #4443 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:13:32 — Step 2.8: claimed #4472 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:14:34 — Step 2.8: claimed #4473 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:15:34 — Step 2.8: claimed #4477 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:17:24 — Step 2.8: claimed #4489 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:18:23 — Step 2.8: claimed #4492 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:20:47 — Step 2.8: claimed #4493 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:22:35 — Step 2.8: claimed #4494 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:24:26 — Step 2.8: claimed #4495 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:26:25 — Step 2.8: claimed #4496 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:28:40 — Step 2.8: claimed #4499 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 19:30:06 — Step 2.8: claimed #4505 (bin/claim-targets.js, transport: git). Reversibility: high.
+## /specify
+- AUTO 18:39:52 — Release: released claim on #2724 (shaped: #2724); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:39:52 — Framing Guard: #2724 framing-check: open — observed stuck-run state, per-reason operational remedies. Reversibility: n/a.
+- AUTO 18:39:52 — Shape: #2724 shaped headless: Surface infra; risk:low size:low ceremony:fast-lane (ceremony-check: one module's prose array + one test, plus an ops close/archive of 2 dirs); framing-check on shaped body: open, no solution:unjustified; premise fix: test path is tests/bin-lib/reconcile/escalate-residue.test.js; 11 near-dup candidates (max score 2, no title-similarity) appended to Related, no refusal. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 18:42:02 — Release: released claim on #4398 (shaped: #4398); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:43:12 — Release: released claim on #4399 (shaped: #4399); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:44:17 — Release: released claim on #4400 (shaped: #4400); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:45:16 — Release: released claim on #4401 (shaped: #4401); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:46:15 — Release: released claim on #4402 (shaped: #4402); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:47:15 — Release: released claim on #4403 (shaped: #4403); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:48:15 — Release: released claim on #4404 (shaped: #4404); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:49:15 — Release: released claim on #4405 (shaped: #4405); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:50:15 — Release: released claim on #4406 (shaped: #4406); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:51:15 — Release: released claim on #4407 (shaped: #4407); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:52:16 — Release: released claim on #4408 (shaped: #4408); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:53:16 — Release: released claim on #4409 (shaped: #4409); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:54:16 — Release: released claim on #4410 (shaped: #4410); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:55:21 — Release: released claim on #4411 (shaped: #4411); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:56:27 — Release: released claim on #4412 (shaped: #4412); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:58:41 — Release: released claim on #4413 (shaped: #4413); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:59:37 — Release: released claim on #4414 (shaped: #4414); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:00:36 — Release: released claim on #4415 (shaped: #4415); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:01:36 — Release: released claim on #4416 (shaped: #4416); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:02:11 — Shape: #4398 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:high (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4399 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:high (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4400 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:high (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4401 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:high (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4402 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:high (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4403 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:high (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4404 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:high (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4405 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:medium (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4406 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:medium (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4407 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:medium (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4408 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:medium (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4409 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:medium (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4410 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:medium (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4411 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:low (entry count) ceremony:fast-lane; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4412 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:low (entry count) ceremony:fast-lane; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4413 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:low (entry count) ceremony:standard; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4414 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:low (entry count) ceremony:fast-lane; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4415 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:low (entry count) ceremony:fast-lane; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:02:11 — Shape: #4416 already spec-shaped (compose-record --check exit 0): labels only, body untouched; framing-check open (settle list of observed digest findings, fix-or-drop ACs) on both passes; risk:low size:low (entry count) ceremony:fast-lane; near-dup hits are sibling settle records only, no title-similarity refusal, no Related append (body not rewritten). Reversibility: high (labels removable; body unchanged).
+- AUTO 19:05:12 — Framing Guard: #4429 framing-check: open — measured refusal storm (642 wd-guard-refusal over 5 days) selects the spec-boundary signal. Reversibility: n/a.
+- AUTO 19:05:12 — Shape: #4429 shaped headless: Surface infra; risk:low size:medium ceremony:standard type:feature (ceremony-check: flow multi-spec + banner + dispatch prompts + friction-events CLI); framing-check on shaped body: open; premise: friction-events.js has no time window — events carry ts, manifest startedAt gives the window (recorded in Current State); 6 near-dup candidates (all score 1 body-anchor-overlap) appended to Related, no refusal; no diagram suggestion (linear additive signal). Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:05:22 — Release: released claim on #4429 (shaped: #4429); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:07:10 — Framing Guard: #4431 framing-check: open — reproduced dirty-stamp symptom; original weighs relocate vs exempt. Reversibility: n/a.
+- AUTO 19:07:10 — Shape: #4431 shaped headless: Surface infra; risk:medium size:medium ceremony:standard type:bug (relocate audit + recommendations caches to the run dir across design-wrapper, flow survey, wrap-up cleanup; decide declined.json home); framing-check on shaped body: open; premise verified: cache path at review.md:428/polish.md:50, engine-verify.js:318 suffix list; 3 near-dup candidates (#3813 score 2 key-files+anchor, unrelated wrap-up bug, not title-similar) appended to Related, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:07:19 — Release: released claim on #4431 (shaped: #4431); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:09:06 — Framing Guard: #4432 framing-check: open — observed wrong exclusion + staged close; original offers two candidate signals. Reversibility: n/a.
+- AUTO 19:09:06 — Shape: #4432 shaped headless: Surface infra; risk:medium size:medium ceremony:standard type:bug; framing-check on shaped body: open (release-time signal chosen over Refs-keyword and reason-text, justified against #1791/#1803 no-keyword ships); premise verified: mentions carry no closing/claim data (linked-prs.js:69-72), release marker carries releasedAt (claims.js:56-66); no near-dup candidates; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:09:15 — Release: released claim on #4432 (shaped: #4432); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:11:04 — Framing Guard: #4442 framing-check: open — measured symptom (25/36 refusals were cd-chains from build/SKILL.md:214); fix aligns to existing canonical rule. Reversibility: n/a.
+- AUTO 19:11:04 — Shape: #4442 shaped headless: Surface infra; risk:low size:low ceremony:fast-lane type:bug; framing-check on shaped body: open; premise widened: 4 contradicting sites, not 1 (build/SKILL.md:214, test/qa-prompts.md:98,:162, tidy/scan-procedures.md:75,:185) — shared core already correct; 23 near-dup candidates (#3737, #3822 score 2 key-files+anchor — same rule at other sites, noted in Gotchas; rest score 1) appended to Related, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:11:13 — Release: released claim on #4442 (shaped: #4442); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:13:03 — Framing Guard: #4443 framing-check: open — documented --as override unreachable at two cited code paths. Reversibility: n/a.
+- AUTO 19:13:03 — Shape: #4443 shaped headless: Surface infra; risk:medium size:medium ceremony:standard type:bug (release path: preflight + release-local + SKILL.md Step 2; major-bump gate interaction); framing-check on shaped body: open; premise verified and widened: preflight stop at pack.js:331 is engine-agnostic, release-local.js:170-172 exits before precheck; test paths corrected to tests/bin-lib/release-{local,preflight}/; 6 near-dup candidates (score 1) appended to Related, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:13:12 — Release: released claim on #4443 (shaped: #4443); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:14:05 — Framing Guard: #4472 framing-check: open — observed scratchpad rm -rf incident; prose gap remedy. Reversibility: n/a.
+- AUTO 19:14:05 — Shape: #4472 shaped headless: already spec-shaped (compose-record --check exit 0): labels only, body untouched; risk:low size:low ceremony:fast-lane; framing-check open on both passes; 3 near-dup candidates (#3737, #4359 score 2 key-files+anchor, no title-similarity), no refusal, no Related append (body not rewritten). Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:14:14 — Release: released claim on #4472 (shaped: #4472); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:15:07 — Framing Guard: #4473 framing-check: open — measured budget breaches; three alternative remedies offered. Reversibility: n/a.
+- AUTO 19:15:07 — Shape: #4473 shaped headless: already spec-shaped (compose-record --check exit 0): labels only, body untouched; risk:low size:medium ceremony:standard (investigation + policy ceiling decision); framing-check open on both passes; 2 near-dup candidates (score 1), no refusal, no Related append (body not rewritten). Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:15:15 — Release: released claim on #4473 (shaped: #4473); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:16:57 — Framing Guard: #4477 framing-check: open — observed secret leak into 4 tooling-written artifacts. Reversibility: n/a.
+- AUTO 19:16:57 — Shape: #4477 shaped headless: Surface infra; risk:medium size:medium ceremony:standard type:feature (story schema field + bin scrub helper + qa-agent + qa-report); framing-check on shaped body: open (scrub vs capture-suppression traded off; screenshot delete over pixel redaction); premise verified: no secret/redact handling in qa-agent.md, stories/SKILL.md schema v2, qa-report.js; 1 near-dup candidate (#4408 score 1) appended to Related, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:17:05 — Release: released claim on #4477 (shaped: #4477); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:17:55 — Framing Guard: #4489 framing-check: open — review-observed root cause (split case representation behind #4481), outcome-shaped ACs. Reversibility: n/a.
+- AUTO 19:17:55 — Shape: #4489 shaped headless: already spec-shaped (compose-record --check exit 0): labels only, body untouched; existing risk:medium size:medium kept; ceremony:standard (write-gate scanner restructure); framing-check open on both passes; 27 near-dup candidates (23 at score 2 key-files+anchor — all other git-command.js records, no title-similarity), no refusal, no Related append (body not rewritten). Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:18:04 — Release: released claim on #4489 (shaped: #4489); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:20:19 — Framing Guard: #4492 framing-check: open — three independent observed wrong-base PRs; three candidate fixes offered. Reversibility: n/a.
+- AUTO 19:20:19 — Shape: #4492 shaped headless: Surface infra; risk:medium size:medium ceremony:standard type:bug; framing-check on shaped body: open (main-checkout fallback chosen over Manifesto config copy and pr-early-open refusal); premise verified: resolvePolicyConfig show-toplevel root at policy-schema.js:692-703, readPolicyFile(repoRoot) at policy.js:15, 14 bin readers; consolidates duplicates #4494/#4499 (fix PR closes all three — deliverable 4); 18 near-dup candidates (#4499 title-similarity score 1, others anchor) appended to Related, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:20:28 — Release: released claim on #4492 (shaped: #4492); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:22:03 — Framing Guard: #4493 framing-check: open — observed false conflict vs passing solo apply; cited root cause. Reversibility: n/a.
+- AUTO 19:22:03 — Shape: #4493 shaped headless: Surface infra; risk:low size:low ceremony:fast-lane type:bug; framing-check on shaped body: open (forward resolved line-ending config chosen over index-blob seeding, which would test against the wrong base); premise verified: gitEnv at stack-check.js:27-28, byte copy at :109-112 and :262-274; 6 near-dup candidates (#4271 score 2 key-files+anchor, same module different issue) appended to Related, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:22:12 — Release: released claim on #4493 (shaped: #4493); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:23:57 — Framing Guard: #4494 framing-check: open — observed duplicate of #4492 (same root cause, independent report). Reversibility: n/a.
+- AUTO 19:23:57 — Shape: #4494 shaped headless: Surface infra; risk:low size:low ceremony:fast-lane type:bug; consolidated into #4492 (unique facts carried forward: later-phase readers, no degrade line); native blocked-by edge 4494:4492 added via link-records.js so dispatch never builds it alone; framing-check on shaped body: open; 7 near-dup candidates (#4492 score 2, no title-similarity) appended to Related, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:24:06 — Release: released claim on #4494 (shaped: #4494); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:25:57 — Framing Guard: #4495 framing-check: open — observed false contested exit on first claim; two candidate fixes. Reversibility: n/a.
+- AUTO 19:25:57 — Shape: #4495 shaped headless: Surface infra; risk:medium size:medium ceremony:standard type:bug (claim lock: both transports + new exit code); framing-check on shaped body: open (bootstrap + dedicated exit kept as a ladder; orphan branch rejected); premise verified: git read maps missing remote ref to transport-failure (claims-git-cas.js:120-131, classifyGitError :72-84 has no missing-ref case), contents API 404 reads as absent (claim-store.js:141,:261); exit-3 mapping flagged as to-trace in Current State; 3 near-dup candidates (score 1) appended to Related, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:26:05 — Release: released claim on #4495 (shaped: #4495); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:28:12 — Framing Guard: #4496 framing-check: open — observed forced add under an ignored parent; three alternative fixes. Reversibility: n/a.
+- AUTO 19:28:12 — Shape: #4496 shaped headless: Surface infra; risk:medium size:medium ceremony:standard type:bug; framing-check on shaped body: open (detect + init migration chosen; spec relocation rejected); premise verified: materialize.js has no check-ignore, init step-04 already owns carve-out + blanket-line migration; auto-mode behavior decided in-spec (stage .gitignore patch, no new HARD-GATE — contract list is closed); 11 near-dup candidates (#3976 score 2, rest 1) appended to Related, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:28:20 — Release: released claim on #4496 (shaped: #4496); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:29:38 — Framing Guard: #4499 framing-check: open — observed duplicate of #4492 (same root cause, independent report). Reversibility: n/a.
+- AUTO 19:29:38 — Shape: #4499 shaped headless: Surface infra; risk:low size:low ceremony:fast-lane type:bug; consolidated into #4492 (unique fact carried forward: run config.yml carries no integration-branch; its Manifesto-copy alternative already declined in #4492); native blocked-by edge 4499:4492 added; framing-check on shaped body: open; 12 near-dup candidates (#4492 score 3 incl. title-similarity, ready but not in flight — no live claim, no open PR — so no refusal per shapingRefusal) appended to Related; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:29:47 — Release: released claim on #4499 (shaped: #4499); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:31:37 — Framing Guard: #4505 framing-check: open — reproduced on 4 CLIs; regression of per-site #2538 fix. Reversibility: n/a.
+- AUTO 19:31:37 — Shape: #4505 shaped headless: Surface infra; risk:medium size:high ceremony:standard type:bug (shared gh seam across 30 bin files + conformance guard); framing-check on shaped body: open; premise verified: pr-checklist.js:170 gh pr view has no repo/host, compose-subject.js:217 --hostname only on GraphQL path, engine-verify.js:1022 --repo owner/repo not repoSlug, repo-resolve.js already exports parseRepo/repoSlug; 24 near-dup candidates (score 1) appended to Related with #2538, no refusal; no diagram suggestion. Reversibility: high (body snapshot in Original request; labels removable).
+- AUTO 19:31:45 — Release: released claim on #4505 (shaped: #4505); labels removed: bot:in-progress. Reversibility: high.
+## /backlog
+- AUTO 19:38:29 — apply-refine-labels: #4423: applied +priority:high. Reversibility: high.
+- AUTO 19:38:34 — apply-refine-labels: #4424: applied +priority:medium. Reversibility: high.
+- AUTO 19:38:39 — apply-refine-labels: #4429: applied +priority:medium. Reversibility: high.
+- AUTO 19:38:43 — apply-refine-labels: #4431: applied +priority:medium. Reversibility: high.
+- AUTO 19:38:47 — apply-refine-labels: #4432: applied +priority:medium. Reversibility: high.
+- AUTO 19:38:52 — apply-refine-labels: #4433: applied +priority:low. Reversibility: high.
+- AUTO 19:38:56 — apply-refine-labels: #4435: applied +priority:medium. Reversibility: high.
+- AUTO 19:39:01 — apply-refine-labels: #4436: applied +priority:low. Reversibility: high.
+- AUTO 19:39:06 — apply-refine-labels: #4437: applied +priority:low. Reversibility: high.
+- AUTO 19:39:10 — apply-refine-labels: #4438: applied +priority:medium. Reversibility: high.
+- AUTO 19:39:14 — apply-refine-labels: #4439: applied +priority:medium. Reversibility: high.
+- AUTO 19:39:18 — apply-refine-labels: #4442: applied +priority:medium. Reversibility: high.
+- AUTO 19:39:23 — apply-refine-labels: #4443: applied +priority:medium. Reversibility: high.
+- AUTO 19:39:27 — apply-refine-labels: #4446: applied +priority:high. Reversibility: high.
+- AUTO 19:39:32 — apply-refine-labels: #4447: applied +priority:low. Reversibility: high.
+- AUTO 19:39:36 — apply-refine-labels: #4448: applied +priority:high. Reversibility: high.
+- AUTO 19:39:40 — apply-refine-labels: #4449: applied +priority:medium. Reversibility: high.
+- AUTO 19:39:44 — apply-refine-labels: #4450: applied +priority:high. Reversibility: high.
+- AUTO 19:39:49 — apply-refine-labels: #4451: applied +priority:medium. Reversibility: high.
+- AUTO 19:39:53 — apply-refine-labels: #4452: applied +priority:medium. Reversibility: high.
+- AUTO 19:39:58 — apply-refine-labels: #4453: applied +priority:low. Reversibility: high.
+- AUTO 19:40:03 — apply-refine-labels: #4454: applied +priority:low. Reversibility: high.
+- AUTO 19:40:08 — apply-refine-labels: #4455: applied +priority:medium. Reversibility: high.
+- AUTO 19:40:12 — apply-refine-labels: #4456: applied +priority:low. Reversibility: high.
+- AUTO 19:40:17 — apply-refine-labels: #4460: applied +priority:medium. Reversibility: high.
+- AUTO 19:40:22 — apply-refine-labels: #4461: applied +priority:medium. Reversibility: high.
+- AUTO 19:40:26 — apply-refine-labels: #4462: applied +priority:medium. Reversibility: high.
+- AUTO 19:40:31 — apply-refine-labels: #4463: applied +priority:medium. Reversibility: high.
+- AUTO 19:40:35 — apply-refine-labels: #4464: applied +priority:low. Reversibility: high.
+- AUTO 19:40:39 — apply-refine-labels: #4465: applied +priority:medium. Reversibility: high.
+- AUTO 19:40:44 — apply-refine-labels: #4466: applied +priority:medium. Reversibility: high.
+- AUTO 19:40:48 — apply-refine-labels: #4467: applied +priority:high. Reversibility: high.
+- AUTO 19:40:53 — apply-refine-labels: #4468: applied +priority:medium. Reversibility: high.
+- AUTO 19:40:57 — apply-refine-labels: #4469: applied +priority:low. Reversibility: high.
+- AUTO 19:41:02 — apply-refine-labels: #4472: applied +priority:medium. Reversibility: high.
+- AUTO 19:41:07 — apply-refine-labels: #4473: applied +priority:low. Reversibility: high.
+- AUTO 19:41:11 — apply-refine-labels: #4474: applied +priority:low. Reversibility: high.
+- AUTO 19:41:16 — apply-refine-labels: #4475: applied +priority:medium. Reversibility: high.
+- AUTO 19:41:21 — apply-refine-labels: #4477: applied +priority:high. Reversibility: high.
+- AUTO 19:41:26 — apply-refine-labels: #4482: applied +priority:low. Reversibility: high.
+- AUTO 19:41:30 — apply-refine-labels: #3944: applied +needs:decision. Reversibility: high.
+- AUTO 19:41:31 — apply-refine-labels: #3944: comment posted. Reversibility: high.
+- AUTO 19:41:55 — Backlog grant: merge-lane watched set empty — breaker sweep skipped. Reversibility: n/a.
+- AUTO 19:41:55 — Backlog grant: zero-eligible short-circuit — 44 candidate(s), 0 needing grant-check: trust: 44. Reversibility: n/a.
+- AUTO 19:41:55 — Backlog refine: headless labeling lanes (--source sweep, refineAutoApply at autonomy: unattended): priority applied to 40 of 56 missing-priority records (6 high, 22 medium, 12 low); 16 remain beyond --budget 40; no new Related cross-references beyond existing Related lines; dependency-repair: 1 judgment-required finding (#3944, multi-record chain prose on a parent) stamped needs:decision; flag-back 0 (no grant-check ran). Reversibility: high (labels removable).
+- AUTO 19:41:55 — Backlog refine: Resolve lane skipped (human decision only): 2 record(s) carry an unresolved decision proposal (#4456, #3944) — /claude-tweaks:backlog refine. Reversibility: n/a.
+## /sweep
+- AUTO 19:44:14 — Close-out: sweep summary — tidy: applied 6, staged 5 items (7 approve rows), yours 37, clean 12; specify (--budget all): shaped 36, routed 0, failed 0; backlog refine (headless): granted 0, re-authorized 0, needs-decision 1 (#3944), skipped 44 (trust), priority applied 40 (16 beyond budget); attention: 105 rows (61 needs:definition, 42 shaped:headless no grant, 2 needs:decision). Reversibility: n/a.

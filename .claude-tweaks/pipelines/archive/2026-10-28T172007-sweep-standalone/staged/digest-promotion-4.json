@@ -1,0 +1,1 @@
+[{"tag":"digest","record":null,"title":"Settle 3 below-floor digest findings in run-livenes…","action":"File new settle record for 3 run-liveness-area digest entries; mark each promoted","command":"gh issue create -R thn-inc/claude-tweaks -t {title} -l {labels} -F {composed body}"}]

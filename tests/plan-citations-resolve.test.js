@@ -72,7 +72,7 @@ function rowStartingWith(text, prefix) {
 test('/tidy keeps a plan a repo file still cites, naming the citing file, at scan and at pre-delete re-verify (#3101 AC2)', () => {
   const scan = read('scan-procedures.md');
   const step4 = scan.slice(scan.indexOf('## Step 4: Audit Execution Plans'), scan.indexOf('Also glob `docs/plans/*-ledger.md`'));
-  assert.match(step4, /Before any plan Delete:\*\* run `plan-citation-check\.md`/, 'Step 4 must route every plan Delete through the citation check');
+  assert.match(step4, /Before any plan Delete or `Prune plan`:\*\* run `plan-citation-check\.md`/, 'Step 4 must route every plan Delete through the citation check');
   // The rule itself lives in its own sub-file, split out while scan-procedures.md carried a byte cap (retired by #3311).
   const check = read('plan-citation-check.md');
   assert.match(check, /basename/, 'the citation check must grep for the plan basename');

@@ -3,6 +3,7 @@ files:
   - plugin/skills/dispatch/task-prompt.md
   - plugin/bin/lib/model-profiles/profiles.js
   - plugin/bin/log-decision.js
+  - plugin/bin/dispatch-prompt.js
   - tests/dispatch-model-profile-conformance.test.js
 ---
 
@@ -26,7 +27,7 @@ files:
 - **URL:** `.claude-tweaks/pipelines/{run-id}/decisions.md`
 - **Action:** Find the line `- AUTO {time} — Dispatch group [{issues}]: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`
 - **Should feel:** Like reading a receipt: one line per group, written after the first call returned, with the cause attached.
-- **Should understand:** `source: default` or `source: policy` means the Capable row resolved as configured; `source: stance` means the project's `model-stance` shifted only the effort, never the model; `source: ceiling` means the project's `model-ceiling` clamped it (`profiles.js`'s `resolve()`); `degraded:session-failure` means an earlier failure this session blacklisted the model.
+- **Should understand:** The `{model}` and `{source}` in the line are the `model` and `source` of the first call's `dispatch-prompt.js` envelope `profile` (#4589), the same resolution that chose the Task call's `model`, kept by the dispatching session and logged only after the first call returns. `source: default` or `source: policy` means the Capable row resolved as configured; `source: stance` means the project's `model-stance` shifted only the effort, never the model; `source: ceiling` means the project's `model-ceiling` clamped it (`profiles.js`'s `resolve()`); `degraded:session-failure` means an earlier failure this session blacklisted the model.
 - **Red flags:** No such line for a group whose first call ran (the dispatching session skipped the log step); the line appearing *above* the first call's own `/flow` entries in the file, which means it was written before the dispatch and could have pushed `/flow`'s run-directory adoption into recovery (case 3).
 
 ### 3. Reproduce the resolution locally — terminal
@@ -39,4 +40,5 @@ files:
 ## Origin
 - Created during build of record #3224 (dispatch first call on the Capable profile)
 - Steps 1-3 built in this session
+- Updated during build of #4589: step 2 — the logged model now comes from the render CLI envelope's `profile`.
 - Related specs: #3212 (parent decomposition), #2912 (first-call bypass evidence)

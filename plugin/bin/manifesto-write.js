@@ -22,7 +22,12 @@
 // the cwd's checkout, as bin/resolve-policy.js does. Writes config.yml (13
 // levers, the integration-model run pin, spec:, created:), the decisions.md
 // snapshot header (existing Step 2.8 lines kept below it), staged/, and the
-// Manifesto's decision lines under `## /flow`.
+// Manifesto's decision lines under `## /flow`. A degraded forge detection
+// (resolve-policy's `degraded` field on the integration-model entry) is never
+// the run pin: config.yml is written without it, a SKIP is logged, and later
+// --run reads detect again; a merge-verification derived from that same
+// detection is written as `wait`, source `degraded` (record #4578: Decision Q10;
+// merge-verification → wait per plan review).
 //
 // Case 3 (a run dir with decisions.md content but no config.yml) is the
 // caller's to route to steps-and-gates.md case 3, never here: only an
@@ -149,11 +154,15 @@ function run(argv, overrides = {}) {
     });
     const mergeRefusal = mergeAuthorizationRefusal({ preAuthorizeMerge: o.preAuthorizeMerge, dispatched, records: parsed.records });
     const pinEntry = resolved['integration-model'];
-    const integrationModel = pinEntry && pinEntry.error === undefined && typeof pinEntry.value === 'string' ? pinEntry.value : null;
+    // A degraded forge detection (its `degraded` reason code) is never the run's
+    // pin: omit it and let writeManifesto log the distinct SKIP (#4578 Q10).
+    const integrationModelDegraded = pinEntry && typeof pinEntry.degraded === 'string' ? pinEntry.degraded : null;
+    const integrationModel = integrationModelDegraded === null && pinEntry && pinEntry.error === undefined && typeof pinEntry.value === 'string' ? pinEntry.value : null;
     const { table } = writeManifesto({
-      runDir, records: parsed.records, levers, integrationModel, mergeRefusal, now: deps.now(),
+      runDir, records: parsed.records, levers, integrationModel, integrationModelDegraded, mergeRefusal, now: deps.now(),
     }, { mkdir: deps.mkdir });
-    if (!integrationModel) deps.stderr('manifesto-write.js: integration-model resolved empty — config.yml written without the run pin (SKIP logged)\n');
+    if (integrationModelDegraded !== null) deps.stderr(`manifesto-write.js: integration-model forge detection degraded (${integrationModelDegraded}) — config.yml written without the run pin (SKIP logged)\n`);
+    else if (!integrationModel) deps.stderr('manifesto-write.js: integration-model resolved empty — config.yml written without the run pin (SKIP logged)\n');
     if (mergeRefusal) deps.stderr(`manifesto-write.js: pre-authorize-merge has no effect on a ${mergeRefusal} run — merge-authorization written as ask (SKIP logged)\n`);
     deps.stdout(table);
     return 0;

@@ -39,12 +39,12 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { CANONICAL_PHASES, repairPrBody, reviseSpecSummary } = require('./lib/flow/pr-body');
+const { CANONICAL_PHASES, repairPrBody, reviseSpecSummary, WHOLE_PIECE_RESTORES } = require('./lib/flow/pr-body');
 const { setPhaseRow, firstLineRunId, readRunReversals } = require('./lib/flow/pr-checklist');
 const { readManifest } = require('./lib/flow/manifest');
 const { resolveTarget, appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
-const { ghAvailable } = require('./lib/repo-resolve');
+const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-checklist.js --run <run-dir> --phase <build|test|review|polish|wrap-up>\n'
@@ -88,9 +88,9 @@ const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
   ghAvailable: () => ghAvailable(),
-  gh: (args, input) => execFileSync('gh', args, {
+  gh: (args, input) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-  }),
+  })),
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   readManifest,
@@ -214,7 +214,7 @@ function run(argv, overrides = {}) {
   // 11. A repair is worth a decisions.md line; a logging failure never changes the exit.
   let logFailed = false;
   if (repaired.restored.length > 0) {
-    const carried = repaired.restored.length === 3 ? 'none' : 'some';
+    const carried = WHOLE_PIECE_RESTORES.every((p) => repaired.restored.includes(p)) ? 'none' : 'some';
     try {
       deps.appendDecision({
         runDir: o.run,

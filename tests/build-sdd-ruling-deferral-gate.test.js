@@ -58,6 +58,8 @@ test('console prose: the appendix sdd-ruling bullet states the console-auto rule
   const reasons = Object.values(SDD_RULING_REASONS);
   assert.ok(reasons.length >= 2, 'SDD_RULING_REASONS exposes its reasons');
   for (const reason of reasons) assert.match(APPENDIX, ws(`pending — ${reason}`));
+  // The ratify rule excludes the one reason that says a human must decide (#4587).
+  assert.match(APPENDIX, ws("`_shared/deferral-gate.md`'s vocabulary, other than `needs-human-decision`"));
 });
 
 test('reconciler prose: console-execution.md states the third exception and console-on-pr.md the stagedPath field', () => {

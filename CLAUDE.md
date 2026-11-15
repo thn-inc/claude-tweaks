@@ -48,7 +48,7 @@ Invocation: `/claude-tweaks:release` (no arguments) — this repo dogfoods the s
 
 ### Hooks
 
-All hook registrations route through `plugin/bin/hooks.js <event>` — one dispatcher, one module per event in `plugin/bin/lib/hooks/`. The full contract — tiered posture, run-dir resolution and ownership, the never-break-a-session invariant, and its consumers — is in `docs/hooks.md`. Read it before touching `plugin/bin/hooks.js`, `plugin/bin/lib/hooks/`, or `plugin/hooks/hooks.json`.
+All hook registrations run `plugin/bin/hooks.sh` → `hooks.js <event>` — one dispatcher, one module per event in `plugin/bin/lib/hooks/`. The full contract — tiered posture, run-dir resolution and ownership, and the never-break-a-session invariant — is in `docs/hooks.md`. Read it before touching `plugin/bin/hooks.{sh,js}`, `plugin/bin/lib/hooks/`, or `plugin/hooks/hooks.json`.
 
 ### Reconcile
 
@@ -84,7 +84,7 @@ How to execute any task here. These apply project-wide unless a more specific ru
 ## Commands
 
 ```bash
-npm test                            # Full suite — tests/ (includes every tests/bin-lib/{module} suite) and tools/upstream-drift/tests/ — a recursive glob, not a fixed list; new tests/bin-lib/{x} directories are picked up automatically
+npm test                            # Locally runs only the impact-selected test files for this checkout's changes; CI runs the whole suite (tests/, tools/upstream-drift/tests/ — recursive, no registration); `npm test -- --full` runs it all here
 npm run test:perf                   # Timing budgets (perf/) — deliberately excluded from npm test, see docs/plugin-structure.md
 claude --plugin-dir ./plugin        # Local development — load the payload subtree from this checkout
 ```

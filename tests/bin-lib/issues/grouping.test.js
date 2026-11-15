@@ -1222,6 +1222,23 @@ test('findInFlightNeighbours drops an in-flight duplicate of a candidate before 
   assert.deepStrictEqual(result.get(5), [{ number: 9, files: ['x.js'] }]);
 });
 
+test('AC1.1: findInFlightNeighbours collapses an in-flight id listed twice into one edge (liveIds dedupe, #4645)', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 1, keyFiles: ['a.js'] }],
+    [{ id: 9, keyFiles: ['a.js'] }, { id: 9, keyFiles: ['a.js'] }],
+    { hubPathMinCount: Infinity },
+  );
+  assert.deepStrictEqual(result.get(1), [{ number: 9, files: ['a.js'] }]);
+});
+
+test('AC1.1: a twice-listed in-flight id does not inflate the pool toward the hub threshold (liveIds dedupe, hubs enabled, #4645)', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 1, keyFiles: ['a.js'] }],
+    [{ id: 9, keyFiles: ['a.js'] }, { id: 9, keyFiles: ['a.js'] }],
+  );
+  assert.deepStrictEqual(result.get(1), [{ number: 9, files: ['a.js'] }]);
+});
+
 test('buildDispatchGroups keeps two fast-lane records that share a file out of one bundle', () => {
   const issues = [
     rec(1, ['a.js'], { fastLane: true, createdAt: '2026-01-01T00:00:00Z' }),

@@ -10,7 +10,7 @@ Registered by #4029; the reader is `readEfficiencyCeilings(repoRoot, profile)` i
 |---|---|---|---|---|
 | `fast-lane-run-round-trip-ceiling` | `policy.yml` | `bin/phase-timing.js --check-budgets` | `420` | Tool round trips (transcript user rows carrying `tool_result` blocks), summed across the run, that one `fast-lane` run may total before the check reports a breach; `0` disables |
 | `fast-lane-run-procedure-kb-ceiling` | `policy.yml` | `bin/phase-timing.js --check-budgets` | `560` | KB of tool-result content returned by Reads of skill procedure files that one `fast-lane` run may total before the check reports a breach; `0` disables |
-| `fast-lane-run-verify-minutes-ceiling` | `policy.yml` | `bin/phase-timing.js --check-budgets` | `21` | Minutes (summed verify-event durations) that one `fast-lane` run may spend in verification before the check reports a breach; `0` disables |
+| `fast-lane-run-verify-minutes-ceiling` | `policy.yml` | `bin/phase-timing.js --check-budgets` | `21` | Minutes (summed verify-event durations, less any time queued for a suite slot) that one `fast-lane` run may spend in verification before the check reports a breach; `0` disables |
 | `standard-run-round-trip-ceiling` | `policy.yml` | `bin/phase-timing.js --check-budgets` | `900` | Same measure as `fast-lane-run-round-trip-ceiling`, for a `standard` run; `0` disables |
 | `standard-run-procedure-kb-ceiling` | `policy.yml` | `bin/phase-timing.js --check-budgets` | `580` | Same measure as `fast-lane-run-procedure-kb-ceiling`, for a `standard` run; `0` disables |
 | `standard-run-verify-minutes-ceiling` | `policy.yml` | `bin/phase-timing.js --check-budgets` | `37` | Same measure as `fast-lane-run-verify-minutes-ceiling`, for a `standard` run; `0` disables |

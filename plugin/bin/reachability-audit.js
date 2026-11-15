@@ -33,20 +33,32 @@ const path = require('path');
 const {
   auditSkillManifest, auditMcpServerConfig,
 } = require('./lib/issues/reachability-audit.js');
+const { fsPath } = require('./lib/health-core/io.js');
 
 const USAGE = 'usage: reachability-audit.js --skill <path> | --mcp-server <path> [--server-name <name>]';
 
-function fail(msg) {
-  process.stderr.write(`reachability-audit: ${msg}\n`);
-  process.exitCode = 2;
-}
+// argv is process.argv.slice(2). Returns the exit code; every output goes through deps.
+function run(argv, deps = realDeps) {
+  const fail = (msg) => {
+    deps.stderr(`reachability-audit: ${msg}\n`);
+    return 2;
+  };
+  // Reads a relative path against deps.cwd(); a thrown fs error names the joined path, so
+  // swap it back to the spelling the caller typed. An absolute path never reads deps.cwd(),
+  // so it still works from a deleted working directory.
+  const read = (p) => {
+    const resolved = fsPath(deps, p);
+    try {
+      return deps.readFile(resolved);
+    } catch (err) {
+      if (typeof err.message === 'string') err.message = err.message.split(resolved).join(p);
+      throw err;
+    }
+  };
+  // The path a failure message names: path.resolve of an absolute path needs no cwd.
+  const shown = (p) => path.resolve(fsPath(deps, p));
 
-function readFile(p) {
-  return fs.readFileSync(p, 'utf8');
-}
-
-function main(argv) {
-  const args = argv.slice(2);
+  const args = argv.slice();
   const opts = {};
   while (args.length) {
     const arg = args.shift();
@@ -64,17 +76,17 @@ function main(argv) {
   if (opts.skill) {
     let content;
     try {
-      content = readFile(opts.skill);
+      content = read(opts.skill);
     } catch (err) {
-      return fail(`cannot read --skill path: ${path.resolve(opts.skill)} (${err.code || err.message})`);
+      return fail(`cannot read --skill path: ${shown(opts.skill)} (${err.code || err.message})`);
     }
     result = auditSkillManifest(content);
   } else {
     let parsed;
     try {
-      parsed = JSON.parse(readFile(opts.mcpServer));
+      parsed = JSON.parse(read(opts.mcpServer));
     } catch (err) {
-      return fail(`cannot read/parse --mcp-server path: ${path.resolve(opts.mcpServer)} (${err.message})`);
+      return fail(`cannot read/parse --mcp-server path: ${shown(opts.mcpServer)} (${err.message})`);
     }
     let entry = parsed;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.mcpServers) {
@@ -87,8 +99,17 @@ function main(argv) {
     result = auditMcpServerConfig(entry);
   }
 
-  process.stdout.write(`${JSON.stringify(result)}\n`);
-  process.exitCode = result.clean ? 0 : 1;
+  deps.stdout(`${JSON.stringify(result)}\n`);
+  return result.clean ? 0 : 1;
 }
 
-main(process.argv);
+const realDeps = {
+  cwd: () => process.cwd(),
+  readFile: (p) => fs.readFileSync(p, 'utf8'),
+  stdout: (text) => process.stdout.write(text),
+  stderr: (text) => process.stderr.write(text),
+};
+
+module.exports = { run, realDeps, USAGE };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

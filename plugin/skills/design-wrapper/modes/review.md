@@ -88,7 +88,7 @@ apart.
 **Dispatch.** One `Task()` call, `subagent_type: impeccable-finish-reviewer`. Do **not** pass
 `isolation: "worktree"` — this mode routinely runs inside a worktree already set up for the task, and a
 second one orphans everything written into it. Do not override the model: the agent declares
-`model: inherit` along with its own effort and turn budget, and those are upstream's calls.
+`model: inherit` along with its own effort and turn budget, and those are upstream's calls. Each child is a rendered-UI unit with no artifact directory (`../../_shared/rendered-ui-units.md`): no extra wait window, and a late result is staged.
 
 This agent is **exempt from the Subagent Contract's agent-side protocol** — its definition ships
 outside this plugin's `agents/` directory, which is the whole of the condition
@@ -243,7 +243,7 @@ result.
 **(e) Dispatch.** One `Task()` per available critic.
 
 > **Parallel execution:** Dispatch the available critics as parallel Task agents — each runs independently and returns findings in Template A format (with the extra `Target` column below). Assemble results after all agents complete.
-> **Contract:** Each agent follows the Subagent Contract (`../../_shared/subagent-output-contract.md`) — minimal input (scope + paths + output template, no conversation), the table followed by a trailing `STATUS: {WORD}` line (one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) as the last non-empty line of the reply. Profile: Standard (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` — the placeholder is model-resolved per `docs/skill-authoring.md`'s Plugin-root references; `../../_shared/subagent-dispatch-core.md` §Model Selection) — a review-style fan-out, never Frontier. Dispatch shape: single-assistant-message rule (`../../_shared/subagent-dispatch-core.md`'s fan-out section) applies. Inline the template literally; reject and re-prompt on format violations.
+> **Contract:** Each agent follows the Subagent Contract (`../../_shared/subagent-output-contract.md`) — minimal input (scope + paths + output template, no conversation), the table followed by a trailing `STATUS: {WORD}` line (one of DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) as the last non-empty line of the reply. Profile: Standard (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard` — the placeholder is model-resolved per `docs/skill-authoring.md`'s Plugin-root references; `../../_shared/subagent-dispatch-core.md` §Model Selection) — a review-style fan-out, never Frontier. Dispatch shape: single-assistant-message rule (`../../_shared/subagent-dispatch-core.md`'s fan-out section) applies. Inline the template literally; reject and re-prompt on format violations. Each child is a rendered-UI unit with no artifact directory (`../../_shared/rendered-ui-units.md`): no extra wait window, and a late result is staged.
 
 `subagent_type: general-purpose`. Do **not** pass `isolation: "worktree"` — this mode routinely runs
 inside a worktree already set up for the task, and a second one orphans everything written into it

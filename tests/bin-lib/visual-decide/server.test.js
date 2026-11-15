@@ -104,7 +104,7 @@ test('resolveSafe rejects escapes and accepts in-tree paths', () => {
   assert.equal(resolveSafe(root, '/a.txt'), path.join(root, 'a.txt'));
   assert.equal(resolveSafe(root, '/../etc/passwd'), null);
   assert.equal(resolveSafe(root, '/..%2f..%2fetc%2fpasswd'), null);
-  assert.equal(resolveSafe(root, '/').replace(/\/$/, ''), root);
+  assert.equal(path.resolve(resolveSafe(root, '/')), path.resolve(root));
 });
 
 test('AC3: POST /events appends exactly one JSONL line per request; malformed body -> 400, file unchanged', async () => {

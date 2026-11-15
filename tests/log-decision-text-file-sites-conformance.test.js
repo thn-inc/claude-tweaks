@@ -20,7 +20,8 @@ const WINDOW = 400;
 
 // `content` is the exact text-file line (= the former `--text` argument); for a prose-only site
 // (D2/B1/C1/E1/Q1 — no inline fence, the former form named no text at all) it is the unique
-// anchor the clause introduces for the text-file line.
+// anchor the clause introduces for the text-file line. B2's anchor is instead the citation of
+// refine-closing-summary.md's Resolve-lane template (its former form named `Backlog refine #{n}: …`).
 const SITES = [
   { id: 'W1', file: 'plugin/skills/flow/multispec-parallel-waves.md', content: 'condition: preflight-records.js --waves exited non-zero ({stderr reason}) → fallback: sequential run.' },
   { id: 'W2', file: 'plugin/skills/flow/multispec-parallel-waves.md', content: '#{N} merged; git worktree remove refused ({reason}); {worktreePath} and {worktreeBranch} left for manual cleanup.' },
@@ -30,7 +31,7 @@ const SITES = [
   { id: 'D1', file: 'plugin/skills/dispatch/two-call-gate.md', content: 'Artifact check failed: {message}' },
   { id: 'T1', file: 'plugin/skills/tidy/release-note-repair.md', content: '{ref}: {stderr reason} → not written' },
   { id: 'P1', file: 'plugin/skills/_shared/pr-check-gate.md', content: 'PR #{pr} checks red at {headRefOid short}, but every failing check ({names}) is also failing on {baseBranch} at {baseSha short} — inherited, passed with caveat' },
-  { id: 'P2', file: 'plugin/skills/_shared/pr-check-gate.md', content: "PR #{pr} checks {state} at {headRefOid short} ({pending names, or 'HEAD not yet pushed' when stale, 'no check reported yet' when pending}) — passed with caveat" },
+  { id: 'P2', file: 'plugin/skills/_shared/pr-check-gate.md', content: "PR #{pr} checks {state} at {headRefOid short} ({pending names, or 'HEAD not yet pushed' when stale, 'no run since ready: {files}' when only awaitingReadyRun holds it, 'no check reported yet' when pending}) — passed with caveat" },
   { id: 'P3', file: 'plugin/skills/_shared/pr-check-gate.md', content: 'condition: pr-checks.js {state}{: reason} → fallback: local verification only' },
   { id: 'K1', file: 'plugin/skills/_shared/git-discipline.md', content: "caught PR #{pr}'s branch up with origin/{integration-branch} before the next phase ({before short} → {after short}); re-pushed" },
   { id: 'L1', file: 'plugin/skills/_shared/local-merge-auto-finish.md', content: 'Merged {feature-branch} into {base-branch} (commit {sha}), pushed. [outcome: merged]' },
@@ -42,11 +43,11 @@ const SITES = [
   { id: 'R2', file: 'plugin/skills/build/plan-audit.md', content: 'amended plan for {N} unlisted spec path(s) — listed {paths}; waived {paths}' },
   { id: 'D2', file: 'plugin/skills/dispatch/two-call-gate.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
   { id: 'B1', file: 'plugin/skills/dispatch/task-prompt.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
-  { id: 'B2', file: 'plugin/skills/backlog/refine-record.md', content: 'Backlog refine #{n}: {choice(s)} — {labels/state changed}' },
+  { id: 'B2', file: 'plugin/skills/backlog/refine-record.md', content: "`refine-closing-summary.md`'s Resolve-lane template minus its `AUTO {time} — ` prefix" },
   { id: 'C1', file: 'plugin/skills/flow/claim-targets.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
   { id: 'E1', file: 'plugin/skills/_shared/pr-early-run-lifecycle.md', content: 'holding that one line' },
   { id: 'Q1', file: 'plugin/skills/build/plan-authoring-checks.md', content: 'holding one line carrying the criterion it covers' },
-  { id: 'V1', file: 'plugin/skills/wrap-up/verification-brief.md', content: 'screenshot commit for #{record}: PR state {state} → {current branch | evidence PR #{m} ({url})}' },
+  { id: 'R3', file: 'plugin/skills/build/plan-review.md', content: 'settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}' },
 ];
 
 const collapse = (text) => text.replace(/\s+/g, ' ');

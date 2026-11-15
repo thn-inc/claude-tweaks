@@ -71,12 +71,13 @@ After ALL agents in a tier complete (not during execution — to avoid file writ
 
 25. Write report artifacts to disk.
 
-**`{RUN_DIR}/report.json`** — machine-readable, written by `bin/qa-report.js` (#3328), never by hand. Write the Phase 4 per-story results for every selected story — SKIPPED ones included (dependency, vault, target-environment, and origin skips from pre-flight and Phase 3), so `summary.skipped` counts them — plus run metadata (`run_dir`, `stories_dir`, `filters`, and `wall_clock_seconds` from step 24) to `{RUN_DIR}/story-results.json` with the Write tool, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-report.js" --results "{RUN_DIR}/story-results.json" --out "{RUN_DIR}/report.json"`. The writer derives `summary`, `findings`, `caveats`, `recovered_locators`, `page_inventories`, and `timing` from the stories array, so none of them is a payload field. The payload:
+**`{RUN_DIR}/report.json`** — machine-readable, written by `bin/qa-report.js` (#3328), never by hand. Write the Phase 4 per-story results for every selected story — SKIPPED ones included (dependency, vault, target-environment, and origin skips from pre-flight and Phase 3), so `summary.skipped` counts them — plus run metadata (`run_dir`, `stories_dir`, `base_url` (the `APP_URL` the stories ran against), `filters`, and `wall_clock_seconds` from step 24) to `{RUN_DIR}/story-results.json` with the Write tool, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-report.js" --results "{RUN_DIR}/story-results.json" --out "{RUN_DIR}/report.json"`. The writer derives `summary`, `findings`, `caveats`, `recovered_locators`, `page_inventories`, and `timing` from the stories array, so none of them is a payload field. The payload:
 
 ```json
 {
   "run_dir": "{RUN_DIR}",
   "stories_dir": "{STORIES_DIR}",
+  "base_url": "{APP_URL}",
   "timestamp": "ISO-8601 (optional — defaults to now)",
   "filters": { "tag": null, "priority": null, "retry": null, "journey": null },
   "wall_clock_seconds": N,
@@ -112,6 +113,7 @@ The schema below is the shape the writer produces.
   "run_dir": "{RUN_DIR}",
   "timestamp": "ISO-8601",
   "stories_dir": "{STORIES_DIR}",
+  "base_url": "{APP_URL}",
   "filters": {
     "tag": "{TAG_FILTER or null}",
     "priority": "{PRIORITY_FILTER or null}",

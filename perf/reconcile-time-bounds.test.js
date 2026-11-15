@@ -6,7 +6,7 @@
 // every check's own 5-10 s timeout, and a pre-exhausted budget skips every check in under 1 s. Both do no
 // real work, so the margins are generous. Lives outside tests/ because a wall-clock assertion flakes under
 // sibling-suite load; the functional halves (the preflight skip entry, the budget-exceeded skip entry) stay
-// in tests/reconcile.test.js.
+// in tests/reconcile-preflight-fetch.test.js.
 'use strict';
 
 const { test } = require('node:test');

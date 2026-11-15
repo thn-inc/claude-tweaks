@@ -50,6 +50,7 @@ interactive way — this skill's own Interaction style directive at the top of `
 `AskUserQuestion` call, one option ("Approve all") marked Recommended, plus an override path
 naming specific items to exclude. This mode is never reached from `auto` mode itself — it exists
 precisely because an earlier auto or interactive run left items staged rather than applied.
+An entirely excluded `Prune plan (archive)` item records its decline per `scan-procedures.md` Step 4's Plan retention (never a `Prune plan (ask)` item).
 
 ## Re-verify before applying
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-const { execSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -11,12 +10,33 @@ function has(cmd) {
   // already knows for free — the same principle detectVersionManager()
   // below already applies to the node *path* via process.execPath.
   if (cmd === 'node') return true;
-  try {
-    execSync(`${cmd} --version`, { stdio: 'ignore', windowsHide: true });
-    return true;
-  } catch {
-    return false;
+  // A PATH scan, not `execSync('git --version')`: that spawned /bin/sh -c plus git itself on
+  // every SessionStart — 2 processes each (#5297).
+  const hit = findOnPath(cmd, { env: process.env, platform: process.platform, cwd: null });
+  if (!hit) return false;
+  // /usr/bin/git on macOS is an xcode-select shim that exists even without the Command Line
+  // Tools (running it is what used to fail), so a hit there only counts with a real developer dir.
+  if (process.platform === 'darwin' && hit === path.join('/usr/bin', cmd)) return hasAppleDeveloperTool(cmd);
+  return true;
+}
+
+// The developer dir xcode-select itself would pick, in its own order: $DEVELOPER_DIR alone when set
+// (a `.app` value means its Contents/Developer), else the xcode-select link's target, else — with no
+// link — the default Xcode.app, then the Command Line Tools. These are macOS paths, so they are joined
+// with path.posix: the answer is the same whatever host computes it.
+function hasAppleDeveloperTool(cmd, { readlink = fs.readlinkSync, exists = fs.existsSync, env = process.env } = {}) {
+  let dirs;
+  if (env.DEVELOPER_DIR) {
+    const dev = env.DEVELOPER_DIR;
+    dirs = [/\.app\/*$/.test(dev) ? path.posix.join(dev, 'Contents', 'Developer') : dev];
+  } else {
+    try {
+      dirs = [readlink('/var/db/xcode_select_link')];
+    } catch {
+      dirs = ['/Applications/Xcode.app/Contents/Developer', '/Library/Developer/CommandLineTools'];
+    }
   }
+  return dirs.some((dir) => exists(path.posix.join(dir, 'usr', 'bin', cmd)));
 }
 
 function detectPackageManager() {
@@ -84,7 +104,17 @@ function findOnPath(name, { env, platform, cwd }) {
       try {
         const st = fs.statSync(candidate);
         if (st.isFile() && (win || (st.mode & 0o111))) return candidate;
-      } catch {
+      } catch (err) {
+        // Windows App Execution Aliases (winget) are zero-byte reparse points that statSync can
+        // throw on (not ENOENT); the link entry itself still proves the command is installed.
+        if (win && err.code !== 'ENOENT') {
+          try {
+            const ls = fs.lstatSync(candidate);
+            if (ls.isFile() || ls.isSymbolicLink()) return candidate;
+          } catch {
+            // not present — keep scanning
+          }
+        }
         // not present / unreadable — keep scanning
       }
     }
@@ -152,4 +182,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { has, detectPackageManager, detectVersionManager, installCommand, findOnPath, playwrightCliMessage, collect, main };
+module.exports = { has, hasAppleDeveloperTool, detectPackageManager, detectVersionManager, installCommand, findOnPath, playwrightCliMessage, collect, main };
