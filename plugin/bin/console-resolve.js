@@ -35,6 +35,14 @@
 // 3 --run not anchored, 5 held, unclassified or unreadable. It takes none of --policy, --dry-run,
 // --json, --set-item.
 //
+// Fourth shape (#4620): `--run <dir> --ceiling` — read-only. Prints one line, `console-resolve.js: ceiling
+// {tier} consoleAutoResolve {true|false} control-mode {on|off} source {cli|explicit|control-mode|invalid-autonomy|default}`,
+// the effective ceiling the Review Console's short-circuit pre-check reads (run config over project policy,
+// control mode under any explicit `autonomy`, exactly as the resolve shape computes it). It takes no other
+// flag, needs no ceiling and writes nothing. Exit 0 printed, 2 malformed (any other flag), 3 --run not
+// anchored, or the policy could not be read (`console-resolve.js: ceiling unreadable ({message})`: an
+// unreadable policy never reads as `supervised`).
+//
 // Control mode (#4620, `control-mode: on`): the Review Console resolves what policy can and CARRIES
 // every item a human must decide — `pending`, `keep-staged`, `refused` — as a `carried` item whose
 // decision fact lands in `{run}/packet-facts/decisions.json`. This file owns every write of that
@@ -77,7 +85,8 @@ const EXIT_CARRY_FAILED = 6;
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]  (exit 6: carried decision facts could not be written)\n'
   + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
-  + '       console-resolve.js --run <dir> --check-repair <file> [--full]';
+  + '       console-resolve.js --run <dir> --check-repair <file> [--full]\n'
+  + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)';
 
 class UsageError extends Error {}
 
@@ -95,7 +104,7 @@ function needsAHumanBlock(unresolved, runDir, consolePath) {
 }
 
 function parseArgs(argv) {
-  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null };
+  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false };
   const valued = { '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair', '--ledger': 'ledger' };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -107,9 +116,14 @@ function parseArgs(argv) {
     } else if (flag === '--dry-run') out.dryRun = true;
     else if (flag === '--json') out.json = true;
     else if (flag === '--full') out.full = true;
+    else if (flag === '--ceiling') out.ceiling = true;
     else throw new UsageError(`unknown flag: ${flag}`);
   }
   if (!out.run) throw new UsageError('--run <dir> is required');
+  if (out.ceiling) {
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.checkRepair !== null || out.full || out.ledger !== null) throw new UsageError('--ceiling takes no other flag than --run');
+    return out;
+  }
   if (out.full && out.checkRepair === null) throw new UsageError('--full requires --check-repair');
   if (out.checkRepair !== null) {
     if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.ledger !== null) throw new UsageError('--check-repair takes none of --policy, --dry-run, --json, --set-item, --resolution, --reason, --ledger');
@@ -466,6 +480,19 @@ function checkRepair(o, runDir, { stdout, stderr, execFile, cwd }) {
   return 5;
 }
 
+// #4620: the `--ceiling` shape — the effective ceiling, read-only. Runs after the anchoring check; a policy
+// read that throws is exit 3 with its own line, never a `supervised` guess.
+function ceilingQuery(runDir, { stdout, stderr, execFile, cwd }) {
+  let policy;
+  try { policy = readPolicy({ execFile, cwd: cwd(), runDir }); } catch (err) {
+    stderr(`console-resolve.js: ceiling unreadable (${err && err.message ? err.message : err})\n`);
+    return 3;
+  }
+  const { ceiling, controlMode, ceilingSource } = policy;
+  stdout(`console-resolve.js: ceiling ${ceiling} consoleAutoResolve ${bookkeepingPermissions(ceiling).consoleAutoResolve === true} control-mode ${controlMode === true ? 'on' : 'off'} source ${ceilingSource}\n`);
+  return 0;
+}
+
 async function run(argv, deps = {}) {
   const cwd = deps.cwd || (() => process.cwd());
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -478,6 +505,8 @@ async function run(argv, deps = {}) {
     stderr(`console-resolve.js: ${err.message}\n${USAGE}\n`);
     return 2;
   }
+  // A relative --run resolves against deps.cwd() (cli-wrapper-contract); read lazily, only when needed.
+  if (!path.isAbsolute(o.run)) o.run = path.resolve(cwd(), o.run);
   let isDir = false;
   try { isDir = fs.statSync(o.run).isDirectory(); } catch { isDir = false; }
   if (!isDir) { stderr(`console-resolve.js: --run ${o.run} is not a directory\n${USAGE}\n`); return 2; }
@@ -487,6 +516,7 @@ async function run(argv, deps = {}) {
     return 3;
   }
   const runDir = target.dir;
+  if (o.ceiling) return ceilingQuery(runDir, { stdout, stderr, execFile, cwd });
   if (o.setItem !== null) return setItem(o, runDir, { stdout, stderr, now, execFile, cwd });
   if (o.checkRepair !== null) return checkRepair(o, runDir, { stdout, stderr, execFile, cwd });
   const { ceiling, controlMode, ceilingSource, vetoWindowHours, sensitivePaths } = readPolicy({ execFile, cwd: cwd(), runDir });

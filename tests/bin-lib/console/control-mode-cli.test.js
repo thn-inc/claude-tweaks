@@ -344,3 +344,98 @@ test('a failed can\'t-tell filing rewritten carried is no longer filing-pending'
   assert.deepStrictEqual(consoleResidueItems(cj(fx), ''), []);
   assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), ['decision:review:tiebreak:abc']);
 });
+
+// The run dir as a name -> bytes map, for the "writes nothing" byte-identity checks.
+function dirBytes(dir, base = dir, out = {}) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) dirBytes(p, base, out); else out[path.relative(base, p)] = fs.readFileSync(p, 'utf8');
+  }
+  return out;
+}
+
+test('AC4.10: --ceiling reports unattended from control mode alone', async () => {
+  const fx = controlFixture();
+  const before = dirBytes(fx.runDir);
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 0, b.err());
+  assert.strictEqual(b.out(), 'console-resolve.js: ceiling unattended consoleAutoResolve true control-mode on source control-mode\n');
+  assert.deepStrictEqual(dirBytes(fx.runDir), before);
+});
+
+test('AC4.11: --ceiling reports supervised and source explicit when autonomy is set', async () => {
+  const fx = mainCheckoutWithRun({ autonomy: 'supervised', policyExtra: CM });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 0, b.err());
+  assert.strictEqual(b.out(), 'console-resolve.js: ceiling supervised consoleAutoResolve false control-mode on source explicit\n');
+});
+
+test('AC4.13: --ceiling with control mode off reports source default and control-mode off', async () => {
+  const fx = mainCheckoutWithRun({ autonomy: null });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 0, b.err());
+  assert.strictEqual(b.out(), 'console-resolve.js: ceiling supervised consoleAutoResolve false control-mode off source default\n');
+});
+
+test('--ceiling reports a malformed autonomy under control mode as supervised, never unattended', async () => {
+  const fx = mainCheckoutWithRun({ autonomy: 'supervsed', policyExtra: CM });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 0, b.err());
+  assert.strictEqual(b.out(), 'console-resolve.js: ceiling supervised consoleAutoResolve false control-mode on source invalid-autonomy\n');
+});
+
+test('--ceiling refuses any other flag', async () => {
+  const fx = controlFixture();
+  for (const more of [['--dry-run'], ['--json'], ['--policy', 'console-auto'], ['--full'], ['--set-item', 'x']]) {
+    const b = baseDeps(fx, []);
+    assert.strictEqual(await run(['--run', fx.runDir, '--ceiling', ...more], b.d), 2, more.join(' '));
+    assert.strictEqual(b.out(), '');
+  }
+});
+
+test('--ceiling: an unanchored --run exits 3 and prints no ceiling line', async () => {
+  const fx = controlFixture();
+  const other = controlFixture();
+  const b = baseDeps(fx, [], { mainRoot: other.root });
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 3);
+  assert.strictEqual(b.out(), '');
+});
+
+test('--ceiling: an unreadable policy exits 3 with its own line, never a supervised guess', async () => {
+  const fx = controlFixture();
+  // The policy read's own cwd() lookup is the second call (the anchoring check made the first) and throws.
+  let calls = 0;
+  const b = baseDeps(fx, [], { cwd: () => { calls += 1; if (calls > 1) throw new Error('cwd gone'); return fx.root; } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 3);
+  assert.strictEqual(b.out(), '');
+  assert.match(b.err(), /console-resolve\.js: ceiling unreadable \(cwd gone\)/);
+});
+
+test('--ceiling is order-free: --ceiling before --run prints the same line', async () => {
+  const fx = controlFixture();
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--ceiling', '--run', fx.runDir], b.d), 0, b.err());
+  assert.strictEqual(b.out(), 'console-resolve.js: ceiling unattended consoleAutoResolve true control-mode on source control-mode\n');
+});
+
+test('characterization: --set-item with a relative --run resolves the same run dir as the absolute spelling', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([leftover()]) });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', path.relative(fx.root, fx.runDir), '--set-item', 'leftover-1.md', '--resolution', 'keep-staged', '--reason', 'x'], b.d), 0, b.err());
+  assert.strictEqual(cj(fx).items[0].resolution, 'carried');
+});
+
+test('characterization: the resolve shape with a relative --run resolves the same run dir', async () => {
+  const fx = controlFixture();
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', path.relative(fx.root, fx.runDir), '--policy', 'console-auto'], b.d), 0, b.err());
+  assert.ok(fs.existsSync(path.join(fx.runDir, 'console.json')));
+});
+
+test('--ceiling: a relative --run resolves against deps.cwd()', async () => {
+  const fx = controlFixture();
+  assert.notStrictEqual(process.cwd(), fx.root);
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', path.relative(fx.root, fx.runDir), '--ceiling'], b.d), 0, b.err());
+  assert.match(b.out(), /^console-resolve\.js: ceiling unattended /);
+});
