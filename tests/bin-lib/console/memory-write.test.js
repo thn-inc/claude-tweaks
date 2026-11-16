@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
+const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const CLI = path.join(ROOT, 'plugin', 'bin', 'console-resolve.js');
@@ -130,7 +131,7 @@ test('an over-cap backup never becomes a console item', async () => {
 
 test('AC4.3: no approval prompt — the CLI source names no AskUserQuestion', () => {
   for (const f of [CLI, path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'memory-write.js')]) {
-    assert.ok(!fs.readFileSync(f, 'utf8').includes('AskUserQuestion'), f);
+    assert.ok(!readText(f).includes('AskUserQuestion'), f);
   }
 });
 

@@ -3,13 +3,14 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { DECISION_FACT_KIND, DECISION_ORIGINS, DECISION_FACT_FIELDS, decisionFactFor, decisionOrigin, settleOpenDecisions } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'decision-facts'));
 const { validateShaped } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'compose-record', 'compose'));
 
 // Live prose read: the table is the schema's single owner and the module is its code twin [IL-80 carve-out].
-const PACKET = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', '_shared', 'acceptance-packet.md'), 'utf8');
+const PACKET = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'acceptance-packet.md'));
 
 function factTable(text) {
   const lines = text.split('\n');
