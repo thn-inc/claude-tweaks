@@ -80,8 +80,10 @@ function assertWorkIgnoreRule(gitignoreText) {
 test('AC5.1 .gitignore un-ignores work/*-spec.md and no other file under work/', () => {
   const LINES = lines(readText(GITIGNORE));
   for (const work of WORK_DIRS) {
+    const count = (line) => LINES.filter((l) => l === line).length;
+    assert.equal(count(`${work}/*`), 1, `${work}/* must occur exactly once`);
+    assert.equal(count(`!${work}/*-spec.md`), 1, `!${work}/*-spec.md must occur exactly once`);
     const at = LINES.indexOf(`${work}/*`);
-    assert.notEqual(at, -1, `missing ${work}/*`);
     assert.equal(LINES[at + 1], `!${work}/*-spec.md`, `${work}/* is not followed by its *-spec.md un-ignore`);
     assert.ok(LINES.includes(`!${work}/`), `missing the directory line !${work}/`);
   }
