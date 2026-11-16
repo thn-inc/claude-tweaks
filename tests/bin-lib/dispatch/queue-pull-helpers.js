@@ -237,6 +237,82 @@ const FOREIGN_LOOKUP_NO_GH = 'Warning: foreign blocker state lookup failed (exit
 const NEAR_DUP = 'AUTO — dispatch: near-duplicate candidates across groups: ';
 const FOREIGN_UNREADABLE = 'acme-corp/other#12 (state unreadable)';
 
+// The fault rows' expectations, one table per family. Each family's file asserts its own table row by
+// row (AC4.1 in queue-pull-parity-ac4, AC7.2 in queue-pull-parity-ac7, through assertFaultRow), and
+// the other family's file reads the table's `status` column in AC4.2 (postureView).
+// Per row: `status` the oracle's exit (the CLI's is 4 where it is 1); `base` the un-faulted run it
+// is read against (default <transport>-P1); `stderr` / `stdout` the prefixes, in order, of the
+// reported lines it adds on that channel, near-duplicate AUTO lines aside (that informational pass
+// reports whatever pool reaches it); `entries` its exclusions literally (reason:records), or else
+// `drops` / `adds` against the base's.
+const FAULT_EXPECT = {
+  'F-queue': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'F-opennum': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'F-depfresh': { status: 0, stderr: [], drops: [] },
+  'F-depview': { status: 0, base: 'gh-livedep', stderr: [], drops: ['blocked:9002'] },
+  'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_WARNING_PREFIX}gh-fault: injected failure`, LANDING_EXITED], drops: ['blocked:9030'] },
+  'F-foreign': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
+  'F-linked': { status: 0, stderr: [`${LINKED_WARNING}gh-fault: injected failure`], drops: ['open-pr:9005', 'open-pr:9008', 'shipped:9010'] },
+  'F-intbranch': {
+    status: 0, stderr: [`${LANDING_SKIPPED}no integration branch resolved; no unlanded-blocker exclusions this pull`],
+    stdout: [6, 9, 17].map((n) => `- AUTO 12:00:00 — log-decision: dispatch: #90${String(n).padStart(2, '0')} excluded, named target docs/${{ 6: 'gone6', 9: 'gone', 17: 'present' }[n]}.md absent at origin/. Reversibility: n/a.`),
+    drops: ['unlanded-blocker:9011'], adds: ['target-missing:9017'],
+  },
+  'F-prview': { status: 0, stderr: [], drops: [] },
+  'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
+  'F-inflight': { status: 0, stderr: [IN_FLIGHT_POOL_AUTO], drops: ['neighbour-in-flight:9013'] },
+  'F-claim': {
+    status: 0,
+    stderr: ['AUTO — dispatch: shipped-candidate claim read failed for #9010 (network-failure), #9016 (network-failure); release time unknown, no downgrade', CLAIM_READ_FAILED_7001],
+    drops: ['neighbour-in-flight:9013'],
+  },
+  'F-openprs': { status: 0, stderr: [], drops: [] },
+  'F-writeback': { status: 0, stderr: ['Queue-order cache write-back failed (non-blocking): Command failed: git -C <SCR>/proj push origin '], drops: [] },
+  'F-corrupt': { status: 1, stderr: [OPEN_STOP], entries: '{corrupt' },
+  'F-groups': { status: 1, stderr: [OPEN_FILTER_WARNING, STOP_LINE.target], entries: ['blocked:9002', 'oversized:9001+9003+9016', 'not-spec-shaped:9004', 'not-spec-shaped:9007'] },
+};
+const posture = (r) => (r.status === 0 ? 'open' : 'stop');
+
+const FILES_STOPPED_NEIGHBOUR = { status: 1, stderr: [STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] };
+const FILES_FOREIGN = (why) => ({ status: 0, base: 'S2-files-miss', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`, FOREIGN_LOOKUP_NO_GH], drops: [] });
+const FILES_EXPECT = {
+  'files-queueRaw-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'files-queueRaw-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'files-depFreshness-missing': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
+  'files-depFreshness-malformed': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
+  'files-depFreshness-missing-cold': { status: 0, stderr: [], drops: [] },
+  'files-openNumbers-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'files-openNumbers-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
+  'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
+  'files-inFlightRaw-missing': FILES_STOPPED_NEIGHBOUR,
+  'files-inFlightRaw-malformed': FILES_STOPPED_NEIGHBOUR,
+  'files-inFlightClaims-missing': FILES_STOPPED_NEIGHBOUR,
+  'files-inFlightClaims-malformed': FILES_STOPPED_NEIGHBOUR,
+  'files-queueRaw-wrapper': { status: 0, stderr: [], entries: [] },
+  'files-inFlightRaw-empty': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
+  'files-inFlightClaims-empty': { status: 0, stderr: [CLAIM_READ_FAILED_7001], drops: ['neighbour-in-flight:9013'] },
+  'files-inFlightClaims-string': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
+  'files-foreignStates-missing': FILES_FOREIGN('ENOENT: '),
+  'files-foreignStates-malformed': FILES_FOREIGN('not valid JSON) — supplied states not used (fail closed)'),
+};
+
+// AC4.2 per family (each family is its own process since the fault pool split): the runs its own pool
+// made, plus, for each row of the other family, a stand-in holding only the exit that family's table
+// pins (`status`; the CLI's is 4 where the oracle's is 1, R4). The other family's file asserts that
+// exit against its own runs row by row, so the two AC4.2 tests together assert what one test over both
+// families did.
+function postureView(R, family) {
+  const [own, other, expect] = family === 'gh' ? [FAULTS, FILES_FAULTS, FILES_EXPECT] : [FILES_FAULTS, FAULTS, FAULT_EXPECT];
+  const view = {};
+  for (const row of other) {
+    const { status } = expect[row.id];
+    view[row.id] = { oracle: { status }, module: { status: status === 1 ? 4 : status } };
+  }
+  for (const row of own) view[row.id] = R[row.id];
+  return view;
+}
+
 // A row's default base, and the fault pool's bases: the matrix configs themselves (one
 // definition of each base), the live-dependency scenario the matrix does not run, and S1-gh-hit,
 // F-depfresh's un-faulted warm control on the same miss origin.
@@ -326,13 +402,15 @@ async function runD1() {
 }
 
 // The one fault pool of a process: the rows and bases of the `transports` it is asked for (both by
-// default) and D1, started by the first call. Each parity file runs in its own process now, so the
-// file's own `before` is the only caller and its `transports` the whole decision. A second call with
-// a different `transports` throws rather than silently handing back the first pool.
+// default) and, unless `d1: false`, D1, started by the first call. Each parity file runs in its own
+// process now, so the file's own `before` hooks are the only callers and their arguments the whole
+// decision: queue-pull-parity-ac4 runs ['gh'] without D1, queue-pull-parity-ac7 ['files'] without D1,
+// and queue-pull-parity-d1 D1 alone ([]). A second call with different arguments throws rather than
+// silently handing back the first pool.
 let faultPool = null;
 let faultPoolTransports = null;
-function runFaultPool(transports = ['gh', 'files']) {
-  const key = transports.join();
+function runFaultPool(transports = ['gh', 'files'], { d1 = true } = {}) {
+  const key = `${transports.join()}${d1 ? ' + D1' : ''}`;
   if (faultPool && key !== faultPoolTransports) {
     throw new Error(`runFaultPool: the pool already runs transports [${faultPoolTransports}], asked for [${key}]`);
   }
@@ -340,7 +418,7 @@ function runFaultPool(transports = ['gh', 'files']) {
     const configs = faultConfigs(transports);
     const t0 = Date.now();
     // D1 first: its two pulls run one after the other, so it starts before the single-pull pairs.
-    faultPool = runAll([{ name: 'D1', run: runD1 }, ...pairJobs(configs)], POOL)
+    faultPool = runAll([...(d1 ? [{ name: 'D1', run: runD1 }] : []), ...pairJobs(configs)], POOL)
       .then((R) => ({ R, pairs: configs.length, ms: Date.now() - t0 }));
     faultPoolTransports = key;
   }
@@ -359,6 +437,7 @@ function registerParityCleanup() {
     if (!faultPool) return;
     let d1 = null;
     try { d1 = (await faultPool).R.D1; } catch { return; } // a failed runD1 removed its own sandboxes
+    if (!d1) return; // a pool run with d1: false
     cleanupPairs([d1.first]); // the second pull ran in the same two sandboxes; the pairs are the memo's
   });
 }
@@ -521,6 +600,10 @@ module.exports = {
   FOREIGN_UNREADABLE,
   assertFaultRow,
   runFaultPool,
+  FAULT_EXPECT,
+  FILES_EXPECT,
+  posture,
+  postureView,
   inOwnTmp,
   EXPRESS_OFF,
   pull,

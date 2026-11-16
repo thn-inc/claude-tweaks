@@ -1,51 +1,30 @@
 'use strict';
-// #5227 parity (AC7.2 files inputs): the files-input fault rows and the reproduced defects D1, D3, D4.
-// Split out of queue-pull.test.js (one file per parity describe, each its own process); see
-// queue-pull-helpers.js for the oracle/parity header and the shared machinery.
-// Pool: runFaultPool(['files']): the files fault rows, the files bases they read (S1-files-miss,
-// S2-files-miss, files-livedep) and D1 (read by the D1 test). The gh fault rows and gh bases are not run
-// here: no assertion in this file reads them.
+// #5227 parity (AC7.2 files inputs) and the files family of #5227 parity (AC4 fetch failures): the
+// files-input fault rows and the reproduced defects D3, D4. Split out of queue-pull.test.js (one file per
+// parity describe, each its own process); see queue-pull-helpers.js for the oracle/parity header and the
+// shared machinery.
+// Pool: runFaultPool(['files'], { d1: false }): the files fault rows and the files bases they read
+// (S1-files-miss, S2-files-miss, files-livedep), one pool for both describes. The gh fault rows run in
+// queue-pull-parity-ac4.test.js and D1 (and its test) in queue-pull-parity-d1.test.js. AC4.2 [files]
+// reads the gh rows' exits from FAULT_EXPECT (postureView), which queue-pull-parity-ac4's AC4.1 rows pin
+// to the gh runs; AC4.3 [files] checks the files rows' share of the tail-row set.
 const { test, describe, before } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { oracleSkip, reported } = require('./queue-pull-oracle');
-const { OPEN_NUMBERS_ARGV, FILES_FAULTS } = require('./queue-pull-fixtures');
-const { SESSION_FILES } = require('../../../plugin/bin/lib/dispatch/queue-pull');
+const { FAULTS, FILES_FAULTS } = require('./queue-pull-fixtures');
+const { PASSES, SESSION_FILES } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const {
-  HIT_MESSAGE, sides, assertClean, stopMapped, exclusionsIn, groupedIn, registerParityCleanup, faultComparison, assertFaultFiles, STOP_LINE,
-  CLAIM_READ_FAILED_7001, FOREIGN_LOOKUP_NO_GH, FOREIGN_UNREADABLE, assertFaultRow, runFaultPool,
+  sides, stopMapped, exclusionsIn, groupedIn, registerParityCleanup, faultComparison, STOP_LINE, CLAIM_READ_FAILED_7001, FOREIGN_UNREADABLE,
+  assertFaultRow, runFaultPool, FILES_EXPECT, posture, postureView,
 } = require('./queue-pull-helpers');
 
 registerParityCleanup();
 
-const FILES_STOPPED_NEIGHBOUR = { status: 1, stderr: [STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] };
-const FILES_FOREIGN = (why) => ({ status: 0, base: 'S2-files-miss', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`, FOREIGN_LOOKUP_NO_GH], drops: [] });
-const FILES_EXPECT = {
-  'files-queueRaw-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'files-queueRaw-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'files-depFreshness-missing': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
-  'files-depFreshness-malformed': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
-  'files-depFreshness-missing-cold': { status: 0, stderr: [], drops: [] },
-  'files-openNumbers-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'files-openNumbers-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
-  'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
-  'files-inFlightRaw-missing': FILES_STOPPED_NEIGHBOUR,
-  'files-inFlightRaw-malformed': FILES_STOPPED_NEIGHBOUR,
-  'files-inFlightClaims-missing': FILES_STOPPED_NEIGHBOUR,
-  'files-inFlightClaims-malformed': FILES_STOPPED_NEIGHBOUR,
-  'files-queueRaw-wrapper': { status: 0, stderr: [], entries: [] },
-  'files-inFlightRaw-empty': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
-  'files-inFlightClaims-empty': { status: 0, stderr: [CLAIM_READ_FAILED_7001], drops: ['neighbour-in-flight:9013'] },
-  'files-inFlightClaims-string': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
-  'files-foreignStates-missing': FILES_FOREIGN('ENOENT: '),
-  'files-foreignStates-malformed': FILES_FOREIGN('not valid JSON) — supplied states not used (fail closed)'),
-};
-
 describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600_000 }, () => {
   let R = {};
   before(async () => {
-    R = (await runFaultPool(['files'])).R;
+    R = (await runFaultPool(['files'], { d1: false })).R;
   });
 
   for (const f of FILES_FAULTS) {
@@ -128,31 +107,42 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
     // A number left out of the map ({}) is a failed read and does print it (control).
     for (const [side, r] of sides(R['files-inFlightClaims-empty'])) assert.ok(reported(r.stderr).includes(CLAIM_READ_FAILED_7001), side);
   });
+});
 
-  test('#5227 D1: a second pull in the same session whose open-numbers fetch returns empty reuses the first pull\'s eligible files, both sides', () => {
-    const { first, second } = R.D1;
-    assertClean(first, 'D1 first');
-    assertClean(second, 'D1 second');
-    for (const [side] of sides(second)) {
-      const one = first[side];
-      const two = second[side];
-      assert.equal(one.status, 0, `${side} first: ${one.stderr.slice(-2000)}`);
-      assert.equal(two.status, 0, `${side} second: exit 0 on stale data: ${two.stderr.slice(-2000)}`);
-      assert.equal(two.files['dispatch-open-numbers.json'], '', `${side}: the second open-numbers fetch returned nothing`);
-      assert.ok(two.ghArgv.some((a) => a.tag === 'injected' && a.argv.join(' ') === OPEN_NUMBERS_ARGV.join(' ')), side);
-      assert.ok(!two.stderr.includes(HIT_MESSAGE), `${side}: the changed #9003 makes the cache miss`);
-      for (const name of ['dispatch-eligible-pre-dep.json', 'dispatch-eligible.json', 'dispatch-blocked-excluded-body.json']) {
-        assert.equal(two.files[name], one.files[name], `${side}: ${name} is the first pull's`);
+describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600_000 }, () => {
+  let R = {};
+  let pool = null;
+  before(async () => {
+    pool = await runFaultPool(['files'], { d1: false });
+    R = pool.R;
+  });
+
+  test('AC4.2 [files]: each PASSES failOpen equals the strictest posture observed across that pass\'s fault fixtures (stop if any stops, else open; n/a with no fetch)', (t) => {
+    const R = postureView(pool.R, 'files');
+    const strictest = (side) => {
+      const out = {};
+      for (const rows of [FAULTS, FILES_FAULTS]) {
+        for (const row of rows.filter((x) => x.pass !== '(stop)')) {
+          const p = posture(R[row.id][side]);
+          out[row.pass] = out[row.pass] === 'stop' || p === 'stop' ? 'stop' : 'open';
+        }
       }
-      assert.ok(JSON.parse(two.files['dispatch-queue-raw.json']).some((c) => c.title === 'Retitled after the first pull'), `${side}: the second queue holds the new title`);
-      const title9003 = (groups) => groups.flat().find((c) => c.number === 9003).title;
-      assert.equal(title9003(JSON.parse(two.files['dispatch-groups.json'])), 'Fixture record 9003', `${side}: the groups carry the first pull's record`);
-      // Beyond the session files: the write-back persists those stale groups under the second
-      // pull's freshness signal, so a third pull over the same queue would hit the cache on them.
-      assert.equal(title9003(two.orderBlob.groups), 'Fixture record 9003', `${side}: the blob holds the stale groups`);
-      assert.equal(two.orderBlob.freshnessSignal.issues.find((i) => i.number === 9003).updatedAt, '2026-11-12T11:00:00Z', `${side}: under the new freshness`);
-    }
-    assert.deepEqual(assertFaultFiles(first, 'gh', 'D1 first'), [], 'D1 first: no tail line, every file compared whole');
-    assert.deepEqual(assertFaultFiles(second, 'gh', 'D1 second'), [], 'D1 second: no tail line, every file compared whole');
+      return out;
+    };
+    const observed = strictest('oracle');
+    assert.deepEqual(strictest('module'), observed, 'the module\'s exits give the same postures');
+    for (const id of Object.keys(observed)) assert.ok(PASSES.some((p) => p.id === id), `fault rows name a registry id: ${id}`);
+    for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
+    // PF6: neighbour-in-flight is open on gh and stop on files; the stricter value wins.
+    assert.equal(posture(R['F-inflight'].oracle), 'open');
+    assert.equal(posture(R['files-inFlightRaw-missing'].oracle), 'stop');
+    t.diagnostic(`postures: ${JSON.stringify(observed)}`);
+  });
+
+  test('AC4.3 [files]: F-corrupt and F-groups stop the pull on both sides (oracle exit 1, CLI exit 4)', () => {
+    // The files share of AC4.3: F-corrupt and F-groups are gh rows (AC4.3 [gh], queue-pull-parity-ac4.test.js),
+    // and no files row prints a `$(cat <err file>)` line, so every files row compares both .err files whole.
+    const tailRows = FILES_FAULTS.filter((f) => faultComparison(R[f.id], 'files').tailErr.length).map((f) => f.id);
+    assert.deepEqual(tailRows, []);
   });
 });

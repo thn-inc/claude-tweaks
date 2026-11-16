@@ -1,13 +1,13 @@
 'use strict';
-// #5227 parity (AC4 fetch failures): the gh and files fault rows. Split out of queue-pull.test.js (one
+// #5227 parity (AC4 fetch failures), gh family: the gh fault rows. Split out of queue-pull.test.js (one
 // file per parity describe, each its own process); see queue-pull-helpers.js for the oracle/parity
 // header and the shared machinery.
-// Pool: the whole fault pool, runFaultPool() with both transports: every gh and files fault row, D1, and
-// the matrix bases the rows read (S1-gh-miss, S1-gh-hit, S2-gh-miss, S1-files-miss, S2-files-miss, plus
-// the two live-dependency bases). It used to reuse the AC1 matrix's runs of those bases through the
-// shared pair memo; in its own process it runs its own copies. AC4.2 and AC4.3 read both families' rows
-// (Plan Review Clarifications), so the pool stays whole; if this file is still over the duration
-// ceiling, the pool splits by family and those two tests become one per family.
+// Pool: runFaultPool(['gh'], { d1: false }): the gh fault rows and the bases they read (S1-gh-miss,
+// S1-gh-hit, S2-gh-miss, gh-livedep). The files fault rows run in queue-pull-parity-ac7.test.js and D1 in
+// queue-pull-parity-d1.test.js, so that no file is over the duration ceiling. AC4.2 and AC4.3 read both
+// families, so each is one test per family (Plan Review Clarifications): AC4.2 [gh] reads the files
+// rows' exits from FILES_EXPECT (postureView), which queue-pull-parity-ac7's AC7.2 rows pin to the
+// files runs; AC4.3 [gh] checks the gh rows' share of the tail-row set.
 const { test, describe, before } = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -15,54 +15,22 @@ const { oracleSkip, reported } = require('./queue-pull-oracle');
 const { WEAK_PR_FILES, FAULTS, FILES_FAULTS } = require('./queue-pull-fixtures');
 const { PASSES } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const {
-  HIT_MESSAGE, NATIVE_WARNING_PREFIX, LINKED_WARNING, OPEN_FILTER_WARNING, OPEN_STOP, IN_FLIGHT_POOL_AUTO, POOL, assertEveryJobRan, sides,
-  stopMapped, exclusionsIn, groupedIn, registerParityCleanup, faultComparison, STOP_LINE, LANDING_SKIPPED, LANDING_EXITED, CLAIM_READ_FAILED_7001,
-  FOREIGN_UNREADABLE, assertFaultRow, runFaultPool,
+  HIT_MESSAGE, POOL, assertEveryJobRan, sides, stopMapped, exclusionsIn, groupedIn, registerParityCleanup, faultComparison, FOREIGN_UNREADABLE,
+  assertFaultRow, runFaultPool, FAULT_EXPECT, posture, postureView,
 } = require('./queue-pull-helpers');
 
 registerParityCleanup();
-
-// Per row: `status` the oracle's exit (the CLI's is 4 where it is 1); `base` the un-faulted run it
-// is read against (default <transport>-P1); `stderr` / `stdout` the prefixes, in order, of the
-// reported lines it adds on that channel, near-duplicate AUTO lines aside (that informational pass
-// reports whatever pool reaches it); `entries` its exclusions literally (reason:records), or else
-// `drops` / `adds` against the base's.
-const FAULT_EXPECT = {
-  'F-queue': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'F-opennum': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'F-depfresh': { status: 0, stderr: [], drops: [] },
-  'F-depview': { status: 0, base: 'gh-livedep', stderr: [], drops: ['blocked:9002'] },
-  'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_WARNING_PREFIX}gh-fault: injected failure`, LANDING_EXITED], drops: ['blocked:9030'] },
-  'F-foreign': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
-  'F-linked': { status: 0, stderr: [`${LINKED_WARNING}gh-fault: injected failure`], drops: ['open-pr:9005', 'open-pr:9008', 'shipped:9010'] },
-  'F-intbranch': {
-    status: 0, stderr: [`${LANDING_SKIPPED}no integration branch resolved; no unlanded-blocker exclusions this pull`],
-    stdout: [6, 9, 17].map((n) => `- AUTO 12:00:00 — log-decision: dispatch: #90${String(n).padStart(2, '0')} excluded, named target docs/${{ 6: 'gone6', 9: 'gone', 17: 'present' }[n]}.md absent at origin/. Reversibility: n/a.`),
-    drops: ['unlanded-blocker:9011'], adds: ['target-missing:9017'],
-  },
-  'F-prview': { status: 0, stderr: [], drops: [] },
-  'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
-  'F-inflight': { status: 0, stderr: [IN_FLIGHT_POOL_AUTO], drops: ['neighbour-in-flight:9013'] },
-  'F-claim': {
-    status: 0,
-    stderr: ['AUTO — dispatch: shipped-candidate claim read failed for #9010 (network-failure), #9016 (network-failure); release time unknown, no downgrade', CLAIM_READ_FAILED_7001],
-    drops: ['neighbour-in-flight:9013'],
-  },
-  'F-openprs': { status: 0, stderr: [], drops: [] },
-  'F-writeback': { status: 0, stderr: ['Queue-order cache write-back failed (non-blocking): Command failed: git -C <SCR>/proj push origin '], drops: [] },
-  'F-corrupt': { status: 1, stderr: [OPEN_STOP], entries: '{corrupt' },
-  'F-groups': { status: 1, stderr: [OPEN_FILTER_WARNING, STOP_LINE.target], entries: ['blocked:9002', 'oversized:9001+9003+9016', 'not-spec-shaped:9004', 'not-spec-shaped:9007'] },
-};
-const posture = (r) => (r.status === 0 ? 'open' : 'stop');
 
 describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600_000 }, () => {
   let R = {};
   let pool = null;
   before(async () => {
-    pool = await runFaultPool();
+    pool = await runFaultPool(['gh'], { d1: false });
     R = pool.R;
   });
 
+  // Since the fault pool split, this file's pool holds the gh fault rows and their bases only (no files
+  // rows, no D1: see the header); the name is kept as it was.
   test('#5227 fault pool: every job ran (the gh and files fault rows, their bases and D1, in one pool)', (t) => {
     assertEveryJobRan(R);
     t.diagnostic(`fault pool: ${pool.pairs} pairs (${pool.pairs * 2} runs) + D1 (4 runs), pool ${POOL}, wall ${pool.ms} ms`);
@@ -102,7 +70,8 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     for (const [side, r] of sides(R['gh-livedep'])) assert.ok(r.ghArgv.some((a) => a.argv.join(' ') === 'issue view 8000 --json state -q .state'), `gh-livedep ${side}: the live check is what holds #9002`);
   });
 
-  test('AC4.2: each PASSES failOpen equals the strictest posture observed across that pass\'s fault fixtures (stop if any stops, else open; n/a with no fetch)', (t) => {
+  test('AC4.2 [gh]: each PASSES failOpen equals the strictest posture observed across that pass\'s fault fixtures (stop if any stops, else open; n/a with no fetch)', (t) => {
+    const R = postureView(pool.R, 'gh');
     const strictest = (side) => {
       const out = {};
       for (const rows of [FAULTS, FILES_FAULTS]) {
@@ -123,7 +92,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     t.diagnostic(`postures: ${JSON.stringify(observed)}`);
   });
 
-  test('AC4.3: F-corrupt and F-groups stop the pull on both sides (oracle exit 1, CLI exit 4)', () => {
+  test('AC4.3 [gh]: F-corrupt and F-groups stop the pull on both sides (oracle exit 1, CLI exit 4)', () => {
     for (const id of ['F-corrupt', 'F-groups']) {
       const { oracle, module } = R[id];
       stopMapped(oracle, module);
@@ -131,8 +100,8 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     }
     for (const [side, r] of sides(R['F-groups'])) assert.equal(r.files['dispatch-groups.json'], '{corrupt', `F-groups ${side}: the unreadable groups file is left as it was`);
     // These two rows are the fault rows that print a `$(cat <err file>)` line; every other row
-    // compares both .err files whole.
-    const tailRows = [...FAULTS, ...FILES_FAULTS].filter((f) => faultComparison(R[f.id], FAULTS.includes(f) ? 'gh' : 'files').tailErr.length).map((f) => f.id);
+    // compares both .err files whole (the files rows: AC4.3 [files], queue-pull-parity-ac7.test.js).
+    const tailRows = FAULTS.filter((f) => faultComparison(R[f.id], 'gh').tailErr.length).map((f) => f.id);
     assert.deepEqual(tailRows, ['F-corrupt', 'F-groups']);
     for (const id of tailRows) assert.deepEqual(faultComparison(R[id], 'gh').tailErr, ['dispatch-linked-prs.err'], id);
   });

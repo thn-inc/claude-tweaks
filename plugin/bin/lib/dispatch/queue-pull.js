@@ -34,7 +34,8 @@
 //   A consumer cannot read fail-closed from failOpen alone: `blocked` is 'open', yet an unreadable
 //   foreign state excludes its record. Each fetch's exclusion effect is pinned by the fault rows
 //   (queue-pull-parity-ac4.test.js AC4.1 and queue-pull-parity-ac7.test.js AC7.2), and each value
-//   here is asserted from those oracle runs (AC4.2, in queue-pull-parity-ac4.test.js), never from
+//   here is asserted from those oracle runs (AC4.2, one test per transport: AC4.2 [gh] in
+//   queue-pull-parity-ac4.test.js and AC4.2 [files] in queue-pull-parity-ac7.test.js), never from
 //   the spec.
 // `malformed-blocker` and `unlanded-blocker` share `id: 'blocker-landing'`, because one
 // dispatch-unlanded-blockers.js call writes both; they carry one identical failOpen. A shared id
