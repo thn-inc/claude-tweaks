@@ -216,6 +216,8 @@ function mainPolicyRoot(p) {
     while (dir) {
       if (fs.lstatSync(path.join(dir, '.git'), { throwIfNoEntry: false })) {
         const loc = require('../policy-file').locatePolicyFile(dir);
+        // POLICY_REL_PATH is two segments (.claude-tweaks/policy.yml), so two
+        // dirnames take the located file back to the main checkout's root.
         return loc.source === 'main-checkout' ? path.dirname(path.dirname(loc.path)) : null;
       }
       const parent = path.dirname(dir);

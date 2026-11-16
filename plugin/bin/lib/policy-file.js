@@ -17,7 +17,9 @@
 // <name>`) and would hand back the superproject. This locator additionally
 // requires the root's admin dir to sit exactly one level under
 // `<main>/.git/worktrees/`, so a submodule keeps its own policy and is not a
-// linked worktree. `mainCheckoutRoot` itself is unchanged.
+// linked worktree. `mainCheckoutRoot` itself is unchanged; the same misanchoring
+// there for `$RUN_ROOT` is #5728 — once it is fixed at the source, this extra
+// check is redundant and goes with it.
 //
 // Accepted divergence: a layout whose worktree admin dir is not under
 // `.git/worktrees/` (a `--separate-git-dir` main repo) resolves no main

@@ -655,9 +655,13 @@ test('worktree-always banner reads ON from a sibling linked worktree when policy
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-wt-'));
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', project, 'worktree', 'add', '-q', wt, '-b', 'wt-branch-untracked']);
-  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: fs.realpathSync(wt) });
-  assert.ok(out.json, 'main\'s policy is readable from the worktree, so the verdict banner must render');
-  assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
+  try {
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: fs.realpathSync(wt) });
+    assert.ok(out.json, 'main\'s policy is readable from the worktree, so the verdict banner must render');
+    assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });
 
 // IL-133 verdict-banner coverage: policy.resolveWorktreeAlways drives the banner text
