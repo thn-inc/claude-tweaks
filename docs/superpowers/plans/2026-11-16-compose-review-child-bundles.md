@@ -78,10 +78,12 @@ Expected: PASS
 - Consumes: `procedureFileKey` and `bashProcedureFiles` from Task 1.
 - Produces: every `readUsage` row carries `procedureFiles: { [key]: count }` (`{}` when none). It is counted on the assistant row that holds the `tool_use`: a `Read` adds 1 to `procedureFileKey(input.file_path)`, and a `Bash` adds 1 per entry of `bashProcedureFiles(input.command)`.
 - Produces: every `readDispatches` item carries `procedureFiles` (`{}` when none, `null` when `tokens` is `null`). It is summed over the same `keptRows` that its tokens sum.
+- Produces: every `readDispatches` item also carries `procedureFileRows: [{ ts, procedureFiles }]`, one entry per kept row whose `procedureFiles` is non-empty, in row order (`[]` when none, `null` when `tokens` is `null`). A kept row with no valid timestamp takes the item's `startTs`. Task 3 joins these per row, so an agent spanning several phases books each read to the phase it happened in.
+- Produces: every `readDispatches` item carries `transcriptPath`, the `path.join(subagentsDir, 'agent-{id}.jsonl')` it read (also on a `notFound` item).
 
 - [ ] **Step 1: Write the failing tests**
   - `readUsage counts per-file procedure reads on the tool_use row`. The fixture JSONL has one assistant line with a `Read` of `plugin/skills/review/code-mode-steps.md` and a `Bash` `sed -n '1,9p' plugin/skills/review/code-mode-steps.md`, followed by their two tool_result lines. The assistant row's `procedureFiles` deep-equals `{ 'skills/review/code-mode-steps.md': 2 }`. Every other row is `{}`.
-  - `readDispatches sums a subagent's per-file reads`. A fixture agent transcript reads `plugin/skills/_shared/a.md` twice. The item's `procedureFiles` deep-equals `{ 'skills/_shared/a.md': 2 }`.
+  - `readDispatches sums a subagent's per-file reads`. A fixture agent transcript reads `plugin/skills/_shared/a.md` twice, on two rows with different timestamps. The item's `procedureFiles` deep-equals `{ 'skills/_shared/a.md': 2 }`, its `procedureFileRows` has two entries carrying those two rows' `ts`, and its `transcriptPath` ends with `agent-{id}.jsonl`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 Run: `node --test tests/bin-lib/timing/transcript.test.js`
@@ -97,10 +99,12 @@ Expected: PASS. If a golden fixture pins row shapes, update it to the new field.
 
 ### Task 3: Per-phase per-file reads in timing.json
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/timing/derive.js` (`joinTokens`)
 - Modify: `plugin/bin/phase-timing.js` (the call that joins usage rows and dispatches)
-- Test: `tests/bin-lib/timing/derive.test.js`, golden fixtures under `tests/fixtures/timing/` as the golden test requires
+- Test: `tests/bin-lib/timing/derive.test.js`, `tests/bin-lib/timing/cli.test.js`, golden fixtures under `tests/fixtures/timing/` as the golden test requires
 
 **Interfaces:**
 - Consumes: the row and dispatch `procedureFiles` from Task 2.
@@ -108,12 +112,13 @@ Expected: PASS. If a golden fixture pins row shapes, update it to the new field.
   - Every phase bucket, `unattributed` and `totals` gains `procedureFiles: { [key]: count }`, with keys sorted ascending.
   - Row counts join by the existing innermost-phase rule.
   - A `dispatchFileReads` entry joins the phase containing its `ts` by the same rule, else `unattributed`. It adds only to `procedureFiles`, never to `rows`, tokens or `toolRoundTrips`.
-- `phase-timing.js` passes `dispatchFileReads` built from `readDispatches` items whose `procedureFiles` is non-null, as `{ ts: d.startTs, procedureFiles: d.procedureFiles }`. Today `run()` calls `joinTokens` (line 366) before `collectDispatches` (line 381), so move the `collectDispatches` call ahead of `joinTokens` and build `dispatchFileReads` from its `items` (`aggregateDispatches` spreads each item, so `startTs` and `procedureFiles` survive). A `notFound` dispatches result yields `[]`. Its emitted `timing.json` `phases[i].procedureFiles` and `totals.procedureFiles` are what Tasks 4 and 5 read.
+- `phase-timing.js` passes `dispatchFileReads` built per row: the concatenation of every dispatch item's non-null `procedureFileRows` (Task 2), so a dispatch spanning several phases books each read to the phase containing that row's `ts`. An item whose `transcriptPath` resolves (`fs.realpathSync`, `path.resolve` when that throws) to one of this run's own `--transcript` paths, resolved the same way, contributes nothing: those reads are already main rows. Today `run()` calls `joinTokens` (line 366) before `collectDispatches` (line 381), so move the `collectDispatches` call ahead of `joinTokens` and build `dispatchFileReads` from its `items` (`aggregateDispatches` spreads each item, so `procedureFileRows` and `transcriptPath` survive). A `notFound` dispatches result yields `[]`. Its emitted `timing.json` `phases[i].procedureFiles` and `totals.procedureFiles` are what Tasks 4 and 5 read.
 
 - [ ] **Step 1: Write the failing tests**
   - `joinTokens sums per-file reads per phase, keyed and sorted`. Two rows inside phase `review` carry `{ 'skills/b.md': 1 }` and `{ 'skills/a.md': 2, 'skills/b.md': 1 }`. Then `phases[review].procedureFiles` deep-equals `{ 'skills/a.md': 2, 'skills/b.md': 2 }`, and `Object.keys` is in that order.
   - `joinTokens attributes dispatch reads by start ts and never counts them as rows`. One dispatch entry with `ts` inside `review` adds its counts there and leaves `rows` and `toolRoundTrips` unchanged. One entry with `ts` outside every phase lands in `unattributed.procedureFiles`.
   - `totals.procedureFiles` equals the sum of the main-transcript row counts plus every dispatch entry.
+  - In `tests/bin-lib/timing/cli.test.js`: `a dispatch spanning two phases books each read to its own phase` (one agent transcript with one read inside `call-1` and one inside `review` adds 1 to each), and `an agent transcript passed as --transcript is not counted again as a dispatch` (a run passing `subagents/agent-x.jsonl` as `--transcript`, which reads one skill file once, gives `totals.procedureFiles` a count of 1, not 2).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 Run: `node --test tests/bin-lib/timing/derive.test.js`
@@ -135,7 +140,8 @@ Expected: PASS. Golden and cli fixtures are updated to carry the new field, with
 
 **Interfaces:**
 - Consumes: `timing.json` `phases[].phase === 'review'` and `phases[].procedureFiles` (Task 3).
-- Produces in `collectRuns`: each run gains `reviewFiles: { [key]: count } | null`. It is the sum over every `review` phase's `procedureFiles`, or `null` when no `review` phase carries a `procedureFiles` object.
+- A **reached** review phase is a `phases[]` row with `phase === 'review'`, a non-null `start` and `source !== 'unattributed'` (`derive.js` emits a row for every `PHASES` name, so a run that never reached review still has a span-less `review` row). Task 5 uses the same rule.
+- Produces in `collectRuns`: each run gains `reviewFiles: { [key]: count } | null`. It is the sum over every reached `review` phase's `procedureFiles`, or `null` when no reached `review` phase carries a `procedureFiles` object.
 - Produces in `summarize`: the result gains `reviewFileReads: { runs: N, files: { [key]: { median, total } } }`.
   - `runs` counts only runs whose `reviewFiles` is non-null.
   - `median` is taken over those runs, with a run missing the key counted as 0.
@@ -144,10 +150,11 @@ Expected: PASS. Golden and cli fixtures are updated to carry the new field, with
 - `--json` output carries `reviewFileReads`.
 
 - [ ] **Step 1: Write the failing tests**
-  - Add two fixture runs whose `timing.json` carry `phases: [{ phase: 'review', procedureFiles: … }]`:
-    - `2027-01-07T090000-record-6`: `{ 'skills/review/code-mode-steps.md': 4, 'skills/review/step3-lens-dispatch.md': 2 }`
-    - `2027-01-08T090000-record-7`: `{ 'skills/review/code-mode-steps.md': 2 }`
-  - `review-phase per-file reads: median over runs with data, missing key counts as 0`. With `--json`, `reviewFileReads.runs === 2`. `files['skills/review/code-mode-steps.md']` deep-equals `{ median: 3, total: 6 }` and `files['skills/review/step3-lens-dispatch.md']` deep-equals `{ median: 1, total: 2 }`. The older fixture runs, which have no `procedureFiles`, do not raise `runs`.
+  - Add three fixture runs whose `timing.json` carry `phases: [{ phase: 'review', start, end, source, procedureFiles: … }]`:
+    - `2027-01-07T090000-record-6`, a reached review: `{ 'skills/review/code-mode-steps.md': 4, 'skills/review/step3-lens-dispatch.md': 2 }`
+    - `2027-01-08T090000-record-7`, a reached review: `{ 'skills/review/code-mode-steps.md': 2 }`
+    - `2027-01-09T090000-record-8`, an unreached review (`start: null`, `source: 'unattributed'`, `procedureFiles: {}`)
+  - `review-phase per-file reads: median over runs with data, missing key counts as 0`. With `--json`, `reviewFileReads.runs === 2` (record-8 does not count). `files['skills/review/code-mode-steps.md']` deep-equals `{ median: 3, total: 6 }` and `files['skills/review/step3-lens-dispatch.md']` deep-equals `{ median: 1, total: 2 }`. The older fixture runs, which have no `procedureFiles`, do not raise `runs`.
   - The markdown output contains `## Review-phase skill-file reads` and the row `| skills/review/code-mode-steps.md | 3 | 6 |`.
   - Existing assertions keep passing. Update the totals the new fixtures shift (the overall run count and week buckets), recomputed by hand from fixture values.
 
@@ -165,6 +172,8 @@ Expected: PASS
 
 ### Task 5: Recount archived runs from their transcripts (the AC1 baseline)
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/phase-timing.js` (extract the transcript-reading half of `run()` into an exported builder)
 - Modify: `tools/efficiency-report.js` (a `--recount` mode and a `--since` filter)
@@ -174,16 +183,17 @@ Expected: PASS
 - Consumes: Task 3's `phases[].procedureFiles` and the `dispatchFileReads` join.
 - Produces in `phase-timing.js`: `async buildTiming({ runDir, paths, cwd, worktree }) -> timing`. It does everything `run()` does between reading `events.jsonl` and the `checkBudgets` block, for an explicit transcript `paths` list, and writes nothing. `run()` calls it, so `timing.json` from a normal run is unchanged in shape. Exported next to `run`.
 - Produces in `efficiency-report.js`: `--recount` (with the existing `--archive` and `--json`) and `--since <YYYY-MM-DD>`.
-  - A run is recounted when it is a direct child of the archive, its `timing.json` lists `transcripts[].path` of which at least one exists, and its `timing.json` has a `review` phase. Existing paths are passed to `buildTiming` with the archived run dir and the run's `run-state.json` `worktree`. Nothing is written into the archive.
+  - **Async seam:** `buildTiming` is async (`readUsage` is), so `efficiency-report.js`'s `run({ argv, deps })` becomes `async` and returns `Promise<number>` on every path, the `require.main` block sets `process.exitCode` in a `.then` (and writes the error and exit 1 in a `.catch`), and every existing caller in `tests/efficiency-report.test.js` awaits it. No other file calls it (grep `efficiency-report` under `tests/`, `tools/`, `perf/`, `plugin/` before changing it; any caller found is updated the same way).
+  - A run is recounted when it is a direct child of the archive, its `timing.json` lists `transcripts[].path` of which at least one exists, and its recounted timing has a **reached** `review` phase (Task 4's rule: `start` non-null, `source !== 'unattributed'`). A run with existing transcripts but no reached review counts in neither `runs` nor `skipped`; it is reported as `noReview: K`. Existing paths are passed to `buildTiming` with the archived run dir and the run's `run-state.json` `worktree`. Nothing is written into the archive.
   - `--since` keeps only runs whose directory name's leading `YYYY-MM-DD` is on or after the given date. It applies to `--recount` and to the default report.
   - Per recounted run, `reads` is the sum over every `phases[]` bucket's `procedureFiles` (the run's windows, all phases; `unattributed` left out, since a dispatcher's session transcript also holds other runs).
-  - The result is `recount: { runs: N, skipped: M, files: { [key]: { median, mean, total } }, perRun: [{ run, reads: { [key]: count } }] }`. `median`/`mean` are over the N runs, a run missing the key counted as 0, `mean` rounded to one decimal. Keys sort by `total` descending, then by key. `skipped` counts runs that had a `transcripts` list but no existing path.
-  - Markdown prints `## Recounted skill-file reads per run (all phases)`, a line `runs recounted: N (skipped: M)`, then `| File | Median reads/run | Mean reads/run | Total reads |` for the top 20 keys. `--json` carries `recount`.
+  - The result is `recount: { runs: N, skipped: M, noReview: K, files: { [key]: { median, mean, total } }, perRun: [{ run, reads: { [key]: count } }] }`. `median`/`mean` are over the N runs, a run missing the key counted as 0, `mean` rounded to one decimal. Keys sort by `total` descending, then by key. `skipped` counts runs that had a `transcripts` list but no existing path.
+  - Markdown prints `## Recounted skill-file reads per run (all phases)`, a line `runs recounted: N (skipped: M, no review: K)`, then `| File | Median reads/run | Mean reads/run | Total reads |` for the top 20 keys. `--json` carries `recount`.
   - `--recount` with no recountable run prints `no archived run has a readable transcript` and exits 0.
 
 - [ ] **Step 1: Write the failing tests**
-  - Fixture archive `tests/fixtures/efficiency-report/recount/`: two run dirs with `events.jsonl` (a `review` phase window), `run-state.json`, and a `timing.json` whose `transcripts[].path` names a JSONL fixture inside the fixture tree (written as a path relative to the test's temp copy, resolved at test time). Run A's transcript reads `plugin/skills/review/code-mode-steps.md` 3 times inside the window and once outside every phase; run B's reads it once and `plugin/skills/review/step3-lens-dispatch.md` twice. A third run dir's `timing.json` lists only a missing transcript path.
-  - `--recount counts all-phase reads per run, leaving out unattributed`: `--json` gives `recount.runs === 2`, `recount.skipped === 1`, `files['skills/review/code-mode-steps.md']` deep-equals `{ median: 2, mean: 2, total: 4 }`, and `files['skills/review/step3-lens-dispatch.md']` deep-equals `{ median: 1, mean: 1, total: 2 }`.
+  - Fixture archive `tests/fixtures/efficiency-report/recount/`: two run dirs with `events.jsonl` (a `review` phase window), `run-state.json`, and a `timing.json` whose `transcripts[].path` names a JSONL fixture inside the fixture tree (written as a path relative to the test's temp copy, resolved at test time). Run A's transcript reads `plugin/skills/review/code-mode-steps.md` 3 times inside the window and once outside every phase; run B's reads it once and `plugin/skills/review/step3-lens-dispatch.md` twice. A third run dir's `timing.json` lists only a missing transcript path. A fourth run dir has a readable transcript but its `events.jsonl` gives no `review` span.
+  - `--recount counts all-phase reads per run, leaving out unattributed`: `--json` gives `recount.runs === 2`, `recount.skipped === 1`, `recount.noReview === 1`, `files['skills/review/code-mode-steps.md']` deep-equals `{ median: 2, mean: 2, total: 4 }`, and `files['skills/review/step3-lens-dispatch.md']` deep-equals `{ median: 1, mean: 1, total: 2 }`.
   - `--recount writes nothing into the archive`: every fixture `timing.json` is byte-identical before and after.
   - `--since keeps runs dated on or after the date`: with `--since` set to run B's date, `recount.runs === 1`.
   - `buildTiming returns what run() writes`: for one fixture run, `buildTiming(...)`'s `phases` deep-equal the `phases` that `run(['--run', dir, '--transcript', p, '--json'])` prints.
@@ -247,14 +257,14 @@ Expected: PASS
 **Interfaces:**
 - `review/SKILL.md` line 73 keeps its procedure summary. Its read instruction becomes the following, on one line:
   `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step review-code-mode "${CLAUDE_PLUGIN_ROOT}/skills/review/code-mode-steps.md"`
-  It applies when a pipeline run directory exists. The reviewer then reads `$PIPELINE_RUN_DIR/context/review-code-mode.md` once, whole, with one Read and never piecewise (no `sed`/`grep`/`cat` of the source). Standalone, with no run directory, the reviewer reads `code-mode-steps.md` directly. The paragraph carries the verbatim compose-fallback sentence.
+  It applies when a pipeline run directory exists. The reviewer then reads `$PIPELINE_RUN_DIR/context/review-code-mode.md` once, whole, with one Read and never piecewise (no `sed`/`grep`/`cat` of the source), and re-reads it whole only if its context was compacted since. Standalone, with no run directory, the reviewer reads `code-mode-steps.md` directly. The paragraph carries the verbatim compose-fallback sentence.
 - `code-mode-steps.md` line 228 composes the lens-dispatch procedure the same way:
   `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step review-lens-procedure "${CLAUDE_PLUGIN_ROOT}/skills/review/step3-lens-dispatch.md"`
-  The reviewer then reads `$PIPELINE_RUN_DIR/context/review-lens-procedure.md` once, whole. Standalone, it reads `step3-lens-dispatch.md` directly. The line carries the verbatim fallback sentence.
+  The reviewer then reads `$PIPELINE_RUN_DIR/context/review-lens-procedure.md` once, whole, re-reading it whole only if its context was compacted since. Standalone, it reads `step3-lens-dispatch.md` directly. The line carries the verbatim fallback sentence.
 - The step names `review-code-mode` and `review-lens-procedure` pass `STEP_RE` and collide with no existing step or phase bundle.
 
 - [ ] **Step 1: Write the failing test** — `tests/review-procedure-bundles.test.js`:
-  - `review SKILL.md composes code-mode-steps.md once and reads the bundle whole`: the file contains the exact call line above, `context/review-code-mode.md`, `once, whole`, and the verbatim fallback sentence. It still names `code-mode-steps.md` for the standalone path.
+  - `review SKILL.md composes code-mode-steps.md once and reads the bundle whole`: the file contains the exact call line above, `context/review-code-mode.md`, `once, whole`, `compacted since`, and the verbatim fallback sentence. It still names `code-mode-steps.md` for the standalone path.
   - `code-mode-steps.md composes step3-lens-dispatch.md once`: the same assertions with `review-lens-procedure`.
   - `both call sites are measured rail rows`: `findComposeCallSites(REPO)` from `plugin/bin/lib/skill-audit/context-cost.js` yields a row for each step, with `error` and `unparsed` undefined. Each row's `max` is ≤ `RAIL_BYTES` minus 2,000 B of headroom for `review-code-mode`, and ≤ `RAIL_BYTES` for `review-lens-procedure`.
   - Discrimination: the same scanner over a temp root whose `review/SKILL.md` lacks the line yields no `review-code-mode` row.
@@ -327,7 +337,7 @@ Run by the `/build` controller, not an SDD implementer: it needs the real archiv
 
 - [ ] **Step 1: Run the recount over the pre-ship archive**
 Run: `node tools/efficiency-report.js --recount --json`, output redirected to a session temp file.
-Expected: exit 0, `recount.runs >= 20`. Fewer than 20 → stop and report; never pad with non-`/flow` runs.
+Expected: exit 0, `recount.runs >= 20` (runs that never reached review are excluded by Task 5's rule, so they do not count toward the 20). Fewer than 20 → stop and report; never pad with non-`/flow` runs.
 
 - [ ] **Step 2: Put the baseline in the PR body** — a `## AC1 baseline` section with: `runs recounted: N (skipped: M)`, the median and mean reads per run for `skills/review/code-mode-steps.md` and `skills/review/step3-lens-dispatch.md`, the exact counter command, and the 80% bound as two numbers (20% of each median). It also states the Decision-rule choices this build made (Global Constraints).
 
