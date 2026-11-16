@@ -29,7 +29,8 @@
 // the inform-tier banners and has the cwd, and one small synchronous read fits
 // its inline block. This module is pure of the hook: every failure — an absent
 // or malformed plugins file, an unreadable artifact, an injected dep that
-// throws — returns null, so a session never breaks on it.
+// throws — returns null, so a session never breaks on it. The one exception is a
+// caller error: a missing `env` or `homedir` throws TypeError (#5377).
 
 const fs = require('fs');
 const path = require('path');

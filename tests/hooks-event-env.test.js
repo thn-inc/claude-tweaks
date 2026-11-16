@@ -516,6 +516,236 @@ test('reconcile prunes the declined store of its cwd and reads the lock wait fro
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(storeFile, 'utf8')), {}, 'the prune ran against the cwd\'s store');
 });
 
+// --- reconcile's pr-first checks (the ones FAST_CHECKS names) run their git and gh children under the passed env ---
+
+// A `gh` stub that logs `$CT_5377_SENTINEL <args>` to `$CT_5377_LOG`, so a call that ran under the passed env
+// leaves the injected sentinel behind. Not for Windows (a shell script).
+function ghStub(dir) {
+  const script = `#!/bin/sh
+echo "$CT_5377_SENTINEL $* pwd=$PWD" >> "$CT_5377_LOG"
+case "$*" in
+  *rate_limit*) echo 100;;
+  *"pr view"*) if [ -n "$CT_5377_PR_VIEW" ]; then printf "%s\\n" "$CT_5377_PR_VIEW"; else printf "%s\\n" '{"comments":[{"id":"c1","body":"x"}],"body":""}'; fi;;
+  *check-runs*) ;;
+  *) echo '{}';;
+esac
+`;
+  fs.writeFileSync(path.join(dir, 'gh'), script, { mode: 0o755 });
+  // A git shim that logs the same way, then runs the real git: a git call that ran under the passed env leaves
+  // the sentinel behind, one that did not never reaches the shim.
+  fs.writeFileSync(path.join(dir, 'git'), `#!/bin/sh
+echo "$CT_5377_SENTINEL git $*" >> "$CT_5377_LOG"
+exec "$CT_5377_REAL_GIT" "$@"
+`, { mode: 0o755 });
+}
+
+// The environment a pr-first reconcile runs under: the stub first on the PATH the env already carries (the
+// key is found, not spelled: a win32 env keeps it as `Path`), the sentinel and the log it appends to.
+function prFirstEnv(stubDir, log, extra = {}) {
+  const realGit = require('child_process').execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const env = hookEnv({ CT_5377_SENTINEL: 'from-ctx-env', CT_5377_LOG: log, CT_5377_REAL_GIT: realGit, ...extra });
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
+  env[key] = stubDir + path.delimiter + env[key];
+  return env;
+}
+
+// A main checkout with a bare origin, `.claude-tweaks/` excluded (so the mirror reads clean) and one active run
+// whose console.json names PR 5, so the console check reaches its gh fetch.
+function prFirstRepo() {
+  const repo = gitRepo({ branch: 'main' });
+  const bare = addOrigin(repo);
+  fs.appendFileSync(path.join(repo, '.git', 'info', 'exclude'), '.claude-tweaks/\n');
+  const run = mkRunAt(repo, '2026-07-01T090000-spec-1', repo);
+  fs.writeFileSync(path.join(run, 'console.json'), JSON.stringify({ prNumber: 5, commentIds: ['c1'], items: [] }));
+  return { repo, bare };
+}
+
+// Puts one new commit on the bare origin's main, from a throwaway clone.
+function advanceOrigin(bare) {
+  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-clone-'));
+  try {
+    const git = (args) => fixtureGit(['-C', clone, '-c', 'user.name=T', '-c', 'user.email=t@example.test', ...args], { env: cleanGitEnv(), stdio: 'ignore' });
+    fixtureGit(['clone', '-q', bare, clone], { env: cleanGitEnv(), stdio: 'ignore' });
+    git(['commit', '--allow-empty', '-q', '-m', 'advance']);
+    git(['push', '-q', 'origin', 'HEAD:main']);
+  } finally {
+    fs.rmSync(clone, { recursive: true, force: true });
+  }
+}
+
+const headOf = (repo, ref) => fixtureGit(['-C', repo, 'rev-parse', ref], { env: cleanGitEnv(), encoding: 'utf8' }).trim();
+
+test('reconcile FAST_CHECKS under pr-first run their children under the passed env', { skip: process.platform === 'win32' }, async () => {
+  const reconcileLib = require('../plugin/bin/lib/reconcile');
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  ghStub(stubDir);
+  const log = path.join(stubDir, 'gh.log');
+  const brokenGitDir = path.join(os.tmpdir(), 'ct-env5377-no-such-git-dir');
+  const bares = [];
+  try {
+    // 1. origin ahead, main checked out: shared fetch (async), classify, `branch --show-current`, `merge --ff-only`.
+    const a = prFirstRepo();
+    bares.push(a.bare);
+    advanceOrigin(a.bare);
+    // The real process.env is broken for git, so any git child that inherits it fails and the result reads red.
+    const ahead = await withProcessEnv({ GIT_DIR: brokenGitDir }, () => reconcileLib.reconcile({
+      cwd: a.repo, env: prFirstEnv(stubDir, log), homeDir: () => os.tmpdir(), checks: ['mirror', 'red-tip', 'console'],
+      resolveIntegrationModel: () => 'pr-first',
+    }));
+    assert.deepStrictEqual(ahead.skipped, [], JSON.stringify(ahead.skipped));
+    assert.strictEqual(ahead.mirror.action, 'fast-forwarded', JSON.stringify(ahead.mirror));
+    assert.strictEqual(headOf(a.repo, 'main'), headOf(a.repo, 'origin/main'));
+    assert.deepStrictEqual(ahead.console.skipped.map((s) => s.reason), ['not-resolved-yet'], JSON.stringify(ahead.console));
+    const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+    assert.ok(lines.every((l) => l.startsWith('from-ctx-env ')), `every gh call ran under the passed env: ${lines.join(' | ')}`);
+    for (const needle of ['api rate_limit', 'check-runs', 'pr view 5', ' rev-parse origin/main', ' fetch origin main', ' status --porcelain', ' rev-list ', ' branch --show-current', ' merge --ff-only']) {
+      assert.ok(lines.some((l) => l.includes(needle)), `a call matching ${needle}: ${lines.join(' | ')}`);
+    }
+    assert.ok(lines.find((l) => l.includes('api rate_limit')).endsWith(`pwd=${a.repo}`), 'the preflight gh child ran in the main checkout');
+
+    // 2. origin ahead, another branch checked out: the `fetch origin main:main` update path.
+    const b = prFirstRepo();
+    bares.push(b.bare);
+    fixtureGit(['-C', b.repo, 'checkout', '-q', '-b', 'other'], { env: cleanGitEnv(), stdio: 'ignore' });
+    advanceOrigin(b.bare);
+    const other = await withProcessEnv({ GIT_DIR: brokenGitDir }, () => reconcileLib.reconcile({
+      cwd: b.repo, env: prFirstEnv(stubDir, log), checks: ['mirror'], resolveIntegrationModel: () => 'pr-first',
+    }));
+    assert.strictEqual(other.mirror.action, 'fast-forwarded', JSON.stringify(other.mirror));
+    assert.strictEqual(headOf(b.repo, 'main'), headOf(b.repo, 'origin/main'));
+
+    // 3. a remote-prune pass takes the synchronous preflight and, once the preflight is narrowed away, the sync
+    // mirror-only fetch. The preflight is patched (the module object is what reconcile calls) to record its argument.
+    const c = prFirstRepo();
+    bares.push(c.bare);
+    advanceOrigin(c.bare);
+    const preflight = require('../plugin/bin/lib/reconcile/preflight');
+    const realHealth = preflight.ghHealthCheck;
+    let seen = null;
+    const env3 = prFirstEnv(stubDir, log);
+    preflight.ghHealthCheck = (o) => { seen = o; return { ok: false, reason: 'patched' }; };
+    let narrowed;
+    try {
+      narrowed = await withProcessEnv({ GIT_DIR: brokenGitDir }, () => reconcileLib.reconcile({
+        cwd: c.repo, env: env3, homeDir: () => os.tmpdir(), checks: ['mirror', 'remote-prune'], resolveIntegrationModel: () => 'pr-first',
+      }));
+    } finally {
+      preflight.ghHealthCheck = realHealth;
+    }
+    assert.ok(seen && seen.env === env3 && seen.cwd === c.repo, `the sync preflight got the passed env and cwd: ${JSON.stringify(seen && Object.keys(seen))}`);
+    assert.ok(narrowed.skipped.some((s) => s.reason === 'preflight-patched'));
+    assert.strictEqual(narrowed.mirror.action, 'fast-forwarded', JSON.stringify(narrowed.mirror));
+  } finally {
+    for (const b of bares) fs.rmSync(b, { recursive: true, force: true });
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
+});
+
+test('the synchronous preflight and shared fetch run under the passed env', { skip: process.platform === 'win32' }, async () => {
+  const { ghHealthCheck } = require('../plugin/bin/lib/reconcile/preflight');
+  const { sharedFetch, sharedFetchAsync } = require('../plugin/bin/lib/reconcile/shared-fetch');
+  const { mirrorFastForward } = require('../plugin/bin/lib/reconcile/mirror-ff');
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  ghStub(stubDir);
+  const log = path.join(stubDir, 'gh.log');
+  const { repo, bare } = prFirstRepo();
+  const brokenGitDir = path.join(os.tmpdir(), 'ct-env5377-no-such-git-dir');
+  try {
+    const env = prFirstEnv(stubDir, log);
+    await withProcessEnv({ GIT_DIR: brokenGitDir }, async () => {
+      assert.deepStrictEqual(ghHealthCheck({ env, cwd: repo }), { ok: true, reason: null });
+      assert.strictEqual(sharedFetch(repo, { integration: 'main', mirror: true, env }).failure, null, 'the mirror-only shape');
+      assert.strictEqual(sharedFetch(repo, { integration: 'main', mirror: true, remotePrune: true, env }).failure, null, 'the --prune shape');
+      assert.strictEqual((await sharedFetchAsync(repo, { integration: 'main', env })).failure, null, 'the async twin');
+      // classifyMirror fetches itself when it is not told the caller already did.
+      assert.strictEqual(mirrorFastForward(repo, 'main', { env }).state, 'current', 'a mirror that fetches for itself');
+    });
+    const preflightLine = fs.readFileSync(log, 'utf8').split('\n').find((l) => l.startsWith('from-ctx-env api rate_limit'));
+    assert.ok(preflightLine, 'the preflight gh call ran under the passed env');
+    assert.ok(preflightLine.endsWith(`pwd=${repo}`), `and in the cwd it was given: ${preflightLine}`);
+  } finally {
+    fs.rmSync(bare, { recursive: true, force: true });
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
+});
+
+test('the console check fetches member grants and its veto window under the passed env', { skip: process.platform === 'win32' }, async () => {
+  const { consoleExecuteDetect } = require('../plugin/bin/lib/reconcile/console-execute');
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  ghStub(stubDir);
+  const log = path.join(stubDir, 'gh.log');
+  const { repo, bare } = prFirstRepo();
+  // A merge row: the check reads the PR's Fixes members' grants (gh issue view) and the veto window (git).
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1', 'console.json'), JSON.stringify({
+    prNumber: 5, commentIds: ['c1'], items: [{ id: 'm1', kind: 'merge', summary: 's', stagedHash: 'h', isMergeRow: true }],
+  }));
+  const prView = JSON.stringify({ comments: [{ id: 'c1', body: '<!-- console-item: resolve -->\n- [x] resolve' }], body: 'Fixes #7' });
+  try {
+    const env = prFirstEnv(stubDir, log, { CT_5377_PR_VIEW: prView });
+    await withProcessEnv({ GIT_DIR: path.join(os.tmpdir(), 'ct-env5377-no-such-git-dir') }, () => consoleExecuteDetect({ cwd: repo, env }));
+    const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+    assert.ok(lines.some((l) => l.startsWith('from-ctx-env issue view 7')), `the member grant fetch ran under the passed env: ${lines.join(' | ')}`);
+    assert.ok(lines.some((l) => l === 'from-ctx-env git rev-parse --show-toplevel'), `the veto-window git read ran under the passed env: ${lines.join(' | ')}`);
+  } finally {
+    fs.rmSync(bare, { recursive: true, force: true });
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
+});
+
+test('the pr-first checks read gh\'s config dir through the passed homeDir', async () => {
+  const reconcileLib = require('../plugin/bin/lib/reconcile');
+  const { ghHealthCheck } = require('../plugin/bin/lib/reconcile/preflight');
+  const { redTipCheck } = require('../plugin/bin/lib/reconcile/red-tip');
+  const { consoleExecuteDetect } = require('../plugin/bin/lib/reconcile/console-execute');
+  const { repo, bare } = prFirstRepo();
+  // An origin on a non-github.com host sends ghOptions to gh's hosts file, found under homeDir() when neither
+  // GH_CONFIG_DIR nor XDG_CONFIG_HOME names a directory.
+  fixtureGit(['-C', repo, 'remote', 'set-url', 'origin', 'https://127.0.0.1:1/o/r.git'], { env: cleanGitEnv(), stdio: 'ignore' });
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-home-'));
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  ghStub(stubDir);
+  try {
+    const env = prFirstEnv(stubDir, path.join(stubDir, 'gh.log'));
+    delete env.GH_CONFIG_DIR;
+    delete env.XDG_CONFIG_HOME;
+    delete env.GH_HOST;
+    let calls = 0;
+    const stacks = [];
+    const homeDir = () => {
+      calls += 1;
+      const limit = Error.stackTraceLimit;
+      Error.stackTraceLimit = 40;
+      stacks.push(new Error().stack);
+      Error.stackTraceLimit = limit;
+      return fakeHome;
+    };
+    const count = () => calls;
+    const before = count();
+    ghHealthCheck({ env, homeDir, cwd: repo });
+    assert.ok(count() > before, 'preflight');
+    const afterPreflight = count();
+    // memoised per env object: a fresh env gives a fresh lookup
+    const env2 = { ...env };
+    redTipCheck(repo, 'main', { env: env2, homeDir });
+    assert.ok(count() > afterPreflight, 'red-tip');
+    const afterRedTip = count();
+    const env3 = { ...env };
+    await consoleExecuteDetect({ cwd: repo, env: env3, homeDir });
+    assert.ok(count() > afterRedTip, 'console');
+    const afterConsole = count();
+    // and reconcile hands its own homeDir to those same checks
+    await reconcileLib.reconcile({ cwd: repo, env: { ...env }, homeDir, checks: ['mirror', 'console'], resolveIntegrationModel: () => 'pr-first' });
+    assert.ok(count() > afterConsole, 'reconcile');
+    // gh's host lookup is memoised per env object and directory, so the first site to ask is the one that
+    // reads the home: reconcile's own preflight, through the async twin FAST_CHECKS take.
+    assert.ok(stacks.slice(afterConsole).some((s) => s.includes('defaultRunnerAsync')), 'the async preflight');
+  } finally {
+    fs.rmSync(bare, { recursive: true, force: true });
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
+});
+
 test('ports ensure resolves the checkout under the passed env and rejects a missing env or home', async () => {
   const portsEnsure = require('../plugin/bin/lib/ports/ensure');
   const repo = gitRepo();
