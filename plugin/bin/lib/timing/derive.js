@@ -90,6 +90,9 @@ function isTopLevel(ev) {
   return n !== null && (ev.source === 'user' ? (n === 'flow' || PHASES.includes(n)) : !(n in NESTED_PARENT));
 }
 
+// The span rule here decides which step each decision line, event and question
+// belongs to in step-yield.json; the dispatch scoreboard's per-step numbers
+// depend on it.
 // { events, manifest?, runState?, now? } -> { phases, totals }, plus `ciGate` (and
 // totals.ciWallMinutes) when a ci-gate event exists (#5160)
 function derivePhases({ events, manifest = null, runState = null, now = new Date() } = {}) {
@@ -321,6 +324,23 @@ function latestCiGatePerPr(ciGate) {
 
 const ZERO_TOKENS = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 });
 
+// (phases, t) -> the name of the innermost phase whose [start, end) span holds the
+// epoch-ms instant t (ties to the later start), skipping `source: 'unattributed'`
+// rows and rows with an unparseable bound; null when no span holds t. The one rule
+// joinTokens buckets usage rows by and step-yield.js places decision lines,
+// events and questions by.
+function phaseAt(phases, t) {
+  let best = null;
+  for (const p of Array.isArray(phases) ? phases : []) {
+    if (p.source === 'unattributed') continue;
+    const start = ms(p.start);
+    const end = ms(p.end);
+    if (start === null || end === null || !(t >= start && t < end)) continue;
+    if (!best || (end - start) < (best.end - best.start) || ((end - start) === (best.end - best.start) && start > best.start)) best = { phase: p.phase, start, end };
+  }
+  return best ? best.phase : null;
+}
+
 // (phases, usageRows) -> { phases, unattributed, totals } (#1929). Each row
 // joins the innermost phase whose [start, end) contains its ts — the same
 // rule verify events use — so a container's tokens are its exclusive-gap
@@ -345,9 +365,7 @@ function joinTokens(phases, usageRows, workflowAgentStarts = [], { dispatchFileR
   const rows = Array.isArray(usageRows) ? usageRows : [];
   const fileReads = Array.isArray(dispatchFileReads) ? dispatchFileReads : [];
   const phaseList = Array.isArray(phases) ? phases : [];
-  const spans = phaseList.map((p) => ({
-    phase: p.phase, start: ms(p.start), end: ms(p.end), source: p.source,
-  }));
+  const spans = phaseList.map((p) => ({ phase: p.phase }));
   const acc = new Map();
   // `samples` (one contextTokens per turn start) is internal: finalize()
   // folds it into `context` and removes it before a bucket leaves joinTokens.
@@ -395,13 +413,8 @@ function joinTokens(phases, usageRows, workflowAgentStarts = [], { dispatchFileR
   const unattributed = bucket();
   // The innermost [start, end) span holding t, as the bucket it feeds (else unattributed).
   const bucketAt = (t) => {
-    let best = null;
-    for (const s of spans) {
-      if (s.start === null || s.end === null || s.source === 'unattributed') continue;
-      if (!(t >= s.start && t < s.end)) continue;
-      if (!best || (s.end - s.start) < (best.end - best.start) || ((s.end - s.start) === (best.end - best.start) && s.start > best.start)) best = s;
-    }
-    return best ? acc.get(best.phase) : unattributed;
+    const name = phaseAt(phaseList, t);
+    return name === null ? unattributed : acc.get(name);
   };
   for (const r of rows) {
     const t = ms(r && r.ts);
@@ -526,7 +539,7 @@ function aggregateDispatches(items) {
 }
 
 module.exports = {
-  derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents,
+  derivePhases, PHASES, NESTED_PARENT, joinTokens, phaseAt, countGuardEvents,
   unionMinutes, resolveTier, TIERS, ROLE_PATTERNS, roleOf, aggregateDispatches,
   latestCiGatePerPr,
 };

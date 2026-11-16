@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents } = require('../../../plugin/bin/lib/timing/derive');
+const { derivePhases, PHASES, NESTED_PARENT, joinTokens, phaseAt, countGuardEvents } = require('../../../plugin/bin/lib/timing/derive');
 const { parseManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { readText } = require('../../helpers/read-skill');
 
@@ -672,4 +672,23 @@ test('#5597: the internal counters never reach the output', () => {
     assert.equal(Object.keys(b).includes('agentCalls'), false);
     assert.equal(Object.keys(b).includes('workflowAgents'), false);
   }
+});
+
+test('#5556: phaseAt returns the innermost [start, end) span, the later start on a tie, and null outside every span', () => {
+  const at = (m) => Date.parse('2026-01-01T00:00:00.000Z') + m * 60000;
+  const iso = (m) => new Date(at(m)).toISOString();
+  const row = (phase, s, e, source = 'skill_invoked') => ({ phase, start: iso(s), end: iso(e), source });
+  const phases = [
+    row('call-1', 0, 60), row('build', 0, 30), row('plan', 10, 20), row('review', 30, 50),
+    row('twin-a', 50, 55), row('twin-b', 50, 55), row('polish', 55, 59, 'unattributed'),
+    { phase: 'dangling', start: null, end: null, source: 'unattributed' },
+  ];
+  assert.equal(phaseAt(phases, at(15)), 'plan');
+  assert.equal(phaseAt(phases, at(5)), 'build');
+  assert.equal(phaseAt(phases, at(30)), 'review', 'the end bound is exclusive: 30 is review, not build');
+  assert.equal(phaseAt(phases, at(52)), 'twin-a', 'equal span and equal start keep the first');
+  assert.equal(phaseAt(phases, at(57)), 'call-1', 'an unattributed row never holds an instant');
+  assert.equal(phaseAt(phases, at(60)), null);
+  assert.equal(phaseAt(phases, at(-1)), null);
+  assert.equal(phaseAt(null, at(5)), null);
 });
