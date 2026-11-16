@@ -3,7 +3,6 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -12,6 +11,8 @@ const { reconcile, PREREQUISITES } = require('../plugin/bin/lib/reconcile');
 const { readText } = require('./helpers/read-skill');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { requireOption } = require('../tools/test-impact/node-options');
+const { hookEnv } = require('./helpers/git-fixtures');
+const { runCli, spawnCli } = require('./helpers/run-cli');
 const {
   HOOKS,
   git,
@@ -22,36 +23,76 @@ const {
   withFetchArgvLog,
 } = require('./helpers/reconcile-fixtures');
 
-// Every non-dry reconcile() pass prunes the declined-learning store (#1399), and that store resolves
-// from process.cwd() to the main checkout (#4360). The in-process passes below pass `cwd: <fixture>`,
-// which does not move process.cwd(), so left real they would lock and rewrite the maintainer's own
-// store whenever the suite runs from a linked worktree. Stub the prune for the whole file; node --test
-// gives each file its own process, and the #4180 prune test (tests/reconcile-archive-residue.test.js) installs its own counting stub on top.
-require('../plugin/bin/lib/declined-learning/store').pruneDeclines = () => 0;
+// Every non-dry reconcile() pass prunes the declined-learning store (#1399). The prune now anchors at
+// the pass's own cwd (#5376), but before that it resolved from process.cwd() to the main checkout
+// (#4360), which `cwd: <fixture>` does not move, and a regression to it would lock and rewrite the
+// maintainer's own store whenever the suite runs from a linked worktree. Stub the prune for the whole
+// file; node --test gives each file its own process, and the #4180 prune test
+// (tests/reconcile-archive-residue.test.js) installs its own counting stub on top.
+const pruneDeclinesStub = () => 0;
+require('../plugin/bin/lib/declined-learning/store').pruneDeclines = pruneDeclinesStub;
 
-// #1130: never let an omitted cwd fall through to the spawned subprocess's
-// own process.cwd() — that is the test runner's real working directory, and
-// when npm test runs from a real checkout, hooks that walk
+// #5376: an in-process `reconcile` verb call runs in this test process, so a runReconcile that stopped
+// handing reconcile() the injected cwd would run a real, non-dry pass (mirror fast-forward, archive, reap,
+// the detached background pass) against the runner's own checkout before any assertion could fail. Every
+// call into the module's reconcile() therefore goes through this guard, which throws before delegating
+// unless opts.cwd resolves to the cwd runHook is injecting for that call; a call with no expectation
+// recorded throws too. hooks.js looks reconcile up on the module object at call time, and
+// reconcileWithAsyncMerge (tests/helpers/reconcile-fixtures.js) reloads that module, so the guard is
+// (re)installed on whichever module object is current before every runHook and runReconcileVerbStubbed.
+// The expected cwd is checked by wrapping `reconcile` on its module object, not passed through `deps`:
+// runReconcile builds opts from deps.cwd() and has no deps seam for reconcile itself, so a deps-level
+// stub would replace the very module lookup (`require('./lib/reconcile').reconcile`) this guard exists to check.
+const reconcileGuards = new WeakSet();
+let expectedReconcileCwd = null;
+let reconcileGuardFault = null;
+const realpathOrNull = (p) => { try { return fs.realpathSync(p); } catch { return null; } };
+function installReconcileGuard() {
+  const mod = require('../plugin/bin/lib/reconcile');
+  if (reconcileGuards.has(mod.reconcile)) return;
+  const delegate = mod.reconcile;
+  const guard = (opts, ...rest) => {
+    const got = opts && typeof opts.cwd === 'string' ? realpathOrNull(opts.cwd) : null;
+    if (expectedReconcileCwd === null || got !== expectedReconcileCwd) {
+      const fault = new Error(`#5376 reconcile guard: reconcile() was handed cwd ${JSON.stringify(opts && opts.cwd)}, `
+        + `expected the injected ${JSON.stringify(expectedReconcileCwd)}; refused before running a pass`);
+      reconcileGuardFault = reconcileGuardFault || fault;
+      throw fault;
+    }
+    return delegate(opts, ...rest);
+  };
+  reconcileGuards.add(guard);
+  mod.reconcile = guard;
+}
+installReconcileGuard();
+
+// #1130: never let an omitted cwd fall through to runCli's default, the
+// runner's own process.cwd() — that is the test runner's real working
+// directory, and when npm test runs from a real checkout, hooks that walk
 // .claude-tweaks/pipelines/ from there write fixture events into REAL run
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
 const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-sandbox-'));
 
-function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
+// hookEnv (tests/helpers/git-fixtures.js) is the whole environment the verb sees (#5376). Its
+// `PIPELINE_RUN_DIR: ''` (#1130) keeps a call that passes no run dir from resolving against a real
+// run ambient in the test runner's own process.env; a caller that needs a run dir passes it in
+// `env`, which wins.
+
+// In-process through hooks.js's run(argv, deps) (#5376). hooks.js catches a throw from reconcile() and
+// prints reconcile-threw with exit 0, so a guard refusal is re-thrown here rather than left to the caller.
+async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
+  installReconcileGuard();
+  reconcileGuardFault = null;
+  expectedReconcileCwd = realpathOrNull(cwd);
+  let r;
   try {
-    const stdout = execFileSync('node', [HOOKS, ...args], {
-      // #1130: `PIPELINE_RUN_DIR: ''` neutralizes any ambient run-dir env var
-      // so a call that doesn't explicitly pass one can't resolve against
-      // whatever real run happens to be ambient in this test runner's own
-      // process.env (e.g. when npm test itself runs inside a /flow-dispatched
-      // shell). A caller that needs a run dir still passes it explicitly via
-      // `env`, which wins because it spreads last.
-      input, cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', ...env },
-    });
-    return { code: 0, stdout };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
+    r = await runCli(HOOKS, args, { stdin: input, cwd, env: hookEnv(env) });
+  } finally {
+    expectedReconcileCwd = null;
   }
+  if (reconcileGuardFault) throw reconcileGuardFault;
+  return { code: r.code, stdout: r.stdout };
 }
 
 test('reconcile: reap dispatches strictly after release and archive in source order (load-bearing, not incidental — #408)', () => {
@@ -362,7 +403,7 @@ test('(#3630): a gh preflight failure still runs a mirror the caller did name', 
 
 // --- hooks.js verb: garbage-stdin invariant + JSON shape (AC5) ---
 
-test('reconcile verb: garbage stdin still exits 0 and prints valid JSON with --json', () => {
+test('reconcile verb: garbage stdin still exits 0 and prints valid JSON with --json', async () => {
   // Always an isolated fixture cwd, never the ambient process cwd — a bare
   // `reconcile` with no cwd override would run for real against whatever
   // repo the test runner happens to be in (this project's own, under `npm
@@ -371,52 +412,113 @@ test('reconcile verb: garbage stdin still exits 0 and prints valid JSON with --j
   // safe when it happened once during authoring, but a test must not rely
   // on that — it must never reach live state in the first place.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-garbage-'));
-  const r = runHook(['reconcile', '--json'], { input: '%%%not json%%%', cwd: dir });
+  const r = await runHook(['reconcile', '--json'], { input: '%%%not json%%%', cwd: dir });
   assert.strictEqual(r.code, 0);
   assert.doesNotThrow(() => JSON.parse(r.stdout));
   assert.deepStrictEqual(JSON.parse(r.stdout).skipped, [{ check: 'all', reason: 'no-repo' }]);
 });
 
-test('reconcile verb: --mcp-reachable is accepted (#1558) — a no-remote fixture skips before it can matter', () => {
+test('reconcile verb: --mcp-reachable is accepted (#1558) — a no-remote fixture skips before it can matter', async () => {
   const dir = noRemoteFixture('ct-recon-mcp-reachable-');
-  const r = runHook(['reconcile', '--dry-run', '--json', '--mcp-reachable'], { cwd: dir });
+  const r = await runHook(['reconcile', '--dry-run', '--json', '--mcp-reachable'], { cwd: dir });
   assert.strictEqual(r.code, 0);
   assert.deepStrictEqual(JSON.parse(r.stdout).skipped, [{ check: 'all', reason: 'no-remote' }]);
 });
 
-test('reconcile verb: --checks is accepted (#1543) — a no-remote fixture skips before it can matter', () => {
+test('reconcile verb: --checks is accepted (#1543) — a no-remote fixture skips before it can matter', async () => {
   const dir = noRemoteFixture('ct-recon-checks-');
-  const r = runHook(['reconcile', '--dry-run', '--json', '--checks', 'mirror,release,archive'], { cwd: dir });
+  const r = await runHook(['reconcile', '--dry-run', '--json', '--checks', 'mirror,release,archive'], { cwd: dir });
   assert.strictEqual(r.code, 0);
   assert.deepStrictEqual(JSON.parse(r.stdout).skipped, [{ check: 'all', reason: 'no-remote' }]);
 });
 
-test('reconcile verb: a missing/empty --checks value falls back to the ALL_CHECKS default (#1543)', () => {
+test('reconcile verb: a missing/empty --checks value falls back to the ALL_CHECKS default (#1543)', async () => {
   const dir = noRemoteFixture('ct-recon-checks-empty-');
-  const r = runHook(['reconcile', '--dry-run', '--json', '--checks', ''], { cwd: dir });
+  const r = await runHook(['reconcile', '--dry-run', '--json', '--checks', ''], { cwd: dir });
   assert.strictEqual(r.code, 0);
   assert.deepStrictEqual(JSON.parse(r.stdout).skipped, [{ check: 'all', reason: 'no-remote' }]);
 });
 
-test('reconcile verb: --dry-run --json is accepted and never mutates on a no-remote fixture', () => {
+test('reconcile verb: --dry-run --json is accepted and never mutates on a no-remote fixture', async () => {
   const dir = noRemoteFixture('ct-recon-hook-');
-  const r = runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
+  const r = await runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
   assert.strictEqual(r.code, 0);
   const parsed = JSON.parse(r.stdout);
   assert.deepStrictEqual(parsed.skipped, [{ check: 'all', reason: 'no-remote' }]);
 });
 
-test('reconcile verb: --json output is byte-for-byte JSON.stringify(out) + "\\n" (#638)', () => {
+// #5376: the in-process verb call reaches the module-level stub above, never the real prune, and hands it the
+// injected cwd as its anchor. The counting stub is swapped back to that file stub, never the real one.
+// #5376 injected-value proof: fails when reconcile reads process.cwd() instead of the injected cwd
+test('an in-process reconcile verb call reaches the file\'s pruneDeclines stub, and a --dry-run call does not', async () => {
+  const store = require('../plugin/bin/lib/declined-learning/store');
+  let count = 0;
+  const args = [];
+  store.pruneDeclines = (...a) => { count += 1; args.push(a); return 0; };
+  try {
+    const dir = noRemoteFixture('ct-recon-prune-stub-');
+    const r = await runHook(['reconcile', '--json'], { cwd: dir });
+    assert.strictEqual(r.code, 0);
+    assert.deepStrictEqual(JSON.parse(r.stdout).skipped, [{ check: 'all', reason: 'no-remote' }]);
+    assert.strictEqual(count, 1, 'a non-dry pass prunes once, through the stub');
+    // The prune anchors at the pass's injected cwd, not the runner's own checkout.
+    const deps = args[0][1];
+    assert.ok(deps && typeof deps.cwd === 'string', `the prune is handed a cwd: ${JSON.stringify(args[0])}`);
+    assert.strictEqual(fs.realpathSync(deps.cwd), fs.realpathSync(dir));
+    const dry = await runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
+    assert.strictEqual(dry.code, 0);
+    assert.deepStrictEqual(JSON.parse(dry.stdout).skipped, [{ check: 'all', reason: 'no-remote' }]);
+    assert.strictEqual(count, 1, 'a dry run never prunes');
+  } finally {
+    store.pruneDeclines = pruneDeclinesStub;
+  }
+});
+
+// #5376 injected-value proof: the git children on the no-remote path read the injected env, not process.env. The
+// injected GIT_DIR names a second fixture that has an origin remote but no origin/HEAD, so the dry run reports the
+// skipped origin/HEAD repair; a child reading process.env sees the first fixture, which has no origin at all.
+test('AC6.1: reconcile --dry-run reads the origin remote against the injected env', async () => {
+  const dir = noRemoteFixture('ct-recon-env-origin-');
+  const decoy = noRemoteFixture('ct-recon-env-decoy-');
+  git(['remote', 'add', 'origin', path.join(decoy, 'no-such-origin')], decoy);
+  const r = await runHook(['reconcile', '--dry-run', '--json'], { cwd: dir, env: { GIT_DIR: path.join(decoy, '.git') } });
+  assert.strictEqual(r.code, 0);
+  const parsed = JSON.parse(r.stdout);
+  assert.deepStrictEqual(parsed.originHeadRepair, { outcome: 'skipped', reason: 'dry-run' });
+  assert.deepStrictEqual(parsed.skipped, [{ check: 'all', reason: 'no-remote' }]);
+});
+
+// Durations differ run to run; every other field of the two outputs must match.
+function zeroDurations(value) {
+  if (Array.isArray(value)) return value.map(zeroDurations);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, /^ms$|Ms$/.test(k) ? 0 : zeroDurations(v)]));
+}
+
+// real process: the script entry (shebang, process.argv, the exit code) of the reconcile success path (AC5.1),
+// twinned with the same pass in-process; the spawned child's real prune anchors at its own fixture.
+test('AC5.1: reconcile --json on a no-remote fixture through runCli and spawnCli prints the same JSON, exit 0', async () => {
+  const inProcess = noRemoteFixture('ct-recon-smoke-a-');
+  const spawned = noRemoteFixture('ct-recon-smoke-b-');
+  const a = await runHook(['reconcile', '--json'], { cwd: inProcess });
+  const b = spawnCli(HOOKS, ['reconcile', '--json'], { cwd: spawned, env: hookEnv() });
+  assert.strictEqual(a.code, 0);
+  assert.deepStrictEqual({ code: b.code, stderr: b.stderr }, { code: 0, stderr: '' });
+  assert.deepStrictEqual(zeroDurations(JSON.parse(a.stdout)), zeroDurations(JSON.parse(b.stdout)));
+  assert.deepStrictEqual(JSON.parse(a.stdout).skipped, [{ check: 'all', reason: 'no-remote' }]);
+});
+
+test('reconcile verb: --json output is byte-for-byte JSON.stringify(out) + "\\n" (#638)', async () => {
   const dir = noRemoteFixture('ct-recon-json-shape-');
-  const r = runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
+  const r = await runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
   assert.strictEqual(r.code, 0);
   const parsed = JSON.parse(r.stdout);
   assert.strictEqual(r.stdout, JSON.stringify(parsed) + '\n');
 });
 
-test('reconcile verb: no --json (new default) prints a compact summary, not the raw JSON census (#638)', () => {
+test('reconcile verb: no --json (new default) prints a compact summary, not the raw JSON census (#638)', async () => {
   const dir = noRemoteFixture('ct-recon-compact-default-');
-  const r = runHook(['reconcile', '--dry-run'], { cwd: dir });
+  const r = await runHook(['reconcile', '--dry-run'], { cwd: dir });
   assert.strictEqual(r.code, 0);
   assert.throws(() => JSON.parse(r.stdout), 'default output must not be a parseable JSON object');
   assert.match(r.stdout, /^skipped: all — no-remote\n$/);
@@ -665,27 +767,29 @@ test('reconcile verb: compact default separates branch entries from archive-bran
   ].join('\n'));
 });
 
-// Runs hooks.js's `main` in-process with `reconcile` and the background spawn
-// stubbed (no GitHub, no real child), capturing the JSON stdout of each call.
-async function runReconcileVerbStubbed(argvs, { reconcileResult = () => ({ skipped: [] }), spawnResult = { spawned: true, reason: 'spawned' } } = {}) {
-  const { main } = require('../plugin/bin/hooks');
+// Runs hooks.js's `run` in-process through runCli with `reconcile` and the
+// background spawn stubbed (no GitHub, no real child), parsing each call's
+// JSON stdout. No `fresh: true`: a reload would drop the two stubs.
+async function runReconcileVerbStubbed(argvs, { reconcileResult = () => ({ skipped: [] }), spawnResult = { spawned: true, reason: 'spawned' }, cwd = HOOK_SANDBOX, env = {} } = {}) {
+  installReconcileGuard(); // so the restore below puts the guard back, never an unguarded reconcile()
   const reconcileMod = require('../plugin/bin/lib/reconcile');
   const spawnMod = require('../plugin/bin/lib/reconcile/background-spawn');
   const originalReconcile = reconcileMod.reconcile;
   const originalSpawn = spawnMod.spawnBackgroundIfStale;
-  const originalWrite = process.stdout.write;
   const calls = [];
   const spawnCalls = [];
   const outputs = [];
   reconcileMod.reconcile = async (opts) => { calls.push(opts); return reconcileResult(calls.length - 1); };
   spawnMod.spawnBackgroundIfStale = (args) => { spawnCalls.push(args); return spawnResult; };
-  process.stdout.write = (chunk) => { outputs.push(String(chunk)); return true; };
   try {
-    for (const argv of argvs) assert.equal(await main(['node', 'hooks.js', ...argv]), 0, `main(${argv.join(' ')}) exit code`);
+    for (const argv of argvs) {
+      const r = await runCli(HOOKS, argv, { cwd, env: hookEnv(env) });
+      assert.equal(r.code, 0, `run(${argv.join(' ')}) exit code`);
+      outputs.push(r.stdout);
+    }
   } finally {
     reconcileMod.reconcile = originalReconcile;
     spawnMod.spawnBackgroundIfStale = originalSpawn;
-    process.stdout.write = originalWrite;
   }
   return { calls, spawnCalls, outputs: outputs.map((o) => JSON.parse(o)) };
 }
@@ -726,7 +830,7 @@ test('unscoped CLI reports the helper reason when the background pass is fresh (
 
 test('unscoped CLI never spawns under --dry-run or on a no-remote fixture (#4032)', async () => {
   const dir = noRemoteFixture('ct-recon-bg-noremote-');
-  const r = runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
+  const r = await runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
   assert.strictEqual(r.code, 0);
   const parsed = JSON.parse(r.stdout);
   assert.deepStrictEqual(parsed.background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' });
@@ -778,6 +882,7 @@ test('unscoped CLI: a module-load failure still prints the reconcile-threw JSON 
   }
 });
 
+// real process: the fault is injected at module load, which only a preload can do
 test('reconcile verb: a post-merge.js load fault still renders the reconcile-threw line in the compact output, not a silent exit 0 (#4897)', () => {
   // A child process, so the fault is planted in its module loader only: the child preloads a script that makes any
   // require resolving to reconcile/post-merge.js throw. format-summary.js is required outside hooks.js's try, so a
@@ -797,7 +902,7 @@ test('reconcile verb: a post-merge.js load fault still renders the reconcile-thr
     '',
   ].join('\n'));
   const dir = noRemoteFixture('ct-recon-loadfault-repo-');
-  const r = runHook(['reconcile', '--dry-run'], { cwd: dir, env: { NODE_OPTIONS: requireOption(preload) } });
+  const r = spawnCli(HOOKS, ['reconcile', '--dry-run'], { cwd: dir, env: hookEnv({ NODE_OPTIONS: requireOption(preload) }) });
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /^skipped: all — reconcile-threw$/m);
 });

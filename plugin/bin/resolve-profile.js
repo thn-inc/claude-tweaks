@@ -15,7 +15,7 @@
 //
 //   node bin/resolve-profile.js record-failure <model>
 //
-// before retrying or reporting — see subagent-output-contract.md's Model
+// before retrying or reporting — see subagent-dispatch-core.md's Model
 // Selection section for when to call this.
 //
 // Recovery (#841 item 3): credit exhaustion is normally a usage window, not

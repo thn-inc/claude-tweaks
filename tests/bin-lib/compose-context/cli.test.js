@@ -205,7 +205,7 @@ test('--phase: an unknown phase, or --phase combined with --step or a positional
     const out = [];
     assert.equal(run(argv, deps(f.main, out)), 2, JSON.stringify(argv));
     assert.match(streamOf(out, 'err'), /usage: compose-context\.js/);
-    assert.match(streamOf(out, 'err'), /--phase <first-call\|second-call\|review-lens>/, 'usage names the known phases');
+    assert.match(streamOf(out, 'err'), /--phase <first-call\|second-call\|review-lens\|review-lens-child\|sdd-child>/, 'usage names the known phases');
     assert.equal(streamOf(out, 'out'), '');
   }
   assert.ok(!fs.existsSync(path.join(f.runDir, 'context')));
@@ -237,7 +237,7 @@ test('--help exits 0 with usage and probes nothing (real binary)', () => {
   const result = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /usage: compose-context\.js --run <run-dir> --step <name> <source-file>\.\.\./);
-  assert.match(result.stdout, /compose-context\.js --run <run-dir> --phase <first-call\|second-call\|review-lens>/);
+  assert.match(result.stdout, /compose-context\.js --run <run-dir> --phase <first-call\|second-call\|review-lens\|review-lens-child\|sdd-child>/);
 });
 
 test('real binary: a --run dir outside any checkout is accepted (anchored-or-outside), exit 0 and a JSON line', () => {

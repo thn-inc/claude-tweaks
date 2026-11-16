@@ -49,6 +49,9 @@ const DIFFERENTIAL_CORPUS = [
   'A=x>tracked.js', '\\\nA=x>tracked.js',
   // #4281: a backslash-newline inside a program word, which bash and the parsers join.
   'g\\\nit commit -m x', 't\\\nee tracked.js', '"g\\\nit" commit -m x',
+  // #4448: a write or git command behind a stripped prefix.
+  'X=1 cp a.txt b.txt', 'sudo tee out.txt', 'x+=1 git commit -m x', 'sudo git commit -m x',
+  'time cp a.txt b.txt', 'nohup git commit -m x', 'env -C sub cp a.txt b.txt', 'builtin cd sub; cp a.txt b.txt',
   // #4548: name-based process kills (sole-trigger witnesses for each word first), then the case,
   // pgrep-fed, filter and wrapper shapes.
   'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'kill -Name node', 'stop-process -name node',
