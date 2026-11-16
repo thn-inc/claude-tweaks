@@ -9,14 +9,14 @@
 // plus each reader's own value interpretation.
 'use strict';
 const fs = require('fs');
-const path = require('path');
 const {
   parseFlatLines, RENAMED_KEYS, resolveValue, resolvePolicyKeys,
 } = require('./policy-schema');
+const { locatePolicyFile } = require('./policy-file');
 
 function readPolicyFile(repoRoot) {
   try {
-    return fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+    return fs.readFileSync(locatePolicyFile(repoRoot).path, 'utf8');
   } catch {
     return null;
   }
@@ -123,7 +123,7 @@ function readRiskPolicy(repoRoot, deps) {
   const { readFile = fs.readFileSync } = deps || {};
   let policyRaw;
   try {
-    policyRaw = readFile(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+    policyRaw = readFile(locatePolicyFile(repoRoot).path, 'utf8');
   } catch (error) {
     if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return controlModeOff();
     throw error;

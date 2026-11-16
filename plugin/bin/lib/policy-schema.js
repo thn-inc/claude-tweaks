@@ -8,6 +8,7 @@ const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
 const { stripComment } = require('./model-profiles/policy-fragment');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
+const { locatePolicyFile } = require('./policy-file');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
 
@@ -827,7 +828,8 @@ function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
   // A non-string repoRoot has no policy.yml to read: skip to the default instead of letting
   // path.join throw, which would break detectIntegrationModel's never-throws contract.
-  const policyRaw = typeof repoRoot === 'string' ? readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml')) : null;
+  const policyPath = locatePolicyFile(repoRoot).path;
+  const policyRaw = policyPath === null ? null : readFileSafe(policyPath);
   return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
 }
 
@@ -950,7 +952,8 @@ function detectIntegrationModel(repoRoot, opts = {}) {
 // `opts` (optional) forwards unchanged to detectIntegrationModel — see that
 // function's own comment for the mcpReachable override contract.
 function resolveIntegrationModel(repoRoot, opts = {}) {
-  const policyRaw = readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml'));
+  const policyPath = locatePolicyFile(repoRoot).path;
+  const policyRaw = policyPath === null ? null : readFileSafe(policyPath);
   const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null });
   const entry = resolved['integration-model'];
   if (entry && entry.source !== 'default') return entry.value;
@@ -979,14 +982,16 @@ function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cw
   } catch {
     root = cwd || process.cwd();
   }
-  const policyRaw = readFile(path.join(root, '.claude-tweaks', 'policy.yml'));
+  const { path: policyPath, source: policySource } = locatePolicyFile(root);
+  const policyRaw = policyPath === null ? null : readFile(policyPath);
   const runConfigRaw = runDir ? readFile(path.join(runDir, 'config.yml')) : null;
   const result = resolvePolicyKeys(keys, { policyRaw, runConfigRaw, onInvalid });
-  return { root, policyRaw, runConfigRaw, result };
+  return { root, policyRaw, runConfigRaw, result, policyPath, policySource };
 }
 
 function auditPolicy(repoRoot) {
-  const policyRaw = readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml'));
+  const policyPath = locatePolicyFile(repoRoot).path;
+  const policyRaw = policyPath === null ? null : readFileSafe(policyPath);
   const claudeMdRaw = readFileSafe(path.join(repoRoot, 'CLAUDE.md'));
   const policyEntries = parseFlatLines(policyRaw);
   const claudeMdEntries = parseFlatLines(claudeMdRaw);

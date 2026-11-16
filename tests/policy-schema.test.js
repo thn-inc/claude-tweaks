@@ -1059,3 +1059,94 @@ test('AC5.4 (#5224): set values resolve from policy', () => {
   assert.deepStrictEqual(r['express-driver-max-key-files'], { value: 5, source: 'policy' });
   assert.deepStrictEqual(r['express-driver-max-lines'], { value: 120, source: 'policy' });
 });
+
+// --- #4492: policy.yml located through the main checkout from a linked worktree ---
+const { resolvePolicyConfig } = require('../plugin/bin/lib/policy-schema');
+
+function worktreeFixture(t, policy = 'integration-branch: develop\nworktree-always: true\n') {
+  // realpath: the main-checkout lookup resolves symlinks (macOS /var -> /private/var).
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'policy-wt-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const main = path.join(base, 'main');
+  const wt = path.join(base, 'wt');
+  fs.mkdirSync(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true });
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.mkdirSync(wt, { recursive: true });
+  fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'wt')}\n`);
+  if (policy !== null) fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), policy);
+  return { main, wt };
+}
+
+function fakeTopLevelGit(top) {
+  const calls = [];
+  const git = (args) => {
+    calls.push(args);
+    if (args.join(' ') === 'rev-parse --show-toplevel') return `${top}\n`;
+    throw new Error(`unexpected git ${args.join(' ')}`);
+  };
+  git.calls = calls;
+  return git;
+}
+
+const realRead = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+
+test('AC5.1: resolvePolicyConfig, fake git runner — worktree file present: reads it, policySource checkout', (t) => {
+  const { wt } = worktreeFixture(t);
+  fs.mkdirSync(path.join(wt, '.claude-tweaks'));
+  fs.writeFileSync(path.join(wt, '.claude-tweaks', 'policy.yml'), 'integration-branch: release\n');
+  const git = fakeTopLevelGit(wt);
+  const out = resolvePolicyConfig({ git, readFile: realRead, keys: ['integration-branch'] });
+  assert.strictEqual(out.policySource, 'checkout');
+  assert.strictEqual(out.policyPath, path.join(wt, '.claude-tweaks', 'policy.yml'));
+  assert.strictEqual(out.result['integration-branch'].value, 'release');
+  assert.deepStrictEqual(git.calls, [['rev-parse', '--show-toplevel']]);
+});
+
+test('AC5.1: resolvePolicyConfig, fake git runner — worktree absent, main present: reads main\'s, policySource main-checkout', (t) => {
+  const { main, wt } = worktreeFixture(t);
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile: realRead, keys: ['integration-branch'] });
+  assert.strictEqual(out.policySource, 'main-checkout');
+  assert.strictEqual(out.policyPath, path.join(main, '.claude-tweaks', 'policy.yml'));
+  assert.strictEqual(out.result['integration-branch'].value, 'develop');
+});
+
+test('AC5.1: resolvePolicyConfig, fake git runner — both absent: policyRaw null, policySource checkout, every key at its default', (t) => {
+  const { wt } = worktreeFixture(t, null);
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile: realRead, keys: ['integration-branch'] });
+  assert.strictEqual(out.policyRaw, null);
+  assert.strictEqual(out.policySource, 'checkout');
+  assert.strictEqual(out.result['integration-branch'].source, 'default');
+});
+
+test('AC1.1: resolvePolicyConfig from a linked worktree without policy.yml reads the main checkout\'s — integration-branch develop, policySource main-checkout', (t) => {
+  const { wt } = worktreeFixture(t);
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile: realRead, keys: ['integration-branch'] });
+  assert.strictEqual(out.root, wt);
+  assert.strictEqual(out.result['integration-branch'].value, 'develop');
+  assert.strictEqual(out.policySource, 'main-checkout');
+});
+
+test('AC2.1: resolvePolicyConfig — a worktree policy.yml wins; the main checkout\'s is not read', (t) => {
+  const { main, wt } = worktreeFixture(t);
+  fs.mkdirSync(path.join(wt, '.claude-tweaks'));
+  fs.writeFileSync(path.join(wt, '.claude-tweaks', 'policy.yml'), 'integration-branch: release\n');
+  const reads = [];
+  const readFile = (p) => { reads.push(p); return realRead(p); };
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile, keys: ['integration-branch'] });
+  assert.strictEqual(out.result['integration-branch'].value, 'release');
+  assert.ok(!reads.includes(path.join(main, '.claude-tweaks', 'policy.yml')));
+});
+
+test('AC3.1: resolvePolicyConfig from the main checkout — policySource checkout, same result as before', (t) => {
+  const { main } = worktreeFixture(t);
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(main), readFile: realRead, keys: ['integration-branch'] });
+  assert.strictEqual(out.policySource, 'checkout');
+  assert.strictEqual(out.policyPath, path.join(main, '.claude-tweaks', 'policy.yml'));
+  assert.strictEqual(out.result['integration-branch'].value, 'develop');
+  assert.strictEqual(out.root, main);
+});
+
+test('auditPolicy from a linked worktree audits the main checkout\'s policy.yml', (t) => {
+  const { wt } = worktreeFixture(t, 'integration-branch: develop\nbogus-key: 1\n');
+  assert.ok(auditPolicy(wt).unrecognizedKeys.includes('bogus-key'));
+});
