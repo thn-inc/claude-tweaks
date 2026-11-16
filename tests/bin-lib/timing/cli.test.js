@@ -431,8 +431,14 @@ test('#4359: a dispatch spanning two phases books each read to its own phase', a
   assert.deepEqual(p.review.procedureFiles, { 'skills/review/lenses.md': 1 });
   assert.deepEqual(t.totals.procedureFiles, { 'skills/review/SKILL.md': 1, 'skills/review/lenses.md': 1 });
   assert.deepEqual(t.unattributed.procedureFiles, {});
-  // the dispatch reads never become main rows
-  assert.equal(t.transcripts[0].rows, 1);
+  // the dispatch reads never become main rows: tokens and round trips equal a run without agent-x
+  const base = subagentRun({ events: SPAN_EVENTS });
+  const rb = await run(['--run', base.dir, '--json', '--transcript', base.transcript]);
+  assert.equal(rb.status, 0, rb.stderr);
+  const mainOnly = readTiming(base.dir).totals;
+  assert.ok(mainOnly.tokens.input > 0, 'setup: the main transcript carries tokens');
+  assert.deepEqual(t.totals.tokens, mainOnly.tokens);
+  assert.equal(t.totals.toolRoundTrips, mainOnly.toolRoundTrips);
 });
 
 test('#4359: an agent transcript passed as --transcript is not counted again as a dispatch', async () => {
@@ -447,6 +453,22 @@ test('#4359: an agent transcript passed as --transcript is not counted again as 
   assert.ok(t.dispatches.items.some((i) => i.agentId === 'x'), 'agent-x is still listed as a dispatch');
   assert.deepEqual(t.totals.procedureFiles, { 'skills/review/SKILL.md': 1 });
   assert.deepEqual(t.phases.find((x) => x.phase === 'review').procedureFiles, { 'skills/review/SKILL.md': 1 });
+});
+
+test('#4359: an agent transcript passed through a symlinked alias of its directory is still not counted again', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:05:00.000Z', 'mx1', SKILL_A));
+  // An explicit alias, so the passed path differs from the dispatch's own path on every
+  // platform (not only through macOS's /var -> /private/var tmpdir link): only realpath matches them.
+  const alias = path.join(s.home, 'slug-alias');
+  fs.symlinkSync(s.slugDir, alias, 'junction');
+  const r = await run(['--run', s.dir, '--json', '--transcript', path.join(alias, 'sess-1', 'subagents', 'agent-x.jsonl')]);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.ok(t.dispatches.items.some((i) => i.agentId === 'x'), 'agent-x is still listed as a dispatch');
+  assert.deepEqual(t.totals.procedureFiles, { 'skills/review/SKILL.md': 1 });
 });
 
 test('#4359 I1: a context-bundle Read by a dispatch reaches timing.json under its context/ key, apart from skill files', async () => {
