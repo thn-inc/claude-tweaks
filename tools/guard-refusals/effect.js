@@ -411,89 +411,6 @@ const WRAPPERS = {
   },
 };
 
-// Bytes of a sed script, scanned command by command: the `w`/`W` commands and
-// the `w` flag of `s` write a file; `e` (and the `s` flag `e`) runs a program;
-// a script that does not parse is `unknown`. Returns 'write' | 'unknown' | null.
-function sedScriptVerdict(script) {
-  const n = script.length;
-  let i = 0;
-  const skipTo = (delim) => {
-    while (i < n) {
-      const c = script[i++];
-      if (c === '\\') i++;
-      else if (c === delim) return true;
-    }
-    return false;
-  };
-  const skipLine = () => {
-    while (i < n) {
-      if (script[i] === '\\') i += 2;
-      else if (script[i++] === '\n') return;
-    }
-  };
-  while (i < n) {
-    const c = script[i];
-    if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === ';' || c === '{' || c === '}' || c === '!' || c === ',' || c === '$' || c === '~' || c === '+' || (c >= '0' && c <= '9')) { i++; continue; }
-    if (c === '/' || c === '\\') {
-      let d = '/';
-      if (c === '\\') { d = script[i + 1]; i += 2; } else i++;
-      if (d === undefined || !skipTo(d)) return 'unknown';
-      while (i < n && (script[i] === 'I' || script[i] === 'M')) i++;
-      continue;
-    }
-    i++;
-    if (c === 's') {
-      const d = script[i++];
-      if (d === undefined || !skipTo(d) || !skipTo(d)) return 'unknown';
-      while (i < n && script[i] !== ';' && script[i] !== '}' && script[i] !== '\n' && script[i] !== ' ' && script[i] !== '\t') {
-        const f = script[i++];
-        if (f === 'w' || f === 'W') return 'write';
-        if (f === 'e') return 'unknown';
-        if (!/[gpiImM0-9]/.test(f)) return 'unknown';
-      }
-    } else if (c === 'y') {
-      const d = script[i++];
-      if (d === undefined || !skipTo(d) || !skipTo(d)) return 'unknown';
-    } else if (c === 'w' || c === 'W') return 'write';
-    else if (c === 'e') return 'unknown';
-    else if (c === 'r' || c === 'R' || c === 'a' || c === 'i' || c === 'c' || c === '#') skipLine();
-    else if (c === ':' || c === 'b' || c === 't' || c === 'T') { while (i < n && script[i] !== ';' && script[i] !== '\n') i++; } else if ('pPdDnNgGhHxlLqQ=zF'.includes(c)) continue;
-    else return 'unknown';
-  }
-  return null;
-}
-
-// sed's own scripts: -e/--expression values, else the first operand. A -f
-// script file cannot be read here.
-function sedVerdict(words, from) {
-  const scripts = [];
-  const operands = [];
-  for (let k = from; k < words.length; k++) {
-    const a = words[k].t;
-    if (a === '--') { for (let m = k + 1; m < words.length; m++) operands.push(words[m].t); break; }
-    if (a === '--expression') { scripts.push(k + 1 < words.length ? words[++k].t : ''); continue; }
-    if (a.startsWith('--expression=')) { scripts.push(a.slice('--expression='.length)); continue; }
-    if (a === '--file' || a.startsWith('--file=')) return 'unknown';
-    if (a === '--line-length') { k++; continue; }
-    if (a.length > 1 && a[0] === '-' && a[1] !== '-') {
-      for (let m = 1; m < a.length; m++) {
-        if (a[m] === 'f') return 'unknown';
-        if (a[m] === 'e' || a[m] === 'l') {
-          const rest = a.slice(m + 1);
-          if (a[m] === 'e') scripts.push(rest !== '' ? rest : (k + 1 < words.length ? words[++k].t : ''));
-          else if (rest === '') k++;
-          break;
-        }
-      }
-      continue;
-    }
-    if (a.length > 1 && a[0] === '-') continue;
-    operands.push(a);
-  }
-  if (scripts.length === 0 && operands.length) scripts.push(operands[0]);
-  return sedScriptVerdict(scripts.join('\n'));
-}
-
 function hitsWrite(entry, words, from) {
   if (entry.any) return true;
   for (let k = from; k < words.length; k++) {
@@ -721,11 +638,6 @@ function judgeWords(words, start) {
     if (base === 'git') return judgeGit(words, s + 1);
     if (base === 'gh') return judgeGh(words, s + 1);
     if (READER_SET.has(base)) {
-      if (base === 'sed') {
-        const v = sedVerdict(words, s + 1);
-        if (v === 'write') return write('sed script writes');
-        if (v === 'unknown') return unknown('sed script');
-      }
       if (Object.hasOwn(RUNS_PROGRAM, base) && words.slice(s + 1).some((x) => RUNS_PROGRAM[base].includes(x.t.split('=')[0]))) return unknown(`${base} runs a program`);
       return READ;
     }

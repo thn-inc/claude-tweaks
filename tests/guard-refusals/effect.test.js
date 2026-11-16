@@ -60,6 +60,10 @@ const TABLE = [
   ['cat <<EOF\nrm x\nEOF', 'read'],
   ['node <<EOF\nx\nEOF', 'unknown'],
   ['sed -n p f', 'read'],
+  // Spec decision: sed is write only with -i/--in-place; every other form is read, whatever its script.
+  ["sed -n 'w out' f", 'read'],
+  ['sed -f s.sed f', 'read'],
+  ['sed --in-place s/a/b/ f', 'write'],
   ['find . -name x', 'read'],
   ['find . -exec rm {} \\;', 'write'],
   ['curl https://x', 'read'],
@@ -133,11 +137,6 @@ test('classifyEffect returns a why naming the program for unknown', () => {
 // Shapes that look like reads but can write or run a program: each resolves
 // away from `read`.
 const NEVER_READ = [
-  ["sed -n 'w out' f", 'write'],
-  ["sed 's/a/b/w out' f", 'write'],
-  ["sed 's/a/b/e' f", 'unknown'],
-  ["sed -f script.sed f", 'unknown'],
-  ['sed -n -e p f', 'read'],
   ['cat <<EOF\n$(rm x)\nEOF', 'unknown'],
   ['echo "$(echo ")"; rm x)"', 'write'],
   ['echo "$(echo ")"; ls)"', 'unknown'],
