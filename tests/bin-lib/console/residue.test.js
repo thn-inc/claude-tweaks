@@ -534,6 +534,16 @@ test('DIGESTED_LINE_RE anchors on - AUTO (#4679)', () => {
   assert.ok(DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('digested (', 'already digested (')));
   assert.ok(!DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('- AUTO ', '- STAGED ')));
   assert.ok(!DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('- AUTO ', '- SKIP ')));
+  // Negative wording and another step label are not evidence (the regex is anchored on the Queue-write line shape).
+  assert.ok(!DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('bbbbbbbbbbbb digested', 'bbbbbbbbbbbb not digested')));
+  assert.ok(!DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('bbbbbbbbbbbb digested', 'bbbbbbbbbbbb undigested')));
+  assert.ok(!DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('Queue write', 'Review Console')));
+  assert.ok(!DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('tiebreak:bbbbbbbbbbbb', 'two words')));
+  // The exact line formatEntry writes matches, plain and deduped.
+  const { formatEntry } = require(path.join(MOD, '..', '..', 'log-decision', 'append'));
+  const real = (text) => formatEntry({ status: 'AUTO', now: new Date(2026, 9, 24, 10, 0, 0), step: 'Queue write', text, reversibility: 'n/a' });
+  assert.ok(DIGESTED_LINE_RE.test(real('tiebreak:x digested (work-fingerprint consolefinding-4567ef01)')));
+  assert.ok(DIGESTED_LINE_RE.test(real('tiebreak:x already digested (work-fingerprint consolefinding-4567ef01)')));
   const forged = DIGESTED_LINE.replace('- AUTO ', '- STAGED ').replace('4567ef01', '89abcdef');
   assert.deepStrictEqual([...digestedFindings(`${DIGESTED_LINE}\n${forged}\n`)], ['consolefinding-4567ef01']);
 });

@@ -33,7 +33,9 @@ const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch, worktreeListStdout, mergedEvidence } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
-const { readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand } = require('../console/residue');
+const {
+  readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand, DIGEST_PENDING_RESOLUTION, DIGEST_LOG_REMEDY, digestRerunCommand,
+} = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
 // GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR would silently override that
@@ -660,14 +662,25 @@ function filingRerunRemedy(runDir) {
   return `re-run the planned filing(s): ${commands.join('; ')}, then ${FILING_LOG_REMEDY}`;
 }
 
+// #4679: the digest twin — the paste-ready `console-filings.js --digest-comments` re-run, one per unacknowledged
+// console holding a `digest-pending` item. '' when no such item is open.
+function digestRerunRemedy(runDir) {
+  const { consoles } = readRunResidue(runDir);
+  const commands = consoles.filter((c) => !c.acknowledged).flatMap((c) => (
+    c.items.some((i) => i.resolution === DIGEST_PENDING_RESOLUTION) ? [digestRerunCommand({ consoleDir: path.dirname(c.path) })] : []
+  ));
+  if (commands.length === 0) return '';
+  return `re-run the planned digest entries: ${commands.join('; ')}, then ${DIGEST_LOG_REMEDY}`;
+}
+
 // The recovery line for a console-residue skip: name the open items, the
 // unreadable console.json files to repair, or both when both block.
 function consoleResidueHint(runDir) {
   const { names, unreadable } = consoleResidue(runDir);
   const parts = [];
   if (names.length > 0) {
-    const rerun = filingRerunRemedy(runDir);
-    parts.push(`unresolved: ${names.join(', ')} — ${rerun ? `${rerun}; or ` : ''}${consoleAckRemedy(runDir)}`);
+    const reruns = [filingRerunRemedy(runDir), digestRerunRemedy(runDir)].filter(Boolean);
+    parts.push(`unresolved: ${names.join(', ')} — ${reruns.map((r) => `${r}; or `).join('')}${consoleAckRemedy(runDir)}`);
   }
   if (unreadable.length > 0) parts.push(`repair or remove ${unreadable.join(', ')}`);
   return parts.join('; ');
@@ -2813,7 +2826,7 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, digestRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,

@@ -314,6 +314,20 @@ test('AC3.1: archive-run refuses a console whose can\'t-tell filings never ran, 
   assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
 });
 
+test('archive-run refuses a console whose can\'t-tell digest entries never ran, naming the digest re-run (#4679)', async () => {
+  const { root, runDir } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' }],
+    digests: [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }],
+  }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
+  const result = await runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; re-run the planned digest entries: console-filings\.js --run ".*" --existing <issues\.json> --out-dir <dir> --digest-comments <comments\.json>, then post each printed digest line .*; review them, then run console-residue\.js --ack --run .*\) — unresolved: tiebreak:bbbbbbbbbbbb \(digest-pending\)\n$/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
 test('AC4.1: archive-run archives once the planned filing\'s filed line is logged', async () => {
   const { root, runDir } = runDirFixture('clean');
   plannedFilingConsole(runDir, { filed: true });

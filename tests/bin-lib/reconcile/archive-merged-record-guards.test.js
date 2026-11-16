@@ -16,10 +16,11 @@ const {
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, runRecordSet, inFlightRecords,
-  consoleResidue, consoleResidueHint, filingRerunRemedy,
+  consoleResidue, consoleResidueHint, filingRerunRemedy, digestRerunRemedy,
   unfiledCantTellFindings, CANT_TELL_UNFILED_HINT, countOwnerlessNonClean,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
+const { DIGEST_LOG_REMEDY } = require('../../../plugin/bin/lib/console/residue');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, cachePath } = require('../../../plugin/bin/lib/reconcile/cache');
 const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
@@ -262,6 +263,37 @@ test('filingRerunRemedy is empty for a residue console with no planned filing (#
   const runDir = prConsoleRunDir([['f1', 'filing-failed']]);
   assert.strictEqual(filingRerunRemedy(runDir), '');
   assert.match(consoleResidueHint(runDir), /unresolved: f1 \(filing-failed\) — review them, then run console-residue\.js --ack --run /);
+});
+// #4679: the digest twin — a planned digest entry with no digested line is `digest-pending` residue and the hint
+// names the digest re-run plus the log remedy, beside the ack.
+const DIGESTED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:bbbbbbbbbbbb digested (work-fingerprint consolefinding-4567ef01). Reversibility: n/a.\n';
+function plannedDigestRunDir() {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-digest-'));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' }],
+    digests: [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }],
+  }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
+  return runDir;
+}
+test('a console holding a planned digest entry with no digested line reads residue and the hint names the digest re-run (#4679)', () => {
+  const runDir = plannedDigestRunDir();
+  assert.strictEqual(readConsoleState(runDir), 'residue');
+  assert.deepStrictEqual(consoleResidue(runDir), { items: 1, unreadable: [], names: ['tiebreak:bbbbbbbbbbbb (digest-pending)'] });
+  assert.strictEqual(filingRerunRemedy(runDir), '');
+  const remedy = digestRerunRemedy(runDir);
+  assert.ok(remedy.startsWith(`re-run the planned digest entries: console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>, then ${DIGEST_LOG_REMEDY}`), remedy);
+  assert.ok(consoleResidueHint(runDir).includes(`${remedy}; or review them, then run console-residue.js --ack --run "${runDir}"`), consoleResidueHint(runDir));
+});
+test('digestRerunRemedy is empty for a residue console with no planned digest (#4679)', () => {
+  assert.strictEqual(digestRerunRemedy(prConsoleRunDir([['f1', 'filing-failed']])), '');
+});
+test('once the digested line is logged the run reads resolved (#4679)', () => {
+  const runDir = plannedDigestRunDir();
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), DIGESTED_LINE);
+  assert.strictEqual(readConsoleState(runDir), 'resolved');
 });
 test('AC4.1: once the filed line is logged the run reads resolved (#4170)', () => {
   const runDir = plannedFilingRunDir();

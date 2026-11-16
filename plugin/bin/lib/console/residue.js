@@ -37,8 +37,11 @@ const DIGEST_PENDING_RESOLUTION = 'digest-pending';
 // STAGED/SKIP line (or quoted prose) is not evidence a record exists.
 const FILED_LINE_RE = /^- AUTO .*?(?:already )?filed as #(\d+) \(work-fingerprint (consolefinding-[0-9a-f]{8})\)/;
 
-// An AUTO line recording a digested or deduped can't-tell digest entry (#4679), anchored like FILED_LINE_RE.
-const DIGESTED_LINE_RE = /^- AUTO .*?(?:already )?digested \(work-fingerprint (consolefinding-[0-9a-f]{8})\)/;
+// An AUTO line recording a digested or deduped can't-tell digest entry (#4679). Stricter than FILED_LINE_RE: it
+// is anchored on the Queue-write step and a whitespace-free item token, exactly the shape log-decision.js's
+// formatEntry writes (`- AUTO {hms} — Queue write: {item} digested (work-fingerprint …)`), so negative wording
+// (`not digested`, `undigested`) or another step's line is never evidence.
+const DIGESTED_LINE_RE = /^- AUTO \S+ — Queue write: \S+ (?:already )?digested \(work-fingerprint (consolefinding-[0-9a-f]{8})\)/;
 
 // decisions.md text -> Map<fingerprint, record number>; the first line for a fingerprint wins.
 function filedRecords(decisions) {

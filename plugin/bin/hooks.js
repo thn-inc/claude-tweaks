@@ -1408,7 +1408,7 @@ async function runTeardownRun(argv, deps) {
 
 async function runArchiveRun(argv, deps) {
   const {
-    archiveRunDir, archiveCommitLine, pinnedGit, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+    archiveRunDir, archiveCommitLine, pinnedGit, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, digestRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
     TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
   } = require('./lib/reconcile/archive-merged');
   const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1464,6 +1464,8 @@ async function runArchiveRun(argv, deps) {
       what.push(`${items} unresolved item(s) no human has reviewed`);
       const rerun = filingRerunRemedy(runDir);
       if (rerun) remedies.push(rerun);
+      const digestRerun = digestRerunRemedy(runDir);
+      if (digestRerun) remedies.push(digestRerun);
       remedies.push(consoleAckRemedy(runDir));
     }
     if (unreadable.length > 0) {
