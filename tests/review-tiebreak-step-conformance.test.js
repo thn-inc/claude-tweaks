@@ -1503,6 +1503,12 @@ const CHUNK_LADDER = [
   [tiebreakSection('Resolve and act'), /at most three judge attempts/, 'a finding gets at most three judge attempts'],
   [tiebreakSection('Resolve and act'), /`check-coverage` stays the backstop for an unsettled finding nobody followed up/, 'check-coverage stays the backstop'],
   [tiebreakSection('Dispatched reviewer'), /Fallback ladder, per chunk first, then per finding:/, "the dispatched reviewer's ladder runs per chunk first, then per finding"],
+  // Final-review fix wave: a dispatched reviewer's timed-out chunk agent has spent its keep-alive bound
+  // (_shared/subagent-dispatch-core.md judges a child silent at the bound in-session), so it is never re-dispatched.
+  [tiebreakSection('Resolve and act'), /except a dispatched reviewer's timed-out chunk agent, which has already spent its keep-alive bound, so each of its findings goes straight to the inline rung, with no chunk re-dispatch\./, "a dispatched reviewer's timed-out chunk goes straight to the inline rung, with no chunk re-dispatch"],
+  [tiebreakSection('Dispatched reviewer'), /times out at that rule's bound as a chunk agent \(it has spent its keep-alive bound, so its chunk is not re-dispatched\)/, "the dispatched reviewer's ladder reads a timed-out chunk's findings inline, with no re-dispatch"],
+  // Final-review fix wave: single-finding follow-ups are capped like chunk agents, so a wave of twice-failed chunks cannot fan out 64 agents.
+  [tiebreakSection('Dispatch'), /Single-finding follow-ups \(`## Resolve and act`'s `unsettled`-id re-dispatches and per-finding fallbacks\) go out the same way: in parallel waves of \*\*8\*\*, each wave under that same wait rule\./, 'single-finding follow-ups go out in waves of 8 under the same wait rule'],
 ];
 const chunkLadderMissing = sectionFactsMissing(CHUNK_LADDER);
 
