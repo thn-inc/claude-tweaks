@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-16T09:44:35.266Z",
+  "computedAt": "2026-11-16T09:47:50.280Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -255,7 +255,7 @@
       },
       {
         "number": 4626,
-        "updatedAt": "2026-11-16T02:38:36Z",
+        "updatedAt": "2026-11-16T09:47:37Z",
         "state": "OPEN"
       },
       {
@@ -515,7 +515,7 @@
       },
       {
         "number": 4424,
-        "updatedAt": "2026-11-16T07:08:43Z",
+        "updatedAt": "2026-11-16T09:45:46Z",
         "state": "OPEN"
       },
       {
@@ -2588,96 +2588,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Defer-reason: needs-human-decision\n\nSurface: infra\n\n**Related:** #4608\n**Related:** #4610\n**Related:** #4625\n**Related:** #4502, #4564, #4577, #4620, #4621, #4623, #4624\n\n## Overview\n\nFiled from the \"Human in control: acceptance-centred pipeline\" decomposition (#4608), whose design doc named this as a separate follow-up and then was deleted: decide whether `plugin/bin/lib/issues/trust.js` should keep reading acceptance verdicts at all. The decomposition does not decide it. The label rename (#4610 expand, #4625 contract) migrates `trust.js`'s `demo:*` reads to `accept:*` like any other consumer and removes nothing from the trust machinery.\n\nThe design's stance that \"verdicts route work and do not feed an autonomy ladder\" is in tension with `trust.js` building a per-class trust table from `demo:*` verdicts. The other half of `trust.js` is a revert detector that `plugin/bin/lib/issues/merge-lane-breaker.js` reuses; that half is a safety net worth keeping whatever is decided about the verdict half.\n\n**Complexity:** Medium\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- Not changing the revert-detection half of `trust.js` or its reuse by `merge-lane-breaker.js`.\n- Not the label rename itself (#4610, #4625).\n- Not designing a replacement trust signal; the decision may be to keep reading verdicts unchanged.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4610 | Add accept:* verdict labels alongside demo:* (expand step) | open (the migrated reads are the baseline this decision starts from) |\n\n## Current State\n\n- `plugin/bin/lib/issues/trust.js` builds a per-class trust table from acceptance verdicts (`demo:approved`, `demo:changes-requested`, the `demo:approved-batch` provenance marker near line 323) and a revert detector reused by `plugin/bin/lib/issues/merge-lane-breaker.js` (which also trips on `demo:changes-requested`).\n- `plugin/skills/_shared/trust-table.md` documents the table; `plugin/bin/lib/issues/autonomy.js` consumes trust rows to cap grants.\n- The earned-autonomy trust table and the acceptance verdict are independent signals today; the design says verdicts must not feed an autonomy ladder.\n\n## Deliverables\n\n- [ ] A written decision (a record comment or a `docs/decisions/` entry) choosing one of: keep verdicts in the trust table unchanged; keep them only as a revert-detection input; stop reading them for trust grading altogether.\n- [ ] If the decision is not \"unchanged\": the `trust.js` change, the `trust-table.md` update, and the test updates, following expand-contract (the old behavior stays until the migration is verified).\n- [ ] The decision recorded against `#4608`'s design intent (\"verdicts route work; they do not feed an autonomy ladder\") so the two do not contradict.\n\n## Acceptance Criteria\n\n1. The decision names which of the three options was chosen and the evidence considered (at least: how many trust rows today derive from verdict labels, counted from the live repository's records).\n2. After the change (if any), a record with only an `accept:approved` verdict affects the trust table exactly as the chosen option states, pinned by a `tests/bin-lib/issues/trust.test.js` case.\n3. `merge-lane-breaker.js` still trips on `accept:changes-requested` and on a detected revert under every option.\n4. `npm test` passes.\n\n## Release Note\n\nDecided whether acceptance verdicts keep feeding the earned-autonomy trust table, keeping the revert safety net either way.\n\n## Technical Approach\n\nCount first, then decide: query how much of the live trust table depends on verdict labels, then choose the smallest change that keeps the design's non-goal true. The revert detector stays regardless.\n\n### Key Files\n\n- `plugin/bin/lib/issues/trust.js` — verdict reads and the revert detector\n- `plugin/bin/lib/issues/merge-lane-breaker.js` — reuses the revert detector\n- `plugin/skills/_shared/trust-table.md` — table contract\n- `tests/bin-lib/issues/trust.test.js` — pin the outcome\n\n## Gotchas\n\n- The revert-detection half is a safety net; do not drop it while resolving the verdict half.\n- Do not decide this inside the label rename records; keeping the decision separate is what keeps those two mechanical.\n\n\n<!-- work-fingerprint: human-in-control-acceptance:followup-trust -->\nwork-fingerprint: human-in-control-acceptance:followup-trust\n\n## Original request\n\nDecide whether trust.js should keep reading acceptance verdicts\n\nDefer-reason: needs-human-decision\n\nSurface: infra\n\n**Related:** #4608\n**Related:** #4610\n**Related:** #4625\n\n## Overview\n\nFiled from the \"Human in control: acceptance-centred pipeline\" decomposition (#4608), whose design doc named this as a separate follow-up and then was deleted: decide whether `plugin/bin/lib/issues/trust.js` should keep reading acceptance verdicts at all. The decomposition does not decide it. The label rename (#4610 expand, #4625 contract) migrates `trust.js`'s `demo:*` reads to `accept:*` like any other consumer and removes nothing from the trust machinery.\n\nThe design's stance that \"verdicts route work and do not feed an autonomy ladder\" is in tension with `trust.js` building a per-class trust table from `demo:*` verdicts. The other half of `trust.js` is a revert detector that `plugin/bin/lib/issues/merge-lane-breaker.js` reuses; that half is a safety net worth keeping whatever is decided about the verdict half.\n\n**Complexity:** Medium\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- Not changing the revert-detection half of `trust.js` or its reuse by `merge-lane-breaker.js`.\n- Not the label rename itself (#4610, #4625).\n- Not designing a replacement trust signal; the decision may be to keep reading verdicts unchanged.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4610 | Add accept:* verdict labels alongside demo:* (expand step) | open (the migrated reads are the baseline this decision starts from) |\n\n## Current State\n\n- `plugin/bin/lib/issues/trust.js` builds a per-class trust table from acceptance verdicts (`demo:approved`, `demo:changes-requested`, the `demo:approved-batch` provenance marker near line 323) and a revert detector reused by `plugin/bin/lib/issues/merge-lane-breaker.js` (which also trips on `demo:changes-requested`).\n- `plugin/skills/_shared/trust-table.md` documents the table; `plugin/bin/lib/issues/autonomy.js` consumes trust rows to cap grants.\n- The earned-autonomy trust table and the acceptance verdict are independent signals today; the design says verdicts must not feed an autonomy ladder.\n\n## Deliverables\n\n- [ ] A written decision (a record comment or a `docs/decisions/` entry) choosing one of: keep verdicts in the trust table unchanged; keep them only as a revert-detection input; stop reading them for trust grading altogether.\n- [ ] If the decision is not \"unchanged\": the `trust.js` change, the `trust-table.md` update, and the test updates, following expand-contract (the old behavior stays until the migration is verified).\n- [ ] The decision recorded against `#4608`'s design intent (\"verdicts route work; they do not feed an autonomy ladder\") so the two do not contradict.\n\n## Acceptance Criteria\n\n1. The decision names which of the three options was chosen and the evidence considered (at least: how many trust rows today derive from verdict labels, counted from the live repository's records).\n2. After the change (if any), a record with only an `accept:approved` verdict affects the trust table exactly as the chosen option states, pinned by a `tests/bin-lib/issues/trust.test.js` case.\n3. `merge-lane-breaker.js` still trips on `accept:changes-requested` and on a detected revert under every option.\n4. `npm test` passes.\n\n## Release Note\n\nDecided whether acceptance verdicts keep feeding the earned-autonomy trust table, keeping the revert safety net either way.\n\n## Technical Approach\n\nCount first, then decide: query how much of the live trust table depends on verdict labels, then choose the smallest change that keeps the design's non-goal true. The revert detector stays regardless.\n\n### Key Files\n\n- `plugin/bin/lib/issues/trust.js` — verdict reads and the revert detector\n- `plugin/bin/lib/issues/merge-lane-breaker.js` — reuses the revert detector\n- `plugin/skills/_shared/trust-table.md` — table contract\n- `tests/bin-lib/issues/trust.test.js` — pin the outcome\n\n## Gotchas\n\n- The revert-detection half is a safety net; do not drop it while resolving the verdict half.\n- Do not decide this inside the label rename records; keeping the decision separate is what keeps those two mechanical.\n\n\n<!-- work-fingerprint: human-in-control-acceptance:followup-trust -->\nwork-fingerprint: human-in-control-acceptance:followup-trust\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n",
-        "createdAt": "2026-10-30T12:16:55Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4626,
-        "state": "OPEN",
-        "title": "Decide whether trust.js should keep reading acceptance verdicts",
-        "updatedAt": "2026-11-16T02:38:36Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
