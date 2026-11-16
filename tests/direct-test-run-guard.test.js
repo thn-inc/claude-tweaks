@@ -1016,7 +1016,6 @@ test('AC8.2: a shell script holding a direct test run is denied', () => {
   withTempDir((dir) => {
     const file = path.join(dir, 'loop.sh');
     fs.writeFileSync(file, 'node --test a.test.js b.test.js\n');
-    fs.chmodSync(file, 0o755);
     for (const command of [`bash ${file}`, file]) {
       const verdict = judgeOrThrow(bash(command), realDeps());
       assert.equal(verdict.decision, 'deny', command);
