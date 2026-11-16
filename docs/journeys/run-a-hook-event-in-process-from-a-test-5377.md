@@ -57,6 +57,7 @@ files:
   - Scan A covers every hook event module plus `dispatch-prompt-gate.js` and `skill-invocation.js`, default parameters included. Scan B needs `env` inside the call's own parentheses, so an `env` moved into a variable built elsewhere does not count.
   - `repoInfo`'s environment is its third parameter: `repoInfo(p, opts, { env })`.
   - Each module has a floor per call name. `<file>: matched N runGit( calls, floor M` means the scan found fewer calls than the floor. Either the matcher stopped matching (repair the matcher) or a real call was removed (lower the floor to the new count). Raise a floor when a call is added, so the next silent drop is caught.
+  - `hooks.js dispatches event modules the scans do not read: add them to EVENT_MODULES and FLOORS here:` followed by module paths means `hooks.js`'s own `EVENT_MODULES` map dispatches an event module the scan list lacks. Add each path to the test's `EVENT_MODULES` array and give it a `FLOORS` entry.
 - **Red flags:** Lowering a floor to get to green without having removed a call.
 
 ### 4. Keep real processes few and counted
@@ -73,4 +74,5 @@ files:
 
 ## Origin
 - Created during build of #5377, which moved `tests/hooks-dispatcher.test.js`, `tests/teardown-gate.test.js`, `tests/user-prompt-submit.test.js`, `tests/skill-invocation.test.js`, `tests/hooks-run-attribution.test.js` and `tests/run-integrity.test.js` onto `runHookCli` and made every hook event module read its environment from the context.
+- Step 3 updated during wrap-up of #5377: review commit 20c8e4067 tied the scan list to `hooks.js`'s `EVENT_MODULES`, which added the missing-module message.
 - Related: `call-a-plugin-bin-cli-in-process-from-a-test-5374.md` (the `runCli` helper this builds on), `act-on-a-red-cli-entry-conformance-scan-5374.md` (where `hooks.js` is a named exemption).
