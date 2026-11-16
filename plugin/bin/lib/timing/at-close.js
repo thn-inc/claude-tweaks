@@ -31,8 +31,7 @@ const errText = (err) => (err && err.message ? err.message : String(err));
 function ownTranscripts(runState, { env = {}, homeDir = os.homedir } = {}) {
   try {
     const rs = runState && typeof runState === 'object' ? runState : {};
-    const usable = (v) => (typeof v === 'string' && v ? v : null);
-    const worktree = usable(rs.worktree) || usable(rs.worktreeAtClose);
+    const worktree = require('../hooks/context').priorWorktree(rs);
     if (!worktree) return { paths: [], reason: 'no worktree or worktreeAtClose in run-state.json' };
     const sid = rs.sessionId;
     if (typeof sid !== 'string') return { paths: [], reason: 'no sessionId in run-state.json' };

@@ -4003,3 +4003,27 @@ test('AC12.3: archiving a multi-record parent writes one timing.json at the arch
   assert.equal(fs.readFileSync(path.join(fx.archiveDir, 'spec-11', 'timing.json'), 'utf8'), childContent);
   assert.deepEqual(spawnCalls, [fx.archiveDir]);
 });
+
+test('a late events.jsonl line landing before the straggler sweep is in the inline phase rows', (t) => {
+  spawnCalls.length = 0;
+  const fx = plainRun('2026-11-16T100000-spec-5555-late', { status: 'active', worktree: '/gone/wt-l' });
+  fs.writeFileSync(path.join(fx.runDir, 'events.jsonl'), '{"skill":"claude-tweaks:build","ts":"2026-11-16T10:00:00.000Z","type":"skill_invoked"}\n');
+
+  // The second plain readdirSync(runDir) is the straggler snapshot (the first is the top-level one);
+  // events.jsonl moved already, so a fresh one landing now is a straggler that the sweep appends.
+  const real = fs.readdirSync.bind(fs);
+  let calls = 0;
+  t.mock.method(fs, 'readdirSync', (p, opts) => {
+    if (p === fx.runDir && opts === undefined && ++calls === 2) {
+      fs.writeFileSync(path.join(fx.runDir, 'events.jsonl'), '{"skill":"claude-tweaks:test","ts":"2026-11-16T10:10:00.000Z","type":"skill_invoked"}\n');
+    }
+    return real(p, opts);
+  });
+
+  const result = archiveRunDir(fx.root, fx.runDir);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(calls >= 2, true, 'the straggler injection must have fired');
+  assert.equal(fs.existsSync(fx.runDir), false);
+  T.assertPhaseRows(T.readTiming(fx.archiveDir));
+});

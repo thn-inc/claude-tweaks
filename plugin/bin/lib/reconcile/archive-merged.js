@@ -1781,30 +1781,11 @@ function archiveRunDir(root, runDir, { env } = {}) {
   // run-state.json moved above, so finalize the terminal state at its new
   // (archived) location, not the original runDir — writeRunState reads and
   // preserves whatever state already moved there.
-  const usablePath = (v) => (typeof v === 'string' && v ? v : null);
-  const priorWorktree = usablePath(preMoveState.worktree) || usablePath(preMoveState.worktreeAtClose);
+  const priorWorktree = require('../hooks/context').priorWorktree(preMoveState);
   const result = writeRunState(archiveDir, priorWorktree
     ? { status: 'clean', worktree: null, worktreeAtClose: priorWorktree }
     : { status: 'clean', worktree: null });
   if (!result) return refuseAfterMarker('close-failed');
-
-  // #5555: phase rows inline (no transcript read), token totals in a detached
-  // pass. A run already clean was closed by close-run, which wrote its own.
-  if (preMoveState.status !== 'clean') {
-    try {
-      const timing = require('../timing/at-close');
-      timing.writePhaseTimingSync(archiveDir);
-      timing.spawnTokenPass(archiveDir);
-    } catch (err) {
-      try {
-        const { appendEntry, formatEntry } = require('../log-decision/append');
-        appendEntry({ runDir: archiveDir, section: '/wrap-up', entry: formatEntry({
-          status: 'SKIP', now: Date.now(), step: 'timing at close',
-          text: `condition: timing at close failed (${(err && err.message) || String(err)}) → fallback: no timing.json written`,
-        }) });
-      } catch { /* a failed trace line never fails the archive */ }
-    }
-  }
 
   // Late-write guard (#990 — reproduced live during #893's own wrap-up even
   // with #902's dynamic enumeration already in place): the top-level
@@ -1844,6 +1825,28 @@ function archiveRunDir(root, runDir, { env } = {}) {
            (#3198) — either way, nothing here should destroy existing
            archive content or block the rest of this call. */
       }
+    }
+  }
+
+  // #5555: phase rows inline (no transcript read), token totals in a detached
+  // pass. A run already clean was closed by close-run, which wrote its own.
+  // Runs after the straggler sweep so a late events.jsonl line is in the rows
+  // and a straggler timing.json never collides with this write.
+  if (preMoveState.status !== 'clean') {
+    try {
+      const timing = require('../timing/at-close');
+      timing.writePhaseTimingSync(archiveDir);
+      timing.spawnTokenPass(archiveDir);
+    } catch (err) {
+      try {
+        // Same one SKIP line as at-close.js's logTimingSkip — keep the two in
+        // sync; this catch must not depend on at-close having loaded.
+        const { appendEntry, formatEntry } = require('../log-decision/append');
+        appendEntry({ runDir: archiveDir, section: '/wrap-up', entry: formatEntry({
+          status: 'SKIP', now: Date.now(), step: 'timing at close',
+          text: `condition: timing at close failed (${(err && err.message) || String(err)}) → fallback: no timing.json written`,
+        }) });
+      } catch { /* a failed trace line never fails the archive */ }
     }
   }
 

@@ -187,7 +187,8 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
   const runId = '2026-08-01T090000-record-1687-noown';
   const { root, runDir } = fixtureAbandonedShippedRun({ runId, ownerSessionId: 'sess-1687-someone-else' });
 
-  const env = { ...process.env };
+  // #5555: the archive starts a detached token pass; point its transcript lookup at an empty fixture dir.
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-cfg-')) };
   delete env.CLAUDE_TWEAKS_SESSION_ID;
   execFileSync('node', [HOOKS, 'reconcile-background'], { cwd: root, encoding: 'utf8', env });
 

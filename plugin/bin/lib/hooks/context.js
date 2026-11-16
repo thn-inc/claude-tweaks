@@ -26,6 +26,14 @@ function parseInput(raw) {
   } catch { return {}; }
 }
 
+// #5555: the worktree a run was bound to — its live `worktree`, else the
+// `worktreeAtClose` a close kept — as a non-empty string, else null.
+function priorWorktree(state) {
+  const usable = (v) => (typeof v === 'string' && v ? v : null);
+  const rs = state && typeof state === 'object' ? state : {};
+  return usable(rs.worktree) || usable(rs.worktreeAtClose);
+}
+
 function readRunState(runDir) {
   try { return JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8')); } catch { return null; }
 }
@@ -1083,7 +1091,7 @@ function appendEvent(runDir, type, data, attribution) {
 
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
-  readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
+  readRunState, priorWorktree, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, isSessionOwnedAdHocRun, resolveDenialRunDir,
   claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
 };
