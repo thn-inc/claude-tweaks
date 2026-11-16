@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../../../plugin/bin/lib/issues/grant-maturation.js');
+const { evaluateMaturation, withheldGrant, extractPendingGrantedAt, partitionGrantComments } = require('../../../plugin/bin/lib/issues/grant-maturation.js');
 
 const NOW = new Date('2026-08-23T12:00:00Z');
 
@@ -95,6 +95,25 @@ test('AC4.3: no-build-grant when the build-label input is omitted or not true', 
     assert.strictEqual(result.state, 'no-build-grant');
     assert.match(result.reason, /auto:build/);
   }
+});
+
+test('withheldGrant: a merge grant without auto:build names the build grant, with the evaluator reason', () => {
+  const mat = evaluateMaturation({ hasBuildLabel: false, hasMergeLabel: true });
+  assert.deepStrictEqual(withheldGrant(mat, ['auto:merge']), { missing: 'build-grant', detail: mat.reason });
+  assert.deepStrictEqual(withheldGrant(mat, ['auto:merge-pending']), { missing: 'build-grant', detail: mat.reason });
+});
+
+test('withheldGrant: no merge grant at all names the merge grant, even without auto:build', () => {
+  const mat = evaluateMaturation({ hasBuildLabel: false });
+  const expected = { missing: 'merge-grant', detail: 'no auto:merge or auto:merge-pending label present' };
+  assert.deepStrictEqual(withheldGrant(mat, []), expected);
+  assert.deepStrictEqual(withheldGrant(mat, undefined), expected);
+});
+
+test('withheldGrant: any other immature state names the merge grant with the evaluator reason', () => {
+  const mat = evaluateMaturation({ hasBuildLabel: true, hasPendingLabel: true, pendingSince: null });
+  assert.strictEqual(mat.state, 'unknown-age');
+  assert.deepStrictEqual(withheldGrant(mat, ['auto:build', 'auto:merge-pending']), { missing: 'merge-grant', detail: mat.reason });
 });
 
 test('extractPendingGrantedAt: null for non-array, empty array, or no marker', () => {

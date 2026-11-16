@@ -35,7 +35,7 @@ const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { iterRunDirsWithState } = require('../hooks/context');
 const { runWithConcurrency } = require('./gh-pool');
-const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
+const { evaluateMaturation, withheldGrant, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { sddRulingDeferralReason, SDD_RULING_REASONS, sddRulingRatifyAction } = require('../console/sdd-ruling');
@@ -404,12 +404,7 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
             // passed over names them, so the withhold is not mistaken for "nobody
             // ever granted" -- the planted comment is what the operator should see.
             const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
-            // A member with no merge grant at all names the missing merge grant, as
-            // console/resolve.js does: naming auto:build first would send the operator
-            // to a second withhold.
-            const labels = grant.labels || [];
-            const noGrant = mat.state === 'no-build-grant' && !labels.includes('auto:merge') && !labels.includes('auto:merge-pending');
-            const base = noGrant ? 'no auto:merge or auto:merge-pending label present' : mat.reason;
+            const base = withheldGrant(mat, grant.labels).detail;
             mergeGrantGap = { member: n, reason: passedOver.length ? `${base} — ${passedOver.join('; ')}` : base };
             break;
           }

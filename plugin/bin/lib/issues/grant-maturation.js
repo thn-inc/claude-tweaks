@@ -128,4 +128,16 @@ function evaluateMaturation({ hasBuildLabel, hasPendingLabel, hasMergeLabel, pen
   return { mature: true, state: 'matured', reason: `pending grant is ${ageHours.toFixed(1)}h old, past the ${windowHours}h veto window`, ageHours, windowHours };
 }
 
-module.exports = { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments, PENDING_GRANT_MARKER_RE };
+// mat: evaluateMaturation's result for a member that is not mature. labels: that
+// member's live label names. Returns { missing, detail }: which grant an operator
+// restores first ('build-grant' | 'merge-grant') and the text to show for it. A
+// member with no merge grant at all reads 'merge-grant' even when auto:build is
+// absent too: naming auto:build first would send the operator to a second withhold.
+function withheldGrant(mat, labels) {
+  if (mat.state !== 'no-build-grant') return { missing: 'merge-grant', detail: mat.reason };
+  const names = Array.isArray(labels) ? labels : [];
+  if (names.includes('auto:merge') || names.includes('auto:merge-pending')) return { missing: 'build-grant', detail: mat.reason };
+  return { missing: 'merge-grant', detail: 'no auto:merge or auto:merge-pending label present' };
+}
+
+module.exports = { evaluateMaturation, withheldGrant, extractPendingGrantedAt, partitionGrantComments, PENDING_GRANT_MARKER_RE };

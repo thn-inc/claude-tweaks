@@ -9,7 +9,7 @@
 
 const crypto = require('crypto');
 const path = require('path');
-const { evaluateMaturation } = require('../issues/grant-maturation');
+const { evaluateMaturation, withheldGrant } = require('../issues/grant-maturation');
 const { resolveRecords, memberRecords } = require('../wrap-up/pack');
 const {
   SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
@@ -465,15 +465,11 @@ function mergeResolution(snapshot, deps) {
       // #3358: name the untrusted marker comments ghReadGrants passed over, so an
       // unknown-age grant is not mistaken for "never granted".
       const passedOver = Array.isArray(g.skippedUntrusted) && g.skippedUntrusted.length ? ` — ${g.skippedUntrusted.join('; ')}` : '';
-      // A member with no merge grant at all keeps the grant-missing reason: naming
-      // auto:build first would send the operator to a second withhold.
-      const noBuild = mat.state === 'no-build-grant';
-      const hasGrant = labels.includes('auto:merge') || labels.includes('auto:merge-pending');
-      if (noBuild && hasGrant) {
-        return { resolution: 'leave-open', reason: `#${n} lacks auto:build — a merge grant counts only together with a live auto:build (${mat.reason})${passedOver}` };
+      const withheld = withheldGrant(mat, labels);
+      if (withheld.missing === 'build-grant') {
+        return { resolution: 'leave-open', reason: `#${n}: ${withheld.detail}${passedOver}` };
       }
-      const detail = noBuild ? 'no auto:merge or auto:merge-pending label present' : mat.reason;
-      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${detail})${passedOver}` };
+      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${withheld.detail})${passedOver}` };
     }
   }
   return { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' };

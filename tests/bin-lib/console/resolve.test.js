@@ -763,14 +763,14 @@ test('AC5.1, AC5.3: a member carrying auto:merge without auto:build resolves the
   const grants = { 7: { labels: ['auto:build', 'auto:merge'], pendingSince: null }, 8: { labels: ['auto:merge'], pendingSince: null } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7, 8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'leave-open');
-  assert.strictEqual(r.merge.reason, `#8 lacks auto:build — a merge grant counts only together with a live auto:build (${NO_BUILD_REASON})`);
+  assert.strictEqual(r.merge.reason, `#8: ${NO_BUILD_REASON}`);
 });
 
 test('AC5.1: a no-build member with passed-over untrusted notes carries the passedOver suffix in the no-build-grant reason', () => {
   const note = 'skipped marker comment https://x/issues/8#c1 by eve (NONE) — not an owner, member, or collaborator';
   const grants = { 8: { labels: ['auto:merge'], pendingSince: null, skippedUntrusted: [note] } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
-  assert.strictEqual(r.merge.reason, `#8 lacks auto:build — a merge grant counts only together with a live auto:build (${NO_BUILD_REASON}) — ${note}`);
+  assert.strictEqual(r.merge.reason, `#8: ${NO_BUILD_REASON} — ${note}`);
 });
 
 test('AC5.1: a member with no grant labels at all keeps the lacks auto:merge reason, not the build one', () => {
