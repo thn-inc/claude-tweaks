@@ -17,7 +17,7 @@ const ROOT = path.join(__dirname, '..');
 const RUNNER = path.join(ROOT, 'tools', 'run-tests.js');
 const {
   parseShard, readDurations, assignShards, extractRunFlags, listTestFiles, durationsPartialPath, finishRecording,
-  DURATIONS_FILE, PER_FILE_OVERHEAD_MS,
+  DURATIONS_FILE, PER_FILE_OVERHEAD_MS, durationsCoverageGaps, durationsOverCeiling,
 } = require(RUNNER);
 const reporter = require(path.join(ROOT, 'tools', 'test-durations-reporter.js'));
 
@@ -81,6 +81,32 @@ test('assignShards looks files up by their posix path, so a win32-separated list
   const durations = new Map([['tests/a.test.js', 9000], ['tests/b.test.js', 10]]);
   const shards = assignShards(['tests\\a.test.js', 'tests\\b.test.js'], durations, 1);
   assert.strictEqual(shards[0].unmeasured, 0);
+});
+
+test('durationsCoverageGaps names a file at the floor that has no entry', () => {
+  const sizes = {
+    'a.test.js': 102400,
+    'b.test.js': 102399,
+    'c.test.js': 200000,
+    'gone.test.js': null,
+  };
+  const gaps = durationsCoverageGaps(Object.keys(sizes), new Map([['c.test.js', 5000]]), (f) => sizes[f]);
+  assert.deepStrictEqual(gaps, ['a.test.js']);
+});
+
+test('durationsCoverageGaps matches a win32-separated path to its posix entry', () => {
+  const gaps = durationsCoverageGaps(['tests\\x.test.js'], new Map([['tests/x.test.js', 5000]]), () => 200000);
+  assert.deepStrictEqual(gaps, []);
+});
+
+test('durationsOverCeiling names an entry above the ceiling and not one at it', () => {
+  const over = durationsOverCeiling(new Map([
+    ['tests/over.test.js', 40001],
+    ['tests/at.test.js', 40000],
+  ]));
+  assert.strictEqual(over.length, 1);
+  assert.ok(over[0].startsWith('tests/over.test.js'), over[0]);
+  assert.ok(over[0].includes('40001'), over[0]);
 });
 
 test('readDurations reads the files map and rejects any other shape', () => {
