@@ -5,6 +5,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { run } = require('../../../plugin/bin/ci-audit');
+const { DEFAULTS } = require('../../../plugin/bin/lib/ci-audit/checks');
+const { NO_WORKFLOW_FILES } = require('../../../plugin/bin/lib/ci-audit/source');
 
 const NOW = new Date('2026-11-16T18:00:00Z');
 const REPO = 'thn-inc/claude-tweaks';
@@ -50,13 +52,16 @@ const BUILD_JOBS = {
   ]),
 };
 
-const isRunsList = (args) => args[0] === 'api' && /^repos\/[^/]+\/[^/]+\/actions\/runs$/.test(args[3]);
+const LIST_RE = /^repos\/[^/]+\/[^/]+\/actions\/workflows\/([^/]+)\/runs$/;
+const isRunsList = (args) => args[0] === 'api' && LIST_RE.test(args[3]);
 const jobsRunId = (args) => {
   const m = args[0] === 'api' ? /^repos\/[^/]+\/[^/]+\/actions\/runs\/(\d+)\/jobs$/.exec(args[3]) : null;
   return m ? Number(m[1]) : null;
 };
 const argVal = (args, key) => args.find((a) => a.startsWith(`${key}=`)).slice(key.length + 1);
+const base = (p) => p.slice(p.lastIndexOf('/') + 1);
 
+// Each workflow's runs list serves the rows whose path ends in its file name, newest first.
 function fakeRunner({ runs = [], jobs = {}, runsError = null } = {}) {
   const calls = [];
   const runner = (args) => {
@@ -65,9 +70,11 @@ function fakeRunner({ runs = [], jobs = {}, runsError = null } = {}) {
     if (isRunsList(args)) {
       if (runsError) throw runsError;
       if (Number(argVal(args, 'page')) > 1) return JSON.stringify({ total_count: 0, workflow_runs: [] });
-      const [from, to] = argVal(args, 'created').split('..').map(Date.parse);
-      const inRange = runs.filter((r) => Date.parse(r.created_at) >= from && Date.parse(r.created_at) <= to);
-      return JSON.stringify({ total_count: inRange.length, workflow_runs: inRange });
+      const file = LIST_RE.exec(args[3])[1];
+      const from = Date.parse(`${argVal(args, 'created').replace(/^>=/, '')}T00:00:00Z`);
+      const mine = runs.filter((r) => typeof r.path === 'string' && base(r.path) === file && Date.parse(r.created_at) >= from)
+        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+      return JSON.stringify({ total_count: mine.length, workflow_runs: mine });
     }
     const id = jobsRunId(args);
     if (id !== null && Object.prototype.hasOwnProperty.call(jobs, id)) {
@@ -122,20 +129,26 @@ test('AC1.1: two runs of a two-job workflow give the hand-computed per-job phase
   assert.deepEqual(tst.setup, { p50Ms: 20000, p90Ms: 30000, n: 2 });
   assert.deepEqual(tst.running, { p50Ms: 60000, p90Ms: 120000, n: 2 });
   // Totals: lint 60 s and 95 s (p50 60 s), test 170 s and 100 s (p50 100 s); the path is lint → test.
-  assert.deepEqual(r.report.criticalPaths, [{ workflow: BUILD, pathMs: 160000, sumMs: 160000, chain: ['lint', 'test'] }]);
+  assert.deepEqual(r.report.criticalPaths, [{ workflow: BUILD, pathMs: 160000, sumMs: 160000, chain: ['lint', 'test'], allJobsMatched: true }]);
   assert.deepEqual(r.report.workflows, [{ file: BUILD, unparsed: [] }]);
-  assert.deepEqual(r.report.window, { days: 7, from: '2026-11-09', maxRuns: 20, workflow: null, minSample: 5, sampledRuns: 2 });
+  assert.deepEqual(r.report.window, {
+    days: 7, from: '2026-11-09', maxRuns: 20, workflow: null, minSample: 5, thresholds: DEFAULTS, sampledRuns: 2,
+  });
   assert.equal(r.report.excluded, 0);
+  assert.deepEqual(r.report.notTimed, { skipped: 0, cancelled: 0 });
   assert.deepEqual(r.report.breaches, []); // two runs sit below the default minimum sample
   assert.deepEqual(r.report.underSampled, [{ workflow: BUILD, job: 'lint', runs: 2 }, { workflow: BUILD, job: 'test', runs: 2 }]);
+  assert.deepEqual(r.report.unmatchedJobs, []);
+  assert.deepEqual(r.report.overlaps, []); // lint and test share 2 runs, under the minimum sample
   assert.equal(r.report.droppedBreaches, 0);
   assert.equal(r.report.noData, null);
   assert.deepEqual(r.report.failures, []);
   assert.deepEqual(r.report.truncated, []);
-  assert.deepEqual(r.report.unsampled, { skipped: 0, outsideWorkflows: 0, noWorkflowPath: 0 });
+  assert.deepEqual(r.report.unsampled, { skipped: 0 });
   assert.deepEqual(Object.keys(r.report), [
     'definitions', 'window', 'workflows', 'jobs', 'criticalPaths', 'shardSkews', 'repeatedSteps', 'overlaps',
-    'breaches', 'underSampled', 'droppedBreaches', 'excluded', 'truncated', 'failures', 'unsampled', 'noData',
+    'breaches', 'underSampled', 'unmatchedJobs', 'droppedBreaches', 'excluded', 'notTimed', 'truncated', 'failures',
+    'unsampled', 'noData',
   ]);
   assert.equal(r.err, '');
   assert.deepEqual(r.pins, [{ owner: 'thn-inc', repo: 'claude-tweaks' }]);
@@ -179,22 +192,48 @@ test('AC2.2: neither failed read prints an empty or clean report', () => {
 });
 
 test('AC2.2: a succeeded read with zero completed runs exits 0 with noData.reason saying why, jobs []', () => {
-  const fake = fakeRunner({
-    runs: [
-      runRow(201, BUILD, '2026-11-15T10:00:00Z', { conclusion: 'skipped' }),
-      runRow(202, 'dynamic/dependabot/dependabot-updates', '2026-11-15T11:00:00Z'),
-      runRow(203, 'dynamic/pages/pages-build', '2026-11-15T11:30:00Z'),
-      runRow(204, '', '2026-11-15T12:00:00Z'),
-    ],
-  });
+  const fake = fakeRunner({ runs: [runRow(201, BUILD, '2026-11-15T10:00:00Z', { conclusion: 'skipped' })] });
   const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake });
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(r.report.jobs, []);
-  assert.deepEqual(r.report.unsampled, { skipped: 1, outsideWorkflows: 2, noWorkflowPath: 1 });
+  assert.deepEqual(r.report.unsampled, { skipped: 1 });
+  assert.equal(r.report.noData.reason, 'no completed run was sampled in the 7-day window: 1 run did no work (skipped)');
+  assert.deepEqual(r.report.failures, []);
+});
+
+test('a checkout with no workflow files exits 0 with noData naming the adapter\'s location, and reads no run', () => {
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake: buildFake(), workflows: files([]) });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.report.noData.reason, NO_WORKFLOW_FILES);
+  assert.equal(r.calls.length, 0);
+});
+
+test('--workflow takes a bare file name; one that matches no workflow file says so in noData', () => {
+  const two = files([{ file: BUILD, text: BUILD_YML }, { file: SHARD, text: SHARD_YML }]);
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--workflow', 'build.yml'], { fake: buildFake(), workflows: two });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.report.window.workflow, BUILD);
+  assert.deepEqual([...new Set(r.report.jobs.map((j) => j.workflow))], [BUILD]);
+  const none = gather(['gather', '--repo', REPO, '--days', '7', '--workflow', 'test.yml'], { fake: buildFake(), workflows: two });
+  assert.equal(none.code, 0);
+  assert.equal(none.report.window.workflow, 'test.yml');
+  assert.equal(none.report.noData.reason, 'workflow filter "test.yml" matched no workflow file in .github/workflows/');
+  assert.equal(none.calls.length, 0);
+});
+
+test('window.thresholds echoes every threshold and floor applied, an override included', () => {
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--thresholds', 'queue-wait-floor-ms=1000,shard-skew=3'], { fake: buildFake() });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.report.window.thresholds, { ...DEFAULTS, 'queue-wait-floor-ms': 1000, 'shard-skew': 3 });
+});
+
+test('noData for a mix of runs with no jobs and runs whose every job is excluded names both', () => {
+  const broken = jobsBody([{ name: 'lint', created_at: '2026-11-15T10:00:10Z', started_at: '2026-11-15T10:00:00Z', completed_at: null, steps: [] }]);
+  const fake = fakeRunner({ runs: BUILD_RUNS, jobs: { 101: broken, 102: jobsBody([]) } });
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake });
+  assert.equal(r.code, 0);
   assert.equal(r.report.noData.reason,
-    'no completed run was sampled in the 7-day window: 1 run did no work (skipped); '
-    + '2 runs came from outside the workflow-files directory; 1 run had no workflow path');
-  assert.deepEqual(r.report.failures, ['1 run carries no workflow path — excluded']);
+    'the 2 sampled runs gave no job with phases: 1 run of them had no jobs; 1 job excluded (a missing or out-of-order instant)');
 });
 
 test('AC2.2: a read whose every job is excluded exits 0 with noData.reason', () => {
@@ -244,6 +283,8 @@ test('usage errors exit 2 with one stderr line, nothing on stdout and no read', 
     ['gather', '--repo', 'not-a-slug'],
     ['gather', '--workflow'],
     ['gather', '--repo', REPO, '--root', '/elsewhere'],
+    ['gather', '--root', '   '],
+    ['gather', '--root', ''],
     [],
     ['scatter'],
   ];
@@ -347,27 +388,31 @@ test('an unparsed or unreadable workflow appears in workflows[].unparsed and nev
   assert.equal(r.report.droppedBreaches, 1); // the queue-wait breach the tabbed workflow would get
 });
 
-test('a workflow-files read that fails is a failure line, never a silent empty set', () => {
+test('workflow files that could not be listed make the read unavailable: exit 2, the failure named, no run read', () => {
   const r = gather(['gather', '--repo', REPO, '--days', '7'], {
     fake: buildFake(), workflows: () => ({ ok: false, workflows: [], error: 'not a directory' }),
   });
-  assert.equal(r.code, 0);
+  assert.equal(r.code, 2);
+  assert.equal(r.lines.length, 1);
   assert.deepEqual(r.report.failures, ['workflow files: not a directory']);
   assert.deepEqual(r.report.workflows, []);
+  assert.equal(r.report.noData, null);
+  assert.equal(r.calls.length, 0);
 });
 
-test('a truncated window names its truncated ranges in truncated', () => {
+const BOTH = files([{ file: BUILD, text: BUILD_YML }, { file: SHARD, text: SHARD_YML }]);
+
+test('a listing the deadline cut names the workflow it left short in truncated', () => {
   let t = 0;
   const fake = fakeRunner({ runs: [runRow(101, BUILD, '2026-11-16T10:00:00Z')], jobs: { 101: BUILD_JOBS[101] } });
   const runner = (args) => {
     const out = fake.runner(args);
-    if (isRunsList(args)) t = 530000; // the first range used up the runs read's share of the deadline
+    if (isRunsList(args)) t = 260000; // the first list call used up the listing's share of the deadline
     return out;
   };
-  const r = gather(['gather', '--repo', REPO, '--days', '7', '--runs', '2'], { fake: { runner, calls: [] }, clock: () => t });
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--runs', '2'], { fake: { runner, calls: [] }, clock: () => t, workflows: BOTH });
   assert.equal(r.code, 0, r.err);
-  assert.equal(r.report.truncated.length, 1);
-  assert.match(r.report.truncated[0], /^runs 2026-11-09\.\.2026-11-15: budget/);
+  assert.deepEqual(r.report.truncated, [`runs of ${SHARD}: 0 runs listed before the deadline (fewer than 2)`]);
   assert.equal(r.report.jobs.length, 2);
 });
 
@@ -376,12 +421,37 @@ test('a zero-run read inside a truncated window says the window was truncated', 
   const fake = fakeRunner({ runs: [] });
   const runner = (args) => {
     const out = fake.runner(args);
-    if (isRunsList(args)) t = 530000;
+    if (isRunsList(args)) t = 260000;
     return out;
   };
-  const r = gather(['gather', '--repo', REPO, '--days', '7', '--runs', '2'], { fake: { runner, calls: [] }, clock: () => t });
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--runs', '2'], { fake: { runner, calls: [] }, clock: () => t, workflows: BOTH });
   assert.equal(r.code, 0);
   assert.equal(r.report.noData.reason, 'no completed run was sampled in the 7-day window — the window was truncated (see truncated)');
+});
+
+test('a repeated-work breach (workflow null) is kept beside an unparsed workflow whose breaches are dropped', () => {
+  // Three parsed jobs declare `Setup` (a repeated-work lead with workflow null); the tabbed workflow's
+  // queue-wait lead is dropped. Only the `b.workflow === null` clause keeps the first.
+  const REP_YML = [
+    'on: push', 'concurrency: rep', 'jobs:',
+    ...['a', 'b', 'c'].flatMap((id) => [`  ${id}:`, '    steps:', '      - name: Setup', '        run: make setup']),
+    '',
+  ].join('\n');
+  const REP = '.github/workflows/rep.yml';
+  const rj = (name, s) => job(name, s, s, '2026-11-15T10:10:00Z', 'Setup', s);
+  const runs = [runRow(501, REP, '2026-11-15T10:00:00Z'), runRow(502, TABBED, '2026-11-15T10:00:00Z')];
+  const fake = fakeRunner({
+    runs,
+    jobs: {
+      501: jobsBody(['a', 'b', 'c'].map((n) => rj(n, '2026-11-15T10:00:00Z'))),
+      502: jobsBody([job('slow', '2026-11-15T10:00:00Z', '2026-11-15T10:01:00Z', '2026-11-15T10:01:10Z', null, null)]),
+    },
+  });
+  const workflows = files([{ file: REP, text: REP_YML }, { file: TABBED, text: TABBED_YML }]);
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--min-sample', '1'], { fake, workflows });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.report.breaches.map((b) => [b.check, b.workflow, b.step]), [['repeated-work', null, 'Setup']]);
+  assert.equal(r.report.droppedBreaches, 1);
 });
 
 test('without --repo the origin names the repository; --root is read for origin and workflow files', () => {

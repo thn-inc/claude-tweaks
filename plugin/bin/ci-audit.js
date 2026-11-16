@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// bin/ci-audit.js — /claude-tweaks:ci-health's (#5757) CLI. `gather` reads recent run data and the
-// workflow files through lib/ci-audit/source.js (the one module that knows the forge), splits each
-// job into waiting, setup and running time, aggregates the figures across runs and runs the
-// mechanical checks, then prints every measured fact as one JSON line. Report-only: it never edits
-// a workflow file or any CI setting, never files anything, and starts no process itself (the
-// source adapter's runner does every forge read, the origin read is repo-resolve.js's).
-// Logic lives in run(argv, deps); every side effect (runner, readWorkflowFiles, remoteUrl, pinHost,
-// cwd, now, clock, stdout, stderr) is injected so tests never touch the forge. `now` (a Date, else
-// the current time) dates the window; `clock()` (epoch ms) times the read against the adapter's
-// deadline.
+// bin/ci-audit.js — /claude-tweaks:ci-health's (#5757) CLI. `gather` reads the workflow files and
+// recent run data through lib/ci-audit/source.js (the one module that knows the forge, resolves
+// the repository and its host, and spawns), splits each job into waiting, setup and running time,
+// aggregates the figures across runs and runs the mechanical checks, then prints every measured
+// fact as one JSON line. Report-only: it never edits a workflow file or any CI setting, never files
+// anything, and starts no process itself. Text the adapter returns (a refusal, a failure, a
+// truncation line, an empty-read reason) is relayed as given.
+// Logic lives in run(argv, deps); every side effect (runner, readWorkflowFiles, cwd, now, clock,
+// stdout, stderr, and the adapter's repository-resolution deps remoteUrl, pinHost, gateDeps) is
+// injected so tests never touch the forge. `now` (a Date, else the current time) dates the window;
+// `clock()` (epoch ms) times the read against the adapter's deadline.
 //
 // Usage: ci-audit.js gather [--days N] [--runs N] [--workflow <file>] [--repo owner/name | --root <dir>]
 //                           [--min-sample N] [--thresholds <text>]
@@ -16,38 +17,45 @@
 //        ci-audit.js --help|-h
 //   --days N            window length, an integer 1..400 (default 30), starting at the UTC date
 //                       N days before now
-//   --runs N            the most recent completed runs sampled, an integer 1..30 (default 20)
-//   --workflow <file>   sample only runs of this workflow file (its checkout-relative path)
+//   --runs N            the most recent completed runs sampled per workflow file, an integer 1..30
+//                       (default 20; the adapter also bounds the sample across all workflows)
+//   --workflow <file>   sample only this workflow file (its checkout-relative path or file name)
 //   --repo owner/name   the repository to read (default: the origin remote); its host is pinned
-//                       for every forge read
+//                       for every read
 //   --root <dir>        the checkout whose origin names the repository and whose workflow files
 //                       are read, instead of the current directory. Never with --repo, which would
 //                       name the repository a second way
 //   --min-sample N      the fewest runs a job needs before any check judges it, an integer 1..30
 //                       (default checks.js's DEFAULT_MIN_SAMPLE, 5)
-//   --thresholds <text> comma-separated `check-id=number` overrides of the checks' thresholds
+//   --thresholds <text> comma-separated `id=number` overrides of the checks' thresholds and floors
 //   Each flag at most once: a repeated flag is a usage error, never a silent overwrite.
 // Time budget: the source adapter bounds the whole read at 570 s, so the caller's command timeout
 // must be at least 600000 ms.
 //
 // Output (one JSON line): { definitions, window, workflows: [{file, unparsed}], jobs, criticalPaths,
-// shardSkews, repeatedSteps, overlaps, breaches, underSampled, droppedBreaches, excluded, truncated,
-// failures, unsampled, noData }.
-// `window` is {days, from, maxRuns, workflow, minSample, sampledRuns}: `minSample` is the floor
-// actually applied (the flag, else the default, never null) and `from` the window's first UTC day
-// (null when an injected `now` was invalid and the read refused it). `underSampled` lists
-// {workflow, job, runs} for every job with fewer runs than `minSample` (no check judged it), sorted
-// by workflow then job, so too few runs never reads as clean. `workflows` lists every workflow
-// file found, a file that could not be read carrying its reason in `unparsed`; a workflow with any
-// `unparsed` reason is never judged, so its breaches are dropped and counted in `droppedBreaches`.
-// `truncated`, `failures` and `unsampled` render whatever the read's outcome. `noData` is {reason}
-// when the read succeeded but no run was sampled, the sampled runs had no jobs, or every job was
-// excluded, else null: an empty sample is never a clean report.
+// shardSkews, repeatedSteps, overlaps, breaches, underSampled, unmatchedJobs, droppedBreaches,
+// excluded, notTimed, truncated, failures, unsampled, noData }.
+// `window` is {days, from, maxRuns, workflow, minSample, thresholds, sampledRuns}: `minSample` is
+// the floor actually applied (the flag, else the default, never null), `thresholds` every check
+// threshold and absolute floor actually applied (checks.js's limitsOf), `workflow` the file the
+// filter matched (else the filter as given, or null), and `from` the window's first UTC day (null
+// when an injected `now` was invalid and the read refused it). `underSampled` lists {workflow,
+// job, runs} for every job with fewer runs than `minSample` (no check judged it), sorted by
+// workflow then job, so too few runs never reads as clean. `unmatchedJobs` lists {workflow, job}
+// for every run job no workflow job matched: no workflow-file check reached it, so it is
+// unchecked, never clean. `notTimed` counts the skipped and cancelled jobs left out of every
+// figure. `workflows` lists every workflow file found, a file that could not be read carrying its
+// reason in `unparsed`; a workflow with any `unparsed` reason is never judged, so its breaches are
+// dropped and counted in `droppedBreaches`. `truncated`, `failures` and `unsampled` render whatever
+// the read's outcome; `truncated` holds only what could have changed the sample. `noData` is
+// {reason} when the read succeeded but no run was sampled (no workflow files, a filter matching
+// none, no completed run that did work), the sampled runs had no jobs, or no job was timed, else
+// null: an empty sample is never a clean report.
 // Exit codes:
-//   0 report printed — partial allowed (failures, truncated ranges, noData)
+//   0 report printed — partial allowed (failures, truncated lines, noData)
 //   2 malformed invocation, an unusable origin or host pin (one stderr line, nothing on stdout), or
-//     the run data read failed (no runs page read, or every sampled run's jobs read failed): the
-//     report still goes to stdout so nothing read is lost
+//     the read failed (the workflow files could not be listed, no runs page was read, or no
+//     sampled run's jobs were read): the report still goes to stdout so nothing read is lost
 //   3 the forge CLI is absent: the report goes to stdout with the failure naming it
 //
 // validate-findings: the judge's findings (a JSON array, --findings) checked against the gather
@@ -73,21 +81,17 @@
 
 const fs = require('fs');
 
-const { originUrl, gateOriginRepo, pinExplicitRepoHost } = require('./lib/repo-resolve');
-const { DEFAULT_DAYS, MAX_DAYS } = require('./lib/ci-health/constants');
-const { errorText } = require('./lib/ci-health/fetch');
-const { oneLine } = require('./lib/ci-health/render');
 const source = require('./lib/ci-audit/source');
 const { readWorkflowFacts } = require('./lib/ci-audit/workflow-facts');
 const { aggregate } = require('./lib/ci-audit/aggregate');
-const { CHECK_IDS, DEFAULT_MIN_SAMPLE, parseThresholds, evaluate } = require('./lib/ci-audit/checks');
+const { CHECK_IDS, DEFAULT_MIN_SAMPLE, parseThresholds, limitsOf, evaluate } = require('./lib/ci-audit/checks');
 const { validateFinding } = require('./lib/ci-audit/validate-finding');
 const { fingerprint } = require('./lib/ci-audit/fingerprint');
 const { toIssuePayload } = require('./lib/ci-audit/issue-payload');
 const { loadIssueIndex } = require('./lib/health-core/issue-index');
 const { decide } = require('./lib/health-core/dedup');
 
-const { DEFAULT_MAX_RUNS, MAX_RUNS } = source;
+const { DEFAULT_MAX_RUNS, MAX_RUNS, DEFAULT_DAYS, MAX_DAYS } = source;
 
 const USAGE = 'usage: ci-audit.js gather [--days N] [--runs N] [--workflow <file>] [--repo owner/name | --root <dir>] [--min-sample N] [--thresholds <text>]\n'
   + '       ci-audit.js validate-findings --gather <file> --findings <file> --issues <file> [--dry-run]\n'
@@ -100,11 +104,8 @@ const DEFINITIONS = Object.freeze({
   running: 'that boundary → job completed',
 });
 
-// owner/name only, no `.`/`..` segment: the adapter interpolates both into request paths.
-const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const validSlug = (slug) => REPO_RE.test(slug) && slug.split('/').every((s) => s !== '.' && s !== '..');
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 function parseArgs(argv) {
@@ -138,7 +139,8 @@ function parseArgs(argv) {
     } else if (a === '--repo') {
       const v = next();
       if (v === null) return { error: '--repo requires a value' };
-      if (!validSlug(v)) return { error: `--repo ${JSON.stringify(v)} must be owner/name` };
+      // owner/name only, no `.`/`..` segment: the adapter interpolates both into request paths.
+      if (!source.validRepo(v)) return { error: `--repo ${JSON.stringify(v)} must be owner/name` };
       o.repo = v;
     } else if (a === '--root') {
       const v = next();
@@ -156,12 +158,10 @@ function parseArgs(argv) {
   return o;
 }
 
+// The repository-resolution deps (remoteUrl, pinHost, gateDeps) are the adapter's own defaults.
 const realDeps = {
   runner: source.makeRunner(),
   readWorkflowFiles: (root) => source.readWorkflowFiles(root),
-  // `root` is --root's value, or null for the checkout the CLI runs in.
-  remoteUrl: (root) => originUrl(root || process.cwd()),
-  pinHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   cwd: () => process.cwd(),
   now: null,
   clock: () => Date.now(),
@@ -170,42 +170,14 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
-// -> { slug } or { error }. The host is pinned for the repository either way, so a --root
-// checkout on another host than the current directory's still reaches its own.
-function resolveRepo(o, deps) {
-  let spec;
-  if (o.repo !== null) {
-    const [owner, repo] = o.repo.split('/');
-    spec = { owner, repo };
-  } else {
-    const where = o.root === null ? '' : ` of ${JSON.stringify(o.root)}`;
-    let url;
-    try {
-      url = deps.remoteUrl(o.root);
-    } catch (err) {
-      return { error: `no --repo and origin remote${where} unreadable: ${oneLine(errorText(err))}` };
-    }
-    const gated = gateOriginRepo(url, deps.gateDeps);
-    if (gated.refusal) return { error: gated.refusal };
-    if (!gated.spec) return { error: `no --repo and origin remote${where} names no forge repository — pass --repo <owner/name>` };
-    spec = { host: gated.spec.host, owner: gated.spec.owner, repo: gated.spec.repo };
-    if (!validSlug(`${spec.owner}/${spec.repo}`)) return { error: `origin remote resolves to an unusable owner/name — pass --repo <owner/name>` };
-  }
-  try {
-    deps.pinHost(spec);
-  } catch (err) {
-    return { error: `could not pin the repository host: ${oneLine(errorText(err))}` };
-  }
-  return { slug: `${spec.owner}/${spec.repo}` };
-}
-
-// Facts per workflow file; a file that could not be read is an unparsed entry, never omitted.
+// Facts per workflow file, each step given its run-data name by the adapter; a file that could
+// not be read is an unparsed entry, never omitted.
 function workflowFacts(listing) {
   const factsByWorkflow = {};
   const workflows = [];
-  for (const w of listing.workflows) {
+  for (const w of listing.ok ? listing.workflows : []) {
     const facts = typeof w.text === 'string'
-      ? readWorkflowFacts(w.text)
+      ? source.withRunNames(readWorkflowFacts(w.text))
       : { jobs: [], concurrencyDeclared: false, unparsed: [w.unreadable] };
     factsByWorkflow[w.file] = facts;
     workflows.push({ file: w.file, unparsed: facts.unparsed });
@@ -214,21 +186,23 @@ function workflowFacts(listing) {
 }
 
 function noDataReason(o, read, agg) {
+  if (read.empty !== null) return read.empty;
   if (read.runs.length > 0) {
     if (agg.jobs.length > 0) return null;
     const runs = plural(read.runs.length, 'sampled run', 'sampled runs');
-    if (read.runs.every((r) => r.jobs.length === 0)) return `the ${runs} had no jobs`;
-    return `the ${runs} gave no job with phases: `
-      + `${plural(agg.excluded, 'job', 'jobs')} excluded (a missing or out-of-order instant)`;
+    const noJobs = read.runs.filter((r) => r.jobs.length === 0).length;
+    if (noJobs === read.runs.length) return `the ${runs} had no jobs`;
+    const why = [];
+    if (noJobs > 0) why.push(`${plural(noJobs, 'run', 'runs')} of them had no jobs`);
+    if (agg.excluded > 0) why.push(`${plural(agg.excluded, 'job', 'jobs')} excluded (a missing or out-of-order instant)`);
+    if (agg.notTimed.skipped > 0) why.push(`${plural(agg.notTimed.skipped, 'job was', 'jobs were')} skipped`);
+    if (agg.notTimed.cancelled > 0) why.push(`${plural(agg.notTimed.cancelled, 'job was', 'jobs were')} cancelled`);
+    return `the ${runs} gave no job with phases: ${why.join('; ')}`;
   }
-  const u = read.unsampled;
-  const why = [];
-  if (u.skipped > 0) why.push(`${plural(u.skipped, 'run did', 'runs did')} no work (skipped)`);
-  if (u.outsideWorkflows > 0) why.push(`${plural(u.outsideWorkflows, 'run came', 'runs came')} from outside the workflow-files directory`);
-  if (u.noWorkflowPath > 0) why.push(`${plural(u.noWorkflowPath, 'run had', 'runs had')} no workflow path`);
+  const skipped = read.unsampled.skipped;
   const filter = o.workflow === null ? '' : ` for workflow ${JSON.stringify(o.workflow)}`;
   return `no completed run was sampled in the ${o.days}-day window${filter}`
-    + (why.length > 0 ? `: ${why.join('; ')}` : '')
+    + (skipped > 0 ? `: ${plural(skipped, 'run did', 'runs did')} no work (skipped)` : '')
     + (read.truncated.length > 0 ? ' — the window was truncated (see truncated)' : '');
 }
 
@@ -331,20 +305,19 @@ function run(argv, deps = realDeps) {
   if (o.error) return fail(`${o.error} (see --help)`);
   if (o.help) { deps.stdout(USAGE); return 0; }
 
-  const resolved = resolveRepo(o, deps);
+  // deps carries the adapter's repository-resolution fakes in tests; realDeps carries none.
+  const resolved = source.resolveRepo({ repo: o.repo, root: o.root }, deps);
   if (resolved.error) return fail(resolved.error);
 
   const now = deps.now || new Date();
-  const read = source.readRunData({
-    runner: deps.runner, repo: resolved.slug, days: o.days, maxRuns: o.maxRuns, workflow: o.workflow, now, clock: deps.clock || null,
-  });
-  const failures = [...read.failures];
   const listing = deps.readWorkflowFiles(o.root || deps.cwd());
-  if (!listing.ok) failures.push(`workflow files: ${listing.error}`);
   const { factsByWorkflow, workflows } = workflowFacts(listing);
+  const read = source.readRunData({
+    runner: deps.runner, repo: resolved.slug, listing, days: o.days, maxRuns: o.maxRuns, workflow: o.workflow, now, clock: deps.clock || null,
+  });
 
-  const agg = aggregate(read.runs, factsByWorkflow);
   const minSample = o.minSample === null ? DEFAULT_MIN_SAMPLE : o.minSample;
+  const agg = aggregate(read.runs, factsByWorkflow, { minSample });
   const unjudged = new Set(workflows.filter((w) => w.unparsed.length > 0).map((w) => w.file));
   const judged = evaluate(agg, factsByWorkflow, o.thresholds, minSample);
   const breaches = judged.filter((b) => b.workflow === null || !unjudged.has(b.workflow));
@@ -358,8 +331,9 @@ function run(argv, deps = realDeps) {
       days: o.days,
       from: validNow ? new Date(now.getTime() - o.days * DAY_MS).toISOString().slice(0, 10) : null,
       maxRuns: o.maxRuns,
-      workflow: o.workflow,
+      workflow: read.workflow !== null ? read.workflow : o.workflow,
       minSample,
+      thresholds: limitsOf(o.thresholds),
       sampledRuns: read.runs.length,
     },
     workflows,
@@ -370,10 +344,12 @@ function run(argv, deps = realDeps) {
     overlaps: agg.overlaps,
     breaches,
     underSampled: agg.jobs.filter((j) => j.runs < minSample).map((j) => ({ workflow: j.workflow, job: j.job, runs: j.runs })),
+    unmatchedJobs: agg.unmatchedJobs,
     droppedBreaches: judged.length - breaches.length,
     excluded: agg.excluded,
+    notTimed: agg.notTimed,
     truncated: read.truncated,
-    failures,
+    failures: read.failures,
     unsampled: read.unsampled,
     noData: reason === null ? null : { reason },
   };

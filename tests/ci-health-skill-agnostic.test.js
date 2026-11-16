@@ -165,12 +165,45 @@ function balancedArgs(text, open) {
   return text.slice(open + 1);
 }
 
-// One scan for every file: the positive walk and every go-red control call this.
-// -> { offenders, readSites }
-function scanFile(abs, rel, repoRules) {
+// AC8.1 (forge-aware imports, #5757 I6): a module's own text can be agnostic while a module it
+// requires names the forge, resolves its host or spawns — and prints that knowledge through it
+// (repo-resolve's refusal names the forge and its CLI). So a relative require from a scanned file
+// is an offender when its target is repo-resolve.js, anything under lib/ci-health/ (harness-health's
+// forge reads), lib/init/ci-workflow-review.js (the workflow-file location), or any module whose
+// comment-stripped text requires child_process or repo-resolve. One import is allowed by name:
+// workflow-facts.js takes merge-verification.js's pure readWorkflowShape (that module also spawns
+// for other callers). Recall limits: one level only (a forge-aware module two requires away is not
+// seen), a computed or non-relative specifier, a require through a variable.
+const LIB_ROOT = path.join(REPO, 'plugin', 'bin', 'lib');
+const FORGE_SEAMS = new Set([path.join(LIB_ROOT, 'repo-resolve.js'), path.join(LIB_ROOT, 'init', 'ci-workflow-review.js')]);
+const ALLOWED_FORGE_IMPORTS = { 'plugin/bin/lib/ci-audit/workflow-facts.js': new Set(['../merge-verification']) };
+// The relative require sites across the scanned files when this rule landed; fewer means the
+// matcher stopped matching, not that the imports went away.
+const REQUIRE_FLOOR = 20;
+const REQUIRE_REL =/(?<![\w$])require\s*\(\s*(['"`])(\.{1,2}\/[^'"`]+)\1\s*\)/g;
+function resolveModule(from, spec) {
+  const base = path.resolve(from, spec);
+  for (const c of [base, `${base}.js`, path.join(base, 'index.js')]) if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+  return null;
+}
+function forgeAwareReason(target) {
+  if (target === null) return 'unresolvable module';
+  if (target === EXEMPT) return null; // the one sanctioned adapter: its text is relayed as adapter text
+  if (FORGE_SEAMS.has(target)) return 'a forge seam';
+  if (path.relative(path.join(LIB_ROOT, 'ci-health'), target).split(path.sep)[0] !== '..') return 'a forge read module';
+  const text = stripComments(readText(target));
+  if (/(?<![\w$])require\s*\(\s*['"`](?:node:)?child_process['"`]\s*\)/.test(text)) return 'a module that spawns';
+  if (/(?<![\w$])require\s*\(\s*['"`][^'"`]*repo-resolve['"`]\s*\)/.test(text)) return 'a module that resolves the forge host';
+  return null;
+}
+
+// One scan for every file: the positive walk and every go-red control call this. Relative requires
+// resolve against `from` (a planted copy in a scratch directory resolves as its original would).
+// -> { offenders, readSites, requireSites }
+function scanFile(abs, rel, repoRules, from = path.dirname(abs)) {
   const text = readText(abs);
   const offenders = matchRules(blankSharedCitations(text), [...DENYLIST, ...LOCATION_RULES, ...repoRules], rel, 'names');
-  if (!abs.endsWith('.js')) return { offenders, readSites: 0 };
+  if (!abs.endsWith('.js')) return { offenders, readSites: 0, requireSites: 0 };
   const keep = stripComments(text);
   const blank = stripComments(text, { literals: 'blank' });
   for (const [mode, stripped] of [['keep', keep], ['blank', blank]]) {
@@ -184,7 +217,15 @@ function scanFile(abs, rel, repoRules) {
     const args = balancedArgs(keep, m.index + m[0].length - 1);
     if (SOURCE_EXT.test(args)) offenders.push({ clause: 'io', file: rel, line: lineAt(keep, m.index), rule: 'source-file read', match: m[0] + args + ')' });
   }
-  return { offenders, readSites };
+  let requireSites = 0;
+  const allowed = ALLOWED_FORGE_IMPORTS[rel] || new Set();
+  for (const m of keep.matchAll(REQUIRE_REL)) {
+    requireSites++;
+    if (allowed.has(m[2])) continue;
+    const why = forgeAwareReason(resolveModule(from, m[2]));
+    if (why !== null) offenders.push({ clause: 'io', file: rel, line: lineAt(keep, m.index), rule: 'forge-aware import', match: `${m[2]} (${why})` });
+  }
+  return { offenders, readSites, requireSites };
 }
 
 function walk(dir) {
@@ -206,12 +247,14 @@ function scanTree() {
   const rules = repoWorkflowRules();
   let offenders = [];
   let readSites = 0;
+  let requireSites = 0;
   for (const { abs, rel } of scanned()) {
     const r = scanFile(abs, rel, rules);
     offenders = offenders.concat(r.offenders);
     readSites += r.readSites;
+    requireSites += r.requireSites;
   }
-  return { offenders, readSites };
+  return { offenders, readSites, requireSites };
 }
 const show = (os_) => os_.map((o) => `${o.file}:${o.line} ${o.rule}: ${o.match}`).join('\n');
 const nameRules = (os_) => os_.filter((o) => o.clause === 'names');
@@ -248,10 +291,11 @@ test('AC7.1: no CI product, hosted runner, cache service, cloud vendor, forge, r
 });
 
 test('AC8.1: nothing outside source.js spawns, uses the network, names the forge CLI, or reads source, lockfile or manifest files', () => {
-  const { offenders, readSites } = scanTree();
+  const { offenders, readSites, requireSites } = scanTree();
   const found = ioRules(offenders);
   assert.deepEqual(found, [], `reads or calls outside source.js:\n${show(found)}`);
   assert.ok(readSites >= 2, `only ${readSites} read call sites matched (the CLI has 2): the read matcher stopped matching`);
+  assert.ok(requireSites >= REQUIRE_FLOOR, `only ${requireSites} relative require sites matched: the import matcher stopped matching`);
 });
 
 // --- go-red self-tests: the same scanFile over planted copies of real files ---
@@ -272,7 +316,7 @@ function scratch(t) {
 function plant(t, srcAbs, extra, name, rules = repoWorkflowRules()) {
   const f = path.join(scratch(t), name || path.basename(srcAbs));
   fs.writeFileSync(f, readText(srcAbs) + extra);
-  return scanFile(f, 'fixture', rules).offenders;
+  return scanFile(f, 'fixture', rules, path.dirname(srcAbs)).offenders;
 }
 const baseLines = (abs) => readText(abs).split('\n').length;
 const rows = (found, n) => found.map((o) => [o.line - n, o.rule, o.match]).sort();
@@ -448,6 +492,45 @@ test('AC8.1 go-red: each banned read or call planted in a copy of the CLI is rep
     [6, 'forge CLI'], [6, 'forge CLI literal'], [7, 'manifest or lockfile'], [8, 'source-file read'], [9, 'manifest or lockfile'],
     [11, 'network module'], [12, 'network module'], [13, 'network call'], [14, 'child_process'],
   ].sort());
+});
+
+test('I6 go-red: a forge-aware import planted in a copy of the CLI or a module is reported; source.js and the allowed import are not', (t) => {
+  const plants = [
+    "const { gateOriginRepo } = require('./lib/repo-resolve');",
+    "const { errorText } = require('./lib/ci-health/fetch');",
+    "const { readWorkflowSet } = require('./lib/init/ci-workflow-review');",
+    "const mv = require('./lib/merge-verification');",
+    "const s = require('./lib/ci-audit/source');",
+    "const g = require('./lib/strip-comments'); // pure: no spawn, no host",
+  ];
+  const found = plant(t, CLI, `\n${plants.join('\n')}\n`, 'ci-audit.js').filter((o) => o.rule === 'forge-aware import');
+  assert.deepEqual(found.map((o) => [o.line - baseLines(CLI), o.match]), [
+    [1, './lib/repo-resolve (a forge seam)'],
+    [2, './lib/ci-health/fetch (a forge read module)'],
+    [3, './lib/init/ci-workflow-review (a forge seam)'],
+    [4, './lib/merge-verification (a module that spawns)'],
+  ]);
+  // The allowed import is allowed for workflow-facts.js only: the same line elsewhere is flagged.
+  const mod = path.join(LIB_DIR, 'checks.js');
+  const other = plant(t, mod, "\nconst { readWorkflowShape } = require('../merge-verification');\n", 'checks.js')
+    .filter((o) => o.rule === 'forge-aware import');
+  assert.deepEqual(other.map((o) => o.match), ['../merge-verification (a module that spawns)']);
+});
+
+test('I6 go-red: the pre-fix CLI, which imported repo-resolve and ci-health modules, is reported', (t) => {
+  const d = scratch(t);
+  const f = path.join(d, 'ci-audit.js');
+  fs.writeFileSync(f, [
+    "'use strict';",
+    "const { originUrl, gateOriginRepo, pinExplicitRepoHost } = require('./lib/repo-resolve');",
+    "const { DEFAULT_DAYS, MAX_DAYS } = require('./lib/ci-health/constants');",
+    "const { errorText } = require('./lib/ci-health/fetch');",
+    "const { oneLine } = require('./lib/ci-health/render');",
+    "const source = require('./lib/ci-audit/source');",
+    '',
+  ].join('\n'));
+  const found = scanFile(f, 'fixture', [], path.dirname(CLI)).offenders.filter((o) => o.rule === 'forge-aware import');
+  assert.deepEqual(found.map((o) => o.line), [2, 3, 4, 5]);
 });
 
 test('a stripper mis-parse in either mode is an offender, never a clean scan', (t) => {
