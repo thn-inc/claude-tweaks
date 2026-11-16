@@ -12,6 +12,7 @@ const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
 
 const { readText } = require('../../helpers/read-skill');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { treeEntryWithContinuations } = require('../../helpers/plugin-structure-entry');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
@@ -2700,4 +2701,476 @@ test('#5230 shipped: the stage-item.js stderr of a shipped Close proposal reache
   const closes = r.ghCalls.filter((a) => (a[0] === 'issue' && a[1] === 'close')
     || (a[0] === 'api' && a.some((x) => /\/issues\/\d+$/.test(x)) && a.some((x) => /^state=closed$/.test(x))));
   assert.deepEqual(closes, [], 'the pass stages a Close proposal, never a direct close');
+});
+
+// ---- #5584: the named path (--named / --run) -------------------------------------------------------
+// A named record without auto:build is fetched, judged by the build-authority rule and, on `typed`,
+// added to the pool before the blocked pass, so every later pass judges it as it judges a granted
+// record. Record numbers: 12 (and 13, 14) for the injected-answer runs; 3 for the runs over the
+// real transcript check, because the captured rows name record #3.
+const { writePointer } = require('../../../plugin/bin/lib/issues/typed-command');
+const { failGh } = require('./queue-pull-fixtures');
+
+const NAMED_VIEW = (n) => ['issue', 'view', String(n), '--json', 'number,title,body,labels,createdAt,updatedAt,state'];
+const ADMIT_LINE = (n) => `#${n} has no auto:build label — built on the typed /claude-tweaks:dispatch command\n`;
+const AUTO_RE = (n) => new RegExp(`^- AUTO \\d{2}:\\d{2}:\\d{2} — queue pull: #${n} admitted on a typed /claude-tweaks:dispatch command \\(no auto:build label\\)\\. Reversibility: n/a\\.$`);
+const TYPED_SESSION = 'test-session-0001';
+const TYPED_ENV = { CLAUDE_CODE_SESSION_ID: TYPED_SESSION, CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CODE_SESSION_ATTENDED: '1' };
+const PRIOR_DECISIONS = '## /dispatch\n- AUTO 01:00:00 — dispatch: an earlier line. Reversibility: n/a.\n';
+const ungranted = (n, { labels = ['ready'], body = withBody(n), state = 'OPEN' } = {}) => ({ ...ghRecord(n, { labels, body }), state });
+
+// `scenario` with each record answered on `gh issue view` only (never in the auto:build pool).
+function withNamedView(scenario, records) {
+  scenario.gh = [...records.map((rec) => ({ argv: NAMED_VIEW(rec.number), stdout: `${JSON.stringify(rec)}\n` })), ...scenario.gh];
+  return scenario;
+}
+// `scenario` with `record` added to the auto:build pool answer.
+function withPooled(scenario, record) {
+  scenario.gh = scenario.gh.map((e) => (e.argv && e.argv.join('\u0000') === QUEUE_ARGV.join('\u0000')
+    ? { ...e, stdout: `${JSON.stringify([...JSON.parse(e.stdout), record])}\n` } : e));
+  return scenario;
+}
+
+// pull4 over the named path. o: { named, typedFor (numbers the injected check answers typed for),
+// realCheck (no injected check), env, now, tmpdir, persisted, decisions (decisions.md's text before
+// the pull) }. Returns pull4's result plus the firing's decisions.md text (null when absent), the
+// numbers the injected check was asked about and the queue-order cache call counts.
+function pullNamed(scenario, o = {}) {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-named-run-'));
+  const decisionsFile = path.join(runDir, 'decisions.md');
+  if (o.decisions !== undefined) fs.writeFileSync(decisionsFile, o.decisions);
+  const asked = [];
+  const order = { read: 0, write: 0 };
+  const typedFor = new Set(o.typedFor || []);
+  try {
+    const r = pull4(scenario, {
+      env: o.env || TYPED_ENV,
+      prepare: () => ({ named: o.named || [12], runDir, ...(o.tmpdir ? { tmpdir: o.tmpdir } : {}) }),
+      deps: {
+        ...(o.realCheck ? {} : {
+          readTypedCommand: ({ number }) => {
+            asked.push(number);
+            return typedFor.has(number) ? { answer: 'typed', promptId: 'p-1' } : { answer: 'none', reason: 'not-typed' };
+          },
+        }),
+        ...(o.now ? { now: () => o.now } : {}),
+        queueOrder: {
+          readOrder: () => { order.read += 1; return o.persisted || null; },
+          writeOrder: () => { order.write += 1; return { ok: true }; },
+        },
+      },
+    });
+    const decisions = fs.existsSync(decisionsFile) ? fs.readFileSync(decisionsFile, 'utf8') : null;
+    return { ...r, decisions, asked, order, stdout: r.cap.stdout.join('') };
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+}
+
+const autoLines = (r) => (r.decisions || '').split('\n').filter((l) => l.startsWith('- AUTO') && l.includes('queue pull:'));
+const viewCalls = (r) => r.ghCalls.filter((a) => a[0] === 'issue' && a[1] === 'view' && a[4] === 'number,title,body,labels,createdAt,updatedAt,state');
+const inGroups = (r, n) => groupNumbers(r).flat().includes(n);
+// AC11: no gh call the pull makes edits a label.
+function assertNoLabelWrite(r) {
+  const edits = r.ghCalls.filter((a) => (a[0] === 'issue' && a[1] === 'edit') || a.includes('--add-label') || a.includes('--remove-label')
+    || (a[0] === 'api' && a.some((x) => /\/labels\b/.test(x))));
+  assert.deepEqual(edits, [], 'no gh call edits a label');
+}
+
+test('AC5.1: --named 12 with a typed answer admits ungranted #12 to the groups, prints the admit line and appends one AUTO line under ## /dispatch', () => {
+  const r = pullNamed(withNamedView(S1(), [ungranted(12)]), { typedFor: [12] });
+  assert.equal(r.thrown, null);
+  assert.ok(inGroups(r, 12), JSON.stringify(groupNumbers(r)));
+  assert.deepEqual(reasonsOf(r, 12), []);
+  assert.ok(r.stdout.includes(ADMIT_LINE(12)), r.stdout);
+  const lines = autoLines(r);
+  assert.equal(lines.length, 1, r.decisions);
+  assert.match(lines[0], AUTO_RE(12));
+  assert.ok(r.decisions.startsWith('## /dispatch\n'), r.decisions);
+  assert.deepEqual(r.asked, [12]);
+  assert.equal(viewCalls(r).length, 1);
+  assertNoLabelWrite(r);
+});
+
+test('AC5.1: a pull that admitted a typed record neither reads nor writes the queue-order cache', () => {
+  const r = pullNamed(withNamedView(S1(), [ungranted(12)]), { typedFor: [12] });
+  assert.deepEqual(r.order, { read: 0, write: 0 });
+  assert.equal(r.state.cacheHit, false);
+  // Control: the same pull with nothing admitted reads the cache twice and writes it back once.
+  const none = pullNamed(withNamedView(S1(), [ungranted(12)]), { typedFor: [] });
+  assert.deepEqual(none.order, { read: 2, write: 1 });
+});
+
+test('AC5.1: a stored blob that is a hit when nothing is admitted is not read once a typed record is admitted', () => {
+  const blob = pull(S1()).store.written[0].blob;
+  const control = pullNamed(withNamedView(S1(), [ungranted(12)]), { typedFor: [], persisted: blob });
+  assert.equal(control.state.cacheHit, true, 'control: the blob is a hit when nothing is admitted');
+  const r = pullNamed(withNamedView(S1(), [ungranted(12)]), { typedFor: [12], persisted: blob });
+  assert.equal(r.state.cacheHit, false);
+  assert.ok(inGroups(r, 12));
+});
+
+test('AC5.2: an admitted record with an open body blocker is excluded as blocked, as a granted record is', () => {
+  const r = pullNamed(withNamedView(S1(), [ungranted(12, { body: `Blocked by #8000\n\n${withBody(12)}` })]), { typedFor: [12] });
+  assert.ok(!inGroups(r, 12));
+  assert.deepEqual(reasonsOf(r, 12), ['blocked']);
+  assert.equal(autoLines(r).length, 1, 'admitted, then excluded by the pass');
+  assertNoLabelWrite(r);
+});
+
+test('AC5.3: an admitted record with an open linked PR is excluded as open-pr', () => {
+  const s = withNamedView(S1(), [ungranted(12)]);
+  s.linked = { ...(s.linked || {}), 12: { openPR: 90 } };
+  const r = pullNamed(s, { typedFor: [12] });
+  assert.ok(!inGroups(r, 12));
+  assert.deepEqual(reasonsOf(r, 12), ['open-pr']);
+  assertNoLabelWrite(r);
+});
+
+test('AC5.4: an admitted record whose body is not spec-shaped is excluded as not-spec-shaped', () => {
+  const r = pullNamed(withNamedView(S1(), [ungranted(12, { body: 'No spec sections in this body.\n' })]), { typedFor: [12] });
+  assert.ok(!inGroups(r, 12));
+  assert.deepEqual(reasonsOf(r, 12), ['not-spec-shaped']);
+  assertNoLabelWrite(r);
+});
+
+// The real transcript check: a temp session temp root holding the pointer, a temp config dir
+// holding one transcript built from a captured row set, and no injected answer.
+const TYPED_FIXTURES = path.join(REPO, 'tests', 'fixtures', 'typed-command');
+const capturedRows = (c) => JSON.parse(fs.readFileSync(path.join(TYPED_FIXTURES, `captured-${c}.json`), 'utf8'));
+function realPull(c, { pointer = true } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-typed-'));
+  try {
+    const rows = capturedRows(c);
+    const configDir = path.join(root, 'config');
+    const tmpdir = path.join(root, 'tmp');
+    const dir = path.join(configDir, 'projects', '-launch-dir');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(tmpdir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${TYPED_SESSION}.jsonl`), `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
+    if (pointer) {
+      assert.equal(writePointer({ sessionId: TYPED_SESSION, promptId: rows[0].promptId, numbers: [3], now: rows[0].timestamp, tmpdir }), true);
+    }
+    return pullNamed(withNamedView(S1(), [ungranted(3)]), {
+      realCheck: true, named: [3], env: { ...TYPED_ENV, CLAUDE_CONFIG_DIR: configDir }, tmpdir,
+      now: new Date(Date.parse(rows[0].timestamp) + 5 * 60 * 1000), decisions: PRIOR_DECISIONS,
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('AC5.5: end to end, the real check over a transcript built from the captured (a) row admits #3', () => {
+  const r = realPull('a');
+  assert.equal(r.thrown, null);
+  assert.ok(inGroups(r, 3), `${r.stdout}${r.stderr}`);
+  assert.ok(r.stdout.includes(ADMIT_LINE(3)), r.stdout);
+  assert.equal(autoLines(r).length, 1);
+  assert.match(autoLines(r)[0], AUTO_RE(3));
+  assert.ok(r.decisions.startsWith(PRIOR_DECISIONS), 'appended under the existing heading, earlier lines kept');
+  assertNoLabelWrite(r);
+});
+
+function assertRefused(r, n, word, remedy) {
+  assert.equal(r.thrown, null);
+  assert.ok(!inGroups(r, n), JSON.stringify(groupNumbers(r)));
+  const line = `#${n} has no auto:build label — not built: typed command not accepted (${word}); ${remedy} (a typed command with any other argument records nothing)\n`;
+  assert.ok(r.stdout.includes(line), r.stdout);
+  assert.equal(r.decisions, PRIOR_DECISIONS, 'decisions.md is unchanged');
+  assertNoLabelWrite(r);
+}
+
+test('AC6.1: no pointer refuses #3 with no-pointer and its remedy; decisions.md is unchanged', () => {
+  assertRefused(realPull('a', { pointer: false }), 3, 'no-pointer', 'grant it with /claude-tweaks:backlog refine #3, or type the command again');
+});
+
+test('AC6.1: a pointer whose transcript row is the captured (g) row refuses #3 with not-typed', () => {
+  assertRefused(realPull('g'), 3, 'not-typed', 'grant it with /claude-tweaks:backlog refine #3');
+});
+
+test('AC6.1: a pointer whose transcript row is the captured (h) row refuses #3 with not-typed', () => {
+  assertRefused(realPull('h'), 3, 'not-typed', 'grant it with /claude-tweaks:backlog refine #3');
+});
+
+const named12 = (rec, o = {}) => pullNamed(withNamedView(S1(), [rec]), { typedFor: [12], decisions: PRIOR_DECISIONS, ...o });
+
+test('AC6.2: a hub-launched session (CC_POSTURE=hub, no CC_LAUNCHED_BY) refuses with launcher and never asks the transcript', () => {
+  const r = named12(ungranted(12), { env: { ...TYPED_ENV, CC_POSTURE: 'hub' } });
+  assertRefused(r, 12, 'launcher', 'the launcher must export CC_LAUNCHED_BY=user (thn-inc/claude-user-config#50)');
+  assert.deepEqual(r.asked, []);
+});
+
+test('AC6.2: a record without ready refuses with not-ready', () => {
+  const r = named12(ungranted(12, { labels: [] }));
+  assertRefused(r, 12, 'not-ready', 'run /claude-tweaks:specify #12');
+  assert.deepEqual(r.asked, []);
+});
+
+test('AC6.2: a failed fetch of #12 refuses with labels-unreadable', () => {
+  const r = pullNamed(failGh(S1(), NAMED_VIEW(12)), { typedFor: [12], decisions: PRIOR_DECISIONS });
+  assertRefused(r, 12, 'labels-unreadable', "re-run once the record's labels can be read");
+  assert.equal(viewCalls(r).length, 1);
+  assert.deepEqual(r.asked, []);
+});
+
+test('AC6.2: a fetched answer that is not this record\'s JSON refuses with labels-unreadable', () => {
+  for (const stdout of ['not json\n', `${JSON.stringify(ungranted(99))}\n`, `${JSON.stringify({ ...ungranted(12), state: null })}\n`, 'null\n']) {
+    const s = S1();
+    s.gh = [{ argv: NAMED_VIEW(12), stdout }, ...s.gh];
+    const r = pullNamed(s, { typedFor: [12], decisions: PRIOR_DECISIONS });
+    assertRefused(r, 12, 'labels-unreadable', "re-run once the record's labels can be read");
+    assert.deepEqual(r.asked, [], stdout);
+  }
+});
+
+test('AC6.2: a CLOSED record with an accepted typed command is refused as not open, before the rule runs', () => {
+  const r = named12(ungranted(12, { state: 'CLOSED' }));
+  assert.ok(!inGroups(r, 12));
+  assert.ok(r.stdout.includes('#12 is closed — not built: the queue pull takes open records only\n'), r.stdout);
+  assert.ok(!r.stdout.includes('#12 has no auto:build label'), 'no rule line');
+  assert.deepEqual(r.asked, [], 'the transcript check is never called');
+  assert.equal(r.decisions, PRIOR_DECISIONS);
+  assertNoLabelWrite(r);
+});
+
+for (const label of ['bot:blocked', 'bot:parked', 'parked']) {
+  test(`AC15: with an accepted typed command, a record carrying ${label} is not admitted by the queue pull (held)`, () => {
+    const r = named12(ungranted(12, { labels: ['ready', label] }));
+    assertRefused(r, 12, 'held', 'clear bot:blocked, bot:parked or parked on #12 once its trigger has fired, then type the command again');
+    assert.deepEqual(r.asked, []);
+  });
+}
+
+test('AC6.3: --named 12,13 with an accepted command for 12 only admits 12 and refuses 13', () => {
+  const r = pullNamed(withNamedView(S1(), [ungranted(12), ungranted(13)]), { named: [12, 13], typedFor: [12] });
+  assert.ok(inGroups(r, 12));
+  assert.ok(!inGroups(r, 13));
+  assert.ok(r.stdout.includes(ADMIT_LINE(12)), r.stdout);
+  assert.ok(r.stdout.includes('#13 has no auto:build label — not built: typed command not accepted (not-typed); '), r.stdout);
+  assert.equal(autoLines(r).length, 1);
+  assert.match(autoLines(r)[0], AUTO_RE(12));
+  assert.deepEqual(r.asked, [12, 13]);
+  assertNoLabelWrite(r);
+});
+
+test('AC6.4: an ungranted #14 sharing a Key File with admitted #12, not named, is not in the groups and is never fetched', () => {
+  const r = pullNamed(withNamedView(S1(), [ungranted(12), ungranted(14, { body: withBody(12) })]), { named: [12], typedFor: [12, 14] });
+  assert.ok(inGroups(r, 12));
+  assert.ok(!inGroups(r, 14));
+  assert.deepEqual(viewCalls(r).map((a) => a[2]), ['12']);
+  assert.deepEqual(r.asked, [12]);
+});
+
+test('Review Focus 4: --named 12,13 with #12 already granted (in the pool) leaves 12 untouched: no fetch, no line, no AUTO line', () => {
+  const s = withNamedView(withPooled(S1(), ghRecord(12, { body: withBody(12) })), [ungranted(13)]);
+  const r = pullNamed(s, { named: [12, 13], typedFor: [12, 13] });
+  assert.ok(inGroups(r, 12));
+  assert.ok(inGroups(r, 13));
+  assert.deepEqual(viewCalls(r).map((a) => a[2]), ['13'], 'no issue view for the pooled #12');
+  assert.ok(!r.stdout.includes('#12 '), r.stdout);
+  assert.equal(autoLines(r).length, 1);
+  assert.match(autoLines(r)[0], AUTO_RE(13));
+  assert.deepEqual(r.asked, [13]);
+  assertNoLabelWrite(r);
+});
+
+test('#5584: a named record that is labelled auto:build but missing from the pool is not admitted and prints one line saying so', () => {
+  const r = pullNamed(withNamedView(S1(), [ghRecord(12, { body: withBody(12) })]), { typedFor: [12] });
+  assert.ok(!inGroups(r, 12));
+  assert.equal(r.stdout, "#12 carries auto:build but is not in this pull's queue — not built this firing\n");
+  assert.deepEqual(r.asked, [], 'the label answer reads no transcript');
+  assert.equal(r.decisions, null);
+});
+
+test('#5584: a failed AUTO-line write does not admit the record (fail closed), prints one not-admitted line and names the failure on stderr', () => {
+  const r = pull4(withNamedView(S1(), [ungranted(12)]), {
+    env: TYPED_ENV,
+    prepare: () => ({ named: [12], runDir: null }),
+    deps: { readTypedCommand: () => ({ answer: 'typed', promptId: 'p-1' }), appendDecision: () => { throw new Error('disk full'); } },
+  });
+  assert.ok(!inGroups(r, 12));
+  assert.match(r.stderr, /queue-pull: named #12: disk full/);
+  assert.equal(r.cap.stdout.join(''), '#12 not admitted: the decisions.md audit line could not be written\n');
+  assert.deepEqual(r.state.typedNumbers, new Set());
+});
+
+test('#5584 review: a failed queue-file write after the AUTO line un-admits the record, prints a second not-admitted line and writes a corrective decisions line', chmodDenialSkip('root bypasses mode bits'), () => {
+  const texts = [];
+  const r = pull4(withNamedView(S1(), [ungranted(12)]), {
+    env: TYPED_ENV,
+    prepare: () => ({ named: [12], runDir: null }),
+    deps: {
+      readTypedCommand: () => ({ answer: 'typed', promptId: 'p-1' }),
+      // The first (admission) AUTO write also makes the queue file read-only, so the write after the loop fails.
+      appendDecision: ({ text }) => {
+        texts.push(text);
+        if (texts.length === 1) fs.chmodSync(sessionPaths('qp-t3')['dispatch-queue-raw.json'], 0o444);
+      },
+    },
+  });
+  assert.ok(!inGroups(r, 12));
+  assert.deepEqual(r.state.typedNumbers, new Set());
+  assert.match(r.stderr, /queue-pull: write dispatch-queue-raw\.json:/);
+  const out = r.cap.stdout.join('');
+  assert.ok(out.includes(ADMIT_LINE(12)), out);
+  assert.ok(out.endsWith('#12 not admitted: the queue file could not be written\n'), out);
+  assert.equal(texts.length, 2);
+  assert.equal(texts[1], '#12 not admitted after all: the queue file could not be written');
+});
+
+test('#5584 fix 1: a typed record carrying bot:in-progress is refused before admission: one claimed line, no AUTO line', () => {
+  const r = pullNamed(withNamedView(S1(), [ungranted(12, { labels: ['ready', 'bot:in-progress'] })]), { typedFor: [12], decisions: PRIOR_DECISIONS });
+  assert.ok(!inGroups(r, 12));
+  assert.equal(r.stdout, '#12 is already claimed (bot:in-progress) — not built this firing\n');
+  assert.deepEqual(r.asked, [12], 'the rule runs first (it answered typed); the claim is checked before admission');
+  assert.equal(r.decisions, PRIOR_DECISIONS, 'no AUTO line for a record the eligibility filter would drop');
+  assert.deepEqual(r.state.typedNumbers, new Set());
+  assertNoLabelWrite(r);
+});
+
+test('#5584 fix 2 (AC15): bot:in-progress beside bot:parked keeps the rule\'s held line, not the claimed line', () => {
+  const r = named12(ungranted(12, { labels: ['ready', 'bot:in-progress', 'bot:parked'] }));
+  assertRefused(r, 12, 'held', 'clear bot:blocked, bot:parked or parked on #12 once its trigger has fired, then type the command again');
+  assert.ok(!r.stdout.includes('already claimed'), r.stdout);
+  assert.deepEqual(r.asked, []);
+});
+
+test('#5584 fix 2 (AC6): bot:in-progress with no ready keeps the rule\'s not-ready line, not the claimed line', () => {
+  const r = named12(ungranted(12, { labels: ['bot:in-progress'] }));
+  assertRefused(r, 12, 'not-ready', 'run /claude-tweaks:specify #12');
+  assert.ok(!r.stdout.includes('already claimed'), r.stdout);
+  assert.deepEqual(r.asked, []);
+});
+
+test('#5584: under --transport files, --named admits nothing and prints one refusal line per named number; no gh call', () => {
+  const out = [];
+  const r = pull(S1(), {
+    transport: 'files',
+    passes: PASSES.slice(0, 2),
+    run: (cmd, args) => { throw new Error(`no ${cmd} on files: ${args.join(' ')}`); },
+    prepare: (own) => ({ named: [12, 13], runDir: own, inputs: { queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001))])) } }),
+    deps: { stdout: (s) => out.push(s), readTypedCommand: () => { throw new Error('never asked'); } },
+  });
+  assert.deepEqual(out, [
+    '#12: --named admits nothing under --transport files; the auto:build label is required\n',
+    '#13: --named admits nothing under --transport files; the auto:build label is required\n',
+  ]);
+  assert.deepEqual(r.ghCalls, []);
+  assert.deepEqual(r.json('dispatch-queue-raw.json').map((i) => i.number), [9001]);
+  assert.deepEqual(r.state.typedNumbers, new Set());
+});
+
+test('#5584: with no named option the pull makes no record fetch and still reads and writes the cache', () => {
+  const r = pull(S1());
+  assert.deepEqual(r.state.typedNumbers, new Set());
+  assert.equal(r.store.written.length, 1);
+  assert.equal(viewCalls(r).length, 0);
+});
+
+// ---- #5584 CLI: --named / --run ----------------------------------------------------------------------
+// A stand-in main checkout: a `.git` directory, and one firing run dir under .claude-tweaks/pipelines.
+function withMainCheckout(fn) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-main-')));
+  try {
+    fs.mkdirSync(path.join(root, '.git'));
+    const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-1');
+    fs.mkdirSync(runDir, { recursive: true });
+    return fn({ root, runDir });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+const listing = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).sort() : null);
+
+test('AC7.1: parseArgs reads --named as a list of record numbers (# optional) and --run as given', () => {
+  assert.deepEqual(cli.parseArgs(['--transport', 'gh', '--named', '#12,13', '--run', 'run-1']),
+    { mode: 'pull', transport: 'gh', priority: null, inputs: {}, named: [12, 13], run: 'run-1' });
+  assert.deepEqual(cli.parseArgs(['--transport', 'gh', '--named', '12,#12', '--run', 'r']).named, [12], 'a repeated number is read once');
+});
+
+test('AC7.2: --named without --run, --run without --named, an empty or non-numeric list, or --named with --rank exits 1 and touches nothing', () => {
+  const cases = [
+    ['--transport', 'gh', '--named', '12'], ['--transport', 'files', '--named', '12'],
+    ['--transport', 'gh', '--run', 'run-1'],
+    ['--transport', 'gh', '--named', '', '--run', 'run-1'], ['--transport', 'gh', '--named', ' ', '--run', 'run-1'],
+    ['--transport', 'gh', '--named', 'abc', '--run', 'run-1'], ['--transport', 'gh', '--named', '12,', '--run', 'run-1'],
+    ['--transport', 'gh', '--named', ',12', '--run', 'run-1'], ['--transport', 'gh', '--named', '12,x', '--run', 'run-1'],
+    ['--transport', 'gh', '--named', '0', '--run', 'run-1'], ['--transport', 'gh', '--named', '12, 13', '--run', 'run-1'],
+    ['--transport', 'gh', '--named', '1.5', '--run', 'run-1'], ['--transport', 'gh', '--named', '##12', '--run', 'run-1'],
+    ['--transport', 'gh', '--named', '99999999999999999999', '--run', 'run-1'],
+    ['--transport', 'gh', '--named', '12', '--named', '13', '--run', 'run-1'],
+    ['--rank', '--named', '12'], ['--rank', '--named', '12', '--run', 'run-1'], ['--rank', '--run', 'run-1'],
+    ['--named', '12', '--run', 'run-1'],
+  ];
+  for (const argv of cases) {
+    const out = []; const err = [];
+    const code = cli.run(argv, touchNothing(out, err));
+    assert.equal(code, 1, JSON.stringify(argv));
+    assert.ok(err.join('').endsWith(cli.USAGE), `usage printed for ${JSON.stringify(argv)}`);
+    assert.deepEqual(out, []);
+  }
+});
+
+test('AC7.3: a --run that names no run directory, or one resolveTarget refuses, exits 1 before gh is probed, and writes nothing', () => withMainCheckout(({ root, runDir }) => {
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-outside-')));
+  const linked = path.join(root, 'linked');
+  fs.mkdirSync(path.join(linked, 'run-2'), { recursive: true });
+  fs.writeFileSync(path.join(linked, '.git'), 'gitdir: /nowhere/.git/worktrees/linked\n');
+  try {
+    const before = { runDir: listing(runDir), outside: listing(outside), linked: listing(path.join(linked, 'run-2')) };
+    // `.` and `..` are bare ids that would land on pipelines/ itself or on .claude-tweaks/.
+    for (const run of ['run-missing', '.', '..', path.join(root, 'nope'), outside, path.join(linked, 'run-2')]) {
+      for (const transport of ['gh', 'files']) {
+        let probed = 0; let pulled = 0;
+        const r = cliRun(['--transport', transport, '--named', '12', '--run', run], {
+          env: {}, cwd: root, ghAvailable: () => { probed += 1; return true; }, queuePull: () => { pulled += 1; },
+        });
+        assert.equal(r.code, 1, `${transport} ${run}: ${r.stderr}`);
+        assert.match(r.stderr, /--run/);
+        assert.equal(r.stdout, '');
+        assert.deepEqual([probed, pulled], [0, 0]);
+      }
+    }
+    assert.deepEqual({ runDir: listing(runDir), outside: listing(outside), linked: listing(path.join(linked, 'run-2')) }, before);
+    // A cwd outside any checkout cannot place a bare run id.
+    const r = cliRun(['--transport', 'gh', '--named', '12', '--run', 'run-1'], { env: {}, cwd: outside, ghAvailable: () => true, queuePull: () => {} });
+    assert.equal(r.code, 1);
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+}));
+
+test('AC7.4: a bare --run id resolves under <main>/.claude-tweaks/pipelines, a path is used as given; named and the run dir reach queuePull', () => withMainCheckout(({ root, runDir }) => {
+  const sub = path.join(root, 'plugin');
+  fs.mkdirSync(sub);
+  for (const [cwd, run] of [[root, 'run-1'], [sub, 'run-1'], [sub, runDir], [root, path.join('.claude-tweaks', 'pipelines', 'run-1')]]) {
+    const seen = [];
+    const r = cliRun(['--transport', 'gh', '--named', '#12,13', '--run', run], {
+      env: { CLAUDE_CODE_SESSION_ID: 's' }, cwd, ghAvailable: () => true, queuePull: (o) => { seen.push(o); return {}; },
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(seen[0].named, [12, 13]);
+    assert.equal(seen[0].runDir, runDir, `${cwd} ${run}`);
+  }
+  // Without --named the options passed to queuePull carry no new key.
+  const plain = [];
+  cliRun(['--transport', 'gh'], { env: {}, cwd: root, ghAvailable: () => true, queuePull: (o) => { plain.push(o); return {}; } });
+  assert.deepEqual(Object.keys(plain[0]).sort(), ['cwd', 'env', 'inputs', 'omit', 'sessionId', 'transport']);
+}));
+
+test('#5584 CLI: under --transport files, --named with a valid --run reaches the module, which prints the refusal line per number', () => withMainCheckout(({ root }) => {
+  const seen = [];
+  const r = cliRun(['--transport', 'files', '--named', '12', '--run', 'run-1'], {
+    env: {}, cwd: root, queuePull: (o, io) => { seen.push(o); io.stdout('#12: --named admits nothing under --transport files; the auto:build label is required\n'); },
+  });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(seen[0].transport, 'files');
+  assert.deepEqual(seen[0].named, [12]);
+}));
+
+test('#5584 CLI: the header and USAGE name --named and --run', () => {
+  assert.match(cli.USAGE, /--named <n\[,m…\]> --run <id-or-path>/);
+  const header = readText(CLI_PATH).split('\n').filter((l) => l.startsWith('//')).join('\n');
+  assert.match(header, /--named/);
+  assert.match(header, /--run/);
 });

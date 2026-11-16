@@ -91,7 +91,8 @@ const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionG
 const { neighbourInFlightExclusions, claimReaderFromMap } = require('./in-flight-neighbours');
 const { nearDuplicatePairsAcrossGroups } = require('./near-dup-pairs');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
-const { sessionTmpPath } = require('../session-tmp');
+const { sessionTmpPath, envTmpdir } = require('../session-tmp');
+const { resolveBuildAuthority, formatAuthorityLine } = require('../issues/build-authority');
 const { ghOptions } = require('../repo-resolve');
 const { GH_TIMEOUT_MS, GH_BATCH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 
@@ -333,6 +334,7 @@ function makeContext(options = {}, deps = {}) {
     foreignStates: inputs.foreignStates || env.DISPATCH_FOREIGN_STATES,
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     standaloneDir: '',
+    typedNumbers: new Set(), // #5584: the named records admitted on a typed command (fetch pass)
     integrationBranch: '',
     integrationRef: '',
     files: {
@@ -347,6 +349,111 @@ function makeContext(options = {}, deps = {}) {
   return { options, deps: merged, paths, omit, state };
 }
 
+// #5584: `--named` (options.named, record numbers a person typed after /claude-tweaks:dispatch).
+// Runs between the pool fetch and its aliasing, before any pass, so the passes and their registry
+// are untouched: a named record already in the pool is left alone (no fetch, no line); any other is
+// fetched and judged by the one build-authority rule. A record the rule answers `typed` for is
+// appended to the queue file and to state.typedNumbers, which the blocked pass's grant filter
+// accepts; every later pass then judges it as it judges a granted record. Each fetched record prints
+// exactly one line on stdout:
+//   - not OPEN: the open-records-only line, printed before the rule runs;
+//   - `none`: formatAuthorityLine's refusal, naming the rule's reason words;
+//   - `label` (carries auto:build, yet the pool fetch missed it): the not-in-this-pull's-queue line;
+//   - `typed` but carrying bot:in-progress: the already-claimed line, no AUTO line (the eligibility
+//     filter would drop it);
+//   - `typed`, AUTO line written to options.runDir's decisions.md: the admit line, and the record is
+//     admitted (only once that line is written);
+//   - `typed`, AUTO write failed: the not-admitted line (the cause goes to stderr);
+//   - `typed` and admitted, but the queue-file write that makes it real failed: a second not-admitted
+//     line and a corrective decisions.md line, and the record leaves state.typedNumbers.
+// Nothing here writes a label. Under the files transport nothing is fetched: one line per named
+// number says the label is required.
+function admitNamed(ctx, queueFile) {
+  const { deps, state } = ctx;
+  const named = ctx.options.named || [];
+  if (named.length === 0) return;
+  if (ctx.options.transport === 'files') {
+    for (const number of named) deps.stdout(`#${number}: --named admits nothing under --transport files; the auto:build label is required\n`);
+    return;
+  }
+  // A pool that does not read as an array admits nothing: the pull stops at group-building on it.
+  const pool = step(ctx, 'named-pool', () => readJson(queueFile));
+  if (!pool.ok || !Array.isArray(pool.value)) return;
+  const pooled = new Set(pool.value.map((i) => i && i.number));
+  const env = optionEnv(ctx);
+  const admitted = [];
+  for (const number of named) {
+    if (pooled.has(number)) continue;
+    const raw = fetchNamed(ctx, number);
+    let result;
+    if (raw === null) {
+      result = { authority: 'none', reasons: ['labels-unreadable'] };
+    } else if (raw.state !== 'OPEN') {
+      deps.stdout(`#${number} is ${raw.state.toLowerCase()} — not built: the queue pull takes open records only\n`);
+      continue;
+    } else {
+      result = deps.buildAuthority({
+        number,
+        labels: raw.labels,
+        named: true,
+        env,
+        typedCommand: () => deps.readTypedCommand({ number, env, now: deps.now(), tmpdir: ctx.options.tmpdir || envTmpdir(env) }),
+        // Never the terminal route: only drive.js is run with a person at a terminal, so outside a
+        // session the pull answers none (not-a-terminal) by design (build-authority.js header).
+        stdinIsTTY: false,
+      });
+    }
+    if (result.authority === 'typed') {
+      // The blocked pass's eligibility filter drops a claimed record, granted or typed: refuse it here,
+      // before an AUTO line could record a build that will not happen. Checked only on `typed`, so a
+      // refusal the rule names (held, not-ready, ...) keeps its own words. A typed answer means the
+      // labels read as an array.
+      if (parseRecordFacets(raw.labels).bot.inProgress) {
+        deps.stdout(`#${number} is already claimed (bot:in-progress) — not built this firing\n`);
+        continue;
+      }
+      const text = `#${number} admitted on a typed /claude-tweaks:dispatch command (no auto:build label)`;
+      if (!step(ctx, `named #${number}`, () => deps.appendDecision({ runDir: ctx.options.runDir, text, now: deps.now() })).ok) {
+        deps.stdout(`#${number} not admitted: the decisions.md audit line could not be written\n`);
+        continue;
+      }
+      admitted.push(raw);
+      state.typedNumbers.add(number);
+    }
+    // A `label` answer here means the record carries auto:build yet the pool fetch did not return it.
+    const line = result.authority === 'label'
+      ? `#${number} carries auto:build but is not in this pull's queue — not built this firing`
+      : formatAuthorityLine(number, result);
+    deps.stdout(`${line}\n`);
+  }
+  if (admitted.length === 0) return;
+  // The admit line and AUTO line above were written before this write: a failed write must not leave
+  // a record reported admitted that never reaches the queue, so each is un-admitted and says so.
+  if (put(ctx, queueFile, JSON.stringify([...pool.value, ...admitted])).ok) return;
+  for (const raw of admitted) {
+    state.typedNumbers.delete(raw.number);
+    deps.stdout(`#${raw.number} not admitted: the queue file could not be written\n`);
+    step(ctx, `named #${raw.number} rollback`, () => deps.appendDecision({
+      runDir: ctx.options.runDir, text: `#${raw.number} not admitted after all: the queue file could not be written`, now: deps.now(),
+    }));
+  }
+}
+
+// One named record as `gh issue view` returns it, or null when the fetch failed or its answer is not
+// that record (another number, or no string state).
+function fetchNamed(ctx, number) {
+  let raw;
+  try {
+    raw = ctx.deps.fetchRecord(ctx, number);
+  } catch {
+    return null;
+  }
+  if (raw === null || typeof raw !== 'object' || raw.number !== number || typeof raw.state !== 'string') return null;
+  return raw;
+}
+
+const NAMED_FIELDS = 'number,title,body,labels,createdAt,updatedAt,state';
+
 // Fence 71-151, then line 155 and the policy reads of 156-158 on a miss: the queue pull, the
 // aliasing, the 500-cap Warning, the dependency-freshness fetch and the cache check. On a hit it
 // has written dispatch-groups.json; the blocked and oversized passes replay the rest.
@@ -360,12 +467,17 @@ function runFetch(ctx) {
   if (!onGh) state.depFreshnessInput = step(ctx, 'dep-freshness-input', () => readTextOrNull(f.depFreshness)).value ?? null;
   if (onGh) put(ctx, queueFile, ghRun(ctx, QUEUE_ARGV).stdout);
   else agentQueueRaw(ctx, f.queueRaw, queueFile);
+  admitNamed(ctx, queueFile);
   aliasFile(ctx, 'alias-queue', queueFile);
-  const count = step(ctx, 'queue-count', () => readJson(queueFile).length);
+  // The cap is the auto:build list's own --limit: the records admitted above are not counted.
+  const count = step(ctx, 'queue-count', () => readJson(queueFile).length - state.typedNumbers.size);
   if (count.ok && count.value >= 500) deps.stderr(`${QUEUE_CAP_WARNING}\n`);
+  // A pull that admitted a typed record never reads the cache (Deliverable 5): a hit reuses stored
+  // groups, which either drop this pull's typed record or (once written) hand it to a later drain.
+  const readOrder = () => (state.typedNumbers.size > 0 ? null : deps.queueOrder.readOrder(rootOf(ctx)));
 
   const depNumbers = step(ctx, 'dep-numbers', () => {
-    const persisted = deps.queueOrder.readOrder(rootOf(ctx));
+    const persisted = readOrder();
     if (!persisted) return '';
     const autoBuildNumbers = new Set(readJson(queueFile).map((i) => i.number));
     const depOnly = (persisted.freshnessSignal.issues || []).filter((i) => !autoBuildNumbers.has(i.number));
@@ -382,7 +494,7 @@ function runFetch(ctx) {
   // The size guard is read for the cache check whether or not a blob exists (fence line 107).
   state.groupSizeGuard = readPolicy(ctx, 'dispatch-group-size-guard');
   try {
-    const persisted = deps.queueOrder.readOrder(rootOf(ctx));
+    const persisted = readOrder();
     if (persisted) {
       const current = buildFreshnessSignal([...readJson(queueFile), ...readJson(depFile)]);
       if (cacheUsable(persisted, current, deps.expressQueuePolicy({ stderr: deps.stderr }).grouping)) {
@@ -425,7 +537,7 @@ function runBlocked(ctx) {
     const openNumbers = new Set(readJson(f.openNumbers).map((i) => i.number));
     const eligiblePreDep = issues
       .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
-      .filter((i) => i.facets.grants.build && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
+      .filter((i) => (i.facets.grants.build || state.typedNumbers.has(i.number)) && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
     // '--limit 200' can truncate the open-issues pull: a dependency absent from it is
     // unresolved, not closed, and is checked live below.
     const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => !openNumbers.has(dep)))];
@@ -564,6 +676,7 @@ function runWriteBack(ctx) {
   aliasFile(ctx, 'alias-dep-freshness', depFile);
 
   if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
+  if (state.typedNumbers.size > 0) return; // a typed record must not reach a later drain's cache hit (#5584)
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);
     const autoBuild = readJson(paths['dispatch-queue-raw.json']);
@@ -1126,6 +1239,18 @@ function defaultDeps(seams = {}) {
     },
     createClaimReader: (...a) => require('../issues/claim-store').createClaimReader(...a),
     expressQueuePolicy: (...a) => require('../express/queue').expressQueuePolicy(...a),
+    // #5584, the named path (admitNamed). A failed or unparseable fetch reads as null.
+    fetchRecord(ctx, number) {
+      const r = ghRun(ctx, ['issue', 'view', String(number), '--json', NAMED_FIELDS], { quiet: true });
+      if (!r.ok) return null;
+      try { return JSON.parse(r.stdout); } catch { return null; }
+    },
+    buildAuthority: resolveBuildAuthority,
+    readTypedCommand: (...a) => require('../issues/typed-command').readTypedCommand(...a),
+    appendDecision({ runDir, text, now = new Date() }) {
+      const { appendEntry, formatEntry } = require('../log-decision/append');
+      appendEntry({ runDir, section: '/dispatch', entry: formatEntry({ status: 'AUTO', now, step: 'queue pull', text, reversibility: 'n/a' }) });
+    },
     foreignDeps: {},
     onPass: null,
   };

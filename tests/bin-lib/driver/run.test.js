@@ -772,6 +772,8 @@ test('admission reads blockers and linked PRs from the shared repo and passes th
     number: 7, state: 'OPEN', labels: issueFor(7).labels,
     openBlockerRefs: openBlockerRefs(entry), openLinkedPRs: [12], routing: 'on', driverEscalated: false,
     keyFiles: ['a.js'], bounds: { sizeCeiling: 'low', maxKeyFiles: 3 }, reviewerOn: false,
+    // #5584: issueFor carries no auto:build, and the harness has no terminal on stdin.
+    buildAuthority: 'none',
   });
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
 });
@@ -2133,14 +2135,16 @@ const K2 = ['detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
 const K3 = ['ciWaitMs', 'detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
 const K4 = ['ci', 'costUsd', 'denialCount', 'merge', 'ms', 'msTotal', 'msWithoutCi', 'outcome', 'pr', 'record', 'run', 'settle', 'settleFailed', 'settleRow', 'status', 'step', 'stop', 'ts', 'turns'];
 const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reproduced', 'returned', 'run', 'status', 'step', 'ts', 'turns', 'usage'];
+// The admission line gained `authority` (#5584), the one field added since the capture.
+const KA = ['authority', ...K0];
 const BASE_KEYS_PLAIN = [
-  K0, K0, K0, K0, K0, K0,
+  K0, K0, K0, KA, K0, K0,
   K0, K1, K2, K2, K0, K0,
   K2, K0, K0, K0, K3, K2,
   K2, K4,
 ];
 const BASE_KEYS_FIX = [
-  K0, K0, K0, K0, K0, K0,
+  K0, K0, K0, KA, K0, K0,
   K0, K1, K2, K2, K0, K5,
   K0, K2, K0, K0, K0, K3,
   K2, K2, K4,
@@ -6274,6 +6278,186 @@ test('budget AC4.1: a record that ends merged, its run directory followed into t
   assert.equal(classifyFacts(facts), 'driven');
 });
 
+// --- #5584: a typed command as the build grant at admission ------------------------------------
+//
+// The admission step asks build-authority.js's one rule (named = the record is in drive.js's own
+// arguments, never under --budget) and passes its answer to the real evaluateAdmission. Records here
+// carry `ready` and no `auto:build` unless a case says so.
+const TYPED_LABELS = ['risk:low', 'size:low', 'type:task', 'ready'];
+const typedIssue = (labels = TYPED_LABELS) => [on('gh', 'issue', 'view'), (c) => JSON.stringify(c.args.at(-1) === 'labels'
+  ? { labels: labels.map((name) => ({ name })) }
+  : { ...issueFor(Number(c.args.at(-1))), labels: labels.map((name) => ({ name })) })];
+const REAL_ADMISSION = [on('admission'), (c) => evaluateAdmission(c.args[0])];
+const SESSION_ENV = Object.freeze({ CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'sess-5584', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CODE_SESSION_ATTENDED: '1' });
+const admissionLine = (h) => h.lines().find((l) => l.step === STEP.admission);
+const GRANT_STOP = (reasons) => `${ADMISSION_REASONS.noBuildGrant}; typed command not accepted: ${reasons}`;
+// A gh call that would write a label: an issue or PR edit, a label flag, or a REST labels path.
+const labelWrites = (h) => h.calls.filter((c) => ['gh', 'ghBatch', 'ghCreate'].includes(c.kind) && (
+  (['issue', 'pr'].includes(c.args[0]) && c.args[1] === 'edit')
+  || c.args.some((a) => typeof a === 'string' && (/^--(add|remove)-label/.test(a) || (c.args[0] === 'api' && /\/labels\b/.test(a))))));
+
+// One drive of #7 (or --budget 1 over a queue of #7) under `env` and `stdinIsTTY`.
+async function typedDrive({ labels = TYPED_LABELS, env = {}, tty, budget = false, readTypedCommand, deps = {} } = {}) {
+  const typedCalls = [];
+  const h = harness({
+    script: [typedIssue(labels), REAL_ADMISSION, ...(budget ? [budgetPull(7)] : [])],
+    deps: {
+      env,
+      ...(tty === undefined ? {} : { stdinIsTTY: tty }),
+      ...(readTypedCommand ? { readTypedCommand: (opts) => { typedCalls.push(opts); return readTypedCommand(opts); } } : {}),
+      ...deps,
+    },
+  });
+  assert.equal(await run(budget ? ['--budget', '1'] : ['#7'], h.deps), 0);
+  return { h, typedCalls, final: finals(h).at(-1) };
+}
+
+test('AC9 (#5584): drive.js #N at a terminal outside a session admits an ungranted ready record; the refusing settings refuse it for the grant', async () => {
+  const typed = await typedDrive({ tty: true });
+  assert.equal(typed.final.outcome, 'pending-review');
+  assert.deepStrictEqual([admissionLine(typed.h).status, admissionLine(typed.h).authority], ['ok', 'typed']);
+  const rows = [
+    ['stdin not a terminal', { tty: false }, 'not-a-terminal'],
+    ['stdinIsTTY absent', {}, 'not-a-terminal'],
+    ['CI set', { tty: true, env: { CI: '1' } }, 'ci'],
+    ['CC_HUB_RUN set', { tty: true, env: { CC_HUB_RUN: '1' } }, 'hub-run'],
+    ['--budget', { tty: true, budget: true }, 'not-named'],
+    ['in a session, transcript check refuses', { tty: true, env: SESSION_ENV, readTypedCommand: () => ({ answer: 'none', reason: 'no-pointer' }) }, 'no-pointer'],
+  ];
+  for (const [name, opts, reason] of rows) {
+    const { h, final } = await typedDrive(opts);
+    assert.deepStrictEqual([final.stop.step, final.stop.class, final.outcome], ['admission', 'refused', 'refused'], name);
+    assert.equal(final.stop.detail, GRANT_STOP(reason), name);
+    assert.deepStrictEqual([admissionLine(h).status, admissionLine(h).authority], ['stop', 'none'], name);
+    assert.equal(calls(h, 'node', /claim-targets\.js$/).length, 0, name);
+  }
+});
+
+test('AC9 (#5584): inside a session with stdin a terminal, admission takes the transcript check, asked once with the record, env, clock and tmpdir', async () => {
+  const env = { ...SESSION_ENV, TMPDIR: '/var/t5584' };
+  const { h, typedCalls, final } = await typedDrive({ tty: true, env, readTypedCommand: () => ({ answer: 'typed', promptId: 'p-1' }) });
+  assert.equal(final.outcome, 'pending-review');
+  assert.equal(admissionLine(h).authority, 'typed');
+  assert.equal(typedCalls.length, 1);
+  const [opts] = typedCalls;
+  assert.deepStrictEqual([opts.number, opts.env, opts.tmpdir], [7, env, '/var/t5584']);
+  assert.ok(opts.now instanceof Date && Number.isFinite(opts.now.getTime()));
+  // Without an injected check the module's own readTypedCommand runs: no pointer under this tmpdir.
+  const fallback = await typedDrive({ tty: true, env: { ...SESSION_ENV, TMPDIR: tmpDir('drive-typed-tmp-') } });
+  assert.equal(fallback.final.stop.detail, GRANT_STOP('no-pointer'));
+});
+
+test('AC9 (#5584): a record with auto:build behaves the same in all six settings and never reads the typed command', async () => {
+  const labels = [...TYPED_LABELS, 'auto:build'];
+  // The worker launch carries the env under test (its options' env and its deps): compare the rest of its options.
+  const sig = (h) => h.calls.map((c) => `${c.kind} ${describeArgs(c.kind === 'worker' ? [{ ...c.args[0], env: undefined }] : c.args || [])}`);
+  const base = await typedDrive({ labels });
+  const settings = [
+    { tty: true }, { tty: false }, { tty: true, env: { CI: '1' } }, { tty: true, env: { CC_HUB_RUN: '1' } },
+    { tty: true, env: SESSION_ENV },
+  ];
+  for (const opts of settings) {
+    const { h, typedCalls, final } = await typedDrive({ labels, readTypedCommand: () => ({ answer: 'none', reason: 'not-typed' }), ...opts });
+    assert.equal(final.outcome, 'pending-review', JSON.stringify(opts));
+    assert.equal(admissionLine(h).authority, 'label');
+    assert.equal(typedCalls.length, 0);
+    assert.deepStrictEqual(sig(h), sig(base.h), JSON.stringify(opts));
+  }
+  const budget = await typedDrive({ labels, tty: true, budget: true, readTypedCommand: () => ({ answer: 'none', reason: 'not-typed' }) });
+  assert.equal(budget.final.outcome, 'pending-review');
+  assert.equal(admissionLine(budget.h).authority, 'label');
+  assert.equal(budget.typedCalls.length, 0);
+});
+
+test('AC11 (#5584): neither a typed nor a refused run writes a label through the fake gh runner', async () => {
+  for (const opts of [{ tty: true }, { tty: false }, { tty: true, env: SESSION_ENV, readTypedCommand: () => ({ answer: 'typed' }) }]) {
+    const { h } = await typedDrive(opts);
+    assert.ok(h.calls.some((c) => c.kind === 'gh'), 'the fake runner saw gh calls');
+    assert.deepStrictEqual(labelWrites(h), [], JSON.stringify(opts));
+  }
+});
+
+test('AC12 (#5584): a typed record without auto:merge stops the merge step not-authorized', async () => {
+  const judged = [];
+  const { h, final } = await typedDrive({ tty: true, deps: { judgments: async () => { judged.push(1); } } });
+  assert.equal(admissionLine(h).authority, 'typed');
+  assert.equal(final.merge.reason, 'not-authorized');
+  assert.equal(final.outcome, 'pending-review');
+  assert.deepStrictEqual(judged, []);
+  assert.ok(!ghMergeCalls(h));
+  assert.deepStrictEqual(labelWrites(h), []);
+});
+
+// AC15: one test per held label. The rule answers none with `held` before the transcript is read,
+// and admission's own held gate still refuses, at a terminal and in a session with an accepted check.
+async function assertHeldRefused(held, reason) {
+  const accepted = () => ({ answer: 'typed' });
+  for (const opts of [{ tty: true }, { tty: true, env: SESSION_ENV, readTypedCommand: accepted }]) {
+    const { h, typedCalls, final } = await typedDrive({ labels: [...TYPED_LABELS, held], ...opts });
+    assert.deepStrictEqual([final.stop.step, final.outcome], ['admission', 'refused'], held);
+    assert.equal(final.stop.detail, `${ADMISSION_REASONS.noBuildGrant}; ${reason}; typed command not accepted: held`, held);
+    assert.equal(admissionLine(h).authority, 'none');
+    assert.equal(typedCalls.length, 0, `${held}: the transcript is never read`);
+    assert.deepStrictEqual(labelWrites(h), []);
+  }
+}
+
+test('AC15 (#5584): bot:blocked is refused at admission with an accepted typed command', async () => {
+  await assertHeldRefused('bot:blocked', ADMISSION_REASONS.blocked);
+});
+
+test('AC15 (#5584): bot:parked is refused at admission with an accepted typed command', async () => {
+  await assertHeldRefused('bot:parked', ADMISSION_REASONS.parked);
+});
+
+test('AC15 (#5584): parked is refused at admission with an accepted typed command', async () => {
+  await assertHeldRefused('parked', ADMISSION_REASONS.parked);
+});
+
+test('AC15 (#5584): a record without ready is refused for the grant with not-ready', async () => {
+  const unready = await typedDrive({ labels: ['risk:low', 'size:low'], tty: true });
+  assert.equal(unready.final.stop.detail, GRANT_STOP('not-ready'));
+});
+
+test('(#5584) the reason words are joined with ", ", and a refusal without the grant reason gets no suffix', async () => {
+  const two = await typedDrive({ tty: false, env: { CI: '1', CC_HUB_RUN: '1' } });
+  // Joined as formatAuthorityLine joins them, so one reason list prints one way on every surface.
+  assert.equal(two.final.stop.detail, GRANT_STOP('not-a-terminal, ci, hub-run'));
+  const labelled = await typedDrive({ labels: [...TYPED_LABELS, 'auto:build', 'bot:blocked'], tty: false });
+  assert.equal(labelled.final.stop.detail, ADMISSION_REASONS.blocked);
+  assert.equal(admissionLine(labelled.h).authority, 'label');
+});
+
+test('(#5584) an injected rule answering none without reasons refuses for the grant and does not throw', async () => {
+  for (const answer of [{ authority: 'none' }, { authority: 'none', reasons: null }]) {
+    const { h, final } = await typedDrive({ tty: true, deps: { resolveBuildAuthority: () => answer } });
+    assert.deepStrictEqual([final.stop.step, final.stop.class, final.outcome], ['admission', 'refused', 'refused'], JSON.stringify(answer));
+    // No reason words, no suffix: formatAuthorityLine likewise never prints an empty list.
+    assert.equal(final.stop.detail, ADMISSION_REASONS.noBuildGrant, JSON.stringify(answer));
+    assert.equal(admissionLine(h).authority, 'none');
+  }
+});
+
+test('(#5584) driveRecord defaults to an unnamed record; run() names each argument record', async () => {
+  const h = harness({ script: [typedIssue(), REAL_ADMISSION], deps: { stdinIsTTY: true } });
+  const { final } = await driveRecord(7, await policyOnce(h), h.deps);
+  assert.equal(final.stop.detail, GRANT_STOP('not-named'));
+  const named = harness({ script: [typedIssue(), REAL_ADMISSION], deps: { stdinIsTTY: true } });
+  const facts = await driveRecord(7, await policyOnce(named), named.deps, STEPS, { named: true });
+  assert.equal(facts.outcome, 'pending-review');
+  const two = harness({ script: [typedIssue(), REAL_ADMISSION], deps: { stdinIsTTY: true } });
+  assert.equal(await run(['#7', '#8'], two.deps), 0);
+  assert.deepStrictEqual(finals(two).map((f) => [f.record, f.outcome]), [[7, 'pending-review'], [8, 'pending-review']]);
+});
+
+test('(#5584) realDeps carries the terminal test, the rule and the transcript check', () => {
+  const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+  assert.equal(realDeps.stdinIsTTY, process.stdin.isTTY === true);
+  assert.equal(realDeps.resolveBuildAuthority, require(path.join(LIB, 'issues', 'build-authority')).resolveBuildAuthority);
+  assert.equal(typeof realDeps.readTypedCommand, 'function');
+  assert.deepStrictEqual(realDeps.readTypedCommand({ number: 7, env: {}, now: new Date(NOW) }), { answer: 'none', reason: 'no-session-id' });
+});
+
 // --- drive.js --in-flight-prs / --near-dup-pairs (#5232): the merge step's drain-overlap hold ---
 
 const readFileOf = (file) => (c) => c.kind === 'readFile' && c.args[0] === file;
@@ -6519,6 +6703,58 @@ test('#5232 AC1.1: checkRecord prints no verdict for a stop before the reasons a
     assert.match(h.err.join(''), /drive\.js --check: (early|late) /, name);
   }
   assert.equal(ranAfter, false, 'no step runs after a stop that read nothing');
+});
+
+// #5584 on #5232's route: `drive.js --check #N` names its record on the command line, as `drive.js #N` does.
+async function typedCheck({ labels = TYPED_LABELS, env = {}, tty, readTypedCommand, deps = {} } = {}) {
+  const typedCalls = [];
+  const h = harness({
+    script: [typedIssue(labels), REAL_ADMISSION],
+    deps: {
+      env,
+      ...(tty === undefined ? {} : { stdinIsTTY: tty }),
+      ...(readTypedCommand ? { readTypedCommand: (opts) => { typedCalls.push(opts); return readTypedCommand(opts); } } : {}),
+      ...deps,
+    },
+  });
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  assertWriteFree(h.calls, h.writes());
+  return { verdict: JSON.parse(h.out.join('')), typedCalls };
+}
+
+test('(#5584) --check names its record: an ungranted ready record with an accepted typed command is admitted, as drive.js #N admits it', async () => {
+  const terminal = await typedCheck({ tty: true });
+  assert.deepStrictEqual(terminal.verdict, { record: 7, admitted: true, reasons: [] });
+  const session = await typedCheck({ tty: true, env: SESSION_ENV, readTypedCommand: () => ({ answer: 'typed', promptId: 'p-1' }) });
+  assert.deepStrictEqual(session.verdict, { record: 7, admitted: true, reasons: [] });
+  assert.equal(session.typedCalls.length, 1);
+  assert.equal(session.typedCalls[0].number, 7);
+});
+
+test('(#5584) --check on a refused typed command stays refused and carries the typed-command words after the reasons', async () => {
+  const rows = [
+    ['stdin not a terminal', { tty: false }, 'not-a-terminal'],
+    ['in a session, transcript check refuses', { tty: true, env: SESSION_ENV, readTypedCommand: () => ({ answer: 'none', reason: 'no-pointer' }) }, 'no-pointer'],
+    ['two words', { tty: false, env: { CI: '1', CC_HUB_RUN: '1' } }, 'not-a-terminal, ci, hub-run'],
+  ];
+  for (const [name, opts, words] of rows) {
+    const { verdict } = await typedCheck(opts);
+    assert.deepStrictEqual(verdict, { record: 7, admitted: false, reasons: [ADMISSION_REASONS.noBuildGrant, `typed command not accepted: ${words}`] }, name);
+  }
+  // A refusal that is not the grant refusal adds no words, as the stop detail adds none.
+  const held = await typedCheck({ labels: [...TYPED_LABELS, 'auto:build', 'bot:blocked'], tty: false });
+  assert.deepStrictEqual(held.verdict, { record: 7, admitted: false, reasons: [ADMISSION_REASONS.blocked] });
+  // An answer of none with words, refused by admission for another reason only: no words either.
+  const other = await typedCheck({ tty: false, deps: { evaluateAdmission: () => ({ admitted: false, reasons: ['express-driver is off'] }) } });
+  assert.deepStrictEqual(other.verdict, { record: 7, admitted: false, reasons: ['express-driver is off'] });
+});
+
+test('(#5584) --check on a labelled record is unchanged and never reads the typed command', async () => {
+  for (const opts of [{ tty: true }, { tty: false }, { tty: true, env: SESSION_ENV }]) {
+    const { verdict, typedCalls } = await typedCheck({ labels: [...TYPED_LABELS, 'auto:build'], readTypedCommand: () => ({ answer: 'none', reason: 'not-typed' }), ...opts });
+    assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [] }, JSON.stringify(opts));
+    assert.equal(typedCalls.length, 0, JSON.stringify(opts));
+  }
 });
 
 // --- drive.js #N --run <dir> (#5232): adopt dispatch's run directory and worktree --------------
