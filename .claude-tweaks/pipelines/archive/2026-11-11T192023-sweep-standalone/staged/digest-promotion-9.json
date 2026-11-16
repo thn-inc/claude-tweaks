@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": null,
+  "title": "Settle 3 below-floor digest findings in wrap-up",
+  "action": "Propose digest cluster: file 1 record absorbing 3 entries",
+  "command": "file record \"wrap-up\" cluster, mark 3 lines → #{n}"
+ }
+]

@@ -11,6 +11,7 @@
 'use strict';
 const { execFileSyncTimed } = require('./timing');
 const { runGit } = require('../hooks/git-exec');
+const { ghOptions } = require('../repo-resolve');
 
 const FETCH_TIMEOUT_MS = 5000;
 // Conclusions that count as red. `in_progress`/`queued` are status values,
@@ -86,15 +87,16 @@ function parseCheckRunLines(stdout) {
 // I/O: one paginated `gh api` call, newest-run-per-check fields only.
 function fetchCheckRuns(repoRoot, sha) {
   let stdout;
+  const args = [
+    'api', '--paginate',
+    `repos/{owner}/{repo}/commits/${sha}/check-runs`,
+    '-q', '.check_runs[] | {id: .id, name: .name, conclusion: .conclusion}',
+  ];
   try {
     stdout = execFileSyncTimed(
       'gh',
-      [
-        'api', '--paginate',
-        `repos/{owner}/{repo}/commits/${sha}/check-runs`,
-        '-q', '.check_runs[] | {id: .id, name: .name, conclusion: .conclusion}',
-      ],
-      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+      args,
+      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
     );
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };

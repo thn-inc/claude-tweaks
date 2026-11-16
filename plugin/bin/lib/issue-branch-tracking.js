@@ -12,6 +12,8 @@
 // more than that will miss references in the truncated commits — the same
 // limitation GitHub's own native keyword parsing already has.
 
+const crypto = require('crypto');
+
 // The closing-keyword vocabulary on its own, exported so a caller with a
 // different grammar (line-anchored, `[ \t]` whitespace) shares the keyword set
 // instead of hand-rolling a second copy that could silently drift.
@@ -31,6 +33,58 @@ function extractIssueNumbers(commitMessages) {
     }
   }
   return Array.from(found).sort((a, b) => a - b);
+}
+
+// Job-level prefilter: a false job `if` gets no runner at all, so a push that
+// cannot reference a closing keyword never bills one. It is deliberately looser
+// than ISSUE_REF_SOURCE (a '#' plus any keyword stem anywhere in the joined
+// messages, no word boundary, no whitespace shape) so it can only over-admit,
+// never drop a push the in-job extraction would have matched.
+//
+// Case folding, verified rather than assumed: GitHub's contains() uses
+// StringComparison.OrdinalIgnoreCase (actions/runner
+// src/Sdk/Expressions/Sdk/Functions/Contains.cs). OrdinalIgnoreCase does fold
+// some non-ASCII letters (e.g. é/É), but an ASCII-only fold is equivalent to it
+// for these literals, which are all ASCII plus ſ; dotnet/runtime's
+// OrdinalCasingTests state U+017F (long s) is NOT equal to s. GNU grep 3.12
+// -zoiP with the generated PATTERN DOES fold long s to s (cloſes #1 and
+// reſolves #2 extract), and does not fold dotless i (fıxes #3 does not
+// extract). So each stem containing an s also gets a long-s literal, or the
+// prefilter would skip a push the runner would track.
+// prefilterMatches models OrdinalIgnoreCase exactly for these literals:
+// ASCII-only folding, never String.prototype.toUpperCase (which maps ſ to S
+// and would be looser than GitHub, voiding the proof).
+// Invariant: every word CLOSING_KEYWORD_ALTERNATION accepts must contain one of
+// these stems. Widening the alternation means revisiting this list; the test
+// "PREFILTER_KEYWORD_STEMS cover every word CLOSING_KEYWORD_ALTERNATION
+// accepts" fails until it is.
+const BASE_KEYWORD_STEMS = Object.freeze(['close', 'fix', 'resolve']);
+
+const LONG_S = '\u017f';
+
+const PREFILTER_KEYWORD_STEMS = Object.freeze(
+  BASE_KEYWORD_STEMS.flatMap((stem) => (stem.includes('s') ? [stem, stem.replace(/s/g, LONG_S)] : [stem]))
+);
+
+const PREFILTER_JOINED_MESSAGES = "join(github.event.commits.*.message, ' ')";
+
+// Emitted unquoted as a plain-scalar `if:` value, where whitespace followed by
+// '#' starts a YAML comment and silently truncates the condition. The '#'
+// literal is safe only because a quote precedes it; keep it that way.
+const PREFILTER_EXPRESSION =
+  `contains(${PREFILTER_JOINED_MESSAGES}, '#') && (` +
+  PREFILTER_KEYWORD_STEMS.map((s) => `contains(${PREFILTER_JOINED_MESSAGES}, '${s}')`).join(' || ') +
+  ')';
+
+// .NET OrdinalIgnoreCase for our literals: fold A-Z only, leave all else as is.
+function foldAsciiUpper(str) {
+  return str.replace(/[a-z]/g, (c) => c.toUpperCase());
+}
+
+function prefilterMatches(commitMessages) {
+  if (!Array.isArray(commitMessages)) return false;
+  const joined = foldAsciiUpper(commitMessages.filter((m) => typeof m === 'string').join(' '));
+  return joined.includes('#') && PREFILTER_KEYWORD_STEMS.some((s) => joined.includes(foldAsciiUpper(s)));
 }
 
 // Shared "Extract referenced issues" step — identical in both jobs below (each
@@ -65,7 +119,14 @@ function extractReferencedIssuesStep() {
   ];
 }
 
+const LONG_S_ADOPTER_COMMENT =
+  `    # cloſe/reſolve are deliberate: the runner's grep -iP folds ſ to s, GitHub's contains() does not`;
+
 function generateWorkflowYaml() {
+  // Lazy: post-tool-use.js imports this module only for ISSUE_REF_SOURCE, so
+  // the branch-name modules must not load on every PostToolUse.
+  const { CLAIMS_BRANCH } = require('./issues/claims');
+  const { HEALTH_STATE_BRANCH } = require('./health-core/durable-state');
   const lines = [
     'name: Track issue fixes across branches',
     '',
@@ -73,6 +134,9 @@ function generateWorkflowYaml() {
     '  push:',
     '    branches:',
     "      - '**'",
+    // Bookkeeping pushes never carry a fix; `!` patterns must follow '**'.
+    `      - '!${CLAIMS_BRANCH}'`,
+    `      - '!${HEALTH_STATE_BRANCH}'`,
     '',
     'permissions:',
     '  contents: read',
@@ -84,7 +148,8 @@ function generateWorkflowYaml() {
     '',
     'jobs:',
     '  label-fix-branch:',
-    "    if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)",
+    LONG_S_ADOPTER_COMMENT,
+    "    if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch) && " + PREFILTER_EXPRESSION,
     '    runs-on: ubuntu-latest',
     '    steps:',
     ...extractReferencedIssuesStep(),
@@ -133,7 +198,8 @@ function generateWorkflowYaml() {
     '          done',
     '',
     '  cleanup-fix-labels:',
-    "    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+    LONG_S_ADOPTER_COMMENT,
+    "    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && " + PREFILTER_EXPRESSION,
     '    runs-on: ubuntu-latest',
     '    steps:',
     ...extractReferencedIssuesStep(),
@@ -159,4 +225,51 @@ function generateWorkflowYaml() {
   return lines.join('\n');
 }
 
-module.exports = { ISSUE_REF_SOURCE, CLOSING_KEYWORD_ALTERNATION, extractIssueNumbers, generateWorkflowYaml };
+// Digests of every distinct generateWorkflowYaml() output this generator has
+// ever produced, so /init can tell an unedited generated file (safe to
+// regenerate) from a hand-edited one. Derived 2026-11-10: walk `git log
+// --follow` of this module, take each revision's output and hash it with
+// normalisedDigest below. APPEND the previous digest here whenever the
+// generator's output changes. The pinned-digest test in
+// tests/issue-branch-tracking.test.js notices the change, and its release-history
+// test fails if the previously released workflow no longer classifies as
+// prior-generated.
+const PRIOR_OUTPUT_SHA256 = Object.freeze([
+  '0b9a50e7dacd86c560626ae566a27cc4a2528acebd83b340d78596354a3127dd',
+  'a64b869f142c07baf9477259374b00cb0aa62332cf0f699684c98f52e2876dd4',
+  'a05f433b8079c9147f6750bf8ef01a3a61de6c52f3c3c5d7db6ed7c582fdc561',
+  'dba131107bd1224c9ff823bc5390401ace05c2ab1e33cc7ec4fea0c96efb9138',
+  '89f9cc80110f35535fce118eb445d03de5e1c80886932a8c076138c0e270d1ae',
+]);
+
+// Strips a leading BOM, CRLF and trailing newlines before hashing, because a
+// Windows core.autocrlf checkout or an editor-added BOM must not make an
+// untouched generated file read as hand-edited. The digests in
+// PRIOR_OUTPUT_SHA256 were computed through this same normalisation, so changing
+// it means re-deriving them.
+function normalisedDigest(text) {
+  const normalised = String(text).replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  return crypto.createHash('sha256').update(normalised).digest('hex');
+}
+
+// Classify an existing track-issue-fixes.yml: 'current' (matches today's
+// output), 'prior-generated' (matches an older output — safe to regenerate),
+// or 'modified' (anything else — never overwrite).
+function classifyExistingWorkflow(content) {
+  const digest = normalisedDigest(content);
+  if (digest === normalisedDigest(generateWorkflowYaml())) return 'current';
+  if (PRIOR_OUTPUT_SHA256.includes(digest)) return 'prior-generated';
+  return 'modified';
+}
+
+module.exports = {
+  ISSUE_REF_SOURCE,
+  CLOSING_KEYWORD_ALTERNATION,
+  PREFILTER_KEYWORD_STEMS,
+  PREFILTER_EXPRESSION,
+  extractIssueNumbers,
+  prefilterMatches,
+  generateWorkflowYaml,
+  PRIOR_OUTPUT_SHA256,
+  classifyExistingWorkflow,
+};

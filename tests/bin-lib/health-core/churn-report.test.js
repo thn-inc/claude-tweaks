@@ -35,6 +35,30 @@ function captureStdout(fn) {
   return out;
 }
 
+test('writes through an injected io, defaults root to io.cwd(), and returns an integer on every path', () => {
+  const roots = [];
+  let out = '';
+  let err = '';
+  const io = { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => '/injected/cwd' };
+  const runs = [
+    { runId: 'r1', runAt: '2026-01-01T00:00:00.000Z', fingerprints: ['a'] },
+    { runId: 'r2', runAt: '2026-01-02T00:00:00.000Z', fingerprints: ['b'] },
+  ];
+  const readDurableState = (r) => { roots.push(r); return { runs }; };
+  const cmd = makeCmdChurnReport({ readDurableState, computeChurn, io });
+  assert.strictEqual(cmd({}), 0);
+  assert.deepStrictEqual(roots, ['/injected/cwd']);
+  assert.match(out, /^runId/);
+  assert.strictEqual(cmd({ 'fail-on-high-churn': '0.5' }), 1);
+  assert.match(out, /high churn: one or more runs >= 0\.5/);
+  assert.strictEqual(cmd({ 'fail-on-high-churn': 'nope' }), 2);
+  assert.match(err, /invalid --fail-on-high-churn value: nope/);
+  const empty = makeCmdChurnReport({ readDurableState: () => ({ runs: [] }), computeChurn, io });
+  out = '';
+  assert.strictEqual(empty({}), 0);
+  assert.strictEqual(out, 'no run logs found\n');
+});
+
 test('prints "no run logs found" and does not exit when there are no runs', () => {
   const { readDurableState } = fakeDurableState([]);
   const cmdChurnReport = makeCmdChurnReport({ readDurableState, computeChurn });
@@ -94,7 +118,7 @@ test('returns 2 with a usage error instead of silently disabling the gate when -
   assert.match(errOut, /invalid --fail-on-high-churn/);
 });
 
-test('returns undefined when ratio stays under threshold', () => {
+test('returns 0 when ratio stays under threshold', () => {
   const runs = [
     { runId: 'r1', runAt: '2026-01-01T00:00:00.000Z', fingerprints: ['a', 'b'] },
     { runId: 'r2', runAt: '2026-01-02T00:00:00.000Z', fingerprints: ['a', 'b'] }, // no churn
@@ -103,7 +127,7 @@ test('returns undefined when ratio stays under threshold', () => {
   const cmdChurnReport = makeCmdChurnReport({ readDurableState, computeChurn });
   let code;
   captureStdout(() => { code = cmdChurnReport({ root: '/tmp', 'fail-on-high-churn': '0.5' }); });
-  assert.strictEqual(code, undefined);
+  assert.strictEqual(code, 0);
 });
 
 test('works unmodified against a computeChurn that returns an extra field (code-health\'s own shape has "stayed")', () => {

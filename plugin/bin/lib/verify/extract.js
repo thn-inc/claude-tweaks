@@ -48,12 +48,14 @@ function cap(lines) {
     .join('\n');
 }
 
-function extractFailingRegion(text, family) {
+// The uncapped failing region of the two node --test families, or null for any
+// other family: tap = each `not ok` line plus its trailing diagnostic block
+// (node --test emits the diagnostics AFTER the failure line — same reason
+// verification.md's old recipe used grep -A); spec = everything from
+// `✖ failing tests:` on (null when that header is absent).
+function failingRegionLines(text, family) {
   const lines = text.split('\n');
   if (family === 'tap') {
-    // Each `not ok` line plus its trailing diagnostic block (node --test emits
-    // the diagnostics AFTER the failure line — same reason verification.md's
-    // old recipe used grep -A).
     const out = [];
     let inFailure = false;
     for (const line of lines) {
@@ -61,8 +63,18 @@ function extractFailingRegion(text, family) {
       if (/^(ok \d|# )/.test(line)) { inFailure = false; continue; }
       if (inFailure) out.push(line);
     }
-    return cap(out);
+    return out;
   }
+  if (family === 'spec') {
+    const start = lines.findIndex((line) => /^✖ failing tests:/.test(line));
+    if (start !== -1) return lines.slice(start).map((line) => line.replace(/\r$/, ''));
+  }
+  return null;
+}
+
+function extractFailingRegion(text, family) {
+  const lines = text.split('\n');
+  if (family === 'tap') return cap(failingRegionLines(text, family));
   if (family === 'summary') {
     // FAIL/Error regions (2 before, 20 after each anchor) plus the trailing
     // summary block, deduplicated by line index and kept in file order.
@@ -84,8 +96,8 @@ function extractFailingRegion(text, family) {
     return cap([...keep].sort((a, b) => a - b).map((i) => lines[i]));
   }
   if (family === 'spec') {
-    const start = lines.findIndex((line) => /^✖ failing tests:/.test(line));
-    if (start !== -1) return cap(lines.slice(start).map((line) => line.replace(/\r$/, '')));
+    const region = failingRegionLines(text, family);
+    if (region !== null) return cap(region);
   }
   return cap(lines.slice(-GENERIC_TAIL_LINES));
 }
@@ -318,6 +330,29 @@ function cancelledCount(text, family) {
   const re = { spec: /^ℹ cancelled (\d+)/m, tap: /^# cancelled (\d+)/m }[family];
   const m = re && stripAnsi(text).match(re);
   return m ? Number(m[1]) : null;
+}
+
+// Why a failing log may owe a serial rerun (#5150): 'cancelled' (a cancelled
+// count), 'inconclusive-marker' (a line of the UNCAPPED failing region matches
+// INCONCLUSIVE_RE), 'timeout-pattern' (a project-declared literal substring,
+// matched with `includes` on ANSI-stripped text, never a regex), else null —
+// checked in that order. Adjudication reads the verdict only to decide whether
+// reruns fan out. Unlike failingTestsByFile's `conclusiveOnly` (which tests
+// INCONCLUSIVE_RE against a block's own top-level key lines so a quoted child
+// timeout cannot make its parent inconclusive), this reads the whole failing
+// region: a quoted child timeout can over-match, which costs speed (reruns run
+// serially), never a verdict. A family with no failing region (summary,
+// generic) reads the whole stripped text. On tap the marker scan reads only
+// top-level `not ok` blocks, so a child's timeout (an indented block before its
+// parent) shows there through the cancelled count, or through a declared
+// pattern, which matches the whole stripped text.
+function timeoutEvidence(text, family, patterns = []) {
+  if ((cancelledCount(text, family) || 0) > 0) return 'cancelled';
+  const stripped = stripAnsi(text);
+  const region = failingRegionLines(stripped, family) || stripped.split('\n');
+  if (region.some((line) => INCONCLUSIVE_RE.test(line))) return 'inconclusive-marker';
+  if (patterns.some((p) => stripped.includes(p))) return 'timeout-pattern';
+  return null;
 }
 
 // Every test point a single-file log reports. `all`/`passed` count leaf names
@@ -777,6 +812,6 @@ function extractFailingFiles(text, family, { cwd = process.cwd(), exists } = {})
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
   stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, summaryDialect, fileLevelFailures, failingTestsByFile, specEntryCount,
-  cancelledCount, testTree, tapLines, TEST_FILE_RE,
+  cancelledCount, timeoutEvidence, testTree, tapLines, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

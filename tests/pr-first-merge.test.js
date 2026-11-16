@@ -61,7 +61,7 @@ test('the precondition gate is the same one condition pr-run-comments.md already
 
 test('the tag mapping preserves both pre-#411 tags plus #715\'s manifesto-authorized tag for /help\'s metric', () => {
   assert.match(MERGE, /`\{tag\}` is `auto-merge`.*`fast-lane`.*`manifesto-authorized`/s);
-  assert.match(MERGE, /github-pr-scan\.md.*triage-queue.*item 3/s);
+  assert.match(MERGE, /github-pr-scan-triage\.md.*triage-queue.*item 3/s);
 });
 
 test('an unrecognized gh pr merge error always takes the conservative ready+comment branch, never a guessed one', () => {
@@ -115,7 +115,7 @@ test("auto-merge-short-circuit.md's retained local-merge branch reads the worktr
   const parts = AUTO_MERGE.split('**`integration-model: local-merge`:**');
   const localMergeSection = parts[parts.length - 1];
   assert.ok(localMergeSection, 'local-merge branch must exist');
-  assert.match(localMergeSection.slice(0, 4000), /require\('\$RUN_DIR\/run-state\.json'\)\.worktree/);
+  assert.match(localMergeSection.slice(0, 4000), /require\(process\.argv\[1\]\+'\/run-state\.json'\)\.worktree;[^\n]*"\{run-dir\}"/);
   assert.doesNotMatch(
     localMergeSection.slice(0, 2000),
     /git -C "\$RUN_DIR" (rev-parse|branch)/,
@@ -396,7 +396,7 @@ test('#3028: human-approved is registered in Step 3, named at close-out step 5, 
   const closeOut = read('plugin', 'skills', 'dispatch', 'close-out.md');
   const step5 = closeOut.split('5. **On confirmation — merge.**')[1].split('\n6. ')[0];
   assert.match(step5, /`\{tag\}` = `human-approved`/, 'close-out step 5 names its tag');
-  const scan = read('plugin', 'skills', '_shared', 'github-pr-scan.md');
+  const scan = read('plugin', 'skills', '_shared', 'github-pr-scan-triage.md');
   const item3 = scan.split('3. **Auto-merged this week**')[1].split('```bash')[0];
   assert.match(item3, /`\[human-approved\]`[\s\S]*excluded/, 'triage-queue item 3 documents the exclusion');
   const jq = scan.split('3. **Auto-merged this week**')[1].split('```bash')[1].split('```')[0];
@@ -499,4 +499,306 @@ test('#3607: a clean update-from-base entered from Step 2.5 re-enters Step 2.5, 
   const conflict = MERGE.slice(MERGE.indexOf('## Conflict path'), MERGE.indexOf('## Outcome vocabulary'));
   assert.ok(conflict.includes('entered from Step 2.5'), 'Conflict path must name its Step 2.5 entry');
   assert.ok(conflict.includes('re-enter Step 2.5 from the top'), 'a pushed head from a Step 2.5 entry needs its own CI read before any merge');
+});
+
+// #4550: a derived merge-verification `off` (no policy.yml key) waits on a PR's own observed
+// pending checks and parks on a red one; an explicit `off` keeps Step 3 as written. Frozen
+// pre-change `off` row below proves the pins can go red [IL-105].
+const PRE_4550_OFF_ROW = "| `off` | Step 3 as written (today's behavior, unchanged) | Step 3 as written (today's behavior — this is the #540-shaped race the lever exists to close; a repo derives `off` only when it has no PR CI or a non-default integration branch, `_shared/policy-schema-coverage.md`'s coverage block) | Step 3 as written; the red read is logged for the summary |";
+
+const DERIVED_OFF_NEEDLES = [
+  ['project-level read (no --run)', 'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-verification\n'],
+  ['derived entry literal', '`{"value":"off","source":"default"}`'],
+  ['read failure counts as derived', 'or the read fails'],
+  ['explicit: policy source', '`source: policy`'],
+  ['explicit: run-level off over another project value', 'a run-level `off` over another project value'],
+  ['verdict: explicit only when policy-sourced', 'explicit only when its `merge-verification` entry shows `source: policy`'],
+  ['verdict: everything else is derived, an unparseable read included', 'derived otherwise — `{"value":"off","source":"default"}`, or the read fails or is unparseable'],
+  ['a derived read never merges blind', '— a wait, never a blind merge.'],
+  ['park comment names derived off', "Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`."],
+  ['off row pending → watch', 'Derived `off` → **Bounded watch** below'],
+  ['off row pending explicit → Step 3', 'Explicit `off` → Step 3 as written |'],
+  ['off row red split', '| Derived `off` → **Red path**. Explicit `off` → Step 3 as written; the red read is logged for the summary |'],
+  ['red bullet: explicit merges, derived parks', 'but an explicit `off` merges anyway; a derived `off` takes the **Red path**'],
+  ['AUTO line', 'derived off with pending checks on PR #{n} — bounded watch'],
+  ['watch heading names derived off', 'and a derived `off` with pending checks)'],
+  ['AUTO lever field', 'bounded watch. Reversibility: n/a. [lever: merge-verification=off (default)]'],
+];
+
+// Frozen pre-#4550 text (git show 47f5ad905) — go-red controls for the heading and the red bullet.
+const PRE_4550_WATCH_HEADING = '**Bounded watch (`wait`, and `merge-when-green` when arming would not hold) — 15 minutes, fixed.**';
+const PRE_4550_RED_BULLET = `- Any \`statusCheckRollup[]\` entry with \`conclusion\` in \`FAILURE\`, \`TIMED_OUT\`, \`ERROR\`, or \`STARTUP_FAILURE\`
+  — or any head run whose \`status\` is \`completed\` and whose \`conclusion\`, compared case-insensitively (run conclusions are lowercase), is in that same list → **red** (the *PR being merged* has a failing check — distinct from #561's red *tip*, which is
+  reconcile's concern). Take the **Red path** below now, before anything else. Under \`off\` this
+  read still runs — \`off\` skips the *wait*, not the read — but the value \`off\` merges anyway
+  (today's behavior); the red classification is logged and shown, not acted on.`;
+
+function assertDerivedOffRule(section) {
+  for (const [label, needle] of DERIVED_OFF_NEEDLES) {
+    assert.ok(section.includes(needle), `Step 2.5 missing ${label}: ${needle}`);
+  }
+}
+
+test('AC1.1 AC3.1 AC4.1: Step 2.5 carries the derived-off pending and red rule', () => {
+  assertDerivedOffRule(step25Section());
+});
+
+test('AC7.1: each derived-off pin goes red when its clause is removed, and on the pre-#4550 off row', () => {
+  const section = step25Section();
+  assertDerivedOffRule(section); // the unmutated text passes, so each throw below is the mutation's doing
+  for (const [label, needle] of DERIVED_OFF_NEEDLES) {
+    assert.throws(() => assertDerivedOffRule(section.replace(needle, '')), `removing ${label} must fail the pin`);
+  }
+  const currentRow = section.split('\n').find((l) => l.startsWith('| `off` |'));
+  assert.throws(() => assertDerivedOffRule(section.replace(currentRow, PRE_4550_OFF_ROW)));
+  const currentHeading = section.split('\n').find((l) => l.startsWith('**Bounded watch ('));
+  assert.ok(currentHeading, 'Step 2.5 must carry the bounded-watch heading');
+  assert.throws(() => assertDerivedOffRule(section.replace(currentHeading, PRE_4550_WATCH_HEADING)), 'the pre-change heading must fail the pin');
+  const redStart = section.indexOf('- Any `statusCheckRollup[]` entry');
+  assert.ok(redStart !== -1, 'Step 2.5 must carry the red classification bullet');
+  const currentRedBullet = section.slice(redStart, section.indexOf('\n- Any entry with `status`', redStart));
+  assert.throws(() => assertDerivedOffRule(section.replace(currentRedBullet, PRE_4550_RED_BULLET)), 'the pre-change red bullet must fail the pin');
+  const inverted = section.replace('explicit only when', 'derived only when').replace('derived otherwise', 'explicit otherwise');
+  assert.notStrictEqual(inverted, section, 'live text carries both verdict words the inversion swaps');
+  assert.throws(() => assertDerivedOffRule(inverted), 'swapping which off counts as derived must fail the pin');
+});
+
+// Frozen pre-#4550 empty-rollup bullet (git show 316a1fa3e^) — the AC2.1 go-red control [IL-105].
+const PRE_4550_EMPTY_ROLLUP = `- An **empty rollup** → read the merge state first: \`mergeStateStatus: DIRTY\` (or \`mergeable: CONFLICTING\`)
+  → **conflict** — take the **Conflict path** below now, under every lever value, with no bounded
+  watch. A branch that conflicts with its base gets no \`pull_request\` workflow runs, so its rollup
+  stays empty and waiting only parks it as \`checks-pending-timeout\` (#3607). Any other merge state
+  depends on the lever: under \`merge-when-green\` or \`wait\` the repo has PR CI
+  by construction (\`_shared/policy-schema-coverage.md\`'s coverage block derives those values only when a
+  \`pull_request\`-triggered workflow exists, and an explicit value is a statement that CI is
+  expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
+  seconds after a push, not instantly — and reads as **pending**, never green; under \`off\` it is
+  simply "no CI" and proceeds as green.`;
+
+function assertEmptyRollupNeverWaits(bullet) {
+  assert.ok(bullet.includes('proceeds as green — derived `off` too, so a PR with no checks never waits'), 'empty-rollup bullet must state a derived off never waits');
+}
+
+test('AC2.1 AC2.2: a derived off with an empty rollup still proceeds green', () => {
+  assertEmptyRollupNeverWaits(emptyRollupBullet());
+  assert.throws(() => assertEmptyRollupNeverWaits(PRE_4550_EMPTY_ROLLUP), 'the pre-#4550 bullet fails the same pin (go-red) [IL-105]');
+});
+
+// #5153: Step 2.5 reads the ready run (`bin/ready-run.js`) after the head runs, classifies its
+// `state`, and parks a draft-skip workflow with no `ready_for_review` trigger on its own reason.
+const collapse = (s) => s.replace(/\s+/g, ' ');
+const HEAD_RUNS_LINE = 'gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json name,workflowName,status,conclusion,url';
+const READY_RUN_LINE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid}';
+const RED_ANCHOR = '- Any `statusCheckRollup[]` entry';
+const READY_ANCHOR = "- The ready-run read's `state`";
+const PENDING_ANCHOR = '- Any entry with `status`';
+
+function readyRunBullet(section) {
+  const start = section.indexOf(READY_ANCHOR);
+  assert.ok(start !== -1, 'Step 2.5 must carry the ready-run bullet');
+  const end = section.indexOf('\n- ', start + 1);
+  assert.ok(end !== -1, 'the ready-run bullet must be followed by another bullet');
+  return collapse(section.slice(start, end));
+}
+
+function parkTemplateText(section) {
+  const start = section.indexOf('`Parked by merge-verification ({value}):');
+  assert.ok(start !== -1, 'Step 2.5 must carry the park-comment template');
+  // Template, resume line, compose sentence, printf fence and the `$REASON` sentence — up to the label check.
+  const end = section.indexOf('**Verify the label landed**', start);
+  assert.ok(end !== -1, 'the park-comment text must be followed by the label-landed check');
+  return collapse(section.slice(start, end));
+}
+
+function requireOrder(text, anchors) {
+  let last = -1;
+  for (const [label, anchor] of anchors) {
+    const at = text.indexOf(anchor);
+    assert.ok(at !== -1, `ordering anchor missing: ${label}`);
+    assert.ok(at > last, `ordering: ${label} must come after the previous anchor`);
+    last = at;
+  }
+}
+
+const BULLET_CLAUSES = {
+  route: [
+    ['read-failed routes to state-read-failed', '`read-failed` → `state-read-failed`'],
+    ['red routes to red with its failing', '`red` → **red** (its `failing`)'],
+    ['draft-skip routes to the Red path', '`draft-skip-without-ready-trigger` → **Red path**'],
+    ['the park reason carries the files', 'reason `draft-skip-without-ready-trigger:{files}`'],
+    ['the fix is named', 'fix: add `ready_for_review` to `types`'],
+    ['the convention citation', '`_shared/ci-skips-drafts.md`'],
+    ['the explicit off escape', 'an explicit `off` logs it and merges'],
+  ],
+  awaiting: [
+    ['awaiting is pending', '`awaiting` → **pending**'],
+    // Only a workflow with no post-ready run at all is awaiting; a started-but-unfinished one is `pending`.
+    ['awaiting names the workflows', '`awaitingReadyRun` names the workflows with no run since ready'],
+  ],
+  passthrough: [
+    ['met and not-applicable change nothing', '`met`, `not-applicable` → no change'],
+    ['the code twin is named', "`classify.js`'s `readyRunVerdict`"],
+  ],
+};
+
+const PARK_CLAUSES = [
+  ['template names the fix', '"{files} skips drafts with no ready_for_review trigger — add ready_for_review to its types (_shared/ci-skips-drafts.md)" for draft-skip-without-ready-trigger'],
+  ['template tail is the resume placeholder', 'on PR #{n}. {resume}`'],
+  ['resume maps the draft-skip reason', '`{resume}`: `Resume once green.`; for draft-skip-without-ready-trigger, `Resume once its workflow is fixed or a post-ready run lands.`'],
+  ['REASON names the draft-skip phrase', 'or the pending-timeout or draft-skip phrase'],
+  ['timeout appends the awaiting files', 'A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`'],
+  ['timeout names the unparsed files', '; `unparsed`: ` ({files} unparsed: _shared/ci-skips-drafts.md)`.'],
+];
+
+function assertReadyRunStep25(section, group) {
+  const groups = group ? [group] : [...Object.keys(BULLET_CLAUSES), 'park'];
+  for (const g of groups) {
+    if (g === 'park') {
+      const park = parkTemplateText(section);
+      for (const [label, needle] of PARK_CLAUSES) assert.ok(park.includes(needle), `park comment missing ${label}: ${needle}`);
+      assert.ok(!/on PR #\{n\}\. Resume once green\./.test(park), 'the park template must not hard-code "Resume once green." — a draft skip never says it');
+      continue;
+    }
+    const bullet = readyRunBullet(section);
+    for (const [label, needle] of BULLET_CLAUSES[g]) assert.ok(bullet.includes(needle), `ready-run bullet missing ${label}: ${needle}`);
+  }
+}
+
+function assertReasonListedOnce(section) {
+  const logStart = section.indexOf('Step 2.5 (merge-verification gate): parked — {reason:');
+  assert.ok(logStart !== -1, 'Step 2.5 must carry the Red-path log line');
+  const logLine = section.slice(logStart, section.indexOf('\n', logStart));
+  const hits = logLine.split('draft-skip-without-ready-trigger:{files}').length - 1;
+  assert.equal(hits, 1, `the Red-path log line's reason alternation must list draft-skip-without-ready-trigger:{files} exactly once (found ${hits})`);
+  assert.ok(logLine.includes('check-failed:{names} | checks-pending-timeout | draft-skip-without-ready-trigger:{files}}'), 'the reason alternation keeps its order');
+}
+
+function assertOutcomeRow(text) {
+  const row = text.split('\n').find((l) => l.startsWith('| `pending-review` |'));
+  assert.ok(row, 'the Outcome vocabulary must carry the pending-review row');
+  assert.ok(row.includes('reason check-failed:{names}, checks-pending-timeout or draft-skip-without-ready-trigger:{files}'), 'the pending-review row lists the new reason');
+}
+
+// Replace a needle that may wrap across lines in the live text (spaces match any whitespace run).
+function mutate(section, needle, to) {
+  const re = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
+  const mutated = section.replace(re, () => to);
+  assert.notEqual(mutated, section, `mutation target absent: ${needle}`);
+  return mutated;
+}
+
+test('AC6.1: Step 2.5 routes draft-skip-without-ready-trigger to the Red path with the fix and the convention citation', () => {
+  const section = step25Section();
+  assertReadyRunStep25(section, 'route');
+  for (const [label, needle] of BULLET_CLAUSES.route) {
+    assert.throws(() => assertReadyRunStep25(mutate(section, needle, 'X'), 'route'), { message: new RegExp(`ready-run bullet missing ${label}`) });
+  }
+});
+
+test('AC6.1: the park comment names the fix and never says "Resume once green" for a draft skip', () => {
+  const section = step25Section();
+  assertReadyRunStep25(section, 'park');
+  for (const [label, needle] of PARK_CLAUSES) {
+    assert.throws(() => assertReadyRunStep25(mutate(section, needle, 'X'), 'park'), { message: new RegExp(`park comment missing ${label}`) });
+  }
+  // Every clause still present, but the template also carries the pre-change tail.
+  const hardCoded = mutate(section, 'on PR #{n}. {resume}`', 'on PR #{n}. {resume}` on PR #{n}. Resume once green.');
+  assert.throws(() => assertReadyRunStep25(hardCoded, 'park'), { message: /must not hard-code "Resume once green\."/ });
+});
+
+test('AC6.2: only the draft-skip state parks on that reason — met and not-applicable change nothing', () => {
+  const section = step25Section();
+  assertReadyRunStep25(section, 'passthrough');
+  assertReasonListedOnce(section);
+  assertOutcomeRow(MERGE);
+  for (const [label, needle] of BULLET_CLAUSES.passthrough) {
+    assert.throws(() => assertReadyRunStep25(mutate(section, needle, 'X'), 'passthrough'), { message: new RegExp(`ready-run bullet missing ${label}`) });
+  }
+  const dropped = mutate(section, 'checks-pending-timeout | draft-skip-without-ready-trigger:{files}}', 'checks-pending-timeout}');
+  assert.throws(() => assertReasonListedOnce(dropped), { message: /exactly once \(found 0\)/ });
+  const doubled = mutate(section, 'checks-pending-timeout | draft-skip-without-ready-trigger:{files}}', 'checks-pending-timeout | draft-skip-without-ready-trigger:{files} | draft-skip-without-ready-trigger:{files}}');
+  assert.throws(() => assertReasonListedOnce(doubled), { message: /exactly once \(found 2\)/ });
+  const oldRow = mutate(MERGE, ', checks-pending-timeout or draft-skip-without-ready-trigger:{files}', ' or checks-pending-timeout');
+  assert.throws(() => assertOutcomeRow(oldRow), { message: /the pending-review row lists the new reason/ });
+});
+
+test('AC11.1: the Step 2.5 reads carry the ready-run read after the head-run read, and the head-run read is byte-identical', () => {
+  const section = step25Section();
+  assert.equal(section.split('\n').filter((l) => l === HEAD_RUNS_LINE).length, 1, 'the head-run read line is present once, unchanged');
+  assert.ok(section.includes('Classify from the three reads, in this order:'), 'Step 2.5 classifies from the three reads');
+  const anchors = [['head-run read', HEAD_RUNS_LINE], ['ready-run read', READY_RUN_LINE], ['classification', 'Classify from the three reads']];
+  requireOrder(section, anchors);
+  const swapped = section.replace(HEAD_RUNS_LINE, '@@HEAD@@').replace(READY_RUN_LINE, HEAD_RUNS_LINE).replace('@@HEAD@@', READY_RUN_LINE);
+  assert.notEqual(swapped, section);
+  assert.throws(() => requireOrder(swapped, anchors), { message: /ordering: ready-run read must come after the previous anchor/ });
+  // The bounded watch's 0) arm re-runs the same CLI (#5153), so the deletion control strips every copy.
+  const noReadyRun = section.split(READY_RUN_LINE).join('');
+  assert.notEqual(noReadyRun, section);
+  assert.throws(() => requireOrder(noReadyRun, anchors), { message: /ordering anchor missing: ready-run read/ });
+  assert.throws(() => requireOrder(mutate(section, 'Classify from the three reads', 'Classify from both reads'), anchors), { message: /ordering anchor missing: classification/ });
+});
+
+test('AC11.1: the ready-run bullet sits after the red bullet and before the pending bullet', () => {
+  const section = step25Section();
+  const anchors = [['red bullet', RED_ANCHOR], ['ready-run bullet', READY_ANCHOR], ['pending bullet', PENDING_ANCHOR]];
+  requireOrder(section, anchors);
+  const swap = (a, b) => section.replace(a, '@@A@@').replace(b, a).replace('@@A@@', b);
+  assert.throws(() => requireOrder(swap(RED_ANCHOR, READY_ANCHOR), anchors), { message: /ordering: (ready-run|pending) bullet must come after the previous anchor/ });
+  assert.throws(() => requireOrder(swap(READY_ANCHOR, PENDING_ANCHOR), anchors), { message: /ordering: pending bullet must come after the previous anchor/ });
+});
+
+test('AC3.1 (prose): red still wins — the ready-run bullet\'s awaiting row is pending and its red row is red', () => {
+  const section = step25Section();
+  assertReadyRunStep25(section, 'awaiting');
+  const bullet = readyRunBullet(section);
+  assert.ok(bullet.includes('`red` → **red**'), 'the red row stays red');
+  assert.ok(!/`awaiting` → \*\*red\*\*/.test(bullet), 'awaiting never reads red');
+  const flipped = mutate(section, '`awaiting` → **pending**', '`awaiting` → **green**');
+  assert.throws(() => assertReadyRunStep25(flipped, 'awaiting'), { message: /ready-run bullet missing awaiting is pending/ });
+  // The pre-fix overstatement ("no finished run") goes red: a started run is pending, not awaiting.
+  const finished = mutate(section, 'with no run since ready', 'with no finished run since ready');
+  assert.throws(() => assertReadyRunStep25(finished, 'awaiting'), { message: /ready-run bullet missing awaiting names the workflows/ });
+});
+
+function assertReadFailedRoute(section) {
+  const fenceAt = section.indexOf(READY_RUN_LINE);
+  assert.notEqual(fenceAt, -1, 'the ready-run fence is present');
+  const after = collapse(section.slice(fenceAt + READY_RUN_LINE.length, section.indexOf(READY_ANCHOR)));
+  assert.ok(after.includes('A non-zero exit or output with no `state` is the `state-read-failed` report.'), 'a failed or stateless ready-run read must route to state-read-failed, never "no requirement"');
+}
+
+function assertConflictFirst(section) {
+  const bullet = readyRunBullet(section);
+  const needle = 'On `mergeStateStatus: DIRTY` or `mergeable: CONFLICTING` (a conflicting PR gets no run), `awaiting` and `draft-skip-without-ready-trigger` take the **Conflict path** first.';
+  assert.ok(bullet.includes(needle), 'awaiting and draft-skip on a DIRTY/CONFLICTING PR must take the Conflict path first');
+}
+
+test('AC6.3: a failed or stateless ready-run CLI call is the state-read-failed report', () => {
+  const section = step25Section();
+  assertReadFailedRoute(section);
+  const gone = mutate(section, 'A non-zero exit or output with no `state` is the `state-read-failed` report.', '');
+  assert.throws(() => assertReadFailedRoute(gone), { message: /must route to state-read-failed, never "no requirement"/ });
+});
+
+test('#3607: awaiting and draft-skip on a conflicting PR take the Conflict path before the ready-run wait or park', () => {
+  const section = step25Section();
+  assertConflictFirst(section);
+  const gone = mutate(section, '`awaiting` and `draft-skip-without-ready-trigger` take the **Conflict path** first.', '');
+  assert.throws(() => assertConflictFirst(gone), { message: /must take the Conflict path first/ });
+  const mergeable = mutate(section, '`mergeable: CONFLICTING` (a conflicting', '(a conflicting');
+  assert.throws(() => assertConflictFirst(mergeable), { message: /must take the Conflict path first/ });
+});
+
+test('settle-parked names the ready-run rule and the new park reason', () => {
+  const settle = collapse(read('plugin', 'skills', 'dispatch', 'settle-parked.md'));
+  const needles = [
+    "Step 2.5's state read, its head-run read and its ready-run rule",
+    '`reason: check-failed:{names} | checks-pending-timeout | draft-skip-without-ready-trigger:{files}`',
+  ];
+  for (const n of needles) {
+    assert.ok(settle.includes(n), `settle-parked.md missing: ${n}`);
+    assert.ok(!settle.replace(n, '').includes(n), `the needle is unique: ${n}`);
+  }
+  assert.ok(!settle.includes("Step 2.5's state read plus its head-run read"), 'the pre-change wording is gone');
+  assert.ok(!settle.includes('`reason: check-failed:{names} | checks-pending-timeout`'), 'the pre-change reason list is gone');
 });

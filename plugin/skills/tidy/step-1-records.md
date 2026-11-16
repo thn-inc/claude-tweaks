@@ -82,7 +82,26 @@ comment — is `decision-markers.md`'s scope, cited from Phase 6, not restated h
 
 **Decomposition parents are exempt — always `Keep`, at every age.** A record carrying `parent-issue` (`github-issues`) or `facets.isParentIssue === true` (`local-files`) is `isBacklog` by construction and forever: `/claude-tweaks:specify` never gives a parent a stage label and nothing ever promotes one, so every live parent crosses the staleness threshold and lands on `Delete or Promote` while its sub-issues are still being built — and `Delete` here is `gh issue close --reason "not planned"`, which destroys the decomposition's only acceptance checkpoint. Sub-issues landing weeks apart is the dominant workflow, so a parent going stale mid-decomposition is the common case, not the edge one. Give the row the reason inline (`Keep — decomposition parent, gated by the parent-gate sweep, not by staleness`) rather than dropping it silently, so a reader sees why one stale-looking record is being left alone. **Name the sweep the resolved driver actually uses** — Step 4.8's `parent-gate` scope under `github-issues`, **Shape 7 below** under `local-files` — since citing Step 4.8 on a project that never runs it points the reader at a sweep that will never produce the row it promises. Either way, that sweep is what acts on parents and this shape must not race it with a contradictory recommendation for the same record; under `local-files` they are not even separate agents — Shape 7 runs in this same Step 1 prompt, so a `Delete or Promote` row here would contradict a `[parent-gate]` row this same agent emits in the same reply.
 
-**Digest containers are exempt too — always `Keep`, at every age.** An issue carrying `digest` is the materiality floor's rolling container (`_shared/materiality-floor.md`), not a work record: it never gets a stage label, so like a decomposition parent it is `isBacklog` by construction and forever, and a long-lived container inevitably crosses the staleness threshold — where `Delete` would close it out from under every entry it holds. Give the row the reason inline (`Keep — materiality-floor digest container, its lifecycle is Step 5.6's digest sweep, not staleness`). Only that sweep ever closes a digest issue (its 100-comment rollover), and it bootstraps the replacement in the same move — so this shape must not race it, exactly as it must not race the `parent-gate` sweep above.
+**Digest containers are exempt too — always `Keep`, at every age.** An issue carrying `digest` is the materiality floor's rolling container (`_shared/materiality-floor.md`), not a work record: it never gets a stage label, so like a decomposition parent it is `isBacklog` by construction and forever, and a long-lived container inevitably crosses the staleness threshold — where `Delete` would close it out from under every entry it holds. Give the row the reason inline (`Keep — materiality-floor digest container, its lifecycle is Step 5.6's digest sweep, not staleness`). Only that sweep ever closes a digest issue (its 100-comment rollover), and it carries the entries into the replacement before it closes anything. On `github-issues` (`local-files` has no rollover), two unlabeled shapes belong to a rollover in flight and take the same `Keep`, with the same reason, so this shape must not race it, exactly as it must not race the `parent-gate` sweep above: the replacement, an open issue whose body holds a whole line `<!-- digest-rollover-of: {old} -->`, and `{old}` itself, which loses its `digest` label before the rollover closes it. The line alone proves nothing, since anyone can write it, so decide by `classifyRolloverResume`'s verdict, over every issue naming `{old}` at once: the verdict's own trust check and lowest-numbered pick, never a pick made here on unverified bodies. This file is all the agent that runs it receives, so the verdict command is here. List the open marker-bearing records from the fetched snapshot, one line per `{old}` followed by every issue naming it:
+
+```bash
+TIDY_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-records.json)"
+node -e "const m=/^<!-- digest-rollover-of: (\d+) -->\s*$/m;const by=new Map();for(const r of require(process.argv[1]))if(String(r.state).toUpperCase()==='OPEN'){const h=m.exec(r.body||'');if(h)by.set(h[1],[...(by.get(h[1])||[]),r.number])}for(const [o,rs] of by)console.log(o+' '+rs.sort((a,b)=>a-b).join(' '))" -- "$TIDY_RECORDS"
+```
+
+For each printed line, run the verdict over `{old}` and every issue on the line, in one call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/digest-rollover.js" verdict --old {old} --candidates {n},{n}
+```
+
+Exit 2 means `gh` is absent: read `{old}` and each issue on the line with `issue_read` get mode, Write `{old}` as one object and the others as one flat JSON array to the paths `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-step1-rollover-old.json` and `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-step1-rollover-cand.json` print, and run this instead:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/digest-rollover.js" verdict --old-json "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-step1-rollover-old.json)" --candidates-json "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-step1-rollover-cand.json)"
+```
+
+A `resume` or `stalled` verdict `Keep`s `{old}`, the printed `replacement` and every printed `extras` issue (an untrusted issue is in neither list). A printed `extras` issue is `Keep` whatever the verdict, `finished` included, since the rollover's next pass closes it. A record is kept when ANY line it appears on gives that verdict: a second-generation container is a replacement on one line and the old issue on the next, and the two verdicts can disagree. Beyond the `extras` rule, any other verdict adds no exemption and never overrides one: a record already labeled `digest` stays `Keep` by the rule above whatever the verdict (`finished` included), and any other record is judged as before. A non-zero exit other than 2 is an unreadable line, not a verdict: `Keep` every issue on it for this run and name the line in the report.
 
 → Collect each as: `[backlog] {title} — {age} — {recommendation}`
 
@@ -141,7 +160,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" scan --driver {work-back
 
 `{work-backend}` is the driver this step resolved; `{release-note-candidates-file}` is the absolute
 path the dispatcher substituted into this prompt (`SKILL.md`'s Step 1 note). The scan writes every
-candidate there — this agent's 15-row table cap never truncates the repair list — and prints at
+candidate there — the candidates file, not the table, carries the full repair list — and prints at
 most one summary line. Exit 2 (an unusable records file or `--out`): report one
 `[release-note] scan failed` row, severity `medium`.
 
@@ -208,8 +227,10 @@ when it closes a parent's last sub-issue. A parent whose last sub-issue closes a
 hand, or by a run that ended before wrap-up — never reaches that eager path; this shape catches it
 after.
 
-Both backstop shapes below (this one and Shape 8) filter out below-floor candidates the same way
-their `github-issues` counterparts do — the same `bin/lib/issues/oversight-floor.js` predicate
+This shape surfaces a due below-floor parent as a Close row (`Open parent gate` closes it, no brief
+owed — `wrap-up/verification-brief-parent-gate.md`'s **Close the parent below the floor**), like its
+`github-issues` counterpart. Shape 8 filters out below-floor candidates the same way its counterpart
+does. Both use the same `bin/lib/issues/oversight-floor.js` predicate
 (#366), mirrored here rather than reimplemented. Each shape resolves `risk-floor`/`size-floor`
 **once, inside its own code block** (one `resolve-policy.js` call regardless of population size,
 never resolved per record) and passes the printed values as literal `process.argv` arguments to
@@ -247,11 +268,17 @@ or out-of-vocabulary `risk`) makes the whole parent's aggregate unscored too, ma
 RISK_FLOOR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values risk-floor)
 node -e "
   const { queryRecords } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
-  const { parentGateState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
+  const { parentGateState, closedParentGap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
   const { exceedsOversightFloor } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/oversight-floor.js');
   const { TIERS } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+  const { HEADING_LINE_RE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');
   const [riskFloor] = process.argv.slice(1);
-  const parents = queryRecords('specs', { isParentIssue: true });
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const parents = [
+    ...queryRecords('specs', { isParentIssue: true }),
+    ...queryRecords('specs', { isParentIssue: true, closed: true })
+      .filter((p) => Number.isNaN(Date.parse(p.facets.closedAt)) || Date.parse(p.facets.closedAt) >= cutoff),
+  ].sort((a, b) => a.id - b.id);
   const gates = parents.map((p) => {
     const subIssueRecords = [
       ...queryRecords('specs', { parent: p.id }),
@@ -262,6 +289,9 @@ node -e "
       title: p.title,
       path: p.path,
       needsDefinition: p.facets.needsDefinition === true,
+      closed: p.facets.closed === true,
+      notPlanned: p.facets.notPlanned === true,
+      belowFloorClose: HEADING_LINE_RE.test(p.body || ''),
       parentLabels: p.facets.acceptance ? ['demo:' + p.facets.acceptance] : [],
       subIssues: subIssueRecords.map((r) => ({ number: r.id, state: r.facets.closed ? 'CLOSED' : 'OPEN', risk: r.facets.risk })),
     };
@@ -276,11 +306,22 @@ node -e "
     }
     return hasUnscored ? undefined : TIERS[maxIndex];
   }
+  const bad = {};
   gates
     .filter((f) => !f.needsDefinition)
-    .filter((f) => exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds)
-    .filter((f) => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
-    .forEach((f) => console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id));
+    .forEach((f) => {
+      if (f.closed) {
+        const v = closedParentGap({ parentLabels: f.parentLabels, stateReason: f.notPlanned ? 'NOT_PLANNED' : undefined, belowFloorClose: f.belowFloorClose, subIssues: f.subIssues, riskFloor });
+        if (v === 'gap') console.log(f.path + '\t[acceptance-gap] ' + f.id + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ' + f.id);
+        else if (v !== 'none') bad[v] = (bad[v] || 0) + 1;
+        return;
+      }
+      if (parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) !== 'due') return;
+      console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
+        ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id
+        : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)'));
+    });
+  for (const v in bad) console.error('WARNING: ' + bad[v] + ' closed parent(s) print no [acceptance-gap] row (' + v + ') — risk unreadable; check the sub-issue records\' parent facet, then re-run.');
 " -- "$RISK_FLOOR"
 ```
 
@@ -288,21 +329,24 @@ Each line is `{path}<TAB>{finding}` — the path fills the row's `Path:Line` col
 Tidy-specific column semantics: the local record path on this driver, where `github-issues` rows
 carry `#{n}`), the rest is the finding.
 
-Both `queryRecords` shapes are deliberate. `{ isParentIssue: true }` returns **open** parents only
-(closed records are excluded unless the filter names `closed`) — the right set, since a closed
-parent was already dispositioned and closed by `/claude-tweaks:demo`, and it mirrors the
-`github-issues` scope's `--state open` fetch. The sub-issue listing is the open+closed two-call
-merge for the same reason: one call alone drops every closed sub-issue, exactly the ones that make
+The `queryRecords` shapes are deliberate. `{ isParentIssue: true }` returns **open** parents only
+(closed records are excluded unless the filter names `closed`), and mirrors the `github-issues`
+scope's `--state open` fetch. `{ isParentIssue: true, closed: true }` adds the parents closed in the
+last 30 days, keeping one whose `closedAt` is missing or unparseable: a parent closed by hand never
+passed through `/claude-tweaks:demo` or **Close the parent below the floor**, so `closedParentGap`
+(`acceptance.js`, which holds the reasoning) judges it. The parent's `## Closed below the oversight
+floor` body section is #4466's marker. The sub-issue listing is the open+closed two-call
+merge: one call alone drops every closed sub-issue, exactly the ones that make
 a gate due. No fetch-limit or truncation warning applies, unlike the API-paging twin —
 `queryRecords` reads the whole `specs/` directory every call.
 
-→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`
+→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`, or below the floor: `[parent-gate] {id}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`, or, for a hand-closed parent above the floor: `[acceptance-gap] {id}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo {id}`
 
 Severity `info` — with several open decompositions this is a standing backlog, not a defect
-count, and Step 6 caps rows highest-severity-first (the same tier and reason as its
-`github-issues` twin). The recommendation is the `Open parent gate` action, staged at every
-aggressiveness tier and never writing `demo:approved`/`demo:changes-requested`, which is why the
-row still ends with `/claude-tweaks:demo {id}`; `actions-local-files.md`'s `## Open parent gate`
+count, and tidy reads a row's severity as recommendation urgency, so any tier above `info` would
+overstate it (the same tier and reason as its `github-issues` twin). The recommendation is the `Open parent gate` action, staged at every
+aggressiveness tier and never writing `demo:approved`/`demo:changes-requested`, which is why an
+above-floor row still ends with `/claude-tweaks:demo {id}`; `actions-local-files.md`'s `## Open parent gate`
 and `step-6-auto.md`'s row carry that action's execution, its staging reasoning, and what it
 does not cover.
 
@@ -324,10 +368,10 @@ that path, and with no sweep here would stay invisible permanently.
 
 Classification is entirely `needsBackstop`'s (`bin/lib/issues/acceptance.js`) — do not reimplement
 the disposition taxonomy. That predicate is backend-agnostic: it reads `{state, labels,
-hasParent, stateReason}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
+hasParent, isParent, stateReason}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
 `facets.acceptance` → the one-element `['demo:' + facets.acceptance]` and empty when unset (the
 identical translation Shape 7 and `wrap-up/verification-brief.md`'s `local-files` paths already
-use), and `facets.parent !== null` → `hasParent`.
+use), `facets.parent !== null` → `hasParent`, and `facets.isParentIssue === true` → `isParent`.
 
 `facets.notPlanned` → `stateReason: 'NOT_PLANNED'` is the same translation, added so a
 record closed not-planned is excluded from this shape exactly as its `github-issues` counterpart
@@ -345,7 +389,8 @@ not-planned route.
 issue — Shape 7's population — and never on the sub-issue. Drop that translation and every
 sub-issue of every closed decomposition lands here as a row, flooding the report with exactly the
 records another shape already covers. That is the same reason the `github-issues` scope resolves
-its own sub-issue set before filtering.
+its own sub-issue set before filtering. `isParent` excludes the parent itself for the mirror reason: a
+parent's acceptance is Shape 7's, which reports a hand-closed one above the floor itself (#4600), or the below-floor close (#4466) — never a row here.
 
 It needs its own query, not Step 1's shared fetch: that fetch returns open records only, and every
 record this shape looks at is closed by definition. `risk-floor`/`size-floor` are resolved again
@@ -372,6 +417,7 @@ node -e "
       state: r.facets.closed ? 'CLOSED' : 'OPEN',
       labels: r.facets.acceptance ? ['demo:' + r.facets.acceptance] : [],
       hasParent: r.facets.parent !== null,
+      isParent: r.facets.isParentIssue === true,
       // local-files has no native stateReason — facets.notPlanned already conflates
       // wontfix/duplicate/absorbed into one flag (_shared/work-record.md's lifecycle
       // spine), so it maps onto NOT_PLANNED only; there is no local-files DUPLICATE case.
@@ -408,9 +454,9 @@ are excluded past 30 days like the other driver.
 → Collect each as: `[acceptance-gap] {id}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo {id}`
 
 Severity `info` — the same tier and the same reason as its `github-issues` twin: on a project that
-closes records ad hoc this is a standing backlog rather than a defect count, and Step 6 caps rows
-highest-severity-first, so any tier above `info` would permanently evict actionable rows beneath
-it. Unlike Shape 7, the recommendation is **not** one of the Action Vocabulary's atomic actions —
+closes records ad hoc this is a standing backlog rather than a defect count, and tidy reads a
+row's severity as recommendation urgency, so any tier above `info` would overstate a standing
+backlog. Unlike Shape 7, the recommendation is **not** one of the Action Vocabulary's atomic actions —
 this shape mutates nothing at all, on either driver. It recommends `/claude-tweaks:demo {id}` and
 stops there, because disposing a closed record is a human judgment about whether shipped work
 solved the problem. It is staged at every aggressiveness tier for that reason (`step-6-auto.md`'s

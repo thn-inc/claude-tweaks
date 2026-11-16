@@ -24,22 +24,23 @@ combined — and it never discovers or lists what's outstanding across the backl
 ```
 
 **`demo:pending` is no longer unconditional (`#367`).** `/claude-tweaks:wrap-up`'s acceptance-labeling
-step only applies the gate — brief plus `demo:pending` — to a record whose `risk:*`/`size:*`
+step only applies the label to a record whose `risk:*`/`size:*`
 facets exceed the configured oversight floor (`exceedsOversightFloor`,
 `bin/lib/issues/oversight-floor.js`; a decomposition parent is gated on the max risk tier across
 its sub-issues, aggregated by `wrap-up/verification-brief.md`'s Parent-Gate Procedure, never on
-size). A record that doesn't clear the floor closes with **no** `demo:*` label at all — not a new
-`demo:exempt` marker, just the absence of one. It is never unreachable by this skill: the
+size). A record that doesn't clear the floor closes with **no** acceptance label at all — not a new
+`demo:exempt` marker, just the absence of one — and, with no parent, still carries its acceptance
+packet (`_shared/acceptance-packet.md`), which Step 1 reads whatever the labels. It is never
+unreachable by this skill: with no packet either (a record closed before the packet), the
 closing-commit-reconstruction fallback below (previously exercised only for the occasional record
-that closed outside `/wrap-up`'s normal flow) is now also the default discovery path for this
-below-floor population — a `/claude-tweaks:demo #N` on a below-floor record resolves through it
-exactly as it always has for any other unlabeled record, no code change needed for that case.
+that closed outside `/wrap-up`'s normal flow) resolves it
+exactly as it always has for any other unlabeled record.
 
 ## When to Use
 
 - You just finished ad hoc work in this same conversation — no `/capture`, no work record — and want a clean recap plus an explicit sign-off gate before moving on; `/demo`'s session-recall source (Step 1) picks this up automatically, no filing required.
 - `/claude-tweaks:help`'s dashboard told you a specific `#N` is awaiting sign-off (Stage 4.7 — fires on either driver) — including an autonomously `auto:merge`'d record already closed — and you want to walk through that one record now.
-- `/claude-tweaks:tidy`'s `acceptance-gap` rows — Step 4.8 under `work-backend: github-issues`, Step 1's Shape 8 under `local-files` — named a record that closed with no disposition at all: no brief, no label or `acceptance:` facet, and typically no session anywhere that remembers it. Step 1 reconstructs one from the closing commit.
+- `/claude-tweaks:tidy`'s `acceptance-gap` rows — Step 4.8 under `work-backend: github-issues`, Step 1's Shape 8 under `local-files`; a hand-closed decomposition parent comes from `parent-gate` or Shape 7 — named a record that closed with no disposition at all: no brief, no label or `acceptance:` facet, and typically no session anywhere that remembers it. Step 1 reconstructs one from the closing commit.
 - You keep having to ask "how do I test this" days after a build finished — this skill surfaces the brief `/wrap-up` already wrote at build time, so you never re-derive it.
 - Some of what you're reviewing has no interactive surface at all (docs, config, a harness or skill file) — this skill still gives it a lightweight human look, just not a click-through.
 
@@ -48,8 +49,8 @@ Not for: discovering what's outstanding across the backlog (`/claude-tweaks:help
 ## Input
 
 `$ARGUMENTS` — *(none)* resolves this session's own unrecorded work via session-recall (Step 1);
-`#N` resolves that single record's Verification Brief, falling back — when no `demo:pending`
-label exists on it — first to the record's closing commit in git history, then to session-recall
+`#N` resolves that single record's acceptance packet, else its Verification Brief, falling back — when it carries no pending
+acceptance label (either spelling, `_shared/work-record.md`) — first to the record's closing commit in git history, then to session-recall
 scoped to that `#N` (Step 1); `#N[,#M...]` — grammar (notation, tokenization) is `_shared/record-batch-input.md`'s contract —
 is an explicit human-supplied batch: each ref
 runs the `#N` path in list order,
@@ -77,6 +78,14 @@ runs — read only the matching branch in `entry-paths.md` in this skill's direc
 
 ## Step 2: Per-item walkthrough
 
+**An acceptance packet renders as a packet.** When Step 1 resolved an acceptance packet
+(`_shared/acceptance-packet.md`), drop its marker line, take its Test guide as the Try it block, hoisted to the top and rendered once,
+then render its remaining sections in order under the packet's title and notes. Never compose a fresh Try it block for a packet: a Test
+guide holding only its one empty line renders that line. The packet's `### Observation plan` appendix is the plan the rest of this step walks,
+show-first, after the design-contract section below when one resolves. A packet with no appendix
+skips Prepare/Validate/Show and goes straight to the Verdict question. The Try it and full-brief paragraphs
+that follow apply to legacy briefs only, and to what Step 1 composed.
+
 **Try it first (#2821).** Before anything else in this step — before the design-contract section
 and before any Prepare/Validate output — render the record's Try it block (`_shared/try-it.md`)
 as Step 1 resolved it: the brief's `### Try it` section (a parent brief's `### Try it — end to
@@ -89,8 +98,8 @@ from the record's Acceptance Criteria and Step 1's entry point, and never render
 
 Then render the rest of this record's full Verification Brief (The ask / What shipped / Confirmed /
 Observation plan — evidence the human can judge, not a checklist to complete), with its Try it
-block hoisted to the top — rendered once, above, never a second time in place. Label-backed entries were
-fetched per `verification-brief.md`'s digest template in Step 1's `#N` lookup; closing-commit
+block hoisted to the top — rendered once, above, never a second time in place. A legacy brief, in the shape of
+the template `wrap-up/verification-brief-parent-gate.md` now holds, was fetched in Step 1's `#N` lookup; closing-commit
 reconstructions and session-recall entries composed their own Observation plan directly, in Step
 1's `#N` and no-arguments paths respectively — all three render identically here, and a
 reconstruction says so in its own `### Confirmed` section rather than being flagged separately at
@@ -109,7 +118,7 @@ first (or, when recall could not name an entry point, the one line saying it was
 ### The design contract this was built against
 
 Run the locate-and-parse procedure in `_shared/design-contract.md` over the changed-path list
-Step 1 already produced — the closing commit's `--name-only` list, the label-backed brief's paths,
+Step 1 already produced — the closing commit's `--name-only` list, the paths the packet or label-backed brief names,
 or session recall's own list. Do not go looking for files beyond it. **When no contract resolves,**
 render nothing — no heading, no empty section, no "not found" note. **When a contract resolves, or
 the parse reports one malformed,** read `design-contract-section.md` in this skill's directory and
@@ -119,7 +128,7 @@ This section never becomes a reason to block.
 
 ### Show-first walkthrough
 
-Applies whenever this record's brief carries a `### Observation plan` section — every **sub-issue**
+Applies whenever this record's packet or brief carries a `### Observation plan` section — every **sub-issue**
 brief composed or posted after this schema shipped. Two populations legitimately carry no such
 section at all even now: a Parent-Gate parent brief (walkthrough lives in its `### Try it — end to end` section
 instead) and a session-recall entry whose recall yielded no confident path list (Step 1's omission
@@ -196,7 +205,7 @@ Option 1 (Approve) — the browser round already ruled it out:
 
 - Option 1 — `label`: `"Approve"`, `description`: `"This does what was asked"`
 - Option 2 — `label`: `"Request changes"`, `description`: `"There's a gap — I'll describe it"`
-- Option 3 — for a label-backed entry: `label`: `"Skip for now"`, `description`: `"Leave demo:pending — I'll come back to this"`. For a closing-commit reconstruction (never carried `demo:pending` — there is nothing to leave): `label`: `"Skip for now"`, `description`: `"Nothing is written — it still carries no acceptance disposition, so /claude-tweaks:tidy's acceptance-gap scan will surface it again"` (true on both drivers — the disposition is a `demo:*` label under `github-issues` and an `acceptance:` facet under `local-files`, and each driver has its own sweep for it). For a session-recall entry: `label`: `"Skip for now"`, `description`: `"Nothing is written — unlike a label-backed record, this won't resurface in a later session"`
+- Option 3 — for a label-backed entry: `label`: `"Skip for now"`, `description`: `"Leave it pending — I'll come back to this"`. For a closing-commit reconstruction, or a packet on a record with no pending label (never pending — there is nothing to leave), read the record's `risk:*`/`size:*` facets against `exceedsOversightFloor` (`bin/lib/issues/oversight-floor.js`, the same predicate both sweeps filter on). Above the floor: `label`: `"Skip for now"`, `description`: `"Nothing is written — it still carries no acceptance disposition, so /claude-tweaks:tidy's acceptance-gap scan will surface it again"` (true on both drivers — the disposition is an acceptance label under `github-issues` and an `acceptance:` facet under `local-files`, and each driver has its own sweep for it). Below the floor, where both sweeps filter it out: `label`: `"Skip for now"`, `description`: `"Nothing is written — below the oversight floor no disposition is owed, and /claude-tweaks:demo #N still reads the packet"`. For a session-recall entry: `label`: `"Skip for now"`, `description`: `"Nothing is written — unlike a label-backed record, this won't resurface in a later session"`
 
 ### Compatibility: briefs with no Observation plan
 
@@ -244,8 +253,30 @@ batched across items — so the next ref's Step 1 starts only once this ref's la
 follow-up filing) has landed.
 
 **Label-backed entries** (Step 1's `#N` lookup): bootstrap `demo:approved`,
-`demo:changes-requested`, and `demo:approved-batch` via the check-then-create loop from
-`_shared/label-bootstrap.md` before the first swap this run.
+`demo:changes-requested`, `demo:approved-batch`, `accept:pending`, `accept:approved`,
+`accept:approved-batch` and `accept:changes-requested` via the check-then-create loop from
+`_shared/label-bootstrap.md` before the first swap this run, copying each row from that file's
+canonical `LABELS_JSON`. The `accept:*` rows only create the labels in the repo; this skill applies
+none of them.
+
+**A verdict replaces any prior acceptance label the record carries.** This skill still adds only
+`demo:*`, but most-conservative-wins (`_shared/work-record.md`) would otherwise let a leftover label
+outrank the new verdict: an Approve on a previously rejected record would keep reading
+`changes-requested`. So the verdict command below also passes, in the same invocation, one
+`--remove-label` for each of these that the labels Step 1 fetched for this ref hold:
+
+- **Every verdict:** `demo:pending`, `accept:pending`.
+- **Approve:** `demo:changes-requested`, `accept:changes-requested`.
+- **Single-record Approve** (not batch-sourced): `demo:approved-batch`, `accept:approved-batch`, since the human's individual verdict replaces the batch one.
+- **Request changes:** `demo:approved`, `accept:approved`, `demo:approved-batch`, `accept:approved-batch`.
+
+A batch-sourced Approve (the Provenance signal note below) removes neither batch label: it is the
+batch action, and it writes its own batch label in the same invocation.
+
+Pass each **only when those labels hold it**, `demo:pending` included: `gh issue edit --remove-label`
+exits 1 with "not found" on a label the repo has never created and fails the whole edit, dropping
+the verdict, while a label the record holds is known to exist. A closing-commit reconstruction, or a packet on a record with no pending label, needs
+no variant: it passes whichever of these it holds, usually none.
 
 **Provenance signal (Approve only).** A single-record verdict and a `#N,#M` batch-list verdict
 are otherwise byte-identical on the wire — both run Step 2's per-item walkthrough in full — so
@@ -257,13 +288,13 @@ is batch-sourced — the Approve action additionally applies `demo:approved-batc
 `approvalProvenance`) can tell a rapid multi-item batch pass apart from a dedicated single-record
 session. This is a `work-backend: github-issues`-only signal — the trust table it feeds is
 already github-issues-only (`_shared/trust-table.md`'s framing note), so `work-backend: local-files`
-writes no equivalent facet. A pre-existing `demo:approved` label carries no such marker and reads
+writes no equivalent facet. A pre-existing approved label carries no such marker and reads
 as single-record-backed — the safer default, since promoting an unlabeled historical approval to
 "batch" would understate coverage rather than overstate it.
 
-- **Approve** — `gh issue edit {n} --remove-label demo:pending --add-label demo:approved` — for a batch-sourced verdict (per the Provenance signal note above), add `--add-label demo:approved-batch` to the same invocation. `work-backend: local-files`: set `facets.acceptance = 'approved'` via `writeRecord` — no equivalent provenance facet on this driver (see the Provenance signal note above). One command covers both entry shapes: `--remove-label` on a label the record does not carry is a silent no-op — verified on this repo, exit 0, and `--add-label` in the same invocation still lands — so a closing-commit reconstruction, which never had `demo:pending`, needs no variant. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`) — close it too: nothing else in the system ever closes a parent, so without this the parent stays open forever and the acceptance label is the only trace the parent issue was ever accepted. `work-backend: github-issues`: `gh issue close {n} --reason completed`. `work-backend: local-files`: `closeRecord(path)` (`bin/lib/issues/local-store.js`), run **after** the `writeRecord` call above — `closeRecord` does its own fresh read of the file, so calling it second means it preserves the `acceptance: 'approved'` facet just written rather than racing it.
+- **Approve** — `gh issue edit {n} --add-label demo:approved`, plus the `--remove-label` flags the replacement rule above selects for Approve — for a batch-sourced verdict (per the Provenance signal note above), add `--add-label demo:approved-batch` to the same invocation. `work-backend: local-files`: set `facets.acceptance = 'approved'` via `writeRecord` — no equivalent provenance facet on this driver (see the Provenance signal note above). For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`) — close it too: below the oversight floor the Parent-Gate Procedure's **Close the parent below the floor** (`wrap-up/verification-brief-parent-gate.md`) closes a parent with no sign-off, but a parent above the floor is closed only here, so without this the parent stays open forever and the acceptance label is the only trace the parent issue was ever accepted. `work-backend: github-issues`: `gh issue close {n} --reason completed`. `work-backend: local-files`: `closeRecord(path)` (`bin/lib/issues/local-store.js`), run **after** the `writeRecord` call above — `closeRecord` does its own fresh read of the file, so calling it second means it preserves the `acceptance: 'approved'` facet just written rather than racing it.
 - **Request changes** — prompt for a short reason inline, then:
-  1. **`work-backend: github-issues`:** `gh issue edit {n} --remove-label demo:pending --add-label demo:changes-requested`. **`work-backend: local-files`:** set `facets.acceptance = 'changes-requested'` via `writeRecord`. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`), the same two-driver test the Approve branch above uses — nothing further follows this: the parent stays open, since a changes-requested verdict means the parent issue's work is not done.
+  1. **`work-backend: github-issues`:** `gh issue edit {n} --add-label demo:changes-requested`, plus the `--remove-label` flags the replacement rule above selects for Request changes. **`work-backend: local-files`:** set `facets.acceptance = 'changes-requested'` via `writeRecord`. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`), the same two-driver test the Approve branch above uses — nothing further follows this: the parent stays open, since a changes-requested verdict means the parent issue's work is not done.
   2. File a linked follow-up record and note the bidirectional link back on the original — read
      `follow-up-record.md` in this skill's directory and follow its items 2 and 3 (both drivers:
      `recordPayload` under `work-backend: github-issues`, `createRecord`+`deriveSlug` under
@@ -291,7 +322,7 @@ bootstraps a label or writes to GitHub/local-files for Approve or Skip:
 Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention) — exactly once, after the last item of a `#N[,#M...]` batch; each conditional line keys on the batch as a whole. Exactly one of these three outcome branches applies per invocation — render only that branch's line, bolded and suffixed `(recommended)`:
 
 - **A `demo:changes-requested` follow-up was filed for any item this run** (Request-changes outcome): **`/claude-tweaks:backlog refine`** — the new gap record needs shaping/authorization like any other backlog item (recommended)
-- **No follow-up was filed, and any item this run remains `demo:pending` after Skip:** **`/claude-tweaks:help`** — lists every #N still awaiting sign-off (Stage 4.7) (recommended)
+- **No follow-up was filed, and any item this run remains pending after Skip:** **`/claude-tweaks:help`** — lists every #N still awaiting sign-off (Stage 4.7) (recommended)
 - **Approved, or Skip resolved with nothing left pending across the batch:** **`/claude-tweaks:help`** — full pipeline status (recommended)
 
 ## Component-Skill Contract
@@ -317,7 +348,7 @@ always renders.
 | Debugging or fixing an application bug a Prepare/Validate check uncovers | Out of scope like code-quality judgment — capture it as a Request-changes candidate |
 | Leaving a live browser session open after Validate or Show finishes | Leaked sessions consume resources — Validate's own session must close before Show runs; Show's `open`/`xdg-open` hands the browser off to the human, it never holds a session open itself |
 | Writing `demo:approved`/`demo:pending` for a session-recall entry | No record holds it — the verdict lives in the conversation, not a label; only Request-changes produces a real record |
-| Sweeping the `demo:pending` backlog from within this skill | Discovery is `/claude-tweaks:help`'s job (Stage 4.7 lists every outstanding `#N`) — `/demo` resolves one item at a time — never a sweep; a `#N,#M` list is the human's own explicit list, never a backlog scan |
+| Sweeping the pending acceptance backlog from within this skill | Discovery is `/claude-tweaks:help`'s job (Stage 4.7 lists every outstanding `#N`) — `/demo` resolves one item at a time — never a sweep; a `#N,#M` list is the human's own explicit list, never a backlog scan |
 | Summarizing, re-wording, or reordering the direction contract's five blocks | The blocks are the pre-build promise the human is checking the result against; a paraphrase is one more reading of the result, which is exactly the circularity this section exists to break |
 | Rendering the design-contract heading when no contract resolved, or with only the blocks that parsed | Most records have no contract — an empty section is noise on all of them, and a partial one is worse, because it reads as complete (`_shared/design-contract.md` collapses malformed into absent for this reason) |
 | Dropping a malformed contract silently because the section is omitted either way | Omitting the section is right; omitting the *trace* is not. `/demo` has no run dir to log to, so its one plain line is the only place an upstream block rename becomes visible instead of looking like a record that never had a contract |

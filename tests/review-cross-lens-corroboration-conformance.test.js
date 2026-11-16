@@ -92,9 +92,10 @@ function assertShareLocationDeferred(file, dispatch) {
   assert.match(file, /neither side/);
 }
 
-function assertTiersUnchanged(file, dispatch) {
+// `variants` is step3-tier-variants.md, where the low-tier single-read rule lives since #4826.
+function assertTiersUnchanged(file, variants) {
   assert.match(file, /never runs at `low` or `high`/);
-  assert.ok(dispatch.includes(SINGLE_READ_RULE), 'low single-read rule changed');
+  assert.ok(variants.includes(SINGLE_READ_RULE), 'low single-read rule changed');
 }
 
 test('AC1.1: the medium-tier pass promotes cross-lens findings to confirmed and logs the lenses', () => {
@@ -134,12 +135,12 @@ test('the only-one-agent bullet stays a single line (decisionLogPattern pin)', (
 });
 
 test('AC1.3: the low single-read rule and the high+ debate are unchanged', () => {
-  assertTiersUnchanged(read('review', 'step3-cross-lens-corroboration.md'), read('review', 'step3-lens-dispatch.md'));
+  assertTiersUnchanged(read('review', 'step3-cross-lens-corroboration.md'), read('review', 'step3-tier-variants.md'));
 });
 
 test('AC1.3 go-red: dropping the never-at-low-or-high statement fails the same assertions', () => {
   const mutated = read('review', 'step3-cross-lens-corroboration.md').replace(/never runs at `low` or `high`/g, 'runs everywhere');
-  assert.throws(() => assertTiersUnchanged(mutated, read('review', 'step3-lens-dispatch.md')));
+  assert.throws(() => assertTiersUnchanged(mutated, read('review', 'step3-tier-variants.md')));
 });
 
 test('gate: code-mode-steps.md reads the file at medium, before Step 3.5', () => {

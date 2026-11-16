@@ -20,7 +20,18 @@ const core = createCache('code-health');
 // survives a scheduled cloud-Routine firing's container recycling the way
 // the local cache (this module's other half) explicitly does not. See
 // buildValidateFindingsUpdate below and dedup.js's `durableDeclined` param.
-const durable = createDurableState('code-health', { includeRemembered: true, includeDeclined: true });
+// createDurable({ env, stderr }) builds the durable-state accessors with an
+// injected child-git environment and stderr sink (#5381) — an in-process caller
+// passes its own; the module-level exports below are bound to createDurable()
+// (inherited env, process.stderr), exactly as before.
+function createDurable({ env, stderr } = {}) {
+  const state = createDurableState('code-health', {
+    includeRemembered: true, includeDeclined: true, env, stderr,
+  });
+  return { readDurableState: state.readState, writeDurableState: state.writeState };
+}
+
+const durable = createDurable();
 
 // computeChurn (union-denominator ratio + the `stayed` field) now lives once
 // in health-core/runs.js, shared by all four health-suite engines — re-export
@@ -86,7 +97,8 @@ module.exports = {
   readCache: core.readCache,
   writeCache: core.writeCache,
   computeChurn,
-  readDurableState: durable.readState,
-  writeDurableState: durable.writeState,
+  createDurable,
+  readDurableState: durable.readDurableState,
+  writeDurableState: durable.writeDurableState,
   buildValidateFindingsUpdate,
 };

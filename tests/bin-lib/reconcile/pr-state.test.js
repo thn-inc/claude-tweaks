@@ -9,6 +9,7 @@ const {
   resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, resolvePrStateByNumberAsync, BULK_CHUNK,
 } = require('../../../plugin/bin/lib/reconcile/pr-state');
 const { STUB_SKIP } = require('../../helpers/path-stub');
+const { _resetGhHostCache: resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
 
 // A real directory on every platform: the POSIX tmp path does not exist on Windows, so a repoRoot cwd must come from the OS.
 const REPO_ROOT = os.tmpdir();
@@ -563,11 +564,11 @@ test('resolvePrStateByNumber/resolvePrStateByNumberAsync: request closingIssuesR
 // plus a NOT_FOUND error at path [repository, pullRequest].
 const NOT_FOUND_BODY = '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"],"message":"x"}]}';
 
-// Fresh git repo whose origin makes repoSlugOf resolve `acme/w`.
-function makeOriginRepo() {
+// Fresh git repo whose origin makes repoTargetOf resolve `acme/w`.
+function makeOriginRepo(origin = 'git@github.com:acme/w.git') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-origin-'));
   execFileSync('git', ['init', '-q'], { cwd: dir });
-  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: dir });
+  execFileSync('git', ['remote', 'add', 'origin', origin], { cwd: dir });
   return dir;
 }
 
@@ -651,5 +652,70 @@ test('#3543: a successful gh pr view makes no GraphQL call, sync and async', { s
     assert.equal(fs.existsSync(wrapper.argvLog), false, 'api graphql was never invoked');
   } finally {
     wrapper.restore();
+  }
+});
+
+// #4794: the bulk screen and the not-found probe read origin through the host gate
+// (repoTargetOf). An SSH alias is a refusal: nothing is spawned, and the answer is
+// `unknown-host` (a refused origin is not an outage). A repo with no origin keeps `network-failure`.
+const GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+
+test('#4794: resolvePrStatesBulk on an SSH-alias origin spawns nothing and returns unknown-host', () => {
+  const repo = makeOriginRepo('git@github-work:acme/w.git');
+  const calls = [];
+  const runner = (args) => { calls.push(args); return graphqlResponse([null]); };
+  assert.equal(resolvePrStatesBulk(repo, ['feature'], { runner, gateDeps: GATE_DEPS }), 'unknown-host');
+  assert.equal(calls.length, 0, 'a refused origin spawns no gh call');
+  const noOrigin = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-noorigin-'));
+  execFileSync('git', ['init', '-q'], { cwd: noOrigin });
+  assert.equal(resolvePrStatesBulk(noOrigin, ['feature'], { runner, gateDeps: GATE_DEPS }), 'network-failure');
+  assert.equal(calls.length, 0, 'an absent origin spawns no gh call either');
+});
+
+test('#4794: resolvePrStatesBulk on an admitted origin sends the bare owner/name pair via -f', () => {
+  const calls = [];
+  const runner = (args) => { calls.push(args); return graphqlResponse([null]); };
+  const r = resolvePrStatesBulk(makeOriginRepo(), ['feature'], { runner, gateDeps: GATE_DEPS });
+  assert.equal(r.get('feature'), null);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 6), ['api', 'graphql', '-f', 'owner=acme', '-f', 'name=w']);
+});
+
+// A gh stub that fails every call and logs its argv (one line per call), with GH_HOST deleted and
+// GH_CONFIG_DIR an empty temp dir so the developer's own gh config cannot decide the gate.
+function installFailingLoggedGh() {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-faillog-'));
+  const log = path.join(logDir, 'gh.log');
+  const { restore: restorePath } = installGhWrapper(`#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexit 1\n`);
+  const saved = { GH_HOST: process.env.GH_HOST, GH_CONFIG_DIR: process.env.GH_CONFIG_DIR };
+  delete process.env.GH_HOST;
+  process.env.GH_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghcfg-'));
+  resetGhHostCache();
+  return {
+    graphqlLines: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter((l) => l.startsWith('api graphql')) : []),
+    restore: () => {
+      restorePath();
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      resetGhHostCache();
+    },
+  };
+}
+
+test('#4794: a refused origin runs no not-found probe and answers unknown-host; an admitted one still does, sync and async', { skip: STUB_SKIP }, async () => {
+  const gh = installFailingLoggedGh();
+  try {
+    const alias = makeOriginRepo('git@github-work:acme/w.git');
+    assert.equal(resolvePrStateByNumber(alias, 7), 'unknown-host');
+    assert.equal(await resolvePrStateByNumberAsync(alias, 7), 'unknown-host');
+    assert.deepEqual(gh.graphqlLines(), [], 'a refused origin confirms nothing: no api graphql call');
+    const dotcom = makeOriginRepo();
+    assert.equal(resolvePrStateByNumber(dotcom, 7), 'network-failure');
+    const lines = gh.graphqlLines();
+    assert.equal(lines.length, 1, 'the admitted origin runs one not-found probe');
+    assert.match(lines[0], /-f owner=acme -f name=w /);
+    assert.equal(await resolvePrStateByNumberAsync(dotcom, 7), 'network-failure');
+    assert.equal(gh.graphqlLines().length, 2);
+  } finally {
+    gh.restore();
   }
 });

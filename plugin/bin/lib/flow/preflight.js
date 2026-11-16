@@ -22,6 +22,7 @@ const { resolveTarget } = require('../stage-item/write');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { splitNul } = require('../git-z');
 const { toPosix } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
@@ -66,7 +67,7 @@ function defaultDeps(cwd) {
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     git: (args, opts = {}) => execFileSync('git', args, { cwd: opts.cwd || cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     execFile: (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, ...opts, windowsHide: true }),
-    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts })).stdout,
+    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts, windowsHide: true })).stdout,
     checkResumeFreshness,
     checkStagedInventory,
     readRunState,
@@ -77,8 +78,8 @@ function defaultDeps(cwd) {
       // have no static schema default, so the flat resolver leaves them null
       // until computeDerivedDefaults runs. `mcpReachable: false` is what the
       // CLI passes without its own `--mcp-reachable` flag (#1421).
-      const { root, result } = resolvePolicyConfig({ git, readFile, runDir, keys });
-      computeDerivedDefaults(result, keys, root, { mcpReachable: false });
+      const { root, runConfigRaw, result } = resolvePolicyConfig({ git, readFile, runDir, keys });
+      computeDerivedDefaults(result, keys, root, { mcpReachable: false, runConfigRaw });
       return result;
     },
     resolveTarget,
@@ -291,7 +292,8 @@ function buildProbes({ runDirReal, runId, mainRoot, cwd, config, state, deps, ex
     pr: async () => {
       if (!state || !state.pr || !state.pr.number) return null;
       let raw;
-      try { raw = await exec('gh', ['pr', 'view', String(state.pr.number), '--json', 'state,isDraft,body,mergeable,mergeStateStatus'], { cwd: mainRoot }); } catch (err) {
+      const prViewArgs = ['pr', 'view', String(state.pr.number), '--json', 'state,isDraft,body,mergeable,mergeStateStatus'];
+      try { raw = await exec('gh', prViewArgs, ghOptions(prViewArgs, { cwd: mainRoot })); } catch (err) {
         if (err && err.code === 'ENOENT') throw new Error('gh-absent');
         throw err;
       }

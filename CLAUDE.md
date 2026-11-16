@@ -48,7 +48,7 @@ Invocation: `/claude-tweaks:release` (no arguments) — this repo dogfoods the s
 
 ### Hooks
 
-All hook registrations route through `plugin/bin/hooks.js <event>` — one dispatcher, one module per event in `plugin/bin/lib/hooks/`. The full contract — tiered posture, run-dir resolution and ownership, the never-break-a-session invariant, and its consumers — is in `docs/hooks.md`. Read it before touching `plugin/bin/hooks.js`, `plugin/bin/lib/hooks/`, or `plugin/hooks/hooks.json`.
+All hook registrations run `plugin/bin/hooks.sh` → `hooks.js <event>` — one dispatcher, one module per event in `plugin/bin/lib/hooks/`. The full contract — tiered posture, run-dir resolution and ownership, and the never-break-a-session invariant — is in `docs/hooks.md`. Read it before touching `plugin/bin/hooks.{sh,js}`, `plugin/bin/lib/hooks/`, or `plugin/hooks/hooks.json`.
 
 ### Reconcile
 
@@ -61,7 +61,7 @@ Adding a new `plugin/bin/lib/reconcile/` convergence check touches multiple regi
 - **Assume zero time.** Decide as if implementation is instant. Never choose a shortcut because the proper approach "takes too long."
 - **No implicit deferrals.** When something needs doing, either do it now, explicitly file a backlog work record via `/claude-tweaks:capture` — with a spec-shaped body (Current State / Deliverables / Acceptance Criteria) and a `Defer-reason:` from `_shared/deferral-gate.md` when an agent holds the context; a stub is for a human typing an idea — or, below the materiality floor, log it to the digest per `_shared/materiality-floor.md`. Never silently skip work or leave TODO comments without a corresponding backlog record or digest entry.
 
-Established codebase distributed to real users via a versioned plugin marketplace. Contract changes (skill frontmatter shape, hook payloads, work-record schema, `_shared/*.md` conventions consumed by multiple skills) follow the same expand-contract discipline as a public API: add the new, migrate every consumer (including the installed build, which reads this repo's own committed config with older code), remove the old — never a silent breaking rename. A deprecated behavior gets a recorded removal condition (see the Don'ts rule on this), not an indefinite compatibility shim. Prefer stability over novelty in shipped skill contracts — adopt new conventions in new skills first, then migrate existing ones deliberately, with the incident log recording what each migration cost.
+Established codebase distributed to real users via a versioned plugin marketplace; live sessions run mixed plugin versions. Redesign is free: replace a design outright when a better one exists, with no preference for what already shipped. The one limit: a change must not break a run in flight on the previous release. Where such a run reads a contract (skill frontmatter shape, hook payloads, work-record schema, run-directory files, `_shared/*.md` conventions, this repo's committed config, which the installed build reads with older code), change it by expand-contract: add the new beside the old, migrate every consumer, remove the old once its recorded removal condition holds (Don'ts `[IL-85]`) — never a silent breaking rename.
 
 ## Objectives
 
@@ -84,7 +84,7 @@ How to execute any task here. These apply project-wide unless a more specific ru
 ## Commands
 
 ```bash
-npm test                            # Full suite — tests/ (includes every tests/bin-lib/{module} suite) and tools/upstream-drift/tests/ — a recursive glob, not a fixed list; new tests/bin-lib/{x} directories are picked up automatically
+npm test                            # Locally runs only the impact-selected test files for this checkout's changes; CI runs the whole suite (tests/, tools/upstream-drift/tests/ — recursive, no registration); `npm test -- --full` runs it all here
 npm run test:perf                   # Timing budgets (perf/) — deliberately excluded from npm test, see docs/plugin-structure.md
 claude --plugin-dir ./plugin        # Local development — load the payload subtree from this checkout
 ```

@@ -48,10 +48,12 @@ tooling problem with the read itself — treat it exactly like `read-failed` bel
 ## Routing by `state`
 
 - **`red`** — resolve the lever first: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run
-  "$PIPELINE_RUN_DIR" --values merge-verification`. When it prints `off`, route `red` like
+  "$PIPELINE_RUN_DIR" --values merge-verification`.
+  When it prints `off` and Step 2.5 reads it as explicit (run its project-level `resolve-policy.js merge-verification` read and apply its rule; a failed or unparseable read is derived), route `red` like
   `pending` — pass with a caveat naming the failing checks, writing yourself (the CLI logs nothing
   on `red`) the same `--status AUTO` line as the `pending`/`stale` bullet below — matching
-  `_shared/pr-first-merge.md` Step 2.5's `off` behaviour (a red PR check is "logged and shown, not acted on" there too). Otherwise (`merge-when-green`,
+  `_shared/pr-first-merge.md` Step 2.5's explicit-`off` behaviour (a red PR check is "logged and shown, not acted on" there too).
+  Otherwise (a derived `off`, `merge-when-green`,
   `wait`, unresolved, or any other value): a gate failure, the same class as a local test failure —
   do not set `TEST_PASSED` (`/test`), and **STOP** (`/review` Step 1.5). Render each `failing[]`
   entry not flagged `inherited` (the attributable checks) — its name and url — "PR #{pr} check
@@ -71,7 +73,7 @@ tooling problem with the read itself — treat it exactly like `read-failed` bel
 - **`pending`** or **`stale`** — pass, with a caveat: `TEST_PASSED` is set and carries the caveat
   naming the pending checks (or the unpushed HEAD), and one entry is logged — the CLI already
   wrote it; on `logged: false` write it yourself with the same text:
-  `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/test|/review}" --step "PR-check gate" --reversibility high --text-file "{text-file}"`, `{text-file}` holding `PR #{pr} checks {state} at {headRefOid short} ({pending names, or 'HEAD not yet pushed' when stale, 'no check reported yet' when pending}) — passed with caveat` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (check names are forge-supplied).
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/test|/review}" --step "PR-check gate" --reversibility high --text-file "{text-file}"`, `{text-file}` holding `PR #{pr} checks {state} at {headRefOid short} ({pending names, or 'HEAD not yet pushed' when stale, 'no run since ready: {files}' when only awaitingReadyRun holds it, 'no check reported yet' when pending}) — passed with caveat` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (check names are forge-supplied).
   The merge gate's bounded watch settles them later.
 - **`green`** — pass; nothing to log.
 - **`no-pr`**, **`gh-absent`**, **`no-ci`**, or **`read-failed`** (and exit 2/3) — fail open

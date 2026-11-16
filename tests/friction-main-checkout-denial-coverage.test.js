@@ -99,7 +99,10 @@ test('#2543: a main-checkout gate denial with no owned run dir is retrievable by
   const laterRunDir = fs.mkdtempSync(path.join(pipelinesDir, '2026-10-02T000000-friction-repro-standalone-'));
 
   // Step 3 (record's repro step 4): the Friction lens's actual input command.
-  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project], { cwd: project });
+  // `--session` names the session that tripped the denial (#4704: from the main
+  // checkout the path match keeps only the current session's ad-hoc dirs; the real
+  // lens inherits it as CLAUDE_CODE_SESSION_ID).
+  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project, '--session', 'repro-session-2543'], { cwd: project });
 
   const denialEvents = events.filter((e) => e.type === 'gate-denial');
   assert.strictEqual(denialEvents.length, 1, `expected the main-checkout denial to be retrievable from the later run dir; got: ${JSON.stringify(events)}`);
@@ -138,7 +141,7 @@ test('#2813: a main-checkout gate denial lands in a fresh ad-hoc dir even when a
   assert.ok(!fs.existsSync(path.join(sibling, 'events.jsonl')), 'the denial must not be logged into the unrelated sibling run');
 
   const laterRunDir = fs.mkdtempSync(path.join(pipelinesDir, '2026-10-02T000000-friction-repro-standalone-'));
-  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project], { cwd: project });
+  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project, '--session', 'repro-session-2813'], { cwd: project });
   const denials = events.filter((e) => e.type === 'gate-denial');
   assert.strictEqual(denials.length, 1, JSON.stringify(events));
   assert.strictEqual(denials[0]._source, 'adhoc');

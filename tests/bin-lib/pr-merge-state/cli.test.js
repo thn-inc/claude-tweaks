@@ -157,6 +157,7 @@ test('AC3.1: unknown, read-failed (with reason) and gh-absent each append the SK
     [{ number: 7, mergeable: 'MERGEABLE' }, 'unknown', 'test', '/test'],
     ['network-failure', 'read-failed (network-failure)', 'review', '/review'],
     ['invalid-arguments', 'read-failed (invalid-arguments)', 'build', '/build'],
+    ['unknown-host', 'read-failed (unknown-host)', 'test', '/test'],
     [42, 'read-failed (unparseable)', 'wrap-up', '/wrap-up'],
     ['gh-absent', 'gh-absent', 'polish', '/flow'],
   ]) {

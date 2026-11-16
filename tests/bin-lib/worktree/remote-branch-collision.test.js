@@ -4,8 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { originWithTwoClones } = require('../../helpers/git-fixtures');
+const { isValidBranchName } = require('../../../plugin/bin/lib/branch-name');
 const {
-  isSafeBranchName,
   readRemoteTip,
   classifyRemoteBranch,
   findPrsForBranch,
@@ -100,16 +100,16 @@ test('classifyRemoteBranch: a failed fetch of an unknown object is unreachable, 
   assert.equal(result.reason, 'fetch-failed');
 });
 
-test('classifyRemoteBranch: a dash-led or malformed name never reaches git', () => {
+test('#4648 AC1.1: classifyRemoteBranch rejects every name isValidBranchName rejects, before git runs', () => {
   const git = () => {
     throw new Error('git must not be called');
   };
-  for (const branch of ['--upload-pack=x', '', 'a b', 'a..b', undefined]) {
-    assert.equal(classifyRemoteBranch({ branch, git }).state, 'unreachable');
-    assert.equal(isSafeBranchName(branch), false);
+  for (const branch of ['--upload-pack=x', '', 'a b', 'a..b', undefined, 'a/', 'a//b', 'a.lock']) {
+    assert.deepEqual(classifyRemoteBranch({ branch, git }), { state: 'unreachable', reason: 'invalid-branch-name' }, String(branch));
+    assert.equal(isValidBranchName(branch), false, String(branch));
   }
-  assert.equal(isSafeBranchName('worktree-flow+spec-2704-2709'), true);
-  assert.equal(isSafeBranchName('flow/spec-1-2'), true);
+  assert.equal(isValidBranchName('worktree-flow+spec-2704-2709'), true);
+  assert.equal(isValidBranchName('flow/spec-1-2'), true);
 });
 
 test('readRemoteTip: matches the exact ref only, not a tail-matching sibling', () => {

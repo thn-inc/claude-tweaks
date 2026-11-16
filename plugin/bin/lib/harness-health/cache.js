@@ -18,7 +18,24 @@ const { mergeWontfixIntoDeclined } = require('../health-core/mark');
 // truthiness of an always-present default object is not a safe signal.
 
 const core = createCache('harness-health');
-const durable = createDurableState('harness-health', { includeRemembered: true, includeDeclined: true });
+
+// createDurable({ env, stderr }) builds the durable-state accessors with an
+// injected child-git environment and stderr sink (#5380) — an in-process caller
+// passes its own; the module-level exports below are bound to createDurable()
+// (inherited env, process.stderr), exactly as before.
+function createDurable({ env, stderr } = {}) {
+  const state = createDurableState('harness-health', {
+    includeRemembered: true, includeDeclined: true, env, stderr,
+  });
+  return {
+    readDurableState: state.readState,
+    writeDurableState: state.writeState,
+    writeDurableStateLocal: state.writeStateLocal,
+    pushDurableState: state.pushState,
+  };
+}
+
+const durable = createDurable();
 
 // Pure: computes the next durable-state object for a validate-findings run.
 // current: { cursors, remembered, declined, retryQueue, runs } — the current
@@ -77,12 +94,13 @@ module.exports = {
   cachePath: core.cachePath,
   readCache: core.readCache,
   writeCache: core.writeCache,
-  readDurableState: durable.readState,
-  writeDurableState: durable.writeState,
+  createDurable,
+  readDurableState: durable.readDurableState,
+  writeDurableState: durable.writeDurableState,
   // Local-only recording + the explicit once-per-row push (#2545) — only
   // cmdValidateFindings uses these; cmdMark keeps writeDurableState's
   // existing push-every-call behavior unchanged (out of this change's scope).
-  writeDurableStateLocal: durable.writeStateLocal,
-  pushDurableState: durable.pushState,
+  writeDurableStateLocal: durable.writeDurableStateLocal,
+  pushDurableState: durable.pushDurableState,
   buildValidateFindingsUpdate,
 };

@@ -75,6 +75,18 @@ test('domainChurn caches identical (root, paths, sinceMs) calls instead of re-sp
   assert.strictEqual(second, first);
 });
 
+test('domainChurn runs git with the injected env', () => {
+  const B = tmp();
+  fs.writeFileSync(path.join(B, 'a.md'), 'x\n');
+  initGitRepo(B);
+  commit(B, 'first');
+  const notARepo = tmp();
+  // GIT_DIR points git at B's repository even though `-C` names a non-repo
+  // directory; the count is 0 when the injected env is ignored.
+  const env = { ...process.env, GIT_DIR: path.join(B, '.git') };
+  assert.strictEqual(domainChurn(notARepo, ['a.md'], 0, { env }), 1);
+});
+
 // Regression: this module is required by all three health-sibling scope.js
 // files (harness-health, journey-health, docs-health) — previously each had
 // its own copy of domainChurn (and, for harness-health/docs-health, no

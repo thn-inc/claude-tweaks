@@ -43,7 +43,8 @@ files:
   - Protected paths are the same in every project: hook code, `skills/_shared/`, CI and forge config (`.github/`, `.gitlab-ci.yml`, `.circleci/`, git hooks), `CODEOWNERS`, `package.json`, the agent's permission files (`.claude/settings*.json`, `.mcp.json`), and the policy and verify-scope files. A Key File is judged as the path it resolves to, so `a/../skills/_shared/x.md` is protected too.
   - A `Surface:` of `terminal` counts as a frontend, like `web`, `mobile` and `desktop`.
   - Exit 2 means `gh` is absent, so the lane is never taken.
-- **Red flags:** An eligible verdict for a record that touches `hooks/` or a merge-sensitive path; a verdict that lists only the first failure.
+  - A record carrying a kept risk flag (`Risk-flags: migrations`, or any slug) is ineligible, with the reason `record carries a kept risk flag`, because the lane composes no plan to carry the `Proof(<slug>)` line plan-audit Check G requires. A line that cannot be read counts as every category flagged. `Risk-flags: none` and no line at all do not block the lane (#4618).
+- **Red flags:** An eligible verdict for a record that touches `hooks/` or a merge-sensitive path; a verdict that lists only the first failure; an eligible verdict, or an express merge, for a record whose body carries a `Risk-flags:` line naming a slug or one that cannot be read.
 
 ### 3. Dispatch and watch one agent ship it
 - **URL:** `/claude-tweaks:dispatch` (or `/claude-tweaks:flow #{n}` for one record, auto mode, worktree strategy, no step list)
@@ -55,7 +56,9 @@ files:
   - `express-lane.js check` refuses to proceed without a runner pass stamp for HEAD. It also refuses a diff outside the bounds: a non-Key-File change, implementation lines plus deleted test lines over `auto-merge-max-lines`, or a protected or merge-sensitive path.
   - The push happens only when HEAD still equals the sha `check` verified.
   - The merge still needs `auto:merge` (or, from `/flow`, a typed `pre-authorize-merge`), a confirmed merge-check verdict, and green CI. Otherwise the PR waits in draft as `pending-review`.
+  - The run records which record it is for: `check`'s `configSet` carries `spec={n}`, so the run's `config.yml` holds `spec: {n}`. A PR left waiting is then merged with `/claude-tweaks:wrap-up #{n} merge` like any other run, with no binding to judge by hand, and the wrap-up pack's `claim` probe resolves the record from that line. The line never authorizes a merge on its own: it is not a closing source, and the console's merge members ignore it.
 - **Red flags:**
+  - An express run dir whose `config.yml` has no `spec:` line after the PR opened.
   - A merge with a red or unread check state.
   - A commit that landed after `check` and was pushed anyway.
   - `express: blocked` for a PR that actually merged. `verify` reads the archived run dir when the post-merge reconcile moved it.
@@ -84,4 +87,6 @@ files:
 
 ## Origin
 - Created during build of #4025: the express lane, a single-agent path for eligible trivial records, with an escalation hand-off to `/flow` and post-merge sampling.
+- Step 2's risk-flag ineligibility clause and red flag added during build of #4618 (risk flags at intent time; see `flag-invisible-risk-when-shaping-4618.md`).
+- Step 3's `spec: {n}` clause and red flag added during build of #5347 (express runs record their record; see `merge-a-parked-unattended-pr-3784.md` for the merge it unblocks and `gather-the-wrap-up-fact-pack-1930.md` for the pack's `config` rung).
 - Related journeys: `add-a-fast-lane-skip-to-the-roster-1926.md` (the fast-lane ceremony an express-eligible record carries), `pre-authorize-a-flow-runs-merge.md` (the typed merge authorization the `/flow` entry honours), `recover-from-a-dispatch-config-deny-3225.md` (the config gate the express bind avoids by ordering).

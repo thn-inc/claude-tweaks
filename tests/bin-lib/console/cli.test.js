@@ -8,7 +8,7 @@ const { execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-resolve.js');
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
-const { run, ghReadGrants, checkPatchStack } = require(CLI);
+const { run, parseArgs, ghReadGrants, checkPatchStack } = require(CLI);
 const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 const { chmodDenialSkip } = require('../../helpers/root');
 
@@ -691,6 +691,31 @@ test('--set-item on an item already keep-staged says so, logs nothing, exits 0 (
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '');
 });
 
+const REF_ITEM = (over = {}) => `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'wrap-up-reference-1.md', section: 'Reference repairs', resolution: 'approve', reason: 'stance', ...over }] })}\n`;
+const SET_PENDING = (runDir, id = 'wrap-up-reference-1.md') => ['--run', runDir, '--set-item', id, '--resolution', 'pending', '--reason', 'reference-repair-stale'];
+
+test('#4636: --set-item rewrites a Reference repairs approve to pending after its diff stopped applying, and logs it', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: REF_ITEM() });
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_PENDING(fx.runDir), d), 0);
+  assert.match(out(), /^console-resolve\.js: wrap-up-reference-1\.md rewritten approve → pending in .*console\.json$/m);
+  const item = readConsole(fx.runDir).items[0];
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'reference-repair-stale');
+  assert.strictEqual(item.rewrittenFrom, 'approve');
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /Console item wrap-up-reference-1\.md \(Reference repairs\): rewritten approve → pending after execution — reference-repair-stale\. Reversibility: n\/a\.$/m);
+});
+
+test('#4636: --set-item refuses pending for an approve item outside Reference repairs, exit 5, console.json untouched', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: REF_ITEM({ id: 'wrap-up-skill-1.md', section: 'Skill updates' }) });
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_PENDING(fx.runDir, 'wrap-up-skill-1.md'), d), 5);
+  assert.match(err(), /in section Skill updates, not rewritable to pending \(only a Reference repairs item\) — nothing written/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '');
+});
+
 test('--set-item whose decisions.md entry cannot be written exits 3 naming the landed rewrite (#4170)', async () => {
   const fx = mainCheckoutWithRun({ consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'apply', reason: 'r' }] })}\n` });
   fs.rmSync(path.join(fx.runDir, 'decisions.md'));
@@ -763,4 +788,137 @@ test('--set-item with a --run outside the main checkout exits 3 (#4170)', async 
   assert.strictEqual(await run(SET_ITEM(shadow), d), 3);
   assert.match(err(), /not anchored|missing/);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(shadow, 'console.json'), 'utf8')).items[0].resolution, 'apply');
+});
+
+test('AC1.1: an unattended needs-human-decision ruling lands in console.json as pending and appears in console-residue.js --run output (#4587)', async () => {
+  const ruling = 'Title: ruling\nKind: sdd-ruling\nRuling: Task 2: Ruling: wait on a human — cheaper — costs a re-read\nDefers: yes\nDefer-reason: needs-human-decision\nStaged-at: abc123\nLedger: docs/plans/x-ledger.md#5\n\nratify / reverse\n';
+  const fx = mainCheckoutWithRun({ staged: { 'sdd-ruling-1.md': ruling } });
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  const item = cj.items.find((i) => i.id === 'sdd-ruling-1.md');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-needs-human-decision');
+  let residueOut = '';
+  const residueCode = require(path.join(PLUGIN_ROOT, 'bin', 'console-residue.js')).run(['--run', fx.runDir], {
+    cwd: () => fx.root, mainRoot: fx.root, now: () => Date.parse('2026-09-06T12:00:00Z'), pluginRoot: '/plug',
+    stdout: (s) => { residueOut += s; }, stderr: () => {},
+  });
+  assert.strictEqual(residueCode, 0, residueOut);
+  assert.ok(residueOut.includes('  - sdd-ruling-1.md — Pending review: pending (sdd-ruling-needs-human-decision)'), residueOut);
+});
+
+test('#4636: console-resolve.js reads merge-sensitive-paths from policy and holds a repair the diff shows on one', async () => {
+  const text = 'Hold: no\n\ndiff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n';
+  const outcome = async (policyExtra) => {
+    const fx = mainCheckoutWithRun({ staged: { 'wrap-up-reference-1.md': text }, policyExtra });
+    fs.writeFileSync(path.join(fx.runDir, 'engine-state.json'), JSON.stringify({ results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: path.join(fx.runDir, 'staged', 'wrap-up-reference-1.md'), hold: false }] } } }));
+    const { d } = baseDeps(fx, []);
+    assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+    return JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).items.find((i) => i.id === 'wrap-up-reference-1.md');
+  };
+  assert.strictEqual((await outcome('')).resolution, 'approve');
+  assert.strictEqual((await outcome('merge-sensitive-paths: plugin/**\n')).resolution, 'approve');
+  const held = await outcome('merge-sensitive-paths: plugin/**,docs/**\n');
+  assert.strictEqual(held.resolution, 'pending');
+  assert.strictEqual(held.reason, 'reference-repair-held');
+});
+
+test('#4636: --check-repair runs the floor on a named file, writing nothing', async () => {
+  const fx = mainCheckoutWithRun({ staged: {}, policyExtra: 'merge-sensitive-paths: plugin/**\n' });
+  const file = (name, text) => { const p = path.join(fx.runDir, name); fs.writeFileSync(p, text); return p; };
+  const diff = (p) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-old\n+new\n`;
+  const check = async (p) => { const { d, out } = baseDeps(fx, []); const code = await run(['--run', fx.runDir, '--check-repair', p], d); return { code, out: out() }; };
+  const clean = await check(file('clean.md', `Hold: no\n\n${diff('docs/a.md')}`));
+  assert.strictEqual(clean.code, 0);
+  assert.match(clean.out, /console-resolve\.js: .*clean\.md clear/);
+  const sensitive = await check(file('sensitive.md', diff('plugin/a.md')));
+  assert.strictEqual(sensitive.code, 5);
+  assert.match(sensitive.out, /reference-repair-held/);
+  assert.match(sensitive.out, /hit plugin\/a\.md \(merge-sensitive\)/, 'names the path and why');
+  const test_ = await check(file('test.md', diff('tests/a.test.js')));
+  assert.strictEqual(test_.code, 5);
+  assert.match(test_.out, /reference-repair-held/);
+  assert.match(test_.out, /hit tests\/a\.test\.js \(test file\)/, 'names the path and why');
+  const none = await check(file('none.md', 'no diff'));
+  assert.strictEqual(none.code, 5);
+  assert.match(none.out, /reference-repair-unclassified/);
+  assert.doesNotMatch(none.out, /\bhit /, 'an unclassified file names no hit');
+  const gone = await check(path.join(fx.runDir, 'absent.md'));
+  assert.strictEqual(gone.code, 5);
+  assert.match(gone.out, /reference-repair-unreadable/);
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'console.json')), 'writes no console');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '', 'logs nothing');
+});
+
+test('#4636: --check-repair needs no unattended ceiling', async () => {
+  const fx = mainCheckoutWithRun({ autonomy: 'supervised' });
+  const p = path.join(fx.runDir, 'clean.md');
+  fs.writeFileSync(p, 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
+  assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], baseDeps(fx, []).d), 0);
+});
+
+test('#4636: --check-repair holds a clean diff as unclassified when the policy read throws', async () => {
+  const fx = mainCheckoutWithRun({ staged: {} });
+  const p = path.join(fx.runDir, 'clean.md');
+  fs.writeFileSync(p, 'Hold: no\n\ndiff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
+  const control = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], control.d), 0, 'the same file is clear when the policy reads');
+  // run() reads the cwd dep once to anchor --run; the second read is the policy read's own.
+  let reads = 0;
+  const { d, out } = baseDeps(fx, [], { cwd: () => { reads += 1; if (reads > 1) throw new Error('simulated policy read failure'); return fx.root; } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], d), 5);
+  assert.ok(reads > 1, 'the policy read was reached');
+  assert.match(out(), /reference-repair-unclassified/);
+  assert.match(out(), /merge-sensitive-paths policy could not be read/, 'the unreadable policy is named, not left to look like a bad diff');
+  assert.doesNotMatch(control.out(), /could not be read/, 'a readable policy prints no such note');
+});
+
+test('#4636: --check-repair --full re-runs the whole hold rule on a staged file', async () => {
+  const fx = mainCheckoutWithRun({ staged: {}, policyExtra: '' });
+  const diff = 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n';
+  const stagedPath = path.join(fx.runDir, 'staged', 'wrap-up-reference-1.md');
+  fs.mkdirSync(path.dirname(stagedPath), { recursive: true });
+  const state = (hold) => fs.writeFileSync(path.join(fx.runDir, 'engine-state.json'), JSON.stringify({ results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: stagedPath, hold }] } } }));
+  const check = async (args) => { const { d, out } = baseDeps(fx, []); const code = await run(['--run', fx.runDir, '--check-repair', ...args], d); return { code, out: out() }; };
+  state(false);
+  fs.writeFileSync(stagedPath, `Hold: no\n\n${diff}`);
+  assert.strictEqual((await check([stagedPath, '--full'])).code, 0, 'header, JSON and floor all clear');
+  fs.writeFileSync(stagedPath, `Hold: yes\nHeld: causal set\n\n${diff}`);
+  assert.strictEqual((await check([stagedPath])).code, 0, 'the floor alone reads a clean diff as clear');
+  const rewritten = await check([stagedPath, '--full']);
+  assert.strictEqual(rewritten.code, 5, 'a rewrite to Hold: yes over a clean diff is not clear');
+  assert.match(rewritten.out, /reference-repair-held/);
+  fs.writeFileSync(stagedPath, `Hold: no\n\n${diff}`);
+  state(true);
+  assert.strictEqual((await check([stagedPath, '--full'])).code, 5, 'a JSON hold of true holds');
+  fs.rmSync(path.join(fx.runDir, 'engine-state.json'));
+  const noState = await check([stagedPath, '--full']);
+  assert.strictEqual(noState.code, 5);
+  assert.match(noState.out, /reference-repair-unclassified/);
+  fs.writeFileSync(path.join(fx.runDir, 'engine-state.json'), '{not json');
+  const badState = await check([stagedPath, '--full']);
+  assert.strictEqual(badState.code, 5, 'an unparseable engine-state.json reads as absent');
+  assert.match(badState.out, /reference-repair-unclassified/);
+  const outside = path.join(fx.runDir, 'wrap-up-reference-1.md');
+  fs.writeFileSync(outside, `Hold: no\n\n${diff}`);
+  assert.strictEqual((await check([outside, '--full'])).code, 2, '--full reads only a file in the run\'s staged/');
+  assert.throws(() => parseArgs(['--run', 'd', '--full']), /--full/);
+});
+
+test('#4636: --check-repair refuses the other shapes\' flags', () => {
+  for (const extra of [['--policy', 'console-auto'], ['--dry-run'], ['--json'], ['--set-item', 'x'], ['--set-item', 'x', '--resolution', 'pending', '--reason', 'r'], ['--resolution', 'pending'], ['--reason', 'r']]) {
+    assert.throws(() => parseArgs(['--run', 'd', '--check-repair', 'f', ...extra]), /--check-repair/);
+  }
+  assert.throws(() => parseArgs(['--run', 'd', '--check-repair', '']), /--check-repair/);
+});
+
+test('#4636: --check-repair with a --run outside the main checkout exits 3', async () => {
+  const fx = mainCheckoutWithRun();
+  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const p = path.join(shadow, 'x.md');
+  fs.writeFileSync(p, 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', shadow, '--check-repair', p], d), 3);
+  assert.strictEqual(out(), '', 'a refused anchor never prints clear');
 });

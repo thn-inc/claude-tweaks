@@ -1,0 +1,91 @@
+## /tidy
+- AUTO 20:23:27 — Step 4.5 reconcile: reconcile --checks (all ten) --json exit 0: worktrees 1 reaped, 30 skipped (26 pr-open, 3 pr-closed-unmerged, 1 no-pr); runs 0 archived (178 skipped); branches 29 skip merged-pr-without-cherry-equivalence; remoteBranches 181 skipped; ledgerResidue 36 skipped (33 open-rows, 3 run-live); console.ready []; mirror ff declined — dirty (only dirty path: this sweep's own untracked run dir); 1 residue error (escalate gh issue comment 2724 failed for run 2026-11-02T205944-record-3721). Full JSON held at session scratchpad reconcile.json. Reversibility: n/a.
+- AUTO 20:28:10 — Step 7 Fill Release Note: filled the Release Note on #5136 with "Extended the verification CLI's CI wiring tests to run on Windows checkouts"; snapshot snapshots/tidy-release-note-5136.original.md. Reversibility: high.
+- AUTO 20:28:13 — Step 7 Fill Release Note: filled the Release Note on #5135 with "Added test coverage for the gating and fallback paths of CI-sourced verification"; snapshot snapshots/tidy-release-note-5135.original.md. Reversibility: high.
+- AUTO 20:28:15 — Step 7 Fill Release Note: filled the Release Note on #5134 with "Kept CI-sourced verification waits inside the foreground command time limit"; snapshot snapshots/tidy-release-note-5134.original.md. Reversibility: high.
+- AUTO 20:28:18 — Step 7 Fill Release Note: filled the Release Note on #5133 with "Restored the push-before-verify instruction for CI-sourced verification during builds"; snapshot snapshots/tidy-release-note-5133.original.md. Reversibility: high.
+- AUTO 20:28:20 — Step 7 Fill Release Note: filled the Release Note on #5059 with "Unified how parent-gate checks read project policy so a broken policy file fails closed"; snapshot snapshots/tidy-release-note-5059.original.md. Reversibility: high.
+- AUTO 20:28:22 — Step 7 Fill Release Note: filled the Release Note on #5031 with "Tightened the acceptance packet's recording-store link checks once a remote store caller exists"; snapshot snapshots/tidy-release-note-5031.original.md. Reversibility: high.
+- AUTO 20:28:25 — Step 7 Fill Release Note: filled the Release Note on #5030 with "Widened the acceptance packet's link and secret-redaction screens to catch more token shapes"; snapshot snapshots/tidy-release-note-5030.original.md. Reversibility: high.
+- AUTO 20:29:08 — Step 7 Archive: archived 27 clean pipeline-run dirs (kind: pipeline-run, remedy auto) via hooks.js archive-run; no commit produced. Reversibility: high (archive is a local move, nothing deleted).
+- SKIP 20:29:08 — Step 7 Archive (refused): 2026-11-01T182344-spec-4830 and 2026-11-03T114116-record-4618: archive-run printed archival refused — console-residue (1 and 3 unreviewed items) → FAILED, surfaced under Yours. Reversibility: n/a.
+- STAGED 20:30:28 — Step 6: Prune plan (archive) for 111 closed-record, uncited, past-cutoff plans under docs/superpowers/plans/. Stage path: staged/tidy-prune-plan-1.md. Reversibility: med (git rm, history keeps it).
+- STAGED 20:30:28 — Step 6: Promote #3847 (parked trigger 2026-11-07 passed); needs:decision marker posted. Stage path: staged/tidy-promote-1.md. Reversibility: n/a (no mutation).
+- STAGED 20:31:52 — Step 6 (Step 5.6): Propose digest cluster x9 from #5046 (tests 16, dispatch 6, reconcile 6, review 6, console 4, flow 4, hooks 4, issues 3, wrap-up 3). Stage paths: staged/digest-promotion-1..9.md. Reversibility: n/a (files a record on approval).
+- AUTO 20:33:58 — Step 6 close (--source sweep): tidy counts: applied 35 (1 reaped, 7 filled-note, 27 archived), staged 11, yours 78, clean 6 scans; 3 failed (2 archive refusals console-residue, 1 reconcile escalate comment error). report.md + report-condensed.md written, both lint-clean. Reversibility: n/a.
+- AUTO 21:40:16 — Step 7 (--approve) Propose digest cluster: human-approved: filed #5198 tests(16) #5199 dispatch(6) #5200 reconcile(6) #5201 review(6) #5202 console(4) #5203 flow(4) #5204 hooks(4) #5205 issues(3) #5206 wrap-up(3); 52 entry lines in #5046 marked → #N across 13 comments; all re-verified live before filing. Reversibility: low (new GitHub issues + digest line marks).
+- AUTO 21:42:19 — Step 7 (--approve) Prune plan (archive): human-approved: git rm 111 docs/superpowers/plans/ plans (record closed, uncited, past cutoff, retention keep-forever — all re-verified, 0 stale) in scratch worktree tidy-prune-plans-2026-11-11; landing as a tidy housekeeping PR (pr-first). Reversibility: med (git rm; history keeps every plan).
+- AUTO 21:42:19 — Step 7 (--approve) Promote: human-approved: #3847 needs:decision comment marked **Resolved:** (promote) and needs:decision removed; record stays parked, /claude-tweaks:specify #3847 left for the human. Reversibility: high.
+- AUTO 21:43:39 — Step 7.5 arm (pr-first): PR #5207 opened, NOT armed — arm-failed: compose-subject.js exited 1 (missing <n> argument — no record to compose a subject from on a record-less housekeeping PR); fence stops before any merge. Reversibility: n/a. [lever: housekeeping-auto-merge=true (policy)]
+- AUTO 22:14:10 — Step 7.5 arm (manual): PR #5207 armed by the user's direct instruction (gh pr merge --auto --squash, hand-written subject "chore: Prune 111 completed execution plans" since compose-subject.js has no record-less path) and merged immediately as 53de55cc2 (mergeStateStatus CLEAN, no required checks); main fast-forwarded to it before archival. Reversibility: low (merged).
+## /flow
+- AUTO 20:36:48 — Step 2.8: claimed #4861 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 20:43:32 — Step 2.8: claimed #4931 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 20:47:15 — Step 2.8: claimed #4946 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 20:50:37 — Step 2.8: claimed #4989 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 20:54:22 — Step 2.8: claimed #4990 (bin/claim-targets.js, transport: git). Reversibility: high.
+## /specify
+- STAGED 20:42:37 — Diagram suggestion: diagram-suggestion (flowchart) for #4861 — reapMerged lock-verdict branches (in-use / unknown / orphaned-recent / orphaned-stale / free): /claude-tweaks:visualize flowchart 4861 --source specify. Reversibility: high.
+- AUTO 20:42:55 — Shape #4861: headless bare-drain shape of #4861: Framing Guard FRAMING: open; shaping framing-check FRAMING: open (no solution:unjustified); ceremony-check CEREMONY: standard; Surface: infra (Design-intent/Ui-stack n/a); stamped ready + shaped:headless + risk:medium + size:medium + ceremony:standard + type:bug; reframed from stale path handoff (path already gone) to the reapMerged orphaned/unknown-lock defect. Reversibility: high.
+- AUTO 20:43:05 — Release: released claim on #4861 (shaped: #4861); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 20:46:37 — Shape #4931: headless bare-drain shape of #4931: Framing Guard FRAMING: open; shaping framing-check FRAMING: open; ceremony-check CEREMONY: standard; Surface: infra; stamped ready + shaped:headless + risk:low + size:medium + ceremony:standard + type:task; scope absorbs the QA-layer shapes of overlapping #4990 (same files); no diagram signal. Reversibility: high.
+- AUTO 20:46:47 — Release: released claim on #4931 (shaped: #4931); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 20:49:50 — Shape #4946: headless bare-drain shape of #4946: Framing Guard FRAMING: open; shaping framing-check FRAMING: open; ceremony-check CEREMONY: fast-lane; Surface: infra; stamped ready + shaped:headless + risk:low + size:low + ceremony:fast-lane (type:task already present); premise verification contradicted the two-copy deliverable (tiebreak template now inlines the shared SHELL DISCIPLINE line via placeholder), rewritten to a single-copy edit; near-dup screen: 12 candidates, none title-similar, appended to Related; no diagram signal. Reversibility: high.
+- AUTO 20:50:01 — Release: released claim on #4946 (shaped: #4946); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 20:53:37 — Shape #4989: headless bare-drain shape of #4989: Framing Guard FRAMING: open; shaping framing-check FRAMING: open; ceremony-check CEREMONY: standard; Surface: infra; stamped ready + shaped:headless + risk:medium + size:medium + ceremony:standard + type:bug; Current State notes #4557 (v6.160.0) progress windows postdate the report, scope narrowed to the verdict at bound/ceiling and the stale handoff nextSteps; claim-time bot:in-progress label add hit gh ETIMEDOUT but the label landed; no diagram signal. Reversibility: high.
+- AUTO 20:53:49 — Release: released claim on #4989 (shaped: #4989); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 20:57:14 — Shape #4990: headless bare-drain shape of #4990: Framing Guard FRAMING: open; shaping framing-check FRAMING: open; ceremony-check CEREMONY: standard; Surface: infra; stamped ready + shaped:headless + risk:low + size:low + ceremony:standard + type:task; scope narrowed to the orchestrating /test session (qa-procedures.md RUN_DIR + orchestrator shell rule) since QA-agent/build/SDD/dispatch parts are owned by #4931/#4442/#4243/#3822; claim-time bot:in-progress add hit gh ETIMEDOUT but the label landed; no diagram signal. Reversibility: high.
+- AUTO 20:57:26 — Release: released claim on #4990 (shaped: #4990); labels removed: bot:in-progress. Reversibility: high.
+## /backlog
+- AUTO 20:58:59 — Backlog grant: ceiling gate not satisfied (ceiling=supervised, opt-in=false) — nothing to do this firing. Reversibility: n/a.
+- AUTO 21:06:58 — refine confirm-gate: Backlog refine: batch auto-applied (headless --source sweep, zero-click) — 45 rows across 2 lanes (40 priority, 5 Related), all recommended values; flag-back 0 rows (no grant-check ran), dependency-repair 0 mechanical wires (10 flags, all already-wired or non-declaration prose). Reversibility: high. [lever: autonomy=unattended (policy)]
+- AUTO 21:07:23 — apply-refine-labels: #4961: applied +priority:medium. Reversibility: high.
+- AUTO 21:07:28 — apply-refine-labels: #4964: applied +priority:low. Reversibility: high.
+- AUTO 21:07:33 — apply-refine-labels: #4967: applied +priority:low. Reversibility: high.
+- AUTO 21:07:38 — apply-refine-labels: #4971: applied +priority:low. Reversibility: high.
+- AUTO 21:07:42 — apply-refine-labels: #4972: applied +priority:low. Reversibility: high.
+- AUTO 21:07:47 — apply-refine-labels: #4974: applied +priority:medium. Reversibility: high.
+- AUTO 21:07:52 — apply-refine-labels: #4975: applied +priority:low. Reversibility: high.
+- AUTO 21:07:57 — apply-refine-labels: #4988: applied +priority:low. Reversibility: high.
+- AUTO 21:08:02 — apply-refine-labels: #4989: applied +priority:medium. Reversibility: high.
+- AUTO 21:08:07 — apply-refine-labels: #4990: applied +priority:low. Reversibility: high.
+- AUTO 21:08:12 — apply-refine-labels: #4992: applied +priority:medium. Reversibility: high.
+- AUTO 21:08:16 — apply-refine-labels: #4993: applied +priority:low. Reversibility: high.
+- AUTO 21:08:21 — apply-refine-labels: #4995: applied +priority:low. Reversibility: high.
+- AUTO 21:08:26 — apply-refine-labels: #4997: applied +priority:low. Reversibility: high.
+- AUTO 21:08:31 — apply-refine-labels: #5000: applied +priority:low. Reversibility: high.
+- AUTO 21:08:35 — apply-refine-labels: #5001: applied +priority:low. Reversibility: high.
+- AUTO 21:08:41 — apply-refine-labels: #5002: applied +priority:medium. Reversibility: high.
+- AUTO 21:08:46 — apply-refine-labels: #5003: applied +priority:low. Reversibility: high.
+- AUTO 21:08:50 — apply-refine-labels: #5004: applied +priority:medium. Reversibility: high.
+- AUTO 21:08:55 — apply-refine-labels: #5005: applied +priority:low. Reversibility: high.
+- AUTO 21:09:00 — apply-refine-labels: #5006: applied +priority:low. Reversibility: high.
+- AUTO 21:09:05 — apply-refine-labels: #5007: applied +priority:medium. Reversibility: high.
+- AUTO 21:09:10 — apply-refine-labels: #5012: applied +priority:low. Reversibility: high.
+- AUTO 21:09:15 — apply-refine-labels: #5013: applied +priority:low. Reversibility: high.
+- AUTO 21:09:20 — apply-refine-labels: #5014: applied +priority:low. Reversibility: high.
+- AUTO 21:09:25 — apply-refine-labels: #5030: applied +priority:medium. Reversibility: high.
+- AUTO 21:09:30 — apply-refine-labels: #5031: applied +priority:low. Reversibility: high.
+- AUTO 21:09:34 — apply-refine-labels: #5032: applied +priority:low. Reversibility: high.
+- AUTO 21:09:39 — apply-refine-labels: #5033: applied +priority:low. Reversibility: high.
+- AUTO 21:09:44 — apply-refine-labels: #5034: applied +priority:low. Reversibility: high.
+- AUTO 21:09:49 — apply-refine-labels: #5035: applied +priority:low. Reversibility: high.
+- AUTO 21:09:53 — apply-refine-labels: #5036: applied +priority:low. Reversibility: high.
+- AUTO 21:09:59 — apply-refine-labels: #5037: applied +priority:low. Reversibility: high.
+- AUTO 21:10:03 — apply-refine-labels: #5038: applied +priority:low. Reversibility: high.
+- AUTO 21:10:09 — apply-refine-labels: #5039: applied +priority:low. Reversibility: high.
+- AUTO 21:10:14 — apply-refine-labels: #5040: applied +priority:low. Reversibility: high.
+- AUTO 21:10:18 — apply-refine-labels: #5041: applied +priority:low. Reversibility: high.
+- AUTO 21:10:23 — apply-refine-labels: #5042: applied +priority:low. Reversibility: high.
+- AUTO 21:10:27 — apply-refine-labels: #5043: applied +priority:low. Reversibility: high.
+- AUTO 21:10:32 — apply-refine-labels: #5044: applied +priority:low. Reversibility: high.
+- AUTO 21:11:04 — refine apply: Backlog refine: updated **Related:** on #4992 to reference #5030. Reversibility: high.
+- AUTO 21:11:06 — refine apply: Backlog refine: updated **Related:** on #5004 to reference #5005. Reversibility: high.
+- AUTO 21:11:07 — refine apply: Backlog refine: updated **Related:** on #5005 to reference #5004. Reversibility: high.
+- AUTO 21:11:09 — refine apply: Backlog refine: updated **Related:** on #5030 to reference #4992, #5031. Reversibility: high.
+- AUTO 21:11:11 — refine apply: Backlog refine: updated **Related:** on #5031 to reference #5030. Reversibility: high.
+- SKIP 21:11:20 — refine dependency-repair: findUnresolvedDependencyProse flagged 10 of 16 prose-matching open records (native blockedBy attached for all 16, 0 alias failures); none is a mechanical wire or a judgment-required repair: #5162 and #4127 already natively wired to their cited blocker (#5153, #4024, both CLOSED); #5160, #5088, #5086, #5084, #5074 cite Blocked by as example or descriptive text, not a declaration; #5159, #4608, #4571 are parents whose prose names sub-issues' blockers (#4571's cited leaves #4242/#4454/#4329 are natively wired to #4575) or a deliberately withheld line. Reversibility: n/a.
+- AUTO 21:13:05 — Backlog grant (correction): CORRECTION of the 20:58:59 ceiling-gate line: that resolve ran with cwd inside the plugin cache and returned schema defaults. Resolved from the repo root: ceiling=unattended, opt-in=true, risk-floor=high, size-floor=high — ceiling gate satisfied; grant chain (Steps 0.5-5) runs now in this firing. Reversibility: n/a.
+- AUTO 21:15:59 — Backlog grant: zero-eligible short-circuit — 84 candidate(s), 0 needing grant-check: trust: 84 (producer:capture|low mixed 51, producer:capture|elevated mixed 30, producer:harness-health|low insufficient-evidence 1, producer:docs-health|low insufficient-evidence 1, producer:dispatch|elevated no-cell 1). Merge-lane breaker sweep: watched.json empty, breaker not tripped. The 5 shaped:headless records this firing (#4861, #4931, #4946, #4989, #4990) carry no by:* label, so the candidate filter excluded them as human-origin (never machine-granted). Reversibility: n/a.
+## /sweep
+- AUTO 21:19:42 — Step 4 close-out: sweep summary — tidy: applied 35 / staged 11 / yours 78 / clean 6 (3 failed: 2 archive refusals, 1 reconcile comment); specify: {shaped: 5, routed: 0, failed: 0}, remaining 10; refine: granted 0 / re-authorized 0 / needs-decision 0 / skipped 84 (trust), labeling 40 priority + 5 Related; attention: 56 rows. Reversibility: n/a.
