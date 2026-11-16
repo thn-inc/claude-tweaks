@@ -164,6 +164,17 @@ test('AC2d truncation', () => {
   assert.equal(kept + result.truncated, 3000);
 });
 
+test('truncation counts the deploy ref line and never drops it', () => {
+  const claims = Array.from({ length: 3000 }, () => claim('what-changed', 'x'.repeat(40), ['change:a']));
+  const deploy = { text: 'target: dev, confirmed live', ref: 'f'.repeat(64) };
+  const result = render([fact('change:a', 'passed'), fact('deploy:status', 'passed', deploy)], claims);
+  assert.ok(result.truncated > 0);
+  assert.ok(result.markdown.length <= 60000, `chars ${result.markdown.length}`);
+  assert.deepEqual(sectionLines(result.markdown, 'Deploy status'), ['target: dev, confirmed live', `ref: ${'f'.repeat(64)}`]);
+  const without = render([fact('change:a', 'passed'), fact('deploy:status', 'passed', { text: deploy.text })], claims);
+  assert.ok(result.truncated >= without.truncated);
+});
+
 test('truncation drops from the longest section and spares the marker, notes and poster', () => {
   const claims = Array.from({ length: 3000 }, () => claim('what-changed', 'x'.repeat(40), ['change:a']));
   const { markdown, truncated } = render(
@@ -435,6 +446,32 @@ test('a deploy fact with no text states its own target', () => {
   assert.deepEqual(sectionLines(markdown, 'Deploy status'), ['target: dev']);
 });
 
+test('AC2.5: render emits the stored ref', () => {
+  const deploy = { target: 'dev', live: true, text: 'target: dev, confirmed live' };
+  const withRef = render([fact('deploy:status', 'passed', { ...deploy, ref: '0123abc' })]).markdown;
+  assert.deepEqual(sectionLines(withRef, 'Deploy status'), ['target: dev, confirmed live', 'ref: 0123abc']);
+  const lines = withRef.split('\n');
+  const at = lines.indexOf('### Deploy status');
+  assert.deepEqual(lines.slice(at + 1, at + 3), ['target: dev, confirmed live', 'ref: 0123abc']);
+  const withoutRef = render([fact('deploy:status', 'passed', deploy)]).markdown;
+  assert.equal(withRef, withoutRef.replace('target: dev, confirmed live', 'target: dev, confirmed live\nref: 0123abc'));
+  assert.deepEqual(sectionLines(withoutRef, 'Deploy status'), ['target: dev, confirmed live']);
+});
+
+test('AC2.7: render output round-trips through refresh', () => {
+  const { refreshPacket } = require('../../../plugin/bin/lib/issues/accept-entry');
+  const { markdown } = render([fact('deploy:status', 'passed', {
+    target: 'dev', live: false, text: 'target: dev, not confirmed live', ref: 'aaa1111',
+  })]);
+  const result = refreshPacket(markdown, { ref: 'bbb2222', text: 'target: dev, confirmed live' });
+  assert.ok(result.refreshed.length > 0);
+  assert.ok(result.refreshed.includes('deploy-status'));
+  assert.deepEqual(sectionLines(result.body, 'Deploy status'), ['target: dev, confirmed live', 'ref: bbb2222']);
+  // A packet rendered with no ref has no stored value, so it refreshes as unverified.
+  const { markdown: old } = render([fact('deploy:status', 'passed', { target: 'dev', live: false, text: 'target: dev, not confirmed live' })]);
+  assert.deepEqual(refreshPacket(old, { ref: 'bbb2222', text: 'target: dev, confirmed live' }).refreshed, []);
+});
+
 test('a decision or recording with blank text falls back to its id', () => {
   const { markdown } = render([
     fact('decision:a', 'passed', { text: '  ' }),
@@ -626,6 +663,14 @@ test('a moved claim withholds the reason of the fact that moved it', () => {
   );
   assert.ok(sectionLines(markdown, 'Tried to break').includes(`- It works (moved: cites \`story:s\` — failed: ${WITHHELD_REASON})`));
   assert.ok(!markdown.includes(SECRET));
+});
+
+test('a credential-shaped deploy ref is withheld and never reads back as a stored ref', () => {
+  const { refreshPacket } = require('../../../plugin/bin/lib/issues/accept-entry');
+  const { markdown } = render([fact('deploy:status', 'passed', { text: 'target: dev, confirmed live', ref: `token=${SECRET}` })]);
+  assert.ok(!markdown.includes(SECRET));
+  assert.deepEqual(sectionLines(markdown, 'Deploy status'), ['target: dev, confirmed live', `ref: ${WITHHELD_TEXT}`]);
+  assert.deepEqual(refreshPacket(markdown, { ref: 'bbb2222', text: 'target: dev, confirmed live' }).refreshed, []);
 });
 
 test('decision, deploy, refused and partial free text are screened too, and recording text is redacted', () => {
