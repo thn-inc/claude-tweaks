@@ -612,7 +612,7 @@ test('go-red control: the pre-change post-merge file has no Step 4.0b', { skip: 
 
 // ---- Task 4: tidy's parent-gate backstop surfaces stranded below-floor parents ----
 
-const ABOVE_ROW_TAIL = ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ';
+const ABOVE_ROW_TAIL = ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:accept ';
 const BELOW_ROW_TAIL = ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)';
 
 // Same shape as tests/help-acceptance-queue-local-files.test.js: `node -e "` ... closing `"` at a line start.
@@ -715,7 +715,7 @@ test('AC3.1: the Collect lines and the pre-filter prose carry the below-floor fo
   const unGated = collapse(paragraph(pg, 'Un-gated parents recommend'));
   assert.ok(unGated.includes('**Close the parent below the floor**'), 'approval closes through the section');
   assert.ok(unGated.includes('`wrap-up/verification-brief-parent-gate.md`'));
-  assert.ok(unGated.includes('no `/claude-tweaks:demo` step'));
+  assert.ok(unGated.includes('no `/claude-tweaks:accept` step'));
 
   const shape7 = section(read('tidy/step-1-records.md'), '### Shape 7 — decomposition parent gate due', '### Shape 8 —');
   assert.ok(!collapse(shape7).includes('Both backstop shapes below (this one and Shape 8) filter out below-floor candidates'));
@@ -776,9 +776,9 @@ test('AC3.1: stale brief-only restatements name the below-floor close', () => {
   const gate = read('tidy/SKILL.md').split('\n').find((l) => l.startsWith('| **Open parent gate** |'));
   assert.ok(gate.includes('below the oversight floor') && gate.includes(floorPtr), 'SKILL.md What It Means column');
   const procedures = collapse(read('tidy/scan-procedures.md'));
-  assert.ok(procedures.includes('so an above-floor finding still ends with "then run `/claude-tweaks:demo #{n}`"'), 'scan-procedures above-floor only');
+  assert.ok(procedures.includes('so an above-floor finding still ends with "then run `/claude-tweaks:accept #{n}`"'), 'scan-procedures above-floor only');
   const actions = collapse(read('tidy/actions-github-issues.md'));
-  assert.ok(actions.includes('which is why an above-floor recommendation still ends with `/claude-tweaks:demo #{n}`'), 'github action above-floor only');
+  assert.ok(actions.includes('which is why an above-floor recommendation still ends with `/claude-tweaks:accept #{n}`'), 'github action above-floor only');
   assert.ok(actions.includes('closes the parent and asserts every sub-issue is complete'), 'github staging reasoning');
   const local = collapse(read('tidy/actions-local-files.md'));
   assert.ok(local.includes('closes the parent and asserts every sub-issue is complete'), 'local staging reasoning');

@@ -148,7 +148,7 @@ unchanged. This reuses the Post-or-update procedure below completely unchanged â
 `verdict:{spec}` already does.
 
 **Read side (#3333).** Both readers of a posted brief follow the write side's split: the
-acceptance-labeling check in `bin/lib/wrap-up/engine-verify.js` and `/claude-tweaks:demo`'s PR
+acceptance-labeling check in `bin/lib/wrap-up/engine-verify.js` and `/claude-tweaks:accept`'s PR
 run-comment lookup in `accept/entry-paths.md` read `<!-- run-comment: brief:{n} -->` for the record
 `n` being read first, then fall back to the plain `<!-- run-comment: brief -->`. The fallback keeps
 single-spec runs, which posted the plain marker, and briefs posted before the qualified marker

@@ -69,13 +69,13 @@ function countAtPreChangeOrSkip(t, relPath, literal) {
 
 const EVENT_SHAPES = ['pick', 'reroll', 'steer', 'tweak', 'exit'];
 
-test('#1208 AC1/AC3: demo/SKILL.md and browser-verdict.md cite the contract and never restate the event JSON shapes', (t) => {
+test('#1208 AC1/AC3: accept/SKILL.md and browser-verdict.md cite the contract and never restate the event JSON shapes', (t) => {
   assert.match(demoSkill, /_shared\/visual-decision\.md/);
   for (const shape of EVENT_SHAPES) {
     assert.equal(
       demoSkill.includes(`"type":"${shape}"`),
       false,
-      `demo/SKILL.md restates the "${shape}" event shape literal — it must only cite the contract`,
+      `accept/SKILL.md restates the "${shape}" event shape literal — it must only cite the contract`,
     );
   }
   const preChange = countAtPreChangeOrSkip(t, PRE_CHANGE_DEMO_SKILL_PATH, '_shared/visual-decision.md');
@@ -87,7 +87,7 @@ test('#1208 AC1/AC3: demo/SKILL.md and browser-verdict.md cite the contract and 
   );
   assert.ok(
     demoSkill.split('_shared/visual-decision.md').length - 1 >= 1,
-    'demo/SKILL.md must cite the contract at least once now',
+    'accept/SKILL.md must cite the contract at least once now',
   );
 
   assert.match(browserVerdict, /_shared\/visual-decision\.md/);
@@ -95,16 +95,16 @@ test('#1208 AC1/AC3: demo/SKILL.md and browser-verdict.md cite the contract and 
     assert.equal(
       browserVerdict.includes(`"type":"${shape}"`),
       false,
-      `demo/browser-verdict.md restates the "${shape}" event shape literal — it must only cite the contract`,
+      `accept/browser-verdict.md restates the "${shape}" event shape literal — it must only cite the contract`,
     );
   }
   assert.ok(
     browserVerdict.split('_shared/visual-decision.md').length - 1 >= 1,
-    'demo/browser-verdict.md must cite the contract at least once',
+    'accept/browser-verdict.md must cite the contract at least once',
   );
 });
 
-test('#1208 AC1: demo/browser-verdict.md documents pick-replaces / exit-narrows / reroll-steer-tweak-fall-back-full mapping', (t) => {
+test('#1208 AC1: accept/browser-verdict.md documents pick-replaces / exit-narrows / reroll-steer-tweak-fall-back-full mapping', (t) => {
   const verdictIdx = browserVerdict.indexOf('**Browser verdict (optional');
   assert.ok(verdictIdx > -1, 'browser-verdict.md section not found');
   const verdictSection = browserVerdict.slice(verdictIdx);
@@ -124,19 +124,19 @@ test('#1208 AC1: demo/browser-verdict.md documents pick-replaces / exit-narrows 
   );
 });
 
-test('#1208 AC1: demo/browser-verdict.md gates the browser round on rendered-page/app-route only, and on browser-tool availability', () => {
+test('#1208 AC1: accept/browser-verdict.md gates the browser round on rendered-page/app-route only, and on browser-tool availability', () => {
   assert.match(browserVerdict, /`rendered-page`\/`app-route` only.*applies only to the URL surfaces/s);
   assert.match(browserVerdict, /Available whenever browser tools resolve/);
   assert.match(demoSkill, /`rendered-page`\/`app-route` only.*applies only to the URL surfaces/s);
 });
 
-test('#1208 AC1: demo/browser-verdict.md documents lifecycle stop on every exit path, matching explore.md\'s rule shape', () => {
+test('#1208 AC1: accept/browser-verdict.md documents lifecycle stop on every exit path, matching explore.md\'s rule shape', () => {
   assert.match(browserVerdict, /Stop the server \(`visual-decide\.js stop --state <demo-dir>\/\.vd-state`\)/);
   assert.match(browserVerdict, /on every exit path — pick, exit, or any error that aborts the round/);
   assert.match(browserVerdict, /never rely on the idle timeout/);
 });
 
-test('CRITICAL gotcha: demo/SKILL.md and browser-verdict.md explicitly state no auto-mode path can reach the browser-verdict step', (t) => {
+test('CRITICAL gotcha: accept/SKILL.md and browser-verdict.md explicitly state no auto-mode path can reach the browser-verdict step', (t) => {
   assert.match(demoSkill, /No auto-mode path reaches this/);
   assert.match(browserVerdict, /No auto-mode path reaches this/);
   assert.match(browserVerdict, /never invoked from within an `auto`-mode pipeline/);
@@ -204,7 +204,7 @@ test('#1208 deliverable 2: visual-review is NOT added to the Consumers table (do
 test('docs cross-references: plugin-structure.md no longer claims explore.md is the sole consumer', () => {
   assert.equal(pluginStructure.includes('sole consumer is `design-wrapper/modes/explore.md`'), false);
   assert.match(pluginStructure, /consumers are `design-wrapper\/modes\/explore\.md`/);
-  assert.match(pluginStructure, /`\/claude-tweaks:demo`'s Verdict step/);
+  assert.match(pluginStructure, /`\/claude-tweaks:accept`'s Verdict step/);
 });
 
 test('docs cross-references: skill-graph.md ## demo table gains a _shared/visual-decision.md row', (t) => {

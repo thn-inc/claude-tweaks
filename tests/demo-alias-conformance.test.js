@@ -9,6 +9,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -84,4 +85,42 @@ test('the stub stays small: two steps and no acceptance mechanics', () => {
   for (const mechanic of ['acceptance-packet.js', 'gh issue', 'AskUserQuestion', '--add-label', '--remove-label']) {
     assert.ok(!stub.includes(mechanic), `the alias stub must not carry acceptance mechanics (found '${mechanic}')`);
   }
+});
+
+// AC6: removal condition (a), mechanized. git grep reads tracked files only, the same set the
+// condition's `grep -rFn` is meant to judge. docs/superpowers/plans/ is excluded with docs/plans/
+// (the plan's logged interpretation: it is the repo's dated plan directory).
+const AC6_ALLOWED = [
+  'plugin/skills/demo/SKILL.md',
+  'plugin/skills/demo/deprecated-aliases.md',
+  'docs/incident-log.md',
+  'docs/decisions/',
+  'docs/plans/',
+  'docs/superpowers/plans/',
+];
+
+function ac6Grep() {
+  let out;
+  try {
+    out = execFileSync('git', ['grep', '-n', '-F', 'claude-tweaks:demo', '--', 'plugin', 'docs', 'README.md'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+  } catch (err) {
+    if (err.status === 1) return []; // git grep: 1 = no match; anything else is a real failure
+    throw err;
+  }
+  return out.split(/\r?\n/).filter(Boolean);
+}
+
+test('AC6.1: no claude-tweaks:demo outside the allowed set', () => {
+  const offenders = ac6Grep().filter((line) => !AC6_ALLOWED.some((prefix) => line.startsWith(prefix)));
+  assert.deepEqual(offenders, [], `claude-tweaks:demo cited outside the allowed set:\n${offenders.join('\n')}`);
+});
+
+test('AC6.2: the grep is live', () => {
+  const lines = ac6Grep();
+  assert.ok(lines.some((line) => line.startsWith('plugin/skills/demo/SKILL.md:')), 'the grep must match the alias stub');
+  assert.ok(lines.some((line) => line.startsWith('plugin/skills/demo/deprecated-aliases.md:')), 'the grep must match the alias doc');
 });

@@ -37,7 +37,7 @@ test('parent gate holds the legacy brief template', () => {
   assert.ok(fence, 'the section must hold a fenced markdown block');
   const body = fence[1];
   assert.ok(body.startsWith('## Verification Brief\n\n### The ask'), 'the fence opens on the brief heading');
-  for (const literal of ['### Confirmed', '### Observation plan', '_Posted by {poster}. Resolve with `/claude-tweaks:demo`._']) {
+  for (const literal of ['### Confirmed', '### Observation plan', '_Posted by {poster}. Resolve with `/claude-tweaks:accept`._']) {
     assert.ok(body.includes(literal), `the fence holds ${literal}`);
   }
   assert.ok(!compose.includes('Render the same'), 'the section no longer points at a template elsewhere');
@@ -490,7 +490,7 @@ test('below the floor posts the packet without --label (Decision Q5)', () => {
   assert.ok(bullet.includes('no acceptance-label bootstrap'), bullet);
   assert.ok(bullet.includes('Step 2.5'), 'skips the safety net');
   assert.ok(bullet.includes('Record the exemption (#2383)'), bullet);
-  assert.ok(bullet.includes('`/claude-tweaks:demo #N`'), bullet);
+  assert.ok(bullet.includes('`/claude-tweaks:accept #N`'), bullet);
   assert.ok(!bullet.includes('Skip Step 1 through'), bullet);
 });
 
@@ -650,7 +650,7 @@ test('the packet read does not depend on a pending label, so a below-floor packe
   assert.ok(lookup.indexOf('**Read the acceptance packet first**') < lookup.indexOf('If the labels just fetched'), 'ahead of the label branch');
   assert.ok(lookup.indexOf('**Read the acceptance packet first**') < lookup.indexOf('recover that **closing'), 'ahead of the closing-commit recovery');
   const wrapUp = flat(belowFloor());
-  assert.ok(wrapUp.includes('`/claude-tweaks:demo #N` reads its packet, whatever its labels'), wrapUp);
+  assert.ok(wrapUp.includes('`/claude-tweaks:accept #N` reads its packet, whatever its labels'), wrapUp);
   assert.ok(!wrapUp.includes('closing-commit-reconstruction fallback'), wrapUp);
 });
 
@@ -745,7 +745,9 @@ test('the stale brief wording is gone from the docs a reader meets first', () =>
   assert.ok(card.includes('| `/claude-tweaks:wrap-up` | Learnings (CLAUDE.md), acceptance packet (a parent\'s gate: Verification Brief) |'), 'the /help card');
   const ledger = flat(read('_shared/work-record.md'));
   assert.ok(!ledger.includes('applies `demo:pending` + posts the Verification Brief |'), 'the ledger row');
-  assert.ok(ledger.includes('posts the acceptance packet, with `demo:pending` above the oversight floor'), 'the ledger row');
+  assert.ok(ledger.includes("posts the acceptance packet through `/accept`'s automatic entry, which applies `accept:pending` above the oversight floor"), 'the ledger row: the no-parent path writes accept:pending');
+  assert.ok(ledger.includes("a decomposition parent's gate, through the Parent-Gate Procedure: `demo:pending` + the Verification Brief"), 'the ledger row: the parent path keeps demo:pending');
+  assert.ok(!ledger.includes('posts the acceptance packet, with `demo:pending` above the oversight floor'), 'the ledger row: the stale no-parent demo:pending wording');
   assert.ok(ledger.includes('and posts an acceptance packet (`_shared/acceptance-packet.md`'), 'the axis bullet');
   assert.ok(!ledger.includes('and posts a Verification Brief (an issue comment'), 'the axis bullet');
   const lifecycle = flat(read('_shared/pr-early-run-lifecycle.md'));

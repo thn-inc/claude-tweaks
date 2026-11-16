@@ -210,7 +210,7 @@ const POLICY_KEYS = [
   { key: 'grant-origination-enabled', type: 'boolean', default: false, summary: "A separate, deliberate opt-in a human must set before the pipeline is ever allowed to originate its own grants.", category: 'autonomy-trust', tier: 'core' },
   // Shared floors read by bin/lib/issues/oversight-floor.js's exceedsOversightFloor
   // — the point past which a machine-originated grant (grant-gate.js gate 5) or a
-  // /claude-tweaks:demo binary-gate check is denied and a human review is
+  // /claude-tweaks:accept binary-gate check is denied and a human review is
   // required. 'always' is the reserved unconditional-deny opt-out value. Not
   // prefixed 'demo-' or 'grant-': more than one consumer reads the same pair. #366.
   { key: 'risk-floor', type: 'enum', values: ['low', 'medium', 'high', 'always'], default: 'high', summary: "The risk tier at which machine-originated grants and demo fast-paths stop and require human review.", category: 'autonomy-trust', tier: 'core' },

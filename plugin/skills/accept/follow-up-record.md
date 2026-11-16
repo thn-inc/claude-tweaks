@@ -27,8 +27,8 @@ from session recall`; a scope-fork capture's `Origin:` line reads `Origin: demo 
      stage: 'backlog' }` (`type` being `bug` or the overridden type). Compute `slug` via that
      same module's `deriveSlug(title, existingSlugs)`. Never `allocateId`+`writeRecord`
      separately — same allocateId+writeRecord race `capture/SKILL.md`'s Backend Selection
-     section documents (two near-simultaneous filings, e.g. two `/claude-tweaks:demo` "Request changes"
-     verdicts landing in the same run, or `/claude-tweaks:demo` racing a `/claude-tweaks:capture`/`/claude-tweaks:specify` decomposition,
+     section documents (two near-simultaneous filings, e.g. two `/claude-tweaks:accept` "Request changes"
+     verdicts landing in the same run, or `/claude-tweaks:accept` racing a `/claude-tweaks:capture`/`/claude-tweaks:specify` decomposition,
      can silently share one numeric id); see that section for the full call shape to mirror.
   3. Note the bidirectional link back on the original record. `work-backend: github-issues`:
      comment on the original issue with the new follow-up's issue number. `work-backend:

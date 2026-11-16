@@ -31,7 +31,7 @@ the ceiling authorizes, and not the only road to born-`ready`: since #623, `/cla
 (`specShapedBody` composition — see `_shared/work-record.md`'s born-shaped rows), ceiling-independent
 the same way health-skill filings are. The in-run initiative budget rides the same `trusted` value
 with a different actor set and a different gate entirely (`_shared/initiative-budget.md`).
-`/claude-tweaks:demo` follow-ups keep the `Never` column their own permission-matrix row states,
+`/claude-tweaks:accept` follow-ups keep the `Never` column their own permission-matrix row states,
 whatever this lever is set to; widening born-`ready` to a further actor means editing that actor's
 row deliberately. `/claude-tweaks:backlog refine`
 consumes the ceiling but grants nothing from it: it renders an advisory column and inherits

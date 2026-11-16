@@ -30,7 +30,7 @@ sections sit the marker, the `## Acceptance packet — #{N}` title, the partial-
 gather has one, the dropped line, and the screened line when an entry was screened.
 
 **The observation plan**, when given in `_shared/observation-plan.md`'s grammar, follows Deploy status
-as a `### Observation plan` appendix and survives the trip to `/claude-tweaks:demo`: a first-line plan
+as a `### Observation plan` appendix and survives the trip to `/claude-tweaks:accept`: a first-line plan
 heading is dropped so it is not doubled, each line keeps its list marker and its whole backtick spans,
 and each keeps its indentation up to three columns past the open list item's content, so a sub-bullet
 stays under its parent and no line becomes an indented code block. What follows the marker is free text
@@ -351,7 +351,7 @@ stays. A packet still over the cap is not posted (`## Pipeline`).
 | The ask | What changed |
 | What shipped | What changed |
 | Confirmed | Test guide and Tried to break |
-| Observation plan | Test guide (rendered as the `### Observation plan` appendix `/claude-tweaks:demo` walks) |
+| Observation plan | Test guide (rendered as the `### Observation plan` appendix `/claude-tweaks:accept` walks) |
 | The Try it block | Test guide |
 
 ## Failure contract

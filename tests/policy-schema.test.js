@@ -55,7 +55,7 @@ test('POLICY_KEYS entries are unique', () => {
   // five rows out, one (branch-divergence-check) in; RENAMED_KEYS carries
   // all five migrations.
   // 41 -> 43, #366 (oversight-floor predicate): risk-floor, size-floor — the
-  // shared floors grant-gate.js's gate 5 and /claude-tweaks:demo's binary gate
+  // shared floors grant-gate.js's gate 5 and /claude-tweaks:accept's binary gate
   // both read via exceedsOversightFloor.
   // 43 -> 44, #406 (pr-first integration model): integration-model — no static
   // default (computed at resolve time by bin/resolve-policy.js's forge

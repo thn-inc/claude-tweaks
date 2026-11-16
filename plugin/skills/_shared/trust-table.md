@@ -382,7 +382,7 @@ holds, superseding the pre-#268 formula that summed only the first three into `d
 non-zero cell here reads `mixed` even when `Changes Requested` is `0` and the follow-up rate is
 under the threshold — the same zero tolerance a `changes-requested` disposition has.
 
-**Approved (Batch) is the subset of Approved that was sign-off via a `/claude-tweaks:demo`
+**Approved (Batch) is the subset of Approved that was sign-off via a `/claude-tweaks:accept`
 `#N,#M` batch invocation rather than a dedicated single-record session** — a legitimate,
 deliberately cheap path (`_shared/work-record.md`'s Acceptance provenance row), distinguished by
 the `-batch` provenance label `bin/lib/issues/acceptance.js`'s `approvalProvenance` reads back.

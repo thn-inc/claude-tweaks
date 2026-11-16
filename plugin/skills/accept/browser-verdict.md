@@ -44,7 +44,7 @@ Stop the server (`visual-decide.js stop --state <demo-dir>/.vd-state`) before pr
 Lifecycle ownership; never rely on the idle timeout. This is a fresh server per verdict attempt,
 never reused across records or across a re-demo of the same one.
 
-**No auto-mode path reaches this.** `/claude-tweaks:demo` has no `$PIPELINE_RUN_DIR` to begin
+**No auto-mode path reaches this.** `/claude-tweaks:accept` has no `$PIPELINE_RUN_DIR` to begin
 with — it is never invoked from within an `auto`-mode pipeline (`## Component-Skill Contract`
 below) — so this whole browser-verdict path is structurally unreachable from `auto`, the same
 constraint `_shared/visual-decision.md` requires of every consumer.

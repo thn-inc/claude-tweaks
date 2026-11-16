@@ -51,7 +51,7 @@ pre-flight check:
    still worth confirming.
 3. Close the session.
 
-Runs once per record per `/claude-tweaks:demo` session and is reused for the rest of that record's walkthrough.
+Runs once per record per `/claude-tweaks:accept` session and is reused for the rest of that record's walkthrough.
 
 **Pre-flight succeeds:** ask one short follow-up — `question`: `"Do you want to look at this
 live, or get the steps to check it yourself?"`, `header`: `"How to check"`, `multiSelect`:
@@ -83,7 +83,7 @@ After presenting the steps, re-ask the Verdict question above with only Approve 
 **Pre-flight fails:** this is evidence, not a side quest to chase mid-conversation. Capture what
 broke (screenshot, console error) and fold it directly into this record's brief as grounds for
 **Request changes** — skip the live-vs-manual follow-up question entirely, a broken environment
-is broken either way. `/claude-tweaks:demo` never debugs or fixes the underlying application code itself — that
+is broken either way. `/claude-tweaks:accept` never debugs or fixes the underlying application code itself — that
 stays out of scope the same way code-quality judgment already does (`/claude-tweaks:review`'s job).
 
 **Browser tools unavailable:** same fallback `verification-brief.md` already documents — skip

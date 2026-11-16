@@ -34,7 +34,7 @@ files:
 - **URL:** only reached after choosing "Resume" in Step 2 — the agent re-adopts the run's own `PIPELINE_RUN_DIR` and re-invokes `/claude-tweaks:flow "{target}" wrap-up`, landing in the same Review Console a direct command invocation would reach.
 - **Action:** Proceed through the Review Console's own Approve all / Override / Stop decision exactly as documented elsewhere — this journey's own scope ends at the handoff into that console.
 - **Should feel:** Continuous with Step 2 — the same run, the same worktree. The console does re-derive CI status fresh at render time (rather than reusing Step 2's read verbatim — the two invocations are separate sessions with nothing to thread state through), but via the identical Recommended-derivation rule, so it lands on the same answer Step 2 just showed unless CI genuinely changed in the moment between them.
-- **Should understand:** Its own teardown (claim release, label removal) runs as one step with the console, per `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section E — never hand-chained from `/claude-tweaks:demo`.
+- **Should understand:** Its own teardown (claim release, label removal) runs as one step with the console, per `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section E — never hand-chained from `/claude-tweaks:accept`.
 - **Red flags:** A second, unrelated worktree or run directory getting created instead of the parked run's own.
 
 ## Origin

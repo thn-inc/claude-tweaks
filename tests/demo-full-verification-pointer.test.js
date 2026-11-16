@@ -86,7 +86,7 @@ test('observation-plan.md declares Full verification with Parent/Pending/Then, i
 test('observation-plan.md has a Producer section stating demo composes the block, wrap-up never does', (t) => {
   assert.match(
     observationPlan,
-    /Composed only by `\/claude-tweaks:demo`'s `#N`-branch composers/,
+    /Composed only by `\/claude-tweaks:accept`'s `#N`-branch composers/,
   );
   const preChange = countAtPreChangeOrSkip(t, OBSERVATION_PLAN_PATH, 'Composed only by');
   if (!preChange.ok) return;
@@ -136,7 +136,7 @@ test('entry-paths.md enumerates siblings through bin/parent-gate.js --parent, ne
   );
 });
 
-test('demo/SKILL.md renders Full verification between Show and Verdict, and has the Anti-Patterns row', (t) => {
+test('accept/SKILL.md renders Full verification between Show and Verdict, and has the Anti-Patterns row', (t) => {
   const showIdx = demoSkill.indexOf('**Show** — by Surface kind:');
   const verdictIdx = demoSkill.indexOf('### Verdict');
   assert.ok(showIdx > -1, 'Show subsection not found');

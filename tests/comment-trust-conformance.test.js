@@ -208,7 +208,7 @@ const PRE_CHANGE_DEMO_LOOKUP = `2. **Read its comments by marker** — \`_shared
 3. **Fail open, visibly.** No PR.`;
 const PRE_CHANGE_PARENT_GATE = `**Then check whether a brief is already posted, before posting one** — and, when re-entering for
 a parent that may already be partially applied, before even composing it above. Fetch the parent's comments
-(\`gh issue view $PARENT_NUM --json comments\`, the same lookup \`/claude-tweaks:demo\`'s Step 1
+(\`gh issue view $PARENT_NUM --json comments\`, the same lookup \`/claude-tweaks:accept\`'s Step 1
 already does) and test whether **any** of them contains a \`## Verification Brief\` heading **with
 a \`### Confirmed\` section** — every comment on the parent.`;
 const PRE_CHANGE_SNIPPET_COMMENTS_LINE = `// comments: this member's fetched comment body array (issue.comments[].body).

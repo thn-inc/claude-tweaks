@@ -10,7 +10,7 @@ file and renders the block verbatim; none restates its fields. Consumers:
 compose it only when neither carries one).
 
 Distinct from `_shared/observation-plan.md`: the observation plan is the agent's procedure — the
-Prepare/Validate/Inspect commands `/claude-tweaks:demo` executes. This block is what a person reads
+Prepare/Validate/Inspect commands `/claude-tweaks:accept` executes. This block is what a person reads
 and does by hand. It borrows the observation plan's Entry point semantics for non-web surfaces; it
 never replaces the plan.
 
@@ -75,7 +75,7 @@ in the Test guide of the record's acceptance packet, or, for a parent-linked sub
 `try-it` PR run comment (`_shared/pr-run-comments.md`) — and `verification-brief-parent-gate.md` decides where the
 end-to-end variant lands. Stated there once, not restated here. Every successful
 `/claude-tweaks:flow` run's Pipeline Summary renders the block (`flow/summary-template.md`,
-`flow/multispec-summary.md`), and `/claude-tweaks:demo` renders it first (its Step 2).
+`flow/multispec-summary.md`), and `/claude-tweaks:accept` renders it first (its Step 2).
 
 The oversight floor (`bin/lib/issues/oversight-floor.js`) never gates the block — it gates only the
 `demo:pending` label and the sign-off ceremony.

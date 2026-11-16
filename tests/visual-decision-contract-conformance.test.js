@@ -85,14 +85,14 @@ test('AC5/AC1: modes/explore.md cites the contract and never restates the event 
   }
 });
 
-test('#1208 AC3: demo/SKILL.md and demo/browser-verdict.md cite the contract and never restate the event JSON shapes', () => {
+test('#1208 AC3: accept/SKILL.md and accept/browser-verdict.md cite the contract and never restate the event JSON shapes', () => {
   const demoText = readNonTombstone(DEMO);
   assert.match(demoText, /_shared\/visual-decision\.md/);
   for (const shape of EVENT_SHAPES) {
     assert.equal(
       demoText.includes(`"type":"${shape}"`),
       false,
-      `demo/SKILL.md restates the "${shape}" event shape literal — it must only cite the contract`,
+      `accept/SKILL.md restates the "${shape}" event shape literal — it must only cite the contract`,
     );
   }
   const browserVerdictText = readNonTombstone(DEMO_BROWSER_VERDICT);
@@ -101,7 +101,7 @@ test('#1208 AC3: demo/SKILL.md and demo/browser-verdict.md cite the contract and
     assert.equal(
       browserVerdictText.includes(`"type":"${shape}"`),
       false,
-      `demo/browser-verdict.md restates the "${shape}" event shape literal — it must only cite the contract`,
+      `accept/browser-verdict.md restates the "${shape}" event shape literal — it must only cite the contract`,
     );
   }
 });

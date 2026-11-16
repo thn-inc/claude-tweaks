@@ -177,7 +177,7 @@ Then at most **two annotation lines total**:
 A decomposition parent is never `ready` and is not agent-sized work (`_shared/work-record.md`'s
 Decomposition rules); `.funnel.parents` no longer gets an annotation line here — its count and a
 paste-ready batch render in Step 4's Sign-off stage instead, pointing at
-`/claude-tweaks:demo` (backstopped by `wrap-up/verification-brief.md`'s Parent-Gate Procedure and
+`/claude-tweaks:accept` (backstopped by `wrap-up/verification-brief.md`'s Parent-Gate Procedure and
 `/claude-tweaks:tidy`'s `Open parent gate` action).
 
 Every record appears exactly once across the header's populations (`funnelBuckets` is mutually
@@ -233,7 +233,7 @@ Bare mode only — lens runs end at their own table (Step 2) and never reach thi
 Three stages, each one paste-ready command block instead of one terminal per record or chain:
 **Shape** (`/claude-tweaks:specify #a,#b,...` chunks over the `prioritized` bucket),
 **Dispatch** (one bare `/claude-tweaks:dispatch` line), and **Sign-off**
-(`/claude-tweaks:demo #a,#b,...` chunks over the `parents` bucket). Neither of the first two stages
+(`/claude-tweaks:accept #a,#b,...` chunks over the `parents` bucket). Neither of the first two stages
 computes a dependency graph any more — `docs/skill-graph.md`'s `## backlog` → `/dispatch` row is
 the canonical statement of what moved to that skill and why; not restated here. **Score** and **Grant** both point at `/claude-tweaks:backlog refine` — the merged command's
 single sweep covers the Priority/Related lanes at the captured stage and the Grant lane at the
@@ -331,7 +331,7 @@ file the Shape and Dispatch stages read).
 **Exclusion:** `unsynced: true` records (`facets.unsynced === true`) — same reasoning as the Shape
 stage's own `unsynced` exclusion: those ids are local-namespace, never a pasteable GitHub `#N` ref.
 No `needs:definition` exclusion here — unlike `/claude-tweaks:specify`'s comma-list batch, which
-hard-fails its entire batch on one such element, `/claude-tweaks:demo`'s batch reports and skips a
+hard-fails its entire batch on one such element, `/claude-tweaks:accept`'s batch reports and skips a
 malformed or unresolvable element and keeps running the rest (`accept/SKILL.md`'s `## Input`), so
 there is no equivalent whole-batch hazard to guard against here.
 
@@ -359,18 +359,18 @@ node -e "
 
 **Render:** one paste block when `.funnel.parents` is non-empty (the same "one fenced paste block
 per funnel stage that has members" rule the other two stages follow) — a header count line, then
-one `/claude-tweaks:demo #a,#b,...` command per chunk, all chunks:
+one `/claude-tweaks:accept #a,#b,...` command per chunk, all chunks:
 
 ```
 ── Sign-off ──
-# {eligibleCount} decomposition parents — {unsyncedCount} excluded: unsynced — close out via /claude-tweaks:demo (or /claude-tweaks:wrap-up's verification brief), never /claude-tweaks:specify
-/claude-tweaks:demo #a,#b,#c,#d,#e,#f,#g,#h,#i,#j
-/claude-tweaks:demo #k,#l,#m,...
+# {eligibleCount} decomposition parents — {unsyncedCount} excluded: unsynced — close out via /claude-tweaks:accept (or /claude-tweaks:wrap-up's verification brief), never /claude-tweaks:specify
+/claude-tweaks:accept #a,#b,#c,#d,#e,#f,#g,#h,#i,#j
+/claude-tweaks:accept #k,#l,#m,...
 ```
 
 The ` — {unsyncedCount} excluded: unsynced` clause renders only when non-zero; drop it entirely
 when zero. When `eligibleCount` is 0 (every parent was excluded), the block still renders its
-header line — the count ledger the no-silent-caps rule requires — with no `/claude-tweaks:demo`
+header line — the count ledger the no-silent-caps rule requires — with no `/claude-tweaks:accept`
 line beneath it. Same `#`-sigil / bare-id rendering split by `work-backend` as the Shape stage.
 
 This stage stays outside the `Next:` line's precedence ladder (below) — the `parents` bucket was

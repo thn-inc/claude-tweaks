@@ -175,7 +175,7 @@ test('truncation drops from the longest section and spares the marker, notes and
   assert.equal(markdown.split('\n')[0], PACKET_MARKER);
   assert.ok(markdown.includes('> partial gather: verify report not found'));
   assert.deepEqual(rowsIn(markdown, "Couldn't test"), ['- `check:lint` — skipped: fail-fast']);
-  assert.ok(markdown.endsWith('_Posted by the bot. Resolve with `/claude-tweaks:demo`._'));
+  assert.ok(markdown.endsWith('_Posted by the bot. Resolve with `/claude-tweaks:accept`._'));
   assert.ok(markdown.length <= 60000);
 });
 
@@ -378,7 +378,7 @@ test('an observation-plan line cannot hide later text', () => {
     '\\~~~',
     'see `https://evil.example`',
   ]);
-  assert.ok(markdown.endsWith('_Posted by bot. Resolve with `/claude-tweaks:demo`._'));
+  assert.ok(markdown.endsWith('_Posted by bot. Resolve with `/claude-tweaks:accept`._'));
 });
 
 test('the observation plan comes after every section and is absent when blank', () => {
@@ -1030,7 +1030,7 @@ test('the poster closes the packet, inline', () => {
   const { markdown } = render([], [], { options: { poster: 'a\n<b>' } });
   const lines = markdown.split('\n');
   assert.equal(lines.at(-2), '---');
-  assert.equal(lines.at(-1), '_Posted by a \\<b>. Resolve with `/claude-tweaks:demo`._');
+  assert.equal(lines.at(-1), '_Posted by a \\<b>. Resolve with `/claude-tweaks:accept`._');
   assert.equal(lines.at(-3), '');
   assert.ok(!render([]).markdown.includes('Posted by'));
   assert.ok(!render([], [], { options: { poster: '  ' } }).markdown.includes('Posted by'));

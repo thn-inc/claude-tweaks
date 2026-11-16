@@ -92,7 +92,7 @@ test('Stage 4.7: every embedded node -e script is syntactically valid', () => {
   }
 });
 
-test('demo/SKILL.md no longer points a local-files reader at a GitHub-only Stage 4.7', () => {
+test('accept/SKILL.md no longer points a local-files reader at a GitHub-only Stage 4.7', () => {
   assert.ok(
     /awaiting sign-off \(Stage 4\.7 — fires on either driver\)/.test(DEMO_SKILL),
     '"how you got here" bullet does not state Stage 4.7 fires on either driver',

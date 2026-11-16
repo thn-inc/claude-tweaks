@@ -78,8 +78,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" LABELS=accept-labels-{n}
      gh issue edit {n} --add-label accept:pending
      ```
 
-     `local-files`: set `facets.acceptance = 'pending'` via `writeRecord`. A failed edit is reported,
-     and the packet stays.
+     `local-files`: set `facets.acceptance = 'pending'` via `writeRecord`. A failed edit is logged as
+     one `SKIP` line (step 5), and the packet stays.
    - A failed `read` (any non-zero exit) — no post and no label: posting blind could add a second
      packet. One `SKIP` line names it (step 5).
 5. **Return.** When a run directory resolves, log each failure above as one `SKIP` line through the

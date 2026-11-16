@@ -14,13 +14,14 @@
 // point never read as a component by another skill; `ledger` documents its
 // own exemption in-file (`## Invocation Model`): every caller reads it as a
 // knowledge dependency, never through the Skill tool, so there is no
-// `$PIPELINE_RUN_DIR` to key on. Seven more carry a CSC section
+// `$PIPELINE_RUN_DIR` to key on. Twelve more carry a CSC section
 // that deliberately doesn't mention `$PIPELINE_RUN_DIR` -- two are always a
 // component (no direct-invocation case to disambiguate: assess-agent-
-// autonomy, flow), seven are never a component (standalone-only or
+// autonomy, flow), ten are never a component (standalone-only or
 // machine-invoked-only, documented with near-identical "no
-// `PIPELINE_RUN_DIR` signal" phrasing: accept, browse, demo, help, intake,
-// pipeline-smoke-test, routine-kickoff, tidy -- routine-kickoff's caller is a
+// `PIPELINE_RUN_DIR` signal" phrasing: accept, activity, browse, demo (the
+// deprecated alias of accept), help, intake, pipeline-smoke-test,
+// routine-kickoff, tidy, walkthrough -- routine-kickoff's caller is a
 // routine kernel's closing line, not a pipeline skill, so the same
 // absence-of-signal reasoning applies; pipeline-smoke-test is human-invoked
 // only by design (#44), never a pipeline component).
