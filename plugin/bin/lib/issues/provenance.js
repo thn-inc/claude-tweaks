@@ -23,8 +23,16 @@
 // genuine `Origin: unstructured` body line resolves to `side-effect:unstructured`,
 // never to this module's `unstructured:unstructured`.
 //
+// A `by:*` label needs triage access to apply, but an `Origin:` body line is
+// plain text any issue author can type — so only a trusted author's line may
+// claim a side-effect class (`authorTrust`, from issueAuthorTrust below); an
+// untrusted author's line is ignored and the record resolves human. An
+// `unknown` author (no attestation on the payload) fails OPEN to the line, the
+// pre-gate behaviour: absent evidence is not evidence of a forger.
+//
 // This module reads that axis. It never writes one, and never extends ORIGINS.
 const { ORIGINS } = require('./record.js');
+const { TRUSTED_AUTHOR_ASSOCIATIONS, commentAssociation } = require('./comment-trust.js');
 
 const BY_LABEL = /^by:(.+)$/;
 // Anchored to line start so prose describing the convention is not mistaken
@@ -66,7 +74,19 @@ function truncateAtClauseBoundary(source) {
   return source;
 }
 
-function resolveProvenance({ labels, body } = {}) {
+// record: a `gh --json` issue (camelCase `authorAssociation`, `author.is_bot`)
+// or a REST issue (`author_association`, `user.type`). Bots are trusted — the
+// plugin's own automation files records under a bot identity.
+// Returns 'trusted' | 'untrusted' | 'unknown' (no attestation on the payload).
+function issueAuthorTrust(record) {
+  const r = record && typeof record === 'object' ? record : {};
+  if ((r.author && r.author.is_bot === true) || (r.user && r.user.type === 'Bot')) return 'trusted';
+  const association = commentAssociation(r);
+  if (association === null) return 'unknown';
+  return TRUSTED_AUTHOR_ASSOCIATIONS.has(association) ? 'trusted' : 'untrusted';
+}
+
+function resolveProvenance({ labels, body, authorTrust } = {}) {
   const names = Array.isArray(labels) ? labels : [];
   for (const name of names) {
     const match = BY_LABEL.exec(name);
@@ -75,7 +95,7 @@ function resolveProvenance({ labels, body } = {}) {
     }
   }
 
-  const line = ORIGIN_LINE.exec(typeof body === 'string' ? body : '');
+  const line = authorTrust === 'untrusted' ? null : ORIGIN_LINE.exec(typeof body === 'string' ? body : '');
   if (line) {
     // Truncate at clause boundaries first (before stripping trailing source),
     // so that punctuation after "from #N" doesn't prevent the pattern from matching.
@@ -103,4 +123,4 @@ function resolveProvenance({ labels, body } = {}) {
   return { kind: 'human', source: 'human' };
 }
 
-module.exports = { resolveProvenance, PRODUCERS: ORIGINS };
+module.exports = { resolveProvenance, issueAuthorTrust, PRODUCERS: ORIGINS };
