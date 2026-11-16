@@ -46,8 +46,8 @@
 //   - Fixed by #5311: a missing or malformed file fails closed (every unresolved dependency open, one
 //     Warning) — files-verifiedOpenDeps-missing and files-verifiedOpenDeps-malformed keep blocked:9002.
 //     F-depview fails closed too, with one Warning naming the view, since #5311.
-//   - The silent fail-opens (ledger row 6) are F-prview and F-openprs. F-depfresh and F-depfresh-writeback
-//     print one Warning per failed search since #5310.
+//   - The silent fail-opens (ledger row 6) are F-prview and F-openprs. F-depfresh, F-depfresh-writeback
+//     and F-depfresh-both print one Warning per failed search since #5310.
 // One module divergence the matrix found and the module fixed (Task 3 carry): on `files` the
 // agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so
 // it is read only when there are dependency numbers to search; otherwise the fence's `echo '[]'`
@@ -3504,6 +3504,8 @@ const FAULT_EXPECT = {
   'F-depfresh': { status: 0, stderr: [DEP_FRESH_USED], drops: [] },
   // #5310: the cold write-back search fails; no blob on either side.
   'F-depfresh-writeback': { status: 0, stderr: [DEP_FRESH_WRITTEN], drops: [], blob: null },
+  // #5310: a warm pull where the cache check's and the write-back's searches both fail prints both lines, in order.
+  'F-depfresh-both': { status: 0, stderr: [DEP_FRESH_USED, DEP_FRESH_WRITTEN], drops: [] },
   'F-depview': { status: 0, base: 'gh-livedep', stderr: ['Warning: gh issue view 8000 failed — dependency #8000 treated as open (fail closed) this run'], drops: [], blob: null },
   // #5309: both eligible records are excluded fail-closed (9030 was already blocked, now with the unreadable detail); the unlanded-blocker pass has no candidate left, so it prints nothing.
   // blob: null, both sides, the row's cold origin left no order blob (no write-back); parityView compares the blobs only against each other.
