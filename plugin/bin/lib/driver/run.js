@@ -212,7 +212,7 @@ function newCtx(record, shared, { named = false } = {}) {
     record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
-    eligibilityReasons: null, admissionReasons: null,
+    eligibilityReasons: null, admissionReasons: null, typedCommandNote: null,
     summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
     shared,
   };
@@ -475,7 +475,8 @@ async function driveRecord(record, shared, deps, steps = STEPS, { named = false 
 // ctx.admissionReasons stay null until then). An eligibility stop still runs admission, so every
 // reason is reported. No claim, run directory, worktree or forge write is in CHECK_STEPS.
 async function checkRecord(n, shared, deps, steps = CHECK_STEPS) {
-  const ctx = newCtx(n, shared);
+  // The record is on drive.js's command line, so it is named (#5584), as the drive loop names its records.
+  const ctx = newCtx(n, shared, { named: true });
   let admitted = true;
   let last = null;
   const noVerdict = (name, status, detail) => {
@@ -494,7 +495,9 @@ async function checkRecord(n, shared, deps, steps = CHECK_STEPS) {
   if (!Array.isArray(ctx.eligibilityReasons) || !Array.isArray(ctx.admissionReasons)) {
     return noVerdict(last ? last.name : 'none', 'no-verdict', 'the eligibility and admission verdicts were not both read');
   }
-  deps.stdout(`${JSON.stringify({ record: n, admitted, reasons: [...ctx.eligibilityReasons, ...ctx.admissionReasons] })}\n`);
+  // A refused typed command's words follow the admission reasons as one more string (#5584).
+  const typedNote = typeof ctx.typedCommandNote === 'string' ? [ctx.typedCommandNote] : [];
+  deps.stdout(`${JSON.stringify({ record: n, admitted, reasons: [...ctx.eligibilityReasons, ...ctx.admissionReasons, ...typedNote] })}\n`);
   return 0;
 }
 

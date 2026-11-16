@@ -358,7 +358,9 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     // Joined as formatAuthorityLine joins them; an answer with no reason words adds nothing.
     const words = Array.isArray(auth.reasons) ? auth.reasons : [];
     if (auth.authority === 'none' && words.length > 0 && admissionReasons.includes(ADMISSION_REASONS.noBuildGrant)) {
-      detail += `; typed command not accepted: ${words.join(', ')}`;
+      // Kept on ctx too, so --check's printed reasons carry it after ctx.admissionReasons.
+      ctx.typedCommandNote = `typed command not accepted: ${words.join(', ')}`;
+      detail += `; ${ctx.typedCommandNote}`;
     }
     return { status: 'stop', detail, extra };
   }

@@ -6700,6 +6700,54 @@ test('#5232 AC1.1: checkRecord prints no verdict for a stop before the reasons a
   assert.equal(ranAfter, false, 'no step runs after a stop that read nothing');
 });
 
+// #5584 on #5232's route: `drive.js --check #N` names its record on the command line, as `drive.js #N` does.
+async function typedCheck({ labels = TYPED_LABELS, env = {}, tty, readTypedCommand } = {}) {
+  const typedCalls = [];
+  const h = harness({
+    script: [typedIssue(labels), REAL_ADMISSION],
+    deps: {
+      env,
+      ...(tty === undefined ? {} : { stdinIsTTY: tty }),
+      ...(readTypedCommand ? { readTypedCommand: (opts) => { typedCalls.push(opts); return readTypedCommand(opts); } } : {}),
+    },
+  });
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  assertWriteFree(h.calls, h.writes());
+  return { verdict: JSON.parse(h.out.join('')), typedCalls };
+}
+
+test('(#5584) --check names its record: an ungranted ready record with an accepted typed command is admitted, as drive.js #N admits it', async () => {
+  const terminal = await typedCheck({ tty: true });
+  assert.deepStrictEqual(terminal.verdict, { record: 7, admitted: true, reasons: [] });
+  const session = await typedCheck({ tty: true, env: SESSION_ENV, readTypedCommand: () => ({ answer: 'typed', promptId: 'p-1' }) });
+  assert.deepStrictEqual(session.verdict, { record: 7, admitted: true, reasons: [] });
+  assert.equal(session.typedCalls.length, 1);
+  assert.equal(session.typedCalls[0].number, 7);
+});
+
+test('(#5584) --check on a refused typed command stays refused and carries the typed-command words after the reasons', async () => {
+  const rows = [
+    ['stdin not a terminal', { tty: false }, 'not-a-terminal'],
+    ['in a session, transcript check refuses', { tty: true, env: SESSION_ENV, readTypedCommand: () => ({ answer: 'none', reason: 'no-pointer' }) }, 'no-pointer'],
+    ['two words', { tty: false, env: { CI: '1', CC_HUB_RUN: '1' } }, 'not-a-terminal, ci, hub-run'],
+  ];
+  for (const [name, opts, words] of rows) {
+    const { verdict } = await typedCheck(opts);
+    assert.deepStrictEqual(verdict, { record: 7, admitted: false, reasons: [ADMISSION_REASONS.noBuildGrant, `typed command not accepted: ${words}`] }, name);
+  }
+  // A refusal that is not the grant refusal adds no words, as the stop detail adds none.
+  const held = await typedCheck({ labels: [...TYPED_LABELS, 'auto:build', 'bot:blocked'], tty: false });
+  assert.deepStrictEqual(held.verdict, { record: 7, admitted: false, reasons: [ADMISSION_REASONS.blocked] });
+});
+
+test('(#5584) --check on a labelled record is unchanged and never reads the typed command', async () => {
+  for (const opts of [{ tty: true }, { tty: false }, { tty: true, env: SESSION_ENV }]) {
+    const { verdict, typedCalls } = await typedCheck({ labels: [...TYPED_LABELS, 'auto:build'], readTypedCommand: () => ({ answer: 'none', reason: 'not-typed' }), ...opts });
+    assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [] }, JSON.stringify(opts));
+    assert.equal(typedCalls.length, 0, JSON.stringify(opts));
+  }
+});
+
 // --- drive.js #N --run <dir> (#5232): adopt dispatch's run directory and worktree --------------
 
 // A real main checkout (a `.git` directory; the space in its name is deliberate), a linked
