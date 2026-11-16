@@ -179,7 +179,7 @@ test("tidy's tombstone check names each skipped untrusted tombstone", () => {
 // ---- Task 5: demo, parent-gate and grant-maturation readers (#3358) ----
 
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
-const ENTRY_PATHS = readText(path.join(SKILLS, 'demo', 'entry-paths.md'));
+const ENTRY_PATHS = readText(path.join(SKILLS, 'accept', 'entry-paths.md'));
 const PARENT_GATE = readText(path.join(SKILLS, 'wrap-up', 'verification-brief-parent-gate.md'));
 const GRANT_GATE = readText(path.join(SKILLS, 'dispatch', 'grant-maturation-gate.md'));
 const SHORT_CIRCUIT = readText(path.join(SKILLS, 'wrap-up', 'auto-merge-short-circuit.md'));
@@ -208,7 +208,7 @@ const PRE_CHANGE_DEMO_LOOKUP = `2. **Read its comments by marker** — \`_shared
 3. **Fail open, visibly.** No PR.`;
 const PRE_CHANGE_PARENT_GATE = `**Then check whether a brief is already posted, before posting one** — and, when re-entering for
 a parent that may already be partially applied, before even composing it above. Fetch the parent's comments
-(\`gh issue view $PARENT_NUM --json comments\`, the same lookup \`/claude-tweaks:demo\`'s Step 1
+(\`gh issue view $PARENT_NUM --json comments\`, the same lookup \`/claude-tweaks:accept\`'s Step 1
 already does) and test whether **any** of them contains a \`## Verification Brief\` heading **with
 a \`### Confirmed\` section** — every comment on the parent.`;
 const PRE_CHANGE_SNIPPET_COMMENTS_LINE = `// comments: this member's fetched comment body array (issue.comments[].body).

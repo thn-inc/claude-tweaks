@@ -14,13 +14,14 @@ const {
   archiveRunDir, decideArchive, decideArchiveCore, readConsoleState, isOrphanedMint,
   archiveMerged, prefetchArchivePrStates, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
-  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin,
+  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, archiveRunCommand, compareWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, runRecordSet, inFlightRecords,
-  consoleResidue, consoleResidueHint, filingRerunRemedy,
+  consoleResidue, consoleResidueHint, filingRerunRemedy, digestRerunRemedy,
   unfiledCantTellFindings, CANT_TELL_UNFILED_HINT, countOwnerlessNonClean,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
+const { digestLogRemedy } = require('../../../plugin/bin/lib/console/residue');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, cachePath } = require('../../../plugin/bin/lib/reconcile/cache');
 const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
@@ -238,7 +239,7 @@ test('consoleResidueHint: names only the unreadable console.json when no item is
 });
 
 // #4170: a planned can't-tell filing (`console.json#filings`) with no filed line in decisions.md is
-// `filing-pending` residue; the refusal names the `console-filings.js --only` re-run beside the ack.
+// `filing-pending` residue; the refusal names the default-selection `console-filings.js` re-run beside the ack.
 const PLANNED_FILED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa filed as #501 (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.\n';
 function plannedFilingRunDir() {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filing-'));
@@ -251,12 +252,12 @@ function plannedFilingRunDir() {
   fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
   return runDir;
 }
-test('AC3.1: a console holding a planned filing with no record reads residue and the hint names the console-filings.js --only re-run (#4170)', () => {
+test('AC3.1: a console holding a planned filing with no record reads residue and the hint names the default-selection console-filings.js re-run (#4170)', () => {
   const runDir = plannedFilingRunDir();
   assert.strictEqual(readConsoleState(runDir), 'residue');
   assert.deepStrictEqual(consoleResidue(runDir), { items: 1, unreadable: [], names: ['tiebreak:aaaaaaaaaaaa (filing-pending)'] });
   assert.ok(consoleResidueHint(runDir).includes(
-    `re-run the planned filing(s): console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa', then file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings; or review them, then run console-residue.js --ack --run "${runDir}"`,
+    `re-run the planned filing(s): console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>, then file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself; a \`drop\` item's re-run logs its digested line instead), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings; or review them, then run console-residue.js --ack --run "${runDir}"`,
   ), consoleResidueHint(runDir));
 });
 test('filingRerunRemedy is empty for a residue console with no planned filing (#4170)', () => {
@@ -264,12 +265,68 @@ test('filingRerunRemedy is empty for a residue console with no planned filing (#
   assert.strictEqual(filingRerunRemedy(runDir), '');
   assert.match(consoleResidueHint(runDir), /unresolved: f1 \(filing-failed\) — review them, then run console-residue\.js --ack --run /);
 });
+// #4679: the digest twin — a planned digest entry with no digested line is `digest-pending` residue and the hint
+// names the digest re-run plus the log remedy, beside the ack.
+const DIGESTED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:bbbbbbbbbbbb digested (work-fingerprint consolefinding-4567ef01). Reversibility: n/a.\n';
+function plannedDigestRunDir() {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-digest-'));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' }],
+    digests: [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }],
+  }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
+  return runDir;
+}
+test('a console holding a planned digest entry with no digested line reads residue and the hint names the digest re-run (#4679)', () => {
+  const runDir = plannedDigestRunDir();
+  assert.strictEqual(readConsoleState(runDir), 'residue');
+  assert.deepStrictEqual(consoleResidue(runDir), { items: 1, unreadable: [], names: ['tiebreak:bbbbbbbbbbbb (digest-pending)'] });
+  assert.strictEqual(filingRerunRemedy(runDir), '');
+  const remedy = digestRerunRemedy(runDir);
+  assert.ok(remedy.startsWith(`re-run the planned digest entries: console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>, then ${digestLogRemedy({ consoleDir: runDir })}`), remedy);
+  assert.ok(consoleResidueHint(runDir).includes(`${remedy}; or review them, then run console-residue.js --ack --run "${runDir}"`), consoleResidueHint(runDir));
+});
+test('digestRerunRemedy with several digest-pending consoles names each re-run and one log command with a dir placeholder (#4679)', () => {
+  const runDir = plannedDigestRunDir();
+  const sub = path.join(runDir, 'spec-2');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'console.json'), fs.readFileSync(path.join(runDir, 'console.json')));
+  fs.writeFileSync(path.join(sub, 'decisions.md'), '## /wrap-up\n');
+  const remedy = digestRerunRemedy(runDir);
+  assert.ok(remedy.includes(`console-filings.js --run "${runDir}" `) && remedy.includes(`console-filings.js --run "${sub}" `), remedy);
+  assert.ok(remedy.endsWith(digestLogRemedy({ consoleDir: "{that console's dir}" })), remedy);
+  assert.strictEqual(remedy.split('post each printed digest line').length, 2, 'the instruction sentence prints once');
+});
+test('a console holding both a filing-pending and a digest-pending item names the one re-run once in the hint and the archive-run refusal (#4679)', () => {
+  const runDir = plannedFilingRunDir();
+  const cj = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
+  cj.items.push({ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' });
+  cj.digests = [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }];
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify(cj));
+  const cmd = `console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
+  const hint = consoleResidueHint(runDir);
+  assert.strictEqual(hint.split(cmd).length, 2, `the command prints once: ${hint}`);
+  assert.ok(hint.includes(digestLogRemedy({ consoleDir: runDir })), 'the digest log remedy is still named');
+  assert.ok(hint.includes('the same re-run also settles the planned digest entries'), hint);
+  assert.ok(!hint.includes('; or the same re-run'), `the digest continuation is an addition, not an alternative: ${hint}`);
+  assert.ok(hint.includes(`; the same re-run also settles`) && hint.includes(`; or review them, then run console-residue.js --ack`), hint);
+});
+test('digestRerunRemedy is empty for a residue console with no planned digest (#4679)', () => {
+  assert.strictEqual(digestRerunRemedy(prConsoleRunDir([['f1', 'filing-failed']])), '');
+});
+test('once the digested line is logged the run reads resolved (#4679)', () => {
+  const runDir = plannedDigestRunDir();
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), DIGESTED_LINE);
+  assert.strictEqual(readConsoleState(runDir), 'resolved');
+});
 test('AC4.1: once the filed line is logged the run reads resolved (#4170)', () => {
   const runDir = plannedFilingRunDir();
   fs.appendFileSync(path.join(runDir, 'decisions.md'), PLANNED_FILED_LINE);
   assert.strictEqual(readConsoleState(runDir), 'resolved');
 });
-test('filingRerunRemedy names one re-run per unacknowledged console, each with only its unfiled planned filings (#4170)', () => {
+test('filingRerunRemedy names one re-run per unacknowledged console that holds an unfiled planned filing (#4170)', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filings-'));
   const [a, b, c, d] = ['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc', 'dddddddddddd'].map((h) => `tiebreak:${h}`);
   const fp = { [a]: 'consolefinding-0123abcd', [b]: 'consolefinding-4567ef01', [c]: 'consolefinding-89abcdef', [d]: 'consolefinding-02468ace' };
@@ -288,10 +345,12 @@ test('filingRerunRemedy names one re-run per unacknowledged console, each with o
   const two = specConsole(2, { items: [item(c)], filings: [filing(c)] });
   const three = specConsole(3, { items: [item(d)], filings: [filing(d)], acknowledged: true });
   const remedy = filingRerunRemedy(parent);
-  assert.ok(remedy.includes(`console-filings.js --run "${one}" --existing <issues.json> --out-dir <dir> --only '${b}'`), remedy);
-  assert.ok(remedy.includes(`console-filings.js --run "${two}" --existing <issues.json> --out-dir <dir> --only '${c}'`), remedy);
+  const rerun = (dir) => `console-filings.js --run "${dir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
+  assert.ok(remedy.includes(rerun(one)), remedy);
+  assert.ok(remedy.includes(rerun(two)), remedy);
+  assert.ok(!remedy.includes('--only'), `the re-run keeps the unattended default selection: ${remedy}`);
   assert.ok(!remedy.includes(three) && !remedy.includes(d), `an acknowledged console is not named: ${remedy}`);
-  assert.ok(!remedy.includes(a) && !remedy.includes('reflect-1.md'), `a filed filing and a non-filing item are not named: ${remedy}`);
+  assert.ok(!remedy.includes('reflect-1.md'), `a non-filing item is not named: ${remedy}`);
 });
 
 test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (#3416)', () => {
@@ -1203,10 +1262,89 @@ test('isArchivedPendingTrackedMove: false when a gitignored entry still lives al
   assert.equal(isArchivedPendingTrackedMove(root, runDir), false);
 });
 
-test('archivedPendingTrackedMoveCommand: a paste-ready archive-run command naming the run dir', () => {
-  const command = archivedPendingTrackedMoveCommand('/x/.claude-tweaks/pipelines/2026-01-01T000000-spec-1');
+test('archivedPendingTrackedMoveCommand: the archive-tracked-shells CLI command naming the root (#3975)', () => {
+  assert.equal(
+    archivedPendingTrackedMoveCommand('/x'),
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/x"',
+  );
+});
+
+test('archiveRunCommand: a paste-ready archive-run command naming the run dir', () => {
+  const command = archiveRunCommand('/x/.claude-tweaks/pipelines/2026-01-01T000000-spec-1');
   assert.match(command, /bin\/hooks\.js" archive-run --run/);
   assert.match(command, /2026-01-01T000000-spec-1/);
+});
+
+// #3975: a clean-twin shell — the archive twin carries a clean run-state, only tracked work/ is live.
+function makeShell(root, runId, { twinWork = '# w\n', liveWork = '# w\n' } = {}) {
+  commitPath(root, `.claude-tweaks/pipelines/${runId}/work/w-spec.md`, liveWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/work/w-spec.md`, twinWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/run-state.json`, JSON.stringify({ status: 'clean' }));
+  return path.join(root, '.claude-tweaks', 'pipelines', runId);
+}
+
+test('AC1.4: without worktree-always only one shell is archived in place per pass (#3975)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const a = makeShell(root, '2026-09-01T100000-spec-1');
+  const b = makeShell(root, '2026-09-01T110000-spec-2');
+  const result = archiveMerged({ cwd: root });
+  assert.equal(result.archived.length, 1, JSON.stringify(result));
+  const left = [a, b].find((d) => !result.archived.includes(d));
+  const skip = result.skipped.find((s) => s.runDir === left);
+  assert.ok(skip, JSON.stringify(result));
+  assert.equal(skip.reason, 'archived-pending-tracked-move');
+  assert.equal(skip.command, archivedPendingTrackedMoveCommand(root));
+});
+
+test('AC1.5: a conflicting clean-twin shell does not take the in-place slot and keeps its twin clean (#3975)', () => {
+  const root = fs.realpathSync(makeRepo());
+  // iterRunDirsWithState walks newest id first, so the differing shell is visited first.
+  const differing = makeShell(root, '2026-09-01T110000-spec-2', { twinWork: '# other\n' });
+  const identical = makeShell(root, '2026-09-01T100000-spec-1');
+  const result = archiveMerged({ cwd: root });
+  assert.deepEqual(result.archived, [identical], JSON.stringify(result));
+  const skip = result.skipped.find((s) => s.runDir === differing);
+  assert.ok(skip, JSON.stringify(result));
+  assert.equal(skip.reason, 'archived-pending-tracked-move');
+  assert.equal(skip.command, archivedPendingTrackedMoveCommand(root));
+  const twinState = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(differing), 'run-state.json'), 'utf8'));
+  assert.equal(twinState.status, 'clean');
+  assert.equal(fs.existsSync(path.join(differing, 'work', 'w-spec.md')), true, 'the differing shell keeps its live work/');
+  assert.equal(skip.shell, true);
+});
+
+test('AC1.7: a failed in-place attempt on a clean-twin shell leaves the twin clean (#3975)', (t) => {
+  const root = fs.realpathSync(makeRepo());
+  const shellDir = makeShell(root, '2026-09-01T100000-spec-1');
+  t.mock.method(cp, 'execFileSync', (cmd, args, opts) => {
+    if (cmd === 'git' && Array.isArray(args) && args.includes('commit')) throw new Error('simulated failure: git commit');
+    return execFileSync(cmd, args, opts);
+  });
+  const result = archiveMerged({ cwd: root });
+  assert.ok(!result.archived.includes(shellDir), JSON.stringify(result));
+  assert.ok(result.skipped.some((s) => s.runDir === shellDir), JSON.stringify(result));
+  const twinState = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(shellDir), 'run-state.json'), 'utf8'));
+  assert.equal(twinState.status, 'clean');
+});
+
+test('AC1.6: a non-clean-twin split state keeps the archive-run completion and is not capped (#3975)', () => {
+  const split = (root, runId) => {
+    commitPath(root, `.claude-tweaks/pipelines/${runId}/work/w-spec.md`, '# w\n');
+    fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId), { recursive: true });
+    return path.join(root, '.claude-tweaks', 'pipelines', runId);
+  };
+  const rootA = fs.realpathSync(makeRepo());
+  setWorktreeAlways(rootA, true);
+  const dirA = split(rootA, '2026-09-01T100000-spec-1');
+  const skip = archiveMerged({ cwd: rootA }).skipped.find((s) => s.runDir === dirA);
+  assert.ok(skip);
+  assert.equal(skip.reason, 'archived-pending-tracked-move');
+  assert.match(skip.command, /archive-run --run/);
+
+  const rootB = fs.realpathSync(makeRepo());
+  const dirs = [split(rootB, '2026-09-01T100000-spec-1'), split(rootB, '2026-09-01T110000-spec-2')];
+  const result = archiveMerged({ cwd: rootB });
+  assert.deepEqual([...result.archived].sort(), [...dirs].sort(), JSON.stringify(result));
 });
 
 // AC2 (Deliverable 2): under `worktree-always: true`, the split state is a
@@ -2298,4 +2436,57 @@ test('archiveMerged: an empty or absent postMergeDeferred changes nothing (#4599
   for (const extra of [{}, { postMergeDeferred: [] }]) {
     assert.deepEqual(archiveMerged({ cwd: root, ...extra }).skipped, [{ runDir: dir, reason: 'no-branch' }]);
   }
+});
+
+// #3975: a twin-only archival (workMoves empty) used to run `git commit -- `
+// with an empty pathspec, which commits the WHOLE index — sweeping an
+// unrelated staged file into the archive commit.
+// The git-state half runs everywhere; the argv half needs a `#!/bin/sh` git shim on PATH, which
+// win32 never spawns (STUB_SKIP), so only that half is gated.
+test('AC6.1: twin-only archival commits only its own paths, never an unrelated staged file', (t) => {
+  const root = fs.realpathSync(makeRepo());
+  const runId = '2026-08-29T153740-spec-1-3975';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  const liveRel = `.claude-tweaks/pipelines/${runId}/work/1-spec.md`;
+  commitPath(root, liveRel, '# spec 1\n');
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/work/1-spec.md`, '# spec 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  fs.writeFileSync(path.join(root, 'unrelated.txt'), 'staged by someone else\n');
+  git(root, 'add', 'unrelated.txt');
+
+  let env;
+  let log = null;
+  if (!STUB_SKIP) {
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-shim-'));
+    t.after(() => fs.rmSync(shimDir, { recursive: true, force: true }));
+    log = path.join(shimDir, 'argv.log');
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(shimDir, 'git'), [
+      '#!/bin/sh',
+      `node -e 'require("fs").appendFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)) + "\\n")' "${log}" "$@"`,
+      `exec "${realGit}" "$@"`,
+      '',
+    ].join('\n'), { mode: 0o755 });
+    env = { ...process.env, PATH: `${shimDir}${path.delimiter}${process.env.PATH}` };
+  }
+
+  const result = archiveRunDir(root, runDir, env ? { env } : {});
+  assert.equal(result.ok, true, JSON.stringify(result));
+
+  assert.equal(git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').includes('unrelated.txt'), false,
+    'the archive commit must not contain the unrelated staged file');
+  assert.ok(git(root, 'diff', '--cached', '--name-only').split('\n').includes('unrelated.txt'),
+    'the unrelated file must stay staged');
+  assert.deepEqual(git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean), [liveRel],
+    'the archive commit holds exactly the twin path it resolved');
+
+  if (STUB_SKIP) return;
+  const commitArgv = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    .find((a) => a.includes('commit'));
+  assert.ok(commitArgv, 'a git commit call must be recorded');
+  const dd = commitArgv.indexOf('--');
+  assert.ok(dd >= 0, 'commit argv carries a -- pathspec separator');
+  const after = commitArgv.slice(dd + 1);
+  assert.ok(after.length > 0, 'pathspec after -- must be non-empty');
+  assert.deepEqual(after.map((p) => path.resolve(root, p)), [path.join(root, liveRel)]);
 });

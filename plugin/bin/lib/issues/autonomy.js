@@ -197,7 +197,8 @@ function permittedGrants(input) {
 // Structured verdicts, per deferral-gate.md's floor mapping: blocked-external <->
 // the external-state group, needs-human-decision <-> the product/design group,
 // blocked-dependency <-> not-yet-built, genuinely-larger <-> scope expansion;
-// tangential and pre-existing-outside-diff map to no group.
+// tangential and pre-existing-outside-diff map to no group; needs-verification
+// maps to a bounded verification task a builder can run (#4679).
 const STRUCTURED_FLOOR = Object.freeze({
   'tangential': false,
   'needs-human-decision': true,
@@ -205,6 +206,7 @@ const STRUCTURED_FLOOR = Object.freeze({
   'genuinely-larger': true,
   'blocked-external': true,
   'blocked-dependency': true,
+  'needs-verification': true,
 });
 
 function clearsFloor(blockerReason) {
@@ -224,6 +226,8 @@ function clearsFloor(blockerReason) {
 // grants. `merge-authorization`
 // is deliberately not a key here and no ceiling sets it (#2734) -- see
 // skills/_shared/autonomy-ceiling.md's "Orthogonal to the ceiling" section for why.
+// Control mode alone grants `ownedUpstreamFiling` at any ceiling, and it authorizes
+// filing into an owned repo only (#4621).
 function bookkeepingPermissions(ceiling, { controlMode } = {}) {
   const absent = ceiling === undefined || ceiling === null;
   const tier = isCeiling(ceiling) ? ceiling : (controlMode === true && absent ? 'unattended' : 'supervised');
@@ -234,6 +238,7 @@ function bookkeepingPermissions(ceiling, { controlMode } = {}) {
     consoleAutoResolve: atLeast(tier, 'unattended'),
     refineAutoApply: atLeast(tier, 'unattended'),
     ledgerRouteRemainder: atLeast(tier, 'unattended'),
+    ownedUpstreamFiling: controlMode === true,
   };
 }
 

@@ -7,8 +7,9 @@
 //   node bin/review-coordination.js detect-overlap <findings-by-lens.json>
 //   node bin/review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
-//   node bin/review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>]
+//   node bin/review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>] [--tier capable|standard]
 //   node bin/review-coordination.js finding-ids <entries.json>
+//   node bin/review-coordination.js plan-chunks <entries.json>
 //   node bin/review-coordination.js write-findings <run-dir> <findings.json>
 //   node bin/review-coordination.js check-coverage <run-dir>
 // categorise-reproduction/detect-overlap/corroborate-cross-lens print JSON
@@ -32,7 +33,7 @@
 // which never changes the exit code. Without --run the output is unchanged.
 // resolve-tiebreak's chunk form (#5540): when <finding.json> is a JSON array of 1 to
 // CHUNK_MAX findings, <reply-file> holds one `Id: {12 hex}` block per finding and the
-// call prints {chunk: true, results, unsettled}. Each settled finding (its block
+// call prints {chunk: true, results, unsettled, escalated}. Each settled finding (its block
 // present exactly once) gets a result — the one-finding result plus id, index and,
 // under --run, logged — and, under --run, its verdict line, appended in entry order. A
 // missing or repeated id settles nothing and is named in unsettled with reason
@@ -41,6 +42,20 @@
 // finding-ids (#5540) runs the chunk form's input checks over a JSON array of entries
 // and prints {ids: [{index, id}]} — each id tiebreak.js's findingId, the `Id:` header a
 // chunk agent is given — with no run dir and no writes; a failed check exits 2.
+// plan-chunks (#5541) takes a JSON array of entries of any length and prints
+// {chunks: [{chunk, tier, indexes}]}: tiebreak.js's planChunks, numbered from 1 in output
+// order, each chunk one judge tier ('capable' | 'standard') of at most CHUNK_MAX entries,
+// `indexes` positions in the input, a repeated finding id kept once at its first index (its later
+// indexes appear in no chunk); [] prints {chunks: []}. No writes; an unreadable file, a
+// non-array or a malformed entry exits 2 with the cause on stderr.
+// resolve-tiebreak --tier (#5541), capable (the default) or standard; a missing or unknown
+// value exits 2. At standard every entry must be Standard-tier (tiebreak.js's judgeTier); a
+// Capable-tier entry exits 2 before the reply is read or anything is appended. The chunk
+// form's output gains `escalated` beside results and unsettled: the entries a Standard judge
+// raised to medium or higher, each {id, index, reason: 'raised', severity}, with no result and
+// no verdict line, for the caller to judge again at capable ([] at capable). The one-finding
+// form at standard prints {escalated: true, id, reason: 'raised', severity} for a raised
+// finding — exit 0, nothing appended; any other reply resolves as at capable.
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
 // also a run dir that does not exist); 3 run dir unanchored (write-findings,
 // check-coverage, resolve-tiebreak --run), or missing (write-findings,
@@ -57,6 +72,7 @@ const {
 } = require('./lib/coordination');
 const {
   resolveTiebreak, resolveTiebreakChunk, CHUNK_MAX, buildFindingsArtifact, checkRunTiebreakCoverage, FINDINGS_ARTIFACT,
+  findingId, TIERS, judgeTier, planChunks, escalation,
 } = require('./lib/tiebreak');
 const { resolveWithin } = require('./lib/path-guard');
 const { resolveTarget } = require('./lib/stage-item/write');
@@ -68,8 +84,9 @@ const USAGE =
   '       review-coordination.js detect-overlap <findings-by-lens.json>\n' +
   '       review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>\n' +
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
-  '       review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>]\n' +
+  '       review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>] [--tier capable|standard]\n' +
   '       review-coordination.js finding-ids <entries.json>\n' +
+  '       review-coordination.js plan-chunks <entries.json>\n' +
   '       review-coordination.js write-findings <run-dir> <findings.json>\n' +
   '       review-coordination.js check-coverage <run-dir>\n';
 
@@ -167,13 +184,25 @@ function validateChunk(findings, file, deps) {
   return { ids };
 }
 
+// True, after one stderr line, when the entries cannot be judged at `tier` (#5541): at
+// 'standard' every entry must be Standard-tier (judgeTier), so a Capable-tier finding is a
+// caller error caught here before the reply is read or anything is appended, never by
+// catching resolveTiebreakChunk's TypeError afterwards. 'capable' accepts every entry.
+// Callers pass entries validateChunk or buildFindingsArtifact already accepted.
+function refusedAtTier(findings, tier, deps) {
+  if (tier !== 'standard' || !findings.some((f) => judgeTier(f) === 'capable')) return false;
+  deps.stderr('review-coordination.js: a Capable-tier finding cannot be judged at standard — run plan-chunks and judge each chunk at its own tier\n');
+  return true;
+}
+
 // The chunk form of resolve-tiebreak (#5540): the entries file is a JSON array of
 // 1..CHUNK_MAX findings and the reply file holds one block per finding. Every exit-2
 // check runs before the reply is read, the run dir is anchored, or anything is
 // appended, so a refused chunk writes nothing.
-function resolveTiebreakChunkCommand(findings, positional, root, runDir, deps) {
+function resolveTiebreakChunkCommand(findings, positional, root, runDir, tier, deps) {
   const checked = validateChunk(findings, positional[0], deps);
   if (checked.exitCode !== undefined) return checked.exitCode;
+  if (refusedAtTier(findings, tier, deps)) return 2;
   let reply;
   try {
     reply = fs.readFileSync(at(deps, positional[1]), 'utf8');
@@ -187,11 +216,11 @@ function resolveTiebreakChunkCommand(findings, positional, root, runDir, deps) {
     if (anchored.exitCode !== undefined) return anchored.exitCode;
   }
   const now = deps.now();
-  const { results, unsettled } = resolveTiebreakChunk(findings, reply, { readFile: evidenceReader(root), now });
+  const { results, unsettled, escalated } = resolveTiebreakChunk(findings, reply, { readFile: evidenceReader(root), now, tier });
   if (anchored) {
     for (const result of results) appendVerdict(result, anchored.dir, now, deps);
   }
-  deps.stdout(JSON.stringify({ chunk: true, results, unsettled }) + '\n');
+  deps.stdout(JSON.stringify({ chunk: true, results, unsettled, escalated }) + '\n');
   return 0;
 }
 
@@ -261,9 +290,16 @@ function run(argv, overrides = {}) {
   if (command === 'resolve-tiebreak') {
     let root = deps.cwd();
     let runDir = null;
+    let tier = 'capable';
     const positional = [];
     for (let i = 0; i < rest.length; i++) {
-      if (rest[i] === '--root' || rest[i] === '--run') {
+      if (rest[i] === '--tier') {
+        if (!TIERS.includes(rest[i + 1])) {
+          deps.stderr(`review-coordination.js: --tier needs one of ${TIERS.join(', ')}\n` + USAGE);
+          return 2;
+        }
+        tier = rest[++i];
+      } else if (rest[i] === '--root' || rest[i] === '--run') {
         // A blank --run (an unset $PIPELINE_RUN_DIR) is a missing one, never a run dir
         // resolved against cwd -- resolve-policy.js's rule (#1138).
         if (i + 1 >= rest.length || (rest[i] === '--run' && rest[i + 1].trim() === '')) {
@@ -275,18 +311,19 @@ function run(argv, overrides = {}) {
       } else positional.push(rest[i]);
     }
     if (positional.length !== 2) {
-      deps.stderr('review-coordination.js: resolve-tiebreak takes <finding.json> <reply-file> [--root <dir>] [--run <dir>]\n' + USAGE);
+      deps.stderr('review-coordination.js: resolve-tiebreak takes <finding.json> <reply-file> [--root <dir>] [--run <dir>] [--tier capable|standard]\n' + USAGE);
       return 2;
     }
     const input = readJson(positional[0], deps);
     if (input.failed) return 2;
-    if (Array.isArray(input.value)) return resolveTiebreakChunkCommand(input.value, positional, root, runDir, deps);
+    if (Array.isArray(input.value)) return resolveTiebreakChunkCommand(input.value, positional, root, runDir, tier, deps);
     try {
       buildFindingsArtifact([input.value]);
     } catch (err) {
       deps.stderr(`review-coordination.js: malformed finding in ${positional[0]}: ${err.message}\n`);
       return 2;
     }
+    if (refusedAtTier([input.value], tier, deps)) return 2;
     let reply;
     try {
       reply = fs.readFileSync(at(deps, positional[1]), 'utf8');
@@ -298,6 +335,13 @@ function run(argv, overrides = {}) {
     if (runDir !== null) {
       anchored = anchorRunDir(runDir, deps, 3);
       if (anchored.exitCode !== undefined) return anchored.exitCode;
+    }
+    // A Standard judge that raised the finding to medium or higher has not settled it (#5541):
+    // print the escalation and append nothing, for the caller to judge it again at Capable.
+    const raised = escalation(input.value, reply, tier);
+    if (raised) {
+      deps.stdout(JSON.stringify({ escalated: true, id: findingId(input.value), ...raised }) + '\n');
+      return 0;
     }
     const now = deps.now();
     const result = resolveTiebreak(input.value, reply, { readFile: evidenceReader(root), now });
@@ -319,6 +363,27 @@ function run(argv, overrides = {}) {
     const checked = validateChunk(input.value, rest[0], deps);
     if (checked.exitCode !== undefined) return checked.exitCode;
     deps.stdout(JSON.stringify({ ids: checked.ids.map((id, index) => ({ index, id })) }) + '\n');
+    return 0;
+  }
+  if (command === 'plan-chunks') {
+    if (rest.length !== 1) {
+      deps.stderr('review-coordination.js: plan-chunks takes exactly 1 JSON file path\n' + USAGE);
+      return 2;
+    }
+    const input = readJson(rest[0], deps);
+    if (input.failed) return 2;
+    if (!Array.isArray(input.value)) {
+      deps.stderr(`review-coordination.js: ${rest[0]} must hold a JSON array of tiebreak entries\n`);
+      return 2;
+    }
+    let chunks;
+    try {
+      chunks = planChunks(input.value);
+    } catch (err) {
+      deps.stderr(`review-coordination.js: malformed finding in ${rest[0]}: ${err.message}\n`);
+      return 2;
+    }
+    deps.stdout(JSON.stringify({ chunks: chunks.map((c, i) => ({ chunk: i + 1, tier: c.tier, indexes: c.indexes })) }) + '\n');
     return 0;
   }
   if (command === 'write-findings') {

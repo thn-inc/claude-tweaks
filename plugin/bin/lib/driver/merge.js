@@ -30,6 +30,7 @@ const { LABELS } = require('../issues/record-vocabulary');
 const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
 const { safeReal } = require('../hooks/worktree-detect');
 const { callerDeps, scalarValue, EXIT_OK } = require('../../resolve-policy');
+const { drainNearDuplicateHits } = require('../dispatch/near-dup-pairs');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
 const AUTHORIZING_LABEL = LABELS.AUTO_MERGE;
@@ -247,6 +248,11 @@ async function entry(s) {
   readLever(s);
   const note = s.logFailures.length ? ` (${s.logFailures.join(', ')})` : '';
   emit(s, 'merge-entry', 'ok', `entry conditions met; lever ${s.value} (${s.source})${note}`);
+  // The drain-overlap hold runs here, after the authorization checks and before the judgment supplier,
+  // so a held record launches no merge-check or acceptance worker (the prose lane holds before
+  // merge-check too). It still precedes compose, mark-ready and the merge call.
+  const hold = overlapHold(s);
+  if (hold.stop) return hold;
   s.stage = 'merge-supplier';
   return consultSupplier(s);
 }
@@ -342,6 +348,158 @@ function compose(s) {
   s.subject = { title, bodyFile: path.join(outDir, 'body.md') };
   emit(s, 'merge-compose', 'ok', `composed subject (${title.length} chars)`);
   return { ok: true, title, bodyFile: s.subject.bodyFile };
+}
+
+// The drain-overlap hold (#5232): ports `dispatch/drain-pr-overlap.md` Step 6's hold into code, for a
+// driver run started with `--in-flight-prs <file>` (a JSON array of the other drain PRs in flight:
+// numbers or `{ number }` objects) and, optionally, `--near-dup-pairs <file>` (dispatch's strong
+// near-duplicate pairs, `dispatch-near-dup-pairs.json`'s shape, #3520). Runs inside entry(), after the
+// authorization checks and before the judgment supplier, so a held record launches no merge-check or
+// acceptance worker and its PR stays in draft (compose and mark ready come later). Two deliberate
+// differences from the prose: path equality is plain (no `detectCrossPRFileOverlap` hub filter,
+// which would let a hub file pass), and every read fails closed: an unreadable list, an unreadable
+// PR, or a files list that may be cut at GitHub's 100-entry cap is a hold, never a pass. A
+// deliberate exception to "an absent flag takes the safe route" (spec AC9): with `--in-flight-prs`
+// absent no hold is applied, because that is the standalone case of one record at a time, which has
+// no in-flight neighbours to name; the caller that runs a drain (dispatch's driver route) is the
+// one that passes the list.
+const FILES_CAP = 100;
+
+// The PR numbers of a parsed in-flight list, de-duplicated in order; null when any entry is neither a
+// positive integer nor an object with a positive-integer `number`.
+function inFlightNumbers(parsed) {
+  if (!Array.isArray(parsed)) return null;
+  const numbers = [];
+  for (const e of parsed) {
+    const n = isObject(e) ? e.number : e;
+    if (!isPositiveInteger(n)) return null;
+    if (!numbers.includes(n)) numbers.push(n);
+  }
+  return numbers;
+}
+
+// `{ ok: true, pairs }` for a pairs file holding an array of `{ records: [a, b], … }` entries, else `{ bad }`.
+// The file holds strong pairs only and entries carry no `strong` field: queue-pull.js's runNearDupPairs
+// writes `pairs.filter((p) => p.strong).map(({ records, signals, sharedAnchors }) => …)`, so every entry
+// is a hold candidate. Each entry is checked against drainNearDuplicateHits' own validPair rule (`records`
+// two finite numbers; here positive integers). A malformed entry inside an otherwise valid array fails
+// the whole file closed (in-flight-unreadable) rather than being skipped: a skipped pair is a hold lost.
+function readPairs(deps, file) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(deps.readFile(file)));
+  } catch (err) {
+    return { bad: `near-duplicate pairs file unreadable: ${errorText(err)}` };
+  }
+  const valid = Array.isArray(parsed) && parsed.every((p) => isObject(p) && Array.isArray(p.records)
+    && p.records.length === 2 && p.records.every(isPositiveInteger));
+  if (!valid) return { bad: 'near-duplicate pairs file is not an array of { records: [a, b] } entries' };
+  return { ok: true, pairs: parsed };
+}
+
+// One `gh pr view --json {fields}` read of a PR's changed paths, through the batch bound (a files list
+// is a batch-bounded read). `{ failed }` on any throw, unparseable output, missing field, or a list
+// of exactly FILES_CAP entries (possibly cut by GitHub, so not evidence of disjointness). The
+// `--json` fields follow from the options: `wantState` adds `state`, `wantClosing` adds
+// `closingIssuesReferences`.
+function readPrFiles(s, pr, { wantState = false, wantClosing = false } = {}) {
+  const { ctx, deps } = s;
+  const fields = [wantState && 'state', 'files', wantClosing && 'closingIssuesReferences'].filter(Boolean).join(',');
+  const who = `PR ${pr}`;
+  let parsed;
+  try {
+    parsed = parseJson(deps.ghBatch(['pr', 'view', String(pr), '--repo', ctx.repo, '--json', fields]));
+  } catch (err) {
+    return { failed: `${who} read failed: ${errorText(err)}` };
+  }
+  if (!isObject(parsed)) return { failed: `${who} read returned unparseable output` };
+  if (wantState && typeof parsed.state !== 'string') return { failed: `${who} read returned no state` };
+  // A PR that is no longer open is skipped by the caller; its other fields are not required.
+  if (wantState && parsed.state !== 'OPEN') return { state: parsed.state };
+  if (!Array.isArray(parsed.files) || !parsed.files.every((f) => isObject(f) && typeof f.path === 'string' && f.path)) {
+    return { failed: `${who} read returned no file list` };
+  }
+  if (parsed.files.length >= FILES_CAP) {
+    return { failed: `${who} file list has ${parsed.files.length} entries and may be truncated` };
+  }
+  let closing = [];
+  if (wantClosing) {
+    const refs = parsed.closingIssuesReferences;
+    if (!Array.isArray(refs) || !refs.every((r) => isObject(r) && isPositiveInteger(r.number))) {
+      return { failed: `${who} read returned no closing-issue list` };
+    }
+    closing = refs.map((r) => r.number);
+  }
+  return { state: wantState ? parsed.state : null, paths: parsed.files.map((f) => f.path), closing };
+}
+
+// Before a hold on open listed PR `pr` stops: the prose hold's decisions.md line (`drain-pr-overlap.md`
+// Step 6, both its forms), whose `held — overlaps drain PR #{pr}` the Review Console's resolver parses
+// (`console/resolve.js`'s drainOverlapHoldPrs). Returns the event-detail note naming a failed log; a
+// failed log never lifts the hold. The fail-closed holds name no PR, so they write no line.
+function logHold(s, pr, what) {
+  if (!s.runDir) return '';
+  const failuresBefore = s.logFailures.length;
+  logDecision(s, 'Auto-merge gate', `group [#${s.ctx.record}] held — overlaps drain PR #${pr} ${what}; merge order is a human call.`, 'AUTO', 'n/a');
+  return logNote(s, failuresBefore);
+}
+
+// The details name numbers without a `#`: every event detail passes `neutralize`, which strips a bare
+// `#N` reference by design (it must not link or close anything), so `#12` would reach the line as nothing.
+//
+// Check order (the fail-closed rules are the section comment above's): read the list file and the pairs
+// file, then drop this PR from the list; read this PR's own files only when other PRs remain; per other
+// PR, check path overlap before near-duplicate; return the first hit. Two stops differ by source:
+// `in-flight-unreadable` is a local file (the list or the pairs) that cannot be read or is malformed;
+// `in-flight-read-failed` is a forge read (`gh pr view`) that failed or came back unusable.
+function overlapHold(s) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-overlap';
+  if (!ctx.inFlightPrsFile) return { ok: true };
+  const halt = (reason, detail) => stop(s, 'merge-overlap', reason, detail);
+  let listed;
+  try {
+    listed = inFlightNumbers(JSON.parse(String(deps.readFile(ctx.inFlightPrsFile))));
+  } catch (err) {
+    return halt('in-flight-unreadable', `in-flight list unreadable: ${reduceDetail(errorText(err))}`);
+  }
+  if (listed === null) {
+    return halt('in-flight-unreadable', 'in-flight list is not an array of PR numbers or { number } objects');
+  }
+  let pairs = null;
+  if (ctx.nearDupPairsFile) {
+    const read = readPairs(deps, ctx.nearDupPairsFile);
+    if (!read.ok) return halt('in-flight-unreadable', reduceDetail(read.bad));
+    pairs = read.pairs;
+  }
+  const others = listed.filter((n) => n !== ctx.pr);
+  if (others.length === 0) {
+    emit(s, 'merge-overlap', 'ok', 'no in-flight PR besides this one');
+    return { ok: true };
+  }
+  const own = readPrFiles(s, ctx.pr);
+  if (own.failed) return halt('in-flight-read-failed', reduceDetail(own.failed));
+  for (const n of others) {
+    const other = readPrFiles(s, n, { wantState: true, wantClosing: pairs !== null });
+    if (other.failed) return halt('in-flight-read-failed', reduceDetail(other.failed));
+    if (other.state !== 'OPEN') continue;
+    const common = own.paths.filter((p) => other.paths.includes(p));
+    if (common.length > 0) {
+      const files = reduceDetail(common.join(', '));
+      const note = logHold(s, n, `on ${files}`);
+      return halt('drain-overlap', `overlaps in-flight PR ${n} on ${files}${note}`);
+    }
+    if (pairs) {
+      const hits = drainNearDuplicateHits([ctx.record], pairs, [{ number: n, closingIssueNumbers: other.closing }]);
+      if (hits.length > 0) {
+        const { partner } = hits[0];
+        const note = logHold(s, n, `(near-duplicate of #${partner})`);
+        return halt('near-duplicate', `overlaps in-flight PR ${n} (near-duplicate of record ${partner})${note}`);
+      }
+    }
+  }
+  emit(s, 'merge-overlap', 'ok', `read ${others.length} in-flight PR${others.length === 1 ? '' : 's'}; none overlaps`);
+  return { ok: true };
 }
 
 // Ports pr-first-merge.md Step 2's un-draft: a draft PR is marked ready, an already-ready one is
@@ -1105,9 +1263,20 @@ function reconcile(s) {
   return undefined;
 }
 
+// What teardown leaves of the record's worktree, which the remote delete and the run's close read:
+// `gone` (removed, or already absent), `kept` (a failed or refused removal: the remote delete and the
+// close do not run), and `caller` (a `--run` adoption, #5232: dispatch created the worktree and its
+// post-merge close-out owns the removal, so nothing local is touched, but the remote delete and the
+// close proceed, as they do for `gone`).
+const WORKTREE = Object.freeze({ GONE: 'gone', KEPT: 'kept', CALLER: 'caller' });
+function worktreeProceeds(state) {
+  return state === WORKTREE.GONE || state === WORKTREE.CALLER;
+}
+
 // Ports Step 4's teardown: remove the record's worktree, then its local branch. No force flag: a
 // worktree with modified or untracked files refuses removal, stays, and is named in the event.
-// Returns whether the worktree is gone (the remote delete runs only then).
+// A run that adopted dispatch's worktree (ctx.adopted) makes no git call and keeps both.
+// Returns a WORKTREE state.
 function teardown(s) {
   const { ctx, deps } = s;
   s.stage = 'merge-teardown';
@@ -1115,6 +1284,12 @@ function teardown(s) {
   const failuresBefore = s.logFailures.length;
   const failedBefore = s.pmFailures.length;
   const notes = [];
+  if (ctx.adopted === true) {
+    const kept = 'adopted worktree and local branch kept for the caller';
+    logDecision(s, 'Step 4 (teardown)', `teardown: ${kept}`, 'AUTO', 'n/a');
+    emit(s, 'merge-teardown', 'ok', `${kept}${logNote(s, failuresBefore)}`);
+    return WORKTREE.CALLER;
+  }
   let gone = false;
   try {
     // No worktree path to match is not "already gone": nothing was removed, so nothing downstream runs.
@@ -1171,7 +1346,7 @@ function teardown(s) {
   }
   logDecision(s, 'Step 4 (teardown)', `teardown: ${notes.join('; ')}`, 'AUTO', 'n/a');
   emit(s, 'merge-teardown', s.pmFailures.length > failedBefore ? 'fail' : 'ok', `${notes.join('; ')}${logNote(s, failuresBefore)}`);
-  return gone;
+  return gone ? WORKTREE.GONE : WORKTREE.KEPT;
 }
 
 // ctx.repo is the run's `--repo` slug, host-qualified off github.com (`{host}/owner/name`,
@@ -1186,11 +1361,11 @@ function apiTarget(repo) {
 // integration branch. "reference does not exist" (already deleted) is success. The branch goes
 // into the REST path encoded per segment: its `/` separators stay, while a `#`, `?` or `%` in a
 // segment cannot end or reshape the path.
-function deleteRemoteBranch(s, worktreeGone) {
+function deleteRemoteBranch(s, worktree) {
   const { ctx, deps } = s;
   s.stage = 'merge-delete-branch';
   const failuresBefore = s.logFailures.length;
-  if (!worktreeGone) return postFail(s, 'merge-delete-branch', 'delete-branch: worktree kept', 'no remote delete while the worktree is kept');
+  if (!worktreeProceeds(worktree)) return postFail(s, 'merge-delete-branch', 'delete-branch: worktree kept', 'no remote delete while the worktree is kept');
   if (!ctx.branch || ctx.branch === ctx.base) {
     return postFail(s, 'merge-delete-branch', 'delete-branch: refused (integration branch)',
       'no remote delete for the integration branch or an empty branch name');
@@ -1214,12 +1389,15 @@ function deleteRemoteBranch(s, worktreeGone) {
 
 // Ports settle.js's `settle-close` row: a run reconcile kept in place, once teardown removed its
 // worktree, is left non-terminal (status active, naming a worktree that is gone), so close it.
-// --run is explicit, so close-run does not refuse the driver-owned run as foreign. No call when
-// reconcile archived the run (s.runDir moved to the archive twin), when the run directory is gone
-// (events stdout-only), or when the worktree was kept (close-run refuses a live worktree).
-function closeRun(s, worktreeGone) {
+// --run is explicit, so close-run does not refuse the driver-owned run as foreign or for a live
+// worktree. No call when reconcile archived the run (s.runDir moved to the archive twin), when the
+// run directory is gone (events stdout-only), or when a removal that was tried failed (`kept`): the
+// run still names a live worktree an operator must act on, so it stays non-terminal rather than
+// reading closed over it. A `--run` adoption (`caller`) does close the run: the worktree is kept on
+// purpose, for dispatch's own close-out, not because a removal failed.
+function closeRun(s, worktree) {
   const { ctx, deps } = s;
-  if (!worktreeGone || s.eventsStdoutOnly || s.runDir !== ctx.runDir) return undefined;
+  if (!worktreeProceeds(worktree) || s.eventsStdoutOnly || s.runDir !== ctx.runDir) return undefined;
   s.stage = 'merge-close-run';
   const r = deps.node(bin('hooks.js'), ['close-run', '--run', s.runDir], { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
   if (r.code !== 0) {
@@ -1238,10 +1416,10 @@ async function postMerge(s) {
   guarded(s, 'merge-post-merge', 'post-merge-run', () => runPostMergeRun(s, out));
   guarded(s, 'merge-release-status', 'release-status', () => releaseStatus(s));
   guarded(s, 'merge-reconcile', 'reconcile', () => reconcile(s));
-  let gone = false;
-  guarded(s, 'merge-teardown', 'teardown-worktree', () => { gone = teardown(s); });
-  guarded(s, 'merge-delete-branch', 'delete-branch', () => deleteRemoteBranch(s, gone));
-  guarded(s, 'merge-close-run', 'close-run', () => closeRun(s, gone));
+  let worktree = WORKTREE.KEPT;
+  guarded(s, 'merge-teardown', 'teardown-worktree', () => { worktree = teardown(s); });
+  guarded(s, 'merge-delete-branch', 'delete-branch', () => deleteRemoteBranch(s, worktree));
+  guarded(s, 'merge-close-run', 'close-run', () => closeRun(s, worktree));
   return { verdict: out.verdict, failedSteps: out.failedSteps, failures: [...s.pmFailures] };
 }
 
@@ -1290,7 +1468,8 @@ const REASONS = Object.freeze([
   'no-supplier', 'labels-unreadable', 'not-authorized', 'summary-entry-missing', 'not-pr-first', 'gh-absent',
   'supplier-failed', 'verdict-not-confirmed', 'acceptance-not-completed', 'compose-refused', 'ready-failed',
   'state-read-failed', 'pr-not-open', 'moving-target', 'checks-read-failed', 'check-failed', 'checks-pending-timeout',
-  'draft-skip-without-ready-trigger', 'conflict', 'merge-refused', 'unclassified',
+  'draft-skip-without-ready-trigger', 'conflict', 'merge-refused', 'drain-overlap', 'near-duplicate',
+  'in-flight-unreadable', 'in-flight-read-failed', 'unclassified',
 ]);
 const PREFIXED_REASONS = Object.freeze(['check-failed', 'draft-skip-without-ready-trigger']);
 

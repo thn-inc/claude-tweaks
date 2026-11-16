@@ -30,7 +30,7 @@ sections sit the marker, the `## Acceptance packet — #{N}` title, the partial-
 gather has one, the dropped line, and the screened line when an entry was screened.
 
 **The observation plan**, when given in `_shared/observation-plan.md`'s grammar, follows Deploy status
-as a `### Observation plan` appendix and survives the trip to `/claude-tweaks:demo`: a first-line plan
+as a `### Observation plan` appendix and survives the trip to `/claude-tweaks:accept`: a first-line plan
 heading is dropped so it is not doubled, each line keeps its list marker and its whole backtick spans,
 and each keeps its indentation up to three columns past the open list item's content, so a sub-bullet
 stays under its parent and no line becomes an indented code block. What follows the marker is free text
@@ -116,7 +116,7 @@ records extend the schema only by adding rows to the table.
 
 ## Decision facts
 
-A control-mode run's Review Console writes one entry per item it could not resolve to `{run-dir}/packet-facts/decisions.json` (a JSON array, deduplicated by `id`), and `gather` reads that file when no `--decision-items` is passed. Each entry renders one line under Decisions left for you, from its `text`. Code twin: `bin/lib/console/decision-facts.js`.
+A control-mode run's Review Console writes one entry per item it could not resolve to `{run-dir}/packet-facts/decisions.json` (a JSON array, deduplicated by `id`), and `gather` reads that file when no `--decision-items` is passed. Each entry renders one line under Decisions left for you, from its `text`. Code twin: `bin/lib/console/decision-facts.js`. An `upstream` fact is built by `bin/lib/console/decision-facts.js`'s `upstreamDecisionFact`, its `evidenceRef` the staged draft; its `text` also carries the draft inline, except a `scrub-hit` fact's, which carries it by `evidenceRef` only.
 
 | Field | Value |
 |---|---|
@@ -366,7 +366,7 @@ stays. A packet still over the cap is not posted (`## Pipeline`).
 | The ask | What changed |
 | What shipped | What changed |
 | Confirmed | Test guide and Tried to break |
-| Observation plan | Test guide (rendered as the `### Observation plan` appendix `/claude-tweaks:demo` walks) |
+| Observation plan | Test guide (rendered as the `### Observation plan` appendix `/claude-tweaks:accept` walks) |
 | The Try it block | Test guide |
 
 ## Failure contract
