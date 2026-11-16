@@ -11,7 +11,9 @@
 //     harness rows (guard `harness-command`), first match wins: other-checkout (readClass); rewritten (a rule
 //       changes the text and detect() finds nothing in the result); refused-shape (detect() finds a shape in
 //       the rewritten text, else the original; `detector` is its first id, counted in refusedShapeById);
-//       long-chain (chainLength >= 4); else unexplained. A throwing rewrite or detect leaves the row unexplained.
+//       long-chain (chainLength >= 4); passes-now (the row's reason is one section 7 records as no longer
+//       given, shapes.js FORMER_REASONS, and the row predates the day that row was last probed); else
+//       unexplained. A throwing rewrite or detect leaves the row unexplained.
 //     `unexplainedByReason` counts the unexplained harness rows by the row's `reason` (null as `none`).
 //   writeTargetsMoved / writeTargetsRespelled / writeTargetsLost / writeTargetsChecked   over every Bash row (any
 //     guard, any effect) with an absolute cwd, not truncated, that a rule changes: checked counts the rows
@@ -34,7 +36,7 @@
 // Nothing here throws: a failing dependency skips that row's check.
 
 const path = require('node:path');
-const { detectShapes, lexShell } = require('./shapes');
+const { detectShapes, lexShell, FORMER_REASONS } = require('./shapes');
 const { gitTargets, fileWriteTargets, mkdirTargets } = require('../../plugin/bin/lib/hooks/git-command');
 const { GATE_COVERAGE } = require('../../plugin/bin/lib/hooks/pre-tool-use');
 const { rewriteForGuard } = require('../../plugin/bin/lib/hooks/guard-rewrite');
@@ -254,6 +256,14 @@ function spellOutAssignments(text) {
   return out;
 }
 
+// A refusal whose reason section 7 records as no longer given (FORMER_REASONS), dated before the day
+// that row was last probed. From that day on the same reason contradicts the row and stays unexplained.
+function formerlyRefused(r) {
+  const former = Object.hasOwn(FORMER_REASONS, r.reason) ? FORMER_REASONS[r.reason] : null;
+  const t = Date.parse(r.ts);
+  return Boolean(former) && Number.isFinite(t) && t < Date.parse(`${former.until}T00:00:00Z`);
+}
+
 function sinceOk(rules, ts) {
   const t = Date.parse(ts);
   if (!Number.isFinite(t)) return false;
@@ -272,7 +282,7 @@ function replay(rows, given = {}) {
 
   const dispositions = {
     plugin: { 'still-denied': 0, 'no-longer-denied': 0, 'scanner-failed': 0 },
-    harness: { 'other-checkout': 0, rewritten: 0, 'refused-shape': 0, 'long-chain': 0, unexplained: 0 },
+    harness: { 'other-checkout': 0, rewritten: 0, 'refused-shape': 0, 'long-chain': 0, 'passes-now': 0, unexplained: 0 },
     refusedShapeById: {},
     unexplainedByReason: {},
     rows: [],
@@ -348,7 +358,8 @@ function replay(rows, given = {}) {
           const shapes = detect(rw ? rw.command : command);
           if (rw && !shapes.length) d = 'rewritten';
           else if (shapes.length) { d = 'refused-shape'; detector = shapes[0]; }
-          else d = chainLength(command) >= LONG_CHAIN ? 'long-chain' : 'unexplained';
+          else if (chainLength(command) >= LONG_CHAIN) d = 'long-chain';
+          else d = formerlyRefused(r) ? 'passes-now' : 'unexplained';
         } catch { d = 'unexplained'; }
       }
       dispositions.harness[d]++;

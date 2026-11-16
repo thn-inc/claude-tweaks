@@ -226,6 +226,82 @@ function heredocBraceQuote(text) {
   return false;
 }
 
+// A call whose last quote never closes: `grep -c "^# " "README.md` was refused live (2026-11-16,
+// #5590); the same call with the quote closed ran. A char appended on a new line lexes as quoted
+// content exactly when a quote is still open at the end: the newline ends a comment and leaves a
+// closing heredoc delimiter line whole.
+function unterminatedQuote(text) {
+  const last = lexShell(`${text}\nx`)[text.length + 1];
+  return last === 'single' || last === 'double';
+}
+
+// A backslash right before a space inside a quoted span, single or double: `grep -c "a\ b" f`,
+// `grep -c 'a\ b' f` and `grep -c "a\\ b" f` were refused live (2026-11-16, #5590); `"a\\b"` ran.
+function quotedBackslashSpace(text) {
+  const kinds = lexShell(text);
+  for (let i = text.indexOf('\\ '); i !== -1; i = text.indexOf('\\ ', i + 1)) {
+    if ((kinds[i] === 'single' || kinds[i] === 'double') && kinds[i + 1] === kinds[i]) return true;
+  }
+  return false;
+}
+
+// A word that starts with `=` and a letter, right after a space or a `|`, quoted or bare (zsh reads a
+// bare `=name` as a command path): `grep -c "x =require" f`, `'x =require'`, `"a\|=token"`, `"a|=b"`
+// and a bare `=y` were refused live (2026-11-16, #5590); `"=require"`, `"x = require"`, `"x =1"`,
+// `"a(=b"`, `"a,=b"` and `"x == y"` ran. Comment and heredoc text was not probed and is not read.
+function equalsWord(text) {
+  const kinds = lexShell(text);
+  for (const m of text.matchAll(/[ |]=[A-Za-z]/g)) {
+    const k = kinds[m.index + 1];
+    if (k === 'plain' || k === 'single' || k === 'double') return true;
+  }
+  return false;
+}
+
+// Index just past the call's leading run of `NAME=value` statements, each ended by `;`, `&&` or a
+// newline. A hand scan: a regex over the same run can split a blank run every way.
+function leadingAssignmentsEnd(text, kinds) {
+  let i = 0;
+  for (;;) {
+    while (i < text.length && /\s/.test(text[i])) i++;
+    const m = /^[A-Za-z_]\w{0,255}=/.exec(text.slice(i, i + 258));
+    if (!m || kinds[i] !== 'plain') return i;
+    let j = i + m[0].length;
+    while (j < text.length && !(kinds[j] === 'plain' && /[\s;&|()<>]/.test(text[j]))) j++;
+    while (text[j] === ' ' || text[j] === '\t') j++;
+    if (text[j] === ';' || text[j] === '\n') i = j + 1;
+    else if (text[j] === '&' && text[j + 1] === '&') i = j + 2;
+    else return i;
+  }
+}
+
+// The text `git` anywhere in the call (a case-insensitive substring, as for git-text-redirect-var)
+// plus a reference to a literally assigned name whose assignment follows another command. Live
+// 2026-11-16 (#5590): `pwd; F="README.md"; grep -c "digit" "$F"`, `pwd; F="README.md"; git log -1 --
+// "$F"` and `cd /tmp; W="<own worktree>"; git -C "$W" log -1` were refused ("names git in a form too
+// complex"); the same calls with the assignment first, with no `git` text, or with the name never
+// referenced ran. A computed value is the older detectors' case, so only a literal one counts here.
+// The assignment test is staticNames' (ASSIGN_CONTEXT, LITERAL_VALUE) over fixed windows: staticNames
+// itself rescans the line once per assignment (115 s on `A=1; ` x 40000, measured 2026-11-16).
+const CONTEXT_WINDOW = 256;
+const VALUE_WINDOW = 4096;
+function gitTextLateVar(text) {
+  if (!/git/i.test(text)) return false;
+  const kinds = lexShell(text);
+  const lead = leadingAssignmentsEnd(text, kinds);
+  const bare = stripQuoted(text);
+  const late = new Set();
+  for (const m of text.matchAll(/(?<![\w$-])([A-Za-z_]\w*)=/g)) {
+    if (m.index < lead || kinds[m.index] !== 'plain') continue;
+    const before = bare.slice(Math.max(0, m.index - CONTEXT_WINDOW), m.index);
+    if (!ASSIGN_CONTEXT.test(before.slice(before.lastIndexOf('\n') + 1))) continue;
+    const at = m.index + m[0].length;
+    if (LITERAL_VALUE.test(text.slice(at, at + VALUE_WINDOW))) late.add(m[1]);
+  }
+  if (late.size === 0) return false;
+  return [...stripSingle(text).matchAll(/\$\{?([A-Za-z_]\w*)/g)].some((m) => late.has(m[1]));
+}
+
 const GH_JQ_PIPE = new RegExp(`${CMD}gh\\s[^\\n]*--jq[\\s=]+(?:'[^']*\\|[^']*'|"[^"]*\\|[^"]*")`);
 const GH_REPO_URL = new RegExp(`${CMD}gh\\s[^\\n]*--repo[\\s=]+["']?(?:https?://)?github\\.com/`);
 // Start of the latest `seps` separator that ends at or before the last `status` in text[start, end)
@@ -622,7 +698,37 @@ const DETECTORS = [
     row: '`ls /Users/me/Code\\ Workspaces/repo/README.md`',
     test: (t) => /[^\s\\]\\ (?=\S)/.test(stripQuoted(t)),
   },
+  {
+    id: 'git-text-late-var',
+    row: '`pwd; F="README.md"; grep -c "digit" "$F"`',
+    test: gitTextLateVar,
+  },
+  {
+    id: 'quoted-backslash-space',
+    row: '`grep -c "a\\ b" README.md`',
+    test: quotedBackslashSpace,
+  },
+  {
+    id: 'equals-word',
+    row: '`grep -c "x =require" README.md`',
+    test: equalsWord,
+  },
+  {
+    id: 'unterminated-quote',
+    row: '`grep -c "^# " "README.md`',
+    test: unterminatedQuote,
+  },
 ];
+
+// A refusal reason (trace.js REASONS) the guard no longer gives, bound to the §7 passes row that
+// records it by that row's exact Example cell. `until` is the day the row was last probed (UTC): a
+// refusal with this reason from that day on contradicts the row, so the replay leaves it unexplained.
+const FORMER_REASONS = {
+  'gh-text': {
+    row: "`gh api graphql -f query='query{repository(owner:\"o\",name:\"r\"){issue(number:1){parent{number}}}}'`; `gh issue list --repo o/r --search \"zsh in:title\" --json number`; `for n in 1 2; do gh issue view $n --repo o/r --json number --jq '\"#\\(.number)\"'; done`",
+    until: '2026-11-16',
+  },
+};
 
 // Refused-row Example cell -> why no static detector can decide it. Every other
 // refused row has a detector.
@@ -648,4 +754,4 @@ function detectShapes(text, { placeholders = true } = {}) {
   return ids;
 }
 
-module.exports = { DETECTORS, UNDETECTED_ROWS, normalizePlaceholders, detectShapes, lexShell };
+module.exports = { DETECTORS, UNDETECTED_ROWS, FORMER_REASONS, normalizePlaceholders, detectShapes, lexShell };

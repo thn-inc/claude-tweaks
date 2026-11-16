@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { replay, RULE_SINCE, chainLength, pluginVersion, defaultDeps, spellOutAssignments } = require('../../tools/guard-refusals/replay');
 const { RULE_IDS } = require('../../plugin/bin/lib/hooks/guard-rewrite');
+const { FORMER_REASONS } = require('../../tools/guard-refusals/shapes');
 
 let n = 0;
 function row(over) {
@@ -323,4 +324,23 @@ test('defaultDeps wires the real rewrite, scanner and detector', () => {
   assert.equal(typeof d.rewrite, 'function');
   assert.deepEqual(Object.keys(d.scanner).sort(), ['fileWriteTargets', 'gitTargets', 'mkdirTargets']);
   assert.deepEqual(d.detect('cat f'), []);
+});
+
+test('AC5: a refusal whose reason section 7 records as no longer given is passes-now, up to the day the row was probed', () => {
+  const { until } = FORMER_REASONS['gh-text'];
+  const rows = [
+    row({ command: 'gh api rate_limit', reason: 'gh-text', ts: '2026-11-10T00:00:00Z' }),
+    // From the probe day on, the same reason contradicts the row.
+    row({ command: 'gh api rate_limit', reason: 'gh-text', ts: `${until}T00:00:00Z` }),
+    row({ command: 'gh api rate_limit', reason: 'gh-runtime', ts: '2026-11-10T00:00:00Z' }),
+    row({ command: 'gh api rate_limit', reason: 'gh-text', ts: 'not a date' }),
+    // An earlier disposition still wins.
+    row({ command: 'gh a && gh b && gh c && gh d', reason: 'gh-text', ts: '2026-11-10T00:00:00Z' }),
+    row({ command: 'grep -c "source" f', reason: 'gh-text', ts: '2026-11-10T00:00:00Z' }),
+  ];
+  const res = replay(rows);
+  assert.deepEqual(rows.map((r) => dispOf(res, r).disposition),
+    ['passes-now', 'unexplained', 'unexplained', 'unexplained', 'long-chain', 'refused-shape']);
+  assert.equal(res.dispositions.harness['passes-now'], 1);
+  assert.deepEqual(res.dispositions.unexplainedByReason, { 'gh-text': 2, 'gh-runtime': 1 });
 });

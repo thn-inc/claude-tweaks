@@ -176,3 +176,27 @@ node /abs/bin/run.js a <<'EOF'
 const cfg = { name: 'x' };
 EOF
 ```
+
+## git-text-late-var
+
+```bash
+pwd; F="README.md"; grep -c "digit" "$F"
+```
+
+## quoted-backslash-space
+
+```bash
+grep -c "a\ b" README.md
+```
+
+## equals-word
+
+```bash
+grep -c "x =require" README.md
+```
+
+## unterminated-quote
+
+```bash
+grep -c "^# " "README.md
+```
