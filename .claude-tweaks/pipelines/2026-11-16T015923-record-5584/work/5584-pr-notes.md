@@ -1,6 +1,6 @@
 # #5584 PR notes — audit, backlog report, parked record, rulings
 
-These sections go into the PR body. Measured at branch commit `f4bde86bfa` unless a row names another commit. The section "Filings for the controller" holds the records the controller files. Their numbers are written back into the placeholders `{FILED-A}`, `{FILED-B}` and `{PARKED}`.
+These sections go into the PR body. Measured at branch commit `f4bde86bfa` unless a row names another commit. The section "Filings for the controller" holds the records the controller files. The controller filed them as #5714 (A), #5715 (B) and #5716 (C, parked).
 
 ## Grant-label sites audit (AC21)
 
@@ -18,14 +18,14 @@ Marks:
 
 | Site | What it does for a claimed record with no grant | Mark |
 |---|---|---|
-| `plugin/bin/release-claim.js --remove-grants` → `plugin/bin/lib/release-claim/release.js` `removeLabel` over `GRANT_LABELS` | Sends one `gh issue edit --remove-label` per label, and every failure is caught. An absent label makes `gh` exit 1 ("not found"). The CLI then prints `warning — could not remove label {label} … (best-effort, continuing)` and logs `label removal failed: auto:build, auto:merge-pending, auto:merge` to `decisions.md`. For a typed record all three labels are reported as failed although none was there, which is misleading. A granted `auto:build`-only record already gets the same false report for the two merge labels. | `best-effort per label` — misleading output filed as {FILED-A} |
-| `plugin/bin/lib/reconcile/release-merged.js` `removeGrantLabels` + `logGrantRemoval` | Sends one DELETE per `GRANT_LABELS` entry, and the result is ignored. On a `merged:` release it always logs `stripped auto:build/auto:merge grants on convergent release`, even when the record had no grant. The log is skipped when the run directory is already archived. | `best-effort per label` — unconditional log line filed as {FILED-A} |
+| `plugin/bin/release-claim.js --remove-grants` → `plugin/bin/lib/release-claim/release.js` `removeLabel` over `GRANT_LABELS` | Sends one `gh issue edit --remove-label` per label, and every failure is caught. An absent label makes `gh` exit 1 ("not found"). The CLI then prints `warning — could not remove label {label} … (best-effort, continuing)` and logs `label removal failed: auto:build, auto:merge-pending, auto:merge` to `decisions.md`. For a typed record all three labels are reported as failed although none was there, which is misleading. A granted `auto:build`-only record already gets the same false report for the two merge labels. | `best-effort per label` — misleading output filed as #5714 |
+| `plugin/bin/lib/reconcile/release-merged.js` `removeGrantLabels` + `logGrantRemoval` | Sends one DELETE per `GRANT_LABELS` entry, and the result is ignored. On a `merged:` release it always logs `stripped auto:build/auto:merge grants on convergent release`, even when the record had no grant. The log is skipped when the run directory is already archived. | `best-effort per label` — unconditional log line filed as #5714 |
 | `plugin/skills/dispatch/settle-and-merge.md` Settle step 3 | Runs `LIVE_LABELS=$(gh issue view …)` and removes only an `auto:merge`/`auto:merge-pending` it finds. | `reads live labels` |
 | `plugin/skills/dispatch/settle-and-merge.md` Settle step 6 (retry ceiling) | It used to remove `auto:build` without reading the labels, so on a typed record `bot:blocked` would not land. It now reads the live labels and passes `--remove-label` only for the grant labels present (`fedaf01b32`, pinned without a fixed-commit size check in `29f7dcb879`; `tests/dispatch-settle-ceiling-live-labels.test.js`). | `fixed here` |
 | `plugin/skills/build/plan-review.md:162` (headless needs-human stop) | Removes "whichever of `auto:build`, `auto:merge`, `auto:merge-pending` is present — read live labels first", and uses `mergeLabelNames` on MCP. | `reads live labels` |
-| `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section E step 6 | Calls `release-claim.js --remove-grants`. The prose says "an issue carrying no `auto:*` label is a harmless no-op". The effect is harmless, but the CLI prints three warnings and a "label removal failed" log line. | `best-effort per label` (via the CLI) — prose claim covered by {FILED-A} |
+| `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section E step 6 | Calls `release-claim.js --remove-grants`. The prose says "an issue carrying no `auto:*` label is a harmless no-op". The effect is harmless, but the CLI prints three warnings and a "label removal failed" log line. | `best-effort per label` (via the CLI) — prose claim covered by #5714 |
 | `plugin/skills/flow/multispec-review-console.md` step 4; `multispec-console-template.md` rows 18, 21 | Each issue gets `--remove-grants` ("best-effort per label", "if present"). | `best-effort per label` (via the CLI) |
-| `plugin/skills/flow/multi-spec.md:162` (Mixed execution, spec B) | "Remove B's `auto:build` grant before the pass" names no read first. On a typed B, a literal `gh issue edit --remove-label auto:build` exits 1. Nothing is lost, because the edit carries only that removal, but the agent sees an error. | covered by {FILED-A} (prose: "if present") |
+| `plugin/skills/flow/multi-spec.md:162` (Mixed execution, spec B) | "Remove B's `auto:build` grant before the pass" names no read first. On a typed B, a literal `gh issue edit --remove-label auto:build` exits 1. Nothing is lost, because the edit carries only that removal, but the agent sees an error. | covered by #5714 (prose: "if present") |
 | `plugin/skills/_shared/auto-mode-contract.md:212`, `_shared/issue-claims.md:490`, `dispatch/routine-template.yml:28,33`, `help/context-flow.md:67` | Describe the headless plan-review stop, the release grant removal and the retry ceiling. The steps they cite are the rows above. | `report only` |
 
 ### Sites that act on a claimed record
@@ -42,7 +42,7 @@ Marks:
 | `plugin/skills/dispatch/reporting.md:27` | "A non-headless block keeps `auto:build` with the claim released" is untrue for a typed record, which has no label to keep. Its next step, "re-run `/claude-tweaks:dispatch #{n}`", works for a typed record, so nothing breaks. | `report only` (below the materiality floor; digest note below) |
 | `plugin/skills/flow/materialize.md:109`, `flow/failure-cards.md:39`, `flow/claim-targets.md:100`, `dispatch/sequential-execution.md:16`, `dispatch/resume-confirmation.md:48` | `materialize.md` always emits `grants: []`, including for an ungranted record. The other four describe grants and do not touch them. | `report only` |
 | `plugin/skills/dispatch/SKILL.md`, `queue-pull-notes.md`, `resume.md`, `_shared/work-record.md`, `_shared/headless-self-report.md`, `plugin/bin/lib/issues/build-authority.js` | This record's prose and rule. | `fixed here` |
-| `plugin/bin/lib/dispatch/stuck-open-pr.js`, `plugin/bin/stuck-open-prs.js`, `plugin/bin/lib/record-graph/encode.js`, `plugin/bin/lib/issues/materialize-format.js`, `backlog.js`, `pending-authorization.js`, `backlog-grant-gate.js`, `closing-tally.js`, `plugin/skills/help/status-scan.md:68-69`, `backlog/attention-mode.md` | They report or sort and change nothing. What they show for a typed record at pending-review is in the next section. | `report only` (backlog/help listing filed as {FILED-B}) |
+| `plugin/bin/lib/dispatch/stuck-open-pr.js`, `plugin/bin/stuck-open-prs.js`, `plugin/bin/lib/record-graph/encode.js`, `plugin/bin/lib/issues/materialize-format.js`, `backlog.js`, `pending-authorization.js`, `backlog-grant-gate.js`, `closing-tally.js`, `plugin/skills/help/status-scan.md:68-69`, `backlog/attention-mode.md` | They report or sort and change nothing. What they show for a typed record at pending-review is in the next section. | `report only` (backlog/help listing filed as #5715) |
 
 Below the materiality floor, so a digest note and no record: `dispatch/reporting.md:27` describes keeping a label that a typed record does not carry. The remedy it prints is still correct.
 
@@ -86,11 +86,11 @@ What each mode lists:
 - **`/claude-tweaks:backlog attention`** does not list `#9001` at all. `stuck:open-pr` takes only granted records (`stuckCandidates` requires `auto:build`), and the record carries none of the other attention labels. It lists `#9003` only as `shaped:headless (no grant)`, with the remedy "run `/claude-tweaks:backlog refine` to grant via the sweep's Grant lane", which is again an offer to grant.
 - `/claude-tweaks:help`'s status scan (`help/status-scan.md:69`) and `isPendingAuthorization` count both records as pending authorization. That leads to the same "grant at refine" recommendation (`help/SKILL.md:74`).
 
-Refine lists the record for granting, so the follow-up record is filed as {FILED-B}.
+Refine lists the record for granting, so the follow-up record is filed as #5715.
 
 ## Parked measurement record (AC14, Deliverable 9)
 
-Filed as {PARKED}: a parked record whose trigger is "both releases installed". It carries:
+Filed as #5716: a parked record whose trigger is "both releases installed". It carries:
 - the probe cases (a), (g), (h) and (d) to re-run with `tools/typed-command-probe.js`;
 - the `CC_LAUNCHED_BY` check;
 - the expected result;
