@@ -82,11 +82,14 @@ function assertArmPlanReviewGaps(text) {
   assert.ok(arm.includes(ARM_CI_GATE), "Step 2.5's ci-gate records still run (Reading A)");
 }
 
-function assertCreationCallerCitesStep25(text) {
+function creationCallerLine(text) {
   const s = text.indexOf(CREATION_CALLER);
   assert.notEqual(s, -1, 'Creation-time caller line missing');
-  const line = text.slice(s, text.indexOf('\n', s));
-  assert.ok(line.includes('Step 2.5'), 'Creation-time caller must name Step 2.5');
+  return text.slice(s, text.indexOf('\n', s));
+}
+
+function assertCreationCallerCitesStep25(text) {
+  assert.ok(creationCallerLine(text).includes('Step 2.5'), 'Creation-time caller must name Step 2.5');
 }
 
 function cut(text, start, end) {
@@ -130,6 +133,6 @@ test('go-red controls: each assert fails with its block removed', () => {
   for (const lit of [ARM_CONFLICT, ARM_VERBATIM, ARM_NO_POST_MERGE, ARM_CI_GATE]) {
     assert.throws(() => assertArmPlanReviewGaps(STEP75.replace(arm, arm.split(lit).join('X'))), lit);
   }
-  const line = PR_FIRST.slice(PR_FIRST.indexOf(CREATION_CALLER), PR_FIRST.indexOf('\n', PR_FIRST.indexOf(CREATION_CALLER)));
+  const line = creationCallerLine(PR_FIRST);
   assert.throws(() => assertCreationCallerCitesStep25(PR_FIRST.replace(line, CREATION_CALLER)));
 });
