@@ -14,7 +14,7 @@ One-stop reference and status dashboard for the workflow system. Combines comman
     └──────────────────────────────────── [ /claude-tweaks:help ] (dashboard + reference) ←────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
                                             ^^^^ YOU ARE HERE ^^^^
 
-┈┈ /claude-tweaks:accept — the human verdict on built work, after wrap-up posts its acceptance packet (no fixed position — run anytime) ┈┈
+┈┈ /claude-tweaks:accept resolves accept:pending (demo:pending on a decomposition parent) → accept:approved/accept:changes-requested — the human verdict on built work, after wrap-up posts its acceptance packet (no fixed position — run anytime) ┈┈
 ```
 
 ## When to Use

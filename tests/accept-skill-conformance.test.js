@@ -220,12 +220,18 @@ test('AC7.1: graph, help diagram and README diagram list accept', () => {
   assert.match(demoRows[0], /^\| `\/accept` \| Deprecated alias/, 'the one demo row is the alias forwarding to /accept');
   const strayDemoRows = graph.split('\n').filter((line) => line.startsWith('| `/demo` |'));
   assert.deepEqual(strayDemoRows, [], 'no section keeps a /demo target row; it is /accept now');
-  assert.match(firstFence(readRepo('plugin/skills/help/SKILL.md')), /\/claude-tweaks:accept/, "help's lifecycle diagram lists accept");
-  const lifecycle = section(readRepo('README.md'), '## How it works');
-  const acceptLine = lifecycle.split('\n').find((line) => line.includes('/claude-tweaks:accept resolves'));
-  assert.ok(acceptLine, "README's lifecycle diagram has the /claude-tweaks:accept line");
-  assert.match(acceptLine, /resolves accept:pending/, 'the accept line resolves accept:pending');
-  assert.match(acceptLine, /accept:approved/, 'the accept line names the accept:* verdicts');
+  // README's lifecycle line and help's diagram line state the same label facts (CLAUDE.md keeps the two in sync).
+  const LABEL_FACTS = 'resolves accept:pending (demo:pending on a decomposition parent) → accept:approved/accept:changes-requested';
+  const acceptLineIn = (text, where) => {
+    const line = text.split('\n').find((l) => l.includes('/claude-tweaks:accept resolves'));
+    assert.ok(line, `${where} has the /claude-tweaks:accept line`);
+    return line;
+  };
+  const readmeLine = acceptLineIn(section(readRepo('README.md'), '## How it works'), "README's lifecycle diagram");
+  const helpLine = acceptLineIn(firstFence(readRepo('plugin/skills/help/SKILL.md')), "help's lifecycle diagram");
+  for (const [where, line] of [['README', readmeLine], ['help', helpLine]]) {
+    assert.ok(line.includes(LABEL_FACTS), `${where}'s accept line carries the pending labels, the parent note and the accept:* verdicts`);
+  }
 });
 
 test('AC7.2: reference card grammar lists /claude-tweaks:accept', () => {

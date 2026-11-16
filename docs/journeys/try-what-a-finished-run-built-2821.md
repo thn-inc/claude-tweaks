@@ -34,7 +34,7 @@ files:
 
 ### 3. Re-open it days later — `/claude-tweaks:accept #N`
 - **URL:** `/claude-tweaks:accept #N`
-- **Action:** Run demo on the record; the Try it block renders before anything else. See `accept-built-work-via-demo.md` for the walkthrough and verdict that follow.
+- **Action:** Run `/accept` on the record; the Try it block renders before anything else. See `accept-built-work-via-demo.md` for the walkthrough and verdict that follow.
 - **Should feel:** Like the same note, found again, with nothing new to learn.
 - **Should understand:** Demo reads the record's acceptance packet first and takes its Test guide as the block, whatever the record's labels. For a sub-issue, or a record from before the packet, it reads the walkthrough back from the PR under `pr-first`: either through the issue's `Verification Brief posted to PR #…` pointer, or for a record with no brief through the PR that closed it. It composes a fresh block from the record's ACs only when no posted block can be found. Only a comment from an owner, member or collaborator counts as posted. A stranger's lookalike is skipped and named in one line (`ignore-a-planted-marker-comment-3358.md`).
 - **Red flags:** Demo composing a different walkthrough while the record or the PR still carries one. A walkthrough shown twice (once first, again inside the rendered packet or brief).
