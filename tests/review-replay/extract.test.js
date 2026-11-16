@@ -104,7 +104,7 @@ test('AC2.1/AC2.2: no prompt contains an archived verdict, an archived rationale
 test('AC5.2: extract builds every prompt from the template file it is given, and records that file in the manifest', async () => {
   const sentence = 'Extra sentence the replay must carry.';
   const live = readText(path.join(__dirname, '..', '..', 'plugin', 'skills', 'review', 'step3-tiebreak.md'));
-  const edited = live.replace(
+  const edited = live.replaceAll(
     'Recommendation file means the finding is worth a fix or a work record;',
     `${sentence} Recommendation file means the finding is worth a fix or a work record;`);
   assert.notEqual(edited, live);

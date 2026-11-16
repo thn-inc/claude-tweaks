@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../tools/review-replay');
-const { splitChunkReply, settleReply, agentIdentity, stripTree } = require('../../tools/review-replay/score');
+const { settleReply, agentIdentity, stripTree } = require('../../tools/review-replay/score');
 const { resolveTiebreak } = require('../../plugin/bin/lib/tiebreak.js');
 const { armLabel } = require('../../tools/review-replay/schema');
 const { makeDeps, FINDINGS, reply, chunkReply, setup, MSGS_ONE, MSGS_EIGHT, fullSet } = require('./helpers');
@@ -334,18 +334,6 @@ test('score exits 2 when --out or --transcripts is missing', async () => {
   assert.match(deps2.errs.join('\n'), /score requires --out/);
 });
 
-test('splitChunkReply: sections start at a header line, the last non-empty line follows each section, and a repeated or absent id maps to null', () => {
-  const ids = ['aaaaaaaaaaa1', 'aaaaaaaaaaa2', 'aaaaaaaaaaa3'];
-  const text = ['intro', '### Finding aaaaaaaaaaa1', 'Verdict: confirmed', '', '## Finding aaaaaaaaaaa2', 'Verdict: refuted', '### Finding aaaaaaaaaaa2', 'Verdict: confirmed', '', 'STATUS: DONE'].join('\n');
-  const got = splitChunkReply(text, ids);
-  assert.deepEqual([...got.keys()], ids);
-  assert.equal(got.get('aaaaaaaaaaa1'), 'Verdict: confirmed\nSTATUS: DONE');
-  assert.equal(got.get('aaaaaaaaaaa2'), null, 'two sections');
-  assert.equal(got.get('aaaaaaaaaaa3'), null, 'no section');
-  const crlf = splitChunkReply('### Finding aaaaaaaaaaa1\r\nVerdict: confirmed\r\nSTATUS: DONE\r\n', ['aaaaaaaaaaa1']);
-  assert.equal(crlf.get('aaaaaaaaaaa1'), 'Verdict: confirmed\nSTATUS: DONE');
-});
-
 test('settleReply maps outcomes to verdicts: confirmed, drop -> refuted, cant-tell reasons -> cant-tell, any other reason -> null with that reason', async () => {
   const s = await setup();
   try {
@@ -412,7 +400,7 @@ test('score requires tiebreak.js through deps.pluginRoot', async () => {
   const stubRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-plugin-'));
   try {
     fs.mkdirSync(path.join(stubRoot, 'bin', 'lib'), { recursive: true });
-    fs.writeFileSync(path.join(stubRoot, 'bin', 'lib', 'tiebreak.js'), "exports.resolveTiebreak = () => ({ outcome: 'drop', reason: 'stub' });\n");
+    fs.writeFileSync(path.join(stubRoot, 'bin', 'lib', 'tiebreak.js'), "exports.resolveTiebreak = () => ({ outcome: 'drop', reason: 'stub' });\nexports.splitChunkReply = (text, ids) => ({ status: null, blocks: new Map(ids.map((id) => [id, { state: 'ok', text }])) });\n");
     fullSet(s);
     const r = await s.score([], { pluginRoot: stubRoot });
     assert.equal(r.code, 0, r.deps.errs.join('\n'));
@@ -442,8 +430,4 @@ test('vsReference compares each repeat with every reference repeat for that find
   } finally {
     s.cleanup();
   }
-});
-
-test('the chunk adapter must go once tiebreak.js exports a chunk splitter', () => {
-  assert.ok(!Object.keys(require('../../plugin/bin/lib/tiebreak.js')).some((k) => /chunk|split/i.test(k)), 'remove the review-replay chunk adapter: #5540 has landed');
 });

@@ -89,7 +89,7 @@ function reply(key, verdict, { status = 'DONE', evidencePath = FINDINGS[key].fil
   if (last) lines.push(`STATUS: ${status}`);
   return lines.join('\n');
 }
-const chunkReply = (parts, status = 'DONE') => `${parts.map(([key, text]) => `### Finding ${FINDINGS[key].id}\n${text}`).join('\n\n')}\n\nSTATUS: ${status}`;
+const chunkReply = (parts, status = 'DONE') => `${parts.map(([key, text]) => `Id: ${FINDINGS[key].id}\n${text}`).join('\n\n')}\n\nSTATUS: ${status}`;
 
 // Runs extract into a fresh dir and rewrites the tree files; returns paths and the writers for journal and transcripts.
 // promptFor(label) is the text an agent's first user message holds (default: just the identity line).

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 
-const { loadTemplate, disciplineLines, fillFinding, buildPrompt, CHUNK_HEADER_RE } =
+const { loadTemplate, disciplineLines, fillFinding, buildPrompt } =
   require('../../tools/review-replay/prompt.js');
 const { stripTree } = require('../../tools/review-replay/score.js');
 const { toPosix } = require('../../tools/review-replay/schema.js');
@@ -94,10 +94,15 @@ test('each missing Finding, Severity or Diff scope placeholder throws naming it'
   }
 });
 
-test('a chunk prompt with no Reply-with-exactly line throws naming it', () => {
+test('a chunk template missing its Id block or its block-end marker throws naming it', () => {
+  const noMarker = TIEBREAK.replace('{… one such block', '{... another line');
+  assert.notEqual(noMarker, TIEBREAK);
+  assert.throws(() => loadTemplate(noMarker), /the chunk template has no ".* one such block" marker line/);
+  const noId = TIEBREAK.replace('\nId: {id}\nFinding: {claim text}', '\nFinding: {claim text}').replace('\nId: {id}\nVerdict', '\nVerdict');
+  assert.notEqual(noId, TIEBREAK);
+  assert.throws(() => loadTemplate(noId), /the chunk template has no "Id: \{" block line/);
   const t = loadTemplate(TIEBREAK);
-  const noReply = { block: t.block, rest: t.rest.map((l) => (l.startsWith('Reply with exactly') ? 'Reply with exactly something else' : l)) };
-  assert.throws(() => buildPrompt(noReply, [F1, F2], CTX), /no "Reply with exactly these lines, then your status line:" line/);
+  assert.throws(() => buildPrompt({ block: t.block, rest: t.rest }, [F1, F2], CTX), /no chunk template/);
 });
 
 test('CRLF template builds the same prompt as LF', () => {
@@ -106,26 +111,20 @@ test('CRLF template builds the same prompt as LF', () => {
   assert.equal(buildPrompt(loadTemplate(crlf), [F1, F2], CTX), buildPrompt(loadTemplate(TIEBREAK), [F1, F2], CTX));
 });
 
-test('chunk prompt lists every finding under its ### Finding header in input order and keeps the rules once', () => {
+test('chunk prompt is the production chunk template: the scope once, an Id block per finding in input order, the rules once', () => {
   const prompt = buildPrompt(loadTemplate(TIEBREAK), [F2, F1], CTX);
   const lines = prompt.split('\n');
-  const headers = lines.filter((l) => CHUNK_HEADER_RE.test(l));
-  assert.deepEqual(headers, ['### Finding abcdef012345', '### Finding 0123456789ab']);
-  assert.ok(prompt.startsWith('2 findings follow, each under its own "### Finding {id}" header. Judge each one on its own'));
+  assert.equal(lines[0], 'Diff scope: bbbb...cccc');
+  assert.deepEqual(lines.filter((l) => /^Id: [0-9a-f]{12}$/.test(l)), ['Id: abcdef012345', 'Id: 0123456789ab']);
   assert.ok(prompt.indexOf('Second claim.') < prompt.indexOf('First claim.'));
   const count = (s) => prompt.split(s).length - 1;
+  assert.equal(count('Diff scope:'), 1);
   assert.equal(count('You are the independent tiebreak judge'), 1);
   assert.equal(count('Verdict: confirmed | refuted | cant-tell'), 1);
-  assert.equal(count('For each finding, write its "### Finding {id}" header'), 1);
+  assert.equal(count('Reply with one block per finding'), 1);
   assert.ok(!prompt.includes('Reply with exactly these lines, then your status line:'));
   assert.ok(!prompt.includes('SCRATCH:'));
-});
-
-test('CHUNK_HEADER_RE matches 12-hex ids only', () => {
-  assert.ok(CHUNK_HEADER_RE.test('### Finding 0123456789ab'));
-  assert.ok(CHUNK_HEADER_RE.test('## Finding 0123456789ab  '));
-  assert.ok(!CHUNK_HEADER_RE.test('### Finding 0123456789a'));
-  assert.ok(!CHUNK_HEADER_RE.test('### Finding 0123456789AB'));
+  assert.ok(!prompt.includes('[Use:'));
 });
 
 test('disciplineLines reads both lines from the live subagent-dispatch-core.md and returns null when either is missing', () => {

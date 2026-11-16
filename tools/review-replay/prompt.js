@@ -7,25 +7,40 @@
 const { toPosix } = require('./schema.js');
 const { split: splitLines } = require('./util.js');
 
-const CHUNK_HEADER_RE = /^#{1,6}\s*Finding\s+([0-9a-f]{12})\s*$/;
-
 const REPLY_MARKER = 'Reply with exactly';
-const REPLY_LINE = 'Reply with exactly these lines, then your status line:';
-const CHUNK_REPLY_LINE =
-  'For each finding, write its "### Finding {id}" header on its own line followed by exactly these lines; after the last finding, your one status line:';
+const CHUNK_BLOCK_END = '{\u2026 one such block';
 
 function loadTemplate(tiebreakMdText) {
   const lines = splitLines(tiebreakMdText);
   const heading = lines.findIndex((l) => l.trim() === '## Dispatch');
   if (heading === -1) throw new Error('step3-tiebreak.md: no "## Dispatch" heading');
-  const open = lines.findIndex((l, i) => i > heading && l.startsWith('```'));
-  if (open === -1) throw new Error('step3-tiebreak.md: no fenced template after "## Dispatch"');
-  const close = lines.findIndex((l, i) => i > open && l.startsWith('```'));
-  if (close === -1) throw new Error('step3-tiebreak.md: the template fence under "## Dispatch" is not closed');
-  const body = lines.slice(open + 1, close);
+  // The single-finding template is the first fence under the heading, the chunk template the second.
+  const fence = (from) => {
+    const open = lines.findIndex((l, i) => i > from && l.startsWith('```'));
+    if (open === -1) throw new Error('step3-tiebreak.md: no fenced template after "## Dispatch"');
+    const close = lines.findIndex((l, i) => i > open && l.startsWith('```'));
+    if (close === -1) throw new Error('step3-tiebreak.md: the template fence under "## Dispatch" is not closed');
+    return { body: lines.slice(open + 1, close), close };
+  };
+  const single = fence(heading);
+  const chunk = fence(single.close);
+  const body = single.body;
   const split = body.findIndex((l, i) => l === '' && i + 1 < body.length && body[i + 1].startsWith(REPLY_MARKER));
   if (split === -1) throw new Error('step3-tiebreak.md: no blank line before "' + REPLY_MARKER + '" in the template');
-  return { block: body.slice(0, split), rest: body.slice(split + 1) };
+  return { block: body.slice(0, split), rest: body.slice(split + 1), chunk: chunkTemplate(chunk.body) };
+}
+
+// The chunk template: a Diff scope line, one block per finding headed "Id: {id}", a marker line, then the shared rules.
+function chunkTemplate(body) {
+  const first = body.findIndex((l) => l.startsWith('Id: {'));
+  const end = body.findIndex((l) => l.startsWith(CHUNK_BLOCK_END));
+  if (first === -1) throw new Error('step3-tiebreak.md: the chunk template has no "Id: {" block line');
+  if (end === -1) throw new Error('step3-tiebreak.md: the chunk template has no "' + CHUNK_BLOCK_END + '" marker line');
+  const block = body.slice(first, end);
+  while (block.length && block[block.length - 1].trim() === '') block.pop();
+  const rest = body.slice(end + 1);
+  while (rest.length && rest[0].trim() === '') rest.shift();
+  return { block, rest };
 }
 
 function backtickLine(lines, prefix) {
@@ -46,8 +61,9 @@ function disciplineLines(text) {
   return { readOnly, shell };
 }
 
-function fillFinding(block, finding, { treeRoot, base, head }) {
-  const seen = { finding: false, severity: false, location: false, scope: false };
+// `needScope` is false for a chunk block, whose Diff scope line is written once above all the blocks.
+function fillFinding(block, finding, { treeRoot, base, head }, needScope = true) {
+  const seen = { finding: false, severity: false, location: false, scope: !needScope };
   const out = [];
   let inPositions = false;
   for (const line of block) {
@@ -61,6 +77,7 @@ function fillFinding(block, finding, { treeRoot, base, head }) {
     }
     if (inPositions && line.startsWith('- {')) continue;
     inPositions = false;
+    if (line.startsWith('Id: {')) { out.push('Id: ' + finding.id); continue; }
     if (line.startsWith('Finding: {')) { seen.finding = true; out.push('Finding: ' + finding.claim); }
     else if (line.startsWith('Severity: {')) { seen.severity = true; out.push('Severity: ' + finding.severity); }
     else if (line.startsWith('Location: {')) {
@@ -93,23 +110,11 @@ function fillRest(rest, discipline) {
   return out;
 }
 
-// remove when #5540 has landed and tiebreak.js exports a chunk splitter
 function chunkPrompt(template, findings, ctx) {
-  const rest = fillRest(template.rest, ctx.discipline);
-  const at = rest.indexOf(REPLY_LINE);
-  if (at === -1) throw new Error('step3-tiebreak.md: template has no "' + REPLY_LINE + '" line');
-  rest[at] = CHUNK_REPLY_LINE;
-  const out = [
-    findings.length + ' findings follow, each under its own "### Finding {id}" header. ' +
-      'Judge each one on its own: one finding being right or wrong says nothing about the next.',
-    '',
-  ];
-  for (const f of findings) {
-    out.push('### Finding ' + f.id);
-    out.push(...fillFinding(template.block, f, ctx));
-    out.push('');
-  }
-  out.push(...rest);
+  if (!template.chunk) throw new Error('step3-tiebreak.md: no chunk template');
+  const out = ['Diff scope: ' + ctx.base + '...' + ctx.head, ''];
+  for (const f of findings) out.push(...fillFinding(template.chunk.block, f, ctx, false), '');
+  out.push(...fillRest(template.chunk.rest, ctx.discipline));
   return out.join('\n');
 }
 
@@ -120,4 +125,4 @@ function buildPrompt(template, findings, ctx) {
   return [...fillFinding(template.block, findings[0], ctx), '', ...rest].join('\n');
 }
 
-module.exports = { loadTemplate, disciplineLines, fillFinding, buildPrompt, CHUNK_HEADER_RE };
+module.exports = { loadTemplate, disciplineLines, fillFinding, buildPrompt };

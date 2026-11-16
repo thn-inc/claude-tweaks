@@ -4,7 +4,6 @@
 // notJudged, never a silent disagreement or agreement.
 
 const path = require('path');
-const { CHUNK_HEADER_RE } = require('./prompt.js');
 const { split, bump } = require('./util.js');
 const {
   MANIFEST_FILE, FIXTURE_FILE, VERDICTS_FILE, JOURNAL_FILE, JOURNAL_EVENT_TYPES, VERDICT_CLASSES,
@@ -26,41 +25,6 @@ const addCost = (c, t) => {
   c.agents += 1;
   for (const k of ['requests', 'output', 'cacheRead', 'cacheCreate', 'seconds']) c[k] += t[k];
 };
-
-// remove when #5540 has landed and tiebreak.js exports a chunk splitter
-// The reply text per id: the lines under the id's "### Finding {id}" header up to the next header, with the reply's last
-// non-empty line (the status line) after it. An id with two sections, or none, maps to null.
-function splitChunkReply(text, ids) {
-  const lines = split(text);
-  let last = lines.length - 1;
-  while (last >= 0 && lines[last].trim() === '') last -= 1;
-  const status = last >= 0 ? lines[last] : '';
-  const sections = [];
-  let current = null;
-  for (const line of lines) {
-    const m = CHUNK_HEADER_RE.exec(line);
-    if (m) {
-      current = { id: m[1], body: [] };
-      sections.push(current);
-    } else if (current) {
-      current.body.push(line);
-    }
-  }
-  const out = new Map();
-  for (const id of ids) {
-    const mine = sections.filter((s) => s.id === id);
-    if (mine.length !== 1) {
-      out.set(id, null);
-      continue;
-    }
-    const body = [...mine[0].body];
-    while (body.length > 0 && body[body.length - 1].trim() === '') body.pop();
-    // The last section runs to the end of the reply, so it already ends on the status line.
-    if (mine[0] !== sections[sections.length - 1]) body.push(status);
-    out.set(id, body.join('\n'));
-  }
-  return out;
-}
 
 // One finding and its reply text -> { verdict, reason }; a null verdict is not judged. `io` is { fs, resolveTiebreak }:
 // the file reads and the resolver come from the caller's deps, not from this module.
@@ -192,7 +156,7 @@ function stripTree(text, treeRoot) {
 
 function score(opts, deps) {
   const fsImpl = deps.fs;
-  const { resolveTiebreak } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'tiebreak.js'));
+  const { resolveTiebreak, splitChunkReply } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'tiebreak.js'));
   const io = { fs: fsImpl, resolveTiebreak };
   const manifest = readJson(fsImpl, path.join(opts.out, MANIFEST_FILE));
   const problems = validateManifest(manifest);
@@ -268,7 +232,7 @@ function score(opts, deps) {
     const run = runs.get(slot.prompt.run);
     const ids = slot.prompt.findingIds;
     const text = typeof slot.reply === 'string' ? stripTree(slot.reply, run.tree) : null;
-    const sections = text !== null && ids.length >= 2 ? splitChunkReply(text, ids) : null;
+    const sections = text !== null && ids.length >= 2 ? splitChunkReply(text, ids).blocks : null;
     for (const id of ids) {
       const finding = run.findings.find((f) => f.id === id);
       const key = `${slot.prompt.run}/${id}`;
@@ -276,8 +240,8 @@ function score(opts, deps) {
       // The tree guard above checks the directory; a cited file missing inside it would otherwise settle as cant-tell.
       if (!fsImpl.existsSync(path.join(run.tree, finding.path))) settled = { verdict: null, reason: 'file-absent-in-tree' };
       else if (text === null) settled = { verdict: null, reason: slot.noReply };
-      else if (sections && sections.get(id) === null) settled = { verdict: null, reason: 'chunk-split' };
-      else settled = settleReply(finding, sections ? sections.get(id) : text, run.tree, io);
+      else if (sections && sections.get(id).state !== 'ok') settled = { verdict: null, reason: 'chunk-split' };
+      else settled = settleReply(finding, sections ? sections.get(id).text : text, run.tree, io);
       if (settled.verdict === null) {
         a.notJudged += 1;
         bump(a.notJudgedByReason, settled.reason);
@@ -320,4 +284,4 @@ function score(opts, deps) {
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }
 
-module.exports = { score, splitChunkReply, settleReply, agentIdentity, stripTree };
+module.exports = { score, settleReply, agentIdentity, stripTree };
