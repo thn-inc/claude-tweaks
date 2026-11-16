@@ -150,7 +150,7 @@ test('AC3.1: a missing or non-string state is stored as the empty string', () =>
   const { index, err } = load(STATELESS);
   assert.strictEqual(index['no-state'].state, '');
   assert.strictEqual(index['num-state'].state, '');
-  assert.strictEqual(err, '');
+  assert.strictEqual(err, '[code-health] loadIssueIndex: 2 issue entries with no state, treated as not closed\n');
 });
 
 test('AC3.2: both decide() functions skip an entry whose state normalized to the empty string', () => {
@@ -199,5 +199,14 @@ test('an entry with no fingerprint adds nothing to the ignored count', () => {
     { number: 2, state: 'open', labels: ['a'], fingerprint: 'fp' },
   ]);
   assert.deepStrictEqual(Object.keys(index), ['fp']);
+  assert.strictEqual(err, '');
+});
+
+test('entries that all carry a string state print nothing about state on stderr', () => {
+  const { index, err } = load([
+    { number: 1, state: 'OPEN', fingerprint: 'a' },
+    { number: 2, state: 'closed', fingerprint: 'b' },
+  ]);
+  assert.deepStrictEqual(Object.keys(index), ['a', 'b']);
   assert.strictEqual(err, '');
 });

@@ -28,6 +28,7 @@ function loadIssueIndex(file, toolName, { stderr = DEFAULT_IO.stderr, cwd } = {}
   }
   const index = {};
   let dropped = 0;
+  let stateless = 0;
   for (const issue of arr) {
     if (!issue || typeof issue !== 'object') {
       stderr(`[${toolName}] loadIssueIndex: skipping malformed issue entry\n`);
@@ -36,6 +37,7 @@ function loadIssueIndex(file, toolName, { stderr = DEFAULT_IO.stderr, cwd } = {}
     if (issue.fingerprint) {
       const normalized = normalizeLabels(issue.labels);
       dropped += normalized.dropped;
+      if (typeof issue.state !== 'string') stateless++;
       index[issue.fingerprint] = {
         number: issue.number,
         state: typeof issue.state === 'string' ? issue.state.toLowerCase() : '',
@@ -44,6 +46,7 @@ function loadIssueIndex(file, toolName, { stderr = DEFAULT_IO.stderr, cwd } = {}
     }
   }
   if (dropped > 0) stderr(`[${toolName}] loadIssueIndex: ignored ${dropped} label entries with no name\n`);
+  if (stateless > 0) stderr(`[${toolName}] loadIssueIndex: ${stateless} issue entries with no state, treated as not closed\n`);
   return index;
 }
 
