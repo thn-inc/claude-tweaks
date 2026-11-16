@@ -37,13 +37,13 @@ files:
 - **Should understand:** Exit 2 with the same one-line shape, the reason `not a regular file inside the checkout` or `not a readable code-health cache`. Exit 2 is a setup problem to fix, not a finding.
 - **Red flags:** A crash with exit 1 (which reads as "gate failed") or a verdict computed from a file outside the checkout.
 
-### 5. Typo the gate's value — `--fail-on Regressed`
-- **Action:** The hook passes a value that is not `regressed` or `risk-high`.
+### 5. Typo or drop the gate's value — `--fail-on Regressed`, or a bare trailing `--fail-on`
+- **Action:** The hook passes a value that is not `regressed` or `risk-high`, or ends with `--fail-on` and no value at all.
 - **Should feel:** Caught at once.
-- **Should understand:** Exit 2 with a usage error naming the accepted values — a different message from the cache refusal.
-- **Red flags:** Exit 0 — an unrecognized value silently disabling the gate.
+- **Should understand:** Exit 2 with a usage error naming the accepted values (`status: --fail-on "{value}" is not a recognized value (must be one of regressed|risk-high) …`, with `""` for a missing value) — a different message from the cache refusal.
+- **Red flags:** Exit 0 — an unrecognized or missing value silently disabling the gate.
 
 ## Origin
 - Created during build of record #5529 (flow run `2026-11-15T210059-spec-5528-5529`).
-- Steps 1-4 built in this session; step 5 describes the existing unrecognized-value guard, unchanged.
+- Steps 1-4 built in this session. Step 5 describes the existing unrecognized-value guard; the run's review added the bare trailing `--fail-on` case, which used to fall through to plain `status` and exit 0.
 - Related: `have-a-health-sweep-honor-closed-and-wontfix-issues-5528.md` (record #5528, the other fix from the same audit).
