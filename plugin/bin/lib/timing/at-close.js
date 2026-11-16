@@ -81,13 +81,17 @@ function prepare(runDir) {
 }
 
 // timing, pending skip -> the result; a write failure replaces the pending skip.
+// A timing with no token totals never replaces a file that gained them while
+// this call derived (a concurrent token pass): the check runs again here.
 function write(runDir, timing, skip) {
+  const withTokens = hasTokenTotals(timing);
+  if (!withTokens && hasTokenTotals(readExisting(runDir))) return { status: 'kept', tokens: true, skip: null };
   try {
     writeTimingFile(runDir, timing);
   } catch (err) {
     return { status: 'failed', tokens: false, skip: `condition: timing.json write failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
   }
-  return { status: 'written', tokens: hasTokenTotals(timing), skip };
+  return { status: 'written', tokens: withTokens, skip };
 }
 
 function finish(runDir, result) {
@@ -131,6 +135,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
         let skip = null;
         if (own.reason) skip = `condition: ${own.reason} → fallback: ${PHASE_ONLY}`;
         else if (d.deadlineHit) skip = `condition: transcript read passed the ${bound} ms time bound → fallback: ${PHASE_ONLY}`;
+        else if (!hasTokenTotals(d.timing)) skip = `condition: own transcript yielded no token totals (${d.notes.length ? d.notes.join('; ') : 'no usage tokens'}) → fallback: ${PHASE_ONLY}`;
         result = write(runDir, d.timing, skip);
       }
     }

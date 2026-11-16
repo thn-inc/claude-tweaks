@@ -280,6 +280,93 @@ test('a closed run reads its transcript against worktreeAtClose: a Read under th
   }
 });
 
+test('an own transcript with no usage rows → zero tokens written and one SKIP naming it', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const runDir = closedRun(root, 'run', wtA);
+    const dir = path.join(cfg, 'projects', transcript.slugForCwd(wtA));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${SID}.jsonl`), '');
+    const r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.equal(r.status, 'written');
+    assert.equal(r.tokens, false);
+    assertPhaseRows(readTiming(runDir));
+    const skips = skipLines(runDir);
+    assert.equal(skips.length, 1);
+    assert.match(skips[0], /condition: own transcript yielded no token totals \(tokens: transcript had no usage rows .*\) → fallback: timing\.json phase rows written without token totals/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('timing.json is a directory → failed and exactly one write-failed SKIP, on both the token and the tokens:false path', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt-a'));
+    fs.mkdirSync(path.join(runDir, 'timing.json'));
+    const env = { CLAUDE_CONFIG_DIR: path.join(root, 'cfg') };
+    const r = await writeTimingAtClose(runDir, { env });
+    assert.equal(r.status, 'failed');
+    assert.equal(r.tokens, false);
+    let skips = skipLines(runDir);
+    assert.equal(skips.length, 1);
+    assert.match(skips[0], /condition: timing\.json write failed \(.*\) → fallback: no timing\.json written/);
+    const r2 = await writeTimingAtClose(runDir, { tokens: false, env });
+    assert.equal(r2.status, 'failed');
+    assert.equal(r2.tokens, false);
+    skips = skipLines(runDir);
+    assert.equal(skips.length, 2);
+    assert.match(skips[1], /timing\.json write failed/);
+    assert.ok(fs.statSync(path.join(runDir, 'timing.json')).isDirectory());
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('writeTimingAtClose({ tokens: false }) writes phase rows and reads no transcript', async () => {
+  const root = tmpRoot();
+  const realRead = transcript.readUsage;
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const runDir = closedRun(root, 'run', wtA);
+    writeTranscript(cfg, wtA, [A, B]);
+    transcript.readUsage = () => { throw new Error('readUsage called'); };
+    const r = await writeTimingAtClose(runDir, { tokens: false, env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.deepStrictEqual(r, { status: 'written', tokens: false, skip: null });
+    const timing = readTiming(runDir);
+    assertPhaseRows(timing);
+    assert.equal(Object.hasOwn(timing.totals, 'tokens'), false);
+  } finally {
+    transcript.readUsage = realRead;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a token-totals timing.json written mid-call by a concurrent pass is kept byte-identical', async () => {
+  const root = tmpRoot();
+  const realRead = transcript.readUsage;
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const runDir = closedRun(root, 'run', wtA);
+    writeTranscript(cfg, wtA, [A, B]);
+    const file = path.join(runDir, 'timing.json');
+    const concurrent = '{"phases":[],"totals":{"tokens":{"input":7,"output":1,"cacheRead":0,"cacheCreate":0}}}\n';
+    // The derivation step: a concurrent token pass lands its file, and this call's read yields nothing.
+    transcript.readUsage = async () => { fs.writeFileSync(file, concurrent); return []; };
+    const r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.deepStrictEqual(r, { status: 'kept', tokens: true, skip: null });
+    assert.equal(fs.readFileSync(file, 'utf8'), concurrent);
+    assert.deepStrictEqual(skipLines(runDir), []);
+  } finally {
+    transcript.readUsage = realRead;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('TIMING_BOUND_MS is at most 60000', () => {
   assert.ok(TIMING_BOUND_MS <= 60000);
   assert.equal(TIMING_BOUND_MS, 60000);

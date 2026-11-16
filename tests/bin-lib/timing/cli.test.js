@@ -720,6 +720,29 @@ test('--auto-transcript honours CLAUDE_CONFIG_DIR given only in the injected env
   assert.match(r.stdout, /^\| review \| 8 \| — \| 116\/228 \| 0\.0 \| 3 \|$/m);
 });
 
+test('--auto-transcript on a closed run (worktree null) picks the worktreeAtClose slug, not the newest candidate (#5555)', async () => {
+  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-cfg-')), 'cfg');
+  const dir = tmpRun(true);
+  const own = '/Users/x/Code/repo/.claude/worktrees/wt';
+  const line = (input) => JSON.stringify({ timestamp: '2026-09-05T13:05:00.000Z', message: { role: 'assistant', id: `m${input}`, model: 'claude-test', content: [], usage: { input_tokens: input, output_tokens: 0 } } }) + '\n';
+  const write = (slug, input) => {
+    fs.mkdirSync(path.join(cfg, 'projects', slug), { recursive: true });
+    const f = path.join(cfg, 'projects', slug, 'sess-9.jsonl');
+    fs.writeFileSync(f, line(input));
+    return f;
+  };
+  write('-Users-x-Code-repo--claude-worktrees-wt', 11);
+  const other = write('-Users-x-Code-repo--claude-worktrees-other', 999);
+  const later = new Date(Date.now() + 60000);
+  fs.utimesSync(other, later, later);
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: null, worktreeAtClose: own, sessionId: 'sess-9', status: 'clean' }));
+  const r = await run(['--run', dir, '--auto-transcript'], { env: { ...fixtureHomeEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'))), CLAUDE_CONFIG_DIR: cfg } });
+  assert.equal(r.status, 0, r.stderr);
+  const t = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+  assert.equal(t.totals.tokens.input, 11);
+  assert.equal(t.transcripts.length, 1);
+});
+
 test('AC6.1: require() prints nothing and leaves process.exitCode undefined', () => {
   delete require.cache[require.resolve(CLI)];
   const writes = [];

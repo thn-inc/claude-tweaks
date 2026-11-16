@@ -249,7 +249,9 @@ function resolveTranscripts(o, runState, deps) {
   const paths = [...o.transcripts];
   const notes = [];
   if (o.autoTranscript) {
-    const worktree = runState && typeof runState.worktree === 'string' ? runState.worktree : null;
+    // A closed run has worktree null; worktreeAtClose keeps its path (#5555).
+    const usable = (v) => (typeof v === 'string' && v ? v : null);
+    const worktree = runState ? usable(runState.worktree) || usable(runState.worktreeAtClose) : null;
     const sessionId = runState && typeof runState.sessionId === 'string' ? runState.sessionId : null;
     if (!worktree && !sessionId) {
       notes.push('tokens: transcript not found (no worktree or sessionId in run-state.json)');
