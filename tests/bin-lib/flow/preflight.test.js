@@ -701,3 +701,170 @@ test('pr probe: a branch name carrying String.replace patterns renders literally
     assert.strictEqual(pack.pr.value.conflictNote, `Run PR #1901 is CONFLICTING with ${branch} — CI will not run on it until the conflict is resolved.`, branch);
   }
 });
+
+// ---- Archived run-dir headers (#3974): specOnBranch and the spec probe resolve
+// the header at the live run dir or its archived sibling.
+const RUN_ID = '2026-09-06T000000-record-7';
+const ARCHIVE_REL = `.claude-tweaks/pipelines/archive/${RUN_ID}`;
+
+// mainRoot() on a realpath'd root: the pathspecs these tests pin are repo-relative,
+// so root and run dir must agree with the realpath specOnBranch receives.
+function realMainRoot() {
+  const fx = mainRoot();
+  return { root: fs.realpathSync(fx.root), runDir: fs.realpathSync(fx.runDir) };
+}
+
+function seedBranchState(runDir) {
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), 'x\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active', pr: { number: 1, branch: 'feat-branch' } }));
+}
+
+// A fake git whose ls-tree answers per pathspec; unlisted pathspecs list nothing.
+function lsTreeGit(answers, seen = []) {
+  return (args) => {
+    seen.push(args);
+    if (args[0] !== 'ls-tree') return 'feat-branch\n';
+    const spec = args[args.length - 1];
+    const a = answers[spec];
+    if (a instanceof Error) throw a;
+    return a === undefined ? '' : a;
+  };
+}
+
+test('AC1.1 specOnBranch finds an archived-only flat header', () => {
+  const fx = realMainRoot();
+  seedBranchState(fx.runDir);
+  const seen = [];
+  const d = deps(fx, { git: lsTreeGit({ [`${ARCHIVE_REL}/work/`]: `${ARCHIVE_REL}/work/7-spec.md\0` }, seen) });
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d });
+  assert.strictEqual(a.specMaterialized, true);
+  const lsCalls = seen.filter((args) => args[0] === 'ls-tree');
+  assert.strictEqual(lsCalls.length, 3, 'live work, live recursive, then the archived work listing');
+  assert.strictEqual(lsCalls[2][lsCalls[2].length - 1], `${ARCHIVE_REL}/work/`);
+});
+
+test('AC2.1 specOnBranch finds an archived-only spec-{N} header', () => {
+  const fx = realMainRoot();
+  seedBranchState(fx.runDir);
+  const d = deps(fx, { git: lsTreeGit({ [`${ARCHIVE_REL}/`]: `${ARCHIVE_REL}/spec-9/work/9-spec.md\0` }) });
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d });
+  assert.strictEqual(a.specMaterialized, true);
+});
+
+test('specOnBranch reports false when neither the live nor the archived listing holds a header', () => {
+  const fx = realMainRoot();
+  seedBranchState(fx.runDir);
+  const d = deps(fx, { git: lsTreeGit({}) });
+  assert.strictEqual(computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d }).specMaterialized, false);
+});
+
+test('specOnBranch: per-spec run dir probes its own archived sibling', () => {
+  const fx = realMainRoot();
+  const perSpec = path.join(fx.runDir, 'spec-4');
+  seedBranchState(perSpec);
+  const seen = [];
+  const d = deps(fx, { git: lsTreeGit({}, seen) });
+  const a = computeAdoption({ runDir: perSpec, mainRoot: fx.root, cwd: fx.root, deps: d });
+  assert.strictEqual(a.specMaterialized, false);
+  const specs = seen.filter((args) => args[0] === 'ls-tree').map((args) => args[args.length - 1]);
+  assert.deepStrictEqual(specs, [
+    `.claude-tweaks/pipelines/${RUN_ID}/spec-4/work/`, `.claude-tweaks/pipelines/${RUN_ID}/spec-4/`,
+    `${ARCHIVE_REL}/spec-4/work/`, `${ARCHIVE_REL}/spec-4/`,
+  ]);
+});
+
+test('AC9.1/AC9.5 specOnBranch returns null when the archived listing throws after empty live listings', () => {
+  for (const failing of [`${ARCHIVE_REL}/work/`, `${ARCHIVE_REL}/`]) {
+    const fx = realMainRoot();
+    seedBranchState(fx.runDir);
+    const d = deps(fx, { git: lsTreeGit({ [failing]: new Error('git failed') }) });
+    assert.strictEqual(computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d }).specMaterialized, null, failing);
+  }
+});
+
+test('AC9.1 specOnBranch returns null when a live listing throws', () => {
+  const fx = realMainRoot();
+  seedBranchState(fx.runDir);
+  const live = `.claude-tweaks/pipelines/${RUN_ID}/work/`;
+  const d = deps(fx, { git: lsTreeGit({ [live]: new Error('git failed'), [`${ARCHIVE_REL}/work/`]: `${ARCHIVE_REL}/work/7-spec.md\0` }) });
+  assert.strictEqual(computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d }).specMaterialized, null);
+});
+
+test('AC3.1 specOnBranch on a real repo branch whose last commit git-mv\'d the header', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-mv-')));
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
+  const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env });
+  git('init', '-q', '-b', 'main');
+  git('commit', '-q', '--allow-empty', '-m', 'init');
+  git('checkout', '-q', '-b', 'feat-branch');
+  const liveRel = `.claude-tweaks/pipelines/${RUN_ID}`;
+  fs.mkdirSync(path.join(root, liveRel, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(root, liveRel, 'work', '7-spec.md'), '---\nrecord: 7\n---\n');
+  git('add', '-A'); git('commit', '-q', '-m', 'materialize');
+  fs.mkdirSync(path.join(root, ARCHIVE_REL), { recursive: true });
+  git('mv', `${liveRel}/work`, `${ARCHIVE_REL}/work`);
+  git('commit', '-q', '-m', 'archive');
+  git('checkout', '-q', 'main');
+  const runDir = path.join(root, liveRel);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', pr: { number: 1, branch: 'feat-branch' } }));
+  const d = deps({ root, runDir }, { git: (args, opts = {}) => execFileSync('git', args, { cwd: opts.cwd || root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env }) });
+  assert.strictEqual(computeAdoption({ runDir, mainRoot: root, cwd: root, deps: d }).specMaterialized, true);
+});
+
+function probeSpec(fx, overrides = {}) {
+  fs.writeFileSync(path.join(fx.runDir, 'config.yml'), 'mode: auto\nceremony-profile: standard\n');
+  return gatherPreflight({ runDir: fx.runDir, steps: ['review'], cwd: fx.root, mainRoot: fx.root, deps: deps(fx, overrides) }).then((p) => p.spec.value);
+}
+function seedHeader(base, n, sub = null) {
+  const dir = sub ? path.join(base, sub, 'work') : path.join(base, 'work');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${n}-spec.md`), '---\n');
+}
+const archiveBase = (fx) => path.join(fx.root, '.claude-tweaks', 'pipelines', 'archive', RUN_ID);
+
+test('AC1.1 spec probe: archived-only flat header gives the live answer', async () => {
+  const live = realMainRoot();
+  seedHeader(live.runDir, 7);
+  const arch = realMainRoot();
+  seedHeader(archiveBase(arch), 7);
+  const want = { path: 'work/7-spec.md', present: true, record: 7, records: [7] };
+  assert.deepStrictEqual(await probeSpec(live), want);
+  assert.deepStrictEqual(await probeSpec(arch), want);
+});
+
+test('AC2.1 spec probe: archived-only spec-{N} headers give the live answer', async () => {
+  const live = realMainRoot();
+  const arch = realMainRoot();
+  for (const n of [9, 12]) { seedHeader(live.runDir, n, `spec-${n}`); seedHeader(archiveBase(arch), n, `spec-${n}`); }
+  const want = { path: null, present: true, record: null, records: [9, 12] };
+  assert.deepStrictEqual(await probeSpec(live), want);
+  assert.deepStrictEqual(await probeSpec(arch), want);
+});
+
+test('AC7.1 spec probe: the merged set\'s lowest name answers, a duplicate counts once', async () => {
+  const fx = realMainRoot();
+  seedHeader(fx.runDir, 8);
+  seedHeader(archiveBase(fx), 7);
+  assert.deepStrictEqual(await probeSpec(fx), { path: 'work/7-spec.md', present: true, record: 7, records: [7] });
+  const dup = realMainRoot();
+  seedHeader(dup.runDir, 7);
+  seedHeader(archiveBase(dup), 7);
+  assert.deepStrictEqual(await probeSpec(dup), { path: 'work/7-spec.md', present: true, record: 7, records: [7] });
+});
+
+test('spec probe: live and archived spec-{N} headers merge by record', async () => {
+  const fx = realMainRoot();
+  seedHeader(fx.runDir, 9, 'spec-9');
+  seedHeader(archiveBase(fx), 9, 'spec-9');
+  seedHeader(archiveBase(fx), 12, 'spec-12');
+  assert.deepStrictEqual(await probeSpec(fx), { path: null, present: true, record: null, records: [9, 12] });
+});
+
+test('AC9.4 spec probe: an unreadable archived dir is absent', async () => {
+  const fx = realMainRoot();
+  const archived = archiveBase(fx);
+  const readdir = (p) => { if (p.startsWith(archived)) return []; try { return fs.readdirSync(p); } catch { return []; } };
+  assert.deepStrictEqual(await probeSpec(fx, { readdir }), { path: null, present: false, record: null, records: [] });
+});
