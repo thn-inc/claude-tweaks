@@ -85,7 +85,7 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
                             legacy spec file deleted too — a record-mode build's materialized file
                             stays on the branch as committed audit trail instead;
                             posts an acceptance packet on the record, with
-                            demo:pending above the oversight floor — or, for a
+                            accept:pending above the oversight floor — or, for a
                             sub-issue of a /specify decomposition, demo:pending +
                             a Verification Brief on the parent once the last
                             sub-issue closes; record mode only)

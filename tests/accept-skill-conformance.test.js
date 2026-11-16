@@ -97,12 +97,16 @@ test('AC4.1/AC4.2/AC4.3: automatic entry labels through auto-label', () => {
 test('AC4.1: wrap-up reaches the automatic entry', () => {
   const wrapUp = (name) => readText(path.join(ACCEPT_DIR, '..', 'wrap-up', name));
   const brief = wrapUp('verification-brief.md');
-  const step4 = brief.slice(brief.indexOf('\n## Step 4: Compose and post the brief\n'));
-  assert.ok(step4.length < brief.length, 'verification-brief.md keeps its Step 4 heading');
-  assert.ok(step4.includes('accept/automatic-entry.md'), 'Step 4 hands the rendered packet to accept/automatic-entry.md');
+  const heading = brief.indexOf('\n## Step 4: Compose and post the brief\n');
+  assert.notEqual(heading, -1, 'verification-brief.md keeps its Step 4 heading');
+  const step4 = brief.slice(heading);
+  const handOff = step4.indexOf('accept/automatic-entry.md');
+  assert.notEqual(handOff, -1, 'Step 4 hands the rendered packet to accept/automatic-entry.md');
   assert.ok(!brief.includes('--label demo:pending'), 'verification-brief.md no longer posts with --label demo:pending');
   assert.ok(!step4.includes(POST), `Step 4 no longer runs ${POST} itself: the automatic entry owns the post`);
-  assert.ok(step4.indexOf('acceptance-packet.js" render') < step4.indexOf('accept/automatic-entry.md'), 'render runs before the hand-off');
+  const render = step4.indexOf('acceptance-packet.js" render');
+  assert.notEqual(render, -1, 'Step 4 still renders the packet');
+  assert.ok(render < handOff, 'render runs before the hand-off');
   assert.ok(wrapUp('execution-and-verification.md').includes('automatic-entry.md'), 'Phase 4 acceptance labeling names the automatic entry');
 });
 

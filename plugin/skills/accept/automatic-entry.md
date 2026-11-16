@@ -95,3 +95,17 @@ rules (`_shared/acceptance-packet.md`'s `## Canonical copy and lookup`); a faile
 `read` branch. A missing packet is sent with `add_issue_comment`, per `_shared/github-write-transport.md`'s
 Marker comments on the MCP path; an existing or unreadable one is never sent again. An owed label
 goes through `issue_write`'s read-merge-write (that file's Full-replace hazard) in either case.
+
+On the missing-packet branch, the MCP path makes the writes `post` would. A failed
+`add_issue_comment` is the failed `post` branch, and it clears the pending label: `issue_read`
+(`get_labels`) immediately before the write, then, only when `demo:pending` or `accept:pending` is
+present, `issue_write` with the complete array `mergeLabelNames` computes, and no write when
+neither is present. A failed clearing adds a needs-human line naming the pending label still on
+the record. After the comment lands and the owed label is written, when the run has a PR, read its
+body with `pull_request_read` and link the packet through MCP `update_pull_request`, matching
+`publishPacket`'s `replacePacketLine`: replace this record's existing `Acceptance packet:` line (a
+single url on the same `/issues/{n}#`; another record's line stays) with
+`Acceptance packet: {comment url}`, append that line after a blank line when the body has none,
+and write nothing when the body already reads that way. A failed label write leaves the packet in
+place and skips the PR line, reported as the `gh` path's `labelApplied: false` is. A failed PR-line
+write does not fail the publish, reported as the `gh` path's `prLink` with `ok: false` is.
