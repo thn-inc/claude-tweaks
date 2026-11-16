@@ -94,10 +94,11 @@ silently failed at claim release (`wrap-up/cleanup-procedures-execution.md` Sect
 as the `bot:in-progress` missed-removal backstop below. Both checks below are flagged only —
 recommendations execute after Step 6 batch approval, same as every other Step 4.7 mutation.
 
-Materialized headers are committed, never gitignored (`flow/materialize.md`'s "Committed during
-the run, archived on the branch at wrap-up" section), so they survive on disk at `.claude-tweaks/pipelines/**/work/*-spec.md`
-(single-record runs) and `.claude-tweaks/pipelines/**/spec-*/work/*-spec.md` (multi-record
-runs) — in both live and archived (`.claude-tweaks/pipelines/archive/`) run directories:
+Materialized headers are committed, never gitignored (`flow/materialize.md`'s "Committed
+during the run, archived on the branch at wrap-up" section), so they survive on disk at
+`.claude-tweaks/pipelines/**/work/*-spec.md` (single-record runs) and
+`.claude-tweaks/pipelines/**/spec-*/work/*-spec.md` (multi-record runs) — in both live and archived
+(`.claude-tweaks/pipelines/archive/`) run directories:
 
 ```bash
 cd "{RUN_ROOT}" && find .claude-tweaks/pipelines -path "*/work/*-spec.md" 2>/dev/null | while read -r header; do

@@ -45,7 +45,14 @@ const SECTION_SENTENCES =
 const BULLET_PHRASE =
   'it is committed on the feature branch during the run and, at wrap-up before the merge, `git mv`\'d to `archive/{run-id}/` on the branch (`bin/archive-run-header.js`, #3976), so it reaches the main checkout already archived.';
 const INVARIANT_SENTENCE =
-  'After wrap-up no consumer reads the header from the live path directly: every header read goes through `bin/lib/run-header.js`\'s resolver (#3974).';
+  'After wrap-up no consumer reads the header from the live path directly: every header reader resolves it through `bin/lib/run-header.js`\'s resolver (#3974) or, like `/tidy`\'s backstop `find`, matches both the live and the archived path.';
+
+// The line on materialize.md that names how materialized files are committed (line 98 pre-change).
+function line98(text) {
+  const lines = text.split('\n').filter((l) => l.includes('Materialized files live under the run dir'));
+  assert.equal(lines.length, 1, 'expected exactly one "Materialized files live under the run dir" line');
+  return collapse(lines[0]);
+}
 
 // The section that opens with `## Committed `, whichever way its heading is worded: the claim
 // about the heading is separate from the claim about the body, so each fails for its own reason.
@@ -71,8 +78,8 @@ function specBullet(text) {
 // Each claim is { message, holds(text) }; the message is the claim's own failure text.
 const MATERIALIZE_CLAIMS = {
   'AC6.1 line 98 does not say "as audit trail"': {
-    message: 'materialize.md still says "committed as audit trail"',
-    holds: (t) => !/committed as audit trail/i.test(collapse(t)),
+    message: 'materialize.md line 98 still says "committed as audit trail"',
+    holds: (t) => !/committed as audit trail/i.test(line98(t)),
   },
   'AC6.1 the section heading is not "Committed as audit trail"': {
     message: 'materialize.md still has the "Committed as audit trail" heading',
@@ -80,7 +87,7 @@ const MATERIALIZE_CLAIMS = {
   },
   'AC6.2 line 98 says committed during the run and archived at wrap-up': {
     message: 'materialize.md line 98 lacks the "committed during the run and archived" tail',
-    holds: (t) => collapse(t).includes(LINE_98_TAIL),
+    holds: (t) => line98(t).includes(LINE_98_TAIL),
   },
   'AC6.2 the section heading states commit during the run, archive at wrap-up': {
     message: 'materialize.md section heading is not the archive-at-wrap-up heading',
