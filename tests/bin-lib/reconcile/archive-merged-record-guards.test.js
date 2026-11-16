@@ -13,7 +13,7 @@ const {
   archiveRunDir, decideArchive, decideArchiveCore, readConsoleState, isOrphanedMint,
   archiveMerged, prefetchArchivePrStates, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
-  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin,
+  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, archiveRunCommand, compareWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, runRecordSet, inFlightRecords,
   consoleResidue, consoleResidueHint, filingRerunRemedy,
@@ -1202,10 +1202,73 @@ test('isArchivedPendingTrackedMove: false when a gitignored entry still lives al
   assert.equal(isArchivedPendingTrackedMove(root, runDir), false);
 });
 
-test('archivedPendingTrackedMoveCommand: a paste-ready archive-run command naming the run dir', () => {
-  const command = archivedPendingTrackedMoveCommand('/x/.claude-tweaks/pipelines/2026-01-01T000000-spec-1');
+test('archivedPendingTrackedMoveCommand: the archive-tracked-shells CLI command naming the root (#3975)', () => {
+  assert.equal(
+    archivedPendingTrackedMoveCommand('/x'),
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/x"',
+  );
+});
+
+test('archiveRunCommand: a paste-ready archive-run command naming the run dir', () => {
+  const command = archiveRunCommand('/x/.claude-tweaks/pipelines/2026-01-01T000000-spec-1');
   assert.match(command, /bin\/hooks\.js" archive-run --run/);
   assert.match(command, /2026-01-01T000000-spec-1/);
+});
+
+// #3975: a clean-twin shell — the archive twin carries a clean run-state, only tracked work/ is live.
+function makeShell(root, runId, { twinWork = '# w\n', liveWork = '# w\n' } = {}) {
+  commitPath(root, `.claude-tweaks/pipelines/${runId}/work/w-spec.md`, liveWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/work/w-spec.md`, twinWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/run-state.json`, JSON.stringify({ status: 'clean' }));
+  return path.join(root, '.claude-tweaks', 'pipelines', runId);
+}
+
+test('AC1.4: without worktree-always only one shell is archived in place per pass (#3975)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const a = makeShell(root, '2026-09-01T100000-spec-1');
+  const b = makeShell(root, '2026-09-01T110000-spec-2');
+  const result = archiveMerged({ cwd: root });
+  assert.equal(result.archived.length, 1, JSON.stringify(result));
+  const left = [a, b].find((d) => !result.archived.includes(d));
+  const skip = result.skipped.find((s) => s.runDir === left);
+  assert.ok(skip, JSON.stringify(result));
+  assert.equal(skip.reason, 'archived-pending-tracked-move');
+  assert.equal(skip.command, archivedPendingTrackedMoveCommand(root));
+});
+
+test('AC1.5: a conflicting clean-twin shell does not take the in-place slot and keeps its twin clean (#3975)', () => {
+  const root = fs.realpathSync(makeRepo());
+  // iterRunDirsWithState walks newest id first, so the differing shell is visited first.
+  const differing = makeShell(root, '2026-09-01T110000-spec-2', { twinWork: '# other\n' });
+  const identical = makeShell(root, '2026-09-01T100000-spec-1');
+  const result = archiveMerged({ cwd: root });
+  assert.deepEqual(result.archived, [identical], JSON.stringify(result));
+  const skip = result.skipped.find((s) => s.runDir === differing);
+  assert.ok(skip, JSON.stringify(result));
+  assert.equal(skip.reason, 'archived-pending-tracked-move');
+  assert.equal(skip.command, archivedPendingTrackedMoveCommand(root));
+  const twinState = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(differing), 'run-state.json'), 'utf8'));
+  assert.equal(twinState.status, 'clean');
+});
+
+test('AC1.6: a non-clean-twin split state keeps the archive-run completion and is not capped (#3975)', () => {
+  const split = (root, runId) => {
+    commitPath(root, `.claude-tweaks/pipelines/${runId}/work/w-spec.md`, '# w\n');
+    fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId), { recursive: true });
+    return path.join(root, '.claude-tweaks', 'pipelines', runId);
+  };
+  const rootA = fs.realpathSync(makeRepo());
+  setWorktreeAlways(rootA, true);
+  const dirA = split(rootA, '2026-09-01T100000-spec-1');
+  const skip = archiveMerged({ cwd: rootA }).skipped.find((s) => s.runDir === dirA);
+  assert.ok(skip);
+  assert.equal(skip.reason, 'archived-pending-tracked-move');
+  assert.match(skip.command, /archive-run --run/);
+
+  const rootB = fs.realpathSync(makeRepo());
+  const dirs = [split(rootB, '2026-09-01T100000-spec-1'), split(rootB, '2026-09-01T110000-spec-2')];
+  const result = archiveMerged({ cwd: rootB });
+  assert.deepEqual([...result.archived].sort(), [...dirs].sort(), JSON.stringify(result));
 });
 
 // AC2 (Deliverable 2): under `worktree-always: true`, the split state is a

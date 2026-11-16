@@ -585,6 +585,7 @@ async function reconcileInner(opts, state) {
         ...(s.missing !== undefined ? { missing: s.missing } : {}),
         ...(s.unfiled !== undefined ? { unfiled: s.unfiled } : {}),
         ...(s.hint !== undefined ? { hint: s.hint } : {}),
+        ...(s.command !== undefined ? { command: s.command } : {}),
       })));
     result.residuePlan = r.residuePlan === undefined ? null : r.residuePlan;
     state.archiveResidueErrors = Array.isArray(r.residueErrors) ? r.residueErrors : [];

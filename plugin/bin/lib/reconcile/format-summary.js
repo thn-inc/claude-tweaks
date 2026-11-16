@@ -291,6 +291,12 @@ function formatSummary(result) {
   const itemSkippedLine = formatItemSkippedLine(result);
   if (itemSkippedLine) lines.push(itemSkippedLine);
 
+  // #3975: one completion line for every stranded shell, right after the aggregated skipped: line.
+  const shell = Array.isArray(result.runs)
+    ? result.runs.find((e) => e.reason === 'archived-pending-tracked-move' && e.command)
+    : null;
+  if (shell) lines.push(`archive stranded shells: ${shell.command}`);
+
   lines.push(...formatCheckSkipLines(result));
 
   if (lines.length === 0) return 'reconcile: nothing to do';

@@ -10,7 +10,7 @@ const path = require('path');
 const { formatSummary } = require('../plugin/bin/lib/reconcile/format-summary');
 const { reconcile, PREREQUISITES } = require('../plugin/bin/lib/reconcile');
 const { readText } = require('./helpers/read-skill');
-const { STUB_SKIP } = require('./helpers/path-stub');
+const { STUB_SKIP, installStub } = require('./helpers/path-stub');
 const { requireOption } = require('../tools/test-impact/node-options');
 const {
   HOOKS,
@@ -458,6 +458,37 @@ test('formatSummary: a skipped entry carrying names (non-canonical-run-dir, #848
   };
   const summary = formatSummary(result);
   assert.strictEqual(summary, 'skipped: all — non-canonical-run-dir: 20260817T173343-spec-764');
+});
+
+test('format-summary prints one archive-stranded-shells line for several shells (#3975)', () => {
+  const cmd = 'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/r"';
+  const shell = (n) => ({ runDir: `/r/.claude-tweaks/pipelines/${n}`, action: 'skipped', reason: 'archived-pending-tracked-move', command: cmd });
+  const lines = formatSummary({ runs: [shell('a'), shell('b')], skipped: [] }).split('\n');
+  assert.deepEqual(lines, ['skipped: 2 run dirs (archived-pending-tracked-move 2)', `archive stranded shells: ${cmd}`]);
+});
+
+test('AC1.3: reconcile --dry-run --json --checks archive lists a clean-twin shell as archived-pending-tracked-move (#3975)', { skip: STUB_SKIP }, () => {
+  const { seedDir, mainDir } = pairedFixture();
+  const id = '2026-09-01T120000-spec-77';
+  writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\nworktree-always: true\n');
+  const pipelines = path.join(seedDir, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(path.join(pipelines, id, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(pipelines, id, 'work', '77-spec.md'), '# 77\n');
+  fs.mkdirSync(path.join(pipelines, 'archive', id), { recursive: true });
+  fs.writeFileSync(path.join(pipelines, 'archive', id, 'run-state.json'), JSON.stringify({ status: 'clean' }));
+  git(['add', '-f', '.claude-tweaks'], seedDir);
+  git(['commit', '-q', '-m', 'shell'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  git(['pull', '-q', 'origin', 'main'], mainDir);
+  // The preflight probe (`gh api rate_limit`) is the only gh call this path makes.
+  const restore = installStub('gh', '#!/bin/sh\necho 5000\n');
+  let r;
+  try { r = runHook(['reconcile', '--dry-run', '--json', '--checks', 'archive'], { cwd: mainDir }); } finally { restore(); }
+  assert.strictEqual(r.code, 0);
+  const entry = JSON.parse(r.stdout).runs.find((e) => path.basename(e.runDir) === id);
+  assert.ok(entry, r.stdout);
+  assert.strictEqual(entry.reason, 'archived-pending-tracked-move');
+  assert.match(entry.command, /archive-tracked-shells\.js" --root /);
 });
 
 test('formatSummary: a skipped entry\'s detail renders in parentheses after the reason, ahead of any count/names suffix; no detail renders unchanged (#4933)', () => {

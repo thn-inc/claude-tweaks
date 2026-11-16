@@ -1133,8 +1133,29 @@ function isArchivedPendingTrackedMove(root, dir) {
 // supports running from inside a worktree whose tracked content has since
 // merged to the main checkout) — reused here rather than inventing a second
 // completion path.
-function archivedPendingTrackedMoveCommand(dir) {
+function archiveRunCommand(dir) {
   return `node "\${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "${dir}"`;
+}
+
+// #3975: the completion for a clean-twin shell (a run whose archive twin already
+// holds a clean run-state, leaving only tracked work/ headers live). One command
+// for the whole batch: `archive-tracked-shells.js` enumerates every such shell
+// itself and lands them on one housekeeping branch/PR.
+function archivedPendingTrackedMoveCommand(root) {
+  return `node "\${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "${root}"`;
+}
+
+// #3975: true when the live dir's `work/` (and each `spec-*/work/`) differs from
+// its archive twin's — such a shell can never be archived in place (archiveRunDir
+// would refuse `work-twin-conflict`), so it must not take the pass's in-place slot.
+function shellWorkTwinDiffers(root, dir) {
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir));
+  const pairs = [[path.join(dir, 'work'), path.join(archiveDir, 'work')]];
+  for (const specName of listSpecDirs(dir)) {
+    pairs.push([path.join(dir, specName, 'work'), path.join(archiveDir, specName, 'work')]);
+  }
+  const isDir = (p) => lstatType(p).type === 'directory';
+  return pairs.some(([src, dest]) => isDir(src) && isDir(dest) && !compareWorkTwin(root, src, dest).identical);
 }
 
 // #1811 Deliverable 3: a run dir shaped `{timestamp}-record-{n}[-{m}...]`
@@ -2421,7 +2442,9 @@ function archiveMerged({
     if (plan && plan.action !== 'none') residuePlan.push(plan);
   };
 
-  for (const { dir, state } of iterRunDirsWithState(root)) {
+  // #3975: without worktree-always, at most one clean-twin shell is archived in place per pass.
+  let shellSlotUsed = false;
+  for (const { dir, state } of iterRunDirsWithState(root, { includeTrackedShells: true })) {
     // #4599: first, before any per-run work — see the header comment above archiveMerged.
     if (postMergePending.has(path.resolve(dir))) {
       skipped.push({ runDir: dir, reason: 'post-merge-pending' });
@@ -2443,11 +2466,23 @@ function archiveMerged({
     // (Deliverable 2's own AC). Without `worktree-always`, archive it
     // directly via archiveRunDir, same as any other archival.
     if (isArchivedPendingTrackedMove(root, dir)) {
+      const twinState = readRunState(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir)));
+      if (twinState && twinState.status === 'clean') {
+        // #3975: a clean-twin shell. The CLI is its completion; in place, only one per pass,
+        // and never one whose work/ differs from the twin's (archiveRunDir would refuse it).
+        const skipShell = () => skipped.push({
+          runDir: dir, reason: 'archived-pending-tracked-move', command: archivedPendingTrackedMoveCommand(root),
+        });
+        if (isWorktreeAlwaysOn(root) || shellSlotUsed || shellWorkTwinDiffers(root, dir)) { skipShell(); continue; }
+        shellSlotUsed = true;
+        finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
+        continue;
+      }
       if (isWorktreeAlwaysOn(root)) {
         skipped.push({
           runDir: dir,
           reason: 'archived-pending-tracked-move',
-          command: archivedPendingTrackedMoveCommand(dir),
+          command: archiveRunCommand(dir),
         });
         continue;
       }
@@ -2806,7 +2841,7 @@ module.exports = {
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
   isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness, defaultRunVerdict,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
-  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
+  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, archiveRunCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
   isClosedSlugStuck, recordNumbersFromSlug, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
