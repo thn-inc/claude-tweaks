@@ -211,6 +211,59 @@ test('legacy wording: a review-marked line over 2000 characters is read only by 
   assert.deepEqual(classifyPairLine(`- AUTO 10:00:00 — Reproduction: lens "3a" finding a.js:1 reproduced. Confirmed. ${R}`), { form: 'reproduced', lens: '3a', path: 'a.js', line: 1 });
 });
 
+// Fix wave (#5556): the label before `Reproduction:` is one of the writer labels measured in the archive.
+const GOOD = 'finding a.js:1 reproduced. Confirmed. Reversibility: high.';
+const WRITER_LABELS = [
+  '', 'log-decision: ', 'Step 3: ', 'Step 3 ', 'Step 3 reproduction: ', 'Step 3 (reproduction): ', 'Step 3 (Reproduction): ',
+  'Step 3 lens 3f: ', 'Delta ', 'Delta-2 ', 'Delta review ', 'spec #4466 — ', 'spec #4466: ', 'spec #4466 — Step 3 ',
+  'spec #4466 — Step 3: ', 'spec #4466 — Step 3 reproduction: ', 'Reproduction: ',
+];
+for (const label of WRITER_LABELS) {
+  test(`writer label ${JSON.stringify(label)} is read as a pair line`, () => {
+    const r = classifyPairLine(`- AUTO 10:00:00 — ${label}Reproduction: lens "3a" ${GOOD}`);
+    assert.ok(r && r.form === 'reproduced', label);
+  });
+}
+
+const CARRIED_LABELS = [
+  'wrap-up: carried forward from review ',
+  'Routing: quoting ',
+  'Step 3 Routing: ',
+  'log-decision: Step 3 lenses 3b/3c dispatched as 4 reproduction pairs in parallel (18 files). ',
+  'Step 3: Delta review 7ca1b5df0..3267fd7e5 (#3418): combined-lens reproduction pair. ',
+  'Review Console: Console item decision:STAGED 19:19:02 — ',
+];
+for (const label of CARRIED_LABELS) {
+  test(`carried or quoted label ${JSON.stringify(label.slice(0, 40))} is not a pair line`, () => {
+    // both tiers: the strict wording and a loose one
+    assert.equal(classifyPairLine(`- AUTO 10:00:00 — ${label}Reproduction: lens "3a" ${GOOD}`), null);
+    assert.equal(classifyPairLine(`- AUTO 10:00:00 — ${label}Reproduction: lens 3a finding a.js:1 reproduced (x). Confirmed. Reversibility: high.`), null);
+    assert.equal(classifyPairLine(`- STAGED 10:00:00 — ${label}Reproduction: lens "3a" finding a.js:1 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.`), null);
+  });
+}
+
+test('writer label: the reviewer\'s carried-forward example is unparsed, not a new finding', () => {
+  const line = '- AUTO 10:00:00 — wrap-up: carried forward from review Reproduction: lens "3a" finding x.js:1 reproduced. Confirmed.';
+  assert.equal(classifyPairLine(line), null);
+  assert.equal(isReviewMarkedLine(line), true);
+});
+
+test('status head: a time without seconds, a hyphen separator and a bare date are the writer\'s own head', () => {
+  for (const head of ['- AUTO 23:56 — ', 'STAGED 14:20:10 - ', 'AUTO 2026-08-09 — ']) {
+    const r = classifyPairLine(`${head}Reproduction: lens "3a" ${GOOD}`);
+    assert.ok(r && r.form === 'reproduced', head);
+  }
+});
+
+test('legacy wording: the 2000-character cap does not skip the strict templates', () => {
+  const longPath = `plugin/${'d/'.repeat(1000)}x.js`;
+  const line = `- AUTO 10:00:00 — Reproduction: lens "3a" finding ${longPath}:12 reproduced. Confirmed. Reversibility: high.`;
+  assert.ok(line.length > 2000);
+  const got = classifyPairLine(line);
+  assert.equal(got && got.form, 'reproduced', 'a >2000-char line is still read by the strict template');
+  assert.equal(got && got.line, 12);
+});
+
 test('legacy wording: a console disposition is never read as the pair line it restates', () => {
   const restated = '- AUTO 20:08:06 — Review Console: Console item decision:STAGED 19:19:02 — Reproduction: lens "3a" finding plugin/x.js:12 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.';
   assert.equal(classifyPairLine(restated), null, 'a label naming the Review Console is not a writer label');
@@ -267,7 +320,7 @@ function matchingForms(action) {
 
 test('AC3.3: every pair-line template in step3-lens-dispatch.md matches its pattern', () => {
   const tier = liveTemplates(TIER);
-  assert.equal(tier.length, 1, `step3-tier-variants.md holds ${tier.length} pair templates, expected 1 — ${RULE}`);
+  assert.equal(tier.length, 1, `step3-tier-variants.md holds ${tier.length} pair templates, expected 1; the producers are step3-tier-variants.md (single-read-coverage) and step3-lens-dispatch.md (the seven pair forms) — ${RULE}`);
   const templates = [...liveTemplates(SKILL), ...tier];
   assert.equal(templates.length, PAIR_FORMS.length, `step3-lens-dispatch.md holds ${templates.length} pair templates, PAIR_FORMS has ${PAIR_FORMS.length} — ${RULE}`);
   const matched = [];

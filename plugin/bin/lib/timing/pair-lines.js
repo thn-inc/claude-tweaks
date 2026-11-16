@@ -35,16 +35,29 @@ const { DECISION_STATUSES } = require('../log-decision/append');
 // (the writer's step label, e.g. `log-decision`) is absent from the bare
 // `- AUTO 10:00:00 — Reproduction: …` shape. The head is optional so the
 // action text alone also classifies.
-const HEAD = `(?:- (?:${DECISION_STATUSES.join('|')}) \\d{2}:\\d{2}:\\d{2} — (?:[^\\n]*?: )?)?`;
+//
+// The label before `Reproduction:` is one of an allow-list: the writer labels measured in the
+// archive (a census of the label before every classified `Reproduction:`). A label outside the
+// list (`wrap-up: carried forward from review`, `Routing: quoting`, a dispatch notice that only
+// mentions a reproduction pair) is a quoted or carried line, not a new finding: it is not a pair line.
+// `spec #N — ` / `spec #N: ` may prefix a writer label (a multi-spec run's per-spec writer).
+const WRITER_LABEL = '(?:log-decision: |Reproduction: |Step 3(?: lens [\\w-]+| \\(?[Rr]eproduction\\)?)?:? |Delta(?:-\\d+| review)? )';
+const LABEL = `(?:spec #\\d+(?: — |: ))?${WRITER_LABEL}?`;
+// The strict tier takes only the colon-terminated labels (`log-decision: `, `Step 3: `, `spec #N: `);
+// the others (`Delta `, `Step 3 `, `spec #N — `) are read by the loose tier.
+const LABEL_STRICT = '(?:(?:spec #\\d+ — )?(?:log-decision|Reproduction|Step 3(?: lens [\\w-]+| \\(?[Rr]eproduction\\)?)?): |spec #\\d+: )?';
+const HEAD = `(?:- (?:${DECISION_STATUSES.join('|')}) \\d{2}:\\d{2}:\\d{2} — ${LABEL_STRICT})?`;
 const LENS = 'lens "([^"]*)"';
 // A path may hold spaces, but never the start of a verdict: `a.js:1 not reproduced; … b.js:2` is two findings.
 const PATH_STRICT = '((?:(?!\\s(?:not )?reproduced\\b)[^\\n])+)';
 const TAIL = ' Reversibility: [a-z/]+\\.$';
 
 // Loose wording (see the header): the label before the body, the tail after it.
-const NO_CONSOLE = '(?:(?!Review Console:)[^\\n])*?';
-const STATUS_HEAD = `(?:- (?:${DECISION_STATUSES.join('|')})(?: \\d{2}:\\d{2}:\\d{2})? — )?`;
-const HEAD_LOOSE = `${STATUS_HEAD}(?:${NO_CONSOLE} )?`;
+// The status head itself is read as the archive spelled it: a bullet or none, a time with or
+// without seconds or a date, an em dash or a hyphen. That is the writer's clock and separator,
+// not a label.
+const STATUS_HEAD = `(?:(?:- )?(?:${DECISION_STATUSES.join('|')})(?: \\d{2}:\\d{2}(?::\\d{2})?| \\d{4}-\\d{2}-\\d{2})? [—-] )?`;
+const HEAD_LOOSE = `${STATUS_HEAD}${LABEL}`;
 const TAIL_LOOSE = '(?: Stage path: \\S+\\.)?(?: Reversibility: [a-z/]+\\.)+$';
 // A lens id is one token (`3a`, `convention`); a label may follow it (`3b (Security)`,
 // `3c Error handling`) and is dropped. A colon, a comma, a slash or `and` after the id means
@@ -186,8 +199,8 @@ function classifyPairLine(line) {
   const s = String(line);
   const long = s.length > LEGACY_LINE_MAX;
   for (const f of ALL_FORMS) {
-    for (let i = long ? f.strict : 0; i < f.pattern.length; i++) {
-      if (long && i >= f.strict) break;
+    // A long line is tried against the strict (prose-pinned) patterns only, which come first.
+    for (let i = 0; i < (long ? f.strict : f.pattern.length); i++) {
       const m = f.pattern[i].exec(s);
       if (!m) continue;
       return {
