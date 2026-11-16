@@ -24,10 +24,12 @@ test('AC11.1: extract\'s manifest and a fixed reply set round-trip through score
     assert.equal(calls.length, 6, 'two arms: four single-finding prompts and two chunk prompts');
     for (const c of calls) {
       const arm = manifest.arms.find((a) => a.name === parseArmLabel(c.opts.label).arm);
-      assert.ok(c.opts.model !== undefined && c.opts.effort !== undefined, `${c.opts.label}: model and effort are set`);
+      assert.ok(arm, `${c.opts.label}: names an arm of the manifest`);
       assert.equal(c.opts.model, PROFILES[arm.profile].model, `${c.opts.label}: the arm's profile model`);
-      assert.equal(c.opts.effort, PROFILES[arm.profile].effort, `${c.opts.label}: the arm's profile effort`);
-      const file = /Read (\S+) and/.exec(c.prompt);
+      const { effort } = PROFILES[arm.profile];
+      if (effort === null) assert.ok(!('effort' in c.opts), `${c.opts.label}: a profile with no effort passes none`);
+      else assert.equal(c.opts.effort, effort, `${c.opts.label}: the arm's profile effort`);
+      const file = /Read (.+) and follow/.exec(c.prompt);
       assert.ok(file && fs.existsSync(file[1]), `${c.opts.label}: the prompt names a prompt file that exists`);
     }
     prompts = new Map(calls.map((c) => [c.opts.label, c.prompt]));

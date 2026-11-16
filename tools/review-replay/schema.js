@@ -33,6 +33,22 @@ const JOURNAL_EVENT_TYPES = ['started', 'result'];
 // The identity line the workflow puts first in each judge's prompt; score reads it back from the agent's transcript.
 const IDENTITY_RE = /^Replay judge (\S+)\.$/m;
 
+// The archived runs' own records. The extracted tree leaves this directory out (extract's writeTree pathspec) and
+// eligibility treats a path under it as absent, both through this one definition so the two cannot drift. The only
+// thing put back is a run's spec file, at the path a finding cites (specFileCited).
+const RUN_RECORDS_DIR = '.claude-tweaks/pipelines';
+const isRunRecordPath = (p) => p === RUN_RECORDS_DIR || String(p).startsWith(`${RUN_RECORDS_DIR}/`);
+
+// `work/<file>` when `p` is `<RUN_RECORDS_DIR>/<dir>/work/<file>` (the spec path a finding of a resumed run cites), else null.
+function specFileCited(p) {
+  const rest = String(p).startsWith(`${RUN_RECORDS_DIR}/`) ? String(p).slice(RUN_RECORDS_DIR.length + 1).split('/') : [];
+  const ok = rest.length === 3 && rest[1] === 'work' && rest.every((s) => s !== '' && s !== '.' && s !== '..');
+  return ok ? `work/${rest[2]}` : null;
+}
+
+// A native path as the forward-slash spelling the judge prompt uses.
+const toPosix = (p) => String(p).replace(/\\/g, '/');
+
 const armLabel = (arm, repeat, name) => `${arm}|${repeat}|${name}`;
 
 // The label back as { arm, repeat (a number), name }, or null when it is not one armLabel produced.
@@ -87,5 +103,5 @@ function validateManifest(obj) {
 module.exports = {
   SCHEMA_VERSION, MANIFEST_FILE, FIXTURE_FILE, VERDICTS_FILE, JOURNAL_FILE,
   VERDICT_CLASSES, EXCLUSION_REASONS, MANIFEST_KEYS, ARM_KEYS, PROMPT_KEYS, JOURNAL_EVENT_TYPES,
-  IDENTITY_RE, armLabel, parseArmLabel, validateManifest,
+  IDENTITY_RE, RUN_RECORDS_DIR, isRunRecordPath, specFileCited, toPosix, armLabel, parseArmLabel, validateManifest,
 };

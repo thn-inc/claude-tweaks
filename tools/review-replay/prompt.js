@@ -4,7 +4,7 @@
 // (plugin/skills/review/step3-tiebreak.md), so an edit to that template changes
 // what the replay sends. Pure text; no file or process access.
 
-const path = require('path');
+const { toPosix } = require('./schema.js');
 
 const CHUNK_HEADER_RE = /^#{1,6}\s*Finding\s+([0-9a-f]{12})\s*$/;
 
@@ -77,7 +77,8 @@ function fillFinding(block, finding, { treeRoot, base, head }) {
     else if (line.startsWith('Severity: {')) { seen.severity = true; out.push('Severity: ' + finding.severity); }
     else if (line.startsWith('Location: {')) {
       seen.location = true;
-      out.push('Location: ' + path.join(treeRoot, finding.path) + ':' + finding.line);
+      // Forward slashes on every platform, so a judge's citation of it strips back to the repo-relative path (score.js's stripTree).
+      out.push('Location: ' + toPosix(treeRoot) + '/' + finding.path + ':' + finding.line);
     } else if (line.startsWith('Diff scope: {')) { seen.scope = true; out.push('Diff scope: ' + base + '...' + head); }
     else out.push(line);
   }

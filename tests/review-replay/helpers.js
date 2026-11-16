@@ -80,13 +80,13 @@ const chunkReply = (parts, status = 'DONE') => `${parts.map(([key, text]) => `##
 
 // Runs extract into a fresh dir and rewrites the tree files; returns paths and the writers for journal and transcripts.
 // promptFor(label) is the text an agent's first user message holds (default: just the identity line).
-async function setup({ promptFor = (label) => `Replay judge ${label}.\n\nThe finding follows.` } = {}) {
+async function setup({ promptFor = (label) => `Replay judge ${label}.\n\nThe finding follows.`, arms = ARMS } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-score-'));
   const out = path.join(root, 'out');
   const transcripts = path.join(root, 'workflow');
   fs.mkdirSync(transcripts);
   const deps = makeDeps();
-  const code = await run({ argv: ['extract', '--runs', ARCHIVE, '--out', out, ...ARMS], deps });
+  const code = await run({ argv: ['extract', '--runs', ARCHIVE, '--out', out, ...arms], deps });
   assert.equal(code, 0, deps.errs.join('\n'));
   for (const f of Object.values(FINDINGS)) {
     const body = Array.from({ length: f.line - 1 }, (_, i) => `// pad ${i + 1}`);
@@ -112,8 +112,8 @@ async function setup({ promptFor = (label) => `Replay judge ${label}.\n\nThe fin
     ...startedIds.map((agentId) => ({ type: 'started', agentId })),
     ...Object.entries(results).map(([agentId, result]) => ({ type: 'result', agentId, result })),
   ]);
-  const score = async (extra = []) => {
-    const d = makeDeps();
+  const score = async (extra = [], overrides = {}) => {
+    const d = makeDeps(overrides);
     const code = await run({ argv: ['score', '--out', out, '--transcripts', transcripts, ...extra], deps: d });
     return { code, deps: d, json: d.logs.length > 0 ? JSON.parse(d.logs.join('\n')) : null };
   };

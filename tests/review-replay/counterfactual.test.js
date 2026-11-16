@@ -28,7 +28,7 @@ function archiveCopy({ decisionLine, timingItems = [] }) {
 
 async function counterfactual(transcripts = TRANSCRIPTS, extra = [], runs = ARCHIVE) {
   const deps = makeDeps();
-  const code = await run({ argv: ['counterfactual', '--runs', runs,'--transcripts', transcripts, ...extra], deps });
+  const code = await run({ argv: ['counterfactual', '--runs', runs, '--transcripts', transcripts, ...extra], deps });
   return { code, deps, out: deps.logs.length ? JSON.parse(deps.logs.join('\n')) : null };
 }
 
@@ -43,7 +43,7 @@ function withReplyB(...texts) {
 
 test('AC6.1: counterfactual over two paired reviewer transcripts reports the single-reviewer share', async () => {
   const { code, out } = await counterfactual();
-  assert.equal(code, 0);
+  assert.equal(code, 3, 'one transcript is unreadable, which is not a clean result');
   assert.equal(out.runs, 1);
   assert.equal(out.lensPairs, 2);
   // Confirmed in lens 3a: src/alpha.js:10 and src/pair.js:5. A raised alpha (12) and pair (5); B raised pair (9, four
@@ -64,7 +64,8 @@ test('a No findings reply is a readable empty table', async () => {
   assert.deepEqual(parseFindingsTable('Reviewed everything.\n\nNo findings'), []);
   const root = withReplyB('No findings.');
   try {
-    const { out } = await counterfactual(root);
+    const { code, out } = await counterfactual(root);
+    assert.equal(code, 0, 'every transcript is readable');
     assert.deepEqual(out.transcripts, { total: 4, unreadable: 0, unreadableShare: 0, ...CLEAN });
     // Now the 3b pair is readable: refuted beta.js:20 was raised by A (line 22) and not by B.
     assert.deepEqual(out.refuted, { total: 1, byA: 1, byB: 0 });
@@ -86,7 +87,8 @@ test('parseFindingsTable reads sev, path, line and text, strips markdown and ski
 test('a missing transcript file is unreadable, and a pair with an unreadable side never counts toward the shares', async () => {
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-cf-empty-'));
   try {
-    const { out } = await counterfactual(empty);
+    const { code, out } = await counterfactual(empty);
+    assert.equal(code, 3, 'every transcript unreadable is not a clean result');
     assert.deepEqual(out.transcripts, { total: 4, unreadable: 4, unreadableShare: 1, ...CLEAN });
     assert.deepEqual(out.confirmed, { total: 0, located: 0, byA: 0, byB: 0, byBoth: 0, singleReviewerShare: null });
   } finally {
@@ -127,6 +129,13 @@ test('prose that mentions "no findings" mid-sentence is unreadable, not an empty
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('a line that starts with "No findings" but goes on is not an empty table', () => {
+  assert.equal(parseFindingsTable('No findings were possible: the transcript ended before the table.'), null);
+  assert.equal(parseFindingsTable('No findings yet; still reading.'), null);
+  assert.deepEqual(parseFindingsTable('_No findings_.'), []);
+  assert.deepEqual(parseFindingsTable('Done.\r\n\r\n**No findings.**\r\n'), []);
 });
 
 test('table rows that cannot be read are counted in transcripts.rowsSkipped, not dropped silently', async () => {

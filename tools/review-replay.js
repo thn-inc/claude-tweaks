@@ -22,7 +22,7 @@
 // (tools/review-replay/counterfactual.js).
 //
 // Exit codes (as tools/driver-merge-check-eval.js): 0 ok; 1 a runtime failure; 2 a malformed invocation; 3 not a clean
-// result (extract shortfall, or score with any notJudged).
+// result (extract shortfall or empty set, score with any notJudged, counterfactual with any unreadable transcript).
 //
 // Seam: run({ argv, deps }) returns the exit code. deps: fs, git(args) -> stdout (throws), writeTree(head, destDir),
 // log(line), err(line), pluginRoot.
@@ -34,7 +34,7 @@ const { readRun, selectRuns, matchVerdicts } = require('./review-replay/archive.
 const { extract } = require('./review-replay/extract.js');
 const { score } = require('./review-replay/score.js');
 const { counterfactual } = require('./review-replay/counterfactual.js');
-const { VERDICT_CLASSES } = require('./review-replay/schema.js');
+const { VERDICT_CLASSES, RUN_RECORDS_DIR } = require('./review-replay/schema.js');
 
 const USAGE = [
   'usage: node tools/review-replay.js baseline --runs <root> [--select <name,...>]',
@@ -56,10 +56,10 @@ function defaultDeps() {
   return {
     fs,
     git,
-    // The tree at `head` without .claude-tweaks, so a replay judge never sees the archived run's own records.
+    // The tree at `head` without the archived runs' own records (RUN_RECORDS_DIR), so a replay judge never sees them.
     writeTree: (head, destDir) => {
       fs.mkdirSync(destDir, { recursive: true });
-      const archive = execFileSync('git', ['archive', head, '--', '.', ':(exclude).claude-tweaks'], { cwd, maxBuffer: 1 << 30, windowsHide: true });
+      const archive = execFileSync('git', ['archive', head, '--', '.', `:(exclude)${RUN_RECORDS_DIR}`], { cwd, maxBuffer: 1 << 30, windowsHide: true });
       execFileSync('tar', ['-x', '-C', destDir], { input: archive, windowsHide: true });
     },
     log: (s) => process.stdout.write(`${s}\n`),

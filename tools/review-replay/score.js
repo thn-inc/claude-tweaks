@@ -3,13 +3,11 @@
 // agreement with the archived verdicts, per arm, plus the cost per arm. A reply that cannot be settled to a verdict is
 // notJudged, never a silent disagreement or agreement.
 
-const fs = require('fs');
 const path = require('path');
-const { resolveTiebreak } = require('../../plugin/bin/lib/tiebreak.js');
 const { CHUNK_HEADER_RE } = require('./prompt.js');
 const {
   MANIFEST_FILE, FIXTURE_FILE, VERDICTS_FILE, JOURNAL_FILE, JOURNAL_EVENT_TYPES, VERDICT_CLASSES,
-  IDENTITY_RE, armLabel, parseArmLabel, validateManifest,
+  IDENTITY_RE, toPosix, armLabel, parseArmLabel, validateManifest,
 } = require('./schema.js');
 
 const SPLIT = /\r?\n/;
@@ -68,13 +66,14 @@ function splitChunkReply(text, ids) {
   return out;
 }
 
-// One finding and its reply text -> { verdict, reason }; a null verdict is not judged.
-function settleReply(finding, text, treeRoot) {
+// One finding and its reply text -> { verdict, reason }; a null verdict is not judged. `io` is { fs, resolveTiebreak }:
+// the file reads and the resolver come from the caller's deps, not from this module.
+function settleReply(finding, text, treeRoot, io) {
   const { lens, path: findingPath, line, claim, severity, kind } = finding;
-  const r = resolveTiebreak(
+  const r = io.resolveTiebreak(
     { lens, path: findingPath, line, claim, reporterSeverity: severity, kind },
     text,
-    { readFile: (p) => fs.readFileSync(path.join(treeRoot, p), 'utf8') },
+    { readFile: (p) => io.fs.readFileSync(path.join(treeRoot, p), 'utf8') },
   );
   if (r.outcome === 'confirmed') return { verdict: 'confirmed', reason: r.reason };
   if (r.outcome === 'drop') return { verdict: 'refuted', reason: r.reason };
@@ -184,12 +183,16 @@ function identifyAgents(fsImpl, dir, started, slots) {
   return { unidentified, costs, unidentifiedCost };
 }
 
+// The tree root's prefix removed from every path a reply cites: the forward-slash spelling the prompt's Location line
+// uses, and the native one.
 function stripTree(text, treeRoot) {
-  return text.split(`${treeRoot}/`).join('').split(`${treeRoot}${path.sep}`).join('');
+  return [`${toPosix(treeRoot)}/`, `${treeRoot}/`, `${treeRoot}${path.sep}`].reduce((t, prefix) => t.split(prefix).join(''), text);
 }
 
 function score(opts, deps) {
   const fsImpl = deps.fs;
+  const { resolveTiebreak } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'tiebreak.js'));
+  const io = { fs: fsImpl, resolveTiebreak };
   const manifest = readJson(fsImpl, path.join(opts.out, MANIFEST_FILE));
   const problems = validateManifest(manifest);
   if (problems.length > 0) {
@@ -269,9 +272,11 @@ function score(opts, deps) {
       const finding = run.findings.find((f) => f.id === id);
       const key = `${slot.prompt.run}/${id}`;
       let settled;
-      if (text === null) settled = { verdict: null, reason: slot.noReply };
+      // The tree guard above checks the directory; a cited file missing inside it would otherwise settle as cant-tell.
+      if (!fsImpl.existsSync(path.join(run.tree, finding.path))) settled = { verdict: null, reason: 'file-absent-in-tree' };
+      else if (text === null) settled = { verdict: null, reason: slot.noReply };
       else if (sections && sections.get(id) === null) settled = { verdict: null, reason: 'chunk-split' };
-      else settled = settleReply(finding, sections ? sections.get(id) : text, run.tree);
+      else settled = settleReply(finding, sections ? sections.get(id) : text, run.tree, io);
       if (settled.verdict === null) {
         a.notJudged += 1;
         bump(a.notJudgedByReason, settled.reason);
@@ -285,14 +290,18 @@ function score(opts, deps) {
       add(a.total, agree);
       tallyInto(a.byClass, want, agree);
       tallyInto(a.bySeverity, finding.severity, agree);
-      verdictsByArm[slot.arm.name].set(`${key}|${slot.repeat}`, settled.verdict);
+      const own = verdictsByArm[slot.arm.name];
+      own.set(key, [...(own.get(key) || []), settled.verdict]);
     }
   }
 
   const ref = verdictsByArm[reference];
   for (const arm of manifest.arms) {
     if (arm.name === reference) continue;
-    for (const [k, v] of verdictsByArm[arm.name]) if (ref.has(k)) add(arms[arm.name].vsReference, ref.get(k) === v);
+    // Repeats are samples of one judge, so every repeat of this arm is paired with every repeat of the reference.
+    for (const [k, mine] of verdictsByArm[arm.name]) {
+      for (const v of mine) for (const refVerdict of ref.get(k) || []) add(arms[arm.name].vsReference, refVerdict === v);
+    }
   }
 
   const baseline = { agents: 0, out: 0, cc: 0, cr: 0, seconds: 0 };
@@ -303,4 +312,4 @@ function score(opts, deps) {
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }
 
-module.exports = { score, splitChunkReply, settleReply, agentIdentity };
+module.exports = { score, splitChunkReply, settleReply, agentIdentity, stripTree };

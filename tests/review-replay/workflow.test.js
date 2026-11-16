@@ -48,6 +48,16 @@ test('the workflow\'s identity line round-trips through agentIdentity', () => {
   assert.match(prompt, /\/abs\/prompts\/N\.md/, 'the prompt points at the prompt file');
 });
 
+test('an arm whose profile has no effort passes no effort option to agent()', async () => {
+  const manifest = {
+    schemaVersion: 1,
+    template: {},
+    arms: [{ name: 'f', chunk: 1, profile: 'fast', model: 'm-f', effort: null, repeat: 1, prompts: [{ file: '/p/a.md', name: 'a', run: 'r', findingIds: [] }] }],
+  };
+  const { calls } = await runWorkflow(manifest);
+  assert.deepEqual(calls.map((c) => c.opts), [{ label: 'f|1|a', phase: 'Judges', model: 'm-f' }]);
+});
+
 test('run with a manifest: one agent per arm x repeat x prompt, with the arm\'s model and effort, returning their replies', async () => {
   const manifest = {
     schemaVersion: 1,

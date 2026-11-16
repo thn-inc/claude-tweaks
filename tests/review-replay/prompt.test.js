@@ -7,6 +7,8 @@ const path = require('path');
 
 const { loadTemplate, disciplineLines, fillFinding, buildPrompt, CHUNK_HEADER_RE } =
   require('../../tools/review-replay/prompt.js');
+const { stripTree } = require('../../tools/review-replay/score.js');
+const { toPosix } = require('../../tools/review-replay/schema.js');
 
 const TIEBREAK = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'skills', 'review', 'step3-tiebreak.md'), 'utf8');
 const CORE = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md'), 'utf8');
@@ -21,7 +23,7 @@ test('single-finding prompt carries claim, severity, absolute Location and diff 
   const prompt = buildPrompt(loadTemplate(TIEBREAK), [F1], CTX);
   assert.match(prompt, /^Finding: First claim\.$/m);
   assert.match(prompt, /^Severity: high$/m);
-  assert.ok(prompt.includes('Location: ' + path.join(CTX.treeRoot, 'src/a.js') + ':12'));
+  assert.ok(prompt.includes('Location: ' + toPosix(CTX.treeRoot) + '/src/a.js:12'));
   assert.match(prompt, /^Diff scope: bbbb\.\.\.cccc$/m);
   assert.ok(!/^Positions:/m.test(prompt));
   assert.ok(!prompt.includes('SCRATCH:'));
@@ -29,6 +31,13 @@ test('single-finding prompt carries claim, severity, absolute Location and diff 
   assert.ok(!prompt.includes('{claim text}'));
   assert.ok(prompt.includes('Reply with exactly these lines, then your status line:'));
   assert.ok(prompt.includes('Verdict: confirmed | refuted | cant-tell'));
+});
+
+test('Location is written with forward slashes for a backslash tree root, and score strips it back to the repo-relative path', () => {
+  const ctx = { ...CTX, treeRoot: 'C:\\work\\tree' };
+  const loc = buildPrompt(loadTemplate(TIEBREAK), [F1], ctx).split('\n').find((l) => l.startsWith('Location: '));
+  assert.equal(loc, 'Location: C:/work/tree/src/a.js:12');
+  assert.equal(stripTree(loc, ctx.treeRoot), 'Location: src/a.js:12');
 });
 
 test('a contested finding keeps Positions with one line per position', () => {

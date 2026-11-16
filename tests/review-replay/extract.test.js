@@ -278,7 +278,7 @@ test('a run whose findings all lack a file is excluded with no-eligible-findings
 });
 
 test('a failed write leaves --out partial: exit 1, stderr names the path and says to remove it, and a re-run says why it refuses', async () => {
-  const deps = makeDeps({ writeTree: () => { throw new Error('disk full'); } });
+  const deps = makeDeps({ writeTree: (head, destDir) => { fs.mkdirSync(destDir, { recursive: true }); throw new Error('disk full'); } });
   const x = await extractInto([], { deps });
   try {
     assert.equal(x.code, 1);
@@ -287,6 +287,9 @@ test('a failed write leaves --out partial: exit 1, stderr names the path and say
     assert.ok(text.includes(x.out), 'names the --out path');
     assert.match(text, /partial; remove it before re-running/);
     assert.equal(x.deps.logs.length, 0);
+    const again = makeDeps();
+    assert.equal(await run({ argv: ['extract', '--runs', ARCHIVE, '--out', x.out, ...ARMS], deps: again }), 2);
+    assert.match(again.errs.join('\n'), /must not exist or must be empty/);
   } finally {
     x.cleanup();
   }
@@ -359,6 +362,44 @@ test('malformed extract invocations exit 2: no arm, no --out, a bad number or qu
     assert.equal(fs.existsSync(path.join(tmp, 'trees')), false);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('findings under .claude-tweaks: policy.yml and a spec under an earlier pipeline dir name are eligible, the spec is in the tree at the cited path, and any other pipelines path is file-absent-at-head', async () => {
+  const HEAD_D = 'd'.repeat(40);
+  const committed = [
+    '.claude-tweaks/policy.yml',
+    '.claude-tweaks/pipelines/earlier-name/work/900-spec.md',
+    '.claude-tweaks/pipelines/earlier-name/work/other-spec.md',
+    '.claude-tweaks/pipelines/earlier-name/decisions.md',
+  ];
+  const deps = makeDeps({
+    gitTable: {
+      'log -1 --format=%ct 3333333': '300\n',
+      'rev-parse 3333333^': `${HEAD_D}\n`,
+      [`cat-file -e ${HEAD_D}^{commit}`]: '',
+      [`ls-tree -r --name-only ${HEAD_D}`]: `src/alpha.js\n${committed.join('\n')}\n`,
+    },
+  });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-ct-'));
+  const out = path.join(root, 'out');
+  try {
+    const code = await run({ argv: ['extract', '--runs', path.join(path.dirname(ARCHIVE), 'archive-claude-tweaks'), '--out', out, '--arm', 'name=one,profile=fast'], deps });
+    assert.equal(code, 0, deps.errs.join('\n'));
+    const fixture = JSON.parse(fs.readFileSync(path.join(out, schema.FIXTURE_FILE), 'utf8'));
+    assert.deepEqual(fixture.runs[0].findings.map((f) => f.id), ['ccccccccccc1', 'ccccccccccc2']);
+    assert.deepEqual(fixture.excluded, [
+      { run: 'run-ct', finding: 'ccccccccccc3', reason: 'file-absent-at-head' },
+      { run: 'run-ct', finding: 'ccccccccccc4', reason: 'file-absent-at-head' },
+    ]);
+    const tree = path.join(out, 'trees', 'run-ct');
+    const spec = read(path.join(ARCHIVE, '..', 'archive-claude-tweaks', 'run-ct', 'work', '900-spec.md'));
+    assert.equal(read(path.join(tree, '.claude-tweaks', 'pipelines', 'earlier-name', 'work', '900-spec.md')), spec, 'the spec is at the path the finding cites');
+    assert.equal(read(path.join(tree, '.claude-tweaks', 'pipelines', 'run-ct', 'work', '900-spec.md')), spec, 'and at the run\'s own archive-dir path');
+    assert.ok(!fs.existsSync(path.join(tree, '.claude-tweaks', 'pipelines', 'earlier-name', 'work', 'other-spec.md')));
+    assert.ok(!fs.existsSync(path.join(tree, '.claude-tweaks', 'pipelines', 'earlier-name', 'decisions.md')));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

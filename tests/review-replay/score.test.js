@@ -2,9 +2,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { run } = require('../../tools/review-replay');
-const { splitChunkReply, settleReply, agentIdentity } = require('../../tools/review-replay/score');
+const { splitChunkReply, settleReply, agentIdentity, stripTree } = require('../../tools/review-replay/score');
+const { resolveTiebreak } = require('../../plugin/bin/lib/tiebreak.js');
 const { armLabel } = require('../../tools/review-replay/schema');
 const { makeDeps, FINDINGS, reply, chunkReply, setup, MSGS_ONE, MSGS_EIGHT, fullSet } = require('./helpers');
 
@@ -316,14 +318,15 @@ test('settleReply maps outcomes to verdicts: confirmed, drop -> refuted, cant-te
   try {
     const tree = s.tree('run-a');
     const f = { id: FINDINGS.a1.id, lens: '3a', path: 'src/alpha.js', line: 10, claim: 'alpha claim', severity: 'medium', kind: 'unconfirmed' };
-    assert.deepEqual(settleReply(f, reply('a1', 'confirmed'), tree), { verdict: 'confirmed', reason: 'confirmed by tiebreak' });
-    assert.deepEqual(settleReply(f, reply('a1', 'refuted'), tree), { verdict: 'refuted', reason: 'refuted by tiebreak' });
-    assert.deepEqual(settleReply(f, reply('a1', 'cant-tell'), tree), { verdict: 'cant-tell', reason: 'verdict:cant-tell' });
-    assert.deepEqual(settleReply(f, reply('a1', 'confirmed', { status: 'BLOCKED' }), tree), { verdict: null, reason: 'status:BLOCKED' });
-    assert.deepEqual(settleReply(f, 'free prose', tree), { verdict: null, reason: 'could-not-parse' });
-    assert.deepEqual(settleReply(f, reply('a1', 'confirmed', { evidencePath: 'src/other.js' }), tree), { verdict: null, reason: 'evidence-path-mismatch' });
-    assert.deepEqual(settleReply({ ...f, line: 'x' }, reply('a1', 'confirmed'), tree), { verdict: null, reason: 'no-line' });
-    assert.deepEqual(settleReply({ ...f, path: 'src/ti' + 'ebreak:x.js' }, reply('a1', 'confirmed'), tree), { verdict: null, reason: 'bad-finding-field' });
+    const settle = (finding, text) => settleReply(finding, text, tree, { fs, resolveTiebreak });
+    assert.deepEqual(settle(f, reply('a1', 'confirmed')), { verdict: 'confirmed', reason: 'confirmed by tiebreak' });
+    assert.deepEqual(settle(f, reply('a1', 'refuted')), { verdict: 'refuted', reason: 'refuted by tiebreak' });
+    assert.deepEqual(settle(f, reply('a1', 'cant-tell')), { verdict: 'cant-tell', reason: 'verdict:cant-tell' });
+    assert.deepEqual(settle(f, reply('a1', 'confirmed', { status: 'BLOCKED' })), { verdict: null, reason: 'status:BLOCKED' });
+    assert.deepEqual(settle(f, 'free prose'), { verdict: null, reason: 'could-not-parse' });
+    assert.deepEqual(settle(f, reply('a1', 'confirmed', { evidencePath: 'src/other.js' })), { verdict: null, reason: 'evidence-path-mismatch' });
+    assert.deepEqual(settle({ ...f, line: 'x' }, reply('a1', 'confirmed')), { verdict: null, reason: 'no-line' });
+    assert.deepEqual(settle({ ...f, path: 'src/ti' + 'ebreak:x.js' }, reply('a1', 'confirmed')), { verdict: null, reason: 'bad-finding-field' });
   } finally {
     s.cleanup();
   }
@@ -338,6 +341,74 @@ test('agentIdentity reads the label from the first user entry, as a string or as
   assert.equal(agentIdentity([line({ type: 'user', message: { content: 'no identity' } }), line({ type: 'user', message: { content: `Replay judge ${label}.` } })].join('\n')), null, 'only the first user entry counts');
   assert.equal(agentIdentity(''), null);
   assert.equal(agentIdentity('not json'), null);
+});
+
+test('a finding whose file is absent from its run tree is notJudged under file-absent-in-tree, not settled as cant-tell', async () => {
+  const s = await setup();
+  try {
+    fullSet(s);
+    fs.rmSync(path.join(s.tree('run-a'), 'src', 'alpha.js'));
+    const r = await s.score();
+    assert.equal(r.code, 3);
+    assert.deepEqual(r.json.arms.one.notJudgedByReason, { 'file-absent-in-tree': 1 });
+    assert.deepEqual(r.json.arms.eight.notJudgedByReason, { 'file-absent-in-tree': 1 });
+    assert.equal(r.json.arms.one.cantTell, 0);
+    assert.deepEqual(r.json.arms.one.total, { agree: 2, n: 3 });
+    assert.deepEqual(r.json.arms.eight.total, { agree: 1, n: 3 });
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('score reads tree files through deps.fs', async () => {
+  const s = await setup();
+  try {
+    fullSet(s);
+    const reads = [];
+    const spy = { ...fs, readFileSync: (p, enc) => { reads.push(String(p)); return fs.readFileSync(p, enc); } };
+    const r = await s.score([], { fs: spy });
+    assert.equal(r.code, 0, r.deps.errs.join('\n'));
+    assert.ok(reads.includes(path.join(s.tree('run-a'), 'src', 'alpha.js')), 'the evidence read went through deps.fs');
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('score requires tiebreak.js through deps.pluginRoot', async () => {
+  const s = await setup();
+  const stubRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-plugin-'));
+  try {
+    fs.mkdirSync(path.join(stubRoot, 'bin', 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(stubRoot, 'bin', 'lib', 'tiebreak.js'), "exports.resolveTiebreak = () => ({ outcome: 'drop', reason: 'stub' });\n");
+    fullSet(s);
+    const r = await s.score([], { pluginRoot: stubRoot });
+    assert.equal(r.code, 0, r.deps.errs.join('\n'));
+    assert.deepEqual(r.json.arms.one.total, { agree: 2, n: 4 }, 'every reply settled as refuted by the stub');
+  } finally {
+    fs.rmSync(stubRoot, { recursive: true, force: true });
+    s.cleanup();
+  }
+});
+
+test('stripTree settles the posix spelling of a backslash tree root', () => {
+  assert.equal(stripTree('Evidence: C:/work/tree/src/alpha.js:10 "q"', 'C:\\work\\tree'), 'Evidence: src/alpha.js:10 "q"');
+  assert.equal(stripTree('Evidence: /tmp/t/src/a.js:1', '/tmp/t'), 'Evidence: src/a.js:1');
+});
+
+test('vsReference compares each repeat with every reference repeat for that finding', async () => {
+  const s = await setup({ arms: ['--arm', 'name=one,chunk=1,profile=fast', '--arm', 'name=eight,chunk=8,profile=fast,repeat=2'] });
+  try {
+    fullSet(s, {
+      'ag-7': { label: armLabel('eight', 2, 'run-a--0'), reply: chunkReply([['a1', reply('a1', 'confirmed', { last: false })], ['a2', reply('a2', 'confirmed', { last: false })]]), messages: MSGS_EIGHT, seconds: 30 },
+      'ag-8': { label: armLabel('eight', 2, 'run-b--0'), reply: chunkReply([['b1', reply('b1', 'confirmed', { last: false })], ['b2', reply('b2', 'refuted', { last: false })]]), messages: MSGS_EIGHT, seconds: 30 },
+    });
+    const r = await s.score();
+    assert.equal(r.code, 0, r.deps.errs.join('\n'));
+    // Repeat 1 agrees with the reference on 1 of 4 findings, repeat 2 on 4 of 4; neither repeat drops out.
+    assert.deepEqual(r.json.arms.eight.vsReference, { agree: 5, n: 8 });
+  } finally {
+    s.cleanup();
+  }
 });
 
 test('the chunk adapter must go once tiebreak.js exports a chunk splitter', () => {

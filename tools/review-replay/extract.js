@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const { readRun, selectRuns, matchVerdicts } = require('./archive.js');
 const { loadTemplate, disciplineLines, buildPrompt } = require('./prompt.js');
 const {
-  SCHEMA_VERSION, MANIFEST_FILE, FIXTURE_FILE, VERDICTS_FILE,
+  SCHEMA_VERSION, MANIFEST_FILE, FIXTURE_FILE, VERDICTS_FILE, isRunRecordPath, specFileCited,
 } = require('./schema.js');
 
 const SPLIT = /\r?\n/;
@@ -120,14 +120,16 @@ function examineRun(dir, deps) {
   } catch {
     return { exclusion: 'head-not-in-clone' };
   }
-  const files = new Set(split(deps.git(['ls-tree', '-r', '--name-only', r.head])).filter(Boolean));
+  // The tree leaves out RUN_RECORDS_DIR, so those entries are not there; a run's own spec is put back at the path a finding cites.
+  const files = new Set(split(deps.git(['ls-tree', '-r', '--name-only', r.head])).filter((p) => p && !isRunRecordPath(p)));
+  const inTree = (p) => files.has(p) || (specFileCited(p) !== null && r.specFiles.includes(specFileCited(p)));
   const match = matchVerdicts(r.findings, r.verdicts, r.failedJudges);
   const eligible = [];
   const findingExclusions = [];
   for (const f of r.findings) {
     // A failed judge left no archived verdict, so such a finding is never eligible: it has nothing to score against.
     if (!match.byId.has(f.id)) continue;
-    if (!files.has(f.path)) {
+    if (!inTree(f.path)) {
       findingExclusions.push({ run: r.run, finding: f.id, reason: 'file-absent-at-head' });
       continue;
     }
@@ -242,6 +244,13 @@ function writeOutputs(c, deps) {
     for (const rel of r.specFiles) {
       fs.mkdirSync(path.dirname(path.join(specDir, rel)), { recursive: true });
       fs.copyFileSync(path.join(r.dir, rel), path.join(specDir, rel));
+    }
+    // A resumed run's spec lives under an earlier pipeline directory name: put it at the path a finding cites too.
+    for (const f of p.eligible) {
+      const rel = specFileCited(f.path);
+      if (rel === null) continue;
+      fs.mkdirSync(path.dirname(path.join(tree, f.path)), { recursive: true });
+      fs.copyFileSync(path.join(r.dir, rel), path.join(tree, f.path));
     }
     counts.fallbackMatched += p.match.fallbackMatched;
     counts.verdictsWithoutFinding += p.match.verdictsWithoutFinding;

@@ -10,9 +10,11 @@ const SPLIT = /\r?\n/;
 const SEVERITIES = /^(critical|high|medium|low|info)$/;
 const TRANSCRIPT_FILE = /^agent-(.+)\.jsonl$/;
 const NEAR_LINES = 5;
+const EXIT_NOT_CLEAN = 3;
 
-// A reply that says "No findings" on a line of its own start (after trimming), not one that mentions it mid-sentence.
-const NO_FINDINGS = /^[\s*_`>#-]*No findings\b/im;
+// A reply with a line that is "No findings" and nothing else (markdown emphasis and closing punctuation aside), not one
+// that mentions it mid-sentence or goes on after it.
+const NO_FINDINGS = /^[\s*_`>#-]*No findings[ \t*_`.!]*$/im;
 
 // { rows, skipped } of a `| sev | path:line | text |` table; null when the text holds neither a row nor "No findings".
 // `skipped` counts lines that open with a severity cell but are not a row (no trailing `|`, or a location with no :line).
@@ -172,7 +174,8 @@ function counterfactual(opts, deps) {
     confirmed: { total: t.confirmed, located: t.located, byA: t.byA, byB: t.byB, byBoth: t.byBoth, singleReviewerShare: share((t.byA + t.byB) / 2, t.located) },
     refuted: { total: t.refuted, byA: t.refA, byB: t.refB },
   }, null, 2));
-  return 0;
+  // An unreadable transcript is left out of the shares, so the result is not a clean one.
+  return t.unreadable > 0 ? EXIT_NOT_CLEAN : 0;
 }
 
 module.exports = { counterfactual, parseFindingsTable };
