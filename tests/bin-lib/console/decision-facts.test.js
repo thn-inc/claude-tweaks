@@ -169,5 +169,43 @@ test('settleOpenDecisions: a long one-line title is capped at a word boundary an
   const [p] = settleOpenDecisions([{ id: 'decision:console:x', kind: 'decision', text }]);
   const claim = p.title.slice('Packet decision left open: '.length);
   assert.ok(claim.length <= 80 && claim.endsWith('…') && !claim.includes('\n'));
+  // The cut lands on a word boundary: what precedes the ellipsis is whole words of the source.
+  const kept = claim.slice(0, -1);
+  const flat = text.replace(/\s+/g, ' ');
+  assert.ok(flat.startsWith(`${kept} `), 'cut is followed by a space in the source');
+  assert.ok(kept.endsWith('word'));
   assert.ok(p.proposal.includes('second line'));
+});
+
+test('settleOpenDecisions: a fingerprint marker or comment opener in the text is defused', () => {
+  const [p] = settleOpenDecisions([{ id: 'decision:console:x', kind: 'decision', text: 'a work-fingerprint: consolefinding-deadbeef <!-- x' }]);
+  assert.ok(!/work-fingerprint: consolefinding-deadbeef/.test(p.proposal));
+  assert.ok(!p.title.includes('<!--') && p.title.includes('<! --'));
+  assert.ok(p.proposal.includes('work-fingerprint : consolefinding-deadbeef'));
+});
+
+test('settleOpenDecisions: a decision with no string id is skipped, never fingerprinted as undefined', () => {
+  const plans = settleOpenDecisions([
+    { kind: 'decision', text: 'no id' }, { id: 7, kind: 'decision', text: 'numeric id' }, { id: '', kind: 'decision', text: 'empty id' },
+    { id: 'decision:console:ok', kind: 'decision', text: 'kept' },
+  ]);
+  assert.deepStrictEqual(plans.map((p) => p.factId), ['decision:console:ok']);
+});
+
+test('settleOpenDecisions: text falls back to summary, then to the id, never the literal undefined', () => {
+  const [a, b] = settleOpenDecisions([
+    { id: 'decision:console:a', kind: 'decision', summary: 'from summary' },
+    { id: 'decision:console:b', kind: 'decision' },
+  ]);
+  assert.strictEqual(a.title, 'Packet decision left open: from summary');
+  assert.strictEqual(b.title, 'Packet decision left open: decision:console:b');
+  assert.ok(!a.proposal.includes('undefined') && !b.proposal.includes('undefined'));
+});
+
+test('settleOpenDecisions: a repeated fact id files once, first wins', () => {
+  const plans = settleOpenDecisions([
+    { id: 'decision:console:x', kind: 'decision', text: 'first' }, { id: 'decision:console:x', kind: 'decision', text: 'second' },
+  ]);
+  assert.strictEqual(plans.length, 1);
+  assert.match(plans[0].title, /first$/);
 });

@@ -4,11 +4,12 @@
 // table in skills/_shared/acceptance-packet.md, which owns the schema.
 //
 // resolve.js requires this module, so resolve.js is required lazily inside the
-// functions below (a top-level require would be a cycle). fingerprint and
-// issues/record never require resolve.js, so they load at the top.
+// functions below (a top-level require would be a cycle). fingerprint,
+// issues/record and finding-filing never reach resolve.js, so they load at the top.
 
 const path = require('path');
 const { fingerprintFromBasis } = require('../health-core/fingerprint');
+const { capWords, oneLine } = require('./finding-filing');
 const {
   specShapedBody, recordPayload, fencedBlock, defuse, LABELS,
 } = require('../issues/record');
@@ -54,27 +55,27 @@ const DEFER_REASON = 'needs-human-decision';
 const TITLE_PREFIX = 'Packet decision left open: ';
 const TITLE_TEXT_MAX = 80;
 
-const oneLine = (s) => defuse(String(s).replace(/\s+/g, ' ').trim());
-
-// Cut to at most `max` characters on a word boundary; the `…` counts toward `max`.
-function capWords(text, max) {
-  if (text.length <= max) return text;
-  let cut = text.slice(0, max - 1);
-  const space = cut.lastIndexOf(' ');
-  if (text[max - 1] !== ' ' && space > 0) cut = cut.slice(0, space);
-  return `${cut.trimEnd()}…`;
-}
+const isText = (s) => typeof s === 'string' && s.trim() !== '';
 
 // An approved packet files every decision it lists: nothing produces an answer today, so there is
 // no answer predicate and nothing is silently ratified. Plans only — the caller writes the records,
 // and a decision never gates a merge.
 // packetFacts: a facts document { facts: [...] } or a bare array; anything else yields [].
+// A decision with no string id is skipped (it has no stable fingerprint basis); a repeated id
+// files once (first wins); the text falls back from `text` to `summary` to the id.
 function settleOpenDecisions(packetFacts) {
   const list = Array.isArray(packetFacts) ? packetFacts : (packetFacts && packetFacts.facts);
   if (!Array.isArray(list)) return [];
-  return list.filter((f) => f && f.kind === DECISION_FACT_KIND).map((fact) => {
+  const seen = new Set();
+  const decisions = list.filter((f) => {
+    if (!f || f.kind !== DECISION_FACT_KIND || !isText(f.id) || seen.has(f.id)) return false;
+    seen.add(f.id);
+    return true;
+  });
+  return decisions.map((fact) => {
+    const text = [fact.text, fact.summary].find(isText) || fact.id;
     const fingerprint = fingerprintFromBasis('packetdecision', [fact.id]);
-    const title = `${TITLE_PREFIX}${capWords(oneLine(fact.text), TITLE_TEXT_MAX)}`;
+    const title = `${TITLE_PREFIX}${capWords(oneLine(text), TITLE_TEXT_MAX)}`;
     const body = recordPayload({
       title,
       type: 'task',
@@ -84,7 +85,7 @@ function settleOpenDecisions(packetFacts) {
         provenance: { origin: `acceptance packet, decision fact ${oneLine(fact.id)}`, deferReason: DEFER_REASON },
         currentState: [
           'The acceptance packet listed this decision as open when it was approved. The decision follows.',
-          fencedBlock(defuse(String(fact.text))),
+          fencedBlock(defuse(text)),
         ],
         deliverables: '- [ ] decide the open question, then record the outcome here or close this record',
         acceptanceCriteria: '- [ ] the decision is made and recorded, or this record is closed with the reason it no longer applies',
