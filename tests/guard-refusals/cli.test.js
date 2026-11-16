@@ -42,7 +42,7 @@ test('CLI exits 2 on a missing --projects-dir and prints JSON with --json', () =
   assert.equal(ok.out.length, 1);
   const out = JSON.parse(ok.out[0]);
 
-  assert.deepEqual(Object.keys(out), ['window', 'files', 'unreadable', 'calls', 'refusals', 'perPipeline', 'byReason', 'byShape', 'byFence', 'top']);
+  assert.deepEqual(Object.keys(out), ['window', 'files', 'unreadable', 'calls', 'refusals', 'perPipeline', 'byReason', 'byShape', 'byFence', 'top', 'guards', 'byEffect', 'byReadClass', 'byRewrite', 'rows']);
   assert.deepEqual(out.window, { since: '2026-10-11T00:00:00.000Z', until: '2026-10-25T00:00:00.000Z' }, 'the window defaults to 14 days');
   assert.equal(out.files, 11);
   assert.equal(out.unreadable, 1);
@@ -177,4 +177,118 @@ test('CLI perPipeline counts a clean run as zero, so the mean can fall below 1 a
   const narrow = capture();
   assert.equal(run({ argv: ['--projects-dir', store, '--until', '2026-10-20T13:00:00Z', '--since-days', '1', '--json', '--skills-root', skillsRootFor('echo placeholder-command-line')], deps: narrow.deps }), 0);
   assert.deepEqual(JSON.parse(narrow.out[0]).perPipeline, { runs: 4, attributedRefusals: 3, unattributedRefusals: 5, mean: 0.75, median: 1 });
+});
+
+// ---- #5587: effect, read class and rewrite per row. Hand-written fixtures, never transcript content. ----
+
+const { STORE_MTIME } = require('../helpers/guard-refusals-store');
+const { ISOLATION_CLAUSE } = require('../../plugin/bin/lib/hooks/harness-refusal');
+
+const HARNESS_BASH = `This session${ISOLATION_CLAUSE}/wt, but this command is too complex to verify that it stays inside the worktree. Refusing to run it.`;
+const HARNESS_FILE = `This session${ISOLATION_CLAUSE}/wt. Edit the worktree copy of this file instead of the shared-checkout path.`;
+const WORKTREE_ALWAYS = 'PreToolUse:Bash hook error: claude-tweaks: this project requires an isolated worktree for this command.';
+
+function writeStore(entries) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-refusals-cli-rows-'));
+  process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
+  const slug = path.join(dir, '-Users-me-guards');
+  fs.mkdirSync(slug, { recursive: true });
+  const file = path.join(slug, 's1.jsonl');
+  fs.writeFileSync(file, `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`);
+  fs.utimesSync(file, STORE_MTIME / 1000, STORE_MTIME / 1000);
+  return dir;
+}
+
+const use = (id, name, input, cwd = '/wt') => {
+  const e = { type: 'assistant', timestamp: '2026-10-20T11:00:00.000Z', message: { content: [{ type: 'tool_use', id, name, input }] } };
+  if (cwd !== null) e.cwd = cwd;
+  return e;
+};
+const result = (id, content) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content }] } });
+
+function scanJson(entries) {
+  const c = capture();
+  assert.equal(run({ argv: ['--projects-dir', writeStore(entries), '--until', UNTIL, '--skills-root', skillsRootFor('echo x'), '--json'], deps: c.deps }), 0);
+  return JSON.parse(c.out[0]);
+}
+
+const ROW_ENTRIES = [
+  use('t_a', 'Bash', { command: 'ls /a\\ b/c' }), result('t_a', HARNESS_BASH),
+  use('t_b', 'Bash', { command: 'ls /a\\ b/c' }, null), result('t_b', HARNESS_BASH),
+  use('t_c', 'Bash', { command: 'ls /a/b' }), result('t_c', HARNESS_BASH),
+];
+
+test('AC5: rewrite is the rule ids at HEAD for a row with a cwd, null without one, [] when nothing changes', () => {
+  const out = scanJson(ROW_ENTRIES);
+  const byId = Object.fromEntries(out.rows.map((r) => [r.toolUseId, r]));
+  assert.deepEqual(byId.t_a.rewrite, ['quote-escaped-space']);
+  assert.equal(byId.t_b.rewrite, null);
+  assert.deepEqual(byId.t_c.rewrite, []);
+  assert.deepEqual(out.byRewrite, { 'no-cwd': 1, 'quote-escaped-space': 1, unchanged: 1 });
+  assert.deepEqual(out.refusals.map((r) => r.rewrite), [['quote-escaped-space'], null, []]);
+});
+
+test('every row carries a guard and an effect, and the new blocks count them', () => {
+  const entries = [
+    ...ROW_ENTRIES,
+    use('t_w', 'Write', { file_path: '/main/x.md' }), result('t_w', HARNESS_FILE),
+    use('t_p', 'Bash', { command: 'git commit -m x' }), result('t_p', WORKTREE_ALWAYS),
+  ];
+  const c = capture();
+  assert.equal(run({ argv: ['--projects-dir', writeStore(entries), '--until', UNTIL, '--skills-root', skillsRootFor('echo x')], deps: c.deps }), 0);
+  const table = c.out.join('\n');
+  assert.match(table, /by guard\n/);
+  assert.match(table, /by effect\n/);
+
+  const out = scanJson(entries);
+  assert.equal(out.rows.length, 5);
+  for (const r of out.rows) {
+    assert.ok(typeof r.guard === 'string' && r.guard.length > 0);
+    assert.ok(['read', 'write', 'unknown'].includes(r.effect), r.effect);
+  }
+  const sum = (m) => Object.values(m).reduce((a, b) => a + b, 0);
+  assert.equal(sum(out.guards), out.rows.length);
+  assert.equal(sum(out.byEffect), out.rows.length);
+  assert.deepEqual(out.guards, { 'harness-command': 3, 'harness-file': 1, 'plugin:worktree-always': 1 });
+  const write = out.rows.find((r) => r.toolUseId === 't_w');
+  assert.deepEqual([write.effect, write.why, write.readClass, write.rewrite], ['write', 'file tool', null, null]);
+  const plugin = out.rows.find((r) => r.toolUseId === 't_p');
+  assert.equal(plugin.rewrite, null, 'a plugin row is never a rewrite candidate');
+  assert.equal(plugin.readClass, null);
+  assert.deepEqual(out.byReadClass, { shape: 3, 'other-checkout': 0 });
+  for (const r of out.rows.filter((x) => x.guard === 'harness-command')) assert.equal(r.readClass, 'shape');
+  assert.deepEqual(Object.keys(out.rows[0]), ['toolUseId', 'file', 'line', 'tool', 'guard', 'command', 'truncated', 'reason', 'effect', 'why', 'readClass', 'rewrite', 'runId', 'ts']);
+});
+
+test('a truncated Bash row is unknown with why truncated, never read', () => {
+  const out = scanJson([
+    use('t_long', 'Bash', { command: `ls ${'a'.repeat(20000)}; rm x` }), result('t_long', HARNESS_BASH),
+  ]);
+  const row = out.rows.find((r) => r.toolUseId === 't_long');
+  assert.equal(row.truncated, true);
+  assert.equal(row.command.length, 20000, 'rows keep the whole stored command');
+  assert.equal(row.effect, 'unknown');
+  assert.equal(row.why, 'truncated');
+  assert.equal(row.readClass, null);
+  assert.equal(out.refusals[0].effect, 'unknown');
+});
+
+test('readClass is other-checkout for a read refused for reaching another checkout, shape otherwise', () => {
+  const out = scanJson([
+    use('t_cd', 'Bash', { command: 'cd /main && ls' }), result('t_cd', `This session${ISOLATION_CLAUSE}/wt, but this command changes directory to /main. Refusing to run it.`),
+    use('t_ls', 'Bash', { command: 'ls /a/b' }), result('t_ls', HARNESS_BASH),
+    use('t_rm', 'Bash', { command: 'rm /a/b' }), result('t_rm', HARNESS_BASH),
+    use('t_mon', 'Monitor', { command: 'tail -f x' }), result('t_mon', HARNESS_BASH),
+  ]);
+  const byId = Object.fromEntries(out.rows.map((r) => [r.toolUseId, r]));
+  assert.equal(byId.t_rm.effect, 'write');
+  assert.equal(byId.t_rm.readClass, null);
+  assert.equal(byId.t_mon.effect, 'unknown');
+  assert.equal(byId.t_mon.why, 'Monitor tool');
+  assert.equal(byId.t_mon.rewrite, null, 'only Bash rows are rewrite candidates');
+  assert.equal(byId.t_ls.readClass, 'shape');
+  assert.equal(byId.t_cd.reason, 'cd-shared');
+  assert.equal(byId.t_cd.effect, 'read');
+  assert.equal(byId.t_cd.readClass, 'other-checkout');
+  assert.deepEqual(out.byReadClass, { 'other-checkout': 1, shape: 1 });
 });
