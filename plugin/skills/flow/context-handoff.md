@@ -49,7 +49,7 @@ A top-level run never hands off `wrap-up`: its `--next-steps` stops before `wrap
 
 1. **Resolve** the substitutions. `{run}` is the literal run dir. `{worktree}` is what `git rev-parse --show-toplevel` prints, run as its own call. `{plugin-root}` is this session's `$CLAUDE_PLUGIN_ROOT` as a literal path. The model comes from `node "{plugin-root}/bin/resolve-profile.js" capable` (the profile dispatch's first call uses), passed as `model` on the `Agent` call.
 2. **Dispatch** one `Agent` with the template below inlined verbatim and the substitutions filled in. This is a dispatch site under `_shared/subagent-output-contract.md`.
-3. **Wait** for the child. The template's wait bound (`sleep 20` at most 60 times, 20 minutes, stretched to at most 60 while the write-capable child keeps changing its worktree) applies only when this agent is itself a subagent, such as an earlier handoff's child, whose own prompt already carries that rule: wait within the turn under it and never end the turn with the child outstanding. A top-level session waits for the child's task-notification with no bound, as the parallel-wave orchestrator does (`_shared/dispatch-waiting.md`): a child phase often runs past 20 minutes. Never redo the child's steps in this session, since a child that has not reported may still be writing. Any blocked report (a subagent's bound expired, the `Agent` call failed) must tell the reader to confirm the child has stopped before anyone runs `resume`, then give `{run}/handoff.json`'s `resume` line on its own line.
+3. **Wait** for the child. The template's wait bound (`wait-for.js agents` calls for a 20-minute window, stretched to at most 3 windows, 60 minutes, while the write-capable child keeps changing its worktree) applies only when this agent is itself a subagent, such as an earlier handoff's child, whose own prompt already carries that rule: wait within the turn under it and never end the turn with the child outstanding. A top-level session waits for the child's task-notification with no bound, as the parallel-wave orchestrator does (`_shared/dispatch-waiting.md`): a child phase often runs past 20 minutes. Never redo the child's steps in this session, since a child that has not reported may still be writing. Any blocked report (a subagent's bound expired, the `Agent` call failed) must tell the reader to confirm the child has stopped before anyone runs `resume`, then give `{run}/handoff.json`'s `resume` line on its own line.
 4. **Relay** the child's final report, unchanged. A child that did not report, or whose report names an abandoned write-capable child (the template's `STATUS: BLOCKED` naming that child and its unit), stops this agent, because it may still be writing. Otherwise, if it is a failure card or its status is not `DONE`/`DONE_WITH_CONCERNS`, stop there: a gate failed (Step 4 item 3). The exception is a multi-spec failure card, whatever its status word, under a step list holding `wrap-up`: `multispec-failure-handling.md` requires the console after a HARD-GATE abort, so this agent still takes the status-filtered loop at the end of this item. After relaying the child's Steps Complete note, this agent runs `wrap-up` and Step 5 itself. It does so when `wrap-up` is in its step list, continuing its own Step 4 loop at that step with `$PIPELINE_RUN_DIR` unchanged in a single-spec run; a multi-spec run's per-record `wrap-up` exports each record's own `{parent}/spec-{N}/` (`multi-spec.md`'s environment-variable table). With no `wrap-up` in the list, the relayed note is this run's close. A multi-spec child's lists carry no `wrap-up`, so when this agent's own step list carries `wrap-up`, after relaying it runs `wrap-up` in run order for each record whose `manifest.yml` status is none of `complete`, `failed`, `not-run`, then the consolidated pass. A `record-steps=` child's own lists never carry `wrap-up`, so its relayed note is its close.
 
 The child may cross the cap and hand off in turn. That does not end because each hop finishes a step (a resume at `review` auto-inserts `test` first, `steps-and-gates.md`'s Auto-insert rule). The chain ends because a fresh agent starts well under the cap and so finishes several steps before it nears the cap again. The gauge's per-run bound of three handoffs (Reading the result) caps it regardless.
@@ -89,12 +89,19 @@ normal call with a large explicit timeout and its output redirected to a file if
 never with `run_in_background` — and never end the turn waiting on a background run you
 started (#1965). A nested `Agent` call launches async, and its completion notification reaches you only
 while your turn is alive (when the call instead returns the child's own reply, that child has
-reported and needs no wait): keep your turn alive with bounded foreground waits — repeated
-`sleep 20` Bash calls, at most 60 (20 minutes) per wave of children (the set launched
-together), each wait logged as one line (what you wait on, the iteration against the bound, how
-many children are still pending), stopping as soon as every child's `<task-notification>` has
+reported and needs no wait): keep your turn alive with bounded foreground waits —
+`node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`, 20 minutes per wave of children (the set launched
+together), stopping as soon as every child's `<task-notification>` has
 arrived, never reading or tailing a running child's `output_file` — until every child you
-launched has reported, and never end your turn with one outstanding. With no `Agent` tool
+launched has reported, and never end your turn with one outstanding. `{ids}` are the agent ids
+of the children whose notification has not arrived, comma-separated. Make each call a
+foreground Bash call with no `timeout` parameter: the command returns within 150 seconds, under
+the 180-second ceiling a dispatched agent's foreground call has (#5602). Exit 0 means a listed
+child stopped: its notification is in hand or arrives next; call again while any child is
+outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3 with `"bound":"deadline"`
+means the 20-minute window is over: the bound has expired, and when the rule below grants
+another window, the next call is that window. Exit 2 is a failed wait call. The command's
+output line is the wait's log line, so write no separate one. With no `Agent` tool
 (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
 expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
 child is abandoned and no longer counts as outstanding, so your final reply still ends with
@@ -114,7 +121,7 @@ names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-wo
 --no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
 piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
 each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
+child shows a change, log one wait line and grant one more 20-minute window; stop when a whole window
 passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
 progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
 sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
@@ -122,9 +129,9 @@ failed wait call counts as no wait but ends its window, and the probe runs as at
 as no change, never retried in another form. Read-only units keep the first-bound self-judge.
 Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
 changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
-call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
-another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
-silent at the bound. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution
+call that is blocked or fails is not a wait and does not move the window's deadline; never retry
+it in another form (a `sleep` of any length, or a longer, wrapped or backgrounded call): treat
+every child still outstanding as silent at the bound. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution
 Discipline section. Give any agent you dispatch this same instruction, whether it is a nested
 Task/Agent call or a `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every
 interim reply (#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a

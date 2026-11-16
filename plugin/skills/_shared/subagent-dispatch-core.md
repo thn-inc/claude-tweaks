@@ -34,9 +34,8 @@ When the dispatch is for a verification or test-running agent (no commits), the 
 
 During worktree-mode pipeline runs this rule is mechanically enforced — the plugin's PreToolUse hook denies commits whose resolved checkout differs from the run's recorded worktree assignment.
 
-**A denial is recoverable, and the dispatch prompt must say how.** E1 resolves the run's worktree assignment from `run-state.json`, and under concurrent sibling pipeline runs that lookup can read as stale or misattributed — so a correctly-placed implementer can still see its *first* commit denied. The fix is an idempotent re-stamp of the assignment onto this run, from either checkout: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "<resolved-run-dir>" "<worktree>"`, then retry the commit. Both values must be substituted as literal absolute paths before dispatch, per the substitution rule above — never `--run` omitted, which lets the command's fallback resolver pick some other session's run and corrupt its state. A denial that survives one re-stamp is a genuine wrong-checkout mismatch: report `BLOCKED`, do not keep retrying. Observed on record #315 — both dispatched implementers hit this denial on their first commit and both cleared it with one re-stamp, solely because the dispatch prompt had been pre-warned.
-
-**One plain command per Bash call.** Any dispatched agent — implementer, reviewer, or lens agent — whose session is worktree-isolated (it entered its worktree via the native `EnterWorktree` tool, or inherits a harness-pinned one, as every dispatch under `worktree-always` does) runs under a harder constraint than anything above: `&&`/`;` chains, a variable assigned and then used in the same call, loops, and heredocs are refused by shape, not just discouraged by convention. The dispatch prompt must say so explicitly — one plain command per Bash call, `Edit`/`Write` instead of a heredoc for a path inside the agent's own worktree, and no reliance on a shell variable surviving between calls. The refused shapes and their workarounds are documented once, canonically, in `_shared/scratch-worktree.md` §7 ("Shell constraint") — cite it rather than restating it here. Observed across five implementer dispatches on the skill-invocation-ledger build: every dispatch that baked this constraint into its prompt up front avoided the failure; none that omitted it did. #3480's medium-tier review lens agents, whose prompts lacked it, hit the guard about 14 times in three minutes on their own scratch files (#3675).
+**A denial is recoverable, and the dispatch prompt must say how.** E1 resolves the run's worktree assignment from `run-state.json`, and under concurrent sibling pipeline runs that lookup can read as stale or misattributed — so a correctly-placed implementer can still see its *first* commit denied. The fix is an idempotent re-stamp of the assignment onto this run, from either checkout: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "<resolved-run-dir>" "<worktree>"`, then retry the commit. Both values must be substituted as literal absolute paths before dispatch, per the substitution rule above — never `--run` omitted, which lets the command's fallback resolver pick some other session's run and corrupt its state. A denial that survives one re-stamp is a genuine wrong-checkout mismatch: report `BLOCKED`, do not keep retrying.
+**One plain command per Bash call.** Any dispatched agent — implementer, reviewer, or lens agent — whose session is worktree-isolated (it entered its worktree via the native `EnterWorktree` tool, or inherits a harness-pinned one, as every dispatch under `worktree-always` does) runs under a harder constraint than anything above: `&&`/`;` chains, a variable assigned and then used in the same call, loops, and heredocs are refused by shape, not just discouraged by convention. The dispatch prompt must say so explicitly — one plain command per Bash call, `Edit`/`Write` instead of a heredoc for a path inside the agent's own worktree, and no reliance on a shell variable surviving between calls. The refused shapes and their workarounds are documented once, canonically, in `_shared/scratch-worktree.md` §7 ("Shell constraint") — cite it rather than restating it here. Prompts that omitted it hit the guard repeatedly (#3675).
 
 Inline this line verbatim into every `/claude-tweaks:review` Step 3 dispatch prompt (lens, debate, refutation, gap-sweep, tiebreak), outside any byte-pinned Calibration/Output block; an implementer or other dispatch states the rule above in its own prompt:
 
@@ -54,9 +53,7 @@ on Claude Code (#3722): interactive 2.1.302 holds it open and re-wakes it when a
 nested child, whose result goes to the top-level session instead; headless 2.1.302 and later runs a
 nested `Agent` call synchronously. An agent cannot tell in advance whether it will be re-woken, so it
 never relies on one. So a backgrounded `Bash` call or `Monitor` watch it ends on can hang it until an
-outside caller intervenes. Observed as a harness-level `contract-violation` pattern: 13+ occurrences
-of agents narrating "waiting for the background task/Monitor notification" and stopping mid-turn in
-one build phase, plus 2 more in a review/wrap-up session, corrected only externally (#1965, #2271).
+outside caller intervenes (#1965, #2271).
 Run long-running commands in the **foreground** of the current turn — a generous timeout, output
 redirected to a file if it's long — never `run_in_background`, and never end a turn hoping a
 notification will re-wake it. `test/verification.md`'s Foreground rule and
@@ -69,14 +66,20 @@ async — its tool result is launch metadata, not the child's reply — and the 
 the child's own reply (headless 2.1.302 and later, above), that child has reported and needs no
 wait. A dispatched agent may fan
 out nested agents at every tier (lens pairs, single reads, curation judges), but it keeps its own
-turn alive with bounded foreground waits — repeated `sleep 20` Bash calls, at most 60 (20 minutes)
+turn alive with bounded foreground waits —
+`node "${CLAUDE_PLUGIN_ROOT}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`, 20 minutes
 per wave of children (the set launched together; a child that keeps editing its worktree earns
-more windows, below), each wait logged per the bounded-polling
-paragraph below (what is waited on, the iteration against the bound, how many children are still
-pending), stopping as soon as every child's `<task-notification>` has arrived, never reading or
-tailing a running child's `output_file` (a failed child's output is retrieved per Failed-agent
-retrieval below) — until every child has reported, and never ends its turn with a child
-outstanding. A reply that ends without a tool call ends the turn, whatever is still in
+more windows, below), stopping as soon as every child's `<task-notification>` has arrived, never
+reading or tailing a running child's `output_file` (a failed child's output is retrieved per
+Failed-agent retrieval below) — until every child has reported, and never ends its turn with a
+child outstanding. `{ids}` are the agent ids of the children whose notification has not arrived,
+comma-separated. Each call is a foreground Bash call with no `timeout` parameter: the command
+returns within 150 seconds, under the 180-second ceiling a dispatched agent's foreground call has
+(#5602). Exit 0 means a listed child stopped: its notification is in hand or arrives next; call
+again while any child is outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3 with
+`"bound":"deadline"` means the 20-minute window is over: the bound has expired, and when the rule
+below grants another window, the next call is that window. Exit 2 is a failed wait call. The
+command's output line is the wait's log line, so the agent writes no separate one. A reply that ends without a tool call ends the turn, whatever is still in
 flight. **Fallback:** when no `Agent`/`Task` tool exists (`ToolSearch` finds none, deferred or
 otherwise — the normal case in a cloud routine sandbox), or a child has not reported when the
 bound expires, judge that unit in-session, applying the child's own checklist or template as a
@@ -104,7 +107,7 @@ the worktree its prompt names, read-only: `git -C "{child-worktree}" rev-parse H
 --no-optional-locks diff HEAD` piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right
 after launching the wave, then at each bound; lacking one, the first bound's probe sets it and
 grants a window). Per wave, while any child shows a change, log one wait line and grant one more
-60-wait window; stop when a whole window passes with no change, or at a ceiling of 3 windows (60
+20-minute window; stop when a whole window passes with no change, or at a ceiling of 3 windows (60
 minutes) per wave, naming which fired (`no progress for one window` or `ceiling reached while
 progressing`) and every unchanged child. Children sharing a worktree progress together; a child
 whose prompt names no worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the
@@ -112,9 +115,9 @@ probe runs as at any bound; a failed probe command counts as no change, never re
 form. Read-only units keep the first-bound self-judge. Exception: a rendered-UI unit (review Step
 6/6.5) gets more windows while its artifact directory changes; stage its late result
 (`_shared/rendered-ui-units.md`). A wait call that is blocked or fails (a
-harness or hook refusal) is not a wait and never counts toward the bound; never retry it in another
-form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as silent at the
-bound and apply the fallback above.
+harness or hook refusal, or exit 2) is not a wait and does not move the window's deadline; never
+retry it in another form (a `sleep` of any length, or a longer, wrapped or backgrounded call):
+treat every child still outstanding as silent at the bound and apply the fallback above.
 
 **Top-level dispatchers.** A session waiting on its own `Agent`/`Task` children within its turn is
 the pattern `_shared/dispatch-waiting.md` documents; this section restricts only what a dispatched

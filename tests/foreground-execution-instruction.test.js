@@ -14,7 +14,10 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
@@ -88,9 +91,7 @@ function coreForegroundSection(text) {
 // handoff template -- so each copy's list spreads this one array, and each pattern matches exactly once
 // per copy so its go-red proof removes the only occurrence.
 const SHARED_RULE = [
-  [/`sleep\s+20`\s+Bash\s+calls,\s+at\s+most\s+60\s+\(20\s+minutes\)\s+per\s+wave\s+of\s+children/, 'the sleep 20 x 60 (20 minute) per-wave bound'],
-  [/blocked\s+or\s+fails[^.]*?is\s+not\s+a\s+wait\s+and\s+never\s+counts\s+toward\s+the\s+bound;\s+never\s+retry\s+it\s+in\s+another\s+form/, 'a blocked or failed wait never counts and is never retried in another form'],
-  [/how\s+many\s+children\s+are\s+still\s+pending/, 'each wait logs how many children are still pending'],
+  [/blocked\s+or\s+fails[^.]*?is\s+not\s+a\s+wait\s+and\s+does\s+not\s+move\s+the\s+window's\s+deadline;\s+never\s+retry\s+it\s+in\s+another\s+form\s+\(a\s+`sleep`\s+of\s+any\s+length/, "a blocked or failed wait does not move the window's deadline and is never retried in another form"],
   [/\bis\s+abandoned\b/, 'a child self-judged at the bound is abandoned'],
   [/no\s+longer\s+counts\s+as\s+outstanding/, 'an abandoned child no longer counts as outstanding'],
   [/final\s+reply\s+still\s+ends\s+with\s+(?:its\s+usual\s+)?`STATUS:/, 'the final reply after an abandoned child still ends with STATUS:'],
@@ -101,6 +102,21 @@ const SHARED_RULE = [
   [/write-capable\s+child[\s\S]*?never\s+redone/, 'a write-capable child silent at the bound is never redone in-session'],
   [/returns\s+the\s+child's\s+own\s+reply[\s\S]{0,80}?that\s+child\s+has\s+reported\s+and\s+needs\s+no\s+wait/, "a call that returns the child's own reply means that child has reported"],
 ];
+
+// #5604: the wait is one CLI call, and every copy of the rule says how to read its result. Each
+// pattern matches exactly once per copy; the invocation alternation covers core's `${CLAUDE_PLUGIN_ROOT}`
+// and item 7's / the handoff template's `{plugin-root}`.
+const WAIT_FOR_FACTS = [
+  [/`node\s+"(?:\$\{CLAUDE_PLUGIN_ROOT\}|\{plugin-root\})\/bin\/wait-for\.js"\s+agents\s+--ids\s+\{ids\}\s+--max-seconds\s+150`,\s+20\s+minutes\s+per\s+wave\s+of\s+children/, 'the wait-for.js agents invocation with its 20-minute window per wave'],
+  [/`\{ids\}`\s+are\s+the\s+agent\s+ids\s+of\s+the\s+children\s+whose\s+notification\s+has\s+not\s+arrived,\s+comma-separated/, '{ids} are the outstanding children, comma-separated'],
+  [/foreground\s+Bash\s+call\s+with\s+no\s+`timeout`\s+parameter:\s+the\s+command\s+returns\s+within\s+150\s+seconds,\s+under\s+the\s+180-second\s+ceiling/, 'a foreground call with no timeout parameter, returning under the 180-second ceiling'],
+  [/Exit\s+0\s+means\s+a\s+listed\s+child\s+stopped:\s+its\s+notification\s+is\s+in\s+hand\s+or\s+arrives\s+next;\s+call\s+again\s+while\s+any\s+child\s+is\s+outstanding/, 'exit 0 means a listed child stopped'],
+  [/Exit\s+3\s+with\s+`"bound":"call"`\s+means\s+call\s+again/, 'exit 3 with a call bound means call again'],
+  [/Exit\s+3\s+with\s+`"bound":"deadline"`\s+means\s+the\s+20-minute\s+window\s+is\s+over:[^.]*?the\s+next\s+call\s+is\s+that\s+window/, 'exit 3 with a deadline bound ends the 20-minute window'],
+  [/Exit\s+2\s+is\s+a\s+failed\s+wait\s+call/, 'exit 2 is a failed wait call'],
+  [/The\s+command's\s+output\s+line\s+is\s+the\s+wait's\s+log\s+line,\s+so\s+(?:write|the\s+agent\s+writes)\s+no\s+separate\s+one/, "the command's output line is the wait's log line"],
+];
+const INVOCATION_NEEDLE = '/bin/wait-for.js" agents --ids';
 
 // Each `\s+` absorbs the hard line wrapping, as in REQUIRED above.
 const KEEP_ALIVE = [
@@ -379,7 +395,8 @@ const countOf = (squashed, pattern) => squashed.split(pattern).length - 1;
 function renderedCounts(prompt) {
   const squashed = prompt.replace(/\s+/g, ' ');
   return {
-    primitive: [...squashed.matchAll(new RegExp(PRIMITIVE.source, 'g'))].length,
+    invocation: countOf(squashed, INVOCATION_NEEDLE),
+    filled: countOf(squashed, 'node "/p/root/bin/wait-for.js" agents --ids'),
     probe: countOf(squashed, 'probe the worktree its prompt names, read-only'),
     runInBackground: countOf(squashed, '`run_in_background`'),
     projectTestCmd: countOf(squashed, "the project's test command"),
@@ -387,11 +404,14 @@ function renderedCounts(prompt) {
 }
 const renderCall = (text, call) => renderTaskPrompt(text, { ...RENDER_OPTS, call });
 
-test('AC1.1 AC1.2: a rendered first-call and second-call prompt state the wait rule once (#5601)', () => {
+test('AC4.1: a rendered first-call and second-call prompt each hold the invocation once, plugin root filled (#5604)', () => {
   const text = readText(TASK_PROMPT);
   for (const call of ['first', 'second']) {
-    const counts = renderedCounts(renderCall(text, call));
-    assert.equal(counts.primitive, 1, `${call} call: the sleep-20 primitive`);
+    const rendered = renderCall(text, call);
+    const counts = renderedCounts(rendered);
+    assert.equal(counts.invocation, 1, `${call} call: the wait-for.js invocation`);
+    assert.equal(counts.filled, 1, `${call} call: the invocation with the plugin root filled`);
+    assert.ok(!rendered.replace(/\s+/g, ' ').includes('{plugin-root}/bin/wait-for.js'), `${call} call: no unfilled {plugin-root} in the invocation`);
     assert.equal(counts.probe, 1, `${call} call: the worktree probe`);
     assert.ok(counts.runInBackground >= 1, `${call} call: names run_in_background`);
     assert.ok(counts.projectTestCmd >= 1, `${call} call: names the project's test command`);
@@ -417,8 +437,17 @@ test('AC1.1: the rendered-count check goes red with a template paragraph restore
   assert.notEqual(restored, text);
   for (const call of ['first', 'second']) {
     const counts = renderedCounts(renderCall(restored, call));
-    assert.equal(counts.primitive, 2, `${call} call: the base-commit primitive count`);
     assert.equal(counts.probe, 2, `${call} call: the base-commit probe count`);
+  }
+});
+
+test('AC4.1: the rendered-count check goes red with the invocation line restored in a template (#5604)', () => {
+  const text = readText(TASK_PROMPT);
+  const restored = withParagraphRestored(text, 'keep alive with `node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`.');
+  assert.notEqual(restored, text);
+  for (const call of ['first', 'second']) {
+    const counts = renderedCounts(renderCall(restored, call));
+    assert.equal(counts.invocation, 2, `${call} call: the invocation held once by item 7 and once by the restored line`);
   }
 });
 
@@ -428,7 +457,7 @@ test('AC1.1: the rendered-count check goes red with a template paragraph restore
 const templateDefects = (blocks) => blocks.flatMap(([label, block]) => {
   const squashed = block.replace(/\s+/g, ' ');
   const foreground = block.split(/\r?\n\r?\n/).some((p) => p.startsWith('Foreground execution (required):'))
-    || new RegExp(PRIMITIVE.source).test(squashed)
+    || squashed.includes(INVOCATION_NEEDLE)
     || squashed.includes('probe the worktree its prompt names, read-only');
   return foreground || countOf(block, '{context-pack}') !== 1 ? [label] : [];
 });
@@ -477,10 +506,8 @@ test('AC2.1: the template-defect check goes red for an indented or re-headed res
   }
 });
 
-// The primitive's numbers (sleep interval, call cap, minutes) are restated in three copies; they must
-// agree. Each copy is reduced to the one place the primitive appears in it.
-const PRIMITIVE = /`sleep\s+(\d+)`\s+Bash\s+calls,\s+at\s+most\s+(\d+)\s+\((\d+)\s+minutes\)/g;
-const EXPECTED_PRIMITIVE = '20/60/20';
+// The invocation line (its call bound and window length) is restated in three copies; they must
+// agree. Each copy is reduced to the one place the rule appears in it.
 function primitiveCopies() {
   return {
     'subagent-dispatch-core.md': coreForegroundSection(readText(CORE)),
@@ -488,32 +515,81 @@ function primitiveCopies() {
     'context-handoff.md template': handoffWaitParagraph(readText(HANDOFF)),
   };
 }
-const primitiveOf = (text) => [...text.matchAll(PRIMITIVE)].map((m) => m.slice(1).join('/'));
-const statesPrimitiveOnce = (text) => {
-  const found = primitiveOf(text);
-  return found.length === 1 && found[0] === EXPECTED_PRIMITIVE;
-};
+const countOfSquashed = (text, needle) => countOf(text.replace(/\s+/g, ' '), needle);
+const statesInvocationOnce = (text) => countOfSquashed(text, INVOCATION_NEEDLE) === 1
+  && /--max-seconds\s+150`,\s+20\s+minutes\s+per\s+wave/.test(text);
 const mismatchedPrimitiveCopies = (copies) => Object.entries(copies)
-  .filter(([, text]) => !statesPrimitiveOnce(text))
+  .filter(([, text]) => !statesInvocationOnce(text))
   .map(([name]) => name);
 
-test('the keep-alive primitive (sleep 20, at most 60, 20 minutes) agrees across all three copies (#3078, #4557)', () => {
-  assert.deepEqual(mismatchedPrimitiveCopies(primitiveCopies()), [], 'every copy of the keep-alive primitive must state sleep 20, at most 60 (20 minutes), exactly once');
+test('AC1.1: each copy holds the invocation line exactly once, with --max-seconds 150 and a 20-minute window (#5604)', () => {
+  assert.deepEqual(mismatchedPrimitiveCopies(primitiveCopies()), [], 'every copy of the keep-alive rule must state the wait-for.js invocation exactly once, with --max-seconds 150 and a 20-minute window');
 });
 
-test('a mismatched keep-alive primitive copy can actually go red (discrimination proof)', () => {
+test('AC1.1: a mismatched invocation copy can actually go red (discrimination proof)', () => {
   const copies = primitiveCopies();
   for (const name of Object.keys(copies)) {
     for (const [label, doctor] of [
-      ['interval', (t) => t.replace(/`sleep\s+20`/, '`sleep 30`')],
-      ['cap', (t) => t.replace(/at\s+most\s+60/, 'at most 15')],
-      ['minutes', (t) => t.replace(/\(20\s+minutes\)/, '(5 minutes)')],
+      ['call bound', (t) => t.replace(/--max-seconds\s+150/, '--max-seconds 100')],
+      ['window', (t) => t.replace(/20\s+minutes\s+per\s+wave/, '30 minutes per wave')],
+      ['duplicate', (t) => `${t} node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`],
     ]) {
       const doctored = doctor(copies[name]);
       assert.notEqual(doctored, copies[name], `anchor text for the ${label} in ${name} not found — proof cannot discriminate`);
       assert.deepEqual(mismatchedPrimitiveCopies({ ...copies, [name]: doctored }), [name], `a ${label} mismatch in only ${name} must turn exactly that copy red`);
     }
   }
+});
+
+test('AC1.1 AC1.2: every copy states each wait-for.js fact (#5604)', () => {
+  for (const [name, text] of Object.entries(primitiveCopies())) {
+    assert.deepEqual(missingFactsOf(WAIT_FOR_FACTS)(text), [], name);
+  }
+});
+
+test('AC1.2: each wait-for.js fact goes red when removed from any single copy (discrimination proof)', () => {
+  for (const text of Object.values(primitiveCopies())) {
+    assertEachPatternGoesRed(text, WAIT_FOR_FACTS, missingFactsOf(WAIT_FOR_FACTS));
+  }
+});
+
+test('AC5.1: the core invocation line runs against the real CLI and reports a call bound in window 1 (#5604)', (t) => {
+  const section = coreForegroundSection(readText(CORE));
+  const line = section.replace(/\s+/g, ' ').match(/`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/wait-for\.js" agents [^`]*)`/);
+  assert.ok(line, 'the core section holds no wait-for.js invocation line');
+  assert.strictEqual(line[1], 'node "${CLAUDE_PLUGIN_ROOT}/bin/wait-for.js" agents --ids {ids} --max-seconds 150');
+  const fwd = (p) => p.replace(/\\/g, '/');
+  const fill = (cmd) => {
+    let out = cmd;
+    for (const [from, to] of [
+      ['node', `"${fwd(process.execPath)}"`],
+      ['${CLAUDE_PLUGIN_ROOT}', fwd(PLUGIN)],
+      ['{ids}', 'fixture-a,fixture-b'],
+    ]) {
+      const next = out.replace(from, to);
+      assert.notEqual(next, out, `filling ${from} changed nothing`);
+      out = next;
+    }
+    return out;
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-for-5604-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const run = (cmd) => spawnSync('bash', ['-c', cmd], {
+    encoding: 'utf8',
+    windowsHide: true,
+    env: { ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir, CLAUDE_CODE_SESSION_ID: `fixture-5604-${process.pid}` },
+  });
+  const filled = fill(line[1]);
+  const bounded = filled.replace('--max-seconds 150', '--max-seconds 1');
+  assert.notEqual(bounded, filled, 'the --max-seconds replace changed nothing');
+  const result = run(bounded);
+  assert.equal(result.status, 3, `stdout: ${result.stdout} stderr: ${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim().split('\n').pop());
+  assert.equal(parsed.bound, 'call');
+  assert.equal(parsed.window, 1);
+  const control = filled.replace('--max-seconds 150', '--max-seconds 151');
+  assert.notEqual(control, filled, 'the control --max-seconds replace changed nothing');
+  assert.equal(run(control).status, 2, 'an over-ceiling --max-seconds 151 must exit 2');
 });
 
 // #3722: the dispatcher keeps only the latest reply, so a re-wake answered with the bare STATUS line
@@ -622,7 +698,7 @@ const PROGRESS_CHECK = [
   [/`git\s+-C\s+"\{child-worktree\}"\s+--no-optional-locks\s+diff\s+HEAD`\s+piped\s+to\s+`git\s+hash-object\s+--stdin`\s+\(a\s+`fatal:`\s+line\s+fails\s+the\s+probe\)/, 'the probe hashes the diff against HEAD, so re-edits count as progress (AC9.1)'],
   [/against\s+the\s+previous\s+probe\s+\(taken\s+right\s+after\s+launching\s+the\s+wave,\s+then\s+at\s+each\s+bound/, 'each bound compares with the previous probe, the first taken right after the wave launches (AC1.1)'],
   [/lacking\s+one,\s+the\s+first\s+bound's\s+probe\s+sets\s+it\s+and\s+grants\s+a\s+window/, 'with no launch probe, the first bound sets the baseline and grants one window'],
-  [/Per\s+wave,\s+while\s+any\s+child\s+shows\s+a\s+change,\s+log\s+one\s+wait\s+line\s+and\s+grant\s+one\s+more\s+60-wait\s+window/, 'per wave, a change in any child logs a wait line and grants one more 60-wait window (Decision: Reading B)'],
+  [/Per\s+wave,\s+while\s+any\s+child\s+shows\s+a\s+change,\s+log\s+one\s+wait\s+line\s+and\s+grant\s+one\s+more\s+20-minute\s+window/, 'per wave, a change in any child logs a wait line and grants one more 20-minute window (Decision: Reading B)'],
   [/stop\s+when\s+a\s+whole\s+window\s+passes\s+with\s+no\s+change/, 'BLOCKED only after a whole window with no change'],
   [/ceiling\s+of\s+3\s+windows\s+\(60\s+minutes\)\s+per\s+wave/, 'the 3-window (60-minute) ceiling'],
   [/\(`no\s+progress\s+for\s+one\s+window`\s+or\s+`ceiling\s+reached\s+while\s+progressing`\)/, 'the BLOCKED report names which of exactly two conditions fired — no third (AC8.2)'],
