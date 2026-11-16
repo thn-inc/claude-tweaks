@@ -104,3 +104,107 @@ test('#4620 AC5.1: without controlMode resolveAll is byte-identical and decision
   const truthy = run(dir, { controlMode: 'on' });
   assert.deepStrictEqual(truthy.decisionFacts, [], 'only exactly true carries');
 });
+
+// #4621: control mode routes a wrap-up upstream-feedback item by the ownership of its target repo.
+const { SECTION_STANCES, SECTIONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve'));
+
+const upstreamFile = (target, extra = '') => `<!-- upstream-target: ${target} -->\nTitle: dispatch: x\n\nbody${extra}\n`;
+const UPSTREAM_STAGED = () => ({
+  'wrap-up-upstream-1.md': upstreamFile('thn-inc/claude-tweaks'),
+  'wrap-up-upstream-2.md': upstreamFile('obra/superpowers'),
+  'wrap-up-upstream-3.md': 'body only, no target line\n',
+});
+const OWNED_THN = () => ({ ownerContext: { owner: 'thn-inc', host: 'github.com' }, ownedOwners: [] });
+const withOwnership = (upstreamOwnership) => ({ controlMode: true, deps: deps({ upstreamOwnership }) });
+
+test('#4621 AC4.1: an upstream item whose target owner is the origin owner files, naming the owned target', () => {
+  const r = run(fixture({ staged: UPSTREAM_STAGED() }), withOwnership(OWNED_THN));
+  const it = byId(r)['wrap-up-upstream-1.md'];
+  assert.strictEqual(it.resolution, 'filed');
+  assert.ok(!('carriedFrom' in it));
+  assert.ok(it.reason.includes('thn-inc/claude-tweaks'), it.reason);
+  assert.strictEqual(it.reason, 'control mode: owned target thn-inc/claude-tweaks — filed with no prompt');
+});
+
+test('#4621 AC4.2 / AC8.1: an external target is carried from filed, as a decision fact naming the target and the hold', () => {
+  const dir = fixture({ staged: UPSTREAM_STAGED() });
+  const r = run(dir, withOwnership(OWNED_THN));
+  const it = byId(r)['wrap-up-upstream-2.md'];
+  assert.strictEqual(it.resolution, CARRIED_RESOLUTION);
+  assert.strictEqual(it.carriedFrom, 'filed');
+  assert.strictEqual(it.reason, 'carried to the acceptance packet as decision:upstream:wrap-up-upstream-2.md — held: external');
+  const fact = r.decisionFacts.find((f) => f.id === 'decision:upstream:wrap-up-upstream-2.md');
+  assert.ok(fact, JSON.stringify(r.decisionFacts));
+  assert.strictEqual(fact.kind, 'decision');
+  assert.strictEqual(fact.origin, 'upstream');
+  assert.ok(fact.summary.includes('obra/superpowers') && fact.summary.includes('external'), fact.summary);
+  assert.ok(fact.text.includes('body'), 'the text carries the draft body');
+  assert.ok(fact.evidenceRef.endsWith('staged/wrap-up-upstream-2.md'), fact.evidenceRef);
+  assert.strictEqual(byId(r)['wrap-up-upstream-1.md'].resolution, 'filed');
+});
+
+test('#4621 Review Focus 1: a staged upstream file with no target line is external, held and never filed', () => {
+  const r = run(fixture({ staged: UPSTREAM_STAGED() }), withOwnership(OWNED_THN));
+  const it = byId(r)['wrap-up-upstream-3.md'];
+  assert.strictEqual(it.resolution, CARRIED_RESOLUTION);
+  assert.strictEqual(it.carriedFrom, 'filed');
+  assert.ok(it.reason.includes('external'), it.reason);
+  assert.deepStrictEqual(r.decisionFacts.map((f) => f.id).sort(), ['decision:upstream:wrap-up-upstream-2.md', 'decision:upstream:wrap-up-upstream-3.md']);
+});
+
+test('#4621: an owned-owners entry makes its owner\'s target file; the case of the target never matters', () => {
+  const dir = fixture({ staged: { 'wrap-up-upstream-1.md': upstreamFile('OBRA/superpowers'), 'wrap-up-upstream-2.md': upstreamFile('mallory/x') } });
+  const r = run(dir, withOwnership(() => ({ ownerContext: { owner: 'thn-inc', host: 'github.com' }, ownedOwners: ['obra'] })));
+  assert.deepStrictEqual(r.items.map((i) => [i.id, i.resolution]), [['wrap-up-upstream-1.md', 'filed'], ['wrap-up-upstream-2.md', 'carried']]);
+});
+
+test('#4621: no upstreamOwnership dep, or one that throws, holds every target as owner-unresolved, never files', () => {
+  for (const extra of [{}, { upstreamOwnership: () => { throw new Error('boom'); } }, { upstreamOwnership: () => ({ ownerContext: null, ownedOwners: [] }) }]) {
+    const r = run(fixture({ staged: UPSTREAM_STAGED() }), { controlMode: true, deps: deps(extra) });
+    assert.deepStrictEqual(r.items.map((i) => i.resolution), ['carried', 'carried', 'carried']);
+    assert.ok(r.items[0].reason.endsWith('held: owner-unresolved'), r.items[0].reason);
+    assert.ok(r.items[2].reason.endsWith('held: external'), 'a target-less file is external whatever the owner context');
+  }
+});
+
+test('#4621: an origin host other than github.com makes every target external', () => {
+  const r = run(fixture({ staged: UPSTREAM_STAGED() }), withOwnership(() => ({ ownerContext: { owner: 'thn-inc', host: 'git.example.com' }, ownedOwners: [] })));
+  assert.ok(r.items.every((i) => i.resolution === 'carried' && i.reason.endsWith('held: external')), JSON.stringify(r.items));
+});
+
+test('#4621: an unreadable staged upstream file reads as no target and is held as external', () => {
+  const dir = fixture({ staged: { 'wrap-up-upstream-1.md': upstreamFile('thn-inc/claude-tweaks') } });
+  const r = run(dir, { controlMode: true, deps: deps({ upstreamOwnership: OWNED_THN, readFile: (p) => { if (p.endsWith('wrap-up-upstream-1.md')) throw new Error('EACCES'); return fs.readFileSync(p, 'utf8'); } }) });
+  assert.strictEqual(r.items[0].resolution, 'carried');
+  assert.ok(r.items[0].reason.endsWith('held: external'), r.items[0].reason);
+});
+
+test('#4621: upstreamOwnership is called once however many upstream items there are, and not when there are none', () => {
+  let calls = 0;
+  const counting = () => { calls += 1; return OWNED_THN(); };
+  run(fixture({ staged: UPSTREAM_STAGED() }), withOwnership(counting));
+  assert.strictEqual(calls, 1);
+  calls = 0;
+  run(BASIC(), withOwnership(counting));
+  assert.strictEqual(calls, 0, 'no upstream item, no read');
+});
+
+test('#4621 AC6.1 / AC8.3: without controlMode every upstream item stays filed on the stance reason, with no facts and no ownership read', () => {
+  const dir = fixture({ staged: UPSTREAM_STAGED() });
+  const throwing = () => { throw new Error('upstreamOwnership must not be called outside control mode'); };
+  const stance = SECTION_STANCES[SECTIONS.UPSTREAM];
+  for (const extra of [{}, { controlMode: false }, { controlMode: 'on' }]) {
+    const r = run(dir, { ...extra, deps: deps({ upstreamOwnership: throwing }) });
+    assert.deepStrictEqual(r.items.map((i) => [i.resolution, i.reason]), [1, 2, 3].map(() => [stance.resolution, stance.reason]));
+    assert.deepStrictEqual(r.decisionFacts, []);
+  }
+});
+
+test('#4621: a hand-off draft stays carried from pending under control mode, with no ownership read', () => {
+  const throwing = () => { throw new Error('upstreamOwnership must not be called for a hand-off draft'); };
+  const r = run(fixture({ staged: { 'upstream-draft-1.md': upstreamFile('thn-inc/claude-tweaks') } }), { controlMode: true, deps: deps({ upstreamOwnership: throwing }) });
+  const it = byId(r)['upstream-draft-1.md'];
+  assert.strictEqual(it.resolution, 'carried');
+  assert.strictEqual(it.carriedFrom, 'pending');
+  assert.ok(!it.reason.includes('held:'), it.reason);
+});

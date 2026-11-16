@@ -33,9 +33,14 @@ function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions =
   return { root, runDir };
 }
 
-function fakeExec(calls, root) {
+// answers (#4621): an optional map from the whole command line (`git remote get-url origin`) to the stdout to
+// return, or to an Error to throw; it is consulted before the defaults below.
+function fakeExec(calls, root, answers = {}) {
   return (cmd, args) => {
     calls.push([cmd, ...args]);
+    const answer = answers[`${cmd} ${args.join(' ')}`];
+    if (answer instanceof Error) throw answer;
+    if (answer !== undefined) return answer;
     if (cmd === 'git' && args[0] === 'rev-parse') return `${root}\n`;
     if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:merge' }], comments: [] });
     if (cmd === 'git' && args[0] === 'apply') return '';
@@ -705,4 +710,139 @@ test('--converge fails an item whose status is outside the ledger vocabulary ins
   assert.strictEqual(await run(['--converge', items, '--run', fx.runDir], b.d), EXIT_CARRY_FAILED);
   assert.deepStrictEqual(JSON.parse(b.out()).failed, ['ledger-9']);
   assert.match(b.out(), /unrecognized status 'Open'/);
+});
+
+// #4621: wrap-up upstream-feedback items are routed by the ownership of their target repo, read from git only.
+const upstreamDraft = (target) => `<!-- upstream-target: ${target} -->\nTitle: dispatch: x\n\nbody\n`;
+const UPSTREAM_ITEMS = {
+  'wrap-up-upstream-1.md': upstreamDraft('thn-inc/claude-tweaks'),
+  'wrap-up-upstream-2.md': upstreamDraft('obra/superpowers'),
+  'wrap-up-upstream-3.md': upstreamDraft('acme/widgets'),
+};
+const BASE_POLICY_KEY = 'git show origin/main:.claude-tweaks/policy.yml';
+const ownershipAnswers = (over = {}) => ({
+  'git remote get-url origin': 'https://github.com/thn-inc/claude-tweaks.git\n',
+  'git rev-parse --abbrev-ref origin/HEAD': 'origin/main\n',
+  [BASE_POLICY_KEY]: 'owned-owners: obra\n',
+  ...over,
+});
+const upstreamFixture = (extra = {}) => controlFixture({ staged: UPSTREAM_ITEMS, ...extra });
+async function resolveWith(fx, answers) {
+  const calls = [];
+  const b = baseDeps(fx, calls, { execFile: fakeExec(calls, fx.root, answers) });
+  const code = await run(resolveArgs(fx), b.d);
+  return { code, calls, out: b.out(), err: b.err() };
+}
+const resolutions = (fx) => Object.fromEntries(cj(fx).items.map((i) => [i.id, i.resolution]));
+const decisionsOf = (fx) => fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+const ownershipSkips = (fx) => decisionsOf(fx).split('\n').filter((l) => /^- SKIP .*Upstream ownership/.test(l));
+
+test('#4621 AC4.1 / AC4.2: owned targets file, an external one is carried to the packet as a decision fact', async () => {
+  const fx = upstreamFixture();
+  const r = await resolveWith(fx, ownershipAnswers());
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'filed', 'wrap-up-upstream-3.md': 'carried' });
+  assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), ['decision:upstream:wrap-up-upstream-3.md']);
+  assert.match(decisionsOf(fx), /Console item wrap-up-upstream-3\.md \(Upstream feedback\): carried — carried to the acceptance packet as decision:upstream:wrap-up-upstream-3\.md — held: external/);
+  assert.match(decisionsOf(fx), /Console item wrap-up-upstream-1\.md \(Upstream feedback\): filed — control mode: owned target thn-inc\/claude-tweaks — filed with no prompt/);
+  assert.strictEqual(ownershipSkips(fx).length, 0, 'a clean read logs nothing');
+  assert.ok(r.calls.some((c) => c.join(' ') === BASE_POLICY_KEY), 'owned-owners is read from the base branch');
+  assert.ok(!r.calls.some((c) => c[0] === 'gh' && (c[1] === 'api' || c[1] === 'auth')), JSON.stringify(r.calls));
+});
+
+test('#4621 AC5.1: the authenticated gh account changes nothing — byte-identical output and facts, and gh is never asked who it is', async () => {
+  const outcomes = [];
+  for (const login of ['alice', 'mallory']) {
+    const fx = upstreamFixture();
+    const r = await resolveWith(fx, ownershipAnswers({ 'gh api user': `${login}\n`, 'gh auth status': `Logged in as ${login}\n` }));
+    assert.strictEqual(r.code, 0, r.err);
+    assert.ok(!r.calls.some((c) => c[0] === 'gh' && (c.includes('auth') || c.includes('api'))), JSON.stringify(r.calls));
+    outcomes.push({ out: r.out.split(fx.root).join('<ROOT>'), facts: fs.readFileSync(FACTS(fx), 'utf8') });
+  }
+  assert.strictEqual(outcomes[0].out, outcomes[1].out);
+  assert.strictEqual(outcomes[0].facts, outcomes[1].facts);
+});
+
+test('#4621: owned-owners counts only from the base branch — the same line in the worktree policy files nothing', async () => {
+  const worktreeOnly = upstreamFixture({ policyExtra: `${CM}owned-owners: obra\n` });
+  const r = await resolveWith(worktreeOnly, ownershipAnswers({ [BASE_POLICY_KEY]: 'control-mode: on\n' }));
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(resolutions(worktreeOnly), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
+  const onBase = upstreamFixture();
+  assert.strictEqual((await resolveWith(onBase, ownershipAnswers())).code, 0);
+  assert.strictEqual(resolutions(onBase)['wrap-up-upstream-2.md'], 'filed');
+});
+
+test('#4621: the base branch is the integration-branch policy value when set, origin/HEAD otherwise, main last', async () => {
+  const set = upstreamFixture({ policyExtra: `${CM}integration-branch: dev\n` });
+  const viaPolicy = await resolveWith(set, ownershipAnswers({ 'git show origin/dev:.claude-tweaks/policy.yml': 'owned-owners: obra\n' }));
+  assert.strictEqual(viaPolicy.code, 0, viaPolicy.err);
+  assert.strictEqual(resolutions(set)['wrap-up-upstream-2.md'], 'filed');
+  assert.ok(!viaPolicy.calls.some((c) => c.join(' ') === 'git rev-parse --abbrev-ref origin/HEAD'), 'a policy value is not second-guessed');
+
+  const head = upstreamFixture();
+  const viaHead = await resolveWith(head, ownershipAnswers({ 'git rev-parse --abbrev-ref origin/HEAD': 'origin/trunk\n', 'git show origin/trunk:.claude-tweaks/policy.yml': 'owned-owners: obra\n' }));
+  assert.strictEqual(viaHead.code, 0, viaHead.err);
+  assert.strictEqual(resolutions(head)['wrap-up-upstream-2.md'], 'filed');
+
+  const last = upstreamFixture();
+  const viaDefault = await resolveWith(last, ownershipAnswers({ 'git rev-parse --abbrev-ref origin/HEAD': new Error('no origin/HEAD') }));
+  assert.strictEqual(viaDefault.code, 0, viaDefault.err);
+  assert.strictEqual(resolutions(last)['wrap-up-upstream-2.md'], 'filed');
+});
+
+test('#4621 Review Focus 3: an unreadable base-branch policy files owner-owned targets, holds the rest, and logs one SKIP naming it', async () => {
+  const fx = upstreamFixture();
+  const r = await resolveWith(fx, ownershipAnswers({ [BASE_POLICY_KEY]: new Error('fatal: path .claude-tweaks/policy.yml does not exist in origin/main') }));
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
+  const skips = ownershipSkips(fx);
+  assert.strictEqual(skips.length, 1, decisionsOf(fx));
+  assert.match(skips[0], /condition: base-branch policy origin\/main:\.claude-tweaks\/policy\.yml could not be read .* → fallback: owned-owners read as \[\]/);
+  assert.match(skips[0], /Reversibility: n\/a\.$/);
+});
+
+test('#4621 AC7.3: a malformed owned-owners entry is ignored on its own, never the whole list, and is logged once', async () => {
+  const fx = upstreamFixture();
+  const r = await resolveWith(fx, ownershipAnswers({ 'git remote get-url origin': 'https://github.com/zeta/app.git\n', [BASE_POLICY_KEY]: 'owned-owners: obra, thn-inc.\n' }));
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'carried', 'wrap-up-upstream-2.md': 'filed', 'wrap-up-upstream-3.md': 'carried' });
+  const skips = ownershipSkips(fx);
+  assert.strictEqual(skips.length, 1, decisionsOf(fx));
+  assert.ok(skips[0].includes('"thn-inc."') && skips[0].includes('→ fallback: the entry ignored'), skips[0]);
+});
+
+test('#4621: an unreadable origin holds every target as owner-unresolved and logs one SKIP', async () => {
+  const fx = upstreamFixture();
+  const r = await resolveWith(fx, ownershipAnswers({ 'git remote get-url origin': new Error('fatal: No such remote origin') }));
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(Object.values(resolutions(fx)), ['carried', 'carried', 'carried']);
+  assert.match(decisionsOf(fx), /held: owner-unresolved/);
+  const skips = ownershipSkips(fx);
+  assert.strictEqual(skips.length, 1, decisionsOf(fx));
+  assert.match(skips[0], /origin remote could not be read .* → fallback: targets held/);
+});
+
+test('#4621: ownership is read only when an upstream item files — no upstream item, no git call for it; --dry-run logs nothing', async () => {
+  const plain = controlFixture();
+  const none = await resolveWith(plain, {});
+  assert.strictEqual(none.code, 0, none.err);
+  assert.ok(!none.calls.some((c) => c.includes('get-url') || c[1] === 'show'), JSON.stringify(none.calls));
+
+  const dry = upstreamFixture();
+  const calls = [];
+  const b = baseDeps(dry, calls, { execFile: fakeExec(calls, dry.root, ownershipAnswers({ [BASE_POLICY_KEY]: new Error('unreadable') })) });
+  assert.strictEqual(await run(resolveArgs(dry, '--dry-run'), b.d), 0, b.err());
+  assert.ok(!fs.existsSync(path.join(dry.runDir, 'console.json')));
+  assert.strictEqual(ownershipSkips(dry).length, 0, 'a dry run writes nothing');
+});
+
+test('#4621: outside control mode an upstream item still files and nothing about ownership is read', async () => {
+  const fx = mainCheckoutWithRun({ staged: UPSTREAM_ITEMS });
+  const calls = [];
+  const b = baseDeps(fx, calls);
+  assert.strictEqual(await run(resolveArgs(fx), b.d), 0, b.err());
+  assert.deepStrictEqual(Object.values(resolutions(fx)), ['filed', 'filed', 'filed']);
+  assert.ok(!calls.some((c) => c.includes('get-url') || c[1] === 'show'), JSON.stringify(calls));
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')));
 });

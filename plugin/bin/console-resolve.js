@@ -67,6 +67,10 @@
 // memory write refused, nothing written (target outside or unresolvable in the memory dir — why
 // `outside-memory-dir` or `parent-missing` — or the memory dir unreadable, `memory-dir-unreadable`).
 //
+// Control mode also routes a wrap-up upstream-feedback item by repo ownership (#4621): it files only into an
+// owned repo (the origin remote's owner, or a base-branch `owned-owners` entry — read from git, never `gh`),
+// any other target is carried as a decision fact, and each failed ownership read logs one `SKIP` line.
+//
 // Control mode (#4620, `control-mode: on`): the Review Console resolves what policy can and CARRIES
 // every item a human must decide — `pending`, `keep-staged`, `refused` — as a `carried` item whose
 // decision fact lands in `{run}/packet-facts/decisions.json`. This file owns every write of that
@@ -89,7 +93,8 @@ const { resolveAll, renderStoredTable } = require('./lib/console/resolve');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { stackVerdicts } = require('./lib/staged-patch/stack-check');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
-const { resolvePolicyConfig } = require('./lib/policy-schema');
+const { resolvePolicyConfig, parseFlatLines } = require('./lib/policy-schema');
+const { ownedOwnersList, ownerContextFromOrigin } = require('./lib/issues/upstream-ownership');
 const { effectiveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
@@ -222,6 +227,59 @@ function readPolicy({ execFile, cwd, runDir, strict = false }) {
   const sensitivePaths = sensitiveEntry && sensitiveEntry.error === undefined ? sensitivePathsOf(sensitiveEntry) : null;
   const { ceiling, controlMode, source: ceilingSource } = effectiveCeiling({ autonomyEntry: result.autonomy, controlModeEntry: result['control-mode'] });
   return { ceiling, controlMode, ceilingSource, vetoWindowHours: Number.isFinite(veto) ? veto : undefined, sensitivePaths };
+}
+
+// #4621: what the resolver needs to route a wrap-up upstream-feedback item by repo ownership, read from git
+// only (never `gh`, and never the authenticated account): the `origin` remote's owner, and `owned-owners`
+// from the BASE branch's policy.yml — `origin/{branch}`, so a change in the branch under review cannot widen
+// it. The base branch is the resolved `integration-branch` policy value, else `origin/HEAD`, else `main`.
+// Called lazily (only when an upstream item would file) and never throws: every failed read becomes a note,
+// `{condition} → fallback: {what the resolver does instead}`, that the caller logs as a SKIP line. A bad
+// `owned-owners` entry is ignored on its own (ownedOwnersList), never the whole list.
+const NOTE_TEXT_MAX = 160;
+const oneLineNote = (value) => { const s = String(value).replace(/\s+/g, ' ').trim(); return s.length > NOTE_TEXT_MAX ? `${s.slice(0, NOTE_TEXT_MAX)}…` : s; };
+const failureText = (err) => oneLineNote(err && (err.stderr || err.message) ? (err.stderr || err.message) : err);
+
+function readUpstreamOwnership({ execFile, cwd, runDir }) {
+  const notes = [];
+  const note = (condition, fallback) => { notes.push(`${condition} → fallback: ${fallback}`); };
+  const git = (args) => String(execFile('git', args, { cwd }));
+  let ownerContext = null;
+  try {
+    ownerContext = ownerContextFromOrigin(git(['remote', 'get-url', 'origin']).trim());
+    if (ownerContext === null) note('the origin remote does not name a valid owner', 'targets held');
+  } catch (err) {
+    note(`the origin remote could not be read (${failureText(err)})`, 'targets held');
+  }
+
+  let branch = null;
+  try {
+    const { result } = resolvePolicyConfig({ git, readFile: (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } }, runDir, keys: ['integration-branch'], cwd });
+    const entry = result['integration-branch'];
+    if (entry && entry.error === undefined && typeof entry.value === 'string' && entry.value !== '') branch = entry.value;
+  } catch { branch = null; }
+  if (branch === null) {
+    try {
+      const head = git(['rev-parse', '--abbrev-ref', 'origin/HEAD']).trim().replace(/^origin\//, '');
+      if (head !== '' && head !== 'HEAD') branch = head;
+    } catch { branch = null; }
+  }
+  if (branch === null) branch = 'main';
+
+  let ownedOwners = [];
+  const policyRef = `origin/${branch}:.claude-tweaks/policy.yml`;
+  try {
+    const value = parseFlatLines(git(['show', policyRef]))['owned-owners'];
+    if (value !== undefined) {
+      const list = ownedOwnersList(value);
+      ownedOwners = list.owners;
+      for (const entry of list.ignored) note(`the owned-owners entry ${JSON.stringify(oneLineNote(entry))} is not a valid owner`, 'the entry ignored');
+    }
+  } catch (err) {
+    ownedOwners = [];
+    note(`base-branch policy ${policyRef} could not be read (${failureText(err)})`, 'owned-owners read as []');
+  }
+  return { ownerContext, ownedOwners, notes };
 }
 
 // Live grants per member — the Authorization read is never a snapshot
@@ -783,6 +841,12 @@ async function run(argv, deps = {}) {
       stderr('console-resolve.js: --dry-run — previewing anyway; nothing is written either way\n');
     }
   }
+  // One read per run, and only if resolveAll asks (a control-mode upstream item that would file); its notes are logged below.
+  let upstreamRead = null;
+  const upstreamOwnership = () => {
+    if (upstreamRead === null) upstreamRead = readUpstreamOwnership({ execFile, cwd: cwd(), runDir });
+    return upstreamRead;
+  };
   const resolverDeps = {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
@@ -792,6 +856,7 @@ async function run(argv, deps = {}) {
     checkPrState: ghCheckPrState(execFile, cwd()),
     vetoWindowHours,
     sensitivePaths,
+    upstreamOwnership,
     now,
     ...(deps.resolverDeps || {}),
   };
@@ -828,7 +893,9 @@ async function run(argv, deps = {}) {
       text: `Console item ${it.id} (${it.section}): ${it.resolution} — ${it.reason}${stagedNames.has(it.id) ? ` (staged/${it.id})` : ''}`,
       reversibility: reversibilityFor(it.resolution),
     }));
-    appendEntry({ runDir, section: '/wrap-up', entry: [header, ...lines].join('\n') });
+    // A degrade, logged `SKIP` in _shared/auto-decision-log.md's Degrade-trace shape: what the ownership read could not do.
+    const ownershipNotes = (upstreamRead === null ? [] : upstreamRead.notes).map((note) => formatEntry({ status: 'SKIP', now: now(), step: 'Upstream ownership', text: `condition: ${note}`, reversibility: 'n/a' }));
+    appendEntry({ runDir, section: '/wrap-up', entry: [header, ...lines, ...ownershipNotes].join('\n') });
     writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, digests: digestSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
   }
   // #3370: items this console deliberately left pending/keep-staged must survive
@@ -848,4 +915,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs, ghReadGrants, readPolicy, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };
+module.exports = { run, parseArgs, ghReadGrants, readPolicy, readUpstreamOwnership, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };

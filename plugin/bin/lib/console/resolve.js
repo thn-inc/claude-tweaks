@@ -18,6 +18,8 @@ const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsBy
 const { planFilings, planDigestsBesideFilings, isDropRecommended } = require('./finding-filing');
 const { UNRESOLVED_RESOLUTIONS } = require('./residue');
 const { decisionFactFor } = require('./decision-facts');
+const { bookkeepingPermissions } = require('../issues/autonomy');
+const { upstreamFilingRoute, parseStagedUpstream, upstreamDecisionFact } = require('../issues/upstream-ownership');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
@@ -980,6 +982,36 @@ function runIdOf(runDir) {
 const CARRIED_RESOLUTION = 'carried';
 const CARRY_FROM = Object.freeze([...UNRESOLVED_RESOLUTIONS, 'refused']);
 
+// Control mode (#4621): a wrap-up upstream-feedback item the stance files is filed only into a repo this
+// project owns; any other target is held and carried to the packet as a decision fact. Hand-off drafts
+// (`upstream-draft-*`) are `pending` and keep the carry above. deps.upstreamOwnership() is read lazily, once,
+// and only when such an item exists; absent, throwing or empty it leaves every target owner-unresolved.
+const UPSTREAM_OWNERSHIP_NONE = Object.freeze({ ownerContext: null, ownedOwners: Object.freeze([]) });
+
+function routeUpstreamItems(items, { snapshot, deps, runDir, facts }) {
+  const permissions = bookkeepingPermissions('unattended', { controlMode: true });
+  const textByName = new Map(snapshot.staged.map((s) => [s.name, s.text]));
+  let ownership = null;
+  const readOwnership = () => {
+    if (ownership !== null) return ownership;
+    try { ownership = (typeof deps.upstreamOwnership === 'function' && deps.upstreamOwnership()) || UPSTREAM_OWNERSHIP_NONE; } catch { ownership = UPSTREAM_OWNERSHIP_NONE; }
+    return ownership;
+  };
+  return items.map((it) => {
+    if (it.section !== SECTIONS.UPSTREAM || it.resolution !== 'filed' || !it.id.startsWith('wrap-up-upstream-')) return it;
+    const { ownerContext, ownedOwners } = readOwnership();
+    // An unreadable file reads as '' — no target line, so it holds as external.
+    const text = textByName.get(it.id);
+    const staged = parseStagedUpstream(typeof text === 'string' ? text : '');
+    const verdict = upstreamFilingRoute({ permissions, targetRepo: staged.targetRepo, ownerContext, ownedOwners });
+    if (verdict.route === 'file') return { ...it, reason: `control mode: owned target ${verdict.targetRepo} — filed with no prompt` };
+    if (verdict.route !== 'hold') return it;
+    const fact = upstreamDecisionFact({ id: it.id, targetRepo: staged.targetRepo, title: staged.title, body: staged.body, reason: verdict.reason, runDir, staged: true });
+    facts.push(fact);
+    return { ...it, resolution: CARRIED_RESOLUTION, carriedFrom: 'filed', reason: `carried to the acceptance packet as ${fact.id} — held: ${verdict.reason}` };
+  });
+}
+
 function resolveAll({ runDir, policy, deps, controlMode }) {
   if (policy !== 'console-auto') throw new RangeError(`unsupported policy: ${policy} (expected console-auto)`);
   const snapshot = readSnapshot({ runDir, deps });
@@ -995,6 +1027,8 @@ function resolveAll({ runDir, policy, deps, controlMode }) {
   // above (#4679), so the carry and the digest routing below never touch the same item.
   const decisionFacts = [];
   if (controlMode === true) {
+    // Before the carry below, so a held upstream item (now `carried`) is not carried twice.
+    items = routeUpstreamItems(items, { snapshot, deps, runDir, facts: decisionFacts });
     items = items.map((it) => {
       if (!CARRY_FROM.includes(it.resolution)) return it;
       const fact = decisionFactFor(it, { runDir, staged: stagedIds.has(it.id) });
