@@ -2109,7 +2109,7 @@ test('#4303: the cd after an assignment word that never closes is not followed',
       assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), copyAt('/main'), cmd);
     }
     assert.deepStrictEqual(fileWriteTargets('command >g X=1 cd /wt; cp a f.js', '/main'), [{ action: 'write', file: path.resolve('/main/g') }, ...copyAt('/main')]);
-    assert.deepStrictEqual(gitTargets('command X=1 cd /wt; git commit -m x', '/main'), [{ action: 'commit', dir: path.resolve('/main') }]);
+    assert.deepStrictEqual(gitTargets('command X=1 cd /wt; git commit -m x', '/main'), [{ action: 'commit', dir: '/main' }]); // the cd never runs, so the base cwd comes back as given
     for (const cmd of ['time X=1 cd /wt; cp a f.js', '! X=1 cd /wt; cp a f.js', 'X=1 command cd /wt; cp a f.js']) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), copyAt('/wt'), cmd);
     }
@@ -2904,7 +2904,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   });
   // bash: git runs in M; the walk keeps the case's start too (#4486).
   test('#4303 case: gitTargets reads a pattern-list | the same way', () => {
-    assert.deepStrictEqual(gitTargets('case x in a|x) cd /main;; esac; git commit -m x', '/r').map((t) => t.dir), [path.resolve('/main'), path.resolve('/r')]);
+    assert.deepStrictEqual(gitTargets('case x in a|x) cd /main;; esac; git commit -m x', '/r').map((t) => t.dir), [path.resolve('/main'), '/r']); // the cd target is resolved, the base cwd is not
   });
   // #4486: an arm runs only when its pattern matches, so every arm starts where the case began, and the
   // commands after `esac` run under each arm's end and, unless a pattern of bare `*`s makes some arm run,

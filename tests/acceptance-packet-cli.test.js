@@ -1,6 +1,6 @@
 'use strict';
 const { test } = require('node:test');
-require('./helpers/stub-token-pass').installTokenPassStub();
+const tokenPassCalls = require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -1283,7 +1283,10 @@ test('Decision 2: a gather live and a gather after the real archive name the sam
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.ok(result.movedEntries.includes('packet-inputs'), JSON.stringify(result));
   assert.throws(() => fs.statSync(ws.runDir), 'the archive took the whole run dir');
-  const archived = gatherRecording(ws, path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive', 'run-1'));
+  const archivedRun = path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive', 'run-1');
+  // The archive's token pass reached the file-level stub. A real one is a detached child started in pipelines/archive, which Windows then refuses to remove (#5694).
+  assert.equal(tokenPassCalls.at(-1), archivedRun);
+  const archived = gatherRecording(ws, archivedRun);
   assert.deepEqual(archived, live);
   assert.equal(fs.readFileSync(path.join(ws.root, ...archived.archive_path.split('/')), 'utf8'), GIF_BYTES);
 });
