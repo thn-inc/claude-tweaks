@@ -129,7 +129,11 @@ const FILE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
 const REWRITE_DEPS = { isLinkedWorktree: () => true, canonicalRealpath: (p) => p.replace(/\/+$/, '') || p };
 
 function rowEffect(r) {
-  if (r.tool === 'Bash') return r.truncated ? { effect: 'unknown', why: 'truncated' } : classifyEffect(r.command);
+  if (r.tool === 'Bash') {
+    if (r.truncated) return { effect: 'unknown', why: 'truncated' };
+    // One command the classifier cannot take must not abort the summary of every other row.
+    try { return classifyEffect(r.command); } catch { return { effect: 'unknown', why: 'classifier failed' }; }
+  }
   if (FILE_TOOLS.has(r.tool)) return { effect: 'write', why: 'file tool' };
   return { effect: 'unknown', why: `${r.tool} tool` };
 }
@@ -137,7 +141,7 @@ function rowEffect(r) {
 // null for a truncated command or without an absolute cwd; the applied rule ids at this checkout's HEAD
 // otherwise ([] when nothing changes). An exception caught inside a rule still reads as [].
 function rewriteRules(r) {
-  if (r.truncated || typeof r.cwd !== 'string' || !path.posix.isAbsolute(r.cwd)) return null;
+  if (r.truncated || typeof r.cwd !== 'string' || !path.isAbsolute(r.cwd)) return null;
   const res = rewriteForGuard({ command: r.command, cwd: r.cwd, deps: REWRITE_DEPS });
   return res ? res.applied : [];
 }

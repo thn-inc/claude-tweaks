@@ -214,26 +214,9 @@ test('scanStore attributes a call to the last run id when one input names severa
 
 // ---- #5587: the guard of each row. Hand-written fixtures, never transcript content. ----
 
-const os = require('node:os');
 const { ISOLATION_CLAUSE } = require('../../plugin/bin/lib/hooks/harness-refusal');
 const { classifyGuard, GATE_FRAGMENTS } = require('../../tools/guard-refusals/transcripts');
-
-const HARNESS_BASH = `This session${ISOLATION_CLAUSE}/wt, but this command is too complex to verify that it stays inside the worktree. Refusing to run it.`;
-const HARNESS_FILE = `This session${ISOLATION_CLAUSE}/wt. Edit the worktree copy of this file instead of the shared-checkout path.`;
-const WORKTREE_ALWAYS = 'PreToolUse:Bash hook error: claude-tweaks: this project requires an isolated worktree for this command.';
-
-function writeStore(entries) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-rows-'));
-  const slug = path.join(dir, '-Users-me-guards');
-  fs.mkdirSync(slug, { recursive: true });
-  const file = path.join(slug, 's1.jsonl');
-  fs.writeFileSync(file, `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`);
-  fs.utimesSync(file, STORE_MTIME / 1000, STORE_MTIME / 1000);
-  return dir;
-}
-
-const use = (id, name, input) => ({ type: 'assistant', timestamp: '2026-10-20T11:00:00.000Z', cwd: '/wt', message: { content: [{ type: 'tool_use', id, name, input }] } });
-const result = (id, content, isError = true) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content }] } });
+const { HARNESS_BASH, HARNESS_FILE, WORKTREE_ALWAYS, writeStore, use, result } = require('../helpers/guard-refusals-store');
 
 test('AC1: one refusal of each guard kind yields one guards count each and no row for printed skill text', () => {
   const dir = writeStore([

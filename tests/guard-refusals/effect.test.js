@@ -270,8 +270,74 @@ const NEVER_READ = [
   ['git diff --output=f $X', 'write'],
 ];
 
-test('shapes that could write are never read', () => {
+test('a shape that could write or run a program is never read, and shapes that only look risky stay read', () => {
   for (const [command, effect] of NEVER_READ) {
+    assert.equal(classifyEffect(command).effect, effect, JSON.stringify(command));
+  }
+});
+
+// Hand-written, not read from WRITE_WORDS: a flag dropped from the table fails its case below, and a flag added
+// to the table with no entry here fails the cross-check after it.
+const PINNED_WRITE_TOKENS = {
+  sed: ['-i', '--in-place'],
+  perl: ['-i'],
+  dd: ['of='],
+  find: ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprint', '-fprint0', '-fprintf', '-fls'],
+  curl: ['-o', '-O', '-D', '-c', '-K', '-d', '-F', '-T', '--data', '--data-ascii', '--data-binary', '--data-raw', '--data-urlencode', '--json', '--form', '--form-string', '--upload-file', '--output', '--remote-name', '--remote-name-all', '--dump-header', '--cookie-jar', '--trace', '--trace-ascii', '--stderr', '--libcurl', '--etag-save', '--hsts', '--alt-svc', '--config'],
+  less: ['-o', '-O', '--log-file', '--LOG-FILE'],
+  file: ['-C', '--compile'],
+  sort: ['-o', '--output', '--compress-program'],
+};
+
+test('every flag, exact word and operand prefix a WRITE_WORDS entry lists is pinned and makes its word write', () => {
+  for (const [word, tokens] of Object.entries(PINNED_WRITE_TOKENS)) {
+    for (const token of tokens) {
+      const command = `${word} . ${token} x`;
+      assert.equal(classifyByTables(command).effect, 'write', command);
+    }
+  }
+  for (const [word, entry] of Object.entries(WRITE_WORDS)) {
+    if (entry.any) continue;
+    const listed = [...[...(entry.short || '')].map((l) => `-${l}`), ...(entry.long || []), ...(entry.exact || []), ...(entry.prefix || [])];
+    assert.deepEqual([...listed].sort(), [...(PINNED_WRITE_TOKENS[word] || [])].sort(), `${word}: table and pinned tokens differ`);
+  }
+});
+
+test('every environment variable HAZARD_ENV names turns a reader into unknown', () => {
+  const names = ['PATH', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'BASH_ENV', 'ENV', 'IFS', 'PAGER', 'EDITOR', 'VISUAL', 'SHELL', 'LESSOPEN', 'LESSCLOSE', 'RIPGREP_CONFIG_PATH', 'CURL_HOME',
+    'GIT_PAGER', 'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_EXTERNAL_DIFF', 'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'GIT_EXEC_PATH', 'GIT_PROXY_COMMAND', 'GIT_CONFIG_COUNT'];
+  for (const name of names) {
+    assert.equal(classifyEffect(`${name}=x git log`).effect, 'unknown', name);
+    assert.equal(classifyEffect(`export ${name}=x; ls`).effect, 'unknown', `export ${name}`);
+  }
+  assert.equal(classifyEffect('FOO=x git log').effect, 'read');
+});
+
+const RUNS_A_PROGRAM = [
+  // gh api graphql: a query document that also holds a mutation is a write.
+  ["gh api graphql -f query='query Q { viewer { login } } mutation M { x }'", 'write'],
+  ["gh api graphql -f query='query Q { viewer { login } }'", 'read'],
+  ["gh api graphql -f query='{ viewer { login } }'", 'read'],
+  // A free-standing unquoted expansion can split into -X DELETE, -f body=… or --input.
+  ['gh api repos/o/r/issues/1', 'read'],
+  ['gh api repos/o/r/issues/1 $FLAGS', 'unknown'],
+  ['gh api -X GET repos/o/r/issues/1 $FLAGS', 'unknown'],
+  ["gh api graphql -f query='{ viewer { login } }' $FLAGS", 'unknown'],
+  ['gh api -X DELETE repos/o/r/issues/1 $FLAGS', 'write'],
+  ['gh api repos/o/r/issues/1 "x$FLAGS"', 'read'],
+  // rg and git ls-remote flags that run a program.
+  ['rg --hostname-bin=x foo', 'unknown'],
+  ['rg --pre=x foo', 'unknown'],
+  ["git ls-remote --upload-pack='touch x' /repo", 'unknown'],
+  ["git ls-remote --exec='touch x' /repo", 'unknown'],
+  ["git ls-remote --upload-pack 'touch x' /repo", 'unknown'],
+  ['git ls-remote --upl=x /repo', 'unknown'],
+  ['git ls-remote origin', 'read'],
+  ['git ls-remote --heads origin', 'read'],
+];
+
+test('gh api, rg and git ls-remote forms that run a program or hide a write flag are not read', () => {
+  for (const [command, effect] of RUNS_A_PROGRAM) {
     assert.equal(classifyEffect(command).effect, effect, JSON.stringify(command));
   }
 });

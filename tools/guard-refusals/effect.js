@@ -85,6 +85,7 @@ const GIT_WRITE = [
   'clean', 'am', 'cherry-pick', 'revert', 'gc', 'prune', 'init', 'clone', 'notes', 'submodule', 'update-index', 'write-tree', 'read-tree',
   'replace', 'filter-branch', 'bisect', 'sparse-checkout',
 ];
+const LS_REMOTE_RUNS = ['--upload-pack', '--exec'];
 const GIT_READ_SET = new Set(GIT_READ);
 const GIT_WRITE_SET = new Set(GIT_WRITE);
 
@@ -611,6 +612,16 @@ function judgeGitWords(words, from) {
     if (sub === 'grep') {
       for (let m = rest; m < words.length; m++) if (words[m].t.startsWith('-O') || words[m].t.startsWith('--open-files-in-pager')) return unknown('git grep -O');
     }
+    if (sub === 'ls-remote') {
+      // --upload-pack=<cmd> and --exec=<cmd> run a program against a local or ssh remote (unique-prefix abbreviations count).
+      for (let m = rest; m < words.length; m++) {
+        const a = words[m].t;
+        if (a[0] !== '-' || a[1] !== '-') continue;
+        const eq = a.indexOf('=');
+        const name = eq === -1 ? a : a.slice(0, eq);
+        if (name.length >= 4 && LS_REMOTE_RUNS.some((l) => l.startsWith(name))) return unknown('git ls-remote runs a program');
+      }
+    }
     return READ;
   }
   if (GIT_WRITE_SET.has(sub)) return write(`git ${sub}`);
@@ -648,6 +659,9 @@ function judgeGhApi(words, from) {
     if (endpoint === null) endpoint = a;
   }
   if (endpoint === null) return unknown('gh api');
+  // An unquoted expansion can split into -X DELETE, -f body=… or --input: a read verdict below is only as sure as the words are literal.
+  const computed = computedArg(words, from);
+  const readOrUnknown = () => (computed ? unknown('computed argument') : READ);
   if (endpoint === 'graphql') {
     if (hasInput) return unknown('gh api graphql');
     let verdict = null;
@@ -662,12 +676,12 @@ function judgeGhApi(words, from) {
         verdict = verdict || READ;
       } else return unknown('gh api graphql');
     }
-    return verdict || unknown('gh api graphql');
+    return verdict ? readOrUnknown() : unknown('gh api graphql');
   }
   if (method && method.dyn) return unknown('gh api');
-  if (method && method.t.toUpperCase() === 'GET') return READ;
+  if (method && method.t.toUpperCase() === 'GET') return readOrUnknown();
   if (method) return write(`gh api ${method.t.toUpperCase()}`);
-  return fields.length || hasInput ? write('gh api field') : READ;
+  return fields.length || hasInput ? write('gh api field') : readOrUnknown();
 }
 
 function judgeGh(words, from) {
@@ -791,16 +805,11 @@ function classifyText(text, depth) {
 // A file, mkdir or gated-git write the worktree write gate itself recognises.
 function gateWrite(command) {
   for (const targets of [fileWriteTargets, mkdirTargets]) {
-    try {
-      const t = targets(command, '/');
-      if (t && t.length) return `git-command: ${t[0].action}`;
-    } catch { /* fall through to the scan */ }
+    const t = targets(command, '/');
+    if (t && t.length) return `git-command: ${t[0].action}`;
   }
-  try {
-    const hit = gitTargets(command, '/').find((t) => GATE_COVERAGE.gitActions.includes(t.action));
-    if (hit) return `git-command: ${hit.action}`;
-  } catch { /* fall through to the scan */ }
-  return null;
+  const hit = gitTargets(command, '/').find((t) => GATE_COVERAGE.gitActions.includes(t.action));
+  return hit ? `git-command: ${hit.action}` : null;
 }
 
 function classifyEffect(command) {
@@ -808,7 +817,9 @@ function classifyEffect(command) {
   // The scan first: the write gate is the slow half, and only the `why` differs.
   const scanned = classifyText(command, 0);
   if (scanned.effect === 'write') return scanned;
-  const gated = gateWrite(command);
+  // A gate that throws cannot vouch for a `read` the scan reached: fail closed, never open.
+  let gated;
+  try { gated = gateWrite(command); } catch { return scanned.effect === 'read' ? unknown('write gate failed') : scanned; }
   return gated ? write(gated) : scanned;
 }
 

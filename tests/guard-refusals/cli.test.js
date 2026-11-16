@@ -185,30 +185,8 @@ test('CLI perPipeline counts a clean run as zero, so the mean can fall below 1 a
 
 // ---- #5587: effect, read class and rewrite per row. Hand-written fixtures, never transcript content. ----
 
-const { STORE_MTIME } = require('../helpers/guard-refusals-store');
+const { HARNESS_BASH, HARNESS_FILE, WORKTREE_ALWAYS, writeStore, use, result } = require('../helpers/guard-refusals-store');
 const { ISOLATION_CLAUSE } = require('../../plugin/bin/lib/hooks/harness-refusal');
-
-const HARNESS_BASH = `This session${ISOLATION_CLAUSE}/wt, but this command is too complex to verify that it stays inside the worktree. Refusing to run it.`;
-const HARNESS_FILE = `This session${ISOLATION_CLAUSE}/wt. Edit the worktree copy of this file instead of the shared-checkout path.`;
-const WORKTREE_ALWAYS = 'PreToolUse:Bash hook error: claude-tweaks: this project requires an isolated worktree for this command.';
-
-function writeStore(entries) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-refusals-cli-rows-'));
-  SCRATCH_DIRS.push(dir);
-  const slug = path.join(dir, '-Users-me-guards');
-  fs.mkdirSync(slug, { recursive: true });
-  const file = path.join(slug, 's1.jsonl');
-  fs.writeFileSync(file, `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`);
-  fs.utimesSync(file, STORE_MTIME / 1000, STORE_MTIME / 1000);
-  return dir;
-}
-
-const use = (id, name, input, cwd = '/wt') => {
-  const e = { type: 'assistant', timestamp: '2026-10-20T11:00:00.000Z', message: { content: [{ type: 'tool_use', id, name, input }] } };
-  if (cwd !== null) e.cwd = cwd;
-  return e;
-};
-const result = (id, content) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content }] } });
 
 function scanJson(entries) {
   const c = capture();
