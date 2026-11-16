@@ -47,13 +47,17 @@ function writtenTiming() {
 // commit's timing.json, with the tmp home path replaced by <HOME>.
 const SUBFIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
 const SUB_GOLDEN = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-golden-timing.json');
-const SUB_EVENTS = '{"ts":"2026-10-17T09:58:00.000Z","type":"skill_invoked","skill":"claude-tweaks:build"}\n{"ts":"2026-10-17T10:10:00.000Z","type":"session-end"}\n';
+const SUB_EVENTS = readText(path.join(SUBFIX, '..', 'subagents-events.jsonl'));
 
 function normalizeSubagents(timing, home) {
   // The CLI may print the home's realpath (macOS: /var -> /private/var), so replace it first.
   const homes = [fs.realpathSync(home), home].sort((a, b) => b.length - a.length);
   let s = normalizeTiming(timing);
   for (const h of homes) s = s.split(JSON.stringify(h).slice(1, -1)).join('<HOME>').split(h).join('<HOME>');
+  // A <HOME>-rooted path string uses the platform separator (serialized: \\ on Windows); compare with /.
+  s = s.replace(/<HOME>[^"]*/g, (m) => m.split('\\\\').join('/'));
+  // An un-normalized machine path must fail loudly, not silently mismatch the golden.
+  for (const h of homes) assert.ok(!s.includes(h) && !s.includes(JSON.stringify(h).slice(1, -1)), `normalized timing still contains ${h}`);
   return s;
 }
 

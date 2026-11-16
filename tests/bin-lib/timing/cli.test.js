@@ -229,7 +229,7 @@ test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds b
 // these runs carry their own two-event events.jsonl covering it; record-1535's
 // 2026-09 events sit outside every fixture dispatch (used once, on purpose).
 const SUBFIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
-const SUB_EVENTS = '{"ts":"2026-10-17T09:58:00.000Z","type":"skill_invoked","skill":"claude-tweaks:build"}\n{"ts":"2026-10-17T10:10:00.000Z","type":"session-end"}\n';
+const SUB_EVENTS = readText(path.join(SUBFIX, '..', 'subagents-events.jsonl'));
 
 // -> { dir, home, slugDir, transcript, env }: a run dir over the fixture's
 // events, and a tmp HOME holding a copy of the fixture session at the slug of
