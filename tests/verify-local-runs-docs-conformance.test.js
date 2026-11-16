@@ -95,12 +95,19 @@ const CI_ENTRY_FACTS = [
 
 test('docs/plugin-structure.md: the verify.js synopsis and the ci-source.js entry state the key, the flag and exit 3', () => {
   const text = readText(PLUGIN_STRUCTURE);
-  checkFacts(lineStartingWith(text, 'node plugin/bin/verify.js'), VERIFY_LINE_FACTS, 'the verify.js line');
-  const entryStart = text.indexOf('ci-source.js (#4347');
+  // The command line's `#` comment continues on `{spaces}# ` lines; join them so the facts stay on one line.
+  const verifyLines = text.split('\n');
+  const verifyAt = verifyLines.findIndex((l) => l.startsWith('node plugin/bin/verify.js'));
+  let verifyLine = verifyAt < 0 ? '' : verifyLines[verifyAt];
+  for (let i = verifyAt + 1; verifyAt >= 0 && i < verifyLines.length && /^\s+# /.test(verifyLines[i]); i++) verifyLine += ' ' + verifyLines[i].replace(/^\s+# /, '');
+  checkFacts(verifyLine, VERIFY_LINE_FACTS, 'the verify.js line');
+  // Whitespace-collapsed: the entries' names and their `(#NNNN` tags can sit on adjacent continuation lines.
+  const flat = text.replace(/\s+/g, ' ');
+  const entryStart = flat.indexOf('ci-source.js (#4347');
   assert.notEqual(entryStart, -1, 'the ci-source.js (#4347 entry is missing');
-  const entryEnd = text.indexOf('slot.js (#5119', entryStart);
+  const entryEnd = flat.indexOf('slot.js (#5119', entryStart);
   assert.notEqual(entryEnd, -1, 'the slot.js entry that closes the ci-source.js entry is missing');
-  checkFacts(text.slice(entryStart, entryEnd), CI_ENTRY_FACTS, 'the ci-source.js entry');
+  checkFacts(flat.slice(entryStart, entryEnd), CI_ENTRY_FACTS, 'the ci-source.js entry');
 });
 
 // Retirement sweep: no shipped doc says a CI-declared suite always runs locally when CI cannot answer.

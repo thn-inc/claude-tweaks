@@ -2668,7 +2668,10 @@ test('#5227 CLI process: the real binary runs --help, rejects a bad flag and pul
 test('AC10.1: docs/plugin-structure.md names queue-pull.js in the command reference and the plugin/bin/lib/dispatch/ entry', () => {
   const lines = readText(path.join(REPO, 'docs', 'plugin-structure.md')).split('\n');
   assert.ok(lines.some((l) => l.startsWith('node plugin/bin/queue-pull.js')), 'a command-reference line');
-  const entry = lines.find((l) => l.startsWith('plugin/bin/lib/dispatch/'));
+  // The entry may continue on indented lines; join them so the phrases it names stay findable.
+  const start = lines.findIndex((l) => l.startsWith('plugin/bin/lib/dispatch/'));
+  let entry = start < 0 ? undefined : lines[start];
+  for (let i = start + 1; entry && i < lines.length && /^ +\S/.test(lines[i]); i++) entry += ' ' + lines[i].trim();
   assert.ok(entry, 'the module entry exists');
   assert.ok(entry.includes('queue-pull.js'), 'the module entry names queue-pull.js');
   assert.ok(entry.includes('; queue-pull.js (#5227'), 'the module has its own entry in the list, not only a mention');

@@ -16,6 +16,16 @@ const read = (rel) => readText(path.join(ROOT, rel));
 
 const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
 
+// A table row plus its continuation rows (`| | | …`), as one string.
+const rowWithContinuations = (text, prefix) => {
+  const lines = text.split('\n');
+  const i = lines.findIndex((line) => line.startsWith(prefix));
+  if (i < 0) return '';
+  let row = lines[i].replace(/ \|$/, '');
+  for (let j = i + 1; j < lines.length && lines[j].startsWith('| | | '); j++) row += ' ' + lines[j].slice(6).replace(/ \|$/, '');
+  return row + ' |';
+};
+
 const POINTERS = [
   ['**Tier variants (`low`, `xhigh`, `max`).**',
     [/When the resolved tier is `low`, `xhigh` or `max`, read `step3-tier-variants\.md`/, /At `medium` and `high`, neither applies/]],
@@ -75,7 +85,7 @@ function missing({ dispatch, variants, citers, structure }) {
     fact(`${file} cites step3-tier-variants.md`, citers[file].includes(cite) && !citers[file].includes(old));
   }
   for (const d of STALE_DEICTICS) fact(`no stale deictic: ${d}`, !dispatch.includes(d));
-  const reviewRow = lineStartingWith(structure, '| review |');
+  const reviewRow = rowWithContinuations(structure, '| review |');
   fact('plugin-structure review row lists step3-tier-variants.md',
     reviewRow.includes('step3-lens-dispatch.md, step3-tier-variants.md,') && /step3-tier-variants\.md holds/.test(reviewRow));
   return out;
