@@ -31,6 +31,7 @@ const DRIVER_ROUTE = read(...SKILLS, 'dispatch', 'driver-route.md');
 const ACCEPT = read(...SKILLS, 'accept', 'SKILL.md');
 const MERGE_MODE = read(...SKILLS, 'wrap-up', 'merge-mode.md');
 const GRAPH = read('docs', 'skill-graph.md');
+const PR_SCAN = read(...SKILLS, '_shared', 'github-pr-scan.md');
 
 // Fail with `message` unless `ok`; the message is what a negative control matches on.
 const need = (ok, message) => assert.ok(ok, message);
@@ -57,9 +58,10 @@ const M_PARKED = 'accept-park.js" parked';
 const M_DECIDE = 'accept-park.js" decide';
 const M_STEP29 = '## Step 2.9: Local acceptance park (control mode)';
 
-// Raised from 300 (#4615 round 2) so the pointer carries the --run argument and the stop statement; the composed
-// merge bundle's own rail (tests/bin-lib/skill-audit) is what bounds the file.
-const POINTER_BYTES = 410;
+// Raised from 300 (#4615 round 2) so the pointer carries the --run argument and the stop statement, and
+// from 410 (final review M4) for the per-merged-run rule; the composed merge bundle's own rail
+// (tests/bin-lib/skill-audit) is what bounds the file.
+const POINTER_BYTES = 450;
 const POINTER_MSG = `Step 2.9 must stay a pointer of at most ${POINTER_BYTES} bytes`;
 
 function pinStep29(text) {
@@ -75,6 +77,7 @@ function pinStep29(text) {
   need(/parked --record \{n\} --run "\$PIPELINE_RUN_DIR"/.test(section), 'Step 2.9 must give parked its --record and --run arguments');
   need(/never run Step 3; report `pending-review` and read/.test(section), 'Step 2.9 must state the stop and the pending-review outcome');
   need(/decide --run "\$PIPELINE_RUN_DIR" --record \{n\}\[,\{m\}…\]/.test(section), 'Step 2.9 must give decide its --run and --record arguments');
+  need(section.includes("`--run` follows Step 2.5's per-merged-run rule"), 'Step 2.9 must apply Step 2.5\'s per-merged-run rule to --run');
   need(section.includes('_shared/local-acceptance-park.md'), 'Step 2.9 must point at local-acceptance-park.md');
   need(/Unless `parked` exits 5 and `decide` exits 0 with `park:false`:/.test(section),
     'Step 2.9 must gate the read of local-acceptance-park.md on the inverted condition');
@@ -100,6 +103,8 @@ test('AC3b.2 control: each Step 2.9 claim goes red on its own message', () => {
   expectRed(() => pinStep29(MERGE.replace(section, section.replace('never run Step 3; report `pending-review` and read', 'read'))), 'Step 2.9 must state the stop and the pending-review outcome');
   expectRed(() => pinStep29(MERGE.replace(section, section.replace('decide --run "$PIPELINE_RUN_DIR" --record', 'decide --record'))),
     'Step 2.9 must give decide its --run and --record arguments');
+  expectRed(() => pinStep29(MERGE.replace(section, section.replace("; `--run` follows Step 2.5's per-merged-run rule", ''))),
+    'Step 2.9 must apply Step 2.5\'s per-merged-run rule to --run');
   expectRed(() => pinStep29(MERGE.replace(section, section.replace('Unless', 'Only when'))),
     'Step 2.9 must gate the read of local-acceptance-park.md on the inverted condition');
   expectRed(() => pinStep29(MERGE.replace(section, `${section} ${'x'.repeat(120)}`)), POINTER_MSG);
@@ -118,6 +123,7 @@ const GATE_HEAD = 'No fence below runs until Step 2.9 lets the merge through';
 const GATE_FACTS = [
   ['let-through condition', '(`parked` exit 5, `decide` exit 0 with `park:false`)'],
   ['every Step 2.5 route', 'whichever Step 2.5 route led here'],
+  ['tidy record-linked arm runs both', "tidy's record-linked arm runs both without `--run`"],
   ['no-Fixes-record exemption', "a caller with no `Fixes` record (tidy's housekeeping arm)"],
   ['own-guard exemption', 'one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`)'],
 ];
@@ -157,6 +163,49 @@ test('AC3b.2a control: the gate clause, each fact and the route check go red', (
   expectRed(() => pinStep3Gate(routeless), 'the Step 2.5 routes into Step 3 must still exist for the clause to cover');
 });
 
+// I2: /accept is a named supplier of Step 3's expected head (--match-head-commit).
+const EXPECTED_HEAD_CALLERS = '(`dispatch/close-out.md` after an update; `/claude-tweaks:accept`), append `--match-head-commit {expected-head}`';
+function pinExpectedHeadCallers(text) {
+  const step3 = text.indexOf('## Step 3: Attempt auto-merge');
+  need(step3 !== -1 && text.indexOf(EXPECTED_HEAD_CALLERS, step3) !== -1, 'Step 3 must name /claude-tweaks:accept as an expected-head caller');
+}
+
+test('I2: Step 3 names /claude-tweaks:accept among the expected-head callers', () => {
+  pinExpectedHeadCallers(MERGE);
+  expectRed(() => pinExpectedHeadCallers(MERGE.replace('; `/claude-tweaks:accept`), append', '), append')), 'Step 3 must name /claude-tweaks:accept as an expected-head caller');
+});
+
+// I4: the repo-wide PR scan never recommends closing a parked PR, nor flags it as a stale pending-review PR.
+const SCAN_PARKED_ROW = '| A PR whose `Fixes` record `accept-park.js parked` exits 0';
+const SCAN_STALE_ROW = '| Open PR stale (>4 weeks, no updates) |';
+const SCAN_ITEM11_EXCLUSION = 'A PR whose `Fixes` record `accept-park.js parked` exits 0 is excluded from this row';
+function pinPrScanPark(text) {
+  const lines = text.split('\n');
+  const parked = lines.findIndex((l) => l.startsWith(SCAN_PARKED_ROW));
+  const stale = lines.findIndex((l) => l.startsWith(SCAN_STALE_ROW));
+  need(parked !== -1, 'github-pr-scan must carry the parked-PR row');
+  need(stale !== -1, 'github-pr-scan stale row missing');
+  need(parked < stale, 'the parked-PR row must come before the stale row');
+  need(lines[parked].includes('Yours, `/claude-tweaks:accept #{record}`, never Close'), 'the parked-PR row must route to /claude-tweaks:accept and never Close');
+  const item11 = paragraphWith(text, '11. **Stale pending-review PR**');
+  need(item11.includes(SCAN_ITEM11_EXCLUSION), 'item 11 must exclude a parked PR');
+}
+
+test('I4: github-pr-scan routes a parked PR to /accept, never Close, and item 11 excludes it', () => {
+  pinPrScanPark(PR_SCAN);
+});
+
+test('I4 control: each github-pr-scan park claim goes red', () => {
+  const row = PR_SCAN.split('\n').find((l) => l.startsWith(SCAN_PARKED_ROW));
+  expectRed(() => pinPrScanPark(without(PR_SCAN, `${row}\n`)), 'github-pr-scan must carry the parked-PR row');
+  const stale = PR_SCAN.split('\n').find((l) => l.startsWith(SCAN_STALE_ROW));
+  const swapped = PR_SCAN.replace(`${row}\n${stale}`, `${stale}\n${row}`);
+  assert.notStrictEqual(swapped, PR_SCAN);
+  expectRed(() => pinPrScanPark(swapped), 'the parked-PR row must come before the stale row');
+  expectRed(() => pinPrScanPark(PR_SCAN.replace(row, row.replace('never Close', 'or Close'))), 'the parked-PR row must route to /claude-tweaks:accept and never Close');
+  expectRed(() => pinPrScanPark(PR_SCAN.replace(SCAN_ITEM11_EXCLUSION, 'A PR is kept in this row')), 'item 11 must exclude a parked PR');
+});
+
 // The shape line lists Step 2.9; the Phase 2 remedy is never run in-flow.
 test('pr-first-merge shape line lists Step 2.9 and the curation remedy stays out of flow', () => {
   const shape = collapse(MERGE.slice(MERGE.indexOf('**The shape:**'), MERGE.indexOf('## Precondition')));
@@ -173,6 +222,8 @@ test('pr-first-merge shape line lists Step 2.9 and the curation remedy stays out
 // ---------------------------------------------------------------------------------------------
 const HELD_LINE = 'Held (not armed): PR #{n} — parked awaiting local acceptance';
 const UNCONFIRMED_LINE = 'Held (not armed): PR #{n} — park state not confirmed (exit {code})';
+const NEVER_PARKED_LINE = 'Held (not armed): PR #{n} — local acceptance target, never parked; recommend /claude-tweaks:accept #{record}';
+const TIDY_DECIDE = 'accept-park.js" decide --record {n}[,{m}…]';
 
 function pinTidy(actions, skill) {
   const arm = collapse(sectionOf(actions, '## Arm ready PR'));
@@ -181,8 +232,14 @@ function pinTidy(actions, skill) {
   const step3 = arm.indexOf("run `_shared/pr-first-merge.md`'s Step 3");
   need(step3 !== -1, 'Arm ready PR Step 3 call missing');
   need(parked < step3, 'Arm ready PR must run parked before Step 3');
+  const decide = arm.indexOf(TIDY_DECIDE);
+  need(decide !== -1, 'Arm ready PR must run accept-park.js decide without --run');
+  need(parked < decide && decide < step3, 'Arm ready PR must run decide after parked and before Step 3');
+  need(arm.includes('Only exit 0 with `park:false` continues'), 'Arm ready PR must continue only on decide exit 0 with park:false');
+  need(arm.includes(NEVER_PARKED_LINE), 'Arm ready PR must report the never-parked local-target line');
+  need(collapse(skill).includes(NEVER_PARKED_LINE), 'tidy SKILL.md Step 7.5 template must carry the never-parked local-target line');
   need(/Any exit but 5/.test(arm), 'Arm ready PR must hold on any parked exit but 5');
-  need(/never with `--run`/.test(arm), 'Arm ready PR must never pass --run to parked');
+  need(/never with `--run` \(the repo-root policy/.test(arm), 'Arm ready PR must never pass --run to parked');
   need(arm.includes('park state not confirmed (exit {code})') && arm.includes('for exit 0'), 'Arm ready PR must say parked only for exit 0 and park state not confirmed otherwise');
   need(arm.includes(HELD_LINE), 'Arm ready PR must report the held line');
   need(collapse(skill).includes(HELD_LINE), 'tidy SKILL.md Step 7.5 template must carry the held line');
@@ -201,7 +258,14 @@ test('AC3b.3 control: the tidy guard and its template line each go red', () => {
   expectRed(() => pinTidy(late, TIDY_SKILL), 'Arm ready PR must run parked before Step 3');
   expectRed(() => pinTidy(TIDY_ACTIONS.replace('Any exit but 5', 'Exit 0 or 6'), TIDY_SKILL), 'Arm ready PR must hold on any parked exit but 5');
   expectRed(() => pinTidy(TIDY_ACTIONS.replace('never with `--run`', 'with `--run`'), TIDY_SKILL), 'Arm ready PR must never pass --run to parked');
-  expectRed(() => pinTidy(TIDY_ACTIONS.replace('park state not confirmed (exit {code})', 'parked'), TIDY_SKILL), 'Arm ready PR must say parked only for exit 0 and park state not confirmed otherwise');
+  expectRed(() => pinTidy(TIDY_ACTIONS.replaceAll('park state not confirmed (exit {code})', 'parked'), TIDY_SKILL), 'Arm ready PR must say parked only for exit 0 and park state not confirmed otherwise');
+  // I1: tidy's record-linked arm runs decide after parked, holding a never-parked local target.
+  expectRed(() => pinTidy(TIDY_ACTIONS.replace(TIDY_DECIDE, 'accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]'), TIDY_SKILL), 'Arm ready PR must run accept-park.js decide without --run');
+  expectRed(() => pinTidy(TIDY_ACTIONS.replace('Only exit 0 with `park:false` continues', 'Any exit continues'), TIDY_SKILL), 'Arm ready PR must continue only on decide exit 0 with park:false');
+  expectRed(() => pinTidy(without(TIDY_ACTIONS, NEVER_PARKED_LINE), TIDY_SKILL), 'Arm ready PR must report the never-parked local-target line');
+  const neverParked = TIDY_SKILL.split('\n').find((l) => l.includes(NEVER_PARKED_LINE));
+  need(neverParked, 'the never-parked template line exists');
+  expectRed(() => pinTidy(TIDY_ACTIONS, without(TIDY_SKILL, neverParked)), 'tidy SKILL.md Step 7.5 template must carry the never-parked local-target line');
   const skillLine = TIDY_SKILL.split('\n').find((l) => l.includes(HELD_LINE));
   need(skillLine, 'the template line exists');
   expectRed(() => pinTidy(TIDY_ACTIONS, without(TIDY_SKILL, skillLine)), 'tidy SKILL.md Step 7.5 template must carry the held line');
@@ -422,6 +486,9 @@ function pinReentry(text) {
     'awaiting-local row must withhold Accept and merge on moved:true until the checks re-run (Step 2.5)');
   need(row.includes('_shared/dev-url-detection.md'), 'awaiting-local row must start the app per dev-url-detection.md');
   need(/exit 6, unknown, is fail-closed: no re-entry, report it/.test(row), 'awaiting-local row must treat parked exit 6 as fail-closed');
+  need(row.includes('`moved:true` from `reenter` (the PR head or base moved since the park), or `reenter-check` exit 8: say so, and withhold `Accept and merge` for this verdict round')
+    && row.includes('re-run only by `_shared/pr-first-merge.md` Step 2.5 on a later merge') && row.includes('never inside this round'),
+    'awaiting-local row must withhold Accept and merge for this verdict round, the checks re-run only by a later Step 2.5');
 }
 
 test('AC4.5: /accept re-entry cites reenter, reenter-check and reenter-remove in that order', () => {
@@ -435,6 +502,10 @@ test('AC4.5 control: a swapped order and a dropped step both go red', () => {
   expectRed(() => pinReentry(ACCEPT.replace(row, swapped)), 'awaiting-local row must cite reenter, reenter-check, reenter-remove in that order');
   expectRed(() => pinReentry(ACCEPT.replace(row, row.replace('exit 6, unknown, is fail-closed: no re-entry, report it', 'exit 6'))), 'awaiting-local row must treat parked exit 6 as fail-closed');
   expectRed(() => pinReentry(ACCEPT.replace(row, row.replace(/reenter-remove/g, 'x'))), 'awaiting-local row must cite parked, reenter, reenter-check and reenter-remove');
+  expectRed(() => pinReentry(ACCEPT.replace(row, row.replace('for this verdict round', 'until the checks are re-run'))),
+    'awaiting-local row must withhold Accept and merge for this verdict round, the checks re-run only by a later Step 2.5');
+  expectRed(() => pinReentry(ACCEPT.replace(row, row.replace('never inside this round', 'here'))),
+    'awaiting-local row must withhold Accept and merge for this verdict round, the checks re-run only by a later Step 2.5');
 });
 
 const LOCAL_OPTIONS = ['Accept and merge (Recommended)', "Accept, I'll merge", "Broken: here's what I saw"];
@@ -446,6 +517,8 @@ function localVerdictBlock(text) {
   need(hits.length === 1, 'Verdict must carry the parked local target paragraph');
   return hits[0];
 }
+
+const HEAD_RECHECK = 'then re-checks the head at merge time: `gh pr view {pr} --json headRefOid -q .headRefOid` must equal `reenter`\'s printed `head`';
 
 function pinLocalVerdict(text) {
   const whole = localVerdictBlock(text);
@@ -460,7 +533,11 @@ function pinLocalVerdict(text) {
   const s4 = merge.indexOf('and Step 4 when the outcome is `merged`');
   need(rec !== -1 && s3 !== -1 && s4 !== -1, 'Accept and merge must record approval, then Step 3 alone with human-approved, then Step 4');
   need(rec < s3 && s3 < s4, 'Accept and merge must order approval, Step 3, Step 4');
-  need(merge.includes('`parked` then exits 5') && merge.includes('then re-checks the head (`moved:true`: say the head moved since the park, re-run the checks, and ask again with the other two options, this one withheld)'), 'Accept and merge must say parked then exits 5 and re-check the head');
+  need(merge.includes('`parked` then exits 5') && merge.includes(HEAD_RECHECK), 'Accept and merge must say parked then exits 5 and re-check the head');
+  need(merge.includes('reenter-check --worktree {worktree} --expect-head {head}` must exit 0') && merge.includes('`Accept and merge` withheld this round')
+    && merge.includes('the checks are re-run by Step 2.5 on a later merge') && merge.includes('never in this round'),
+    'Accept and merge must run reenter-check --expect-head at merge time and withhold itself this round on a move');
+  need(merge.includes('`{expected-head}` = `reenter`\'s printed `head` (so `gh pr merge --match-head-commit`)'), 'Accept and merge must pin Step 3 to reenter\'s head with --match-head-commit');
   need(merge.indexOf('then re-checks the head') < merge.indexOf('then records the approval'), 'Accept and merge must re-check the head before recording the approval');
   need(merge.includes('as `dispatch/close-out.md` step 5 does') && merge.includes('waits on the required checks, no bypass'), 'Accept and merge must cite close-out step 5 and the required checks');
   need(merge.includes('`PIPELINE_RUN_DIR` bound as `dispatch/close-out.md` step 7 binds it') && merge.includes('the archived one included') && merge.includes('`claude-tweaks-run:` marker as its step 3 resolves it'),
@@ -468,7 +545,7 @@ function pinLocalVerdict(text) {
   need(merge.includes('first resolves the run dir for Step 4') && merge.includes('"Resolve the run dir"'), 'Accept and merge must resolve the run dir before recording the approval');
   need(merge.indexOf('first resolves the run dir') < merge.indexOf('then records the approval'), 'Accept and merge must resolve the run dir before Step 3');
   need(merge.includes('on `no run dir`, say so plainly and ask again with the other two options, this one withheld'), 'Accept and merge must be withheld on no run dir');
-  need(merge.includes('Step 2.5 and Step 2.9 are skipped for this merge'), 'Accept and merge must skip Step 2.5 and Step 2.9');
+  need(merge.includes('Step 2.5 and Step 2.9 are skipped for this merge (it is reached only with an unmoved head, pinned by `{expected-head}`)'), 'Accept and merge must skip Step 2.5 and Step 2.9');
   need(/#4614/.test(block), 'the broken option must hand off to the verdict handler (#4614)');
 }
 
@@ -504,8 +581,16 @@ test('AC5.1 control: a dropped or reordered option goes red', () => {
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('with `PIPELINE_RUN_DIR` bound as `dispatch/close-out.md` step 7 binds it', 'with a run dir'))), 'Accept and merge must bind PIPELINE_RUN_DIR for Step 4 as close-out step 7 does');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('first resolves the run dir for Step 4', 'first resolves'))), 'Accept and merge must resolve the run dir before recording the approval');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('on `no run dir`, say so plainly and ask again with the other two options, this one withheld', 'on `no run dir`, continue'))), 'Accept and merge must be withheld on no run dir');
-  const headCheck = ', then re-checks the head (`moved:true`: say the head moved since the park, re-run the checks, and ask again with the other two options, this one withheld)';
-  assert.ok(block.includes(headCheck), 'head-check clause located');
+  const headCheck = block.slice(block.indexOf(', then re-checks the head'), block.indexOf(', then records the approval'));
+  assert.ok(headCheck.startsWith(', then re-checks the head at merge time'), 'head-check clause located');
+  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('`Accept and merge` withheld this round', 'this one withheld'))),
+    'Accept and merge must run reenter-check --expect-head at merge time and withhold itself this round on a move');
+  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace(' --expect-head {head}` must exit 0', '` must exit 0'))),
+    'Accept and merge must run reenter-check --expect-head at merge time and withhold itself this round on a move');
+  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace(' and `{expected-head}` = `reenter`\'s printed `head` (so `gh pr merge --match-head-commit`)', ''))),
+    'Accept and merge must pin Step 3 to reenter\'s head with --match-head-commit');
+  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace(' (it is reached only with an unmoved head, pinned by `{expected-head}`)', ''))),
+    'Accept and merge must skip Step 2.5 and Step 2.9');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace(headCheck, ''))), 'Accept and merge must say parked then exits 5 and re-check the head');
   const reordered = block.replace(headCheck, '').replace('(`accept:pending` removed, so `parked` then exits 5)', `(\`accept:pending\` removed, so \`parked\` then exits 5)${headCheck}`);
   assert.notStrictEqual(reordered, block);

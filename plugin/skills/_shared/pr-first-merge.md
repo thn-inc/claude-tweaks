@@ -7,8 +7,8 @@ short-circuit, `wrap-up/merge-mode.md`, `flow/worktree-merge.md`'s reconciliatio
 
 **The shape:** ready → merge-verification gate (Step 2.5: state read; red parks; pending waits or
 arms only when the forge holds it) → local acceptance park (Step 2.9) → `gh pr merge --auto` (arm) → degrade to immediate merge →
-degrade to ready+comment. `gh pr merge` needs no local checkout, so the same cwd-pinned Task call that
-already holds authorization, `merge-check`, and acceptance labeling runs the merge itself — no
+degrade to ready+comment. `gh pr merge` needs no local checkout, so the cwd-pinned Task call that
+holds authorization, `merge-check`, and acceptance labeling runs the merge itself — no
 `close-run`-before-merge relief, branch-switch guard, push-from-worktree rule or scratch-worktree
 conflict procedure.
 
@@ -292,11 +292,11 @@ never suggest bypassing protection.
 
 ## Step 2.9: Local acceptance park (control mode)
 
-Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]`. Unless `parked` exits 5 and `decide` exits 0 with `park:false`: never run Step 3; report `pending-review` and read `_shared/local-acceptance-park.md`.
+Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]`; `--run` follows Step 2.5's per-merged-run rule. Unless `parked` exits 5 and `decide` exits 0 with `park:false`: never run Step 3; report `pending-review` and read `_shared/local-acceptance-park.md`.
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
 
-No fence below runs until Step 2.9 lets the merge through (`parked` exit 5, `decide` exit 0 with `park:false`), whichever Step 2.5 route led here; exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
+No fence below runs until Step 2.9 lets the merge through (`parked` exit 5, `decide` exit 0 with `park:false`), whichever Step 2.5 route led here; tidy's record-linked arm runs both without `--run`. Exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
 
 **Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`).
 
@@ -312,19 +312,19 @@ gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --b
 gate), `fast-lane` for the interactive single-record short-circuit triggered by a live `auto:merge`
 label, or `manifesto-authorized` for the same short-circuit triggered instead by the
 `merge-authorization` Manifesto lever with no label present (`wrap-up/review-console.md`,
-`wrap-up/manifesto-authorized-merge.md`) — preserving all three tags' meanings — `/help`'s
+`wrap-up/manifesto-authorized-merge.md`) — `/help`'s
 auto-merged-this-week metric (`_shared/github-pr-scan-triage.md` `triage-queue` item 3) keys on all
 three. `{issue-list}` is the record numbers — the manifest's `complete` specs only for a bundle
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
 `dispatch/close-out.md`'s human-confirmed merge (that metric excludes it). `{scope}`
-resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind the `--pr` above — no local branch or checkout needed, so `dispatch/close-out.md`'s and `tidy`'s later-session callers compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
+resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind `--pr` — no checkout needed, so later-session callers such as `dispatch/close-out.md` and `tidy` compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
 the Conventional-Commits subject and one `Fixes #{n}` line per record, `Refs #{n}` for a
 `{keep-open}` one: the comma-joined `{issue-list}` numbers on a `Refs` line of the post-refresh
 PR body (`closing-links.js --mode pre-merge`'s `keepOpen`, or `parseFixesSpan(body).refs`);
 omit `--keep-open {keep-open}` when none. (Why the `Fixes` lines are restated: `pr-first-merge-appendix.md`'s "Rationale notes".)
 `--squash` keeps one conventional commit per PR.
 
-When the caller supplies an expected head sha (today only `dispatch/close-out.md` after an update), append `--match-head-commit {expected-head}` to every `gh pr merge` command in this step, so a merge, or the arming of one, is accepted only against the head the caller verified; callers that supply none are unchanged.
+When the caller supplies an expected head sha (`dispatch/close-out.md` after an update; `/claude-tweaks:accept`), append `--match-head-commit {expected-head}` to every `gh pr merge` command in this step, so a merge or an arm is accepted only against the head the caller verified; callers that supply none are unchanged.
 
 Run each fence as its own Bash call, never chained; if the composer exits non-zero, stop before any
 merge (its stderr names the reason). `{subject-dir}` is a literal path — resolve it once with
