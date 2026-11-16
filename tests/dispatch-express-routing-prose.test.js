@@ -4,10 +4,10 @@
 // escalation back to the ordinary first call); Step 3's loop termination runs the post-merge
 // sampling sweep; express-prompt.md carries exactly two fenced Task templates whose
 // clean-room-facing parts (context pack, status line, model profile, OUTCOME vocabulary) are
-// pinned per block, and whose Foreground execution paragraph — plus the express call's
-// working-directory and no-stash paragraphs — equal task-prompt.md's first call's after
-// whitespace normalization. All of it is new prose in this change, so every go-red control
-// mutates the live text in memory (skill-prose-conformance-tests).
+// pinned per block, and whose express-call working-directory and no-stash paragraphs equal
+// task-prompt.md's first call's after whitespace normalization (the foreground-wait rule is not
+// restated in a template: Context pack item 7 carries it once, #5601). All of it is new prose in
+// this change, so every go-red control mutates the live text in memory (skill-prose-conformance-tests).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -153,17 +153,9 @@ function paragraph(block, prefix) {
   assert.equal(found.length, 1, `expected exactly one "${prefix}" paragraph, found ${found.length}`);
   return found[0].replace(/\s+/g, ' ').trim();
 }
-const FOREGROUND = 'Foreground execution (required):';
 const WORKDIR = 'Working directory:';
 const NO_STASH = 'Never run `git stash`';
 const firstCall = () => fencedBlocks(readText(TASK_PROMPT))[0];
-
-test('both templates restate the first call\'s Foreground execution paragraph verbatim', () => {
-  const { express, review } = expressBlocks();
-  const canonical = paragraph(firstCall(), FOREGROUND);
-  assert.equal(paragraph(express, FOREGROUND), canonical, 'express call');
-  assert.equal(paragraph(review, FOREGROUND), canonical, 'post-merge sample review call');
-});
 
 test('the express call copies the first call\'s working-directory and no-stash paragraphs', () => {
   const { express } = expressBlocks();
@@ -171,21 +163,74 @@ test('the express call copies the first call\'s working-directory and no-stash p
 });
 
 test('go-red control: a reworded copied paragraph fails, a rewrapped one does not', () => {
-  const { express, review } = expressBlocks();
-  const canonical = paragraph(firstCall(), FOREGROUND);
-  for (const block of [express, review]) {
-    const reworded = block.replace('never with `run_in_background`', 'with `run_in_background`');
-    assert.notEqual(reworded, block);
-    assert.notEqual(paragraph(reworded, FOREGROUND), canonical);
-    const rewrapped = block.replace(`${FOREGROUND} run`, `${FOREGROUND}\nrun`);
-    assert.notEqual(rewrapped, block);
-    assert.equal(paragraph(rewrapped, FOREGROUND), canonical);
-  }
+  const { express } = expressBlocks();
   for (const [prefix, from, to] of [[WORKDIR, 'Do NOT create', 'You may create'], [NO_STASH, 'make a temporary WIP commit', 'stash it']]) {
     const reworded = express.replace(from, to);
     assert.notEqual(reworded, express);
     assert.notEqual(paragraph(reworded, prefix), paragraph(firstCall(), prefix), prefix);
   }
+});
+
+// #5601: the foreground-wait rule reaches an express agent through item 7 of the `{context-pack}`
+// each template carries once; a template holding its own Foreground paragraph would state it twice.
+const PRE_5601_PARAGRAPH = readText(path.join(__dirname, 'fixtures', 'dispatch-prompt', 'foreground-paragraph-pre-5601.txt')).trimEnd();
+const FOREGROUND_HEAD = 'Foreground execution (required):';
+// The paragraph is found by its heading, or by the primitive and the probe phrase it carried, so an
+// indented or re-headed copy is still caught. The raw block never holds item 7's text.
+const PRIMITIVE = /`sleep\s+\d+`\s+Bash\s+calls,\s+at\s+most\s+\d+\s+\(\d+\s+minutes\)/;
+const PROBE_PHRASE = 'probe the worktree its prompt names, read-only';
+const expressDefects = (blocks) => Object.entries(blocks).filter(([, block]) => (
+  block.split(/\r?\n\r?\n/).some((p) => p.startsWith(FOREGROUND_HEAD))
+  || PRIMITIVE.test(block.replace(/\s+/g, ' '))
+  || block.replace(/\s+/g, ' ').includes(PROBE_PHRASE)
+  || block.split('{context-pack}').length - 1 !== 1
+)).map(([label]) => label);
+
+test('AC2: each express template holds {context-pack} once and no Foreground paragraph (#5601)', () => {
+  const blocks = expressBlocks();
+  assert.deepEqual(expressDefects(blocks), []);
+  for (const label of Object.keys(blocks)) {
+    const restored = blocks[label].replace('{context-pack}', `${PRE_5601_PARAGRAPH}\n\n{context-pack}`);
+    assert.notEqual(restored, blocks[label]);
+    assert.deepEqual(expressDefects({ ...blocks, [label]: restored }), [label], `a restored paragraph in only ${label}`);
+    const duplicated = `${blocks[label]}\n\n{context-pack}`;
+    assert.deepEqual(expressDefects({ ...blocks, [label]: duplicated }), [label], `a duplicated {context-pack} in only ${label}`);
+  }
+});
+
+// The restored paragraph can dodge a head-only check: indented, or with its heading renamed (#5601 final review).
+test('AC2: the express-template check goes red for an indented or re-headed restored paragraph (#5601)', () => {
+  const blocks = expressBlocks();
+  const shapes = [
+    ['indented two spaces', PRE_5601_PARAGRAPH.split('\n').map((line) => `  ${line}`).join('\n')],
+    ['re-headed', PRE_5601_PARAGRAPH.replace(FOREGROUND_HEAD, 'Foreground execution:')],
+  ];
+  for (const [shape, doctoredParagraph] of shapes) {
+    assert.notEqual(doctoredParagraph, PRE_5601_PARAGRAPH, `${shape}: the doctoring changed nothing`);
+    for (const label of Object.keys(blocks)) {
+      const restored = blocks[label].replace('{context-pack}', `${doctoredParagraph}\n\n{context-pack}`);
+      assert.notEqual(restored, blocks[label]);
+      assert.deepEqual(expressDefects({ ...blocks, [label]: restored }), [label], `a ${shape} restored paragraph in only ${label}`);
+    }
+  }
+});
+
+const CONTEXT_PACK_DEFINITION = /`\{context-pack\}` is `task-prompt\.md`'s Context pack section, each numbered item resolved as it states/;
+const contextPackDefined = (text) => {
+  const line = text.split('\n').find((l) => l.startsWith('Referenced by'));
+  assert.ok(line, 'express-prompt.md lost its "Referenced by" line');
+  assert.match(line.replace(/\s+/g, ' '), CONTEXT_PACK_DEFINITION, 'express-prompt.md must define {context-pack} as the whole Context pack section');
+};
+
+test('AC8.1: express-prompt.md defines {context-pack} as the whole Context pack section (#5601)', () => {
+  contextPackDefined(readText(EXPRESS_PROMPT));
+});
+
+test('AC8.2: narrowing the definition to a list without item 7 goes red', () => {
+  const text = readText(EXPRESS_PROMPT);
+  const narrowed = text.replace('Context pack section, each numbered item resolved as it states', 'Context pack items 1-6 and 8, each resolved as it states');
+  assert.notEqual(narrowed, text);
+  assert.throws(() => contextPackDefined(narrowed), /must define \{context-pack\} as the whole Context pack section/);
 });
 
 // The dispatcher-facing text of each template's section: from its heading to its fence.

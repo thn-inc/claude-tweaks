@@ -232,7 +232,7 @@ test('--root refuses a non-github.com or unreadable origin in that checkout, nam
 
 test('realDeps origin read: --root reads that checkout\'s origin, and a missing origin leaves one CLI stderr line', () => {
   const dir =fs.mkdtempSync(path.join(os.tmpdir(), 'ci-health-root-'));
-  const env = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
   try {
