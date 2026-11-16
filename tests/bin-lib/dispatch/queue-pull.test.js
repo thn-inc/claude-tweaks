@@ -1,10 +1,11 @@
 'use strict';
 // #5227: queue-pull module suite: the registry, passes, CLI, rank and the oracle pins that need no pair
 // pool. The oracle/parity header, the fence and the strings read from it, and the parity-pair machinery
-// live in queue-pull-helpers.js, with the in-process pull harness (pull, pull4, inOwnTmp); the four
-// `#5227 parity` describes run as queue-pull-parity-{ac1,ac5,ac4,ac7}.test.js, one process each, and the
+// live in queue-pull-helpers.js, with the in-process pull harness (pull, pull4, inOwnTmp); the
+// `#5227 parity` describes run as queue-pull-parity-{ac1,ac5,ac4,ac7,d1}.test.js, one process each (the
+// AC4 describe is split across ac4 and ac7 by fault family: gh rows in ac4, files rows in ac7), and the
 // slow whole-fence oracle runs and cross-checks as queue-pull-oracle-checks.test.js.
-const { test, mock, before, after } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');

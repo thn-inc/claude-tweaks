@@ -142,21 +142,14 @@ test('the committed durations file parses and names only test files that exist',
 test('every test file of 100 KB or more has a recorded duration (refresh: node tools/run-tests.js --record-durations tools/test-durations.json)', () => {
   const durations = readDurations(readText(path.join(ROOT, DURATIONS_FILE)));
   const testFiles = listTestFiles(ROOT).map((f) => path.relative(ROOT, f).split(path.sep).join('/'));
-  const sizeOf = (file) => {
-    try {
-      return fs.statSync(path.join(ROOT, file)).size;
-    } catch (err) {
-      if (err.code === 'ENOENT') return null;
-      throw err;
-    }
-  };
+  const sizeOf = (file) => fs.statSync(path.join(ROOT, file)).size;
   const gaps = durationsCoverageGaps(testFiles, durations, sizeOf);
-  assert.deepStrictEqual(gaps, [], `no recorded duration for: ${gaps.join(', ')}`);
+  assert.deepStrictEqual(gaps, [], `no recorded duration for: ${gaps.join(', ')} — refresh: node tools/run-tests.js --record-durations tools/test-durations.json`);
 });
 
-test('no recorded duration exceeds 100,000 ms — split that test file by describe into sibling files', () => {
+test('no recorded duration exceeds 100,000 ms', () => {
   const over = durationsOverCeiling(readDurations(readText(path.join(ROOT, DURATIONS_FILE))));
-  assert.deepStrictEqual(over, [], `over the ceiling: ${over.join(', ')}`);
+  assert.deepStrictEqual(over, [], `over the ceiling: ${over.join(', ')} — split that test file by describe into sibling files`);
 });
 
 test('extractRunFlags pulls --shard and --record-durations out and keeps the roots', () => {
