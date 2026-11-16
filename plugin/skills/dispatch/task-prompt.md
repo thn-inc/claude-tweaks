@@ -43,10 +43,11 @@ calls — plus one standing instruction (item 7) that needs no resolution, only 
    started (#1965). A nested `Agent` call launches async, and its completion notification reaches you only
    while your turn is alive (when the call instead returns the child's own reply, that child has
    reported and needs no wait): keep your turn alive with bounded foreground waits —
-   `node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`, 20 minutes per wave of children (the set launched
-   together), stopping as soon as every child's `<task-notification>` has
-   arrived, never reading or tailing a running child's `output_file` — until every child you
-   launched has reported, and never end your turn with one outstanding. `{ids}` are the agent ids
+   `node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`, 20 minutes per
+   wave of children (the set launched together), stopping as soon as every child's
+   `<task-notification>` has arrived, never reading or tailing a running child's `output_file` —
+   until every child you launched has reported, and never end your turn with one outstanding.
+   `{ids}` are the agent ids
    of the children whose notification has not arrived, comma-separated. Make each call a
    foreground Bash call with no `timeout` parameter: the command returns within 150 seconds, under
    the 180-second ceiling a dispatched agent's foreground call has (#5602). Exit 0 means a listed
@@ -82,9 +83,10 @@ calls — plus one standing instruction (item 7) that needs no resolution, only 
    bound; a failed probe command counts as no change, never retried in another form. Read-only units
    keep the first-bound self-judge.
    Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
-   changes; stage its late result (`_shared/rendered-ui-units.md`). A wait call that is blocked or fails is not a wait and does not move
-   the window's deadline; never retry it in another form (a `sleep` of any length, or a longer,
-   wrapped or backgrounded call): treat every child still outstanding as silent at the bound. The full rule is in
+   changes; stage its late result (`_shared/rendered-ui-units.md`). A wait call that is blocked or
+   fails is not a wait and does not move the window's deadline; never retry it in another form (a
+   `sleep` of any length, or a longer, wrapped or backgrounded call): treat every child still
+   outstanding as silent at the bound. The full rule is in
    `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
    dispatch this same instruction, whether it is a nested Task/Agent call or a
    `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply

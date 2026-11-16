@@ -35,6 +35,7 @@ When the dispatch is for a verification or test-running agent (no commits), the 
 During worktree-mode pipeline runs this rule is mechanically enforced — the plugin's PreToolUse hook denies commits whose resolved checkout differs from the run's recorded worktree assignment.
 
 **A denial is recoverable, and the dispatch prompt must say how.** E1 resolves the run's worktree assignment from `run-state.json`, and under concurrent sibling pipeline runs that lookup can read as stale or misattributed — so a correctly-placed implementer can still see its *first* commit denied. The fix is an idempotent re-stamp of the assignment onto this run, from either checkout: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "<resolved-run-dir>" "<worktree>"`, then retry the commit. Both values must be substituted as literal absolute paths before dispatch, per the substitution rule above — never `--run` omitted, which lets the command's fallback resolver pick some other session's run and corrupt its state. A denial that survives one re-stamp is a genuine wrong-checkout mismatch: report `BLOCKED`, do not keep retrying.
+
 **One plain command per Bash call.** Any dispatched agent — implementer, reviewer, or lens agent — whose session is worktree-isolated (it entered its worktree via the native `EnterWorktree` tool, or inherits a harness-pinned one, as every dispatch under `worktree-always` does) runs under a harder constraint than anything above: `&&`/`;` chains, a variable assigned and then used in the same call, loops, and heredocs are refused by shape, not just discouraged by convention. The dispatch prompt must say so explicitly — one plain command per Bash call, `Edit`/`Write` instead of a heredoc for a path inside the agent's own worktree, and no reliance on a shell variable surviving between calls. The refused shapes and their workarounds are documented once, canonically, in `_shared/scratch-worktree.md` §7 ("Shell constraint") — cite it rather than restating it here. Prompts that omitted it hit the guard repeatedly (#3675).
 
 Inline this line verbatim into every `/claude-tweaks:review` Step 3 dispatch prompt (lens, debate, refutation, gap-sweep, tiebreak), outside any byte-pinned Calibration/Output block; an implementer or other dispatch states the rule above in its own prompt:
@@ -79,7 +80,8 @@ returns within 150 seconds, under the 180-second ceiling a dispatched agent's fo
 again while any child is outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3 with
 `"bound":"deadline"` means the 20-minute window is over: the bound has expired, and when the rule
 below grants another window, the next call is that window. Exit 2 is a failed wait call. The
-command's output line is the wait's log line, so the agent writes no separate one. A reply that ends without a tool call ends the turn, whatever is still in
+command's output line is the wait's log line, so the agent writes no separate one. A reply that
+ends without a tool call ends the turn, whatever is still in
 flight. **Fallback:** when no `Agent`/`Task` tool exists (`ToolSearch` finds none, deferred or
 otherwise — the normal case in a cloud routine sandbox), or a child has not reported when the
 bound expires, judge that unit in-session, applying the child's own checklist or template as a
@@ -123,16 +125,20 @@ treat every child still outstanding as silent at the bound and apply the fallbac
 the pattern `_shared/dispatch-waiting.md` documents; this section restricts only what a dispatched
 agent instructs itself or its children to do.
 
-**Bounded polling for a long external wait.** Neither of the two patterns above (running long
-commands in the foreground; collecting nested `Agent` children in-turn) fits a genuinely long
-*external* process with no completion-notification channel at all — a live CI run, a cloud
-deploy — that a dispatched agent must verify finished, not just kick off. Backgrounding it and
-ending the turn to wait for a notification is the same violation as above (a dispatched agent cannot
-count on being re-woken), and the agent cannot simply block for however long the process takes
-either. The compliant shape is a **bounded check-interval loop run with real foreground tool
-calls**: repeated `Bash` calls (or a `Monitor` watch over a polling script) that check the
-external condition on a fixed interval — e.g. `sleep 20 && gh run view {id} --json
-status,conclusion` — never a backgrounded watcher left to report back on its own. Cap the loop to
+**Bounded polling for a long external wait.** A genuinely long *external* process with no
+completion notification (a live CI run, a cloud deploy) that a dispatched agent must verify
+finished is never backgrounded with the turn ended on it (the violation above), and the agent
+cannot block for however long it takes either. The compliant shape is a **bounded check-interval
+loop run with real foreground tool calls**. For a pull request's checks, a workflow run or a local
+process it is `wait-for.js` (`wait-for.js ci --pr {n}`, `wait-for.js ci --run {id}`,
+`wait-for.js pid --pid {pid}`), called as the `agents` form above (foreground, no `timeout`,
+`--max-seconds 150`): 0 means read the result, 3 with `"bound":"call"` means call again, and 3 with
+`"bound":"deadline"` means the bound is exhausted (below); on exit 2 call it once more, which joins
+the failed call's window, and a second exit 2 ends the wait unresolved. Its bound is its 20-minute
+window and its output line is its log line; the cap, interval and logging rules below are for any
+other condition (a deploy, a log line), whose repeated `Bash` calls (or a `Monitor` watch over a
+polling script) check it on a fixed interval, never a backgrounded watcher left to report back on
+its own. Cap the loop to
 a fixed iteration count rather than leaving it open-ended; `release/execute.md`'s re-render poll
 already uses 20-second intervals for up to 15 attempts (5 minutes) and is a reasonable default to
 copy rather than re-derive. When the bound is exhausted without the condition resolving, that is
@@ -141,10 +147,8 @@ so, rather than silently extending the original wait or escalating to background
 
 Log every iteration: name what's being waited on, the iteration number against the bound, and
 the current status, in one line — e.g. "Polling CI run {id}: attempt 4/15, status=in_progress".
-This is the detail that matters most in practice: without it, "an agent doing bounded polling
-with real tool calls" and "an agent stuck in a silent loop" are indistinguishable from outside
-the transcript, and a coordinating session watching the dispatched work has no signal to check
-before interrupting with a false-alarm check-in (#2784).
+Without it, bounded polling and a silent loop look the same from outside the transcript, and a
+coordinating session has no signal before a false-alarm check-in (#2784).
 
 ## Read-only Reviewer Discipline
 

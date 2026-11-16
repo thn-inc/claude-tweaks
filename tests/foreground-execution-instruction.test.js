@@ -87,7 +87,7 @@ function coreForegroundSection(text) {
 }
 
 // The facts the final-review fix wave added (abandoned child, the whole-final-reply re-wake, the
-// sleep 20 x 60 per-wave bound and its log line). Written to match every copy of the rule -- core, item 7, the
+// 20-minute per-wave window and its log line). Written to match every copy of the rule -- core, item 7, the
 // handoff template -- so each copy's list spreads this one array, and each pattern matches exactly once
 // per copy so its go-red proof removes the only occurrence.
 const SHARED_RULE = [
@@ -452,7 +452,7 @@ test('AC4.1: the rendered-count check goes red with the invocation line restored
 });
 
 // A fenced template holds no Foreground paragraph and its `{context-pack}` exactly once (#5601). The
-// paragraph is found by its heading, or by the primitive and the probe phrase it carried, so an
+// paragraph is found by its heading, or by the wait-for.js invocation and the probe phrase it carried, so an
 // indented or re-headed copy is still caught. The raw block never holds item 7's text.
 const templateDefects = (blocks) => blocks.flatMap(([label, block]) => {
   const squashed = block.replace(/\s+/g, ' ');
@@ -688,7 +688,7 @@ test('each core measured-fact assertion can actually go red on its own (discrimi
   assertEachPatternGoesRed(coreForegroundSection(readText(CORE)), CORE_MEASURED, coreMeasuredMissing);
 });
 
-// #4557: at the sleep 20 x 60 bound, a still-outstanding write-capable child's worktree is probed
+// #4557: at the 20-minute window's bound, a still-outstanding write-capable child's worktree is probed
 // read-only and the wait continues while it progresses, instead of stopping BLOCKED on elapsed time
 // alone. One passage, the same words in all three copies; each pattern matches once per copy.
 const PROGRESS_CHECK = [
@@ -877,4 +877,55 @@ test('AC1.1: a copy with the exception sentence moved to its start goes red (dis
     const doctored = RENDERED_UI_EXCEPTION + ' ' + flat.replace(' ' + RENDERED_UI_EXCEPTION, '');
     assert.deepEqual(exceptionMisplacedCopies({ ...copies, [name]: doctored }), [name], `moving the exception in only ${name} must turn exactly that copy red`);
   }
+});
+
+// #5604: the bounded-polling paragraph names wait-for.js for a pull request's checks, a workflow run and a
+// local process, and keeps its cap, interval and logging rules for any other condition. Each pattern matches
+// exactly once in that one paragraph, so its go-red proof removes the only occurrence.
+function boundedPollingParagraph(core) {
+  const found = coreForegroundSection(core).split(/\n\n/).filter((p) => p.startsWith('**Bounded polling for a long external wait.**'));
+  assert.equal(found.length, 1, 'the Foreground Execution Discipline section must hold exactly one Bounded polling paragraph');
+  return found[0];
+}
+const BOUNDED_POLLING = [
+  [/wait-for\.js\s+ci\s+--pr/, 'a pull request wait is `wait-for.js ci --pr`'],
+  [/wait-for\.js\s+ci\s+--run/, 'a workflow run wait is `wait-for.js ci --run`'],
+  [/wait-for\.js\s+pid\b/, 'a local process wait is `wait-for.js pid`'],
+  [/3\s+with\s+`"bound":"deadline"`\s+means\s+the\s+bound\s+is\s+exhausted/, 'exit 3 with a deadline bound means the bound is exhausted'],
+  [/on\s+exit\s+2\s+call\s+it\s+once\s+more,\s+which\s+joins\s+the\s+failed\s+call's\s+window,\s+and\s+a\s+second\s+exit\s+2\s+ends\s+the\s+wait\s+unresolved/, 'a first exit 2 is retried once and a second ends the wait unresolved'],
+  [/the\s+cap,\s+interval\s+and\s+logging\s+rules\s+below\s+are\s+for\s+any\s+other\s+condition/, 'the cap, interval and logging rules are for any other condition'],
+];
+const missingBoundedPolling = missingFactsOf(BOUNDED_POLLING);
+
+test('AC7.1: the bounded-polling paragraph names wait-for.js ci --pr, ci --run and pid (#5604)', () => {
+  const paragraph = boundedPollingParagraph(readText(CORE));
+  assert.deepEqual(missingBoundedPolling(paragraph), []);
+  assertEachPatternGoesRed(paragraph, BOUNDED_POLLING, missingBoundedPolling);
+});
+
+// #5604: no skill file shows a wait as a backtick-quoted `sleep N` (the harness refuses a leading sleep).
+// Every file under plugin/skills is read, whatever its extension.
+function skillFiles(root) {
+  return fs.readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(root, entry.name);
+    return entry.isDirectory() ? skillFiles(full) : [[full, readText(full)]];
+  });
+}
+const backtickSleepHits = (files) => files.filter(([, text]) => /`sleep \d/.test(text)).map(([file]) => file);
+const PR_FIRST_MERGE = path.join(PLUGIN, 'skills', '_shared', 'pr-first-merge.md');
+
+test('AC3.1 AC3.2: no file under plugin/skills puts a backtick directly before sleep and a digit (#5604)', () => {
+  const files = skillFiles(path.join(PLUGIN, 'skills'));
+  assert.ok(files.length > 100, `expected over 100 skill files, found ${files.length}`);
+  assert.deepEqual(backtickSleepHits(files), []);
+  const merge = files.find(([file]) => file === PR_FIRST_MERGE);
+  assert.ok(merge, 'pr-first-merge.md is not among the swept files');
+  assert.match(merge[1], /sleep 30/, 'the unmatched anchor (a bare sleep 30 in a code block) is gone, so the sweep proves nothing about it');
+});
+
+test('AC3.3: the backtick-sleep sweep goes red on a fixture copy carrying such text (#5604)', () => {
+  const files = skillFiles(path.join(PLUGIN, 'skills'));
+  const doctored = files.map(([file, text]) => (file === CORE ? [file, `${text} \`sleep 20\` `] : [file, text]));
+  assert.notDeepEqual(doctored, files, 'the core is not among the swept files');
+  assert.deepEqual(backtickSleepHits(doctored), [CORE]);
 });
