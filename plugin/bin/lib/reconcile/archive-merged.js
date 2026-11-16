@@ -669,8 +669,8 @@ function digestRerunRemedy(runDir) {
     c.items.some((i) => i.resolution === DIGEST_PENDING_RESOLUTION) ? [{ consoleDir: path.dirname(c.path) }] : []
   ));
   if (commands.length === 0) return '';
-  const perConsole = commands.length > 1 ? " (each console's own dir as --run)" : '';
-  return `re-run the planned digest entries: ${commands.map((c) => digestRerunCommand(c)).join('; ')}, then ${digestLogRemedy(commands[0])}${perConsole}`;
+  const logRemedy = digestLogRemedy({ consoleDir: commands.length > 1 ? "{that console's dir}" : commands[0].consoleDir });
+  return `re-run the planned digest entries: ${commands.map((c) => digestRerunCommand(c)).join('; ')}, then ${logRemedy}`;
 }
 
 // The recovery line for a console-residue skip: name the open items, the

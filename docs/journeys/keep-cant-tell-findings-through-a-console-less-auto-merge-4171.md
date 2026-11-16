@@ -14,7 +14,7 @@ files:
 **Goal:** a review finding the tiebreak could not settle (a can't-tell `console` verdict) is never lost when no console runs. Either it is filed as a backlog record before the merge, or the merge waits for a human, or the run refuses to archive and says why.
 **Entry point:** `/claude-tweaks:wrap-up` reaching the auto-merge short-circuit (`wrap-up/auto-merge-short-circuit.md`), or `dispatch/settle-and-merge.md`'s bundle Auto-merge gate, on a run whose `decisions.md` holds a `Tiebreak tiebreak:{id}: … console: …` verdict line.
 **Success state:**
-- At `autonomy: unattended`, every can't-tell finding is a backlog record (deduplicated by `work-fingerprint`) before the merge, and the run archives.
+- At `autonomy: unattended`, every can't-tell finding is a backlog record or a digest entry (deduplicated by `work-fingerprint`) before the merge, and the run archives.
 - Below `unattended`, the run does not auto-merge. The normal Review Console renders the findings for a human.
 - A run that merged anyway with a finding unfiled refuses archival under `cant-tell-unfiled`, with a paste-ready remedy.
 
@@ -34,12 +34,12 @@ files:
 ### 2. At unattended, the findings are filed
 - **URL:** `wrap-up/review-console.md`'s "Can't-tell filings" procedure (`console-filings.js --run {item-run-dir} --existing {issues.json} --out-dir {dir}`), then one `gh issue create` per proposal
 - **Action:** when `consoleAutoResolve` is granted, every can't-tell finding is settled by its recommendation: a `drop` is digested, every other one is filed as a `needs-verification` task. Each created record logs `AUTO … Queue write: {item} filed as #{n} (work-fingerprint {fp})`, and a finding that already has a record logs `… already filed as #{n} …` instead; each digest entry logs `… digested (work-fingerprint {fp})` (`… already digested …` when the digest already holds it).
-- **Should feel:** hands-off. The maintainer later finds `needs:definition` records titled `Review finding (can't-tell): {path} — {claim}`.
+- **Should feel:** hands-off. The maintainer later finds verification-task records titled `Review finding (can't-tell): {path} — {claim}`.
 - **Should understand:**
   - Dedup is by `work-fingerprint` over every record, closed ones included, so a re-run never files twins.
   - The `filed as #N` lines are the evidence the archive guard reads.
 - **Red flags:**
-  - a can't-tell finding dropped because its tiebreak recommended `drop`
+  - a can't-tell finding dropped with no digest entry
   - a created record with no `filed as` line in `decisions.md`
 
 ### 3. Below unattended, or on a failed filing, the short-circuit refuses

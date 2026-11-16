@@ -204,7 +204,7 @@ a `drop`-recommended can't-tell item is digested (`tiebreak-cant-tell`, deduplic
 with no `--only` for the run's finding rows, ticks the rows that come back under `file`/`deduped`,
 and passes the rows under `digest`/`digestDeduped` to `resolve-console --digested`, once their
 digested lines are logged. A CLI entry's `item` is a console item id: the row passed is the one
-whose `findingItem` equals it, named by that row's own `id`.
+whose `findingItem` equals it, named by that row's own `id`. The steps this leaves out — the digest-comments fetch and `--digest-comments`, posting `digestFile`, the per-entry digested log line — are `wrap-up/review-console.md`'s "Can't-tell filings" paragraph, run per console dir.
 
 **Second narrower exception (#1802):** the same `isMergeRow: true` item is also **not**
 floor-clearing when a live re-fetch shows any group member currently lacking both `auto:merge`

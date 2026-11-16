@@ -287,6 +287,17 @@ test('a console holding a planned digest entry with no digested line reads resid
   assert.ok(remedy.startsWith(`re-run the planned digest entries: console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>, then ${digestLogRemedy({ consoleDir: runDir })}`), remedy);
   assert.ok(consoleResidueHint(runDir).includes(`${remedy}; or review them, then run console-residue.js --ack --run "${runDir}"`), consoleResidueHint(runDir));
 });
+test('digestRerunRemedy with several digest-pending consoles names each re-run and one log command with a dir placeholder (#4679)', () => {
+  const runDir = plannedDigestRunDir();
+  const sub = path.join(runDir, 'spec-2');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'console.json'), fs.readFileSync(path.join(runDir, 'console.json')));
+  fs.writeFileSync(path.join(sub, 'decisions.md'), '## /wrap-up\n');
+  const remedy = digestRerunRemedy(runDir);
+  assert.ok(remedy.includes(`console-filings.js --run "${runDir}" `) && remedy.includes(`console-filings.js --run "${sub}" `), remedy);
+  assert.ok(remedy.endsWith(digestLogRemedy({ consoleDir: "{that console's dir}" })), remedy);
+  assert.strictEqual(remedy.split('post each printed digest line').length, 2, 'the instruction sentence prints once');
+});
 test('digestRerunRemedy is empty for a residue console with no planned digest (#4679)', () => {
   assert.strictEqual(digestRerunRemedy(prConsoleRunDir([['f1', 'filing-failed']])), '');
 });

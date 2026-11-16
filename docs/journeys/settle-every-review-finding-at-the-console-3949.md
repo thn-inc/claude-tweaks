@@ -26,7 +26,7 @@ files:
 # Settle Every Review Finding at the Review Console
 
 **Persona:** an operator who finishes a `/claude-tweaks:flow` or `/claude-tweaks:wrap-up` run and meets its Review Console: at a terminal, on the PR comment under `pr-first`, or not at all, because the run resolved itself at `autonomy: unattended`. Until now, Low-confidence and Contested findings sat there as `keep-staged`, with no default and nothing applying them. They were left behind in every finished run.
-**Goal:** every review finding reaches a final outcome before the run closes: filed as a backlog record, or dropped. A finding nobody could settle is never quietly kept, and never quietly dropped.
+**Goal:** every review finding reaches a final outcome before the run closes: filed as a backlog record, digested, or dropped. A finding nobody could settle is never quietly kept, and never quietly dropped.
 **Entry point:** the Wrap-Up Review Console, reached by `/claude-tweaks:wrap-up` (or `/claude-tweaks:flow`'s consolidated multi-spec console) after `/claude-tweaks:review`'s tiebreak (Step 3.7) has logged a verdict line for every open finding.
 **Success state:**
 - The console shows no `pending` or `keep-staged` finding from this run.
