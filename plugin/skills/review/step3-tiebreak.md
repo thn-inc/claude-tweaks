@@ -12,7 +12,7 @@ Runs after every earlier pass has settled a finding's bucket, in this order:
 4. `step3-debate-and-refutation.md`'s Step 3.5 debate (`high` and above) and Per-Candidate Refutation (`xhigh`/`max`).
 5. The Step 3.6 gap sweep (`xhigh`/`max`).
 
-Entry status: every finding still `unconfirmed` or `contested` after that sequence, including both sides of a `nearLocation` pair — each is judged on its own, with its own agent and its own verdict line. A finding already `confirmed` does not enter.
+Entry status: every finding still `unconfirmed` or `contested` after that sequence, including both sides of a `nearLocation` pair — each is judged on its own, with its own verdict line, sharing a chunk agent with up to seven others. A finding already `confirmed` does not enter.
 
 ## Findings artifact
 
@@ -26,17 +26,17 @@ Each entry is `{lens, path, line, claim, reporterSeverity, kind, positions?}` wh
 
 ## Dispatch
 
-One agent per entry, in parallel waves of **8**: dispatch a wave in one batch, wait for every agent of the wave to return, then start the next. Outside a dispatched reviewer, that wait follows `step3-lens-dispatch.md`'s hung single-read agent rule (its bounded wait and one `SendMessage` nudge); an agent still silent after that is a failed dispatch (`## Resolve and act` step 1). Never reuse the reporting lens's agent or its reproduction partner — the tiebreak agent is a fresh run.
+Group the entry set's distinct ids, in entry order, into chunks of at most **8** findings — never by lens or file; a repeated entry goes in once, since the chunk form refuses a repeated id — and dispatch one fresh agent per chunk, in parallel waves of **8** chunk agents: dispatch a wave in one batch, wait for every agent of the wave to return, then start the next. Outside a dispatched reviewer, that wait follows `step3-lens-dispatch.md`'s hung single-read agent rule (its bounded wait and one `SendMessage` nudge); an agent still silent after that is a failed dispatch (`## Resolve and act`). Never reuse the reporting lens's agent or its reproduction partner — the tiebreak agent is a fresh run.
 
-> **Parallel execution:** Dispatch each wave's tiebreak agents as parallel Task agents — each runs independently, sees only its own finding's allowlist, and returns the template's `Verdict:`/`Evidence:`/`Severity:`/`Recommendation:` reply, settled by `resolve-tiebreak`. Assemble results after all agents complete.
+> **Parallel execution:** Dispatch each wave's tiebreak agents as parallel Task agents — each runs independently, sees only its own chunk's allowlist, and returns one `Id:`-headed `Verdict:`/`Evidence:`/`Severity:`/`Recommendation:` block per finding, settled by `resolve-tiebreak`. Assemble results after all agents complete.
 
-After the last wave, re-run `step3-lens-dispatch.md`'s Post-fan-out untracked-file sweep against the same pre-dispatch listing — report-only, as there, logging only what the earlier sweep did not already report. Skip it when this step dispatched no agent (no entries, or every verdict read inline).
+After the last wave, re-run `step3-lens-dispatch.md`'s Post-fan-out untracked-file sweep against the same pre-dispatch listing, once the last single-finding follow-up (`## Resolve and act`) has returned too — report-only, as there, logging only what the earlier sweep did not already report. Skip it when this step dispatched no agent (no entries, or every verdict read inline).
 
 Model: `[Use: Capable]`, resolved with `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable --run-dir "$PIPELINE_RUN_DIR"` (drop `--run-dir` when no run directory exists).
 
 The Working Directory, Read-only Reviewer, and Foreground disciplines are the composed review-dispatch bundle's (standalone, `_shared/subagent-dispatch-core.md`'s), applied to these dispatches exactly as `step3-lens-dispatch.md`'s notes state for lens dispatches.
 
-The agent receives the allowlist and nothing else: the claim text, the severity, the `path:line`, the diff scope (Step 2's — the own-work scope when the Merge-Provenance Check found merge commits), and, for a contested finding only, each position as a one-line claim plus a severity label. Never pass the reporting agent's evidence or reasoning. Inline this template literally in each `Task()` prompt, per the Subagent Contract:
+The agent receives the allowlist and nothing else: the claim text, the severity, the `path:line`, the diff scope (Step 2's — the own-work scope when the Merge-Provenance Check found merge commits), and, for a contested finding only, each position as a one-line claim plus a severity label. Never pass the reporting agent's evidence or reasoning. The single-finding template comes first — a single-finding follow-up (`## Resolve and act`) and an inline verdict (`## Dispatched reviewer`) use it; inline it literally in each such `Task()` prompt, per the Subagent Contract:
 
 ```
 Finding: {claim text}
@@ -67,11 +67,55 @@ SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you 
 [Use: Capable — tiebreak agent. Independent run; fresh file read, not the reporting lens's context. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable --run-dir "$PIPELINE_RUN_DIR"` (contract § Model Selection).]
 ```
 
+The chunk template follows, inlined literally the same way in each chunk agent's `Task()` prompt: the `Diff scope:` line once, then one block per finding headed `Id: {id}`, with `{id}` the finding's `id` from `review-findings.json`:
+
+```
+Diff scope: {base}...{branch}, or the own-work file list path when the Merge-Provenance Check found merge commits
+
+Id: {id}
+Finding: {claim text}
+Severity: {severity label — for a contested finding, the higher of the two positions' severities}
+Location: {path}:{line}
+Positions: {contested finding only — omit this line and the two lines below otherwise}
+- {one-line claim} ({severity})
+- {one-line claim} ({severity})
+
+{… one such block per finding in the chunk, each headed by its own Id: line …}
+
+Reply with one block per finding, each opening with its own Id: line copied exactly, then exactly these lines; one status line ends the whole reply:
+Id: {id}
+Verdict: confirmed | refuted | cant-tell
+Evidence: {path}:{line} `{the whole cited source line, verbatim}`
+Severity: critical | high | medium | low | info
+Recommendation: file | drop — {one-line reason}
+
+You are the independent tiebreak judge for each finding above. Judge each finding on its own: one being right or wrong says nothing about the next. For each, re-read the live file at its Location and decide from the code itself whether the finding holds; you were deliberately given no account of how any of them was reported.
+Evidence is required for confirmed and refuted: cite the Location path exactly as given (the full repo-relative path, never a bare filename or another file) and a line within 5 of Location, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. The cited line must carry a run of at least 3 letters, digits or underscores (an identifier or keyword that long): a line with none, such as `});` or `if (fd === 2) {`, is rejected as unverified however exact the quote, so cite a neighbouring line within that range that has one. cant-tell needs no Evidence line.
+Recommendation file means the finding is worth a fix or a work record; drop means it is not worth acting on.
+A vacuity claim — that a test cannot fail, or that its cases are vacuous — cannot be confirmed by reading code: never reply confirmed for one.
+Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
+
+[... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
+[... SHELL DISCIPLINE line, verbatim from the review-dispatch bundle's Working Directory Discipline section ...]
+
+SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you create to verify these findings goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
+
+[Use: Capable — tiebreak agent. Independent run; fresh file read, not the reporting lens's context. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable --run-dir "$PIPELINE_RUN_DIR"` (contract § Model Selection).]
+```
+
 ## Resolve and act
 
-For each entry, once its agent has returned:
+For each chunk, once its agent has returned:
 
-1. Resolve three paths with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" F=review-{ctx-id}-tiebreak-{n}.json R=review-{ctx-id}-tiebreak-{n}-reply.txt T=review-{ctx-id}-tiebreak-{n}-text.txt` (`{n}` the entry's position in the set). `Write` the entry (as written to the artifact, `positions` included for a contested one) to `F` and the agent's reply to `R`; `T` is written in step 3. An empty, failed, timed-out, or non-`DONE` dispatch (`BLOCKED`, `NEEDS_CONTEXT`, a session limit) is re-dispatched once as a fresh agent — except a dispatched reviewer's timed-out agent, which has already spent its keep-alive bound and goes straight to the inline rung; only if that one fails too is it passed as an empty reply file (a dispatched reviewer takes the inline rung instead, see `## Dispatched reviewer`) — the resolver turns it into the can't-tell result, so every entry still gets exactly one verdict line. On a lens 3f vacuity finding, write a `confirmed` reply to `R` with its `Verdict: confirmed` line replaced by `Verdict: cant-tell`: a vacuity claim needs an executed run (`step3-lens-dispatch.md`'s lens 3f vacuity bullet), so it resolves can't-tell with its one verdict line, reason `verdict:cant-tell`; a `refuted` reply resolves as written.
+- Resolve two paths with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" F=review-{ctx-id}-tiebreak-chunk-{c}.json R=review-{ctx-id}-tiebreak-chunk-{c}-reply.txt` (`{c}` the chunk's position, from 1). `Write` the chunk's entries (as written to the artifact, `positions` included for a contested one), in chunk order, as one JSON array to `F`, and the agent's reply to `R`. A lens 3f vacuity finding's entry carries `vacuity: true` in `F`: the code rewrites its block's `Verdict: confirmed` line to `Verdict: cant-tell`, so the dispatcher never edits a chunk reply.
+- An empty, failed, timed-out, or non-`DONE` chunk reply (`BLOCKED`, `NEEDS_CONTEXT`, a session limit) is re-dispatched once as a fresh chunk agent, and its valid blocks are discarded, not settled. If that one fails too, each of its findings goes down the per-finding path: one fresh single-finding agent, the finding's third and last judge attempt, settled by steps 1–4 below — a dispatched reviewer takes the inline rung instead.
+- Otherwise, run the chunk call once (with `--run` in a pipeline run): step 2's command with the chunk's `F` and `R`. It prints `{"chunk": true, "results": [...], "unsettled": [...]}`. Each result is the one-finding output plus `id` and `index` (`i`, from 0 within the chunk); act on it by steps 3 and 4, with its `{n}` the finding's position in the whole set, `(c − 1) × 8 + i + 1`, so a `logged: false` result's `T`, resolved as step 1 resolves it, never collides across chunks. Every id in its `unsettled` list (reason `missing` or `duplicated`) gets one single-finding re-dispatch after that call, settled with the one-finding call form by steps 1–4; a re-dispatch that fails too resolves as an empty reply does today — passed as an empty reply to the one-finding call, except that a dispatched reviewer takes the inline rung (` Mode: inline.`). Only code splits a reply: never cut one by hand. A non-zero chunk-call exit settles none of its findings: each gets step 2's no-verdict line.
+
+A finding gets at most three judge attempts — its chunk agent, that chunk's one re-dispatch, one single-finding agent — and `check-coverage` stays the backstop for an unsettled finding nobody followed up.
+
+For each single-finding follow-up, once its agent has returned, and for each inline verdict:
+
+1. Resolve three paths with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" F=review-{ctx-id}-tiebreak-{n}.json R=review-{ctx-id}-tiebreak-{n}-reply.txt T=review-{ctx-id}-tiebreak-{n}-text.txt` (`{n}` the entry's position in the set). `Write` the entry (as written to the artifact, `positions` included for a contested one) to `F` and the agent's reply to `R`; `T` is written in step 3. A single-finding agent is already a chunk's re-dispatch, so it is never re-dispatched again: only if that one fails too is it passed as an empty reply file (a dispatched reviewer takes the inline rung instead, see `## Dispatched reviewer`) — the resolver turns it into the can't-tell result, so every entry still gets exactly one verdict line. On a lens 3f vacuity finding, write a `confirmed` reply to `R` with its `Verdict: confirmed` line replaced by `Verdict: cant-tell`: a vacuity claim needs an executed run (`step3-lens-dispatch.md`'s lens 3f vacuity bullet), so it resolves can't-tell with its one verdict line, reason `verdict:cant-tell`; a `refuted` reply resolves as written.
 2. Run, with `{checkout under review}` the worktree or checkout the review reads (not the run dir). A pipeline run, for an agent's reply:
 
    ```bash
@@ -113,10 +157,10 @@ Can't-tell findings of severity medium or higher are listed in the closing outpu
 
 When the reviewer is itself a dispatched agent (`/claude-tweaks:dispatch`'s second Task call, or any other orchestrator), it dispatches the tiebreak agents itself, under `_shared/subagent-dispatch-core.md`'s nested-children rule — the same rule `step3-lens-dispatch.md`'s Foreground note gives lens dispatches.
 
-Fallback ladder, per finding:
+Fallback ladder, per chunk first, then per finding:
 
-1. Nested dispatch, collected with the keep-alive waits that rule bounds.
-2. For a finding whose agent is unavailable (no `Agent` tool), times out at that rule's bound, or fails again after `## Resolve and act` step 1's re-dispatch, the reviewer reads the live code, fills the same template, feeds its own reply to the resolver, and logs with ` Mode: inline.` — a documented loss of independence, named in a `Tiebreak caveat:` line (`review-summary-template.md`'s `### Tiebreak` section).
+1. Nested dispatch of each chunk agent, and of each single-finding follow-up an `unsettled` id gets, collected with the keep-alive waits that rule bounds.
+2. For a finding whose agent is unavailable (no `Agent` tool), or fails again after its chunk's re-dispatch or its single-finding re-dispatch (`## Resolve and act`; a timeout at that rule's bound is a failure), the reviewer reads the live code, fills the single-finding template, feeds its own reply to the resolver, and logs with ` Mode: inline.` — a documented loss of independence, named in a `Tiebreak caveat:` line (`review-summary-template.md`'s `### Tiebreak` section).
 
 An unavailable agent changes who judges, never whether a verdict exists, so marking every finding can't-tell is not an allowed fallback. The invariant is that every listed finding has its verdict line before the run's Review Console resolves.
 

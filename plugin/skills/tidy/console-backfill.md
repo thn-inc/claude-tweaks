@@ -103,7 +103,7 @@ node -e "const fs=require('fs');const [list,plan,n]=process.argv.slice(1);const 
 
 Dispatch one fresh agent per finding in **waves of 8** — a wave in one batch, every agent returned before the next wave — following `review/step3-tiebreak.md`'s `## Dispatch` (its wait rules, foreground discipline and parallel-execution form). Model `Capable`: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable` (no run directory exists).
 
-Read `review/step3-tiebreak.md` and inline the fenced template under its `## Dispatch` verbatim into each `Task()` prompt, with these field values and nothing else changed:
+Read `review/step3-tiebreak.md` and inline the single-finding template, the first fenced block under its `## Dispatch`, verbatim into each `Task()` prompt, with these field values and nothing else changed:
 
 - `Finding:` = the item's `claimText`, then a second line `Source (context only — judge just the finding at Location): {context}`.
 - `Severity:` = `finding.reporterSeverity`.
