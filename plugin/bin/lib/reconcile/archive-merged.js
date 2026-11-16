@@ -2471,11 +2471,19 @@ function archiveMerged({
         // #3975: a clean-twin shell. The CLI is its completion; in place, only one per pass,
         // and never one whose work/ differs from the twin's (archiveRunDir would refuse it).
         const skipShell = () => skipped.push({
-          runDir: dir, reason: 'archived-pending-tracked-move', command: archivedPendingTrackedMoveCommand(root),
+          runDir: dir, reason: 'archived-pending-tracked-move', command: archivedPendingTrackedMoveCommand(root), shell: true,
         });
         if (isWorktreeAlwaysOn(root) || shellSlotUsed || shellWorkTwinDiffers(root, dir)) { skipShell(); continue; }
         shellSlotUsed = true;
-        finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
+        finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => {
+          const result = archive(root, dir);
+          if (!result.ok) {
+            // archiveRunDir merged `archiving` into the clean twin's run-state; a refusal after that
+            // marker leaves it, which would hide the twin's clean status from the next pass. Best-effort.
+            try { writeRunState(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir)), { status: 'clean' }); } catch { /* best-effort */ }
+          }
+          return result;
+        });
         continue;
       }
       if (isWorktreeAlwaysOn(root)) {

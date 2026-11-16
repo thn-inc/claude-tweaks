@@ -293,7 +293,7 @@ function formatSummary(result) {
 
   // #3975: one completion line for every stranded shell, right after the aggregated skipped: line.
   const shell = Array.isArray(result.runs)
-    ? result.runs.find((e) => e.reason === 'archived-pending-tracked-move' && e.command)
+    ? result.runs.find((e) => e.shell === true && e.command)
     : null;
   if (shell) lines.push(`archive stranded shells: ${shell.command}`);
 

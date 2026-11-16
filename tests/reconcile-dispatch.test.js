@@ -462,9 +462,18 @@ test('formatSummary: a skipped entry carrying names (non-canonical-run-dir, #848
 
 test('format-summary prints one archive-stranded-shells line for several shells (#3975)', () => {
   const cmd = 'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/r"';
-  const shell = (n) => ({ runDir: `/r/.claude-tweaks/pipelines/${n}`, action: 'skipped', reason: 'archived-pending-tracked-move', command: cmd });
+  const shell = (n) => ({ runDir: `/r/.claude-tweaks/pipelines/${n}`, action: 'skipped', reason: 'archived-pending-tracked-move', command: cmd, shell: true });
   const lines = formatSummary({ runs: [shell('a'), shell('b')], skipped: [] }).split('\n');
   assert.deepEqual(lines, ['skipped: 2 run dirs (archived-pending-tracked-move 2)', `archive stranded shells: ${cmd}`]);
+});
+
+test('format-summary: the stranded-shells line comes from a shell entry, never a non-clean split state (#3975)', () => {
+  const cmd = 'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/r"';
+  const split = { runDir: '/r/.claude-tweaks/pipelines/x', action: 'skipped', reason: 'archived-pending-tracked-move', command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "/r/x"' };
+  const shell = { runDir: '/r/.claude-tweaks/pipelines/y', action: 'skipped', reason: 'archived-pending-tracked-move', command: cmd, shell: true };
+  const mixed = formatSummary({ runs: [split, shell], skipped: [] }).split('\n');
+  assert.deepEqual(mixed.filter((l) => l.startsWith('archive stranded shells')), [`archive stranded shells: ${cmd}`]);
+  assert.ok(!formatSummary({ runs: [split], skipped: [] }).includes('archive stranded shells'));
 });
 
 test('AC1.3: reconcile --dry-run --json --checks archive lists a clean-twin shell as archived-pending-tracked-move (#3975)', { skip: STUB_SKIP }, () => {

@@ -1249,6 +1249,22 @@ test('AC1.5: a conflicting clean-twin shell does not take the in-place slot and 
   assert.equal(skip.command, archivedPendingTrackedMoveCommand(root));
   const twinState = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(differing), 'run-state.json'), 'utf8'));
   assert.equal(twinState.status, 'clean');
+  assert.equal(fs.existsSync(path.join(differing, 'work', 'w-spec.md')), true, 'the differing shell keeps its live work/');
+  assert.equal(skip.shell, true);
+});
+
+test('AC1.7: a failed in-place attempt on a clean-twin shell leaves the twin clean (#3975)', (t) => {
+  const root = fs.realpathSync(makeRepo());
+  const shellDir = makeShell(root, '2026-09-01T100000-spec-1');
+  t.mock.method(cp, 'execFileSync', (cmd, args, opts) => {
+    if (cmd === 'git' && Array.isArray(args) && args.includes('commit')) throw new Error('simulated failure: git commit');
+    return execFileSync(cmd, args, opts);
+  });
+  const result = archiveMerged({ cwd: root });
+  assert.ok(!result.archived.includes(shellDir), JSON.stringify(result));
+  assert.ok(result.skipped.some((s) => s.runDir === shellDir), JSON.stringify(result));
+  const twinState = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(shellDir), 'run-state.json'), 'utf8'));
+  assert.equal(twinState.status, 'clean');
 });
 
 test('AC1.6: a non-clean-twin split state keeps the archive-run completion and is not capped (#3975)', () => {
