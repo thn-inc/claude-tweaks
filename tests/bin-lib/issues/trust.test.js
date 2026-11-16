@@ -1407,3 +1407,43 @@ test('#4626: an unstructured cell stays insufficient-evidence under revocationOn
   assert.equal(row.revocationOnly.operationalGood, MIN_SAMPLES + 4);
   assert.equal(row.revocationOnly.verdict, 'insufficient-evidence');
 });
+
+test('#4626: a reverted approved record drags revocationOnly to mixed while verdict stays clean', () => {
+  const good = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 20));
+  const records = [...good, approvedOperational(8)];
+  const gitLog = [
+    ...records.map((r) => commitFor(r.number)),
+    { sha: sha40(999), message: `This reverts commit ${sha40(8)}.` },
+  ];
+  const [row] = trustRows(records, gitLog, NOW, {});
+  assert.equal(row.verdict, 'clean', 'the approval itself still grades clean today');
+  assert.deepEqual(row.mixedReasons, []);
+  assert.equal(row.revocationOnly.verdict, 'mixed');
+  assert.deepEqual(row.revocationOnly.mixedReasons, ['negative-evidence']);
+});
+
+test('#4626: a failure-marked approved record drags revocationOnly to mixed while verdict stays clean', () => {
+  const good = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 20));
+  const marked = {
+    ...approvedOperational(8),
+    closedAt: closedDaysAgo(1),
+    comments: [{ body: attemptFailedCommentBody({ attemptNumber: 1, reason: 'x', classification: 'correctness' }) }],
+  };
+  const records = [...good, marked];
+  const gitLog = good.map((r) => commitFor(r.number));
+  const [row] = trustRows(records, gitLog, NOW, {});
+  assert.equal(row.verdict, 'clean');
+  assert.equal(row.revocationOnly.verdict, 'mixed');
+  assert.deepEqual(row.revocationOnly.mixedReasons, ['negative-evidence']);
+});
+
+test('#4626: a graded cell over the follow-up threshold carries follow-up-rate in revocationOnly.mixedReasons', () => {
+  const { records, gitLog } = ac1Fixture();
+  const [clean] = trustRows(records, gitLog, NOW, {});
+  assert.equal(clean.revocationOnly.verdict, 'clean');
+  assert.deepEqual(clean.revocationOnly.mixedReasons, []);
+
+  const [strict] = trustRows(records, gitLog, NOW, { 'trust-follow-up-rate-max-percent': 10 });
+  assert.equal(strict.revocationOnly.verdict, 'mixed');
+  assert.deepEqual(strict.revocationOnly.mixedReasons, ['follow-up-rate']);
+});

@@ -21,7 +21,7 @@ So approvals decide no grade today. They are a latent path: the first class whos
 
 Option 2: acceptance verdicts route work; a rejection is a revocation input, an approval never promotes a class.
 
-The spec named three options: keep verdicts in the trust table unchanged; keep them only as a revocation input; stop reading them for trust grading altogether. This record chooses the second.
+The spec named three options: keep verdicts in the trust table unchanged; keep them only as a revert-detection input; stop reading them for trust grading altogether. This record chooses the second. It reads "revert-detection input" this way: a changes-requested verdict still counts as a negative per-class input, beside reverts, and an approval counts for nothing.
 
 Under the chosen rule an approved record is graded on its own operational outcome. Merged and unreverted past the revert window counts as good. A revert or a `correctness`/`ambiguous` failure marker counts as negative evidence. Anything else is undispositioned. A changes-requested verdict still counts as a disposition, and a cell that clears the `MIN_SAMPLES` and `MIN_VERDICTS` floors reads `mixed` while it holds one. A pending verdict stays undispositioned. The `batch-only` mixed reason has no meaning here, because an approval carries no weight.
 

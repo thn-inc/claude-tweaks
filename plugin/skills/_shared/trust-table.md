@@ -405,8 +405,9 @@ one at 90% are different claims, and only this column distinguishes them.
 
 **Verdict (revocation-only) is ADR 0035's expand step** (`docs/decisions/0035-acceptance-verdicts-are-a-revocation-input-only.md`).
 It renders `row.revocationOnly.verdict`: what Verdict becomes once an approval stops counting as
-positive evidence. An approved record is graded on its own operational outcome instead, and a
-changes-requested verdict still reads `mixed`. Verdict stays the column consumers act on until the
+positive evidence. An approved record is graded on its own operational outcome instead. A
+changes-requested verdict still counts as a disposition, and a cell that clears the `MIN_SAMPLES`
+and `MIN_VERDICTS` floors reads `mixed` while it holds one. Verdict stays the column consumers act on until the
 contract step.
 
 **Not Planned is counted and rendered, and is deliberately not a verdict input.** A record closed
