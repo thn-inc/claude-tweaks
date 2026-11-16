@@ -17,6 +17,10 @@
 - POSIX sh only in `tools/direct-test-run-guard.sh`: no `[[`, `local`, arrays, `$'...'`, `${v//...}`, `echo -e`, `==` in `[ ]`. No `set -e`, no `set -u`. Variables are prefixed `dtrg_`.
 - The skip path uses shell builtins only: no command substitution, no pipeline, no external program.
 - Caps: a payload over 8192 bytes goes to node, and so does one where any of the three scans reads more than 256 pieces (pieces between quotes in the payload, pieces between backslashes in the command string, fragments of the command). The spec's "escape cap" is the second of these; the other two were added at plan time, when a command of 8,000 semicolons measured 60 ms.
+- A backslash in the command sends the call to node. The spec lists the backslash among the escapes the prefilter decodes; the plan tightens that on purpose. Decoding `\\` needs a rule that tells an escaped backslash before a quote from an escaped quote, and it buys nothing: the common case (`grep "a\|b"`) is cut at the `|` and goes to node on the quote that follows.
+- The file body is one brace group (the spec's "one compound command"), so the shell parses all of it before it runs any of it.
+- After `command exec node … <<DTRG_EOF` the next line pipes the same line to node. It runs only when the exec did not happen: bash 3.2 writes a here-document to a temp file, and when that fails `command exec` returns instead of ending the shell, so without the pipe a call that needs node would reach `exit 0` unjudged. No test can pin this line: bash falls back from an unusable `TMPDIR` to `/tmp` (measured: `TMPDIR=/nonexistent` changes nothing), and dash and bash 5 use a pipe. It is listed as unproven in the mutant evidence.
+- A payload over the cap is read whole by the shell's `read` before it is handed to node, at about 0.4 ms per KB (measured: 64 KB costs 86 ms against 53 ms for the old command; 1 MB costs 479 ms against 55 ms). In one day of recorded calls 337 of 1,264,622 payloads were over 8192 bytes, the largest was 20,645 bytes and none was over 64 KB, so the mean added cost is 0.001 ms a call. The plan accepts that cost and budgets it in Task 3 instead of adding a bounded read, which POSIX sh does not have (`read -n` is bash only).
 - Tests read tracked text files through `tests/helpers/read-skill.js`'s `readText`, never `fs.readFileSync(p, 'utf8')` (`tests/raw-markdown-read-conformance.test.js`). A Buffer read (no encoding) of the prefilter is allowed where raw bytes are the point.
 - No wall-clock assertion under `tests/` (`tests/wall-clock-budget-conformance.test.js`); timing goes in `perf/`.
 - Every spawn in a test passes `timeout: 30000, killSignal: 'SIGKILL', windowsHide: true`.
@@ -27,7 +31,7 @@
 - Run tests with `node --test tests/direct-test-run-guard.test.js` (one file, allowed) or `node tools/run-tests.js <files>`; never a multi-file `node --test`.
 - Measured facts this plan relies on (2026-11-16, Claude Code 2.1.325, macOS; a headless `claude -p --setting-sources project` run in a scratch project whose PreToolUse hook wrote its stdin and `$0` to files): the payload is one compact JSON line ending in one `\n`, with keys `session_id, transcript_path, cwd, prompt_id, permission_mode, effort, hook_event_name, tool_name, tool_input{command, description}, tool_use_id`; the hook shell is `/bin/sh`.
 - The registered command string was run once in each fault state under `/bin/sh` (bash 3.2), `/bin/dash` and bash 5: missing file, CRLF file and syntax-broken file each exit 0 with empty stdout. A plain `. file` instead exits 2 under dash on a missing or broken file, which would block every Bash call, so the `[ -r ] && command .` form is required.
-- The prefilter text in Task 1 was run at authoring time against 143 decision rows (the rows Task 1's tests name) under `/bin/sh`, `/bin/dash` and bash 5, each with and without `LC_ALL=en_US.UTF-8`: 0 mismatches. 29 single-rule mutants each flipped at least one row under `/bin/sh`; the `LC_ALL=C` mutant flips rows only under bash 3.2 (macOS `/bin/sh`), because dash and bash 5 match bytes without it. An earlier text with the same decisions on every recorded call was replayed over one day of recorded Bash calls (1,264,622 calls, 72,800 distinct): 0 calls skipped that the guard or any of five widened oracles denies, identical verdicts in the three shells, 50.1% of calls skip node.
+- The prefilter text in Task 1 was run at authoring time against 144 decision rows (the rows Task 1's tests name) under `/bin/sh`, `/bin/dash` and bash 5, each with and without `LC_ALL=en_US.UTF-8`: 0 mismatches. 29 single-rule mutants each flipped at least one row under `/bin/sh`; the `LC_ALL=C` mutant flips rows only under bash 3.2 (macOS `/bin/sh`), because dash and bash 5 match bytes without it. An earlier text with the same decisions on every recorded call was replayed over one day of recorded Bash calls (1,264,622 calls, 72,800 distinct): 0 calls skipped that the guard or any of five widened oracles denies, identical verdicts in the three shells, 50.1% of calls skip node.
 
 Governing project skills, quoted:
 
@@ -193,10 +197,11 @@ Create `tools/direct-test-run-guard.sh` with exactly this content, LF line endin
 # file cannot read plainly: another JSON escape, a payload of another shape, or one over the caps.
 # Cutting inside quotes only adds fragments, so it can add node runs and never remove one.
 #
-# Faults. The whole file is function definitions plus one call, so a syntax fault (CRLF line
-# endings, conflict markers) is found before anything reads stdin: `command .` returns, and the
-# hook command's own `node "$d.js"` runs the guard on the untouched stdin, as the registration did
-# before #5794. The hook command ends in `exit 0`, and nothing here prints.
+# Faults. Everything below this comment is one brace group, so the shell parses all of it before
+# it runs any of it: a syntax fault anywhere (CRLF line endings, conflict markers, a cut-off file)
+# is found before anything reads stdin. `command .` then returns, and the hook command's own
+# `node "$d.js"` runs the guard on the untouched stdin, as the registration did before #5794. The
+# hook command ends in `exit 0`, and nothing here prints.
 #
 # POSIX sh only: dash, bash 3.2 (macOS /bin/sh) and Git Bash run it. No [[, local, arrays, $'...'
 # or ${v//...}. Claude Code passes a hook command to `sh -c` on macOS and Linux and to Git Bash on
@@ -205,6 +210,7 @@ Create `tools/direct-test-run-guard.sh` with exactly this content, LF line endin
 #
 # Test seam: with DIRECT_TEST_RUN_GUARD_LIB set, sourcing this file only defines the functions.
 
+{
 # dtrg_scan <payload>: status 0 when node must judge the call, 1 when no rule of the guard can
 # deny it. It changes IFS and turns globbing off; direct_test_run_guard_needs_node restores both.
 dtrg_scan() {
@@ -296,8 +302,10 @@ direct_test_run_guard_needs_node() {
 }
 
 # The hook entry. Claude Code writes one JSON line and a newline: that shape is judged, and node,
-# when needed, replaces this shell and reads the line back from a here-document (no fork). Any
-# other stdin (no final newline, more than one line, nothing) goes to node byte for byte.
+# when needed, replaces this shell and reads the line back from a here-document (no fork). When
+# that exec does not happen (bash writes a here-document to a temp file, so an unwritable TMPDIR
+# fails it) the line is piped to node instead. Any other stdin (no final newline, more than one
+# line, nothing) goes to node byte for byte.
 direct_test_run_guard_main() {
   dtrg_js=$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard.js
   dtrg_stdin=
@@ -311,6 +319,7 @@ direct_test_run_guard_main() {
       command exec node "$dtrg_js" <<DTRG_EOF
 $dtrg_stdin
 DTRG_EOF
+      printf '%s\n' "$dtrg_stdin" | node "$dtrg_js"
     fi
   else
     printf '%s' "$dtrg_stdin" | node "$dtrg_js"
@@ -319,6 +328,7 @@ DTRG_EOF
 }
 
 [ -n "${DIRECT_TEST_RUN_GUARD_LIB-}" ] || direct_test_run_guard_main
+}
 ```
 
 The word list on the line after `# program-words:` holds exactly the members of `PROGRAM_WORDS`; if the array differs from this line, the array is the source and the line follows it.
@@ -371,7 +381,7 @@ A project fixture helper, `withHookProject(prefilter, guardSource, fn)`: a temp 
 - `RECORDER`: `const fs = require('fs'); const c = []; process.stdin.on('data', (d) => c.push(d)); process.stdin.on('end', () => fs.writeFileSync(process.env.DTRG_SEEN, Buffer.concat(c)));` — "node ran" means the `seen` file (passed as `DTRG_SEEN`) exists, and its bytes are what node read.
 - `REAL_GUARD`: `require('child_process').spawnSync(process.execPath, [process.env.DTRG_REAL], { stdio: 'inherit' });` — runs the real guard (`DTRG_REAL: GUARD`) on the same stdin and stdout.
 
-The good prefilter bytes are `fs.readFileSync(PREFILTER)` (a Buffer read, no encoding). The three faulty prefilter states are: `null` (missing); the CRLF copy (`readText(PREFILTER).replace(/\n/g, '\r\n')`, asserted to hold `\r\n` and no `\r\r\n`); and a copy with the line `<<<<<<< HEAD` inserted after the line `dtrg_scan() {`.
+The good prefilter bytes are `fs.readFileSync(PREFILTER)` (a Buffer read, no encoding). The four faulty prefilter states are: `null` (missing); the CRLF copy (`readText(PREFILTER).replace(/\n/g, '\r\n')`, asserted to hold `\r\n` and no `\r\r\n`); a copy with the line `<<<<<<< HEAD` inserted after the line `dtrg_scan() {`; and a copy with that line inserted after the last call line (the line starting `[ -n "${DIRECT_TEST_RUN_GUARD_LIB-}" ]`), which only the brace group turns into a fault found before anything runs.
 
 `D` below is `hookPayload('node --test tests/a.test.js tests/b.test.js')`, and `DENIED` is `hookPayload('node --test tests/direct-test-run-guard.test.js tests/run-tests-isolation.test.js')` (two files that exist in this checkout).
 
@@ -382,7 +392,7 @@ Tests (each `perPrefilterShell` unless it says otherwise):
 3. `#5794 AC1.1 AC1.2 AC1.3 AC1.4: the registered command prints what the node guard prints`, with `nodeEnv(ROOT)`: for the inputs `DENIED + '\n'` and `hookPayload('for f in tests/*.test.js; do node --test $f; done') + '\n'`, `runHook` exits 0 and its stdout equals, byte for byte, the stdout of `spawnSync(process.execPath, [GUARD], { input, … })`, which parses as JSON whose `hookSpecificOutput.permissionDecision` is `deny`. For `node --test tests/direct-test-run-guard.test.js`, `node tools/run-tests.js tests/direct-test-run-guard.test.js` and `git status --short && ls`, `runHook` exits 0 with empty stdout.
 4. `#5794 AC3.1 AC3.2: node reads the bytes the hook received`, in `withHookProject(good, RECORDER, …)` with `nodeEnv(dir, { DTRG_SEEN: seen })`: for each input below (remove `seen` between inputs), exit status 0, empty stdout, node ran, and `fs.readFileSync(seen)` equals the input bytes. Inputs: `D + '\n'`; `D` (no final newline); `JSON.stringify(JSON.parse(D), null, 2) + '\n'`; the same without the final newline; `D + '\nextra'`; `D + '\nextra\n'`; `hookPayload('git status') + '\n\n'`; `''`; `'\n'`; `'not json\n'`; and `hookPayload('node "a b.js" c.js # æøå \u2028 \\ $HOME `id`') + '\n'`.
 5. `#5794 AC4.1 AC4.2: the skip path starts nothing`: in `withHookProject(good, RECORDER, …)`, input `hookPayload('git status --short && ls') + '\n'` with `nodeEnv(dir, { DTRG_SEEN: seen })` exits 0 with empty stdout and empty stderr, and node did not run. Then with `emptyPathEnv(dir, { DTRG_SEEN: seen })` (no `node` and no `cat` to find): status 0, empty stdout, empty stderr. `shellFile` is an absolute path from `findOnPath`, so the empty PATH does not stop the spawn.
-6. `#5794 AC5.1 AC5.2 AC5.3: a missing, CRLF or broken prefilter still reaches the guard`: for each of the three faulty states, (a) in `withHookProject(state, RECORDER, …)` with `nodeEnv(dir, { DTRG_SEEN: seen })`, input `D + '\n'` exits 0 with empty stdout, node ran, and it read exactly the input bytes; (b) in `withHookProject(state, REAL_GUARD, …)` with `nodeEnv(dir, { DTRG_REAL: GUARD })`, input `DENIED + '\n'` exits 0 and stdout parses as a deny.
+6. `#5794 AC5.1 AC5.2 AC5.3: a missing, CRLF or broken prefilter still reaches the guard`: for each of the four faulty states, (a) in `withHookProject(state, RECORDER, …)` with `nodeEnv(dir, { DTRG_SEEN: seen })`, each of the inputs `D + '\n'` and `hookPayload('git status --short && ls') + '\n'` exits 0 with empty stdout, node ran, and it read exactly the input bytes (a faulty prefilter skips nothing); (b) in `withHookProject(state, REAL_GUARD, …)` with `nodeEnv(dir, { DTRG_REAL: GUARD })`, input `DENIED + '\n'` exits 0 and stdout parses as a deny.
 7. `#5794 AC5.2: with no node on PATH the hook exits 0 and prints nothing`: with `emptyPathEnv(dir, { DTRG_SEEN: seen })` and input `D + '\n'`: with the good prefilter, status 0 and empty stdout; with `prefilter` `null`, status 0 and empty stdout (stderr may name the missing node: do not assert on it).
 8. `#5794 AC5.2: garbage and empty stdin print nothing`, with `nodeEnv(ROOT)` (the real guard): inputs `'not json\n'`, `''` and `'{"tool_name":"Bash"}\n'` each exit 0 with empty stdout.
 
@@ -419,11 +429,11 @@ Stage `.claude/settings.json`, `.gitattributes` and `tests/direct-test-run-guard
 - Create: `perf/direct-test-run-prefilter.test.js`
 
 **Interfaces:**
-- Consumes: `tools/direct-test-run-guard.sh` and its `DIRECT_TEST_RUN_GUARD_LIB` seam (Task 1). The perf file defines its own driver and payload builder; it does not require the test file (requiring a test file runs its tests).
+- Consumes: `tools/direct-test-run-guard.sh` and its `DIRECT_TEST_RUN_GUARD_LIB` seam (Task 1), and the command registered in `.claude/settings.json` (Task 2). The perf file defines its own driver and payload builder; it does not require the test file (requiring a test file runs its tests).
 
 - [ ] **Step 1: Write the budget test**
 
-Follow `perf/hooks-prefilter.test.js` for the header comment, the `findOnPath('sh')` lookup and the `process.hrtime.bigint()` timer. One sh process per measurement: the driver is `DIRECT_TEST_RUN_GUARD_LIB=1; . "$1"; IFS= read -r l; i=0; while [ "$i" -lt "$2" ]; do direct_test_run_guard_needs_node "$l"; i=$((i + 1)); done`, run as `<sh> -c <driver> sh <prefilter path> 200` with one payload line on stdin. A measurement is the wall time of that process; keep the minimum of 5.
+Follow `perf/hooks-prefilter.test.js` for the header comment, the `findOnPath('sh')` lookup and the `process.hrtime.bigint()` timer. One sh process per measurement: the driver is `DIRECT_TEST_RUN_GUARD_LIB=1; . "$1"; IFS= read -r l; i=0; while [ "$i" -lt "$2" ]; do direct_test_run_guard_needs_node "$l"; i=$((i + 1)); done`, run as `<sh> -c <driver> sh <prefilter path> 200` with one payload line on stdin. A measurement is the wall time of that process. Measure in 7 rounds, each round timing every payload once in turn (so a busy stretch on the machine falls on all of them), and keep each payload's minimum.
 
 Payload lines, built with the same key set as the test file's `hookPayload` and padded to exactly 8192 bytes unless stated:
 - `word`: the command `ls ` plus `a` characters. `word1k`: the same at 1024 bytes.
@@ -435,8 +445,9 @@ Payload lines, built with the same key set as the test file's `hookPayload` and 
 
 Assertions, for `sh` and, when on PATH, `dash` (skipped by name when missing):
 - `#5794 AC9.1 AC9.2: work is linear in the payload`: `word` takes under 24 times `word1k` (linear is 8; measured 2.9).
-- `#5794 AC9.1 AC9.2: a worst-case payload at the caps costs under 10 times a plain payload of the same size`: each of `blanks`, `fragments`, `quotes`, `newlines` and `description` takes under 10 times `word` (measured at most 4.4 under sh and 5.2 under dash; with one cap removed the matching payload measured 20 to 66 times).
-- `#5794 AC9.1 AC9.2: a worst-case call stays under 25 ms`: each of the six 8192-byte payloads takes under 5000 ms for its 200 calls (measured at most 5.2 ms a call at load average 104; a node start measured 50 ms there).
+- `#5794 AC9.1 AC9.2: a worst-case payload at the caps costs under 12 times a plain payload of the same size`: each of `blanks`, `fragments`, `quotes`, `newlines` and `description` takes under 12 times `word` (measured 2.5 to 7.8 across four runs at load averages 29 to 104; with one cap removed the matching payload measured 20 to 66 times).
+- `#5794 AC9.1 AC9.2: a worst-case call stays under 25 ms`: each of the six 8192-byte payloads takes under 5000 ms for its 200 calls (measured at most 12.2 ms a call; a node start measured 50 ms on the same machine).
+- `#5794 AC9.2: a payload over the cap costs under 3 times the old registration` (one test per shell): in a temp project whose `tools/direct-test-run-guard.js` is the one line `process.stdin.resume();` beside a copy of the prefilter, with a 65,536-byte payload line plus a newline on stdin, the registered command (read from `.claude/settings.json` through `readText`) takes under 3 times `node "$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard.js"` run through the same shell, each the minimum of 5 runs (measured 86 ms against 53 ms under sh and 65 ms against 46 ms under dash). The shell's `read` takes the line a byte at a time, so this path is linear with a larger constant than node's; the budget keeps it from growing unseen.
 
 State in the header comment the numbers measured on the authoring machine when the file is written (shell, load average, the per-call times).
 
@@ -497,7 +508,7 @@ Stage the three files by path and commit: `Describe the guard prefilter — hook
 
 Each result is written in full to `$PIPELINE_RUN_DIR/evidence/{name}.txt` and summarised in one `decisions.md` entry (`log-decision.js --section "/build" --status AUTO --step "AC evidence" --text-file …`) naming the criterion, the command shape and the counts. The scripts stay uncommitted.
 
-1. **AC6.2 mutants** (`evidence/mutants.txt`): in a `git archive` extract of HEAD, one mutant at a time on `tools/direct-test-run-guard.sh`, each followed by `node --test tests/direct-test-run-guard.test.js` in the extract; every mutant must turn at least one test red: drop each separator from `dtrg_seps` in turn (9); drop `node|`, `|find`, `|until` and `|.` from the word list; delete the `*[!A-Za-z0-9_.+-]*` line; delete the `n*`, `t*` and `\"*` branches in turn, turn `n*` into a blank, and turn the `*) return 0` escape branch into an append; delete the 8192 cap and each of the three 256 caps; delete `set -f`; delete the state-3 `command) return 0` branch, the state check, and the state-1 reset; delete `LC_ALL=C` (red under bash 3.2 as `/bin/sh` with a UTF-8 locale installed; dash and bash 5 match bytes without it, so on a host whose `sh` is dash this one is reported as not provable there). Each of the three 256 caps is also removed for a run of `perf/direct-test-run-prefilter.test.js` in the extract, which must fail on the matching payload.
+1. **AC6.2 mutants** (`evidence/mutants.txt`): in a `git archive` extract of HEAD, one mutant at a time on `tools/direct-test-run-guard.sh`, each followed by `node --test tests/direct-test-run-guard.test.js` in the extract; every mutant must turn at least one test red: drop each separator from `dtrg_seps` in turn (9); drop `node|`, `|find`, `|until` and `|.` from the word list; delete the `*[!A-Za-z0-9_.+-]*` line; delete the `n*`, `t*` and `\"*` branches in turn, turn `n*` into a blank, and turn the `*) return 0` escape branch into an append; delete the 8192 cap and each of the three 256 caps; delete `set -f`; delete the state-3 `command) return 0` branch, the state check, and the state-1 reset; delete `LC_ALL=C` (red under bash 3.2 as `/bin/sh` with a UTF-8 locale installed; dash and bash 5 match bytes without it, so on a host whose `sh` is dash this one is reported as not provable there). Each of the three 256 caps is also removed for a run of `perf/direct-test-run-prefilter.test.js` in the extract, which must fail on the matching payload. Remove the brace group's two lines (red on the marker-after-the-call-line state). Delete the pipe line after the here-document: expected to survive, and reported as unproven (Global Constraints say why).
 2. **AC7.1 to AC7.4 replay** (`evidence/replay.txt`): every Bash command in the local transcript stores for this repository, each judged by `judgeOrThrow` with the real file system and by five widened oracles (typed deny with every operand a directory, with none, under win32 path rules; script scan with every script read as one that starts a test run, under POSIX and win32 rules), against the committed prefilter's verdict under `/bin/sh`, `/bin/dash` and bash 5. Report files, calls, distinct commands, denies and throws per oracle, commands the prefilter skipped that any oracle denies (must be 0), the share of calls that skip node, and the independent count of commands matching a plain `node … --test` regex with each of those the prefilter skipped listed.
 3. **AC8.1 to AC8.4 cost** (`evidence/cost.txt`): CPU per call from `resource.getrusage(RUSAGE_CHILDREN)` over at least 30 runs each, old command and new command, for `git status --short && ls` and for `node --test tests/a.test.js tests/b.test.js`, with the bare `sh -c :` cost and the load average of the same run.
 4. **AC10.4 Windows** (`evidence/windows.txt`): a `windows-regression.yml` dispatch on the branch after the last code change; the run URL, the comparison base it printed, and the failing-file list.
