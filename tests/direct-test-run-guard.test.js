@@ -794,7 +794,10 @@ const PREFILTER_SHELLS = [
 function perPrefilterShell(title, fn) {
   for (const sh of PREFILTER_SHELLS) {
     const missing = !sh.file;
-    if (missing && sh.name === 'sh') throw new Error('sh not found on PATH');
+    if (missing && sh.name === 'sh') {
+      test(`${title} [sh]`, () => assert.fail('sh not found on PATH'));
+      continue;
+    }
     test(`${title} [${sh.name}]`, { skip: missing && (sh.skipReason || `${sh.name} not on PATH`) }, () => fn(sh));
   }
 }
@@ -1482,34 +1485,34 @@ const ALLOWED_BY_PREFILTER = [
   'cd "/a b" && git status', 'npm test', 'echo "node --test a.test.js b.test.js"', 'git add a.js\ngit status',
   'git status\t--short', 'loop.sh', 'a-b_c.d+e 1', 'grep -n "x" f.js', 'ls \u00a0node x', '',
 ];
-perPrefilterShell('#5794 the prefilter skips a call whose fragments all start with a plain command name', (sh) => {
+perPrefilterShell('#5794 AC6.2: the prefilter skips a call whose fragments all start with a plain command name', (sh) => {
   for (const command of ALLOWED_BY_PREFILTER) assert.equal(guard.judgeOrThrow(bash(command), realDeps()).decision, 'allow', `oracle drift: ${command}`);
   assertVerdicts(sh, ALLOWED_BY_PREFILTER, 'skip');
 });
 
-perPrefilterShell('#5794 the prefilter sends every program word to node', (sh) => {
-  const rows = PROGRAM_WORDS.flatMap((w) => [`${w} x`, `ls && ${w} x`]);
+perPrefilterShell('#5794 AC6.2: the prefilter sends every program word to node', (sh) => {
+  const rows = PROGRAM_WORDS.flatMap((w) => [`${w} x`, `ls && ${w} x`, `${w}\tx`, `ls &&\t${w}\tx`]);
   assertVerdicts(sh, rows, 'node');
 });
 
-perPrefilterShell('#5794 the prefilter cuts at every separator', (sh) => {
+perPrefilterShell('#5794 AC6.2: the prefilter cuts at every separator', (sh) => {
   const T = 'node --test tests/a.test.js tests/b.test.js';
   const rows = [
     `ls; ${T}`, `ls && ${T}`, `ls || ${T}`, `ls | ${T}`, `ls & ${T}`, `(${T})`, `{ ${T}; }`, 'echo `' + T + '`',
-    `echo $(${T})`, `ls\n${T}`, `\t${T}`, `git commit -m "a; ${T}"`,
+    `echo $(${T})`, `ls\n${T}`, `\t${T}`, `git commit -m "a; ${T}"`, `ls\t&&\t${T.replace(/ /g, '\t')}`,
     ...[';', '&', '|', '(', ')', '{', '}', '`', '\n'].map((sep) => `ls ${sep} node x`),
   ];
   assertVerdicts(sh, rows, 'node');
 });
 
-perPrefilterShell('#5794 the prefilter sends a first word it cannot read plainly to node', (sh) => {
+perPrefilterShell('#5794 AC6.2: the prefilter sends a first word it cannot read plainly to node', (sh) => {
   const rows = [...'/="\'$<>!~:@%*?[]#,^\\'].map((c) => `x${c}y z`);
   rows.push('xéy z', 'ls;\u00a0node x', 'env\u00a0node x', './x.sh', '/usr/bin/time ls', 'FOO=1 ls', '"ls"',
     'X=de; no$X --test a.test.js b.test.js', "'C:\\work\\loop.sh'", 'C:/work/loop.sh');
   assertVerdicts(sh, rows, 'node', { env: UTF8_ENV });
 });
 
-perPrefilterShell('#5794 the prefilter sends what it cannot read to node', (sh) => {
+perPrefilterShell('#5794 AC6.2: the prefilter sends what it cannot read to node', (sh) => {
   const raw = [
     'grep "a\\|b" f', 'ls \\', 'ls\rx', 'ls\fx', 'ls\bx', 'ls\u0007x',
   ].map((c) => hookPayload(c)).concat([
@@ -1525,7 +1528,7 @@ perPrefilterShell('#5794 the prefilter sends what it cannot read to node', (sh) 
   assertVerdicts(sh, raw.map((line) => ({ line })), 'node', { env: UTF8_ENV });
 });
 
-perPrefilterShell('#5794 the prefilter reads the size and piece caps exactly', (sh) => {
+perPrefilterShell('#5794 AC6.2: the prefilter reads the size and piece caps exactly', (sh) => {
   const base = Buffer.byteLength(hookPayload('ls '));
   const p0 = hookPayload('ls', { description: '' }).split('"').length;
   const pairs = [
@@ -1538,14 +1541,14 @@ perPrefilterShell('#5794 the prefilter reads the size and piece caps exactly', (
   assertVerdicts(sh, rows, (r, i) => (i % 2 === 0 ? 'skip' : 'node'), { env: UTF8_ENV });
 });
 
-perPrefilterShell('#5794 the prefilter does not expand a glob', (sh) => {
+perPrefilterShell('#5794 AC6.2: the prefilter does not expand a glob', (sh) => {
   withTempDir((dir) => {
     fs.writeFileSync(path.join(dir, 'plainfile'), '');
     assertVerdicts(sh, ['* x'], 'node', { env: UTF8_ENV, cwd: dir });
   });
 });
 
-test('#5794 under a shell that does not split words every call goes to node', { skip: !findOnPath('zsh') && 'zsh not on PATH' }, () => {
+test('#5794 AC6.2: under a shell that does not split words every call goes to node', { skip: !findOnPath('zsh') && 'zsh not on PATH' }, () => {
   assert.deepEqual(prefilterVerdicts(findOnPath('zsh'), [hookPayload('git status --short && ls')]), ['node']);
 });
 
