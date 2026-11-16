@@ -1103,7 +1103,7 @@ test('lockHeld: a timing lock held by a live writer → no yield, silently (no S
   }
 });
 
-test('lock wait that spends the close bound: the yield logs its own one SKIP naming the file; inside the bound it stays silent', () => {
+test('lock wait that spends the close bound: the yield logs its own one SKIP naming the file', () => {
   const root = tmpRoot();
   const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
   try {

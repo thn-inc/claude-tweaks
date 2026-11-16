@@ -159,8 +159,8 @@ const isArchivedDir = (d) => path.basename(path.dirname(d)) === 'archive';
 // One derive-and-write of the yield in dir, under dir's timing lock (the one the timing.json write
 // takes), so a yield is never derived from a timing.json that a concurrent token pass is about to
 // replace and then written after it. The lock is waited for PHASE_LOCK_WAIT_MS at most, never past
-// the close deadline; a lock not acquired in time skips the yield silently (a later close rewrites
-// it whole). needRunState (dir had a run-state.json when this write started): a dir whose
+// the close deadline; a lock not acquired inside the bound skips the yield silently (a later close
+// rewrites it whole), and a lock wait that spends the bound reports bound:true for finish's one SKIP. needRunState (dir had a run-state.json when this write started): a dir whose
 // run-state.json is gone is being archived, and a file written into it would strand after the
 // straggler sweep — checked again under the lock, right before the write, so it counts as vanished.
 // -> a result, or { vanished: true } when dir is gone or being vacated.
