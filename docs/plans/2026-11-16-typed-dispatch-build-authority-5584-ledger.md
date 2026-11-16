@@ -10,3 +10,4 @@
 | 6 | build | SDD ruling — the driver joins typed-command reason words with ", " like formatAuthorityLine: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
 | 7 | build | SDD ruling — AC13/AC16 size clauses are measured once against the merge base, not enforced by a committed test: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
 | 8 | build | SDD ruling — plan review Reading A: the queue pull refuses a non-OPEN named record before the rule with its own open-records-only line: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
+| 9 | build/skill | dispatch-queue-exclusion-addition covers adding a pass or reason; #5584 added a pre-pass admission path (admitNamed, between the pool fetch and aliasing) that adds records without a pass, a reason word or a registry row — an enrichment the skill does not describe | open | — |
