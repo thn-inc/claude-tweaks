@@ -80,7 +80,6 @@ const NOTE_FREE = `(?: \\((?:(?!\\b(?:not )?reproduced\\b)(?:[^()\\n]|\\([^()\\n
 const NOTE_OPT = `${NOTE_FREE}?`;
 const LOC = '(\\S+?):(\\d+)(?:-\\d+)?';
 const TAG = '(?: #?\\w+:)?';
-const NOTE = '(?: \\([^()\\n]*\\))?';
 // A review-marked line longer than this is not tried against any loose, free or legacy
 // pattern (the longest real one is 1,355 characters): it counts as unparsed.
 const LEGACY_LINE_MAX = 2000;

@@ -281,8 +281,12 @@ function deriveQuestions(rows) {
       if (q && q.answerTs === null) q.answerTs = a.ts;
     }
   }
-  const ms = (q) => { const v = Date.parse(q.askTs); return Number.isFinite(v) ? v : Infinity; };
-  return [...byId.values()].sort((a, b) => (ms(a) - ms(b)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const askMs = (q) => { const v = Date.parse(q.askTs); return Number.isFinite(v) ? v : Infinity; };
+  const byIdOrder = (a, b) => {
+    if (a.id === b.id) return 0;
+    return a.id < b.id ? -1 : 1;
+  };
+  return [...byId.values()].sort((a, b) => (askMs(a) - askMs(b)) || byIdOrder(a, b));
 }
 
 // "Has token totals": totals.tokens is present and input + output + cacheRead +
