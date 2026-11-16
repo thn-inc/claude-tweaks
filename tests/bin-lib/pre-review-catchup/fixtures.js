@@ -34,8 +34,6 @@ const CATCHUP_SHAPE_STEPS = {
 };
 const CATCHUP_SHAPES = Object.keys(CATCHUP_SHAPE_STEPS);
 
-// `work` is the build checkout on branch `feat` (cut from `main`, which already carries
-// a.txt and b.txt); `other` pushes upstream commits to origin's `main`.
 function writeFile(run, dir, name, lines, msg) {
   fs.writeFileSync(path.join(dir, name), `${lines.join('\n')}\n`);
   run(dir, ['add', name]);

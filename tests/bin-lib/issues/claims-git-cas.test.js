@@ -63,27 +63,6 @@ test('readClaimBlobGit: a non-timeout runner error reports transport-failure wit
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 
-// Every git call below pipes stderr — the house convention for a bare-repo
-// fixture (tests/bin-lib/reconcile/prune-remote.test.js's `git` helper).
-// Without it execFileSync echoes the child's stderr to this process's
-// stderr *as well as* capturing it, so the failure paths these tests
-// exercise on purpose (`git show` on an absent claim, the rejected
-// stale-lease push, the empty-clone warning) print `fatal:` / `! [rejected]`
-// lines into the TAP stream as `#` diagnostics — output that reads like a
-// broken suite while every assertion passes. stdin stays 'pipe' because
-// realRunner feeds `hash-object --stdin` through `opts.input`.
-const PIPE_ALL = ['pipe', 'pipe', 'pipe'];
-
-function realRunner(args, opts = {}) {
-  return execFileSync('git', args, {
-    encoding: 'utf8', stdio: PIPE_ALL, cwd: opts.cwd, input: opts.input, env: opts.env,
-  });
-}
-
-function setupGit(args) {
-  return execFileSync('git', args, { encoding: 'utf8', stdio: PIPE_ALL });
-}
-
 const fixtureRoots = [];
 after(() => {
   for (const d of fixtureRoots) fs.rmSync(d, { recursive: true, force: true });
@@ -92,6 +71,7 @@ after(() => {
 // The fixtures are built once per process and copied per call (#5769); each wrapper
 // registers the copy's root for cleanup.
 const fixtures = require('./claims-git-cas-fixtures');
+const { realRunner, setupGit } = fixtures;
 function registered(make) {
   return () => {
     const fixture = make();

@@ -5,7 +5,7 @@ const { decideRemotePrune, pruneRemote } = require('../../../plugin/bin/lib/reco
 const { readText } = require('../../helpers/read-skill');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
-const { pruneRemoteFixture } = require('./prune-remote-fixtures');
+const { pruneRemoteFixture, git } = require('./prune-remote-fixtures');
 
 // The delete bar is deliberately stricter than archive-branches' local -D:
 // a pushed deletion is unrecoverable from this checkout once origin GCs the
@@ -50,10 +50,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { defaultRefExists } = require('../../../plugin/bin/lib/reconcile/prune-remote');
-
-function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-}
 
 // Screen-then-confirm (#1082): every pre-existing test below injects only
 // `resolvePr` (the confirm step). Without an injected screen, the default

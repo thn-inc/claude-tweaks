@@ -131,4 +131,4 @@ function pruneRemoteFixture(name) {
   return name === 'squashed' ? { ...out, ...shas.get(name) } : out;
 }
 
-module.exports = { PRUNE_REMOTE_FIXTURES, pruneRemoteFixture };
+module.exports = { PRUNE_REMOTE_FIXTURES, pruneRemoteFixture, git };

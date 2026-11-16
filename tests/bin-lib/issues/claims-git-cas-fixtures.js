@@ -11,8 +11,15 @@ const {
   readClaimBlobGit, writeClaimBlobGit, CLAIMS_BRANCH,
 } = require('../../../plugin/bin/lib/issues/claims-git-cas');
 
-// Every git call pipes stderr — see claims-git-cas.test.js's PIPE_ALL note. stdin stays
-// 'pipe' because realRunner feeds `hash-object --stdin` through `opts.input`.
+// Every git call below pipes stderr — the house convention for a bare-repo
+// fixture (tests/bin-lib/reconcile/prune-remote.test.js's `git` helper).
+// Without it execFileSync echoes the child's stderr to this process's
+// stderr *as well as* capturing it, so the failure paths these tests
+// exercise on purpose (`git show` on an absent claim, the rejected
+// stale-lease push, the empty-clone warning) print `fatal:` / `! [rejected]`
+// lines into the TAP stream as `#` diagnostics — output that reads like a
+// broken suite while every assertion passes. stdin stays 'pipe' because
+// realRunner feeds `hash-object --stdin` through `opts.input`.
 const PIPE_ALL = ['pipe', 'pipe', 'pipe'];
 
 function realRunner(args, opts = {}) {
@@ -105,4 +112,5 @@ function makeRegistryWithClaims() {
 
 module.exports = {
   makeBareOriginAndClone, makeBranchlessOriginAndClone, makeDecoyOriginAndClone, makeRegistryWithClaims,
+  realRunner, setupGit,
 };
