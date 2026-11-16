@@ -17,7 +17,7 @@
 - `plugin/skills/backlog/SKILL.md`'s grant sub-stage paragraph and `plugin/skills/_shared/local-files-preflight-stop.md` are long paragraphs other tests read. Change only the text this plan quotes.
 - `git grep -E` with `\b` matches nothing on this machine. Use `-F`, `-w` or `-P`.
 - One plain command per Bash call, with literal arguments, run from the worktree root. No `cd … &&`, no `$(…)`, no pipes into `node -e`.
-- Commit style: `{Verb} {what} — {detail}`, then a body line `refs #5561`, then the trailer `Claude-Session: https://claude.ai/code/session_017vXcAdc42Z6F8aPqLoVBNZ`. Stage files by explicit path. Never `git reset`, `git checkout .` or a force push.
+- Commit style: `{Verb} {what} — {detail}`, then a body line `refs #5561`, then the trailer `Claude-Session: https://claude.ai/code/session_01X7gPFASGMdQ3Wco2tvfd3P`. Stage files by explicit path. Never `git reset`, `git checkout .` or a force push.
 - Scope and edit discipline: "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
 - Governing project skill, `.claude/skills/skill-prose-conformance-tests/SKILL.md` (applies to Task 4's test edit), quoted: "`[IL-105]` says prove the assertion can go red; the mechanism this repo converged on three times is to freeze the bytes the change *replaced* as a fixture constant inside the test, then assert every pattern twice — it matches the live file, and it does **not** match the frozen excerpt." and "Read governed markdown through `tests/helpers/read-skill.js`'s `readText()`, never a private `fs.readFileSync(p, 'utf8')`." (`tests/sweep-orchestrator.test.js` already reads through `readText`.)
 - Governing project skill, `.claude/skills/removal-condition-execution/SKILL.md` (applies to every repair task), quoted: "**Rationales.** A surviving rule that gave the removed thing as its reason. … Keep the rule and re-point the reason at what still enforces it".
@@ -27,7 +27,7 @@
 
 Two findings the spec's file list missed. Both are "shipped prose that says an eval enforces something", the class the spec's fifth deliverable removes, and the spec calls its own grep "a floor, not proof of completeness".
 
-1. `plugin/skills/sweep/SKILL.md`'s Anti-Patterns row ends "— the eval scenario fails CI on this, not just doc review", and `tests/sweep-orchestrator.test.js:116-120` pins that clause. The spec's seventh criterion expected that test to need no edit beyond the `sweep/SKILL.md:9` sentence. Task 4 removes the clause and re-points the assertion.
+1. `plugin/skills/sweep/SKILL.md`'s Anti-Patterns row ends "— the eval scenario fails CI on this, not just doc review", and `tests/sweep-orchestrator.test.js:116-120` pins that clause. The spec's seventh criterion expected that test to need no edit beyond the `sweep/SKILL.md:9` sentence. Task 4 removes the clause and re-points the assertion. The user decided this at plan review: the spec's `## Plan Review Clarifications` section widens criterion 7 to allow exactly this second edit.
 2. `plugin/bin/lib/skill-audit/bloat.js:43-44` ends a comment with "the same posture the eval cost check takes with a thin history". That check is `evals/tests/context-cost-regression.test.js`. Task 6 drops the comparison.
 
 ## Review Focus
@@ -126,7 +126,7 @@ Stage the five files by path. Message: `Promote the cited Agent SDK notes to doc
 
 - [ ] **Step 1: List `docs/decisions/` and confirm `0033-…` is the highest number**
 
-If a file numbered `0034` or higher exists, use the next free number in the file name and heading, and report the change so Task 1's reference line can be corrected.
+If a file numbered `0034` or higher exists, use the next free number in the file name and heading, and in the same task correct line 3 of `docs/reference/agent-sdk-payload-notes.md` (Task 1 wrote `docs/decisions/0034-evals-harness-and-benchmark-workflow-deleted.md` there) to the new file name. Stage that file in this task's commit and say so in the report. With no renumber, this task does not touch the reference file.
 
 - [ ] **Step 2: Confirm no record 0034 exists**
 
@@ -291,7 +291,7 @@ Expected: FAIL after Step 1 (`expected the Anti-Patterns row to end on the legal
 - [ ] **Step 4: Run the tests to verify they pass (AC7.1)**
 
 Run: `node --test tests/sweep-orchestrator.test.js`
-Expected: PASS, 0 failures (AC7.1, with the edit this plan's Departures section explains).
+Expected: PASS, 0 failures (AC7.1, as the spec's `## Plan Review Clarifications` section widens it: the test's only edit is the Anti-Patterns assertion from Step 1).
 Run: `node --test tests/skill-graph-table-structure.test.js`
 Expected: PASS, 0 failures.
 Run: `git grep -n -i -F -e "evals/" -e "eval scenario" -e "dedicated eval" -- plugin/skills/sweep docs/journeys/run-a-hands-off-hygiene-sweep.md`
@@ -335,7 +335,7 @@ itself. It was deleted with the eval harness. The incident is the evidence.
 | Replace | With |
 |---|---|
 | `` via this repo's own `evals/` harness running against real API calls, not hypothesized — `` | `` via a since-removed eval harness running against real API calls, not hypothesized — `` |
-| the two lines `` (`evals/scenarios/backlog-refine-permission-matrix-compliance.yaml`, `` and `` `.superpowers/sdd/task-9-report.md`). Root cause: `` | one line `` (`.superpowers/sdd/task-9-report.md`). Root cause: `` (the rest of that sentence re-wraps as it falls; its words do not change) |
+| the two lines `` (`evals/scenarios/backlog-refine-permission-matrix-compliance.yaml`, `` and `` `.superpowers/sdd/task-9-report.md`). Root cause: `` | the one line ``   (`.superpowers/sdd/task-9-report.md`). Root cause: a purely informational "point the user at `` (two leading spaces; this is the second of the two lines with its own tail kept, so deleting the first line and leaving the second untouched gives it. No following line re-wraps) |
 | `` run (`evals/scenarios/dispatch-local-files-preflight-stop.yaml`). `` | `` run. `` |
 | `` tool calls, $17.47 — `evals/scenarios/backlog-refine-permission-matrix-compliance.yaml`). `` | `` tool calls, $17.47). `` |
 
@@ -475,6 +475,8 @@ Run: `ls docs/decisions`
 Expected: one file numbered `0034`. If the catch-up brought another, renumber this record to the next free number and update the reference file's first paragraph.
 
 - [ ] **Step 6: Post the note on #4237**
+
+The user decided at plan review that this comment is posted during the build, before the merge, with the conditional wording below.
 
 Write the comment body with the Write tool to a session temp file and post it with `gh issue comment 4237 --repo thn-inc/claude-tweaks --body-file {file}`:
 
