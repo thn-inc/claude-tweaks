@@ -597,8 +597,8 @@ function runBlocked(ctx) {
         if (!r.ok) {
           deps.stderr(`Warning: gh issue view ${dep} failed — dependency #${dep} treated as open (fail closed) this run\n`);
           state.depUnreadable = true;
-          fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
-        } else if (trimNl(r.stdout) === 'OPEN') fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
+        }
+        if (!r.ok || trimNl(r.stdout) === 'OPEN') fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
       }
     });
   }
@@ -619,15 +619,12 @@ function runBlocked(ctx) {
     }
     // #5311: a missing or malformed file fails closed: every unresolved dependency counts as open.
     const bad = lines === null || lines.some((l) => !/^\d+$/.test(l.trim()));
-    let verifiedOpen;
-    if (bad) {
-      const unresolved = readJson(paths['dispatch-unresolved-deps.json']);
-      if (unresolved.length) {
-        deps.stderr('Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run\n');
-        state.depUnreadable = true;
-      }
-      verifiedOpen = unresolved.map(Number);
-    } else verifiedOpen = lines.map(Number);
+    const unresolved = bad ? readJson(paths['dispatch-unresolved-deps.json']) : [];
+    if (bad && unresolved.length) {
+      deps.stderr('Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run\n');
+      state.depUnreadable = true;
+    }
+    const verifiedOpen = bad ? unresolved.map(Number) : lines.map(Number);
     for (const dep of verifiedOpen) openNumbers.add(dep);
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
     // resolve-foreign-blockers.js through the library's own bounded spawn (tests inject
