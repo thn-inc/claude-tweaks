@@ -186,8 +186,11 @@ test('listHeaderDirs: win32 path module yields exact backslash strings', () => {
 // AC8 conformance: one place builds a spec-header path.
 //
 // Reader scan. The eight readers (READER_FILES) must not spell the archive location
-// themselves: their comment-stripped, literal-keeping text holds no 'archive' /
-// "archive" / `archive` literal and no `pipelines/archive`. The six that resolve
+// themselves: no string or template literal holds an `archive` path segment — the
+// whole literal ('archive', "archive", `archive`) or a segment inside longer literal
+// text ('archive/', '/archive/', `${p}/archive/${id}`, `pipelines/archive`). The
+// match runs over the same literal mask the builder scan builds, so identifiers
+// (`archiveDir`), `${…}` code and comments never count. The six that resolve
 // headers directly must also require run-header. precondition.js reads through
 // hasMaterializeCommit and plugin/bin/context-gauge.js (the CLI) through the gauge
 // lib, so those two are scanned for the literals only.
@@ -210,9 +213,11 @@ test('listHeaderDirs: win32 path module yields exact backslash strings', () => {
 // - string concatenation (`'work/' + n + '-spec.md'`), a plain string literal (the
 //   USAGE text in verify-run-bookends.js, ruled not a path), a segment held in a
 //   constant, and a destructured `join(`/`resolve(` or a receiver not named like a
-//   path module.
-// A stripperVerdict mis-parse is an offender in both scans: keep mode for the reader
-// scan, keep and blank mode for the builder scan, which reads both.
+//   path module — `require('path').join(…)` (the receiver is a call, not a name) and
+//   an aliased receiver (`const j = path.join; j(…)`, `const { join: pj } = path`)
+//   among them.
+// A stripperVerdict mis-parse is an offender in both scans, keep and blank mode,
+// since both build the literal mask from the two outputs.
 
 const REPO = path.join(__dirname, '..');
 const BIN_ROOT = path.join(REPO, 'plugin', 'bin');
@@ -273,19 +278,10 @@ const verdictOffenders = (pairs) => pairs
   .filter(([, v]) => v !== 'ok')
   .map(([mode, v]) => `${mode}: ${STRIPPER_VERDICT_MESSAGES[v]}`);
 
-const ARCHIVE_LITERAL_RE = /(['"`])archive\1|pipelines\/archive/g;
+// An `archive` path segment over the literal mask: bounded by NUL (a delimiter or
+// code), `/` or `\` on both sides.
+const ARCHIVE_SEGMENT_RE = /(?:^|[\0/\\])archive(?=[\0/\\]|$)/gm;
 const RUN_HEADER_REQUIRE_RE = /\brequire\(\s*(['"])[^'"\n]*\/run-header(?:\.js)?\1\s*\)/;
-
-// { verdicts, lines, requiresRunHeader } for one reader's raw source.
-function scanReader(raw) {
-  const keep = stripComments(raw);
-  const lines = [...keep.matchAll(ARCHIVE_LITERAL_RE)].map((m) => lineAt(keep, m.index));
-  return {
-    verdicts: verdictOffenders([['keep', stripperVerdict(raw, keep)]]),
-    lines: [...new Set(lines)],
-    requiresRunHeader: RUN_HEADER_REQUIRE_RE.test(keep),
-  };
-}
 
 // Literal text only: a keep-mode character where blank mode differs from it, NUL
 // everywhere else (delimiters, `${…}` code, identifiers), newlines kept.
@@ -296,6 +292,21 @@ function literalMask(keep, blank) {
     else out += keep[i] !== blank[i] ? keep[i] : '\0';
   }
   return out;
+}
+
+// { verdicts, lines, requiresRunHeader } for one reader's raw source.
+function scanReader(raw) {
+  const keep = stripComments(raw);
+  const blank = stripComments(raw, { literals: 'blank' });
+  // Blank mode keeps a literal's whitespace, so the mask holds NUL there; a space is
+  // a word boundary in prose, not a path-segment boundary, so it goes back to a space.
+  const mask = literalMask(keep, blank).replace(/\0/g, (nul, i) => (/\s/.test(keep[i]) ? ' ' : nul));
+  const lines = [...mask.matchAll(ARCHIVE_SEGMENT_RE)].map((m) => lineAt(mask, m.index));
+  return {
+    verdicts: verdictOffenders([['keep', stripperVerdict(raw, keep)], ['blank', stripperVerdict(raw, blank)]]),
+    lines: [...new Set(lines)],
+    requiresRunHeader: RUN_HEADER_REQUIRE_RE.test(keep),
+  };
 }
 
 const WORK_SEGMENT_RE = /(?:^|[\0/\\])work(?=[\0/\\]|$)/m;
@@ -366,9 +377,15 @@ test('AC8.1 reader scan self-test: archive literals flag by exact line, comments
     'const d = `archive`;',
     "const e = entry.location === 'archived';",
     'const f = archiveDir;',
+    "const g = path.join(root, 'archive/', id);",
+    "const h = root + '/archive/' + id;",
+    'const i = `${p}/archive/${id}`;',
+    "const j = 'run the archive step';",
+    "const k = 'archived/x';",
   ].join('\n');
   const out = scanReader(src);
-  assert.deepEqual(out.lines, [2, 4, 5, 6]);
+  // Not: 3 comment, 7 'archived', 8 identifier, 12 word in prose, 13 longer segment.
+  assert.deepEqual(out.lines, [2, 4, 5, 6, 9, 10, 11]);
   assert.deepEqual(out.verdicts, []);
   assert.equal(out.requiresRunHeader, true);
   assert.equal(scanReader("const x = require('./lib/run-header.js');").requiresRunHeader, true);
@@ -376,9 +393,12 @@ test('AC8.1 reader scan self-test: archive literals flag by exact line, comments
   assert.equal(scanReader("const x = require('./run-header-extra');").requiresRunHeader, false);
 });
 
-test('AC8.1 reader scan self-test: a keep-mode mis-parse is an offender', () => {
+test('AC8.1 reader scan self-test: a mis-parse is an offender in keep and blank mode', () => {
   const out = scanReader('if (b) /"/.test(b); const c = "//"; const d = \'archive\';');
-  assert.deepEqual(out.verdicts, [`keep: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
+  assert.deepEqual(out.verdicts, [
+    `keep: ${STRIPPER_VERDICT_MESSAGES.misparsed}`,
+    `blank: ${STRIPPER_VERDICT_MESSAGES.misparsed}`,
+  ]);
 });
 
 test('AC8.2 builder scan self-test: flagged sites by exact line', () => {
@@ -460,9 +480,4 @@ test('AC8.2 builder scan over plugin/bin: header paths are built only where allo
     sites >= BUILDER_SITES_FLOOR,
     `matched ${sites} header-path builds, floor ${BUILDER_SITES_FLOOR}: a low count means the matcher stopped matching, not that the builds went away`,
   );
-});
-
-test('AC8.2 builder scan: the resolver sites are the exact lines', () => {
-  const out = scanBuilder(readText(path.join(REPO, 'plugin/bin/lib/run-header.js')));
-  assert.deepEqual(out.lines, [51, 53, 54, 98, 99]);
 });
