@@ -64,6 +64,12 @@ test('AC4: ruleNotApplied counts a released rule after its release day, by versi
   assert.equal(sub.ruleNotApplied.byRule['quote-escaped-space'].byVersion['6.160.0'].subagent, 1);
   const unreleased = replay([row({ command: 'git -C /wt log -- /a\\ b' })]);
   assert.equal(unreleased.ruleNotApplied.total, 0);
+  // The same row through a stub rule whose release date is null: the rule fires, yet no row counts.
+  const nullRelease = replay([row({ command: 'git -C /wt log' })], { rewrite: () => ({ command: 'git log', applied: ['drop-git-C-cwd'] }) });
+  assert.equal(nullRelease.writeTargetsChecked, 1);
+  assert.equal(nullRelease.ruleNotApplied.total, 0);
+  const released = replay([row({ command: 'git -C /wt log' })], { rewrite: () => ({ command: 'git log', applied: ['quote-escaped-space'] }) });
+  assert.equal(released.ruleNotApplied.total, 1);
 });
 
 test('rows without cwd or truncated are never rewritten', () => {
@@ -82,6 +88,21 @@ test('rows without cwd or truncated are never rewritten', () => {
   assert.equal(res.ruleNotApplied.total, 0);
   assert.equal(dispOf(res, rows[3]).disposition, 'scanner-failed');
   assert.equal(dispOf(res, rows[4]).disposition, 'no-longer-denied');
+  assert.deepEqual(res.notReplayed, { noCwd: 3, truncated: 2 });
+});
+
+test('a throwing rewrite or scanner is counted, never dropped silently', () => {
+  const failing = row({ command: 'ls /a\\ b' });
+  const res = replay([failing], { rewrite: () => { throw new Error('boom'); } });
+  assert.deepEqual(res.notReplayed, { rewriteFailed: 1 });
+  assert.equal(dispOf(res, failing).disposition, 'unexplained');
+  const scanThrows = replay([row({ command: 'ls /a\\ b' })], {
+    scanner: { ...emptyScan, gitTargets: (cmd) => { if (cmd.includes('"')) throw new Error('boom'); return []; } },
+    rewrite: () => ({ command: 'ls "/a b"', applied: ['quote-escaped-space'] }),
+  });
+  assert.equal(scanThrows.writeTargetsSkipped, 1);
+  assert.equal(scanThrows.writeTargetsChecked, 0);
+  assert.deepEqual(scanThrows.notReplayed, {});
 });
 
 test('ruleNotApplied splits main and subagent', () => {

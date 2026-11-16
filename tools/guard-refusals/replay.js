@@ -17,7 +17,9 @@
 //     an absolute cwd, not truncated, that a rule changes: checked counts the rows compared, moved those where
 //     any scanner list (JSON.stringify) differs between the original and rewritten text, lost those where a
 //     target in a before-list is missing from the matching after-list (a gained target alone is moved, not
-//     lost). A throw skips the row.
+//     lost). A throw skips the row, counted in writeTargetsSkipped.
+//   notReplayed   Bash rows (any guard, any effect) no rule could be tried on or whose rewrite threw, by cause:
+//     truncated, noCwd, rewriteFailed. A harness read among them is judged on its original text only.
 //   ruleNotApplied   harness-command Bash rows, any effect, not truncated, whose rewrite applies and whose
 //     rewritten text detect() leaves clean, counted only when EVERY applied rule shipped (RULE_SINCE non-null)
 //     and the row's ts is on or after the day AFTER that release day (UTC): a refusal on the release day itself
@@ -163,6 +165,11 @@ function replay(rows, given = {}) {
   let writeTargetsMoved = 0;
   let writeTargetsChecked = 0;
   let writeTargetsLost = 0;
+  // Rewritten rows whose scan threw, so they entered neither writeTargetsChecked nor the moved/lost counts.
+  let writeTargetsSkipped = 0;
+  // Bash rows no rule could be tried on (truncated text, no absolute cwd) or whose rewrite threw:
+  // a harness read among them lands in refused-shape, long-chain or unexplained without a rewrite.
+  const notReplayed = {};
 
   // A row without a file is its own session, never pooled with other file-less rows.
   const sessionKey = (r) => (typeof r.file === 'string' && r.file ? r.file : r);
@@ -197,8 +204,8 @@ function replay(rows, given = {}) {
       try {
         const res = rewrite(command, r.cwd);
         rw = res && res.command !== command ? res : null;
-      } catch { failed = true; }
-    }
+      } catch { failed = true; bump(notReplayed, 'rewriteFailed'); }
+    } else if (isBash) bump(notReplayed, r.truncated ? 'truncated' : 'noCwd');
 
     if (r.effect === 'read' && /^plugin:/.test(r.guard || '')) {
       let d;
@@ -242,7 +249,7 @@ function replay(rows, given = {}) {
           return list.some((t) => !kept.has(JSON.stringify(t)));
         });
         if (lost) writeTargetsLost++;
-      } catch { /* skipped: not compared */ }
+      } catch { writeTargetsSkipped++; }
     }
 
     if (r.guard === 'harness-command' && rw && rw.applied && rw.applied.length && sinceOk(rw.applied, r.ts)) {
@@ -274,7 +281,7 @@ function replay(rows, given = {}) {
     }
   }
 
-  return { dispositions, writeTargetsMoved, writeTargetsLost, writeTargetsChecked, ruleNotApplied, byClass, byPattern };
+  return { dispositions, writeTargetsMoved, writeTargetsLost, writeTargetsChecked, writeTargetsSkipped, notReplayed, ruleNotApplied, byClass, byPattern };
 }
 
 module.exports = { replay, RULE_SINCE, REWRITE_DEPS, chainLength, pluginVersion, defaultDeps };
