@@ -1,13 +1,8 @@
 {
-  "computedAt": "2026-11-16T07:19:40.905Z",
+  "computedAt": "2026-11-16T09:06:40.308Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
-      {
-        "number": 5605,
-        "updatedAt": "2026-11-16T01:01:13Z",
-        "state": "OPEN"
-      },
       {
         "number": 5604,
         "updatedAt": "2026-11-16T02:01:19Z",
@@ -39,11 +34,6 @@
         "state": "OPEN"
       },
       {
-        "number": 5587,
-        "updatedAt": "2026-11-16T05:44:55Z",
-        "state": "OPEN"
-      },
-      {
         "number": 5584,
         "updatedAt": "2026-11-16T02:39:13Z",
         "state": "OPEN"
@@ -54,18 +44,8 @@
         "state": "OPEN"
       },
       {
-        "number": 5563,
-        "updatedAt": "2026-11-16T06:52:46Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5557,
-        "updatedAt": "2026-11-16T00:21:16Z",
-        "state": "OPEN"
-      },
-      {
         "number": 5556,
-        "updatedAt": "2026-11-15T23:52:19Z",
+        "updatedAt": "2026-11-16T07:41:33Z",
         "state": "OPEN"
       },
       {
@@ -236,11 +216,6 @@
       {
         "number": 4725,
         "updatedAt": "2026-11-03T09:36:01Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4679,
-        "updatedAt": "2026-11-16T00:08:37Z",
         "state": "OPEN"
       },
       {
@@ -469,11 +444,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4467,
-        "updatedAt": "2026-11-16T05:56:09Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4463,
         "updatedAt": "2026-10-30T06:35:24Z",
         "state": "OPEN"
@@ -506,11 +476,6 @@
       {
         "number": 4451,
         "updatedAt": "2026-10-30T06:50:58Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4448,
-        "updatedAt": "2026-11-16T01:15:03Z",
         "state": "OPEN"
       },
       {
@@ -785,7 +750,7 @@
       },
       {
         "number": 4237,
-        "updatedAt": "2026-10-31T09:59:41Z",
+        "updatedAt": "2026-11-16T08:12:59Z",
         "state": "OPEN"
       },
       {
@@ -958,14 +923,20 @@
   "groups": [
     [
       {
-        "body": "Surface: backend\n\n**Related:** #4558, #4526, #5540, #5541, #4663, #3381, #4359\nRisk-flags: none\n\n## Current State\n\nA run directory records what each step cost (`timing.json`: minutes, tokens and subagents per phase) and what each step decided (`decisions.md`, `events.jsonl`), but nothing joins the two. To learn what `/claude-tweaks:review` produced for its tokens, a maintainer writes a script that greps `decisions.md`. The 2026-11-15 measurements were made that way (`tools/replay-scratch/review-yield.js` on branch `worktree-design-process-efficiency`): over 419 archived reviews, 18% of findings were reported by both paired reviewers, and the script could not classify a share of the lines it met.\n\nWhere the facts are today:\n\n- Pair outcome lines (`Reproduction: lens \"…\" finding … reproduced. Confirmed.`, `… not reproduced. Staged to Review Console …`, and four more forms) are written by the reviewing session from templates in `plugin/skills/review/step3-lens-dispatch.md`. No code defines their form. `review-coordination.js categorise-reproduction` computes the split and logs nothing.\n- Tiebreak verdict lines are written by code (`plugin/bin/lib/tiebreak.js`, through `review-coordination.js resolve-tiebreak --run`). `plugin/bin/lib/console/resolve.js` exports `parseTiebreakLine`; `plugin/bin/lib/log-decision/append.js` has `parseEntry`.\n- `review-findings.json` (in 196 of 2,948 run directories) lists the findings sent to tiebreak, with id, lens, path, line, severity and kind. It does not list findings both reviewers reported.\n- `plugin/bin/lib/hooks/post-tool-use.js` appends an `ask-user-question` event when a question is answered. It records the questions and the answer, not when the question was asked.\n- `events.jsonl` has `commit` and `verify` events.\n- `plugin/bin/lib/calibration/decisions-classifier.js` classifies a decision line by status.\n\nDesign: `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`, Phase 5, unit 5.2. The file this record adds is read by the scoreboard in the dispatch repository (unit 5.4), by Phase 6's done criterion and by Phase 7's design.\n\n## Deliverables\n\n1. **One function.** A module under `plugin/bin/lib/timing/` takes a run directory and returns the step yield object. It reads `timing.json` when present, `decisions.md`, `events.jsonl` and `run-state.json`, and nothing outside the run directory except the transcripts the timing writer already resolves. No model turn. Its phase spans come from `derivePhases` over `events.jsonl` (`derive.js`: `{ events, manifest?, runState?, now? }` in, `{ phases, totals }` out, no `timing.json` or transcript needed), so a run with no `timing.json` still gets its steps and only the cost fields are `null`. The file is `step-yield.json` in the run directory, beside `timing.json`; its name is a constant exported by the module, and `steps` is an array in phase order.\n2. **Per step.** One entry per phase the run had: minutes, tokens (input, output, cache read, cache creation), agents, and what the step produced: commits, verify runs and their results, and decision lines by status (`AUTO`, `STAGED`, `SKIP`, `FAILED`, and the rest of the log's closed vocabulary).\n3. **Review.** The review entry also holds, per lens and in total: findings raised, findings both paired reviewers reported, findings one reviewer reported, and tiebreak results by verdict (`confirmed`, `refuted`, `cant-tell`) and by outcome (`confirmed`, `drop`, `digest`, `console`). A `judge: none` line (#5541) is its own outcome, `none`, whether or not #5541 has landed. Each of the six pair-line forms in `step3-lens-dispatch.md` adds to exactly one counter: a `reproduced` line (severity contested included) counts a finding both reviewers reported, and the other forms count findings one reviewer reported, except a vacuity downgrade, which relabels a finding already counted and adds none. The per-form assignments, including the two-finding coincidence line and the refuted absence claim, are written once in the reader module and in the document, and AC3's per-template test covers each form.\n4. **Questions.** Each entry holds the questions asked during that step and the minutes each waited for its answer. A question whose ask time cannot be established is listed with `waitedMinutes: null`. A question belongs to the step whose span holds its ask time, or its answer time when the ask time is unknown; an asked question with no recorded answer also has `waitedMinutes: null`.\n5. **Nothing is dropped silently.** A line or event the function does not recognise is counted under `unparsed` for its step, with up to five samples. A cost field with no source is `null`, never `0`.\n6. **Written when a run closes.** The closing paths that write `timing.json` (#5555, which this record is blocked by) also write `step-yield.json`, under the same rule: the close never fails or stalls on it, inside the same named time bound, and a failure logs one `SKIP` line. The file is derived data: every close rewrites it whole from the run directory (a temporary file, then a rename), and no existing file takes precedence.\n7. **Schema.** The file has a `schemaVersion`. `docs/reference/step-yield.md` describes every field, its source and when it is `null`, which source `waitedMinutes` came from, and the pair-line mapping table. Per-lens and per-status keys are documented as patterns, and the status set comes from one named list the module imports, not a second copy. It is the contract the dispatch repository reads.\n8. **Archive report.** `tools/step-yield-report.js` runs the same function over every run directory under a pipelines root, in memory, for runs that have no yield file, and prints totals and per-lens review numbers, with `--json`. It replaces `tools/replay-scratch/review-yield.js`, which is deleted.\n9. **Docs.** `docs/hooks.md` and `docs/plugin-structure.md` name the file and the tool.\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Acceptance Criteria\n\n- [ ] AC1: For a fixture run directory with a known `decisions.md`, `events.jsonl` and `timing.json`, the function returns the expected object. The fixture has at least: one finding both reviewers reported, one reported by one reviewer and confirmed by tiebreak, one refuted, one can't-tell, one question, one verify event and one line of an unknown shape.\n- [ ] AC2: The unknown line appears under `unparsed` with its text, and no count includes it. The test fails if the line is dropped.\n- [ ] AC3: Tiebreak lines are read with `parseTiebreakLine` and log entries with `parseEntry`. The pair-line forms get one reader module that holds their patterns, and a test reads `plugin/skills/review/step3-lens-dispatch.md` and fails when a template there no longer matches its pattern. The yield module itself holds no pattern for a log line.\n- [ ] AC4: A run directory with no `timing.json` yields entries with `null` cost fields and correct produced counts.\n- [ ] AC5: A question whose ask time is known has `waitedMinutes` equal to the gap between ask and answer; one whose ask time is unknown has `null`. One test each.\n- [ ] AC6: Closing a fixture run through each closing path leaves the yield file. With the yield function stubbed to throw, each path's result and exit code are unchanged and one `SKIP` line is logged.\n- [ ] AC7: `tools/step-yield-report.js` over the archive reproduces `review-yield.js`'s totals for the same runs (findings raised, reported by both, tiebreak confirmed and refuted), or the PR lists each difference and its cause. The share of review lines left `unparsed` across the archive is under 2%, where review lines are the decision lines attributed to the review step. The bound takes precedence: a reader for a legacy shape no current writer emits is written when it is needed to meet the bound, and if the bound is still missed the PR names the shapes that remain.\n- [ ] AC8: `docs/reference/step-yield.md` lists every key the function can emit. A test fails when the function emits a key the document does not name. A golden file of key paths and their nullability also fails the test when a key is removed or its type changes without a `schemaVersion` bump.\n- [ ] AC9: A fixture with a decision line and an event on each side of a phase boundary attributes each to the phase whose span holds it, and a change to `derivePhases`'s boundary rule turns the test red.\n\n## Technical Approach\n\nName the file and the keys once, in the module, and have the document test read the module's own key list.\n\nAsk time for a question: the `ask-user-question` event is written when the answer arrives. Either add an event when the question is posed (a `PreToolUse` write for `AskUserQuestion`, read `docs/hooks.md` first) or read the ask time from the transcript's tool-use row, which the timing reader already streams. Choose one and state why in the PR. The first works for runs whose transcript is gone; the second needs no hook change. Record the chosen source and its limits in `step-yield.md` under `waitedMinutes`.\n\nAttribute a decision line, an event or a question to a step by the phase spans `derivePhases` already computes. Do not write a second phase model.\n\nThe pair-line patterns are additive: a reworded template adds a pattern and never replaces one, so archived runs keep parsing. The test's failure message names the template, the pattern and this rule. Phase 6 of the design moves the pair-line write into `categorise-reproduction`; the reader and its test then follow that writer, and `step-yield.md` says so.\n\nMulti-record runs: one yield file per directory that gets a `timing.json`.\n\nThe dispatch repository reads this file; a field is added, never renamed, without a `schemaVersion` change and a note in the document.\n\n### Key Files\n\n- `plugin/bin/lib/timing/derive.js`\n- `plugin/bin/lib/timing/transcript.js`\n- `plugin/skills/review/step3-lens-dispatch.md`\n- `plugin/bin/lib/log-decision/append.js`\n- `plugin/bin/lib/console/resolve.js`\n- `plugin/bin/lib/tiebreak.js`\n- `plugin/bin/lib/calibration/decisions-classifier.js`\n- `plugin/bin/lib/hooks/post-tool-use.js`\n- `plugin/bin/lib/hooks/close-run-state.js`\n- `plugin/bin/lib/hooks/teardown-run.js`\n- `plugin/bin/lib/reconcile/archive-merged.js`\n- `plugin/bin/hooks.js`\n- `tools/step-yield-report.js`\n- `tools/replay-scratch/review-yield.js`\n- `tests/bin-lib/timing/derive.test.js`\n- `docs/reference/step-yield.md`\n- `docs/hooks.md`\n- `docs/plugin-structure.md`\n\n## Gotchas\n\n- Read `.claude/skills/run-directory-fact-packs` and `.claude/skills/parse-signal-discipline` before writing the reader, and `.claude/skills/prose-code-twin-pin` and `.claude/skills/skill-prose-conformance-tests` before writing the two tests that read prose.\n- Do not edit `plugin/skills/review/step3-lens-dispatch.md`. It is 49,090 bytes against a 52,500-byte read limit, and this record only reads it. Moving the pair-line write into `categorise-reproduction` is Phase 6 of the design, not this record.\n- The pair-line test pins prose other records edit. A sibling that rewords a template turns this test red at merge; the fix is to update the pattern in the same change.\n- #5540 changes how tiebreak verdicts are settled (one call per chunk) and #5541 adds a `judge: none` token to some verdict lines. Both keep the per-finding line's form; count a `judge: none` line under outcome `none`, whether or not #5541 has landed.\n- Older runs log reviews in older line shapes (\"legacy shape\" appears in current console output). The report's `unparsed` share is the measure of how many; do not write parsers for shapes no current writer emits unless AC7's 2% bound needs it.\n- `tools/efficiency-report.js` reads `timing.json` across the archive. Leave it as it is; the new report reads yield.\n- `plugin/bin/write-run-artifact.js` allows three artifact names (#4671). This file is written by code in-process, not through that CLI.\n- `tools/replay-scratch/` exists only on branch `worktree-design-process-efficiency` until that branch merges. If it is not on `main` when this is built, read `review-yield.js` from the branch for AC7 and skip the deletion.\n- `derivePhases`'s span rule decides which step each line and question belongs to, and the dispatch scoreboard's per-step numbers depend on it. Say so in a comment at `derivePhases` and in `step-yield.md`.\n- #5557 deletes `tools/replay-scratch/` except `review-yield.js`. This record deletes `review-yield.js`; whichever of the two records lands last removes the then-empty directory.\n\n## Release Note\n\nEach closed pipeline run now has a step yield file: per step, what it cost and what it produced, including review findings by outcome and the minutes each question waited.\n\n\n<!-- work-fingerprint: process-efficiency:step-yield -->\nwork-fingerprint: process-efficiency:step-yield",
-        "createdAt": "2026-11-15T22:28:19Z",
+        "body": "Surface: infra\n\n**Related:** #4990, #4931, #4216, #4217, #4448, #4353, #3822, #5335\nRisk-flags: none\n\n## Current State\n\nThe process-efficiency design (`docs/superpowers/specs/2026-11-15-process-efficiency-design.md`, Phase 3) ends unit 3.2 with: \"Done when a replay of the window's refused commands shows no read-only command refused and no write newly admitted.\" It also says #4990 and #4931, which teach callers to avoid refused shapes, \"stay open until 3.2 lands, then are re-read: each is closed or narrowed\".\n\nHow this differs from the design: the design assumed one guard that the plugin owns. Measured on 2026-11-16 over 2026-10-17 to 2026-11-16, Claude Code's own worktree-isolation guard produced 96.7% of the refusals (12,770 of 13,202) and the plugin's PreToolUse gates 3.3% (432). The plugin cannot make the harness guard accept a command. It can rewrite a command before the guard reads it (`plugin/bin/lib/hooks/guard-rewrite.js`), it can stop its own skill text from producing a refused shape, and it can decide what its own gates deny. So the design's criterion is restated here for those three, and what is left over is counted and named, not hidden.\n\nThe same measurement, with a scratch classifier, over the 3,606 read-only commands the harness refused (1,186 of them in the last 14 days of the window):\n\n| Class | 30 days | Last 14 days | What the plugin can do |\n|---|---|---|---|\n| Reads another checkout: `git -C <main checkout> …`, `cd <another worktree> && git …` | 876 | 419 | Nothing in a rewrite: the guard refuses where git points. A section 7 row can name the form that works |\n| `git -C <own worktree>` or `git -C .` | 496 | 285 | Rewritten by #5588, for the read subcommands it lists |\n| A read chained onto an unquoted `$?` | 171 | 43 | Rewritten by #5588 |\n| A backslash-escaped space | 703 | 35 | Already rewritten since v6.154.1 (`quote-escaped-space`) |\n| Long chains, loops and pipes of readers | the rest | the rest | No rule: the text's meaning is known, but no single respelling is |\n\nThe classes overlap (a command can sit in two rows), so the rows do not sum to the total.\n\nThree more facts the replay must explain:\n\n- Of the plugin's own 314 worktree-always Bash denials in the window, 4 were read-only commands, and `gitTargets` and `fileWriteTargets` at HEAD resolve no target for any of the 4.\n- After the rewriter's first release, `rewriteForGuard` at HEAD still changes 400 refused commands, 129 of them by `quote-escaped-space` and 113 of those in subagents. Either the rewritten form is refused for a second reason, or the rule never ran in that session. A backslash-space `grep -rln` probe on 2026-11-16 ran unrefused in a subagent.\n- Live probes on 2026-11-16 (Claude Code 2.1.325) found read shapes section 7 does not list: `git grep -c \"git-discipline\" -- <file>` is refused (\"names git more than once in a single command\") while `\"[g]it-discipline\"` runs; `grep -c \"Source\" <file>` is refused (\"runs a string through Source\") while `\"[S]ource\"` runs, and section 7 lists only the lowercase token; `git -C \"<main checkout>\" rev-parse --short HEAD` is refused (\"redirects git to the shared checkout via -C\") while `git log origin/main --oneline -1`, run from the worktree, reads the shared refs.\n\n## Deliverables\n\n1. **A replay**, `node tools/guard-refusals.js --replay`, which reads the same window as the tool's normal run and prints one disposition per refused read-only command (`effect: read`, from #5587):\n   - a `plugin:*` row: `still-denied` when the plugin's scanner at HEAD resolves a gate target for the command (`gitTargets` with an action in `GATE_COVERAGE.gitActions`, `fileWriteTargets`, `mkdirTargets`), else `no-longer-denied`;\n   - a `harness-command` row, the first match winning: `other-checkout` when its `readClass` says so; `rewritten` when a rule changes the command and the rewritten text matches no refused-row detector in `tools/guard-refusals/shapes.js`; `refused-shape` when the original or the rewritten text matches one, with the detector id; `long-chain` when the call holds four or more simple commands; `unexplained` otherwise.\n   The replay also prints, for every refused command of any effect that a rule changes, whether `gitTargets`, `fileWriteTargets` and `mkdirTargets` return equal lists before and after the rewrite (`writeTargetsMoved`, a count).\n2. **`rule-not-applied`.** For rows dated after the release that first carried the rule that fires, the replay counts those whose rewritten text matches no refused-row detector: the rewrite would have passed, yet the call was refused. It prints the count per rule and per plugin version, and for each the split between main sessions and subagents.\nDecided 2026-11-16: when that count is above 20 in the last 14 days of the window, the build files one record through `/claude-tweaks:capture` naming the rule, the versions and the split between main sessions and subagents. At or under 20 it writes the count in the PR and files nothing.\nDecided 2026-11-16: `replay.js` holds `RULE_SINCE`, a map from rule id to the date of the release that first carried the rule, read from `CHANGELOG.md` at build time (the rewriter's first release was v6.154.1 on 2026-10-25). A test fails when its keys differ from `RULE_IDS`. A rule whose release date is not yet known counts no row. A row is dated by its transcript timestamp, and its plugin version is `unknown` when the command names no plugin cache path. The 20 is the total over all rules. The count is an upper bound on rules that did not run, since a rewritten command can still be refused for a reason no detector knows. The split between main sessions and subagents is printed because one explanation to test is that a rewrite does not reach a subagent's call: 113 of the 129 `quote-escaped-space` rows were in subagents.\n3. **Section 7 rows** in `plugin/skills/_shared/scratch-worktree.md` for the read shapes no rule fixes, each live-verified in a guard-isolated session with the refusal wording, the form that works, the date, the platform, the Claude Code version, whether the probe ran in a main session or a subagent, and this record's number:\n   - a git read of another checkout by `-C` or by `cd`, with the working form for ref and history reads (run it from the session's own worktree against the branch or remote ref, since refs are shared) and a plain statement that the other checkout's working-tree state has no accepted form;\n   - a `git` command whose arguments spell `git` as a whole word;\n   - the tokens `source`, `eval` and `complete` in any letter case (the existing rows say lowercase);\n   Decided 2026-11-16: the existing `source-token`, `eval-token` and `complete-token` detectors are widened to any letter case and keep their ids. Their rows gain the new observation with its date and are not replaced. The detector ids #5588 adds for its three rows belong to #5588 and are not renamed here.\n   - the heredoc form `plugin/skills/build/adopted-branch-collision-check.md` used before #5589: probe four forms (a quoted and an unquoted delimiter, each with a one-line and a 14-line body), with the script path literal, and record which are refused. Known from the window's 346 refusals of that fence: 345 had an unquoted delimiter, none named `CLAUDE_PLUGIN_ROOT`, and no body held a `$`. If no property of the text separates the refused forms from the accepted ones, the row goes in `UNDETECTED_ROWS` with that as its reason.\n   Each row gets a detector in `shapes.js`, or an entry in `UNDETECTED_ROWS` with the reason no static detector can decide it (a path that is another checkout is known only at run time).\n4. **The fence scan stays green.** A new detector that flags fences under `plugin/skills` is run before it is committed.\nDecided 2026-11-16: when it flags 10 fences or fewer on the tree as it is at build time, not counting fences the allowlist already holds for #4217, they are rewritten in this PR. When it flags more, the row is bound in `UNDETECTED_ROWS` with the count as its reason and the migration is filed through `/claude-tweaks:capture`; `tests/skill-fence-guard-shapes.test.js` allows a ratchet entry only for #4028's four detectors, so an allowlist is not the way out.\n5. **A parked measurement record**, filed through `/claude-tweaks:capture`, because the effect of #5588 and #5589 can only be seen in sessions that run their release. It carries: the command (`node tools/guard-refusals.js --since-days 14 --replay --json`); the baselines for 2026-11-02 to 2026-11-16 (285 refused reads with `git -C` on the own worktree or `.`, 43 refused reads chained onto an unquoted `$?`, 81 refusals of the branch-collision fence); the trigger (14 days after the release that holds #5588 and #5589); and the bound for each (at most 10% of its baseline, counting only sessions whose plugin version is that release or newer). A count over the bound is to be explained in a comment on that record, by `rule-not-applied` or by a second refusal reason.\nDecided 2026-11-16: the three classes are named outputs of the replay, `byClass`, so the baseline and the later count come from the same code. `git-C-own` is a read row whose text holds `git -C .` or `git -C` with the row's own cwd; `exit-status` is a read row with an unquoted `$?` word; `collision-fence` is a row of any effect whose text names both `node-eval-file.js` and `remote-branch-collision`. The builder recomputes the three baselines for 2026-11-02 to 2026-11-16 with the committed tool. The parked record quotes them beside the scratch numbers above and uses the tool's. A row from a session whose plugin version cannot be read is counted and printed on its own line.\n6. **A comment on #4990 and a comment on #4931**, and no edit to either record's body or labels. Each comment gives, for every shape the record lists, the number of refusals in the replay window that match it, whether a rewrite rule changes it, and one recommendation: close, narrow to the named shapes, or keep as it is.\nDecided 2026-11-16: one rule gives the recommendation. `close` when every shape the record lists is changed by a rule or has no refusal in the window; `narrow` when some are, naming the shapes that remain; `keep` otherwise. A `close` is worded as conditional on the parked record meeting its bounds, because the comment is written before any session has run the release. The maintainer acts on it; the build closes nothing.\n7. **The replay result in the PR**: the disposition counts, `writeTargetsMoved`, and the `rule-not-applied` table, as printed.\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Acceptance Criteria\n\n- [ ] AC1: On a fixture store, the replay prints `still-denied` for a plugin-denied `git log` fixture whose scanner stub resolves a target, and `no-longer-denied` when it resolves none. Test in `tests/guard-refusals/replay.test.js`.\n- [ ] AC2: On a fixture store, a refused `ls /a\\ b/c` is `rewritten`; a refused `grep -n \"source\" f.md` is `refused-shape` with id `source-token`; a refused read whose reason is `git-redirect-shared` is `other-checkout`; a refused `cat f` with reason `too-complex` is `unexplained`; a refused call of five readers joined by `&&`, which no rule changes, is `long-chain`.\n- [ ] AC3: `writeTargetsMoved` is 0 for a fixture where a rule only requotes a path, and 1 for a fixture with a stub rule that drops a real `cd`.\n- [ ] AC4: A fixture row dated after its rule's release, rewritten into text no detector matches, is counted under `rule-not-applied` with its plugin version; the same row dated before the release is not.\n- [ ] AC5: Run with `--since-days 30` on the builder's machine, with #5588 and #5589 merged into the tree: no `plugin:*` read row is `still-denied`; `writeTargetsMoved` is 0; and `unexplained` is at most 5% of the read rows that are neither `other-checkout` nor `long-chain`. The PR quotes the replay's output blocks and that fraction's numerator and denominator.\n- [ ] AC6: `tests/guard-refusals/shapes.test.js` passes with the new section 7 rows, each bound to a detector or excused in `UNDETECTED_ROWS`, and `tests/skill-fence-guard-shapes.test.js` passes with no new allowlist entry.\n- [ ] AC7: Each new section 7 row names a date, a platform, a Claude Code version, the kind of session and this record's number, and the PR quotes the live refusal text each row's wording was copied from.\n- [ ] AC8: The parked record exists, is labelled `parked`, and its body holds the command, the three baselines as the committed tool printed them, the trigger and the three bounds. The PR links it.\n- [ ] AC9: #4990 and #4931 each have one new comment from this build holding a per-shape count table and a recommendation, and `gh api repos/{owner}/{repo}/issues/4990` and `…/4931` show their bodies and labels unchanged from before the build.\n- [ ] AC10: The full suite passes (`npm test -- --full`), since `scratch-worktree.md` prose that tests pin is reworded.\n- [ ] AC11: A test fails when `RULE_SINCE`'s keys differ from `RULE_IDS`. On a fixture store, `--shape-patterns` with one pattern prints `byPattern` with that pattern's count, and `byClass` prints one count for each of `git-C-own`, `exit-status` and `collision-fence`.\n\n## Technical Approach\n\nThe replay is a mode of the existing tool, so it shares the scan, the window flags and the fixtures. It adds no pass over the transcripts: it reads the rows the normal run already built. The standing guard against a rule that moves a write is #5588's unit test over every rule's positive cases; `writeTargetsMoved` is a one-time check on real commands.\n\nA replay cannot ask the harness guard whether it would accept a command; the guard is closed code. `rewritten` therefore means \"a rule fires and the result matches no known refused row\", which is as far as text can go. The live probes in #5588 and in Deliverable 3 are the ground truth for each form, and the parked record is the check on real sessions.\n\nThe chain exclusion in AC5 is deliberate. A read-only command of four or more chained steps with loops and pipes (`cd <wt> && for f in …; do …; done; git diff … | head`) is refused as \"too complex\" or \"names git in a form too complex\". Its meaning is known, but there is no single plain respelling a rewrite could produce, and splitting it is the caller's job. The replay prints this class's count beside the others so it stays visible.\nDecided 2026-11-16: a call's chain length is its number of simple commands at the top level, split at `;`, `&&`, `||`, `|` and a newline outside quotes, substitutions and heredoc bodies. A read row of length 4 or more that no earlier disposition claims is `long-chain`. AC5 shows that the replay agrees with itself; the parked record is the check on real sessions.\n\nFor the comments on #4990 and #4931, match each record's listed shapes with a committed pattern file: `mkdir -p … && playwright-cli`, a `cd \"<worktree>\" &&` prefix, a heredoc into `python -` or `node -`, a shell-function wrapper, `playwright-cli` with a variable or `$PWD` in `--filename`, in a `for` loop, or piped into `head`.\nDecided 2026-11-16: the replay takes `--shape-patterns <file>`, a JSON list of `{ id, pattern }`, and prints `byPattern`, the number of refused rows each pattern matches. The patterns for the two records are committed as `tools/guard-refusals/caller-shape-patterns.json`, and each comment names that file at the build's commit so a reader can run the count again.\n\n### Key Files\n\n- `tools/guard-refusals.js`\n- `tools/guard-refusals/replay.js`\n- `tools/guard-refusals/caller-shape-patterns.json`\n- `tools/guard-refusals/shapes.js`\n- `tests/guard-refusals/replay.test.js`\n- `tests/guard-refusals/shapes.test.js`\n- `tests/guard-refusals/cli.test.js`\n- `plugin/skills/_shared/scratch-worktree.md`\n- `docs/plugin-structure.md`\n\n## Gotchas\n\n- This record edits no scanner under `plugin/`. It reads `git-command.js` through the replay, so its numbers move when #4448, #4244 or #4572 land. Run AC5 on the tree as it is at build time and say which of those were in it.\n- The harness guard's boundary moves between Claude Code releases. Section 7's rows are \"last observed\". Never delete or flip an existing row to make the table agree with a probe: add the new observation with its date, as `.claude/skills/pretooluse-updatedinput-normalizer` and the table's own lead-in say.\n- #4931 adds `playwright-cli` rows to section 7 and re-verifies the loop and pipeline rows; #4353, #4898, #4243, #5335 and #3822 also touch section 7 or cite it. Rebase on whichever has landed. `scratch-worktree.md` is 33,126 bytes against the 52,500-byte read limit.\n- #4216 is the open measurement record for #4028's own target (refusals per pipeline). The parked record here measures three named classes, not the per-pipeline mean. Cite #4216 in it; do not fold the two together.\n- #4217 migrates the fences its four detectors flag. A fence that both #4217's detectors and a new detector flag belongs to #4217; leave it.\n- Transcripts hold local paths and record text. The PR and the two comments carry counts, reason ids and shape names only, never a quoted command from a transcript.\n- A subagent's refusals are in the subagent's own transcript file; 84.8% of the window's harness refusals were. The replay must not drop rows whose file sits under `subagents/`.\n- The design's goal 2 (\"a read-only command is never refused by the worktree guard for its shape\") is not reachable from inside the plugin for the `other-checkout` class and the long-chain class. The caller of the specify run holds a draft report for the harness's maintainers; this record does not file it.\n- Read `.claude/skills/skill-prose-conformance-tests` before changing section 7, and `.claude/skills/fact-validated-narration` for the two comments: every count in them comes from the replay's output.\n- Blocked by #5587 (the `guard`, `effect`, `readClass` and `rewrite` fields the replay reads), #5588 (the rules, and the same `shapes.js` and section 7 edits) and #5589 (the fence the heredoc row describes).\n\n## Release Note\n\nDocumented more of the shell commands a worktree session's guard refuses, with the form that works for each, and added a maintainer replay that checks no harmless command is refused by the plugin's own gates.\n\n\n<!-- work-fingerprint: process-efficiency:refused-read-replay-and-residue -->\nwork-fingerprint: process-efficiency:refused-read-replay-and-residue\n",
+        "createdAt": "2026-11-16T00:04:31Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
             "name": "ready",
             "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
             "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACruzLxQ",
@@ -992,25 +963,19 @@
             "color": "BFDADC"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
             "id": "LA_kwDORUwzVM8AAAACszEEfQ",
             "name": "ceremony:standard",
             "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
             "color": "FEF2C0"
           }
         ],
-        "number": 5556,
+        "number": 5590,
         "state": "OPEN",
-        "title": "Write a step yield file per closed run: what each step cost and produced",
-        "updatedAt": "2026-11-15T23:52:19Z",
+        "title": "Replay the window's refused reads, record the shapes the plugin cannot fix, and re-read #4990 and #4931",
+        "updatedAt": "2026-11-16T00:33:07Z",
         "facets": {
           "origin": null,
-          "risk": "medium",
+          "risk": "low",
           "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
@@ -7769,7 +7734,7 @@
         "number": 4237,
         "state": "OPEN",
         "title": "Move workflow actions off the deprecated Node.js 20 runtime",
-        "updatedAt": "2026-10-31T09:59:41Z",
+        "updatedAt": "2026-11-16T08:12:59Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -9364,90 +9329,6 @@
     ],
     [
       {
-        "body": "Origin: reflect hindsight from #4303\n\nDefer-reason: tangential\n\n## Current State\n\nA review lens agent dispatched by `/claude-tweaks:review` Step 3 (record #4303, run 2026-10-25T143627-spec-4303) cleaned up with `rm -rf` on the session's whole scratchpad directory (`/private/tmp/claude-501/{project-slug}`) instead of its own `SCRATCH:` subdirectory. That deleted the parent session's scratchpad, its sibling agents' files and the session's background-task output directory. The repository, the worktree and the run directory were untouched, and the lost helpers were regenerated.\n\n`_shared/subagent-output-contract.md`'s Scratch rule says only \"The agent deletes what it created there before its status word\". The `SCRATCH:` line in `review/step3-lens-dispatch.md` and `step3-debate-and-refutation.md` likewise says to delete the scratch file or directory. Neither says what the agent must never delete. Without that rule the agent chose a path itself and climbed to a shared parent.\n\n## Deliverables\n\nThe Scratch rule in `plugin/skills/_shared/subagent-output-contract.md` states that cleanup removes only paths created inside the exact `SCRATCH:` directory the prompt names: no recursive delete of a parent, of the session scratchpad or temp root, or of any path not textually under the `SCRATCH:` path.\n\nThe `SCRATCH:` lines in `plugin/skills/review/step3-lens-dispatch.md` and `plugin/skills/review/step3-debate-and-refutation.md`, and every other dispatch template that grants a scratch path, carry the same one-line prohibition.\n\nA conformance test pins the prohibition text in the contract and in each dispatch template that names a `SCRATCH:` path.\n\n## Acceptance Criteria\n\nThe Scratch rule names the never-delete scope (a parent, the session scratchpad or temp root, any path outside the named SCRATCH path).\n\nEvery `SCRATCH:` dispatch line in plugin/skills carries the prohibition, and a conformance test fails when one is missing.\n\n`npm test` passes.\n\n## Release Note\n\nDispatched review agents are told never to delete anything outside their own scratch directory.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-output-contract.md` — Scratch rule: never-delete scope\n- `plugin/skills/review/step3-lens-dispatch.md` — SCRATCH: line prohibition\n- `plugin/skills/review/step3-debate-and-refutation.md` — SCRATCH: line prohibition\n\n_Filed by `reflect` via specShapedBody._\n\n## Decision-log reference\n\nSTAGED — Step 4 (reflect hindsight): pattern observation \"Scratch rule lacks a never-delete scope\" — record proposal. Stage path: staged/reflect-2.md.\n",
-        "createdAt": "2026-10-27T12:41:52Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4472,
-        "state": "OPEN",
-        "title": "Subagent Scratch rule never forbids deleting outside the scratch path — a review lens agent rm -rf'd the session scratchpad",
-        "updatedAt": "2026-10-30T04:28:12Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: terminal\n\nOrigin: ledger resolve gate (record #3313, build item 14)\n**Related:** #3313, #2987, #3002, #3933\n\n## Current State\n\nA project's `verify-scope.json` can declare `preExisting`: a glob/path allowlist of known-failing test files (#3129; e.g. a shallow clone's precondition tests). A run whose entire failing-file set is covered by it is adjudicated as passing (`plugin/bin/verify.js` around line 616). #3313 added a report-only new/fixed split (`newAndFixed` in `plugin/bin/lib/verify/pre-existing.js`): \"fixed\" lists the tracked test files an entry covers that did not fail. It is computed only inside the adjudication block, gated on `!rawPass && !adjudicatedPass` (`verify.js:632`), and only for a full-scope run with every check run.\n\nA green (raw-pass) run never enters that block, so it never reports that its `preExisting` entries went unused. Because `verify-scope.json` is a committed project file, an entry that is no longer needed stays a standing waiver: if that file later breaks again for a real reason, its failure is excused without anyone seeing it.\n\n## Deliverables\n\n- [ ] On a raw-pass, full-scope run (every check ran) with a non-empty `preExisting` declaration, print one report line: none of the N declared `preExisting` entries was needed in this run, naming the entries\n- [ ] Narrower scope modes (`affected` and the like) print nothing, since they did not run every suite and cannot claim a listed file passed (the same rule `newAndFixed` already applies)\n- [ ] The line is informational: it never changes the exit code or the verify stamp, and never tells the reader to delete the entries. Entries are often environment-specific (a test that fails only in a shallow clone passes locally), so the line reads \"not needed in this run\", not \"stale, remove\"\n- [ ] Add the same fact to the run's JSON/report output beside the existing `preExistingAdjudicated` field (for example `preExistingUnused: { declared, mode }`), so `/test` and the wrap-up pack can surface it\n- [ ] Document the line in `plugin/skills/test/verification.md`'s `preExisting` paragraph\n\n## Acceptance Criteria\n\n- A raw-pass full-scope run with `preExisting: [\"tests/a.test.js\"]` prints the not-needed line naming `tests/a.test.js`, and its JSON carries `preExistingUnused`\n- A raw-pass run in a narrower scope mode, a run with no `preExisting` key, and a failing run each print no such line\n- The line does not alter the exit code or the stamp (asserted by comparing to the same run without the declaration)\n- No `git ls-files` call is made on the raw-pass path (asserted with the injectable `execImpl`)\n- `npm test` passes\n\n## Release Note\n\n`verify` now notes when a full green run didn't need any of the declared pre-existing-failure allowances.\n\n## Technical Approach\n\nThe original question offered three postures: report on every pass, only under full scope, or only behind a flag. Full scope only, by default, is the one that is both sound and cheap:\n\n- **Sound:** only a full-scope run with every check run exercised every suite, which is the same reason `newAndFixed` returns `fixed: null` for narrower modes.\n- **Cheap:** the cost the original record worried about was `git ls-files` on every green run. On a raw pass no test failed, so every declared entry was unneeded by definition, and the line can name the declared entries directly with no tracked-file enumeration. The output cost is one line, only for projects that declare `preExisting`, which is meant to be temporary.\n- **Not behind a flag:** a flag would leave the standing-waiver risk invisible, which is the gap this record exists to close.\n\n### Key Files\n\n- `plugin/bin/verify.js` — raw-pass branch: emit the line and the `preExistingUnused` field\n- `plugin/bin/lib/verify/pre-existing.js` — optional small helper for the raw-pass report (no `trackedFiles` call)\n- `plugin/skills/test/verification.md` — document the line beside the existing `preExisting` paragraph\n- `tests/bin-lib/verify/` — new cases for the line, the narrower-mode silence, and the no-`ls-files` assertion\n\n## Gotchas\n\n- `verify.js`'s stdout is bounded by contract (\"one table row per check plus at most one ≤100-line failing region\", `verification.md:58`); the new line has to fit that contract's wording, so update the bound's description if it enumerates every line kind.\n- Keep the report out of stamp-match logic: `verify.js:142` treats a `preExisting`-adjudicated stamp differently, and a raw pass that merely reports unused entries is still a plain raw pass.\n\n## Original request\n\nDecide whether a green verify run should flag stale preExisting allowlist entries\n\nOrigin: ledger resolve gate (record #3313, build item 14)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n#3313 made `verify.js` report which allowlisted `preExisting` files passed (\"N new, M fixed\") — but only on a run that failed and was adjudicated. A green (raw-pass) run never adjudicates, so a fully stale allowlist, where every entry now passes, is never flagged for removal. Files: `plugin/bin/verify.js`, `plugin/bin/lib/verify/pre-existing.js`, `plugin/skills/test/verification.md`.\n\n## Deliverables\n\n- [ ] Decide whether a raw-pass run with a `preExisting` declaration should print the fixed list.\n- [ ] If yes, implement it and pin the cost of `git ls-files` on every green run.\n\n## Open Question\n\nShould a green run pay for the stale-allowlist check on every pass, only under scope mode full, or only on request (a flag)? Printing it by default adds output to the most common run; a flag keeps a stale allowlist invisible unless someone asks.\n\n## Release Note\n\nNo user-visible change until the question is answered.\n\n_Filed by `ledger resolve gate`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n",
         "createdAt": "2026-10-20T17:25:10Z",
         "labels": [
@@ -10510,26 +10391,14 @@
         }
       },
       {
-        "body": "Surface: infra\n\n**Related:** #4271, #2724, #2767, #3977, #4102, #4355\n\n## Current State\n\n`plugin/bin/check-staged-stack.js` is the stacked staging-time gate in `_shared/staged-patch.md`. It checks each `staged/` patch in a throwaway scratch repo through `plugin/bin/lib/staged-patch/stack-check.js`. `withScratch` runs `git init` (`stack-check.js:109`) and copies the worktree's files into it byte-for-byte (`:112`). The three-way path does the same at `:262-274`. Every scratch git call runs under `gitEnv()` (`:27-28`), which sets `GIT_CONFIG_NOSYSTEM=1` and points `GIT_CONFIG_GLOBAL` at the null device. #3997 tightened that isolation against environment-carried config.\n\nOn Git for Windows, the default system config (`<Git install>/etc/gitconfig`) sets `core.autocrlf=true`, so tracked files are checked out with CRLF. A review patch made by `git diff` has LF context. In the worktree, `git apply --check` succeeds because git normalizes the CRLF working copy on read. In the scratch repo there is no `core.autocrlf`, so `git apply` compares LF context against raw CRLF bytes and fails.\n\nObserved on 6.156.1 (Windows): `/claude-tweaks:review`'s medium Test Quality fix failed the stacked gate with exit 2 (\"patch failed … CRLF working copy vs LF patch\"), while a solo `git apply --check` in the worktree passed. The patch stayed unstacked and unapplied until the Review Console. Diagnosing it by hand cost a review step. Every LF patch on such a checkout is affected.\n\n## Deliverables\n\n1. Make the scratch repo see the same line-ending semantics as the worktree. Resolve the worktree's effective `core.autocrlf` and `core.eol` (`git -C <worktree> config --get …`, which reads system/global/local), then pass them to the scratch's git calls as `-c` overrides. Copy every `.gitattributes` file in the patch's path set (root and each touched directory) into the scratch along with the files. `gitEnv()` keeps disabling system/global config wholesale, so #3997's isolation still holds and only these named line-ending settings cross over, explicitly.\n2. Apply the same settings to the three-way merge path (`:262-274`) so it does not reintroduce a CRLF/LF mismatch there.\n\n## Acceptance Criteria\n\n- With `core.autocrlf=true` set for the worktree and a CRLF working copy, an LF `git diff` patch that `git apply --check` accepts in the worktree also passes `check-staged-stack.js`.\n- A patch that genuinely conflicts still fails with the same message as today.\n- With `core.autocrlf` unset (macOS/Linux default), scratch behavior is unchanged.\n- An environment-injected config (the #3997 case, e.g. `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0` carrying an unrelated setting) still does not reach the scratch repo.\n- Tests in `tests/bin-lib/staged-patch/stack-check.test.js` cover the CRLF case by setting `core.autocrlf=true` in a fixture repo's local config and writing CRLF files, so they run on every platform.\n\n## Release Note\n\nThe staged-fix check no longer reports false conflicts on Windows checkouts that use CRLF line endings.\n\n## Technical Approach\n\nThe reporter suggested two fixes: honour the worktree's line-ending config in the scratch, or seed the scratch from index blobs (`git show :path`). Index blobs are rejected because the stacked check has to see the worktree's actual state, including edits the run has not committed. A blob seed would test patches against the wrong base. Forwarding the resolved values with `-c` keeps the scratch hermetic for everything else.\n\n### Key Files\n\n- `plugin/bin/lib/staged-patch/stack-check.js` — resolve and forward line-ending config; copy `.gitattributes`\n- `plugin/bin/check-staged-stack.js` — CLI wrapper; no contract change expected\n- `tests/bin-lib/staged-patch/stack-check.test.js` — CRLF fixture case and the #3997 isolation case\n- `plugin/skills/_shared/staged-patch.md` — reference: the stacked gate's contract\n\n## Gotchas\n\n- A `git config --get` miss exits 1. Treat it as \"unset\", not as an error.\n- `core.safecrlf` can turn the conversion into a hard failure. Do not forward it; the gate checks applicability, not line-ending policy.\n- Validate on Windows CI as well as locally: `-c core.autocrlf=true` on macOS behaves the same for `git apply`, but the system-config source exists only on Git for Windows.\n\n## Original request\n\ncheck-staged-stack: false conflict for every LF patch on a Git for Windows checkout with core.autocrlf=true\n\n**Summary:** The stacked staged-patch check copies CRLF working-tree files into a scratch repo with system git config disabled, so a correct LF patch reports a conflict on Windows.\n\n**Kind:** Defect\n\n**Affected component:** `bin/check-staged-stack.js` / `bin/lib/staged-patch/stack-check.js` (the review routing's stacked staging-time gate, `_shared/staged-patch.md`)\n\n**Cost this session:** /review's medium Test Quality fix could not pass its staging gate. The check exited 2 with \"patch failed … CRLF working copy vs LF patch\", although a solo `git apply --check` in the worktree passed. The controller kept the patch unstacked, so it remains unapplied on the branch until the Review Console runs. Diagnosing it by hand cost one extra review step.\n\n**Repro steps:**\n1. On Windows, use Git for Windows with its default system config (`core.autocrlf=true` in `<Git install>/etc/gitconfig`), so tracked files are checked out with CRLF line endings.\n2. In a /flow run, stage a review patch produced by `git diff` (LF line endings in the patch body) against one of those files.\n3. Run the stacked staging-time check (`check-staged-stack.js`) over the run's `staged/` dir.\n\n**Expected vs. actual:**\nExpected: the stacked check agrees with `git apply --check` run in the worktree itself, which applies cleanly because git converts the CRLF working copy on read.\nActual: the check reports the patch as failing to apply. `withScratch` copies the worktree files byte-for-byte into a fresh `git init` scratch repo. `gitEnv()` sets `GIT_CONFIG_NOSYSTEM=1` and points `GIT_CONFIG_GLOBAL` at the null device, so the scratch repo has no `core.autocrlf`. `git apply` then compares LF patch context against CRLF bytes and fails.\n\n**Suggested direction:** Normalize line endings when seeding the scratch repo, for example by running `git -c core.autocrlf=true` (or the worktree's own resolved `core.autocrlf`/`core.eol` and `.gitattributes`) inside the scratch. Alternatively, write the scratch copies from `git show :path` (index blobs) instead of raw working-tree bytes. #3997 tightened the same `gitEnv()` isolation against environment-carried config. This is the opposite side of that change: the isolation also drops the one system setting that changes what the working tree contains.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-c691611c -->\n\n",
-        "createdAt": "2026-10-28T06:56:57Z",
+        "body": "Surface: infra\n\n**Related:** #4149, #4211, #4242, #4247, #4248, #4294, #4303, #4309, #4310, #4328, #4329, #3822, #4164, #4217, #4245, #4246, #4285, #4304, #4369, #4571\n\nOrigin: /claude-tweaks:review of #4149 (refs #4149)\n\n## Current State\n\nIn `plugin/bin/lib/hooks/git-command.js`, three lead checks read the segment's first token literally: `visitSegment` (cd tracking, `:652`), `findGitLead` (`:754`), and the `WRITE_SHAPES` lead check. A `cd`, a `git`, or a write-shape command behind `if`, `then`, `do`, `else`, `while`, `!`, `time`, `builtin`, `command`, or `pushd` is never seen.\n\nRe-probed at HEAD with session cwd `/r`, these still reproduce:\n\n- `if true; then cp x /M/b; fi` and `for f in a; do cp x /M/b; done` give `fileWriteTargets` `[]`.\n- `if true; then git -C /M commit -m x; fi` gives `gitTargets` `[]`.\n- `if true; then cd M; fi; : > zz` and `pushd /M; : > zz` both resolve `zz` to `/r/zz`.\n\n`groupEvents` already treats these words as keeping command position, through `COMMAND_PREFIX_WORDS` (`:1420`, used at `:1455` and `:1867`), so the two halves of the scanner disagree. Found by /claude-tweaks:review of #4149 (lens 3b, both reproduction agents).\n\n**Scope under ADR 0028 (#4571, 2026-10-30).** This record is a Phase 1 prerequisite of #4572, narrowed to **compound keywords used as list structure**: `if`/`then`/`elif`/`else`/`fi`, `while`/`until`/`for … do`/`done`, `case … esac`, and `in`.\n\n- **Moved to #4448:** the prefixes (`!`, `time`, `builtin`, `command`). This record is Blocked by it.\n- **Moved to #4572:** `pushd`/`popd` and a cd inside a conditional or loop body (`if true; then cd M; fi; : > zz`). Under the new design these are unresolved cwds, owned there, not modelled here.\n\n## Deliverables\n\n1. Add the compound keywords to #4448's \"skip to command word\" helper, so `visitSegment`, `findGitLead` and the write-shape lead check read the command after a keyword. Export the keyword set beside #4448's prefix set for #4572's recogniser.\n2. Add the keyword probe cases above to `tests/hooks-gate-coverage.test.js` / `tests/hooks-git-command.test.js`, checked against real bash.\n\n## Acceptance Criteria\n\n- `if true; then cp x /M/b; fi`, `for f in a; do cp x /M/b; done`, `while false; do :; done; cp x /M/b` and `if true; then git -C /M commit -m x; fi` report the /M target.\n- `case x in x) cp a /M/b;; esac` reports the /M target.\n- Each new case goes red against the current lead check.\n- A pin test fails if the exported keyword set and this record's list diverge.\n- `npm test` passes.\n\n## Release Note\n\nThe worktree write guard now catches file writes and git commits placed inside if, for, while and case blocks.\n\n## Technical Approach\n\nExtend #4448's helper rather than adding a second one, so the lexer half and the target half share a single definition of command position. Follow the repo-local `shell-scanner-bash-differential` skill: judge each case against real bash 3.2 and 5, check base for regressions, and prove each rule with a mutant.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/git-command.js` — the \"skip to command word\" helper (#4448), `COMMAND_PREFIX_WORDS`, exported keyword set\n- `tests/hooks-gate-coverage.test.js` — write-target probe cases\n- `tests/hooks-git-command.test.js` — git-target probe cases\n\n## Gotchas\n\n- Adding keywords to the shared `COMMAND_PREFIX_WORDS` set also changes `groupEvents`' behaviour. Decide whether they join the set or are skipped only at the lead checks.\n- `in` is a keyword only after `for NAME` and `case WORD`. Skipping it anywhere else would misread a command named `in`.\n- Several open records target the same lexer half of `git-command.js`, including #4245, #4246 and #4448. #4242 proposes splitting the lexer out. Expect merge conflicts.\n- This is the worktree-always write gate. A missed target fails open, so every new rule needs a go-red case.\n\n## Original request\n\nWrite gate misses a command after a compound keyword or builtin prefix (if/then/do/while/!/time/command/pushd)\n\nOrigin: /claude-tweaks:review of #4149 (refs #4149)\n\n## Current State\n\nIn `plugin/bin/lib/hooks/git-command.js`, `visitSegment` (cd tracking), `findGitLead` and the `WRITE_SHAPES` lead check read the segment's first token literally, so a `cd`, a `git` or a write-shape command behind `if`, `then`, `do`, `else`, `while`, `!`, `time`, `builtin`, `command` or `pushd` is never seen. Executed probe at the #4149 branch and at 7070c0b8a: `if true; then cp x /M/b; fi`, `for f in a; do cp x /M/b; done` (fileWriteTargets `[]`), `if true; then git -C /M commit -m x; fi` (gitTargets `[]`), `if true; then cd M; fi; : > zz` (resolves under the session cwd) — bash writes or commits in /M in each. `groupEvents` already knows these words keep command position (`COMMAND_PREFIX_WORDS`), so the two halves disagree. Found by /claude-tweaks:review of #4149 (lens 3b, both reproduction agents).\n\n## Deliverables\n\n1. Skip compound keywords and builtin prefixes (the `COMMAND_PREFIX_WORDS` set, plus `pushd`/`popd` as cd forms) before reading a segment's command word in `visitSegment`, `findGitLead` and the write-shape check.\n2. Add each probe case above to `tests/hooks-gate-coverage.test.js` / `tests/hooks-git-command.test.js`, checked against real bash.\n\n## Acceptance Criteria\n\n- `fileWriteTargets`/`gitTargets` report the /M target for every probe case above.\n- Each new case goes red against the current lead check.\n- `npm test` passes.\n\n_Filed by `review` via specShapedBody._\n",
+        "createdAt": "2026-10-25T10:25:05Z",
         "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
             "name": "ready",
             "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
             "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACruyrJA",
@@ -10556,6 +10425,12 @@
             "color": "0052CC"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAACszED4w",
             "name": "ceremony:fast-lane",
             "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
@@ -10568,13 +10443,13 @@
             "color": "ededed"
           }
         ],
-        "number": 4493,
+        "number": 4244,
         "state": "OPEN",
-        "title": "check-staged-stack: false conflict for every LF patch on a Git for Windows checkout with core.autocrlf=true",
-        "updatedAt": "2026-10-31T06:32:28Z",
+        "title": "Write gate misses a command after a compound keyword or builtin prefix (if/then/do/while/!/time/command/pushd)",
+        "updatedAt": "2026-10-30T07:20:25Z",
         "facets": {
           "origin": null,
-          "risk": "low",
+          "risk": "medium",
           "size": "low",
           "ceremony": "fast-lane",
           "solutionUnjustified": false,
@@ -10738,6 +10613,178 @@
         "state": "OPEN",
         "title": "build: Working Directory Discipline tells dispatchers to require `cd \"$WORKTREE\" && …`, which the worktree-isolation guard refuses",
         "updatedAt": "2026-10-30T04:28:03Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      },
+      {
+        "body": "Surface: infra\n\n**Related:** #4271, #2724, #2767, #3977, #4102, #4355\n\n## Current State\n\n`plugin/bin/check-staged-stack.js` is the stacked staging-time gate in `_shared/staged-patch.md`. It checks each `staged/` patch in a throwaway scratch repo through `plugin/bin/lib/staged-patch/stack-check.js`. `withScratch` runs `git init` (`stack-check.js:109`) and copies the worktree's files into it byte-for-byte (`:112`). The three-way path does the same at `:262-274`. Every scratch git call runs under `gitEnv()` (`:27-28`), which sets `GIT_CONFIG_NOSYSTEM=1` and points `GIT_CONFIG_GLOBAL` at the null device. #3997 tightened that isolation against environment-carried config.\n\nOn Git for Windows, the default system config (`<Git install>/etc/gitconfig`) sets `core.autocrlf=true`, so tracked files are checked out with CRLF. A review patch made by `git diff` has LF context. In the worktree, `git apply --check` succeeds because git normalizes the CRLF working copy on read. In the scratch repo there is no `core.autocrlf`, so `git apply` compares LF context against raw CRLF bytes and fails.\n\nObserved on 6.156.1 (Windows): `/claude-tweaks:review`'s medium Test Quality fix failed the stacked gate with exit 2 (\"patch failed … CRLF working copy vs LF patch\"), while a solo `git apply --check` in the worktree passed. The patch stayed unstacked and unapplied until the Review Console. Diagnosing it by hand cost a review step. Every LF patch on such a checkout is affected.\n\n## Deliverables\n\n1. Make the scratch repo see the same line-ending semantics as the worktree. Resolve the worktree's effective `core.autocrlf` and `core.eol` (`git -C <worktree> config --get …`, which reads system/global/local), then pass them to the scratch's git calls as `-c` overrides. Copy every `.gitattributes` file in the patch's path set (root and each touched directory) into the scratch along with the files. `gitEnv()` keeps disabling system/global config wholesale, so #3997's isolation still holds and only these named line-ending settings cross over, explicitly.\n2. Apply the same settings to the three-way merge path (`:262-274`) so it does not reintroduce a CRLF/LF mismatch there.\n\n## Acceptance Criteria\n\n- With `core.autocrlf=true` set for the worktree and a CRLF working copy, an LF `git diff` patch that `git apply --check` accepts in the worktree also passes `check-staged-stack.js`.\n- A patch that genuinely conflicts still fails with the same message as today.\n- With `core.autocrlf` unset (macOS/Linux default), scratch behavior is unchanged.\n- An environment-injected config (the #3997 case, e.g. `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0` carrying an unrelated setting) still does not reach the scratch repo.\n- Tests in `tests/bin-lib/staged-patch/stack-check.test.js` cover the CRLF case by setting `core.autocrlf=true` in a fixture repo's local config and writing CRLF files, so they run on every platform.\n\n## Release Note\n\nThe staged-fix check no longer reports false conflicts on Windows checkouts that use CRLF line endings.\n\n## Technical Approach\n\nThe reporter suggested two fixes: honour the worktree's line-ending config in the scratch, or seed the scratch from index blobs (`git show :path`). Index blobs are rejected because the stacked check has to see the worktree's actual state, including edits the run has not committed. A blob seed would test patches against the wrong base. Forwarding the resolved values with `-c` keeps the scratch hermetic for everything else.\n\n### Key Files\n\n- `plugin/bin/lib/staged-patch/stack-check.js` — resolve and forward line-ending config; copy `.gitattributes`\n- `plugin/bin/check-staged-stack.js` — CLI wrapper; no contract change expected\n- `tests/bin-lib/staged-patch/stack-check.test.js` — CRLF fixture case and the #3997 isolation case\n- `plugin/skills/_shared/staged-patch.md` — reference: the stacked gate's contract\n\n## Gotchas\n\n- A `git config --get` miss exits 1. Treat it as \"unset\", not as an error.\n- `core.safecrlf` can turn the conversion into a hard failure. Do not forward it; the gate checks applicability, not line-ending policy.\n- Validate on Windows CI as well as locally: `-c core.autocrlf=true` on macOS behaves the same for `git apply`, but the system-config source exists only on Git for Windows.\n\n## Original request\n\ncheck-staged-stack: false conflict for every LF patch on a Git for Windows checkout with core.autocrlf=true\n\n**Summary:** The stacked staged-patch check copies CRLF working-tree files into a scratch repo with system git config disabled, so a correct LF patch reports a conflict on Windows.\n\n**Kind:** Defect\n\n**Affected component:** `bin/check-staged-stack.js` / `bin/lib/staged-patch/stack-check.js` (the review routing's stacked staging-time gate, `_shared/staged-patch.md`)\n\n**Cost this session:** /review's medium Test Quality fix could not pass its staging gate. The check exited 2 with \"patch failed … CRLF working copy vs LF patch\", although a solo `git apply --check` in the worktree passed. The controller kept the patch unstacked, so it remains unapplied on the branch until the Review Console runs. Diagnosing it by hand cost one extra review step.\n\n**Repro steps:**\n1. On Windows, use Git for Windows with its default system config (`core.autocrlf=true` in `<Git install>/etc/gitconfig`), so tracked files are checked out with CRLF line endings.\n2. In a /flow run, stage a review patch produced by `git diff` (LF line endings in the patch body) against one of those files.\n3. Run the stacked staging-time check (`check-staged-stack.js`) over the run's `staged/` dir.\n\n**Expected vs. actual:**\nExpected: the stacked check agrees with `git apply --check` run in the worktree itself, which applies cleanly because git converts the CRLF working copy on read.\nActual: the check reports the patch as failing to apply. `withScratch` copies the worktree files byte-for-byte into a fresh `git init` scratch repo. `gitEnv()` sets `GIT_CONFIG_NOSYSTEM=1` and points `GIT_CONFIG_GLOBAL` at the null device, so the scratch repo has no `core.autocrlf`. `git apply` then compares LF patch context against CRLF bytes and fails.\n\n**Suggested direction:** Normalize line endings when seeding the scratch repo, for example by running `git -c core.autocrlf=true` (or the worktree's own resolved `core.autocrlf`/`core.eol` and `.gitattributes`) inside the scratch. Alternatively, write the scratch copies from `git show :path` (index blobs) instead of raw working-tree bytes. #3997 tightened the same `gitEnv()` isolation against environment-carried config. This is the opposite side of that change: the isolation also drops the one system setting that changes what the working tree contains.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-c691611c -->\n\n",
+        "createdAt": "2026-10-28T06:56:57Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
+            "name": "bug",
+            "description": "Something isn't working",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 4493,
+        "state": "OPEN",
+        "title": "check-staged-stack: false conflict for every LF patch on a Git for Windows checkout with core.autocrlf=true",
+        "updatedAt": "2026-10-31T06:32:28Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: reflect hindsight from #4303\n\nDefer-reason: tangential\n\n## Current State\n\nA review lens agent dispatched by `/claude-tweaks:review` Step 3 (record #4303, run 2026-10-25T143627-spec-4303) cleaned up with `rm -rf` on the session's whole scratchpad directory (`/private/tmp/claude-501/{project-slug}`) instead of its own `SCRATCH:` subdirectory. That deleted the parent session's scratchpad, its sibling agents' files and the session's background-task output directory. The repository, the worktree and the run directory were untouched, and the lost helpers were regenerated.\n\n`_shared/subagent-output-contract.md`'s Scratch rule says only \"The agent deletes what it created there before its status word\". The `SCRATCH:` line in `review/step3-lens-dispatch.md` and `step3-debate-and-refutation.md` likewise says to delete the scratch file or directory. Neither says what the agent must never delete. Without that rule the agent chose a path itself and climbed to a shared parent.\n\n## Deliverables\n\nThe Scratch rule in `plugin/skills/_shared/subagent-output-contract.md` states that cleanup removes only paths created inside the exact `SCRATCH:` directory the prompt names: no recursive delete of a parent, of the session scratchpad or temp root, or of any path not textually under the `SCRATCH:` path.\n\nThe `SCRATCH:` lines in `plugin/skills/review/step3-lens-dispatch.md` and `plugin/skills/review/step3-debate-and-refutation.md`, and every other dispatch template that grants a scratch path, carry the same one-line prohibition.\n\nA conformance test pins the prohibition text in the contract and in each dispatch template that names a `SCRATCH:` path.\n\n## Acceptance Criteria\n\nThe Scratch rule names the never-delete scope (a parent, the session scratchpad or temp root, any path outside the named SCRATCH path).\n\nEvery `SCRATCH:` dispatch line in plugin/skills carries the prohibition, and a conformance test fails when one is missing.\n\n`npm test` passes.\n\n## Release Note\n\nDispatched review agents are told never to delete anything outside their own scratch directory.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-output-contract.md` — Scratch rule: never-delete scope\n- `plugin/skills/review/step3-lens-dispatch.md` — SCRATCH: line prohibition\n- `plugin/skills/review/step3-debate-and-refutation.md` — SCRATCH: line prohibition\n\n_Filed by `reflect` via specShapedBody._\n\n## Decision-log reference\n\nSTAGED — Step 4 (reflect hindsight): pattern observation \"Scratch rule lacks a never-delete scope\" — record proposal. Stage path: staged/reflect-2.md.\n",
+        "createdAt": "2026-10-27T12:41:52Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 4472,
+        "state": "OPEN",
+        "title": "Subagent Scratch rule never forbids deleting outside the scratch path — a review lens agent rm -rf'd the session scratchpad",
+        "updatedAt": "2026-10-30T04:28:12Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -11699,12 +11746,6 @@
       ]
     },
     {
-      "number": 5590,
-      "blockedBy": [
-        5587
-      ]
-    },
-    {
       "number": 5580,
       "blockedBy": [
         5556
@@ -11759,7 +11800,6 @@
     {
       "number": 4615,
       "blockedBy": [
-        4467,
         4613
       ]
     },
@@ -11781,7 +11821,6 @@
       "number": 4575,
       "blockedBy": [
         4244,
-        4448,
         4574,
         4573,
         4572
@@ -11802,8 +11841,7 @@
     {
       "number": 4572,
       "blockedBy": [
-        4244,
-        4448
+        4244
       ]
     },
     {
@@ -11822,12 +11860,6 @@
       "number": 4329,
       "blockedBy": [
         4575
-      ]
-    },
-    {
-      "number": 4244,
-      "blockedBy": [
-        4448
       ]
     },
     {
@@ -11870,13 +11902,19 @@
       "records": [
         3822,
         4004,
-        4493
+        4244
       ]
     },
     {
       "records": [
         3835,
         4442,
+        4493
+      ]
+    },
+    {
+      "records": [
+        4472,
         4725
       ]
     },
