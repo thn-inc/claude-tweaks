@@ -914,3 +914,88 @@ test('only a complete composition stands in for the stamp — complete: false wi
   });
   assert.deepEqual(result, { verified: false, reason: 'stamp-absent', status });
 });
+
+// #3974: hasMaterializedHeader reads the live header and, root by root, the archived one.
+const { hasMaterializedHeader } = require('../../../plugin/bin/lib/dispatch/first-call-artifact-check');
+
+const HDR_MAIN = path.join(path.sep, 'main');
+const HDR_RUN = path.join(HDR_MAIN, '.claude-tweaks', 'pipelines', RUN_ID);
+const HDR_ARCHIVE = path.join(HDR_MAIN, '.claude-tweaks', 'pipelines', 'archive', RUN_ID);
+const hdrServing = (files) => (p) => {
+  if (Object.hasOwn(files, p)) return files[p];
+  throw new Error(`ENOENT ${p}`);
+};
+
+test('hasMaterializedHeader characterization: a live flat or spec-{n} header counts, with or without a record: line', () => {
+  assert.equal(hasMaterializedHeader(hdrServing({ [path.join(HDR_RUN, 'work', '7-spec.md')]: '# spec\n' }), [HDR_RUN], 7), true);
+  assert.equal(hasMaterializedHeader(hdrServing({ [path.join(HDR_RUN, 'spec-7', 'work', '7-spec.md')]: 'record: 7\n' }), [HDR_RUN], 7), true);
+});
+
+test('hasMaterializedHeader characterization: a live header naming another record does not count', () => {
+  assert.equal(hasMaterializedHeader(hdrServing({ [path.join(HDR_RUN, 'work', '7-spec.md')]: 'record: 8\n' }), [HDR_RUN], 7), false);
+});
+
+test('hasMaterializedHeader characterization: an unreadable live header is absent', () => {
+  const throwing = () => { throw new Error('EACCES'); };
+  assert.equal(hasMaterializedHeader(throwing, [HDR_RUN], 7), false);
+});
+
+test('hasMaterializedHeader characterization: a second base (worktree mirror) is read after the first', () => {
+  const mirror = path.join(path.sep, 'wt', '.claude-tweaks', 'pipelines', RUN_ID);
+  const read = hdrServing({ [path.join(mirror, 'work', '7-spec.md')]: 'record: 7\n' });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN, mirror], 7), true);
+});
+
+test('hasMaterializedHeader characterization: a run dir outside a pipelines parent invents no archived candidate', () => {
+  const dir = path.join(path.sep, 'tmp', 'adhoc-run');
+  const reads = [];
+  hasMaterializedHeader((p) => { reads.push(p); throw new Error('ENOENT'); }, [dir], 7);
+  assert.deepEqual(reads, [path.join(dir, 'work', '7-spec.md'), path.join(dir, 'spec-7', 'work', '7-spec.md')]);
+});
+
+test('AC1.1 hasMaterializedHeader accepts an archived-only flat header', () => {
+  const read = hdrServing({ [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 7\n' });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+});
+
+test('AC2.1 hasMaterializedHeader accepts an archived-only spec-{n} header', () => {
+  const read = hdrServing({ [path.join(HDR_ARCHIVE, 'spec-7', 'work', '7-spec.md')]: 'record: 7\n' });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+});
+
+test('AC7.1 hasMaterializedHeader: the live copy wins when both exist', () => {
+  const live = path.join(HDR_RUN, 'work', '7-spec.md');
+  const serve = hdrServing({ [live]: 'record: 7\n', [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 8\n' });
+  const reads = [];
+  const read = (p) => { reads.push(p); return serve(p); };
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+  assert.deepEqual(reads, [live], 'the archived copy is never read once the live one answers');
+});
+
+test('AC7.2 hasMaterializedHeader: a live copy naming another record falls through to the archived copy', () => {
+  const read = hdrServing({
+    [path.join(HDR_RUN, 'work', '7-spec.md')]: 'record: 8\n',
+    [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 7\n',
+  });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+});
+
+test('AC7.3 hasMaterializedHeader: a live work/ lacking this record plus an archived header is true', () => {
+  const read = hdrServing({
+    [path.join(HDR_RUN, 'work', '9-spec.md')]: 'record: 9\n',
+    [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 7\n',
+  });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+});
+
+test('hasMaterializedHeader: an archived header naming another record does not count', () => {
+  const flat = hdrServing({ [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 8\n' });
+  assert.equal(hasMaterializedHeader(flat, [HDR_RUN], 7), false);
+  const nested = hdrServing({ [path.join(HDR_ARCHIVE, 'spec-7', 'work', '7-spec.md')]: 'record: 8\n' });
+  assert.equal(hasMaterializedHeader(nested, [HDR_RUN], 7), false);
+});
+
+test('AC9.4 hasMaterializedHeader: an unreadable archived header is absent', () => {
+  const throwing = () => { throw new Error('EACCES'); };
+  assert.equal(hasMaterializedHeader(throwing, [HDR_RUN], 7), false);
+});
