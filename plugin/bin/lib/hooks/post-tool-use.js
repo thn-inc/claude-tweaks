@@ -555,11 +555,12 @@ function checkPostTeardownReanchor(ctx) {
 // come from the SDK's structured `AskUserQuestionOutput` shape
 // (`{questions, answers}`) an earlier version of this function assumed —
 // real captured transcripts (see docs/reference/agent-sdk-payload-notes.md's
-// "AskUserQuestion input/output shapes" section's Correction) show `tool_response` for
-// this tool is always a plain natural-language string (e.g. `Your questions
-// have been answered: "..."="...". You can now continue with these answers
-// in mind.`) with a varying prefix/suffix, and the embedded question text can
-// contain unescaped nested double quotes — not safely regex-parseable into a
+// "AskUserQuestion input/output shapes" section's Correction) show
+// `tool_response` for this tool is always a plain natural-language string
+// (e.g. `Your questions have been answered: "..."="...". You can now
+// continue with these answers in mind.`) with a varying prefix/suffix, and
+// the embedded question text can contain unescaped nested double quotes —
+// not safely regex-parseable into a
 // structured per-question answer map. So there is no per-question `answer`
 // field; instead ONE raw `response` string for the whole event, extracted via
 // this file's own `extractToolResponseText` (reused, not reimplemented — see

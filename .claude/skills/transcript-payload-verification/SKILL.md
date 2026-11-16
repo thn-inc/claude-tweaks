@@ -295,5 +295,6 @@ cell's result beside the claim with its version (`plugin/skills/_shared/subagent
 ## Origin
 
 Surfaced during #452 (Add a Friction reflect lens fed by hook-denial and AskUserQuestion events) —
-see that record's final review and `docs/reference/agent-sdk-payload-notes.md`'s "AskUserQuestion input/output shapes"
-section's Correction for the concrete incident this skill generalizes from.
+see that record's final review and `docs/reference/agent-sdk-payload-notes.md`'s
+"AskUserQuestion input/output shapes" section's Correction for the concrete incident this skill
+generalizes from.

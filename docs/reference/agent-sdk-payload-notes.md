@@ -2,7 +2,7 @@
 
 This file replaces `evals/NOTES.md`, which was deleted with the eval harness in #5561 (`docs/decisions/0034-evals-harness-and-benchmark-workflow-deleted.md`). It keeps the three sections that code and a project skill outside the harness cite. The rest of that file is in git history at the parent of the deleting commit.
 
-Confirmed against: @anthropic-ai/claude-agent-sdk@0.3.217 (ESM, "type": "module", main sdk.mjs). Capture dates: the `AskUserQuestion` shapes 2026-07-22, their Correction 2026-08-15 (#452), the `run_in_background` and `autoAllowBashIfSandboxed` defaults 2026-07-24, the `autoAllowBashIfSandboxed` supersession note 2026-08-02. `actor.js`, `runner.js` and the README named below were files of the removed harness.
+Confirmed against: @anthropic-ai/claude-agent-sdk@0.3.217 (ESM, "type": "module", main sdk.mjs). Capture dates: the `AskUserQuestion` shapes 2026-07-22, their Correction 2026-08-15 (#452), the `run_in_background` and `autoAllowBashIfSandboxed` defaults 2026-07-24, the `autoAllowBashIfSandboxed` supersession note 2026-08-02. `actor.js`, `runner.js` and the README named below were files of the removed harness. Where a section says "above", or cites a Task number or record #46, it points into the rest of the removed file and the harness's own build plan, both in git history.
 
 ## AskUserQuestion input/output shapes (confirmed Task 4, Step 1)
 
