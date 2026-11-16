@@ -268,7 +268,7 @@ re-wake behavior: interactive 2.1.302 holds a dispatched agent open and re-wakes
 `Monitor` watch it started reports, headless (`claude -p`) 2.1.302 and later runs a nested `Agent` call
 synchronously, and headless 2.1.299 and older never re-wakes it for a nested child. The contract had stated
 "never re-woken" as universal, and every restatement had to be qualified once the interactive cell
-contradicted it (`tests/foreground-execution-instruction.test.js` now pins six claim sites). A `claude -p`
+contradicted it (`tests/foreground-execution-instruction.test.js` now pins five claim sites). A `claude -p`
 probe, the throwaway-hook recipe above included, measures headless only. When
 contract prose states harness behavior, measure each launch mode and version it will run under, record each
 cell's result beside the claim with its version (`plugin/skills/_shared/subagent-dispatch-core.md`'s

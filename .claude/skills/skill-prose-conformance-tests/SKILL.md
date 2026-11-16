@@ -146,8 +146,10 @@ over: the magic span number silently stops matching if the paragraph rewraps, an
 CRLF-normalized file a join-based `assert.notEqual(doctored, text)` guard can pass without the
 doctoring actually having removed anything. `tests/foreground-execution-instruction.test.js`
 (#1965) replaced that shape with a blank-line paragraph split (`text.split(/\r?\n\r?\n/)`) filtered
-on the anchor, guarded by an exact removed-paragraph count
-(`paragraphs.length - kept.length === 2`) rather than a same-string inequality — both stronger
+on the anchor, guarded by an exact paragraph count rather than a same-string inequality. The
+original removed-paragraph guard (`paragraphs.length - kept.length === 2`) went with the template
+copies it doctored (#5601); the live instance is that suite's `handoffWaitParagraph`, which
+asserts exactly one `Async-wait discipline (required):` paragraph (`found.length === 1`) — both stronger
 (pins that *exactly* the expected number of paragraphs vanished, not merely that *something*
 changed) and simpler than the line-span form it replaced. Reach for a structural split over a
 line-count regex whenever the doctored unit is a whole paragraph, list item, or fenced block —
