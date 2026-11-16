@@ -212,7 +212,8 @@ function digestRerunCommand({ consoleDir, pluginRoot }) {
 const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any `logFailures` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each `deduped` entry itself), via log-decision.js `--run` that console's dir, per wrap-up/review-console.md's Can't-tell filings";
 
 // #4679: a `digest-pending` item clears only on a logged digested line (DIGESTED_LINE_RE).
-const DIGEST_LOG_REMEDY = "post each printed digest line to the materiality digest and log it as '{item} digested (work-fingerprint {fp})', hand-log a held entry as '{item} already digested (work-fingerprint {fp})', via log-decision.js `--run` that console's dir";
+// DIGESTED_LINE_RE accepts only the `AUTO … Queue write: …` shape, so the remedy names the full command (no `--spec`).
+const DIGEST_LOG_REMEDY = "post each printed digest line to the materiality digest and log it with `node \"{plugin-root}/bin/log-decision.js\" --run \"{console dir}\" --status AUTO --section \"/wrap-up\" --step \"Queue write\" --text '{item} digested (work-fingerprint {fp})' --reversibility n/a` (no `--spec`), hand-logging a held entry with the text '{item} already digested (work-fingerprint {fp})'";
 
 // One item line plus its pointer: a `cat` of the staged file, or for a
 // `decision:` item (no staged file — it lives in decisions.md) a `see` line.

@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'residue');
-const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, filingRerunCommand, DIGESTED_LINE_RE, digestedFindings, pendingDigests, DIGEST_PENDING_RESOLUTION, digestRerunCommand } = require(MOD);
+const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, filingRerunCommand, DIGESTED_LINE_RE, DIGEST_LOG_REMEDY, digestedFindings, pendingDigests, DIGEST_PENDING_RESOLUTION, digestRerunCommand } = require(MOD);
 
 // The items of the real archived #2821 console.json (#3370): 9 items, four of
 // them unresolved — copied verbatim, including the `skills:undefined` ids.
@@ -546,6 +546,19 @@ test('DIGESTED_LINE_RE anchors on - AUTO (#4679)', () => {
   assert.ok(DIGESTED_LINE_RE.test(real('tiebreak:x already digested (work-fingerprint consolefinding-4567ef01)')));
   const forged = DIGESTED_LINE.replace('- AUTO ', '- STAGED ').replace('4567ef01', '89abcdef');
   assert.deepStrictEqual([...digestedFindings(`${DIGESTED_LINE}\n${forged}\n`)], ['consolefinding-4567ef01']);
+});
+
+test('DIGEST_LOG_REMEDY names a command whose logged line DIGESTED_LINE_RE accepts (#4679)', () => {
+  const { formatEntry } = require(path.join(MOD, '..', '..', 'log-decision', 'append'));
+  const flag = (name) => new RegExp(`${name} (?:"([^"]+)"|'([^']+)'|(\\S+))`).exec(DIGEST_LOG_REMEDY);
+  const val = (name) => { const m = flag(name); assert.ok(m, `the remedy names ${name}`); return m[1] ?? m[2] ?? m[3]; };
+  assert.ok(!/--spec \S/.test(DIGEST_LOG_REMEDY.replace('(no `--spec`)', '')), 'the remedy passes no --spec');
+  const line = formatEntry({
+    status: val('--status'), now: new Date(2026, 9, 24, 10, 0, 0), step: val('--step'),
+    text: val('--text').replace('{item}', 'tiebreak:x').replace('{fp}', 'consolefinding-4567ef01'), reversibility: val('--reversibility'),
+  });
+  assert.ok(DIGESTED_LINE_RE.test(line), line);
+  assert.strictEqual(val('--step'), 'Queue write');
 });
 
 test('pendingDigests: console.json without digests yields none (#4679)', () => {
