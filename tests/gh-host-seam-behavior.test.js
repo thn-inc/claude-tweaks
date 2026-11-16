@@ -586,6 +586,7 @@ test('#5109: claim-targets.js on a cloud sandbox proxy origin takes its repo fro
   const r = runGated(t, claimTargetsRow('github.com'), { origin: 'http://local_proxy@127.0.0.1:43215/git/acme/widgets' });
   assert.equal(r.status, 3, `expected exit 3 (in flight); stderr:\n${r.stderr}`);
   for (const line of r.lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on a proxy origin: ${line}`);
+  assert.equal(r.lines.filter((l) => / ARGS=repo view /.test(l)).length, 1, `expected one gh repo view call, log:\n${r.lines.join('\n')}`);
   assert.deepEqual(r.lines.filter((l) => / ARGS=pr list /.test(l)).map(argsOf), [CT_PR_LIST_ARGV]);
 });
 
