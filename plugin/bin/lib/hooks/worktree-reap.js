@@ -298,7 +298,9 @@ function reapWorktrees({
       continue;
     }
     // A live session's hold (#4960): a dispatch worktree is unlocked, but its session leaves a
-    // hold file in the worktree's git admin dir. fs-only, so it sits outside the examined cap.
+    // hold file in the worktree's git admin dir. Cost: fs reads plus at most one `ps` per live hold
+    // with a recorded start time (pidStartTime) — no git spawn, which is why it sits before the
+    // git-forking MAX_EXAMINED_PER_RUN cap rather than under it.
     const held = holdVerdict(real);
     if (held !== 'free') {
       skipped.push({ path: real, reason: held === 'held' ? REASON.HELD : REASON.HELD_UNVERIFIABLE });

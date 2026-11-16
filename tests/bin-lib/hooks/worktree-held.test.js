@@ -3,6 +3,7 @@
 // and reapWorktrees honouring it.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -15,6 +16,11 @@ const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
 function worktree() {
   const main = gitRepo();
   return { main, wt: harnessWorktreeOf(main) };
+}
+
+// The repo's initial branch (gitRepo() leaves it to the machine's init.defaultBranch).
+function currentBranch(main) {
+  return execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: main, encoding: 'utf8', windowsHide: true }).trim();
 }
 
 // A real hold file via writeHold, with a hand-shaped block so each field is controllable.
@@ -120,7 +126,7 @@ test('holdVerdict: a path that is not a worktree at all -> free', () => {
 
 test('reapWorktrees: skips a held worktree with REASON.HELD even when merged and clean', () => {
   const { main, wt } = worktree();
-  const base = require('child_process').execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: main, encoding: 'utf8' }).trim();
+  const base = currentBranch(main);
   hold(wt);
   const res = reapWorktrees({ cwd: main, integration: base });
   assert.deepEqual(res.reaped, []);
@@ -131,7 +137,7 @@ test('reapWorktrees: skips a held worktree with REASON.HELD even when merged and
 
 test('reapWorktrees: a held worktree does not spend the examined cap', () => {
   const main = gitRepo();
-  const base = require('child_process').execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: main, encoding: 'utf8' }).trim();
+  const base = currentBranch(main);
   const held = harnessWorktreeOf(main, 'a-held');
   hold(held);
   const free = Array.from({ length: MAX_EXAMINED_PER_RUN }, (_, i) => harnessWorktreeOf(main, `b-free-${i}`));
@@ -143,7 +149,7 @@ test('reapWorktrees: a held worktree does not spend the examined cap', () => {
 
 test('reapWorktrees: only an unparseable hold -> REASON.HELD_UNVERIFIABLE, which is not quiet', () => {
   const { main, wt } = worktree();
-  const base = require('child_process').execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: main, encoding: 'utf8' }).trim();
+  const base = currentBranch(main);
   garbageHold(wt);
   const res = reapWorktrees({ cwd: main, integration: base });
   assert.deepEqual(res.skipped, [{ path: wt, reason: REASON.HELD_UNVERIFIABLE }]);
