@@ -9,6 +9,8 @@ const { run } = require('../plugin/bin/backlog-grant-gate');
 // the test loudly rather than returning a plausible empty page.
 function stubGh(args) {
   if (['ready', 'parent-issue', 'all'].includes(args[3])) return JSON.stringify([]);
+  if (args[0] === 'repo' && args[1] === 'view') return JSON.stringify({ owner: { login: 'o' }, name: 'r' });
+  if (args[0] === 'api' && args[1] === 'graphql') return JSON.stringify({ data: { repository: {} } });
   throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
 }
 
