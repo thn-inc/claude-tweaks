@@ -4,9 +4,10 @@
 // instead of polling with `sleep`. One call blocks until its target changes
 // (exit 0) or a bound is hit (exit 3), and prints one JSON line either way.
 //
-// Bounds. The call bound is --max-seconds (default 100, at most 150): 150 s stays
-// under the measured 180-second foreground ceiling (docs/reference/blocking-wait-
-// probe.md), so the caller passes no Bash `timeout`. The window bound is
+// Bounds. The call bound is --max-seconds (default 100, at most 150): an agents or pid
+// call ends within 150 s, a ci call within 170 s (a slow read may run 20 s past the
+// bound), both under the measured 180-second foreground ceiling
+// (docs/reference/blocking-wait-probe.md), so the caller passes no Bash `timeout`. The window bound is
 // --window-seconds (default 1200, at most 3600), shared across calls: calls with
 // the same target and ids/key join one window in the session's waits file, so a
 // re-issued call cannot extend the wait past the window's deadline. A window is
@@ -18,8 +19,9 @@
 // the epoch deps.now().
 //
 // A `ci` call whose first read fails exits 2 after it opened its window, so a retry
-// joins that window. Each ci read is a child process killed at callEnd + 20 s at the
-// latest (POLL_GRACE_MS), so no call outlasts --max-seconds + 20.
+// joins that window. Each ci read is a child process killed 20 s (POLL_GRACE_MS) after
+// the nearer of the call bound and the window deadline, so a ci call outlasts either
+// bound by at most 20 s.
 //
 // Files: only the two marker-owned files of ./marker.js (the session's stops and
 // waits files in the OS temp dir), never a transcript. `agents` reads stops and
@@ -40,7 +42,7 @@ const MAX_SECONDS_CAP = 150;
 const DEFAULT_WINDOW_SECONDS = 1200;
 const WINDOW_SECONDS_CAP = 3600;
 const POLL_MS = { agents: 1000, pid: 1000, ci: 30000 };
-// A ci poll starts before the call bound and is killed by its own timeout, so a call
+// A ci poll starts before the nearer bound and is killed by its own timeout, so a call
 // lasts at most --max-seconds + POLL_GRACE_MS (170 s at the cap, under the 180 s ceiling).
 const POLL_GRACE_MS = 20000;
 const MIN_POLL_TIMEOUT_MS = 1000;
@@ -49,8 +51,9 @@ const USAGE = `usage: wait-for.js agents --ids <a,b> | ci --pr <n> | ci --run <i
          [--max-seconds <n>=100 (<=150)] [--window-seconds <n>=1200 (<=3600)] [--session <id>] [--help]
 
 Blocks in the foreground until the target changes or a bound is hit, then prints
-one JSON line. Call it with no Bash timeout: the longest call, --max-seconds 150,
-stays under the measured 180-second foreground ceiling
+one JSON line. Call it with no Bash timeout: the longest agents or pid call,
+--max-seconds 150, takes 150 s, and a ci call up to 170 s (a slow read may run 20 s
+past the bound), both under the measured 180-second foreground ceiling
 (docs/reference/blocking-wait-probe.md).
   agents --ids <a,b>   returns when a listed subagent id has a final stop (not
                        blocked, pending 0) not returned to an earlier call
@@ -61,7 +64,7 @@ stays under the measured 180-second foreground ceiling
 A verify run and a suite slot are not targets: verify.js waits on both itself.
 
 Calls with the same target and ids (or key) share one window of --window-seconds;
-a call never runs past its window's deadline. Session: --session, else
+a call never runs past its window's deadline (a ci read may, by at most 20 s). Session: --session, else
 CLAUDE_CODE_SESSION_ID ([A-Za-z0-9_-]).
 
 Output keys: target, state, changed, elapsedSeconds, deadlineEpoch, window,
@@ -69,8 +72,8 @@ bound (exit 3 only: "call" or "deadline"), plus the target's own keys
 (agents: reported, pending, stops; ci: readFailures, and conclusion for --run;
 a ci read that fails after a good one counts as pending and adds to readFailures,
 a first read that fails exits 2 after opening the window, so a retry joins it; each
-ci read is killed at the time left until the call bound plus 20 s, so a call lasts at
-most --max-seconds + 20).
+ci read is killed 20 s after the nearer of the call bound and the window deadline, so
+a ci call lasts at most --max-seconds + 20 s).
 
 Exit codes: 0 the target changed; 3 a bound was hit; 2 a malformed invocation,
 a missing or invalid session id, a refused marker file, or an unexpected error.
@@ -281,7 +284,8 @@ async function run(argv, deps) {
     };
 
     for (;;) {
-      ctx.timeoutMs = Math.max(MIN_POLL_TIMEOUT_MS, callEnd + POLL_GRACE_MS - deps.monotonicNow());
+      // The nearer of the two bounds, plus the grace a slow ci read is allowed past it.
+      ctx.timeoutMs = Math.max(MIN_POLL_TIMEOUT_MS, Math.min(callEnd - deps.monotonicNow(), deadlineMs - deps.now()) + POLL_GRACE_MS);
       const res = await target.poll(ctx);
       if (res.changed) {
         print(res);

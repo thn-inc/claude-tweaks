@@ -624,6 +624,21 @@ test('each ci poll gets timeoutMs = the time left until the call bound plus 20 s
   assert.deepEqual(optsSeen.map((o) => o.timeoutMs), [120000, 90000, 60000, 30000, 20000]);
 });
 
+test('a window deadline nearer than the call bound sets the ci poll timeout', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  const { runner, optsSeen } = scripted(new Array(10).fill({ state: 'pending' }));
+  const r = await callWith(['ci', '--pr', '7', '--max-seconds', '100', '--window-seconds', '60'], { c, dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 3, r.stderr);
+  assert.equal(r.out.bound, 'deadline');
+  assert.deepEqual(optsSeen.map((o) => o.timeoutMs), [80000, 50000, 20000]);
+});
+
+test('USAGE states the real longest call for agents/pid and for ci', () => {
+  assert.ok(USAGE.includes('150 s, and a ci call up to 170 s'));
+  assert.ok(!/stays under the measured/.test(USAGE));
+});
+
 test('slow ci polls cannot hold a call past --max-seconds + 20 s', async (t) => {
   const dir = tmp(t);
   const c = clock(T);
