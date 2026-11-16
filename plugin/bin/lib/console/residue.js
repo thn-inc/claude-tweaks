@@ -200,18 +200,12 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
 
 const shown = (v) => (v === undefined || v === null || v === '' ? '—' : v);
 
-// The paste-ready `console-filings.js` re-run for a console's planned filings (#4679): the default (unattended)
-// selection, never `--only` — `filing-pending` exists only for unattended runs, and `--only` composes the
-// human-present `needs:definition` shape. Already-filed items dedup against `--existing`, held digests against
-// `--digest-comments`, so the command depends on no item id. Without a `pluginRoot` the CLI is named bare.
-function filingRerunCommand({ consoleDir, pluginRoot }) {
-  const bin = pluginRoot ? `node "${pluginRoot}/bin/console-filings.js"` : 'console-filings.js';
-  return `${bin} --run "${consoleDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
-}
-
-// #4679: the paste-ready re-run for a `digest-pending` item — the default (no `--only`) selection, which
-// plans every digest entry, with the digest's trusted comments passed so an already-held entry dedupes.
-function digestRerunCommand({ consoleDir, pluginRoot }) {
+// The paste-ready `console-filings.js` re-run for a console's planned filings and digest entries (#4679): the
+// default (unattended) selection, never `--only` — `filing-pending` and `digest-pending` exist only for unattended
+// runs, and `--only` composes the human-present `needs:definition` shape. One command settles both kinds:
+// already-filed items dedup against `--existing`, held digests against `--digest-comments`, so the command
+// depends on no item id. Without a `pluginRoot` the CLI is named bare.
+function consoleRerunCommand({ consoleDir, pluginRoot }) {
   const bin = pluginRoot ? `node "${pluginRoot}/bin/console-filings.js"` : 'console-filings.js';
   return `${bin} --run "${consoleDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
 }
@@ -224,7 +218,7 @@ const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} 
 // #4679: a `digest-pending` item clears only on a logged digested line (DIGESTED_LINE_RE).
 // DIGESTED_LINE_RE accepts only the `AUTO … Queue write: …` shape, so the remedy names the full command (no `--spec`).
 // `{item}` and `{fp}` stay placeholders (they vary per entry); the console dir and plugin root are filled in, and
-// the CLI is named bare without a `pluginRoot`, as digestRerunCommand does.
+// the CLI is named bare without a `pluginRoot`, as consoleRerunCommand does.
 function digestLogRemedy({ consoleDir, pluginRoot }) {
   const bin = pluginRoot ? `node "${pluginRoot}/bin/log-decision.js"` : 'log-decision.js';
   return 'post each printed digest line to the materiality digest and log it with '
@@ -236,7 +230,9 @@ function digestLogRemedy({ consoleDir, pluginRoot }) {
 // `decision:` item (no staged file — it lives in decisions.md) a `see` line.
 // An item without a usable id is still listed, as `(no id)`, but gets no
 // pointer — a malformed item must never throw and hide every other banner.
-function itemLines(item, consoleDir, pluginRoot) {
+// `printed` is one console's state ({ rerun, kinds }): the re-run command prints once per console, and each
+// pending kind's remedy once, however many items of either kind it holds.
+function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds: new Set() }) {
   const hasId = typeof item.id === 'string' && item.id !== '';
   const lines = [`  - ${hasId ? item.id : '(no id)'} — ${shown(item.section)}: ${item.resolution} (${shown(item.reason)})`];
   if (!hasId) return lines;
@@ -247,13 +243,18 @@ function itemLines(item, consoleDir, pluginRoot) {
   }
   const staged = path.join(consoleDir, 'staged', item.id);
   if (fs.existsSync(staged)) lines.push(`    cat "${staged}"`);
-  if (item.resolution === FILING_PENDING_RESOLUTION) {
-    lines.push(`    re-run filing: ${filingRerunCommand({ consoleDir, pluginRoot })}`);
-    lines.push(`      (<issues.json>: gh issue list --state all --json number,body --limit <N>; <comments.json>: the materiality digest's comments; ${FILING_LOG_REMEDY})`);
-  }
-  if (item.resolution === DIGEST_PENDING_RESOLUTION) {
-    lines.push(`    re-run digest: ${digestRerunCommand({ consoleDir, pluginRoot })}`);
-    lines.push(`      (<comments.json>: the materiality digest's comments; ${digestLogRemedy({ consoleDir, pluginRoot })})`);
+  const kind = item.resolution === FILING_PENDING_RESOLUTION ? 'filing' : item.resolution === DIGEST_PENDING_RESOLUTION ? 'digest' : null;
+  if (kind) {
+    const first = !printed.rerun;
+    if (first) lines.push(`    re-run ${kind}: ${consoleRerunCommand({ consoleDir, pluginRoot })}`);
+    printed.rerun = true;
+    if (!printed.kinds.has(kind)) {
+      printed.kinds.add(kind);
+      const lead = first ? '' : 'same re-run; ';
+      lines.push(kind === 'filing'
+        ? `      (${lead}<issues.json>: gh issue list --state all --json number,body --limit <N>; <comments.json>: the materiality digest's comments; ${FILING_LOG_REMEDY})`
+        : `      (${lead}<comments.json>: the materiality digest's comments; ${digestLogRemedy({ consoleDir, pluginRoot })})`);
+    }
   }
   return lines;
 }
@@ -270,9 +271,10 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
     if (count >= maxItems) break;
     const consoleDir = path.dirname(c.path);
     if (!single) lines.push(`  (${path.relative(dir, c.path)})`);
+    const printed = { rerun: false, kinds: new Set() };
     for (const item of c.items) {
       if (count >= maxItems) break;
-      lines.push(...itemLines(item, consoleDir, pluginRoot));
+      lines.push(...itemLines(item, consoleDir, pluginRoot, printed));
       count += 1;
     }
   }
@@ -291,6 +293,6 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
 module.exports = {
   CONSOLE_FINDING_FP, UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
   FILING_LOG_REMEDY, digestLogRemedy,
-  filedRecords, digestedFindings, unresolvedItems, pendingFilings, pendingDigests, consoleResidueItems, splitMissing, filingRerunCommand, digestRerunCommand,
+  filedRecords, digestedFindings, unresolvedItems, pendingFilings, pendingDigests, consoleResidueItems, splitMissing, consoleRerunCommand,
   readRunResidue, formatResidueLines,
 };

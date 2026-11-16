@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'residue');
-const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, filingRerunCommand, DIGESTED_LINE_RE, digestLogRemedy, digestedFindings, pendingDigests, DIGEST_PENDING_RESOLUTION, digestRerunCommand } = require(MOD);
+const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, consoleRerunCommand, DIGESTED_LINE_RE, digestLogRemedy, digestedFindings, pendingDigests, DIGEST_PENDING_RESOLUTION } = require(MOD);
 
 // The items of the real archived #2821 console.json (#3370): 9 items, four of
 // them unresolved — copied verbatim, including the `skills:undefined` ids.
@@ -484,13 +484,13 @@ test('AC3.1: formatResidueLines names the default-selection console-filings.js r
   assert.ok(lines.some((l) => l.endsWith(`; file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself; a \`drop\` item's re-run logs its digested line instead), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings)`)), lines.join('\n'));
 });
 
-test('filingRerunCommand is the default (unattended) selection, names no --only and omits node without a plugin root (#4679)', () => {
+test('consoleRerunCommand is the default (unattended) selection, names no --only and omits node without a plugin root (#4679)', () => {
   assert.strictEqual(
-    filingRerunCommand({ consoleDir: '/r' }),
+    consoleRerunCommand({ consoleDir: '/r' }),
     'console-filings.js --run "/r" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>',
   );
   assert.strictEqual(
-    filingRerunCommand({ consoleDir: '/r', pluginRoot: '/p' }),
+    consoleRerunCommand({ consoleDir: '/r', pluginRoot: '/p' }),
     'node "/p/bin/console-filings.js" --run "/r" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>',
   );
 });
@@ -640,9 +640,35 @@ test('formatResidueLines names the digest re-run for a digest-pending item (#467
   plannedDigestConsole(dir, '');
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
   const cmd = `node "/p/bin/console-filings.js" --run "${dir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
-  assert.strictEqual(digestRerunCommand({ consoleDir: dir, pluginRoot: '/p' }), cmd);
+  assert.strictEqual(consoleRerunCommand({ consoleDir: dir, pluginRoot: '/p' }), cmd);
   assert.ok(lines.includes(`    re-run digest: ${cmd}`), lines.join('\n'));
   assert.ok(!lines.some((l) => l.includes('--only')), 'the digest re-run names no --only');
+});
+
+test('a console with both pending kinds prints the one re-run command once, and each kind\'s remedy once (#4679)', () => {
+  const dir = tmpRun();
+  plannedFilingConsole(dir, '');
+  const cj = JSON.parse(fs.readFileSync(path.join(dir, 'console.json'), 'utf8'));
+  cj.items.push({ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' });
+  cj.digests = [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }];
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify(cj));
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  const cmd = consoleRerunCommand({ consoleDir: dir, pluginRoot: '/p' });
+  assert.strictEqual(lines.filter((l) => l.includes(cmd)).length, 1, lines.join('\n'));
+  assert.strictEqual(lines.filter((l) => l.includes('log-decision.js')).length, 2, 'each kind keeps its own log remedy');
+  assert.strictEqual(lines.filter((l) => l.includes('gh issue list')).length, 1);
+  assert.ok(lines.some((l) => l.startsWith('      (same re-run; <comments.json>')), lines.join('\n'));
+});
+
+test('two filing-pending items in one console print the re-run command once (#4679)', () => {
+  const dir = tmpRun();
+  plannedFilingConsole(dir, '');
+  const cj = JSON.parse(fs.readFileSync(path.join(dir, 'console.json'), 'utf8'));
+  cj.items.push({ id: 'tiebreak:cccccccccccc', section: 'Low-confidence findings', resolution: 'filed', reason: 'r' });
+  cj.filings.push({ item: 'tiebreak:cccccccccccc', fingerprint: 'consolefinding-89abcdef', title: 'u' });
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify(cj));
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  assert.strictEqual(lines.filter((l) => l.includes(consoleRerunCommand({ consoleDir: dir, pluginRoot: '/p' }))).length, 1, lines.join('\n'));
 });
 
 test('a console with both a pending filing and a pending digest reports both (#4679)', () => {

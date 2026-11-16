@@ -328,6 +328,19 @@ test('archive-run refuses a console whose can\'t-tell digest entries never ran, 
   assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
 });
 
+test('archive-run names the one re-run once for a console holding both a pending filing and a pending digest entry (#4679)', async () => {
+  const { root, runDir } = runDirFixture('clean');
+  plannedFilingConsole(runDir);
+  const cj = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
+  cj.items.push({ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' });
+  cj.digests = [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }];
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify(cj));
+  const result = await runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(2 unresolved item\(s\)/);
+  assert.strictEqual(result.stdout.split('console-filings.js --run').length, 2, `the command prints once: ${result.stdout}`);
+  assert.match(result.stdout, /the same re-run also settles the planned digest entries/);
+});
+
 test('AC4.1: archive-run archives once the planned filing\'s filed line is logged', async () => {
   const { root, runDir } = runDirFixture('clean');
   plannedFilingConsole(runDir, { filed: true });

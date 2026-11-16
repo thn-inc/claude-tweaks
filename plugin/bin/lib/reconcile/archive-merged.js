@@ -34,7 +34,7 @@ const { checkRunIntegrity, fallbackBranch, worktreeListStdout, mergedEvidence } 
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
 const {
-  readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand, DIGEST_PENDING_RESOLUTION, digestLogRemedy, digestRerunCommand,
+  readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, consoleRerunCommand, DIGEST_PENDING_RESOLUTION, digestLogRemedy,
 } = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
@@ -649,28 +649,40 @@ function consoleAckRemedy(runDir) {
   return `review them, then run console-residue.js --ack --run "${runDir}"`;
 }
 
+// The dirs of the unacknowledged consoles holding an item of `resolution` (a filing-pending item needs a usable id).
+function pendingConsoleDirs(runDir, resolution) {
+  const { consoles } = readRunResidue(runDir);
+  return consoles.filter((c) => !c.acknowledged
+    && c.items.some((i) => i.resolution === resolution && (resolution !== FILING_PENDING_RESOLUTION || typeof i.id === 'string')))
+    .map((c) => path.dirname(c.path));
+}
+
 // #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
 // `console-filings.js` re-run (default selection, no `--only`), one per unacknowledged console holding a
 // `filing-pending` item. '' when no such item is open.
 function filingRerunRemedy(runDir) {
-  const { consoles } = readRunResidue(runDir);
-  const commands = consoles.filter((c) => !c.acknowledged).flatMap((c) => {
-    return c.items.some((i) => i.resolution === FILING_PENDING_RESOLUTION && typeof i.id === 'string') ? [filingRerunCommand({ consoleDir: path.dirname(c.path) })] : [];
-  });
+  const commands = pendingConsoleDirs(runDir, FILING_PENDING_RESOLUTION).map((consoleDir) => consoleRerunCommand({ consoleDir }));
   if (commands.length === 0) return '';
   return `re-run the planned filing(s): ${commands.join('; ')}, then ${FILING_LOG_REMEDY}`;
 }
 
-// #4679: the digest twin — the paste-ready `console-filings.js --digest-comments` re-run, one per unacknowledged
-// console holding a `digest-pending` item. '' when no such item is open.
-function digestRerunRemedy(runDir) {
-  const { consoles } = readRunResidue(runDir);
-  const commands = consoles.filter((c) => !c.acknowledged).flatMap((c) => (
-    c.items.some((i) => i.resolution === DIGEST_PENDING_RESOLUTION) ? [{ consoleDir: path.dirname(c.path) }] : []
-  ));
-  if (commands.length === 0) return '';
-  const logRemedy = digestLogRemedy({ consoleDir: commands.length > 1 ? "{that console's dir}" : commands[0].consoleDir });
-  return `re-run the planned digest entries: ${commands.map((c) => digestRerunCommand(c)).join('; ')}, then ${logRemedy}`;
+// #4679: the digest twin — the same paste-ready `console-filings.js` re-run (it plans digest entries too), one per
+// unacknowledged console holding a `digest-pending` item, then the digest log remedy. '' when no such item is open.
+// `alsoRerun` is the dirs whose re-run the caller already names (a console holding both kinds): they are
+// pointed at, not repeated.
+function digestRerunRemedy(runDir, alsoRerun = []) {
+  const dirs = pendingConsoleDirs(runDir, DIGEST_PENDING_RESOLUTION);
+  if (dirs.length === 0) return '';
+  const commands = dirs.filter((d) => !alsoRerun.includes(d)).map((consoleDir) => consoleRerunCommand({ consoleDir }));
+  const logRemedy = digestLogRemedy({ consoleDir: dirs.length > 1 ? "{that console's dir}" : dirs[0] });
+  if (commands.length === 0) return `the same re-run also settles the planned digest entries, then ${logRemedy}`;
+  return `re-run the planned digest entries: ${commands.join('; ')}${commands.length < dirs.length ? ' (the re-run above also settles the others)' : ''}, then ${logRemedy}`;
+}
+
+// The re-run remedies for a run's open console items, each console's one command named once: the digest remedy
+// leaves out the re-run of a console the filing remedy already names.
+function rerunRemedies(runDir) {
+  return [filingRerunRemedy(runDir), digestRerunRemedy(runDir, pendingConsoleDirs(runDir, FILING_PENDING_RESOLUTION))].filter(Boolean);
 }
 
 // The recovery line for a console-residue skip: name the open items, the
@@ -679,8 +691,7 @@ function consoleResidueHint(runDir) {
   const { names, unreadable } = consoleResidue(runDir);
   const parts = [];
   if (names.length > 0) {
-    const reruns = [filingRerunRemedy(runDir), digestRerunRemedy(runDir)].filter(Boolean);
-    parts.push(`unresolved: ${names.join(', ')} — ${reruns.map((r) => `${r}; or `).join('')}${consoleAckRemedy(runDir)}`);
+    parts.push(`unresolved: ${names.join(', ')} — ${rerunRemedies(runDir).map((r) => `${r}; or `).join('')}${consoleAckRemedy(runDir)}`);
   }
   if (unreadable.length > 0) parts.push(`repair or remove ${unreadable.join(', ')}`);
   return parts.join('; ');
@@ -2826,7 +2837,7 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, digestRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, digestRerunRemedy, rerunRemedies, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,

@@ -298,6 +298,18 @@ test('digestRerunRemedy with several digest-pending consoles names each re-run a
   assert.ok(remedy.endsWith(digestLogRemedy({ consoleDir: "{that console's dir}" })), remedy);
   assert.strictEqual(remedy.split('post each printed digest line').length, 2, 'the instruction sentence prints once');
 });
+test('a console holding both a filing-pending and a digest-pending item names the one re-run once in the hint and the archive-run refusal (#4679)', () => {
+  const runDir = plannedFilingRunDir();
+  const cj = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
+  cj.items.push({ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' });
+  cj.digests = [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }];
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify(cj));
+  const cmd = `console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
+  const hint = consoleResidueHint(runDir);
+  assert.strictEqual(hint.split(cmd).length, 2, `the command prints once: ${hint}`);
+  assert.ok(hint.includes(digestLogRemedy({ consoleDir: runDir })), 'the digest log remedy is still named');
+  assert.ok(hint.includes('the same re-run also settles the planned digest entries'), hint);
+});
 test('digestRerunRemedy is empty for a residue console with no planned digest (#4679)', () => {
   assert.strictEqual(digestRerunRemedy(prConsoleRunDir([['f1', 'filing-failed']])), '');
 });
