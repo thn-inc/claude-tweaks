@@ -4,7 +4,7 @@
 // dispatched call, replacing backlog refine's one-paste-line-per-record
 // blocks (#844). Follows bin/materialize.js's run(argv, deps) + injectable-
 // runner + --run anchoring pattern (gh-api-module-pattern skill).
-//   node bin/apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo owner/name] [--help]
+//   node bin/apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo [host/]owner/name] [--help]
 // actions.json: a JSON array of
 //   { issue: number, addLabels?: string[], removeLabels?: string[], commentFile?: string }
 // — each action needs at least one of addLabels/removeLabels/commentFile.
@@ -32,7 +32,7 @@ const {
   parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo owner/name] [--help]\n';
+const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo [host/]owner/name] [--help]\n';
 
 function parseArgs(argv) {
   const opts = { file: null, run: null, runEmpty: false, repo: null, help: false };

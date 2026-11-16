@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/materialize.js — record-to-build-time-file materialization in one command.
-//   node bin/materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]
-//   node bin/materialize.js <n> --check [--repo owner/name] [--record-json <path>]
+//   node bin/materialize.js <n> --run-dir <dir> [--repo [host/]owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]
+//   node bin/materialize.js <n> --check [--repo [host/]owner/name] [--record-json <path>]
 // --check (#4027) runs only Resolution + the Materialization hard gate —
 // /flow Step 1 item 5's pre-flight — with no --run-dir and no write, and
 // prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; its exit codes
@@ -61,8 +61,8 @@ const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/st
 const { resolvePluginVersion } = require('./lib/plugin-version');
 const { defaultRunner: runPremiseCommand, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('./lib/health-core/premise-self-check');
 
-const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
-  + '       materialize.js <n> --check [--repo owner/name] [--record-json <path>]\n'
+const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo [host/]owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
+  + '       materialize.js <n> --check [--repo [host/]owner/name] [--record-json <path>]\n'
   + '  --check: Resolution + the Materialization hard gate only (#4027) — no --run-dir, no write;\n'
   + '           prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
 

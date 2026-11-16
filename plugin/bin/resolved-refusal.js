@@ -6,7 +6,7 @@
 // feeds the pure evaluator (evaluateResolvedRefusal); the CLI only wires the
 // owner/repo resolution and the exit-code contract around them.
 //
-// Usage: resolved-refusal.js <n> [--repo owner/name] [--help]
+// Usage: resolved-refusal.js <n> [--repo [host/]owner/name] [--help]
 // Output: one JSON line on stdout — {number, ...evaluateResolvedRefusal result}.
 // Exit 0 on any verdict (suppress true or false, any `reason`). Exit 1: the
 // `gh api graphql` call failed, returned GraphQL errors, or the issue is missing
@@ -21,7 +21,7 @@ const {
   parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: resolved-refusal.js <n> [--repo owner/name] [--help]\n';
+const USAGE = 'usage: resolved-refusal.js <n> [--repo [host/]owner/name] [--help]\n';
 
 function parseArgs(argv) {
   const opts = { number: null, repo: null, help: false };

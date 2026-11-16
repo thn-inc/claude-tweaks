@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/repair-claim.js — repair or force-release an UNREADABLE claims-registry blob.
 //   node bin/repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> \
-//     [--link <url>] [--repo owner/name] [--section "/<skill>"] [--step <text>] [--help]
+//     [--link <url>] [--repo [host/]owner/name] [--section "/<skill>"] [--step <text>] [--help]
 // Mechanizes _shared/issue-claims.md's "Repairing an unreadable claim blob" steps 1-4:
 // read the blob and capture its sha (ordinary response metadata, available even when the
 // content doesn't parse), confirm the content classifies 'unreadable' on that same fresh
@@ -30,7 +30,7 @@ const {
   parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> [--link <url>] [--repo owner/name] [--section "/<skill>"] [--step <text>] [--help]\n';
+const USAGE = 'usage: repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> [--link <url>] [--repo [host/]owner/name] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { repaired: 0, 'cas-rejected': 3, refused: 4, failed: 1 };
 const MODES = ['release', 'reclaim'];
 

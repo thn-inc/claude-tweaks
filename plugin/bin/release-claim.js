@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/release-claim.js — release a claims-registry claim in one command.
 //   node bin/release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] \
-//     [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo owner/name] \
+//     [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo [host/]owner/name] \
 //     [--sweep] [--section "/<skill>"] [--step <text>] [--help]
 // Performs wrap-up/cleanup-procedures.md Section E steps 3-8 for one issue: read the
 // blob, ownership check (never delete a successor's claim), releasePayload -> tombstone
@@ -52,7 +52,7 @@ const {
   parseRepo, ghAvailable, repoSlug, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
+const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo [host/]owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { released: 0, 'already-released': 3, 'skipped-not-owner': 4, unreadable: 5, failed: 1 };
 
 // bot:in-progress removal is opt-out, not opt-in (#1631) — parseArgs models this as two
