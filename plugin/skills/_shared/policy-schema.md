@@ -128,6 +128,7 @@ Canonical defaults for the keys in this section also live in `_shared/work-recor
 |---|---|---|---|---|
 | `harness-health-scoped-rule-budget` | `policy.yml` | `/claude-tweaks:harness-health` | `30` | Line-count budget for path-scoped `.claude/rules/*.md` files |
 | `harness-health-always-loaded-budget` | `policy.yml` | `/claude-tweaks:harness-health` | `150` | Line-count budget for CLAUDE.md and unscoped rule files |
+| `ci-health-thresholds` | `policy.yml` | `/claude-tweaks:ci-health` — passed to `ci-audit.js gather --thresholds` | unset (empty) | Comma-separated `check-id=positive-number` text overriding that checklist's thresholds, e.g. `queue-wait=0.5,shard-skew=2`. Unset resolves empty and the checklist defaults apply. A set value resolves verbatim whatever its contents; `parseThresholds` rejects an unknown id or non-positive number at gather time, so a bad pair is never silently dropped. Whitespace in the value is schema-invalid and resolves empty with `invalid: true` |
 
 ## Health-sweep filing
 
