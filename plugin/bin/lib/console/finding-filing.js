@@ -254,5 +254,5 @@ function fingerprintMap(rows) {
 
 module.exports = {
   findingFingerprint, composeFindingProposal, planFilings, fingerprintMap,
-  CANT_TELL_DEFER_REASON, DIGEST_DEFER_REASON, areaOfPath, consoleFindingMarker, composeFindingDigest, planDigests, heldConsoleFindings,
+  CANT_TELL_DEFER_REASON, DIGEST_DEFER_REASON, DIGEST_FINDING_MAX, areaOfPath, consoleFindingMarker, composeFindingDigest, planDigests, heldConsoleFindings,
 };
