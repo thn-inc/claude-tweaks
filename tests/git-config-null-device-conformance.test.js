@@ -35,11 +35,13 @@ const SELF = path.basename(__filename);
 
 // .js files under tests/ and tools/ (this suite excluded) when this landed:
 // `git ls-files tests tools | grep -c '\.js$'` printed 1382 before this file
-// existed. Fewer means the walk lost part of the tree, not that files went
-// away — never lower it to make the suite green.
+// existed. When .js files under tests/ or tools/ were really deleted, lower the
+// floor to the new tracked count (`git ls-files tests tools | grep -c '\.js$'`
+// minus this suite) in the same change and say why; never lower it to hide a
+// walk that lost part of the tree.
 const FILE_FLOOR = 1382;
 
-const NULL_DEVICE_CONFIG = /(?<![\w$])GIT_CONFIG_(?:GLOBAL|SYSTEM)['"]?\]?\s*(?::|=(?!=))\s*os\s*\.\s*devNull(?![\w$])/;
+const NULL_DEVICE_CONFIG = /(?<![\w$])GIT_CONFIG_(?:GLOBAL|SYSTEM)['"]?\]?\s*(?::|=)\s*os\s*\.\s*devNull(?![\w$])/;
 
 // 1-based line numbers of every line giving GIT_CONFIG_GLOBAL/SYSTEM os.devNull.
 function findNullDeviceConfig(text) {
@@ -62,7 +64,7 @@ function listJs(dir) {
 }
 
 function assertFloor(count) {
-  assert.ok(count >= FILE_FLOOR, `walked only ${count} .js files, floor ${FILE_FLOOR}: the walk lost part of tests/ or tools/`);
+  assert.ok(count >= FILE_FLOOR, `walked only ${count} .js files, floor ${FILE_FLOOR}: the walk lost part of tests/ or tools/, or files were deleted (then lower the floor to the tracked count)`);
 }
 
 let corpusCache = null;
