@@ -1121,8 +1121,9 @@ test('AC5.1: resolvePolicyConfig, fake git runner — both absent: policyRaw nul
 });
 
 test('resolveIntegrationModel from a linked worktree honors the main checkout\'s integration-model pin', (t) => {
-  const { wt } = worktreeFixture(t, 'integration-model: local-merge\n');
-  assert.strictEqual(resolveIntegrationModel(wt), 'local-merge');
+  // pr-first, not local-merge: local-merge is also what detection returns for this forge-less fixture.
+  const { wt } = worktreeFixture(t, 'integration-model: pr-first\n');
+  assert.strictEqual(resolveIntegrationModel(wt), 'pr-first');
 });
 
 test('resolveForgeProbeTimeoutMs from a linked worktree reads the main checkout\'s gh-timeout-ms', (t) => {
