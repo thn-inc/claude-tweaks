@@ -25,6 +25,7 @@ const { ledgerRowCells } = require('./ledger-cells');
 const { isTimeoutError } = require('../shared-primitives');
 const { parseWorkBackend } = require('../work-backend');
 const { PIN_PATTERNS } = require('../set-config/write');
+const { listHeaderDirs } = require('../run-header');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -192,6 +193,20 @@ function headerRecords(deps, dir) {
   return headerEntries(deps, dir).map((e) => e.record);
 }
 
+// Rungs (a)/(b)'s read: the flat-`work/` headers of one run dir, live and archived
+// (run-header.js), merged by record. A record present in both counts once, the
+// earlier (live) copy winning — its `parkedAtShaping` with it (#3974).
+function flatEntries(deps, runDir) {
+  const byRecord = new Map();
+  // The flat dirs need no `spec-*` listing (`nested: false` skips it: one fewer run-dir read per call).
+  for (const { dir } of listHeaderDirs([runDir], { nested: false })) {
+    for (const entry of headerEntries(deps, dir)) {
+      if (!byRecord.has(entry.record)) byRecord.set(entry.record, entry);
+    }
+  }
+  return [...byRecord.values()].sort((a, b) => a.record - b.record);
+}
+
 // Which resolveRecords rungs may receive a closing keyword (Ruling R1): only
 // the header rungs. Manifest ids include not-run/failed specs, whose PR-body
 // line is `Refs`, not `Fixes`. The `config` rung is not closing either: a
@@ -241,9 +256,8 @@ function manifestRecords(deps, dir) {
     const n = Number(spec && spec.id);
     if (Number.isInteger(n)) nums.push(n);
   }
-  for (const name of deps.readdir(dir)) {
-    if (!/^spec-/.test(name)) continue;
-    nums.push(...headerRecords(deps, path.join(dir, name, 'work')));
+  for (const { dir: workDir } of listHeaderDirs([dir], { readdir: deps.readdir }).filter((e) => e.specDir !== null)) {
+    nums.push(...headerRecords(deps, workDir));
   }
   return sortedUnique(nums);
 }
@@ -289,12 +303,12 @@ function resolveRecords(deps, runDir, worktree) {
     parkedAtShaping: Object.fromEntries(entries.map((e) => [e.record, e.parkedAtShaping])),
   });
 
-  const own = headerEntries(deps, path.join(runDir, 'work'));
+  const own = flatEntries(deps, runDir);
   if (own.length) return fromHeaders(own, 'headers');
 
   const mirror = worktreeMirror(runDir, worktree);
   if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
-    const mirrored = headerEntries(deps, path.join(mirror, 'work'));
+    const mirrored = flatEntries(deps, mirror);
     if (mirrored.length) return fromHeaders(mirrored, 'worktree-headers');
   }
 
@@ -486,7 +500,12 @@ function namesRecordReference(resolution, excludeRecords) {
 
 // A `deferred` Resolution naming neither a `staged/` path nor a record reference. The one definition
 // behind parseLedger's deferredUnstaged count and stage-item/ledger.js's incomplete-deferral guard.
+// A control-mode console (#4620) settles a row it carried into the acceptance packet with this text;
+// naming the decision fact makes it a complete deferral, like a record reference.
+const LEDGER_CARRIED_RE = /\bcarried to the acceptance packet as decision:\S+/;
+
 function isDeferredUnstaged(resolution, excludeRecords) {
+  if (LEDGER_CARRIED_RE.test(resolution)) return false;
   return !LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords);
 }
 
@@ -540,7 +559,8 @@ function parseLedger(text, { excludeRecords = [] } = {}) {
       const item = cells[2] || '';
       const resolution = cells.slice(4).join('|');
       const reasonLivesElsewhere = LEDGER_DEFERRED_STAGED_RE.test(item) || LEDGER_DEFERRED_STAGED_RE.test(resolution)
-        || LEDGER_SDD_RULING_ITEM_RE.test(item) || namesRecordReference(resolution, excludeRecords);
+        || LEDGER_SDD_RULING_ITEM_RE.test(item) || namesRecordReference(resolution, excludeRecords)
+        || LEDGER_CARRIED_RE.test(resolution); // #4620: the reason lives in the carried decision fact
       if (!reasonLivesElsewhere && !hasValidDeferReason(resolution)) missingDeferReasonItems.push(cells[0]);
     }
   }
@@ -907,5 +927,5 @@ function ownRecordNumbers(runDir, worktree) {
 
 module.exports = {
   gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, worktreeMirror,
-  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers, defaultDeps,
+  LEDGER_DEFERRED_STAGED_RE, LEDGER_CARRIED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers, defaultDeps,
 };

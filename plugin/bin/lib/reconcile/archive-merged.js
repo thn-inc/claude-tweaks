@@ -20,7 +20,7 @@ const { ownEventRecency } = require('../run-liveness/probes');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir,
+  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir, priorWorktree,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
@@ -1367,6 +1367,11 @@ function archiveRunDir(root, runDir, { env } = {}) {
     return archiveCommit ? { ...refusal(reason, extra), commit: archiveCommit } : refusal(reason, extra);
   }
 
+  // #5555: the run's state before the move — the status decides whether this
+  // close owes a timing.json (a run close-run already closed has one), and the
+  // worktree it names is kept as worktreeAtClose for the token pass.
+  const preMoveState = readRunState(runDir) || {};
+
   const specDirs = listSpecDirs(runDir);
 
   // Every git-tracked work/ subtree — the top-level one (single-spec
@@ -1708,7 +1713,10 @@ function archiveRunDir(root, runDir, { env } = {}) {
   // run-state.json moved above, so finalize the terminal state at its new
   // (archived) location, not the original runDir — writeRunState reads and
   // preserves whatever state already moved there.
-  const result = writeRunState(archiveDir, { status: 'clean', worktree: null });
+  const wtAtClose = priorWorktree(preMoveState);
+  const result = writeRunState(archiveDir, wtAtClose
+    ? { status: 'clean', worktree: null, worktreeAtClose: wtAtClose }
+    : { status: 'clean', worktree: null });
   if (!result) return refuseAfterMarker('close-failed');
 
   // Late-write guard (#990 — reproduced live during #893's own wrap-up even
@@ -1749,6 +1757,22 @@ function archiveRunDir(root, runDir, { env } = {}) {
            (#3198) — either way, nothing here should destroy existing
            archive content or block the rest of this call. */
       }
+    }
+  }
+
+  // #5555: phase rows inline (no transcript read), token totals in a detached
+  // pass. A run already clean was closed by close-run, which wrote its own.
+  // Runs after the straggler sweep so a late events.jsonl line is in the rows
+  // and a straggler timing.json never collides with this write.
+  if (preMoveState.status !== 'clean') {
+    try {
+      const timing = require('../timing/at-close');
+      timing.writePhaseTimingSync(archiveDir);
+      timing.spawnTokenPass(archiveDir, { env });
+    } catch (err) {
+      // The shared fallback writer needs only log-decision/append.js, so this catch
+      // does not depend on at-close having loaded.
+      try { require('../log-decision/timing-skip').logTimingFailure(archiveDir, 'timing at close failed', err); } catch { /* a failed trace line never fails the archive */ }
     }
   }
 

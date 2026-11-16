@@ -82,6 +82,12 @@ function evaluateGrantGate({ record, policy, trustVerdicts, grantCheck } = {}) {
   }
 
   // Gate 2: record class trust reads 'clean'.
+  // No `authorTrust` here, deliberately (#4577): a candidate always carries a
+  // `by:*` producer label (filterCandidates drops `facets.origin === null`), and
+  // resolveProvenance reads that label before any `Origin:` body line, so a
+  // forged line cannot move this record's class. Gate 3 below denies a record
+  // with no `by:*` label whatever class it resolved to. A caller that builds
+  // this verdict without that filter must pass `authorTrust` itself.
   const { kind, source } = resolveProvenance({ labels: names, body: rec.body });
   const band = riskBand(names);
   const classKey = `${kind}:${source}|${band}`;

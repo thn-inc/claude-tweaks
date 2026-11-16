@@ -113,6 +113,22 @@ test('archive-run: never prints a moved: line for a name absent from the fixture
   assert.doesNotMatch(result.stdout, /moved: staged/);
 });
 
+// #5555: the typed verb reaches archiveRunDir, so a run it archives that was not yet `clean`
+// (a state with no status passes the verb's active/interrupted refusal) gets phase rows and one token-pass spawn.
+test('archive-run: a not-yet-clean run gets timing.json phase rows and exactly one recorded token-pass spawn', async () => {
+  const atClose = require('../plugin/bin/lib/timing/at-close');
+  const T = require('./helpers/close-timing');
+  const { root, runDir, runId } = runDirFixture(undefined);
+  T.writeEvents(runDir);
+  const spawned = [];
+  const result = await T.withStub(atClose, 'spawnTokenPass', (dir) => { spawned.push(dir); return { spawned: true, reason: 'stubbed' }; },
+    () => runHook(['archive-run', '--run', runDir], { cwd: root }));
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  assert.match(result.stdout, /moved: events\.jsonl/);
+  T.assertPhaseRows(T.readTiming(archiveDir));
+  assert.deepEqual(spawned, [archiveDir]);
+});
+
 // Regression: a *-sweep-standalone*/*-tidy-standalone* run's decisions.md/
 // staged only become git-tracked once their worktree copy has merged AND
 // this checkout has pulled that merge (SKILL.md's pr-first Step 7.5) — a
