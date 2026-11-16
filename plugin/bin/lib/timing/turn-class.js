@@ -109,8 +109,9 @@ function splitSegments(command) {
   return segments.map((s) => s.trim()).filter(Boolean);
 }
 
-// Whitespace tokens with surrounding quotes removed ("a b" -> a b).
 const TOKEN_RE = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+
+// Whitespace tokens with surrounding quotes removed ("a b" -> a b).
 function tokenize(segment) {
   return tokenizeMarked(segment).map((t) => t.text);
 }

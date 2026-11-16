@@ -112,19 +112,24 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 // than 'unattributed' (derive.js emits a span-less review row for a run that never reached review).
 const isReachedReview = (p) => Boolean(p) && p.phase === 'review' && p.start != null && p.source !== 'unattributed';
 
+// Adds a phase's procedureFiles ({ key: count }) into `target`, skipping non-numeric counts.
+function addFileCounts(target, procedureFiles) {
+  if (!isPlainObject(procedureFiles)) return;
+  for (const [key, count] of Object.entries(procedureFiles)) {
+    const n = num(count);
+    if (n !== null) target[key] = (target[key] || 0) + n;
+  }
+}
+
 // The per-file procedure reads of every reached review phase, summed. null when no reached review row
 // carries a procedureFiles object — an older timing.json, or a run that stopped before review.
 function reviewFilesOf(timing) {
   if (!Array.isArray(timing.phases)) return null;
   let files = null;
   for (const p of timing.phases) {
-    if (!isReachedReview(p)) continue;
-    if (!isPlainObject(p.procedureFiles)) continue;
+    if (!isReachedReview(p) || !isPlainObject(p.procedureFiles)) continue;
     files = files || {};
-    for (const [key, count] of Object.entries(p.procedureFiles)) {
-      const n = num(count);
-      if (n !== null) files[key] = (files[key] || 0) + n;
-    }
+    addFileCounts(files, p.procedureFiles);
   }
   return files;
 }
@@ -235,7 +240,11 @@ function reviewFileReads(runs) {
   return { runs: withData.length, files: Object.fromEntries(rows) };
 }
 
-const byTotalThenKey = (a, b) => b[1].total - a[1].total || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+function byTotalThenKey(a, b) {
+  if (a[1].total !== b[1].total) return b[1].total - a[1].total;
+  if (a[0] < b[0]) return -1;
+  return a[0] > b[0] ? 1 : 0;
+}
 
 function readJson(file, fsImpl) {
   try {
@@ -294,12 +303,7 @@ async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
     const phases = Array.isArray(timing.phases) ? timing.phases : [];
     if (!phases.some(isReachedReview)) { noReview += 1; continue; }
     const reads = {};
-    for (const p of phases) {
-      for (const [key, count] of Object.entries(isPlainObject(p.procedureFiles) ? p.procedureFiles : {})) {
-        const n = num(count);
-        if (n !== null) reads[key] = (reads[key] || 0) + n;
-      }
-    }
+    for (const p of phases) addFileCounts(reads, p.procedureFiles);
     perRun.push({ run: entry, reads });
   }
   const keys = new Set(perRun.flatMap((r) => Object.keys(r.reads)));
