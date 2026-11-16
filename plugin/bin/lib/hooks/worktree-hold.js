@@ -11,7 +11,8 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { safeReal, nearestExistingDir } = require('./worktree-detect');
+const { safeReal, nearestExistingDir, mainCheckoutRoot } = require('./worktree-detect');
+const { resolveOwnerPid } = require('../run-liveness/process-probe');
 const { isPathContained } = require('../shared-primitives');
 
 const HOLD_DIR_NAME = 'claude-tweaks-holds';
@@ -201,6 +202,83 @@ function clearSessionHolds(mainRoot, { sessionId, pid } = {}) {
   }
 }
 
+// The hook-facing half. Each function below never throws; its return is a status string or
+// count for tests, not a contract. `ownerBlock` is injected by the hook module (it lives in
+// context.js, which this file must not require); the pid it reports is the same
+// resolveOwnerPid answer the run-state writers stamp.
+
+// Stamps `{sessionId, agentId}`'s hold in the worktree containing `where`, then clears the
+// same key from every other worktree so the hold follows the session.
+function stampHold({ where, sessionId, agentId, env, ownerBlock }) {
+  const wt = worktreeRootOf(where);
+  if (!wt) return 'skipped';
+  const block = ownerBlock({ sessionId, env });
+  const key = holdKey({ sessionId, agentId, pid: block && block.pid });
+  if (!key) return 'skipped';
+  if (!writeHold(wt, { key, block, agentId })) return 'skipped';
+  const mainRoot = mainCheckoutRoot(wt);
+  if (mainRoot) clearHolds(mainRoot, { key, except: wt });
+  return 'stamped';
+}
+
+function syncHoldForToolUse(input, { cwd, env, ownerBlock, resolveEnteredPath } = {}) {
+  try {
+    const tool = input && input.tool_name;
+    if (tool === 'EnterWorktree') {
+      return stampHold({
+        where: resolveEnteredPath() || cwd, sessionId: input.session_id, agentId: input.agent_id, env, ownerBlock,
+      });
+    }
+    if (tool === 'ExitWorktree') {
+      const key = holdKey({
+        sessionId: input.session_id, agentId: input.agent_id, pid: ownerBlock({ sessionId: input.session_id, env }).pid,
+      });
+      const mainRoot = key && mainCheckoutRoot(cwd);
+      if (!mainRoot) return 'skipped';
+      clearHolds(mainRoot, { key });
+      return 'cleared';
+    }
+    return 'skipped';
+  } catch {
+    return 'skipped';
+  }
+}
+
+// SessionStart: a main-thread hold for the worktree the session starts (or resumes) in.
+function stampHoldForCwd({ cwd, sessionId, env, ownerBlock } = {}) {
+  try {
+    return stampHold({ where: cwd, sessionId, agentId: undefined, env, ownerBlock });
+  } catch {
+    return 'skipped';
+  }
+}
+
+// SessionEnd: every hold this session wrote under this process's pid, in any worktree.
+function releaseSessionHolds({ cwd, sessionId, env, resolvePid } = {}) {
+  try {
+    const { pid } = (resolvePid || resolveOwnerPid)(env);
+    if (!isPid(pid)) return 0;
+    const mainRoot = mainCheckoutRoot(cwd);
+    return mainRoot ? clearSessionHolds(mainRoot, { sessionId, pid }) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// SubagentStop: the finished subagent's own hold, never the still-live parent's.
+function releaseAgentHolds({ cwd, sessionId, agentId, env, resolvePid } = {}) {
+  try {
+    if (!agentId) return 0;
+    const { pid } = (resolvePid || resolveOwnerPid)(env);
+    const key = holdKey({ sessionId, agentId, pid });
+    const mainRoot = key && mainCheckoutRoot(cwd);
+    return mainRoot ? clearHolds(mainRoot, { key }) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 module.exports = {
   HOLD_DIR_NAME, holdKey, worktreeRootOf, holdDirOf, writeHold, readHolds, clearHolds, clearSessionHolds,
+  syncHoldForToolUse, stampHoldForCwd, releaseSessionHolds, releaseAgentHolds,
 };

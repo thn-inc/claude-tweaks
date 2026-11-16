@@ -7,6 +7,7 @@ const ctxLib = require('./context');
 const runDirResolve = require('./run-dir-resolve');
 const skillInvocation = require('./skill-invocation');
 const wtDetect = require('./worktree-detect');
+const holdLib = require('./worktree-hold');
 // Reused, not reimplemented (#703): the same teardown-target resolution
 // pre-tool-use.js's own checkTeardownGate relies on. Safe to require here —
 // pre-tool-use.js never requires this file back.
@@ -774,6 +775,14 @@ function run(ctx) {
   // event some other way) is never shadowed; in practice the two never
   // compete, since stampAdHocRunDir no-ops the instant ctx.ownedRun.dir is
   // already set.
+  // Worktree hold (#4960, log tier): record that this session now stands in the entered
+  // worktree (or has left it) so the reapers skip it. Before the ad-hoc stamp, which is
+  // one of several things that can fail; never changes this hook's answer.
+  try {
+    holdLib.syncHoldForToolUse(ctx.input, {
+      cwd: ctx.cwd, env: process.env, ownerBlock: ctxLib.ownerBlock, resolveEnteredPath: () => resolveCreatedWorktreePath(ctx),
+    });
+  } catch { /* log tier: never break a session */ }
   stampAdHocRunDir(ctx);
 
   // Windows core.longpaths proactive nudge (#1782, warn tier) — before the

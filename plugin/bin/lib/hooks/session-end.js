@@ -1,8 +1,13 @@
 // bin/lib/hooks/session-end.js — A2: mark the active run interrupted at session end.
 'use strict';
 const ctxLib = require('./context');
+const holdLib = require('./worktree-hold');
 
 function run(ctx) {
+  // #4960: drop this session's worktree holds first — a session with no run dir still held a worktree.
+  try {
+    holdLib.releaseSessionHolds({ cwd: ctx.cwd, sessionId: ctx.input.session_id, env: process.env });
+  } catch { /* log tier: never break a session */ }
   // Scoped to a run this session may write to, NOT ctx.runDir (#62). When every
   // non-terminal run belongs to another session there is nothing here to record.
   const owned = ctx.ownedRun || {};

@@ -9,7 +9,9 @@ const path = require('node:path');
 const { chmodDenialSkip } = require('../../helpers/root');
 const {
   HOLD_DIR_NAME, holdKey, worktreeRootOf, holdDirOf, writeHold, readHolds, clearHolds, clearSessionHolds,
+  stampHoldForCwd, releaseSessionHolds, releaseAgentHolds,
 } = require('../../../plugin/bin/lib/hooks/worktree-hold');
+const { ownerBlock } = require('../../../plugin/bin/lib/hooks/context');
 const { safeReal } = require('../../../plugin/bin/lib/hooks/worktree-detect');
 const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
 
@@ -224,4 +226,47 @@ test('clearSessionHolds: removes this session+pid only', () => {
   for (const key of ['s1__main__42', 's1__a9__42', 's1__main__43', 's2__main__42']) assert.ok(writeHold(a, { key, block: BLOCK }));
   assert.strictEqual(clearSessionHolds(main, { sessionId: 's1', pid: 42 }), 2);
   assert.deepStrictEqual(readHolds(a).map((h) => h.key).sort(), ['s1__main__43', 's2__main__42']);
+});
+
+test('stampHoldForCwd: a resumed session in a worktree re-stamps with its current pid', () => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'wt-resume');
+  assert.ok(writeHold(a, { key: 's1__main__1', block: BLOCK }));
+  fs.mkdirSync(path.join(a, 'sub'));
+  const out = stampHoldForCwd({ cwd: path.join(a, 'sub'), sessionId: 's1', env: { CLAUDE_PID: String(process.pid) }, ownerBlock });
+  assert.strictEqual(out, 'stamped');
+  assert.ok(readHolds(a).some((h) => h.key === `s1__main__${process.pid}`));
+});
+
+test('releaseSessionHolds: clears only this pid\'s holds (a nested claude -p ending leaves the parent\'s)', () => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'wt-rel');
+  for (const key of ['s1__main__42', `s1__main__${process.pid}`]) assert.ok(writeHold(a, { key, block: BLOCK }));
+  assert.strictEqual(releaseSessionHolds({ cwd: a, sessionId: 's1', env: { CLAUDE_PID: '42' } }), 1);
+  assert.deepStrictEqual(readHolds(a).map((h) => h.key), [`s1__main__${process.pid}`]);
+});
+
+test('releaseSessionHolds: with no CLAUDE_PID, releases the hold written under the ancestry pid', () => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'wt-anc');
+  assert.ok(writeHold(a, { key: 's1__main__77', block: BLOCK }));
+  assert.strictEqual(
+    releaseSessionHolds({ cwd: a, sessionId: 's1', env: {}, resolvePid: () => ({ pid: 77, pidSource: 'ancestry' }) }),
+    1,
+  );
+  assert.deepStrictEqual(readHolds(a), []);
+});
+
+test('releaseAgentHolds: a finished subagent\'s hold is removed; the main thread\'s stays', () => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'wt-ma');
+  const b = harnessWorktreeOf(main, 'wt-ag');
+  assert.ok(writeHold(a, { key: `s1__main__${process.pid}`, block: BLOCK }));
+  assert.ok(writeHold(b, { key: `s1__ag1__${process.pid}`, block: BLOCK, agentId: 'ag1' }));
+  const env = { CLAUDE_PID: String(process.pid) };
+  assert.strictEqual(releaseAgentHolds({ cwd: b, sessionId: 's1', env }), 0);
+  assert.strictEqual(readHolds(b).length, 1);
+  assert.strictEqual(releaseAgentHolds({ cwd: b, sessionId: 's1', agentId: 'ag1', env }), 1);
+  assert.deepStrictEqual(readHolds(b), []);
+  assert.deepStrictEqual(readHolds(a).map((h) => h.key), [`s1__main__${process.pid}`]);
 });
