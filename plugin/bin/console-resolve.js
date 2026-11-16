@@ -54,6 +54,17 @@
 // written (the JSON is printed first), 6 a carried fact could not be written — every carried item
 // then reads `failed`, the JSON is printed, and stderr names each one.
 //
+// Sixth shape (#4620): `--run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>` — one
+// automatic, revertable memory write (lib/console/memory-write.js), the Review Console's step 8 under control
+// mode. The target must resolve inside --memory-dir (symlinks followed; a create needs its parent to exist). It
+// writes the target, then logs one AUTO entry under /wrap-up naming the path, the prior sha256 (`none` on a
+// create) and the whole-file diff (reverse with `git apply -R`); a diff over 20 KiB stores the prior content
+// at `{run}/staged/.memory-prior-{sha12}.md` (dot-prefixed so it never becomes a console item) and the entry
+// names that path instead. It needs no ceiling and takes no other flag. Exit 0 written, 2 malformed (any
+// other flag, a missing flag, or an unreadable --content-file), 3 --run not anchored, the target or backup
+// write failed (nothing logged), or the entry could not be written (stderr names the written path), 5 the
+// target is outside the memory directory (nothing written).
+//
 // Control mode (#4620, `control-mode: on`): the Review Console resolves what policy can and CARRIES
 // every item a human must decide — `pending`, `keep-staged`, `refused` — as a `carried` item whose
 // decision fact lands in `{run}/packet-facts/decisions.json`. This file owns every write of that
@@ -82,6 +93,7 @@ const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issue
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems } = require('./lib/console/residue');
 const { REWRITE_FROM, CARRY_REWRITE_FROM, REWRITE_TARGETS, REWRITE_ONLY_IN, rewriteItemResolution } = require('./lib/console/item-resolution');
+const { planMemoryWrite, resolveMemoryTarget } = require('./lib/console/memory-write');
 const { decisionFactFor } = require('./lib/console/decision-facts');
 const { convergeResidue, composeResidueProposal, RESIDUE_FAILED } = require('./lib/console/residue-convergence');
 const { withLock } = require('./lib/file-lock');
@@ -99,7 +111,8 @@ const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dr
   + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
   + '       console-resolve.js --run <dir> --check-repair <file> [--full]\n'
   + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)\n'
-  + '       console-resolve.js --run <dir> --converge <items.json>  (takes no other flag; exit 2 malformed items file, 3 unanchored or decisions.md unwritable, 6 a carried fact could not be written)';
+  + '       console-resolve.js --run <dir> --converge <items.json>  (takes no other flag; exit 2 malformed items file, 3 unanchored or decisions.md unwritable, 6 a carried fact could not be written)\n'
+  + '       console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>  (takes no other flag; exit 2 malformed or unreadable content file, 3 unanchored or a write failed, 5 target outside the memory dir)';
 
 class UsageError extends Error {}
 
@@ -117,8 +130,8 @@ function needsAHumanBlock(unresolved, runDir, consolePath) {
 }
 
 function parseArgs(argv) {
-  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false, converge: null };
-  const valued = { '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair', '--ledger': 'ledger', '--converge': 'converge' };
+  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false, converge: null, memoryWrite: null, memoryDir: null, contentFile: null };
+  const valued = { '--memory-write': 'memoryWrite', '--memory-dir': 'memoryDir', '--content-file': 'contentFile', '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair', '--ledger': 'ledger', '--converge': 'converge' };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (Object.prototype.hasOwnProperty.call(valued, flag)) {
@@ -133,6 +146,12 @@ function parseArgs(argv) {
     else throw new UsageError(`unknown flag: ${flag}`);
   }
   if (!out.run) throw new UsageError('--run <dir> is required');
+  if (out.memoryWrite !== null || out.memoryDir !== null || out.contentFile !== null) {
+    if (out.memoryWrite === null || out.memoryDir === null || out.contentFile === null) throw new UsageError('--memory-write, --memory-dir and --content-file go together');
+    if (out.memoryWrite === '' || out.memoryDir === '' || out.contentFile === '') throw new UsageError('--memory-write, --memory-dir and --content-file require non-empty values');
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.checkRepair !== null || out.full || out.ledger !== null || out.ceiling || out.converge !== null) throw new UsageError('--memory-write takes no other flag than --run, --memory-dir and --content-file');
+    return out;
+  }
   if (out.ceiling) {
     if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.checkRepair !== null || out.full || out.ledger !== null || out.converge !== null) throw new UsageError('--ceiling takes no other flag than --run');
     return out;
@@ -596,6 +615,60 @@ function converge(o, runDir, { stdout, stderr, now, cwd }) {
   return failed.length > 0 ? EXIT_CARRY_FAILED : 0;
 }
 
+// #4620: the `--memory-write` shape — one memory file written automatically, with a reversible log entry.
+// Order: resolve (refuse outside the memory dir), read the prior, back it up when the diff is over the cap,
+// write the target, then log. A failed target write logs nothing; a failed log names the written path.
+function memoryWrite(o, runDir, { stdout, stderr, now, cwd }) {
+  const memoryDir = path.resolve(cwd(), o.memoryDir);
+  const refused = (why) => { stderr(`console-resolve.js: memory write refused (${why}) — nothing written\n`); return 5; };
+  const resolved = resolveMemoryTarget({ memoryDir, target: o.memoryWrite });
+  if (!resolved.ok) return refused(resolved.why);
+  let content;
+  try { content = fs.readFileSync(path.resolve(cwd(), o.contentFile), 'utf8'); } catch (err) {
+    stderr(`console-resolve.js: --content-file ${o.contentFile} could not be read (${err && err.message ? err.message : err})\n${USAGE}\n`);
+    return 2;
+  }
+  let priorText = null;
+  try { priorText = fs.readFileSync(resolved.path, 'utf8'); } catch (err) {
+    if (!(err && err.code === 'ENOENT')) {
+      stderr(`console-resolve.js: could not read ${resolved.path} (${err && err.message ? err.message : err}) — nothing written\n`);
+      return 3;
+    }
+  }
+  const plan = planMemoryWrite({ memoryDir, target: o.memoryWrite, content, priorText });
+  if (!plan.ok) return refused(plan.why);
+  let backup = null;
+  let failing = plan.path;
+  try {
+    if (plan.overCap && priorText !== null) {
+      failing = path.join(runDir, 'staged', `.memory-prior-${plan.priorHash.slice(0, 12)}.md`);
+      fs.mkdirSync(path.dirname(failing), { recursive: true });
+      writeFileAtomic(failing, priorText);
+      backup = failing;
+      failing = plan.path;
+    }
+    writeFileAtomic(plan.path, content);
+  } catch (err) {
+    stderr(`console-resolve.js: could not write ${failing} (${err && err.message ? err.message : err}) — no decisions.md entry written\n`);
+    return 3;
+  }
+  const head = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; diff (reverse with git apply -R)`;
+  const indented = plan.diff.replace(/\n$/, '').split('\n').map((l) => `    ${l}`).join('\n');
+  let text;
+  let block = '';
+  if (!plan.overCap) { text = `${head} in the indented block below`; block = `\n${indented}`; }
+  else if (backup !== null) text = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; diff over ${plan.diff.length} bytes not inlined, prior content stored at ${backup}`;
+  else text = `Memory write ${plan.path}: prior sha256 none; created, diff over the cap not inlined — reverse by deleting the file`;
+  try {
+    appendEntry({ runDir, section: '/wrap-up', entry: `${formatEntry({ status: 'AUTO', now: now(), step: 'Memory write', text, reversibility: 'high' })}${block}` });
+  } catch (err) {
+    stderr(`console-resolve.js: wrote ${plan.path}, but the decisions.md entry could not be written (${err && err.message ? err.message : err})\n`);
+    return 3;
+  }
+  stdout(`console-resolve.js: wrote ${plan.path} (prior sha256 ${plan.priorHash})\n`);
+  return 0;
+}
+
 async function run(argv, deps = {}) {
   const cwd = deps.cwd || (() => process.cwd());
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -619,6 +692,7 @@ async function run(argv, deps = {}) {
     return 3;
   }
   const runDir = target.dir;
+  if (o.memoryWrite !== null) return memoryWrite(o, runDir, { stdout, stderr, now, cwd });
   if (o.ceiling) return ceilingQuery(runDir, { stdout, stderr, execFile, cwd });
   if (o.converge !== null) return converge(o, runDir, { stdout, stderr, now, cwd });
   if (o.setItem !== null) return setItem(o, runDir, { stdout, stderr, now, execFile, cwd });

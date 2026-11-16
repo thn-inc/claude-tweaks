@@ -170,3 +170,30 @@ test('AC4.7 go-red: a deferred digest row carrying only a Defer-reason is an inc
   assert.ok(problems.includes('the ledger writer does not accept the digested row for specs/digest.md'), problems.join('; '));
   assert.ok(problems.includes('parseLedger counts the digested row for specs/digest.md as blocking'), problems.join('; '));
 });
+
+// #4620 Task 9: step 8 routes control-mode memory writes through console-resolve.js --memory-write.
+function stepEight(text) {
+  const start = text.indexOf('\n8. `M#` memory updates');
+  assert.notStrictEqual(start, -1, 'step 8 not found');
+  const end = text.indexOf('\n9. ', start);
+  assert.notStrictEqual(end, -1, 'no step 9 after step 8');
+  return text.slice(start, end);
+}
+const MEMORY_COMMAND = 'console-resolve.js" --memory-write "{file}" --memory-dir "{memory dir}" --content-file "{temp file}" --run "$PIPELINE_RUN_DIR"';
+
+function memoryWriteProblems(text) {
+  const s = stepEight(text);
+  const problems = [];
+  if (!s.includes(MEMORY_COMMAND)) problems.push('step 8 does not route control-mode memory writes through --memory-write');
+  if (s.includes('AskUserQuestion')) problems.push('step 8 names AskUserQuestion');
+  return problems;
+}
+
+test('review-console.md step 8 routes control-mode memory writes through --memory-write', () => {
+  assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE), []);
+});
+
+test('review-console.md step 8 go-red: dropping the command or adding a prompt is caught', () => {
+  assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE.split(MEMORY_COMMAND).join('console-resolve.js" --run "$PIPELINE_RUN_DIR"')), ['step 8 does not route control-mode memory writes through --memory-write']);
+  assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE.replace('8. `M#` memory updates: ', '8. `M#` memory updates: AskUserQuestion. ')), ['step 8 names AskUserQuestion']);
+});
