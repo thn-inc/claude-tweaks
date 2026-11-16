@@ -360,3 +360,21 @@ test('deriveTiming clipToRunWindow: no row in the lifetime → zero rows and a n
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('deriveTiming clipToRunWindow: a dispatch inside the run window but before the first event is counted; the default event window excludes it', async () => {
+  const { root, dir, transcript } = lifetimeFixture();
+  try {
+    const sub = path.join(root, 'main', 'subagents');
+    fs.mkdirSync(sub, { recursive: true });
+    // 09:57 is after the run's creation (09:55 from the run id) and before its first event (10:00).
+    fs.writeFileSync(path.join(sub, 'agent-pre.jsonl'), JSON.stringify({ type: 'assistant', timestamp: '2020-01-06T09:57:00.000Z', message: { id: 'pre1', role: 'assistant', model: 'claude-test', content: [], usage: { input_tokens: 3, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }) + '\n');
+    const clipped = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, clipToRunWindow: true });
+    assert.equal(clipped.timing.dispatches.items.length, 1);
+    assert.equal(clipped.timing.dispatches.excludedOutsideWindow, 0);
+    const whole = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir });
+    assert.equal(whole.timing.dispatches.items.length, 0);
+    assert.equal(whole.timing.dispatches.excludedOutsideWindow, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
