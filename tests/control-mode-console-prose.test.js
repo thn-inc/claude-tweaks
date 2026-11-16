@@ -100,6 +100,7 @@ const STEP_10_CLAIMS = [
   ["id: 'insight-{row}'", "step 10 does not give an insight item the id insight-{row}"],
   ["status: 'open'", "step 10 does not give an insight item status 'open'"],
   ["Recommended-cell reason", "step 10 does not source an insight's deferReason from its Recommended cell"],
+  ['`belowFloor` judged per `_shared/materiality-floor.md`', 'step 10 does not judge an insight item belowFloor per the materiality floor'],
   ['writes no ledger row', 'step 10 does not say an insight writes no ledger row'],
   ['as step 7 creates a `Q#`', 'step 10 does not create a filed insight the way step 7 creates a Q#'],
   ['`carried` → nothing more', 'step 10 does not settle a carried insight with nothing more'],
