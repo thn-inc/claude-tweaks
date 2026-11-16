@@ -158,7 +158,9 @@ function defaultExecFile(cmd, args, opts = {}) {
 //
 // `strict` (the `--ceiling` query only): an absent file (ENOENT/ENOTDIR) still reads as unset, but any
 // other read failure, or an `autonomy`/`control-mode` entry carrying an `error`, throws — a policy that
-// cannot be read must never print as `supervised`. The other shapes keep the tolerant read.
+// cannot be read must never print as `supervised`. The other shapes keep the tolerant read. (The `.error`
+// entry only arises if `autonomy` or `control-mode` is retired or removed from the schema — fail-closed
+// against schema drift.)
 function readPolicy({ execFile, cwd, runDir, strict = false }) {
   const git = (args) => execFile('git', args, { cwd });
   const readFile = (p) => {

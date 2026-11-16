@@ -464,6 +464,16 @@ test('--ceiling: an absent policy.yml (ENOENT) is not unreadable: exit 0, source
   assert.strictEqual(b.out(), 'console-resolve.js: ceiling supervised consoleAutoResolve false control-mode off source default\n');
 });
 
+test('--ceiling: a policy.yml location under a regular file (ENOTDIR) is absent, not unreadable: exit 0, source default', async () => {
+  const fx = mainCheckoutWithRun({ autonomy: null });
+  const aFile = path.join(fx.root, 'not-a-dir');
+  fs.writeFileSync(aFile, 'x');
+  // git reports a "toplevel" that is a file, so the policy path is <file>/.claude-tweaks/policy.yml.
+  const b = baseDeps(fx, [], { execFile: (cmd, args) => (cmd === 'git' && args[0] === 'rev-parse' ? `${aFile}\n` : '') });
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 0, b.err());
+  assert.strictEqual(b.out(), 'console-resolve.js: ceiling supervised consoleAutoResolve false control-mode off source default\n');
+});
+
 test('the resolve shape keeps its tolerant read: a directory where policy.yml should be still reads as default (exit 4)', async () => {
   const fx = mainCheckoutWithRun({ writePolicy: false, staged: STAGED });
   fs.mkdirSync(path.join(fx.root, '.claude-tweaks', 'policy.yml'));
