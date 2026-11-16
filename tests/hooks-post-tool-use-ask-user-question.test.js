@@ -7,8 +7,8 @@
 //
 // `tool_response` for this tool is NOT the SDK's structured
 // `AskUserQuestionOutput` object (`{questions, answers}`) — real captured
-// transcripts (see evals/NOTES.md's "AskUserQuestion input/output shapes"
-// section's Correction) show it is always a plain natural-language string
+// transcripts (see docs/reference/agent-sdk-payload-notes.md's
+// "AskUserQuestion input/output shapes" section's Correction) show it is always a plain natural-language string
 // with a varying prefix/suffix, and the embedded question text can contain
 // unescaped nested double quotes, making it unsafe to regex-parse into a
 // structured per-question answer map. So there is no per-question `answer`
@@ -42,7 +42,7 @@ function askCtx({ toolInput, toolResponse, ownedRun } = {}) {
 
 test('logs questions (header, question, option labels) and the raw response text — real captured payload (Example 1)', () => {
   // Real tool_input/tool_response pair, captured verbatim from a live
-  // session transcript — see evals/NOTES.md's AskUserQuestion Correction
+  // session transcript — see docs/reference/agent-sdk-payload-notes.md's AskUserQuestion Correction
   // (single question, plain recommended-option answer).
   const runDir = makeRunDir();
   const toolInput = {

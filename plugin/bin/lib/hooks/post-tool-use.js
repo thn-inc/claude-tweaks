@@ -554,8 +554,8 @@ function checkPostTeardownReanchor(ctx) {
 // `tool_input` — reliable, SDK-typed. What's logged as `response` does NOT
 // come from the SDK's structured `AskUserQuestionOutput` shape
 // (`{questions, answers}`) an earlier version of this function assumed —
-// real captured transcripts (see evals/NOTES.md's "AskUserQuestion
-// input/output shapes" section's Correction) show `tool_response` for
+// real captured transcripts (see docs/reference/agent-sdk-payload-notes.md's
+// "AskUserQuestion input/output shapes" section's Correction) show `tool_response` for
 // this tool is always a plain natural-language string (e.g. `Your questions
 // have been answered: "..."="...". You can now continue with these answers
 // in mind.`) with a varying prefix/suffix, and the embedded question text can
