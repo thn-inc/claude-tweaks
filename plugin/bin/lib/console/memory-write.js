@@ -48,7 +48,9 @@ function resolveMemoryTarget({ memoryDir, target }) {
   const leaf = lstatType(abs);
   let resolved = null;
   if (leaf.type === 'missing') {
-    const parent = resolveWithin(path.dirname(abs), memoryDir);
+    const parentPath = path.dirname(abs);
+    const parent = resolveWithin(parentPath, memoryDir);
+    if (parent === null && lstatType(parentPath).type === 'missing') return { ok: false, why: 'parent-missing' };
     if (parent !== null) resolved = path.join(parent, path.basename(abs));
   } else if (leaf.type === 'file' || leaf.type === 'symlink') {
     resolved = resolveWithin(abs, memoryDir);

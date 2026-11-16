@@ -63,7 +63,8 @@
 // names that path instead. It needs no ceiling and takes no other flag. Exit 0 written, 2 malformed (any
 // other flag, a missing flag, or an unreadable --content-file), 3 --run not anchored, the target or backup
 // write failed (nothing logged), or the entry could not be written (stderr names the written path), 5 the
-// target is outside the memory directory (nothing written).
+// memory write refused, nothing written (target outside or unresolvable in the memory dir — why
+// `outside-memory-dir` or `parent-missing` — or the memory dir unreadable, `memory-dir-unreadable`).
 //
 // Control mode (#4620, `control-mode: on`): the Review Console resolves what policy can and CARRIES
 // every item a human must decide — `pending`, `keep-staged`, `refused` — as a `carried` item whose
@@ -112,7 +113,7 @@ const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dr
   + '       console-resolve.js --run <dir> --check-repair <file> [--full]\n'
   + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)\n'
   + '       console-resolve.js --run <dir> --converge <items.json>  (takes no other flag; exit 2 malformed items file, 3 unanchored or decisions.md unwritable, 6 a carried fact could not be written)\n'
-  + '       console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>  (takes no other flag; exit 2 malformed or unreadable content file, 3 unanchored or a write failed, 5 target outside the memory dir)';
+  + '       console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>  (takes no other flag; exit 2 malformed or unreadable content file, 3 unanchored or a write failed, 5 memory write refused: target outside or unresolvable in the memory dir, or memory dir unreadable)';
 
 class UsageError extends Error {}
 
@@ -652,12 +653,12 @@ function memoryWrite(o, runDir, { stdout, stderr, now, cwd }) {
     stderr(`console-resolve.js: could not write ${failing} (${err && err.message ? err.message : err}) — no decisions.md entry written\n`);
     return 3;
   }
-  const head = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; diff (reverse with git apply -R)`;
+  const head = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; to reverse, strip the 4-space indent from the diff below into a patch file, then run git apply -R --unidiff-zero {patch} from the memory directory`;
   const indented = plan.diff.replace(/\n$/, '').split('\n').map((l) => `    ${l}`).join('\n');
   let text;
   let block = '';
-  if (!plan.overCap) { text = `${head} in the indented block below`; block = `\n${indented}`; }
-  else if (backup !== null) text = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; diff over ${plan.diff.length} bytes not inlined, prior content stored at ${backup}`;
+  if (!plan.overCap) { text = head; block = `\n${indented}`; }
+  else if (backup !== null) text = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; diff over ${Buffer.byteLength(plan.diff)} bytes not inlined, prior content stored at ${backup}`;
   else text = `Memory write ${plan.path}: prior sha256 none; created, diff over the cap not inlined — reverse by deleting the file`;
   try {
     appendEntry({ runDir, section: '/wrap-up', entry: `${formatEntry({ status: 'AUTO', now: now(), step: 'Memory write', text, reversibility: 'high' })}${block}` });

@@ -141,7 +141,7 @@ test('AC4.4: a write outside the memory dir is refused and writes nothing', asyn
   fs.writeFileSync(path.join(outside, 'victim.md'), 'keep\n');
   fs.symlinkSync(outside, path.join(fx.memoryDir, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
   fs.symlinkSync(path.join(outside, 'victim.md'), path.join(fx.memoryDir, 'filelink.md'));
-  const cases = ['../escape.md', path.join(outside, 'abs.md'), 'link/in.md', 'link/victim.md', 'filelink.md', 'missing-dir/x.md'];
+  const cases = ['../escape.md', path.join(outside, 'abs.md'), 'link/in.md', 'link/victim.md', 'filelink.md'];
   for (const target of cases) {
     const before = decisions(fx);
     const r = await write(fx, target, 'pwned\n');
@@ -168,12 +168,63 @@ test('planMemoryWrite: a missing memory dir is refused', () => {
   assert.strictEqual(plan.ok, false);
 });
 
-test('a failed target write exits 3 and logs nothing', async () => {
+test('a directory as the target is refused (exit 5) and logs nothing', async () => {
   const fx = fixture();
   fs.mkdirSync(path.join(fx.memoryDir, 'dir.md'));
   const r = await write(fx, 'dir.md', 'x\n');
-  assert.notStrictEqual(r.code, 0);
+  assert.strictEqual(r.code, 5, r.err);
   assert.strictEqual(decisions(fx), '');
+});
+
+test('a missing parent directory is refused with its own why (parent-missing), exit 5, nothing written', async () => {
+  const fx = fixture();
+  const r = await write(fx, 'no-such-dir/x.md', 'x\n');
+  assert.strictEqual(r.code, 5, r.err);
+  assert.match(r.err, /memory write refused \(parent-missing\) — nothing written/);
+  assert.strictEqual(fs.existsSync(path.join(fx.memoryDir, 'no-such-dir')), false);
+  assert.strictEqual(decisions(fx), '');
+});
+
+test('a dangling symlink target is refused and nothing is created behind it', async () => {
+  const fx = fixture();
+  const gone = path.join(fx.root, 'gone.md');
+  fs.symlinkSync(gone, path.join(fx.memoryDir, 'dangling.md'));
+  const r = await write(fx, 'dangling.md', 'x\n');
+  assert.strictEqual(r.code, 5, r.err);
+  assert.strictEqual(fs.existsSync(gone), false);
+  assert.strictEqual(decisions(fx), '');
+});
+
+const canMakeReadOnly = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0;
+
+test('a failed target write exits 3, names the path and logs nothing', { skip: !canMakeReadOnly && 'read-only dirs are not enforced on win32 or as root' }, async () => {
+  const fx = fixture();
+  fs.writeFileSync(path.join(fx.memoryDir, 'note.md'), 'a\n');
+  fs.chmodSync(fx.memoryDir, 0o555);
+  try {
+    const r = await write(fx, 'note.md', 'b\n');
+    assert.strictEqual(r.code, 3, r.err);
+    assert.ok(r.err.includes(path.join(fx.memoryDir, 'note.md')), r.err);
+    assert.strictEqual(fs.readFileSync(path.join(fx.memoryDir, 'note.md'), 'utf8'), 'a\n');
+    assert.strictEqual(decisions(fx), '');
+  } finally { fs.chmodSync(fx.memoryDir, 0o755); }
+});
+
+test('a decisions.md that cannot be written exits 3 after the target was written, and stderr names the path', async () => {
+  const fx = fixture();
+  fs.rmSync(path.join(fx.runDir, 'decisions.md'));
+  fs.mkdirSync(path.join(fx.runDir, 'decisions.md'));
+  const r = await write(fx, 'note.md', 'b\n');
+  assert.strictEqual(r.code, 3, r.err);
+  assert.strictEqual(fs.readFileSync(path.join(fx.memoryDir, 'note.md'), 'utf8'), 'b\n');
+  assert.match(r.err, new RegExp(`wrote ${path.join(fx.memoryDir, 'note.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, but the decisions.md entry could not be written`));
+});
+
+test('the entry head tells the reader how to reverse: strip the indent, git apply -R, from the memory directory', async () => {
+  const fx = fixture();
+  assert.strictEqual((await write(fx, 'n.md', 'x\n')).code, 0);
+  const head = decisions(fx).split('\n').find((l) => l.includes('Memory write'));
+  for (const part of ['strip the 4-space indent', 'git apply -R --unidiff-zero', 'from the memory directory']) assert.ok(head.includes(part), part);
 });
 
 test('parseArgs: --memory-write needs its two companions, takes no other flag, and no other shape takes them', () => {

@@ -186,8 +186,12 @@ function memoryWriteProblems(text) {
   const problems = [];
   if (!s.includes(MEMORY_COMMAND)) problems.push('step 8 does not route control-mode memory writes through --memory-write');
   if (s.includes('AskUserQuestion')) problems.push('step 8 names AskUserQuestion');
+  if (!s.includes(INDEX_CLAUSE)) problems.push('step 8 does not say the MEMORY.md content file holds the whole index');
+  if (!s.includes(FAILURE_CLAUSE)) problems.push('step 8 does not stop on any non-zero exit and carry the exit-3 path');
   return problems;
 }
+const INDEX_CLAUSE = 'its content file holding the whole current index with the new line appended';
+const FAILURE_CLAUSE = 'Any non-zero exit stops with the generic failure card; on exit 3 carry the path stderr names.';
 
 test('review-console.md step 8 routes control-mode memory writes through --memory-write', () => {
   assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE), []);
@@ -196,4 +200,6 @@ test('review-console.md step 8 routes control-mode memory writes through --memor
 test('review-console.md step 8 go-red: dropping the command or adding a prompt is caught', () => {
   assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE.split(MEMORY_COMMAND).join('console-resolve.js" --run "$PIPELINE_RUN_DIR"')), ['step 8 does not route control-mode memory writes through --memory-write']);
   assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE.replace('8. `M#` memory updates: ', '8. `M#` memory updates: AskUserQuestion. ')), ['step 8 names AskUserQuestion']);
+  assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE.replace(INDEX_CLAUSE, 'the new index line')), ['step 8 does not say the MEMORY.md content file holds the whole index']);
+  assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE.replace(FAILURE_CLAUSE, 'Exit 5 stops.')), ['step 8 does not stop on any non-zero exit and carry the exit-3 path']);
 });
