@@ -515,6 +515,24 @@ test('local: the trim push failing drops the trim commit, restores the file and 
   assert.match(state.out, /released v1\.3\.0/);
 });
 
+test('local: a transient index.lock on the trim commit drop is retried, so the file is restored and the line says untrimmed', () => {
+  let pushes = 0;
+  let resets = 0;
+  const { deps, state } = trimDeps({ files: withKey(2), gitFail: (k) => k.startsWith('push ') && (pushes += 1) === 2 });
+  const inner = deps.git;
+  deps.git = (args) => {
+    if (args.join(' ') === 'reset --soft HEAD~1' && (resets += 1) === 1) {
+      state.git.push('reset --soft HEAD~1');
+      throw new Error("fatal: Unable to create '/repo/.git/index.lock': File exists.");
+    }
+    return inner(args);
+  };
+  assert.strictEqual(run([], deps), 0);
+  assert.strictEqual(resets, 2, 'the reset was retried once');
+  assert.match(state.err, /^changelog trim: failed \(fatal: push origin main failed\); file left untrimmed\n$/);
+  assert.match(state.out, /released v1\.3\.0/);
+});
+
 test('local: a failed restore names the index state in the failure line', () => {
   let adds = 0;
   const { deps, state } = trimDeps({ files: withKey(2), gitFail: (k) => k.startsWith('commit -m chore: trim') || (k === 'add -- CHANGELOG.md' && (adds += 1) === 2) });

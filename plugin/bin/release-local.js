@@ -154,9 +154,11 @@ function trimAfterRelease(deps, { policyRaw, branch, hasOrigin }) {
       pushAfterAncestryCheck(deps, { branch, refs: [branch], onDiverged: `origin/${branch} moved since the release push` });
     }
   } catch (err) {
+    // A push that reached origin but errored client-side leaves the local branch one commit
+    // behind origin after the drop below; the next release's pre-check surfaces it.
     let restored = true;
     try {
-      if (progress.committed) deps.git(['reset', '--soft', 'HEAD~1']);
+      if (progress.committed) withIndexLockRetry(deps.git)(['reset', '--soft', 'HEAD~1']);
       if (progress.written) {
         deps.writeFile('CHANGELOG.md', original);
         deps.git(['add', '--', 'CHANGELOG.md']);
