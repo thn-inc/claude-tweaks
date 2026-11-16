@@ -13,85 +13,131 @@ const { readText } = require('./helpers/read-skill');
 // runs or reads: every file under plugin/skills/ci-health/, every ci-audit module but source.js,
 // and the CLI plugin/bin/ci-audit.js (its emitted text falls under the same rule).
 //
-// AC7.1 (names): DENYLIST below, plus this repository's own workflow file names, plus the
-// hard-coded workflow-file locations of the common CI products. A .js file is scanned over
-// stripComments' keep-mode text (comments blanked, string literals kept, since emitted text
-// counts); a .md file over its text. A `_shared/<name>.md` citation is a path to one of this
-// plugin's own contracts, not a vendor mention, and is blanked first.
-// AC8.1 (reads and calls), .js files only: any child_process use, any spawn-family call, any
-// network module or fetch( call, a forge CLI literal, a manifest or lockfile named anywhere in a
-// literal, and a read call (readFile, readFileSync, createReadStream, open, openSync) whose
-// arguments name a source-code file by extension. A read of a path held in a variable is allowed:
-// the CLI reads its own --gather/--findings/--issues files that way.
-// Recall limits: a name assembled from two literals or reached through a computed key is not
-// seen; `.exec(` is not flagged as a member call because RegExp.prototype.exec shares the name
-// (a bare exec( is, and requiring child_process is flagged on its own); a source-file read whose
-// path literal sits in a variable declared elsewhere is not tied to the read.
+// AC7.1 (names): DENYLIST below, plus this repository's own workflow names, plus the hard-coded
+// workflow-file locations of the common CI products, over each file's whole text, comments
+// included (a vendor name in a comment is still a name). A `_shared/<name>.md` citation of a
+// contract that exists under plugin/skills/_shared/ is blanked first; an invented or traversing
+// `_shared/` path is not. Each rule has a boundary kind:
+//   any  — matched anywhere: names no English word contains (github, cloudflare, ...);
+//   pre  — matched where a word starts: after a non-letter (`_`, a digit, punctuation) or at a
+//          camelCase hump (isGitHub, read_azure_runs);
+//   tok  — a word start and a word end (a non-letter or a hump after it), for short names and
+//          names that are also English words (gh, aws, drone, nix);
+//   raw  — the regex carries its own boundaries.
+// AC8.1 (reads and calls), .js files only, over comment-stripped text: any child_process use, any
+// spawn-family call, any network module (require or dynamic import), fetch(, process.binding(, a
+// forge CLI literal, a manifest or lockfile named in a literal, and a read call (readFile,
+// readFileSync, createReadStream, open, openSync) whose arguments name a source-code file by
+// extension. A read of a path held in a variable is allowed: the CLI reads its own
+// --gather/--findings/--issues files that way.
+// Recall limits: a name assembled from two literals or reached through a computed key; an
+// all-lowercase run where a `pre`/`tok` name follows another lowercase letter (`viadocker`);
+// a member `.exec(` (RegExp.prototype.exec shares the name; a bare exec( and any child_process
+// require are flagged); a source-file read whose path literal sits in a variable declared
+// elsewhere; a directory walk (readdir/readdirSync) over a source tree; a dynamic import of a
+// computed specifier.
 const REPO = path.join(__dirname, '..');
 const SKILL_DIR = path.join(REPO, 'plugin', 'skills', 'ci-health');
+const SHARED_DIR = path.join(REPO, 'plugin', 'skills', '_shared');
 const LIB_DIR = path.join(REPO, 'plugin', 'bin', 'lib', 'ci-audit');
 const CLI = path.join(REPO, 'plugin', 'bin', 'ci-audit.js');
-const EXEMPT = 'source.js';
+const EXEMPT = path.join(LIB_DIR, 'source.js');
 const toPosix = (p) => p.split(path.sep).join('/');
 
-// Token boundaries: `tok` needs a non-alphanumeric on both sides (short or ordinary-word names);
-// `pre` only before it, so a vendor name inside a longer identifier or host still matches.
-const tok = (s) => new RegExp(`(?<![a-z0-9_])(?:${s})(?![a-z0-9_])`, 'gi');
-const pre = (s) => new RegExp(`(?<![a-z0-9_])(?:${s})`, 'gi');
+const ci = (s) => new RegExp(s, 'gi');
+const cs = (s) => new RegExp(s, 'g');
 const DENYLIST = [
-  ['CI product', pre('github[\\s-]*actions|gitlab[\\s-]*ci|circle[\\s-]*ci|jenkins|travis|buildkite|azure[\\s-]*pipelines|team[\\s-]*city|bitbucket[\\s-]*pipelines|app[\\s-]*veyor|codefresh|tekton|woodpecker')],
-  // `semaphore` alone is a concurrency primitive and `argo` a prefix of argument words: both whole tokens.
-  ['CI product', tok('drone(?:[\\s-]*ci)?|semaphore[\\s-]*ci|semaphoreci|bamboo|concourse|argo(?:cd)?|cloud[\\s-]*build|code[\\s-]*build|code[\\s-]*pipeline')],
-  ['hosted runner', tok('ubuntu(?:-[a-z0-9.]+)?|macos-(?:latest|\\d[a-z0-9.]*)|windows-(?:latest|\\d{4})|self[\\s-]*hosted|runs-on')],
-  ['cache service', pre('actions\\/cache|cache@v|sccache|ccache|bazel|turbo[\\s-]*repo|nx[\\s-]*cloud|build[\\s-]*kit|registry[\\s-]*cache|type=registry')],
-  ['cache service', tok('s3')],
-  ['cloud vendor', pre('amazon|google|azure|cloudflare|digital[\\s-]*ocean|heroku|vercel|netlify')],
-  ['cloud vendor', tok('aws|gcp')],
-  ['forge', pre('github|gitlab|bitbucket|codeberg|gitea')],
-  ['forge CLI', tok('gh')],
+  ['forge', ci('github|gitlab|bitbucket|codeberg'), 'any'],
+  ['forge', ci('gitea'), 'pre'],
+  ['forge CLI', ci('gh'), 'tok'],
+  ['forge CLI env', cs('GH_[A-Z0-9_]*[A-Z0-9]'), 'tok'],
+  ['forge registry', ci('ghcr'), 'any'],
+  ['CI product', ci('circleci|buildkite|appveyor|codefresh|bitrise|buildjet'), 'any'],
+  ['CI product', ci('github[ -]?actions|gitlab[ -]?ci|circle[ -]?ci|jenkins|travis|azure[ -]?pipelines|team[ -]?city|bitbucket[ -]?pipelines|app[ -]?veyor|tekton|woodpecker'), 'pre'],
+  // `semaphore` alone is a concurrency primitive and `argo` a prefix of argument words: tokens only.
+  ['CI product', ci('gha|drone(?:[ -]?ci)?|semaphore[ -]?ci|semaphoreci|bamboo|concourse|argo(?:cd)?'), 'tok'],
+  // Product spellings only: "the code build step" and "a cloud build" are ordinary phrases.
+  ['CI product', cs('Code[ -]?Build|Code[ -]?Pipeline|Cloud[ -]?Build|Harness|Blacksmith'), 'tok'],
+  // The product's own nouns, case-sensitive, so the word "actions" and "Next Actions" stay clean.
+  ['CI product', cs('Actions[ ]+(?:workflow|tab|runner|minute|job|step|cache|secret|log)s?'), 'tok'],
+  ['hosted runner', ci('ubuntu(?:-[a-z0-9.]+)?|macos-(?:latest|\\d[a-z0-9.]*)|windows-(?:latest|\\d{4})|self[ -]?hosted|runs-on'), 'tok'],
+  ['hosted runner', ci('microsoft'), 'pre'],
+  ['cache service', ci('actions\\/cache|cache@v|sccache|turborepo|buildkit'), 'any'],
+  ['cache service', ci('ccache|bazel|turbo[ -]?repo|nx[ -]?cloud|build[ -]?kit|registry[ -]?cache|type=registry|docker|artifactory'), 'pre'],
+  ['cache service', ci('s3|gcs|nix'), 'tok'],
+  ['cloud vendor', ci('cloudflare|digitalocean|heroku|vercel|netlify'), 'any'],
+  ['cloud vendor', ci('amazon|google|azure|digital[ -]?ocean'), 'pre'],
+  ['cloud vendor', ci('aws|gcp'), 'tok'],
+  ['dependency bot', ci('dependabot|renovatebot|renovate\\.json'), 'any'],
+  ['dependency bot', cs('Renovate'), 'tok'],
   // A workflow step reference (`actions/checkout`), never the English word "actions".
-  ['forge step reference', pre('actions\\/[a-z]')],
+  ['forge step reference', ci('actions\\/[a-z]'), 'pre'],
 ];
 const LOCATIONS = ['.github/workflows', '.gitlab-ci.yml', 'Jenkinsfile', '.circleci', 'azure-pipelines.yml',
   '.travis.yml', 'bitbucket-pipelines.yml', '.buildkite', '.drone.yml', '.woodpecker'];
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-const LOCATION_RULES = LOCATIONS.map((l) => ['workflow-file location', new RegExp(`(?<![a-z0-9_-])${escapeRe(l)}`, 'gi')]);
+const LOCATION_RULES = LOCATIONS.map((l) => ['workflow-file location', ci(`(?<![a-z0-9_-])${escapeRe(l)}`), 'raw']);
 
-// This repository's workflows: every file basename, every hyphenated stem, and every top-level
-// `name:` that is not one plain word (a bare `test` would match ordinary prose).
-function repoWorkflowRules(root = REPO) {
+// This repository's workflows -> [{ file, text }]; tests inject a planted listing the same way.
+function readWorkflowListing(root = REPO) {
   const dir = path.join(root, '.github', 'workflows');
-  const names = new Set();
-  for (const f of fs.readdirSync(dir).filter((n) => /\.ya?ml$/.test(n))) {
-    names.add(f);
-    const stem = f.replace(/\.ya?ml$/, '');
-    if (stem.includes('-')) names.add(stem);
-    const top = /^name:[ \t]*(['"]?)(.+?)\1[ \t]*$/m.exec(readText(path.join(dir, f)));
-    if (top && /[\s-]/.test(top[2])) names.add(top[2]);
-  }
-  return [...names].map((n) => ['this repository\'s workflow', new RegExp(`(?<![a-z0-9_.-])${escapeRe(n)}(?![a-z0-9_-])`, 'gi')]);
+  return fs.readdirSync(dir).filter((n) => /\.ya?ml$/.test(n)).map((file) => ({ file, text: readText(path.join(dir, file)) }));
 }
+// The plugin's own names: a workflow that runs one of its skills is named after the skill, and
+// the skill naming itself is not a repository-specific name.
+const OWN_NAMES = new Set([...fs.readdirSync(path.join(REPO, 'plugin', 'skills')), 'ci-audit', 'ci-health']);
+// Every workflow file basename, plus every hyphenated stem and every top-level `name:` that is not
+// one plain word (a bare `test` would match prose) and not one of the plugin's own names.
+function repoWorkflowRules(listing = readWorkflowListing()) {
+  const names = new Set();
+  for (const { file, text } of listing) {
+    names.add(file);
+    const stem = file.replace(/\.ya?ml$/, '');
+    const top = /^name:[ \t]*(['"]?)(.+?)\1[ \t]*$/m.exec(text);
+    for (const n of [stem, top && top[2]]) {
+      if (n && /[\s-]/.test(n) && !OWN_NAMES.has(n.toLowerCase())) names.add(n);
+    }
+  }
+  return [...names].map((n) => ['this repository\'s workflow', ci(`(?<![a-z0-9_.-])${escapeRe(n)}(?![a-z0-9_-])`), 'raw']);
+}
+
+const LETTER = /[A-Za-z]/;
+const UP = /[A-Z]/;
+const LO = /[a-z]/;
+const startsWord = (t, i) => i === 0 || !LETTER.test(t[i - 1]) || (LO.test(t[i - 1]) && UP.test(t[i]));
+const endsWord = (t, j) => j >= t.length || !LETTER.test(t[j]) || (LO.test(t[j - 1]) && UP.test(t[j]));
+const BOUNDED = {
+  any: () => true,
+  raw: () => true,
+  pre: (t, m) => startsWord(t, m.index),
+  tok: (t, m) => startsWord(t, m.index) && endsWord(t, m.index + m[0].length),
+};
 
 const lineAt = (text, i) => text.slice(0, i).split('\n').length;
 function matchRules(text, rules, file, clause) {
   const out = [];
-  for (const [rule, re] of rules) {
-    for (const m of text.matchAll(re)) out.push({ clause, file, line: lineAt(text, m.index), rule, match: m[0] });
+  for (const [rule, re, kind = 'raw'] of rules) {
+    for (const m of text.matchAll(re)) {
+      if (BOUNDED[kind](text, m)) out.push({ clause, file, line: lineAt(text, m.index), rule, match: m[0] });
+    }
   }
   return out;
 }
+const blankSharedCitations = (text) => text.replace(/_shared\/([a-z0-9-]+)\.md/g,
+  (m, name) => (fs.existsSync(path.join(SHARED_DIR, `${name}.md`)) ? ' '.repeat(m.length) : m));
 
 const SOURCE_EXT = /\.(?:[cm]?js|jsx|tsx?|py|go|rs|java|kt|rb|php|c|cc|cpp|h|hpp|cs|swift)(?![a-z0-9])/i;
 const MANIFEST = /(?<![a-z0-9_.-])(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.ya?ml|bun\.lockb?|cargo\.(?:toml|lock)|go\.(?:mod|sum)|requirements[a-z0-9_.-]*\.txt|pipfile(?:\.lock)?|pyproject\.toml|poetry\.lock|gemfile(?:\.lock)?|pom\.xml|build\.gradle(?:\.kts)?|composer\.(?:json|lock))(?![a-z0-9_-])/gi;
+const NET_MODULES = "['\"`](?:node:)?(?:https?|http2|net|dns|tls|dgram|undici)['\"`]";
 const IO_KEEP = [
   ['child_process', /(?<![a-z0-9_])child_process(?![a-z0-9_])/g],
-  ['network module', /require\(\s*['"`](?:node:)?(?:https?|http2|net|dns|tls|dgram|undici)['"`]\s*\)/g],
+  ['network module', new RegExp(`(?<![\\w$])(?:require|import)\\(\\s*${NET_MODULES}\\s*\\)`, 'g')],
   ['forge CLI literal', /(['"`])gh(?:\1|\s)/g],
   ['manifest or lockfile', MANIFEST],
 ];
 const IO_BLANK = [
   ['spawn call', /(?<![\w$])(?:spawn|spawnSync|execFile|execFileSync|execSync|fork)\s*\(|(?<![\w$.])exec\s*\(/g],
-  ['network call', /(?<![\w$])fetch\s*\(|\bnew\s+(?:WebSocket|XMLHttpRequest)\b/g],
+  ['network call', /(?<![\w$])fetch\s*\(|\bnew\s+(?:WebSocket|XMLHttpRequest)\b|\bprocess\s*\.\s*binding\s*\(/g],
 ];
 const READ_CALL = /(?<![\w$])(?:readFileSync|readFile|createReadStream|openSync|open)\s*\(/g;
 
@@ -108,19 +154,14 @@ function balancedArgs(text, open) {
 // -> { offenders, readSites }
 function scanFile(abs, rel, repoRules) {
   const text = readText(abs);
-  if (!abs.endsWith('.js')) {
-    const named = text.replace(/_shared\/[a-z0-9-]+\.md/g, (m) => ' '.repeat(m.length));
-    return { offenders: matchRules(named, [...DENYLIST, ...LOCATION_RULES, ...repoRules], rel, 'names'), readSites: 0 };
-  }
+  const offenders = matchRules(blankSharedCitations(text), [...DENYLIST, ...LOCATION_RULES, ...repoRules], rel, 'names');
+  if (!abs.endsWith('.js')) return { offenders, readSites: 0 };
   const keep = stripComments(text);
   const blank = stripComments(text, { literals: 'blank' });
-  const offenders = [];
   for (const [mode, stripped] of [['keep', keep], ['blank', blank]]) {
     const verdict = stripperVerdict(text, stripped);
     if (verdict !== 'ok') offenders.push({ clause: 'io', file: rel, line: 0, rule: `stripper (${mode})`, match: STRIPPER_VERDICT_MESSAGES[verdict] });
   }
-  const named = keep.replace(/_shared\/[a-z0-9-]+\.md/g, (m) => ' '.repeat(m.length));
-  offenders.push(...matchRules(named, [...DENYLIST, ...LOCATION_RULES, ...repoRules], rel, 'names'));
   offenders.push(...matchRules(keep, IO_KEEP, rel, 'io'), ...matchRules(blank, IO_BLANK, rel, 'io'));
   let readSites = 0;
   for (const m of blank.matchAll(READ_CALL)) {
@@ -142,7 +183,7 @@ function walk(dir) {
 }
 const scanned = () => [
   ...walk(SKILL_DIR),
-  ...walk(LIB_DIR).filter((f) => f.endsWith('.js') && path.basename(f) !== EXEMPT),
+  ...walk(LIB_DIR).filter((f) => f.endsWith('.js') && f !== EXEMPT),
   CLI,
 ].map((abs) => ({ abs, rel: toPosix(path.relative(REPO, abs)) }));
 
@@ -161,18 +202,28 @@ const show = (os_) => os_.map((o) => `${o.file}:${o.line} ${o.rule}: ${o.match}`
 const nameRules = (os_) => os_.filter((o) => o.clause === 'names');
 const ioRules = (os_) => os_.filter((o) => o.clause === 'io');
 
+// An independent recursive listing, posix-relative to the repo, for the floor's expected set.
+function listRel(rel) {
+  const out = [];
+  for (const e of fs.readdirSync(path.join(REPO, rel), { withFileTypes: true })) {
+    const child = `${rel}/${e.name}`;
+    if (e.isDirectory()) out.push(...listRel(child));
+    else if (e.isFile()) out.push(child);
+  }
+  return out;
+}
+
 test('floor: the scan covers every skill file, every ci-audit module but source.js, and the CLI', () => {
-  const lib = fs.readdirSync(LIB_DIR).filter((n) => n.endsWith('.js'));
-  assert.ok(lib.includes(EXEMPT), 'source.js is gone: the exemption names a file that no longer exists');
+  const lib = listRel('plugin/bin/lib/ci-audit').filter((n) => n.endsWith('.js'));
+  assert.ok(lib.includes('plugin/bin/lib/ci-audit/source.js'), 'source.js is gone: the exemption names a file that no longer exists');
   const expected = [
-    ...fs.readdirSync(SKILL_DIR).map((n) => `plugin/skills/ci-health/${n}`),
-    ...lib.filter((n) => n !== EXEMPT).map((n) => `plugin/bin/lib/ci-audit/${n}`),
+    ...listRel('plugin/skills/ci-health'),
+    ...lib.filter((n) => n !== 'plugin/bin/lib/ci-audit/source.js'),
     'plugin/bin/ci-audit.js',
   ].sort();
   const got = scanned().map((f) => f.rel).sort();
   assert.deepEqual(got, expected);
   assert.ok(got.length >= 10, `only ${got.length} files scanned; fewer than 10 means the walk lost files`);
-  assert.ok(!got.includes(`plugin/bin/lib/ci-audit/${EXEMPT}`));
   assert.ok(repoWorkflowRules().length >= 8, 'fewer than 8 repository workflow names: the repository clause is reading nothing');
 });
 
@@ -191,7 +242,7 @@ test('AC8.1: nothing outside source.js spawns, uses the network, names the forge
 // --- go-red self-tests: the same scanFile over planted copies of real files ---
 
 test('control: the exempt source.js, scanned the same way, trips both clauses', () => {
-  const { offenders } = scanFile(path.join(LIB_DIR, EXEMPT), EXEMPT, repoWorkflowRules());
+  const { offenders } = scanFile(EXEMPT, 'source.js', repoWorkflowRules());
   const rules = new Set(offenders.map((o) => `${o.clause}:${o.rule}`));
   for (const r of ['names:forge', 'names:forge CLI', 'names:workflow-file location', 'io:child_process', 'io:spawn call', 'io:forge CLI literal']) {
     assert.ok(rules.has(r), `source.js should trip ${r}; got ${[...rules].join(', ')}`);
@@ -203,53 +254,98 @@ function scratch(t) {
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;
 }
-function plant(t, srcAbs, extra, name) {
+function plant(t, srcAbs, extra, name, rules = repoWorkflowRules()) {
   const f = path.join(scratch(t), name || path.basename(srcAbs));
   fs.writeFileSync(f, readText(srcAbs) + extra);
-  return scanFile(f, 'fixture', repoWorkflowRules()).offenders;
+  return scanFile(f, 'fixture', rules).offenders;
 }
 const baseLines = (abs) => readText(abs).split('\n').length;
+const rows = (found, n) => found.map((o) => [o.line - n, o.rule, o.match]).sort();
 
-test('AC7.2: a denylisted name planted in a copy of a real module is reported; the unplanted copy is not', (t) => {
+test('AC7.2: a denylisted name planted in a copy of a real module is reported, in code or in a comment; the unplanted copy is not', (t) => {
   const mod = path.join(LIB_DIR, 'phases.js');
   assert.deepEqual(plant(t, mod, ''), [], 'control: the unplanted copy reports nothing');
-  const n = baseLines(mod);
-  const found = plant(t, mod, "\nconst RUNNER = 'ubuntu-latest';\nconst HOST = 'GitHub Actions';\n// azure in a comment is not code\n");
-  assert.deepEqual(found.map((o) => [o.line, o.rule]).sort(), [[n + 1, 'hosted runner'], [n + 2, 'CI product'], [n + 2, 'forge']]);
+  const found = plant(t, mod, "\nconst RUNNER = 'ubuntu-latest';\nconst HOST = 'GitHub Actions';\n// read from azure\n");
+  assert.deepEqual(rows(found, baseLines(mod)), [
+    [1, 'hosted runner', 'ubuntu-latest'], [2, 'CI product', 'GitHub Actions'], [2, 'forge', 'GitHub'], [3, 'cloud vendor', 'azure'],
+  ]);
 });
 
-test('AC7.2: a planted name in a copy of checklist.md is reported, with ordinary words and a _shared citation left alone', (t) => {
+test('AC7.2: names inside identifiers, env names and the wider product list are reported', (t) => {
+  const mod = path.join(LIB_DIR, 'checks.js');
+  const plants = [
+    'const isGitHub = 1, readGithubRuns = 2, fetch_gitlab_runs = 3, viaBitbucket = 4;', // 1
+    'const onAzureHost = 1, AWS_REGION = 2, useDockerCache = 3;', // 2
+    "const t = process.env.GH_TOKEN || process.env.GH_HOST || 'GHA';", // 3
+    "const img = 'ghcr.io/x'; // Docker Hub, Microsoft-hosted", // 4
+    '// the Actions runner, GCS, Dependabot, Renovate, Bitrise, Harness, BuildJet, Blacksmith, Artifactory, Nix', // 5
+    '// CodeBuild, CodePipeline, Cloud Build', // 6
+  ];
+  const found = plant(t, mod, `\n${plants.join('\n')}\n`);
+  assert.deepEqual(rows(found, baseLines(mod)), [
+    [1, 'forge', 'Bitbucket'], [1, 'forge', 'GitHub'], [1, 'forge', 'Github'], [1, 'forge', 'gitlab'],
+    [2, 'cache service', 'Docker'], [2, 'cloud vendor', 'AWS'], [2, 'cloud vendor', 'Azure'],
+    [3, 'CI product', 'GHA'], [3, 'forge CLI env', 'GH_HOST'], [3, 'forge CLI env', 'GH_TOKEN'], [3, 'forge CLI', 'GH'], [3, 'forge CLI', 'GH'],
+    [4, 'cache service', 'Docker'], [4, 'forge registry', 'ghcr'], [4, 'hosted runner', 'Microsoft'],
+    [5, 'CI product', 'Actions runner'], [5, 'CI product', 'Bitrise'], [5, 'CI product', 'Blacksmith'], [5, 'CI product', 'BuildJet'], [5, 'CI product', 'Harness'],
+    [5, 'cache service', 'Artifactory'], [5, 'cache service', 'GCS'], [5, 'cache service', 'Nix'], [5, 'dependency bot', 'Dependabot'], [5, 'dependency bot', 'Renovate'],
+    [6, 'CI product', 'Cloud Build'], [6, 'CI product', 'CodeBuild'], [6, 'CI product', 'CodePipeline'],
+  ]);
+});
+
+test('AC7.2: ordinary words that share letters with a denylisted name are not reported', (t) => {
   const md = path.join(SKILL_DIR, 'checklist.md');
   assert.deepEqual(plant(t, md, ''), []);
-  const n = baseLines(md);
-  const ok = '\n## Next Actions\n## Allowed Steps\nthe cache, jobsCache, laws, draws, glazureware, ghost, high, drones, arguments, a semaphore, windows.\nSee `_shared/github-write-transport.md`.\n';
-  assert.deepEqual(plant(t, md, ok), [], 'ordinary words and a _shared/ contract path are not vendor names');
-  const bad = '\nUse a github runner with sccache on AWS, or `actions/checkout`.\n';
-  assert.deepEqual(plant(t, md, bad).map((o) => [o.line, o.rule, o.match]).sort(), [
-    [n + 1, 'cache service', 'sccache'],
-    [n + 1, 'cloud vendor', 'AWS'],
-    [n + 1, 'forge step reference', 'actions/c'],
-    [n + 1, 'forge', 'github'],
+  const ok = [
+    '## Next Actions', '## Allowed Steps',
+    'the actions it takes, the code build step, a cloud build, the code pipeline stage, renovate the flow,',
+    'harness-health, the test harness, Unix, phoenix, high, ghost, laws, draws, cargo, Argon, arguments,',
+    'the cache, jobsCache, drones, a semaphore, windows, docket, ghostly, Ghosts, nixed, gcsx.',
+  ].join('\n');
+  assert.deepEqual(plant(t, md, `\n${ok}\n`), [], 'ordinary words are not vendor names');
+});
+
+test('AC7.2: a planted name in a copy of checklist.md is reported', (t) => {
+  const md = path.join(SKILL_DIR, 'checklist.md');
+  const found = plant(t, md, '\nUse a github runner with sccache on AWS, or `actions/checkout`.\n');
+  assert.deepEqual(rows(found, baseLines(md)), [
+    [1, 'cache service', 'sccache'], [1, 'cloud vendor', 'AWS'], [1, 'forge step reference', 'actions/c'], [1, 'forge', 'github'],
+  ]);
+});
+
+test('the _shared/ carve-out blanks only a citation of an existing contract', (t) => {
+  const md = path.join(SKILL_DIR, 'checklist.md');
+  assert.ok(fs.existsSync(path.join(SHARED_DIR, 'github-write-transport.md')), 'the pinned contract moved');
+  assert.deepEqual(plant(t, md, '\nSee `_shared/github-write-transport.md`.\n'), []);
+  const found = plant(t, md, '\nSee `_shared/github-actions-cache.md`, `_shared/../../github-x.md` and the github API.\n');
+  assert.deepEqual(rows(found, baseLines(md)), [
+    [1, 'CI product', 'github-actions'], [1, 'forge', 'github'], [1, 'forge', 'github'], [1, 'forge', 'github'],
   ]);
 });
 
 test('AC7.1 go-red: a hard-coded workflow-file location and a repository workflow name are reported', (t) => {
   const mod = path.join(LIB_DIR, 'checks.js');
-  const n = baseLines(mod);
   const found = plant(t, mod, "\nconst A = '.gitlab-ci.yml';\nconst B = 'test-perf.yml';\nconst C = 'release-please';\n");
-  assert.deepEqual(found.map((o) => [o.line, o.rule, o.match]).sort(), [
-    [n + 1, 'CI product', 'gitlab-ci'],
-    [n + 1, 'forge', 'gitlab'],
-    [n + 1, 'workflow-file location', '.gitlab-ci.yml'],
-    [n + 2, 'this repository\'s workflow', 'test-perf'],
-    [n + 2, 'this repository\'s workflow', 'test-perf.yml'],
-    [n + 3, 'this repository\'s workflow', 'release-please'],
+  assert.deepEqual(rows(found, baseLines(mod)), [
+    [1, 'CI product', 'gitlab-ci'], [1, 'forge', 'gitlab'], [1, 'workflow-file location', '.gitlab-ci.yml'],
+    [2, 'this repository\'s workflow', 'test-perf'], [2, 'this repository\'s workflow', 'test-perf.yml'],
+    [3, 'this repository\'s workflow', 'release-please'],
+  ]);
+});
+
+test('a repository workflow named after one of the plugin\'s skills denies only its file name', (t) => {
+  const listing = [...readWorkflowListing(), { file: 'ci-health.yml', text: 'name: ci-health\non:\n  schedule: []\n' },
+    { file: 'nightly-docs.yml', text: 'name: docs-health nightly\n' }];
+  const rules = repoWorkflowRules(listing);
+  for (const { abs, rel } of scanned()) assert.deepEqual(nameRules(scanFile(abs, rel, rules).offenders), [], rel);
+  const found = plant(t, path.join(SKILL_DIR, 'SKILL.md'), '\nSee ci-health.yml, nightly-docs and docs-health nightly.\n', 'SKILL.md', rules);
+  assert.deepEqual(rows(found, baseLines(path.join(SKILL_DIR, 'SKILL.md'))), [
+    [1, 'this repository\'s workflow', 'ci-health.yml'], [1, 'this repository\'s workflow', 'docs-health nightly'], [1, 'this repository\'s workflow', 'nightly-docs'],
   ]);
 });
 
 test('AC8.1 go-red: each banned read or call planted in a copy of the CLI is reported on its line', (t) => {
   assert.deepEqual(plant(t, CLI, ''), []);
-  const n = baseLines(CLI);
   const plants = [
     "const cp = require('child_process');",
     'spawnSync(cmd, []);',
@@ -261,11 +357,16 @@ test('AC8.1 go-red: each banned read or call planted in a copy of the CLI is rep
     "fs.readFileSync(path.join(root, 'src', 'index.ts'), 'utf8');",
     "const lock = 'yarn.lock';",
     'pattern.exec(text); // RegExp exec is not a spawn',
+    "import('node:dns');",
+    "import('undici');",
+    "process.binding('tcp_wrap');",
+    "import('node:child_process');",
   ];
   const found = plant(t, CLI, `\n${plants.join('\n')}\n`, 'ci-audit.js');
-  assert.deepEqual(found.map((o) => [o.line - n, o.rule]).sort(), [
+  assert.deepEqual(found.map((o) => [o.line - baseLines(CLI), o.rule]).sort(), [
     [1, 'child_process'], [2, 'spawn call'], [3, 'spawn call'], [4, 'network module'], [5, 'network call'],
     [6, 'forge CLI'], [6, 'forge CLI literal'], [7, 'manifest or lockfile'], [8, 'source-file read'], [9, 'manifest or lockfile'],
+    [11, 'network module'], [12, 'network module'], [13, 'network call'], [14, 'child_process'],
   ].sort());
 });
 
