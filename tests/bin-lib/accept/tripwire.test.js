@@ -305,6 +305,16 @@ test('removalLogSlugs reads only whole removal lines', () => {
   assert.ok(REMOVAL_COMMENT_RE.test('Risk flag public-contract removed by the maintainer during shaping'));
 });
 
+test('the removal comment text is exactly what removalLogSlugs reads', () => {
+  const stamping = require('fs').readFileSync(require('path').join(__dirname, '..', '..', '..', 'plugin', 'skills', 'specify', 'shaping-mode-stamping.md'), 'utf8');
+  const start = stamping.indexOf('\n5. **Removal logging,**');
+  assert.notStrictEqual(start, -1, 'Risk flags step 5 exists');
+  const step = stamping.slice(start, stamping.indexOf('\n6. **Writer rule', start));
+  const literals = [...step.matchAll(/exactly `(Risk flag \{slug\} removed by the maintainer during shaping)`/g)].map((m) => m[1]);
+  assert.strictEqual(literals.length, 1, 'step 5 states the comment literal once');
+  assert.deepStrictEqual(removalLogSlugs([literals[0].replace('{slug}', 'auth')]), ['auth']);
+});
+
 test('agent classification: unknown categories are ignored with a note, a double match is one glob entry', () => {
   const unknown = run({ agentClassification: [{ category: 'banana', evidence: 'x' }] });
   assert.strictEqual(unknown.status, 'ok');

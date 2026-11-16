@@ -38,6 +38,8 @@
 //           Refine risk flags step). Prints { logged, logFailures }: `logged` is null when
 //           --removed names nothing (nothing is written), true when every line was written,
 //           false when one failed (`logFailures` names the slugs). A failed log is exit 0.
+//           It is the audit line only: under github-issues the skill always posts the record
+//           comment too, because the record is the removal log the diff tripwire reads (#4619).
 // An empty kept set writes the none line and no marker, but a hand-written unconfirmed marker
 // already on the body survives a headless settle: clearing it would need humanConfirmed with
 // no human, the marker is the cautious side, and the next human confirm clears it.

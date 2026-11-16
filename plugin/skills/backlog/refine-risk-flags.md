@@ -44,7 +44,7 @@ node -e "
 ```
 
 A non-zero exit from that block leaves the snapshot stale, so Step 5 skips this record's body writes as changed (fail closed): report it.
-6. **Log** each `removed` slug, only once step 4's write succeeded, as `shaping-mode-stamping.md`'s `### Risk flags` step 5 states (its `logged: false` fallback covers `logFailures`), with `--site backlog` in place of `--site specify`: `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" log-removals --run "$PIPELINE_RUN_DIR" --site backlog --removed {removed}` when this run's run dir resolved. A non-zero `log-removals` exit falls back to a comment for every `removed` slug and does not change the record's outcome (the write has landed). Under `local-files` with no run dir the Gotchas bullet is not logged here: step 4 already added it to the body file before its write. `--site backlog` logs under `/backlog`'s `Refine risk flags` step.
+6. **Log** each `removed` slug, only once step 4's write succeeded, as `shaping-mode-stamping.md`'s `### Risk flags` step 5 states (its `logged: false` fallback covers `logFailures`), with `--site backlog` in place of `--site specify`: `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" log-removals --run "$PIPELINE_RUN_DIR" --site backlog --removed {removed}` when this run's run dir resolved. Under `github-issues` that step 5 always posts the comments, so a `logged: false` or a non-zero exit needs no fallback. A non-zero `log-removals` exit does not change the record's outcome (the write has landed). Under `local-files` with no run dir the Gotchas bullet is not logged here: step 4 already added it to the body file before its write. `--site backlog` logs under `/backlog`'s `Refine risk flags` step.
 
 ## Refused
 
