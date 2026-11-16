@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-16T06:32:23.812Z",
+  "computedAt": "2026-11-16T06:54:20.873Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -19,11 +19,6 @@
         "state": "OPEN"
       },
       {
-        "number": 5601,
-        "updatedAt": "2026-11-16T00:58:33Z",
-        "state": "OPEN"
-      },
-      {
         "number": 5599,
         "updatedAt": "2026-11-16T02:14:03Z",
         "state": "OPEN"
@@ -31,11 +26,6 @@
       {
         "number": 5598,
         "updatedAt": "2026-11-16T00:33:32Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5596,
-        "updatedAt": "2026-11-16T00:42:42Z",
         "state": "OPEN"
       },
       {
@@ -65,7 +55,7 @@
       },
       {
         "number": 5563,
-        "updatedAt": "2026-11-16T05:44:31Z",
+        "updatedAt": "2026-11-16T06:52:46Z",
         "state": "OPEN"
       },
       {
@@ -85,7 +75,7 @@
       },
       {
         "number": 5541,
-        "updatedAt": "2026-11-16T02:26:23Z",
+        "updatedAt": "2026-11-16T06:36:05Z",
         "state": "OPEN"
       },
       {
@@ -351,11 +341,6 @@
       {
         "number": 4591,
         "updatedAt": "2026-11-01T18:33:39Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4577,
-        "updatedAt": "2026-11-16T05:47:34Z",
         "state": "OPEN"
       },
       {
@@ -680,7 +665,7 @@
       },
       {
         "number": 4359,
-        "updatedAt": "2026-11-16T00:08:10Z",
+        "updatedAt": "2026-11-16T06:48:42Z",
         "state": "OPEN"
       },
       {
@@ -900,7 +885,7 @@
       },
       {
         "number": 3975,
-        "updatedAt": "2026-11-16T02:38:24Z",
+        "updatedAt": "2026-11-16T06:50:38Z",
         "state": "OPEN"
       },
       {
@@ -986,84 +971,6 @@
     ]
   },
   "groups": [
-    [
-      {
-        "body": "Surface: backend\n\n**Related:** #5148, #4663, #5535, #5214, #4708, #4672, #4828, #3835\nRisk-flags: none\n\n## Current State\n\nStep 3.7 of `/claude-tweaks:review` (`plugin/skills/review/step3-tiebreak.md`) resolves every tiebreak judge at the Capable tier (`plugin/skills/review/step3-tiebreak.md:35`), whatever the finding's severity. In a 60-finding sample from nine archived reviews, 54 findings were `low` or `info` by the reporter's own severity. #5148 asks that an `info` finding skip the independent judge and resolve as `drop` with a logged line.\n\nNo measurement exists of how a cheaper judge, or no judge, changes verdicts for `low` and `info` findings.\n\nDesign: `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`, Phase 2, unit 2.2 (branch `worktree-design-process-efficiency`).\n\n## Deliverables\n\n1. **Replay.** With the tiebreak replay harness, over at least 20 archived reviews, compare for `low` and `info` findings: a Capable judge (rerun), a Standard judge, and for `info` only, no judge with the finding resolved `drop`. Report agreement with archived verdicts and tokens per arm, and how many `low` and `info` findings the 20 reviews yield. Put the table in the PR with the harness commit or script hash, the model id per tier, the review set and the date, so the run can be repeated.\n2. **Decision.** State in the PR which tier `low` and `info` findings take, from that table. `medium` and above stay on Capable.\n3. **Prose and chunking.** `step3-tiebreak.md` names the tier per severity and resolves it with `resolve-profile.js` as today. A chunk never mixes tiers.\n4. **Record link.** Comment on #5148 that its Step 3.7 request is settled here and in the chunking record, and that #5148 now covers only the review-effort size proxy.\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Acceptance Criteria\n\n- [ ] AC1: The PR holds the replay table for at least 20 archived reviews, with agreement and tokens for each arm.\n- [ ] AC2: The chosen tier's agreement on `low` and `info` findings is no lower than the Capable rerun arm's; if every cheaper arm is lower, the build changes no tier, records that result in the PR and on #5148, and closes as measured. On that branch Deliverable 3 and AC3 to AC5 do not ship.\n  - Decided 2026-11-15: the reference is the Capable rerun arm on the same findings, not the archive. Each arm judges at least 60 `low` and 30 `info` findings. \"No lower\" means at most 5 percentage points below the rerun arm's agreement. The table reports agreement per archived verdict class (confirmed, refuted, can't-tell). A cheaper arm also fails if, for `low` findings the archive confirmed, its share resolved `refuted` or `drop` is more than 3 points above the rerun arm's.\n  - A test proves that a finding a cheaper judge raises to `medium` or higher is judged again at Capable.\n- [ ] AC3: A finding of severity `medium` or higher is still judged at Capable, and so is a finding whose severity is null or unknown. A test in `tests/review-tiebreak-step-conformance.test.js` fails when the prose routes either to a cheaper tier, and a second test asserts that a chunk holds findings of one tier only.\n- [ ] AC4: `tests/resolve-profile-invocation-conformance.test.js` passes with the new invocation lines.\n- [ ] AC5: If `info` findings resolve without a judge, each still gets exactly one verdict line that `check-coverage` accepts, written by `resolve-tiebreak`, with a test.\n\n## Release Note\n\n`/claude-tweaks:review` now picks the tiebreak judge's model tier from the finding's severity, so low and info findings no longer always use the most capable model.\n\n## Technical Approach\n\nThe severity used to pick a tier is the one the entry carries (`reporterSeverity`; for a contested finding, the higher of its positions; `plugin/bin/lib/tiebreak.js:230`); a null or unknown severity takes Capable, since the reporter's rating is unvalidated and the failure direction is the more capable judge. Chunks are formed per tier after that.\nA finding that a cheaper judge raises to `medium` or higher is judged again at Capable, and that second verdict is the one settled (decided 2026-11-15). The replay reports how often the Capable rerun raises a `low` or `info` finding; findings a cheaper judge fails to raise are an accepted risk, recorded in the PR. If the no-judge arm wins for `info`, the resolver needs a path that produces the `drop` outcome and its log line from the entry alone; keep it inside `plugin/bin/lib/tiebreak.js` so the line's form has one writer.\n\n### Key Files\n\n- `plugin/skills/review/step3-tiebreak.md`\n- `plugin/skills/review/step3-routing.md`\n- `plugin/bin/lib/tiebreak.js`\n- `plugin/bin/lib/coordination.js`\n- `tests/review-tiebreak-step-conformance.test.js`\n- `tests/bin-lib/tiebreak.test.js`\n- `tests/resolve-profile-invocation-conformance.test.js`\n\n## Gotchas\n\n- Builds on the chunked dispatch from #5540 (the sibling record); do not start before it merges. Its build also produces the replay harness copy this record reuses.\n- Do not add text to `plugin/skills/review/code-mode-steps.md` (#5076).\n- #4679 (unattended filing ignores a `drop` recommendation) reads the same verdict lines. A new no-judge `drop` line must not be filed by that path.\n- Decided 2026-11-15: a verdict line written without a judge carries a provenance token (`judge: none`) written only in `plugin/bin/lib/tiebreak.js`. A test proves the #4679 filing path skips such a line, and the PR lists every reader of verdict lines and what each does with the token.\n- #4937 (accept `info` severity in the routing table) is open; an `info` verdict that reaches routing depends on it.\n- Decided 2026-11-15: no Blocked-by link to #4937. The no-judge arm may be chosen only if #4937 has merged or the PR carries its change, and a test shows an `info` verdict reaching routing.\n- ASSUMPTION — verify at build: a tiebreak replay harness is available to run. At this commit `git ls-files -- tools` holds no replay script; the harness is a scratch script behind the design (unit 5.3 of the design moves it into `tools/`) — confirm via `git ls-files -- tools` once that unit lands, or reuse the harness the chunking sibling record's build ran. Do not rebuild a different harness: the arms must be comparable with the 2026-11-15 numbers. If no harness is available when the build starts, stop and report NEEDS_CONTEXT.\n- If AC2's no-change branch applies, replace the Release Note with `None - measured, no tier change.`\n\n\n<!-- work-fingerprint: process-efficiency:tiebreak-tier-by-severity -->\nwork-fingerprint: process-efficiency:tiebreak-tier-by-severity",
-        "createdAt": "2026-11-15T22:06:57Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5541,
-        "state": "OPEN",
-        "title": "Review tiebreak: pick the judge tier from the finding's severity",
-        "updatedAt": "2026-11-16T02:26:23Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
     [
       {
         "body": "**Related:** #5383 (its wrap-up staged all three changes below; they are coupled, so they are filed together)\n\nOrigin: wrap-up of #5383 (staged/skills-1.patch, staged/skills-2.md, staged/reflect-1.md)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nBoth files of `.claude/skills/gh-api-module-pattern/` are over the 52,500-byte Read rail (`plugin/bin/lib/skill-audit/budgets.js` `RAIL_BYTES`), measured with `context-cost.js`'s `measuredBytes` at 33f635d03: `cli-wrapper-contract.md` 56,381 (over by 3,881), `SKILL.md` 53,799 (over by 1,299). Both were over before #5383, which grew them by 26 and 355 bytes. The `rail:` tests cover only the plugin's shipped skills, so CI never flags these.\n\n#5383's wrap-up found two additions `cli-wrapper-contract.md` needs, both of which grow it further:\n1. The relative-path and live-stdio rules. #5383's review fix wave (46a856cf1) resolved relative path arguments against `deps.cwd()` four different ways across five CLIs, and an unconditional `path.resolve(deps.cwd(), p)` broke a test because it read cwd for absolute paths too. release-local's hook needs inherited stdio for real callers, or an npm OTP prompt fails. The contract states neither rule.\n2. The env-only fixture proof in the conversion-proofs bullet sets `GIT_DIR` alone. That leaves `git rev-parse --show-toplevel` at the cwd repo (probed: `GIT_DIR` only prints A; `GIT_DIR` plus `GIT_WORK_TREE=<B>` prints B). The bullet also has no rule for observing the injected `cwd`: a stub that records `process.cwd()` per call, as #5383's digest-rollover AC6.1 fix does.\n\nThe diff staged for addition 2, from a real `git diff` (it applied cleanly at 33f635d03):\n\n```diff\ndiff --git a/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md b/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\nindex e63de77d3..ffedfa987 100644\n--- a/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\n+++ b/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\n@@ -2,7 +2,7 @@\n \n - Logic lives in an exported `run(argv, deps)`; every side effect (`runner`, `ghAvailable`, `remoteUrl`, `stdout`, `stderr`) goes through `deps` so tests inject fakes. **Every** `deps` call that can throw (e.g. `remoteUrl` outside a git repo) is try/caught into the documented exit-code contract — an un-wrapped deps call is where #610's one post-review high landed.\n - **A CLI that tests call in-process meets the entry contract** (#5374; `plugin/bin/resolve-policy.js` is the worked example). It exports `run` and `realDeps`; `argv` is `process.argv.slice(2)`, and `run` returns an integer exit code or a Promise of one. The script entry is the file's last statement: `if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);`. The standard io keys, each present only when the CLI uses it, are `stdout(text)`, `stderr(text)`, `cwd()`, `env` (a plain object, read-only), `stdin()` (the whole input as a string) and `homeDir()`. Above the guard and in everything `run` calls there is no `process.exitCode`, `process.exit()`, `process.chdir()` or write to `process.env`. A relative path is resolved against `deps.cwd()`, never left to `path.resolve` or `fs`. Every child process is started with a `cwd` derived from `deps.cwd()` and with `env: deps.env`, and a library function on the CLI's path takes that `env` as an option whose default is the inherited environment, so a `gh` or `git` stub on an injected `PATH` is not skipped. The process-wide timeout knobs are the named exception: `plugin/bin/lib/shared-primitives.js`'s shared `gh`/`git` timeouts read `CLAUDE_TWEAKS_GH_TIMEOUT_MS`, `CLAUDE_TWEAKS_GIT_TIMEOUT_MS` and the `gh-timeout-ms` / `git-timeout-ms` keys of the `policy.yml` at the real working directory once per process, and `plugin/bin/lib/hooks/git-exec.js`'s `runGit` reads `CT_HOOKS_GIT_TIMEOUT_MS` from the real `process.env`, by design; an in-process test cannot set them through `env`, so a test of those knobs is a `spawnCli` test. Tests call the CLI through `tests/helpers/run-cli.js` (`runCli`, or `runCliSync` for a synchronous `run`), passing an absolute `cliPath`; the helper fails the test on a leaked `process.exitCode`, working directory, `process.env` key, signal listener, direct stdout/stderr write, or an `os.homedir()` call under an injected home; each converted CLI keeps one or two `spawnCli` smoke tests for the script entry, shebang and exit code. The helper's `env` defaults to `{}` and is the whole environment the CLI sees, so a CLI that starts `git` or `gh` needs `PATH` (and `SystemRoot` on Windows) in the `env` the test passes. Module-level state under `plugin/bin` (the forge probe's memos, for example) survives between in-process calls in one test file; a case that depends on it passes `fresh: true`, which clears `require.cache` under `plugin/bin` first. The helper fails closed: after merging `realDeps` with the test's fakes, it replaces a key named in `FAIL_CLOSED_KEYS` (`runner`, `gh`, `ghAvailable`, `runHook`, `spawn`) that still holds the CLI's real value with a function that throws, and records the reach so a CLI that catches the throw still fails the test; `allowRealRunner: true` lifts it for one call. The list is by key name: a `realDeps` key that can start `gh` or an arbitrary command carries one of those names, and a record converting a CLI whose `realDeps` holds such a seam under another name (for example `execFileSync`, `runPremiseCheck`) adds that name to `FAIL_CLOSED_KEYS` in the same change. A git-only seam (`git`, `gitRunner`) is deliberately not on the list: it runs real git against the injected `cwd` and `env`, which is the behaviour under test. `tests/bin-lib/cli-entry-conformance.test.js` pins the three structural rules (exports `run`, has the guard, no `process.exitCode`/`process.exit(` above it) for every top-level `plugin/bin/*.js`, with a `NOT_YET` list that only shrinks; `hooks.js` is the standing exception (its entry calls `process.exit(code)` and it has a require-time prefilter).\n-- **Converting an existing CLI to the entry contract takes two proofs the tests-side journey does not cover.** `docs/journeys/call-a-plugin-bin-cli-in-process-from-a-test-5374.md` starts from a CLI that already meets the contract; the `plugin/bin` side of the change needs these first. (1) Pin the script's output with real-process tests committed before the split, so the split is checked against the old behavior and not against itself: #5374 committed five `resolve-policy.js` script cases in `tests/resolve-policy-entry.test.js` (8fa20f94e) before splitting the file into a core and a printing `run` (75fb7d40e). (2) Prove that each `git` or `gh` child on the CLI's path got the injected `env` with an env-only fixture, not by reading the call: two repos, A with no remote and B with an `origin` and a recorded `origin/HEAD`, the CLI's `cwd` in A and `GIT_DIR=<B>/.git` only in the injected `env`, so a child that inherits the real environment reads A and a child that got `env: deps.env` reads B's remote (`forgePair` in `tests/forge-probe-env.test.js` and `tests/resolve-policy-entry.test.js`). Strip `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` from the fixture's own setup `git` calls, so a variable the test runner inherited cannot point them at the wrong repo. Find the ambient reads on a CLI's path by running each documented invocation through `runCliSync` and through `spawnCli` against the same fixture, with an injected `cwd`, `env` and `HOME` that differ from the real ones, and comparing the two results, not by reading the code: the read audit for `resolve-policy.js` (#5374) missed sites in four successive passes (plan, plan review, whole-branch review, review phase).\n+- **Converting an existing CLI to the entry contract takes two proofs the tests-side journey does not cover.** `docs/journeys/call-a-plugin-bin-cli-in-process-from-a-test-5374.md` starts from a CLI that already meets the contract; the `plugin/bin` side of the change needs these first. (1) Pin the script's output with real-process tests committed before the split, so the split is checked against the old behavior and not against itself: #5374 committed five `resolve-policy.js` script cases in `tests/resolve-policy-entry.test.js` (8fa20f94e) before splitting the file into a core and a printing `run` (75fb7d40e). (2) Prove that each `git` or `gh` child on the CLI's path got the injected `env` with an env-only fixture, not by reading the call: two repos, A with no remote and B with an `origin` and a recorded `origin/HEAD`, the CLI's `cwd` in A and `GIT_DIR=<B>/.git` only in the injected `env`, so a child that inherits the real environment reads A and a child that got `env: deps.env` reads B's remote (`forgePair` in `tests/forge-probe-env.test.js` and `tests/resolve-policy-entry.test.js`). A child that finds the repository root with `git rev-parse --show-toplevel` is not moved by `GIT_DIR` alone: git then takes the working directory as the work tree and still prints A, so put `GIT_WORK_TREE=<B>` beside it in the injected `env`; a child that reads only the repository (`--absolute-git-dir`, `log`, `remote get-url`) follows `GIT_DIR` alone (AC6.1 in `tests/risk-flags-cli.test.js`, #5383). The `cwd` half needs its own observation: a test named for an injected `cwd` whose stub never reads it stays green with the child's `cwd` option deleted, so have the stub append `process.cwd()` to a file on each call and assert every entry equals the injected directory, both sides through `path.resolve(fs.realpathSync(…))` (`gh-cwd.txt` in `tests/digest-rollover-cli.test.js`'s AC6.1 data-call test, #5383). Strip `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` from the fixture's own setup `git` calls, so a variable the test runner inherited cannot point them at the wrong repo. Find the ambient reads on a CLI's path by running each documented invocation through `runCliSync` and through `spawnCli` against the same fixture, with an injected `cwd`, `env` and `HOME` that differ from the real ones, and comparing the two results, not by reading the code: the read audit for `resolve-policy.js` (#5374) missed sites in four successive passes (plan, plan review, whole-branch review, review phase).\n - **A fail-closed branch around an injected dependency needs one test of the real dependency's failure shape, not only a stub that throws.** A stub proves the wrapper catches a throw, not that the real dependency ever throws. `plugin/bin/dispatch-resume.js`'s run-dir listing is the example: `read('run dir listing', …)` mapped a throw to exit 4, but the real `listRunDirsWithState` swallows a `readdirSync` failure into an empty listing, so the branch was unreachable and an unlistable pipelines dir passed the bound-run scan as clean (verdict and `--bound-run` modes) and could report this session's own lock as a live sibling. #4809 added `listRunDirsFailClosed` and the tests that drive the real dependency.\n - `require.main === module` guard sets `process.exitCode = run(...)` (never `process.exit`, which can truncate piped stdout). `--help` short-circuits before any availability probe. **This one is pinned mechanically, not by grep** — `tests/bin-lib/exit-code-conformance.test.js` (#1903) walks every `plugin/bin/**/*.js`, extracts the text each `require.main === module` guard governs, and fails on a direct `process.exit(...)` inside it. Three prior records (#1176, #1313, #1535) each closed one violation of this rule found by a manual sweep that missed another, which is why the sweep was replaced. A new guard needs no registration; a deliberate exception goes in that test's `ALLOWLIST` with its reason stated beside it (today: `bin/hooks.js`, whose stdout is a synchronous `fs.writeSync(1, …)` with nothing pending to flush, and `bin/lib/statusline-wrapper-source.js`, which deliberately hard-stops on a child process's own exit code).\n - **Precisely, the scan reads only a file's *last* `require.main === module` guard, and only the text that guard governs** — `extractGuard` takes the last regex match, then either a balanced `{…}` block or the bare statement up to its `;`. A file may hold more than one guard: `bin/hooks.js` has its Bash prefilter fast path (#3074) ahead of the real entry point at the bottom. The last guard is the entry point, since a guard that short-circuits before it must appear first, so a direct `process.exit(...)` in an earlier guard is not checked. `hooks.js`'s prefilter exit is safe because nothing has been written to stdout yet. An exit placed outside any guard is invisible to the scan in a file that also exports something. `hooks.js`'s allowlist entry covers the entry-point guard's `main(...).then((code) => process.exit(code))`, and `tests/bin-lib/exit-code-conformance.test.js` pins that the scan selects that guard, not the prefilter one.\n```\n\n## Deliverables\n\n- [ ] Move one lazy bullet group out of `cli-wrapper-contract.md` into a sibling file in the skill directory, leaving a one-line pointer bullet (the `status-as-data.md` / `run-dir-boundary-guards.md` pattern). The in-process entry contract and conversion proofs (lines 4-5 at 33f635d03, about 5.3 KB) are the candidate, since both additions land there. Do the same for one lazy section of `SKILL.md`.\n- [ ] Repoint every reference that names a moved bullet: `git grep -n cli-wrapper-contract -- tests plugin docs .claude`, including `tests/helpers/run-cli.js`'s `CONTRACT` constant and `docs/plugin-structure.md`.\n- [ ] Add the two contract rules in the moved group: (a) resolve a relative path argument where `run` consumes it, `path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)`, so an absolute path never reads cwd; (b) a child that may prompt on a terminal (a release hook, npm publish) gets `stdio: 'inherit'` when `deps.stdout`/`deps.stderr` are `realDeps`' own, and injected io gets a piped capture routed through deps (release-local.js `run()`'s `live` check).\n- [ ] Apply the conversion-proofs change above (the `GIT_WORK_TREE` pairing and the cwd-recording stub).\n\n## Acceptance Criteria\n\n- [ ] `cli-wrapper-contract.md` and `SKILL.md` each measure at or below `RAIL_BYTES` with `context-cost.js`'s `measuredBytes`, including the additions.\n- [ ] `git grep -n -F 'path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)' -- .claude/skills/gh-api-module-pattern/` and `git grep -n -F 'GIT_WORK_TREE' -- .claude/skills/gh-api-module-pattern/` each print a line.\n- [ ] Every `cli-wrapper-contract` reference found by the grep above resolves to a file and a bullet that exist.\n- [ ] Full `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md` — modify\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — modify\n- `tests/helpers/run-cli.js` — verify\n- `docs/plugin-structure.md` — verify\n\n_Filed by `capture` via specShapedBody._",
@@ -8890,90 +8797,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n**Related:** #3721 (same `archiveRunDir` commit code; build sequentially), #3855 (superseded by this project)\n\n## Overview\n\nWhen a run's gitignored half has been archived but its git-tracked `work/{N}-spec.md` header (or `spec-{N}/work/`) is still live, the directory is in the \"split state\" of #3855. Measured on 2026-10-22: 254 local live directories hold only a tracked spec header with an archive twin, and 258 of the 264 tracked live run directories on `origin/main` have a twin. Reconcile never reports them, because `iterRunDirsWithState` skips a directory whose archive twin is clean. The completion command reconcile would emit for that state (`hooks.js archive-run --run`) also always fails, because `archive-run` refuses a directory with no `run-state.json`. And `archiveRunDir` has a latent hazard in the same code path: when it stages only twin resolutions and no `workMoves`, it runs `git commit -m ... --` with no paths, which commits the whole staged index.\n\nThis record makes the split state visible, ships a command that can actually complete it, fixes the commit hazard, and runs the command once on this repository. Every consumer project on pr-first has the same pile, so the command ships in the plugin rather than as a maintainer-only script.\n\n**Complexity:** Medium\n**Estimated tasks:** 7\n\n## Non-Goals\n\n- No change to where new runs' headers end up; moving the header on the run branch before merge is #3976. This record cleans what already exists and reports what recurs.\n- No dual-path reader work (#3974).\n- Not a general run-directory janitor. The CLI handles live directories that hold only tracked `work/` (or `spec-*/work/`), nothing else.\n- No change to `archive-run`'s refusal of directories with no `run-state.json`; `tests/archive-run-verb.test.js` pins that refusal and it stays.\n- No archive retention or pruning of `archive/` itself.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #3721 | archive-run: commits the archive move on the current branch without reporting the commit or its branch | open; edits the same `archiveRunDir` commit code, so build the two sequentially |\n\n## Current State\n\n- `iterRunDirsWithState` (`plugin/bin/lib/hooks/context.js` line 225) skips a live directory when `readRunState(archive/{name})` reports `status: 'clean'`. A directory with no `run-state.json` of its own passes the earlier `wantClean` test, then falls to that skip.\n- `isArchivedPendingTrackedMove(root, dir)` (`plugin/bin/lib/reconcile/archive-merged.js` line 798) detects the split state: the archive twin exists and every live entry is a git-tracked `work/` or `spec-{n}/work/`. `archivedPendingTrackedMoveCommand(dir)` (line 831) returns `node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" archive-run --run \"<dir>\"`. Under `worktree-always: true` the sweep skips with reason `archived-pending-tracked-move` and that command; without it the sweep completes the archival in-process.\n- `archiveRunDir` (line 1014) stages `twinPlan` resolutions and `workMoves`, then commits with `commitPaths = workMoves.flatMap(([src, dest]) => [src, dest])` (line 1301). When `workMoves` is empty and only `twinPlan` is non-empty, `commitPaths` is empty and the call is `git commit -m \"[reconcile] archive run <id>\" --`, which commits the whole index (#2241 scoped the commit for the `workMoves` case only).\n- `plugin/bin/sweep-stray-run-dirs.js` is a one-time sweep (#593) that already moves tracked `work/` subtrees into `archive/{run-id}/` through `archiveRunDir`, folds `events.jsonl` into an existing twin, and commits once per directory. It has `--root`, `--dry-run`, and `--log`.\n- `housekeeping-auto-merge` is a policy key (`plugin/bin/lib/policy-schema.js`, `plugin/skills/_shared/policy-schema.md` row 141) derived from `autonomy` (`true` at `trusted`/`unattended`), consumed by tidy Step 7.5 and wrap-up's `residue-sweep.md` to auto-arm a housekeeping PR.\n- Reconcile check registration is documented in `docs/reconcile-checks.md` (\"Adding a new check\", line 37); the split-state skip reasons are in its \"Archive skip reasons and residue pruning (#1892)\" section (line 127).\n- Tests: `tests/bin-lib/reconcile/archive-merged.test.js` has the split-state tests at lines 3685 to 3935 (the `worktree-always` skip at 3898 and the in-process completion at 3922); `tests/archive-run-verb.test.js` line 71 pins the no-`run-state.json` refusal.\n\n## Deliverables\n\n- [ ] `iterRunDirsWithState` gains an opt-in option (for example `includeTrackedShells: true`) under which the clean-twin skip no longer hides a live directory that holds only tracked `work/` or `spec-*/work/`; reconcile's archive check passes it and reports each such directory as `archived-pending-tracked-move`. The default behavior is unchanged, so `resolveRun`'s fallback scan and `session-start.js`'s unfinished-run report keep not seeing the shells.\n- [ ] New shipped CLI `plugin/bin/archive-tracked-shells.js` (name may change at build): moves every such shell to `archive/{run-id}/`, or deletes the live copy when an identical archived copy is already tracked; enumerates the shells read-only in the main checkout (a shell is a live directory that holds only tracked `work/` or `spec-*/work/` and whose archive twin's `run-state.json` is `clean`; that clean twin is the definition of a finished run), then does the moves in a scratch worktree cut from `origin/main` (`_shared/scratch-worktree.md`) on a fresh branch, comparing against the tracked archived copy; opens one batched housekeeping PR for every shell found; never commits on the main checkout; honors the `housekeeping-auto-merge` policy key (read from the main checkout's `policy.yml` through `resolve-policy.js`; the key's derived default applies when unset) for whether that PR is armed. Reuses `sweep-stray-run-dirs.js`'s mechanics rather than reimplementing the move.\n- [ ] Reconcile prints that command (not `archive-run`) as the `archived-pending-tracked-move` completion under `worktree-always`; without `worktree-always` it performs the same move in place, as `archiveRunDir` does today.Resolved by the maintainer (2026-10-22): without worktree-always, reconcile completes at most one shell in place per reconcile pass; any larger batch is delegated to the shipped CLI's single housekeeping PR, so the pile is never mass-committed in place on whatever branch is checked out.\n- [ ] `archiveRunDir`'s commit passes an explicit pathspec in every case, including the twin-only case.\n- [ ] List the CLI in `docs/plugin-structure.md`'s CLI listing and update `docs/reconcile-checks.md`'s skip-reason section for the new completion command. The CLI is a standalone bin run by a human or by a session following reconcile's printed command; it is not a reconcile check and needs none of that file's check-registration sites.\n- [ ] One-time: run the CLI on this repository. About 258 tracked live directories on `origin/main` have an archive twin; the roughly 6 without one are not touched by the CLI (they have no clean twin to prove a finished run); the CLI lists them in its envelope as `untwinned`, and they are classified individually by hand in the same PR (archive, keep, or delete, each with a reason in the PR body).\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Acceptance Criteria\n\n1. `node plugin/bin/hooks.js reconcile --dry-run --json --checks archive`, run against a fixture whose archive twin carries a clean `run-state.json` and whose live directory holds only tracked `work/`, lists that directory with reason `archived-pending-tracked-move`. Run before the change, the same fixture lists nothing (the test is red against the old iterator).\n2. The command reconcile emits for that state succeeds in a test fixture under `worktree-always: true`: it exits 0, creates a branch, moves the shell to `archive/{run-id}/`, opens one PR (the `gh` runner is injected and asserted), and makes no commit on the main checkout's branch (`git rev-parse HEAD` on the main checkout is unchanged).\n3. With three shells in the fixture the CLI opens exactly one PR and the branch carries every move; a re-run after the PR is simulated merged is a no-op that exits 0 with `moved` empty. A re-run while the first PR is still open reuses the deterministic branch `housekeeping/archive-tracked-shells` and the open PR (printing its URL) rather than opening a second one, and a re-run after a crash partway through resumes from the branch's current state.\n4. A shell whose archive twin is byte-identical is deleted rather than moved; a shell whose twin differs is left in place and named in the output with the differing path (the same `compareWorkTwin` rule `archiveRunDir` applies, which compares file bytes; the delete path never uses a looser comparison). The PR still opens for the shells that were clean, and the CLI exits 1 to flag the left-behind ones.\n5. With `housekeeping-auto-merge` resolving `true` the CLI arms the PR with `gh pr merge --auto --squash`; resolving `false` it leaves the PR unarmed and says so in its output. A rejected arming call (for example a repository with no branch protection) leaves the PR unarmed and reports the rejection; it is not an error exit.\n6. A test calls `archiveRunDir` in the twin-only case (empty `workMoves`, non-empty `twinPlan`) with an unrelated file staged in the index, and asserts that file is not in the resulting commit and that the recorded `git commit` argv ends with an explicit, non-empty pathspec. Run against the old code the test fails.\n7. The CLI honors `--dry-run` and makes no change and no PR. With `--no-pr` it makes the branch and commits locally, pushes nothing, and prints the branch name. In a `local-merge` project, or where `gh` is absent, it refuses with exit 2 and a message naming `--no-pr`, unless `--no-pr` was given. A failure after the scratch worktree exists removes the worktree and leaves no half-built branch on the remote.\n8. `docs/plugin-structure.md` lists the CLI with its flags and `docs/reconcile-checks.md`'s skip-reason section names it as the `archived-pending-tracked-move` completion; the existing docs conformance tests pass.\n9. Build-time check: the housekeeping PR opened for this repository contains a move or delete for every shell the CLI's dry run lists, and its body classifies each of the roughly 6 `untwinned` directories. Post-merge check: `git ls-tree origin/main .claude-tweaks/pipelines/` lists no live tracked directory that has a clean archive twin; directories classified \"keep\" in the PR body are the only exceptions.\n10. The default `iterRunDirsWithState` call (no option) still skips a live shell whose twin is clean, so `session-start.js`'s unfinished-run report and `resolveRun`'s fallback scan list none of the shells; a test per caller pins this.\n\n## Release Note\n\nAdded a command that archives stranded run spec headers through one housekeeping pull request, and made reconcile report them instead of ignoring them.\n\n## Technical Approach\n\nKeep the move itself in `archiveRunDir` (git mv, `compareWorkTwin`, `resolveIdenticalWorkTwin`) and have the CLI orchestrate: enumerate shells with `isArchivedPendingTrackedMove`, create a fresh branch in a scratch worktree, run `archiveRunDir` for each, then push and open one PR. The in-process path (no `worktree-always`) and the CLI differ only in where the commit lands.\n\n### Data / API Surface\n\n`archive-tracked-shells.js [--root <dir>] [--dry-run] [--no-pr]`: prints one JSON envelope `{ moved: [...], deleted: [...], conflicts: [...], untwinned: [...], pr: { number, url, armed } | null }` and exits 0 on success (including nothing to do), 2 on a malformed call or an unsupported environment, and 1 when any shell was left because its twin differs. Reconcile prints one line for the whole batch, `node \"${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js\" --root \"<root>\"`, rather than one command per directory.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState` clean-twin skip\n- `plugin/bin/lib/reconcile/archive-merged.js` — `isArchivedPendingTrackedMove`, `archivedPendingTrackedMoveCommand`, `archiveRunDir` commit pathspec\n- `plugin/bin/archive-tracked-shells.js` — new CLI\n- `plugin/bin/sweep-stray-run-dirs.js` — mechanics to reuse (and the CLI listed in `docs/plugin-structure.md`)\n- `docs/reconcile-checks.md` — registration and the skip-reason table\n- `tests/bin-lib/reconcile/archive-merged.test.js` — split-state fixtures and the pathspec regression test\n- `tests/archive-run-verb.test.js` — refusal that must stay pinned\n\n## Gotchas\n\n- The existing split-state tests pass because they create the archive twin as an empty directory with no `run-state.json`; the real 258 cases have a twin with a clean `run-state.json`. Build the new fixtures with the real shape, or the regression will not reproduce.\n- The skip in `iterRunDirsWithState` serves other callers too (`resolveRun`'s fallback scan, `session-start.js`'s unfinished-run report). That is why the new behavior is an opt-in option passed only by reconcile's archive check, not a change to the default (a default flip would list about 254 shells as unfinished runs in every SessionStart banner).\n- `archive-run` refuses a directory with no `run-state.json`, naming `archiveOrphanedMint`; do not weaken that refusal, because the CLI is the supported path for this shape.\n- Under `worktree-always`, nothing may be committed on the main checkout: do the work in a scratch branch and worktree (`_shared/scratch-worktree.md`), and never `git stash`.\n- Memory note: `archive-run` commits the whole staged index, so run `git status` and assert a clean index before the CLI starts, and commit with explicit pathspecs.\n- Batching is deliberate: one PR for every shell found, not one per directory, so the housekeeping pass does not itself produce a pile of PRs. `housekeeping-auto-merge` decides arming only; it never bypasses the merge-verification gate.\n- ASSUMPTION — verify at build: the CLI can rely on `archiveRunDir(root, runDir)` committing per directory on the scratch branch with a result it can read (its current contract). #3721 is changing that commit and its reporting; after rebasing on #3721, re-pin the assumed return shape with a test.\n- The twin's non-`work/` content (`run-state.json`) is gitignored and exists only in the main checkout, which is why enumeration runs there and the moves run in the scratch worktree against the tracked archived `work/`.\n- The first reconcile after this ships will see the whole pile and print the CLI command once; run the one-time housekeeping PR before relying on a quiet reconcile summary.\n- Cited line numbers are as of 2026-10-22; find the code by symbol (`iterRunDirsWithState`, `isArchivedPendingTrackedMove`, `archiveRunDir`, `commitPaths`) and the tests by name.\n- Related: #3855 (this record implements its second and third deliverables). #3721 edits the same commit code; build sequentially and rebase on it.\n- File overlap with in-progress and open records: `archive-merged.js` with #3945, #3740, and #3721; `context.js` with #3845, #3836, #3811, and #3736. Rebase before opening the PR.\n- Windows: the CLI shells out to `git` and `gh`; apply the `windows-checkout-test-parity` skill to any path assertion and use the injectable runner seam for the PR step (`gh-api-module-pattern` skill).\n\n\n<!-- work-fingerprint: 2026-10-22-run-directory-cleanup:report-stranded-spec-shell-dirs-ship-a-command-that-archives -->\nwork-fingerprint: 2026-10-22-run-directory-cleanup:report-stranded-spec-shell-dirs-ship-a-command-that-archives",
-        "createdAt": "2026-10-22T17:03:58Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 3975,
-        "state": "OPEN",
-        "title": "Report stranded spec-shell dirs, ship a command that archives them via one PR, and stop archiveRunDir committing the whole index",
-        "updatedAt": "2026-11-16T02:38:24Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "**Related:** #3877\nOrigin: build of #3877 (final whole-branch review finding #6)\n\nDefer-reason: tangential\n\n## Current State\n\nAfter #3877, `/tidy`'s `## Arm ready PR` action (`plugin/skills/tidy/actions-github-issues.md`) holds a record-linked PR whose acceptance labeling never landed. That covers three cases: the run's `verify.json` `acceptance-labeling` row is not `pass`/`skip`, no `demo:pending` is set on its `Fixes` records, and no trusted brief/try-it run comment exists. In those cases the action logs a `SKIP` to `decisions.md` instead of arming.\n\n`_shared/github-pr-scan.md`'s `repo-wide` item 9 still classifies that same PR as a granted `[pr-unarmed]` candidate on every sweep. So `tidy/step-6-auto.md` re-stages the same record-linked \"Arm ready PR\" row each run, and a human approves an arm that only holds again. `step-6-auto.md`'s own header treats a recurring staged item as a missing routing rule.\n\n## Deliverables\n\n- Item 9 (or tidy's Step 6 routing) applies the same acceptance-labeling landed check as the arm action. It reuses `dispatch/close-out.md` step 3's live-state precheck: `demo:pending` on every `Fixes` record, or a trusted brief/try-it run comment. Where a local run dir resolves, it also reads that run's `verify.json` `acceptance-labeling` row.\n- A not-landed record-linked PR routes to **Yours**, carrying the paste-ready recommendation the arm action already names: `/claude-tweaks:dispatch close-out #{record}`, or the no-run-dir alternative. It does not appear as an Arm ready PR row.\n- The arm action's own guard stays as the execution-time backstop.\n\n## Acceptance Criteria\n\n1. A record-linked unarmed PR whose labeling has not landed surfaces under Yours with `/claude-tweaks:dispatch close-out #{record}` (or the no-run-dir alternative), not as an Arm ready PR row.\n2. A record-linked PR whose labeling has landed still stages as an Arm ready PR row.\n3. Housekeeping-marker PRs are unaffected.\n4. `npm test` passes.\n\n## Release Note\n\n`/tidy` no longer keeps offering to arm a PR it will only hold for missing acceptance labeling.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan.md` — item 9 classifies a not-landed record-linked PR away from the Arm candidate set\n- `plugin/skills/tidy/step-6-auto.md` — routes the not-landed record-linked flavor to Yours\n- `plugin/skills/tidy/actions-github-issues.md` — arm guard stays as backstop; cross-reference the scan-time routing\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-10-22T14:24:28Z",
         "labels": [
@@ -11943,8 +11766,7 @@
     {
       "number": 5604,
       "blockedBy": [
-        5602,
-        5601
+        5602
       ]
     },
     {
@@ -11954,7 +11776,6 @@
         5541,
         4359,
         5598,
-        5596,
         5595
       ]
     },
@@ -12015,8 +11836,7 @@
     {
       "number": 4622,
       "blockedBy": [
-        4502,
-        4577
+        4502
       ]
     },
     {
