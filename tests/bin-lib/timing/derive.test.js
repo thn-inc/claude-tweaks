@@ -475,6 +475,8 @@ test('#1929: countGuardEvents counts the three guard event types and ignores the
   ];
   assert.deepEqual(countGuardEvents(events), { gateDenial: 2, wdAmbiguous: 1, wdDeny: 3 });
   assert.deepEqual(countGuardEvents([]), { gateDenial: 0, wdAmbiguous: 0, wdDeny: 0 });
+  // Inherited property names are not guard types.
+  assert.deepEqual(countGuardEvents([{ type: 'constructor' }, { type: 'toString' }, { type: '__proto__' }]), { gateDenial: 0, wdAmbiguous: 0, wdDeny: 0 });
 });
 
 // --- #3375 dispatch aggregation ---

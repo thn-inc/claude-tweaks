@@ -457,7 +457,8 @@ const GUARD_TYPES = { 'gate-denial': 'gateDenial', 'wd-ambiguous': 'wdAmbiguous'
 function countGuardEvents(events) {
   const out = { gateDenial: 0, wdAmbiguous: 0, wdDeny: 0 };
   for (const e of Array.isArray(events) ? events : []) {
-    const key = e && GUARD_TYPES[e.type];
+    // An own lookup: an event type of `constructor` or `toString` must not read an inherited value.
+    const key = e && Object.hasOwn(GUARD_TYPES, e.type) ? GUARD_TYPES[e.type] : null;
     if (key) out[key] += 1;
   }
   return out;
