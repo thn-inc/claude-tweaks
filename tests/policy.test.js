@@ -317,3 +317,10 @@ test('readRiskPolicy from a linked worktree reads the main checkout\'s control-m
   assert.strictEqual(risk.controlMode, true);
   assert.deepStrictEqual(risk.extraCategories, ['billing']);
 });
+
+test('readRiskPolicy with a non-string repoRoot throws a TypeError before calling readFile', () => {
+  const { readRiskPolicy } = require('../plugin/bin/lib/policy');
+  let called = false;
+  assert.throws(() => readRiskPolicy(null, { readFile: () => { called = true; return ''; } }), TypeError);
+  assert.strictEqual(called, false);
+});

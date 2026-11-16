@@ -1061,7 +1061,7 @@ test('AC5.4 (#5224): set values resolve from policy', () => {
 });
 
 // --- #4492: policy.yml located through the main checkout from a linked worktree ---
-const { resolvePolicyConfig } = require('../plugin/bin/lib/policy-schema');
+const { resolvePolicyConfig, resolveIntegrationModel, resolveForgeProbeTimeoutMs } = require('../plugin/bin/lib/policy-schema');
 
 function worktreeFixture(t, policy = 'integration-branch: develop\nworktree-always: true\n') {
   // realpath: the main-checkout lookup resolves symlinks (macOS /var -> /private/var).
@@ -1112,10 +1112,29 @@ test('AC5.1: resolvePolicyConfig, fake git runner — worktree absent, main pres
 
 test('AC5.1: resolvePolicyConfig, fake git runner — both absent: policyRaw null, policySource checkout, every key at its default', (t) => {
   const { wt } = worktreeFixture(t, null);
-  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile: realRead, keys: ['integration-branch'] });
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile: realRead, keys: ['integration-branch', 'worktree-always'] });
   assert.strictEqual(out.policyRaw, null);
   assert.strictEqual(out.policySource, 'checkout');
+  assert.strictEqual(out.policyPath, path.join(wt, '.claude-tweaks', 'policy.yml'));
   assert.strictEqual(out.result['integration-branch'].source, 'default');
+  assert.strictEqual(out.result['worktree-always'].source, 'default');
+});
+
+test('resolveIntegrationModel from a linked worktree honors the main checkout\'s integration-model pin', (t) => {
+  const { wt } = worktreeFixture(t, 'integration-model: local-merge\n');
+  assert.strictEqual(resolveIntegrationModel(wt), 'local-merge');
+});
+
+test('resolveForgeProbeTimeoutMs from a linked worktree reads the main checkout\'s gh-timeout-ms', (t) => {
+  const { wt } = worktreeFixture(t, 'gh-timeout-ms: 7000\n');
+  assert.strictEqual(resolveForgeProbeTimeoutMs(wt, { env: {} }), 7000);
+});
+
+test('auditPolicy from a linked worktree still reads CLAUDE.md at the worktree root', (t) => {
+  const { wt } = worktreeFixture(t);
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), 'integration-branch: release\n');
+  const keys = auditPolicy(wt).migratableKeys.map((row) => row.key);
+  assert.ok(keys.includes('integration-branch'));
 });
 
 test('AC1.1: resolvePolicyConfig from a linked worktree without policy.yml reads the main checkout\'s — integration-branch develop, policySource main-checkout', (t) => {

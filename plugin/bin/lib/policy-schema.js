@@ -826,8 +826,8 @@ function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   if (Number.isInteger(explicit) && explicit > 0) return explicit;
   const raw = (opts && opts.env ? opts.env : process.env).CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
-  // A non-string repoRoot has no policy.yml to read: skip to the default instead of letting
-  // path.join throw, which would break detectIntegrationModel's never-throws contract.
+  // A non-string repoRoot has no policy.yml to read (locatePolicyFile returns a null path): skip
+  // to the default, which keeps detectIntegrationModel's never-throws contract.
   const policyPath = locatePolicyFile(repoRoot).path;
   const policyRaw = policyPath === null ? null : readFileSafe(policyPath);
   return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
@@ -952,6 +952,7 @@ function detectIntegrationModel(repoRoot, opts = {}) {
 // `opts` (optional) forwards unchanged to detectIntegrationModel — see that
 // function's own comment for the mcpReachable override contract.
 function resolveIntegrationModel(repoRoot, opts = {}) {
+  // A non-string repoRoot locates no policy file (null path) and falls through to detection — deliberate.
   const policyPath = locatePolicyFile(repoRoot).path;
   const policyRaw = policyPath === null ? null : readFileSafe(policyPath);
   const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null });
@@ -974,7 +975,11 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 // rethrows the rest) — only the orchestration around them is shared. `root`
 // is returned too since a caller such as resolve-policy.js's
 // integration-model default needs it independent of any resolved key.
-// `cwd` (optional) replaces `process.cwd()` as that fallback root.
+// `cwd` (optional) replaces `process.cwd()` as that fallback root. The policy
+// file is found through locatePolicyFile (#4492), so from a linked worktree
+// without its own copy the main checkout's is read; `policyPath` is the file
+// read (null only for a non-string root) and `policySource` is `checkout` or
+// `main-checkout`.
 function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cwd }) {
   let root;
   try {
