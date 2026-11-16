@@ -777,8 +777,7 @@ test('AC5.1: a member with no grant labels at all keeps the lacks auto:merge rea
   const grants = { 8: { labels: [], pendingSince: null } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'leave-open');
-  assert.match(r.merge.reason, /^#8 lacks auto:merge and a matured auto:merge-pending/);
-  assert.doesNotMatch(r.merge.reason, /lacks auto:build/);
+  assert.strictEqual(r.merge.reason, '#8 lacks auto:merge and a matured auto:merge-pending (no auto:merge or auto:merge-pending label present)');
 });
 
 test('readGrants throwing resolves the merge half to leave-open with reason grants-unreadable (#1932 AC3)', () => {

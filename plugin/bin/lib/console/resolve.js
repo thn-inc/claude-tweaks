@@ -462,10 +462,13 @@ function mergeResolution(snapshot, deps) {
       const passedOver = Array.isArray(g.skippedUntrusted) && g.skippedUntrusted.length ? ` — ${g.skippedUntrusted.join('; ')}` : '';
       // A member with no merge grant at all keeps the grant-missing reason: naming
       // auto:build first would send the operator to a second withhold.
-      if (mat.state === 'no-build-grant' && (labels.includes('auto:merge') || labels.includes('auto:merge-pending'))) {
+      const noBuild = mat.state === 'no-build-grant';
+      const hasGrant = labels.includes('auto:merge') || labels.includes('auto:merge-pending');
+      if (noBuild && hasGrant) {
         return { resolution: 'leave-open', reason: `#${n} lacks auto:build — a merge grant counts only together with a live auto:build (${mat.reason})${passedOver}` };
       }
-      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${mat.reason})${passedOver}` };
+      const detail = noBuild ? 'no auto:merge or auto:merge-pending label present' : mat.reason;
+      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${detail})${passedOver}` };
     }
   }
   return { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' };
