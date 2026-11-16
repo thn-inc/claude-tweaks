@@ -43,13 +43,15 @@ files:
 - **Should feel:** independent. The tiebreak agent never sees the reporting agent's evidence or reasoning.
 - **Should understand:**
   - Every reply goes through `resolve-tiebreak`, which checks the quoted line against the file. An unusable reply still yields a can't-tell verdict, so every finding gets a line.
-  - A `standard` judge that raises a finding to `medium` or higher has not settled it. `resolve-tiebreak --tier standard` reports it as `escalated`, logs nothing, and the reviewer judges it again with one `[Use: Capable]` single-finding agent, whose verdict is the one logged.
+  - A `standard` judge that raises a finding to `medium` or higher has not settled it. `resolve-tiebreak --tier standard` reports it as `escalated`, logs nothing, and the reviewer judges it again with one `[Use: Capable]` single-finding agent, whose verdict is the one logged. That re-judge's entry carries the raised severity as `severityFloor`. If the Capable agent settles no verdict (can't-tell, or a failed or unusable reply), the finding still lands at the raised severity, so it reaches the console and not the digest. A Capable confirm or refute settles on its own verdict. The re-judge is one judge attempt beyond the three below.
   - A vacuity claim (lens 3f) cannot be confirmed by reading. Only an executed run confirms it, so a `confirmed` reply on one counts as can't-tell.
   - A failed, empty, timed-out or non-`DONE` chunk agent is re-dispatched once as a fresh chunk agent, its valid blocks discarded. A dispatched reviewer skips that re-dispatch for a timed-out chunk agent, whose keep-alive bound is already spent, and reads each of its findings inline instead. A second failure sends each of its findings to one single-finding agent. A finding the reply left out, or answered twice, gets one single-finding agent after the chunk is settled. A finding gets at most three judge attempts, and a failed last attempt resolves can't-tell. A dispatched reviewer reads a finding inline instead of a single-finding agent after a failed chunk re-dispatch, and when it has no `Agent` tool or a single-finding agent fails, and names each inline verdict in a `Tiebreak caveat:` line.
 - **Red flags:**
   - a finding is missing from the artifact
   - an agent prompt carries the reporter's evidence
   - every finding comes back can't-tell because dispatch failed and no fallback ran
+  - an `info` finding a Standard judge raised to `medium` or higher ends in the digest because its Capable re-judge failed
+  - a chunk holds an `info` finding together with a finding of any other severity
 
 ### 3. Read the outcome
 - **URL:** the review summary's `### Tiebreak` section; `decisions.md`; the Wrap-Up Review Console (pipeline) or the closing output (standalone)
@@ -74,7 +76,7 @@ files:
 - Created during the build of #3947, the second step of the unconfirmed-findings tiebreak project. The first step, #3945, built the resolver, the findings artifact and the archive coverage check.
 - Updated during the wrap-up of #4563: step 3 notes the two kinds of finding the console now settles with no verdict line of their own, a debate-confirmed finding and a contested pair's partner.
 - Updated during the build of #5540: step 2 judges findings one agent per chunk of up to 8, settled by one `resolve-tiebreak` call per chunk, with the per-chunk then per-finding failure ladder.
-- Updated during the build of #5541: step 2 plans chunks by judge tier, so `info` findings are judged at Standard and every other severity at Capable, with a raised finding judged again at Capable.
+- Updated during the build of #5541: step 2 plans chunks by judge tier, so `info` findings are judged at Standard and every other severity at Capable, with a raised finding judged again at Capable, whose entry carries the raised severity as a floor for a re-judge that settles nothing.
 - Related journeys:
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive side.
   - `settle-every-review-finding-at-the-console-3949.md`: what the Review Console then does with each can't-tell finding.
