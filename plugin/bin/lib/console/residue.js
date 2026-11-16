@@ -73,9 +73,13 @@ function unresolvedItems(consoleJson) {
 function pendingFilings(consoleJson, decisions) {
   if (!consoleJson || typeof consoleJson !== 'object' || !Array.isArray(consoleJson.filings)) return [];
   const filed = filedRecords(decisions);
+  const digested = digestedFindings(decisions);
   const items = Array.isArray(consoleJson.items) ? consoleJson.items : [];
   return consoleJson.filings.flatMap((entry) => {
     if (!entry || typeof entry.item !== 'string' || typeof entry.fingerprint !== 'string') return [];
+    // #4679: a previous-release run's `drop` item sits in `filings`; its default-selection re-run digests it, so
+    // a digested line settles the entry as a filed line does (pendingDigests clears on a filed line the same way).
+    if (digested.has(entry.fingerprint)) return [];
     if (filed.has(entry.fingerprint)) return [];
     const item = items.find((i) => i && i.id === entry.item);
     return [{
@@ -210,7 +214,7 @@ function digestRerunCommand({ consoleDir, pluginRoot }) {
 // #4170: a `filing-pending` item clears only on a logged filed/deduped line (FILED_LINE_RE), so the remedy
 // names the log lines, not just the create — a session that died after the create re-runs to a `deduped` entry,
 // which console-filings.js logs itself (#4026), leaving only its `logFailures` to hand-log.
-const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any `logFailures` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each `deduped` entry itself), via log-decision.js `--run` that console's dir, per wrap-up/review-console.md's Can't-tell filings";
+const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any `logFailures` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each `deduped` entry itself; a `drop` item's re-run logs its digested line instead), via log-decision.js `--run` that console's dir, per wrap-up/review-console.md's Can't-tell filings";
 
 // #4679: a `digest-pending` item clears only on a logged digested line (DIGESTED_LINE_RE).
 // DIGESTED_LINE_RE accepts only the `AUTO … Queue write: …` shape, so the remedy names the full command (no `--spec`).

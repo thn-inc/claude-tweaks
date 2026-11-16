@@ -703,6 +703,20 @@ test('AC3.1: a console whose can\'t-tell filings never ran reports the planned f
   assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
 });
 
+test('AC3.1 (old shape): a previous-release console with a drop item in `filings` stays filing-pending, then clears on the digested line (#4679)', () => {
+  const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const consoleJson = `${JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:a1', section: 'Low-confidence findings', resolution: 'filed', reason: 'r', tiebreak: { recommendation: 'drop' } }],
+    filings: [{ item: 'tiebreak:a1', fingerprint: 'consolefinding-0123abcd', title: 't' }],
+  })}\n`;
+  const fx = mainCheckoutWithRun({ consoleJson });
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles[0].items.map((i) => i.resolution), ['filing-pending']);
+  appendEntry({ runDir: fx.runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: new Date(2026, 9, 24, 10, 0, 0), step: 'Queue write', text: 'tiebreak:a1 digested (work-fingerprint consolefinding-0123abcd)', reversibility: 'n/a' }) });
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
+});
+
 test('--set-item needs no unattended ceiling (#4170)', async () => {
   const fx = mainCheckoutWithRun({ autonomy: 'trusted', consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'apply', reason: 'r' }] })}\n` });
   assert.strictEqual(await run(SET_ITEM(fx.runDir), baseDeps(fx, []).d), 0);

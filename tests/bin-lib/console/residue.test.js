@@ -447,6 +447,25 @@ test('an absent decisions.md fails closed: every planned filing is pending (#417
   assert.deepStrictEqual(readRunResidue(dir).consoles.map((c) => c.items.map((i) => i.resolution)), [['filing-pending']]);
 });
 
+// #4679: a previous-release (#3949) run put a `drop` item in `filings`; its printed re-run is now the default
+// selection, which digests it and logs the digested line, so that line must clear the filing too.
+test('an old console whose `filings` holds a drop item clears on its digested line, and stays pending without it (#4679)', () => {
+  const old = [{ id: 'tiebreak:aaaaaaaaaaaa', section: 'Low-confidence findings', resolution: 'filed', reason: 'r', tiebreak: { recommendation: 'drop' } }];
+  const digestedLine = '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa digested (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.';
+  const dir = tmpRun();
+  plannedFilingConsole(dir, `## /wrap-up\n${digestedLine}\n`, old);
+  assert.deepStrictEqual(readRunResidue(dir).consoles, []);
+  const dir2 = tmpRun();
+  plannedFilingConsole(dir2, `## /wrap-up\n${digestedLine.replace('digested (', 'already digested (')}\n`, old);
+  assert.deepStrictEqual(readRunResidue(dir2).consoles, [], 'an already-digested line clears it too');
+  const dir3 = tmpRun();
+  plannedFilingConsole(dir3, '## /wrap-up\n', old);
+  assert.deepStrictEqual(readRunResidue(dir3).consoles.map((c) => c.items.map((i) => i.resolution)), [['filing-pending']], 'control: with no digested line it is still pending');
+  const dir4 = tmpRun();
+  plannedFilingConsole(dir4, `## /wrap-up\n${digestedLine.replace('consolefinding-0123abcd', 'consolefinding-ffffffff')}\n`, old);
+  assert.deepStrictEqual(readRunResidue(dir4).consoles.map((c) => c.items.map((i) => i.resolution)), [['filing-pending']], 'a digested line for another fingerprint does not clear it');
+});
+
 test('a planned filing with no matching console item is still listed by its id (#4170)', () => {
   const dir = tmpRun();
   plannedFilingConsole(dir, '', []);
@@ -462,7 +481,7 @@ test('AC3.1: formatResidueLines names the default-selection console-filings.js r
   assert.ok(!lines.some((l) => l.includes('--only')), 'the filing re-run keeps the unattended shape: no --only');
   assert.ok(lines.some((l) => l.startsWith('      (<issues.json>: gh issue list --state all --json number,body')), lines.join('\n'));
   // The remedy names the log line that clears a filing-pending item (FILED_LINE_RE), `deduped` re-run included.
-  assert.ok(lines.some((l) => l.endsWith(`; file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings)`)), lines.join('\n'));
+  assert.ok(lines.some((l) => l.endsWith(`; file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself; a \`drop\` item's re-run logs its digested line instead), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings)`)), lines.join('\n'));
 });
 
 test('filingRerunCommand is the default (unattended) selection, names no --only and omits node without a plugin root (#4679)', () => {
