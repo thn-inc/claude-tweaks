@@ -15,6 +15,10 @@ This repo records a removal condition beside every deprecated behavior (CLAUDE.m
 
 A condition usually names a check. #3847's was `find . -path "*/.claude/worktrees/*/.claude-tweaks/pipelines/*" -maxdepth 6 -type d`, run from the main checkout. Run it and put the result in the PR. Past a sunset the removal proceeds regardless, so a hit is reported as abandoned state, not a blocker. Raw output can exceed GitHub's 65,536-character PR-body limit (#3847's was 15,008 lines): quote the exact command plus a hit/miss count, and say that is what you did.
 
+### A condition that names an issue is proved by caller searches, not by the issue
+
+A condition may name a trigger issue whose text never mentions the code it gates. #5535's comment tied the `resolve-refutation` verb to issue 3950 closing, and that issue's body names neither the verb nor its function. Read the issue's state, then prove the removal from caller searches for the verb, its function and every export, and put both results in the PR. Say in the PR that the issue does not name the code, so a reader does not take its closing as the proof.
+
 ### Delete the step; never renumber the survivors
 
 Other files cite steps by number. #3847 deleted `3.5.` from `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section C and left 3.6 onward alone.
@@ -45,13 +49,17 @@ A test that proves a section is excluded by asserting the removed text is absent
 
 `checkPipelineShadowGuard` in `plugin/bin/lib/hooks/pre-tool-use.js` still allows writes into a run dir that already exists in a worktree. Its comment had justified that by the copy-out guard. It now rests on its own ground: a write into an existing directory creates no new shadow. Decide for each such behavior whether it goes with the removed thing or stays with a rewritten rationale, and say which in the spec.
 
+### Give each of the removed thing's tests a verdict: deleted, already pinned, or retargeted
+
+A removed function's tests mix assertions about the function itself with assertions about code it wrapped. Delete the first kind with it. For each of the second kind, cite the surviving test that already pins that behavior, or move the assertion onto the survivor and show it go red. #5542's `listClaimNames` had three tests in `tests/bin-lib/issues/claim-store.test.js`, asserting three things: the name mapping was its own behavior (deleted); the `recursive=1` path and no-`-f` rule were already pinned by `listClaimEntries`' tests (deleted, with those tests cited in the plan); the `gh-absent` failure passthrough had no other pin, so it moved onto `listClaimEntries` and was shown red with the passthrough line removed. #5535's three pins in `tests/review-tiebreak-step-conformance.test.js` read the retired verb's own comment and docs line, so they went with that text. This is the per-assertion inventory `skill-prose-conformance-tests` asks for when retargeting pins.
+
 ## Decision Framework
 
 | A hit on the retired vocabulary in… | Verdict |
 |---|---|
 | live skill prose, `docs/donts.md`, `docs/skill-graph.md`, `docs/plugin-structure.md`, `.claude/skills/` | rewrite or delete |
 | a code comment, a test title, a test comment | rewrite; behavior unchanged unless the record says otherwise |
-| a test assertion | re-anchor (a sentinel) or retarget (a pin), never only delete |
+| a test assertion | re-anchor (a sentinel) or retarget (a pin); delete it outright only when what it pins was deleted too, or a surviving test you cite already pins it |
 | `docs/incident-log.md`, `CHANGELOG.md`, archived run `work/*.md`, `docs/superpowers/plans/*` | leave: history, not live guidance |
 | an unrelated step with the same number (Step 3.5 also exists in review, backlog refine, journeys, docs-health, routine status, attention mode) | leave |
 
