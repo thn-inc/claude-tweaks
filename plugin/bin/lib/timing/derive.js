@@ -206,7 +206,7 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
     const list = spans.get(name) || [];
     if (!list.length) {
       const unattributedStart = name === 'polish' && wrapUpStart !== null ? wrapUpStart : null;
-      return { phase: name, start: iso(unattributedStart), end: iso(unattributedStart), minutes: 0, ownMinutes: 0, source: 'unattributed', verify: [] };
+      return { phase: name, start: iso(unattributedStart), end: iso(unattributedStart), minutes: 0, ownMinutes: 0, source: 'unattributed', verify: [], spans: [] };
     }
     const start = Math.min(...list.map((s) => s.start));
     const end = Math.max(...list.map((s) => s.end));
@@ -282,7 +282,12 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
     }
   }
 
-  const phases = rows.map(({ _list, ...r }) => r);
+  // `spans`: each occurrence of the phase ({ start, end } ISO, start order). start/end
+  // above are first-start..last-end, which swallows a step that ran between two
+  // occurrences; phaseAt places by these.
+  const phases = rows.map(({ _list, ...r }) => (_list
+    ? { ...r, spans: _list.slice().sort((a, b) => a.start - b.start).map((s) => ({ start: iso(s.start), end: iso(s.end) })) }
+    : r));
   const totals = {
     // Wall-clock minutes covered by any phase — a union across every row's
     // spans (calls included), never a sum of ownMinutes, so it can never
@@ -324,19 +329,23 @@ function latestCiGatePerPr(ciGate) {
 
 const ZERO_TOKENS = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 });
 
-// (phases, t) -> the name of the innermost phase whose [start, end) span holds the
-// epoch-ms instant t (ties to the later start), skipping `source: 'unattributed'`
-// rows and rows with an unparseable bound; null when no span holds t. The one rule
-// joinTokens buckets usage rows by and step-yield.js places decision lines,
-// events and questions by.
+// (phases, t) -> the name of the phase whose single occurrence span ([start, end)) holds
+// the epoch-ms instant t, innermost first (ties to the later start), skipping
+// `source: 'unattributed'` rows and unparseable bounds; null when no span holds t. A row
+// carries its occurrences in `spans`; a row without the key (a timing.json written before
+// it existed) falls back to its start/end. The one rule joinTokens buckets usage rows by
+// and step-yield.js places decision lines, events and questions by.
 function phaseAt(phases, t) {
   let best = null;
   for (const p of Array.isArray(phases) ? phases : []) {
     if (p.source === 'unattributed') continue;
-    const start = ms(p.start);
-    const end = ms(p.end);
-    if (start === null || end === null || !(t >= start && t < end)) continue;
-    if (!best || (end - start) < (best.end - best.start) || ((end - start) === (best.end - best.start) && start > best.start)) best = { phase: p.phase, start, end };
+    const spans = Array.isArray(p.spans) ? p.spans : [p];
+    for (const s of spans) {
+      const start = ms(s.start);
+      const end = ms(s.end);
+      if (start === null || end === null || !(t >= start && t < end)) continue;
+      if (!best || (end - start) < (best.end - best.start) || ((end - start) === (best.end - best.start) && start > best.start)) best = { phase: p.phase, start, end };
+    }
   }
   return best ? best.phase : null;
 }

@@ -10,6 +10,7 @@
       "ownMinutes": 0,
       "source": "unattributed",
       "verify": [],
+      "spans": [],
       "tokens": {
         "input": 0,
         "output": 0,
@@ -48,6 +49,7 @@
       "ownMinutes": 0,
       "source": "unattributed",
       "verify": [],
+      "spans": [],
       "tokens": {
         "input": 0,
         "output": 0,
@@ -86,6 +88,12 @@
       "ownMinutes": 12,
       "source": "skill_invoked",
       "verify": [],
+      "spans": [
+        {
+          "start": "2026-10-17T09:58:00.000Z",
+          "end": "2026-10-17T10:10:00.000Z"
+        }
+      ],
       "tokens": {
         "input": 1,
         "output": 1,
@@ -126,6 +134,7 @@
       "ownMinutes": 0,
       "source": "unattributed",
       "verify": [],
+      "spans": [],
       "tokens": {
         "input": 0,
         "output": 0,
@@ -164,6 +173,7 @@
       "ownMinutes": 0,
       "source": "unattributed",
       "verify": [],
+      "spans": [],
       "tokens": {
         "input": 0,
         "output": 0,
@@ -202,6 +212,7 @@
       "ownMinutes": 0,
       "source": "unattributed",
       "verify": [],
+      "spans": [],
       "tokens": {
         "input": 0,
         "output": 0,
@@ -240,6 +251,7 @@
       "ownMinutes": 0,
       "source": "unattributed",
       "verify": [],
+      "spans": [],
       "tokens": {
         "input": 0,
         "output": 0,
@@ -278,6 +290,7 @@
       "ownMinutes": 0,
       "source": "unattributed",
       "verify": [],
+      "spans": [],
       "tokens": {
         "input": 0,
         "output": 0,
@@ -316,6 +329,7 @@
       "ownMinutes": 0,
       "source": "unattributed",
       "verify": [],
+      "spans": [],
       "tokens": {
         "input": 0,
         "output": 0,
@@ -354,6 +368,7 @@
       "ownMinutes": 0,
       "source": "unattributed",
       "verify": [],
+      "spans": [],
       "tokens": {
         "input": 0,
         "output": 0,

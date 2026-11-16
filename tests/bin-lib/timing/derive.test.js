@@ -692,3 +692,31 @@ test('#5556: phaseAt returns the innermost [start, end) span, the later start on
   assert.equal(phaseAt(phases, at(-1)), null);
   assert.equal(phaseAt(null, at(5)), null);
 });
+
+// build@0 test@10 review@20 test@40 review@45 close@60 (minutes)
+function interleavedEvents() {
+  const base = Date.parse('2026-01-01T00:00:00.000Z');
+  const ev = (m, type, skill) => ({ type, ts: new Date(base + m * 60000).toISOString(), ...(skill ? { skill: `claude-tweaks:${skill}` } : {}) });
+  return { base, events: [ev(0, 'skill_invoked', 'build'), ev(10, 'skill_invoked', 'test'), ev(20, 'skill_invoked', 'review'), ev(40, 'skill_invoked', 'test'), ev(45, 'skill_invoked', 'review'), ev(60, 'close-run')] };
+}
+
+test('#5556: a phase that ran twice does not swallow the step between its occurrences (per-occurrence spans)', () => {
+  const { base, events } = interleavedEvents();
+  const phases = derivePhases({ events }).phases;
+  const m = (min) => base + min * 60000;
+  const byPhase = Object.fromEntries(phases.map((p) => [p.phase, p]));
+  assert.deepEqual(byPhase.review.spans.map((s) => [Date.parse(s.start) - base, Date.parse(s.end) - base]), [[20 * 60000, 40 * 60000], [45 * 60000, 60 * 60000]]);
+  assert.deepEqual(byPhase.polish.spans, [], 'an unattributed row has no spans');
+  assert.equal(phaseAt(phases, m(25)), 'review', 'inside the first review, though test runs first-start..last-end');
+  assert.equal(phaseAt(phases, m(42)), 'test');
+  assert.equal(phaseAt(phases, m(50)), 'review');
+  assert.equal(phaseAt(phases, m(15)), 'test');
+  // A row without `spans` (a timing.json written before the key) falls back to start/end.
+  const legacy = phases.map(({ spans: _spans, ...p }) => p);
+  assert.equal(phaseAt(legacy, m(25)), 'test', 'the old first-start..last-end rule, kept only for rows without spans');
+  // joinTokens places by the same rule.
+  const rows = [{ ts: new Date(m(25)).toISOString(), role: 'assistant', inputTokens: 7 }];
+  const joined = joinTokens(phases, rows);
+  assert.equal(joined.phases.find((p) => p.phase === 'review').tokens.input, 7);
+  assert.equal(joined.phases.find((p) => p.phase === 'test').tokens.input, 0);
+});

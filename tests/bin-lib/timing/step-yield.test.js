@@ -234,13 +234,65 @@ test('judgeNoneUnparseable: a judge: none line parseTiebreakLine rejects counts 
   assert.equal(review.decisions.STAGED, 1);
 });
 
-test('judge: none on a line parseTiebreakLine accepts keeps that parse\'s verdict and lens, outcome none', () => {
+test('a judge: none inside a quoted Evidence is the quote, not the marker: the refuted line counts drop', () => {
   const line = `- AUTO ${hms(at(1250))} — Tiebreak tiebreak:0123456789ab: lens "3b" finding plugin/b.js:30 dropped: refuted by tiebreak. Evidence: plugin/b.js:30 "judge: none". Severity: low. Reversibility: high.`;
   const f = step(derive(buildRun({ lines: [line] })), 'review').findings;
-  assert.equal(f.tiebreak.byOutcome.none, 1);
-  assert.equal(f.tiebreak.byOutcome.drop, 0);
+  assert.equal(f.tiebreak.byOutcome.none, 0);
+  assert.equal(f.tiebreak.byOutcome.drop, 1);
   assert.equal(f.tiebreak.byVerdict.refuted, 1);
   assert.deepEqual(Object.keys(f.byLens), ['3b']);
+});
+
+test('judge: none before the Evidence clause on a line parseTiebreakLine accepts keeps that parse\'s verdict and lens, outcome none', () => {
+  const line = `- AUTO ${hms(at(1250))} — Tiebreak tiebreak:0123456789ab: lens "3b" finding plugin/b.js:30 dropped: refuted by tiebreak. Evidence: plugin/b.js:30 "x". Severity: low. Reversibility: high.`;
+  const marked = line.replace('finding plugin/b.js:30 dropped', 'finding plugin/b.js:30 judge: none dropped');
+  // The marker breaks the accepted shape, so the verdict is unsettled; the lens is then unknown.
+  const f = step(derive(buildRun({ lines: [marked] })), 'review').findings;
+  assert.equal(f.tiebreak.byOutcome.none, 1);
+  assert.equal(f.tiebreak.byVerdict.unsettled, 1);
+});
+
+test('interleaved phases: a pair line inside the first review of test, review, test, review counts under review', () => {
+  const events = [[0, 'skill_invoked', { skill: 'claude-tweaks:build' }], [600, 'skill_invoked', { skill: 'claude-tweaks:test' }], [1200, 'skill_invoked', { skill: 'claude-tweaks:review' }],
+    [2400, 'skill_invoked', { skill: 'claude-tweaks:test' }], [2700, 'skill_invoked', { skill: 'claude-tweaks:review' }], [3600, 'close-run', {}]];
+  const lines = [entry(1500, 'AUTO', 'Reproduction', 'lens "3a" finding plugin/a.js:10 reproduced. Confirmed.')];
+  const y = derive(buildRun({ events, lines }));
+  assert.equal(step(y, 'review').findings.both, 1);
+  assert.equal(step(y, 'test').findings, null);
+  assert.equal(step(y, 'review').decisions.AUTO, 1);
+});
+
+test('a run-state.json or timing.json that parses to a non-object is recorded, never silently absent', () => {
+  const dir = buildRun({ timing: false, state: false });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), '[1,2]');
+  fs.writeFileSync(path.join(dir, 'timing.json'), '7');
+  const y = derive(dir);
+  assert.equal(y.sources.runState, false);
+  assert.equal(y.sources.timing, false);
+  assert.deepEqual(y.unparsed.samples.sort(), ['run-state.json: not a JSON object', 'timing.json: not a JSON object']);
+  assert.equal(y.unparsed.count, 2);
+});
+
+test('placement: within a ## section a clock never lands before the section\'s previous line, so a backwards clock moves to the next day', () => {
+  const t = (d, h, m, s = 0) => new Date(2026, 10, d, h, m, s);
+  const dir = tmpRun('sections');
+  const events = [[t(12, 23, 0), 'skill_invoked', { skill: 'claude-tweaks:build' }], [t(12, 23, 55), 'skill_invoked', { skill: 'claude-tweaks:test' }],
+    [t(13, 8, 0), 'skill_invoked', { skill: 'claude-tweaks:review' }], [t(13, 9, 30), 'skill_invoked', { skill: 'claude-tweaks:wrap-up' }], [t(14, 20, 0), 'close-run', {}]];
+  for (const [when, type, data] of events) atClock(when, () => appendEvent(dir, type, data));
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ createdAt: t(12, 23, 0).toISOString(), updatedAt: t(14, 20, 0).toISOString() }));
+  const line = (when, text) => formatEntry({ status: 'SKIP', now: when, step: 'timing', text, reversibility: 'n/a' });
+  fs.writeFileSync(path.join(dir, 'decisions.md'), [
+    '## A', line(t(12, 23, 50), 'first'), line(t(12, 0, 10), 'second, after midnight'), line(t(12, 9, 0), 'third, 09:00 next day'), line(t(12, 8, 0), 'fourth, 08:00 the day after that'),
+    '## B', line(t(12, 8, 30), 'a new section starts over'),
+  ].join('\n') + '\n');
+  const y = derive(dir);
+  // 23:50 d12 -> build; 00:10 d13 -> test; 09:00 d13 -> review (wrap-up opens 09:30);
+  // the later 08:00 goes to d14 08:00 -> wrap-up (open until d14 20:00); section B restarts: 08:30 d13 -> review.
+  assert.equal(step(y, 'build').decisions.SKIP, 1);
+  assert.equal(step(y, 'test').decisions.SKIP, 1);
+  assert.equal(step(y, 'review').decisions.SKIP, 2, 'the 09:00 line and section B\'s 08:30 line (a section restarts at the window start)');
+  assert.equal(step(y, 'wrap-up').decisions.SKIP, 1, 'the 08:00 line after 09:00 lands on the next day');
+  assert.equal(y.unattributed.decisions.SKIP, 0);
 });
 
 test('openWindow: no events and no updatedAt leaves clock lines unattributed, no throw', () => {
@@ -382,7 +434,7 @@ test('single-read-coverage and relabel lines count in no finding total; a relabe
 
 test('a call-N row is a step; a nested phase wins over its call', () => {
   const events = [[0, 'skill_invoked', { skill: 'claude-tweaks:flow' }], [60, 'skill_invoked', { skill: 'claude-tweaks:build' }], [600, 'close-run', {}]];
-  const y = derive(buildRun({ events, lines: [entry(120, 'SKIP', 'timing', 'inside build'), entry(30, 'SKIP', 'timing', 'inside the call only')] }));
+  const y = derive(buildRun({ events, lines: [entry(30, 'SKIP', 'timing', 'inside the call only'), entry(120, 'SKIP', 'timing', 'inside build')] }));
   assert.deepEqual(y.steps.map((s) => s.phase), ['call-1', 'build']);
   assert.equal(step(y, 'build').decisions.SKIP, 1);
   assert.equal(step(y, 'call-1').decisions.SKIP, 1);
@@ -422,11 +474,13 @@ test('KEY_PATHS names every key the yield carries', () => {
   for (const k of KEY_PATHS) assert.deepEqual(Object.keys(k).sort(), ['nullable', 'path', 'type']);
 });
 
-test('KEY_PATHS: every documented non-unattributed path the fixture can reach is present in the output', () => {
-  const present = leafPaths(derive(buildRun()));
+test('KEY_PATHS: every documented steps[], sources and top-level path is present in the with-timing fixture output', () => {
+  // Nullable paths are reachable here too: the fixture's timing.json has token totals, a
+  // joined question and a review step with findings. An object-valued path (`steps[].tokens`,
+  // `steps[].findings`) is present when it is a null leaf in some step or has leaves beneath it.
+  const present = [...leafPaths(derive(buildRun()))];
   const reachable = KEY_PATHS.filter((k) => k.path.startsWith('steps[]') || k.path.startsWith('sources') || /^(schemaVersion|runDir|generatedAt)$/.test(k.path));
-  const missing = reachable.filter((k) => !present.has(k.path) && !['steps[].findings.byLens.<lens>.tiebreak.byVerdict.<verdict>'].includes(k.path) && !k.path.endsWith('findings') && !k.nullable).map((k) => k.path);
-  assert.deepEqual(missing, []);
+  assert.deepEqual(reachable.filter((k) => !present.some((p) => p === k.path || p.startsWith(`${k.path}.`))).map((k) => k.path), []);
 });
 
 // ---- writeStepYield ----

@@ -137,7 +137,9 @@ function classifyLine(rawLine, bucket) {
   const line = rawLine.startsWith('- ') ? rawLine : `- ${rawLine}`;
   const tiebreak = parseTiebreakLine(line);
   const pair = classifyPairLine(line);
-  if (rawLine.includes(JUDGE_NONE)) {
+  // `judge: none` is the line's own marker, never text inside a quoted `Evidence:`.
+  const evidenceAt = rawLine.indexOf(' Evidence: ');
+  if ((evidenceAt === -1 ? rawLine : rawLine.slice(0, evidenceAt)).includes(JUDGE_NONE)) {
     const lens = (tiebreak && tiebreak.lens) || (pair && pair.lens) || UNKNOWN_LENS;
     countTiebreak(bucket, lens, tiebreak ? tiebreakMeaning(tiebreak).verdict : 'unsettled', 'none');
     return;
@@ -153,14 +155,17 @@ function classifyLine(rawLine, bucket) {
 
 // A line's clock -> epoch ms, or null when it cannot be placed. An ISO clock is used as
 // is. A local HH:MM:SS goes on the earliest local calendar day that puts it inside the
-// run window widened by WINDOW_PAD_MS each side; a window open on either side, or no day
-// that fits, gives null (the writer's clock is local, so only the window can say which day).
-function placeClock(clock, window) {
+// run window widened by WINDOW_PAD_MS each side and not before `notBefore` (the previous
+// placed line of its section; entries are appended to a section in write order); a window
+// open on either side, or no day that fits, gives null (the writer's clock is local, so
+// only the window can say which day).
+function placeClock(clock, window, notBefore = -Infinity) {
   if (!clock) return null;
   if (clock.iso) { const t = Date.parse(clock.iso); return Number.isFinite(t) ? t : null; }
   if (!(clock.h < 24 && clock.m < 60 && clock.s < 60)) return null;
   if (!window || !Number.isFinite(window.start) || !Number.isFinite(window.end)) return null;
-  const lo = window.start - WINDOW_PAD_MS;
+  const winLo = window.start - WINDOW_PAD_MS;
+  const lo = Math.max(winLo, notBefore);
   const hi = window.end + WINDOW_PAD_MS;
   const first = new Date(lo);
   for (let i = 0; i <= DAY_SCAN_MAX; i++) {
@@ -193,10 +198,16 @@ function readJsonSource(file, label, top) {
   const r = readSource(file);
   if (r.absent) return { present: false, value: null };
   if (r.error) { addUnparsed(top, `${label}: unreadable (${r.error})`); return { present: false, value: null }; }
-  try { return { present: true, value: JSON.parse(r.text) }; } catch (err) {
+  let value;
+  try { value = JSON.parse(r.text); } catch (err) {
     addUnparsed(top, `${label}: unparseable (${err && err.name})`);
     return { present: false, value: null };
   }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    addUnparsed(top, `${label}: not a JSON object`);
+    return { present: false, value: null };
+  }
+  return { present: true, value };
 }
 
 function decisionFiles(runDir, top) {
@@ -310,6 +321,7 @@ function deriveStepYield(runDir, { now = new Date() } = {}) {
   for (const { ev, t } of asks) {
     const j = joined.get(ev) || null;
     const waited = j && t >= j.ask.askMs ? Math.round((t - j.ask.askMs) / 6000) / 10 : null;
+    // A known ask time that no span holds falls back to the answer time's step.
     const b = (j && bucketFor(j.ask.askMs) !== unattributed) ? bucketFor(j.ask.askMs) : bucketFor(t);
     b.questions.push({
       question: texts.get(ev).join(' / '), askedAt: j ? j.ask.askTs : null, answeredAt: ev.ts,
@@ -324,9 +336,17 @@ function deriveStepYield(runDir, { now = new Date() } = {}) {
     if (r.absent) continue;
     if (r.error) { addUnparsed(top, `${path.relative(runDir, file) || file}: unreadable (${r.error})`); continue; }
     sources.decisions = true;
+    // placeEntry appends each entry at the end of its `## ` section, so within a section
+    // lines are in write order: a local clock never lands before the section's previous
+    // placed line. A section's first line takes the earliest instant in the window.
+    let previous = -Infinity;
     for (const line of r.text.split(/\r?\n/)) {
+      if (line.startsWith('## ')) previous = -Infinity;
       if (isStructuralLine(line)) continue;
-      classifyLine(line, bucketFor(placeClock(lineClock(line), window)));
+      const clock = lineClock(line);
+      const t = placeClock(clock, window, previous);
+      if (t !== null && clock && !clock.iso) previous = t;
+      classifyLine(line, bucketFor(t));
     }
   }
 
