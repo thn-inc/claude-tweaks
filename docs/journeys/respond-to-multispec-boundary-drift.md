@@ -32,7 +32,7 @@ files:
 
 5. **Finish the batch with an unpolluted curation diff** — Let the run reach the consolidated Review Console and batch curation.
    - **Action:** `multispec-batch-curation.md`'s batch scope derives from `git merge-base --end-of-options HEAD "origin/{integration-branch}"` to `HEAD`, so the upstream commits the boundary merges brought in are excluded from the batch diff.
-   - **Check:** With zero boundary merges, the merge-base is the batch's starting commit — the diff is byte-identical to the old behavior. `manifest.yml` does not record that commit: `manifest-init` (#3035) never writes the legacy `baseSha` key, nothing reads it, and an older manifest that still carries one keeps it untouched on rewrite.
+   - **Check:** With zero boundary merges, the merge-base is the batch's starting commit — the diff is byte-identical to the old behavior. `manifest.yml` does not record that commit: `manifest-init` (#3035) never writes the legacy `baseSha` key, nothing reads it, and an older manifest that still carries one loses the line on its next rewrite.
 
 ## Outcome
 
