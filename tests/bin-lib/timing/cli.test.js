@@ -316,15 +316,17 @@ test('#3375 AC4: an empty transcript, an orphan transcript, and a user-lines-onl
   assert.match(r.stdout, /^\| standard \| 2 \|/m);
 });
 
-test('#3375 AC5.1: a transcript-requested run with no subagent data gains exactly one new key, dispatches, with the not-found reason', async () => {
+test('#3375 AC5.1: a transcript-requested run with no subagent data gains exactly the new keys dispatches and questions, with the not-found reason', async () => {
   const dir = tmpRun(true);
   const r = await run(['--run', dir, '--transcript', TFIX, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   const json = readTiming(dir);
   // the #1929 key set for this run
   const before = ['runDir', 'generatedAt', 'phases', 'totals', 'unattributed', 'transcripts'];
-  assert.deepEqual(Object.keys(json).filter((k) => k !== 'dispatches').sort(), before.sort());
-  assert.deepEqual(Object.keys(json).filter((k) => !before.includes(k)), ['dispatches']);
+  // #5556: questions ([] here: the transcript holds no AskUserQuestion) follows dispatches
+  assert.deepEqual(Object.keys(json).filter((k) => k !== 'dispatches' && k !== 'questions').sort(), before.sort());
+  assert.deepEqual(Object.keys(json).filter((k) => !before.includes(k)), ['dispatches', 'questions']);
+  assert.deepEqual(json.questions, []);
   assert.match(json.dispatches.notFound, /^no subagents\/ directory at /);
   assert.deepEqual(Object.keys(json.dispatches), ['notFound']);
   assert.match(r.stdout, /^dispatches: subagent transcripts not found \(no subagents\/ directory at .+\)$/m);

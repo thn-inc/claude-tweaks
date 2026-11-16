@@ -29,7 +29,7 @@ files:
 - **Should feel:** one answer every later step reuses. The console, the ledger gate, the insights step and the memory writes all branch on the same two words.
 - **Should understand:**
   - Control mode applies when the line reads `control-mode on` and `consoleAutoResolve true`, whatever the `source`. An explicit `autonomy` value wins over control mode and reports `source explicit`; an explicit lower tier turns the carry route off.
-  - Control mode implies the `unattended` capability set and adds no capability of its own.
+  - Control mode implies the `unattended` capability set and adds exactly one capability, `ownedUpstreamFiling` (#4621), which holds at every ceiling.
   - An invalid `autonomy` value resolves `supervised` with `source invalid-autonomy`. An unreadable policy exits 3.
 - **Red flags:**
   - the ledger gate converging while the console renders a human prompt in the same run

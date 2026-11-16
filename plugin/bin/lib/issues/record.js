@@ -4,7 +4,7 @@
 // skills, /capture, /specify, /backlog, and /dispatch is exposed here (defined in the
 // sub-modules below); other modules import from this file, never their own copies. No network.
 //
-// #2805: split into cohesive sub-modules (four then, a fifth added in #4618) — this
+// #2805: split into cohesive sub-modules (six: four then, a fifth added in #4618, a sixth in #4615) — this
 // file is a thin aggregator that re-exports the exact same public API from them, so every
 // existing `require('./record')`/`require('../issues/record')` call site
 // (or a re-require of this same path from any depth) keeps working unchanged:
@@ -14,6 +14,8 @@
 //   - record-dependencies.js — dependency/blocker/sub-issue query building
 //   - record-risk-flags.js  — the `Risk-flags:` body line: parseRiskFlags and its
 //                             sanctioned writers (#4618)
+//   - record-acceptance-target.js — the `Acceptance-target:` body line: parseAcceptanceTarget
+//                             and itemOverrideOf (#4615)
 // It also re-exports fenceFor/fencedBlock/extractSection, the fence and section
 // primitives that live in ../markdown-blocks.js.
 // New code that only needs one boundary's exports may require that
@@ -47,6 +49,8 @@ const {
   RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
 } = require('./record-risk-flags');
 
+const { parseAcceptanceTarget, itemOverrideOf } = require('./record-acceptance-target');
+
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, normalizeLabelNames, parseRecordFacets,
@@ -55,5 +59,6 @@ module.exports = {
   buildNativeSubIssuesQuery, buildNativeParentQuery, buildAuthorAssociationQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, typeOf, extractSection,
   RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  parseAcceptanceTarget, itemOverrideOf,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,
 };

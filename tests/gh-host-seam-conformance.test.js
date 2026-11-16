@@ -300,7 +300,7 @@ test('AC3.1: every gh spawn under plugin/bin/ routes through ghOptions', () => {
 // (backlog-grant-gate.js). The spawn scan above cannot see a CLI that drops either half, and the CLI
 // then splits one record across two hosts on a GHE origin (found in #4505's review), so the roster
 // is pinned here.
-const PIN_WIRED = ['accept-entry.js', 'acceptance-packet.js', 'activity-gather.js', 'ci-health.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
+const PIN_WIRED = ['accept-entry.js', 'accept-park.js', 'acceptance-packet.js', 'activity-gather.js', 'ci-health.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
   'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-claim.js', 'remote-branch-collision.js', 'repair-claim.js', 'resolved-refusal.js'];
 
 test('review (#4505): every CLI that pins its explicit --repo host keeps both halves of the wiring, and no unlisted CLI wires it', () => {
@@ -403,12 +403,13 @@ const NOT_ORIGIN = {
   'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps an ungated `originSpecOf(remote)` (the seam's normalized read, #4794), only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
   'lib/wrap-up/engine-verify.js': { count: 2, reason: "carrier-commit's and reference-repairs' `parseRepo(<origin>)` pass only owner/repo to deps.gh, a ghOptions-wrapped runner, so the host is the seam's choice, never the parsed one. The acceptance-labeling check's origin goes through the gate (resolveCheckRepo, #4805), which ORIGIN_GATED lists" },
   'lib/reconcile/pr-state-batch.js': { count: 1, reason: "githubOrigin keeps the parse only when its host is github.com, and the batch query pins `--hostname github.com`" },
+  'lib/issues/upstream-ownership.js': { count: 1, reason: "#4621: ownerContextFromOrigin's `originSpecOf(remoteUrl)` is a pure ownership read that makes no gh call; it needs the host itself (a non-github.com host routes `external`), which the gate would refuse instead of returning" },
 };
 
 // The files whose code calls gateOriginRepo(, the defining lib/repo-resolve.js excluded.
 const ORIGIN_GATED = ['materialize.js', 'lib/compose-subject.js', 'release-claim.js', 'repair-claim.js', 'preflight-records.js',
   'parent-gate.js', 'resolved-refusal.js', 'link-records.js', 'fetch-sub-issues.js', 'backlog-grant-gate.js',
-  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js', 'claim-targets.js', 'stale-claim-pr.js', 'lib/driver/steps.js'];
+  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js', 'claim-targets.js', 'stale-claim-pr.js', 'lib/driver/steps.js', 'accept-park.js'];
 
 // A gateOriginRepo( call in code; blank mode leaves a name inside a string or comment unseen.
 const callsGate = (raw) => /(?<![\w$])gateOriginRepo\s*\(/.test(stripComments(raw, BLANK));
@@ -474,8 +475,9 @@ test('AC9.2: no plugin/bin file reads the origin through parseRepo outside NOT_O
   // site onto the gate (a deliberate removal, not lost recall), so it is 8; #4805 moved engine-verify.js's
   // acceptance-labeling reads (two sites) onto the gate the same way, so it is 6. #4794 moved stale-claim-pr.js's
   // one site onto the gate (its origin now goes through gateOriginRepo, a deliberate removal), so it is 5.
+  // #4621 added upstream-ownership.js's one ungated pure read, so it is 6.
   // Raise it as sites are added, never lower it otherwise.
-  assert.ok(matched >= 5, `matched only ${matched} origin-reading parseRepo sites under plugin/bin/ (floor 5): the matcher stopped matching`);
+  assert.ok(matched >= 6, `matched only ${matched} origin-reading parseRepo sites under plugin/bin/ (floor 6): the matcher stopped matching`);
   for (const [rel, { count }] of Object.entries(NOT_ORIGIN)) {
     assert.equal(seen[rel], count, `${rel}: expected exactly ${count} origin-reading parseRepo site(s), saw ${seen[rel]} — re-read the lines and settle the entry`);
   }

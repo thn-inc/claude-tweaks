@@ -11,11 +11,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  archiveRunDir, decideArchive, decideArchiveCore, readConsoleState, isOrphanedMint,
+  archiveRunDir, decideArchiveCore, readConsoleState,
   archiveMerged, prefetchArchivePrStates, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
-  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin,
-  classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
+  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, archiveRunCommand, compareWorkTwin,
+  classifyRunDir, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, runRecordSet, inFlightRecords,
   consoleResidue, consoleResidueHint, filingRerunRemedy, digestRerunRemedy,
   unfiledCantTellFindings, CANT_TELL_UNFILED_HINT, countOwnerlessNonClean,
@@ -159,10 +159,10 @@ function residueRunDir(consoleBody, { specBody } = {}) {
 }
 const heldItem = (resolution) => ({ id: 'review-debate-deviation.md', section: 'Contested findings', resolution, reason: 'r' });
 
-test('AC6: readConsoleState: a resolved console holding a keep-staged item reads residue, and decideArchive refuses it', () => {
+test('AC6: readConsoleState: a resolved console holding a keep-staged item reads residue, and decideArchiveCore refuses it', () => {
   const runDir = residueRunDir({ resolved: true, items: [heldItem('keep-staged')] });
   assert.strictEqual(readConsoleState(runDir), 'residue');
-  assert.deepStrictEqual(decideArchive({ state: 'MERGED' }, readConsoleState(runDir)), { action: 'skip', reason: 'console-residue' });
+  assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, readConsoleState(runDir)), { action: 'skip', reason: 'console-residue' });
 });
 test('AC2: readConsoleState: a resolved console holding a pending item reads residue', () => {
   assert.strictEqual(readConsoleState(residueRunDir({ resolved: true, items: [heldItem('pending')] })), 'residue');
@@ -170,7 +170,7 @@ test('AC2: readConsoleState: a resolved console holding a pending item reads res
 test('readConsoleState: an acknowledged residue console reads resolved and archives', () => {
   const runDir = residueRunDir({ resolved: true, residueAcknowledgedAt: '2026-10-24T10:00:00Z', items: [heldItem('keep-staged')] });
   assert.strictEqual(readConsoleState(runDir), 'resolved');
-  assert.deepStrictEqual(decideArchive({ state: 'MERGED' }, readConsoleState(runDir)), { action: 'archive' });
+  assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, readConsoleState(runDir)), { action: 'archive' });
 });
 test('readConsoleState: an unresolved item whose staged file is gone is not residue (missing semantics kept)', () => {
   const runDir = residueRunDir({ resolved: true, items: [heldItem('keep-staged')] });
@@ -1053,7 +1053,7 @@ test('#1854: an auto-resolve console.json ({resolved:true, mode:"auto-resolve", 
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-auto-resolve-'));
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, mode: 'auto-resolve', at: '2026-09-06T12:00:00.000Z', ceiling: 'unattended', items: [], merge: { resolution: 'merge', reason: 'x' } }));
   assert.strictEqual(readConsoleState(runDir), 'resolved');
-  const decision = decideArchive({ state: 'MERGED' }, readConsoleState(runDir));
+  const decision = decideArchiveCore({ state: 'MERGED' }, readConsoleState(runDir));
   assert.notStrictEqual(decision.reason, 'console-never-rendered');
   assert.deepStrictEqual(decision, { action: 'archive' });
 });
@@ -1262,10 +1262,89 @@ test('isArchivedPendingTrackedMove: false when a gitignored entry still lives al
   assert.equal(isArchivedPendingTrackedMove(root, runDir), false);
 });
 
-test('archivedPendingTrackedMoveCommand: a paste-ready archive-run command naming the run dir', () => {
-  const command = archivedPendingTrackedMoveCommand('/x/.claude-tweaks/pipelines/2026-01-01T000000-spec-1');
+test('archivedPendingTrackedMoveCommand: the archive-tracked-shells CLI command naming the root (#3975)', () => {
+  assert.equal(
+    archivedPendingTrackedMoveCommand('/x'),
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/x"',
+  );
+});
+
+test('archiveRunCommand: a paste-ready archive-run command naming the run dir', () => {
+  const command = archiveRunCommand('/x/.claude-tweaks/pipelines/2026-01-01T000000-spec-1');
   assert.match(command, /bin\/hooks\.js" archive-run --run/);
   assert.match(command, /2026-01-01T000000-spec-1/);
+});
+
+// #3975: a clean-twin shell — the archive twin carries a clean run-state, only tracked work/ is live.
+function makeShell(root, runId, { twinWork = '# w\n', liveWork = '# w\n' } = {}) {
+  commitPath(root, `.claude-tweaks/pipelines/${runId}/work/w-spec.md`, liveWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/work/w-spec.md`, twinWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/run-state.json`, JSON.stringify({ status: 'clean' }));
+  return path.join(root, '.claude-tweaks', 'pipelines', runId);
+}
+
+test('AC1.4: without worktree-always only one shell is archived in place per pass (#3975)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const a = makeShell(root, '2026-09-01T100000-spec-1');
+  const b = makeShell(root, '2026-09-01T110000-spec-2');
+  const result = archiveMerged({ cwd: root });
+  assert.equal(result.archived.length, 1, JSON.stringify(result));
+  const left = [a, b].find((d) => !result.archived.includes(d));
+  const skip = result.skipped.find((s) => s.runDir === left);
+  assert.ok(skip, JSON.stringify(result));
+  assert.equal(skip.reason, 'archived-pending-tracked-move');
+  assert.equal(skip.command, archivedPendingTrackedMoveCommand(root));
+});
+
+test('AC1.5: a conflicting clean-twin shell does not take the in-place slot and keeps its twin clean (#3975)', () => {
+  const root = fs.realpathSync(makeRepo());
+  // iterRunDirsWithState walks newest id first, so the differing shell is visited first.
+  const differing = makeShell(root, '2026-09-01T110000-spec-2', { twinWork: '# other\n' });
+  const identical = makeShell(root, '2026-09-01T100000-spec-1');
+  const result = archiveMerged({ cwd: root });
+  assert.deepEqual(result.archived, [identical], JSON.stringify(result));
+  const skip = result.skipped.find((s) => s.runDir === differing);
+  assert.ok(skip, JSON.stringify(result));
+  assert.equal(skip.reason, 'archived-pending-tracked-move');
+  assert.equal(skip.command, archivedPendingTrackedMoveCommand(root));
+  const twinState = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(differing), 'run-state.json'), 'utf8'));
+  assert.equal(twinState.status, 'clean');
+  assert.equal(fs.existsSync(path.join(differing, 'work', 'w-spec.md')), true, 'the differing shell keeps its live work/');
+  assert.equal(skip.shell, true);
+});
+
+test('AC1.7: a failed in-place attempt on a clean-twin shell leaves the twin clean (#3975)', (t) => {
+  const root = fs.realpathSync(makeRepo());
+  const shellDir = makeShell(root, '2026-09-01T100000-spec-1');
+  t.mock.method(cp, 'execFileSync', (cmd, args, opts) => {
+    if (cmd === 'git' && Array.isArray(args) && args.includes('commit')) throw new Error('simulated failure: git commit');
+    return execFileSync(cmd, args, opts);
+  });
+  const result = archiveMerged({ cwd: root });
+  assert.ok(!result.archived.includes(shellDir), JSON.stringify(result));
+  assert.ok(result.skipped.some((s) => s.runDir === shellDir), JSON.stringify(result));
+  const twinState = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(shellDir), 'run-state.json'), 'utf8'));
+  assert.equal(twinState.status, 'clean');
+});
+
+test('AC1.6: a non-clean-twin split state keeps the archive-run completion and is not capped (#3975)', () => {
+  const split = (root, runId) => {
+    commitPath(root, `.claude-tweaks/pipelines/${runId}/work/w-spec.md`, '# w\n');
+    fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId), { recursive: true });
+    return path.join(root, '.claude-tweaks', 'pipelines', runId);
+  };
+  const rootA = fs.realpathSync(makeRepo());
+  setWorktreeAlways(rootA, true);
+  const dirA = split(rootA, '2026-09-01T100000-spec-1');
+  const skip = archiveMerged({ cwd: rootA }).skipped.find((s) => s.runDir === dirA);
+  assert.ok(skip);
+  assert.equal(skip.reason, 'archived-pending-tracked-move');
+  assert.match(skip.command, /archive-run --run/);
+
+  const rootB = fs.realpathSync(makeRepo());
+  const dirs = [split(rootB, '2026-09-01T100000-spec-1'), split(rootB, '2026-09-01T110000-spec-2')];
+  const result = archiveMerged({ cwd: rootB });
+  assert.deepEqual([...result.archived].sort(), [...dirs].sort(), JSON.stringify(result));
 });
 
 // AC2 (Deliverable 2): under `worktree-always: true`, the split state is a
@@ -1312,8 +1391,8 @@ test('archiveMerged: split-state run dir archives cleanly on one pass when workt
 });
 
 // --- #1732: classifyRunDir — the single classifier every one of the five
-// lifecycle predicates above (isOrphanedMint, isAbandonedInterrupted,
-// isAdHocStandaloneSuperseded, decideArchive, isStructurallyStuck) now
+// lifecycle detections above (the orphaned-mint, abandoned-interrupted and
+// adhoc-superseded classifications, the merged-PR decision, isStructurallyStuck) now
 // delegates to. These tests exercise the classifier directly, at the level
 // the pre-consolidation predicates' own tests above don't reach: the `kind`
 // value itself, and first-match precedence across multiple simultaneously-
@@ -1337,7 +1416,7 @@ test('classifyRunDir: orphaned-mint for a config.yml-less mint past the grace wi
 // Precedence: an ad-hoc-standalone dir whose worktree is definitively gone
 // is old enough to ALSO satisfy orphaned-mint's own bare mtime threshold
 // (ADHOC_SUPERSEDED_TTL_MS is a strict superset of ORPHAN_MINT_TTL_MS's
-// window) — but isOrphanedMint's own precondition (`!isAdHocStandaloneMint`)
+// window) — but the orphaned-mint classification's own precondition (`!isAdHocStandaloneMint`)
 // exempts it, so classifyRunDir's full-precedence pass must land on
 // 'adhoc-superseded', never 'orphaned-mint', for this exact shape. This is
 // the reachable form of the "first-match order" pin the consolidation's own
@@ -1356,22 +1435,24 @@ test('classifyRunDir: adhoc-superseded takes precedence over orphaned-mint for a
   fs.utimesSync(adhocDir, backdated, backdated);
   const result = classifyRunDir({ dir: adhocDir, state, worktrees: [] });
   assert.equal(result.kind, 'adhoc-superseded');
-  assert.equal(isOrphanedMint(adhocDir), false, 'isOrphanedMint must stay exempt for this same shape');
-  assert.equal(isAdHocStandaloneSuperseded(adhocDir, state, []), true);
+  assert.equal(classifyRunDir({ dir: adhocDir, kinds: ['orphaned-mint'] }).kind, 'none', 'the orphaned-mint classification must stay exempt for this same shape');
+  assert.equal(classifyRunDir({ dir: adhocDir, state, worktrees: [], kinds: ['adhoc-superseded'] }).kind, 'adhoc-superseded');
   fs.rmSync(adhocDir, { recursive: true, force: true });
 });
 
-test('classifyRunDir: merged when decideArchiveCore would archive, carrying no TTL', () => {
-  const prState = { state: 'MERGED', mergeCommit: { oid: 'a'.repeat(40) } };
-  const result = classifyRunDir({ prState, consoleState: 'resolved' });
-  assert.equal(result.kind, 'merged');
-  assert.equal(result.ttlMs, null);
+test('decideArchiveCore: archives a merged PR with a resolved console, and carries the skip reason for gh-absent (AC5)', () => {
+  assert.deepStrictEqual(
+    decideArchiveCore({ state: 'MERGED', mergeCommit: { oid: 'a'.repeat(40) } }, 'resolved'),
+    { action: 'archive' },
+  );
+  assert.deepStrictEqual(decideArchiveCore('gh-absent', 'none'), { action: 'skip', reason: 'gh-absent' });
 });
 
-test('classifyRunDir: none with the skip reason carried in evidence when the merged-PR path would skip', () => {
-  const result = classifyRunDir({ prState: 'gh-absent', consoleState: 'none' });
-  assert.equal(result.kind, 'none');
-  assert.equal(result.evidence.skipReason, 'gh-absent');
+test("AC3: classifyRunDir has no merged kind — a prState reads none, with or without kinds: ['merged']", () => {
+  const none = { kind: 'none', ttlMs: null, evidence: {} };
+  const merged = { state: 'MERGED' };
+  assert.deepStrictEqual(classifyRunDir({ prState: merged, consoleState: 'resolved' }), none);
+  assert.deepStrictEqual(classifyRunDir({ prState: merged, consoleState: 'resolved', kinds: ['merged'] }), none);
 });
 
 test('classifyRunDir: structurally-stuck for a qualifying skip reason past the TTL', () => {
@@ -2357,4 +2438,57 @@ test('archiveMerged: an empty or absent postMergeDeferred changes nothing (#4599
   for (const extra of [{}, { postMergeDeferred: [] }]) {
     assert.deepEqual(archiveMerged({ cwd: root, ...extra }).skipped, [{ runDir: dir, reason: 'no-branch' }]);
   }
+});
+
+// #3975: a twin-only archival (workMoves empty) used to run `git commit -- `
+// with an empty pathspec, which commits the WHOLE index — sweeping an
+// unrelated staged file into the archive commit.
+// The git-state half runs everywhere; the argv half needs a `#!/bin/sh` git shim on PATH, which
+// win32 never spawns (STUB_SKIP), so only that half is gated.
+test('AC6.1: twin-only archival commits only its own paths, never an unrelated staged file', (t) => {
+  const root = fs.realpathSync(makeRepo());
+  const runId = '2026-08-29T153740-spec-1-3975';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  const liveRel = `.claude-tweaks/pipelines/${runId}/work/1-spec.md`;
+  commitPath(root, liveRel, '# spec 1\n');
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/work/1-spec.md`, '# spec 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  fs.writeFileSync(path.join(root, 'unrelated.txt'), 'staged by someone else\n');
+  git(root, 'add', 'unrelated.txt');
+
+  let env;
+  let log = null;
+  if (!STUB_SKIP) {
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-shim-'));
+    t.after(() => fs.rmSync(shimDir, { recursive: true, force: true }));
+    log = path.join(shimDir, 'argv.log');
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(shimDir, 'git'), [
+      '#!/bin/sh',
+      `node -e 'require("fs").appendFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)) + "\\n")' "${log}" "$@"`,
+      `exec "${realGit}" "$@"`,
+      '',
+    ].join('\n'), { mode: 0o755 });
+    env = { ...process.env, PATH: `${shimDir}${path.delimiter}${process.env.PATH}` };
+  }
+
+  const result = archiveRunDir(root, runDir, env ? { env } : {});
+  assert.equal(result.ok, true, JSON.stringify(result));
+
+  assert.equal(git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').includes('unrelated.txt'), false,
+    'the archive commit must not contain the unrelated staged file');
+  assert.ok(git(root, 'diff', '--cached', '--name-only').split('\n').includes('unrelated.txt'),
+    'the unrelated file must stay staged');
+  assert.deepEqual(git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean), [liveRel],
+    'the archive commit holds exactly the twin path it resolved');
+
+  if (STUB_SKIP) return;
+  const commitArgv = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    .find((a) => a.includes('commit'));
+  assert.ok(commitArgv, 'a git commit call must be recorded');
+  const dd = commitArgv.indexOf('--');
+  assert.ok(dd >= 0, 'commit argv carries a -- pathspec separator');
+  const after = commitArgv.slice(dd + 1);
+  assert.ok(after.length > 0, 'pathspec after -- must be non-empty');
+  assert.deepEqual(after.map((p) => path.resolve(root, p)), [path.join(root, liveRel)]);
 });

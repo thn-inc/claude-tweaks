@@ -375,7 +375,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
 
     `gh pr view`'s `commits`/`comments` lists are recent-first, so truncation drops only the oldest entries and the newest one this check needs survives; no `--limit` warning applies. The resume command for an `[unsettled]` row is not defined here: whoever reports one reads `_shared/github-pr-scan-unsettled-resume.md` before reporting its resume command, whether or not a PR exists — which says when the PR body's Resume line is reported and when the reconstructed `reconcile` command is.
 
-11. **Stale pending-review PR** (#2367) — a `pending-review` PR (`dispatch/reporting.md`'s parking outcome: an open, non-draft, plugin-created PR — the same `claude-tweaks-run` marker item 9 detects, housekeeping-marker PRs excluded since those are mechanical, never a parked record — that has never been armed, `autoMergeRequest` absent) has no proactive mergeability re-check while it waits for a human; it can go from clean to conflicting purely from *other* records merging into the integration branch, discovered only at merge time. This scope's own schedule (independent of any single dispatch firing) is what re-checks it.
+11. **Stale pending-review PR** (#2367) — a `pending-review` PR (`dispatch/reporting.md`'s parking outcome: an open, non-draft, plugin-created PR — the same `claude-tweaks-run` marker item 9 detects, housekeeping-marker PRs excluded since those are mechanical, never a parked record — that has never been armed, `autoMergeRequest` absent) has no proactive mergeability re-check while it waits for a human; it can go from clean to conflicting purely from *other* records merging into the integration branch, discovered only at merge time. This scope's own schedule (independent of any single dispatch firing) is what re-checks it. A PR whose `Fixes` record `accept-park.js parked` exits 0 or 6 (unknown counts as parked) is excluded from this row: it is parked for local acceptance, which has no timeout and no nagging, and `/claude-tweaks:accept` re-checks its head and base at re-entry.
 
 <!-- when: transport=gh -->
     Reuses `$PR_SCAN_UNARMED` from item 9 above (already fetched with `body`/`autoMergeRequest`) — no duplicate `gh pr list` call. Resolve this item's own session-scoped temp path first:
@@ -417,6 +417,7 @@ Findings and recommendations (tidy Action Vocabulary):
 |---------|---------------|
 | Open PR awaiting review, nothing wrong (item 1's first finding) | `gh pr view {n} --web` — informational, optional human look, no action required |
 | Open PR has failing/pending CI or `CHANGES_REQUESTED` (item 1's second finding) | Investigate the CI failure or address the requested changes — local action |
+| A PR whose `Fixes` record `accept-park.js parked` exits 0 or 6 (unknown counts as parked; parked for local acceptance, #4615) — checked before the stale row below | Yours, `/claude-tweaks:accept #{record}`, never Close — a park has no timeout, no nagging, and is never closed or reaped |
 | Open PR stale (>4 weeks, no updates) | Close (GitHub) or Resume — judgment call |
 | Open PR superseded (related spec complete, equivalent changes merged) | Close (GitHub) |
 | Merged/closed PR whose head branch or worktree still exists locally | Corroborates Step 4.5 `[git]` cleanup — dispatcher merges at assembly |
