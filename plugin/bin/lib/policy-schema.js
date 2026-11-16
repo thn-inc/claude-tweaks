@@ -812,23 +812,19 @@ const HOOK_FORGE_PROBE_TIMEOUT_MS = 5000;
 const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
 
 // The `gh` timeout for detectIntegrationModel's `gh repo view` probe. Ladder:
-// explicit positive-integer `opts.timeoutMs` (returns before any file read) >
-// env CLAUDE_TWEAKS_GH_TIMEOUT_MS, when within gh-timeout-ms's bounds (an
-// invalid value falls through, never throws) > `gh-timeout-ms` in
-// {repoRoot}/.claude-tweaks/policy.yml (resolveValue: out of range -> 5000) >
-// 5000. Reads from repoRoot rather than shared-primitives' cwd-anchored
-// GH_TIMEOUT_MS getter: a require cycle, and the wrong root for a caller
-// probing a repo other than the cwd's. `opts.env` (optional) replaces process.env
-// as the place the env var is read from.
+// explicit positive-integer `opts.timeoutMs` (returns before any read) > the
+// shared gh ladder, `shared-primitives.ghTimeoutMsAt(repoRoot, { env })`: env
+// CLAUDE_TWEAKS_GH_TIMEOUT_MS > `gh-timeout-ms` in {repoRoot}/.claude-tweaks/policy.yml
+// > 5000. The ladder lives there, not here, so every gh bound shares one definition.
+// It reads from repoRoot rather than the cwd, the right root for a caller probing a
+// repo other than the cwd's. `opts.env` (optional) replaces process.env as the place
+// the env var is read from. The require sits inside the body: shared-primitives lazily
+// requires policy-schema back, so a load-time require here would close a cycle.
 function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   const explicit = opts && opts.timeoutMs;
   if (Number.isInteger(explicit) && explicit > 0) return explicit;
-  const raw = (opts && opts.env ? opts.env : process.env).CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-  if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
-  // A non-string repoRoot has no policy.yml to read: skip to the default instead of letting
-  // path.join throw, which would break detectIntegrationModel's never-throws contract.
-  const policyRaw = typeof repoRoot === 'string' ? readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml')) : null;
-  return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
+  const { ghTimeoutMsAt } = require('./shared-primitives');
+  return ghTimeoutMsAt(repoRoot, { env: opts && opts.env });
 }
 
 // The reason codes of detectIntegrationModel's degrade object — the one

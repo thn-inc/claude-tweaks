@@ -159,6 +159,19 @@ test('resolveForgeProbeTimeoutMs reads CLAUDE_TWEAKS_GH_TIMEOUT_MS from opts.env
   }
 });
 
+test('resolveForgeProbeTimeoutMs accepts the shared env spellings 9e3 and " 9000"', () => {
+  const root = tmp('timeout');
+  assert.equal(resolveForgeProbeTimeoutMs(root, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '9e3' } }), 9000);
+  assert.equal(resolveForgeProbeTimeoutMs(root, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: ' 9000' } }), 9000);
+});
+
+test('resolveForgeProbeTimeoutMs with opts.env null reads the policy and never throws', () => {
+  const root = tmp('timeout-null');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'gh-timeout-ms: 7000\n');
+  assert.equal(resolveForgeProbeTimeoutMs(root, { env: null }), 7000);
+});
+
 test('resolvePolicyConfig falls back to the given cwd when git fails', () => {
   const other = tmp('cwd');
   const seen = [];
