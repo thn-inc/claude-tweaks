@@ -897,6 +897,31 @@ test('#5597: a run directory that cannot be listed is named and the direct items
   assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
 });
 
+test('#5597: a workflows/ directory lstat reports missing is named with ENOENT and the direct items are still returned', async () => {
+  const { dir, wfDir } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', wfDir, 'ENOENT') });
+  assert.deepEqual(r.dirNotes, [`workflows/ directory not readable (ENOENT) at ${wfDir}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run directory lstat reports missing is named with ENOENT and the direct items are still returned', async () => {
+  const { dir, runPath } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', runPath, 'ENOENT') });
+  assert.deepEqual(r.dirNotes, [`workflow run directory not readable (ENOENT) at ${runPath}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: an empty run directory beside a run file with agentCount 2 gives only the empty-directory note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(run, { recursive: true });
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.writeFileSync(path.join(runFileDir, 'r1.json'), JSON.stringify({ agentCount: 2 }));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, [`no agent-* transcripts in ${run}`]);
+});
+
 test('#5597: a run file whose agentCount equals the agents found adds no note', async () => {
   const { dir } = faultSession();
   const runFileDir = path.join(path.dirname(dir), 'workflows');

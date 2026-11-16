@@ -711,6 +711,13 @@ async function baselineSubagents() {
   return readTiming(base.dir).totals.subagents;
 }
 
+async function baselineTiming() {
+  const base = subagentRun();
+  const r = await runAuto(base);
+  assert.equal(r.status, 0, r.stderr);
+  return readTiming(base.dir);
+}
+
 test('#5597 AC9.4: a workflow agent whose transcript has no timestamped row is in dispatches with its note and in no count', async () => {
   const baseTotal = await baselineSubagents();
   const s = subagentRun();
@@ -724,13 +731,18 @@ test('#5597 AC9.4: a workflow agent whose transcript has no timestamped row is i
 });
 
 test('#5597: workflow agents count in their phase subagents and in dispatches end to end', async () => {
-  const baseTotal = await baselineSubagents();
+  const base = await baselineTiming();
+  const baseTotal = base.totals.subagents;
   const s = subagentRun();
   addWorkflowAgent(s, 'r1', 'w1');
   const r = await runAuto(s);
   assert.equal(r.status, 0, r.stderr);
   const t = readTiming(s.dir);
   assert.equal(t.totals.subagents, baseTotal + 1);
+  // The fixture agent starts at 10:05, inside the build phase (09:58-10:10).
+  const phaseOf = (tj, name) => tj.phases.find((p) => p.phase === name);
+  assert.equal(phaseOf(t, 'build').subagents, phaseOf(base, 'build').subagents + 1);
+  assert.equal(t.unattributed.subagents, base.unattributed.subagents);
   assert.equal(t.dispatches.items.find((i) => i.agentId === 'w1').workflowRunId, 'r1');
   const direct = t.dispatches.items.find((i) => i.agentId === 'a1');
   assert.equal('workflowRunId' in direct, false);

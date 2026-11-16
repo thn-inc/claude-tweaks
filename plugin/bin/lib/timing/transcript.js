@@ -352,8 +352,8 @@ async function scanWorkflows(subagentsDir, { fsImpl, window, scans, dirNotes }) 
       continue;
     }
     const scan = await scanAgentDir(runPath, runNames, { fsImpl, window, workflowRunId: runId });
-    if (scan.ids === 0) dirNotes.push(`no agent-* transcripts in ${runPath}`);
-    else scans.push(scan);
+    if (scan.ids === 0) { dirNotes.push(`no agent-* transcripts in ${runPath}`); continue; }
+    scans.push(scan);
     // Cross-check against the run file Claude Code writes beside the session's
     // subagents/ directory; any read or parse failure adds nothing.
     const runFile = path.join(path.dirname(subagentsDir), 'workflows', `${runId}.json`);
