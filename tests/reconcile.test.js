@@ -11,7 +11,7 @@ const { classifyMirror } = require('../plugin/bin/lib/reconcile/classify');
 const { mirrorFastForward } = require('../plugin/bin/lib/reconcile/mirror-ff');
 const { decideReap } = require('../plugin/bin/lib/reconcile/reap-merged');
 const { decideRelease } = require('../plugin/bin/lib/reconcile/release-merged');
-const { decideArchive, readConsoleState, localHasMerge } = require('../plugin/bin/lib/reconcile/archive-merged');
+const { decideArchiveCore, classifyRunDir, readConsoleState, localHasMerge } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { isWorktreeLocked } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
 const { gitRepo } = require('./helpers/git-fixtures');
@@ -312,23 +312,23 @@ test('decideRelease: live claim + open PR -> skip, never released', () => {
 // run — not the empty-console fast path, which ends with close-run (status
 // clean) + the archive-run verb and never reaches this sweep. Archiving on
 // 'none' swept live runs with pending staged decisions (the #657 incident).
-test('decideArchive: merged + console never rendered -> skip, not archive', () => {
+test('decideArchiveCore: merged + console never rendered -> skip, not archive', () => {
   assert.deepStrictEqual(
-    decideArchive({ number: 3, state: 'MERGED' }, 'none'),
+    decideArchiveCore({ number: 3, state: 'MERGED' }, 'none'),
     { action: 'skip', reason: 'console-never-rendered' },
   );
 });
 
-test('decideArchive: merged + console resolved -> archive', () => {
-  assert.deepStrictEqual(decideArchive({ number: 3, state: 'MERGED' }, 'resolved'), { action: 'archive' });
+test('decideArchiveCore: merged + console resolved -> archive', () => {
+  assert.deepStrictEqual(decideArchiveCore({ number: 3, state: 'MERGED' }, 'resolved'), { action: 'archive' });
 });
 
-test('decideArchive: merged + console UNresolved -> never archived', () => {
-  assert.deepStrictEqual(decideArchive({ number: 3, state: 'MERGED' }, 'unresolved'), { action: 'skip', reason: 'console-unresolved' });
+test('decideArchiveCore: merged + console UNresolved -> never archived', () => {
+  assert.deepStrictEqual(decideArchiveCore({ number: 3, state: 'MERGED' }, 'unresolved'), { action: 'skip', reason: 'console-unresolved' });
 });
 
-test('decideArchive: PR not merged -> never archived regardless of console state', () => {
-  assert.strictEqual(decideArchive({ number: 3, state: 'OPEN' }, 'resolved').action, 'skip');
+test('decideArchiveCore: PR not merged -> never archived regardless of console state', () => {
+  assert.deepStrictEqual(decideArchiveCore({ number: 3, state: 'OPEN' }, 'resolved'), { action: 'skip', reason: 'pr-open' });
 });
 
 test('readConsoleState: absent file reads as none, not unresolved', () => {
@@ -869,28 +869,27 @@ test('archiveRunDir: an unreadable run dir returns reason readdir-failed instead
   }
 });
 
-// --- isOrphanedMint / archiveOrphanedMint: dispatch-minted dirs that never got adopted by flow ---
+// --- orphaned-mint classification / archiveOrphanedMint: dispatch-minted dirs that never got adopted by flow ---
 
-test('isOrphanedMint: false when config.yml exists, regardless of age', () => {
-  const { isOrphanedMint, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir orphaned-mint: none when config.yml exists, regardless of age', () => {
+  const { ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   const dir = mintEmptyRunDir(root, '2026-08-01T000000-record-999', { ageMs: ORPHAN_MINT_TTL_MS * 2 });
   fs.writeFileSync(path.join(dir, 'config.yml'), 'x: 1\n');
-  assert.strictEqual(isOrphanedMint(dir), false);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'none');
 });
 
-test('isOrphanedMint: false when empty but within the grace window', () => {
-  const { isOrphanedMint } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir orphaned-mint: none when empty but within the grace window', () => {
   const root = bareRepoRoot();
   const dir = mintEmptyRunDir(root, '2026-08-15T000000-record-999');
-  assert.strictEqual(isOrphanedMint(dir), false);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'none');
 });
 
-test('isOrphanedMint: true when empty (no config.yml) and older than the TTL', () => {
-  const { isOrphanedMint, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir orphaned-mint: orphaned-mint when empty (no config.yml) and older than the TTL', () => {
+  const { ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   const dir = mintEmptyRunDir(root, '2026-08-01T000000-record-999', { ageMs: ORPHAN_MINT_TTL_MS + 60000 });
-  assert.strictEqual(isOrphanedMint(dir), true);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'orphaned-mint');
 });
 
 test('archiveMerged: an orphaned mint older than the TTL is archived on the next sweep, not left in place', () => {
@@ -919,23 +918,23 @@ test('archiveMerged: an orphaned mint within the TTL is left in place, not archi
 });
 
 // --- #1117: -adhoc-standalone mints (post-tool-use.js's stampAdHocRunDir)
-// are exempt from the blind isOrphanedMint mtime sweep — see
+// are exempt from the blind orphaned-mint mtime sweep — see
 // archive-merged.js's isAdHocStandaloneMint.
 
-test('isOrphanedMint: false for a genuine adhoc-standalone mint, regardless of age (#1117)', () => {
-  const { isOrphanedMint, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir orphaned-mint: none for a genuine adhoc-standalone mint, regardless of age (#1117)', () => {
+  const { ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const { writeRunState } = require('../plugin/bin/lib/hooks/context');
   const root = bareRepoRoot();
   const dir = mintEmptyRunDir(root, '2026-08-01T000000-adhoc-standalone', { ageMs: ORPHAN_MINT_TTL_MS * 3 });
   writeRunState(dir, { worktree: path.join(root, 'some-worktree'), status: 'active', sessionId: 'sess-1' });
-  assert.strictEqual(isOrphanedMint(dir), false);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'none');
 });
 
 // #1604: the suffix alone is no longer sufficient — isAdHocStandaloneMint
 // now also requires a real run-state.json carrying a non-empty `worktree`,
 // closing the leak a malformed/mkdir-only dir sharing the suffix used to
-// slip through (both isOrphanedMint's exemption and decideArchive's
-// no-worktree/no-branch skip).
+// slip through (both the orphaned-mint classification's exemption and
+// the merged-PR path's no-worktree/no-branch skip).
 test('isAdHocStandaloneMint: requires the suffix AND a corroborating run-state.json worktree field (#1604)', () => {
   const { isAdHocStandaloneMint } = require('../plugin/bin/lib/reconcile/archive-merged');
   const { writeRunState } = require('../plugin/bin/lib/hooks/context');
@@ -998,7 +997,7 @@ test('findRunsByWorktreePath still finds an adhoc-standalone dir after a reconci
   );
 });
 
-// --- #1604: isAdHocStandaloneSuperseded / archiveMerged's eventual-cleanup
+// --- #1604: adhoc-superseded classification / archiveMerged's eventual-cleanup
 // path for a genuinely superseded ad-hoc dir (worktree definitively gone) ---
 //
 // writeRunState() creates a file inside `dir`, which bumps the DIRECTORY's
@@ -1016,10 +1015,8 @@ function mintAdHocDir(root, runId, state, ageMs) {
   return dir;
 }
 
-test('isAdHocStandaloneSuperseded: false while the recorded worktree still resolves, regardless of age (#1117 invariant unchanged)', () => {
-  const {
-    isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
-  } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir adhoc-superseded: none while the recorded worktree still resolves, regardless of age (#1117 invariant unchanged)', () => {
+  const { ADHOC_SUPERSEDED_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   // realpathSync(os.tmpdir()) — not the not-yet-created wtDir itself — since
   // macOS's /var is a symlink to /private/var and `git worktree list
@@ -1033,38 +1030,33 @@ test('isAdHocStandaloneSuperseded: false while the recorded worktree still resol
     const { parseWorktreeList } = require('../plugin/bin/lib/hooks/worktree-reap');
     const { runGit } = require('../plugin/bin/lib/hooks/git-exec');
     const worktrees = parseWorktreeList(runGit(['worktree', 'list', '--porcelain'], root).stdout);
-    assert.strictEqual(isAdHocStandaloneSuperseded(dir, state, worktrees), false);
+    assert.strictEqual(classifyRunDir({ dir, state, worktrees, kinds: ['adhoc-superseded'] }).kind, 'none');
   } finally {
     git(['worktree', 'remove', '--force', wtDir], root);
   }
 });
 
-test('isAdHocStandaloneSuperseded: false when the worktree is gone but younger than the TTL', () => {
-  const { isAdHocStandaloneSuperseded } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir adhoc-superseded: none when the worktree is gone but younger than the TTL', () => {
   const root = bareRepoRoot();
   const state = { worktree: path.join(root, 'long-gone-worktree'), status: 'active', sessionId: 'sess-1' };
   const dir = mintAdHocDir(root, '2026-08-01T150000-adhoc-standalone', state, 60 * 60 * 1000);
-  assert.strictEqual(isAdHocStandaloneSuperseded(dir, state, []), false);
+  assert.strictEqual(classifyRunDir({ dir, state, worktrees: [], kinds: ['adhoc-superseded'] }).kind, 'none');
 });
 
-test('isAdHocStandaloneSuperseded: true when the worktree is gone AND the TTL has elapsed', () => {
-  const {
-    isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
-  } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir adhoc-superseded: adhoc-superseded when the worktree is gone AND the TTL has elapsed', () => {
+  const { ADHOC_SUPERSEDED_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   const state = { worktree: path.join(root, 'long-gone-worktree'), status: 'active', sessionId: 'sess-1' };
   const dir = mintAdHocDir(root, '2026-08-01T160000-adhoc-standalone', state, ADHOC_SUPERSEDED_TTL_MS * 2);
-  assert.strictEqual(isAdHocStandaloneSuperseded(dir, state, []), true);
+  assert.strictEqual(classifyRunDir({ dir, state, worktrees: [], kinds: ['adhoc-superseded'] }).kind, 'adhoc-superseded');
 });
 
-test('isAdHocStandaloneSuperseded: false for a non-ad-hoc dir even past the TTL with a gone worktree', () => {
-  const {
-    isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
-  } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir adhoc-superseded: none for a non-ad-hoc dir even past the TTL with a gone worktree', () => {
+  const { ADHOC_SUPERSEDED_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   const state = { worktree: path.join(root, 'long-gone-worktree'), status: 'active', sessionId: 'sess-1' };
   const dir = mintAdHocDir(root, '2026-08-01T170000-record-42', state, ADHOC_SUPERSEDED_TTL_MS * 2);
-  assert.strictEqual(isAdHocStandaloneSuperseded(dir, state, []), false);
+  assert.strictEqual(classifyRunDir({ dir, state, worktrees: [], kinds: ['adhoc-superseded'] }).kind, 'none');
 });
 
 test('archiveMerged: a superseded ad-hoc-standalone dir is archived (moved out of the live pipelines dir), ending the SessionStart/probePipelineRuns nag (#1604)', () => {

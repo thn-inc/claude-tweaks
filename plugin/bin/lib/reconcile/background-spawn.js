@@ -44,8 +44,8 @@ function spawnBackgroundIfStale({ root, cwd, sessionId, now = Date.now() } = {})
     const { spawn } = require('child_process');
     // #1687: thread the session's id into the child's environment so
     // `reconcile-background` can pass it to `reconcile({ sessionId })`, which
-    // is what engages archive-merged.js's `isAbandonedInterrupted` ownership
-    // gate. A dedicated `CLAUDE_TWEAKS_`-prefixed var, not
+    // is what engages the `abandoned-interrupted` classification's ownership
+    // gate (archive-merged.js). A dedicated `CLAUDE_TWEAKS_`-prefixed var, not
     // `CLAUDE_CODE_SESSION_ID` (unreliable for a hook-spawned process); only
     // set when a real id is known — absent means "unresolvable".
     const env = sessionId ? { ...process.env, CLAUDE_TWEAKS_SESSION_ID: sessionId } : process.env;

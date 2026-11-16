@@ -35,9 +35,9 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
+const { locatePolicyFile } = require('./lib/policy-file');
 const {
   parseRepo, ghAvailable, remoteUrl, ghOptions, explicitRepoGhHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
@@ -115,7 +115,7 @@ const realDeps = {
   // maxBuffer widened for the same reason: fetchGitLog dumps every commit
   // message on the integration branch in one call.
   gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
-  readPolicyRaw: () => readFileSafe(path.join(repoRoot(), '.claude-tweaks', 'policy.yml')),
+  readPolicyRaw: () => readFileSafe(locatePolicyFile(repoRoot()).path),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };

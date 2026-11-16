@@ -35,8 +35,8 @@ const SKILL_DIR_PHRASE = /in that skill's directory|in the `\/claude-tweaks:[a-z
 const SKILLS_DIR_TOKEN = /^([^/.][^/]*)\/./;
 const SKILL_TOKEN = /\/claude-tweaks:([a-z0-9-]+)/g;
 // A plugin root is the repo root or one directory down. Deeper trees are
-// test fixtures (evals/fixtures/…, tools/upstream-drift/fixtures/…), never a
-// shipped or project-local skill root.
+// test fixtures (tools/upstream-drift/fixtures/…), never a shipped or
+// project-local skill root.
 const ROOT_SKILL_MD = /^(?:([^/]+)\/)?skills\/[^/]+\/SKILL\.md$/;
 
 function discoverPluginRoots(listFiles) {

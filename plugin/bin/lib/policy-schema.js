@@ -8,6 +8,7 @@ const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
 const { stripComment } = require('./model-profiles/policy-fragment');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
+const { locatePolicyFile } = require('./policy-file');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
 
@@ -189,9 +190,9 @@ const POLICY_KEYS = [
   // semantics live in _shared/record-batch-input.md, not restated here.
   { key: 'specify-budget', type: 'integer', default: 5, summary: "Caps how many eligible backlog records one bare /specify drain attempts before stopping.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'autonomy', type: 'enum', values: ['supervised', 'trusted', 'unattended'], default: 'supervised', summary: "Caps how much the pipeline may do without a human — trust that classes earn can never exceed this ceiling.", category: 'autonomy-trust', tier: 'core' },
-  // Control mode (#4609, human-in-control #4608): twelve flat keys here, plus `risk-categories` and `risk-path-globs` in the merge-safety group above. A summary opens "Not yet used" until a record wires its key; #4618 wired `risk-categories` and `risk-path-globs` (bin/lib/policy.js's readRiskPolicy, which reads `control-mode` only as their gate), so those two carry no marker. The #4608 leaves wire them: control-mode -> #4620 (the bookkeeping ceiling, bin/lib/issues/autonomy.js's effectiveCeiling) and #4624 (the rest of its implied set), and every control-mode-gated leaf through isControlModeOn (bin/lib/policy.js); acceptance-target -> #4615; deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds -> #4616; owned-owners -> #4621; trusted-authors -> #4622; risk-categories, risk-path-globs -> #4618, #4619. The record that wires a key drops its marker and its entry in tests/resolve-policy-control-mode.test.js's NOT_YET_USED. All but `control-mode` itself are consulted only with control mode on. All advanced — the core tier is at its cap.
+  // Control mode (#4609, human-in-control #4608): twelve flat keys here, plus `risk-categories` and `risk-path-globs` in the merge-safety group above. A summary opens "Not yet used" until a record wires its key; #4618 wired `risk-categories` and `risk-path-globs` (bin/lib/policy.js's readRiskPolicy, which reads `control-mode` only as their gate) and #4615 wired `acceptance-target` (bin/accept-park.js's `decide`), so those three carry no marker. The #4608 leaves wire them: control-mode -> #4620 (the bookkeeping ceiling, bin/lib/issues/autonomy.js's effectiveCeiling) and #4624 (the rest of its implied set), and every control-mode-gated leaf through isControlModeOn (bin/lib/policy.js); deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds -> #4616; owned-owners -> #4621; trusted-authors -> #4622; risk-categories, risk-path-globs -> #4618, #4619. The record that wires a key drops its marker and its entry in tests/resolve-policy-control-mode.test.js's NOT_YET_USED. All but `control-mode` itself are consulted only with control mode on. All advanced — the core tier is at its cap.
   { key: 'control-mode', type: 'enum', values: ['off', 'on'], default: 'off', summary: "The single human-in-control switch; implied levers default at skill-default precedence, so any explicitly set lever wins.", category: 'autonomy-trust', tier: 'advanced' },
-  { key: 'acceptance-target', type: 'enum', values: ['local', 'dev'], default: 'local', summary: "Not yet used; control mode only: where a human accepts work, locally or on the dev environment; pairs with deploy-reach when dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'acceptance-target', type: 'enum', values: ['local', 'dev'], default: 'local', summary: "Control mode only: where a human accepts work, locally or on the dev environment; pairs with deploy-reach when dev.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'deploy-reach', type: 'enum', values: ['on-merge', 'command', 'none'], default: 'none', summary: "Not yet used; control mode only: how a merge reaches the dev environment, if at all; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
   // deploy-command is an executed string: consumers read it from the base branch's policy only (never from a PR's own copy). policyOnly (here and on the two trust lists below) — the resolver skips the --run overlay, so a run config can name neither what executes nor who is trusted; the base-branch read stays the consumer's, since the resolver only sees the checkout it runs in. allowWhitespace — it is a shell command, like release-hook. closedQuote on the three allowWhitespace rows below: a quoted value holding a `#` is cut mid-quote by parseFlatLines, so an opening quote that never closes is invalid rather than a malformed command.
   { key: 'deploy-command', type: 'string', allowWhitespace: true, closedQuote: true, policyOnly: true, summary: "Not yet used. Executed string, read only from the base branch's policy; meaningful only with deploy-reach command and control mode on.", category: 'pipeline-behavior', tier: 'advanced' },
@@ -404,6 +405,13 @@ function readFileSafe(filePath) {
   } catch {
     return null;
   }
+}
+
+// policy.yml text found through locatePolicyFile (#4492); null when unreadable or
+// when `repoRoot` is not a string (locatePolicyFile returns a null path then).
+function readLocatedPolicy(repoRoot) {
+  const policyPath = locatePolicyFile(repoRoot).path;
+  return policyPath === null ? null : readFileSafe(policyPath);
 }
 
 // Flat `key: value` line matcher, tolerant of a trailing `# comment` and of
@@ -827,9 +835,9 @@ function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   if (Number.isInteger(explicit) && explicit > 0) return explicit;
   const raw = (opts && opts.env ? opts.env : process.env).CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
-  // A non-string repoRoot has no policy.yml to read: skip to the default instead of letting
-  // path.join throw, which would break detectIntegrationModel's never-throws contract.
-  const policyRaw = typeof repoRoot === 'string' ? readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml')) : null;
+  // A non-string repoRoot has no policy.yml to read: skip to the default, which keeps
+  // detectIntegrationModel's never-throws contract.
+  const policyRaw = readLocatedPolicy(repoRoot);
   return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
 }
 
@@ -952,7 +960,8 @@ function detectIntegrationModel(repoRoot, opts = {}) {
 // `opts` (optional) forwards unchanged to detectIntegrationModel — see that
 // function's own comment for the mcpReachable override contract.
 function resolveIntegrationModel(repoRoot, opts = {}) {
-  const policyRaw = readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml'));
+  // A non-string repoRoot locates no policy file and falls through to detection — deliberate.
+  const policyRaw = readLocatedPolicy(repoRoot);
   const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null });
   const entry = resolved['integration-model'];
   if (entry && entry.source !== 'default') return entry.value;
@@ -973,7 +982,11 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 // rethrows the rest) — only the orchestration around them is shared. `root`
 // is returned too since a caller such as resolve-policy.js's
 // integration-model default needs it independent of any resolved key.
-// `cwd` (optional) replaces `process.cwd()` as that fallback root.
+// `cwd` (optional) replaces `process.cwd()` as that fallback root. The policy
+// file is found through locatePolicyFile (#4492), so from a linked worktree
+// without its own copy the main checkout's is read; `policyPath` is the file
+// read (null only for a non-string root) and `policySource` is `checkout` or
+// `main-checkout`.
 function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cwd }) {
   let root;
   try {
@@ -981,14 +994,15 @@ function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cw
   } catch {
     root = cwd || process.cwd();
   }
-  const policyRaw = readFile(path.join(root, '.claude-tweaks', 'policy.yml'));
+  const { path: policyPath, source: policySource } = locatePolicyFile(root);
+  const policyRaw = policyPath === null ? null : readFile(policyPath);
   const runConfigRaw = runDir ? readFile(path.join(runDir, 'config.yml')) : null;
   const result = resolvePolicyKeys(keys, { policyRaw, runConfigRaw, onInvalid });
-  return { root, policyRaw, runConfigRaw, result };
+  return { root, policyRaw, runConfigRaw, result, policyPath, policySource };
 }
 
 function auditPolicy(repoRoot) {
-  const policyRaw = readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml'));
+  const policyRaw = readLocatedPolicy(repoRoot);
   const claudeMdRaw = readFileSafe(path.join(repoRoot, 'CLAUDE.md'));
   const policyEntries = parseFlatLines(policyRaw);
   const claudeMdEntries = parseFlatLines(claudeMdRaw);

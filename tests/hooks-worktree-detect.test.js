@@ -73,6 +73,18 @@ test('findPolicyFile: policy file present at the target\'s own directory returns
   assert.strictEqual(findPolicyFile(path.join(dir, 'a.txt')), dir);
 });
 
+// #4492 F3: a sibling-placed linked worktree (outside main, so the ancestor walk never reaches
+// main's untracked policy.yml) still reports the main checkout as holding the policy.
+test('findPolicyFile: a sibling-placed linked worktree finds the main checkout\'s untracked policy', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  assert.strictEqual(findPolicyFile(path.join(wt, 'a.txt')), null);
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  assert.strictEqual(findPolicyFile(path.join(wt, 'a.txt')), main);
+  assert.strictEqual(findPolicyFile(wt), main);
+});
+
 test('safeReal: returns null (not the raw, unresolved path) when realpathSync fails', () => {
   // This project's fail-open invariant ("a recorded worktree whose path no
   // longer exists resolves to allow") depends on unresolvable paths being

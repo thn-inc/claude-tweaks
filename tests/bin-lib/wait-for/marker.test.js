@@ -69,7 +69,7 @@ test('readers throw TypeError for an invalid session id', (t) => {
   assert.throws(() => readWaits('a.b', { tmpDir }), TypeError);
 });
 
-test('AC10.3: a symlink, a dangling one included, is refused unread', { skip: process.platform === 'win32' && 'creating a symlink needs a privilege on win32' }, (t) => {
+test('AC10.3: a symlink, a dangling one included, is refused unread', (t) => {
   const tmpDir = tmp(t);
   const real = path.join(tmpDir, 'real.jsonl');
   fs.writeFileSync(real, STOP_X);

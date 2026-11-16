@@ -646,6 +646,24 @@ test('worktree-always nudge is absent when the session is already inside a linke
   assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
 });
 
+// #4492 F3: a sibling-placed linked worktree of a project that keeps policy.yml out of git
+// reads main's policy, so the fast-reject must not hide the banner.
+test('worktree-always banner reads ON from a sibling linked worktree when policy.yml is untracked in main', async () => {
+  const project = gitProject();
+  execFileSync('git', ['-C', project, 'commit', '--allow-empty', '-m', 'init', '-q']);
+  withPolicy(project, 'worktree-always: true\n');
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-wt-'));
+  const wt = path.join(parent, 'wt');
+  execFileSync('git', ['-C', project, 'worktree', 'add', '-q', wt, '-b', 'wt-branch-untracked']);
+  try {
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: fs.realpathSync(wt) });
+    assert.ok(out.json, 'main\'s policy is readable from the worktree, so the verdict banner must render');
+    assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 // IL-133 verdict-banner coverage: policy.resolveWorktreeAlways drives the banner text
 // directly, so these pin the exact literal line for each alias-resolution outcome.
 
@@ -1080,11 +1098,12 @@ test('SessionStart: a throw while rendering the background summary still leaves 
 
 // #1687: the reconcile-background child had no way to learn the spawning
 // session's id at all — neither argv nor env — so archive-merged.js's
-// ownership gate (isAbandonedInterrupted) was permanently inert on the one
-// path that actually runs the 'archive' check in production. session-start.js
-// now threads ctx.input.session_id into the spawned child's own environment
-// via a dedicated var, never CLAUDE_CODE_SESSION_ID (this file's own header
-// comment documents that one as unreliable for a hook-spawned process).
+// ownership gate (the `abandoned-interrupted` classification) was permanently
+// inert on the one path that actually runs the 'archive' check in production.
+// session-start.js now threads ctx.input.session_id into the spawned child's
+// own environment via a dedicated var, never CLAUDE_CODE_SESSION_ID (this
+// file's own header comment documents that one as unreliable for a
+// hook-spawned process).
 test('SessionStart spawn gate: threads ctx.input.session_id into the background child\'s environment as CLAUDE_TWEAKS_SESSION_ID (#1687)', async () => {
   const cp = require('child_process');
   const originalSpawn = cp.spawn;
