@@ -142,7 +142,7 @@ Silence there would read as "no evidence" when the truth is "not looked at."
 **This line is advisory and is never the reason a row is recommended.** It describes how the
 record's *class* has historically turned out; the Recommended value comes from a content-aware read
 of *this record* (Step 3's `assess-agent-autonomy` call). A class with no evidence is the normal
-state, not a warning: on a repo that has not been running `/claude-tweaks:demo`, every line reads
+state, not a warning: on a repo that has not been running `/claude-tweaks:accept`, every line reads
 `insufficient-evidence`, and its only job is to make that visible at the moment a human is granting
 anyway.
 

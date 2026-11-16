@@ -1,10 +1,10 @@
-# Demo Step 3 — Filing the Follow-Up Record
+# Accept Step 3 — Filing the Follow-Up Record
 
-Referenced by `skills/demo/SKILL.md` Step 3 (both the label-backed and the session-recall
-**Request changes** branches) and Step 2's Scope-fork checkpoint ("Capture it"). Read only when a
+Referenced by `skills/accept/verdict-interim.md` (Step 3: both the label-backed and the session-recall
+**Request changes** branches) and `skills/accept/SKILL.md` Step 2's Scope-fork checkpoint ("Capture it"). Read only when a
 Request-changes verdict was given or a scope-fork capture was chosen — an Approve or Skip verdict
 never reads this file. Step 3's Request-changes items 2 and 3, verbatim (item 1, the label swap,
-stays in `SKILL.md`); a session-recall entry runs the same procedure with no original record to
+stays in `verdict-interim.md`); a session-recall entry runs the same procedure with no original record to
 relabel, comment on, or reference, and its `Origin:` line reads `Origin: demo changes-requested
 from session recall`; a scope-fork capture's `Origin:` line reads `Origin: demo scope-fork from
 #{n}` (or `from session recall`).
@@ -27,8 +27,8 @@ from session recall`; a scope-fork capture's `Origin:` line reads `Origin: demo 
      stage: 'backlog' }` (`type` being `bug` or the overridden type). Compute `slug` via that
      same module's `deriveSlug(title, existingSlugs)`. Never `allocateId`+`writeRecord`
      separately — same allocateId+writeRecord race `capture/SKILL.md`'s Backend Selection
-     section documents (two near-simultaneous filings, e.g. two `/claude-tweaks:demo` "Request changes"
-     verdicts landing in the same run, or `/claude-tweaks:demo` racing a `/claude-tweaks:capture`/`/claude-tweaks:specify` decomposition,
+     section documents (two near-simultaneous filings, e.g. two `/claude-tweaks:accept` "Request changes"
+     verdicts landing in the same run, or `/claude-tweaks:accept` racing a `/claude-tweaks:capture`/`/claude-tweaks:specify` decomposition,
      can silently share one numeric id); see that section for the full call shape to mirror.
   3. Note the bidirectional link back on the original record. `work-backend: github-issues`:
      comment on the original issue with the new follow-up's issue number. `work-backend:
