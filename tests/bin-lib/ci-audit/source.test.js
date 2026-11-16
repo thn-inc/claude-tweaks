@@ -101,6 +101,7 @@ function fakeRunner({ runs = [], jobs = {}, runsError = null } = {}) {
     if (id !== null && Object.prototype.hasOwnProperty.call(jobs, id)) {
       const j = jobs[id];
       if (j instanceof Error) throw j;
+      if (typeof j === 'string') return j;
       return JSON.stringify(typeof j === 'function' ? j(pageOf(args)) : j);
     }
     throw new Error(`unexpected ${args.join(' ')}`);
@@ -118,6 +119,7 @@ test('two runs with jobs and steps map to the exact NormRun / NormJob shape, new
     cliAbsent: false,
     truncated: [],
     failures: [],
+    unsampled: { skipped: 0, outsideWorkflows: 0, noWorkflowPath: 0 },
     runs: [
       {
         id: 43904882452, workflow: '.github/workflows/track-issue-fixes.yml', conclusion: 'success', createdAt: '2026-11-16T16:12:19Z',
@@ -222,13 +224,127 @@ test('a runs read that succeeds with zero completed runs is ok:true, runs:[] (in
     runs: [runRow({ status: 'in_progress', conclusion: null }), runRow({ id: 7, conclusion: 'skipped' })],
   });
   const r = read(fake);
-  assert.deepEqual(r, { ok: true, cliAbsent: false, runs: [], truncated: [], failures: [] });
+  assert.deepEqual(r, {
+    ok: true, cliAbsent: false, runs: [], truncated: [], failures: [], unsampled: { skipped: 1, outsideWorkflows: 0, noWorkflowPath: 0 },
+  });
   assert.equal(fake.calls.filter((c) => jobsRunId(c.args) !== null).length, 0);
 });
 
 test('an empty window is ok:true, runs:[]', () => {
   const r = read(fakeRunner());
-  assert.deepEqual(r, { ok: true, cliAbsent: false, runs: [], truncated: [], failures: [] });
+  assert.deepEqual(r, {
+    ok: true, cliAbsent: false, runs: [], truncated: [], failures: [], unsampled: { skipped: 0, outsideWorkflows: 0, noWorkflowPath: 0 },
+  });
+});
+
+const ZERO = { skipped: 0, outsideWorkflows: 0, noWorkflowPath: 0 };
+
+test('unsampled counts each exclusion, each pinned by an input where only it decides', () => {
+  const cases = [
+    ['skipped', runRow({ conclusion: 'skipped' }), { ...ZERO, skipped: 1 }],
+    ['outsideWorkflows', runRow({ path: 'dynamic/dependabot/dependabot-updates' }), { ...ZERO, outsideWorkflows: 1 }],
+    ['noWorkflowPath', runRow({ path: undefined }), { ...ZERO, noWorkflowPath: 1 }],
+  ];
+  for (const [name, run, want] of cases) {
+    const r = read(fakeRunner({ runs: [run] }));
+    assert.equal(r.ok, true, name);
+    assert.deepEqual(r.runs, [], name);
+    assert.deepEqual(r.unsampled, want, name);
+    assert.deepEqual(r.failures, name === 'noWorkflowPath' ? ['1 run carries no workflow path — excluded'] : [], name);
+  }
+});
+
+test('unsampled is present with zeros on a refusal and on a failed runs read', () => {
+  assert.deepEqual(read(fakeRunner(), { maxRuns: 0 }).unsampled, ZERO);
+  const throwing = () => { throw Object.assign(new Error('x'), { code: 'ENOENT' }); };
+  assert.deepEqual(readRunData({ runner: throwing, repo: 'o/r', days: 7, now: NOW }).unsampled, ZERO);
+});
+
+test('a non-null workflow filter that normalizes to nothing is refused before any call, like maxRuns', () => {
+  for (const bad of ['', 42, '/', '//', './', '\\\\']) {
+    const f = fakeRunner({ runs: [runRow()], jobs: { 43904630871: TEST_JOBS } });
+    const r = read(f, { workflow: bad });
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.equal(r.failures.length, 1, JSON.stringify(bad));
+    assert.match(r.failures[0], /^workflow /, JSON.stringify(bad));
+    assert.equal(f.calls.length, 0, JSON.stringify(bad));
+  }
+  assert.equal(read(fakeRunner(), { workflow: null }).ok, true);
+  assert.equal(read(fakeRunner(), { workflow: undefined }).ok, true);
+});
+
+test('days and now are validated before any call, like maxRuns', () => {
+  const bads = [
+    ['days', { days: NaN }], ['days', { days: 0 }], ['days', { days: 1.5 }], ['days', { days: '7' }], ['days', { days: 401 }],
+    ['now', { now: new Date('not a date') }], ['now', { now: '2026-11-16' }], ['now', { now: 0 }],
+  ];
+  for (const [field, over] of bads) {
+    const f = fakeRunner();
+    let r;
+    assert.doesNotThrow(() => { r = read(f, over); }, `${field} ${String(Object.values(over)[0])}`);
+    assert.equal(r.ok, false);
+    assert.equal(r.failures.length, 1);
+    assert.match(r.failures[0], new RegExp(`^${field} `));
+    assert.equal(f.calls.length, 0);
+  }
+  assert.equal(read(fakeRunner(), { days: 400 }).ok, true);
+});
+
+test('a full jobs page with no total_count is named in truncated; a short one is complete', () => {
+  const job = (i) => ({ ...TRACK_JOBS.jobs[0], id: i, name: `j${i}` });
+  const full = fakeRunner({ runs: [TRACK_RUN], jobs: { 43904882452: () => ({ jobs: Array.from({ length: 100 }, (_, i) => job(i)) }) } });
+  const r = read(full);
+  assert.equal(r.ok, true);
+  assert.equal(r.runs[0].jobs.length, 100);
+  assert.deepEqual(r.truncated, ['jobs of run 43904882452: 100 jobs read, total unknown (no total_count on a full page)']);
+  assert.equal(full.calls.filter((c) => jobsRunId(c.args) !== null).length, 1);
+  const short = read(fakeRunner({ runs: [TRACK_RUN], jobs: { 43904882452: { jobs: [job(1)] } } }));
+  assert.equal(short.runs[0].jobs.length, 1);
+  assert.deepEqual(short.truncated, []);
+});
+
+test('a non-JSON jobs body is a fixed failure text that quotes no byte of the body', () => {
+  const body = 'Zq<!--9f3aXk-->';
+  const r = read(fakeRunner({ runs: [runRow(), TRACK_RUN], jobs: { 43904630871: TEST_JOBS, 43904882452: body } }));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.failures, ['jobs of run 43904882452: response is not JSON']);
+  // No 2-byte run of the body appears (the run id and the fixed words share none with it).
+  for (let i = 0; i + 2 <= body.length; i += 1) assert.ok(!r.failures[0].includes(body.slice(i, i + 2)), `failure quotes ${body.slice(i, i + 2)}`);
+});
+
+test('a sampled run with an invalid id is excluded with a failure line and no jobs read', () => {
+  for (const id of [0, -3, 1.5, '12', null]) {
+    const f = fakeRunner({ runs: [runRow(), runRow({ id, created_at: '2026-11-16T16:13:00Z' })], jobs: { 43904630871: TEST_JOBS } });
+    const r = read(f);
+    assert.equal(r.ok, true, String(id));
+    assert.deepEqual(r.runs.map((x) => x.id), [43904630871], String(id));
+    assert.deepEqual(r.failures, [`run ${JSON.stringify(id)}: not a run id — excluded`], String(id));
+    assert.deepEqual(f.calls.map((c) => jobsRunId(c.args)).filter((x) => x !== null), [43904630871], String(id));
+  }
+});
+
+test('gh vanishing during a jobs read is a failed jobs read; cliAbsent stays false (gh answered the listing)', () => {
+  const enoent = Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' });
+  const r = read(fakeRunner({ runs: [runRow(), TRACK_RUN], jobs: { 43904630871: TEST_JOBS, 43904882452: enoent } }));
+  assert.equal(r.ok, true);
+  assert.equal(r.cliAbsent, false);
+  assert.deepEqual(r.failures, ['jobs of run 43904882452: gh is not installed or not on PATH']);
+});
+
+test('every sampled run cut by the deadline is ok:false with no failures and every unread run named', () => {
+  let t = 0;
+  const fake = fakeRunner({ runs: [runRow(), TRACK_RUN], jobs: { 43904630871: TEST_JOBS, 43904882452: TRACK_JOBS } });
+  const runner = (args, opts) => {
+    const out = fake.runner(args, opts);
+    if (isRunsList(args) && pageOf(args) === 1 && createdRange(args)[0] < Date.parse('2026-11-10T00:00:00Z')) t = 560000;
+    return out;
+  };
+  const r = readRunData({ runner, repo: 'thn-inc/claude-tweaks', days: 7, now: NOW, clock: () => t, maxRuns: 2 });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.failures, []);
+  assert.deepEqual(r.runs, []);
+  assert.deepEqual(r.truncated, ['jobs of run 43904882452: not read (deadline)', 'jobs of run 43904630871: not read (deadline)']);
+  assert.equal(fake.calls.filter((c) => jobsRunId(c.args) !== null).length, 0);
 });
 
 test('a workflow filter keeps one file\'s runs and reads no other run\'s jobs', () => {

@@ -31,16 +31,25 @@
 // (then id) and samples the most recent `maxRuns` (DEFAULT_MAX_RUNS, at most MAX_RUNS). Each
 // sampled run's jobs are one `actions/runs/{id}/jobs` read per page (`filter=latest`, 100 a page,
 // at most MAX_JOB_PAGES pages; a run past the cap keeps what was read and is named in `truncated`).
-// A failed or malformed jobs read excludes that run and adds one failure line.
-// -> { ok, cliAbsent, runs, truncated, failures }, with `truncated` and `failures` plain strings:
+// A failed or malformed jobs read excludes that run and adds one failure line; a body that is not
+// JSON reads `response is not JSON`, so no response byte reaches `failures`.
+// -> { ok, cliAbsent, runs, truncated, failures, unsampled }, `truncated`/`failures` plain strings:
 //  - cliAbsent: the first call threw ENOENT (fetch.js's ghAbsent); one failure line names gh absent.
+//    gh vanishing after it answered the listing is a failed jobs read, and cliAbsent stays false.
 //  - ok false: no runs page was read (gh absent included), or runs were sampled but no run's jobs
-//    were read (every jobs read failed or the deadline left them unread), or an invalid input
-//    (repo not owner/name, maxRuns out of range) refused before any call. A read that succeeds
-//    with zero sampled runs is ok:true, runs:[]; a failed read never looks like an empty clean one.
+//    were read (every jobs read failed, or the deadline left them all unread: failures may then
+//    be empty, truncated names each), or an invalid input refused before any call with one
+//    failure line (repo not owner/name; maxRuns not an integer 1..MAX_RUNS; days not an integer
+//    1..MAX_DAYS; now not a valid Date; a non-null workflow that normalizes to no path). A read
+//    that succeeds with zero sampled runs is ok:true, runs:[]; a failed read never looks clean.
 //  - truncated: each runs range fetchRuns names (`runs {from}..{to}: cap|budget`), each jobs read the
-//    deadline left unread, and each run cut at the jobs page cap. Sampling to maxRuns is the
-//    requested sample, not truncation, and is not listed.
+//    deadline left unread, each run cut at the jobs page cap, and each run whose full jobs page
+//    came without a total_count (paging stops there: how many jobs remain is unknown). Sampling to
+//    maxRuns is the requested sample, not truncation, and is not listed.
+//  - unsampled: always present, zeros when none — the completed runs left out before sampling,
+//    so an empty sample can say why: `skipped` (a NO_WORK conclusion), `noWorkflowPath` (also
+//    kept as its failure line) and `outsideWorkflows` (a path outside `.github/workflows/`).
+//    In-progress runs and runs the `workflow` filter leaves out are not counted.
 //
 // Bounds: every call passes { timeout: CI_HEALTH_GH_TIMEOUT_MS } (ci-health's 15 s github.com read
 // bound, for the same several-MiB `actions/runs` pages) and `--method GET` on a literal `repos/`
@@ -61,7 +70,7 @@ const { ghOptions } = require('../repo-resolve');
 const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const { fetchRuns, errorText, isGhAbsent, parseBody } = require('../ci-health/fetch');
 const {
-  CI_HEALTH_GH_TIMEOUT_MS, CI_HEALTH_DEADLINE_MS, DEFAULT_DAYS, NO_WORK_CONCLUSIONS,
+  CI_HEALTH_GH_TIMEOUT_MS, CI_HEALTH_DEADLINE_MS, DEFAULT_DAYS, MAX_DAYS, NO_WORK_CONCLUSIONS,
 } = require('../ci-health/constants');
 const { readWorkflowSet } = require('../init/ci-workflow-review');
 
@@ -84,7 +93,7 @@ function validRepo(slug) {
 function normPath(p) {
   if (typeof p !== 'string' || p === '') return null;
   const s = p.replace(/\\/g, '/').replace(/^\.\//, '');
-  return s === '' ? null : s;
+  return /[^/.]/.test(s) ? s : null;
 }
 
 function normJob(j) {
@@ -120,21 +129,22 @@ function readJobs({ owner, repo, id }, { runner, outOfTime }) {
     if (!Array.isArray(page)) throw new Error(`page ${n}: response has no jobs array`);
     if (body && Number.isFinite(body.total_count)) total = body.total_count;
     jobs.push(...page);
-    if (page.length < JOBS_PER_PAGE || total === null || jobs.length >= total) return { jobs, cut: null };
+    if (page.length < JOBS_PER_PAGE || (total !== null && jobs.length >= total)) return { jobs, cut: null };
+    if (total === null) return { jobs, cut: `jobs of run ${id}: ${jobs.length} jobs read, total unknown (no total_count on a full page)` };
   }
   return { jobs, cut: jobs.length < total ? `jobs of run ${id}: ${jobs.length} of ${total} jobs read (page cap)` : null };
 }
 
 function readRunData({ runner, repo, days = DEFAULT_DAYS, maxRuns = DEFAULT_MAX_RUNS, workflow = null, now = null, clock = null } = {}) {
-  const result = { ok: false, cliAbsent: false, runs: [], truncated: [], failures: [] };
-  if (!validRepo(repo)) {
-    result.failures.push(`repo ${JSON.stringify(repo)} is not owner/name`);
-    return result;
-  }
-  if (!Number.isInteger(maxRuns) || maxRuns < 1 || maxRuns > MAX_RUNS) {
-    result.failures.push(`maxRuns must be an integer from 1 to ${MAX_RUNS}`);
-    return result;
-  }
+  const unsampled = { skipped: 0, outsideWorkflows: 0, noWorkflowPath: 0 };
+  const result = { ok: false, cliAbsent: false, runs: [], truncated: [], failures: [], unsampled };
+  const refuse = (message) => { result.failures.push(message); return result; };
+  if (!validRepo(repo)) return refuse(`repo ${JSON.stringify(repo)} is not owner/name`);
+  if (!Number.isInteger(maxRuns) || maxRuns < 1 || maxRuns > MAX_RUNS) return refuse(`maxRuns must be an integer from 1 to ${MAX_RUNS}`);
+  if (!Number.isInteger(days) || days < 1 || days > MAX_DAYS) return refuse(`days must be an integer from 1 to ${MAX_DAYS}`);
+  if (now !== null && !(now instanceof Date && Number.isFinite(now.getTime()))) return refuse('now must be a valid Date');
+  const wanted = workflow === null ? null : normPath(workflow);
+  if (workflow !== null && wanted === null) return refuse(`workflow ${JSON.stringify(workflow)} is not a workflow file path`);
   const [owner, name] = repo.split('/');
   const nowDate = now || new Date();
   const from = new Date(`${new Date(nowDate.getTime() - days * DAY_MS).toISOString().slice(0, 10)}T00:00:00Z`);
@@ -149,17 +159,17 @@ function readRunData({ runner, repo, days = DEFAULT_DAYS, maxRuns = DEFAULT_MAX_
   for (const t of listed.truncatedRanges) result.truncated.push(`runs ${t.from}..${t.to}: ${t.reason}`);
   if (!listed.available) return result;
 
-  const wanted = workflow === null ? null : normPath(workflow);
-  let pathless = 0;
   const pool = [];
   for (const run of listed.runs) {
-    if (!run || run.status !== 'completed' || NO_WORK_CONCLUSIONS.includes(run.conclusion)) continue;
+    if (!run || run.status !== 'completed') continue;
+    if (NO_WORK_CONCLUSIONS.includes(run.conclusion)) { unsampled.skipped += 1; continue; }
     const wf = normPath(run.path);
-    if (wf === null) { pathless += 1; continue; }
-    if (!wf.startsWith(WORKFLOW_DIR)) continue;
+    if (wf === null) { unsampled.noWorkflowPath += 1; continue; }
+    if (!wf.startsWith(WORKFLOW_DIR)) { unsampled.outsideWorkflows += 1; continue; }
     if (wanted !== null && wf !== wanted) continue;
     pool.push({ run, wf });
   }
+  const pathless = unsampled.noWorkflowPath;
   if (pathless > 0) result.failures.push(`${pathless} ${pathless === 1 ? 'run carries' : 'runs carry'} no workflow path — excluded`);
   const createdMs = (r) => { const ms = Date.parse(r.created_at); return Number.isFinite(ms) ? ms : -Infinity; };
   pool.sort((a, b) => createdMs(b.run) - createdMs(a.run) || (b.run.id > a.run.id ? 1 : b.run.id < a.run.id ? -1 : 0));
@@ -176,7 +186,10 @@ function readRunData({ runner, repo, days = DEFAULT_DAYS, maxRuns = DEFAULT_MAX_
     try {
       read = readJobs({ owner, repo: name, id }, { runner, outOfTime });
     } catch (err) {
-      result.failures.push(`jobs of run ${id}: ${isGhAbsent(err) ? 'gh is not installed or not on PATH' : errorText(err)}`);
+      // JSON.parse's message quotes the body's opening bytes, so a parse failure gets fixed text.
+      const why = isGhAbsent(err) ? 'gh is not installed or not on PATH'
+        : err instanceof SyntaxError ? 'response is not JSON' : errorText(err);
+      result.failures.push(`jobs of run ${id}: ${why}`);
       continue;
     }
     if (read.cut) result.truncated.push(read.cut);
