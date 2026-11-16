@@ -118,7 +118,8 @@ function replaceSpan(lines, { first, through = first, before = null, holds }, re
 // fetch and compute become `echo '[]'`. Everything else runs as written; the CLIs it spawns find no
 // gh on the files sandbox's PATH (f).
 function filesOracleScript(fence, mcpText) {
-  const lines = fence.replace(/\n$/, '').split('\n');
+  // #5309: the fence's native-failure branch reads DISPATCH_TRANSPORT (the module's options.transport).
+  const lines = ['DISPATCH_TRANSPORT=files', ...fence.replace(/\n$/, '').split('\n')];
   const mcpFence = (firstLine) => extractFence(mcpText, firstLine).replace(/\n$/, '').split('\n');
   replaceSpan(lines, {
     first: 'gh issue list --label auto:build --state open --json number,title,body,labels,createdAt,updatedAt,state --limit 500 > "$DISPATCH_QUEUE_RAW"',

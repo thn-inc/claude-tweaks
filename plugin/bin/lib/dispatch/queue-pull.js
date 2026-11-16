@@ -262,7 +262,7 @@ const readArray = (file) => {
   return value;
 };
 
-// The `gh issue list --search "#a #b" --state all ...` dependency-freshness fetch (fence 104, 275):
+// The `gh issue list --search "#a #b" --state all ...` dependency-freshness fetch (fence 104, 271):
 // stderr dropped, any failure writes [].
 function fetchDepFreshness(ctx, numbersCsv, file) {
   const search = numbersCsv.split(',').join(' ').replace(/[0-9]+/g, '#$&');
@@ -348,6 +348,7 @@ function makeContext(options = {}, deps = {}) {
     neighbourUnreadable: [], // #5304: the neighbour pass's unreadable claims, kept before its appends so a throwing append still reports them
     claimReader: null, // #5304: the pull's one claim reader, built on its first read (claimReader(ctx))
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
+    nativeUnreadable: false, // #5309: the native-blockers query failed closed; every eligible record is excluded
     standaloneDir: '',
     integrationBranch: '',
     integrationRef: '',
@@ -425,7 +426,23 @@ function runFetch(ctx) {
 // foreign-states Warning the dispatch layer drops after an ignored states file. Matches the fence's test.
 const GH_ABSENT_LOOKUP = /^Warning: foreign blocker state lookup failed \(exit 2: [^)]*gh[^)]* is required\)/;
 
-// Fence 159-205 on a miss (the eligible list, the unresolved-dependency check, the body-text and
+// #5309: the blockedBy entry every eligible record carries when the native query failed closed.
+const NATIVE_UNREADABLE = 'native blockers (state unreadable)';
+
+// #5309: a failed native-blockers call. On gh every failure fails closed: the Warning names the
+// call and the consequence, and the grouping block excludes every eligible record. On files only
+// exit 3 fails closed (exit 2 is gh absent, the normal files result); any other failure keeps the
+// gh-absent fallback and its Warning. Module and fence print the same bytes.
+function nativeQueryFailed(ctx, r) {
+  if (ctx.options.transport === 'files' && r.status !== 3) {
+    ctx.deps.stderr(`Warning: native dependency query failed — falling back to no native filtering this run: ${trimNl(r.stderr)}\n`);
+    return;
+  }
+  ctx.state.nativeUnreadable = true;
+  ctx.deps.stderr(`Warning: native dependency query failed — every candidate excluded as blocked (native blockers unreadable, fail closed) this run: ${trimNl(r.stderr)}\n`);
+}
+
+// Fence 159-213 on a miss (the eligible list, the unresolved-dependency check, the body-text and
 // native blocker filtering); on a hit the persisted `excluded` entries replayed as 'blocked'.
 function runBlocked(ctx) {
   const { deps, paths, omit, state } = ctx;
@@ -509,19 +526,26 @@ function runBlocked(ctx) {
     step(ctx, 'native-deps', () => {
       const nativeNums = readJson(paths['dispatch-eligible.json']).map((i) => i.number).join(',');
       if (!nativeNums) return;
-      const r = deps.spawnCli('resolve-blockers.js', [nativeNums], cliOpts(ctx));
+      let r;
+      try {
+        r = deps.spawnCli('resolve-blockers.js', [nativeNums], cliOpts(ctx));
+      } catch (err) {
+        // #5309: a throw is a failed call with no step line: the one Warning carries the message.
+        nativeQueryFailed(ctx, { status: null, stderr: errText(err) });
+        return;
+      }
       fs.writeFileSync(paths['dispatch-native-deps.tmp.json'], r.stdout || '');
       fs.writeFileSync(paths['dispatch-native-deps.err'], r.stderr || '');
       if (r.status === 0) {
         fs.renameSync(paths['dispatch-native-deps.tmp.json'], paths['dispatch-native-deps.json']);
       } else {
-        deps.stderr(`Warning: native dependency query failed — falling back to no native filtering this run: ${trimNl(r.stderr)}\n`);
+        nativeQueryFailed(ctx, r);
       }
     });
   }
 }
 
-// Fence 206-258 on a miss: the grouping block, which writes dispatch-groups.json, then the
+// Fence 214-261 on a miss: the grouping block, which writes dispatch-groups.json, then the
 // bundles, then the 'blocked' appends, then the 'oversized' appends. On a hit it runs the size
 // guard over the persisted groups and keeps the persisted bundles.
 function runOversized(ctx) {
@@ -548,7 +572,7 @@ function runOversized(ctx) {
     const excludedNative = [];
     for (const c of eligible) {
       const dep = nativeDeps[c.number];
-      const refs = dep ? openBlockerRefs(dep) : [];
+      const refs = state.nativeUnreadable ? [NATIVE_UNREADABLE] : (dep ? openBlockerRefs(dep) : []);
       if (refs.length > 0) excludedNative.push({ number: c.number, blockedBy: refs });
       else finalEligible.push(c);
     }
@@ -576,7 +600,7 @@ function runOversized(ctx) {
   }
 }
 
-// Fence 266-303, the cache-miss path only: the dependency-freshness refetch over every eligible
+// Fence 264-303, the cache-miss path only: the dependency-freshness refetch over every eligible
 // record's dependencies, then the best-effort write-back of the queue-order blob.
 function runWriteBack(ctx) {
   const { deps, paths, state } = ctx;
@@ -596,6 +620,7 @@ function runWriteBack(ctx) {
   aliasFile(ctx, 'alias-dep-freshness', depFile);
 
   if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
+  if (state.nativeUnreadable) return; // #5309: a failed native read is never persisted as a verdict
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);
     const autoBuild = readArray(paths['dispatch-queue-raw.json']);

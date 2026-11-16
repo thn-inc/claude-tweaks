@@ -190,6 +190,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" 
   fs.writeFileSync(process.argv[5], JSON.stringify(excluded));
 NODE_EVAL_EOF
 echo '{}' > "$DISPATCH_NATIVE_DEPS"
+DISPATCH_TRANSPORT="${DISPATCH_TRANSPORT:-gh}"
+NATIVE_UNREADABLE=
 if [ "$WORK_LINKS" = "native" ]; then
   NATIVE_NUMS=$(node -e "console.log(require(process.argv[1]).map((i) => i.number).join(','))" -- "$DISPATCH_ELIGIBLE")
   if [ -n "$NATIVE_NUMS" ]; then
@@ -197,11 +199,18 @@ if [ "$WORK_LINKS" = "native" ]; then
       > "$DISPATCH_NATIVE_DEPS_TMP" 2>"$DISPATCH_NATIVE_DEPS_ERR"; then
       mv "$DISPATCH_NATIVE_DEPS_TMP" "$DISPATCH_NATIVE_DEPS"
     else
-      echo "Warning: native dependency query failed — falling back to no native filtering this run: $(cat "$DISPATCH_NATIVE_DEPS_ERR")" >&2
+      NATIVE_RC=$?
+      # #5309: gh transport (any failure) or exit 3 fails closed; DISPATCH_TRANSPORT=files is the MCP path.
+      if [ "${DISPATCH_TRANSPORT:-gh}" != files ] || [ "$NATIVE_RC" -eq 3 ]; then
+        NATIVE_UNREADABLE=1
+        echo "Warning: native dependency query failed — every candidate excluded as blocked (native blockers unreadable, fail closed) this run: $(cat "$DISPATCH_NATIVE_DEPS_ERR")" >&2
+      else
+        echo "Warning: native dependency query failed — falling back to no native filtering this run: $(cat "$DISPATCH_NATIVE_DEPS_ERR")" >&2
+      fi
     fi
   fi
 fi
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPATCH_NATIVE_DEPS" "$DISPATCH_BLOCKED_EXCLUDED_BODY" "$DISPATCH_EXCLUSIONS" "$DISPATCH_GROUP_SIZE_GUARD" "$DISPATCH_FASTLANE_BUNDLE_CAP" "$DISPATCH_FASTLANE_BUNDLES" > "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPATCH_NATIVE_DEPS" "$DISPATCH_BLOCKED_EXCLUDED_BODY" "$DISPATCH_EXCLUSIONS" "$DISPATCH_GROUP_SIZE_GUARD" "$DISPATCH_FASTLANE_BUNDLE_CAP" "$DISPATCH_FASTLANE_BUNDLES" "$NATIVE_UNREADABLE" > "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionGroupsBySizeGuard } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grouping.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -212,7 +221,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPAT
   const excludedNative = [];
   for (const c of eligible) {
     const dep = nativeDeps[c.number];
-    const refs = dep ? openBlockerRefs(dep) : [];
+    const refs = process.argv[8] ? ['native blockers (state unreadable)'] : (dep ? openBlockerRefs(dep) : []);
     if (refs.length > 0) excludedNative.push({ number: c.number, blockedBy: refs });
     else finalEligible.push(c);
   }
@@ -235,12 +244,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPAT
   for (const e of [...excludedBody, ...excludedNative]) {
     appendExclusion(process.argv[4], { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });
   }
-  // Size guard (#1228): flagged, never removed from DISPATCH_GROUPS -- bare
-  // and #N/#N,#M still resolve an oversized group normally (a human present,
-  // explicitly naming/picking it, is itself the required surfacing). Only
-  // the drain's ranking script (Step 3 — bare, or its deprecated next
-  // alias) excludes an oversized group from its own candidate pool, since
-  // nobody is present there to see a table row or answer a prompt.
+  // Size guard (#1228): flagged, never removed from DISPATCH_GROUPS; only the ranking script excludes it.
   const groupSizeGuard = parseInt(process.argv[5], 10);
   const { oversized, threshold } = partitionGroupsBySizeGuard(groups, { groupSizeGuard });
   for (const g of oversized) {
@@ -255,12 +259,7 @@ if [ "$GROUPING_RC" -ne 0 ]; then
   exit 1
 fi
 
-# #1571: write-back (cache-miss path only — a hit's persisted blob already
-# reflects current state, so re-persisting it would be a wasted, byte-
-# identical write). Best-effort: a failed write here never blocks or fails
-# this firing (this design's own Gotchas) — only the persisted cache misses
-# the update, exactly like a losing CAS writer's own in-memory groups/
-# excluded staying valid for its own firing (AC5).
+# #1571: write-back, cache-miss path only; best-effort (AC5). #5309: skipped after a failed native read.
 DISPATCH_ALL_DEP_NUMBERS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" <<NODE_EVAL_EOF
   const { parseDependencies } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const eligiblePreDep = require(process.argv[1]);
@@ -273,6 +272,7 @@ if [ -n "$DISPATCH_ALL_DEP_NUMBERS" ]; then
   gh issue list --search "$(echo "$DISPATCH_ALL_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 fi
 alias_mcp_timestamps "$DISPATCH_DEP_FRESHNESS"
+if [ -z "$NATIVE_UNREADABLE" ]; then
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_FASTLANE_BUNDLES" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const path = require('path');
@@ -300,6 +300,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   const result = writeOrder(root, blob);
   if (!result.ok) console.error('Queue-order cache write-back failed (non-blocking): ' + result.error);
 NODE_EVAL_EOF
+fi
 
 fi
 

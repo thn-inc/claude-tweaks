@@ -30,7 +30,8 @@
 //     would hit the cache on them (NEW: beyond ledger row 1, which names the session files only).
 //   - One failed native-dependency GraphQL call (F-native) turns off two passes: the blocked pass's
 //     native filtering and, through preflight-records.js's native read, the unlanded-blocker pass
-//     (a Warning each). (NEW cross-pass effects; each pass still fails open.)
+//     (a Warning each). (NEW cross-pass effects; each pass still fails open.) Fixed by #5309: a
+//     failed call fails closed (every eligible record excluded as blocked, one Warning, no write-back).
 //   - One failed claim fetch (F-claim) printed an AUTO line for the shipped pass and one for the
 //     neighbour pass; #5304 prints one combined line per pull (both fence and module).
 //   - A missing or malformed DISPATCH_FOREIGN_STATES file on files printed two fail-closed Warnings
@@ -765,7 +766,8 @@ const fenceText = (re) => {
 };
 const CAP_WARNING = fenceText(/echo "(Warning: the auto:build queue pull returned exactly the --limit cap \(500\)[^"]*)" >&2/);
 const HIT_MESSAGE = fenceText(/echo "(Queue-order cache hit [^"]*)" >&2/);
-const NATIVE_WARNING_PREFIX = fenceText(/echo "(Warning: native dependency query failed[^$]*)\$\(cat /);
+const NATIVE_WARNING_PREFIX = fenceText(/echo "(Warning: native dependency query failed[^$]*falling back[^$]*)\$\(cat /);
+const NATIVE_FAIL_CLOSED_PREFIX = fenceText(/echo "(Warning: native dependency query failed[^$]*fail closed[^$]*)\$\(cat /);
 const GROUPING_STOP_RE = /echo "(dispatch: queue-pull stopped -- group-building exclusion pass failed \(exit )\$GROUPING_RC(\); see error above\.)" >&2/;
 const CACHE_HIT_STOP_RE = /echo "(dispatch: queue-pull stopped -- cache-hit exclusion pass failed \(exit )\$CACHE_HIT_RC(\); see error above\.)" >&2/;
 const asserts = (fn) => assert.throws(fn, (err) => err instanceof assert.AssertionError);
@@ -819,7 +821,7 @@ test('#5227 oracle cross-check: the S1 and SFast fixtures give the oracle the sa
   }
 });
 
-test('#5227 native: work-links native spawns resolve-blockers.js over the eligible numbers and excludes through openBlockerRefs; a non-zero exit prints the fence Warning and filters nothing', () => {
+test('#5227 native: work-links native spawns resolve-blockers.js over the eligible numbers and excludes through openBlockerRefs; a non-zero exit on gh fails closed (#5309)', () => {
   const scenario = () => ({ ...S1(), policy: { 'work-links': 'native' } });
   const ok = pull(scenario(), { spawn: { 'resolve-blockers.js': { status: 0, stdout: JSON.stringify({ 9001: { openBlockerIds: [7000], crossRepoBlockers: [] } }), stderr: '' } } });
   assert.deepEqual(ok.cliCalls.filter(([n]) => n === 'resolve-blockers.js'), [['resolve-blockers.js', '9001,9003']]);
@@ -831,12 +833,73 @@ test('#5227 native: work-links native spawns resolve-blockers.js over the eligib
   assert.deepEqual(ok.store.written[0].blob.excluded, [{ number: 9002, blockedBy: [8000] }, { number: 9001, blockedBy: [7000] }]);
 
   const failed = pull(scenario(), { spawn: { 'resolve-blockers.js': { status: 2, stdout: '', stderr: 'graphql down\n' } } });
-  assert.ok(failed.errs.includes(`${NATIVE_WARNING_PREFIX}graphql down\n`), failed.stderr);
-  assert.deepEqual(groupNumbers(failed), [[9001], [9003]], 'a failed native query filters nothing native');
+  assert.deepEqual(failed.errs, [`${NATIVE_FAIL_CLOSED_PREFIX}graphql down\n`], failed.stderr);
+  assert.deepEqual(groupNumbers(failed), [], 'a failed native query on gh excludes every eligible record');
   assert.deepEqual(failed.json('dispatch-native-deps.json'), {});
+  assert.equal(failed.store.written.length, 0, 'a failed native read is never persisted as a verdict');
 
   const omitted = pull(scenario(), { omit: ['blocked'], spawn: {} });
   assert.deepEqual(omitted.cliCalls.filter(([n]) => n === 'resolve-blockers.js'), [], 'omitting blocked skips the native query');
+});
+
+// #5309: the native-blockers query failed. Every eligible record is excluded as blocked with the
+// unreadable-state detail, one Warning prints, and nothing is written back.
+const NATIVE_UNREADABLE = { detail: { blockedBy: ['native blockers (state unreadable)'] } };
+const nativeFiles = (own, { queue = [9001, 9003] } = {}) => ({
+  inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify(queue.map((n) => mcpRecord(n, withBody(n))))),
+    openNumbers: writeInput(own, 'open.json', JSON.stringify(queue.map((n) => ({ number: n })))),
+    depFreshness: writeInput(own, 'dep.json', '[]'),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+  },
+});
+const nativeScenario = () => ({ ...S1(), policy: { 'work-links': 'native' } });
+const noGhOnFiles = () => { throw new Error('no gh on files'); };
+
+test('#5309 (a) gh: resolve-blockers.js exit 3 excludes every eligible record as blocked, prints the one fail-closed Warning, and writes nothing back', () => {
+  const r = pull(nativeScenario(), { spawn: { 'resolve-blockers.js': { status: 3, stdout: '', stderr: 'gh-fault\n' } } });
+  assert.deepEqual(r.errs, [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault\n`], r.stderr);
+  assert.deepEqual(entriesOf(r, 'blocked'), [
+    { reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } },
+    { reason: 'blocked', records: [9001], ...NATIVE_UNREADABLE },
+    { reason: 'blocked', records: [9003], ...NATIVE_UNREADABLE },
+  ]);
+  assert.deepEqual(groupNumbers(r), []);
+  assert.equal(r.store.written.length, 0, 'queueOrder.writeOrder is not called');
+});
+
+test('#5309 (a2) gh: resolve-blockers.js exit 2 (owner/repo unresolvable) fails closed the same way', () => {
+  const r = pull(nativeScenario(), { spawn: { 'resolve-blockers.js': { status: 2, stdout: '', stderr: 'no owner/repo\n' } } });
+  assert.deepEqual(r.errs, [`${NATIVE_FAIL_CLOSED_PREFIX}no owner/repo\n`], r.stderr);
+  assert.deepEqual(entriesOf(r, 'blocked').slice(1).map((e) => e.records), [[9001], [9003]]);
+  assert.deepEqual(groupNumbers(r), []);
+  assert.equal(r.store.written.length, 0);
+});
+
+test('#5309 (b) gh: a throw inside the native step prints only the fail-closed Warning, with the error message as its stderr', () => {
+  const r = pull(nativeScenario(), { spawn: { 'resolve-blockers.js': () => { throw new Error('spawn exploded'); } } });
+  assert.deepEqual(r.errs, [`${NATIVE_FAIL_CLOSED_PREFIX}spawn exploded\n`], r.stderr);
+  assert.deepEqual(entriesOf(r, 'blocked').slice(1).map((e) => e.records), [[9001], [9003]]);
+  assert.deepEqual(groupNumbers(r), []);
+  assert.equal(r.store.written.length, 0);
+});
+
+test('#5309 (c) files: resolve-blockers.js exit 2 (gh absent) keeps the gh-absent fallback and its Warning, filters nothing native, and writes back', () => {
+  const r = pull(nativeScenario(), { transport: 'files', run: noGhOnFiles, prepare: (own) => nativeFiles(own),
+    spawn: { 'resolve-blockers.js': { status: 2, stdout: '', stderr: 'gh is required\n' } } });
+  assert.deepEqual(r.errs, [`${NATIVE_WARNING_PREFIX}gh is required\n`], r.stderr);
+  assert.deepEqual(entriesOf(r, 'blocked'), []);
+  assert.deepEqual(groupNumbers(r), [[9001], [9003]], 'a gh-absent drain keeps dispatching');
+  assert.equal(r.store.written.length, 1, 'the write-back is unchanged on files');
+});
+
+test('#5309 (d) files: resolve-blockers.js exit 3 fails closed as on gh', () => {
+  const r = pull(nativeScenario(), { transport: 'files', run: noGhOnFiles, prepare: (own) => nativeFiles(own),
+    spawn: { 'resolve-blockers.js': { status: 3, stdout: '', stderr: 'gh-fault\n' } } });
+  assert.deepEqual(r.errs, [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault\n`], r.stderr);
+  assert.deepEqual(entriesOf(r, 'blocked').map((e) => e.records), [[9001], [9003]]);
+  assert.deepEqual(groupNumbers(r), []);
+  assert.equal(r.store.written.length, 0);
 });
 
 test('#5227 unresolved dependency: a blocker outside the open-numbers pull is checked with gh issue view, and OPEN blocks', () => {
@@ -3312,7 +3375,8 @@ const FAULT_EXPECT = {
   'F-opennum': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'F-depfresh': { status: 0, stderr: [], drops: [] },
   'F-depview': { status: 0, base: 'gh-livedep', stderr: [], drops: ['blocked:9002'] },
-  'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_WARNING_PREFIX}gh-fault: injected failure`, LANDING_EXITED], drops: ['blocked:9030'] },
+  // #5309: both eligible records are excluded fail-closed (9030 was already blocked, now with the unreadable detail); the unlanded-blocker pass has no candidate left, so it prints nothing.
+  'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault: injected failure`], drops: [], adds: ['blocked:9001'] },
   'F-foreign': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
   'F-foreign-states': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (ENOENT: ', 'Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
   'F-linked': { status: 0, stderr: [`${LINKED_WARNING}gh-fault: injected failure`], drops: ['open-pr:9005', 'open-pr:9008', 'shipped:9010'] },
