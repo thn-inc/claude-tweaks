@@ -2,6 +2,6 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
-| 1 | ops | Branch divergence at resume: origin/main was 4 commits ahead of HEAD at flow Step 2.5 (e3f947486d); Common Step 5's pre-verification catch-up merges it | open | — |
+| 1 | ops | Branch divergence at resume: origin/main was 4 commits ahead of HEAD at flow Step 2.5 (e3f947486d); Common Step 5's pre-verification catch-up merges it | fixed | merged origin/main at the pre-verification catch-up (df6aae6948 → 6c91b3a51a) |
 | 2 | build | SDD ruling — Task 3 resumed by a fresh implementer to re-run trace attribution and write the lost report: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 3 | build/skill | windows-checkout-test-parity extension: a scan for leaked template-root paths in copied fixture files must also search each root's JSON-escaped spelling, since a JSON file stores a win32 path with doubled backslashes (tests/helpers/learned-skills-land.js) | observation | — |
