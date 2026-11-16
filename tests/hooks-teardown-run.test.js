@@ -787,3 +787,107 @@ test('#5293: dead owner, merged, branch-recovered worktree locked by a live pid 
   assert.ok(fs.existsSync(wt), 'worktree directory must remain');
   assert.match(git(root, 'worktree', 'list'), /feat-branch/);
 });
+
+// #5555 Task 4: `hooks.js teardown-run` (and close-run before it) write timing.json before they
+// return. In-process through run(argv, deps); --abandoned keeps the gh seam unreached.
+const { runCli } = require('./helpers/run-cli');
+const { cleanGitEnv } = require('./helpers/git-fixtures');
+const atClose = require('../plugin/bin/lib/timing/at-close');
+const T = require('./helpers/close-timing');
+
+const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
+
+// -> { root, wt, runDir, cfg }: the fixture run, active and owned by T.SID, with events.jsonl and no timing.json.
+function timingFixture() {
+  const fx = fixtureRepo();
+  writeRunState(fx.runDir, { status: 'active', worktree: fx.wt, sessionId: T.SID });
+  T.writeEvents(fx.runDir);
+  return { ...fx, cfg: path.join(fx.root, 'cfg') };
+}
+
+function hooksVerb(fx, verb, extra = ['--abandoned']) {
+  return runCli(HOOKS, [verb, '--run', fx.runDir, ...extra], {
+    cwd: fx.root, env: { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CLAUDE_CONFIG_DIR: fx.cfg, CLAUDE_CODE_SESSION_ID: T.SID },
+  });
+}
+const teardown = (fx) => hooksVerb(fx, 'teardown-run');
+// The worktree line carries the fixture's own root; two fixtures compare equal once it is masked.
+const masked = (fx, r) => ({ code: r.code, stdout: r.stdout.split(fx.root).join('<root>') });
+
+test('AC1.1/AC1.2 teardown-run: events.jsonl and no timing.json → timing.json with a phase row per phase and token totals, present when the call returns', async () => {
+  const fx = timingFixture();
+  T.writeTranscript(fx.cfg, fx.wt);
+  const r = await teardown(fx);
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /state: closed/);
+  assert.match(r.stdout, /worktree: removed/);
+  const timing = T.readTiming(fx.runDir);
+  T.assertPhaseRows(timing);
+  assert.deepStrictEqual(T.pickTokens(timing.totals.tokens), T.sum(T.A, T.B));
+  assert.deepStrictEqual(T.skipLines(fx.runDir), []);
+});
+
+test('teardown-run: a refused (foreign-owned) teardown reports closed:false and writes no timing.json', async () => {
+  const fx = timingFixture();
+  writeRunState(fx.runDir, { status: 'active', worktree: fx.wt, sessionId: 'someone-else' });
+  const r = await teardown(fx);
+  assert.match(r.stdout, /state: refused/);
+  assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'timing.json')), false);
+  assert.strictEqual(teardownRun(fx.runDir, { mode: null, sessionId: T.SID, cwd: fx.root }).closed, false);
+});
+
+test('AC4.1 teardown-run: writeTimingAtClose stubbed to throw → stdout and exit code equal the no-op stub\'s, and decisions.md gains one SKIP line', async () => {
+  const base = timingFixture();
+  const thrown = timingFixture();
+  // The base commit printed nothing about timing, so a no-op stub is its stand-in.
+  const expected = await T.withStub(atClose, 'writeTimingAtClose', async () => ({}), () => teardown(base));
+  const actual = await T.withStub(atClose, 'writeTimingAtClose', async () => { throw new Error('boom'); }, () => teardown(thrown));
+  assert.deepStrictEqual(masked(thrown, actual), masked(base, expected));
+  assert.deepStrictEqual(T.skipLines(base.runDir), []);
+  const skips = T.skipLines(thrown.runDir);
+  assert.strictEqual(skips.length, 1);
+  assert.match(skips[0], /boom/);
+});
+
+// Mock timers drive the real TIMING_BOUND_MS (no 60 s wait): see boundedWithHungReader.
+test('AC5.2 teardown-run: the transcript reader never resolves → returns at the TIMING_BOUND_MS bound, phase rows written, one SKIP line', { timeout: 10000 }, async () => {
+  const fx = timingFixture();
+  T.writeTranscript(fx.cfg, fx.wt);
+  const r = await T.boundedWithHungReader(() => teardown(fx));
+  assert.strictEqual(r.code, 0);
+  const timing = T.readTiming(fx.runDir);
+  T.assertPhaseRows(timing);
+  assert.strictEqual(Object.hasOwn(timing.totals, 'tokens'), false);
+  const skips = T.skipLines(fx.runDir);
+  assert.strictEqual(skips.length, 1);
+  assert.match(skips[0], /time bound/);
+});
+
+test('AC12.2 teardown-run: a parent run with two spec-N children → one timing.json in the parent, none written into spec-N, an existing spec-N file byte-identical', async () => {
+  const fx = timingFixture();
+  T.writeTranscript(fx.cfg, fx.wt);
+  for (const n of [1, 2]) {
+    fs.mkdirSync(path.join(fx.runDir, `spec-${n}`));
+    T.writeEvents(path.join(fx.runDir, `spec-${n}`));
+  }
+  const childFile = path.join(fx.runDir, 'spec-2', 'timing.json');
+  fs.writeFileSync(childFile, '{"phases":[],"totals":{"minutes":1}}');
+  const before = fs.readFileSync(childFile);
+  assert.strictEqual((await teardown(fx)).code, 0);
+  T.assertPhaseRows(T.readTiming(fx.runDir));
+  assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'spec-1', 'timing.json')), false);
+  assert.ok(before.equals(fs.readFileSync(childFile)));
+});
+
+test('close-run then teardown-run on the same run → the second keeps the timing.json byte-identical', async () => {
+  const fx = timingFixture();
+  T.writeTranscript(fx.cfg, fx.wt);
+  assert.strictEqual((await hooksVerb(fx, 'close-run', [])).code, 0);
+  const file = path.join(fx.runDir, 'timing.json');
+  const first = fs.readFileSync(file);
+  assert.ok(T.readTiming(fx.runDir).totals.tokens);
+  const r = await teardown(fx);
+  assert.match(r.stdout, /state: closed/);
+  assert.ok(first.equals(fs.readFileSync(file)));
+  assert.deepStrictEqual(T.skipLines(fx.runDir), []);
+});

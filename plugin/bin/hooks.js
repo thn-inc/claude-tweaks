@@ -1123,6 +1123,13 @@ async function runCloseRun(argv, deps) {
     if (!r.writeOk) {
       deps.stdout(`claude-tweaks: failed to close run ${path.basename(runDir)} — run-state.json could not be written\n`);
     }
+    if (r.status === 'closed' && r.writeOk) {
+      // #5555: timing.json is written in-process, inside at-close's own time bound; lazy so no hook event loads it.
+      const atClose = require('./lib/timing/at-close');
+      try { await atClose.writeTimingAtClose(runDir, { env: deps.env }); } catch (err) {
+        atClose.logTimingSkip(runDir, `condition: timing at close failed (${err && err.message ? err.message : err}) → fallback: no timing.json written`);
+      }
+    }
   } else {
     // No --run was given (or it resolved to nothing) and resolveRunDir's
     // fallback also found no run dir — the only remaining case in this
@@ -1400,6 +1407,12 @@ async function runTeardownRun(argv, deps) {
   } else if (runDir) {
     const result = teardownRun(runDir, { mode, sessionId: deps.env.CLAUDE_CODE_SESSION_ID, cwd: deps.cwd() });
     deps.stdout(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
+    if (result.closed) {
+      const atClose = require('./lib/timing/at-close');
+      try { await atClose.writeTimingAtClose(runDir, { env: deps.env }); } catch (err) {
+        atClose.logTimingSkip(runDir, `condition: timing at close failed (${err && err.message ? err.message : err}) → fallback: no timing.json written`);
+      }
+    }
   } else {
     deps.stdout('claude-tweaks: no pipeline run dir found — run not torn down\n');
   }
