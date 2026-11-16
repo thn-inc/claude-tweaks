@@ -100,11 +100,11 @@ files:
 
 ### 5. (Maintainer) Decide the held items at acceptance
 - **URL:** the acceptance packet comment's Decisions left for you
-- **Action:** the maintainer reads one line per held item: the target, the draft title, the reason, and the staged draft (inline for `external` and `filing-failed`, by path for `scrub-hit`). They then file it themselves or decline it.
+- **Action:** the maintainer reads one line per held item: the target, the reason and the staged draft's path. An `external` or `filing-failed` line also carries the draft title and the draft inline, and a `filing-failed` one the agent's `--reason` phrase. A `scrub-hit` line carries neither the title nor the phrase. They then file it themselves or decline it.
 - **Should feel:** the only upstream decision left, with everything needed to make it.
 - **Should understand:**
   - Holding is the default for anything not provably owned.
-  - To widen what counts as owned, add owners to `owned-owners` on the default branch.
+  - Only `thn-inc/claude-tweaks`, the repo `/claude-tweaks:feedback` files into, can ever file. `owned-owners` on the default branch decides whether it counts as owned in a project whose origin owner is not `thn-inc`. Adding any other owner files nothing more.
 - **Red flags:**
   - a held item missing from the packet;
   - an external issue that appeared without the maintainer's action.
