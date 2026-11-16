@@ -551,11 +551,11 @@ function settleLensReplies(rest, deps) {
     }
   }
 
-  const paired = [];
+  const pairedByLens = new Map();
   if (flags.run !== undefined) {
     for (const s of settled) {
-      const lensHold = hold[s.lens] || [];
-      paired.push({ lens: s.lens, entries: pairEntries(s.result, { lens: s.lens, only: flags.only, hold: lensHold }).entries.map((e) => ({ ...e, section: '/review' })) });
+      const { entries } = pairEntries(s.result, { lens: s.lens, only: flags.only, hold: hold[s.lens] || [] });
+      pairedByLens.set(s.lens, entries.map((e) => ({ ...e, section: '/review' })));
     }
   }
 
@@ -581,12 +581,12 @@ function settleLensReplies(rest, deps) {
     });
   }
 
-  const logged = anchored ? appendDecisionEntries(paired.flatMap((p) => p.entries), anchored.dir, deps) : undefined;
+  const logged = anchored ? appendDecisionEntries([...pairedByLens.values()].flat(), anchored.dir, deps) : undefined;
   const all = states.flatMap((s) => s.reviewers);
   const out = {
     settled: settled.map((s) => {
       const item = { lens: s.lens, confirmed: s.result.confirmed, unconfirmed: s.result.unconfirmed };
-      if (anchored) { item.entries = paired.find((p) => p.lens === s.lens).entries; item.logged = logged; }
+      if (anchored) { item.entries = pairedByLens.get(s.lens); item.logged = logged; }
       return item;
     }),
     needsSession,
