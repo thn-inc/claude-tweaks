@@ -403,6 +403,7 @@ const NOT_ORIGIN = {
   'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps an ungated `originSpecOf(remote)` (the seam's normalized read, #4794), only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
   'lib/wrap-up/engine-verify.js': { count: 2, reason: "carrier-commit's and reference-repairs' `parseRepo(<origin>)` pass only owner/repo to deps.gh, a ghOptions-wrapped runner, so the host is the seam's choice, never the parsed one. The acceptance-labeling check's origin goes through the gate (resolveCheckRepo, #4805), which ORIGIN_GATED lists" },
   'lib/reconcile/pr-state-batch.js': { count: 1, reason: "githubOrigin keeps the parse only when its host is github.com, and the batch query pins `--hostname github.com`" },
+  'lib/issues/upstream-ownership.js': { count: 1, reason: "#4621: ownerContextFromOrigin's `originSpecOf(remoteUrl)` is a pure ownership read that makes no gh call; it needs the host itself (a non-github.com host routes `external`), which the gate would refuse instead of returning" },
 };
 
 // The files whose code calls gateOriginRepo(, the defining lib/repo-resolve.js excluded.
@@ -474,8 +475,9 @@ test('AC9.2: no plugin/bin file reads the origin through parseRepo outside NOT_O
   // site onto the gate (a deliberate removal, not lost recall), so it is 8; #4805 moved engine-verify.js's
   // acceptance-labeling reads (two sites) onto the gate the same way, so it is 6. #4794 moved stale-claim-pr.js's
   // one site onto the gate (its origin now goes through gateOriginRepo, a deliberate removal), so it is 5.
+  // #4621 added upstream-ownership.js's one ungated pure read, so it is 6.
   // Raise it as sites are added, never lower it otherwise.
-  assert.ok(matched >= 5, `matched only ${matched} origin-reading parseRepo sites under plugin/bin/ (floor 5): the matcher stopped matching`);
+  assert.ok(matched >= 6, `matched only ${matched} origin-reading parseRepo sites under plugin/bin/ (floor 6): the matcher stopped matching`);
   for (const [rel, { count }] of Object.entries(NOT_ORIGIN)) {
     assert.equal(seen[rel], count, `${rel}: expected exactly ${count} origin-reading parseRepo site(s), saw ${seen[rel]} — re-read the lines and settle the entry`);
   }

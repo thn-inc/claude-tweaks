@@ -74,12 +74,14 @@ test('AC6.1 go-red: dropping the merge-conflict row naming fails', () => {
   assert.throws(() => assertGateStops(CONTRACT, m, GATES[0]), { message: /merge conflicts not named/ });
 });
 test('AC6.1: control mode adds no capability that could silence a gate', () => {
-  const cm = bookkeepingPermissions(null, { controlMode: true });
-  assert.deepStrictEqual(cm, bookkeepingPermissions('unattended'));
+  // ownedUpstreamFiling (#4621) is control mode's one deliberate capability; it files into an owned repo, never silences a gate
+  const strip = ({ ownedUpstreamFiling, ...rest }) => rest;
+  const cm = strip(bookkeepingPermissions(null, { controlMode: true }));
+  assert.deepStrictEqual(cm, strip(bookkeepingPermissions('unattended')));
   // controls: the comparison can go red - supervised differs, and a mutated copy fails
-  assert.notDeepStrictEqual(cm, bookkeepingPermissions('supervised'));
+  assert.notDeepStrictEqual(cm, strip(bookkeepingPermissions('supervised')));
   const flipped = { ...cm, [Object.keys(cm)[0]]: !Object.values(cm)[0] };
-  assert.throws(() => assert.deepStrictEqual(flipped, bookkeepingPermissions('unattended')));
+  assert.throws(() => assert.deepStrictEqual(flipped, strip(bookkeepingPermissions('unattended'))));
 });
 
 function precedenceRungs(ceiling) {

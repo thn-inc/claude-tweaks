@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "runDir": "RUN",
+  "generatedAt": "NOW",
+  "sources": { "timing": true, "decisions": true, "events": true, "runState": true, "questions": "timing.json" },
+  "steps": [
+    {
+      "phase": "build", "start": "T+0s", "end": "T+600s", "minutes": 10, "ownMinutes": 10,
+      "tokens": { "input": 100, "output": 10, "cacheRead": 1000, "cacheCreate": 50 }, "agents": 0,
+      "commits": { "push": 1 },
+      "verify": { "runs": 0, "pass": 0, "fail": 0, "unknown": 0 },
+      "decisions": { "AUTO": 0, "STAGED": 0, "KEPT-PROMPT": 0, "SCANNED": 0, "REFUSED": 0, "SKIP": 1, "FAILED": 0 },
+      "events": { "commit": 1, "skill_invoked": 1 },
+      "questions": [], "findings": null, "unparsed": { "count": 0, "samples": [] }
+    },
+    {
+      "phase": "test", "start": "T+600s", "end": "T+1200s", "minutes": 10, "ownMinutes": 10,
+      "tokens": { "input": 200, "output": 20, "cacheRead": 2000, "cacheCreate": 60 }, "agents": 1,
+      "commits": {},
+      "verify": { "runs": 1, "pass": 1, "fail": 0, "unknown": 0 },
+      "decisions": { "AUTO": 0, "STAGED": 0, "KEPT-PROMPT": 0, "SCANNED": 0, "REFUSED": 0, "SKIP": 0, "FAILED": 0 },
+      "events": { "skill_invoked": 1, "verify": 1 },
+      "questions": [], "findings": null, "unparsed": { "count": 0, "samples": [] }
+    },
+    {
+      "phase": "review", "start": "T+1200s", "end": "T+2400s", "minutes": 20, "ownMinutes": 20,
+      "tokens": { "input": 300, "output": 30, "cacheRead": 3000, "cacheCreate": 70 }, "agents": 3,
+      "commits": {},
+      "verify": { "runs": 0, "pass": 0, "fail": 0, "unknown": 0 },
+      "decisions": { "AUTO": 4, "STAGED": 4, "KEPT-PROMPT": 0, "SCANNED": 0, "REFUSED": 0, "SKIP": 0, "FAILED": 0 },
+      "events": { "ask-user-question": 1, "skill_invoked": 1 },
+      "questions": [
+        { "question": "Merge now?", "askedAt": "T+1290s", "answeredAt": "T+1500s", "waitedMinutes": 3.5, "askSource": "toolUseId" }
+      ],
+      "findings": {
+        "raised": 4, "both": 1, "one": 3, "relabeled": 0,
+        "tiebreak": {
+          "byVerdict": { "confirmed": 1, "refuted": 1, "cant-tell": 1, "unsettled": 0 },
+          "byOutcome": { "confirmed": 1, "drop": 1, "digest": 0, "console": 1, "none": 0 }
+        },
+        "byLens": {
+          "3a": {
+            "raised": 1, "both": 1, "one": 0, "relabeled": 0,
+            "tiebreak": {
+              "byVerdict": { "confirmed": 0, "refuted": 0, "cant-tell": 0, "unsettled": 0 },
+              "byOutcome": { "confirmed": 0, "drop": 0, "digest": 0, "console": 0, "none": 0 }
+            }
+          },
+          "3b": {
+            "raised": 2, "both": 0, "one": 2, "relabeled": 0,
+            "tiebreak": {
+              "byVerdict": { "confirmed": 1, "refuted": 1, "cant-tell": 0, "unsettled": 0 },
+              "byOutcome": { "confirmed": 1, "drop": 1, "digest": 0, "console": 0, "none": 0 }
+            }
+          },
+          "3c": {
+            "raised": 1, "both": 0, "one": 1, "relabeled": 0,
+            "tiebreak": {
+              "byVerdict": { "confirmed": 0, "refuted": 0, "cant-tell": 1, "unsettled": 0 },
+              "byOutcome": { "confirmed": 0, "drop": 0, "digest": 0, "console": 1, "none": 0 }
+            }
+          }
+        }
+      },
+      "unparsed": { "count": 1, "samples": ["{{MYSTERY_LINE}}"] }
+    },
+    {
+      "phase": "wrap-up", "start": "T+2400s", "end": "T+2700s", "minutes": 5, "ownMinutes": 5,
+      "tokens": { "input": 400, "output": 40, "cacheRead": 4000, "cacheCreate": 80 }, "agents": 0,
+      "commits": {},
+      "verify": { "runs": 0, "pass": 0, "fail": 0, "unknown": 0 },
+      "decisions": { "AUTO": 0, "STAGED": 0, "KEPT-PROMPT": 0, "SCANNED": 0, "REFUSED": 0, "SKIP": 0, "FAILED": 0 },
+      "events": { "close-run": 1, "skill_invoked": 1 },
+      "questions": [], "findings": null, "unparsed": { "count": 0, "samples": [] }
+    }
+  ],
+  "unattributed": {
+    "commits": {},
+    "verify": { "runs": 0, "pass": 0, "fail": 0, "unknown": 0 },
+    "decisions": { "AUTO": 0, "STAGED": 0, "KEPT-PROMPT": 0, "SCANNED": 0, "REFUSED": 0, "SKIP": 0, "FAILED": 0 },
+    "events": {},
+    "questions": [], "findings": null, "unparsed": { "count": 0, "samples": [] }
+  },
+  "unparsed": { "count": 0, "samples": [] }
+}
