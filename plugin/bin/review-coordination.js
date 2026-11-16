@@ -76,7 +76,8 @@
 // hand-written line carried. A vacuity kind needs a --lens whose leading token is `3f`; vacuity-downgraded also needs
 // an earlier form 1 or 2 line (a reproduced pair line) for that lens and location under `## /review`, so the
 // downgrade is always the later line and stays an open console item until a tiebreak verdict settles it. The
-// judgment file holds only its kind's declared keys (a `lens` or any other key exits 2: the lens comes from --lens).
+// judgment file holds only its kind's declared keys (a `lens` or any other key exits 2: the lens comes from --lens), and
+// an absence-refuted `symbol` holds no whitespace (the pair-line reader takes it as one token).
 // Every refusal exits 2 and writes nothing; all come before the run dir is anchored except two of
 // vacuity-downgraded's, which read decisions.md (no earlier reproduced line; a decisions.md that cannot be read).
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
@@ -324,12 +325,14 @@ function resolveTiebreakChunkCommand(findings, positional, root, runDir, tier, d
 }
 
 // The judged lines' closed field rules (#5595): each kind's single-line string fields, whole-number lines and shape.
+// `lens3f` marks the kinds whose line is a lens 3f line (--lens must start with 3f). The table's keys must stay equal to
+// the composer's JUDGMENT_KINDS; a test pins that.
 const isText = (v) => typeof v === 'string' && v.trim() !== '' && !/[\r\n]/.test(v);
 const isLineNumber = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1;
 const JUDGMENT_FIELDS = {
   'absence-refuted': { text: ['path', 'symbol', 'command'], extra: ['foundAt'], compose: absenceRefuted },
-  'vacuity-downgraded': { text: ['path'], lines: ['line'], compose: vacuityDowngraded },
-  'vacuity-reconfirmed': { text: ['path', 'command', 'output'], lines: ['line'], compose: vacuityReconfirmed },
+  'vacuity-downgraded': { text: ['path'], lines: ['line'], lens3f: true, compose: vacuityDowngraded },
+  'vacuity-reconfirmed': { text: ['path', 'command', 'output'], lines: ['line'], lens3f: true, compose: vacuityReconfirmed },
 };
 const LENS_TOKEN_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+`);
 const leadingToken = (lens) => { const m = LENS_TOKEN_RE.exec(lens); return m ? m[0] : null; };
@@ -343,6 +346,9 @@ function judgmentProblem(j, rule) {
   const undeclared = Object.keys(j).filter((k) => k !== 'kind' && !judgmentKeys(rule).includes(k));
   if (undeclared.length) return `unexpected key ${undeclared.map((k) => JSON.stringify(k)).join(', ')}, a ${j.kind} judgment holds only kind, ${judgmentKeys(rule).join(', ')}`;
   for (const k of rule.text) if (!isText(j[k])) return `${k} must be a non-empty single-line string, got ${JSON.stringify(j[k])}`;
+  // The pair-line reader takes the symbol of `{path}:{symbol}` as one whitespace-free token (timing/pair-lines.js), so a
+  // symbol holding whitespace would be logged as a line no reader classifies.
+  if (j.kind === 'absence-refuted' && /\s/.test(j.symbol)) return `symbol must not hold whitespace, got ${JSON.stringify(j.symbol)}`;
   for (const k of rule.lines || []) if (!isLineNumber(j[k])) return `${k} must be a whole number of 1 or more, got ${JSON.stringify(j[k])}`;
   if (j.kind === 'absence-refuted') {
     const at = j.foundAt;
@@ -385,8 +391,7 @@ function logReproductionJudgment(rest, deps) {
   const rule = JUDGMENT_FIELDS[j.kind];
   const problem = judgmentProblem(j, rule);
   if (problem) return refuse(`${j.kind}: ${problem}`);
-  const vacuity = j.kind !== 'absence-refuted';
-  if (vacuity && leadingToken(flags.lens) !== '3f') return refuse(`${j.kind} is a lens 3f line, --lens must start with 3f, got ${JSON.stringify(flags.lens)}`);
+  if (rule.lens3f && leadingToken(flags.lens) !== '3f') return refuse(`${j.kind} is a lens 3f line, --lens must start with 3f, got ${JSON.stringify(flags.lens)}`);
   const anchored = anchorRunDir(flags.run, deps, 3);
   if (anchored.exitCode !== undefined) return anchored.exitCode;
   if (j.kind === 'vacuity-downgraded') {
@@ -665,6 +670,6 @@ function run(argv, overrides = {}) {
   return 2;
 }
 
-module.exports = { run, realDeps };
+module.exports = { run, realDeps, JUDGMENT_FIELDS };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

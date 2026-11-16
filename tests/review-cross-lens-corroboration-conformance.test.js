@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
+const { LINE_TOLERANCE_REPRODUCTION } = require('../plugin/bin/lib/coordination');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 // Pinned seam: the #3698 CRLF test reads through readAt, so keep every skill read routed here.
@@ -86,7 +87,8 @@ function assertKeepsStaged(file, dispatch) {
   assert.ok(b.includes('step3-cross-lens-corroboration.md'), 'bullet does not cite the new file');
 }
 
-const SHARE_LOC_BULLET = '> - Findings at the same location (path exact, line ±2)';
+// The bullet restates the ±2 line tolerance, so its anchor is built from the constant: a changed tolerance makes this red.
+const SHARE_LOC_BULLET = `> - Findings at the same location (path exact, line ±${LINE_TOLERANCE_REPRODUCTION})`;
 
 // One `--only unconfirmed` call writes both the `not reproduced` and the share-a-location lines (#5595), so
 // the share-a-location line waits at `medium` through the only-one-agent bullet's deferral sentence.

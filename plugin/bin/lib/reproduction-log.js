@@ -94,6 +94,8 @@ function pairEntries({ confirmed, unconfirmed }, { lens, only, hold = [] }) {
       i += 1;
       const aHeld = held.has(holdKey(a));
       const bHeld = held.has(holdKey(b));
+      // With one side held (settled elsewhere: refuted, or promoted by corroboration) the other is a plain
+      // single-reviewer finding, so it gets form 3 and no coincidence line (spec AC4); both held writes nothing.
       if (!aHeld && !bHeld) entries.push(coincidence({ lens, path: a.path, lineA: a.line, lineB: b.line }));
       else if (!aHeld) entries.push(notReproduced({ lens, path: a.path, line: a.line }));
       else if (!bHeld) entries.push(notReproduced({ lens, path: b.path, line: b.line }));

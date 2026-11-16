@@ -1484,6 +1484,31 @@ test('AC8.4: vacuity-downgraded with no form 1/2 line for that lens and location
   assert.strictEqual(judgeRun(contested, DOWNGRADE, base(contested)).code, 0);
 });
 
+test('AC8.4: vacuity-downgraded with a decisions.md that cannot be read (not merely missing) exits 2 naming it and writes nothing', (t) => {
+  const inp = judgeInputs(t);
+  fs.mkdirSync(path.join(inp.runDir, 'decisions.md'));
+  const res = judgeRun(inp, DOWNGRADE, ['--lens', '3f', '--run', inp.runDir]);
+  assert.strictEqual(res.code, 2);
+  assert.match(res.err, /cannot read decisions\.md/);
+  assert.strictEqual(res.out, '');
+});
+
+test('AC9.4: an absence-refuted symbol holding whitespace exits 2 and writes nothing; a colon in it is accepted', (t) => {
+  const inp = judgeInputs(t);
+  const base = ['--lens', 'security', '--run', inp.runDir];
+  const res = judgeRun(inp, { ...ABSENCE, symbol: 'export default' }, base);
+  assert.strictEqual(res.code, 2);
+  assert.match(res.err, /absence-refuted: symbol must not hold whitespace/);
+  assert.strictEqual(res.out, '');
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+  assert.strictEqual(judgeRun(inp, { ...ABSENCE, symbol: 'Foo::bar' }, base).code, 0);
+});
+
+test('the judgment rule table names the same kinds as the composer (a kind added to one alone would crash or be refused as unknown)', () => {
+  const { JUDGMENT_FIELDS } = require('../../../plugin/bin/review-coordination');
+  assert.deepStrictEqual(Object.keys(JUDGMENT_FIELDS), [...rl.JUDGMENT_KINDS]);
+});
+
 test('log-reproduction-judgment: vacuity kinds need a 3f lens; the lens rule, flags and run dir are checked', (t) => {
   const inp = judgeInputs(t);
   seedReproduced(inp);
