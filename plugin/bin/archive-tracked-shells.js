@@ -13,14 +13,30 @@
 //   --root     main checkout (default: the main checkout of the cwd's repo)
 //   --dry-run  classify only: no branch, no worktree, no network, no PR
 //   --no-pr    commit on the local branch and stop (also the only mode under
-//              integration-model local-merge, or with gh absent)
+//              integration-model local-merge, or with gh absent). With no `origin`
+//              remote the branch starts from the local integration branch (policy
+//              integration-branch, else the main checkout's current branch).
 //
-// Stdout: one JSON envelope line { moved, deleted, conflicts, untwinned, branch, pr,
-// notes[, dryRun] }.
+// The scratch worktree is created locked with the reason `archive-tracked-shells (pid N)`;
+// a second run finding it locked by a live pid refuses rather than replacing it.
+//
+// Arming (housekeeping-auto-merge 'true'): the PR is armed with `gh pr merge --auto --squash`
+// only when its state read shows mergeStateStatus BLOCKED — the forge holds the merge for its
+// required checks. Any other value means the repository has no required check pending, and
+// `--auto` would merge before CI (`_shared/pr-first-merge.md` Step 2.5), so the PR is left
+// unarmed with a note. A read after arming reports `pr.armed` / `pr.merged` / `pr.state`. The PR
+// body carries `<!-- tidy-housekeeping-pr -->`, the housekeeping marker the unarmed-ready-PR
+// backstop (`_shared/github-pr-scan.md` item 9) recognises, so a green PR can be armed later.
+//
+// Stdout: one JSON envelope line { moved, deleted, conflicts, untwinned, untracked, branch,
+// pr, notes[, dryRun][, error] }. `untracked` names clean-twin work/-only dirs whose files are
+// not tracked: reconcile still flags them, and this CLI leaves them alone.
 // Exit codes (a Combined-2 family): 0 success, including nothing to do and every
 // --dry-run; 1 a shell was left behind (its work twin differs, or archival refused
-// it); 2 a malformed call or an unsupported environment (local-merge or no gh
-// without --no-pr, an unresolvable integration branch, a dirty scratch worktree).
+// it); 2 a malformed call, an unsupported environment (local-merge or no gh without
+// --no-pr, an unresolvable integration branch, a dirty or live-locked scratch worktree),
+// or an operational failure (push, ls-remote, gh). An exit 2 after the shells were
+// archived on the branch still prints the envelope, with `branch` and `error`.
 // An untwinned shell (no clean archive twin to resolve against) is reported, not an
 // exit-1 outcome: nothing here can converge it.
 'use strict';
@@ -31,6 +47,7 @@ const { execFileSync } = require('child_process');
 const { runGit, repoPinnedEnv } = require('./lib/hooks/git-exec');
 const { splitNul } = require('./lib/git-z');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
+const { parseWorktreeList, findWorktreeEntry, isPidAlive } = require('./lib/hooks/worktree-reap');
 const { readRunState, isTrackedShellDir } = require('./lib/hooks/context');
 const { archiveRunDir, listSpecDirs, compareWorkTwin } = require('./lib/reconcile/archive-merged');
 const { lstatType } = require('./lib/path-guard');
@@ -43,6 +60,10 @@ const { resolvePolicy, callerDeps, scalarValue, EXIT_OK } = require('./resolve-p
 const BRANCH = 'housekeeping/archive-tracked-shells';
 const USAGE = 'usage: archive-tracked-shells.js [--root <dir>] [--dry-run] [--no-pr]\n';
 const POLICY_KEYS = ['integration-model', 'integration-branch', 'housekeeping-auto-merge'];
+// The marker `_shared/github-pr-scan.md` item 9's backstop reads as a mechanical housekeeping PR.
+const HOUSEKEEPING_MARKER = '<!-- tidy-housekeeping-pr -->';
+// worktree-reap.js's PID_RE reads `(pid N` out of a lock reason, so parseWorktreeList yields the pid.
+const lockReason = (pid) => `archive-tracked-shells (pid ${pid})`;
 
 function parseArgs(argv) {
   const opts = { root: null, dryRun: false, noPr: false, help: false };
@@ -64,12 +85,15 @@ function parseArgs(argv) {
 const pipelinesDir = (root) => path.join(root, '.claude-tweaks', 'pipelines');
 const archiveDirOf = (root, runId) => path.join(pipelinesDir(root), 'archive', runId);
 
-// Every shell under `root`: { shells: [{ runId, dir }], untwinned: [runId] }. A candidate
-// is a directory under pipelines/ (not archive/) that isTrackedShellDir accepts and that
-// holds at least one git-tracked file. A shell whose archive twin run-state reads
-// status 'clean' is archivable; any other is untwinned.
+// Every shell under `root`: { shells: [{ runId, dir }], untwinned: [runId], untracked: [runId] }.
+// A candidate is a directory under pipelines/ (not archive/) that isTrackedShellDir accepts. One
+// holding at least one git-tracked file is a shell: archivable when its archive twin run-state
+// reads status 'clean', untwinned otherwise. One holding no tracked file is left alone; it is
+// listed in `untracked` when its twin is clean, because reconcile (which does not ask git) still
+// reports it and prints this CLI as its completion.
 function findShells(root, deps) {
   const base = pipelinesDir(root);
+  const none = () => ({ shells: [], untwinned: [], untracked: [] });
   let names;
   try {
     names = fs.readdirSync(base, { withFileTypes: true })
@@ -77,19 +101,23 @@ function findShells(root, deps) {
       .map((e) => e.name)
       .sort();
   } catch (err) {
-    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return { shells: [], untwinned: [] };
+    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return none();
     throw err;
   }
   const candidates = names.filter((n) => isTrackedShellDir(path.join(base, n)));
-  if (candidates.length === 0) return { shells: [], untwinned: [] };
+  if (candidates.length === 0) return none();
   const listed = deps.git(['ls-files', '-z', '--', '.claude-tweaks/pipelines'], { cwd: root, env: deps.env });
   if (listed.failure) throw new Error(`git ls-files failed: ${listed.stderr || listed.failure}`);
   const tracked = new Set(splitNul(listed.stdout || '').map((p) => p.split('/')[2]));
-  const out = { shells: [], untwinned: [] };
+  const out = none();
   for (const runId of candidates) {
-    if (!tracked.has(runId)) continue;
     const state = readRunState(archiveDirOf(root, runId));
-    if (state && state.status === 'clean') out.shells.push({ runId, dir: path.join(base, runId) });
+    const clean = Boolean(state && state.status === 'clean');
+    if (!tracked.has(runId)) {
+      if (clean) out.untracked.push(runId);
+      continue;
+    }
+    if (clean) out.shells.push({ runId, dir: path.join(base, runId) });
     else out.untwinned.push(runId);
   }
   return out;
@@ -122,11 +150,29 @@ function gitText(res) {
   return res.failure ? '' : (res.stdout || '').trim();
 }
 
-// The integration branch: the policy value, else origin/HEAD's target, else null.
-function resolveIntegration(root, deps, policyValue) {
+// The integration branch: the policy value, else origin/HEAD's target, else (--no-pr only, where
+// a repository may have no origin at all) the main checkout's current branch, else null.
+function resolveIntegration(root, deps, policyValue, noPr) {
   if (policyValue) return policyValue;
   const head = gitText(deps.git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { cwd: root, env: deps.env }));
-  return head.startsWith('origin/') ? head.slice('origin/'.length) : null;
+  if (head.startsWith('origin/')) return head.slice('origin/'.length);
+  if (!noPr) return null;
+  return gitText(deps.git(['symbolic-ref', '--short', '--quiet', 'HEAD'], { cwd: root, env: deps.env })) || null;
+}
+
+// Why the scratch worktree may not be replaced, or null when it may. Our own runs lock it with
+// lockReason(pid); a lock whose pid is dead is a crashed run's and is replaced. A lock held by a
+// live pid, or one with no pid in its reason, is someone else's and is left alone.
+function scratchHolder(root, wt, deps) {
+  const listed = deps.git(['worktree', 'list', '--porcelain'], { cwd: root, env: deps.env });
+  if (listed.failure) return `git worktree list failed: ${firstLine(listed.stderr) || listed.failure}`;
+  const entry = findWorktreeEntry(parseWorktreeList(listed.stdout), wt);
+  if (!entry || !entry.locked) return null;
+  if (Number.isInteger(entry.pid)) {
+    if (!deps.pidAlive(entry.pid)) return null;
+    return `another archive-tracked-shells run is in progress (pid ${entry.pid}): its scratch worktree ${wt} is locked`;
+  }
+  return `the scratch worktree ${wt} is locked (${entry.lockReason || 'no reason given'}), not by an archive-tracked-shells run — once nothing uses it, run git worktree unlock "${wt}" and re-run`;
 }
 
 // Best-effort and never throws: it runs from a `finally`. The scratch path is this CLI's own, so a
@@ -154,45 +200,58 @@ const firstLine = (text) => String(text || '').split('\n')[0].trim();
 
 // Where the scratch branch starts, from the remote branch and the PRs that ever named it (a
 // real run without --no-pr). -> { base, merge, remoteExisted, openPr } | { error }
-//   open PR              -> origin/BRANCH, reuse the PR
-//   a merged PR          -> origin/{integration}; a lingering remote branch is deleted first
-//   closed PR only       -> error when the branch is still on the remote; else as "no PR ever"
-//   no PR ever           -> origin/BRANCH if on the remote (crash between push and create), else the
-//                           local BRANCH (crash before push), else origin/{integration}
+// An open PR wins; otherwise the most recent PR (by createdAt) decides what the remote branch is:
+//   open PR                  -> origin/BRANCH, reuse the PR
+//   newest closed, on remote -> error: only a human can say reopen or discard
+//   newest merged, on remote -> the branch is deleted (leased on the merged PR's headRefOid; a
+//                               branch that moved since is refused), then as below
+//   any merged PR, branch gone -> origin/{integration}
+//   no PR ever (or a closed one whose branch is gone) -> origin/BRANCH if on the remote (crash
+//                               between push and create), else the local BRANCH (crash before
+//                               push), else origin/{integration}
 // `merge` says the base predates the integration branch's tip, so origin/{integration} is merged in.
 function planPrBase(root, integration, hasLocal, fetchedOk, g, gh) {
   const originRef = `refs/remotes/origin/${integration}`;
   const branchRef = `refs/remotes/origin/${BRANCH}`;
   const ls = g(['ls-remote', '--heads', 'origin', `refs/heads/${BRANCH}`], root);
   if (ls.failure) return { error: `git ls-remote origin failed: ${firstLine(ls.stderr) || ls.failure}` };
-  let remoteExisted = gitText(ls) !== '';
-  const listed = gh(['pr', 'list', '--head', BRANCH, '--state', 'all', '--json', 'number,url,state']);
+  const remoteHead = gitText(ls).split(/\s+/)[0] || '';
+  let remoteExisted = remoteHead !== '';
+  const listed = gh(['pr', 'list', '--head', BRANCH, '--state', 'all', '--json', 'number,url,state,createdAt,headRefOid']);
   if (listed.failure) return { error: `gh pr list failed: ${firstLine(listed.stderr) || listed.failure}` };
   let prs;
   try { prs = JSON.parse(listed.stdout || '[]'); } catch { prs = null; }
   if (!Array.isArray(prs)) return { error: 'gh pr list printed no JSON array' };
-  const open = prs.find((p) => p.state === 'OPEN');
-  const closed = prs.find((p) => p.state === 'CLOSED');
+  const created = (p) => String((p && p.createdAt) || '');
+  const newestFirst = [...prs].sort((a, b) => (created(b) > created(a) ? 1 : created(b) < created(a) ? -1 : b.number - a.number));
+  const open = newestFirst.find((p) => p.state === 'OPEN');
+  const latest = newestFirst[0] || null;
+  const merged = newestFirst.find((p) => p.state === 'MERGED');
   const fetchBranch = () => !g(['fetch', 'origin', `+refs/heads/${BRANCH}:${branchRef}`], root).failure;
   if (open) {
     if (!remoteExisted || !fetchBranch()) return { error: `PR #${open.number} is open but ${BRANCH} could not be fetched from origin` };
     return { base: branchRef, merge: true, remoteExisted, openPr: { number: open.number, url: open.url } };
   }
-  if (prs.some((p) => p.state === 'MERGED')) {
+  // A closed PR whose remote branch is gone has nothing left to resume. With the branch still on
+  // the remote and that PR the newest, only a human can say whether it is reopened or discarded.
+  if (remoteExisted && latest && latest.state === 'CLOSED') {
+    return { error: `PR #${latest.number} (${latest.url}) for ${BRANCH} was closed without merging and the branch is still on origin — reopen PR #${latest.number}, or delete the remote branch (git push origin --delete ${BRANCH}), then re-run` };
+  }
+  if (merged) {
     // Its commits already landed, so the local branch is reset to the integration branch (-B) —
     // which must be current, or the new branch would be built on a stale tip.
     if (!fetchedOk) return { error: `a merged PR exists for ${BRANCH} but origin/${integration} could not be fetched, so a fresh branch cannot start from it` };
     if (remoteExisted) {
-      const gone = g(['push', 'origin', `:refs/heads/${BRANCH}`], root);
+      // Here the newest PR is the merged one. Delete only the head it merged: a push since then
+      // is work no PR carries, and the lease makes the delete fail if one lands meanwhile.
+      if (!latest.headRefOid || remoteHead !== latest.headRefOid) {
+        return { error: `the remote branch ${BRANCH} (${remoteHead}) is not the head PR #${latest.number} merged (${latest.headRefOid || 'unknown'}) — commits were pushed after the merge; open a PR for them or delete the branch (git push origin --delete ${BRANCH}), then re-run` };
+      }
+      const gone = g(['push', `--force-with-lease=refs/heads/${BRANCH}:${latest.headRefOid}`, 'origin', `:refs/heads/${BRANCH}`], root);
       if (gone.failure) return { error: `deleting the merged remote branch ${BRANCH} failed: ${firstLine(gone.stderr) || gone.failure}` };
       remoteExisted = false;
     }
     return { base: originRef, merge: false, remoteExisted, openPr: null };
-  }
-  // A closed PR whose remote branch is gone has nothing left to resume: same as no PR ever. With the
-  // branch still on the remote, only a human can say whether it is to be reopened or discarded.
-  if (closed && remoteExisted) {
-    return { error: `PR #${closed.number} (${closed.url}) for ${BRANCH} was closed without merging and the branch is still on origin — reopen PR #${closed.number}, or delete the remote branch (git push origin --delete ${BRANCH}), then re-run` };
   }
   if (remoteExisted) {
     if (!fetchBranch()) return { error: `${BRANCH} exists on origin but could not be fetched` };
@@ -203,7 +262,8 @@ function planPrBase(root, integration, hasLocal, fetchedOk, g, gh) {
 }
 
 // Run ids and paths come from the checkout, so the body is made inert the way land.js's is: no
-// HTML-comment marker, no @-mention, no closing phrase that would close a record on merge.
+// HTML-comment marker, no @-mention, no closing phrase that would close a record on merge. The
+// one marker it carries is its own last line, HOUSEKEEPING_MARKER, added after that pass.
 // `already` lists the run ids found archived on the branch from an earlier run.
 function prBody(envelope, already = []) {
   const safe = (text) => unmention(defang(text));
@@ -218,46 +278,104 @@ function prBody(envelope, already = []) {
     lines.push('', 'Untwinned (classify by hand)', '');
     for (const u of envelope.untwinned) lines.push(`- ${safe(u)}`);
   }
-  return neutralizeClosingPhrases(`${lines.join('\n')}\n`).text;
+  return `${neutralizeClosingPhrases(`${lines.join('\n')}\n`).text}\n${HOUSEKEEPING_MARKER}\n`;
+}
+
+// Reads the PR's merge state. -> { state, mergeStateStatus, autoMergeRequest } | { error }
+function readMergeState(gh, number) {
+  const res = gh(['pr', 'view', String(number), '--json', 'state,mergeStateStatus,autoMergeRequest']);
+  if (res.failure) return { error: firstLine(res.stderr) || String(res.failure) };
+  let parsed;
+  try { parsed = JSON.parse(res.stdout || ''); } catch { parsed = null; }
+  if (!parsed || typeof parsed !== 'object') return { error: 'gh pr view printed no JSON object' };
+  return parsed;
+}
+
+// housekeeping-auto-merge decides whether to arm; it never bypasses the merge-verification gate.
+// `--auto` is a wait only when the forge holds the merge (mergeStateStatus BLOCKED); on any other
+// value it merges at once, checks pending or not (`_shared/pr-first-merge.md` Step 2.5), so the
+// PR is left unarmed. A read after arming says whether it armed or merged.
+function armPr(envelope, gh, autoMerge) {
+  const pr = envelope.pr;
+  const unarmed = (why) => envelope.notes.push(`PR #${pr.number} left unarmed: ${why}`);
+  if (autoMerge !== 'true') {
+    if (autoMerge === 'false') envelope.notes.push('housekeeping-auto-merge is false — PR left unarmed');
+    else envelope.notes.push(`housekeeping-auto-merge is ${autoMerge ? `'${autoMerge}'` : 'unresolved'}, not 'true' — PR left unarmed`);
+    return;
+  }
+  const before = readMergeState(gh, pr.number);
+  if (before.error) { unarmed(`its merge state could not be read (${before.error})`); return; }
+  pr.state = before.state || null;
+  if (before.state === 'MERGED') { pr.merged = true; return; }
+  if (before.state !== 'OPEN') { unarmed(`it is ${before.state || 'in an unknown state'}, not open`); return; }
+  if (before.autoMergeRequest) { pr.armed = true; envelope.notes.push(`PR #${pr.number} was already armed`); return; }
+  if (before.mergeStateStatus !== 'BLOCKED') {
+    unarmed(`mergeStateStatus is ${before.mergeStateStatus || 'unknown'}, not BLOCKED — the repository holds no required check for it, so --auto would merge before CI`);
+    return;
+  }
+  const armed = gh(['pr', 'merge', String(pr.number), '--auto', '--squash']);
+  if (armed.failure) { pr.armError = firstLine(armed.stderr) || String(armed.failure); return; }
+  const after = readMergeState(gh, pr.number);
+  if (after.error) { unarmed(`the arming call succeeded but the read-back failed (${after.error}), so whether it armed is unconfirmed`); return; }
+  pr.state = after.state || null;
+  if (after.state === 'MERGED') pr.merged = true;
+  else if (after.autoMergeRequest) pr.armed = true;
+  else unarmed('the arming call succeeded but the PR shows no auto-merge request');
 }
 
 // The real run: archive every shell in a scratch worktree on the local branch, and (unless
 // opts.noPr) push it and open or reuse its one PR. The worktree is always removed; the branch
-// stays. -> { code, branch }
-function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
+// stays. `progress.archived` turns true once the shells are archived on the branch. ->
+// { code, branch[, error, report] } — `report` asks run() to print the envelope with `error`.
+function archiveInWorktree(root, shells, integration, deps, envelope, opts, progress = {}) {
   const wt = deps.worktreePath(root);
   const env = repoPinnedEnv(deps.env);
   const g = (args, cwd, extra) => deps.git(args, { cwd, env: deps.env, ...extra });
   const gh = (args, input) => deps.gh(args, { cwd: root, input });
   const refuse = (msg, branch = null) => {
     deps.stderr(`archive-tracked-shells: ${msg}\n`);
-    return { code: 2, branch };
+    return { code: 2, branch, error: msg, report: Boolean(progress.archived) };
   };
   const originRef = `refs/remotes/origin/${integration}`;
   const branchRef = `refs/remotes/origin/${BRANCH}`;
-  const fetched = g(['fetch', 'origin', `+refs/heads/${integration}:${originRef}`], root);
-  if (fetched.failure) envelope.notes.push(`fetch of origin ${integration} failed; using the last fetched ref`);
+  // What the scratch branch is brought up to: origin's integration branch, or under --no-pr in a
+  // repository with no origin remote (a no-forge local-merge project) the local one.
+  let intRef = originRef;
+  let fetchedOk = false;
+  if (opts.noPr && g(['remote', 'get-url', 'origin'], root).failure) {
+    intRef = `refs/heads/${integration}`;
+    envelope.notes.push(`no origin remote: ${BRANCH} is built on the local ${integration}`);
+  } else {
+    fetchedOk = !g(['fetch', 'origin', `+refs/heads/${integration}:${originRef}`], root).failure;
+    if (!fetchedOk) envelope.notes.push(`fetch of origin ${integration} failed; using the last fetched ref`);
+    if (opts.noPr && g(['rev-parse', '--verify', '--quiet', `${originRef}^{commit}`], root).failure) {
+      intRef = `refs/heads/${integration}`;
+      envelope.notes.push(`${originRef} does not resolve: ${BRANCH} is built on the local ${integration}`);
+    }
+  }
   const hasLocal = !g(['rev-parse', '--verify', '--quiet', `refs/heads/${BRANCH}`], root).failure;
-  let plan = { base: hasLocal ? `refs/heads/${BRANCH}` : originRef, merge: hasLocal, remoteExisted: false, openPr: null };
+  let plan = { base: hasLocal ? `refs/heads/${BRANCH}` : intRef, merge: hasLocal, remoteExisted: false, openPr: null };
   if (!opts.noPr) {
-    plan = planPrBase(root, integration, hasLocal, !fetched.failure, g, gh);
+    plan = planPrBase(root, integration, hasLocal, fetchedOk, g, gh);
     if (plan.error) return refuse(plan.error);
   }
   const { base } = plan;
   if (g(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], root).failure) {
     return refuse(`cannot resolve ${base} to start ${BRANCH} from`);
   }
+  const holder = scratchHolder(root, wt, deps);
+  if (holder) return refuse(holder);
   removeWorktree(root, wt, deps);
-  const added = g(['worktree', 'add', '-B', BRANCH, wt, base], root);
+  const added = g(['worktree', 'add', '--lock', '--reason', lockReason(deps.pid()), '-B', BRANCH, wt, base], root);
   if (added.failure) return refuse(`git worktree add failed: ${added.stderr || added.failure}`);
   try {
     if (plan.merge) {
       // The base predates this run: bring in what reached the integration branch since, so a
       // shell that landed later is in the scratch tree.
-      const merged = g(['merge', '--no-edit', originRef], wt);
+      const merged = g(['merge', '--no-edit', intRef], wt);
       if (merged.failure) {
         g(['merge', '--abort'], wt);
-        return refuse(`merging ${originRef} into ${BRANCH} failed: ${merged.stderr || merged.failure}`, BRANCH);
+        return refuse(`merging ${intRef} into ${BRANCH} failed: ${merged.stderr || merged.failure}`, BRANCH);
       }
     }
     const dirty = g(['--no-optional-locks', 'status', '--porcelain'], wt); // git-path-read: not a path list (emptiness only)
@@ -294,6 +412,7 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
         });
       }
     }
+    progress.archived = true;
     const leftCode = left > 0 ? 1 : 0;
     if (opts.noPr) return { code: leftCode, branch: BRANCH };
 
@@ -344,16 +463,8 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
       }
     }
     if (pr) {
-      envelope.pr = { number: pr.number, url: pr.url, armed: false };
-      if (opts.autoMerge === 'true') {
-        const armed = gh(['pr', 'merge', String(pr.number), '--auto', '--squash']);
-        if (armed.failure) envelope.pr.armError = firstLine(armed.stderr) || String(armed.failure);
-        else envelope.pr.armed = true;
-      } else if (opts.autoMerge === 'false') {
-        envelope.notes.push('housekeeping-auto-merge is false — PR left unarmed');
-      } else {
-        envelope.notes.push(`housekeeping-auto-merge is ${opts.autoMerge ? `'${opts.autoMerge}'` : 'unresolved'}, not 'true' — PR left unarmed`);
-      }
+      envelope.pr = { number: pr.number, url: pr.url, armed: false, merged: false };
+      armPr(envelope, gh, opts.autoMerge);
     }
     return { code: leftCode, branch: BRANCH };
   } finally {
@@ -408,7 +519,14 @@ function run(argv, deps) {
     return 2;
   }
   const envelope = {
-    moved: [], deleted: [], conflicts: [], untwinned: found.untwinned, branch: null, pr: null, notes: [],
+    moved: [], deleted: [], conflicts: [], untwinned: found.untwinned, untracked: found.untracked, branch: null, pr: null, notes: [],
+  };
+  // An exit 2 after the shells were archived on the branch still prints what was done.
+  const failAfterArchive = (error) => {
+    envelope.branch = BRANCH;
+    envelope.error = error;
+    deps.stdout(`${JSON.stringify(envelope)}\n`);
+    return 2;
   };
   let code = 0;
   if (opts.dryRun) {
@@ -419,23 +537,25 @@ function run(argv, deps) {
       else envelope[verdict.kind].push({ runId: shell.runId, commit: null });
     }
   } else if (found.shells.length > 0) {
-    const integration = resolveIntegration(root, deps, policy['integration-branch']);
+    const integration = resolveIntegration(root, deps, policy['integration-branch'], opts.noPr);
     if (!integration) {
       deps.stderr('archive-tracked-shells: cannot resolve the integration branch — set integration-branch in .claude-tweaks/policy.yml\n');
       return 2;
     }
     let out;
+    const progress = { archived: false };
     try {
       out = archiveInWorktree(root, found.shells, integration, deps, envelope, {
         noPr: opts.noPr, autoMerge: policy['housekeeping-auto-merge'],
-      });
+      }, progress);
     } catch (err) {
-      deps.stderr(`archive-tracked-shells: archiving failed: ${(err && err.message) || err}\n`);
-      return 2;
+      const message = `archiving failed: ${(err && err.message) || err}`;
+      deps.stderr(`archive-tracked-shells: ${message}\n`);
+      return progress.archived ? failAfterArchive(message) : 2;
     }
     envelope.branch = out.branch;
     code = out.code;
-    if (out.code === 2) return 2;
+    if (out.code === 2) return out.report ? failAfterArchive(out.error) : 2;
   }
   deps.stdout(`${JSON.stringify(envelope)}\n`);
   return code;
@@ -479,6 +599,8 @@ const realDeps = {
     return Object.fromEntries(keys.map((k) => [k, scalarValue(out.result[k])]));
   },
   worktreePath: (root) => path.join(root, '.worktrees', 'archive-tracked-shells'),
+  pid: () => process.pid,
+  pidAlive: (pid) => isPidAlive(pid),
 };
 
 module.exports = { run, realDeps, findShells, prBody, BRANCH };

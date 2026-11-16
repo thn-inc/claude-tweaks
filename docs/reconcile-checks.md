@@ -194,6 +194,9 @@ worktree PR, already archived the gitignored half while the tracked headers stay
   paste-ready `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "<root>"` in
   `skipped[].command` (with `shell: true`), which the compact summary prints once per pass as
   `archive stranded shells: <command>`; the CLI moves every such shell through one housekeeping PR.
+  The detection here asks no git, so a live `work/` whose files are untracked is reported too; the
+  CLI leaves such a dir alone and names it in its envelope's `untracked`. The command never needs
+  `--no-pr`: under `local-merge` the archive check does not run at all.
   Without `worktree-always`, the sweep completes at most one non-conflicting shell in place per pass
   and skips the rest with the same entry, delegating them to the CLI; a shell whose twin `work/`
   differs from the live copy is skipped without using that slot (`work-twin-conflict` is the CLI's

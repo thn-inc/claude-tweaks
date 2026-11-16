@@ -2441,7 +2441,9 @@ test('archiveMerged: an empty or absent postMergeDeferred changes nothing (#4599
 // #3975: a twin-only archival (workMoves empty) used to run `git commit -- `
 // with an empty pathspec, which commits the WHOLE index — sweeping an
 // unrelated staged file into the archive commit.
-test('AC6.1: twin-only archival commits only its own paths, never an unrelated staged file', { skip: process.platform === 'win32' }, () => {
+// The git-state half runs everywhere; the argv half needs a `#!/bin/sh` git shim on PATH, which
+// win32 never spawns (STUB_SKIP), so only that half is gated.
+test('AC6.1: twin-only archival commits only its own paths, never an unrelated staged file', (t) => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-29T153740-spec-1-3975';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -2452,25 +2454,33 @@ test('AC6.1: twin-only archival commits only its own paths, never an unrelated s
   fs.writeFileSync(path.join(root, 'unrelated.txt'), 'staged by someone else\n');
   git(root, 'add', 'unrelated.txt');
 
-  const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-shim-'));
-  const log = path.join(shimDir, 'argv.log');
-  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  fs.writeFileSync(path.join(shimDir, 'git'), [
-    '#!/bin/sh',
-    `node -e 'require("fs").appendFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)) + "\\n")' "${log}" "$@"`,
-    `exec "${realGit}" "$@"`,
-    '',
-  ].join('\n'), { mode: 0o755 });
-  const env = { ...process.env, PATH: `${shimDir}${path.delimiter}${process.env.PATH}` };
+  let env;
+  let log = null;
+  if (!STUB_SKIP) {
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-shim-'));
+    t.after(() => fs.rmSync(shimDir, { recursive: true, force: true }));
+    log = path.join(shimDir, 'argv.log');
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(shimDir, 'git'), [
+      '#!/bin/sh',
+      `node -e 'require("fs").appendFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)) + "\\n")' "${log}" "$@"`,
+      `exec "${realGit}" "$@"`,
+      '',
+    ].join('\n'), { mode: 0o755 });
+    env = { ...process.env, PATH: `${shimDir}${path.delimiter}${process.env.PATH}` };
+  }
 
-  const result = archiveRunDir(root, runDir, { env });
+  const result = archiveRunDir(root, runDir, env ? { env } : {});
   assert.equal(result.ok, true, JSON.stringify(result));
 
   assert.equal(git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').includes('unrelated.txt'), false,
     'the archive commit must not contain the unrelated staged file');
   assert.ok(git(root, 'diff', '--cached', '--name-only').split('\n').includes('unrelated.txt'),
     'the unrelated file must stay staged');
+  assert.deepEqual(git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean), [liveRel],
+    'the archive commit holds exactly the twin path it resolved');
 
+  if (STUB_SKIP) return;
   const commitArgv = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
     .find((a) => a.includes('commit'));
   assert.ok(commitArgv, 'a git commit call must be recorded');

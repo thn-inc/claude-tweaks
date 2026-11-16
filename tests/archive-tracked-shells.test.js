@@ -272,52 +272,121 @@ test('a stale unregistered directory at the scratch path is replaced', () => {
   assert.equal(fs.existsSync(worktreeDir(root)), false);
 });
 
-test('a stale locked registered worktree at the scratch path is replaced', () => {
+test('a stale scratch worktree locked by a dead archive-tracked-shells pid is replaced', () => {
   const { root } = makeFixture();
   const s = addShell(root, '2026-11-10T000001-record-1');
   git(root, 'worktree', 'add', '-q', '-b', 'stale-scratch', worktreeDir(root), 'main');
-  git(root, 'worktree', 'lock', worktreeDir(root));
-  const r = call(root, ['--root', root, '--no-pr']);
+  git(root, 'worktree', 'lock', '--reason', 'archive-tracked-shells (pid 424242)', worktreeDir(root));
+  const asked = [];
+  const r = call(root, ['--root', root, '--no-pr'], { extra: { pidAlive: (pid) => { asked.push(pid); return false; } } });
   assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(asked, [424242]);
   assert.deepEqual(r.envelope.deleted.map((m) => m.runId), [s.id]);
   assert.equal(fs.existsSync(worktreeDir(root)), false);
   assert.doesNotMatch(git(root, 'worktree', 'list'), /archive-tracked-shells/);
 });
 
-// A fake `gh` over an in-memory PR table. `pr list` projects only the requested --json fields
-// (so a dropped field is visible); `pr create` adds an OPEN row; `pr merge` records its argv.
-function fakeGh({ failCreate = false, failOpenList = false, failMerge = false } = {}) {
+test('a scratch worktree locked by a live archive-tracked-shells run refuses with exit 2 and is left untouched', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-10T000002-record-1');
+  git(root, 'worktree', 'add', '-q', '-b', 'live-scratch', worktreeDir(root), 'main');
+  git(root, 'worktree', 'lock', '--reason', 'archive-tracked-shells (pid 424243)', worktreeDir(root));
+  fs.writeFileSync(path.join(worktreeDir(root), 'in-flight.txt'), 'x\n');
+  const r = call(root, ['--root', root, '--no-pr'], { extra: { pidAlive: (pid) => pid === 424243 } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /another archive-tracked-shells run is in progress \(pid 424243\)/);
+  assert.equal(r.stdout, '');
+  assert.ok(fs.existsSync(path.join(worktreeDir(root), 'in-flight.txt')), 'the live run\'s worktree is untouched');
+  assert.match(git(root, 'worktree', 'list', '--porcelain'), /locked archive-tracked-shells \(pid 424243\)/);
+  assert.equal(git(root, 'branch', '--list', BRANCH), '');
+});
+
+test('a scratch worktree locked with no pid in its reason refuses with exit 2 naming git worktree unlock', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-10T000003-record-1');
+  git(root, 'worktree', 'add', '-q', '-b', 'other-scratch', worktreeDir(root), 'main');
+  git(root, 'worktree', 'lock', worktreeDir(root));
+  const r = call(root, ['--root', root, '--no-pr'], { extra: { pidAlive: () => { throw new Error('no pid to ask about'); } } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /git worktree unlock/);
+  assert.ok(fs.existsSync(worktreeDir(root)));
+});
+
+test('the scratch worktree is created locked with this run\'s pid', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-10T000004-record-1');
+  let lockLine = null;
+  const peeking = (args, o) => {
+    if (args.includes('status')) lockLine = (git(root, 'worktree', 'list', '--porcelain').match(/^locked .*archive-tracked-shells.*$/m) || [null])[0];
+    return realDeps.git(args, o);
+  };
+  const r = call(root, ['--root', root, '--no-pr'], { extra: { git: peeking, pid: () => 31337 } });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(lockLine, 'locked archive-tracked-shells (pid 31337)');
+});
+
+// A fake `gh` over an in-memory PR table. `pr list` and `pr view` project only the requested
+// --json fields (so a dropped field is visible); `pr create` adds an OPEN row whose
+// mergeStateStatus is `mergeState`; `pr merge` records its argv and then either sets an
+// auto-merge request or (`mergeOnArm`, an unprotected repo) merges the PR outright.
+function fakeGh({
+  failCreate = false, failOpenList = false, failMerge = false, failView = false, mergeState = 'BLOCKED', mergeOnArm = false,
+} = {}) {
   const st = { prs: [], calls: [], creates: 0, merges: [], bodies: [] };
   const flag = (args, name) => args[args.indexOf(name) + 1];
   const ok = (stdout) => ({ stdout, stderr: '', failure: null, exitCode: 0 });
   const bad = (stderr) => ({ stdout: null, stderr, failure: 'gh-failed', exitCode: 1 });
+  const project = (p, args) => Object.fromEntries(flag(args, '--json').split(',').map((f) => [f, p[f] === undefined ? null : p[f]]));
   st.gh = (args, o = {}) => {
     st.calls.push({ args, input: o.input });
     if (args[0] === 'pr' && args[1] === 'list') {
       const state = flag(args, '--state');
       if (state === 'open' && failOpenList) return bad('read-back down\nsecond line');
-      const fields = flag(args, '--json').split(',');
       const rows = st.prs
         .filter((p) => p.head === flag(args, '--head') && (state === 'all' || p.state.toLowerCase() === state))
-        .map((p) => Object.fromEntries(fields.map((f) => [f, p[f]])));
+        .map((p) => project(p, args));
       return ok(JSON.stringify(rows));
+    }
+    if (args[0] === 'pr' && args[1] === 'view') {
+      if (failView) return bad('view down\nsecond line');
+      const row = st.prs.find((p) => String(p.number) === args[2]);
+      if (!row) return bad(`no pull request ${args[2]}`);
+      return ok(JSON.stringify(project(row, args)));
     }
     if (args[0] === 'pr' && args[1] === 'create') {
       if (failCreate) return bad('create down');
       st.creates += 1;
       st.bodies.push(o.input);
       const number = st.prs.length + 1;
-      st.prs.push({ number, url: `https://example.test/pull/${number}`, state: 'OPEN', head: flag(args, '--head') });
+      st.prs.push({
+        number,
+        url: `https://example.test/pull/${number}`,
+        state: 'OPEN',
+        head: flag(args, '--head'),
+        createdAt: `2026-11-01T00:00:${String(number).padStart(2, '0')}Z`,
+        mergeStateStatus: mergeState,
+        autoMergeRequest: null,
+      });
       return ok(`https://example.test/pull/${number}`);
     }
     if (args[0] === 'pr' && args[1] === 'merge') {
       if (failMerge) return bad('auto-merge not allowed\nsecond line');
       st.merges.push(args);
+      const row = st.prs.find((p) => String(p.number) === args[2]);
+      if (mergeOnArm) row.state = 'MERGED';
+      else row.autoMergeRequest = { enabledAt: '2026-11-01T00:01:00Z' };
       return ok('');
     }
     throw new Error(`unexpected gh ${args.join(' ')}`);
   };
   return st;
+}
+
+// Simulates a merge of PR row `i`: MERGED, with headRefOid the remote branch's current head.
+function markMerged(fake, root, i = 0) {
+  const ls = git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`);
+  fake.prs[i].state = 'MERGED';
+  fake.prs[i].headRefOid = ls ? ls.split(/\s+/)[0] : null;
 }
 
 const remoteTree = (origin, ref = BRANCH) => git(origin, 'ls-tree', '-r', '--name-only', ref).split('\n');
@@ -340,7 +409,8 @@ test('AC2.1: under worktree-always the emitted command exits 0, creates the bran
   assert.deepEqual(create.args, ['pr', 'create', '--base', 'main', '--head', BRANCH, '--title', 'Archive 1 stranded run spec headers', '--body-file', '-']);
   assert.ok(create.input.includes(s.id));
   const list = fake.calls.find((c) => c.args[1] === 'list');
-  assert.deepEqual(list.args, ['pr', 'list', '--head', BRANCH, '--state', 'all', '--json', 'number,url,state']);
+  assert.deepEqual(list.args, ['pr', 'list', '--head', BRANCH, '--state', 'all', '--json', 'number,url,state,createdAt,headRefOid']);
+  assert.ok(create.input.endsWith('\n<!-- tidy-housekeeping-pr -->\n'), 'the body ends with the housekeeping marker item 9 recognises');
 });
 
 test('AC3.1: three shells -> exactly one PR, branch carries every move', () => {
@@ -361,7 +431,7 @@ test('AC3.2: re-run after simulated merge is a no-op exiting 0 with moved empty'
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   git(root, 'fetch', '-q', 'origin');
   git(root, 'push', '-q', 'origin', `refs/remotes/origin/${BRANCH}:refs/heads/main`);
-  fake.prs[0].state = 'MERGED';
+  markMerged(fake, root);
   git(root, 'pull', '-q', '--ff-only', 'origin', 'main');
   const before = fake.creates;
   const r = call(root, ['--root', root], { ghFake: fake.gh });
@@ -380,8 +450,8 @@ test('AC3.2b: after a squash merge whose head branch was deleted, a run with new
   git(root, 'merge', '--squash', `refs/remotes/origin/${BRANCH}`);
   git(root, 'commit', '-q', '-m', 'squash of the housekeeping branch');
   git(root, 'push', '-q', 'origin', 'main');
+  markMerged(fake, root);
   git(root, 'push', '-q', 'origin', `:refs/heads/${BRANCH}`);
-  fake.prs[0].state = 'MERGED';
   git(root, 'rev-parse', '--verify', `refs/heads/${BRANCH}`); // the stale local branch is still there
   const b = addShell(root, '2026-11-14T000001-record-2', { twin: 'absent' });
   const r = call(root, ['--root', root], { ghFake: fake.gh });
@@ -397,17 +467,58 @@ test('a merged PR whose head branch still exists on the remote has that branch d
   addShell(root, '2026-11-14T100000-record-1', { twin: 'absent' });
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
-  fake.prs[0].state = 'MERGED';
+  markMerged(fake, root);
+  const mergedHead = fake.prs[0].headRefOid;
   const b = addShell(root, '2026-11-14T100001-record-2', { twin: 'absent' });
   const seen = [];
   const recording = (args, o) => { seen.push(args); return realDeps.git(args, o); };
   const r = call(root, ['--root', root], { ghFake: fake.gh, extra: { git: recording } });
   assert.equal(r.code, 0, r.stderr);
-  assert.ok(seen.some((a) => a.join(' ') === `push origin :refs/heads/${BRANCH}`), 'the lingering remote branch was deleted');
+  assert.ok(
+    seen.some((a) => a.join(' ') === `push --force-with-lease=refs/heads/${BRANCH}:${mergedHead} origin :refs/heads/${BRANCH}`),
+    'the lingering remote branch was deleted, leased on the merged head',
+  );
   git(root, 'fetch', '-q', 'origin');
   const subjects = git(root, 'log', `origin/main..origin/${BRANCH}`, '--format=%s').split('\n');
   assert.ok(subjects.includes(`[reconcile] archive run ${b.id}`));
   assert.equal(fake.creates, 2);
+});
+
+test('a merged PR followed by a newer CLOSED PR whose branch is still on origin refuses with exit 2 and deletes nothing', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-14T110000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  markMerged(fake, root);
+  // PR #2 reused the branch and was closed without merging; the branch stayed on origin.
+  fake.prs.push({ ...fake.prs[0], number: 2, url: 'https://example.test/pull/2', state: 'CLOSED', createdAt: '2026-11-02T00:00:00Z', headRefOid: null });
+  const tip = git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`);
+  addShell(root, '2026-11-14T110001-record-2', { twin: 'absent' });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /reopen PR #2/);
+  assert.equal(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), tip);
+  assert.equal(fake.creates, 1);
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+});
+
+test('a merged PR whose remote branch moved since the merge refuses with exit 2 and deletes nothing', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-14T120000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  markMerged(fake, root);
+  // Someone pushed to the branch after the merge: its head is no longer the merged one.
+  git(root, 'fetch', '-q', 'origin');
+  git(root, 'push', '-q', 'origin', `refs/remotes/origin/main:refs/heads/${BRANCH}`, '--force');
+  const tip = git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`);
+  assert.notEqual(tip.split(/\s+/)[0], fake.prs[0].headRefOid);
+  addShell(root, '2026-11-14T120001-record-2', { twin: 'absent' });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /is not the head PR #1 merged/);
+  assert.equal(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), tip);
+  assert.equal(fake.creates, 1);
 });
 
 test('a merged PR with the integration fetch failing refuses with exit 2 instead of building on a stale ref', () => {
@@ -415,7 +526,7 @@ test('a merged PR with the integration fetch failing refuses with exit 2 instead
   addShell(root, '2026-11-14T150000-record-1', { twin: 'absent' });
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
-  fake.prs[0].state = 'MERGED';
+  markMerged(fake, root);
   addShell(root, '2026-11-14T150001-record-2', { twin: 'absent' });
   const seen = [];
   const failingFetch = (args, o) => {
@@ -494,14 +605,63 @@ test('AC3.4: re-run after a crash resumes from the branch current state', () => 
   for (const s of [a, b, c]) assert.equal(subjects.filter((x) => x === `[reconcile] archive run ${s.id}`).length, 1);
 });
 
-test('AC5.1: housekeeping-auto-merge true arms with gh pr merge --auto --squash', () => {
+test('AC5.1: housekeeping-auto-merge true on a PR the forge holds (BLOCKED) arms with gh pr merge --auto --squash', () => {
   const { root } = makeFixture();
   addShell(root, '2026-11-17T000000-record-1', { twin: 'absent' });
-  const fake = fakeGh();
+  const fake = fakeGh({ mergeState: 'BLOCKED' });
   const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(fake.merges, [['pr', 'merge', '1', '--auto', '--squash']]);
   assert.equal(r.envelope.pr.armed, true);
+  assert.equal(r.envelope.pr.merged, false);
+  assert.equal(r.envelope.pr.state, 'OPEN');
+  const views = fake.calls.filter((c) => c.args[1] === 'view').map((c) => c.args);
+  assert.deepEqual(views, [
+    ['pr', 'view', '1', '--json', 'state,mergeStateStatus,autoMergeRequest'],
+    ['pr', 'view', '1', '--json', 'state,mergeStateStatus,autoMergeRequest'],
+  ], 'one merge-state read before arming and one after');
+});
+
+test('housekeeping-auto-merge true on a repo with no required checks (not BLOCKED) leaves the PR unarmed with a note, exit 0', () => {
+  for (const mergeState of ['CLEAN', 'UNSTABLE', 'UNKNOWN', 'BEHIND']) {
+    const { root } = makeFixture();
+    addShell(root, `2026-11-17T00000${mergeState.length}-record-1`, { twin: 'absent' });
+    const fake = fakeGh({ mergeState, mergeOnArm: true });
+    const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(fake.merges, [], `${mergeState}: no gh pr merge call`);
+    assert.equal(r.envelope.pr.armed, false);
+    assert.equal(r.envelope.pr.merged, false);
+    assert.equal(fake.prs[0].state, 'OPEN');
+    assert.ok(
+      r.envelope.notes.includes(`PR #1 left unarmed: mergeStateStatus is ${mergeState}, not BLOCKED — the repository holds no required check for it, so --auto would merge before CI`),
+      JSON.stringify(r.envelope.notes),
+    );
+  }
+});
+
+test('an arming call that merged the PR at once is reported as merged, not armed', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-17T000010-record-1', { twin: 'absent' });
+  // The state read said BLOCKED, but the forge merged on arming: the read-back is what counts.
+  const fake = fakeGh({ mergeState: 'BLOCKED', mergeOnArm: true });
+  const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(fake.merges.length, 1);
+  assert.equal(r.envelope.pr.armed, false);
+  assert.equal(r.envelope.pr.merged, true);
+  assert.equal(r.envelope.pr.state, 'MERGED');
+});
+
+test('a merge-state read that fails leaves the PR unarmed with the reason, exit 0', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-17T000011-record-1', { twin: 'absent' });
+  const fake = fakeGh({ failView: true });
+  const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(fake.merges, []);
+  assert.equal(r.envelope.pr.armed, false);
+  assert.ok(r.envelope.notes.includes('PR #1 left unarmed: its merge state could not be read (view down)'), JSON.stringify(r.envelope.notes));
 });
 
 test('AC5.2: housekeeping-auto-merge false leaves the PR unarmed and says so', () => {
@@ -518,10 +678,11 @@ test('AC5.2: housekeeping-auto-merge false leaves the PR unarmed and says so', (
 test('AC5.3/AC5.4: a rejected arming call leaves the PR unarmed, reports the rejection, and is not an error exit', () => {
   const { root } = makeFixture();
   addShell(root, '2026-11-17T000002-record-1', { twin: 'absent' });
-  const fake = fakeGh({ failMerge: true });
+  const fake = fakeGh({ failMerge: true, mergeState: 'BLOCKED' });
   const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.envelope.pr.armed, false);
+  assert.equal(r.envelope.pr.merged, false);
   assert.equal(r.envelope.pr.armError, 'auto-merge not allowed');
 });
 
@@ -620,7 +781,9 @@ test('prBody neutralizes closing phrases, HTML-comment markers and @-mentions in
     conflicts: [{ runId: 'r', reason: 'work-twin-conflict', differing: ['@scope/a.md', 'fixes #9'] }],
     untwinned: ['resolves #11'],
   }, ['already @me']);
-  assert.doesNotMatch(body, /<!--/);
+  const marker = '\n<!-- tidy-housekeeping-pr -->\n';
+  assert.ok(body.endsWith(marker), 'the housekeeping marker is the last line');
+  assert.doesNotMatch(body.slice(0, -marker.length), /<!--/, 'no other HTML-comment marker survives');
   assert.doesNotMatch(body, /@(?!​)/);
   assert.doesNotMatch(body, /\b(?:closes|fixes|resolves) #\d+/i);
   assert.match(body, /closes issue #5/);
@@ -678,4 +841,107 @@ test('every git call of a dry run and of enumeration carries the injected env', 
   assert.equal(r.code, 0, r.stderr);
   assert.ok(seen.some((c) => c.args.includes('ls-files')));
   for (const c of seen) assert.ok(c.env, `no env on git ${c.args.join(' ')}`);
+});
+
+// A no-forge local-merge project: one checkout, no `origin` at all.
+function makeLocalOnlyFixture() {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-local-')));
+  const root = path.join(base, 'main');
+  fixtureGit(['init', '-q', '-b', 'main', root], { env: ENV });
+  git(root, 'config', 'core.autocrlf', 'false');
+  fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
+  fs.writeFileSync(path.join(root, 'README.md'), 'seed\n');
+  git(root, 'add', '.gitignore', 'README.md');
+  git(root, 'commit', '-q', '-m', 'seed');
+  return { root };
+}
+
+test('--no-pr in a repository with no origin builds the branch on the local integration branch and exits 0', () => {
+  for (const branch of ['main', '']) { // policy integration-branch, then unset (the current branch)
+    const { root } = makeLocalOnlyFixture();
+    const a = addShell(root, '2026-11-22T000000-record-1', { twin: 'absent', push: false });
+    const b = addShell(root, '2026-11-22T000001-record-2', { twin: 'identical', push: false });
+    const head = git(root, 'rev-parse', 'HEAD');
+    const r = call(root, ['--root', root, '--no-pr'], { model: 'local-merge', branch });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.envelope.branch, BRANCH);
+    assert.deepEqual(r.envelope.moved.map((m) => m.runId), [a.id]);
+    assert.deepEqual(r.envelope.deleted.map((m) => m.runId), [b.id]);
+    assert.ok(r.envelope.notes.includes(`no origin remote: ${BRANCH} is built on the local main`), JSON.stringify(r.envelope.notes));
+    const subjects = git(root, 'log', `main..${BRANCH}`, '--format=%s').split('\n').sort();
+    assert.deepEqual(subjects, [`[reconcile] archive run ${a.id}`, `[reconcile] archive run ${b.id}`].sort());
+    assert.equal(git(root, 'rev-parse', 'HEAD'), head);
+    assert.equal(fs.existsSync(worktreeDir(root)), false);
+  }
+});
+
+test('a clean-twin work/-only dir with no tracked file is named in untracked and left alone', () => {
+  const { root } = makeFixture();
+  const s = addShell(root, '2026-11-23T000000-record-1', { twin: 'absent' });
+  const id = '2026-11-23T000001-record-2';
+  fs.mkdirSync(path.join(pipelines(root), id, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(pipelines(root), id, 'work', '1-spec.md'), 'untracked\n');
+  fs.mkdirSync(path.join(pipelines(root), 'archive', id), { recursive: true });
+  fs.writeFileSync(path.join(pipelines(root), 'archive', id, 'run-state.json'), JSON.stringify({ status: 'clean' }));
+  const lone = '2026-11-23T000002-record-3'; // untracked and twin-less: not reconcile's shape, not listed
+  fs.mkdirSync(path.join(pipelines(root), lone, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(pipelines(root), lone, 'work', '1-spec.md'), 'x\n');
+  for (const argv of [['--dry-run'], ['--no-pr']]) {
+    const r = call(root, ['--root', root, ...argv]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.envelope.untracked, [id]);
+    assert.ok(fs.existsSync(path.join(pipelines(root), id, 'work', '1-spec.md')));
+  }
+  assert.deepEqual(findShells(root, realDeps).shells.map((x) => x.runId), [s.id]);
+});
+
+test('a push failure after the shells were archived exits 2 and still prints the envelope with branch and error', () => {
+  const { root } = makeFixture();
+  const s = addShell(root, '2026-11-24T000000-record-1', { twin: 'absent' });
+  const failingPush = (args, o) => {
+    if (args[0] === 'push' && args.includes(BRANCH)) return { stdout: '', stderr: 'remote rejected\nmore', failure: 'git-error' };
+    return realDeps.git(args, o);
+  };
+  const fake = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: fake.gh, extra: { git: failingPush } });
+  assert.equal(r.code, 2);
+  assert.ok(r.envelope, `an envelope is printed: ${JSON.stringify(r.stdout)}`);
+  assert.equal(r.envelope.branch, BRANCH);
+  assert.equal(r.envelope.error, `git push origin ${BRANCH} failed: remote rejected`);
+  assert.deepEqual(r.envelope.moved.map((m) => m.runId), [s.id]);
+  assert.equal(r.envelope.pr, null);
+  assert.equal(fake.creates, 0);
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+});
+
+test('a throw after the shells were archived exits 2 and still prints the envelope with branch and error', () => {
+  const { root } = makeFixture();
+  const s = addShell(root, '2026-11-24T000001-record-1', { twin: 'absent' });
+  const throwing = (args, o) => {
+    if (args[0] === 'rev-list') throw new Error('injected rev-list failure');
+    return realDeps.git(args, o);
+  };
+  const r = call(root, ['--root', root], { ghFake: fakeGh().gh, extra: { git: throwing } });
+  assert.equal(r.code, 2);
+  assert.equal(r.envelope.branch, BRANCH);
+  assert.equal(r.envelope.error, 'archiving failed: injected rev-list failure');
+  assert.deepEqual(r.envelope.moved.map((m) => m.runId), [s.id]);
+});
+
+test('realDeps.policy returns flat strings: true/false as text and an unset key as the empty string', () => {
+  const resolveIn = (body) => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-policy-')));
+    fixtureGit(['init', '-q', dir], { env: ENV });
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), body);
+    return realDeps.policy(dir, ['integration-model', 'integration-branch', 'housekeeping-auto-merge'], { env: ENV });
+  };
+  assert.deepEqual(
+    resolveIn('integration-model: local-merge\nhousekeeping-auto-merge: true\n'),
+    { 'integration-model': 'local-merge', 'integration-branch': '', 'housekeeping-auto-merge': 'true' },
+  );
+  assert.deepEqual(
+    resolveIn('integration-model: local-merge\nintegration-branch: trunk\nhousekeeping-auto-merge: false\n'),
+    { 'integration-model': 'local-merge', 'integration-branch': 'trunk', 'housekeeping-auto-merge': 'false' },
+  );
 });
