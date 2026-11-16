@@ -12,12 +12,17 @@
 
 ## Global Constraints
 
-- Tier per finding: `standard` only when the finding's severity (`reporterSeverityOf`: a contested finding's higher known position severity, else `reporterSeverity`) is `info`; `capable` for `low`, `medium`, `high`, `critical`, null, or any unknown value.
+- Tier per finding: `standard` only when the finding's severity (`reporterSeverityOf`: a contested finding's higher known position severity, else `reporterSeverity`) is `info`; `capable` for `low`, `medium`, `high`, `critical`, null, or any unknown value. A contested finding with any position whose severity is null or unknown is `capable` even when its known positions are all `info` (spec `## Plan Review Clarifications`).
+- Inline verdicts (a dispatched reviewer's inline rung) always resolve with `--tier capable`, so they never escalate.
 - `CHUNK_MAX` stays 8; a chunk holds findings of one tier only.
 - A finding a `standard` judge gives severity `medium` or higher (`severityRank(s) >= severityRank('medium')`, `plugin/bin/lib/coordination.js`) is re-judged at `capable`; that second verdict is the one settled, and the standard reply is never logged.
 - Backward compatibility (a run on the previous release reads the old prose): `resolve-tiebreak` without `--tier` behaves exactly as today (tier `capable`, never escalates); the chunk form's existing output keys keep their meaning, `escalated` is added beside them.
 - Do not add text to `plugin/skills/review/code-mode-steps.md` (#5076).
 - Commit subjects: `{Verb} {what} — {detail}`, body line `refs #5541` (never closes/fixes).
+
+## Controller steps (not dispatched)
+
+Done by the build controller, outside the tasks: the PR body carries the replay table (tokens and per-class agreement per arm), the harness commit, the script hashes, the model id per tier, the review set and the date, the transport choice and the accepted-risk note (Deliverables 1-2, AC1-AC2); the controller also posts Deliverable 4's comment on #5148 and corrects the record's Release Note to the shipped decision.
 
 ## Review Focus
 
@@ -31,6 +36,9 @@
 
 ### Task 1: Tier rule, chunk plan and escalation in `tiebreak.js`
 
+**Role:** integration
+**Review risk:** high — decision logic: tier from severity, the escalation condition, dedupe and tier partitioning, the tier-mismatch refusal.
+
 **Files:**
 - Modify: `plugin/bin/lib/tiebreak.js` (header comment block for the chunk section; new functions beside `resolveTiebreakChunk`; `module.exports`)
 - Test: `tests/bin-lib/tiebreak.test.js`
@@ -38,13 +46,13 @@
 **Interfaces:**
 - Produces:
   - `TIERS = ['capable', 'standard']`
-  - `judgeTier(finding) -> 'capable' | 'standard'`
+  - `judgeTier(finding) -> 'capable' | 'standard'` — for a contested finding with a `positions` array, `'standard'` only when every position's severity is known and the highest is `info`; otherwise `reporterSeverityOf(finding) === 'info'`.
   - `planChunks(findings: Finding[]) -> Array<{ tier: 'capable'|'standard', indexes: number[] }>` — throws `TypeError` for a non-array or an entry `buildFindingsArtifact` refuses; a repeated finding id keeps its first index only; tiers in `TIERS` order, entry order within a tier, at most `CHUNK_MAX` indexes per chunk; `[]` for `[]`.
   - `escalation(finding, replyText, tier) -> null | { reason: 'raised', severity }` — non-null only when `tier === 'standard'`, the reply parses (`parse === 'ok'`), its status is `DONE`, and its severity ranks `medium` or higher.
   - `resolveTiebreakChunk(findings, replyText, opts)` — `opts.tier` (default `'capable'`): a value outside `TIERS` throws `TypeError`; `'standard'` with any finding whose `judgeTier` is `'capable'` throws `TypeError`. Returns `{ results, unsettled, escalated }`; `escalated` is `[{ id, index, reason: 'raised', severity }]`, those findings get no result; always `[]` at `capable`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/tiebreak.test.js` (reuse the file's `reader`, `NOW`, `CHUNK_F1`/`CHUNK_F2` style fixtures):
-  - `judgeTier: info is standard, every other severity capable` — `info` → `'standard'`; `low`, `medium`, `high`, `critical`, `null`, `undefined`, `'bogus'` → `'capable'`; contested `{kind:'contested', positions:[{severity:'info'},{severity:'medium'}]}` → `'capable'`; contested with two `info` positions → `'standard'`.
+  - `judgeTier: info is standard, every other severity capable` — `info` → `'standard'`; `low`, `medium`, `high`, `critical`, `null`, `undefined`, `'bogus'` → `'capable'`; contested `{kind:'contested', positions:[{severity:'info'},{severity:'medium'}]}` → `'capable'`; contested with two `info` positions → `'standard'`; contested `[{severity:'info'},{severity:null}]` and `[{severity:'info'},{severity:'bogus'}]` → `'capable'`.
   - `planChunks: a chunk never mixes tiers` — 10 `low` + 3 `info` entries interleaved → chunks `[{tier:'capable', indexes:[first 8 low]}, {tier:'capable', indexes:[last 2 low]}, {tier:'standard', indexes:[3 info]}]` with exact indexes; every chunk's indexes share `judgeTier === chunk.tier`.
   - `planChunks: a repeated entry goes in once` — entries `[A, B, A]` → the index `2` appears in no chunk.
   - `planChunks: [] gives []; a malformed entry throws TypeError`.
@@ -74,6 +82,9 @@ git commit -m "Add tiebreak judge tiers — info findings take the Standard tier
 ```
 
 ### Task 2: `plan-chunks` verb and `--tier` flag in `review-coordination.js`
+
+**Role:** integration
+**Review risk:** high — decision logic: whether a finding may be judged at a tier, whether the one-finding form escalates, which results are appended under `--run`.
 
 **Files:**
 - Modify: `plugin/bin/review-coordination.js` (header comment lines 11-48, `USAGE`, `resolveTiebreakChunkCommand`, the `resolve-tiebreak` branch, a new `plan-chunks` branch beside `finding-ids`)
@@ -116,6 +127,8 @@ git commit -m "Add plan-chunks and --tier to review-coordination.js — the tieb
 
 ### Task 3: Step 3.7 prose names the tier per severity
 
+**Role:** integration
+
 **Files:**
 - Modify: `plugin/skills/review/step3-tiebreak.md` (`## Dispatch` chunk sentence, `{n}` definition, `Model:` line, the `[Use: …]` line of both templates; `## Resolve and act` chunk call, step 2 commands, escalation sentence, attempt count)
 - Modify: `tests/review-tiebreak-step-conformance.test.js` (new AC3 tests; update the pins at lines 152, 1459, 1442 and 1491)
@@ -142,7 +155,9 @@ Expected: FAIL — the new AC3/AC2 facts are missing from `step3-tiebreak.md`.
   - `Model:` line: `Model: each chunk's \`tier\` from \`plan-chunks\` — \`[Use: Capable]\` for \`capable\`, resolved with \`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable --run-dir "$PIPELINE_RUN_DIR"\`; \`[Use: Standard]\` for \`standard\`, resolved with \`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard --run-dir "$PIPELINE_RUN_DIR"\` (drop \`--run-dir\` when no run directory exists). A single-finding follow-up takes its chunk's tier; an escalation re-judge (\`## Resolve and act\`) is always \`capable\`.`
   - Both templates' last line: `[Use: {Capable | Standard} — tiebreak agent, at the tier the Model line gives this agent. Independent run; fresh file read, not the reporting lens's context. Resolve via \`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {capable | standard} --run-dir "$PIPELINE_RUN_DIR"\` (contract § Model Selection).]`
   - `## Resolve and act`: the chunk call and both step-2 commands carry `--tier {tier}` (the agent's tier: its chunk's, or `capable` for an escalation re-judge); the chunk call's printed object gains `"escalated": [...]`; after the `unsettled` sentence add: `Every id in its \`escalated\` list (reason \`raised\`: a \`standard\` judge gave it severity \`medium\` or higher) gets one \`capable\` single-finding re-judge after that call, in waves of **8** as single-finding follow-ups go, settled by steps 1–4 with \`--tier capable\`: that verdict is the one settled, and the \`standard\` judge's reply is never logged. A one-finding call at \`--tier standard\` that prints \`escalated: true\` is re-judged the same way.`; extend the attempt sentence to `A finding gets at most three judge attempts — its chunk agent, that chunk's one re-dispatch, one single-finding agent — plus one \`capable\` re-judge when a \`standard\` judge raised it, and \`check-coverage\` stays the backstop …` (keep the rest).
+  - `## Resolve and act`, the inline-verdict paragraph: an inline fallback verdict always resolves with `--tier capable` (it never escalates). `## Dispatched reviewer` ladder item 2: add a failed or timed-out escalation re-judge to the cases the reviewer reads inline.
   - Then update the three doc lines listed under **Files** to match.
+- Add to Step 1's tests: `AC2: inline verdicts resolve at --tier capable` — the inline paragraph carries `` always resolves with `--tier capable` ``, and the Dispatched reviewer ladder item 2 names the escalation re-judge; each with a go-red proof.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
