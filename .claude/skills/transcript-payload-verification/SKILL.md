@@ -146,6 +146,15 @@ environment, so it runs as a fresh top-level session rather than a child that co
 parent's session id. `docs/reference/pretooluse-updatedinput-worktree-guard.md` (#4028) took the same
 `--plugin-dir` route against the real `plugin/` directory.
 
+**One exception: a typed event that copies a payload field verbatim.** `session-end.js` writes the
+payload's `reason` into every `session-end` event, so the run directories already hold a real
+sample of that one field. Tally it from the main checkout before branching on it:
+`grep -rh '"type":"session-end"' .claude-tweaks/pipelines --include=events.jsonl | grep -oE '"reason":"[a-z_]+"' | sort | uniq -c`.
+#4960's `/clear` carve-out in `session-end.js` branches on `reason === 'clear'`; the tally confirms
+that value occurs, and also shows a `resume` value the carve-out does not name. The sample covers
+only sessions that owned a run and only the fields an event copies; for any other input field the
+throwaway hook above is still the route.
+
 ## A fixture is a claim, not ground truth
 
 The same gap one level over: a fixture's literal values are an assertion about the real shape,
