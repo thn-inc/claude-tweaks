@@ -8,6 +8,7 @@ files:
   - plugin/skills/review/step3-routing.md
   - plugin/skills/review/review-summary-template.md
   - plugin/bin/review-coordination.js
+  - plugin/bin/lib/tiebreak.js
 ---
 
 # Get a Verdict on Every Unverified Review Finding
@@ -35,7 +36,7 @@ files:
 
 ### 2. The tiebreak judges each open finding
 - **URL:** Step 3.7 (`plugin/skills/review/step3-tiebreak.md`)
-- **Action:** the reviewer writes every still-open finding to `review-findings.json` (`review-coordination.js write-findings`). It then dispatches one `[Use: Capable]` agent per chunk of up to 8 findings, in waves of 8 chunk agents.
+- **Action:** the reviewer writes every still-open finding to `review-findings.json` (`review-coordination.js write-findings`). It then dispatches one `[Use: Capable]` agent per chunk of up to 8 findings, in waves of 8 chunk agents, taking each finding's id from `review-coordination.js finding-ids` on the chunk file (in a pipeline run and standalone alike).
   - Each agent sees only the diff scope and, per finding, its id, the claim, the severity and `path:line`. A contested finding also carries each side's one-line position.
   - The agent re-reads the live code and judges each finding on its own, replying `confirmed`, `refuted` or `cant-tell` in one `Id:`-headed block per finding, quoting the whole cited source line as evidence.
   - A dispatched reviewer that cannot dispatch reads each finding itself with the same template, and its verdict lines end ` Mode: inline.`.
@@ -71,6 +72,7 @@ files:
 ## Origin
 - Created during the build of #3947, the second step of the unconfirmed-findings tiebreak project. The first step, #3945, built the resolver, the findings artifact and the archive coverage check.
 - Updated during the wrap-up of #4563: step 3 notes the two kinds of finding the console now settles with no verdict line of their own, a debate-confirmed finding and a contested pair's partner.
+- Updated during the build of #5540: step 2 judges findings one agent per chunk of up to 8, settled by one `resolve-tiebreak` call per chunk, with the per-chunk then per-finding failure ladder.
 - Related journeys:
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive side.
   - `settle-every-review-finding-at-the-console-3949.md`: what the Review Console then does with each can't-tell finding.
