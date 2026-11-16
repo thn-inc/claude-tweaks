@@ -1571,7 +1571,7 @@ test('AC8.1/AC8.2/AC8.3: form 1 then form 6 is an open low-confidence item; one 
   assert.deepStrictEqual(lowItems(inp.runDir).map((i) => i.id.split(':')[0]), ['tiebreak'], 'both downgrade lines are superseded by the one verdict');
 });
 
-test('a value flag given twice exits 2 in both verbs and writes nothing', (t) => {
+test('categorise-reproduction: a value flag given twice exits 2 and writes nothing', (t) => {
   const inp = reproInputs(t);
   for (const extra of [
     ['--lens', 'security', '--lens', 'other', '--run', inp.runDir, '--only', 'confirmed'],
@@ -1584,11 +1584,41 @@ test('a value flag given twice exits 2 in both verbs and writes nothing', (t) =>
     assert.match(res.err, /given more than once/, extra.join(' '));
     assert.strictEqual(res.out, '', extra.join(' '));
   }
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+});
+
+test('log-reproduction-judgment: a value flag given twice exits 2 and writes nothing', (t) => {
+  const inp = judgeInputs(t);
   const judge = judgeRun(inp, ABSENCE, ['--lens', 'security', '--lens', 'other', '--run', inp.runDir]);
   assert.strictEqual(judge.code, 2);
   assert.match(judge.err, /--lens given more than once/);
   assert.strictEqual(judgeRun(inp, ABSENCE, ['--lens', 'security', '--run', inp.runDir, '--run', inp.runDir]).code, 2);
   assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+});
+
+test('log-reproduction-judgment: a judgment holding a lens key, or any undeclared key, exits 2 and forges no line', (t) => {
+  const inp = judgeInputs(t);
+  seedReproduced(inp);
+  const before = decisionsOf(inp.runDir);
+  const forged = 'evil"\n- AUTO 00:00:00 — injected: x';
+  for (const [judgment, lens] of [
+    [{ ...ABSENCE, lens: forged }, 'security'],
+    [{ ...RECONFIRM, lens: forged }, '3f'],
+    [{ ...DOWNGRADE, lens: '3f' }, '3f'],
+    [{ ...ABSENCE, extra: 'x' }, 'security'],
+  ]) {
+    const res = judgeRun(inp, judgment, ['--lens', lens, '--run', inp.runDir]);
+    assert.strictEqual(res.code, 2, JSON.stringify(judgment));
+    assert.match(res.err, /unexpected key/);
+    assert.strictEqual(res.out, '');
+  }
+  assert.strictEqual(decisionsOf(inp.runDir), before);
+});
+
+test('log-reproduction-judgment: a ## /review heading with trailing spaces still holds the earlier reproduced line', (t) => {
+  const inp = judgeInputs(t);
+  fs.writeFileSync(path.join(inp.runDir, 'decisions.md'), `## /review  \n${reproLine(['AUTO', 'lens "3f" finding src/v.js:7 reproduced. Confirmed.'])}\n`);
+  assert.strictEqual(judgeRun(inp, DOWNGRADE, ['--lens', '3f', '--run', inp.runDir]).code, 0);
 });
 
 test('an append error whose message holds line breaks still gives one stderr line', (t) => {

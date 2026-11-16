@@ -76,8 +76,10 @@
 // formats what the session reports: it does not check that the command ran or that the output is real, the trust a
 // hand-written line carried. A vacuity kind needs a --lens whose leading token is `3f`; vacuity-downgraded also needs
 // an earlier form 1 or 2 line (a reproduced pair line) for that lens and location under `## /review`, so the
-// downgrade is always the later line and stays an open console item until a tiebreak verdict settles it. Every
-// refusal exits 2 before the run dir is anchored and writes nothing.
+// downgrade is always the later line and stays an open console item until a tiebreak verdict settles it. The
+// judgment file holds only its kind's declared keys (a `lens` or any other key exits 2: the lens comes from --lens).
+// Every refusal exits 2 and writes nothing; all come before the run dir is anchored except two of
+// vacuity-downgraded's, which read decisions.md (no earlier reproduced line; a decisions.md that cannot be read).
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
 // also a run dir that does not exist); 3 run dir unanchored (write-findings, check-coverage, resolve-tiebreak --run,
 // categorise-reproduction --run, log-reproduction-judgment), or missing (write-findings, resolve-tiebreak --run,
@@ -328,15 +330,21 @@ function resolveTiebreakChunkCommand(findings, positional, root, runDir, tier, d
 const isText = (v) => typeof v === 'string' && v.trim() !== '' && !/[\r\n]/.test(v);
 const isLineNumber = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1;
 const JUDGMENT_FIELDS = {
-  'absence-refuted': { text: ['path', 'symbol', 'command'], compose: absenceRefuted },
+  'absence-refuted': { text: ['path', 'symbol', 'command'], extra: ['foundAt'], compose: absenceRefuted },
   'vacuity-downgraded': { text: ['path'], lines: ['line'], compose: vacuityDowngraded },
   'vacuity-reconfirmed': { text: ['path', 'command', 'output'], lines: ['line'], compose: vacuityReconfirmed },
 };
 const LENS_TOKEN_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+`);
 const leadingToken = (lens) => { const m = LENS_TOKEN_RE.exec(lens); return m ? m[0] : null; };
 
+// The keys a kind's judgment may hold besides `kind`. Any other key (a `lens` above all, which would override
+// --lens and skip its checks) is refused, and the composer is handed only these.
+const judgmentKeys = (rule) => [...rule.text, ...(rule.lines || []), ...(rule.extra || [])];
+
 // The refusal text for a judgment object's fields, or null.
 function judgmentProblem(j, rule) {
+  const undeclared = Object.keys(j).filter((k) => k !== 'kind' && !judgmentKeys(rule).includes(k));
+  if (undeclared.length) return `unexpected key ${undeclared.map((k) => JSON.stringify(k)).join(', ')}, a ${j.kind} judgment holds only kind, ${judgmentKeys(rule).join(', ')}`;
   for (const k of rule.text) if (!isText(j[k])) return `${k} must be a non-empty single-line string, got ${JSON.stringify(j[k])}`;
   for (const k of rule.lines || []) if (!isLineNumber(j[k])) return `${k} must be a whole number of 1 or more, got ${JSON.stringify(j[k])}`;
   if (j.kind === 'absence-refuted') {
@@ -352,7 +360,7 @@ function judgmentProblem(j, rule) {
 function holdsReproducedLine(text, file, line) {
   let inReview = false;
   for (const raw of text.split('\n')) {
-    if (/^## /.test(raw)) { inReview = raw === '## /review'; continue; }
+    if (/^## /.test(raw)) { inReview = raw.trimEnd() === '## /review'; continue; }
     if (!inReview || !raw.startsWith('- ')) continue;
     const m = classifyPairLine(raw);
     if (m && (m.form === 'reproduced' || m.form === 'reproduced-severity-contested')
@@ -394,7 +402,8 @@ function logReproductionJudgment(rest, deps) {
       return refuse(`vacuity-downgraded needs an earlier reproduced line (form 1 or 2) for lens 3f at ${j.path}:${j.line} under ## /review in decisions.md; write it with categorise-reproduction --run --only confirmed first`);
     }
   }
-  const composed = { ...rule.compose({ lens: flags.lens, ...j }), section: '/review' };
+  const fields = Object.fromEntries(judgmentKeys(rule).map((k) => [k, j[k]]));
+  const composed = { ...rule.compose({ ...fields, lens: flags.lens }), section: '/review' };
   const logged = appendDecisionEntries([composed], anchored.dir, deps);
   deps.stdout(JSON.stringify({ entries: [composed], logged }) + '\n');
   return 0;
