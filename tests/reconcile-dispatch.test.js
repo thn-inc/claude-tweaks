@@ -562,6 +562,51 @@ test('formatSummary: a skipped entry carrying names (non-canonical-run-dir, #848
   assert.strictEqual(summary, 'skipped: all — non-canonical-run-dir: 20260817T173343-spec-764');
 });
 
+test('format-summary prints one archive-stranded-shells line for several shells (#3975)', () => {
+  const cmd = 'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/r"';
+  const shell = (n) => ({ runDir: `/r/.claude-tweaks/pipelines/${n}`, action: 'skipped', reason: 'archived-pending-tracked-move', command: cmd, shell: true });
+  const lines = formatSummary({ runs: [shell('a'), shell('b')], skipped: [] }).split('\n');
+  assert.deepEqual(lines, ['skipped: 2 run dirs (archived-pending-tracked-move 2)', `archive stranded shells: ${cmd}`]);
+});
+
+test('format-summary: the stranded-shells line comes from a shell entry, never a non-clean split state (#3975)', () => {
+  const cmd = 'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/r"';
+  const split = { runDir: '/r/.claude-tweaks/pipelines/x', action: 'skipped', reason: 'archived-pending-tracked-move', command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "/r/x"' };
+  const shell = { runDir: '/r/.claude-tweaks/pipelines/y', action: 'skipped', reason: 'archived-pending-tracked-move', command: cmd, shell: true };
+  const mixed = formatSummary({ runs: [split, shell], skipped: [] }).split('\n');
+  assert.deepEqual(mixed.filter((l) => l.startsWith('archive stranded shells')), [`archive stranded shells: ${cmd}`]);
+  assert.ok(!formatSummary({ runs: [split], skipped: [] }).includes('archive stranded shells'));
+});
+
+test('AC1.3: reconcile --dry-run --json --checks archive lists a clean-twin shell as archived-pending-tracked-move (#3975)', { skip: STUB_SKIP }, async () => {
+  const { seedDir, mainDir } = pairedFixture();
+  const id = '2026-09-01T120000-spec-77';
+  writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\nworktree-always: true\n');
+  const pipelines = path.join(seedDir, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(path.join(pipelines, id, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(pipelines, id, 'work', '77-spec.md'), '# 77\n');
+  fs.mkdirSync(path.join(pipelines, 'archive', id), { recursive: true });
+  fs.writeFileSync(path.join(pipelines, 'archive', id, 'run-state.json'), JSON.stringify({ status: 'clean' }));
+  git(['add', '-f', '.claude-tweaks'], seedDir);
+  git(['commit', '-q', '-m', 'shell'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  git(['pull', '-q', 'origin', 'main'], mainDir);
+  // The preflight probe (`gh api rate_limit`) is the only gh call this path makes.
+  // In-process runCli (#5376): the stub rides in the call's own env, never process.env.PATH.
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stub-'));
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho 5000\n', { mode: 0o755 });
+  let r;
+  try {
+    r = await runHook(['reconcile', '--dry-run', '--json', '--checks', 'archive'], { cwd: mainDir, env: { PATH: stubDir + path.delimiter + process.env.PATH } });
+  } finally { fs.rmSync(stubDir, { recursive: true, force: true }); }
+  assert.strictEqual(r.code, 0);
+  const entry = JSON.parse(r.stdout).runs.find((e) => path.basename(e.runDir) === id);
+  assert.ok(entry, r.stdout);
+  assert.strictEqual(entry.reason, 'archived-pending-tracked-move');
+  assert.match(entry.command, /archive-tracked-shells\.js" --root /);
+  assert.strictEqual(entry.shell, true);
+});
+
 test('formatSummary: a skipped entry\'s detail renders in parentheses after the reason, ahead of any count/names suffix; no detail renders unchanged (#4933)', () => {
   const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null };
   const detail = 'origin host git.corp.invalid is not a known GitHub host — export GH_HOST=git.corp.invalid';

@@ -332,10 +332,7 @@ const realDeps = {
   gh: defaultGh,
 };
 
-// Kept for callers that import it. Removal condition: no file under plugin/, tests/, tools/, perf/ or evals/ calls main.
-async function main(argv) { return run(argv, realDeps); }
-
-module.exports = { run, buildTiming, EVENTS_UNREADABLE, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
+module.exports = { run, buildTiming, EVENTS_UNREADABLE, realDeps, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
 if (require.main === module) {
   run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; }).catch((err) => {
     process.stderr.write(`phase-timing.js: ${err && err.message}\n`);

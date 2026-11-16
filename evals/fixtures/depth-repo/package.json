@@ -1,6 +1,0 @@
-{
-  "name": "eval-fixture-depth-repo",
-  "private": true,
-  "version": "0.0.0",
-  "scripts": { "test": "node --test \"test/*.test.js\"" }
-}

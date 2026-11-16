@@ -13,6 +13,7 @@ const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 const { gitRepo, linkedWorktreeOf, fixtureGit, FIXTURE_TIMEOUT_MS } = require('../../helpers/git-fixtures');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { gate: libGate } = require('../../../plugin/bin/lib/skill-gate');
+const { canonicalRealpath } = require('../../../plugin/bin/lib/path-guard');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'skill-gate.js');
 
@@ -20,7 +21,7 @@ const ENV = {
   PATH: process.env.PATH,
   ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
   GIT_CONFIG_NOSYSTEM: '1',
-  GIT_CONFIG_GLOBAL: os.devNull,
+  GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_AUTHOR_NAME: 't',
   GIT_AUTHOR_EMAIL: 't@example.test',
   GIT_COMMITTER_NAME: 't',
@@ -442,7 +443,17 @@ test('the real repoRoot default resolves the checkout top level', () => {
   const real = require(CLI);
   assert.equal(typeof real.realDeps.repoRoot, 'function');
   const main = repo();
-  assert.equal(real.realDeps.repoRoot(main, ENV), fs.realpathSync(main));
+  const sub = path.join(main, 'sub', 'dir');
+  fs.mkdirSync(sub, { recursive: true });
+  const top = real.realDeps.repoRoot(sub, ENV);
+  assert.equal(typeof top, 'string');
+  assert.notEqual(top, '');
+  assert.equal(top.endsWith('\n'), false);
+  const got = canonicalRealpath(top);
+  const want = canonicalRealpath(main);
+  assert.notEqual(got, null);
+  assert.notEqual(want, null);
+  assert.equal(got, want);
 });
 
 test('AC12: --help exits 0 with the usage on stdout, before anything else', () => {

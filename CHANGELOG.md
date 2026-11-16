@@ -53,6 +53,67 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.171.0](https://github.com/thn-inc/claude-tweaks/compare/v6.170.0...v6.171.0) (2026-11-16)
+
+
+### Features
+
+* Add wait-for.js: a foreground command that blocks until… ([#5602](https://github.com/thn-inc/claude-tweaks/issues/5602)) ([#5615](https://github.com/thn-inc/claude-tweaks/issues/5615)) ([51a0426](https://github.com/thn-inc/claude-tweaks/commit/51a042653bb0e75afcdd89028900be6a103f7750))
+* Control mode: carry undecidable console items into the… ([#4620](https://github.com/thn-inc/claude-tweaks/issues/4620)) ([4b764b7](https://github.com/thn-inc/claude-tweaks/commit/4b764b7a0cbcac7b847c36dabafabf2dee56537e))
+* Gate journeys, visual-review and design-wrapper before… ([#5605](https://github.com/thn-inc/claude-tweaks/issues/5605)) ([#5617](https://github.com/thn-inc/claude-tweaks/issues/5617)) ([b3517f6](https://github.com/thn-inc/claude-tweaks/commit/b3517f66029a2a860e3875dcc6209caee62ea746))
+* Keep a bounded number of releases in CHANGELOG.md, set… ([#5563](https://github.com/thn-inc/claude-tweaks/issues/5563)) ([03a7190](https://github.com/thn-inc/claude-tweaks/commit/03a71901a10080ca7ccc89e2caefc482197407b7))
+* Rewrite /demo as /claude-tweaks:accept ([#4613](https://github.com/thn-inc/claude-tweaks/issues/4613)) ([#5579](https://github.com/thn-inc/claude-tweaks/issues/5579)) ([58f1c31](https://github.com/thn-inc/claude-tweaks/commit/58f1c31b54d32051eb18c1a494b7ba7be56ce575))
+* Route driver-admitted singletons from… ([#5232](https://github.com/thn-inc/claude-tweaks/issues/5232)) ([77535d7](https://github.com/thn-inc/claude-tweaks/commit/77535d7959e6875720dc38b78dfbd732939628b0))
+
+
+### Bug Fixes
+
+* Give the adopted-branch collision check a CLI so worktree… ([#5589](https://github.com/thn-inc/claude-tweaks/issues/5589)) ([#5612](https://github.com/thn-inc/claude-tweaks/issues/5612)) ([57c0f74](https://github.com/thn-inc/claude-tweaks/commit/57c0f740990246e96d0cc06daa6a1d4669b4d77b))
+* Normalize issue state and label shape in the health issue… ([#5528](https://github.com/thn-inc/claude-tweaks/issues/5528)) ([ee78b56](https://github.com/thn-inc/claude-tweaks/commit/ee78b568f1da8d978f971b0afdba261dfa8c5215)), closes [#5529](https://github.com/thn-inc/claude-tweaks/issues/5529)
+* Provenance and trust read an Origin: line from any issue… ([#4577](https://github.com/thn-inc/claude-tweaks/issues/4577)) ([#5627](https://github.com/thn-inc/claude-tweaks/issues/5627)) ([8f3d450](https://github.com/thn-inc/claude-tweaks/commit/8f3d450cba47496af1983fc8756612e64307e29b))
+* Report stranded spec-shell dirs, ship a command that… ([#3975](https://github.com/thn-inc/claude-tweaks/issues/3975)) ([#5665](https://github.com/thn-inc/claude-tweaks/issues/5665)) ([ed21754](https://github.com/thn-inc/claude-tweaks/commit/ed217542d84d05c59811164e9242aeec19e3d043))
+* Review Console: unattended filing ignores the tiebreak's… ([#4679](https://github.com/thn-inc/claude-tweaks/issues/4679)) ([#5592](https://github.com/thn-inc/claude-tweaks/issues/5592)) ([2b9548b](https://github.com/thn-inc/claude-tweaks/commit/2b9548b090c7b56d53c7d69f35f6fea4fe1dcfe6))
+* tidy step-7-5: the housekeeping PR merges immediately… ([#4467](https://github.com/thn-inc/claude-tweaks/issues/4467)) ([f9b6587](https://github.com/thn-inc/claude-tweaks/commit/f9b6587de022f5fb825ac32de454691db54aa59c))
+* Windows regression: 1 test file(s) newly failing after… ([#4790](https://github.com/thn-inc/claude-tweaks/issues/4790)) ([01b30f7](https://github.com/thn-inc/claude-tweaks/commit/01b30f7386f965dadb1b11fc8ce2134b4ee94019))
+* Windows regression: 1 test file(s) newly failing after… ([#4828](https://github.com/thn-inc/claude-tweaks/issues/4828)) ([8fef772](https://github.com/thn-inc/claude-tweaks/commit/8fef7722b41addd3e65371990b4ac8a6e8f88731))
+* Windows regression: 3 test file(s) newly failing after… ([#5666](https://github.com/thn-inc/claude-tweaks/issues/5666)) ([af2bade](https://github.com/thn-inc/claude-tweaks/commit/af2bade1eb98282bd91b16a131da62529cd99de0))
+* Wrap-up: Phase 4's execution-step commit and push still… ([#3813](https://github.com/thn-inc/claude-tweaks/issues/3813)) ([#4641](https://github.com/thn-inc/claude-tweaks/issues/4641)) ([bbadf4b](https://github.com/thn-inc/claude-tweaks/commit/bbadf4be2176f2e7acf6f0fb982638d07bc09bd0))
+* Write gate misses a write behind a NAME=value, env or… ([#4448](https://github.com/thn-inc/claude-tweaks/issues/4448)) ([c4f9ed6](https://github.com/thn-inc/claude-tweaks/commit/c4f9ed6faef86da8f529ffb9731815941e44c2ca))
+
+### Highlights
+* Added a command that archives stranded run spec headers through one housekeeping pull request, and made reconcile report them instead of ignoring them.
+* Fixed three tests that failed only on a Windows checkout and added a check that catches their most common cause; no user-visible change.
+* Added a command that lets an agent block until a child agent, a pull request's checks or a background process finishes, instead of polling with sleep.
+* `/claude-tweaks:review` now picks the tiebreak judge's model tier from the finding's severity: `info` findings are judged at the Standard tier, and every other severity stays on Capable. A finding the Standard judge raises to `medium` or higher is judged again at Capable.
+* Added `/claude-tweaks:accept`, an acceptance step that walks you through a finished feature's packet and takes your verdict, and kept `/claude-tweaks:demo` as a deprecated alias.
+* Trust tracking no longer takes a record's origin from text quoted out of another record.
+* Improved the maintainer tool that counts refused shell commands: it now says which guard refused each one and whether the command only reads.
+* Builds, reviews and pipeline runs now check whether a change has any user-facing surface before loading the journey, visual-review and design skills, and skip the load when it has none.
+* Added an opt-in route from the dispatch skill to the pipeline driver, so an eligible singleton in a drain is built by the driver instead of an express agent.
+* A new policy key, `changelog-max-releases`, keeps only the newest releases in `CHANGELOG.md` and links to the rest. It is off by default.
+* Unattended runs no longer flood the backlog with unverified review findings. A finding the review tiebreak recommended dropping goes to the digest, and one it recommended filing arrives as a task an agent can verify and build, not one that needs a human brainstorm.
+* Fixed the health sweeps skipping a finding whose issue had been closed, and ignoring wontfix labels, when the issue list came straight from GitHub.
+* Changed the code-health status gate to stop with a clear error when it has no trustworthy local sweep data, where it used to pass silently.
+* Maintainer-side only: the review and tiebreak replay scripts become one tested tool, `tools/review-replay.js`. Nothing in the shipped plugin changes.
+* Moved three reference-only documents out of the installed plugin and removed leftover pointer sections from the shared skill files.
+* Capture and feedback now judge whether an idea still needs definition from one shared rubric, which also treats incidental implementation sub-decisions as clear.
+* The worktree-always guard now blocks a write into the main checkout behind a NAME=value, env, sudo or similar command prefix.
+* Tidy's housekeeping PRs now wait for their checks and can no longer close an issue by accident.
+* Every pipeline run now gets a `timing.json` when it closes, including dispatched runs and runs closed without a wrap-up, so cost reports cover all runs from this release on. Runs closed earlier are not backfilled.
+* Moved two maintainer-only test parsers out of the installed plugin.
+* Trust tracking now ignores provenance lines written by people outside the repository.
+* Dispatched agents now receive the foreground-wait rule once in each prompt instead of twice.
+* Maintainer-side only: recorded what Claude Code's Workflow tool does for a plugin-shipped workflow, as a reference document. Nothing in the shipped plugin changes.
+* `/claude-tweaks:review` now settles unconfirmed findings with one judge per group of up to eight findings instead of one judge per finding, which cuts the step's token cost substantially.
+* Changed spec-header checks to find a run's header at either its live or archived location, with no change to existing runs.
+* Made the end-of-run review console optional in control mode, resolving what policy can and carrying anything that needs you into the acceptance packet.
+* Removed the old bare-SHA verification stamp that was written alongside the JSON stamp for one release.
+* Stopped two more kinds of harmless shell command from being refused in a worktree session: a git command pointed at the directory it is already in, and a command that prints the previous command's exit status.
+* Run timing now counts agents started by a workflow script, with their tokens, alongside agents started by a direct dispatch.
+* Fixed the branch-collision check at the start of a build so it runs as one plain command and is no longer refused and retried in a worktree session.
+* Wrap-up's final cleanup and commit now land in the merged PR instead of on an already-merged branch.
+* Reworded the project's maturity statement: designs may be replaced outright, as long as a run in flight on the previous release keeps working.
+
 ## [6.170.0](https://github.com/thn-inc/claude-tweaks/compare/v6.169.0...v6.170.0) (2026-11-15)
 
 

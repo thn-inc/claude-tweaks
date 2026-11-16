@@ -83,7 +83,7 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
                            (deletes ledger, design caches, and plans only under
                             superpowers-plans-retention: prune-after-wrapup;
                             legacy spec file deleted too — a record-mode build's materialized file
-                            stays on the branch as committed audit trail instead;
+                            is archived on the branch at wrap-up (`archive/{run-id}/`) instead;
                             posts an acceptance packet on the record, with
                             accept:pending above the oversight floor — or, for a
                             sub-issue of a /specify decomposition, demo:pending +
