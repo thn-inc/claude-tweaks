@@ -381,6 +381,19 @@ test('#4359: --recount on an archive that cannot be listed says so and exits 1',
   assert.match(errs, /^efficiency-report\.js: cannot read the archive /);
 });
 
+test('#4359: any other recount throw reports its own error, not "cannot read the archive"', async () => {
+  const { root, archive } = recountTree();
+  try {
+    // A buildTiming that resolves to nothing makes the read of timing.phases throw past the per-run catch.
+    const { code, errs } = await runCli(['--archive', archive, '--recount'], { cwd: root, buildTiming: async () => undefined });
+    assert.strictEqual(code, 1);
+    assert.match(errs, /^efficiency-report\.js: recount failed: /);
+    assert.ok(!errs.includes('cannot read the archive'), errs);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('#4029: isoWeek puts a date near New Year in the ISO week-year it belongs to', () => {
   assert.strictEqual(isoWeek(new Date(Date.UTC(2026, 0, 1))), '2026-W01'); // Thursday
   assert.strictEqual(isoWeek(new Date(Date.UTC(2027, 0, 1))), '2026-W53'); // Friday: previous week-year
