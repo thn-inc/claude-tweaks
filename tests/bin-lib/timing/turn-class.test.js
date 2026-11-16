@@ -251,3 +251,7 @@ test('turn-class: bashProcedureFiles counts no read named inside a heredoc body'
   assert.deepEqual(bashProcedureFiles('cat <<EOF > /tmp/x\nsed -n 1p plugin/skills/review/SKILL.md\nEOF', null), []);
   assert.deepEqual(bashProcedureFiles("cat <<'EOF' > /tmp/x\ncat plugin/skills/review/SKILL.md\nEOF\ncat plugin/skills/a.md", null), ['skills/a.md']);
 });
+
+test('AC4 (unit): a Workflow tool call is classed dispatch', () => {
+  assert.equal(classifyToolCall({ name: 'Workflow', input: { script: 'x' } }), 'dispatch');
+});

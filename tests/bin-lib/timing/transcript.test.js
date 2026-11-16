@@ -745,3 +745,343 @@ test('#3375 C1: a lower later line never reduces the id\'s usage (max, not last)
   const rows = await readUsage(f);
   assert.deepEqual(rows.map((r) => r.outputTokens), [407, 0]);
 });
+
+// ---- #5597: agents a workflow script starts live in subagents/workflows/{runId}/ ----
+
+// {tmp}/sess-1/subagents — a real session shape, so the run file beside it
+// ({tmp}/sess-1/workflows/{runId}.json) never lands in a shared tmp dir.
+function tmpSessionSubagents() {
+  const sub = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wf-')), 'sess-1', 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  return sub;
+}
+function writeAgent(dir, id, ts, meta) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `agent-${id}.jsonl`), aLine('assistant', ts, `m-${id}`, 'claude-sonnet-5-5', [1, 1, 1, 1]) + '\n');
+  if (meta) fs.writeFileSync(path.join(dir, `agent-${id}.meta.json`), JSON.stringify(meta));
+}
+function fiveAgentSession() {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1', model: 'sonnet' });
+  writeAgent(dir, 'd2', '2026-11-16T10:01:00.000Z', { description: 'Review Task 1', model: 'opus' });
+  const run = path.join(dir, 'workflows', 'wf-run-1');
+  writeAgent(run, 'w1', '2026-11-16T10:02:00.000Z', { description: 'lens 3b A', model: 'haiku', workflowPhase: 'review' });
+  writeAgent(run, 'w2', '2026-11-16T10:03:00.000Z', { description: 'lens 3b B', model: 'sonnet', workflowPhase: 'review' });
+  writeAgent(run, 'w3', '2026-11-16T10:04:00.000Z', { description: 'lens 3b C', model: 'opus', workflowPhase: 'review' });
+  return { dir, run };
+}
+
+test('AC1.1: two direct agents and one workflows/{runId}/ holding three agents give five items', async () => {
+  const { dir } = fiveAgentSession();
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 5);
+  assert.equal(r.notFound, null);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('AC1.2: the three workflow items carry the run id and their workflowPhase; the two direct items carry null for both', async () => {
+  const { dir } = fiveAgentSession();
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items.map((i) => [i.agentId, i.workflowRunId, i.workflowPhase]), [
+    ['d1', null, null], ['d2', null, null],
+    ['w1', 'wf-run-1', 'review'], ['w2', 'wf-run-1', 'review'], ['w3', 'wf-run-1', 'review'],
+  ]);
+  // the two keys follow notFound
+  const keys = Object.keys(r.items[0]);
+  assert.deepEqual(keys.slice(keys.indexOf('notFound')), ['notFound', 'workflowRunId', 'workflowPhase']);
+});
+
+test('AC2.1: workflow items take their tier from the meta model alias', async () => {
+  const { dir } = fiveAgentSession();
+  const agg = aggregateDispatches((await readDispatches(dir)).items);
+  assert.deepEqual(agg.items.filter((i) => i.workflowRunId).map((i) => [i.agentId, i.tier]), [['w1', 'fast'], ['w2', 'standard'], ['w3', 'capable']]);
+});
+
+test('AC2.2: a workflow description "lens 3b A" yields the role lens reviewer', async () => {
+  const { dir } = fiveAgentSession();
+  const agg = aggregateDispatches((await readDispatches(dir)).items);
+  assert.equal(agg.items.find((i) => i.agentId === 'w1').role, 'lens reviewer');
+});
+
+test('AC3.1: a symlinked workflows/ directory is not read and is named', async () => {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  const outside = tmpSubagents();
+  writeAgent(path.join(outside, 'r1'), 'x1', '2026-11-16T10:01:00.000Z', { description: 'leaked' });
+  fs.symlinkSync(outside, path.join(dir, 'workflows'));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, [`workflows/ directory is a symlink (not followed) at ${path.join(dir, 'workflows')}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('AC3.2: a symlinked run directory is not read and is named', async () => {
+  const dir = tmpSessionSubagents();
+  const outside = tmpSubagents();
+  writeAgent(outside, 'x1', '2026-11-16T10:01:00.000Z', { description: 'leaked' });
+  fs.mkdirSync(path.join(dir, 'workflows'));
+  const runPath = path.join(dir, 'workflows', 'r1');
+  fs.symlinkSync(outside, runPath);
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, [`workflow run directory is a symlink (not followed) at ${runPath}`]);
+  assert.deepEqual(r.items, []);
+});
+
+test('AC3.3: a symlinked agent file inside a run directory is not read and is named', async () => {
+  const dir = tmpSessionSubagents();
+  const outside = tmpSubagents();
+  fs.writeFileSync(path.join(outside, 'secret.jsonl'), aLine('assistant', '2026-11-16T10:00:00.000Z', 'ms', 'claude-opus-5-5', [9, 9, 9, 9]) + '\n');
+  const run = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'agent-l1.meta.json'), JSON.stringify({ description: 'lens 1', workflowPhase: 'review' }));
+  fs.symlinkSync(path.join(outside, 'secret.jsonl'), path.join(run, 'agent-l1.jsonl'));
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].notFound, 'transcript not readable (symlink)');
+  assert.equal(r.items[0].tokens, null);
+  assert.equal(r.items[0].workflowRunId, 'r1');
+});
+
+test('AC6.1: a run directory with no agent file gives one dirNotes string', async () => {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  const runPath = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(runPath, { recursive: true });
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, [`no agent-* transcripts in ${runPath}`]);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.notFound, null);
+});
+
+test('AC6.2: an unreadable meta.json in a run directory gives an item with a meta not readable note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'p1', '2026-11-16T10:00:00.000Z', { description: 'lens 1', workflowPhase: 'review' });
+  const metaPath = path.join(run, 'agent-p1.meta.json');
+  const fsImpl = { ...fs, readFileSync: (p, ...a) => { if (String(p) === metaPath) throw Object.assign(new Error('denied'), { code: 'EACCES' }); return fs.readFileSync(p, ...a); } };
+  const r = await readDispatches(dir, { fsImpl });
+  assert.equal(r.items.length, 1);
+  assert.match(r.items[0].notFound, /^meta not readable \(EACCES\)/);
+  assert.equal(r.items[0].workflowPhase, null);
+  assert.equal(r.items[0].workflowRunId, 'r1');
+});
+
+test('Deliverable 2: a workflow agent with no meta file is still an item — run id from the directory, workflowPhase null, "meta not found" note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'm1', '2026-11-16T10:00:00.000Z');
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].workflowRunId, 'r1');
+  assert.equal(r.items[0].workflowPhase, null);
+  assert.equal(r.items[0].notFound, 'meta not found');
+  assert.ok(r.items[0].tokens);
+});
+
+test('AC9: a workflow agent whose transcript has rows but no timestamped row is an item with its note and no start', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'agent-u1.meta.json'), JSON.stringify({ description: 'lens 1', workflowPhase: 'review' }));
+  fs.writeFileSync(path.join(run, 'agent-u1.jsonl'), aLine('assistant', undefined, 'm-u1', 'claude-sonnet-5-5', [1, 1, 1, 1]) + '\n');
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].notFound, 'transcript has no usage rows');
+  assert.equal(r.items[0].startTs, null);
+  assert.equal(r.items[0].tokens, null);
+});
+
+test('AC6.3: a file in a run directory that is not an agent file gives no item and no exception', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'a1', '2026-11-16T10:00:00.000Z', { description: 'lens 1' });
+  fs.writeFileSync(path.join(run, 'journal.jsonl'), '{}\n');
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['a1']);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('AC10.1: a subagents/ directory holding only workflows/{runId}/ with two agents returns two items and notFound null', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'a1', '2026-11-16T10:00:00.000Z', { description: 'lens 1' });
+  writeAgent(run, 'a2', '2026-11-16T10:01:00.000Z', { description: 'lens 2' });
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 2);
+  assert.equal(r.notFound, null);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('AC11.1: a run file whose agentCount is 3 beside a run directory with two agents gives one dirNotes string naming 3 and 2', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'a1', '2026-11-16T10:00:00.000Z', { description: 'lens 1' });
+  writeAgent(run, 'a2', '2026-11-16T10:01:00.000Z', { description: 'lens 2' });
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.writeFileSync(path.join(runFileDir, 'r1.json'), JSON.stringify({ agentCount: 3 }));
+  const r = await readDispatches(dir);
+  assert.equal(r.dirNotes.length, 1);
+  assert.match(r.dirNotes[0], /\b3\b/);
+  assert.match(r.dirNotes[0], /\b2\b/);
+  assert.equal(r.items.length, 2);
+});
+
+test('AC11.2: with no run file there is no such note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'a1', '2026-11-16T10:00:00.000Z', { description: 'lens 1' });
+  writeAgent(run, 'a2', '2026-11-16T10:01:00.000Z', { description: 'lens 2' });
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('AC12.1: subagentsDirFor maps a workflow agent transcript to the session subagents/ dir', () => {
+  assert.equal(subagentsDirFor(path.join('/h', 'p', 'sess-1', 'subagents', 'workflows', 'r1', 'agent-a.jsonl')), path.join('/h', 'p', 'sess-1', 'subagents'));
+});
+
+test('AC12.2: its result for a main transcript is unchanged', () => {
+  assert.equal(subagentsDirFor(path.join('/h', 'p', 'sess-1.jsonl')), path.join('/h', 'p', 'sess-1', 'subagents'));
+});
+
+test('#5597 review focus 1: workflows/ that is a plain file is ignored', async () => {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  fs.writeFileSync(path.join(dir, 'workflows'), 'x');
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('#5597 review focus 2: a plain file directly inside workflows/ is ignored', async () => {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  fs.mkdirSync(path.join(dir, 'workflows'));
+  fs.writeFileSync(path.join(dir, 'workflows', 'agent-z.jsonl'), aLine('assistant', '2026-11-16T10:00:00.000Z', 'mz', 'claude-opus-5-5', [9, 9, 9, 9]) + '\n');
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('#5597: window clipping applies to workflow run directories', async () => {
+  const { dir } = fiveAgentSession();
+  const window = { start: Date.parse('2026-11-16T09:00:00.000Z'), end: Date.parse('2026-11-16T10:03:30.000Z') };
+  const r = await readDispatches(dir, { window });
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1', 'd2', 'w1', 'w2']);
+  assert.equal(r.excludedOutsideWindow, 1);
+});
+
+function useLine(id, name) {
+  return JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: `m-${id}`, role: 'assistant', content: [{ type: 'tool_use', id, name, input: { prompt: 'x' } }], usage: {} } });
+}
+
+test('agentCalls counts Agent and Task results and not Workflow', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-agentcalls-')), 's.jsonl');
+  const results = ['a', 't', 'w'].map((id) => ({ type: 'tool_result', tool_use_id: id, content: 'ok' }));
+  fs.writeFileSync(f, [
+    useLine('a', 'Agent'), useLine('t', 'Task'), useLine('w', 'Workflow'),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:05.000Z', message: { role: 'user', content: results } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  const user = rows.find((r) => r.role === 'user');
+  assert.equal(user.agentCalls, 2);
+  assert.equal(user.turnClasses.dispatch, 3);
+  assert.ok(rows.filter((r) => r.role === 'assistant').every((r) => !('agentCalls' in r)));
+});
+
+test('#5597 review focus 5: guard-refused Agent call adds no agentCalls', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-agentcalls-')), 's.jsonl');
+  fs.writeFileSync(f, [
+    useLine('a', 'Agent'),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:05.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'This session is isolated in the worktree /repo', is_error: true }] } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  const user = rows.find((r) => r.role === 'user');
+  assert.deepEqual(user.turnClasses, { 'guard-refusal': 1 });
+  assert.equal(user.agentCalls, 0);
+});
+
+// A session with one direct agent and workflows/r1/ holding one agent; each
+// fault test below breaks exactly one fs call on one path.
+function faultSession() {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  const runPath = path.join(dir, 'workflows', 'r1');
+  writeAgent(runPath, 'w1', '2026-11-16T10:01:00.000Z', { description: 'lens 1' });
+  return { dir, wfDir: path.join(dir, 'workflows'), runPath };
+}
+const failOn = (method, target, code) => ({ ...fs, [method]: (p, ...a) => { if (String(p) === target) throw Object.assign(new Error(code), { code }); return fs[method](p, ...a); } });
+
+test('#5597: a workflows/ directory lstat cannot read is named and the direct items are still returned', async () => {
+  const { dir, wfDir } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', wfDir, 'EIO') });
+  assert.deepEqual(r.dirNotes, [`workflows/ directory not readable (EIO) at ${wfDir}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a workflows/ directory that cannot be listed is named and the direct items are still returned', async () => {
+  const { dir, wfDir } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('readdirSync', wfDir, 'EACCES') });
+  assert.deepEqual(r.dirNotes, [`workflows/ directory not readable (EACCES) at ${wfDir}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run directory lstat cannot read is named and the direct items are still returned', async () => {
+  const { dir, runPath } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', runPath, 'EIO') });
+  assert.deepEqual(r.dirNotes, [`workflow run directory not readable (EIO) at ${runPath}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run directory that cannot be listed is named and the direct items are still returned', async () => {
+  const { dir, runPath } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('readdirSync', runPath, 'EACCES') });
+  assert.deepEqual(r.dirNotes, [`workflow run directory not readable (EACCES) at ${runPath}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a workflows/ directory lstat reports missing is named with ENOENT and the direct items are still returned', async () => {
+  const { dir, wfDir } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', wfDir, 'ENOENT') });
+  assert.deepEqual(r.dirNotes, [`workflows/ directory not readable (ENOENT) at ${wfDir}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run directory lstat reports missing is named with ENOENT and the direct items are still returned', async () => {
+  const { dir, runPath } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', runPath, 'ENOENT') });
+  assert.deepEqual(r.dirNotes, [`workflow run directory not readable (ENOENT) at ${runPath}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: an empty run directory beside a run file with agentCount 2 gives only the empty-directory note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(run, { recursive: true });
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.writeFileSync(path.join(runFileDir, 'r1.json'), JSON.stringify({ agentCount: 2 }));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, [`no agent-* transcripts in ${run}`]);
+});
+
+test('#5597: a run file whose agentCount equals the agents found adds no note', async () => {
+  const { dir } = faultSession();
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.writeFileSync(path.join(runFileDir, 'r1.json'), JSON.stringify({ agentCount: 1 }));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, []);
+  assert.equal(r.items.length, 2);
+});
+
+test('#5597: a symlinked run file is not read, so its mismatching agentCount adds no note', async () => {
+  const { dir } = faultSession();
+  const outside = tmpSubagents();
+  fs.writeFileSync(path.join(outside, 'r1.json'), JSON.stringify({ agentCount: 3 }));
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.symlinkSync(path.join(outside, 'r1.json'), path.join(runFileDir, 'r1.json'));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, []);
+  assert.equal(r.items.length, 2);
+});
