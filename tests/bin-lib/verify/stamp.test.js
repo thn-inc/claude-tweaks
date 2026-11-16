@@ -52,15 +52,19 @@ test('composeStamp never lets caller-supplied fields override the derived sha/di
 
 test('AC2.1: writeStamp on an empty directory creates exactly one file and returns only jsonPath', () => {
   const dir = tmpDir();
-  const stamp = composeStamp({
-    report: REPORT, scope: 'full', fullSha: 'abc123', base: null, changedFiles: [],
-    suitesRun: ['tests'], flakyRetried: [], reportPath: '/r.json', at: 't',
-  });
-  const out = writeStamp(dir, stamp);
-  assert.deepStrictEqual(fs.readdirSync(dir), [STAMP_JSON_NAME]);
-  assert.deepStrictEqual(Object.keys(out), ['jsonPath']);
-  assert.strictEqual(out.jsonPath, path.join(dir, STAMP_JSON_NAME));
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(out.jsonPath, 'utf8')), stamp);
+  try {
+    const stamp = composeStamp({
+      report: REPORT, scope: 'full', fullSha: 'abc123', base: null, changedFiles: [],
+      suitesRun: ['tests'], flakyRetried: [], reportPath: '/r.json', at: 't',
+    });
+    const out = writeStamp(dir, stamp);
+    assert.deepStrictEqual(fs.readdirSync(dir), [STAMP_JSON_NAME]);
+    assert.deepStrictEqual(Object.keys(out), ['jsonPath']);
+    assert.strictEqual(out.jsonPath, path.join(dir, STAMP_JSON_NAME));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(out.jsonPath, 'utf8')), stamp);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('writeStamp writes the JSON stamp through a pid-suffixed tmp file (#2004 — migrated off the retired lib/verify/atomic-write.js)', () => {
@@ -140,11 +144,13 @@ test('readStamp reads the JSON stamp and ignores a leftover bare-SHA file', () =
 });
 
 test('readStamp returns null on unparseable JSON, a leftover bare-SHA file beside it or not', () => {
-  const fsImpl = fakeFs({
+  const withBare = fakeFs({
     [path.join('/g', STAMP_JSON_NAME)]: 'not json',
     [path.join('/g', LEFTOVER_BARE)]: '0123456789abcdef0123456789abcdef01234567\n',
   });
-  assert.strictEqual(readStamp('/g', fsImpl), null);
+  assert.strictEqual(readStamp('/g', withBare), null, 'bare-SHA file beside the unparseable JSON');
+  const withoutBare = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: 'not json' });
+  assert.strictEqual(readStamp('/g', withoutBare), null, 'unparseable JSON alone');
 });
 
 test('readStamp returns null for a `baseline` key the runner did not write — scalar, null or array — never a clean full pass (#3043)', () => {

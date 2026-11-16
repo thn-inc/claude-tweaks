@@ -523,14 +523,17 @@ test('AC3.1: a git dir holding only a bare-SHA file has no stamp — --stamp-sta
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
   const head = r.git('rev-parse', 'HEAD').trim();
   const bare = path.join(r.gitDir, 'claude-tweaks-verify-pass');
-  fs.writeFileSync(bare, `${head}\n`);
+  // A sha other than HEAD, so a restored twin write (which would write HEAD) shows up as a rewrite.
+  const bareSha = 'f'.repeat(40);
+  assert.notStrictEqual(bareSha, head);
+  fs.writeFileSync(bare, `${bareSha}\n`);
   const status = await runCli(['--stamp-status', '--git-dir', r.gitDir], { cwd: r.repo });
   assert.strictEqual(status.code, 0);
   assert.match(status.stdout, /"present":false/);
   const run = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
   assert.strictEqual(run.code, 0, run.stderr);
   assert.match(run.stdout, /^Scope: full/m);
-  assert.strictEqual(fs.readFileSync(bare, 'utf8'), `${head}\n`, 'the leftover bare file is neither rewritten nor deleted');
+  assert.strictEqual(fs.readFileSync(bare, 'utf8'), `${bareSha}\n`, 'the leftover bare file is neither rewritten nor deleted');
   assert.deepStrictEqual(passStampFiles(r.gitDir), ['claude-tweaks-verify-pass', 'claude-tweaks-verify-pass.json']);
 });
 
