@@ -332,7 +332,7 @@ function findCarryRows(ledgerText, id, factId) {
   for (const [number, line] of table.rows) {
     const cells = ledgerRowCells(line);
     const resolution = cells.slice(4).join('|');
-    if (named.test(resolution)) rows.push({ number, resolution });
+    if (named.test(resolution)) rows.push({ number, resolution, status: String(cells[3] || '').trim().toLowerCase() });
     else if (resolution.includes(carriedText)) already.push(number);
   }
   return { rows, already };
@@ -396,6 +396,11 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
     }
     if (found.rows.length > 1) {
       stderr(`console-resolve.js: ${found.rows.length} ledger rows name staged/${o.setItem} in ${ledgerPath} (#${found.rows.map((r) => r.number).join(', #')}) — nothing written\n`);
+      return 5;
+    }
+    // A row already final in a status the carry cannot settle (settleRow would throw after the fact landed) is refused here.
+    if (found.rows.length === 1 && found.rows[0].status !== 'open' && found.rows[0].status !== 'deferred') {
+      stderr(`console-resolve.js: ledger row #${found.rows[0].number} naming staged/${o.setItem} is already ${found.rows[0].status || '(empty)'} (terminal) — nothing written\n`);
       return 5;
     }
     ledger = { ledgerPath, row: found.rows.length === 1 ? found.rows[0].number : null, alreadyRow: found.already[0] };
@@ -775,7 +780,7 @@ async function run(argv, deps = {}) {
         return carryFailure(stderr, result.items.filter((it) => it.resolution === 'carried').map((it) => it.id), err);
       }
     }
-    const via = ceilingSource === 'control-mode' ? 'control mode' : 'console-resolve.js';
+    const via = ceilingSource === 'control-mode' || controlMode === true ? 'control mode' : 'console-resolve.js';
     const header = formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text: `Console auto-resolved ${result.items.length} item(s) at unattended (${via})`, reversibility: 'per item' });
     // Reversibility uses _shared/auto-decision-log.md's closed vocabulary
     // (high | med | low | n/a) — nothing else is a legal value on a schema line.

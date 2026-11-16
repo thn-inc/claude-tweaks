@@ -310,3 +310,81 @@ test('carried is pinned code-to-prose', () => {
   const sentence = carrySentence(REVIEW_CONSOLE);
   for (const from of CARRY_FROM) assert.ok(sentence.includes(`\`${from}\``), `the carry sentence does not name \`${from}\``);
 });
+
+// Final-review fixes (#4620): ONE gate rule — `control-mode on` AND `consoleAutoResolve true`, whatever the source.
+const GATE = '`control-mode on` and `consoleAutoResolve true`';
+const OLD_SOURCE_GATE = 'with `source control-mode`';
+
+function gateProblems(text) {
+  const problems = [];
+  const carry = carryParagraph(text);
+  if (carry === null) problems.push('the short-circuit has no control-mode paragraph');
+  else {
+    if (!carry.includes(GATE)) problems.push('the carry paragraph does not gate on control-mode on and consoleAutoResolve true');
+    if (carry.includes(OLD_SOURCE_GATE)) problems.push('the carry paragraph still gates on source control-mode');
+  }
+  return problems;
+}
+
+test('Important 1: the carry paragraph and every convergence gate share one rule, whatever the source', () => {
+  assert.deepStrictEqual(gateProblems(REVIEW_CONSOLE), []);
+  assert.ok(step10Line(REVIEW_CONSOLE).includes(GATE), 'step 10 does not gate on the shared rule');
+  assert.ok(stepEight(REVIEW_CONSOLE).includes(GATE), 'step 8 does not gate on the shared rule');
+  assert.ok(narrowingSlice(LEDGER_FORMAT).includes(GATE), 'ledger-format does not gate on the shared rule');
+});
+
+test('Important 1 go-red: the carry paragraph, step 8 and step 10 each go red when their gate is reverted', () => {
+  const carry = carryParagraph(REVIEW_CONSOLE);
+  assert.deepStrictEqual(gateProblems(REVIEW_CONSOLE.replace(carry, carry.replace(GATE, '`control-mode on`'))), ['the carry paragraph does not gate on control-mode on and consoleAutoResolve true']);
+  assert.deepStrictEqual(gateProblems(REVIEW_CONSOLE.replace(carry, carry.replace(GATE, '`control-mode on` with `source control-mode`'))), ['the carry paragraph does not gate on control-mode on and consoleAutoResolve true', 'the carry paragraph still gates on source control-mode']);
+  const eight = stepEight(REVIEW_CONSOLE);
+  assert.ok(!REVIEW_CONSOLE.replace(eight, eight.replace(GATE, 'control mode')).includes(eight), 'control: step 8 mutation applies');
+  assert.ok(!stepEight(REVIEW_CONSOLE.replace(eight, eight.replace(GATE, 'control mode'))).includes(GATE), 'step 8 mutation goes red');
+  const ten = step10Line(REVIEW_CONSOLE);
+  assert.ok(!step10Line(REVIEW_CONSOLE.replace(ten, ten.replace(GATE, 'control mode'))).includes(GATE), 'step 10 mutation goes red');
+  const narrowing = narrowingSlice(LEDGER_FORMAT);
+  assert.ok(!narrowingSlice(LEDGER_FORMAT.replace(narrowing, narrowing.replace(GATE, '`control-mode on`'))).includes(GATE), 'ledger-format mutation goes red');
+});
+
+// Important 2: exit 6 in every statement of the resolve shape's exit list.
+const PLUGIN_STRUCTURE = readText(path.join(__dirname, '..', 'docs', 'plugin-structure.md'));
+const MULTISPEC = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'multispec-review-console.md'));
+const STRUCTURE_EXIT6 = '5 console already rendered on the PR, 6 a control-mode carry write failed';
+const MULTISPEC_EXIT6 = "except exit 6 (carry failed): stop with `flow/failure-cards.md`'s Generic gate failure card naming each item stderr lists";
+
+function exit6Problems(structure, multispec) {
+  const problems = [];
+  const line = structure.split('\n').find((l) => l.includes('--policy console-auto [--dry-run] [--json]')) || '';
+  if (!line.includes(STRUCTURE_EXIT6)) problems.push('plugin-structure.md --policy console-auto line does not list exit 6');
+  if (!multispec.includes(MULTISPEC_EXIT6)) problems.push('multispec-review-console.md does not route exit 6 to the Generic gate failure card');
+  return problems;
+}
+
+test('Important 2: the --policy console-auto exit list names exit 6 in docs and the multispec console', () => {
+  assert.deepStrictEqual(exit6Problems(PLUGIN_STRUCTURE, MULTISPEC), []);
+  assert.deepStrictEqual(exit6Problems(PLUGIN_STRUCTURE.replace(STRUCTURE_EXIT6, '5 console already rendered on the PR'), MULTISPEC), ['plugin-structure.md --policy console-auto line does not list exit 6']);
+  assert.deepStrictEqual(exit6Problems(PLUGIN_STRUCTURE, MULTISPEC.replace(MULTISPEC_EXIT6, 'except nothing')), ['multispec-review-console.md does not route exit 6 to the Generic gate failure card']);
+});
+
+// Minor 3: the gather docs line states the decisions.json read.
+const GATHER_READ = 'with `--run` and no `--decision-items` it reads `{run}/packet-facts/decisions.json`';
+test('Minor 3: the acceptance-packet gather docs line states the decisions.json read', () => {
+  assert.ok(PLUGIN_STRUCTURE.includes(GATHER_READ));
+  assert.ok(!PLUGIN_STRUCTURE.replace(GATHER_READ, 'reads').includes(GATHER_READ), 'control: removing it goes red');
+});
+
+// Minor 1: flow's summary row reads the ceiling through console-resolve.js --ceiling, so control mode counts.
+const SUMMARY = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'summary-template.md'));
+const SUMMARY_NEW = 'the `ceiling {tier}` word of `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --ceiling --run "$PIPELINE_RUN_DIR"`';
+const SUMMARY_OLD = 'resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values autonomy';
+function summaryProblems(text) {
+  const problems = [];
+  if (!text.includes(SUMMARY_NEW)) problems.push('the summary row does not read the ceiling through console-resolve.js --ceiling');
+  if (text.includes(SUMMARY_OLD)) problems.push('the summary row still reads the ceiling through resolve-policy.js --values autonomy');
+  return problems;
+}
+test('Minor 1: the flow summary merge row reads the ceiling through console-resolve.js --ceiling', () => {
+  assert.deepStrictEqual(summaryProblems(SUMMARY), []);
+  assert.deepStrictEqual(summaryProblems(SUMMARY.replace(SUMMARY_NEW, 'the ceiling')), ['the summary row does not read the ceiling through console-resolve.js --ceiling']);
+  assert.deepStrictEqual(summaryProblems(`${SUMMARY}\n${SUMMARY_OLD}`), ['the summary row still reads the ceiling through resolve-policy.js --values autonomy']);
+});

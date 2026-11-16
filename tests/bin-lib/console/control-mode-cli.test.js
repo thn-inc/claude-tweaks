@@ -603,3 +603,30 @@ test('--converge: an unanchored --run exits 3 and writes nothing', async () => {
 function lstatAbsent(p) {
   try { fs.lstatSync(p); return false; } catch (err) { return err.code === 'ENOENT'; }
 }
+
+// Final-review fixes (#4620).
+test('--set-item carried refuses a ledger row already terminal in a status the carry cannot settle: exit 5, no fact written', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([ledgerItem()]) });
+  const ledger = path.join(fx.root, 'ledger.md');
+  fs.writeFileSync(ledger, LEDGER_HEAD);
+  appendRow({ runDir: fx.runDir, ledgerPath: ledger, phase: 'build', item: 'a finding', status: 'fixed', resolution: 'fixed in abc1234, see staged/ledger-record-1.md' });
+  const ledgerBefore = fs.readFileSync(ledger, 'utf8');
+  const consoleBefore = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'ledger-record-1.md', 'carried', '--ledger', ledger), b.d), 5, b.err());
+  assert.match(b.err(), /ledger row #1 naming staged\/ledger-record-1\.md is already fixed \(terminal\) — nothing written/);
+  assert.ok(lstatAbsent(FACTS(fx)), 'no orphan decisions.json');
+  assert.strictEqual(fs.readFileSync(ledger, 'utf8'), ledgerBefore);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), consoleBefore);
+});
+
+test('the Review Console header says control mode whenever control mode carries, explicit unattended included', async () => {
+  const fx = controlFixture({ autonomy: 'unattended' });
+  assert.strictEqual(await run(resolveArgs(fx), baseDeps(fx, []).d), 0);
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /Console auto-resolved 2 item\(s\) at unattended \(control mode\)\./);
+  // Control: control mode off keeps the plain wording.
+  const off = mainCheckoutWithRun({ staged: STAGED });
+  assert.strictEqual(await run(resolveArgs(off), baseDeps(off, []).d), 0);
+  assert.match(fs.readFileSync(path.join(off.runDir, 'decisions.md'), 'utf8'), /at unattended \(console-resolve\.js\)\./);
+});
