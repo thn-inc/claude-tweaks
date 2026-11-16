@@ -2,6 +2,7 @@
 // Split out of tests/reconcile.test.js; shared fixtures live in tests/helpers/reconcile-fixtures.js.
 'use strict';
 const { test } = require('node:test');
+require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');

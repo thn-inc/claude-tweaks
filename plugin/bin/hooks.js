@@ -1123,6 +1123,13 @@ async function runCloseRun(argv, deps) {
     if (!r.writeOk) {
       deps.stdout(`claude-tweaks: failed to close run ${path.basename(runDir)} — run-state.json could not be written\n`);
     }
+    if (r.status === 'closed' && r.writeOk) {
+      // #5555: timing.json is written in-process, inside at-close's own time bound; lazy so no hook event loads it.
+      try { await require('./lib/timing/at-close').writeTimingAtCloseSafe(runDir, { env: deps.env }); } catch (err) {
+        // The module itself failed to load, so the SKIP line is written without it.
+        try { require('./lib/log-decision/timing-skip').logTimingFailure(runDir, 'timing module failed to load', err); } catch { /* a failed trace line never fails the close */ }
+      }
+    }
   } else {
     // No --run was given (or it resolved to nothing) and resolveRunDir's
     // fallback also found no run dir — the only remaining case in this
@@ -1400,6 +1407,11 @@ async function runTeardownRun(argv, deps) {
   } else if (runDir) {
     const result = teardownRun(runDir, { mode, sessionId: deps.env.CLAUDE_CODE_SESSION_ID, cwd: deps.cwd() });
     deps.stdout(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
+    if (result.closed) {
+      try { await require('./lib/timing/at-close').writeTimingAtCloseSafe(runDir, { env: deps.env }); } catch (err) {
+        try { require('./lib/log-decision/timing-skip').logTimingFailure(runDir, 'timing module failed to load', err); } catch { /* a failed trace line never fails the close */ }
+      }
+    }
   } else {
     deps.stdout('claude-tweaks: no pipeline run dir found — run not torn down\n');
   }

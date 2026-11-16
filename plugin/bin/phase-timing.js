@@ -60,13 +60,12 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS, latestCiGatePerPr } = require('./lib/timing/derive');
-const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
-const { readManifest } = require('./lib/flow/manifest');
+const { TIERS, ROLE_PATTERNS, latestCiGatePerPr } = require('./lib/timing/derive');
+const { locateTranscripts } = require('./lib/timing/transcript');
+const { derivePhaseTiming, deriveTiming, writeTimingFile } = require('./lib/timing/run-timing');
+const { priorWorktree } = require('./lib/run-state-worktree');
 const { TURN_CLASSES, CEREMONY_CLASSES } = require('./lib/timing/turn-class');
 const { checkBudgets, defaultGh } = require('./lib/timing/budget');
-const { resolveAgainst } = require('./lib/health-core/io');
-const { canonicalRealpath } = require('./lib/path-guard');
 
 const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript] [--check-budgets]\n';
 
@@ -84,24 +83,6 @@ function parseArgs(argv) {
   }
   if (o.run === null) return null; // flag never supplied — malformed
   return o;
-}
-
-function readEvents(file) {
-  let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch (err) {
-    if (err && err.code === 'ENOENT') return { ok: true, events: [] };
-    return { ok: false, error: err.message };
-  }
-  const events = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try { events.push(JSON.parse(line)); } catch { /* per-row skip, never fatal */ }
-  }
-  return { ok: true, events };
-}
-
-function readJsonOrNull(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
 
 function verifyCell(verify) {
@@ -263,84 +244,14 @@ function renderCiGate(ciGate) {
   return lines.join('\n') + '\n';
 }
 
-// paths: the resolved transcript paths; events: parsed events.jsonl rows. The
-// window is the earliest..latest event ts (no event with a ts -> the whole
-// session), leaving out worktree-reaped: it fires hours after the session
-// ends, so its ts would stretch the window over the idle gap (derive.js's
-// endOfRun rule, #1928). Subagents dirs are deduped by fs.realpathSync (path.resolve when
-// the dir does not resolve) so a transcript passed twice, or reached through a
-// symlinked alias, is not double-counted. worktree (the run's, or null) reaches
-// readUsage, so a subagent's reads key as the main rows do. -> the timing.json
-// `dispatches` value, before stripInternalFields.
-async function collectDispatches(paths, events, cwd, worktree = null) {
-  const stamps = events.filter((e) => !(e && e.type === 'worktree-reaped')).map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
-  // reduce, not Math.min(...stamps): a spread of a very large array can throw RangeError.
-  const window = stamps.length
-    ? { start: stamps.reduce((a, b) => Math.min(a, b)), end: stamps.reduce((a, b) => Math.max(a, b)) }
-    : null;
-  // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
-  // link and refuses it instead of reading wherever it points.
-  const canonical = (p) => {
-    const dir = path.resolve(cwd, subagentsDirFor(p));
-    try { return fs.lstatSync(dir).isSymbolicLink() ? dir : fs.realpathSync(dir); } catch { return dir; }
-  };
-  const dirs = [...new Set(paths.map(canonical))];
-  const items = [];
-  const reasons = [];
-  let excludedOutsideWindow = 0;
-  let found = 0;
-  for (const dir of dirs) {
-    const r = await readDispatches(dir, { window, worktree });
-    reasons.push(...r.dirNotes);
-    if (r.notFound) { reasons.push(r.notFound); continue; }
-    found += 1;
-    items.push(...r.items);
-    excludedOutsideWindow += r.excludedOutsideWindow;
-  }
-  if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
-  // A direct (non-workflow) item keeps its pre-workflow shape: both keys null -> dropped.
-  const agg = aggregateDispatches(items.map((d) => {
-    if (d.workflowRunId !== null || d.workflowPhase !== null) return d;
-    const { workflowRunId: _run, workflowPhase: _phase, ...direct } = d;
-    return direct;
-  }));
-  const out = { scope: window ? 'run-window' : 'whole-session', items: agg.items, byTier: agg.byTier, byRole: agg.byRole, excludedOutsideWindow };
-  // A dir that yielded nothing beside one that did is still named, not dropped.
-  if (reasons.length) out.notFoundDirs = reasons;
-  return out;
-}
-
-// (dispatches, transcript paths, cwd) -> joinTokens' dispatchFileReads (#4359):
-// every item's procedureFileRows, in item order. An item whose transcript is
-// one of the run's own --transcript paths (realpath on both sides, path.resolve
-// when that fails) is skipped: its reads are already main rows.
-function dispatchFileReads(dispatches, paths, cwd) {
-  if (!dispatches || !Array.isArray(dispatches.items)) return [];
-  const real = (p) => { const abs = path.resolve(cwd, p); return canonicalRealpath(abs) || abs; };
-  const own = new Set(paths.map(real));
-  const reads = [];
-  for (const item of dispatches.items) {
-    if (!Array.isArray(item.procedureFileRows)) continue;
-    if (typeof item.transcriptPath === 'string' && own.has(real(item.transcriptPath))) continue;
-    reads.push(...item.procedureFileRows);
-  }
-  return reads;
-}
-
-// The dispatches value as timing.json carries it: each item without
-// procedureFileRows and transcriptPath, which only dispatchFileReads reads.
-function stripInternalFields(dispatches) {
-  if (!dispatches || !Array.isArray(dispatches.items)) return dispatches;
-  return { ...dispatches, items: dispatches.items.map(({ procedureFileRows: _rows, transcriptPath: _path, ...item }) => item) };
-}
-
 // Resolve the transcript list: explicit --transcript paths, plus the
 // auto-located one. Returns { paths, notes }.
 function resolveTranscripts(o, runState, deps) {
   const paths = [...o.transcripts];
   const notes = [];
   if (o.autoTranscript) {
-    const worktree = runState && typeof runState.worktree === 'string' ? runState.worktree : null;
+    // A closed run has worktree null; worktreeAtClose keeps its path (#5555).
+    const worktree = priorWorktree(runState);
     const sessionId = runState && typeof runState.sessionId === 'string' ? runState.sessionId : null;
     if (!worktree && !sessionId) {
       notes.push('tokens: transcript not found (no worktree or sessionId in run-state.json)');
@@ -358,54 +269,6 @@ function resolveTranscripts(o, runState, deps) {
   return { paths, notes };
 }
 
-// The transcript-reading half of run(), writing nothing: events -> phases,
-// then (wantTokens) each path's usage rows, the dispatches and the token join.
-// notes is appended to. -> { out, tokens, guard, timing }.
-async function deriveTiming({ runDir, events, runState, paths, notes, wantTokens, cwd, worktree }) {
-  const out = derivePhases({ events, manifest: readManifest(runDir), runState });
-  const transcripts = [];
-  let rows = [];
-  for (const p of paths) {
-    try {
-      const r = await readUsage(resolveAgainst(cwd, p), { worktree });
-      if (r.length === 0) {
-        const note = `transcript had no usage rows (${p})`;
-        transcripts.push({ path: p, rows: 0, note });
-        notes.push(`tokens: ${note}`);
-      } else {
-        transcripts.push({ path: p, rows: r.length });
-      }
-      rows = rows.concat(r);
-    } catch (err) {
-      const reason = `${err && err.code ? err.code : 'unreadable'}: ${p}`;
-      transcripts.push({ path: p, rows: 0, note: `transcript not found (${reason})` });
-      notes.push(`tokens: transcript not found (${reason})`);
-    }
-  }
-  // Computed before the join: each workflow agent's start places it in a phase's subagents (#5597).
-  const dispatches = wantTokens ? await collectDispatches(paths, events, cwd, worktree) : null;
-  const workflowStarts = ((dispatches && dispatches.items) || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
-  const tokens = wantTokens ? joinTokens(out.phases, rows, workflowStarts, { dispatchFileReads: dispatchFileReads(dispatches, paths, cwd) }) : null;
-  if (tokens) tokens.totals.rows = rows.length;
-  const guard = wantTokens ? countGuardEvents(events) : null;
-
-  const timing = { runDir, generatedAt: new Date().toISOString(), phases: tokens ? tokens.phases : out.phases, totals: { ...out.totals } };
-  if (out.ciGate) timing.ciGate = out.ciGate;
-  if (tokens) {
-    timing.unattributed = tokens.unattributed;
-    timing.totals.tokens = tokens.totals.tokens;
-    timing.totals.procedureBytes = tokens.totals.procedureBytes;
-    timing.totals.procedureFiles = tokens.totals.procedureFiles;
-    timing.totals.toolRoundTrips = tokens.totals.toolRoundTrips;
-    for (const k of ['turnClasses', 'context', 'modelMix', 'subagents', 'ceremonyShare']) timing.totals[k] = tokens.totals[k];
-    timing.totals.guard = guard;
-    timing.transcripts = transcripts;
-    if (notes.length) timing.notes = notes;
-    timing.dispatches = stripInternalFields(dispatches);
-  }
-  return { out, tokens, guard, timing };
-}
-
 // #4359: a run's timing for an explicit transcript `paths` list, as run()
 // would build it, writing nothing (efficiency-report.js --recount reads
 // archived runs with it). worktree left undefined reads run-state.json's, as
@@ -413,11 +276,9 @@ async function deriveTiming({ runDir, events, runState, paths, notes, wantTokens
 // EVENTS_UNREADABLE.
 const EVENTS_UNREADABLE = 'EVENTS_UNREADABLE';
 async function buildTiming({ runDir, paths, cwd = process.cwd(), worktree }) {
-  const events = readEvents(path.join(runDir, 'events.jsonl'));
-  if (!events.ok) throw Object.assign(new Error(`events.jsonl unreadable (${events.error})`), { code: EVENTS_UNREADABLE });
-  const runState = readJsonOrNull(path.join(runDir, 'run-state.json'));
-  const wt = worktree !== undefined ? worktree : (runState && runState.worktree ? runState.worktree : null);
-  const r = await deriveTiming({ runDir, events: events.events, runState, paths, notes: [], wantTokens: true, cwd, worktree: wt });
+  const base = derivePhaseTiming(runDir);
+  if (!base.ok) throw Object.assign(new Error(base.error), { code: EVENTS_UNREADABLE });
+  const r = await deriveTiming(runDir, { transcriptPaths: paths, cwd, wantTokens: true, base, worktree });
   return r.timing;
 }
 
@@ -433,14 +294,14 @@ async function run(argv, deps) {
   let stat = null;
   try { stat = fs.statSync(runDir); } catch { /* not a directory, handled below */ }
   if (!stat || !stat.isDirectory()) { deps.stderr(`phase-timing.js: --run ${o.run} is not a directory\n${USAGE}`); return 2; }
-  const events = readEvents(path.join(runDir, 'events.jsonl'));
-  if (!events.ok) { deps.stderr(`phase-timing.js: events.jsonl unreadable (${events.error})\n`); return 2; }
-  const runState = readJsonOrNull(path.join(runDir, 'run-state.json'));
+  const base = derivePhaseTiming(runDir);
+  if (!base.ok) { deps.stderr(`phase-timing.js: ${base.error}\n`); return 2; }
 
   const wantTokens = o.transcripts.length > 0 || o.autoTranscript;
-  const { paths, notes } = wantTokens ? resolveTranscripts(o, runState, deps) : { paths: [], notes: [] };
-  const worktree = runState && runState.worktree ? runState.worktree : null;
-  const { out, tokens, guard, timing } = await deriveTiming({ runDir, events: events.events, runState, paths, notes, wantTokens, cwd, worktree });
+  const { paths, notes: found } = wantTokens ? resolveTranscripts(o, base.runState, deps) : { paths: [], notes: [] };
+  const derived = await deriveTiming(runDir, { transcriptPaths: paths, notes: found, cwd, wantTokens, base });
+  if (!derived.ok) { deps.stderr(`phase-timing.js: ${derived.error}\n`); return 2; }
+  const { timing, out, tokens, guard, notes } = derived;
   // #4029: the efficiency-budget check. A transcript that yielded no rows leaves
   // the transcript-backed totals out, so they read as unmeasured, never as 0 -> ok.
   let budgetLine = null;
@@ -452,13 +313,8 @@ async function run(argv, deps) {
     budgetLine = checked.line;
     for (const line of checked.stderr) deps.stderr(line + '\n');
   }
-  const timingPath = path.join(runDir, 'timing.json');
-  // A rewrite without --check-budgets keeps the last budget verdict rather than dropping it.
-  if (!o.checkBudgets) {
-    const previous = readJsonOrNull(timingPath);
-    if (previous && typeof previous === 'object' && Object.hasOwn(previous, 'budget')) timing.budget = previous.budget;
-  }
-  fs.writeFileSync(timingPath, JSON.stringify(timing, null, 2) + '\n');
+  // A rewrite without --check-budgets keeps the last budget verdict rather than dropping it (writeTimingFile).
+  const timingPath = writeTimingFile(runDir, timing);
   if (o.markdown) deps.stdout(renderMarkdown(out, tokens, guard, notes) + renderCiGate(timing.ciGate) + renderDispatches(timing.dispatches));
   else if (o.json) deps.stdout(JSON.stringify(timing, null, 2) + '\n');
   else deps.stdout(`timing: wrote ${timingPath}\n`);
