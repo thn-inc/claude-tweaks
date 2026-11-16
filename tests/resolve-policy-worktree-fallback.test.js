@@ -83,3 +83,24 @@ test('JSON mode from the worktree carries the same stderr note and the unchanged
   assert.deepStrictEqual(JSON.parse(res.stdout), { 'integration-branch': { value: 'develop', source: 'policy' } });
   assert.strictEqual(res.stderr, note(fs.realpathSync(wt), path.join(fs.realpathSync(main), '.claude-tweaks', 'policy.yml')));
 });
+
+test('warningLines: an in-process caller gets the note first in both modes, and none for a checkout-sourced policy', () => {
+  const { warningLines } = require('../plugin/bin/resolve-policy');
+  const mk = (policySource) => ({
+    keys: ['integration-branch'],
+    result: { 'integration-branch': { value: 'main', source: 'default', invalid: true } },
+    invalidRaw: new Map([['integration-branch', 'bad']]),
+    degrades: new Map(),
+    root: '/r',
+    policySource,
+    policyPath: '/m/.claude-tweaks/policy.yml',
+  });
+  const expected = note('/r', '/m/.claude-tweaks/policy.yml');
+  const withValues = warningLines(mk('main-checkout'), { values: true });
+  assert.strictEqual(withValues[0], expected);
+  assert.strictEqual(withValues.length, 2); // note, then the invalid-value warning
+  assert.deepStrictEqual(warningLines(mk('main-checkout'), { values: false }), [expected]);
+  for (const values of [true, false]) {
+    assert.ok(!warningLines(mk('checkout'), { values }).some((line) => line.includes('note —')));
+  }
+});
