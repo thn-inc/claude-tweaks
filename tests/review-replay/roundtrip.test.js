@@ -3,7 +3,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { MANIFEST_FILE, MANIFEST_KEYS, ARM_KEYS, PROMPT_KEYS, validateManifest, armLabel } = require('../../tools/review-replay/schema');
+const { MANIFEST_FILE, MANIFEST_KEYS, ARM_KEYS, PROMPT_KEYS, validateManifest, armLabel, parseArmLabel } = require('../../tools/review-replay/schema');
+const { PROFILES } = require('../../plugin/bin/lib/model-profiles/profiles.js');
 const { setup, fullSet, runWorkflow } = require('./helpers');
 
 test('AC11.1: extract\'s manifest and a fixed reply set round-trip through score using schema.js constants', async () => {
@@ -21,6 +22,14 @@ test('AC11.1: extract\'s manifest and a fixed reply set round-trip through score
     // Each agent's first user message is the prompt the workflow itself built for that slot.
     const { calls } = await runWorkflow(manifest);
     assert.equal(calls.length, 6, 'two arms: four single-finding prompts and two chunk prompts');
+    for (const c of calls) {
+      const arm = manifest.arms.find((a) => a.name === parseArmLabel(c.opts.label).arm);
+      assert.ok(c.opts.model !== undefined && c.opts.effort !== undefined, `${c.opts.label}: model and effort are set`);
+      assert.equal(c.opts.model, PROFILES[arm.profile].model, `${c.opts.label}: the arm's profile model`);
+      assert.equal(c.opts.effort, PROFILES[arm.profile].effort, `${c.opts.label}: the arm's profile effort`);
+      const file = /Read (\S+) and/.exec(c.prompt);
+      assert.ok(file && fs.existsSync(file[1]), `${c.opts.label}: the prompt names a prompt file that exists`);
+    }
     prompts = new Map(calls.map((c) => [c.opts.label, c.prompt]));
     assert.ok(prompts.has(armLabel('one', 1, 'run-a--0')) && prompts.has(armLabel('eight', 1, 'run-b--0')), 'the workflow labels follow armLabel');
 

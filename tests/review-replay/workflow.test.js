@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { agentIdentity } = require('../../tools/review-replay/score');
-const { armLabel, parseArmLabel } = require('../../tools/review-replay/schema');
+const { armLabel, parseArmLabel, validateManifest } = require('../../tools/review-replay/schema');
 const { workflowSource, runWorkflow } = require('./helpers');
 
 const META_RE = /export const meta = \{[\s\S]*?\n\}\n/;
@@ -19,7 +19,7 @@ test('AC7.1: replay.workflow.js holds no Verdict: rule, no model name outside me
   const body = bodyOf();
   assert.ok(!/Verdict:/.test(body), 'no Verdict: rule');
   assert.ok(!/\b(opus|sonnet|haiku|fable)\b/i.test(body), 'no model name outside meta');
-  assert.equal(body.match(/\bagent\(/g).length, 1, 'exactly one agent call in source');
+  assert.equal((body.match(/\bagent\(/g) || []).length, 1, 'exactly one agent call in source');
 });
 
 test('the workflow\'s meta names the review-replay workflow and its one Judges phase', () => {
@@ -57,6 +57,7 @@ test('run with a manifest: one agent per arm x repeat x prompt, with the arm\'s 
       { name: 'two', chunk: 8, profile: 'fast', model: 'm-two', effort: 'e-two', repeat: 1, prompts: [{ file: '/p/c.md', name: 'c', run: 'r', findingIds: [] }] },
     ],
   };
+  assert.deepEqual(validateManifest(manifest), [], 'the hand-built manifest is a valid manifest');
   const { calls, result } = await runWorkflow(manifest);
   assert.deepEqual(calls.map((c) => c.opts), [
     { label: 'one|1|a', phase: 'Judges', model: 'm-one', effort: 'e-one' },
