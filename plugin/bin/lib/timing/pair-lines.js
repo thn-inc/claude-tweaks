@@ -1,9 +1,10 @@
 // bin/lib/timing/pair-lines.js — reader for the review reproduction-pair lines (#5556).
 //
-// The seven pair-line templates are typed by the agent from
-// plugin/skills/review/step3-lens-dispatch.md (the only producer; the tiebreak
-// forms are written by tiebreak.js and owned by console/resolve.js's
-// parseTiebreakLine). This module is their code twin: one pattern set per
+// The eight pair-line templates are typed by the agent from two producer files:
+// plugin/skills/review/step3-lens-dispatch.md (seven forms) and
+// plugin/skills/review/step3-tier-variants.md (the single-read-coverage notice).
+// The tiebreak forms are written by tiebreak.js and owned by console/resolve.js's
+// parseTiebreakLine. This module is their code twin: one pattern set per
 // template, pinned to the prose by tests/bin-lib/timing/pair-lines.test.js.
 //
 // Pair-line patterns are additive: a reworded template adds a pattern to its
@@ -58,6 +59,9 @@ const PAIR_FORMS = Object.freeze([
   form('vacuity-reconfirmed', { both: 0, one: 1, relabel: 0 },
     'Reproduction: lens "3f" vacuity finding {path}:{line} re-confirmed by executed run: {command} → {observed output}. Confirmed. Reversibility: high.',
     ['Reproduction: lens "(3f)" vacuity finding (.+):(\\d+) re-confirmed by executed run: .+ → .+\\. Confirmed\\.'], { lens: 1, path: 2, line: 3 }),
+  form('single-read-coverage', { both: 0, one: 0, relabel: 0 },
+    'Reproduction: lens "{lens}" {session limit twice | unavailable | timed out}; single-read coverage. Reversibility: high.',
+    [`Reproduction: ${LENS} (?:session limit twice|unavailable|timed out); single-read coverage\\.`], { lens: 1, path: null, line: null }),
   form('coincidence', { both: 0, one: 2, relabel: 0 },
     'Reproduction: lens "{lens}" findings {path}:{lineA} / {path}:{lineB} share a location but not substance; both staged unconfirmed. Reversibility: high.',
     [`Reproduction: ${LENS} findings (.+):(\\d+) / \\2:\\d+ share a location but not substance; both staged unconfirmed\\.`], { lens: 1, path: 2, line: 3 }),
@@ -87,7 +91,7 @@ function classifyPairLine(line) {
       return {
         form: f.id,
         lens: m[f.groups.lens],
-        path: m[f.groups.path],
+        path: f.groups.path == null ? null : m[f.groups.path],
         line: f.groups.line == null ? null : Number(m[f.groups.line]),
       };
     }

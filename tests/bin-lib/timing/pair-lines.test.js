@@ -3,17 +3,20 @@
 //
 // Producers of the pair lines (git grep -n -F 'Reproduction: lens' -- plugin):
 //   plugin/skills/review/step3-lens-dispatch.md  — the seven pair templates (pinned below)
+//   plugin/skills/review/step3-tier-variants.md  — the single-read-coverage notice (pinned below)
 //   plugin/bin/lib/tiebreak.js, plugin/bin/lib/console/resolve.js — the tiebreak forms,
 //     owned by parseTiebreakLine (a pair-lines null, asserted below)
-// Mentions that are not producers: release/SKILL.md (quotes one template), review/step3-tier-variants.md
-// (a partner-died line, not a pair form — it is review-marked and lands in a caller's `unparsed`).
+// Mention that is not a producer: release/SKILL.md (quotes one template).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
 const { PAIR_FORMS, JUDGE_NONE, classifyPairLine, isReviewMarkedLine } = require('../../../plugin/bin/lib/timing/pair-lines');
 
-const SKILL = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'review', 'step3-lens-dispatch.md');
+const SKILL_DIR = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'review');
+const SKILL = path.join(SKILL_DIR, 'step3-lens-dispatch.md');
+const TIER = path.join(SKILL_DIR, 'step3-tier-variants.md');
+const COVERAGE_PHRASES = ['session limit twice', 'unavailable', 'timed out'];
 const RULE = 'pair-line patterns are additive: add a pattern for the new wording, never replace one, so archived runs keep parsing';
 
 const L = (status, action) => `- ${status} 10:00:00 — ${action}`;
@@ -73,6 +76,7 @@ test('AC3.2: counters match Decision 3', () => {
     'absence-refuted': [0, 1, 0],
     'vacuity-downgraded': [0, 0, 1],
     'vacuity-reconfirmed': [0, 1, 0],
+    'single-read-coverage': [0, 0, 0],
     coincidence: [0, 2, 0],
   });
   assert.ok(Object.isFrozen(PAIR_FORMS));
@@ -92,8 +96,8 @@ const FILL = [
   ['{lineA}', '12'], ['{lineB}', '14'], ['{line}', '12'], ['{path}', 'plugin/x.js'], ['{lens}', '3a'],
 ];
 
-function liveTemplates() {
-  const text = readText(SKILL);
+function liveTemplates(file = SKILL) {
+  const text = readText(file);
   const spans = [];
   for (const m of text.matchAll(/`([^`\n]*— Reproduction:[^`\n]*)`/g)) spans.push(m[1]);
   return spans.map((s) => s.replace(/^\{?\w+\}? \{HH:MM:SS\} — /, ''));
@@ -110,11 +114,13 @@ function matchingForms(action) {
 }
 
 test('AC3.3: every pair-line template in step3-lens-dispatch.md matches its pattern', () => {
-  const templates = liveTemplates();
+  const tier = liveTemplates(TIER);
+  assert.equal(tier.length, 1, `step3-tier-variants.md holds ${tier.length} pair templates, expected 1 — ${RULE}`);
+  const templates = [...liveTemplates(SKILL), ...tier];
   assert.equal(templates.length, PAIR_FORMS.length, `step3-lens-dispatch.md holds ${templates.length} pair templates, PAIR_FORMS has ${PAIR_FORMS.length} — ${RULE}`);
   const matched = [];
   for (const t of templates) {
-    const filled = fill(t);
+    const filled = fill(t.replace(/\{session limit twice \| unavailable \| timed out\}/, COVERAGE_PHRASES[0]));
     assert.ok(!/[{}]/.test(filled), `a placeholder survived filling: ${filled}`);
     const forms = matchingForms(filled);
     assert.equal(forms.length, 1, `template "${t}" matches forms [${forms.join(', ')}], expected exactly one — ${RULE}`);
@@ -122,6 +128,17 @@ test('AC3.3: every pair-line template in step3-lens-dispatch.md matches its patt
     matched.push(forms[0]);
   }
   assert.deepEqual(matched.sort(), PAIR_FORMS.map((f) => f.id).sort());
+});
+
+test('AC3.3: each single-read-coverage alternation filling matches that form', () => {
+  const [t] = liveTemplates(TIER);
+  for (const phrase of COVERAGE_PHRASES) {
+    const filled = fill(t.replace(/\{session limit twice \| unavailable \| timed out\}/, phrase));
+    assert.ok(!/[{}]/.test(filled), filled);
+    assert.deepEqual(matchingForms(filled), ['single-read-coverage'], phrase);
+    assert.deepEqual(classifyPairLine(`- STAGED 10:00:00 — ${filled}`), { form: 'single-read-coverage', lens: '3a', path: null, line: null });
+  }
+  assert.equal(matchingForms(fill(t.replace(/\{[^}]*\|[^}]*\}/, 'exploded'))).length, 0);
 });
 
 test('AC3.3: a reworded template matches no form (go-red control)', () => {
