@@ -386,7 +386,7 @@ under the threshold — the same zero tolerance a `changes-requested` dispositio
 `#N,#M` batch invocation rather than a dedicated single-record session** — a legitimate,
 deliberately cheap path (`_shared/work-record.md`'s Acceptance provenance row), distinguished by
 the `-batch` provenance label `bin/lib/issues/acceptance.js`'s `approvalProvenance` reads back.
-Both invocation shapes run the same per-item walkthrough (`skills/demo/SKILL.md` Step 2) — the
+Both invocation shapes run the same per-item walkthrough (`skills/accept/SKILL.md` Step 2) — the
 marker distinguishes a rapid multi-item pass from a single-record session, not whether a
 walkthrough happened. A pre-existing approved label with no marker reads as single-record-backed,
 so this column is `0` for every cell graded before the signal existed. **A cell whose Approved

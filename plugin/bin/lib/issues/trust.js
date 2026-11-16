@@ -86,9 +86,9 @@ const FOLLOWUP_TAIL_RE = /\bfrom[ \t]+#(\d+)$/i;
 // work". Three `from #N` contexts are emitted today and only one is corrective:
 //
 //   demo changes-requested — a rejected verdict's linked gap record
-//                            (`demo/SKILL.md` Step 3). Corrective; counts.
+//                            (`accept/SKILL.md` Step 3). Corrective; counts.
 //   demo scope-fork        — new scope the human raised mid-demo.
-//                            `demo/SKILL.md`'s scope-fork checkpoint states
+//                            `accept/SKILL.md`'s scope-fork checkpoint states
 //                            outright that this "isn't a changes-requested
 //                            verdict, so it needs its own provenance marker" —
 //                            the marker exists precisely so it is not read as

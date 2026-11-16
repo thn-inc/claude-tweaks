@@ -7,8 +7,8 @@ const { readText } = require('./helpers/read-skill');
 const CONTRACT = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'visual-decision.md');
 const TEMPLATE = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'template.html');
 const EXPLORE = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'modes', 'explore.md');
-const DEMO = path.join(__dirname, '..', 'plugin', 'skills', 'demo', 'SKILL.md');
-const DEMO_BROWSER_VERDICT = path.join(__dirname, '..', 'plugin', 'skills', 'demo', 'browser-verdict.md');
+const DEMO = path.join(__dirname, '..', 'plugin', 'skills', 'accept', 'SKILL.md');
+const DEMO_BROWSER_VERDICT = path.join(__dirname, '..', 'plugin', 'skills', 'accept', 'browser-verdict.md');
 const BROWSER_REVIEW = path.join(__dirname, '..', 'plugin', 'skills', 'visual-review', 'browser-review.md');
 
 const EVENT_SHAPES = ['pick', 'reroll', 'steer', 'tweak', 'exit'];

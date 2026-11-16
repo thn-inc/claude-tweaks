@@ -1,6 +1,6 @@
 # Demo Step 2 — Browser Verdict
 
-Referenced by `skills/demo/SKILL.md` Step 2's `### Verdict` subsection. Read only when this
+Referenced by `skills/accept/SKILL.md` Step 2's `### Verdict` subsection. Read only when this
 record's Observation plan is a `rendered-page`/`app-route` surface **and** browser tools resolve
 — a `cli`/`flow`/`diff` plan, or a run with no browser tools, goes straight to `SKILL.md`'s
 terminal question and never reads this file. In the body below, "the terminal question below" and

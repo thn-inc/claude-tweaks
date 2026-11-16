@@ -3,7 +3,7 @@ files:
   - plugin/bin/lib/issues/comment-trust.js
   - plugin/bin/find-run-comment.js
   - plugin/skills/_shared/pr-run-comments.md
-  - plugin/skills/demo/entry-paths.md
+  - plugin/skills/accept/entry-paths.md
   - plugin/bin/lib/wrap-up/engine-verify.js
   - plugin/skills/_shared/acceptance-packet.md
   - plugin/bin/lib/reconcile/console-execute.js

@@ -669,5 +669,11 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   //   (pre-commit, against the base the row was added to) shows exactly one `+|`
   //   Anti-Patterns line, in release/SKILL.md. Measured by RUNNING the parser on the
   //   working tree (actual 423), not by adding 1 to 422 (`[IL-99]`).
-  assert.strictEqual(total, 423);
+  //
+  //   423 -> 424, #4613 (demo moved to plugin/skills/accept/). The skill's
+  //   SKILL.md moved by git mv with its Anti-Patterns table unchanged, and the new
+  //   plugin/skills/demo/SKILL.md alias stub carries a one-row table ("Adding
+  //   acceptance logic here"). Measured by RUNNING the parser on the working
+  //   tree (actual 424), not by adding 1 to 423 (`[IL-99]`).
+  assert.strictEqual(total, 424);
 });

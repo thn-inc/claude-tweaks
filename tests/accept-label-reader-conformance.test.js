@@ -392,7 +392,7 @@ const labelsIn = (text) => [...text.matchAll(LABEL_RE)].map((m) => m[1]).sort();
 
 // The labels /demo's replacement rule removes, per bullet.
 function demoRemovals() {
-  const skill = skillText('demo', 'SKILL.md');
+  const skill = skillText('accept', 'SKILL.md');
   const from = skill.indexOf('**A verdict replaces any prior acceptance label the record carries.**');
   assert.notEqual(from, -1, 'the replacement rule must exist in /demo Step 3');
   const rule = skill.slice(from, skill.indexOf('**Provenance signal', from));
@@ -440,7 +440,7 @@ test('/demo Step 3: a batch-sourced Approve cannot strip the batch label it writ
 
 // One verdict's command text, from its opener up to where the other driver's branch starts.
 function verdictCommand(opener, end) {
-  const skill = skillText('demo', 'SKILL.md');
+  const skill = skillText('accept', 'SKILL.md');
   const from = skill.indexOf(opener);
   assert.notEqual(from, -1, `the verdict command must open with: ${opener}`);
   const to = skill.indexOf(end, from);
@@ -449,7 +449,7 @@ function verdictCommand(opener, end) {
 }
 
 test('/demo Step 3: each removal is conditional on the fetched labels, demo:pending included', () => {
-  const skill = skillText('demo', 'SKILL.md');
+  const skill = skillText('accept', 'SKILL.md');
   const { rule } = demoRemovals();
   assert.match(rule, /only when those labels hold it\*\*, `demo:pending` included/);
   assert.match(rule, /exits 1 with "not found"/);
@@ -505,21 +505,21 @@ test('every acceptance bootstrap list provisions the four accept:* rows, byte-eq
   }
 
   // /demo lists names and copies the rows from the canonical array.
-  const skill = skillText('demo', 'SKILL.md');
+  const skill = skillText('accept', 'SKILL.md');
   const from = skill.indexOf('**Label-backed entries** (Step 1');
   const list = labelsIn(skill.slice(from, skill.indexOf('**A verdict replaces', from)));
   for (const [name] of acceptRows) assert.ok(list.includes(name), `/demo Step 3 must bootstrap ${name}`);
 });
 
 test('/demo fetches the fresh brief when any pending label is present, even one a verdict outranks', () => {
-  const paths = collapse(skillText('demo', 'entry-paths.md'));
+  const paths = collapse(skillText('accept', 'entry-paths.md'));
   assert.match(paths, /If the labels just fetched carry a pending acceptance label in either spelling .{0,120}even one a verdict outranks/);
   assert.match(paths, /If the record carries \*\*no\*\* pending acceptance label/);
   assert.doesNotMatch(paths, /acceptance facet does \*\*not\*\* read `pending`/);
 });
 
 test('/demo Input states the same fallback condition as its entry path', () => {
-  const skill = collapse(skillText('demo', 'SKILL.md'));
+  const skill = collapse(skillText('accept', 'SKILL.md'));
   assert.match(skill, /falling back — when it carries no pending acceptance label \(either spelling/);
   assert.doesNotMatch(skill, /when its acceptance facet does not read `pending`/);
 });

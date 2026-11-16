@@ -6,8 +6,12 @@ const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const OBSERVATION_PLAN_PATH = 'plugin/skills/_shared/observation-plan.md';
-const ENTRY_PATHS_PATH = 'plugin/skills/demo/entry-paths.md';
-const DEMO_SKILL_PATH = 'plugin/skills/demo/SKILL.md';
+const ENTRY_PATHS_PATH = 'plugin/skills/accept/entry-paths.md';
+const DEMO_SKILL_PATH = 'plugin/skills/accept/SKILL.md';
+// #4613 moved the skill from plugin/skills/demo/ to plugin/skills/accept/; at PRE_CHANGE_SHA
+// these files lived at these paths, so the go-red probes below read them from here.
+const PRE_CHANGE_ENTRY_PATHS_PATH = 'plugin/skills/demo/entry-paths.md';
+const PRE_CHANGE_DEMO_SKILL_PATH = 'plugin/skills/demo/SKILL.md';
 const VERIFICATION_BRIEF_PATH = 'plugin/skills/wrap-up/verification-brief.md';
 const PARENT_GATE_PATH = 'plugin/skills/wrap-up/verification-brief-parent-gate.md';
 
@@ -109,7 +113,7 @@ test('entry-paths.md cites buildNativeParentQuery, cross-spec-promise-check.md, 
   assert.match(entryPaths, /buildNativeParentQuery/);
   assert.match(entryPaths, /cross-spec-promise-check\.md/);
   assert.match(entryPaths, /one plain line above the verdict/);
-  const preChange = countAtPreChangeOrSkip(t, ENTRY_PATHS_PATH, 'buildNativeParentQuery');
+  const preChange = countAtPreChangeOrSkip(t, PRE_CHANGE_ENTRY_PATHS_PATH, 'buildNativeParentQuery');
   if (!preChange.ok) return;
   assert.strictEqual(
     preChange.count, 0,
@@ -124,7 +128,7 @@ test('entry-paths.md enumerates siblings through bin/parent-gate.js --parent, ne
     'the hand-composed sub_issues call must be gone (AC2.1)',
   );
   assert.match(entryPaths, /verdict's `state`/);
-  const preChange = countAtPreChangeOrSkip(t, ENTRY_PATHS_PATH, 'bin/parent-gate.js" --parent');
+  const preChange = countAtPreChangeOrSkip(t, PRE_CHANGE_ENTRY_PATHS_PATH, 'bin/parent-gate.js" --parent');
   if (!preChange.ok) return;
   assert.strictEqual(
     preChange.count, 0,
@@ -140,7 +144,7 @@ test('demo/SKILL.md renders Full verification between Show and Verdict, and has 
   const between = demoSkill.slice(showIdx, verdictIdx);
   assert.match(between, /Full verification/);
   assert.match(demoSkill, /as if the slice were the feature/);
-  const preChange = countAtPreChangeOrSkip(t, DEMO_SKILL_PATH, 'as if the slice were the feature');
+  const preChange = countAtPreChangeOrSkip(t, PRE_CHANGE_DEMO_SKILL_PATH, 'as if the slice were the feature');
   if (!preChange.ok) return;
   assert.strictEqual(
     preChange.count, 0,

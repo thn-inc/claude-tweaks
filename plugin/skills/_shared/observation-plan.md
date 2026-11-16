@@ -73,7 +73,7 @@ would read as a dependency edge rather than a verification pointer. The block is
 
 ## Producer
 
-Composed only by `/claude-tweaks:demo`'s `#N`-branch composers (`demo/entry-paths.md`'s Full
+Composed only by `/claude-tweaks:demo`'s `#N`-branch composers (`accept/entry-paths.md`'s Full
 verification pointer sub-procedure), from live parent/sibling state at demo time — sibling
 open/closed state is fresher there than anything wrap-up could have written at build time.
 `wrap-up/verification-brief.md` Step 2 never composes this block: its Routing sends every

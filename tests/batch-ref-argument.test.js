@@ -67,12 +67,12 @@ test('shaping-mode Actions Performed documents the per-element outcome vocabular
 });
 
 test('demo argument-hint accepts a comma-separated record-ref list', () => {
-  const hint = extractArgumentHint(read('plugin/skills/demo/SKILL.md'));
+  const hint = extractArgumentHint(read('plugin/skills/accept/SKILL.md'));
   assert.strictEqual(hint, '[#N[,#M...]]');
 });
 
 test('demo Input cites the shared batch grammar and keeps its own per-item skip-and-continue semantics', () => {
-  const src = readFlat('plugin/skills/demo/SKILL.md');
+  const src = readFlat('plugin/skills/accept/SKILL.md');
   assert.ok(src.includes('Step 1 → Step 2 → Step 3 to completion before the next ref begins'), 'per-item completion rule missing from demo Input');
   assert.ok(src.includes("A batch is the human's own list — never a sweep"), 'never-a-sweep restatement missing from demo Input');
   assert.ok(src.includes('Per-item failure isolation: a ref that resolves to nothing'), 'per-item failure isolation missing from demo Input');

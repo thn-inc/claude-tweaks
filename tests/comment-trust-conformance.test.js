@@ -179,7 +179,7 @@ test("tidy's tombstone check names each skipped untrusted tombstone", () => {
 // ---- Task 5: demo, parent-gate and grant-maturation readers (#3358) ----
 
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
-const ENTRY_PATHS = readText(path.join(SKILLS, 'demo', 'entry-paths.md'));
+const ENTRY_PATHS = readText(path.join(SKILLS, 'accept', 'entry-paths.md'));
 const PARENT_GATE = readText(path.join(SKILLS, 'wrap-up', 'verification-brief-parent-gate.md'));
 const GRANT_GATE = readText(path.join(SKILLS, 'dispatch', 'grant-maturation-gate.md'));
 const SHORT_CIRCUIT = readText(path.join(SKILLS, 'wrap-up', 'auto-merge-short-circuit.md'));

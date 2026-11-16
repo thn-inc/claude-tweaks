@@ -117,7 +117,7 @@ below already documents in full — never the sub-issue side, which works under 
 and silently returns nothing under the other. This step only needs sub-issue *existence*, not
 per-sub-issue state, so it skips that scope's state-map plumbing; and it fetches `--state all` rather
 than `parent-gate`'s `--state open`, because a sub-issue whose parent was already gated and approved —
-which closes the parent (`demo/SKILL.md`'s Approve step) — must still be suppressed here, and an
+which closes the parent (`accept/SKILL.md`'s Approve step) — must still be suppressed here, and an
 open-only fetch would miss it.
 
 ### `work-links` resolution

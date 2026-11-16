@@ -1,6 +1,6 @@
 # Demo Step 1 — Entry Paths
 
-Referenced by `skills/demo/SKILL.md` Step 1. `$ARGUMENTS` already selected which path runs before
+Referenced by `skills/accept/SKILL.md` Step 1. `$ARGUMENTS` already selected which path runs before
 this file is read — load only the branch that matches (no-arguments vs. `#N` given), never both. For a `#N[,#M...]` list, the `#N` branch is entered once per ref, in list order — each entry is a fresh, independent lookup.
 
 ## No arguments: session-recall

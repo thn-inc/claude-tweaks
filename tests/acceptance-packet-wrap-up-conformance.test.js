@@ -552,8 +552,8 @@ test('the execution prose describes the packet', () => {
 // ---- Task 11: readers find the packet ----
 
 const MARKER = '<!-- acceptance-packet: v1 -->';
-const ENTRY = 'demo/entry-paths.md';
-const DEMO = 'demo/SKILL.md';
+const ENTRY = 'accept/entry-paths.md';
+const DEMO = 'accept/SKILL.md';
 const LANDED = '_shared/acceptance-labeling-landed.md';
 const recordLookup = () => between(read(ENTRY), '## `#N` given: single-record lookup', '### PR run-comment lookup');
 const packetRead = () => flat(paragraphAt(recordLookup(), '**Read the acceptance packet first**'));
@@ -737,7 +737,7 @@ test('the parent gate and comments prose no longer describe the retired below-fl
 test('the skill graph states the packet edges and no longer describes the brief as what wrap-up posts', () => {
   const graph = readText(path.join(__dirname, '..', 'docs', 'skill-graph.md'));
   const edge = '| `_shared/acceptance-packet.md` |';
-  assert.ok(between(graph, '\n## demo\n', '\n## design-wrapper\n').includes(edge), 'the demo row');
+  assert.ok(between(graph, '\n## accept\n', '\n## activity\n').includes(edge), 'the accept row');
   const wrapUp = graph.slice(graph.indexOf('\n## wrap-up\n'), graph.indexOf('\n## Provenance'));
   assert.ok(wrapUp.includes(edge), 'the wrap-up row');
   assert.ok(wrapUp.includes('`/wrap-up` posts the acceptance packet (`_shared/acceptance-packet.md`) and applies `demo:pending` above the oversight floor'), 'the /demo row');

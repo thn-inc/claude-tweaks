@@ -68,7 +68,7 @@ test('grouping rule\'s batchable-today claim matches the live argument-hints', (
   assert.match(hint('flow'), multi);
   assert.match(hint('dispatch'), multi);
   assert.match(hint('specify'), multi);
-  assert.match(hint('demo'), multi);
+  assert.match(hint('accept'), multi);
 });
 
 // --- Task 2: Report rules width discipline, condense, conformance scan ---

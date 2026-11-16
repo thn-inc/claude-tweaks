@@ -1,6 +1,6 @@
 # Demo Step 3 — Filing the Follow-Up Record
 
-Referenced by `skills/demo/SKILL.md` Step 3 (both the label-backed and the session-recall
+Referenced by `skills/accept/SKILL.md` Step 3 (both the label-backed and the session-recall
 **Request changes** branches) and Step 2's Scope-fork checkpoint ("Capture it"). Read only when a
 Request-changes verdict was given or a scope-fork capture was chosen — an Approve or Skip verdict
 never reads this file. Step 3's Request-changes items 2 and 3, verbatim (item 1, the label swap,

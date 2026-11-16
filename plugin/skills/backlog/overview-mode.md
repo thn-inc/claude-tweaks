@@ -332,7 +332,7 @@ file the Shape and Dispatch stages read).
 stage's own `unsynced` exclusion: those ids are local-namespace, never a pasteable GitHub `#N` ref.
 No `needs:definition` exclusion here — unlike `/claude-tweaks:specify`'s comma-list batch, which
 hard-fails its entire batch on one such element, `/claude-tweaks:demo`'s batch reports and skips a
-malformed or unresolvable element and keeps running the rest (`demo/SKILL.md`'s `## Input`), so
+malformed or unresolvable element and keeps running the rest (`accept/SKILL.md`'s `## Input`), so
 there is no equivalent whole-batch hazard to guard against here.
 
 **Ordering:** same convention as the Shape stage — priority (high first), then age (oldest first),

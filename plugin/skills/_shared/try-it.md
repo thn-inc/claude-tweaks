@@ -5,8 +5,8 @@ run delivered — where to go, what to do, what to expect. Every surface that sh
 file and renders the block verbatim; none restates its fields. Consumers:
 `wrap-up/verification-brief.md` (composes it for every record; on a record with no parent it, like the observation plan, feeds the packet's Test guide, `_shared/acceptance-packet.md`), `wrap-up/verification-brief-parent-gate.md`
 (the end-to-end variant for a decomposition parent), `flow/summary-template.md` and
-`flow/multispec-summary.md` (render it in the Pipeline Summary), `demo/SKILL.md` and
-`demo/entry-paths.md` (render it first, read back from the brief or the PR's `try-it` run comment;
+`flow/multispec-summary.md` (render it in the Pipeline Summary), `accept/SKILL.md` and
+`accept/entry-paths.md` (render it first, read back from the brief or the PR's `try-it` run comment;
 compose it only when neither carries one).
 
 Distinct from `_shared/observation-plan.md`: the observation plan is the agent's procedure — the

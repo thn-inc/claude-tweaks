@@ -1,6 +1,6 @@
 # Demo Step 2 — The Design Contract Section
 
-Referenced by `skills/demo/SKILL.md` Step 2's `### The design contract this was built against`
+Referenced by `skills/accept/SKILL.md` Step 2's `### The design contract this was built against`
 subsection. Read only after `../_shared/design-contract.md`'s locate-and-parse procedure has run
 over Step 1's changed-path list **and** it resolved a contract or reported one malformed — when
 nothing resolves, `SKILL.md` renders nothing and never reads this file. In the body below, "this

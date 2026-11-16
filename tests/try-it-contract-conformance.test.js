@@ -196,7 +196,7 @@ test('pr-run-comments.md registers the try-it kind, spec-qualified under multi-s
 });
 
 test('demo Step 2 renders Try it before the design contract and before Prepare', () => {
-  const doc = read('demo/SKILL.md');
+  const doc = read('accept/SKILL.md');
   const step2 = between(doc, '## Step 2: Per-item walkthrough', '### Verdict');
   const first = paragraphAt(step2, '**Try it first');
   assert.ok(first.start < step2.indexOf('### The design contract'), 'before the design-contract section');
@@ -211,7 +211,7 @@ test('demo Step 2 renders Try it before the design contract and before Prepare',
 });
 
 test('demo entry paths compose a Try it block on both composer branches', () => {
-  const doc = read('demo/entry-paths.md');
+  const doc = read('accept/entry-paths.md');
   const recall = between(doc, '## No arguments: session-recall', '## `#N` given: single-record lookup');
   const recallTryIt = paragraphAt(recall, '- **Try it**').text;
   assert.ok(recallTryIt.includes('_shared/try-it.md'), 'session-recall composes the block per the contract');
@@ -222,7 +222,7 @@ test('demo entry paths compose a Try it block on both composer branches', () => 
 });
 
 test('demo #N lookup reads the walkthrough back from the PR before composing one', () => {
-  const doc = read('demo/entry-paths.md');
+  const doc = read('accept/entry-paths.md');
   const lookup = between(doc, '## `#N` given: single-record lookup', '### Full verification pointer');
   assert.match(lookup, /`Verification Brief\s+posted to PR #\{pr-number\}: \{pr-url\}`/, 'names the pr-first pointer line');
   assert.ok(lookup.includes('<!-- run-comment: try-it -->'), 'names the try-it marker');
