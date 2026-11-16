@@ -63,7 +63,11 @@ const landArgs = (f, extra = {}) => ({
 });
 // The tip of BRANCH on origin, read from the bare origin's own ref files (no git process): the loose
 // ref, else a packed-refs line. Every caller reads the fixture's origin, never a re-pointed remote.
+// Files ref backend only: a reftable origin would read as null for every branch, so refuse it.
 const remoteBranch = (f) => {
+  if (fs.existsSync(path.join(f.origin, 'reftable'))) {
+    throw new Error(`remoteBranch reads the files ref backend only; ${f.origin} uses reftable`);
+  }
   const ref = `refs/heads/${BRANCH}`;
   const absent = (e) => e.code === 'ENOENT' || e.code === 'ENOTDIR';
   try { return fs.readFileSync(path.join(f.origin, ref), 'utf8').trim() || null; } catch (e) { if (!absent(e)) throw e; }

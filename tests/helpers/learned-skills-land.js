@@ -106,8 +106,11 @@ function fixture(t, { capturedTargets = [X, Z], autocrlf, originConflict = false
   }
   for (const file of filesUnder(runDir)) {
     const bytes = fs.readFileSync(file);
+    // A JSON file stores a win32 path with doubled backslashes: search the escaped form too.
     for (const s of spellings) {
-      if (bytes.includes(s)) throw new Error(`land fixture: template root ${s} survived in ${file}`);
+      for (const form of new Set([s, JSON.stringify(s).slice(1, -1)])) {
+        if (bytes.includes(form)) throw new Error(`land fixture: template root ${s} survived in ${file}`);
+      }
     }
   }
   return { root, origin, repo, runDir, mergeBase, mainTip: mergeBase };
