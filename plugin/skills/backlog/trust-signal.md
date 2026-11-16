@@ -48,7 +48,7 @@ node -e "
   const fs = require('fs');
   const root = '${CLAUDE_PLUGIN_ROOT}';
   const { trustRows, riskBand, parseGitLog, TRUST_POLICY_KEYS } = require(root + '/bin/lib/issues/trust.js');
-  const { resolveProvenance } = require(root + '/bin/lib/issues/provenance.js');
+  const { resolveProvenance, issueAuthorTrust } = require(root + '/bin/lib/issues/provenance.js');
   const { resolveCeiling } = require(root + '/bin/lib/issues/autonomy.js');
   const issues = require('$TT_RECORDS').map((i) => ({ ...i, labels: i.labels.map((l) => l.name) }));
   const gitLog = parseGitLog(fs.readFileSync('$TT_COMMIT_LOG', 'utf8'));
@@ -57,7 +57,7 @@ node -e "
   const ceiling = resolveCeiling({ policy: '{resolved-ceiling}' });
   const out = {};
   for (const issue of issues.filter((i) => i.state === 'OPEN')) {
-    const { kind, source } = resolveProvenance({ labels: issue.labels, body: issue.body });
+    const { kind, source } = resolveProvenance({ labels: issue.labels, body: issue.body, authorTrust: issueAuthorTrust(issue) });
     const row = rows.get(kind + ':' + source + '|' + riskBand(issue.labels));
     out[issue.number] = {
       ceiling,
