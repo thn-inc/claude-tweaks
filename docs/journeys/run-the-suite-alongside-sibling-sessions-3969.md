@@ -98,4 +98,5 @@ files:
 - Updated during build of #5294: step 1 now covers the hooks' repoInfo store pointed into the run root, so a suite run never writes fixture answers into the user's real store.
 - Updated during build of #5547: step 1 now covers test files named on the runner's command line, which a repo-local guard steers multi-file direct runs to.
 - Updated at wrap-up of #5547: step 4 now covers a per-run `--test-concurrency=<n>` on the runner's command line.
+- Updated during build of #5768: step 1 now covers the runner's per-run git template (`GIT_TEMPLATE_DIR`), which carries the maintenance-off keys and `receive.autogc=false` into every repo a test creates. Step 1's maintenance red flag now points at a test that drops or overrides the template. A traced full run went from 759 maintenance processes to 0.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).
