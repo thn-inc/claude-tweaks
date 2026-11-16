@@ -14,10 +14,20 @@ const { readText } = require('./helpers/read-skill');
 
 // Every verdict below is read through classifyCommandOrThrow and judgeOrThrow, which let an internal error
 // through, so a bug can never pass an allow row by landing in the catching wrapper.
+const guard = require('../tools/direct-test-run-guard');
 const {
-  classifyCommand, classifyCommandOrThrow, hasDirectTestRun, scanScript, judge, judgeOrThrow, realDeps, SAFEGUARDS_TEXT,
-} = require('../tools/direct-test-run-guard');
+  classifyCommand, hasDirectTestRun, scanScript, judge, judgeOrThrow, realDeps, SAFEGUARDS_TEXT,
+} = guard;
 const { parseRunnerOperands } = require('../tools/run-tests');
+
+// Every typed deny a test in this file sees, with the options it was judged under: the last test (AC9)
+// round-trips each replacement line through the classifier and the runner's parser.
+const SEEN_DENIES = [];
+function classifyCommandOrThrow(command, options) {
+  const verdict = guard.classifyCommandOrThrow(command, options);
+  if (verdict.decision === 'deny') SEEN_DENIES.push({ command, options, replacement: verdict.replacement });
+  return verdict;
+}
 
 const isDirectory = (p) => p === '/repo/tests' || p === '/repo/evals/tests';
 // Every `.js`/`.mjs` path that is no directory exists, so the runner's parser decides on shape alone.
@@ -335,30 +345,6 @@ test('every general node option that takes a value word is read with its value',
   }
 });
 
-test('AC9.1 AC9.2: every replacement line is allowed by the classifier and accepted by the runner\'s parser', () => {
-  const rows = DENY_ROWS.filter(([, replacement]) => replacement !== null).map(([command]) => command);
-  rows.push('cd tests && node --test a.test.js b.test.js');
-  for (const command of rows) {
-    const { replacement } = classifyCommandOrThrow(command, opts);
-    assert.equal(classifyCommandOrThrow(replacement, opts).decision, 'allow', `${command} -> ${replacement}`);
-    let cwd = '/repo';
-    let line = replacement;
-    const prefix = /^cd (\S+) && (.*)$/.exec(replacement);
-    if (prefix) {
-      cwd = path.posix.resolve('/repo', prefix[1]);
-      line = prefix[2];
-    }
-    const at = line.indexOf('tools/run-tests.js');
-    assert.notEqual(at, -1, replacement);
-    // `--full` is the runner's own flag (taken out before the operand parser runs).
-    const tokens = shellWords(expandAsShell(line.slice(at + 'tools/run-tests.js'.length))).filter((w) => w !== '--full');
-    assert.doesNotThrow(
-      () => parseRunnerOperands(tokens, { cwd, repoRoot: '/repo', isFile: (p) => !isDirectory(p), pathImpl: path.posix }),
-      `${command} -> ${replacement}`,
-    );
-  }
-});
-
 test('win32 paths', () => {
   const win = {
     cwd: 'C:/repo',
@@ -368,6 +354,32 @@ test('win32 paths', () => {
   };
   assert.equal(classifyCommandOrThrow('node --test tests/a.test.js tests/b.test.js', win).decision, 'deny');
   assert.equal(classifyCommandOrThrow('"C:/nodejs/node.exe" --test tests/a.test.js', win).decision, 'allow');
+});
+
+test('D5: win32 — the cd prefix, the evals exemption, another drive\'s checkout and a directory across drives', () => {
+  const W = path.win32;
+  const win = {
+    cwd: 'C:\\repo',
+    hasRunner: (d) => {
+      const r = W.resolve(d);
+      if (/^C:\\repo(?:\\|$)/i.test(r)) return 'C:\\repo';
+      return /^D:\\other(?:\\|$)/i.test(r) ? 'D:\\other' : null;
+    },
+    isDirectory: (p) => /^C:\\repo\\(?:tests|evals\\tests)$/i.test(p),
+    isFile: (p) => /\.js$/.test(p),
+    pathImpl: W,
+  };
+  const rows = [
+    ['cd tests && node --test a.test.js b.test.js', 'cd tests && node ../tools/run-tests.js a.test.js b.test.js'],
+    ['cd C:/repo/tests && node --test a.test.js b.test.js', 'cd C:/repo/tests && node ../tools/run-tests.js a.test.js b.test.js'],
+    ['node --test D:/other/tests/a.test.js D:/other/tests/b.test.js', 'node D:/other/tools/run-tests.js D:/other/tests/a.test.js D:/other/tests/b.test.js'],
+    // The directory was reached by a relative cd, so the prefix is recomputed: across drives, an absolute path.
+    ['cd D:/other/tests && cd .. && node --test tests/a.test.js tests/b.test.js', 'cd D:/other && node tools/run-tests.js tests/a.test.js tests/b.test.js'],
+  ];
+  for (const [command, replacement] of rows) assert.equal(classifyCommandOrThrow(command, win).replacement, replacement, command);
+  for (const command of ['cd evals && node --test tests/', 'node --test evals/a.test.js evals/b.test.js', 'cd evals && node --test']) {
+    assert.deepEqual(classifyCommandOrThrow(command, win), { decision: 'allow' }, command);
+  }
 });
 
 // ---- fix wave (#5547 whole-branch review and the 14-day probe) ----
@@ -820,7 +832,7 @@ const JS_ROWS = [
   ['a node.exe literal', "require('child_process').spawnSync('node.exe', ['--test']);", "'node.exe'"],
   ['the first of two node references, a literal', "require('child_process').spawnSync('node', ['--test'], { x: process.execPath });", "'node'"],
   ['process.env.npm_node_execpath', "require('child_process').spawnSync(process.env.npm_node_execpath, ['--test']);", 'process.env.npm_node_execpath'],
-  ['the first of two node references, code',"require('child_process').spawnSync(process.execPath, ['--test'], { x: 'node' });", 'process.execPath'],
+  ['the first of two node references, code', "require('child_process').spawnSync(process.execPath, ['--test'], { x: 'node' });", 'process.execPath'],
 ];
 
 test('a shell script names its first direct test run, cut at 120 characters', () => {
@@ -1021,14 +1033,16 @@ test('AC11.1: .claude/settings.json registers the guard for Bash and the file ex
   for (const key of ['permissions', 'worktree', 'enabledPlugins', 'extraKnownMarketplaces']) assert.ok(settings[key], key);
 });
 
-// The repo's own guidance must not teach the form the guard denies: every documented `node --test` command
-// is one the classifier allows, so a doc edit that brings back a multi-file or glob run goes red here.
-const NODE_COMMAND_START = /^(?:cd \S+ && )?(?:[A-Za-z_][A-Za-z0-9_]*=\S+ )*(?:node|\S*\/node|npx\s+(?:\S+\s+)*?node@\S+)\s/;
-const TEST_WORD = /(?:^|\s)--test(?:\s|$)/;
+// The repo's own guidance must not teach the form the guard denies: every documented line or code span
+// that holds a direct `node --test` run anywhere in it (hasDirectTestRun) is one the classifier allows, so a
+// doc edit that brings back a multi-file or glob run goes red here.
+const BARE_MENTION = /^(?:node|\S*\/node|npx\s+(?:\S+\s+)*?node@\S+)\s+--test\s*$/;
 
 function normalizePlaceholders(command) {
   return command.replace(/<([A-Za-z0-9_-]+)>/g, 'placeholder').replace(/(?<!\$)\{([A-Za-z0-9_-]+)\}/g, 'placeholder');
 }
+
+const holdsRun = (command) => hasDirectTestRun(command, { cwd: ROOT, pathImpl: path });
 
 function documentedTestCommands(text) {
   const found = [];
@@ -1036,16 +1050,16 @@ function documentedTestCommands(text) {
   for (const line of text.split('\n')) {
     if (/^\s*```/.test(line)) { fenced = !fenced; continue; }
     if (fenced) {
-      const trimmed = line.trim();
-      if (NODE_COMMAND_START.test(`${trimmed} `) && TEST_WORD.test(trimmed)) found.push(normalizePlaceholders(trimmed));
+      const command = normalizePlaceholders(line.trim());
+      if (holdsRun(command)) found.push(command);
       continue;
     }
     for (const match of line.matchAll(/`([^`\n]+)`/g)) {
       const span = match[1].trim();
-      if (!NODE_COMMAND_START.test(`${span} `) || !TEST_WORD.test(span)) continue;
-      // Nothing after --test: a mention of the tool, not a command.
-      if (/(?:^|\s)--test\s*$/.test(span)) continue;
-      found.push(normalizePlaceholders(span));
+      // A node program and --test with nothing after it: a mention of the tool, not a command.
+      if (BARE_MENTION.test(span)) continue;
+      const command = normalizePlaceholders(span);
+      if (holdsRun(command)) found.push(command);
     }
   }
   return found;
@@ -1090,14 +1104,19 @@ test('AC12.1: every documented node --test command is one the guard allows', () 
   assert.ok(commands.length >= 10, `only ${commands.length} documented commands found`);
   const denied = [];
   for (const { source, command } of commands) {
-    try { assertCommandAllowed(command, source); } catch (e) { denied.push(`${source}: ${command}`); }
+    // The caught message is kept, so a classifier throw reads differently from a deny.
+    try { assertCommandAllowed(command, source); } catch (e) { denied.push(`${source}: ${command}\n${e.message}`); }
   }
   assert.deepEqual(denied, [], 'documented commands the guard denies');
 });
 
-test('the extractor skips a bare mention and keeps a real command', () => {
+test('the extractor skips a bare mention and keeps a real command, wherever in the line the run is', () => {
   assert.deepEqual(documentedTestCommands('a bare `node --test` run'), []);
   assert.deepEqual(documentedTestCommands('run `node --test <file>`'), ['node --test placeholder']);
+  // A run after other commands is a command too.
+  assert.deepEqual(documentedTestCommands('```\ncd evals && npm install && node --test tests/\n```'), ['cd evals && npm install && node --test tests/']);
+  assert.deepEqual(documentedTestCommands('`for f in a b; do node --test tests/$f.test.js; done`'), ['for f in a b; do node --test tests/$f.test.js; done']);
+  assert.deepEqual(documentedTestCommands('`echo "node --test a b"`'), []);
   const bare = documentedTestCommands('```\nnode --test\n```');
   assert.deepEqual(bare, ['node --test']);
   assert.throws(() => assertCommandAllowed(bare[0], 'fixture'));
@@ -1111,6 +1130,49 @@ test('AC12.2: the conformance check fails on the pre-change mutant instruction',
   assert.throws(() => assertCommandAllowed(found[0], 'fixture'));
 });
 
+// A text ending in a newline has one line per newline; one that does not has one more.
+const lineCount = (text) => (text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length);
+
+// The words the runner's parser receives from a replacement's argument text, after the shell: expansions
+// and globs expanded (expandAsShell) and redirections, with their target, gone. `--full` is the runner's
+// own flag, taken out before the parser runs.
+function runnerArgs(argText) {
+  const words = shellWords(expandAsShell(argText));
+  const out = [];
+  for (let i = 0; i < words.length; i += 1) {
+    if (/^(?:[0-9]*|&)(?:>>?|<|>&)$/.test(words[i])) i += 1;
+    else if (!/^(?:[0-9]*|&)[<>]/.test(words[i]) && words[i] !== '--full') out.push(words[i]);
+  }
+  return out;
+}
+
+// Runs last: every typed deny the tests above produced under options with an isFile answer (the guard checks
+// a replacement only then) and whose reason pastes a command.
+test('AC9.1 AC9.2: every pasted replacement line is allowed by the classifier and accepted by the runner\'s parser', () => {
+  const rows = SEEN_DENIES.filter(({ options, replacement }) => typeof options.isFile === 'function' && !/<[a-z][^>]*>/.test(replacement));
+  assert.ok(rows.length >= 80, `only ${rows.length} pasted replacements`);
+  for (const { command, options, replacement } of rows) {
+    const P = options.pathImpl;
+    const label = `${command} -> ${replacement}`;
+    assert.equal(guard.classifyCommandOrThrow(replacement, options).decision, 'allow', label);
+    let cwd = options.cwd;
+    let line = replacement;
+    const prefix = /^cd ("[^"]*"|\S+) && (.*)$/.exec(line);
+    if (prefix) {
+      cwd = P.resolve(cwd, prefix[1].replace(/^"|"$/g, ''));
+      line = prefix[2];
+    }
+    // The runner named as the reason states it: relative to the run's directory, or another checkout's.
+    const runner = /(?:^|\s)("[^"]*run-tests\.js"|\S*run-tests\.js)(?=\s|$)/.exec(line);
+    assert.ok(runner, label);
+    const repoRoot = P.dirname(P.dirname(P.resolve(cwd, runner[1].replace(/^"|"$/g, ''))));
+    const args = runnerArgs(line.slice(runner.index + runner[0].length));
+    assert.doesNotThrow(() => parseRunnerOperands(args, { cwd, repoRoot, isFile: (p) => /\.js$/.test(p), pathImpl: P }), label);
+  }
+});
+
 test('AC13.1: CLAUDE.md is 150 lines or fewer', () => {
-  assert.ok(readText(path.join(ROOT, 'CLAUDE.md')).split('\n').length - 1 <= 150);
+  assert.deepEqual([lineCount('a\nb\n'), lineCount('a\nb')], [2, 2]);
+  const lines = lineCount(readText(path.join(ROOT, 'CLAUDE.md')));
+  assert.ok(lines <= 150, `${lines} lines`);
 });
