@@ -5,12 +5,12 @@ run delivered — where to go, what to do, what to expect. Every surface that sh
 file and renders the block verbatim; none restates its fields. Consumers:
 `wrap-up/verification-brief.md` (composes it for every record; on a record with no parent it, like the observation plan, feeds the packet's Test guide, `_shared/acceptance-packet.md`), `wrap-up/verification-brief-parent-gate.md`
 (the end-to-end variant for a decomposition parent), `flow/summary-template.md` and
-`flow/multispec-summary.md` (render it in the Pipeline Summary), `demo/SKILL.md` and
-`demo/entry-paths.md` (render it first, read back from the brief or the PR's `try-it` run comment;
+`flow/multispec-summary.md` (render it in the Pipeline Summary), `accept/SKILL.md` and
+`accept/entry-paths.md` (render it first, read back from the brief or the PR's `try-it` run comment;
 compose it only when neither carries one).
 
 Distinct from `_shared/observation-plan.md`: the observation plan is the agent's procedure — the
-Prepare/Validate/Inspect commands `/claude-tweaks:demo` executes. This block is what a person reads
+Prepare/Validate/Inspect commands `/claude-tweaks:accept` executes. This block is what a person reads
 and does by hand. It borrows the observation plan's Entry point semantics for non-web surfaces; it
 never replaces the plan.
 
@@ -75,7 +75,7 @@ in the Test guide of the record's acceptance packet, or, for a parent-linked sub
 `try-it` PR run comment (`_shared/pr-run-comments.md`) — and `verification-brief-parent-gate.md` decides where the
 end-to-end variant lands. Stated there once, not restated here. Every successful
 `/claude-tweaks:flow` run's Pipeline Summary renders the block (`flow/summary-template.md`,
-`flow/multispec-summary.md`), and `/claude-tweaks:demo` renders it first (its Step 2).
+`flow/multispec-summary.md`), and `/claude-tweaks:accept` renders it first (its Step 2).
 
 The oversight floor (`bin/lib/issues/oversight-floor.js`) never gates the block — it gates only the
 `demo:pending` label and the sign-off ceremony.

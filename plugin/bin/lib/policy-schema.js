@@ -210,7 +210,7 @@ const POLICY_KEYS = [
   { key: 'grant-origination-enabled', type: 'boolean', default: false, summary: "A separate, deliberate opt-in a human must set before the pipeline is ever allowed to originate its own grants.", category: 'autonomy-trust', tier: 'core' },
   // Shared floors read by bin/lib/issues/oversight-floor.js's exceedsOversightFloor
   // — the point past which a machine-originated grant (grant-gate.js gate 5) or a
-  // /claude-tweaks:demo binary-gate check is denied and a human review is
+  // /claude-tweaks:accept binary-gate check is denied and a human review is
   // required. 'always' is the reserved unconditional-deny opt-out value. Not
   // prefixed 'demo-' or 'grant-': more than one consumer reads the same pair. #366.
   { key: 'risk-floor', type: 'enum', values: ['low', 'medium', 'high', 'always'], default: 'high', summary: "The risk tier at which machine-originated grants and demo fast-paths stop and require human review.", category: 'autonomy-trust', tier: 'core' },
@@ -291,6 +291,8 @@ const POLICY_KEYS = [
   { key: 'standard-run-round-trip-ceiling', type: 'integer', min: 0, default: 900, summary: "Sets how many tool round trips a standard run may use before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-procedure-kb-ceiling', type: 'integer', min: 0, default: 580, summary: "Sets how many kilobytes of skill procedure a standard run may read before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-verify-minutes-ceiling', type: 'integer', min: 0, default: 37, summary: "Sets how many minutes of verification a standard run may spend before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
+  // #5563: read by release-notes-publish.js and release-local.js via policy.js readChangelogMaxReleases, from policy.yml alone. Not a Manifesto lever; policyOnly so a run config never sets a value the engines would not read.
+  { key: 'changelog-max-releases', type: 'integer', min: 0, default: 0, summary: "Keeps only this many of the newest releases in CHANGELOG.md, moving the rest behind a footer that names where they are; 0 never trims.", category: 'housekeeping', tier: 'advanced', policyOnly: true },
   // #5119: reaches verify.js only as --default-suite-slots (verify.js never reads
   // policy.yml); a declared concurrency.suiteSlots wins. Not a Manifesto lever; policyOnly so a run config never sets it.
   { key: 'verify-suite-slots', type: 'integer', min: 1, default: 1, summary: "Sets how many test suites verify.js may run at once on one machine when verify-scope.json declares no concurrency.suiteSlots.", category: 'housekeeping', tier: 'advanced', policyOnly: true },

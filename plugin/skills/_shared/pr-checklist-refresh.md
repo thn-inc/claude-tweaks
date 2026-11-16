@@ -88,6 +88,7 @@ after its push (`_shared/git-discipline.md`), as `checklist`. By `run-state.json
   "{body-file}"`; on non-empty `uncovered`, re-run with `--summary-file "{file}" --out "{body-file}"`; a
   non-zero exit → warn, write checklist-only. Re-read that file's first line back before the write and
   confirm it still names this run's `{run-id}`; hard-stop on a mismatch rather than push a wrong body.
+  Also confirm each marker is literal `<!--`…`-->`, not HTML entities (#4467); else hard-stop and retry.
 
 <!-- when: transport=mcp -->
   `gh`-absent: `mcp__github__update_pull_request` with the same composed body — unsanitized

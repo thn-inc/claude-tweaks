@@ -549,7 +549,7 @@ Review Console" versus "rendered below" in the Design Quality section.
 returned No-contract or Malformed — the two cases are one absence to a caller, and neither is an
 error. `seed` is omitted when the contract carried none; `recorded_on` is omitted when there was no
 record to write to, or when the value was already present and unchanged. The `blocks` themselves are
-deliberately **not** in the return: `/claude-tweaks:demo` re-reads them from the shipped artifact at
+deliberately **not** in the return: `/claude-tweaks:accept` re-reads them from the shipped artifact at
 acceptance time (`../../_shared/design-contract.md`), so passing a copy through here would create a
 second, staler source of the same text.
 

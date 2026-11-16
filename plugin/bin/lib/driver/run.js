@@ -18,7 +18,8 @@
 // nothing stopped; otherwise it is the word for the stop's class (events.js's outcomeFor;
 // `none` when nothing stopped). A halted record is then settled by settle.js
 // (comment, label, release the claim, remove what this run created), unless the run was
-// started with --no-settle, which leaves the stop to the caller; settle's events come before
+// started with --no-settle, which leaves the stop to the caller (under --run a pre-push stop's
+// escalate still runs, writing only the escalation line); settle's events come before
 // the final line, and the final line's `settle` word says what happened (`done`,
 // `left-to-caller`, `none` or `interrupted`). An interrupted record settles nothing: a
 // signal queued during the halting step's synchronous child is delivered at the loop's yield
@@ -65,10 +66,11 @@
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { createEventSink, outcomeFor, neutralize, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
-const { STEPS } = require('./steps');
-const { toEscalationReason, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle } = require('./settle');
+const { STEPS, CHECK_STEPS } = require('./steps');
+const { toEscalationReason, planRow, SETTLE_ROWS, ESCALATE_STEP, CLASS_BY_ROW, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType, canonicalRealpath } = require('../path-guard');
+const { resolveAgainst } = require('../health-core/io');
 const { defaultResolvePolicy } = require('../express/policy');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
@@ -78,6 +80,9 @@ const USAGE = [
   '       drive.js --help | -h   (prints this text; exit 0, before any probe)',
   '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)',
   '       drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record)',
+  '       drive.js --check #N   (prints the admission verdict as one JSON line; no write of any kind)',
+  '       drive.js #N [--in-flight-prs <file>] [--near-dup-pairs <file>]   (holds the merge before mark-ready when a PR in the JSON list <file> shares a changed path, or closes a strong near-duplicate partner of the record from the pairs <file>; unreadable input holds too; with no --in-flight-prs no hold is applied; not with --budget or --check)',
+  '       drive.js #N --run <dir> --no-settle   (adopts the run directory <dir> and the linked worktree it is run from, minting and creating neither; requires --no-settle and one record)',
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
@@ -85,7 +90,9 @@ const USAGE = [
   'Exit codes (Combined-2):',
   '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
-  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record',
+  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record; a missing, empty or repeated --run value, or --run without --no-settle, with more than one record, or with --budget or --check; with --in-flight-prs or --near-dup-pairs, a missing, empty, flag-shaped or repeated value, --budget or --check beside either, or --near-dup-pairs without --in-flight-prs',
+  '  3  --run refused: the run directory is missing or not a run directory under the main checkout, or the working directory is not a linked worktree of it, or the run directory\'s run-state.json does not name that worktree, or the worktree has no branch; nothing written',
+  '  --check: 0 a verdict was printed (admitted or not); 1 no verdict could be computed (nothing on stdout); 2 malformed (anything but exactly one record reference)',
   '',
 ].join('\n');
 
@@ -96,19 +103,57 @@ const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 // argv -> { records, settle } | { budget, settle } | { help: true } | { error }. `#N` or `N`,
 // positive integers only, de-duplicated in the order given. `--budget <n|all>` (n a positive
 // integer without a leading zero) names a queue-pulled run instead of records and is exclusive
-// with them. --help (or -h) anywhere wins. `--no-settle` anywhere sets settle false (the caller
+// with them. `--check` (anywhere) takes exactly one record reference and no other option: `{ check }`.
+// `--run <dir>` (once, with exactly one record and --no-settle, never with --budget or --check)
+// adds `runDir`, the raw value; run() resolves it. The key is present only when the flag was given.
+// `--in-flight-prs <file>` and `--near-dup-pairs <file>` (once each, with records or --run, never with
+// --budget or --check; --near-dup-pairs only beside --in-flight-prs) add `inFlightPrsFile` / `nearDupPairsFile`, the raw values, on the same terms;
+// run() resolves them against deps.cwd(). They feed merge.js's drain-overlap hold.
+// --help (or -h) anywhere wins. `--no-settle` anywhere sets settle false (the caller
 // settles stops); any other option is an error.
 const BUDGET_NEEDS_RECORD = 'a record reference (#N) or --budget <n|all> is required';
+const CHECK_GRAMMAR = '--check takes exactly one record reference (#N) and no other option';
+const CHECK_RUN_EXCLUSIVE = '--check and --run are exclusive';
+// The value-taking-flag rule: a trailing bare flag reads undefined, and an empty or flag-shaped value is no value.
+const isFlagValue = (v) => typeof v === 'string' && v.trim() !== '' && !v.startsWith('--');
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
   if (argv.length === 0) return { error: BUDGET_NEEDS_RECORD };
+  if (argv.includes('--check')) {
+    if (argv.includes('--run')) return { error: CHECK_RUN_EXCLUSIVE };
+    const rest = argv.filter((a) => a !== '--check');
+    const m = rest.length === 1 && argv.length === 2 ? RECORD_RE.exec(String(rest[0])) : null;
+    const n = m ? Number(m[1]) : NaN;
+    return Number.isSafeInteger(n) && n > 0 ? { check: n } : { error: CHECK_GRAMMAR };
+  }
   const records = [];
   let budget;
+  let runDir;
+  let inFlightPrsFile;
+  let nearDupPairsFile;
   let settleStops = true;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--no-settle') {
       settleStops = false;
+      continue;
+    }
+    if (a === '--run') {
+      if (runDir !== undefined) return { error: '--run given more than once' };
+      const v = argv[i + 1];
+      if (!isFlagValue(v)) return { error: '--run needs a value: the run directory to adopt' };
+      runDir = v;
+      i += 1;
+      continue;
+    }
+    if (a === '--in-flight-prs' || a === '--near-dup-pairs') {
+      const isPrs = a === '--in-flight-prs';
+      if ((isPrs ? inFlightPrsFile : nearDupPairsFile) !== undefined) return { error: `${a} given more than once` };
+      const v = argv[i + 1];
+      if (!isFlagValue(v)) return { error: `${a} needs a value: ${isPrs ? 'a JSON file listing the in-flight drain PRs' : 'a JSON file of dispatch\'s strong near-duplicate pairs'}` };
+      if (isPrs) inFlightPrsFile = v;
+      else nearDupPairsFile = v;
+      i += 1;
       continue;
     }
     if (a === '--budget') {
@@ -128,12 +173,26 @@ function parseArgs(argv) {
     }
     if (!records.includes(n)) records.push(n);
   }
+  if (nearDupPairsFile !== undefined && inFlightPrsFile === undefined) {
+    return { error: '--near-dup-pairs requires --in-flight-prs (the pairs apply only to the in-flight PRs that list names)' };
+  }
+  const hold = {
+    ...(inFlightPrsFile !== undefined ? { inFlightPrsFile } : {}),
+    ...(nearDupPairsFile !== undefined ? { nearDupPairsFile } : {}),
+  };
+  if (runDir !== undefined) {
+    if (budget !== undefined) return { error: '--run and --budget are exclusive' };
+    if (records.length !== 1) return { error: '--run takes exactly one record reference (#N)' };
+    if (settleStops) return { error: '--run requires --no-settle (the caller settles stops)' };
+    return { records, settle: false, runDir, ...hold };
+  }
   if (budget !== undefined) {
     if (records.length > 0) return { error: '--budget and a named record (#N) are exclusive' };
+    if (Object.keys(hold).length > 0) return { error: '--in-flight-prs and --near-dup-pairs are exclusive with --budget' };
     return { budget, settle: settleStops };
   }
   if (records.length === 0) return { error: BUDGET_NEEDS_RECORD };
-  return { records, settle: settleStops };
+  return { records, settle: settleStops, ...hold };
 }
 
 // `current` is the record being driven, `{ ctx, sink, started, step, inStep, stepStarted,
@@ -141,9 +200,9 @@ function parseArgs(argv) {
 // handler can reach that record's context, event sink and clocks: `step` is the table
 // entry running or last run (null before the first), `inStep` is true while it is pending,
 // and `final` holds the final line an interrupt wrote. `interrupted` is the signal's name
-// once the handler has run, else false.
+// once the handler has run, else false. `adopted` is adopt.js's ok result under --run, else null.
 function newShared() {
-  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true };
+  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true, adopted: null, inFlightPrsFile: null, nearDupPairsFile: null };
 }
 
 function newCtx(record, shared) {
@@ -151,6 +210,7 @@ function newCtx(record, shared) {
     record, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
+    eligibilityReasons: null, admissionReasons: null,
     summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
     shared,
   };
@@ -282,21 +342,30 @@ function reportInterrupt(shared, current, step, detail, ms, deps) {
 async function settleStop(ctx, stop, record, shared, sink, deps) {
   const stopObj = stopObject(ctx, stop);
   const pr = ctx.pr && ctx.pr.number;
+  // A successful call has no detail: the line omits the field, like any other step line.
+  const emit = (name, status, ms, detail) => { sink.emit(eventFor(ctx, name, { status, detail: detail || undefined, extra: {} }, ms, deps)); };
+  const input = {
+    stop: stopObj, record, runId: ctx.runId, runDir: ctx.runDir, wt: ctx.wt, branch: ctx.branch,
+    pr, claimed: ctx.claimed, mainRoot: shared.mainRoot, ghRepo: shared.ghRepo, emit,
+    interrupted: () => shared.interrupted,
+  };
+  const reported = (result, mode) => ({
+    mode: result.interrupted ? 'interrupted' : mode, row: result.row, failed: result.failed,
+    settledClass: result.settledClass, unclassified: result.unclassified, note: result.note,
+  });
   if (shared.settle === true) {
-    // A successful call has no detail: the line omits the field, like any other step line.
-    const emit = (name, status, ms, detail) => { sink.emit(eventFor(ctx, name, { status, detail: detail || undefined, extra: {} }, ms, deps)); };
-    const result = await settle({
-      stop: stopObj, record, runId: ctx.runId, runDir: ctx.runDir, wt: ctx.wt, branch: ctx.branch,
-      pr, claimed: ctx.claimed, mainRoot: shared.mainRoot, ghRepo: shared.ghRepo, emit,
-      interrupted: () => shared.interrupted,
-    }, deps);
-    return {
-      mode: result.interrupted ? 'interrupted' : (result.calls.length > 0 ? 'done' : 'none'), row: result.row, failed: result.failed,
-      settledClass: result.settledClass, unclassified: result.unclassified, note: result.note,
-    };
+    const result = await settle(input, deps);
+    return reported(result, result.calls.length > 0 ? 'done' : 'none');
   }
   // The row settle would use, from the same run-state read.
   const plan = planRow({ stop: stopObj, runDir: ctx.runDir, pr }, deps);
+  // Under --run (#5232) the pre-push row's escalate still runs: it writes only the escalation line
+  // to dispatch's run directory, which the ordinary first call after `express-escalated` reads
+  // (build's already-shipped check, `hasEscalation`); the rest of the row stays the caller's. Its
+  // own precondition skips it when check already wrote the line. A failed escalate reads `blocked`.
+  if (shared.adopted && plan.row === 'pre-push') {
+    return reported(await settle({ ...input, only: [ESCALATE_STEP] }, deps), 'left-to-caller');
+  }
   return {
     mode: SETTLE_ROWS[plan.row].length > 0 ? 'left-to-caller' : 'none', row: plan.row, failed: [],
     settledClass: CLASS_BY_ROW[plan.row], unclassified: plan.unclassified, note: plan.unreadableNote,
@@ -397,6 +466,36 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
   };
 }
 
+// `drive.js --check #N`: walks CHECK_STEPS (the read-only head of the table; it names no step) and
+// prints the admission verdict as one JSON line. Exit 0 once a verdict printed, admitted or not;
+// exit 1, nothing on stdout, when none could be computed: a step failed, or a step stopped before
+// the eligibility and admission steps recorded their reasons (ctx.eligibilityReasons and
+// ctx.admissionReasons stay null until then). An eligibility stop still runs admission, so every
+// reason is reported. No claim, run directory, worktree or forge write is in CHECK_STEPS.
+async function checkRecord(n, shared, deps, steps = CHECK_STEPS) {
+  const ctx = newCtx(n, shared);
+  let admitted = true;
+  let last = null;
+  const noVerdict = (name, status, detail) => {
+    deps.stderr(`drive.js --check: ${name} ${status}: ${detail}\n`);
+    return 1;
+  };
+  for (const step of steps) {
+    last = step;
+    const result = await step.run(ctx, deps);
+    if (result.status === 'fail') return noVerdict(step.name, result.status, result.detail);
+    if (result.status === 'ok') continue;
+    // A stop is a verdict only from a step that recorded its reasons.
+    if (ctx.eligibilityReasons === null && ctx.admissionReasons === null) return noVerdict(step.name, result.status, result.detail);
+    admitted = false;
+  }
+  if (!Array.isArray(ctx.eligibilityReasons) || !Array.isArray(ctx.admissionReasons)) {
+    return noVerdict(last ? last.name : 'none', 'no-verdict', 'the eligibility and admission verdicts were not both read');
+  }
+  deps.stdout(`${JSON.stringify({ record: n, admitted, reasons: [...ctx.eligibilityReasons, ...ctx.admissionReasons] })}\n`);
+  return 0;
+}
+
 // The signal handler run() subscribes (see the header's Interrupts paragraph). A second
 // signal is ignored: the first one's terminate already drops the subscription.
 function interrupt(shared, signal, deps) {
@@ -439,6 +538,23 @@ function reraiseAfterFlush(sig, { stdout, kill, setTimer }) {
   }
 }
 
+// `--run <dir>`: the guard's ok result (adopt.js), or null once the refusal is on stderr. A relative
+// <dir> is joined to deps.cwd() unnormalized (resolveAgainst), so a `..` after a symlink still
+// reaches the guard's realpath. A throw (deps.cwd() of a deleted directory included) is a refusal
+// naming the error. Nothing is written either way.
+function adoptRunDir(runDir, deps) {
+  let result;
+  try {
+    const cwd = deps.cwd();
+    result = deps.adoptRun({ runDir: resolveAgainst(cwd, runDir), cwd }, deps);
+  } catch (err) {
+    result = { ok: false, why: (err && err.message) || String(err) };
+  }
+  if (result && result.ok === true) return result;
+  deps.stderr(`drive.js: --run refused: ${(result && result.why) || 'no result'}\n`);
+  return null;
+}
+
 async function run(argv, deps) {
   const parsed = parseArgs(argv);
   if (parsed.help) {
@@ -457,8 +573,25 @@ async function run(argv, deps) {
     deps.stderr('drive.js: git is not available (git --version failed)\n');
     return 2;
   }
+  if (parsed.check !== undefined) return checkRecord(parsed.check, newShared(), deps);
   const shared = newShared();
   shared.settle = parsed.settle;
+  if (parsed.inFlightPrsFile !== undefined || parsed.nearDupPairsFile !== undefined) {
+    // Resolved against the caller's working directory, as --run's value is, before any step reads it.
+    try {
+      const cwd = deps.cwd();
+      if (parsed.inFlightPrsFile !== undefined) shared.inFlightPrsFile = resolveAgainst(cwd, parsed.inFlightPrsFile);
+      if (parsed.nearDupPairsFile !== undefined) shared.nearDupPairsFile = resolveAgainst(cwd, parsed.nearDupPairsFile);
+    } catch (err) {
+      deps.stderr(`drive.js: cannot resolve --in-flight-prs / --near-dup-pairs against the working directory: ${(err && err.message) || String(err)}\n`);
+      return 2;
+    }
+  }
+  if (parsed.runDir !== undefined) {
+    const adopted = adoptRunDir(parsed.runDir, deps);
+    if (!adopted) return 3;
+    shared.adopted = adopted;
+  }
   const unsubscribe = deps.onSignal((signal) => interrupt(shared, signal, deps));
   try {
     if (parsed.budget !== undefined) {
@@ -527,6 +660,8 @@ const realDeps = {
   createJudgments: (opts) => require('./judgments').createJudgments(opts),
   runner: (call) => require('./worker').defaultRunner(call),
   resolveRunDir: (opts) => require('../hooks/run-dir-resolve').resolve(opts),
+  // The --run guard (#5232): adopts dispatch's run directory and worktree, or refuses.
+  adoptRun: (opts, d) => require('./adopt').adoptRun(opts, d),
   lstatType: (p) => lstatType(p),
   readdir: (p) => fs.readdirSync(p),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
@@ -576,4 +711,4 @@ const realDeps = {
   remoteUrl: () => remoteUrl(),
 };
 
-module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, newShared, interruptClass, reraiseAfterFlush };
+module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, checkRecord, newShared, interruptClass, reraiseAfterFlush };

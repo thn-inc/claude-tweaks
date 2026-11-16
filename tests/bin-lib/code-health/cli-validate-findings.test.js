@@ -619,3 +619,43 @@ test('validate-findings stamps Verified-as-of from the injected env: GIT_DIR nam
   const [payload] = JSON.parse(result.stdout);
   assert.ok(payload.body.includes(`Verified-as-of: ${sha}`), `expected the injected repo's HEAD ${sha}, got body:\n${payload.body}`);
 });
+
+test('AC5.1: an --issues file in gh\'s raw shape — a CLOSED match with no wontfix label reopens and is cached as regressed', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+  const first = runValidateFindings(root, findingsFile, ['--slice', 'src/api', '--run-id', 'r-raw-reopen-1']);
+  const fp = JSON.parse(first.stdout)[0].body.match(/<!--\s*work-fingerprint:\s*(codehealth-[0-9a-f]{8})\s*-->/)[1];
+
+  const issuesFile = path.join(root, 'issues.json');
+  fs.writeFileSync(issuesFile, JSON.stringify([{
+    number: 8, state: 'CLOSED', fingerprint: fp,
+    labels: [{ id: 'LA_1', name: 'by:code-health', color: 'ededed', description: '' }],
+  }]));
+  const second = runValidateFindings(root, findingsFile, ['--issues', issuesFile, '--slice', 'src/api', '--run-id', 'r-raw-reopen-2']);
+  assert.strictEqual(second.status, 0, `stderr: ${second.stderr}`);
+  assert.strictEqual(JSON.parse(second.stdout).length, 1, 'a closed non-wontfix match must emit a reopen payload');
+  const cache = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'code-health', 'cache.json'), 'utf8'));
+  assert.strictEqual(cache[fp].status, 'regressed');
+  assert.strictEqual(cache[fp].issue, 8);
+});
+
+test('AC5.2: an --issues file in gh\'s raw shape — a wontfix label object suppresses and is cached as wontfix', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+  const first = runValidateFindings(root, findingsFile, ['--slice', 'src/api', '--run-id', 'r-raw-wontfix-1']);
+  const fp = JSON.parse(first.stdout)[0].body.match(/<!--\s*work-fingerprint:\s*(codehealth-[0-9a-f]{8})\s*-->/)[1];
+
+  const issuesFile = path.join(root, 'issues.json');
+  fs.writeFileSync(issuesFile, JSON.stringify([{
+    number: 7, state: 'CLOSED', fingerprint: fp,
+    labels: [{ id: 'LA_1', name: 'by:code-health' }, { id: 'LA_2', name: 'wontfix' }],
+  }]));
+  const second = runValidateFindings(root, findingsFile, ['--issues', issuesFile, '--slice', 'src/api', '--run-id', 'r-raw-wontfix-2']);
+  assert.strictEqual(second.status, 0, `stderr: ${second.stderr}`);
+  assert.strictEqual(JSON.parse(second.stdout).length, 0, 'a wontfix label object must suppress');
+  const cache = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'code-health', 'cache.json'), 'utf8'));
+  assert.strictEqual(cache[fp].status, 'wontfix');
+  assert.strictEqual(cache[fp].issue, 7);
+});
