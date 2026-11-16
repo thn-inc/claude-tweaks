@@ -755,6 +755,9 @@ fs.mkdirSync(STUB);
 const printArgv = `exec "${process.execPath}" -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- "$@"\n`;
 fs.writeFileSync(path.join(STUB, 'ls'), `#!/bin/sh\n${printArgv}`, { mode: 0o755 });
 fs.writeFileSync(path.join(STUB, 'node'), `#!/bin/sh\ncase "$1" in -e|-p|--eval|--print) exec "${process.execPath}" "$@";; esac\n${printArgv}`, { mode: 0o755 });
+// git stub: honours leading -C <dir> by cd-ing there, then prints [$PWD, ...argv] as JSON, so a
+// dropped -C that changes the directory shows up in stdout.
+fs.writeFileSync(path.join(STUB, 'git'), `#!/bin/sh\nwhile [ "$1" = "-C" ]; do cd "$2" || exit 1; shift 2; done\nexec "${process.execPath}" -e 'console.log(JSON.stringify([process.env.PWD, ...process.argv.slice(1)]))' -- "$@"\n`, { mode: 0o755 });
 const EVAL = "'console.log(JSON.stringify(process.argv.slice(1)))'";
 const POSITIVE = [
   { rule: 'inline-literal-assignment', command: 'P=/x/y; node $P/z.js' },
@@ -769,6 +772,12 @@ const POSITIVE = [
   { rule: 'node-eval-separator', command: `node -e ${EVAL} "$HOME"` },
   { rule: 'quote-escaped-space', command: 'ls /a/Code\\ Workspaces/b /c/d\\ e' },
   { rule: 'drop-redundant-cd', command: `cd "${CWD}" && pwd && ls x` },
+  { rule: 'drop-git-C-cwd', command: 'git -C . log --oneline -3' },
+  // a/x.js exists, so zsh's nomatch error does not fail the original.
+  { rule: 'drop-git-C-cwd', command: `git -C "${CWD}" grep -n x -- a/*.js` },
+  { rule: 'drop-git-C-cwd', command: `git -C '${CWD}/' status --short` },
+  { rule: 'quote-exit-status', command: 'git merge-base --is-ancestor A B; echo exit=$?' },
+  { rule: 'quote-exit-status', command: 'git status; echo a/b:c=$?' },
 ];
 const SHELLS = ['bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'exit 0'], { windowsHide: true }).status === 0);
 
@@ -803,6 +812,8 @@ test('every positive case is argv-identical under bash and zsh', { skip: process
 fs.writeFileSync(path.join(CWD, 'setp'), 'P=/evald\n');
 fs.writeFileSync(path.join(CWD, '.env'), 'export NODE_ENV=production\n');
 fs.writeFileSync(path.join(CWD, 'f'), 'P=/sourced\n');
+fs.mkdirSync(path.join(CWD, 'a'));
+fs.writeFileSync(path.join(CWD, 'a', 'x.js'), '');
 const MUST_DECLINE = [
   { command: 'NODE_ENV=development; source .env; echo "$NODE_ENV"', naive: 'NODE_ENV=development; source .env; echo "development"' },
   { command: 'NODE_ENV=development; set -a; . ./.env; set +a; echo "$NODE_ENV"', naive: 'NODE_ENV=development; set -a; . ./.env; set +a; echo "development"' },
@@ -864,6 +875,23 @@ test('must-decline cases: code run from the command text reassigns at runtime, s
   }
 });
 
+// drop-git-C-cwd (AC4): a drop that changes where git runs prints a different $PWD, under both shells.
+test('drop-git-C-cwd must-decline cases: the naive drop prints a different directory under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, () => {
+  fs.mkdirSync(path.join(CWD, 'sub'), { recursive: true });
+  for (const { command, naive } of [
+    { command: 'git -C sub log', naive: 'git log' },
+    { command: `git -C "${CWD}/sub" log`, naive: 'git log' },
+    { command: `cd sub && git -C "${CWD}" log`, naive: 'cd sub && git log' },
+  ]) {
+    assert.strictEqual(rw(command), null, command);
+    for (const shell of SHELLS) {
+      const original = runIn(shell, command, {});
+      assert.strictEqual(original.status, 0, `${shell}: ${command}\n${original.stderr}`);
+      assert.notStrictEqual(runIn(shell, naive, {}).stdout, original.stdout, `${shell}: the naive drop must differ for ${command}`);
+    }
+  }
+});
+
 // Fix wave 2, property-style: a deterministic PRNG draws short commands from a
 // small grammar mixing safe statements with runners (`.`, source, eval, trap,
 // an expansion as the command word), redirections, the four list operators and
@@ -886,6 +914,8 @@ const GRAMMAR = {
   safe: [
     'echo $P/z', 'echo "$P/z"', 'echo ${P}/b', '/bin/echo $P/e', 'true', 'false', 'cd . && echo $P/c', 'echo "$Q"', '[ -n "$P" ] && echo $P/t',
     '[ $N -eq 5 ] 2>/dev/null || echo $P/q', 'if true; then echo $P/i; fi',
+    // The git rules: a stubbed git prints its directory and argv.
+    'git -C . log', 'git -C . status; echo st=$?', `git -C "${CWD}" log`, 'git log; echo exit=$?',
   ],
   risky: [
     '. ./f', 'source ./f', 'eval "$(cat setp)"', 'trap "$(cat setp)" DEBUG', '$(echo .) ./f', '"$(echo .)" ./f', '$SRC ./f',
@@ -895,6 +925,8 @@ const GRAMMAR = {
     'repeat 1 . ./f', 'repeat 1 do . ./f; done', 'if [[ -n x ]] . ./f', '[[ $(echo XP=5 | cut -c2-) -eq 5 ]]', '[[ $N -eq 5 ]]',
     'echo $[$(echo XP=5 | cut -c2-)]', '(( N ))', 'let N', 'echo $(( $N ))', 'case a in a) . ./f;; esac', '{ . ./f; }',
     'for i in a; do . ./f; done', 'while false; do :; done', 'g() { . ./f; }; g', 'shift $N',
+    // The git rules' bail shapes.
+    'git -C . -C sub log', 'cd sub && git -C . log', 'git -C "$P" log', 'export rc=$?', 'echo =$?', 'git log; rc=$?', 'if true; then rc=$?; fi', '{ rc=$?; }',
   ],
   redirect: ['', '', '', ' 2>/dev/null', ' 2>&1', ' >/dev/null'],
   join: ['; ', ' && ', ' || ', ' | ', '\n'],
@@ -916,7 +948,7 @@ test('property: every rewrite of a randomly drawn command keeps stdout, stderr a
   let rewritten = 0;
   let declined = 0;
   // N=P=5: any arithmetic evaluation of $N assigns P (fix wave 3).
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME || os.homedir(), SRC: '.', N: 'P=5' };
+  const env = { PATH: `${STUB}${path.delimiter}${process.env.PATH}`, HOME: process.env.HOME || os.homedir(), SRC: '.', N: 'P=5' };
   for (let n = 0; n < 300; n += 1) {
     const command = drawCommand(rand);
     const out = rw(command);
@@ -929,7 +961,9 @@ test('property: every rewrite of a randomly drawn command keeps stdout, stderr a
       const args = (c) => (shell === 'zsh' ? ['-f', '-c', c] : ['-c', c]);
       const run = (c) => {
         const r = spawnSync(shell, args(c), { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
-        return { stdout: r.stdout, stderr: r.stderr, status: r.status };
+        // bash echoes the offending source line after a syntax error: that echo is the command text itself,
+        // so it differs for any rewrite (the diagnostic above it, and the status, still must match).
+        return { stdout: r.stdout, stderr: r.stderr.replace(/^(bash: -c: line \d+: )`.*'$/gm, '$1<source echo>'), status: r.status };
       };
       assert.deepStrictEqual(run(out.command), run(command), `${shell}: ${JSON.stringify(command)}\n→ ${JSON.stringify(out.command)}`);
     }
@@ -1048,4 +1082,55 @@ test('property: a backslash-spelled double-quoted cd drops only when the shell l
   t.diagnostic(`rewritten=${rewritten} declined=${declined} shells=${SHELLS.join(',')}`);
   assert.ok(rewritten >= 30, `only ${rewritten} rewrites`);
   assert.ok(declined >= 30, `only ${declined} declines`);
+});
+
+// ── Write-target invariance (AC5) ────────────────────────────────────────────
+// The write gate reads the command text, so a rewrite must leave gitTargets,
+// fileWriteTargets and mkdirTargets exactly as they were.
+const { gitTargets, fileWriteTargets, mkdirTargets } = require('../../../plugin/bin/lib/hooks/git-command');
+const WRITE_CASES = [ // one writing command per rule that can write
+  { rule: 'drop-redundant-cd', command: `cd "${CWD}" && git commit -m x && mkdir d && echo a > f` },
+  { rule: 'inline-literal-assignment', command: 'P=/x; echo a > $P/f' },
+  { rule: 'plugin-root-placeholder', command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" > out.txt' },
+  { rule: 'node-eval-separator', command: `node -e ${EVAL} "$A" > out.txt` },
+  { rule: 'quote-escaped-space', command: 'echo a > /a/b\\ c' },
+  { rule: 'quote-exit-status', command: 'git commit -m x; echo exit=$? > log.txt' },
+];
+function targetsOf(command) { return { git: gitTargets(command, CWD), write: fileWriteTargets(command, CWD), mkdir: mkdirTargets(command, CWD) }; }
+function assertSameTargets(rewrite) {
+  for (const { command } of [...POSITIVE, ...WRITE_CASES]) {
+    const out = rewrite(command);
+    assert.ok(out, command);
+    assert.deepStrictEqual(targetsOf(out.command), targetsOf(command), command);
+  }
+}
+test('AC5.1, AC5.2: every rewrite keeps gitTargets, fileWriteTargets and mkdirTargets equal', () => {
+  for (const { rule, command } of WRITE_CASES) {
+    assert.deepStrictEqual(rw(command).applied, [rule], command);
+    const t = targetsOf(command);
+    assert.ok(t.git.length + t.write.length + t.mkdir.length > 0, `vacuous: no targets for ${command}`);
+  }
+  assertSameTargets(rw);
+});
+test('AC5.3: the invariance check goes red for a stub rule that drops a real cd sub &&', () => {
+  fs.mkdirSync(path.join(CWD, 'sub'), { recursive: true });
+  const dropCdSub = (c) => ({ command: c.replace('cd sub && ', ''), applied: ['stub'] });
+  assert.throws(() => { const c = 'cd sub && git commit -m x'; assert.deepStrictEqual(targetsOf(dropCdSub(c).command), targetsOf(c)); });
+});
+
+// ── AC8: a rewrite carries no permission decision ────────────────────────────
+const { guardRewriteOutput } = require('../../../plugin/bin/lib/hooks/guard-rewrite');
+test('AC8.1: guardRewriteOutput carries no permissionDecision for either new rule', () => {
+  for (const command of ['git -C . log', 'git status; echo exit=$?']) {
+    const out = guardRewriteOutput({ tool_name: 'Bash', cwd: CWD, tool_input: { command, description: 'd' } }, (o) => rewriteForGuard({ ...o, deps: linked }));
+    assert.ok(out, command);
+    assert.deepStrictEqual(Object.keys(out).sort(), ['hookEventName', 'updatedInput']);
+    assert.strictEqual(out.updatedInput.description, 'd');
+    assert.notStrictEqual(out.updatedInput.command, command);
+  }
+});
+test('AC8.2: guardRewriteOutput returns null outside a linked worktree for either new rule', () => {
+  for (const command of ['git -C . log', 'git status; echo exit=$?']) {
+    assert.strictEqual(guardRewriteOutput({ tool_name: 'Bash', cwd: CWD, tool_input: { command } }, (o) => rewriteForGuard(o)), null, command);
+  }
 });
