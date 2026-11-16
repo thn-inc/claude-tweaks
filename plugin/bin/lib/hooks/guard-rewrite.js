@@ -598,13 +598,40 @@ function shippedUnder(root, s, at, { pathImpl, lstat }) {
 const NODE_EVAL = /node[ \t]+(?:-e|-p|--eval|--print)[ \t]+/g;
 const SEGMENT_END = /[;&|\n)]/;
 
-// True when s[p] is an unquoted command separator: `;`, `&`, `|` (`|&` is a pipe), a newline or
-// `(`. The `&` of a `>&`/`<&` redirection is not one: the word after it is the redirection's target.
-function separatorAt(s, kind, p) {
+// True when s[p] is an unquoted command separator other than `(`: `;`, `&`, `|` (`|&` is a pipe) or
+// a newline. The `&` of a `>&`/`<&` redirection is not one: the word after it is the redirection's
+// target.
+function plainSeparatorAt(s, kind, p) {
   if (kind[p] !== TOP) return false;
   const c = s[p];
   if (c === '&') return s[p - 1] !== '>' && s[p - 1] !== '<';
-  return c === ';' || c === '|' || c === '\n' || c === '(';
+  return c === ';' || c === '|' || c === '\n';
+}
+
+// Per scan, which unquoted `(` opens a subshell: one itself at a command start. The `(` of an array
+// assignment (`a=(…)`, `a+=(…)`), a zsh glob group (`x*(…)`) or a `$(` starts no command. One forward
+// pass, cached per `kind` array, so a caller probing every position stays linear.
+const SUBSHELL_OPENERS = new WeakMap();
+function subshellOpeners(s, kind) {
+  let marks = SUBSHELL_OPENERS.get(kind);
+  if (marks) return marks;
+  marks = new Uint8Array(s.length);
+  let start = true;
+  for (let p = 0; p < s.length; p += 1) {
+    const c = s[p];
+    if (c === ' ' || c === '\t') continue;
+    if (kind[p] === TOP && c === '(') marks[p] = start ? 1 : 0;
+    else start = plainSeparatorAt(s, kind, p);
+  }
+  SUBSHELL_OPENERS.set(kind, marks);
+  return marks;
+}
+
+// True when s[p] is an unquoted command separator: a plainSeparatorAt one, or a `(` that is itself
+// at a command start (a subshell opener).
+function separatorAt(s, kind, p) {
+  if (kind[p] === TOP && s[p] === '(') return subshellOpeners(s, kind)[p] === 1;
+  return plainSeparatorAt(s, kind, p);
 }
 
 function atCommandStart(s, kind, i) {

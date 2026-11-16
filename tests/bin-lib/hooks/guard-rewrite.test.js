@@ -357,6 +357,12 @@ test('node-eval-separator never reads node as a <& redirection target', () => {
   assert.strictEqual(rw(`echo x <& node -e '1' "$A"`), null);
 });
 
+test('node-eval-separator never reads node as an array element: the ( of a=( starts no command', () => {
+  assert.strictEqual(rw(`a=(node -e '1' "$A")`), null);
+  assert.strictEqual(rw(`a+=(node -e '1' "$A")`), null);
+  assert.deepStrictEqual(rw(`(node -e '1' "$A")`), { command: `(node -e '1' -- "$A")`, applied: ['node-eval-separator'] }, 'a subshell ( at a command start still starts one');
+});
+
 test('quote-escaped-space double-quotes ls /a/Code\\ Workspaces/b', () => {
   assert.deepStrictEqual(rw('ls /a/Code\\ Workspaces/b'), { command: 'ls "/a/Code Workspaces/b"', applied: ['quote-escaped-space'] });
   assert.deepStrictEqual(rw('ls /a/Code\\ Workspaces/b /c/d\\ e 2>&1'), { command: 'ls "/a/Code Workspaces/b" "/c/d e" 2>&1', applied: ['quote-escaped-space'] });
@@ -483,6 +489,14 @@ test('drop-git-C-cwd leaves a git that is the target of a >& or <& redirection',
   assert.deepStrictEqual(rw('ls |& git -C . log'), { command: 'ls |& git log', applied: ['drop-git-C-cwd'] }, '|& is a pipe, not a redirection');
 });
 
+test('drop-git-C-cwd leaves a git inside an array literal or a zsh glob group: only a subshell ( starts a command', () => {
+  assert.strictEqual(rw('a=(git -C . log)'), null);
+  assert.strictEqual(rw('a+=(git -C . log)'), null);
+  assert.strictEqual(rw('echo x*(git -C . log)'), null, 'zsh glob group text');
+  assert.deepStrictEqual(rw('(git -C . log)'), { command: '(git log)', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw('ls; ( (git -C . log) )'), { command: 'ls; ( (git log) )', applied: ['drop-git-C-cwd'] }, 'nested subshells at a command start');
+});
+
 test('AC2.2: drop-git-C-cwd declines a -C that is not the first option', () => {
   assert.strictEqual(posix('git --no-pager -C "/w/wt" log'), null);
   assert.strictEqual(rw('git -C . log; git --no-pager -C . log'), null, 'the whole command declines, not just that call');
@@ -578,7 +592,7 @@ test('drop-git-C-cwd leaves git reached through env, command, xargs or an assign
   assert.strictEqual(rw('xargs git -C . log'), null);
   assert.strictEqual(rw('X=1 git -C . log'), null);
   assert.strictEqual(rw('echo "$(git -C . log)"'), null, 'inside a substitution');
-  assert.strictEqual(rw('echo $(git -C . log)'), null, 'inside an unquoted substitution, where atCommandStart accepts the `(`');
+  assert.strictEqual(rw('echo $(git -C . log)'), null, 'inside an unquoted substitution');
 });
 
 test('drop-git-C-cwd skips a longer command word that starts with git', () => {
@@ -882,6 +896,8 @@ test('drop-git-C-cwd must-decline cases: the naive drop prints a different direc
     { command: 'git -C sub log', naive: 'git log' },
     { command: `git -C "${CWD}/sub" log`, naive: 'git log' },
     { command: `cd sub && git -C "${CWD}" log`, naive: 'cd sub && git log' },
+    // An array literal, not a git call: the naive drop changes the element count (4 → 2).
+    { command: 'a=(git -C . log); echo ${#a[@]}', naive: 'a=(git log); echo ${#a[@]}' },
   ]) {
     assert.strictEqual(rw(command), null, command);
     for (const shell of SHELLS) {
