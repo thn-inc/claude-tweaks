@@ -19,10 +19,13 @@
 // resolveTiebreakChunk reads it (see its comment), the artifact does not keep it,
 // and a non-boolean value is refused rather than silently ignored. severityFloor
 // (a severity, optional) is the severity a Standard judge raised the finding to
-// (#5541): only resolveTiebreak reads it, settling at the higher of what it
-// computes and the floor, so a failed Capable re-judge still reaches the console
-// at the raised severity. It is not part of the finding's id, the artifact does
-// not keep it, and an absent, null or unknown value changes nothing.
+// (#5541): only resolveTiebreak reads it, and only where the Capable judge
+// settled no verdict (can't-tell, could-not-parse, a non-DONE status, no verified
+// evidence): there it settles at the higher of what it computes and the floor, so
+// a failed re-judge still reaches the console at the raised severity. A confirm
+// or refute settles on its own verdict and ignores it. It is not part of the
+// finding's id, the artifact does not keep it, and an absent, null or unknown
+// value changes nothing.
 //
 // Reply grammar (parseTiebreakReply). Lines are trimmed; each field line is
 // `Field: value`, the field name matched case-insensitively:
@@ -304,9 +307,7 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   const shownLine = line !== null ? line : String(finding.line ?? 'unknown');
   const reporterSev = reporterSeverityOf(finding);
   const tiebreakSev = parsed.severity;
-  // An escalation re-judge carries the severity the Standard judge raised the finding to (#5541).
-  const floor = knownSeverity(finding.severityFloor);
-  const higherSev = higher(higher(reporterSev, tiebreakSev) || 'medium', floor);
+  const higherSev = higher(reporterSev, tiebreakSev) || 'medium';
   const where = `lens "${finding.lens}" finding ${finding.path}:${shownLine}`;
   const result = (fields) => ({
     id, evidence: null, recommendation: parsed.recommendation, listInConsole: false, parse: parsed.parse, ...fields,
@@ -329,18 +330,21 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   else reason = evidenceProblem(parsed.evidence, finding, line, readFile);
 
   if (reason) {
-    const outcome = severityRank(higherSev) >= severityRank('medium') ? 'console' : 'digest';
+    // An escalation re-judge carries the severity the Standard judge raised the finding to (#5541).
+    // The floor applies only here, where the Capable judge settled no verdict; a confirm or refute settles on its own.
+    const unsettledSev = higher(higherSev, knownSeverity(finding.severityFloor));
+    const outcome = severityRank(unsettledSev) >= severityRank('medium') ? 'console' : 'digest';
     const log = outcome === 'console'
-      ? entry('STAGED', tiebreakStep, neutralize(`${where} console: ${reason}. Severity: ${higherSev}. Recommendation: ${parsed.recommendation ?? 'none'}.`))
-      : entry('AUTO', tiebreakStep, neutralize(`${where} digested: ${reason}. Severity: ${higherSev}.`));
-    return result({ outcome, severity: higherSev, reason, ...log });
+      ? entry('STAGED', tiebreakStep, neutralize(`${where} console: ${reason}. Severity: ${unsettledSev}. Recommendation: ${parsed.recommendation ?? 'none'}.`))
+      : entry('AUTO', tiebreakStep, neutralize(`${where} digested: ${reason}. Severity: ${unsettledSev}.`));
+    return result({ outcome, severity: unsettledSev, reason, ...log });
   }
 
   const ev = parsed.evidence;
   if (parsed.verdict === 'confirmed') {
     return result({
       outcome: 'confirmed',
-      severity: higher(lower(reporterSev, tiebreakSev) || 'medium', floor),
+      severity: lower(reporterSev, tiebreakSev) || 'medium',
       evidence: ev,
       reason: 'confirmed by tiebreak',
       ...entry('AUTO', 'Reproduction', `${where} confirmed by tiebreak:${id}. Confirmed.`),

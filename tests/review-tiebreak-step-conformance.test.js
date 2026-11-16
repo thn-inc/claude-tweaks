@@ -1692,6 +1692,7 @@ test('AC3: a chunk holds findings of one tier only', () => {
   assert.equal(tierOf('contested info/null'), 'capable', 'a null position severity is Capable even when the known positions are all info');
   assert.deepEqual(chunks.map((c) => c.tier).sort(), ['capable', 'capable', 'standard'], 'the fixture reaches both tiers, and its nine Capable entries span two chunks');
 });
+
 test('AC3: the chunk-tier assertions can go red', () => {
   assertEachPatternGoesRed(dispatchSection(), CHUNK_TIER_PLAN, chunkTierPlanMissing);
   // The code half, over hand-built plans: a chunk mixing tiers, an oversize chunk, and a dropped entry each turn it red.

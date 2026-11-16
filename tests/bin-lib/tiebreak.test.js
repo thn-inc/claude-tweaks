@@ -1240,9 +1240,28 @@ test('severityFloor: a failed re-judge of a raised info finding settles can\'t-t
     assert.equal(r.listInConsole, false, text);
     assert.match(r.logLine, /Severity: high\./, text);
   }
-  assert.equal(resolve(floored, reply({ verdict: 'refuted', severity: 'info' })).severity, 'high');
-  assert.equal(resolve(floored, reply({ verdict: 'refuted', severity: 'info' })).listInConsole, true);
-  assert.equal(resolve(floored, reply({ severity: 'low' })).severity, 'high');
+});
+
+test('severityFloor: a Capable confirm settles on its own verdict, never the floor', () => {
+  const floored = { ...INFO1, severityFloor: 'high' };
+  for (const severity of ['low', 'info', 'medium']) {
+    const withFloor = resolve(floored, reply({ severity }));
+    const without = resolve(INFO1, reply({ severity }));
+    assert.equal(withFloor.outcome, 'confirmed', severity);
+    assert.equal(withFloor.severity, without.severity, severity);
+    assert.deepEqual({ ...withFloor, id: null }, { ...without, id: null }, severity);
+  }
+  assert.equal(resolve(floored, reply({ severity: 'low' })).severity, 'info');
+});
+
+test('severityFloor: a Capable refute drops at its own severity, never the floor', () => {
+  const floored = { ...INFO1, severityFloor: 'high' };
+  const r = resolve(floored, reply({ verdict: 'refuted', severity: 'info' }));
+  assert.equal(r.outcome, 'drop');
+  assert.equal(r.severity, 'info');
+  assert.equal(r.listInConsole, false);
+  assert.match(r.logLine, /Severity: info\./);
+  assert.deepEqual({ ...r, id: null }, { ...resolve(INFO1, reply({ verdict: 'refuted', severity: 'info' })), id: null });
 });
 
 test('severityFloor: the same finding without a floor still settles at info', () => {
@@ -1276,10 +1295,13 @@ test('severityFloor: it is not part of the id, the tier or the artifact', () => 
   assert.deepEqual(buildFindingsArtifact([floored]), buildFindingsArtifact([INFO1]));
   assert.deepEqual(planChunks([floored]), [{ tier: 'standard', indexes: [0] }]);
   assert.equal(escalation(floored, reply({ severity: 'info' }), 'standard'), null);
-  // A floored finding settles in the capable chunk form, never refused there.
+  // A floored finding settles in the capable chunk form, never refused there, and a confirm there settles on its own verdict.
   const chunk = tierResolve([floored], `${block(INFO_ID1, CONFIRMED_BODY.replace('Severity: medium', 'Severity: low'))}\nSTATUS: DONE`, 'capable');
   assert.equal(chunk.results.length, 1);
-  assert.equal(chunk.results[0].severity, 'high');
+  assert.equal(chunk.results[0].severity, 'info');
+  // ...while an empty block there is a no-verdict settle, which the floor lifts.
+  const unsettledBlock = tierResolve([floored], `${block(INFO_ID1, 'Verdict: cant-tell')}\nSTATUS: DONE`, 'capable');
+  assert.equal(unsettledBlock.results[0].severity, 'high');
 });
 
 test('escalation: one-finding check', () => {
