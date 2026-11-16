@@ -64,7 +64,7 @@ const realDeps = {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, windowsHide: true, cwd, env,
   }),
   gh: (args, { cwd, env, ghDeps }) => execFileSync('gh', args, ghOptions(args, {
-    encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true, cwd, env,
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true, cwd, env,
   }, ghDeps)),
   // An explicit --repo's host reaches every gh call below (#4505's seam).
   pinGhHost: (repoSpec, { cwd, env } = {}) => pinExplicitRepoHost(repoSpec, { cwd, env }),
