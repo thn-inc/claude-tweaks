@@ -74,7 +74,12 @@ test('AC6.1 go-red: dropping the merge-conflict row naming fails', () => {
   assert.throws(() => assertGateStops(CONTRACT, m, GATES[0]), { message: /merge conflicts not named/ });
 });
 test('AC6.1: control mode adds no capability that could silence a gate', () => {
-  assert.deepStrictEqual(Object.keys(bookkeepingPermissions(null, { controlMode: true })).sort(), Object.keys(bookkeepingPermissions('unattended')).sort());
+  const cm = bookkeepingPermissions(null, { controlMode: true });
+  assert.deepStrictEqual(cm, bookkeepingPermissions('unattended'));
+  // controls: the comparison can go red - supervised differs, and a mutated copy fails
+  assert.notDeepStrictEqual(cm, bookkeepingPermissions('supervised'));
+  const flipped = { ...cm, [Object.keys(cm)[0]]: !Object.values(cm)[0] };
+  assert.throws(() => assert.deepStrictEqual(flipped, bookkeepingPermissions('unattended')));
 });
 
 function precedenceRungs(ceiling) {
@@ -87,14 +92,18 @@ test('AC4.10: autonomy-ceiling.md Precedence names the control-mode rung below e
   const idx = precedenceRungs(CEILING);
   assert.ok(idx.every((i) => i !== -1), `a rung is missing: ${idx}`);
   assert.deepStrictEqual([...idx].sort((a, b) => a - b), idx, 'rungs out of order');
-  // control: a permuted copy (control-mode rung moved above config.yml) must be seen as out of order
+  // control: a permuted copy (control-mode rung inserted above policy.yml, i.e. below config.yml) must be seen as out of order
   const permuted = CEILING.replace('3. `.claude-tweaks/policy.yml`', '3. `control-mode: on` x\n3. `.claude-tweaks/policy.yml`');
   assert.notDeepStrictEqual([...precedenceRungs(permuted)].sort((a, b) => a - b), precedenceRungs(permuted));
 });
-test('policy-schema-read-path.md names the control-mode owner', () => {
-  const row = READ_PATH.split('\n').find((l) => l.startsWith('| `control-mode` |'));
+function assertOwnerCell(readPath) {
+  const row = readPath.split('\n').find((l) => l.startsWith('| `control-mode` |'));
   assert.ok(row, 'no control-mode row');
-  assert.match(row, /#4620/);
-  const mutated = row.replace('#4620', '#0');
-  assert.doesNotMatch(mutated, /#4620/);
+  assert.match(row, /#4620/, 'control-mode owner cell does not name #4620');
+}
+test('policy-schema-read-path.md names the control-mode owner', () => {
+  assertOwnerCell(READ_PATH);
+  const m = READ_PATH.replace('(the Review Console\'s carry route and residue convergence, #4620)', '(the Review Console\'s carry route and residue convergence)');
+  assert.notStrictEqual(m, READ_PATH);
+  assert.throws(() => assertOwnerCell(m), { message: /does not name #4620/ });
 });
