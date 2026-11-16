@@ -151,9 +151,10 @@ test('AC4.1: bare --stamp-status in a repo with no declaration is unchanged', as
   assert.strictEqual(s.scopeError, null, 'a missing default file is silent — never reported as a scopeError');
   assert.strictEqual(s.verifiedHead, true);
   assert.strictEqual(s.match, true);
+  // #5534 AC4.2: the 15 keys, in print order; no `legacy`.
   assert.deepStrictEqual(Object.keys(s), [
     'present', 'sha', 'head', 'dirty', 'scope', 'fullSha', 'match', 'verifiedHead', 'baselineAdjudicated',
-    'preExistingAdjudicated', 'reportPath', 'legacy', 'suiteComposed', 'generatedExempt', 'liveGeneratedExempt', 'scopeError',
+    'preExistingAdjudicated', 'reportPath', 'suiteComposed', 'generatedExempt', 'liveGeneratedExempt', 'scopeError',
   ]);
 });
 

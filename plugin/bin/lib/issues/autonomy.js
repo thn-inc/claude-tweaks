@@ -21,6 +21,7 @@
 // autonomy; this import is one-directional by contract (autonomy -> record,
 // never record -> autonomy) so the two never cycle.
 const { DEFER_REASONS } = require('./record');
+const { isControlModeOn } = require('../policy');
 
 // Ordered least to most permissive. Index comparison is the tier test, so the
 // order is load-bearing, not cosmetic.
@@ -60,12 +61,35 @@ function isCeiling(value) {
 // policy > skill default. An unrecognized value at any level is skipped rather
 // than honored or thrown on — a typo must never resolve to a tier nobody named,
 // and falling through to the next source lands on 'supervised' in the worst case.
+//
+// #4620: `controlMode === true` (from isControlModeOn, never a truthy guess) implies
+// 'unattended' only when no explicit source named a tier — it sits below all three.
 function resolveCeiling(sources) {
-  const { cliArg, runConfig, policy } = sources || {};
+  const { cliArg, runConfig, policy, controlMode } = sources || {};
   for (const candidate of [cliArg, runConfig, policy]) {
     if (isCeiling(candidate)) return candidate;
   }
-  return 'supervised';
+  return controlMode === true ? 'unattended' : 'supervised';
+}
+
+// The one fold both ceiling readers (console-resolve.js readPolicy, the pre-tool-use
+// Review Console gate's readConsoleCeiling) share, so their parity is structural.
+// Entries are resolvePolicyKeys entries. An entry with `error` counts as absent. A
+// malformed autonomy value arrives as source 'default' with `invalid: true` — the
+// person meant a lower tier, so it suppresses the control-mode implication and
+// resolves 'supervised'. `controlMode` reports the switch even when an explicit
+// value wins.
+function effectiveCeiling({ cliArg, autonomyEntry, controlModeEntry } = {}) {
+  const usable = (entry) => (entry && typeof entry === 'object' && entry.error === undefined ? entry : null);
+  const autonomy = usable(autonomyEntry);
+  const mode = usable(controlModeEntry);
+  const controlMode = isControlModeOn(mode ? mode.value : undefined);
+  if (isCeiling(cliArg)) return { ceiling: cliArg, controlMode, source: 'cli' };
+  if (autonomy && autonomy.invalid === true) return { ceiling: 'supervised', controlMode, source: 'invalid-autonomy' };
+  const explicit = autonomy && autonomy.source !== 'default' && isCeiling(autonomy.value);
+  if (explicit) return { ceiling: autonomy.value, controlMode, source: 'explicit' };
+  if (controlMode) return { ceiling: resolveCeiling({ controlMode }), controlMode, source: 'control-mode' };
+  return { ceiling: resolveCeiling({ runConfig: autonomy ? autonomy.value : null }), controlMode, source: 'default' };
 }
 
 function atLeast(ceiling, minimum) {
@@ -194,11 +218,14 @@ function clearsFloor(blockerReason) {
 // ledger route-remainder held back to 'unattended' (see
 // skills/_shared/autonomy-ceiling.md for what each one does). An unrecognized
 // ceiling falls through to 'supervised' -- same handling as permittedGrants,
-// so a typo denies everything rather than granting it. `merge-authorization`
+// so a typo denies everything rather than granting it. Control mode (#4620) lifts only an *absent*
+// ceiling to 'unattended': a present-but-unrecognized one stays 'supervised' even under it, so a typo never
+// grants. `merge-authorization`
 // is deliberately not a key here and no ceiling sets it (#2734) -- see
 // skills/_shared/autonomy-ceiling.md's "Orthogonal to the ceiling" section for why.
-function bookkeepingPermissions(ceiling) {
-  const tier = isCeiling(ceiling) ? ceiling : 'supervised';
+function bookkeepingPermissions(ceiling, { controlMode } = {}) {
+  const absent = ceiling === undefined || ceiling === null;
+  const tier = isCeiling(ceiling) ? ceiling : (controlMode === true && absent ? 'unattended' : 'supervised');
   return {
     ledgerNarrowing: atLeast(tier, 'trusted'),
     queueWriteAutoFile: atLeast(tier, 'trusted'),
@@ -209,4 +236,4 @@ function bookkeepingPermissions(ceiling) {
   };
 }
 
-module.exports = { CEILINGS, resolveCeiling, permittedGrants, clearsFloor, bookkeepingPermissions };
+module.exports = { CEILINGS, resolveCeiling, effectiveCeiling, permittedGrants, clearsFloor, bookkeepingPermissions };

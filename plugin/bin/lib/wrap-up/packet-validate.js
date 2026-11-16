@@ -17,6 +17,7 @@ const {
   VERIFICATION_CLAIM_RE,
 } = require('./packet-contract');
 const { findCredentialInText } = require('./packet-links');
+const { DECISION_RENDER_FIELDS } = require('../console/decision-facts');
 
 // The fixed, value-free lead of every drop reason, carried on each dropped entry as
 // `reasonKind`: a consumer that writes a drop somewhere unscreened (the CLI's --dropped-out)
@@ -32,7 +33,7 @@ const REASON_KINDS = Object.freeze({
 });
 
 const ROUTED_KINDS = Object.freeze(['check', 'story']);
-const OPTIONAL_TEXT_FIELDS = Object.freeze(['reason', 'text', 'url', 'command', 'label', 'url_or_path', 'archive_path', 'failure']);
+const OPTIONAL_TEXT_FIELDS = Object.freeze(['reason', 'text', 'url', 'command', 'label', 'url_or_path', 'archive_path', 'failure', ...DECISION_RENDER_FIELDS]);
 const isObject = (value) => value !== null && typeof value === 'object';
 
 class SchemaError extends Error {
