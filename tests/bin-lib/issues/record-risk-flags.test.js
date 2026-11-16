@@ -518,6 +518,11 @@ test('a malformed tripwire line contributes no slugs and is rewritten in exact f
   assert.strictEqual(out, `Risk-flags: auth, public-contract\n${TW} public-contract\n\n## O\n`);
 });
 
+test('two tripwire lines collapse to one exact line; the first is rewritten in place', () => {
+  const body = `Risk-flags: auth\n${TW} auth\nSurface: infra\n${TW} migrations\n\n## O\n`;
+  assert.strictEqual(addTripwireRiskFlags(body, ['public-contract']), `Risk-flags: auth, public-contract\n${TW} public-contract\nSurface: infra\n\n## O\n`);
+});
+
 test('the line sits below an unconfirmed marker', () => {
   const body = 'Risk-flags: auth\nRisk-flags-unconfirmed: true\n\n## O\n';
   assert.strictEqual(addTripwireRiskFlags(body, ['migrations']),
