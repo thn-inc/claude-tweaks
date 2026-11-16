@@ -182,7 +182,7 @@ A review-marked decision line is a `Reproduction:` pair line. Seven forms are co
 
 `direct-verification-elevated` is a relabel: an elevation changes the confidence of a finding a pair line already counted, so it adds to no finding count. (In the archive only 23 of 267 such lines sit beside a `not reproduced` line for the same location; the rest elevate a finding that has no pair line of its own, which therefore does not appear in `raised`. That undercount is accepted over guessing.) A line naming a count of findings (`5 unconfirmed findings staged …`) or several findings with no per-finding verdict is not classified and stays `unparsed`.
 
-Pair-line patterns are **additive**: a reworded template adds a pattern to its form, never replaces one, so archived runs keep parsing. Phase 6 of `docs/superpowers/specs/2026-11-15-process-efficiency-design.md` moves the pair-line write into `categorise-reproduction`; this reader (`pair-lines.js`) and its test then follow that writer.
+Pair-line patterns are **additive**: a reworded template adds a pattern to its form, never replaces one, so archived runs keep parsing. Since #5595 (Phase 6 of `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`) `categorise-reproduction --run` and `log-reproduction-judgment` write the pair lines, so this reader (`pair-lines.js`) and its test follow that writer: each composed form is pinned to `reproduction-log.js`, not to prose.
 
 ### Tiebreak lines
 
