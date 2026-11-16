@@ -165,13 +165,15 @@ test('AC2d truncation', () => {
 });
 
 test('truncation counts the deploy ref line and never drops it', () => {
-  const claims = Array.from({ length: 3000 }, () => claim('what-changed', 'x'.repeat(40), ['change:a']));
-  const deploy = { text: 'target: dev, confirmed live', ref: 'f'.repeat(64) };
-  const result = render([fact('change:a', 'passed'), fact('deploy:status', 'passed', deploy)], claims);
+  // Deploy status is the longest section here, so a droppable ref line would go first.
+  const claims = Array.from({ length: 200 }, () => claim('what-changed', 'x'.repeat(40), ['change:a']));
+  const text = `target: dev, confirmed live ${'d'.repeat(55000)}`;
+  const ref = 'f'.repeat(64);
+  const result = render([fact('change:a', 'passed'), fact('deploy:status', 'passed', { text, ref })], claims);
   assert.ok(result.truncated > 0);
   assert.ok(result.markdown.length <= 60000, `chars ${result.markdown.length}`);
-  assert.deepEqual(sectionLines(result.markdown, 'Deploy status'), ['target: dev, confirmed live', `ref: ${'f'.repeat(64)}`]);
-  const without = render([fact('change:a', 'passed'), fact('deploy:status', 'passed', { text: deploy.text })], claims);
+  assert.deepEqual(sectionLines(result.markdown, 'Deploy status'), [text, `ref: ${ref}`]);
+  const without = render([fact('change:a', 'passed'), fact('deploy:status', 'passed', { text })], claims);
   assert.ok(result.truncated >= without.truncated);
 });
 
