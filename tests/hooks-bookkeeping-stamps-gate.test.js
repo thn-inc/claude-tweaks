@@ -1416,7 +1416,7 @@ function archivedGateFixture(shape) {
   }
   const { run } = mkRunDir(projectDir(), wt, undefined);
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   return { out, wt, run };
@@ -1454,7 +1454,7 @@ test('bookkeeping-stamps gate (#3974): an archived-only header under github-issu
   execFileSync('git', ['-C', wt, 'add', '-f', archivedRel]);
   execFileSync('git', ['-C', wt, 'commit', '-m', 'Archive run', '-q']);
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a claim-log deny');
   const spec = out.json.hookSpecificOutput;
   assert.strictEqual(spec.permissionDecision, 'deny');

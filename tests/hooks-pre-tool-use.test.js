@@ -1944,7 +1944,7 @@ test('#4620 AC4.10: readConsoleCeiling matches readPolicy() under control mode',
     const dir = consoleRun(null);
     const repo = repoOfRun(dir);
     withPolicy(repo, policy);
-    assert.strictEqual(pre.readConsoleCeiling(dir, repo), readPolicy({ execFile, cwd: repo, runDir: dir }).ceiling, policy);
+    assert.strictEqual(pre.readConsoleCeiling(dir, repo, { env: BASE_ENV }), readPolicy({ execFile, cwd: repo, runDir: dir }).ceiling, policy);
   }
   const first = consoleRun(null);
   withPolicy(repoOfRun(first), policies[0]);
