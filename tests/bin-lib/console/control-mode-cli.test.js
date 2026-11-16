@@ -658,7 +658,7 @@ test('--set-item carried exits 5 when console.json stops being rewritable after 
     return Date.parse('2026-09-06T12:00:00Z');
   } });
   assert.strictEqual(await run(setItemArgs(fx, 'ledger-record-1.md', 'carried'), b.d), 5, b.err());
-  assert.strictEqual(b.err(), 'console-resolve.js: item ledger-record-1.md is dropped, not rewritable to carried (only apply/approve/filed → carried) — nothing written\n');
+  assert.strictEqual(b.err(), 'console-resolve.js: item ledger-record-1.md is dropped, not rewritable to carried (only apply/approve/filed → carried) — the decision fact decision:console:ledger-record-1.md is in decisions.json; the console item is unchanged\n');
   assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), ['decision:console:ledger-record-1.md'], 'the fact landed before the refusal');
   assert.strictEqual(cj(fx).items[0].resolution, 'dropped');
 });

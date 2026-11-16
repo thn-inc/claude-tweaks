@@ -435,7 +435,11 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
     stderr(`console-resolve.js: could not write ${consolePath}: ${err && err.message ? err.message : err}\n`);
     return 3;
   }
-  if (r.status === 'refused') { stderr(`console-resolve.js: ${r.why} — nothing written\n`); return 5; }
+  if (r.status === 'refused') {
+    // The fact (and possibly the ledger row) already landed: say so, never "nothing written".
+    stderr(`console-resolve.js: ${r.why} — the decision fact ${fact.id} is in decisions.json${ledgerChanged ? ` and ledger row #${ledger.row} is settled` : ''}; the console item is unchanged\n`);
+    return 5;
+  }
   // One helper for both paths: appends the AUTO line; returns null, or the message a failed append leaves.
   const logLine = (text) => {
     try {
