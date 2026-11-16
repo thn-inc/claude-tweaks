@@ -66,3 +66,47 @@ test('splitJobPhases returns null when completedAt is missing', () => {
   void completedAt;
   assert.equal(splitJobPhases(noKey, DECLARED), null);
 });
+
+test('percentile of a non-array input is null', () => {
+  assert.equal(percentile(null, 50), null);
+  assert.equal(percentile('1,2,3', 50), null);
+});
+
+test('percentile with a non-finite or out-of-range p is null', () => {
+  assert.equal(percentile([1, 2, 3], NaN), null);
+  assert.equal(percentile([1, 2, 3], Infinity), null);
+  assert.equal(percentile([1, 2, 3], -1), null);
+  assert.equal(percentile([1, 2, 3], 101), null);
+});
+
+test('percentile ignores non-finite values', () => {
+  assert.equal(percentile([10, NaN, Infinity, 'x', 20], 50), 10);
+  assert.equal(percentile([NaN, NaN, Infinity], 50), null);
+});
+
+test('splitJobPhases with a boundary outside the job window leaves setup null', () => {
+  const j = job();
+  j.steps[1] = { ...j.steps[1], startedAt: T('03:00') };
+  j.steps[2] = { ...j.steps[2], startedAt: T('00:10') };
+  assert.deepEqual(splitJobPhases(j, DECLARED), { waitingMs: 30000, setupMs: null, runningMs: 120000 });
+});
+
+test('splitJobPhases returns null when completedAt precedes startedAt', () => {
+  assert.equal(splitJobPhases(job({ completedAt: T('00:20') }), DECLARED), null);
+});
+
+test('splitJobPhases returns null for an unparseable instant', () => {
+  assert.equal(splitJobPhases(job({ startedAt: 'not-a-date' }), DECLARED), null);
+});
+
+test('splitJobPhases skips a matching step with no startedAt and uses the next matching command', () => {
+  const j = job();
+  j.steps[1] = { ...j.steps[1], startedAt: null, completedAt: null };
+  assert.deepEqual(splitJobPhases(j, DECLARED), { waitingMs: 30000, setupMs: 50000, runningMs: 70000 });
+});
+
+test('splitJobPhases orders run steps by number before finding the boundary', () => {
+  const j = job();
+  j.steps = [j.steps[2], j.steps[0], j.steps[1]];
+  assert.deepEqual(splitJobPhases(j, DECLARED), { waitingMs: 30000, setupMs: 20000, runningMs: 100000 });
+});
