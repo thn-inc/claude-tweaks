@@ -71,8 +71,11 @@ Two consequences, both load-bearing:
   state, which is what makes automatic reaping (`bin/lib/hooks/worktree-reap.js`, fired from
   `session-start.js`) safe.
 - **`work/{n}-spec.md` is the first of two exceptions** and stays inside the worktree. It is
-  git-tracked and must be committed onto the feature branch; it reaches the main checkout by
-  merge.
+  git-tracked and must be committed onto the feature branch; it is committed on the feature
+  branch during the run and, at wrap-up before the merge, `git mv`'d to `archive/{run-id}/` on
+  the branch (`bin/archive-run-header.js`, #3976), so it reaches the main checkout already
+  archived. After wrap-up no consumer reads the header from the live path directly: every
+  header read goes through `bin/lib/run-header.js`'s resolver (#3974).
 - **A `*-tidy-standalone*` run's own audit files are the second exception (#1493)** — under
   `pr-first`, `decisions.md`, `report.md`, and `staged/**` are copied into the worktree's own
   copy of the run dir (`tidy/SKILL.md` Step 7.5) and committed there, the same shape as
