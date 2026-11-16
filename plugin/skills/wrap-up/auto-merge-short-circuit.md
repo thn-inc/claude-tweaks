@@ -138,7 +138,7 @@ bearing on whether the record gets `demo:pending`; `_shared/work-record.md` stat
 this branch is the only place that can honor it.
 
 **Ledger deletion (`cleanup-procedures.md` item 2) — before the merge (#939).** This branch
-bypasses Phase 4's execution step, which is where item 2 (Open items ledger) normally runs —
+bypasses both places item 2 (Open items ledger) normally runs — `review-console.md`'s "On approval" step 13 (Ledger close-out) under `pr-first`, Phase 4's execution step under `local-merge` —
 re-implement it here, the same way acceptance labeling above is re-implemented rather than
 skipped. Phase 3's ledger gate has already confirmed zero `open` rows by the time this branch is
 reached (`/review` passing is itself gated on that), so item 2's own stated precondition is
