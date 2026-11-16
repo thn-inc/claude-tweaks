@@ -530,12 +530,18 @@ test('#5377 probesFor: no env returns DEFAULT_PROBES itself, an env binds the ps
   const real = cp.execFileSync;
   let seen = null;
   cp.execFileSync = (file, args, opts) => { seen = opts; return 'Sat Oct 24 08:08:15 2026\n'; };
+  let started;
   try {
-    assert.strictEqual(probesFor({ SENTINEL_5377: 'ctx-env' }).pidStartTime(process.pid), 'Sat Oct 24 08:08:15 2026');
+    started = probesFor({ SENTINEL_5377: 'ctx-env' }).pidStartTime(process.pid);
   } finally {
     cp.execFileSync = real;
   }
-  if (process.platform !== 'win32') {
+  if (process.platform === 'win32') {
+    // pidStartTime is null on win32 by design (process-probe.js) and never starts ps.
+    assert.strictEqual(started, null);
+    assert.strictEqual(seen, null);
+  } else {
+    assert.strictEqual(started, 'Sat Oct 24 08:08:15 2026');
     assert.strictEqual(seen.env.SENTINEL_5377, 'ctx-env');
     assert.strictEqual(seen.env.LC_ALL, 'C');
   }
