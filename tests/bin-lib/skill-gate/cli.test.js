@@ -20,7 +20,7 @@ const ENV = {
   PATH: process.env.PATH,
   ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
   GIT_CONFIG_NOSYSTEM: '1',
-  GIT_CONFIG_GLOBAL: os.devNull,
+  GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_AUTHOR_NAME: 't',
   GIT_AUTHOR_EMAIL: 't@example.test',
   GIT_COMMITTER_NAME: 't',

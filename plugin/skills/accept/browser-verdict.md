@@ -1,6 +1,6 @@
-# Demo Step 2 — Browser Verdict
+# Accept Step 2 — Browser Verdict
 
-Referenced by `skills/demo/SKILL.md` Step 2's `### Verdict` subsection. Read only when this
+Referenced by `skills/accept/SKILL.md` Step 2's `### Verdict` subsection. Read only when this
 record's Observation plan is a `rendered-page`/`app-route` surface **and** browser tools resolve
 — a `cli`/`flow`/`diff` plan, or a run with no browser tools, goes straight to `SKILL.md`'s
 terminal question and never reads this file. In the body below, "the terminal question below" and
@@ -44,7 +44,8 @@ Stop the server (`visual-decide.js stop --state <demo-dir>/.vd-state`) before pr
 Lifecycle ownership; never rely on the idle timeout. This is a fresh server per verdict attempt,
 never reused across records or across a re-demo of the same one.
 
-**No auto-mode path reaches this.** `/claude-tweaks:demo` has no `$PIPELINE_RUN_DIR` to begin
-with — it is never invoked from within an `auto`-mode pipeline (`## Component-Skill Contract`
-below) — so this whole browser-verdict path is structurally unreachable from `auto`, the same
-constraint `_shared/visual-decision.md` requires of every consumer.
+**No auto-mode path reaches this.** The one entry a pipeline reaches is the automatic entry
+(`automatic-entry.md`, `SKILL.md`'s `## Component-Skill Contract`), which never reads this file:
+it walks no packet and asks nothing. Only the on-demand entry, typed by a human, gets here, so
+this whole browser-verdict path is structurally unreachable from `auto`, the same constraint
+`_shared/visual-decision.md` requires of every consumer.

@@ -140,6 +140,12 @@
 //    closes. A skip-count ceiling would not close this: a hung child leaves
 //    that skipped yield as the agent's last stop, so there is no later stop
 //    for a ceiling to grade.
+// Stop marker (#5602): independent of grading, every stop whose payload carries
+// an agent_id, a session_id and a distinct agent_transcript_path also appends
+// {agentId, at, blocked, pending} to the session's stop file via
+// ../wait-for/marker.js, after the answer above is settled and on every path —
+// no owned run and third-party agent types included. Any fault in it is
+// swallowed, so it can never change what this hook returns or prints.
 'use strict';
 const fs = require('fs');
 const ctxLib = require('./context');
@@ -449,8 +455,7 @@ function lastAssistantText(transcriptPath) {
   return { text: null, asyncWaitCheckpoint: false };
 }
 
-function run(ctx) {
-  ctxLib.requireEnv(ctx);
+function grade(ctx, memo) {
   // Scoped to ctx.ownedRun, NEVER ctx.runDir: the latter is the session-agnostic
   // newest-non-terminal resolution, so with parallel sessions active a sibling
   // session's Task-agent stop would stamp whichever run dir happens to be newest
@@ -460,7 +465,7 @@ function run(ctx) {
   // session owns no run, matching skill-invocation.js's identical guard.
   const ownedRun = ctx.ownedRun || {};
   if (!ownedRun.dir) return {};
-  if (isExemptAgentType(ctx.input.agent_type)) return {}; // third-party agent — never governed by this contract; checked before the transcript read below so an exempt stop never pays that I/O cost
+  if (isExemptAgentType(ctx.input.agent_type)) return {}; // third-party agent — never governed by this contract; not graded, so it never pays the grading read below (the stop marker, recordStop, still reads its transcript for the pending count, #5602)
   // #1928: only a real agent transcript is graded. The former fallback to
   // the parent session's transcript_path scored the orchestrator's own
   // narration as a subagent reply — the bulk of the corpus's false fires.
@@ -474,7 +479,8 @@ function run(ctx) {
   // transcriptPath is already a confirmed non-empty string (checked above),
   // so a straight equality test already implies mainTranscriptPath is one too.
   if (ctx.input.transcript_path === transcriptPath) return {};
-  const { text, asyncWaitCheckpoint, lines, replyIndex } = lastAssistantText(transcriptPath);
+  memo.last ??= lastAssistantText(transcriptPath);
+  const { text, asyncWaitCheckpoint, lines, replyIndex } = memo.last;
   if (typeof text !== 'string') return {}; // unreadable -> best-effort no-op
   const trimmedText = text.trim();
   const firstLine = trimmedText.split('\n')[0].slice(0, 120);
@@ -521,7 +527,8 @@ function run(ctx) {
   // still pending is not its final reply. Bounded (PENDING_DISPATCH_MAX_AGE_MS);
   // null (indeterminate transcript shape) grades as today. Computed only here,
   // after every cheaper skip, since it parses the whole transcript.
-  if (countPendingDispatches(lines, replyIndex) > 0) return {};
+  memo.pending = countPendingDispatches(lines, replyIndex); // shared with recordStop so a stop parses once
+  if (memo.pending > 0) return {};
   if (toolUseCount === 0) {
     ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
   }
@@ -556,6 +563,31 @@ function run(ctx) {
   const variant = classifyViolationVariant(trimmedText);
   ctxLib.appendEvent(ownedRun.dir, 'contract-violation', { firstLine, variant }, ownedRun.attribution);
   return { json: { systemMessage: 'claude-tweaks: a subagent reply is missing the Subagent Contract status line (STATUS: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, as the last non-empty line). Logged to events.jsonl.' } };
+}
+
+// #5602: append this stop to the per-session marker file wait-for.js reads.
+// Runs after grade() has its answer, on every path (no owned run, exempt agent
+// type, unreadable transcript included), and can never change that answer:
+// every fault — a marker.js load error, an fs error — is swallowed. Prints
+// nothing, logs nothing. memo carries the transcript read grade() already made.
+function recordStop(ctx, out, memo) {
+  try {
+    const { agent_id: agentId, session_id: sessionId, agent_transcript_path: transcriptPath, transcript_path: mainPath } = ctx.input;
+    if (!nonEmptyString(agentId) || !nonEmptyString(sessionId) || !nonEmptyString(transcriptPath) || transcriptPath === mainPath) return;
+    const marker = require('../wait-for/marker');
+    memo.last ??= lastAssistantText(transcriptPath);
+    if (!('pending' in memo)) memo.pending = typeof memo.last.text === 'string' ? countPendingDispatches(memo.last.lines, memo.last.replyIndex) : null;
+    const blocked = Boolean(out && out.json && out.json.decision === 'block');
+    marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending: memo.pending });
+  } catch { /* the marker never changes the hook's answer */ }
+}
+
+function run(ctx) {
+  ctxLib.requireEnv(ctx);
+  const memo = {};
+  const out = grade(ctx, memo);
+  recordStop(ctx, out, memo);
+  return out;
 }
 
 module.exports = { run, isExemptAgentType, isAsyncWaitSignal, detectStatus, classifyViolationVariant, countToolUseBlocks, isInterimProgressReply, countPendingDispatches, PENDING_DISPATCH_MAX_AGE_MS };
