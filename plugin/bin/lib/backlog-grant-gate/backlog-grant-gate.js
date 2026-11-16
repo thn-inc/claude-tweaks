@@ -84,10 +84,10 @@ function filterCandidates(issues, openNumbers, foreignByRecord) {
 // back for the next reader, a degraded enrichment included: the snapshot lives
 // for its TTL, so a transient failure leaves the gap in place for the same
 // window and only this first call prints the warning. owner/repo are
-// deliberately not passed to the
-// enrichment: `--repo` addresses the native calls while this list reads cwd's
-// repo, so enrichRecords resolves the repo with `repo view` on this same
-// runner. A degraded enrichment fails open and warns once on `stderr`.
+// deliberately not passed to the enrichment: `--repo` addresses the native
+// calls while this list reads cwd's repo, so enrichRecords resolves the repo
+// with `repo view` on this same runner. A degraded enrichment fails open and
+// warns once on `stderr`.
 function fetchAllRecords({
   limit, runner, sessionId, ttlSeconds, now = Date.now(), stderr = (s) => process.stderr.write(s),
 }) {
