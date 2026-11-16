@@ -12,7 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const { safeReal, nearestExistingDir, mainCheckoutRoot } = require('./worktree-detect');
-const { resolveOwnerPid } = require('../run-liveness/process-probe');
+const processProbe = require('../run-liveness/process-probe');
 const { isPathContained } = require('../shared-primitives');
 
 const HOLD_DIR_NAME = 'claude-tweaks-holds';
@@ -256,7 +256,7 @@ function stampHoldForCwd({ cwd, sessionId, env, ownerBlock } = {}) {
 // SessionEnd: every hold this session wrote under this process's pid, in any worktree.
 function releaseSessionHolds({ cwd, sessionId, env, resolvePid } = {}) {
   try {
-    const { pid } = (resolvePid || resolveOwnerPid)(env);
+    const { pid } = (resolvePid || processProbe.resolveOwnerPid)(env);
     if (!isPid(pid)) return 0;
     const mainRoot = mainCheckoutRoot(cwd);
     return mainRoot ? clearSessionHolds(mainRoot, { sessionId, pid }) : 0;
@@ -269,7 +269,7 @@ function releaseSessionHolds({ cwd, sessionId, env, resolvePid } = {}) {
 function releaseAgentHolds({ cwd, sessionId, agentId, env, resolvePid } = {}) {
   try {
     if (!agentId) return 0;
-    const { pid } = (resolvePid || resolveOwnerPid)(env);
+    const { pid } = (resolvePid || processProbe.resolveOwnerPid)(env);
     const key = holdKey({ sessionId, agentId, pid });
     const mainRoot = key && mainCheckoutRoot(cwd);
     return mainRoot ? clearHolds(mainRoot, { key }) : 0;

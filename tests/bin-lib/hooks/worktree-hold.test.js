@@ -12,6 +12,7 @@ const {
   stampHoldForCwd, releaseSessionHolds, releaseAgentHolds,
 } = require('../../../plugin/bin/lib/hooks/worktree-hold');
 const { ownerBlock } = require('../../../plugin/bin/lib/hooks/context');
+const processProbe = require('../../../plugin/bin/lib/run-liveness/process-probe');
 const { safeReal } = require('../../../plugin/bin/lib/hooks/worktree-detect');
 const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
 
@@ -254,6 +255,20 @@ test('releaseSessionHolds: with no CLAUDE_PID, releases the hold written under t
     releaseSessionHolds({ cwd: a, sessionId: 's1', env: {}, resolvePid: () => ({ pid: 77, pidSource: 'ancestry' }) }),
     1,
   );
+  assert.deepStrictEqual(readHolds(a), []);
+});
+
+test('releaseSessionHolds: the default pid source is process-probe\'s resolveOwnerPid (the one ownerBlock stamps with)', () => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'wt-default');
+  assert.ok(writeHold(a, { key: 's1__main__88', block: BLOCK }));
+  const real = processProbe.resolveOwnerPid;
+  processProbe.resolveOwnerPid = () => ({ pid: 88, pidSource: 'ancestry' });
+  try {
+    assert.strictEqual(releaseSessionHolds({ cwd: a, sessionId: 's1', env: {} }), 1);
+  } finally {
+    processProbe.resolveOwnerPid = real;
+  }
   assert.deepStrictEqual(readHolds(a), []);
 });
 
