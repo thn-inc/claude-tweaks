@@ -3,8 +3,8 @@
 // tests/resolve-blockers-cli.test.js's deps-injection style. Covers the
 // factory's own parse/exit-code contract once (malformed list, --repo
 // missing value, unknown flag, gh absent, unresolvable repo, fetch throw,
-// --help), including the cases moved here from the two concrete CLIs' test
-// files by #5552 — the concrete CLIs' files (resolve-blockers.js,
+// --help, non-positive and partly malformed lists, a trailing comma, --repo
+// followed by a flag). The concrete CLIs' files (resolve-blockers.js,
 // resolve-linked-prs.js) test only their own usage name, `gh` argv,
 // --hostname, output shapes and GraphQL failure.
 'use strict';
@@ -108,7 +108,7 @@ test('no --repo and no resolvable origin remote — exit 2', () => {
   assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo/);
 });
 
-test('AC5.1: non-positive <n> — exit 1', () => {
+test('#5552 AC5.1: non-positive <n> — exit 1', () => {
   const { run } = buildCli();
   const deps = fakeDeps();
   const code = run(['0'], deps);
@@ -116,7 +116,7 @@ test('AC5.1: non-positive <n> — exit 1', () => {
   assert.match(deps.calls.stderr.join(''), /malformed <n>/);
 });
 
-test('AC5.1: a comma list with one malformed entry — exit 1, gh never probed', () => {
+test('#5552 AC5.1: a comma list with one malformed entry — exit 1, gh never probed', () => {
   const { run } = buildCli();
   const deps = fakeDeps({ ghAvailable: () => { throw new Error('should not be called'); } });
   const code = run(['720,abc,730'], deps);
@@ -124,7 +124,7 @@ test('AC5.1: a comma list with one malformed entry — exit 1, gh never probed',
   assert.match(deps.calls.stderr.join(''), /malformed <n>/);
 });
 
-test('AC5.1: a trailing comma (empty segment) — exit 1', () => {
+test('#5552 AC5.1: a trailing comma (empty segment) — exit 1', () => {
   const { run } = buildCli();
   const deps = fakeDeps();
   const code = run(['720,'], deps);
@@ -132,7 +132,7 @@ test('AC5.1: a trailing comma (empty segment) — exit 1', () => {
   assert.match(deps.calls.stderr.join(''), /malformed <n>/);
 });
 
-test('AC5.1: --repo followed by another flag is a missing value, not the value — exit 1', () => {
+test('#5552 AC5.1: --repo followed by another flag is a missing value, not the value — exit 1', () => {
   const { run } = buildCli();
   const deps = fakeDeps({
     ghAvailable: () => { throw new Error('should not be called'); },
@@ -143,7 +143,7 @@ test('AC5.1: --repo followed by another flag is a missing value, not the value �
   assert.match(deps.calls.stderr.join(''), /missing value for --repo/);
 });
 
-test('AC5.1: `gh` absent — remoteUrl is never called', () => {
+test('#5552 AC5.1: `gh` absent — remoteUrl is never called', () => {
   const { run } = buildCli();
   let remoteCalls = 0;
   const deps = fakeDeps({
