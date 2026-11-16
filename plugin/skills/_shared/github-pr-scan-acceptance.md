@@ -18,9 +18,9 @@ Every `gh issue list`/`gh pr list` call below carries an explicit `--limit`, siz
 
 One cheap list for the dashboard's Acceptance Queue section — deliberately `--state all`, unlike
 every other count in this file, since a pending acceptance persists independent of open/closed state
-(an `auto:merge`'d record's issue can already be closed while still awaiting sign-off). `/demo`
-no longer sweeps this backlog itself (it resolves only the items you name — a bare ref or an
-explicit `#N,#M` list, never a scan), so this is the sole place the outstanding set is enumerated.
+(an `auto:merge`'d record's issue can already be closed while still awaiting sign-off). `/accept`
+resolves only the items you name (a bare ref or an explicit `#N,#M` list, never a scan), so this is
+the sole place the outstanding set is enumerated.
 
 ```bash
 gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200
