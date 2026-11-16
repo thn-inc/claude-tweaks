@@ -39,7 +39,7 @@
 //   `:(literal)` pathspec; an empty pathspec would commit the whole index. It takes `env`'s identity and runs its hooks.
 //   Throws a TypeError for a `runId` (a run-id segment with no glob or path characters) or
 //   `specDir` that is not shaped like one: a
-//   caller bug, never a repo state. `validRunId(runId)` and `SPEC_DIR_RE` are those two checks,
+//   caller bug, never a repo state; its `code` is ARGS_ERROR_CODE ('ERR_RUN_HEADER_ARGS'). `validRunId(runId)` and `SPEC_DIR_RE` are those two checks,
 //   exported so a CLI refuses a malformed value (bin/archive-run-header.js, exit 2) before the call.
 //
 // pushRunBranch({ worktree, env, git = runGit })
@@ -62,6 +62,8 @@ const SAFE_RUN_ID_RE = /^\d{4}-\d{2}-\d{2}T[0-9A-Za-z._-]+$/;
 // A commit runs the repo's hooks and a push talks to a remote; both may outlast runGit's 10s default.
 const COMMIT_TIMEOUT_MS = 120000;
 const PUSH_TIMEOUT_MS = 120000;
+// The `code` on the TypeError a bad `runId`/`specDir` throws, so a caller tells it from a bug inside the move.
+const ARGS_ERROR_CODE = 'ERR_RUN_HEADER_ARGS';
 
 function ARCHIVE_HEADER_SUBJECT(runId) {
   return `Archive run ${runId} spec header — moved to archive/ before merge`;
@@ -106,10 +108,14 @@ function pruneEmptyDirs(worktree, rel, liveDir) {
   }
 }
 
+function argsError(message) {
+  return Object.assign(new TypeError(message), { code: ARGS_ERROR_CODE });
+}
+
 function archiveRunHeader({ worktree, runId, specDir = null, env, git = runGit } = {}) {
-  if (!validRunId(runId)) throw new TypeError(`archiveRunHeader: not a run id: ${String(runId)}`);
+  if (!validRunId(runId)) throw argsError(`archiveRunHeader: not a run id: ${String(runId)}`);
   if (specDir !== null && !SPEC_DIR_RE.test(String(specDir))) {
-    throw new TypeError(`archiveRunHeader: not a spec dir: ${String(specDir)}`);
+    throw argsError(`archiveRunHeader: not a spec dir: ${String(specDir)}`);
   }
   const g = (args, opts = {}) => git(args, worktree, { env, ...opts });
 
@@ -273,4 +279,4 @@ function pushRunBranch({ worktree, env, git = runGit } = {}) {
     : { pushed: true, branch };
 }
 
-module.exports = { ARCHIVE_HEADER_SUBJECT, SPEC_DIR_RE, archiveRunHeader, pushRunBranch, validRunId };
+module.exports = { ARCHIVE_HEADER_SUBJECT, ARGS_ERROR_CODE, SPEC_DIR_RE, archiveRunHeader, pushRunBranch, validRunId };

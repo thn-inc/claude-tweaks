@@ -356,6 +356,10 @@ test('an argument that is not a run id or a spec dir throws instead of reaching 
   assert.throws(() => archiveRunHeader({ worktree: r.dir, runId: '../escape', env: ENV }), TypeError);
   assert.throws(() => archiveRunHeader({ worktree: r.dir, runId: RUN, specDir: 'spec-8/../x', env: ENV }), TypeError);
   assert.throws(() => archiveRunHeader({ worktree: r.dir, runId: RUN, specDir: 'work', env: ENV }), TypeError);
+  // The CLI tells these from a bug inside the move by this code, never by the error's type.
+  for (const bad of [{ runId: '../escape' }, { runId: RUN, specDir: 'work' }]) {
+    assert.throws(() => archiveRunHeader({ worktree: r.dir, env: ENV, ...bad }), { name: 'TypeError', code: 'ERR_RUN_HEADER_ARGS' });
+  }
 });
 
 test('AC7.1 the gh-absent bookends check reads the archived-only header as materialized', () => {

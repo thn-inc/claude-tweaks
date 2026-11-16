@@ -32,15 +32,17 @@
 //
 // Status is data: exit 0 whenever an envelope was printed, whatever its outcome or reason.
 // 2 malformed invocation (a missing or option-shaped value, an unknown flag, a --run that is not under
-//   `.claude-tweaks/pipelines/` or whose run id or spec segment is not shaped like one; a TypeError the
-//   move throws anyway); git is never spawned for a malformed --run.
+//   `.claude-tweaks/pipelines/` or whose run id or spec segment is not shaped like one; the move's own
+//   argument error, ERR_RUN_HEADER_ARGS); git is never spawned for a malformed --run.
 // 3 run dir missing or not anchored under the main checkout (a worktree-local shadow --
 //   _shared/pipeline-run-dir.md, [IL-127]); an archive/{run-id} dir in the main checkout is anchored.
 //   Checked before any git call. Same vocabulary as post-merge-run.js (the Sanctioned-writer family).
 'use strict';
 
 const path = require('path');
-const { archiveRunHeader, pushRunBranch, validRunId, SPEC_DIR_RE } = require('./lib/run-header-archive');
+const {
+  archiveRunHeader, pushRunBranch, validRunId, SPEC_DIR_RE, ARGS_ERROR_CODE,
+} = require('./lib/run-header-archive');
 const { resolveTarget, formatEntry, appendEntries } = require('./lib/log-decision/append');
 const { readRunStateWithParent, readRunState } = require('./lib/hooks/context');
 const { mainCheckoutRoot, safeReal } = require('./lib/hooks/worktree-detect');
@@ -196,8 +198,9 @@ function run(argv, overrides = {}) {
     try {
       result = deps.archiveRunHeader({ worktree, runId, specDir, env: deps.env });
     } catch (e) {
-      // The checks above are the library's own, so this is a caller bug, never a repo state: exit 2, not a crash.
-      if (e instanceof TypeError) { deps.stderr(`${NAME}: the move refused its arguments: ${e.message}\n`); return 2; }
+      // The checks above are the library's own, so its argument error is a caller bug, never a repo state: exit 2.
+      // Matched by code, never by type: a TypeError from inside the move may follow a mutation and must surface.
+      if (e && e.code === ARGS_ERROR_CODE) { deps.stderr(`${NAME}: the move refused its arguments: ${e.message}\n`); return 2; }
       throw e;
     }
   }

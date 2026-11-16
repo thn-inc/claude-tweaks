@@ -14,6 +14,7 @@ const path = require('node:path');
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { gitRepo, harnessWorktreeOf, originWithTwoClones, fixtureGit, cleanGitEnv, hookEnv } = require('./helpers/git-fixtures');
 const { writeRunState } = require('../plugin/bin/lib/hooks/context');
+const { ARGS_ERROR_CODE } = require('../plugin/bin/lib/run-header-archive');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'archive-run-header.js');
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -339,12 +340,12 @@ test('the push runs with the injected env', () => {
   assert.equal(f.git(f.main, 'ls-remote', 'origin', `refs/heads/${branch}`), '', 'and not at origin');
 });
 
-test('a TypeError from the move exits 2 with one stderr line; any other throw is not swallowed', () => {
+test('the move\'s argument error exits 2 with one stderr line; any other throw, a plain TypeError included, is not swallowed', () => {
   const f = makeFixture();
   f.header(`${LIVE}/work/7-spec.md`);
   const head = f.head();
 
-  const res = cli(f, ['--run', f.runDir], { deps: { archiveRunHeader: () => { throw new TypeError('boom'); } } });
+  const res = cli(f, ['--run', f.runDir], { deps: { archiveRunHeader: () => { throw Object.assign(new TypeError('boom'), { code: ARGS_ERROR_CODE }); } } });
 
   assert.equal(res.code, 2);
   assert.equal(res.stdout, '');
@@ -352,6 +353,8 @@ test('a TypeError from the move exits 2 with one stderr line; any other throw is
   assert.equal(f.decisions(), '');
   assert.equal(f.head(), head);
   assert.throws(() => cli(f, ['--run', f.runDir], { deps: { archiveRunHeader: () => { throw new Error('other'); } } }), /other/);
+  // A TypeError from inside the move (a bug after a mutation, say) is not an argument refusal.
+  assert.throws(() => cli(f, ['--run', f.runDir], { deps: { archiveRunHeader: () => { throw new TypeError('x'); } } }), { name: 'TypeError', message: 'x' });
 });
 
 test('an unanchored worktree-local shadow --run exits 3 and leaves the shadow byte-unchanged', () => {
