@@ -39,8 +39,9 @@
 //     pass's `stop`), a third and fourth stop beside Q3's corrupt-exclusions and unreadable-groups.
 //   - F-linked's single Warning (the open-linked-PR lookup failed) also turns off the shipped pass:
 //     it drops shipped:9010 as well as the two open-pr exclusions. F-intbranch (no integration-branch
-//     policy key, `git remote show origin` fails) drops the unlanded-blocker:9011 exclusion. (NEW
-//     cross-pass effects; each pass still fails open.)
+//     policy key, `git remote show origin` fails) skips the target-missing pass with one Warning and
+//     drops the unlanded-blocker:9011 exclusion beside it. (NEW cross-pass effects; each pass still
+//     fails open.)
 //   - A silent fail-open on the files transport: files-verifiedOpenDeps-missing and
 //     files-verifiedOpenDeps-malformed exit 0 with no Warning or AUTO line and drop the blocked:9002
 //     exclusion, so a blocked record becomes dispatchable with nothing printed (the files twin of
@@ -1724,11 +1725,13 @@ test('#5227 portability: the integration branch comes from the policy key, else 
   assert.deepEqual(policyGit.map((a) => a.join(' ')), ['cat-file -e origin/release/next:docs/gone6.md', 'cat-file -e origin/release/next:docs/gone.md'], 'no `git remote show origin` when the policy answers');
 });
 
-test('#5227 portability: a failing `git remote show origin` leaves the branch empty and the pull continues (every named target reads as missing)', () => {
+test('#5227 portability: a failing `git remote show origin` leaves the branch empty, composes no origin/ ref, skips the target-missing pass and the pull continues', () => {
   const r = pull4({ ...FULL(), gitFail: [['remote', 'show', 'origin']] });
   assert.equal(r.state.integrationBranch, '');
-  assert.equal(r.state.integrationRef, 'origin/');
-  assert.deepEqual(entriesOf(r, 'target-missing').map((e) => e.records[0]), [9006, 9009]);
+  assert.equal(r.state.integrationRef, '', 'no origin/ ref is composed');
+  assert.deepEqual(entriesOf(r, 'target-missing'), [], 'no named target is excluded against an empty branch');
+  const named = JSON.parse(r.text['dispatch-named-targets.json']).map((e) => e.number);
+  assert.ok(named.includes(9006) && named.includes(9009), 'dispatch-named-targets.json is still written with the named candidates');
 });
 
 test('AC4.6 (in-process): a corrupt exclusions file before the open-PR append throws QueuePullStopped with the fence stop line, runs no later pass and leaves the file as it was', () => {
@@ -3264,6 +3267,7 @@ const STOP_LINE = {
   target: `${TARGET_STOP}1); see error above.`,
 };
 // Lines the CLIs and libraries the fence runs print (not fence echo text).
+const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no integration branch resolved';
 const LANDING_SKIPPED = 'Warning: unlanded-blocker pass skipped — ';
 const LANDING_EXITED = `${LANDING_SKIPPED}preflight-records.js exited 1; no unlanded-blocker exclusions this pull`;
 const CLAIM_READ_FAILED_7001 = 'AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight';
@@ -3299,9 +3303,10 @@ const FAULT_EXPECT = {
   'F-foreign-states': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (ENOENT: ', 'Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
   'F-linked': { status: 0, stderr: [`${LINKED_WARNING}gh-fault: injected failure`], drops: ['open-pr:9005', 'open-pr:9008', 'shipped:9010'] },
   'F-intbranch': {
-    status: 0, stderr: [`${LANDING_SKIPPED}no integration branch resolved; no unlanded-blocker exclusions this pull`],
-    stdout: [6, 9, 17].map((n) => `- AUTO 12:00:00 — log-decision: dispatch: #90${String(n).padStart(2, '0')} excluded, named target docs/${{ 6: 'gone6', 9: 'gone', 17: 'present' }[n]}.md absent at origin/. Reversibility: n/a.`),
-    drops: ['unlanded-blocker:9011'], adds: ['target-missing:9017'],
+    // #9006 is no longer pre-excluded as target-missing, so the shipped pass (which runs next) excludes it on its merged-PR signal.
+    status: 0, stderr: [TARGET_MISSING_SKIPPED, 'AUTO — dispatch: #9006 excluded, shipped by merged PR #5006', `${LANDING_SKIPPED}no integration branch resolved; no unlanded-blocker exclusions this pull`],
+    stdout: [],
+    drops: ['target-missing:9006', 'target-missing:9009', 'unlanded-blocker:9011'], adds: ['shipped:9006'],
   },
   'F-prview': { status: 0, stderr: [], drops: [] },
   'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
@@ -3475,11 +3480,11 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     }
     assert.deepEqual(exclusionsIn(R['S2-gh-miss'].oracle).find((e) => e.records[0] === 9031).detail.blockedBy, ['acme-corp/other#12'], 'the S2 base reads the state (control)');
     for (const [side, r] of sides(R['F-intbranch'])) {
-      assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9017).detail, { path: 'docs/present.md' }, `F-intbranch ${side}`);
+      assert.ok(!exclusionsIn(r).some((e) => e.reason === 'target-missing'), `F-intbranch ${side}: no named target is excluded as absent`);
       assert.ok(r.gitArgv.some((e) => e.tag === 'injected' && e.argv.join(' ') === 'remote show origin'), `F-intbranch ${side}`);
+      assert.ok(!r.gitArgv.some((e) => e.argv[0] === 'cat-file'), `F-intbranch ${side}: no git cat-file probe runs against origin/`);
       const proposals = Object.entries(r.staged).filter(([n]) => n.startsWith('dispatch-target-missing-')).map(([, body]) => body);
-      assert.equal(proposals.length, 3, `F-intbranch ${side}`);
-      assert.ok(proposals.every((body) => body.includes('absent at `origin/`')), `F-intbranch ${side}: every target-missing Close proposal names origin/`);
+      assert.equal(proposals.length, 0, `F-intbranch ${side}: no target-missing Close proposal is staged`);
     }
     for (const [side, r] of sides(R['F-prview'])) assert.equal(r.files['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":[]}\n', `F-prview ${side}: a failed probe reads as no files`);
     assert.equal(R['S1-gh-miss'].oracle.files['dispatch-shipped-pr-files.jsonl'], `{"pr":5016,"files":${JSON.stringify(WEAK_PR_FILES)}}\n`, 'the base probes the files (control)');

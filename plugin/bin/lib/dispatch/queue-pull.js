@@ -763,6 +763,9 @@ function targetMissingProposal(num, tpath, ref) {
   ].map((l) => `${l}\n`).join('');
 }
 
+// #5305: the Warning an empty integration branch prints in place of the target-missing pass (fence 391-394).
+const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no integration branch resolved';
+
 // Fence 384-466. The run-dir and integration-branch resolution (385-395) is shared setup and
 // runs whether or not this pass is omitted; later passes read state.integrationBranch.
 function runTargetMissing(ctx) {
@@ -774,7 +777,8 @@ function runTargetMissing(ctx) {
   let branch = readPolicy(ctx, 'integration-branch');
   if (!branch) branch = remoteHeadBranch(ctx);
   state.integrationBranch = branch;
-  const ref = `origin/${branch}`;
+  // #5305: an empty branch composes no origin/ ref; the pass that compares against it is skipped.
+  const ref = branch ? `origin/${branch}` : '';
   state.integrationRef = ref;
   const exclusions = paths['dispatch-exclusions.json'];
 
@@ -785,22 +789,26 @@ function runTargetMissing(ctx) {
         .filter((c) => c.target);
       fs.writeFileSync(paths['dispatch-named-targets.json'], JSON.stringify(named));
     });
-    const probe = step(ctx, 'target-missing', () => {
-      const named = readJson(paths['dispatch-named-targets.json']);
-      const missing = named.filter(({ target }) => {
-        try {
-          deps.run('git', ['cat-file', '-e', `${ref}:${target.path}`], runOpts(ctx, { stdio: 'pipe' }));
-          return false;
-        } catch {
-          return true;
+    if (!branch) {
+      deps.stderr(`${TARGET_MISSING_SKIPPED}\n`);
+    } else {
+      const probe = step(ctx, 'target-missing', () => {
+        const named = readJson(paths['dispatch-named-targets.json']);
+        const missing = named.filter(({ target }) => {
+          try {
+            deps.run('git', ['cat-file', '-e', `${ref}:${target.path}`], runOpts(ctx, { stdio: 'pipe' }));
+            return false;
+          } catch {
+            return true;
+          }
+        });
+        for (const { number, target } of missing) {
+          appendExclusion(exclusions, { reason: 'target-missing', records: [number], detail: { path: target.path } });
         }
       });
-      for (const { number, target } of missing) {
-        appendExclusion(exclusions, { reason: 'target-missing', records: [number], detail: { path: target.path } });
-      }
-    });
-    // #3110: stop rather than continue with a partial exclusion list.
-    if (!probe.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- target-missing exclusion pass failed (exit 1); see error above.');
+      // #3110: stop rather than continue with a partial exclusion list.
+      if (!probe.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- target-missing exclusion pass failed (exit 1); see error above.');
+    }
   }
 
   step(ctx, 'target-missing-filter', () => rewriteGroups(ctx, () => {

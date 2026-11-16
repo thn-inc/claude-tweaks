@@ -391,7 +391,7 @@ INTEGRATION_BRANCH=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values
 if [ -z "$INTEGRATION_BRANCH" ]; then
   INTEGRATION_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
 fi
-INTEGRATION_REF="origin/$INTEGRATION_BRANCH"
+INTEGRATION_REF=${INTEGRATION_BRANCH:+origin/$INTEGRATION_BRANCH}
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_NAMED_TARGETS" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { namedTarget } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/named-target.js');
@@ -401,6 +401,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
     .filter((c) => c.target);
   fs.writeFileSync(process.argv[2], JSON.stringify(named));
 NODE_EVAL_EOF
+if [ -z "$INTEGRATION_BRANCH" ]; then
+  echo "Warning: target-missing pass skipped — no integration branch resolved" >&2
+else
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_NAMED_TARGETS" "$INTEGRATION_REF" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { execFileSync } = require('child_process');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -424,6 +427,7 @@ TARGET_MISSING_RC=$?
 if [ "$TARGET_MISSING_RC" -ne 0 ]; then
   echo "dispatch: queue-pull stopped -- target-missing exclusion pass failed (exit $TARGET_MISSING_RC); see error above." >&2
   exit 1
+fi
 fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
   const fs = require('fs');
