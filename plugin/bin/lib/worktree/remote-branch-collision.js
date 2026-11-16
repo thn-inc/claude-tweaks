@@ -24,6 +24,10 @@
 // `findPriorAttemptPr` recognizes it by PR identity, and checks that the closed
 // PR's head is an ancestor of origin's tip (not that the tip equals it): commits
 // pushed after the PR closed must still count as the same attempt (Review Focus 1).
+//
+// #5589: `checkAdoptedBranch` composes the whole check — classify, PR lookup,
+// prior-attempt recognition, stop card — into one call, so the build skill's
+// collision check is one CLI invocation instead of an inline script.
 'use strict';
 
 const { execFileSync } = require('child_process');
@@ -189,7 +193,27 @@ function formatStopCard({ branch, remoteSha, prLookup, reason }) {
   ].join('\n');
 }
 
+// The adopted-branch collision check as one call (#5589): classify, then — for a
+// `foreign` branch, or an `unreachable` one whose tip is known — look up PRs and
+// compose the stop card, or recognize a dispatched retry's own earlier attempt.
+// `records` is an array of positive integers (the CLI parses it). The result keys
+// are `state`, `reason`, `remoteSha` (null, never absent), plus `pr` when the
+// state became `prior-attempt`, or `card` when a stop card was composed.
+function checkAdoptedBranch({ branch, repo = null, records = [], git = defaultGit, gh = defaultGh }) {
+  const r = classifyRemoteBranch({ branch, git });
+  const out = { state: r.state, reason: r.reason || null, remoteSha: r.remoteSha || null };
+  if (r.state === 'foreign' || (r.state === 'unreachable' && r.remoteSha)) {
+    const reason = r.state === 'foreign' ? null : r.reason;
+    const prLookup = repo ? findPrsForBranch({ branch, repo, gh }) : null;
+    const prior = r.state === 'foreign' ? findPriorAttemptPr({ remoteSha: r.remoteSha, prLookup, records, repo, git }) : null;
+    if (prior) { out.state = 'prior-attempt'; out.pr = prior; }
+    else out.card = formatStopCard({ branch, remoteSha: r.remoteSha, prLookup, reason });
+  }
+  return out;
+}
+
 module.exports = {
+  checkAdoptedBranch,
   readRemoteTip,
   classifyRemoteBranch,
   findPrsForBranch,
