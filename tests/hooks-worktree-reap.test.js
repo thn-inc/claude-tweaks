@@ -512,7 +512,7 @@ test('QUIET_SKIP_REASONS covers exactly the reasons that describe a healthy repo
   // one silently is how the reaper becomes noise.
   assert.deepStrictEqual(
     [...QUIET_SKIP_REASONS].sort(),
-    [REASON.IN_USE, REASON.OUT_OF_DOMAIN, REASON.RECENT].sort(),
+    [REASON.IN_USE, REASON.OUT_OF_DOMAIN, REASON.RECENT, REASON.HELD].sort(),
   );
 });
 

@@ -17,12 +17,15 @@
 // it is parsed defensively and tested against a frozen fixture, never live
 // output: if it changes shape, pid comes back null and nothing is reaped.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { runGit } = require('./git-exec');
 const { mainCheckoutRoot, safeReal } = require('./worktree-detect');
 const policy = require('../policy');
 const { release: releasePortsDefault } = require('../ports/registry');
 const { isPathContained } = require('../shared-primitives');
+const { readHolds } = require('./worktree-hold');
+const { pidStartTime } = require('../run-liveness/process-probe');
 
 const PID_RE = /\(pid\s+(\d+)\b/;
 
@@ -75,12 +78,15 @@ const REASON = {
   UNKNOWN_LOCK: 'lock reason unrecognized',
   OUT_OF_DOMAIN: `outside the harness worktree domain (${HARNESS_WORKTREE_DIR}/)`,
   RECENT: 'lock owner is gone, but the worktree was modified within the grace period',
+  HELD: 'held by a live session in this worktree',
+  // Not quiet: a hold that cannot be read or verified is reported, so a stuck one surfaces.
+  HELD_UNVERIFIABLE: 'held by a session hold that cannot be verified',
 };
 
 // Skip reasons that are the normal, expected state of a healthy repo and would
 // otherwise be reprinted on every single SessionStart. Consumed by
 // session-start.js, which reports only the reasons NOT in this set.
-const QUIET_SKIP_REASONS = new Set([REASON.IN_USE, REASON.OUT_OF_DOMAIN, REASON.RECENT]);
+const QUIET_SKIP_REASONS = new Set([REASON.IN_USE, REASON.OUT_OF_DOMAIN, REASON.RECENT, REASON.HELD]);
 
 function parseWorktreeList(porcelain) {
   const out = [];
@@ -291,6 +297,13 @@ function reapWorktrees({
       skipped.push({ path: real, reason: verdict === 'in-use' ? REASON.IN_USE : REASON.UNKNOWN_LOCK });
       continue;
     }
+    // A live session's hold (#4960): a dispatch worktree is unlocked, but its session leaves a
+    // hold file in the worktree's git admin dir. fs-only, so it sits outside the examined cap.
+    const held = holdVerdict(real);
+    if (held !== 'free') {
+      skipped.push({ path: real, reason: held === 'held' ? REASON.HELD : REASON.HELD_UNVERIFIABLE });
+      continue;
+    }
     if (verdict === 'orphaned' && !isStale(real, now)) {
       skipped.push({ path: real, reason: REASON.RECENT });
       continue;
@@ -420,6 +433,39 @@ function isWorktreeLocked(wtPath, { cwd } = {}) {
   return false;
 }
 
+// Is a session standing in this worktree right now, per the hold files in its git admin dir
+// (worktree-hold.js)? Per hold: unreadable, from another host, or without a usable pid is
+// UNVERIFIABLE; a pid that is gone, or alive with a start time differing from the recorded one
+// (a recycled pid), is dead; anything else is live. Any live hold -> 'held' (the verified reason
+// wins over an unverifiable neighbour); else any unverifiable one -> 'unverifiable'; else 'free'.
+// A start time that cannot be read now never frees a hold. Never throws: an error reads
+// 'unverifiable', so the worktree is kept.
+function holdVerdict(wtPath, { hostname = os.hostname, isAlive = isPidAlive, startTime = pidStartTime } = {}) {
+  try {
+    let unverifiable = false;
+    for (const { hold } of readHolds(wtPath)) {
+      if (hold === null || hold.host !== hostname() || !Number.isInteger(hold.pid) || hold.pid <= 0) {
+        unverifiable = true;
+        continue;
+      }
+      if (!isAlive(hold.pid)) continue;
+      if (typeof hold.pidStartedAt === 'string' && hold.pidStartedAt !== '') {
+        const current = startTime(hold.pid);
+        if (typeof current === 'string' && current !== '' && current !== hold.pidStartedAt) continue;
+      }
+      return 'held';
+    }
+    return unverifiable ? 'unverifiable' : 'free';
+  } catch {
+    return 'unverifiable';
+  }
+}
+
+// Both non-free verdicts keep the worktree (fail closed).
+function isHeldByLiveSession(wtPath, opts) {
+  return holdVerdict(wtPath, opts) !== 'free';
+}
+
 module.exports = {
   parseWorktreeList,
   findWorktreeEntry,
@@ -433,6 +479,8 @@ module.exports = {
   preferRemoteTrackingRef,
   bareIntegrationName,
   isWorktreeLocked,
+  holdVerdict,
+  isHeldByLiveSession,
   HARNESS_WORKTREE_DIR,
   ORPHAN_GRACE_MS,
   MAX_EXAMINED_PER_RUN,

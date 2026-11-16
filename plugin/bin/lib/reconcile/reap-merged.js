@@ -13,12 +13,15 @@
 // changed). worktree-reap.js's own `reapWorktrees` already carries this
 // exact guard (`here === real || here.startsWith(...)`, "never our own
 // ground") — mirrored here rather than restated with different wording.
+// A third guard covers a live session in ANOTHER process: dispatch worktrees
+// are unlocked, so the session leaves a hold in the worktree's git admin dir
+// and `holdVerdict` reads it (#4960).
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { runGit, repoTargetOf } = require('../hooks/git-exec');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
-const { parseWorktreeList, isWorktreeLocked, HARNESS_WORKTREE_DIR, QUIET_SKIP_REASONS } = require('../hooks/worktree-reap');
+const { parseWorktreeList, isWorktreeLocked, holdVerdict, HARNESS_WORKTREE_DIR, QUIET_SKIP_REASONS } = require('../hooks/worktree-reap');
 const { isPathContained } = require('../shared-primitives');
 const { resolvePrState } = require('./pr-state');
 const { findRunByWorktreePath, appendEvent } = require('../hooks/context');
@@ -228,6 +231,15 @@ function reapMerged({
     // worktree the caller is standing in is never a reap candidate (#644).
     if (isOwnCwd(here, real)) { skipped.push({ path: real, reason: 'own-cwd' }); continue; }
     if (isWorktreeLocked(real, { cwd: root })) { skipped.push({ path: real, reason: 'in-use' }); continue; }
+    // A live session in another process, read from its hold (#4960). 'held' is quiet like 'in-use';
+    // a hold that cannot be verified keeps the worktree and is logged, so a stuck one surfaces.
+    const held = holdVerdict(real);
+    if (held === 'held') { skipped.push({ path: real, reason: 'held' }); continue; }
+    if (held === 'unverifiable') {
+      skipped.push({ path: real, reason: 'held-unverifiable' });
+      if (!dryRun) logReapEvent(resolveOwningRunDir(root, real), 'worktree-reap-skipped', { reason: 'held-unverifiable' });
+      continue;
+    }
 
     const prState = prStates ? prStates.byBranch(wt.branch) : resolvePrState(root, wt.branch);
     const decision = decideReap(prState);
