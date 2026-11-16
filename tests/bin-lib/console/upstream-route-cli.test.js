@@ -155,8 +155,36 @@ test('AC4.3: --filed logs the owned filing naming repo and URL, at trusted and a
 
 const skipLinesOf = (fx) => decisionsOf(fx).split('\n').filter((l) => /^- SKIP .*Upstream ownership/.test(l));
 
-test('--filed on a target that routes to hold exits 5 but logs the filing against the hold verdict, writing no fact', async () => {
+const stagedFile = (fx, id) => path.join(fx.runDir, 'staged', id);
+
+test('--filed needs no staged file: after feedback --pre-confirmed deleted it, an owned URL still logs the filing naming the repo', async () => {
+  const fx = fixture({ consoleJson: consoleOf([filedItem(OWNED)]) });
+  fs.rmSync(stagedFile(fx, OWNED));
+  const url = 'https://github.com/thn-inc/claude-tweaks/issues/9';
+  const r = await routeId(fx, OWNED, '--filed', url);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.strictEqual(r.out, `console-resolve.js: upstream-route ${OWNED} file target thn-inc/claude-tweaks reason none\n`);
+  const lines = upstreamLines(fx);
+  assert.strictEqual(lines.length, 1, decisionsOf(fx));
+  assert.ok(lines[0].includes(`Upstream filing: ${OWNED} filed into thn-inc/claude-tweaks as ${url} (control mode: owned target, no prompt)`), lines[0]);
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')));
+});
+
+test('the URL, not the staged draft, names the target of a --filed call', async () => {
+  const fx = fixture();
+  // EXTERNAL's draft names acme/widgets, but the issue was filed into the owned repo: the URL decides.
+  const owned = await routeId(fx, EXTERNAL, '--filed', 'https://github.com/obra/superpowers/issues/3');
+  assert.strictEqual(owned.code, 0, owned.err);
+  assert.ok(upstreamLines(fx)[0].includes(`Upstream filing: ${EXTERNAL} filed into obra/superpowers as https://github.com/obra/superpowers/issues/3`), decisionsOf(fx));
+  // OWNED's draft names the owned repo, but the issue went elsewhere: hold verdict.
+  const elsewhere = await routeId(fx, OWNED, '--filed', 'https://github.com/acme/widgets/issues/4');
+  assert.strictEqual(elsewhere.code, 5, elsewhere.err);
+  assert.ok(upstreamLines(fx)[1].includes(`Upstream filing: ${OWNED} filed as https://github.com/acme/widgets/issues/4 against a hold verdict (external)`), decisionsOf(fx));
+});
+
+test('--filed with an external URL exits 5 and logs the filing against the hold verdict, with no fact and no console rewrite', async () => {
   const fx = fixture({ consoleJson: consoleOf([filedItem(EXTERNAL)]) });
+  fs.rmSync(stagedFile(fx, EXTERNAL));
   const consoleBefore = fs.readFileSync(consolePath(fx), 'utf8');
   const url = 'https://github.com/acme/widgets/issues/1';
   const r = await routeId(fx, EXTERNAL, '--filed', url);
@@ -165,9 +193,72 @@ test('--filed on a target that routes to hold exits 5 but logs the filing agains
   const lines = upstreamLines(fx);
   assert.strictEqual(lines.length, 1, decisionsOf(fx));
   assert.match(lines[0], /^- AUTO /);
-  assert.ok(lines[0].includes(`Upstream filing: ${EXTERNAL} filed as ${url} against a hold verdict (external) — route changed after the filing decision`), lines[0]);
+  assert.ok(lines[0].includes(`Upstream filing: ${EXTERNAL} filed as ${url} against a hold verdict (external). Reversibility: n/a.`), lines[0]);
+  assert.ok(!lines[0].includes('route changed'), 'the wording claims no earlier file route');
   assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')), 'no fact is written');
   assert.strictEqual(fs.readFileSync(consolePath(fx), 'utf8'), consoleBefore, 'console.json is untouched');
+});
+
+test('--filed with a URL that is not a strict issue URL is an unresolved target: exit 5, logged, no ownership read', async () => {
+  for (const url of [
+    'https://github.com/thn-inc/claude-tweaks/pull/9',
+    'http://github.com/thn-inc/claude-tweaks/issues/9',
+    'https://github.com/thn-inc/claude-tweaks/issues/9/extra',
+    'https://github.com/thn-inc/claude-tweaks/issues/9?x=1',
+    'https://github.com/thn-inc/claude-tweaks/issues/9#issuecomment-1',
+    'https://github.com/thn-inc/claude-tweaks/issues/9x',
+    'https://github.com/thn-inc/claude-tweaks/issues/',
+    'https://github.com.evil.example/thn-inc/claude-tweaks/issues/9',
+    'https://evilgithub.com/thn-inc/claude-tweaks/issues/9',
+    'https://gist.github.com/thn-inc/claude-tweaks/issues/9',
+    'https://github.com/-bad/claude-tweaks/issues/9',
+    'https://github.com/thn-inc/../issues/9',
+    'github.com/thn-inc/claude-tweaks/issues/9',
+  ]) {
+    const fx = fixture();
+    const r = await routeId(fx, OWNED, '--filed', url);
+    assert.strictEqual(r.code, 5, `${url}: ${r.err}`);
+    const lines = upstreamLines(fx);
+    assert.strictEqual(lines.length, 1, `${url}: ${decisionsOf(fx)}`);
+    assert.ok(lines[0].includes(`Upstream filing: ${OWNED} filed as ${url} against a hold verdict (external)`), lines[0]);
+    assert.ok(!r.calls.some((c) => c.includes('get-url') || c[1] === 'show'), `${url}: ownership read for an unresolved target`);
+    assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')), url);
+  }
+});
+
+test('a decisions.md entry that cannot be written on the hold-verdict --filed path exits 3 and says the issue was filed', async () => {
+  const fx = fixture();
+  fs.rmSync(path.join(fx.runDir, 'decisions.md'));
+  fs.mkdirSync(path.join(fx.runDir, 'decisions.md'));
+  const url = 'https://github.com/acme/widgets/issues/1';
+  const r = await routeId(fx, EXTERNAL, '--filed', url);
+  assert.strictEqual(r.code, 3, r.err);
+  assert.ok(r.err.includes(`${url} was filed`), r.err);
+  assert.match(r.err, /decisions\.md entry could not be written/);
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')));
+});
+
+test('a decisions.md entry that cannot be written on the owned --filed path exits 3', async () => {
+  const fx = fixture();
+  fs.rmSync(path.join(fx.runDir, 'decisions.md'));
+  fs.mkdirSync(path.join(fx.runDir, 'decisions.md'));
+  const r = await routeId(fx, OWNED, '--filed', 'https://github.com/thn-inc/claude-tweaks/issues/9');
+  assert.strictEqual(r.code, 3, r.err);
+  assert.match(r.err, /decisions\.md entry could not be written/);
+});
+
+test('--hold and the no-modifier route still need the staged draft, and --filed still needs a valid id', async () => {
+  const fx = fixture();
+  const url = 'https://github.com/thn-inc/claude-tweaks/issues/9';
+  fs.rmSync(stagedFile(fx, OWNED));
+  assert.strictEqual((await routeId(fx, OWNED, '--hold', 'filing-failed', '--reason', 'x')).code, 5);
+  assert.strictEqual((await routeId(fx, OWNED)).code, 5);
+  for (const id of ['../x', 'upstream-draft-1.md', 'wrap-up-upstream-a/b', 'wrap-up-upstream-a b', 'wrap-up-upstream-']) {
+    const r = await routeId(fx, id, '--filed', url);
+    assert.strictEqual(r.code, 5, `${id}: ${r.err}`);
+    assert.strictEqual(upstreamLines(fx).length, 0, id);
+  }
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')));
 });
 
 test('a route that flips between the route call and --filed still logs the real filing, with the ownership notes once', async () => {
@@ -182,7 +273,7 @@ test('a route that flips between the route call and --filed still logs the real 
   assert.strictEqual(flipped.code, 5, flipped.err);
   const lines = upstreamLines(fx);
   assert.strictEqual(lines.length, 1, decisionsOf(fx));
-  assert.ok(lines[0].includes(`Upstream filing: ${OWNED} filed as ${url} against a hold verdict (external) — route changed after the filing decision`), lines[0]);
+  assert.ok(lines[0].includes(`Upstream filing: ${OWNED} filed as ${url} against a hold verdict (external)`), lines[0]);
   assert.strictEqual(skipLinesOf(fx).length, 1, 'the hold-verdict path logs what the ownership read could not do');
   assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')));
 });
