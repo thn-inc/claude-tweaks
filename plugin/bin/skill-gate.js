@@ -59,6 +59,7 @@ function wantsHelp(argv) {
     if (a === '--help' || a === '-h') return true;
     if (Object.prototype.hasOwnProperty.call(VALUE_FLAGS, a)) {
       const v = argv[i + 1];
+      if (v === '--help') return false; // the flag's missing value, which parseArgs rejects (exit 2)
       if (v !== undefined && !v.startsWith('--')) i += 1;
     }
   }

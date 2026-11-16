@@ -112,6 +112,13 @@ test('AC9.2: the pinned line runs against the real CLI in a fixture repository',
   assert.match(log, /- SKIP \d\d:\d\d:\d\d — Common Step 6 \(skipped\): condition: .* → fallback: journeys not loaded\. Reversibility: n\/a\./);
 });
 
+test('the gate-failure fallback names a labelled SKIP shape and keeps exit 3 out of the run dir', () => {
+  assert.ok(SHARED.includes('--step "{step} (gate)"'));
+  assert.ok(SHARED.includes('condition: skill-gate exit {n} → fallback: {skill} loaded'));
+  assert.match(SHARED, /Exit 3 means the run directory is unanchored: report it only in the caller's own output, with no run-dir write/);
+  assert.match(SHARED, /a path containing a comma is split/);
+});
+
 test('AC13.1: the md no-surface set equals the exported NO_SURFACE_SET', () => {
   assertNoSurfaceSetEquals(SHARED, NO_SURFACE_SET);
   assert.ok(NO_SURFACE_SET.length > 0);

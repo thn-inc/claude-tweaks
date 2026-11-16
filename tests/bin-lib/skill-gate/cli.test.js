@@ -432,6 +432,12 @@ test('-h and --help as a flag value are values, not help; a repeated flag exits 
   }
 });
 
+test('--help in a value flag\'s value position is that flag\'s missing value (exit 2), not help', () => {
+  const r = cli(['--skill', 'journeys', '--files', '--help'], { cwd: repo() });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /--files needs a value/);
+});
+
 test('the real repoRoot default resolves the checkout top level', () => {
   const real = require(CLI);
   assert.equal(typeof real.realDeps.repoRoot, 'function');

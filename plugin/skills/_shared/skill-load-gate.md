@@ -10,7 +10,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/skill-gate.js" --skill <skill> [--mode <mode>] [
 
 - `--mode` — required for `design-wrapper` (`pre-build`, `test`, `review`, `polish`, `survey`), invalid for the other skills.
 - `--surface` — found per `_shared/design-wrapper-handling.md`'s `--surface` bullet; omit when none resolves.
-- `--files` — the caller's already-resolved changed-file list, comma-joined. `--integration-branch` — the ref `_shared/integration-branch.md` resolves; the gate resolves the branch's changed files itself. Pass one of the two; `pre-build` takes neither (no diff exists yet).
+- `--files` — the caller's already-resolved changed-file list, comma-joined (a path containing a comma is split at it and each piece is judged as its own path, so the verdict for that path is unreliable). `--integration-branch` — the ref `_shared/integration-branch.md` resolves; the gate resolves the branch's changed files itself. Pass one of the two; `pre-build` takes neither (no diff exists yet).
 - `--run`, `--section`, `--step` — all three together when the step has a run directory; a `skip` then appends one `SKIP` line to its `decisions.md`.
 
 Exit 0 for either decision; 2 for a malformed invocation (usage on stderr); 3 when `--run` is missing or not anchored under the main checkout. Output is one JSON line: `{decision, reason, journeys?, logged?}`.
@@ -19,7 +19,7 @@ Exit 0 for either decision; 2 for a malformed invocation (usage on stderr); 3 wh
 
 - `skip` — do not invoke the skill. Repeat the gate's `reason` verbatim in the caller's own output. `logged: false` (no `--run`, or the `decisions.md` write failed): the caller also names the step, the skill and the reason in its own output (standalone: its handoff). `journeys` (a `visual-review` skip) lists the journeys whose `files:` overlap the diff; report them.
 - `proceed` — invoke the skill as the step documents. A reason starting `cannot tell: ` is still a proceed: the gate could not decide, wrote one stderr line and logged nothing.
-- Exit 2 or 3, or no JSON on stdout — proceed (the gate failed open by not running) and log one `SKIP` naming the failure.
+- Exit 2 or 3, or no JSON on stdout — proceed (the gate failed open by not running). With a run directory, log one `SKIP` as `--step "{step} (gate)"` with text `condition: skill-gate exit {n} → fallback: {skill} loaded`, so the line reads as a gate failure and not a skipped skill. Exit 3 means the run directory is unanchored: report it only in the caller's own output, with no run-dir write.
 
 A `skip` from `design-wrapper` uses the same wire reasons as the wrapper's own `{skipped: reason}`, so callers' result tables need no separate branch.
 
