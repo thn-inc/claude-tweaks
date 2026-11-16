@@ -460,13 +460,14 @@ function pinLocalVerdict(text) {
   const s4 = merge.indexOf('and Step 4 when the outcome is `merged`');
   need(rec !== -1 && s3 !== -1 && s4 !== -1, 'Accept and merge must record approval, then Step 3 alone with human-approved, then Step 4');
   need(rec < s3 && s3 < s4, 'Accept and merge must order approval, Step 3, Step 4');
-  need(merge.includes('`parked` then exits 5') && merge.includes('`moved:true` withholds this option'), 'Accept and merge must say parked then exits 5 and re-check the head');
+  need(merge.includes('`parked` then exits 5') && merge.includes('then re-checks the head (`moved:true`: say the head moved since the park, re-run the checks, and ask again with the other two options, this one withheld)'), 'Accept and merge must say parked then exits 5 and re-check the head');
+  need(merge.indexOf('then re-checks the head') < merge.indexOf('then records the approval'), 'Accept and merge must re-check the head before recording the approval');
   need(merge.includes('as `dispatch/close-out.md` step 5 does') && merge.includes('waits on the required checks, no bypass'), 'Accept and merge must cite close-out step 5 and the required checks');
   need(merge.includes('`PIPELINE_RUN_DIR` bound as `dispatch/close-out.md` step 7 binds it') && merge.includes('the archived one included') && merge.includes('`claude-tweaks-run:` marker as its step 3 resolves it'),
     'Accept and merge must bind PIPELINE_RUN_DIR for Step 4 as close-out step 7 does');
   need(merge.includes('first resolves the run dir for Step 4') && merge.includes('"Resolve the run dir"'), 'Accept and merge must resolve the run dir before recording the approval');
   need(merge.indexOf('first resolves the run dir') < merge.indexOf('then records the approval'), 'Accept and merge must resolve the run dir before Step 3');
-  need(merge.includes('on `no run dir`, say so plainly and withhold this option'), 'Accept and merge must be withheld on no run dir');
+  need(merge.includes('on `no run dir`, say so plainly and ask again with the other two options, this one withheld'), 'Accept and merge must be withheld on no run dir');
   need(merge.includes('Step 2.5 and Step 2.9 are skipped for this merge'), 'Accept and merge must skip Step 2.5 and Step 2.9');
   need(/#4614/.test(block), 'the broken option must hand off to the verdict handler (#4614)');
 }
@@ -502,7 +503,13 @@ test('AC5.1 control: a dropped or reordered option goes red', () => {
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('as `dispatch/close-out.md` step 5 does', ''))), 'Accept and merge must cite close-out step 5 and the required checks');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('with `PIPELINE_RUN_DIR` bound as `dispatch/close-out.md` step 7 binds it', 'with a run dir'))), 'Accept and merge must bind PIPELINE_RUN_DIR for Step 4 as close-out step 7 does');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('first resolves the run dir for Step 4', 'first resolves'))), 'Accept and merge must resolve the run dir before recording the approval');
-  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('on `no run dir`, say so plainly and withhold this option', 'on `no run dir`, continue'))), 'Accept and merge must be withheld on no run dir');
+  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('on `no run dir`, say so plainly and ask again with the other two options, this one withheld', 'on `no run dir`, continue'))), 'Accept and merge must be withheld on no run dir');
+  const headCheck = ', then re-checks the head (`moved:true`: say the head moved since the park, re-run the checks, and ask again with the other two options, this one withheld)';
+  assert.ok(block.includes(headCheck), 'head-check clause located');
+  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace(headCheck, ''))), 'Accept and merge must say parked then exits 5 and re-check the head');
+  const reordered = block.replace(headCheck, '').replace('(`accept:pending` removed, so `parked` then exits 5)', `(\`accept:pending\` removed, so \`parked\` then exits 5)${headCheck}`);
+  assert.notStrictEqual(reordered, block);
+  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, reordered)), 'Accept and merge must re-check the head before recording the approval');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('human-approved', 'x'))), 'Accept and merge must record approval, then Step 3 alone with human-approved, then Step 4');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('then records the approval', 'records the approval'))), 'Accept and merge must record approval, then Step 3 alone with human-approved, then Step 4');
 });

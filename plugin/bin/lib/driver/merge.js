@@ -1007,7 +1007,7 @@ function followParkedRunDir(s) {
 // Ports `_shared/pr-first-merge.md` Step 2.9, the local acceptance park (control mode, #4615), as
 // `_shared/local-acceptance-park.md` lays it out: past the gate (Step 2.5), before Step 3's merge
 // call. `parked` exit 0 (already parked: `already-parked`) or 6 (unknown: `park-state-unknown`)
-// refuses the merge with no park call, so nothing is archived or released this run; any exit but 5
+// refuses the merge with no park call, so nothing is archived or released this run; any other exit (2, 3)
 // fails closed. Then `decide`: no park merges as before (control mode off prints `consulted: false`
 // and reads nothing), a park runs `park` for this run's one record, which owns the archive, the
 // claim release and the worktree removal, so no teardown runs here and no decision line follows it.
