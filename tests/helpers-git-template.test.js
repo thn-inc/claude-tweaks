@@ -275,6 +275,7 @@ const { writeGitTemplateDir } = require('../tools/run-tests');
 test('AC3.1: under the runner\'s git template a bare-origin push and a fixture commit start no maintenance process', () => {
   const underRunner = process.env.CT_TEST_SUITE_SLOT_HELD === '1';
   const template = underRunner ? process.env.GIT_TEMPLATE_DIR : writeGitTemplateDir(mk('ct-gt-tpl-') + '/t', process.env);
+  if (!underRunner) assert.ok(template, 'writeGitTemplateDir could not build a template outside the runner');
   const sysCfg = path.join(mk('ct-gt-sys-'), 'system');
   fs.writeFileSync(sysCfg, '[maintenance]\n\tautoDetach = false\n');
   const scrubbed = /^(GIT_TEMPLATE_DIR|GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+))$/;
