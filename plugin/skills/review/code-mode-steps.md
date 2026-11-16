@@ -319,7 +319,9 @@ The simplify skill handles scope resolution, running the code-simplifier subagen
 
 ## Step 6: Visual Review
 
-**When this step runs:**
+**Gate (code and full mode):** per `_shared/skill-load-gate.md`, `--skill visual-review`, `--files` from Step 2's diff scope, `--surface`, and `--run "$PIPELINE_RUN_DIR" --section "/review" --step "Step 6"` with a run dir. On `skip`, do not invoke the skill: the Visual Review status is `Skipped — no UI changes`, with the gate's `reason` and `journeys`.
+
+**When this step runs (on `proceed`):**
 - **Code mode:** Delegate to `/claude-tweaks:visual-review --mode=recommendation` — it detects UI changes via `git diff` and identifies affected journeys, returning a structured recommendation without opening a browser (no `playwright-cli` dependency). Do not stop to ask; note any recommendation in the summary (Step 7). This is `recommendation` mode, not `discover` mode — `discover` actually opens a browser and walks the app, which would contradict this step's "recommendation only, non-blocking" design.
 - **Full mode:** Invoke `/claude-tweaks:visual-review` with the target URL/journey and QA data (if available). The visual review owns UI/journey detection and the procedure. Findings feed into the summary (Step 7) as the "UI / Visual" lens with their own severity classifications. When the diff has zero UI-file matches (the same trigger-extension check `/claude-tweaks:visual-review` already uses for its own detection), fall back to `--mode=recommendation` instead — same as code mode above — rather than opening a full browser mode on a diff with nothing to visually review.
 
@@ -335,18 +337,18 @@ Invocation:
 
 ## Step 6.5: Design Quality Pass (Impeccable)
 
-Invoke `/claude-tweaks:design-wrapper review <spec>` to run Impeccable's `critique` + `audit` commands on the changed UI files — and, when the relevant surface brief carries a direction contract, to dispatch Impeccable's own `impeccable-finish-reviewer` agent against it (the wrapper's Step 3.7; its findings arrive in the same `findings` list under `source: "finish-review"`). Findings are advisory in Phase 1 — they inform the verdict and surface in the review summary, but are not auto-applied.
+**Gate:** per `_shared/skill-load-gate.md`, `--skill design-wrapper --mode review`, Step 6's `--files` and `--surface`, and `--run "$PIPELINE_RUN_DIR" --section "/review" --step "Step 6.5"` with a run dir. On `skip`, do not invoke the wrapper: treat it as the `{skipped: ...}` row below and proceed to Step 6.6.
 
-**Invocation:**
+On `proceed`, invoke `/claude-tweaks:design-wrapper review <spec>` to run Impeccable's `critique` + `audit` commands on the changed UI files — and, when the relevant surface brief carries a direction contract, to dispatch Impeccable's own `impeccable-finish-reviewer` agent against it (the wrapper's Step 3.7; its findings arrive in the same `findings` list under `source: "finish-review"`). Findings are advisory in Phase 1 — they inform the verdict and surface in the review summary, but are not auto-applied.
 
-Before invoking the wrapper, run `_shared/design-wrapper-handling.md`'s "Caller-side pre-check" with `--mode review`, `--files` from the diff scope this run already resolved (Step 2's own-work file list when merge commits were detected, otherwise the full `git diff --name-only` set), and `--surface` from this record's materialized `surface:` header field — so a non-frontend record, or a project with the design kill-switch off, never pays for loading `design-wrapper/SKILL.md` plus `modes/review.md`. On `decision: "skip"`, treat exactly like the wrapper's own `{skipped: ...}` return in the Result handling table below and proceed to Step 6.6. On `decision: "proceed"`, pass the spec number (or paths) used for this review run — the wrapper resolves changed UI files via its own detection and runs `/impeccable:impeccable critique` + `/impeccable:impeccable audit`.
+**Invocation:** pass the spec number (or paths) used for this review run — the wrapper resolves changed UI files via its own detection and runs `/impeccable:impeccable critique` + `/impeccable:impeccable audit`.
 
 **Result handling:**
 
 | Wrapper return | Review behavior |
 |----------------|-----------------|
 | `{result: "advisory", findings: [...], score_trend?: {...}}` | Include findings in the summary as a "Design Quality" section (see Step 7's template). When `score_trend` is present, the section also renders a Design/Audit Health trend line above the findings table (current score vs. the last captured score, per `review-summary-template.md`). Findings are advisory — they inform the verdict, but no auto-fixes. A `decisions_staged` field (present when the wrapper staged `target: "decisions"` findings to `{run-dir}/staged/design-decision-*.md`) means those findings await the Review Console — render them under the section's **Decisions** sub-heading only when the field is absent (nothing was staged — standalone review, or no `decisions` findings this run). |
-| `{skipped: ...}` (from the wrapper, or from the pre-check's `decision: "skip"` above) | Omit the "Design Quality" section from the summary. Note the skip reason in the summary footer. |
+| `{skipped: ...}` (from the wrapper or the gate) | Omit the "Design Quality" section from the summary. Note the skip reason in the summary footer. |
 | `{deferred: ...}` (should not happen for `review` mode) | Treat as skip and omit the section. |
 
 See `_shared/design-wrapper-handling.md` for the canonical return-shape contract and the "why skips don't fail" rationale.

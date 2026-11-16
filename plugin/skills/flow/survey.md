@@ -19,7 +19,7 @@ Run the survey before rendering the Pipeline Summary, after the resolve gate com
 
 ## Survey procedure
 
-**Creative Opportunities survey (v4.5.0).** Before rendering the summary, invoke `/claude-tweaks:design-wrapper survey <changed-files>` against the full diff produced by the pipeline. The wrapper analyzes the diff heuristically (no screenshots are passed — `/flow` does not maintain its own browser session) and returns ranked recommendations for creative commands the user might want to run manually. Render the recommendations as a Creative Opportunities block (template in SKILL.md Step 5) before the Next Actions block.
+**Creative Opportunities survey (v4.5.0).** Before rendering the summary, run the gate per `_shared/skill-load-gate.md` with `--skill design-wrapper --mode survey`, `--files` the `<changed-files>` of the full diff produced by the pipeline, `--surface` where that file finds one, and `--run "$PIPELINE_RUN_DIR" --section "/flow" --step "Creative Opportunities survey"`. On `skip`, do not invoke the wrapper; omit the block, as for a `{skipped: ...}` return below. On `proceed`, invoke `/claude-tweaks:design-wrapper survey <changed-files>`. The wrapper analyzes the diff heuristically (no screenshots are passed — `/flow` does not maintain its own browser session) and returns ranked recommendations for creative commands the user might want to run manually. Render the recommendations as a Creative Opportunities block (template in SKILL.md Step 5) before the Next Actions block.
 
 Handle the wrapper return:
 

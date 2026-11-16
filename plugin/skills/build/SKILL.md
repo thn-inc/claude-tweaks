@@ -193,7 +193,7 @@ Spec Mode only — design mode has no materialized spec, so this step never runs
 
 ### Common Step 1.7: Design Pre-Build (frontend specs + terminal)
 
-For a surface routed to pre-build — `surface` ∈ `web | mobile | desktop | terminal`, read from the materialized header's `surface:` field (lifted from the record body's `Surface:` metadata line per `skills/flow/materialize.md`) — invoke `/claude-tweaks:design-wrapper pre-build <spec>` to lazy-load relevant design references into the implementer subagent's context. For the full skip conditions, invocation rules, result handling, the terminal-track always-load set, and where loaded references go, see `design-prebuild.md` in this skill's directory. **On skip**, write a `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule; standalone: list in the Step 7 handoff.
+Gate per `_shared/skill-load-gate.md`: `--skill design-wrapper --mode pre-build`, `--surface`, no file list, and `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Common Step 1.7"` with a run dir. On `skip`, do not invoke the wrapper. On `proceed`, invoke `/claude-tweaks:design-wrapper pre-build <spec>` to load design references for implementers. For its own skips, result handling, the terminal track and reference routing, see `design-prebuild.md` in this skill's directory. **On skip**, write a `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule; standalone: list in the Step 7 handoff.
 
 ### Common Step 2: Execute the Plan
 
@@ -264,13 +264,11 @@ When a mismatch is an architectural deviation at module level — a boundary in 
 
 ### Common Step 6: User Journey Capture
 
-After simplification and alignment (Common Steps 3 + 4.5), run `/claude-tweaks:journeys`. Pass:
+After Common Steps 3 + 4.5, gate per `_shared/skill-load-gate.md`: `--skill journeys --integration-branch {ref}` (`_shared/integration-branch.md`), and `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Common Step 6"` with a run dir. On `skip`, do not invoke the skill. On `proceed`, run `/claude-tweaks:journeys`. Pass:
 - **Changed files** — files modified during this build session
 - **Spec or design doc context** — what was built and why
 
-The journeys skill handles scanning existing journeys, creating new journey files, updating existing ones, and committing. See `/claude-tweaks:journeys` for details.
-
-This is not optional and does not require user input — if you built a feature that any persona interacts with (end user, admin, developer, internal tooling user), the journeys skill documents it.
+On `proceed` this is not optional and does not require user input — if you built a feature that any persona interacts with (end user, admin, developer, internal tooling user), the journeys skill documents it.
 
 ### Common Step 6.5: Documentation Sync
 
