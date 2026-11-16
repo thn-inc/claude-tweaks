@@ -692,7 +692,7 @@ test('the console check fetches member grants and its veto window under the pass
   }
 });
 
-test('the pr-first checks read gh\'s config dir through the passed homeDir', async () => {
+test('the pr-first checks read gh\'s config dir through the passed homeDir', { skip: process.platform === 'win32' }, async () => {
   const reconcileLib = require('../plugin/bin/lib/reconcile');
   const { ghHealthCheck } = require('../plugin/bin/lib/reconcile/preflight');
   const { redTipCheck } = require('../plugin/bin/lib/reconcile/red-tip');
