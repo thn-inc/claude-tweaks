@@ -17,6 +17,7 @@ const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'accept-park.js');
 const RUN_ID = '2026-11-16T10-00-00Z-accept-park';
 const HEAD = 'abc1234def5678';
+const BASE = '0123abcd'.repeat(5);
 const ON = 'control-mode: on\n';
 
 const PACKET = renderPacket(
@@ -82,6 +83,10 @@ function world({ policy, records = {}, worktrees, fail = {} } = {}) {
       const out = {};
       for (const field of value.split(',')) out[field] = field === 'labels' ? r.labels.map((name) => ({ name })) : r[field];
       return JSON.stringify(out);
+    }
+    if (noun === 'pr' && verb === 'view' && flag === '--json' && value === 'baseRefOid') {
+      failIf('view:baseRefOid');
+      return JSON.stringify({ baseRefOid: BASE });
     }
     if (noun === 'issue' && verb === 'edit' && flag === '--add-label') {
       const r = record(n);
@@ -229,6 +234,20 @@ test('decide: an unreadable policy file exits 1 with nothing printed', async () 
   assert.match(res.stderr, /policy\.yml/);
 });
 
+test('I1: decide without --run reads the repo-root policy.yml alone', async () => {
+  const off = world({ policy: 'acceptance-target: dev\n', records: { 7: { body: 'Risk-flags: auth\n' } } });
+  fs.writeFileSync(path.join(off.state.runDir, 'config.yml'), 'control-mode: on\n');
+  const offRes = await call(off, ['decide', '--record', '7'], { ghAvailable: () => { throw new Error('probed gh'); } });
+  assert.equal(offRes.code, 0, offRes.stderr);
+  assert.deepEqual(JSON.parse(offRes.stdout), { park: false, decisions: [{ record: 7, consulted: false, park: false, target: null, reason: null }] });
+  assert.equal(off.state.gh.length, 0, 'control mode off reads no record');
+
+  const on = world({ policy: 'control-mode: on\n', records: { 7: { body: 'Plain body.\n' } } });
+  const onRes = await call(on, ['decide', '--record', '7']);
+  assert.equal(onRes.code, 0, onRes.stderr);
+  assert.deepEqual(JSON.parse(onRes.stdout), { park: true, decisions: [{ record: 7, consulted: true, park: true, target: 'local', reason: 'default' }] });
+});
+
 test('decide: a --run outside the main checkout is refused with exit 3', async () => {
   const w = world({ policy: 'control-mode: on\n', records: { 7: {} } });
   const shadow = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'accept-park-shadow-')));
@@ -255,7 +274,8 @@ test('AC3.3: park leaves the PR open, applies accept:pending, writes the packet,
   const edits = w.state.gh.filter((a) => a[0] === 'api' && a[1] === 'graphql');
   assert.equal(edits.length, 1);
   const state = parkStateOf(w.state.records[7].comments[0].body);
-  assert.deepEqual(state, { parked: true, target: 'local', reason: 'awaiting-local-acceptance', headSha: HEAD });
+  assert.deepEqual(state, { parked: true, target: 'local', reason: 'awaiting-local-acceptance', headSha: HEAD, baseSha: BASE });
+  assert.deepEqual(w.state.gh.filter((a) => a[0] === 'pr'), [['pr', 'view', '12', '--json', 'baseRefOid']], 'the base is read once');
   assert.deepEqual(w.state.spawn.filter(([name]) => name === 'hooks.js'), [
     ['hooks.js', 'close-run', '--run', w.state.runDir],
     ['hooks.js', 'archive-run', '--run', w.state.runDir],
@@ -389,6 +409,16 @@ test('park: a failed comment edit is a step-2 failure and archives nothing', asy
   assert.equal(w.state.spawn.length, 0);
 });
 
+test('I3: a base that will not read is a step-2 failure and archives nothing', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } }, fail: { 'view:baseRefOid': 'HTTP 502' } });
+  const res = await call(w, parkArgv(w));
+  assert.equal(res.code, 1);
+  const result = JSON.parse(res.stdout);
+  assert.deepEqual(result.steps.map((s) => s.ok), [true, false]);
+  assert.match(result.steps[1].detail, /HTTP 502/);
+  assert.equal(w.state.spawn.length, 0);
+});
+
 test('park removes a locked worktree', async () => {
   const w = world({ records: { 7: { comments: [packetComment(7)] } } });
   const res = await call(w, parkArgv(w));
@@ -472,7 +502,7 @@ test('park: a relative --run and --worktree resolve against the injected cwd', a
 // ---- parked ----
 
 test('parked exit codes', async () => {
-  const parkedBody = require('../plugin/bin/lib/accept/park').writeParkDeployStatus(PACKET, { headSha: HEAD }).body;
+  const parkedBody = require('../plugin/bin/lib/accept/park').writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE }).body;
   const cases = [
     { records: { 7: { labels: ['accept:pending'], comments: [{ ...packetComment(7), body: parkedBody }] } }, code: 0, out: 'parked' },
     { records: { 7: { labels: ['accept:pending'], comments: [packetComment(7)] } }, code: 5, out: 'not-parked' },
@@ -571,7 +601,7 @@ function reentryWorld(extra = {}) {
     if (args[0] === 'pr') {
       ghCalls.push(args);
       if (extra.prFails) throw new Error('HTTP 404: no pull request');
-      return JSON.stringify({ headRefName: 'feat/x', headRefOid: TIP });
+      return JSON.stringify({ headRefName: 'feat/x', headRefOid: extra.prHead ?? TIP, baseRefOid: extra.base ?? BASE });
     }
     return baseGh(args);
   };
@@ -600,7 +630,7 @@ test('reenter prints the re-entry result with the packet park head, and fences i
   assert.equal(out.head, TIP);
   assert.equal(out.parkHead, null, 'the fixture packet carries no park-head, so the PR counts as moved');
   assert.equal(out.moved, true);
-  assert.deepEqual(ghCalls, [['pr', 'view', '12', '--json', 'headRefName,headRefOid']]);
+  assert.deepEqual(ghCalls, [['pr', 'view', '12', '--json', 'headRefName,headRefOid,baseRefOid']]);
   assert.deepEqual(gitCalls[0].args, ['-C', w.state.root, 'worktree', 'list', '--porcelain']);
   assert.deepEqual(gitCalls[1].args, ['-C', w.state.root, 'fetch', '--end-of-options', 'origin', 'feat/x']);
   assert.equal(gitCalls[1].opts.cwd, w.state.root);
@@ -609,13 +639,33 @@ test('reenter prints the re-entry result with the packet park head, and fences i
 test('reenter reads a parked packet head and reports an unmoved PR', async () => {
   const { w, ghCalls } = reentryWorld();
   const { writeParkDeployStatus } = require('../plugin/bin/lib/accept/park');
-  w.state.records[7].comments[0].body = writeParkDeployStatus(PACKET, { headSha: TIP }).body;
+  w.state.records[7].comments[0].body = writeParkDeployStatus(PACKET, { headSha: TIP, baseSha: BASE }).body;
   const res = await call(w, ['reenter', '--record', '7', '--pr', '12', '--repo', 'o/r']);
   assert.equal(res.code, 0, res.stderr);
   const out = JSON.parse(res.stdout);
   assert.equal(out.parkHead, TIP);
+  assert.equal(out.parkBase, BASE);
+  assert.equal(out.prBase, BASE);
   assert.equal(out.moved, false);
-  assert.deepEqual(ghCalls, [['pr', 'view', '12', '--json', 'headRefName,headRefOid', '--repo', 'o/r']]);
+  assert.deepEqual(ghCalls, [['pr', 'view', '12', '--json', 'headRefName,headRefOid,baseRefOid', '--repo', 'o/r']]);
+});
+
+test('I3: reenter counts a moved base, or a packet with no park-base, as moved', async () => {
+  const { writeParkDeployStatus } = require('../plugin/bin/lib/accept/park');
+  const moved = reentryWorld({ base: 'c'.repeat(40) });
+  moved.w.state.records[7].comments[0].body = writeParkDeployStatus(PACKET, { headSha: TIP, baseSha: BASE }).body;
+  const res = await call(moved.w, ['reenter', '--record', '7', '--pr', '12']);
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(JSON.parse(res.stdout).moved, true, 'the base moved since the park');
+
+  const legacy = reentryWorld();
+  legacy.w.state.records[7].comments[0].body = writeParkDeployStatus(PACKET, { headSha: TIP, baseSha: BASE }).body.replace(/\npark-base: \S+/, '');
+  const old = await call(legacy.w, ['reenter', '--record', '7', '--pr', '12']);
+  assert.equal(old.code, 0, old.stderr);
+  const out = JSON.parse(old.stdout);
+  assert.equal(out.parkHead, TIP);
+  assert.equal(out.parkBase, null);
+  assert.equal(out.moved, true, 'no park-base fails closed');
 });
 
 test('reenter: a stale directory exits 7 and touches nothing', async () => {
@@ -721,7 +771,6 @@ test('malformed invocations exit 2', async () => {
     [],
     ['bogus'],
     ['decide', '--run', run],
-    ['decide', '--record', '7'],
     ['decide', '--run', run, '--record', '7,x'],
     ['decide', '--run', run, '--record', '0'],
     ['decide', '--run', run, '--record', '7,7'],

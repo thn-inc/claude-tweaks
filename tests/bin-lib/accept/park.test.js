@@ -15,7 +15,8 @@ const rendered = (facts) => renderPacket(
 
 const PACKET = rendered([deployFact('local', 'target: local')]);
 const HEAD = 'abc1234';
-const parked = () => writeParkDeployStatus(PACKET, { headSha: HEAD }).body;
+const BASE = 'b'.repeat(40);
+const parked = () => writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE }).body;
 const found = (body) => ({ status: 'found', body });
 
 test('PARK_REASON is the one reason string', () => {
@@ -61,15 +62,15 @@ test('a series with no parking record does not park; a non-array is rejected', (
 });
 
 test('AC3.2: park writes target, reason and head SHA into Deploy status', () => {
-  const { body, changed } = writeParkDeployStatus(PACKET, { headSha: HEAD });
+  const { body, changed } = writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE });
   assert.equal(changed, true);
-  assert.deepEqual(parkStateOf(body), { parked: true, target: 'local', reason: PARK_REASON, headSha: HEAD });
+  assert.deepEqual(parkStateOf(body), { parked: true, target: 'local', reason: PARK_REASON, headSha: HEAD, baseSha: BASE });
   assert.equal(packetStateOf({ packet: found(body), labels: ['accept:pending'] }).state, 'awaiting-local');
 });
 
 test('parkStateOf: no park fields, no section, null body', () => {
-  assert.deepEqual(parkStateOf(PACKET), { parked: false, target: 'local', reason: null, headSha: null });
-  const none = { parked: false, target: null, reason: null, headSha: null };
+  assert.deepEqual(parkStateOf(PACKET), { parked: false, target: 'local', reason: null, headSha: null, baseSha: null });
+  const none = { parked: false, target: null, reason: null, headSha: null, baseSha: null };
   assert.deepEqual(parkStateOf(null), none);
   assert.deepEqual(parkStateOf(42), none);
   assert.deepEqual(parkStateOf('no sections here'), none);
@@ -78,26 +79,26 @@ test('parkStateOf: no park fields, no section, null body', () => {
 test('park write keeps an existing ref: line and is idempotent', () => {
   const body = rendered([deployFact('dev', 'target: dev, not confirmed live', { ref: 'deadbeef' })]);
   assert.match(body, /ref: deadbeef/);
-  const first = writeParkDeployStatus(body, { headSha: HEAD });
+  const first = writeParkDeployStatus(body, { headSha: HEAD, baseSha: BASE });
   assert.equal(first.changed, true);
   assert.match(first.body, /^target: local$/m);
   assert.doesNotMatch(first.body, /target: dev/);
   assert.match(first.body, /^ref: deadbeef$/m);
   assert.equal(first.body.match(/^target:/gm).length, 1);
-  const second = writeParkDeployStatus(first.body, { headSha: HEAD });
+  const second = writeParkDeployStatus(first.body, { headSha: HEAD, baseSha: BASE });
   assert.equal(second.changed, false);
   assert.equal(second.body, first.body);
 });
 
 test('a second park at a new head replaces park-head and leaves one of each line', () => {
-  const next = writeParkDeployStatus(parked(), { headSha: 'fedcba9876' }).body;
+  const next = writeParkDeployStatus(parked(), { headSha: 'fedcba9876', baseSha: BASE }).body;
   assert.equal(parkStateOf(next).headSha, 'fedcba9876');
-  for (const key of ['target', 'reason', 'park-head']) assert.equal(next.match(new RegExp(`^${key}:`, 'gm')).length, 1, key);
+  for (const key of ['target', 'reason', 'park-head', 'park-base']) assert.equal(next.match(new RegExp(`^${key}:`, 'gm')).length, 1, key);
 });
 
 test('lines outside Deploy status are untouched; a same-named line elsewhere is not read', () => {
   const lines = ['x', '### What changed', 'target: dev', 'reason: other', '', '### Deploy status', 'target: dev', '', '---', 'footer'];
-  const out = writeParkDeployStatus(lines.join('\n'), { headSha: HEAD }).body.split('\n');
+  const out = writeParkDeployStatus(lines.join('\n'), { headSha: HEAD, baseSha: BASE }).body.split('\n');
   assert.deepEqual(out.slice(0, 5), lines.slice(0, 5));
   assert.deepEqual(out.slice(-3), ['', '---', 'footer']);
   assert.equal(parkStateOf(lines.join('\n')).target, 'dev');
@@ -105,7 +106,7 @@ test('lines outside Deploy status are untouched; a same-named line elsewhere is 
 
 test('CRLF bodies keep their line endings', () => {
   const crlf = PACKET.replace(/\n/g, '\r\n');
-  const out = writeParkDeployStatus(crlf, { headSha: HEAD }).body;
+  const out = writeParkDeployStatus(crlf, { headSha: HEAD, baseSha: BASE }).body;
   assert.equal(out.replace(/\r\n/g, '').includes('\n'), false);
   assert.equal(parkStateOf(out).parked, true);
 });
@@ -116,12 +117,14 @@ test('park-head is not read as a deploy ref', () => {
 });
 
 test('rejects a bad head sha and a packet with no Deploy status section', () => {
-  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: 'HEAD' }), TypeError);
-  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: 'abc12' }), TypeError);
-  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: 'ABC1234' }), TypeError);
+  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: 'HEAD', baseSha: BASE }), TypeError);
+  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: 'abc12', baseSha: BASE }), TypeError);
+  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: 'ABC1234', baseSha: BASE }), TypeError);
   assert.throws(() => writeParkDeployStatus(PACKET, {}), TypeError);
-  assert.throws(() => writeParkDeployStatus('### What changed\nx\n', { headSha: HEAD }), TypeError);
-  assert.throws(() => writeParkDeployStatus(null, { headSha: HEAD }), TypeError);
+  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: HEAD }), TypeError, 'the base is required');
+  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: 'BASE' }), TypeError);
+  assert.throws(() => writeParkDeployStatus('### What changed\nx\n', { headSha: HEAD, baseSha: BASE }), TypeError);
+  assert.throws(() => writeParkDeployStatus(null, { headSha: HEAD, baseSha: BASE }), TypeError);
 });
 
 // Each case flips exactly one input from the parked baseline.
@@ -166,7 +169,7 @@ test('parked predicate: no packet -> not-parked; unreadable or malformed -> unkn
 
 test('a refresh of a parked packet that keeps a ref: line leaves it parked', () => {
   const withRef = rendered([deployFact('dev', 'target: dev, confirmed live', { ref: 'deadbeef' })]);
-  const written = writeParkDeployStatus(withRef, { headSha: HEAD }).body;
+  const written = writeParkDeployStatus(withRef, { headSha: HEAD, baseSha: BASE }).body;
   const result = refreshPacket(written, { ref: '1234567abc', text: 'target: dev, confirmed live' });
   assert.deepEqual(result.refreshed, []);
   assert.equal(result.body, written);
@@ -188,9 +191,9 @@ test('parkStateOf reads the target token as packetStateOf does: `target: local, 
 
 test('with no target line the park group is separated from the text under it by a blank line', () => {
   const body = '### Deploy status\nsome deploy note\n\n### Next\nx\n';
-  const out = writeParkDeployStatus(body, { headSha: HEAD }).body;
-  assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\n\nsome deploy note\n\n### Next\nx\n`);
-  assert.equal(writeParkDeployStatus(out, { headSha: HEAD }).changed, false);
+  const out = writeParkDeployStatus(body, { headSha: HEAD, baseSha: BASE }).body;
+  assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\npark-base: ${BASE}\n\nsome deploy note\n\n### Next\nx\n`);
+  assert.equal(writeParkDeployStatus(out, { headSha: HEAD, baseSha: BASE }).changed, false);
 });
 
 const readersOf = (body) => ({
@@ -201,7 +204,7 @@ const readersOf = (body) => ({
 
 test('both readers agree when a mid-line `target: dev` precedes the target line', () => {
   const body = '### Deploy status\nnote from a human: target: dev\ntarget: dev, confirmed live\n\nref: deadbeef\n';
-  const written = writeParkDeployStatus(body, { headSha: HEAD }).body;
+  const written = writeParkDeployStatus(body, { headSha: HEAD, baseSha: BASE }).body;
   const read = readersOf(written);
   assert.equal(read.park.parked, true);
   assert.equal(read.predicate, 'parked');
@@ -211,7 +214,7 @@ test('both readers agree when a mid-line `target: dev` precedes the target line'
 });
 
 test('both readers agree on a `- target: local` line that parkStateOf once missed', () => {
-  const body = `### Deploy status\n- target: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\n`;
+  const body = `### Deploy status\n- target: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\npark-base: ${BASE}\n`;
   const read = readersOf(body);
   assert.equal(read.state, 'awaiting-local');
   assert.equal(read.park.target, 'local');
@@ -226,13 +229,13 @@ test('a mid-line target elsewhere in the section is read by both, never by parkS
 
 test('an empty Deploy status section ending at a --- rule keeps a blank line before the rule', () => {
   const body = '### Deploy status\n---\nfooter\n';
-  const out = writeParkDeployStatus(body, { headSha: HEAD }).body;
-  assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\n\n---\nfooter\n`);
-  assert.equal(writeParkDeployStatus(out, { headSha: HEAD }).changed, false);
+  const out = writeParkDeployStatus(body, { headSha: HEAD, baseSha: BASE }).body;
+  assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\npark-base: ${BASE}\n\n---\nfooter\n`);
+  assert.equal(writeParkDeployStatus(out, { headSha: HEAD, baseSha: BASE }).changed, false);
   assert.equal(parkStateOf(out).parked, true);
 });
 
 test('with an empty Deploy status section no stray blank line is added', () => {
-  const out = writeParkDeployStatus('### Deploy status\n', { headSha: HEAD }).body;
-  assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\n`);
+  const out = writeParkDeployStatus('### Deploy status\n', { headSha: HEAD, baseSha: BASE }).body;
+  assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\npark-base: ${BASE}\n`);
 });

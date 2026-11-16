@@ -33,11 +33,14 @@ function staleDirError(worktree, what) {
   return Object.assign(new Error(`stale accept directory (${what}): ${worktree} — clear it with reenter-remove --worktree, or remove it; it is never reused`), { code: 'stale-dir' });
 }
 
-// -> { worktree, headRefName, prHead, parkHead, moved, head }. `parkHead` is the packet's
-// `park-head:`, short or full: it is resolved to a full oid after the fetch and compared with the
-// PR head; absent, unresolvable or different counts as moved. Throws Error{code:'stale-dir'} before
-// any gh call or worktree add when the accept directory exists or git still lists it.
-function reenter({ record, pr, repoRoot, parkHead = null, git, gh, lstat = lstatType, realpath = (p) => canonicalRealpath(p) } = {}) {
+// -> { worktree, headRefName, prHead, prBase, parkHead, parkBase, moved, head }. `parkHead` is the
+// packet's `park-head:`, short or full: it is resolved to a full oid after the fetch and compared
+// with the PR head; absent, unresolvable or different counts as moved. `parkBase` is the packet's
+// `park-base:`, compared with the PR's base oid; absent, malformed or different counts as moved
+// too (fail closed). So does a fetched worktree head other than the viewed PR head: a push between
+// the view and the fetch. Throws Error{code:'stale-dir'} before any gh call or worktree add when
+// the accept directory exists or git still lists it.
+function reenter({ record, pr, repoRoot, parkHead = null, parkBase = null, git, gh, lstat = lstatType, realpath = (p) => canonicalRealpath(p) } = {}) {
   if (!POSITIVE_RE.test(String(record))) throw new TypeError(`reenter: record must be a positive integer, got: ${record}`);
   if (!POSITIVE_RE.test(String(pr))) throw new TypeError(`reenter: pr must be a positive integer, got: ${pr}`);
   if (typeof repoRoot !== 'string' || !path.isAbsolute(repoRoot)) throw new TypeError('reenter: repoRoot must be an absolute path');
@@ -47,10 +50,11 @@ function reenter({ record, pr, repoRoot, parkHead = null, git, gh, lstat = lstat
   // A registration whose directory was deleted: `worktree add` would fail on it, unclassified.
   if (isListed(git, repoRoot, worktree, realpath)) throw staleDirError(worktree, 'registered with git, directory missing');
 
-  const view = JSON.parse(gh(['pr', 'view', String(pr), '--json', 'headRefName,headRefOid']));
-  const { headRefName, headRefOid: prHead } = view;
+  const view = JSON.parse(gh(['pr', 'view', String(pr), '--json', 'headRefName,headRefOid,baseRefOid']));
+  const { headRefName, headRefOid: prHead, baseRefOid: prBase } = view;
   if (typeof headRefName !== 'string' || !headRefName.trim() || /[\r\n]/.test(headRefName)) throw new Error(`reenter: PR #${pr} has no usable headRefName`);
   if (typeof prHead !== 'string' || !HEX_RE.test(prHead)) throw new Error(`reenter: PR #${pr} has no usable headRefOid`);
+  if (typeof prBase !== 'string' || !HEX_RE.test(prBase)) throw new Error(`reenter: PR #${pr} has no usable baseRefOid`);
 
   git(['-C', repoRoot, 'fetch', '--end-of-options', 'origin', headRefName]);
   const parkFull = resolveParkHead(git, repoRoot, parkHead);
@@ -65,10 +69,12 @@ function reenter({ record, pr, repoRoot, parkHead = null, git, gh, lstat = lstat
     } catch { /* best effort: the original failure is the one reported */ }
     throw err;
   }
+  const baseKept = typeof parkBase === 'string' && HEX_RE.test(parkBase) && parkBase === prBase;
   return {
-    worktree, headRefName, prHead,
+    worktree, headRefName, prHead, prBase,
     parkHead: typeof parkHead === 'string' && parkHead ? parkHead : null,
-    moved: parkFull === null || parkFull !== prHead.toLowerCase(),
+    parkBase: typeof parkBase === 'string' && parkBase ? parkBase : null,
+    moved: parkFull === null || parkFull !== prHead.toLowerCase() || head.toLowerCase() !== prHead.toLowerCase() || !baseKept,
     head,
   };
 }

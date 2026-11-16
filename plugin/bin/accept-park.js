@@ -6,10 +6,11 @@
 // decisions live in bin/lib/accept/ (target.js, park.js); this file reads the inputs, runs the
 // steps and picks the exit code.
 //
-//   decide --run <dir> --record <n>[,<m>…] [--repo owner/name]
+//   decide --record <n>[,<m>…] [--run <dir>] [--repo owner/name]
 //     One JSON line, decideSeries' result. Control mode off (isControlModeOn over
 //     resolvePolicyKeys, the run's config.yml over policy.yml as resolve-policy.js --run reads
-//     them) prints `consulted: false` for every record and reads no record. On, each record's
+//     them; without --run, the main checkout's policy.yml alone, as parked reads it) prints
+//     `consulted: false` for every record and reads no record. On, each record's
 //     body gives its kept risk flags (parseRiskFlags: ok -> flags, unclassified -> [], unknown
 //     -> the widened flags, so it parks) and its Acceptance-target override; an invalid
 //     acceptance-target value is passed as invalid (-> invalid-input, local).
@@ -24,8 +25,9 @@
 //     and accept:pending — a found packet gets the label when no pending spelling is on it, no
 //     packet gets one posted through acceptance-packet.js gather (deploy {"target":"local"}) ->
 //     render (narrative {schemaVersion, claims: []}) -> post --label accept:pending, an
-//     unreadable one fails; (2) per parked record, writeParkDeployStatus and an in-place comment
-//     edit (packet-post.js's graphql updateIssueComment); then one AUTO decisions.md line, then
+//     unreadable one fails; (2) per parked record, writeParkDeployStatus (--head, and the PR's
+//     baseRefOid from one `gh pr view --json baseRefOid`, a failed read failing the step) and an
+//     in-place comment edit (packet-post.js's graphql updateIssueComment); then one AUTO decisions.md line, then
 //     (3) hooks.js close-run and archive-run, ok only on `claude-tweaks: archived`; (4)
 //     releaseClaim for every --claimed record, ok on released or already-released; (5) remove:
 //     `git -C <main checkout> worktree remove --force --force` (the driver locks its worktree),
@@ -45,8 +47,9 @@
 //   reenter --record <n> --pr <n> [--repo owner/name]
 //     /accept's re-entry: bin/lib/accept/reentry.js adds `.claude/worktrees/accept-<n>` under the
 //     main checkout from the PR branch's tip (never an existing directory). One JSON line:
-//     { worktree, headRefName, prHead, parkHead, moved, head } — parkHead is the packet's
-//     `park-head:` (an unreadable or absent packet is null, so moved). Exit 0 entered; 1 a git or
+//     { worktree, headRefName, prHead, prBase, parkHead, parkBase, moved, head } — parkHead and
+//     parkBase are the packet's `park-head:` and `park-base:` (an unreadable or absent packet is
+//     null, so moved); a moved base, or a pushed head since the PR view, is moved too. Exit 0 entered; 1 a git or
 //     gh failure (including a PR view that will not read); 2 malformed invocation; 4 gh absent,
 //     before any write; 7 stale directory, on disk or still registered with git (nothing touched;
 //     reenter-remove clears it).
@@ -66,7 +69,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const { pinExplicitRepoHost } = require('./lib/repo-resolve');
 
 const USAGE = [
-  'usage: accept-park.js decide --run <dir> --record <n>[,<m>...] [--repo owner/name]',
+  'usage: accept-park.js decide --record <n>[,<m>...] [--run <dir>] [--repo owner/name]',
   '       accept-park.js park --run <dir> --record <n>[,<m>...] --pr <n> --head <sha> --worktree <path>',
   '         [--claimed <n>[,<m>...]] [--worktree-mode remove|caller] [--repo owner/name]',
   '       accept-park.js parked --record <n> [--run <dir>] [--repo owner/name]',
@@ -83,7 +86,7 @@ const USAGE = [
 ].join('\n');
 
 const VERBS = Object.freeze({
-  decide: { required: ['--run', '--record'], optional: ['--repo'] },
+  decide: { required: ['--record'], optional: ['--run', '--repo'] },
   park: { required: ['--run', '--record', '--pr', '--head', '--worktree'], optional: ['--claimed', '--worktree-mode', '--repo'] },
   parked: { required: ['--record'], optional: ['--run', '--repo'] },
   reenter: { required: ['--record', '--pr'], optional: ['--repo'] },
@@ -287,8 +290,12 @@ function runDecide(opts, deps, ctx) {
   const { resolvePolicyKeys } = require('./lib/policy-schema');
   const { isControlModeOn, readRiskPolicy } = require('./lib/policy');
   const { decideSeries } = require('./lib/accept/park');
-  const runDir = ctx.absolute(opts.run);
-  if (!anchoredRun(runDir, deps)) return 3;
+  // Without --run the repo-root policy.yml is the authority, as parked reads it.
+  let runDir = null;
+  if (opts.run !== undefined) {
+    runDir = ctx.absolute(opts.run);
+    if (!anchoredRun(runDir, deps)) return 3;
+  }
 
   const sources = readPolicySources(deps, ctx, runDir);
   if (sources === null) return 1;
@@ -407,7 +414,7 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
   const { readPacket } = require('./lib/wrap-up/packet-gather');
   const { SCHEMA_VERSION } = require('./lib/wrap-up/packet-contract');
   const { LABELS, acceptanceOf, normalizeLabelNames } = require('./lib/issues/record-vocabulary');
-  const { PARK_REASON, writeParkDeployStatus } = require('./lib/accept/park');
+  const { PARK_REASON, HEAD_SHA_RE, writeParkDeployStatus } = require('./lib/accept/park');
   const tmp = (n, suffix) => deps.tmpPath(`accept-park-${n}-${process.pid}-${suffix}`, deps.env);
   const perRecord = async (records, fn) => {
     const details = [];
@@ -448,6 +455,16 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
     return packet;
   };
 
+  // The PR's base oid, read once for every parked record's `park-base:` line.
+  let baseOid = null;
+  const prBase = () => {
+    if (baseOid !== null) return baseOid;
+    const { baseRefOid } = JSON.parse(ctx.ghIssue(['pr', 'view', String(opts.pr), '--json', 'baseRefOid']));
+    if (typeof baseRefOid !== 'string' || !HEAD_SHA_RE.test(baseRefOid)) throw new Error(`PR #${opts.pr} has no usable baseRefOid`);
+    baseOid = baseRefOid;
+    return baseOid;
+  };
+
   const claimed = opts.claimed ?? opts.record;
   const prUrl = `https://${repoSpec.host || 'github.com'}/${repoSpec.owner}/${repoSpec.repo}/pull/${opts.pr}`;
   const worktree = ctx.absolute(opts.worktree);
@@ -465,7 +482,7 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
     writeDeployStatus: () => perRecord(opts.record, (n) => {
       const packet = readFoundPacket(n);
       if (packet.status !== 'found') throw new Error('no packet comment to write the park state into');
-      const { body, changed } = writeParkDeployStatus(packet.comment.body, { headSha: opts.head });
+      const { body, changed } = writeParkDeployStatus(packet.comment.body, { headSha: opts.head, baseSha: prBase() });
       if (!changed) return 'park state already written';
       const file = tmp(n, 'parked.md');
       try {
@@ -474,7 +491,7 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
       } finally {
         removeQuietly(deps, file);
       }
-      return `park state written, head ${opts.head}`;
+      return `park state written, head ${opts.head}, base ${prBase()}`;
     }),
     archiveRun: async () => {
       log();
@@ -561,8 +578,9 @@ const REENTER_EXIT = Object.freeze({ staleDir: 7, modified: 8 });
 // reentry.js hands its git runner the whole argv, `-C <dir>` included.
 const reentryGit = (deps, ctx) => (args) => deps.git(args, { cwd: ctx.mainRoot(), env: deps.env });
 
-// The packet's park-head for the record, null when the packet is absent or will not read.
-function parkHeadOf(record, deps, ctx) {
+// The packet's park-head and park-base for the record, both null when the packet is absent or
+// will not read.
+function parkShasOf(record, deps, ctx) {
   const { readPacket } = require('./lib/wrap-up/packet-gather');
   const { parkStateOf } = require('./lib/accept/park');
   try {
@@ -570,10 +588,11 @@ function parkHeadOf(record, deps, ctx) {
     if (!Array.isArray(view.comments)) throw new Error('comments is not a list');
     const read = readPacket(view.comments);
     if (read.status !== 'found') throw new Error(`the packet is ${read.status}`);
-    return parkStateOf(read.comment.body).headSha;
+    const { headSha, baseSha } = parkStateOf(read.comment.body);
+    return { parkHead: headSha, parkBase: baseSha };
   } catch (err) {
     deps.stderr(`accept-park.js: could not read #${record}'s park head (${messageOf(err)}) — the PR counts as moved\n`);
-    return null;
+    return { parkHead: null, parkBase: null };
   }
 }
 
@@ -591,7 +610,7 @@ function runReenter(opts, deps, ctx) {
   }
   try {
     const result = reenter({
-      record, pr: opts.pr, repoRoot, parkHead: parkHeadOf(record, deps, ctx),
+      record, pr: opts.pr, repoRoot, ...parkShasOf(record, deps, ctx),
       git: reentryGit(deps, ctx), gh: (args) => ctx.ghIssue(args),
     });
     printJson(deps, result);

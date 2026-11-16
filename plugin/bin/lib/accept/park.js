@@ -1,7 +1,7 @@
 // bin/lib/accept/park.js
 // Pure: the local-acceptance park (#4615). decideAcceptanceRoute / decideSeries say whether a
 // record's acceptance check parks for a human at the local worktree (never consulted with
-// control mode off); writeParkDeployStatus / parkStateOf write and read the park's three fields
+// control mode off); writeParkDeployStatus / parkStateOf write and read the park's four fields
 // in the acceptance packet's Deploy status section; isParkedForLocalAcceptance is the one
 // predicate over a record's labels plus its packet, failing to 'unknown' when the packet is
 // unreadable. The pending label is read through acceptanceOf, never named here. runPark is the
@@ -11,13 +11,13 @@
 
 const { resolveAcceptanceTarget } = require('./target');
 const { acceptanceOf, normalizeLabelNames } = require('../issues/record-vocabulary');
-const { PARK_REASON, REASON_LINE_RE, HEAD_LINE_RE, parkFieldsOf } = require('./park-grammar');
+const { PARK_REASON, REASON_LINE_RE, HEAD_LINE_RE, BASE_LINE_RE, parkFieldsOf } = require('./park-grammar');
 const { DEPLOY, joinLines, sectionRange, splitLines } = require('../issues/accept-entry');
 
 const HEAD_SHA_RE = /^[0-9a-f]{7,64}$/;
 // The write replaces any `target:` line, a renderer's `target: dev, confirmed live` included.
 const ANY_TARGET_LINE_RE = /^target:/;
-const PARK_LINE_RES = [ANY_TARGET_LINE_RE, REASON_LINE_RE, HEAD_LINE_RE];
+const PARK_LINE_RES = [ANY_TARGET_LINE_RE, REASON_LINE_RE, HEAD_LINE_RE, BASE_LINE_RE];
 
 // Control mode is on only for the boolean true: any other value never consults the resolver.
 function decideAcceptanceRoute({ controlMode, keptRiskFlags, itemOverride, policyDefault } = {}) {
@@ -34,7 +34,7 @@ function decideSeries(records) {
 }
 
 function parkStateOf(packetBody) {
-  const none = { parked: false, target: null, reason: null, headSha: null };
+  const none = { parked: false, target: null, reason: null, headSha: null, baseSha: null };
   if (typeof packetBody !== 'string') return none;
   const lines = splitLines(packetBody);
   const range = sectionRange(lines, DEPLOY);
@@ -43,10 +43,12 @@ function parkStateOf(packetBody) {
   return parkFieldsOf(texts);
 }
 
-// Inside the Deploy status section only: exactly one 'target: local', `reason:` and `park-head:`
-// line, written as a group at the section's start. Every other line, `ref:` included, stays.
-function writeParkDeployStatus(packetBody, { headSha } = {}) {
+// Inside the Deploy status section only: exactly one 'target: local', `reason:`, `park-head:` and
+// `park-base:` line (the PR's base oid at park time, so /accept's re-entry sees a moved base),
+// written as a group at the section's start. Every other line, `ref:` included, stays.
+function writeParkDeployStatus(packetBody, { headSha, baseSha } = {}) {
   if (typeof headSha !== 'string' || !HEAD_SHA_RE.test(headSha)) throw new TypeError(`park: headSha must be 7-64 lowercase hex: ${headSha}`);
+  if (typeof baseSha !== 'string' || !HEAD_SHA_RE.test(baseSha)) throw new TypeError(`park: baseSha must be 7-64 lowercase hex: ${baseSha}`);
   if (typeof packetBody !== 'string') throw new TypeError('park: packet body must be a string');
   const lines = splitLines(packetBody);
   const range = sectionRange(lines, DEPLOY);
@@ -54,7 +56,7 @@ function writeParkDeployStatus(packetBody, { headSha } = {}) {
   const eol = lines[range.start - 1].eol;
   const isParkLine = ({ text }) => PARK_LINE_RES.some((re) => re.test(text.trim()));
   const inSection = (index) => index >= range.start && index < range.end;
-  const fresh = ['target: local', `reason: ${PARK_REASON}`, `park-head: ${headSha}`].map((text) => ({ text, eol }));
+  const fresh = ['target: local', `reason: ${PARK_REASON}`, `park-head: ${headSha}`, `park-base: ${baseSha}`].map((text) => ({ text, eol }));
   // The group leads the section, so the first TARGET_RE match packetStateOf finds is the one
   // written here. A blank line separates it from whatever follows: text, a `---` rule (which would
   // otherwise make the group a setext heading) or the next heading.

@@ -13,6 +13,7 @@ const { execFileSync } = require('node:child_process');
 const { reenter, reenterCheck, reenterRemove } = require('../../../plugin/bin/lib/accept/reentry');
 
 const BRANCH = 'feat/accept-me';
+const BASE = 'b'.repeat(40);
 const tempDirs = [];
 after(() => {
   for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
@@ -55,7 +56,7 @@ function fixture() {
   const gh = (args) => {
     ghCalls.push(args);
     assert.deepEqual(args.slice(0, 2), ['pr', 'view']);
-    return JSON.stringify({ headRefName: BRANCH, headRefOid: tip });
+    return JSON.stringify({ headRefName: BRANCH, headRefOid: tip, baseRefOid: BASE });
   };
   // A commit on a side branch of the clone, never pushed: a second real oid to compare against.
   const other = () => {
@@ -70,7 +71,7 @@ function fixture() {
   return { base, clone, tip, git, gh, calls, ghCalls, setup, other, list: () => setup(['worktree', 'list', '--porcelain'], clone) };
 }
 
-const enter = (f, extra = {}) => reenter({ record: 42, pr: 7, repoRoot: f.clone, parkHead: f.tip, git: f.git, gh: f.gh, ...extra });
+const enter = (f, extra = {}) => reenter({ record: 42, pr: 7, repoRoot: f.clone, parkHead: f.tip, parkBase: BASE, git: f.git, gh: f.gh, ...extra });
 
 test('AC4.1: reenter fetches and adds the worktree from the PR branch', () => {
   const f = fixture();
@@ -81,7 +82,9 @@ test('AC4.1: reenter fetches and adds the worktree from the PR branch', () => {
   assert.equal(res.prHead, f.tip);
   assert.equal(res.head, f.tip);
   assert.equal(fs.readFileSync(path.join(expected, 'a.txt'), 'utf8'), 'one\n');
-  assert.deepEqual(f.ghCalls, [['pr', 'view', '7', '--json', 'headRefName,headRefOid']]);
+  assert.deepEqual(f.ghCalls, [['pr', 'view', '7', '--json', 'headRefName,headRefOid,baseRefOid']]);
+  assert.equal(res.prBase, BASE);
+  assert.equal(res.parkBase, BASE);
   assert.ok(f.list().includes(`worktree ${expected}`));
   // The ref and path operands are fenced from option parsing.
   assert.ok(f.calls.filter((a) => a.includes('fetch') || a.includes('add') || a.includes('remove')).every((a) => a.includes('--end-of-options')));
@@ -159,6 +162,35 @@ test('AC4.4: a moved PR head withholds Accept and merge', () => {
   const k = fixture();
   const short = k.other().slice(0, 7);
   assert.equal(enter(k, { parkHead: short }).moved, true, 'a short park head resolving to another commit is moved');
+});
+
+test('I3: a moved or missing park base is moved; an unmoved base and head is not', () => {
+  const f = fixture();
+  const same = enter(f);
+  assert.equal(same.moved, false, 'base same and head same: not moved');
+  const g = fixture();
+  assert.equal(enter(g, { parkBase: 'c'.repeat(40) }).moved, true, 'base moved since the park');
+  const h = fixture();
+  assert.equal(enter(h, { parkBase: null }).moved, true, 'a missing park-base fails closed');
+  const i = fixture();
+  assert.equal(enter(i, { parkBase: 'not-hex' }).moved, true, 'an unreadable park-base fails closed');
+});
+
+test('M2: a push between the PR view and the fetch is moved', () => {
+  const f = fixture();
+  const stale = f.other();
+  // The view answers an older head (the park head), the branch tip fetched is newer.
+  const gh = (args) => JSON.stringify({ headRefName: BRANCH, headRefOid: stale, baseRefOid: BASE });
+  const res = enter(f, { gh, parkHead: stale });
+  assert.equal(res.prHead, stale);
+  assert.equal(res.head, f.tip);
+  assert.equal(res.moved, true, 'the fetched head is not the head the view saw');
+});
+
+test('reenter refuses a PR view with no usable base', () => {
+  const f = fixture();
+  assert.throws(() => enter(f, { gh: () => JSON.stringify({ headRefName: BRANCH, headRefOid: f.tip }) }), /baseRefOid/);
+  assert.equal(f.calls.filter((a) => a.includes('fetch') || a.includes('add')).length, 0);
 });
 
 test('a stale accept directory is refused, never reused', () => {
