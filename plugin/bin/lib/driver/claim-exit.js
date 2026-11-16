@@ -14,7 +14,8 @@ const CLAIM_KIND = Object.freeze({
   // 7: the token may not write the claim.
   PERMISSION_DENIED: 'permission-denied',
   // 2 (malformed invocation or missing dependency) and 6 (claims branch missing): every later
-  // claim would meet the same cause.
+  // claim would meet the same cause. Neither writes a claim, which dispatch's driver route relies
+  // on to skip the claim release (two-call-gate.md §5).
   SHARED_CAUSE: 'shared-cause',
   // 5 (unverified write), or no exit at all (killed or timed out): a claim may have been written.
   UNVERIFIED: 'unverified',
