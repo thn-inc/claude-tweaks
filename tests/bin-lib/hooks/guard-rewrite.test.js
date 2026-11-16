@@ -810,7 +810,7 @@ fs.writeFileSync(path.join(STUB, 'node'), `#!/bin/sh\ncase "$1" in -e|-p|--eval|
 fs.writeFileSync(path.join(STUB, 'git'), `#!/bin/sh\n${CT_PRINT}while [ "$1" = "-C" ]; do cd "$2" || exit 1; shift 2; done\nct_print "$PWD" "$@"\n`, { mode: 0o755 });
 // AC2: each stub prints exactly JSON.stringify of its argument list (git: of [$PWD, ...args]),
 // byte for byte, under the shebang's /bin/sh and under bash and dash by name when present.
-const PRINT_ARGS = ['a b', 'q"q', 'back\\slash', 'line\nbreak', 'é ☃ 🙂', 'tab\there', 'ctl\x01x'];
+const PRINT_ARGS = ['a b', 'q"q', 'back\\slash', 'line\nbreak', 'é ☃ 🙂', 'tab\there', 'ctl\x01x', '50%s%d', '', '\r\b\f', '\x01\x1f'];
 test('each stub prints JSON.stringify of its argument list, byte for byte, under each interpreter', { skip: process.platform === 'win32' }, (t) => {
   const env = { PATH: process.env.PATH, HOME: process.env.HOME || os.homedir() };
   for (const name of ['ls', 'node', 'git']) {
