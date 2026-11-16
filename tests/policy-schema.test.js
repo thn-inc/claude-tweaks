@@ -7,6 +7,7 @@ const path = require('path');
 const { POLICY_KEYS, RENAMED_KEYS, auditPolicy, resolveValue, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
 const { runCliSync } = require('./helpers/run-cli');
+const { assertLastBump } = require('./helpers/last-bump');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-schema-'));
@@ -38,121 +39,12 @@ const RENAMES_332 = [
 ];
 
 test('POLICY_KEYS entries are unique', () => {
-  // 35 -> 37, #269 (backlog grant mode): grant-origination-enabled and
-  // fleet-daily-grant-cap, the reserved opt-in + the mode's own soft cap.
-  // 37 -> 42, #219 (model-profile levers): model-stance, frontier-run-cap,
-  // model-ceiling, model-profiles, research-mode — count recomputed from the
-  // merged list at conflict resolution, never summed from either side (IL-99).
-  // 42 -> 44, #274 (experiment-cleanup vertical): experiment-flag-patterns,
-  // experiment-flag-exclude — the repo's flag idiom + kill-switch exclusion.
-  // 44 -> 45, #330 (prose migration): health-open-cap — documented in
-  // _shared/policy-schema.md since #235 but never registered; the resolver
-  // migration surfaced the gap (unknown-key for a documented lever).
-  // 45 -> 41, #331 (key collapse): execution.always merged into
-  // execution-strategy's widened enum, merge-check renamed to
-  // branch-divergence-check, and review-diff-heuristic-thresholds /
-  // promise-register-min-leaves / section-confirmation retired outright —
-  // five rows out, one (branch-divergence-check) in; RENAMED_KEYS carries
-  // all five migrations.
-  // 41 -> 43, #366 (oversight-floor predicate): risk-floor, size-floor — the
-  // shared floors grant-gate.js's gate 5 and /claude-tweaks:accept's binary gate
-  // both read via exceedsOversightFloor.
-  // 43 -> 44, #406 (pr-first integration model): integration-model — no static
-  // default (computed at resolve time by bin/resolve-policy.js's forge
-  // detection instead), see skills/_shared/integration-model.md.
-  // 44 -> 47, #414 (sweep backstop): pr-unarmed-age-hours, unsettled-age-hours,
-  // housekeeping-auto-merge — the two threshold keys plus the tidy
-  // housekeeping-PR arming grant, see skills/_shared/github-pr-scan.md's
-  // 'unarmed ready PR' check.
-  // 47 -> 48, #363 (plans-retention policy): superpowers-plans-retention —
-  // configurable docs/superpowers/plans/*.md retention at wrap-up cleanup
-  // item 1, default keep-forever preserves today's unconditional behavior.
-  // 48 -> 49, #559 (merge-verification): CI-verification lever for merges
-  // into the integration branch, default derived by bin/lib/merge-verification.js.
-  // 49 -> 50, #595 (design-critique lever): off | auto | full, default auto —
-  // governs whether project-local design critics run at review time.
-  // 50 -> 51, #645 (session-scoped record snapshot): record-snapshot-ttl-seconds
-  // — freshness window for /tmp/ct-records-{session-id}.json, shared by
-  // backlog/capture/specify/trust-table/help/tidy/visualize.
-  // 51 -> 52, #715 (merge-authorization lever): lets a human pre-authorize,
-  // at Manifesto time, that this run should merge itself once every
-  // HARD-GATE is green — policy.yml is deliberately excluded as a source
-  // (see resolvePolicyKeys' merge-authorization special case).
-  // 52 -> 53, #310 (sampling floor): grant-sampling-every — every Nth
-  // machine-granted merged record is flagged for a real /demo verdict, so
-  // human calibration evidence keeps entering the trust table.
-  // 53 -> 54, #660 (review prose-exemption lever): review-auto-apply-prose-exempt
-  // — lets a prose-only fix auto-apply one severity tier above the resolved
-  // review-auto-apply-ceiling, see skills/review/step3-routing.md.
-  // 54 -> 59, #194 (Phase 2 doc-convention wiring): doc-convention-tutorial,
-  // doc-convention-how-to, doc-convention-reference, doc-convention-explanation,
-  // doc-convention-journey — one enum key per newly-wired Diátaxis/Journey genre,
-  // same shape as doc-convention-adr.
-  // 59 -> 60, #357 (ui-stack decision point): ui-stack — free-form string
-  // naming the UI component library/styling approach a frontend build should
-  // use, mirrors integration-branch's no-static-default shape.
-  // 60 -> 61, #1137 (brainstorming auto-continue): specify-auto-continue —
-  // lets a session invoke /claude-tweaks:specify on an approved brainstorming
-  // design doc immediately, see skills/specify/SKILL.md's Auto-continue section.
-  // 61 -> 62, #309 (veto-window maturation): grant-veto-window-hours — how
-  // long a machine-granted auto:merge-pending grant must sit unvetoed before
-  // /claude-tweaks:dispatch's Auto-merge gate matures it to auto:merge.
-  // 62 -> 63, #1654 (dispatch group-size guard lever): dispatch-group-size-guard
-  // — headless `next` selection's file-overlap group-size exclusion threshold,
-  // wired through the same policy.yml precedence chain as its dispatch-batch-size
-  // sibling; grouping.js's GROUP_SIZE_GUARD_DEFAULT stays the unset fallback.
-  // 63 -> 64, #1491 (specify drain budget): specify-budget — default
-  // attempt-count budget for a bare /specify drain invocation, sibling of
-  // dispatch-batch-size; the shared n/all --budget semantics are canonical in
-  // _shared/record-batch-input.md, not restated here.
-  // 64 -> 65, #1792 (port isolation): port-services — names the services
-  // that get a port from this checkout's leased block; read directly by
-  // SessionStart, not an auto-mode lever.
-  // 65 -> 66, #1910 (fast-lane bundling): dispatch-fastlane-bundle-cap —
-  // caps how many non-overlapping ceremony:fast-lane singleton dispatch
-  // groups queue-pull-script.md folds into one multi-spec group; 0 disables
-  // bundling, grouping.js's FASTLANE_BUNDLE_CAP_DEFAULT stays the unset
-  // fallback (sibling of #1654's dispatch-group-size-guard above).
-  // 66 -> 67, #1886 (design-ceremony lever): design-ceremony — new static
-  // per-project policy key gating whether /claude-tweaks:specify's
-  // /superpowers:brainstorming handoff prepends a per-section-approval
-  // consolidation instruction (fast-lane) or leaves the invocation
-  // unchanged (standard, the default).
-  // 67 -> 69, #2253 (release family, unit 3): release-hook — the local
-  // engine's post-tag publish/mirror/deploy command, ignored under
-  // pr-first; release-train — opt-in for the unattended release train,
-  // honored only at autonomy: unattended. Both non-core scaffolding seeded
-  // commented-out by /claude-tweaks:init Step 21; consumers land in units 4 and 6.
-  // 69 -> 70, #2540 (variant-exploration off-switch): design-variant-exploration
-  // — off|offer, default off — gates /specify's Step 2.5b-ii layout-tournament
-  // and scaffold-live offers, which previously had no policy lever at all.
-  // 70 -> 71, #2567 (configurable gh timeout): gh-timeout-ms — bounds
-  // (1000-60000) how long a shared-primitives.js `gh` subprocess call may
-  // run before it is killed and retried once; env var
-  // CLAUDE_TWEAKS_GH_TIMEOUT_MS takes precedence over this when both are set.
-  // 71 -> 72, #3128 (decomposition event log): specify-decomposition-log —
-  // boolean, default false — opts a project into /specify's Ceremony tally
-  // writing docs/specify-decomposition-log.md; off, the step is a no-op.
-  // 72 -> 73, #3051 (configurable claims-git-cas timeout): git-timeout-ms —
-  // integer (1000-120000), default 30000 — bounds how long a
-  // claims-git-cas.js `git` subprocess call may run before it is killed;
-  // env var CLAUDE_TWEAKS_GIT_TIMEOUT_MS takes precedence over this when
-  // both are set.
-  // 73 -> 74, #3298 (merge-subject scope source): commit-scope — string, no default — the constant Conventional-Commits scope token
-  // 74 -> 75, #3298: commit-scope-paths — list, default [] — comma-separated prefix=token pairs resolved against a merge's changed files
-  // 75 -> 76, #4041: release-tip-moves — integer, default 2 — caps how far origin/{branch} may move past /release Step 3's reviewed tip before Step 5 holds the release
-  // 76 -> 82, #4029: the six {fast-lane,standard}-run-{round-trip,procedure-kb,verify-minutes}-ceiling efficiency budgets — integer, min 0 (0 disables), p90-derived defaults
-  // 82 -> 84, #4025 (express lane): express-lane — boolean opt-in, default false; express-review-sample-every — integer >= 1, default 5
-  // 84 -> 97, #4609 (human-in-control policy keys): thirteen inert flat keys — control-mode, acceptance-target, deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds, owned-owners, trusted-authors, risk-categories
-  // 97 -> 98, #4609 (human-in-control policy keys): risk-path-globs — the second block-style key, a slug-to-glob-list map
-  // 98 -> 99, #4847: declare-claude-tweaks — boolean, default true — false stops /init Step 14 declaring claude-tweaks at project scope
-  // 99 -> 100, #5119: verify-suite-slots — integer >= 1, default 1 — the project-wide default for verify.js's machine-wide suite slots
-  // 100 -> 103, #5216 (pipeline driver admission): express-driver — enum off|split|on, default off; express-driver-wall-clock-minutes, express-driver-spend-ceiling-dollars — integer >= 1, ceilings
-  // 103 -> 104, #5222: express-driver-review — enum off|on|beyond-express, default beyond-express, policyOnly
-  // 104 -> 106, #5291 (trust verdict window bridge): trust-evaluation-window-days — integer >= 1, default 30; trust-follow-up-rate-max-percent — integer 0..100, default 30
-  // 106 -> 109, #5224: express-driver-max-size — enum low|medium, default low; express-driver-max-key-files — integer >= 1, default 3; express-driver-max-lines — integer >= 1, Shape B (base 40, derives auto-merge-max-lines while source is default); all policyOnly
-  assert.strictEqual(POLICY_KEYS.length, 109);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 109);
+  assertLastBump(__filename);
+  // Changes only with a recorded reason. Recompute by counting the merged list,
+  // never by summing either side's delta (IL-99); history is `git log -L`.
+  // Last bump: 109 -> 110, #5563
+  assert.strictEqual(POLICY_KEYS.length, 110);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 110);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {

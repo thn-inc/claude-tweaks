@@ -57,6 +57,9 @@ const realDeps = {
   git: (args, { cwd, env }) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
   readFile: (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
   writeFile: (abs, text) => fs.writeFileSync(abs, text),
+  // The project policy, read only for `changelog-max-releases` and `integration-branch`: a missing
+  // file is "no policy" (null); any other read failure throws, and the trim reports it unreadable.
+  readPolicy: (abs) => { try { return fs.readFileSync(abs, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
 };
 
 function run(argv, deps) {
@@ -72,6 +75,7 @@ function run(argv, deps) {
     git: (args) => deps.git(args, { cwd: root, env: deps.env }),
     readFile: (p) => deps.readFile(path.join(root, p)),
     writeFile: (p, text) => deps.writeFile(path.join(root, p), text),
+    readPolicy: () => deps.readPolicy(path.join(root, '.claude-tweaks', 'policy.yml')),
     stdout: deps.stdout,
     stderr: deps.stderr,
   });

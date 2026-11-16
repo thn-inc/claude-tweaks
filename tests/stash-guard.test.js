@@ -18,7 +18,7 @@ const { run, parseArgs, readStack, storeCommand, USAGE } = require('../plugin/bi
 const IDENTITY = {
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
   GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
-  GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_SYSTEM: os.devNull,
+  GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
 };
 Object.assign(process.env, IDENTITY);
 // An inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE outranks `git -C <dir>`, which would aim the

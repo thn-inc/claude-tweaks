@@ -6,6 +6,7 @@ const {
   extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
+  buildAuthorAssociationQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, openBlockerRefs, openNativeBlockerRefs,
@@ -700,6 +701,19 @@ test('buildNativeParentQuery returns null for empty or non-array input', () => {
   assert.strictEqual(buildNativeParentQuery(null), null);
 });
 
+test('buildAuthorAssociationQuery aliases each number and requests authorAssociation', () => {
+  const q = buildAuthorAssociationQuery([42, 731]);
+  assert.match(q, /i42: issue\(number:42\)\{ authorAssociation \}/);
+  assert.match(q, /i731: issue\(number:731\)\{ authorAssociation \}/);
+  assert.match(q, /query\(\$owner:String!,\$repo:String!\)/);
+});
+
+test('buildAuthorAssociationQuery returns null for empty or non-array input', () => {
+  assert.strictEqual(buildAuthorAssociationQuery([]), null);
+  assert.strictEqual(buildAuthorAssociationQuery(null), null);
+  assert.strictEqual(buildAuthorAssociationQuery('42'), null);
+});
+
 // AC — dependency assumptions (cross-spec-promise-tracking)
 
 test('parseDependencyAssumptions captures trailing text after the colon', () => {
@@ -876,10 +890,10 @@ test('parseRecordFacets: shaped:headless alongside an unrelated third label fami
 
 // --- Defer-reason vocabulary (_shared/deferral-gate.md, #620) ---
 
-test('DEFER_REASONS is the frozen six-value closed vocabulary, in contract order', () => {
+test('DEFER_REASONS is the frozen seven-value closed vocabulary, in contract order', () => {
   assert.deepStrictEqual([...DEFER_REASONS], [
     'tangential', 'needs-human-decision', 'pre-existing-outside-diff',
-    'genuinely-larger', 'blocked-external', 'blocked-dependency',
+    'genuinely-larger', 'blocked-external', 'blocked-dependency', 'needs-verification',
   ]);
   assert.ok(Object.isFrozen(DEFER_REASONS));
 });

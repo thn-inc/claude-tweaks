@@ -59,7 +59,7 @@ test('review wires in Step 6.65 and consolidates Step 6.7 routing', () => {
   // code-mode-steps.md into focus-criterion-passes.md to stay under the
   // per-file byte ceiling (tests/review-qa-rerun-after-fix-wave-conformance.test.js's
   // AC5.1 Read-limit byte rail) — step numbering and the Step 6.7 consolidated-routing table
-  // (still in code-mode-steps.md) are unaffected by the split.
+  // (moved with Step 6.7's body to late-findings-routing.md in #4359) are unaffected by the split.
   const passes = readText(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md'));
   assert.match(passes, /## Step 6\.65: Agent Trust Scope Pass/);
   assert.match(passes, /candidates-agent-trust-scope\.js/);
@@ -67,7 +67,8 @@ test('review wires in Step 6.65 and consolidates Step 6.7 routing', () => {
 
   const steps = readText(path.join(ROOT, 'plugin/skills/review/code-mode-steps.md'));
   assert.match(steps, /focus-criterion-passes\.md/);
-  assert.match(steps, /Agent Trust Scope`\s*\(from Step 6\.65\)/);
+  const routing = readText(path.join(ROOT, 'plugin/skills/review/late-findings-routing.md'));
+  assert.match(routing, /Agent Trust Scope`\s*\(from Step 6\.65\)/);
 });
 
 test('docs/getting-started.md counts the shipped verticals including agent-trust-scope', () => {
