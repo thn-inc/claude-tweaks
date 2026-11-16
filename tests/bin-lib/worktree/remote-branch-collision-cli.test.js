@@ -149,10 +149,12 @@ test('AC2.1: --records "3887,3890" reaches the prior-attempt lookup as [3887, 38
 });
 
 test('AC2.2: an absent or empty --records reaches it as []', () => {
+  // The closed PR closes #0, so the old script's `''.split(',').map(Number)` -> [0] would match it
+  // and answer prior-attempt; only an empty list leaves the branch foreign.
   for (const records of [['--records', ''], []]) {
     const out = parsed(call(['--branch', 'b', '--repo', 'o/r', ...records], {
       git: checkGit({ ls: 'present', head: 'not' }),
-      gh: countingGh([priorPr(3890)]),
+      gh: countingGh([priorPr(0)]),
     }));
     assert.equal(out.state, 'foreign');
   }
@@ -217,6 +219,14 @@ test('AC3.1: a malformed call exits 2 with a usage line and empty stdout', () =>
     assert.match(res.stderr, /usage:/, JSON.stringify(argv));
     assert.equal(git.calls, 0, JSON.stringify(argv));
   }
+});
+
+test('AC3.1: a flag followed by another flag is "needs a value", not an unknown argument', () => {
+  // Without the guard, `--repo` would be taken as the branch and `o/r` would fail as an unknown
+  // argument: still exit 2, so only the message tells the two apart.
+  const res = call(['--branch', '--repo', 'o/r']);
+  assert.equal(res.code, 2);
+  assert.match(res.stderr, /--branch needs a value/);
 });
 
 test('AC3.1: an empty --branch is passed to the module', () => {

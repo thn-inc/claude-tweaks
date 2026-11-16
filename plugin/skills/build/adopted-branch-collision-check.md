@@ -40,6 +40,11 @@ git branch --show-current
 gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null
 ```
 
+Before pasting, check the two values: git accepts `$`, backticks and `"` in a ref name, and the
+shell expands them inside the double quotes before the command's own validation runs. A `{branch}`
+or `{repo}` holding any of `$`, a backtick, `"`, `\` or a newline is never pasted: treat a bad
+`{branch}` as `unreachable` with reason `invalid-branch-name` (item 3) and a bad `{repo}` as empty.
+
 Then run the check from the worktree as one plain command, all three values pasted in literally — an
 empty `{repo}` or `{records}` stays `""`:
 
@@ -69,9 +74,9 @@ then treat it as `unreachable` with reason `no-output` (item 3). Branch on `stat
      the command prints this case's `card` too, stating that the relation could not be determined
      (`{reason}`) rather than that the commit is not in this worktree's history.
 4. `foreign` — `origin`'s tip is not in `HEAD`'s history: a same-name branch left by an unrelated
-   run. Gather PR context, best-effort, via `findPrsForBranch({ branch, repo })` (a failed lookup
-   renders as PR status unknown, distinct from a confirmed no-PR result), then render the stop
-   card (`formatStopCard` — the command above prints it as `card`, for this case and item 3's):
+   run. The command already gathered the PR context, best-effort (a failed lookup renders as PR
+   status unknown, distinct from a confirmed no-PR result), and prints the stop card as `card`, for
+   this case and item 3's. Render it; its shape (`formatStopCard`) is:
 
    ```markdown
    ## Build: Adopted branch collides with an unrelated branch on origin

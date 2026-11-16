@@ -21,12 +21,13 @@
 
 const { execFileSync } = require('child_process');
 const { checkAdoptedBranch } = require('./lib/worktree/remote-branch-collision');
-const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
+const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 const {
   parseRepo, ghOptions, pinExplicitRepoHost, injectedGhDeps, pickInjected,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: remote-branch-collision.js --branch <name> [--repo <owner/name>] [--records <n[,m...]>] [--help]\n';
+const USAGE = 'usage: remote-branch-collision.js --branch <name> [--repo <owner/name>] [--records <n[,m...]>] [--help]\n' +
+  'exit: 0 a JSON line was printed, whatever the state; 1 the check threw (nothing on stdout); 2 a malformed call\n';
 
 const FLAGS = { '--branch': 'branch', '--repo': 'repo', '--records': 'records' };
 
@@ -61,7 +62,7 @@ const realDeps = {
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
   git: (args, { cwd, env }) => execFileSync('git', args, {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, windowsHide: true, cwd, env,
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true, cwd, env,
   }),
   gh: (args, { cwd, env, ghDeps }) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true, cwd, env,
