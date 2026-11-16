@@ -1451,7 +1451,6 @@ test('AC2.1 open-pr: a failed resolve-linked-prs.js prints the fence Warning and
   const failed = pull4(FULL(), { spawn: { 'resolve-linked-prs.js': { status: 3, stdout: 'partial', stderr: 'graphql down\n' } } });
   assert.ok(failed.errs.includes(`${LINKED_WARNING}graphql down\n`), failed.stderr);
   assert.equal(LINKED_WARNING, 'Warning: linked-PR query failed — falling back to no open-PR or shipped-candidate exclusion this run: ');
-  assert.ok(failed.errs.some((line) => line.includes('no open-PR or shipped-candidate exclusion')), failed.stderr);
   assert.equal(failed.text['dispatch-linked-prs.json'], '{}\n', "the fence's echo '{}' writes a newline");
   assert.deepEqual(entriesOf(failed, 'open-pr'), []);
   assert.ok(groupNumbers(failed).flat().includes(9008), 'nothing is excluded on a failed query');
