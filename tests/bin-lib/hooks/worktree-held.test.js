@@ -119,6 +119,14 @@ test("holdVerdict: never throws — a throwing probe reads 'unverifiable'", () =
   assert.equal(holdVerdict(wt, { hostname: boom }), 'unverifiable');
 });
 
+test('holdVerdict: a probe that throws with a message equal to a dead detail is unverifiable, not free', () => {
+  const { wt } = worktree();
+  hold(wt);
+  for (const message of ['gone', 'pid-reused']) {
+    assert.equal(holdVerdict(wt, { isAlive: () => { throw new Error(message); } }), 'unverifiable', message);
+  }
+});
+
 test('holdVerdict: a path that is not a worktree at all -> free', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'held-nowt-')));
   assert.equal(holdVerdict(dir), 'free');

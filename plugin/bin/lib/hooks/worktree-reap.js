@@ -441,7 +441,7 @@ function isWorktreeLocked(wtPath, { cwd } = {}) {
 // positive, alive-no-start-time and start-time-unavailable are LIVE (a live pid whose start time
 // cannot be compared, e.g. win32, stays held); gone and pid-reused are dead; every other answer
 // (unreadable hold, other-host — inverted from run-liveness on purpose — no-pid, invalid start
-// time, a probe error) is UNVERIFIABLE. Any live hold -> 'held' (the verified reason wins over an
+// time, a probe error) is UNVERIFIABLE. The mapping is by result AND detail, never detail alone. Any live hold -> 'held' (the verified reason wins over an
 // unverifiable neighbour); else any unverifiable one -> 'unverifiable'; else 'free'.
 // Never throws: an error reads 'unverifiable', so the worktree is kept.
 function holdVerdict(wtPath, { hostname = os.hostname, isAlive = isPidAlive, startTime = pidStartTime } = {}) {
@@ -451,8 +451,12 @@ function holdVerdict(wtPath, { hostname = os.hostname, isAlive = isPidAlive, sta
       // An empty start time is as unreadable as null: it must never read as a recycled pid.
       const current = (pid) => { const t = startTime(pid); return t === '' ? null : t; };
       const { result, detail } = probeOwnerPid(hold, { hostname, pidAlive: isAlive, pidStartTime: current });
-      if (result === 'positive' || detail === 'alive-no-start-time' || detail === 'start-time-unavailable') return 'held';
-      if (detail === 'gone' || detail === 'pid-reused') continue;
+      // result is checked before detail: a thrown probe carries its error message as detail (result
+      // 'error'), so a message that happens to read 'gone' must never be taken for a dead owner.
+      if (result === 'positive'
+        || (result === 'negative' && detail === 'alive-no-start-time')
+        || (result === 'error' && detail === 'start-time-unavailable')) return 'held';
+      if (result === 'negative' && (detail === 'gone' || detail === 'pid-reused')) continue;
       unverifiable = true;
     }
     return unverifiable ? 'unverifiable' : 'free';
