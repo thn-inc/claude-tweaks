@@ -14,12 +14,15 @@ function installTokenPassStub() {
   const stub = (runDir) => { calls.push(runDir); return { spawned: true, reason: 'stubbed' }; };
   const reals = new Map();
   // Stubs the at-close module the cache holds now, not the one this helper loaded:
-  // runCliSync's `fresh: true` drops every plugin/bin module, and the next archive
-  // loads a new, unstubbed copy. Its real child starts in pipelines/archive, which
-  // Windows then refuses to remove (#5694). So the stub is set again before each test.
+  // a `fresh: true` CLI run (tests/helpers/run-cli.js) drops every plugin/bin module,
+  // and the next archive loads a new, unstubbed copy. Its real child starts in
+  // pipelines/archive, which Windows then refuses to remove (#5694). So each test
+  // starts with the cached copy stubbed; a purge and an archive inside one test body
+  // still reach the real function. A copy already stubbed is left alone, so a test's
+  // own temporary replacement survives its subtests.
   const install = () => {
     const atClose = require(AT_CLOSE);
-    if (atClose.spawnTokenPass === stub) return;
+    if (reals.has(atClose)) return;
     reals.set(atClose, atClose.spawnTokenPass);
     atClose.spawnTokenPass = stub;
   };
