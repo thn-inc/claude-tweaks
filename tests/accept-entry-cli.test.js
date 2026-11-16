@@ -245,6 +245,57 @@ test('refresh refuses an --out that is the --packet-file with exit 2 and leaves 
   assert.equal(fs.readFileSync(packet, 'utf8'), body);
 });
 
+test('refresh refuses a symlinked --out that points at the --packet-file with exit 2', (t) => {
+  const dir = tempDir(t);
+  const body = packetBody(['target: local', 'ref: aaa']);
+  const packet = write(path.join(dir, 'packet.md'), body);
+  const badDeploy = writeJson(path.join(dir, 'deploy.json'), { text: 'no ref' });
+  try {
+    fs.symlinkSync(packet, path.join(dir, 'link.md'));
+  } catch (err) {
+    t.skip(`symlinks cannot be created here (${err.code})`);
+    return;
+  }
+  // Relative spellings, so the identity check also resolves against the injected cwd.
+  const result = cli(['refresh', '--packet-file', 'packet.md', '--out', 'link.md', '--deploy-json', badDeploy], { cwd: dir });
+  assert.equal(result.code, 2, result.stderr);
+  assert.equal(fs.readFileSync(packet, 'utf8'), body);
+});
+
+test('refresh refuses a case alias of the --packet-file on a case-insensitive filesystem', (t) => {
+  const dir = tempDir(t);
+  const body = packetBody(['target: local', 'ref: aaa']);
+  const packet = write(path.join(dir, 'packet.md'), body);
+  const alias = path.join(dir, 'PACKET.md');
+  let caseInsensitive = false;
+  try {
+    caseInsensitive = fs.statSync(alias).ino === fs.statSync(packet).ino;
+  } catch {
+    // ENOENT: the filesystem tells the two spellings apart.
+  }
+  if (!caseInsensitive) {
+    t.skip('the filesystem is case-sensitive, so PACKET.md is a different file');
+    return;
+  }
+  const badDeploy = writeJson(path.join(dir, 'deploy.json'), { text: 'no ref' });
+  const result = cli(['refresh', '--packet-file', packet, '--out', alias, '--deploy-json', badDeploy]);
+  assert.equal(result.code, 2, result.stderr);
+  assert.equal(fs.readFileSync(packet, 'utf8'), body);
+});
+
+test('refresh refuses with exit 2 when a file identity cannot be read, and removes nothing', (t) => {
+  const dir = tempDir(t);
+  const body = packetBody(['target: local', 'ref: aaa']);
+  const packet = write(path.join(dir, 'packet.md'), body);
+  const out = write(path.join(dir, 'out.md'), 'an earlier refresh');
+  const result = cli(['refresh', '--packet-file', packet, '--out', out], {
+    deps: { fileId: () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); } },
+  });
+  assert.equal(result.code, 2);
+  assert.equal(fs.readFileSync(packet, 'utf8'), body);
+  assert.equal(fs.readFileSync(out, 'utf8'), 'an earlier refresh');
+});
+
 // --- labels ---
 
 test('labels --verdict approved prints add and remove', (t) => {

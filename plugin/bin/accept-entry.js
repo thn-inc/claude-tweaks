@@ -14,7 +14,8 @@
 //   2 a malformed invocation: an unknown subcommand or flag, a missing value, both or neither
 //     of --labels-json / --acceptance-facet, an unknown --acceptance-facet, --verdict or
 //     --packet-status value, a --packet-status that contradicts --packet-file, a refresh --out
-//     naming the --packet-file, or a malformed --record or --repo.
+//     that is the --packet-file (same path, symlink or case alias) or whose identity cannot be
+//     read, or a malformed --record or --repo.
 //
 // `read` wraps packet-gather.js's readPacket: the earliest trusted packet comment wins,
 // untrusted copies are skipped, and a non-current schema is `unreadable`. It writes the found
@@ -110,6 +111,17 @@ const realDeps = {
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   writeFile: (p, s) => fs.writeFileSync(p, s),
   removeFile: (p) => fs.unlinkSync(p),
+  // A file's identity (device and inode, as bigints so a large inode stays exact), or null when
+  // absent. Any other failure throws.
+  fileId: (p) => {
+    try {
+      const { dev, ino } = fs.statSync(p, { bigint: true });
+      return `${dev}:${ino}`;
+    } catch (err) {
+      if (isAbsentError(err)) return null;
+      throw err;
+    }
+  },
   // `{ cwd, env, stderr, homeDir }` is the caller's injected process context; absent, gh inherits the real one.
   gh: (args, { cwd, env, stderr, homeDir } = {}) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', windowsHide: true, stdio: QUIET, timeout: GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
@@ -246,11 +258,24 @@ function deploySource(deps, file) {
 
 const resolvedPath = (deps, p) => (path.isAbsolute(p) ? path.resolve(p) : path.resolve(deps.cwd(), p));
 
-function runRefresh(opts, deps) {
-  // A failed refresh removes --out, which would then be the input itself.
-  if (resolvedPath(deps, opts.out) === resolvedPath(deps, opts.packetFile)) {
-    throw new UsageError('--out must not be the --packet-file');
+// A failed refresh removes --out, which would then be the input itself. The spellings catch an
+// --out not yet written; the file identities catch a symlink or a case alias of an existing one.
+// An identity that cannot be read refuses too (a UsageError removes nothing).
+function sameFile(opts, deps) {
+  if (resolvedPath(deps, opts.out) === resolvedPath(deps, opts.packetFile)) return true;
+  let outId;
+  let inId;
+  try {
+    outId = deps.fileId(opts.out);
+    inId = deps.fileId(opts.packetFile);
+  } catch (err) {
+    throw new UsageError(`could not tell whether --out is the --packet-file (${messageOf(err)})`);
   }
+  return outId !== null && outId === inId;
+}
+
+function runRefresh(opts, deps) {
+  if (sameFile(opts, deps)) throw new UsageError('--out must not be the --packet-file');
   let result;
   try {
     const body = readInput(deps, '--packet-file', opts.packetFile);
@@ -277,7 +302,7 @@ function runLabels(opts, deps) {
 
 // The deps members whose first argument is a file path: a relative one is the caller's, so it
 // resolves against deps.cwd() rather than the real working directory.
-const PATH_SEAMS = ['readFile', 'writeFile', 'removeFile'];
+const PATH_SEAMS = ['readFile', 'writeFile', 'removeFile', 'fileId'];
 // The subcommands that write --out, so an earlier one is removed on a failure.
 const WRITES_OUT = new Set(['read', 'refresh']);
 
