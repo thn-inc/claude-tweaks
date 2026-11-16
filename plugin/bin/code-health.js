@@ -278,9 +278,8 @@ function cmdValidateFindings(args, ctx) {
     }
   }
 
-  // 4. Persist local cache (open/closed/wontfix/regressed) and the durable
-  // cursor/run/remembered update in a single batched health-state write. A
-  // dry-run writes neither.
+  // 4. Persist the local cache, then the durable cursor/run/remembered update
+  // in one batched health-state write; a dry-run writes neither.
   if (!args.dryRun) {
     // Non-fatal, same as the writeDurableState block below: cache.json is
     // rebuildable from `gh issue list` (see cache.js's header comment), so a

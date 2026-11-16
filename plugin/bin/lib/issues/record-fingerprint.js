@@ -13,7 +13,11 @@
 // once no issue, open or closed, carries a code-health-fingerprint,
 // harness-health-fingerprint or journey-health-fingerprint marker. The check is
 //   gh issue list --state all --limit 100000 --json number,body -q '[.[] | select(.body | test("(code|harness|journey)-health-fingerprint:"))] | length'
-// and a result of 0 means the condition is met.
+// and a result of 0 means the condition is met. The command checks only the
+// repository it runs in; a 0 is necessary but not sufficient, because the reader
+// also serves consumer repos this check cannot see, so removal also needs a
+// release note plus a sunset window (or a sweep step that rewrites old markers
+// to `work-fingerprint`).
 const FP_RE_WORK = /<!--\s*work-fingerprint:\s*([^\s>]+)\s*-->/;
 const FP_RE_LEGACY = /<!--\s*(?:code-health|harness-health|journey-health)-fingerprint:\s*([^\s>]+)\s*-->/;
 
@@ -34,11 +38,11 @@ const FP_RE_WORK_PLAIN = /^work-fingerprint: (\S+)[ \t]*$/m;
 // null/undefined/empty body). The new work-fingerprint HTML-comment marker wins
 // whenever both it and the legacy HTML-comment marker are present, regardless of
 // which appears first in the body (the legacy marker is still read until the
-// removal condition above holds). The plain-text
-// companion (FP_RE_WORK_PLAIN, #1700) is checked last, as a fallback only — it
-// exists specifically for the case where an MCP-fetched body has had every
-// HTML-comment span stripped, so neither HTML-comment regex can match, but the
-// plain-text line survives untouched.
+// removal condition above holds). The plain-text companion (FP_RE_WORK_PLAIN,
+// #1700) is checked last, as a fallback only — it exists specifically for the
+// case where an MCP-fetched body has had every HTML-comment span stripped, so
+// neither HTML-comment regex can match, but the plain-text line survives
+// untouched.
 function extractFingerprint(body) {
   if (typeof body !== 'string' || !body) return null;
   const work = FP_RE_WORK.exec(body);

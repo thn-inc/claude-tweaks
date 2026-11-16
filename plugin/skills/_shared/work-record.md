@@ -437,7 +437,10 @@ emit only `work-fingerprint`). Removal condition: remove `FP_RE_LEGACY` and its 
 `extractFingerprint` once no issue, open or closed, carries a `code-health-fingerprint`,
 `harness-health-fingerprint` or `journey-health-fingerprint` marker; the check is
 `gh issue list --state all --limit 100000 --json number,body -q '[.[] | select(.body | test("(code|harness|journey)-health-fingerprint:"))] | length'`
-and a result of 0 means the condition is met. `bin/lib/issues/record.js`'s
+and a result of 0 means the condition is met. The command checks only the repository it runs
+in; a 0 is necessary but not sufficient, because the reader also serves consumer repos this
+check cannot see, so removal also needs a release note plus a sunset window (or a sweep step
+that rewrites old markers to `work-fingerprint`). `bin/lib/issues/record.js`'s
 `extractFingerprint` implements the dual read; when both markers are present, the new one wins.
 
 ## Freshness stamp
