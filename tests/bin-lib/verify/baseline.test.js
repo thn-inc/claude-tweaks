@@ -710,6 +710,14 @@ test('isolated cancelled / all-skipped: a killed file is flaky only when its iso
   }
 });
 
+test('a killed file whose clean-exiting isolated run has a malformed tree stays attributable — the file-level waiver sits behind the well-formedness guard (#4424)', async () => {
+  const malformed = ['▶ multi', 'line', '  ✔ a (1ms)', '✔ multi', 'line (2ms)', 'ℹ tests 1', 'ℹ suites 1', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 0',
+    'ℹ skipped 0', 'ℹ todo 0', 'ℹ duration_ms 5'].join('\n');
+  const r = await killedCase({ isolatedCode: 0, isolatedLog: malformed });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.flakyPassed, []);
+});
+
 test('absence is not a pass: an isolated run cut short (the extra test never ran) or skipping it stays attributable (#3043)', async () => {
   // A child killed mid-file after `x` failed: `slow` never appears.
   assert.deepStrictEqual((await isolationCase(NAMED({ fails: [['x']], passes: ['first'] }))).attributable, [R]);
