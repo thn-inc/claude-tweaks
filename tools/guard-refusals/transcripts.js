@@ -251,4 +251,4 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
   return { files: files.length, unreadable, calls: calls.size, refusals, referencedRuns: [...referenced].sort() };
 }
 
-module.exports = { scanStore };
+module.exports = { scanStore, eachLine, listCandidates };
