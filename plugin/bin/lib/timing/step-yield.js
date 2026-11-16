@@ -24,7 +24,7 @@ const { readManifest } = require('../flow/manifest');
 const { parseEntry, DECISION_STATUSES } = require('../log-decision/append');
 const { classifyDecisionLine, entryClock, isStructuralLine } = require('../calibration/decisions-classifier');
 const { parseTiebreakLine } = require('../console/resolve');
-const { PAIR_FORMS, JUDGE_NONE, classifyPairLine, isReviewMarkedLine } = require('./pair-lines');
+const { ALL_FORMS, JUDGE_NONE, classifyPairLine, isReviewMarkedLine } = require('./pair-lines');
 const { writeFileAtomic } = require('../atomic-write');
 
 const STEP_YIELD_FILE = 'step-yield.json';
@@ -107,8 +107,10 @@ function eachFindingScope(bucket, lens, fn) {
 }
 
 function countPair(bucket, pair) {
-  const counts = PAIR_FORMS.find((f) => f.id === pair.form).counts;
-  eachFindingScope(bucket, pair.lens, (s) => {
+  const counts = ALL_FORMS.find((f) => f.id === pair.form).counts;
+  // A notice that counts nothing and names no lens (a console disposition) leaves the counters alone.
+  if (pair.lens == null && !counts.both && !counts.one && !counts.relabel) return;
+  eachFindingScope(bucket, pair.lens == null ? UNKNOWN_LENS : pair.lens, (s) => {
     s.both += counts.both; s.one += counts.one; s.relabeled += counts.relabel;
     s.raised += counts.both + counts.one;
   });

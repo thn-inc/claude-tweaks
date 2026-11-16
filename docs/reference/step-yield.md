@@ -159,6 +159,19 @@ A review-marked decision line is a `Reproduction:` pair line, written by the age
 
 `raised = both + one`. A relabel adds to no finding count. A `vacuity-downgraded` line relabels a finding already counted and adds none. `vacuity-reconfirmed` counts one `+1` as the spec says; **a finding that was reproduced, downgraded and then re-confirmed therefore counts in both `both` and `one`.** `single-read-coverage` is a coverage notice; its findings are counted by their own `not-reproduced` lines. The six spec forms are these rows with `reproduced-severity-contested` folded into `reproduced`.
 
+**Archived wording.** Runs archived before the templates were pinned carry the same lines in wording no live template produces. `pair-lines.js` reads it, found by measuring the archive with `tools/step-yield-report.js`:
+
+- Every `PAIR_FORMS` form also carries looser patterns: a writer label that does not end in a colon (`Delta Reproduction:`), a `Reproduction: delta:` or `Reproduction: #4169:` tag, an unquoted lens, a parenthetical on the finding's location or after the verdict, a `Stage path:` clause, the writer's own `Reversibility:` tail repeated, a status line with no time, and agent commentary after `reproduced. Confirmed` (`;`, `,`, ` —` or ` (` after `Confirmed`) or after `not reproduced` (`;` or a parenthesis). These are the only patterns that are not whole-input anchored: they pin the head and the verdict phrase and take the rest of the line as commentary. A bare truncation (`… reproduced. Confirmed.`) and a bare tail (`… Reversibility: high. extra`) still read as unparsed.
+- `LEGACY_FORMS`, line shapes no current template produces. They are pinned by real archived lines in `tests/bin-lib/timing/pair-lines.test.js`, not to prose:
+
+| Form (`LEGACY_FORMS` id) | Line | both | one | relabel |
+|---|---|---|---|---|
+| `direct-verification-elevated` | `… finding {path}:{line} elevated via direct-verification override (…). Confirmed.` — a finding the controller confirmed by reading the source | 0 | +1 | 0 |
+| `no-findings` | `… lens "{lens}" both agents returned No findings.` | 0 | 0 | 0 |
+| `console-disposition` | `Review Console: Console item decision:… (Low-confidence findings): keep-staged — …` — the console's restatement of an already-staged finding; it adds nothing and creates no `findings` object | 0 | 0 | 0 |
+
+`direct-verification-elevated` counts +1 `one`: of 267 archived lines only 23 sit beside a `not reproduced` line for the same location, so the elevation is mostly the finding's only line; those 23 count twice, as `vacuity-reconfirmed` does. A line naming a count of findings (`5 unconfirmed findings staged …`) or several findings with no per-finding verdict is not classified and stays `unparsed`.
+
 Pair-line patterns are **additive**: a reworded template adds a pattern to its form, never replaces one, so archived runs keep parsing. Phase 6 of `docs/superpowers/specs/2026-11-15-process-efficiency-design.md` moves the pair-line write into `categorise-reproduction`; this reader (`pair-lines.js`) and its test then follow that writer.
 
 ### Tiebreak lines

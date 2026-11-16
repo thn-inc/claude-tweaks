@@ -493,6 +493,16 @@ test('writeStepYield writes the object whole into the run dir and leaves no temp
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.tmp-')), []);
 });
 
+// ---- legacy console disposition (#5556, Task 7) ----
+test('a Review Console disposition line is read, counts no finding and creates no findings object', () => {
+  const line = '- AUTO HMS — Review Console: Console item decision:STAGED 09:59:02 — log-decision: Reproduction: lens "3a" fi#46a4cb4a (Low-confidence findings): keep-staged — unconfirmed finding — no Approve-all default; never auto-applied. Reversibility: n/a.';
+  const lines = ['# Decisions', '', line.replace('HMS', hms(at(1300)))];
+  const review = step(derive(buildRun({ lines })), 'review');
+  assert.equal(review.findings, null);
+  assert.equal(review.decisions.AUTO, 1);
+  assert.deepEqual(review.unparsed, { count: 0, samples: [] });
+});
+
 test('writeStepYield never creates the run dir', () => {
   const gone = path.join(os.tmpdir(), `ct-step-yield-gone-${process.pid}`);
   assert.throws(() => writeStepYield(gone, { schemaVersion: 1 }), { code: 'ENOENT' });
