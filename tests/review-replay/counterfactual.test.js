@@ -10,10 +10,25 @@ const { FIXTURES, ARCHIVE, makeDeps } = require('./helpers');
 
 const TRANSCRIPTS = path.join(FIXTURES, 'transcripts');
 const B_FILE = path.join('proj', 'sess', 'subagents', 'agent-3b-b.jsonl');
+const CLEAN = { rowsSkipped: 0, extraDispatches: 0, duplicateIds: 0 };
+const SHARES_3A = { total: 2, located: 2, byA: 2, byB: 1, byBoth: 1, singleReviewerShare: 0.75 };
 
-async function counterfactual(transcripts = TRANSCRIPTS, extra = []) {
+// A copy of the fixture archive whose run-a decisions.md gains `decisionLine` and timing.json gains `timingItems`.
+function archiveCopy({ decisionLine, timingItems = [] }) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-cf-arch-'));
+  fs.cpSync(ARCHIVE, root, { recursive: true });
+  const runA = path.join(root, 'run-a');
+  if (decisionLine) fs.appendFileSync(path.join(runA, 'decisions.md'), `${decisionLine}\n`);
+  const timingFile = path.join(runA, 'timing.json');
+  const timing = JSON.parse(fs.readFileSync(timingFile, 'utf8'));
+  timing.dispatches.items.push(...timingItems);
+  fs.writeFileSync(timingFile, JSON.stringify(timing));
+  return root;
+}
+
+async function counterfactual(transcripts = TRANSCRIPTS, extra = [], runs = ARCHIVE) {
   const deps = makeDeps();
-  const code = await run({ argv: ['counterfactual', '--runs', ARCHIVE, '--transcripts', transcripts, ...extra], deps });
+  const code = await run({ argv: ['counterfactual', '--runs', runs,'--transcripts', transcripts, ...extra], deps });
   return { code, deps, out: deps.logs.length ? JSON.parse(deps.logs.join('\n')) : null };
 }
 
@@ -38,7 +53,7 @@ test('AC6.1: counterfactual over two paired reviewer transcripts reports the sin
 
 test('AC6.2: a reviewer transcript with no findings table counts as unreadable, not zero findings, and the unreadable share is reported', async () => {
   const { out } = await counterfactual();
-  assert.deepEqual(out.transcripts, { total: 4, unreadable: 1, unreadableShare: 0.25 });
+  assert.deepEqual(out.transcripts, { total: 4, unreadable: 1, unreadableShare: 0.25, ...CLEAN });
   // The 3b pair has an unreadable side: its refuted finding (reviewer A raised it) is left out of the shares, not scored as a miss by B.
   assert.deepEqual(out.refuted, { total: 0, byA: 0, byB: 0 });
   assert.equal(parseFindingsTable('I read the diff and ran out of turns.'), null);
@@ -50,7 +65,7 @@ test('a No findings reply is a readable empty table', async () => {
   const root = withReplyB('No findings.');
   try {
     const { out } = await counterfactual(root);
-    assert.deepEqual(out.transcripts, { total: 4, unreadable: 0, unreadableShare: 0 });
+    assert.deepEqual(out.transcripts, { total: 4, unreadable: 0, unreadableShare: 0, ...CLEAN });
     // Now the 3b pair is readable: refuted beta.js:20 was raised by A (line 22) and not by B.
     assert.deepEqual(out.refuted, { total: 1, byA: 1, byB: 0 });
     assert.deepEqual(out.confirmed, { total: 2, located: 2, byA: 2, byB: 1, byBoth: 1, singleReviewerShare: 0.75 });
@@ -72,7 +87,7 @@ test('a missing transcript file is unreadable, and a pair with an unreadable sid
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-cf-empty-'));
   try {
     const { out } = await counterfactual(empty);
-    assert.deepEqual(out.transcripts, { total: 4, unreadable: 4, unreadableShare: 1 });
+    assert.deepEqual(out.transcripts, { total: 4, unreadable: 4, unreadableShare: 1, ...CLEAN });
     assert.deepEqual(out.confirmed, { total: 0, located: 0, byA: 0, byB: 0, byBoth: 0, singleReviewerShare: null });
   } finally {
     fs.rmSync(empty, { recursive: true, force: true });
@@ -100,4 +115,65 @@ test('counterfactual needs --transcripts, rejects an unknown run name and honour
   assert.equal(none.code, 0);
   assert.equal(none.out.runs, 0);
   assert.equal(none.out.lensPairs, 0);
+});
+
+test('prose that mentions "no findings" mid-sentence is unreadable, not an empty table', async () => {
+  assert.equal(parseFindingsTable('I looked and there were no findings I could stand behind, so I stopped.'), null);
+  assert.deepEqual(parseFindingsTable('**No findings**'), []);
+  const root = withReplyB('I ran out of turns; there are no findings to report yet.');
+  try {
+    const { out } = await counterfactual(root);
+    assert.equal(out.transcripts.unreadable, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('table rows that cannot be read are counted in transcripts.rowsSkipped, not dropped silently', async () => {
+  const root = withReplyB('| low | src/beta.js:22 | kept |\n| low | src/beta.js:23 | no trailing pipe\n| low | src/beta.js | no line number |');
+  try {
+    const { out } = await counterfactual(root);
+    assert.equal(out.transcripts.unreadable, 0);
+    assert.equal(out.transcripts.rowsSkipped, 2);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the first dispatch per lens and side is kept; later ones and duplicate transcript ids are counted', async () => {
+  const item = (agentId, desc) => ({ agentId, description: desc, wallClockMs: 1, tokens: { output: 1, cacheRead: 1, cacheCreate: 1 } });
+  const archive = archiveCopy({ timingItems: [item('3a-a-rerun', 'Review lens 3a convention (A)')] });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-cf-dup-'));
+  fs.cpSync(TRANSCRIPTS, root, { recursive: true });
+  // A same-id file in a later directory must not replace the first, and the re-review has no table of its own.
+  fs.mkdirSync(path.join(root, 'proj2', 'sess', 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'proj2', 'sess', 'subagents', 'agent-3a-a.jsonl'), `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'no table' }] } })}\n`);
+  try {
+    const { out } = await counterfactual(root, [], archive);
+    assert.deepEqual(out.confirmed, SHARES_3A);
+    assert.equal(out.transcripts.total, 4);
+    assert.equal(out.transcripts.extraDispatches, 1);
+    assert.equal(out.transcripts.duplicateIds, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(archive, { recursive: true, force: true });
+  }
+});
+
+test('a confirmed finding in a pair with an unreadable side is left out of located and the shares', async () => {
+  const archive = archiveCopy({ decisionLine: '- AUTO 10:00:08 — Reproduction: lens "3b" finding src/beta.js:22 reproduced. Confirmed. Reversibility: high.' });
+  try {
+    const unreadable = await counterfactual(TRANSCRIPTS, [], archive);
+    assert.equal(unreadable.out.transcripts.unreadable, 1);
+    assert.deepEqual(unreadable.out.confirmed, SHARES_3A);
+    const root = withReplyB('No findings.');
+    try {
+      const readable = await counterfactual(root, [], archive);
+      assert.deepEqual(readable.out.confirmed, { total: 3, located: 3, byA: 3, byB: 1, byBoth: 1, singleReviewerShare: 2 / 3 });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(archive, { recursive: true, force: true });
+  }
 });

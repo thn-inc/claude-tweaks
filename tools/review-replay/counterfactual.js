@@ -11,25 +11,40 @@ const SEVERITIES = /^(critical|high|medium|low|info)$/;
 const TRANSCRIPT_FILE = /^agent-(.+)\.jsonl$/;
 const NEAR_LINES = 5;
 
-// The rows of a `| sev | path:line | text |` table; null when the text holds neither a row nor "No findings".
-function parseFindingsTable(text) {
+// A reply that says "No findings" on a line of its own start (after trimming), not one that mentions it mid-sentence.
+const NO_FINDINGS = /^[\s*_`>#-]*No findings\b/im;
+
+// { rows, skipped } of a `| sev | path:line | text |` table; null when the text holds neither a row nor "No findings".
+// `skipped` counts lines that open with a severity cell but are not a row (no trailing `|`, or a location with no :line).
+function parseFindings(text) {
   const rows = [];
+  let skipped = 0;
   for (const line of String(text).split(SPLIT)) {
     const c = line.split('|').map((s) => s.trim());
-    if (c.length < 5) continue;
+    if (c.length < 2 || !SEVERITIES.test(c[1].toLowerCase().replace(/[*`]/g, ''))) continue;
     const sev = c[1].toLowerCase().replace(/[*`]/g, '');
-    if (!SEVERITIES.test(sev)) continue;
-    const m = c[2].replace(/[`*]/g, '').match(/^(.+?):(\d+)/);
-    if (!m) continue;
+    const m = c.length >= 5 ? (c[2] || '').replace(/[`*]/g, '').match(/^(.+?):(\d+)/) : null;
+    if (!m) {
+      skipped += 1;
+      continue;
+    }
     rows.push({ sev, path: m[1].trim(), line: Number(m[2]), text: c[3] });
   }
-  if (rows.length > 0) return rows;
-  return /No findings/i.test(String(text)) ? [] : null;
+  if (rows.length > 0) return { rows, skipped };
+  return NO_FINDINGS.test(String(text)) ? { rows: [], skipped } : null;
 }
 
-// Every agent-{id}.jsonl under `dir`, recursively: id -> file.
+// The rows of a findings table; null when unreadable.
+function parseFindingsTable(text) {
+  const parsed = parseFindings(text);
+  return parsed ? parsed.rows : null;
+}
+
+// Every agent-{id}.jsonl under `dir`, recursively, in name order: { files: id -> file, duplicateIds }. The first file
+// found for an id is kept; each further file with that id counts in duplicateIds.
 function indexTranscripts(dir, fs) {
-  const index = new Map();
+  const files = new Map();
+  let duplicateIds = 0;
   const walk = (d) => {
     let entries;
     try {
@@ -37,16 +52,19 @@ function indexTranscripts(dir, fs) {
     } catch {
       return;
     }
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of entries) {
       if (e.isDirectory()) walk(path.join(d, e.name));
       else {
         const m = TRANSCRIPT_FILE.exec(e.name);
-        if (m) index.set(m[1], path.join(d, e.name));
+        if (!m) continue;
+        if (files.has(m[1])) duplicateIds += 1;
+        else files.set(m[1], path.join(d, e.name));
       }
     }
   };
   walk(dir);
-  return index;
+  return { files, duplicateIds };
 }
 
 // The text of the last assistant message that has any; null when the transcript cannot be read or has none.
@@ -82,18 +100,26 @@ function lastAssistantText(file, fs) {
 const near = (row, p, l) => row.path === p && Math.abs(row.line - l) <= NEAR_LINES;
 const share = (a, b) => (b === 0 ? null : a / b);
 
-// One reviewer's rows by lens and side for a run; a side with no transcript or no table is `rows: null`.
-function lensPairs(r, index, fs) {
+// One reviewer's rows by lens and side for a run; a side with no transcript or no table is `rows: null`. A lens/side
+// dispatched more than once (a fix-wave re-review) keeps its first dispatch, the review's own pass; the others count in
+// `extra`.
+function lensPairs(r, files, fs) {
   const by = new Map();
+  let extra = 0;
   for (const a of r.lensAgents) {
     if (!a.side) continue;
-    const file = a.agentId ? index.get(a.agentId) : undefined;
-    const text = file ? lastAssistantText(file, fs) : null;
     const pair = by.get(a.lens) || {};
-    pair[a.side] = { rows: text === null ? null : parseFindingsTable(text) };
+    if (pair[a.side]) {
+      extra += 1;
+      continue;
+    }
+    const file = a.agentId ? files.get(a.agentId) : undefined;
+    const text = file ? lastAssistantText(file, fs) : null;
+    const parsed = text === null ? null : parseFindings(text);
+    pair[a.side] = { rows: parsed ? parsed.rows : null, skipped: parsed ? parsed.skipped : 0 };
     by.set(a.lens, pair);
   }
-  return [...by.entries()].filter(([, pair]) => pair.A && pair.B);
+  return { pairs: [...by.entries()].filter(([, pair]) => pair.A && pair.B), extra };
 }
 
 function counterfactual(opts, deps) {
@@ -102,12 +128,13 @@ function counterfactual(opts, deps) {
     deps.err(`review-replay.js: no such run under ${opts.runs}: ${missing.join(', ')}`);
     return 2;
   }
-  const index = indexTranscripts(opts.transcripts, deps.fs);
-  const t = { runs: 0, pairs: 0, transcripts: 0, unreadable: 0, confirmed: 0, located: 0, byA: 0, byB: 0, byBoth: 0, refuted: 0, refA: 0, refB: 0 };
+  const { files, duplicateIds } = indexTranscripts(opts.transcripts, deps.fs);
+  const t = { runs: 0, pairs: 0, transcripts: 0, unreadable: 0, skipped: 0, extra: 0, confirmed: 0, located: 0, byA: 0, byB: 0, byBoth: 0, refuted: 0, refA: 0, refB: 0 };
   for (const dir of dirs) {
     const r = readRun(dir, deps);
     if (r.excluded) continue;
-    const pairs = lensPairs(r, index, deps.fs);
+    const { pairs, extra } = lensPairs(r, files, deps.fs);
+    t.extra += extra;
     if (pairs.length === 0) continue;
     t.runs += 1;
     const confirmed = [...r.pairConfirmed, ...r.verdicts.filter((v) => v.verdict === 'confirmed')];
@@ -115,6 +142,7 @@ function counterfactual(opts, deps) {
     for (const [lens, pair] of pairs) {
       t.pairs += 1;
       t.transcripts += 2;
+      t.skipped += pair.A.skipped + pair.B.skipped;
       const readable = pair.A.rows !== null && pair.B.rows !== null;
       t.unreadable += (pair.A.rows === null ? 1 : 0) + (pair.B.rows === null ? 1 : 0);
       if (!readable) continue;
@@ -137,7 +165,10 @@ function counterfactual(opts, deps) {
   deps.log(JSON.stringify({
     runs: t.runs,
     lensPairs: t.pairs,
-    transcripts: { total: t.transcripts, unreadable: t.unreadable, unreadableShare: share(t.unreadable, t.transcripts) },
+    transcripts: {
+      total: t.transcripts, unreadable: t.unreadable, unreadableShare: share(t.unreadable, t.transcripts),
+      rowsSkipped: t.skipped, extraDispatches: t.extra, duplicateIds,
+    },
     confirmed: { total: t.confirmed, located: t.located, byA: t.byA, byB: t.byB, byBoth: t.byBoth, singleReviewerShare: share((t.byA + t.byB) / 2, t.located) },
     refuted: { total: t.refuted, byA: t.refA, byB: t.refB },
   }, null, 2));
