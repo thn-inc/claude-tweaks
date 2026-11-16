@@ -151,7 +151,7 @@ test('archive-run: sweep-standalone run with untracked decisions.md/staged refus
 // requires terminal status, but a run parked with a rendered-but-unanswered
 // PR console (console.json present, resolved !== true) could still be
 // archived by a mistaken direct call — sweeping staged decisions before the
-// human answered. Parity with decideArchive's console-unresolved skip.
+// human answered. Parity with decideArchiveCore's console-unresolved skip.
 test('archive-run: refuses a terminal run whose console.json is rendered but unresolved', async () => {
   const { root, runDir } = runDirFixture('clean');
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ commentIds: ['IC_x'], prNumber: 5, items: [], resolved: false }));

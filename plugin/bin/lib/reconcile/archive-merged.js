@@ -400,11 +400,11 @@ function unclosedRecords(prState, records, repoSlug) {
 // `unclosed` (ascending record numbers) rides on a `merged-partial` skip only.
 // That skip is the gate's first word, not the last: the callers settle it with
 // `settleMergedPartial` below (issue-state probe, empty-linkage fallback).
-// #1732: the merged-PR decision, called by archiveMergedRun's two paths (with
-// real staged evidence, #3249). It is never routed through classifyRunDir: it
-// has no TTL of its own to own — only the mtime/recency kinds do. The `Core`
-// suffix is a leftover from the removed wrapper, kept so existing callers
-// need no change.
+// #1732: the merged-PR decision, called by archiveMergedRun (with real staged
+// evidence, #3249) and byNumberRecordSkip. It is never routed through
+// classifyRunDir: it has no TTL of its own to own — only the mtime/recency
+// kinds do. The `Core` suffix is a leftover from the removed wrapper, kept so
+// existing callers need no change.
 //
 // #3945: `coverage` (checkRunTiebreakCoverage's `{ artifactPresent,
 // artifactValid, missing }`) is evaluated only at the two points that would
@@ -1851,7 +1851,8 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 // two, isStructurallyStuck one. A scoped call answers exactly the question it
 // asks, unaffected by whether the same dir would ALSO match some OTHER kind
 // earlier in CLASSIFY_ORDER. The merged-PR decision is decideArchiveCore's,
-// called by archiveMergedRun, and is never routed through the classifier.
+// called by archiveMergedRun and byNumberRecordSkip, and is never routed
+// through the classifier.
 //
 // I/O-free apart from the one mtime stat (via isStaleDir) and the one
 // events.jsonl read (via ownEventRecency) that the mtime-based kinds and

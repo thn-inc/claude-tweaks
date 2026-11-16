@@ -108,8 +108,8 @@ function expandChecks(checks) {
 // pass's prune failures; it rides on EVERY return path that resolved a repo root (an early or
 // over-budget return included), and stays null only when there is no repo.
 // `sessionId`, when the caller has one, threads through to archiveMerged's
-// own `isAbandonedInterrupted` ownership check (archive-merged.js) — omitted
-// (undefined), archiveMerged falls back to its own
+// own `abandoned-interrupted` classification's ownership check
+// (archive-merged.js) — omitted (undefined), archiveMerged falls back to its own
 // `process.env.CLAUDE_CODE_SESSION_ID` default, unchanged from before this
 // option existed.
 // This module is gh-CLI-only by design (a Node subprocess cannot reach an

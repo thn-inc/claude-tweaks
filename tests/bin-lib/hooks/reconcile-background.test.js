@@ -157,7 +157,7 @@ function fixtureAbandonedShippedRun({ runId, ownerSessionId } = {}) {
   if (ownerSessionId) runState.sessionId = ownerSessionId;
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(runState));
   // Far outside the 24h staleness window — satisfies both checkRunIntegrity's
-  // shipped-unclosed evidence bar and lastOwnEventMs' recency check.
+  // shipped-unclosed evidence bar and ownEventRecency's recency check.
   const seedEvent = '{"skill":"claude-tweaks:build","ts":"2020-01-01T09:05:00.000Z","type":"skill_invoked"}';
   fs.writeFileSync(path.join(runDir, 'events.jsonl'), `${seedEvent}\n`);
 
