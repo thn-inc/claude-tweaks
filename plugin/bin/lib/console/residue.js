@@ -67,6 +67,8 @@ function pendingFilings(consoleJson, decisions) {
     if (!entry || typeof entry.item !== 'string' || typeof entry.fingerprint !== 'string') return [];
     if (filed.has(entry.fingerprint)) return [];
     const item = items.find((i) => i && i.id === entry.item);
+    // #4620: a failed filing rewritten `carried` lives in the acceptance packet now, not in this run's residue.
+    if (item && item.resolution === 'carried') return [];
     return [{
       ...(item || { id: entry.item }),
       resolution: FILING_PENDING_RESOLUTION,
