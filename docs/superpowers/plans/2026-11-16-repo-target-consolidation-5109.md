@@ -146,6 +146,7 @@ git commit -m "Factor repoTargetOfRemote out of repoTargetOf — one remote-taki
 ### Task 2: stale-claim-pr.js resolves its origin through repoTargetOfRemote
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/stale-claim-pr.js` (header comment lines 51-56 and 64-65, the require at line 76, resolveTarget at lines 182-202)
@@ -188,6 +189,7 @@ git commit -m "Route stale-claim-pr's origin through repoTargetOfRemote — loos
 ### Task 3: claim-targets.js gates its origin through repoTargetOfRemote
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/claim-targets.js:28-30` (require), `:52-68` (realDeps.gateOrigin, realDeps.repoTarget comment)
