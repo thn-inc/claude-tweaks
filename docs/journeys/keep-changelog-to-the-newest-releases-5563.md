@@ -35,10 +35,10 @@ files:
 
 ### 3. See a trim that could not run
 - **URL:** the release output
-- **Action:** Read stderr on a release where the trim could not complete (an unreadable `policy.yml`, a commit that is not on the default branch, a rejected trim push).
+- **Action:** Read stderr on a release where the trim could not complete (under pr-first an unreadable `policy.yml`; a commit that is not on the default branch; a rejected trim push).
 - **Should feel:** Visible but harmless: one line, and the release still reports released.
-- **Should understand:** `changelog trim: failed ({reason}); file left untrimmed` or `changelog trim: policy unreadable ({reason}); not trimmed`, one line each. A failed trim push drops its own commit and restores the file and the index; if that restore fails too, the same line says the index may still hold the trimmed file.
-- **Red flags:** A multi-line error dump. A non-zero exit from a release that landed. A trim commit left behind after its push failed.
+- **Should understand:** `changelog trim: failed ({reason}); file left untrimmed` or `changelog trim: policy unreadable ({reason}); not trimmed`, one line each. A failed trim push drops its own commit and restores the file and the index; if that restore fails too, the same line says the index may still hold the trimmed file. The policy-unreadable line prints only under pr-first: under local-merge an unreadable `policy.yml` stops `bin/release-local.js` before it changes anything, as it did before the key existed, so there is no release to report.
+- **Red flags:** A multi-line error dump. A non-zero exit from a release that landed. A trim commit left behind after its push failed. A local-merge release that went ahead on an unreadable `policy.yml`.
 
 ### 4. Run tidy on the trimmed file
 - **URL:** `/claude-tweaks:tidy`
@@ -56,4 +56,4 @@ files:
 
 ## Origin
 
-Created by `/claude-tweaks:build` for record #5563 (2026-11-16): the `changelog-max-releases` key, the trim and its footer, both release engines, the release probe's floor and the version check's partial notice.
+Created by `/claude-tweaks:build` for record #5563 (2026-11-16): the `changelog-max-releases` key, the trim and its footer, both release engines, the release probe's floor and the version check's partial notice. Step 3 updated at the wrap-up of #5563 (review fix wave): the unreadable-policy case is pr-first only, since under local-merge that read failure stops `bin/release-local.js` before the release starts.
