@@ -315,8 +315,8 @@ node -e "
 ```
 
 Render as the same one-line format as the `github-issues` scope: `Awaiting sign-off: **{N}
-records** — #{id1} ({title1}), #{id2} ({title2}), ... — run /demo #{id1},#{id2},... to review them
-all` (a single ref when `{N}` is 1: `run /demo #{id1}`) — omit entirely when the count is 0.
+records** — #{id1} ({title1}), #{id2} ({title2}), ... — run /claude-tweaks:accept #{id1},#{id2},... to review them
+all` (a single ref when `{N}` is 1: `run /claude-tweaks:accept #{id1}`) — omit entirely when the count is 0.
 
 ## Stage 4.8: Trust Table (GitHub)
 

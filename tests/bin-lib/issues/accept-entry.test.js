@@ -459,3 +459,22 @@ test('skip edits nothing', () => {
 test('an unknown verdict throws', () => {
   assert.throws(() => verdictLabelEdits([], 'maybe'), TypeError);
 });
+
+// --- refreshPacket: hostile source values (review findings) ---
+
+test('a non-http(s) devBaseUrl or recordingUrl is refused, not written as `null` or a foreign scheme', () => {
+  assert.throws(() => refreshPacket(stalePacket(), { ...SOURCE, devBaseUrl: 'data:text/plain,x' }), TypeError);
+  assert.throws(() => refreshPacket(stalePacket(), { ...SOURCE, recordingUrl: 'javascript:alert(1)' }), TypeError);
+});
+
+test('a `$` pattern in a source URL is data, not a replacement token', () => {
+  const { body } = refreshPacket(stalePacket(), { ...SOURCE, recordingUrl: 'https://dev.example.com/r?a=$&' });
+  assert.match(sectionOf(body, 'Recording'), /<https:\/\/dev\.example\.com\/r\?a=\$&>/);
+  assert.doesNotMatch(body, /old\.example\.com/);
+});
+
+test('deploy text that ends the section or carries a credential is refused', () => {
+  assert.throws(() => refreshPacket(stalePacket(), { ...SOURCE, text: 'target: dev\n---\nfoo' }), TypeError);
+  assert.throws(() => refreshPacket(stalePacket(), { ...SOURCE, text: 'target: dev\n### Next' }), TypeError);
+  assert.throws(() => refreshPacket(stalePacket(), { ...SOURCE, text: 'token=ghp_abcdefghijklmnopqrstuvwxyz0123456789' }), TypeError);
+});

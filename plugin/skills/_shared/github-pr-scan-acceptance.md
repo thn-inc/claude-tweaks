@@ -33,8 +33,8 @@ so a record labelled seconds before the run can be missing while the search inde
 and picked up by the next run.
 
 Render as one line listing every matching record: `Awaiting sign-off: **{N} records** — #{n1}
-({title1}), #{n2} ({title2}), ... — run /demo #{n1},#{n2},... to review them all` (a single ref
-when `{N}` is 1: `run /demo #{n1}`) — omit entirely when the count is 0.
+({title1}), #{n2} ({title2}), ... — run /claude-tweaks:accept #{n1},#{n2},... to review them all` (a single ref
+when `{N}` is 1: `run /claude-tweaks:accept #{n1}`) — omit entirely when the count is 0.
 
 ## Scope: `acceptance-gap` (consumed by /tidy Step 4.8)
 

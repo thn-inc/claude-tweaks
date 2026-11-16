@@ -30,6 +30,7 @@
 const { SECTIONS, WITHHELD_TEXT, DEPLOY_REF_SOURCE, isDeployRef } = require('../wrap-up/packet-contract');
 const { dispositionState, APPROVAL_PROVENANCE_LABEL, APPROVAL_PROVENANCE_LABELS } = require('./acceptance');
 const { LABELS } = require('./record-vocabulary');
+const { findCredentialInText } = require('../wrap-up/packet-links');
 
 const PACKET_STATES = Object.freeze(['awaiting-local', 'waiting-for-deploy', 'live-on-dev', 'already-decided', 'no-packet', 'unhandled']);
 const REFRESHABLE_FIELDS = Object.freeze(['deploy-status', 'test-guide-base-url', 'recording-link']);
@@ -192,6 +193,13 @@ function mapSection(lines, heading, fn) {
   return lines.map((line, index) => (index >= range.start && index < range.end ? { ...line, text: fn(line.text) } : line));
 }
 
+// A refresh writes only web links: any other scheme parses but has no origin to rewrite to.
+function httpUrl(value) {
+  const url = new URL(value);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new TypeError(`not an http(s) URL: ${value}`);
+  return url;
+}
+
 function refreshPacket(body, source) {
   const unchangedUnverified = { body, refreshed: [], unverified: [...REFRESHABLE_FIELDS] };
   if (source === null || source === undefined) return unchangedUnverified;
@@ -201,6 +209,11 @@ function refreshPacket(body, source) {
   if (stored === null) return unchangedUnverified;
   if (sameCommit(stored.ref, source.ref)) return { body, refreshed: [], unverified: [] };
 
+  // The renderer screens the same field; text that ends the section early or carries a credential
+  // would strand the stored ref line or publish the credential, so the refresh refuses it.
+  if (source.text.split(/\r?\n/).some((line) => SECTION_END_RE.test(line)) || findCredentialInText(source.text)) {
+    throw new TypeError('deploy text ends the Deploy status section or is credential-shaped');
+  }
   const refreshed = ['deploy-status'];
   lines = replaceDeploy(lines, deployRange, stored.index, source);
   // The unverified-link suffix belongs to the Test guide field and follows the deploy text: a
@@ -209,16 +222,17 @@ function refreshPacket(body, source) {
     lines = mapSection(lines, TEST_GUIDE, (text) => text.split(` ${UNVERIFIED_LINK}`).join(''));
   }
   if (typeof source.devBaseUrl === 'string' && source.devBaseUrl !== '') {
-    const origin = new URL(source.devBaseUrl).origin;
-    lines = mapSection(lines, TEST_GUIDE, (text) => text.replace(ORIGIN_RE, origin));
+    const origin = httpUrl(source.devBaseUrl).origin;
+    // A function replacer: a `$` pattern in the value is data, not a replacement token.
+    lines = mapSection(lines, TEST_GUIDE, (text) => text.replace(ORIGIN_RE, () => origin));
     refreshed.push('test-guide-base-url');
   }
   if (typeof source.recordingUrl === 'string' && source.recordingUrl !== '') {
     const recordingText = sectionText(lines, RECORDING);
     AUTOLINK_RE.lastIndex = 0;
     if (recordingText !== null && AUTOLINK_RE.test(recordingText)) {
-      const link = `<${new URL(source.recordingUrl).href}>`;
-      lines = mapSection(lines, RECORDING, (text) => text.replace(AUTOLINK_RE, link));
+      const link = `<${httpUrl(source.recordingUrl).href}>`;
+      lines = mapSection(lines, RECORDING, (text) => text.replace(AUTOLINK_RE, () => link));
       refreshed.push('recording-link');
     }
   }

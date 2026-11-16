@@ -140,7 +140,7 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
 
 Log the outcome to `decisions.md` either way (`_shared/auto-decision-log.md`): `AUTO` status,
 rationale = the `reason` field (or `null` on a pass), reversibility = high (the closing-commit
-fallback covers a skipped gate; a human can still `/demo #N` it).
+fallback covers a skipped gate; a human can still `/claude-tweaks:accept #N` it).
 
 ## Step 1: Bootstrap the Acceptance labels
 
