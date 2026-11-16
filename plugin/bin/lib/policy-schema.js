@@ -405,6 +405,13 @@ function readFileSafe(filePath) {
   }
 }
 
+// policy.yml text found through locatePolicyFile (#4492); null when unreadable or
+// when `repoRoot` is not a string (locatePolicyFile returns a null path then).
+function readLocatedPolicy(repoRoot) {
+  const policyPath = locatePolicyFile(repoRoot).path;
+  return policyPath === null ? null : readFileSafe(policyPath);
+}
+
 // Flat `key: value` line matcher, tolerant of a trailing `# comment` and of
 // living inside a fenced code block — matches bin/lib/policy.js's convention.
 // bin/hooks.sh's policy_verdict mirrors this for `worktree-always` (#5392):
@@ -826,10 +833,9 @@ function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   if (Number.isInteger(explicit) && explicit > 0) return explicit;
   const raw = (opts && opts.env ? opts.env : process.env).CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
-  // A non-string repoRoot has no policy.yml to read (locatePolicyFile returns a null path): skip
-  // to the default, which keeps detectIntegrationModel's never-throws contract.
-  const policyPath = locatePolicyFile(repoRoot).path;
-  const policyRaw = policyPath === null ? null : readFileSafe(policyPath);
+  // A non-string repoRoot has no policy.yml to read: skip to the default, which keeps
+  // detectIntegrationModel's never-throws contract.
+  const policyRaw = readLocatedPolicy(repoRoot);
   return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
 }
 
@@ -952,9 +958,8 @@ function detectIntegrationModel(repoRoot, opts = {}) {
 // `opts` (optional) forwards unchanged to detectIntegrationModel — see that
 // function's own comment for the mcpReachable override contract.
 function resolveIntegrationModel(repoRoot, opts = {}) {
-  // A non-string repoRoot locates no policy file (null path) and falls through to detection — deliberate.
-  const policyPath = locatePolicyFile(repoRoot).path;
-  const policyRaw = policyPath === null ? null : readFileSafe(policyPath);
+  // A non-string repoRoot locates no policy file and falls through to detection — deliberate.
+  const policyRaw = readLocatedPolicy(repoRoot);
   const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null });
   const entry = resolved['integration-model'];
   if (entry && entry.source !== 'default') return entry.value;
@@ -995,8 +1000,7 @@ function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cw
 }
 
 function auditPolicy(repoRoot) {
-  const policyPath = locatePolicyFile(repoRoot).path;
-  const policyRaw = policyPath === null ? null : readFileSafe(policyPath);
+  const policyRaw = readLocatedPolicy(repoRoot);
   const claudeMdRaw = readFileSafe(path.join(repoRoot, 'CLAUDE.md'));
   const policyEntries = parseFlatLines(policyRaw);
   const claudeMdEntries = parseFlatLines(claudeMdRaw);
