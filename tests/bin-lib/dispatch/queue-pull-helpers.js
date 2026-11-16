@@ -50,12 +50,12 @@
 // it is read only when there are dependency numbers to search; otherwise the fence's `echo '[]'`
 // holds (S2-files-miss, whose queue declares no dependency, diverged on the write-back blob).
 //
-// This module holds what queue-pull.test.js, queue-pull-oracle-checks.test.js and the four
-// queue-pull-parity-*.test.js files share (one file per `#5227 parity` describe, each its own node:test
-// process): the fence and the strings read from it, the in-process pull harness, the parity-pair
-// machinery (one memoized runPair per config name, per process) and the fetch-failure fault pool. State that must be one instance per process (PAIR_MEMO, the fault-pool
-// promise) lives here and is never exported; each parity file registers the cleanup hooks through
-// registerParityCleanup().
+// This module holds what queue-pull.test.js, queue-pull-oracle-checks.test.js and the five
+// queue-pull-parity-*.test.js files share (each its own node:test process): the fence and the
+// strings read from it, the in-process pull harness, the parity-pair machinery (one memoized runPair
+// per config name, per process) and the fetch-failure fault pool. State that must be one instance per
+// process (PAIR_MEMO, the fault-pool promise) lives here and is never exported; each parity file
+// registers the cleanup hooks through registerParityCleanup().
 const { after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -401,18 +401,19 @@ async function runD1() {
   }
 }
 
-// The one fault pool of a process: the rows and bases of the `transports` it is asked for (both by
-// default) and, unless `d1: false`, D1, started by the first call. Each parity file runs in its own
-// process now, so the file's own `before` hooks are the only callers and their arguments the whole
-// decision: queue-pull-parity-ac4 runs ['gh'] without D1, queue-pull-parity-ac7 ['files'] without D1,
-// and queue-pull-parity-d1 D1 alone ([]). A second call with different arguments throws rather than
+// The one fault pool of a process: the rows and bases of the `transports` it is asked for and, when
+// `d1` is true, D1, started by the first call. Each parity file runs in its own process now, so the
+// file's own `before` hooks are the only callers and their arguments the whole decision:
+// queue-pull-parity-ac4 runs ['gh'] without D1, queue-pull-parity-ac7 ['files'] without D1, and
+// queue-pull-parity-d1 D1 alone ([]). A second call with different arguments throws rather than
 // silently handing back the first pool.
 let faultPool = null;
-let faultPoolTransports = null;
-function runFaultPool(transports = ['gh', 'files'], { d1 = true } = {}) {
-  const key = `${transports.join()}${d1 ? ' + D1' : ''}`;
-  if (faultPool && key !== faultPoolTransports) {
-    throw new Error(`runFaultPool: the pool already runs transports [${faultPoolTransports}], asked for [${key}]`);
+let faultPoolArgs = null;
+function runFaultPool(transports, { d1 }) {
+  const args = { transports: transports.join(), d1: Boolean(d1) };
+  if (faultPool && (args.transports !== faultPoolArgs.transports || args.d1 !== faultPoolArgs.d1)) {
+    const show = (a) => `transports [${a.transports}] with D1 ${a.d1 ? 'on' : 'off'}`;
+    throw new Error(`runFaultPool: the pool already runs ${show(faultPoolArgs)}, asked for ${show(args)}`);
   }
   if (!faultPool) {
     const configs = faultConfigs(transports);
@@ -420,7 +421,7 @@ function runFaultPool(transports = ['gh', 'files'], { d1 = true } = {}) {
     // D1 first: its two pulls run one after the other, so it starts before the single-pull pairs.
     faultPool = runAll([...(d1 ? [{ name: 'D1', run: runD1 }] : []), ...pairJobs(configs)], POOL)
       .then((R) => ({ R, pairs: configs.length, ms: Date.now() - t0 }));
-    faultPoolTransports = key;
+    faultPoolArgs = args;
   }
   return faultPool;
 }

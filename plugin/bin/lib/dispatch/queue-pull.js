@@ -64,8 +64,9 @@
 // same format over the same variable, so both sides emit identical names. Production never sets it.
 //
 // Test seams beyond `deps` (no shipped caller uses them; a refactor keeps them or updates the
-// tests in queue-pull.test.js that read them): `makeContext(options, deps)` is exported, and tests
-// run passes over its context and then assert on `ctx.state.cacheHit`, `.workLinks`,
+// tests that read them: queue-pull.test.js, and the shared `pull` harness in queue-pull-helpers.js
+// that it and queue-pull-oracle-checks.test.js run): `makeContext(options, deps)` is exported,
+// and tests run passes over its context and then assert on `ctx.state.cacheHit`, `.workLinks`,
 // `.groupSizeGuard`, `.integrationBranch`, `.integrationRef` and `.files` (the effective input
 // paths); `runPasses` takes `ctx.runners` ({ [id]: fn }) in place of the real runners; and
 // `defaultDeps({ execFileSync, spawnSync })` replaces the two child_process calls the default

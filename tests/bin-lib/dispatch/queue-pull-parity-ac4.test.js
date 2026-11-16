@@ -33,7 +33,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
   // rows, no D1: see the header); the name is kept as it was.
   test('#5227 fault pool: every job ran (the gh and files fault rows, their bases and D1, in one pool)', (t) => {
     assertEveryJobRan(R);
-    t.diagnostic(`fault pool: ${pool.pairs} pairs (${pool.pairs * 2} runs) + D1 (4 runs), pool ${POOL}, wall ${pool.ms} ms`);
+    t.diagnostic(`fault pool: ${pool.pairs} pairs (${pool.pairs * 2} runs), the gh rows and their bases, pool ${POOL}, wall ${pool.ms} ms`);
   });
 
   for (const f of FAULTS) {
