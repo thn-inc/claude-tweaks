@@ -16,6 +16,7 @@ const EXCLUSION_REASONS = [
   'decisions-unreadable',
   'no-review',
   'no-findings-artifact',
+  'findings-unreadable',
   'no-fix-commit',
   'fix-commit-not-in-clone',
   'no-recorded-base',

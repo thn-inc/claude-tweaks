@@ -61,7 +61,7 @@ function matchVerdicts(findings, verdicts, failedJudges = []) {
   const byId = new Map();
   const unmatched = [];
   for (const f of findings) {
-    const hits = verdicts.filter((v) => v.id === f.id);
+    const hits = f.id == null ? [] : verdicts.filter((v) => v.id != null && v.id === f.id);
     if (hits.length === 0) {
       unmatched.push(f);
       continue;
@@ -72,26 +72,31 @@ function matchVerdicts(findings, verdicts, failedJudges = []) {
   let fallbackMatched = 0;
   const stillUnmatched = [];
   for (const f of unmatched) {
-    const hits = verdicts.filter((v) => !used.has(v) && (v.id === null || !ids.has(v.id)) && sameLocation(v, f));
-    if (hits.length === 0) {
+    // One verdict line per finding: two findings at one location each take their own line, in order.
+    const hit = verdicts.find((v) => !used.has(v) && (v.id === null || !ids.has(v.id)) && sameLocation(v, f));
+    if (!hit) {
       stillUnmatched.push(f);
       continue;
     }
-    hits.forEach((v) => used.add(v));
-    byId.set(f.id, hits[hits.length - 1].verdict);
+    used.add(hit);
+    byId.set(f.id, hit.verdict);
     fallbackMatched += 1;
   }
   const failedJudgeByReason = {};
   const failedJudgeIds = new Set();
   let findingsWithoutVerdict = 0;
+  const usedJudges = new Set();
   for (const f of stillUnmatched) {
-    const byFindingId = failedJudges.filter((j) => j.id === f.id);
-    const hits = byFindingId.length > 0 ? byFindingId : failedJudges.filter((j) => (j.id === null || !ids.has(j.id)) && sameLocation(j, f));
-    if (hits.length === 0) {
+    const byFindingId = f.id == null ? [] : failedJudges.filter((j) => j.id != null && j.id === f.id);
+    const judge = byFindingId.length > 0
+      ? byFindingId[byFindingId.length - 1]
+      : failedJudges.find((j) => !usedJudges.has(j) && (j.id === null || !ids.has(j.id)) && sameLocation(j, f));
+    if (!judge) {
       findingsWithoutVerdict += 1;
       continue;
     }
-    const reason = hits[hits.length - 1].reason;
+    usedJudges.add(judge);
+    const reason = judge.reason;
     failedJudgeByReason[reason] = (failedJudgeByReason[reason] || 0) + 1;
     failedJudgeIds.add(f.id);
   }
@@ -151,13 +156,23 @@ function readCost(deps, dir) {
 
 const EMPTY_COST = { lensAgents: 0, tiebreakAgents: 0, lensOut: 0, lensCc: 0, tbOut: 0, tbCc: 0, tbCr: 0, tbSeconds: 0 };
 
+// review-findings.json -> { findings, why }: absent is `findings: null` with no reason (Task 3 excludes it as
+// no-findings-artifact); present but malformed is `findings: null` with `findings-unreadable`.
 function readFindings(deps, dir) {
-  const raw = readJson(deps, path.join(dir, 'review-findings.json'));
-  if (!Array.isArray(raw)) return null;
-  return raw.map((f) => ({
-    id: f.id, lens: f.lens, path: f.path, line: f.line, claim: f.claim,
-    severity: f.reporterSeverity == null ? 'unknown' : f.reporterSeverity, kind: f.kind,
-  }));
+  let raw;
+  try {
+    raw = JSON.parse(readText(deps, path.join(dir, 'review-findings.json')));
+  } catch (e) {
+    return { findings: null, why: e && e.code === 'ENOENT' ? null : 'findings-unreadable' };
+  }
+  if (!Array.isArray(raw)) return { findings: null, why: 'findings-unreadable' };
+  return {
+    why: null,
+    findings: raw.map((f) => ({
+      id: f.id, lens: f.lens, path: f.path, line: f.line, claim: f.claim,
+      severity: f.reporterSeverity == null ? 'unknown' : f.reporterSeverity, kind: f.kind,
+    })),
+  };
 }
 
 // The review head: the parent of the earliest fix commit the clone knows. { head, why }.
@@ -219,6 +234,8 @@ function readRun(dir, deps) {
   if (!recordedBase) why.push('no-recorded-base');
   const timing = readCost(deps, dir);
   if (!timing) why.push('no-timing');
+  const { findings, why: findingsWhy } = readFindings(deps, dir);
+  if (findingsWhy) why.push(findingsWhy);
   let dispatchBundle = null;
   try {
     dispatchBundle = readText(deps, path.join(dir, 'context', 'review-dispatch.md'));
@@ -226,7 +243,7 @@ function readRun(dir, deps) {
     dispatchBundle = null;
   }
   return {
-    ...base, ...lines, why, findings: readFindings(deps, dir), head, base: recordedBase, dispatchBundle,
+    ...base, ...lines, why, findings, head, base: recordedBase, dispatchBundle,
     lensAgents: timing ? timing.lensAgents : [], cost: timing ? timing.cost : { ...EMPTY_COST }, specFiles: readSpecFiles(deps, dir),
   };
 }
@@ -245,7 +262,12 @@ function listRuns(root, fs) {
   };
   collect(root, true);
   collect(path.join(root, 'archive'), false);
-  return dirs.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
+  // A code-unit order, so the listing does not depend on the machine's locale.
+  return dirs.sort((a, b) => {
+    const x = path.basename(a);
+    const y = path.basename(b);
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
 }
 
 module.exports = { parseDecisions, matchVerdicts, readRun, listRuns };

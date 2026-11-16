@@ -25,9 +25,10 @@ const COMMANDS = new Set(['baseline']);
 const VALUE_FLAGS = new Set(['--runs', '--select']);
 
 function defaultDeps() {
+  const cwd = process.cwd(); // the repo the CLI runs in, captured once
   return {
     fs,
-    git: (args) => String(execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, maxBuffer: 256 * 1024 * 1024, windowsHide: true })),
+    git: (args) => String(execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, maxBuffer: 256 * 1024 * 1024, windowsHide: true })),
     log: (s) => process.stdout.write(`${s}\n`),
     err: (s) => process.stderr.write(`${s}\n`),
     pluginRoot: path.join(__dirname, '..', 'plugin'),

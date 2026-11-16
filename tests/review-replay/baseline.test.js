@@ -78,6 +78,48 @@ test('a finding with neither a verdict nor a failed judge counts as findingsWith
   assert.equal(matchVerdicts(findings, []).findingsWithoutVerdict, 1);
 });
 
+test('a finding with a null id matches no id-less verdict by id', () => {
+  const findings = [{ id: null, lens: '3a', path: 'p.js', line: 1 }, { id: 'x2', lens: '3b', path: 'q.js', line: 2 }];
+  const verdicts = [{ id: null, lens: '3z', path: 'z.js', line: 9, verdict: 'confirmed' }];
+  const m = matchVerdicts(findings, verdicts);
+  assert.equal(m.byId.size, 0);
+  assert.equal(m.fallbackMatched, 0);
+  assert.equal(m.verdictsWithoutFinding, 1);
+  assert.equal(m.findingsWithoutVerdict, 2);
+});
+
+test('two findings at one lens/path/line each take their own verdict line; a missing one is findingsWithoutVerdict', () => {
+  const findings = [{ id: 'x1', lens: '3a', path: 'p.js', line: 1 }, { id: 'x2', lens: '3a', path: 'p.js', line: 1 }];
+  const at = (verdict) => ({ id: null, lens: '3a', path: 'p.js', line: 1, verdict });
+  const two = matchVerdicts(findings, [at('confirmed'), at('refuted')]);
+  assert.deepEqual([...two.byId.entries()], [['x1', 'confirmed'], ['x2', 'refuted']]);
+  assert.equal(two.fallbackMatched, 2);
+  assert.equal(two.findingsWithoutVerdict, 0);
+  const one = matchVerdicts(findings, [at('confirmed')]);
+  assert.deepEqual([...one.byId.keys()], ['x1']);
+  assert.equal(one.findingsWithoutVerdict, 1);
+  const judge = { id: null, lens: '3a', path: 'p.js', line: 1, reason: 'status:DONE' };
+  const failed = matchVerdicts(findings, [], [judge]);
+  assert.deepEqual(failed.failedJudgeByReason, { 'status:DONE': 1 });
+  assert.equal(failed.findingsWithoutVerdict, 1);
+});
+
+test('a malformed review-findings.json is findings-unreadable in why; an absent one is not', () => {
+  const garble = (file, text) => ({
+    ...fs,
+    readFileSync: (p, enc) => (String(p).endsWith(file) ? text : fs.readFileSync(p, enc)),
+  });
+  const bad = readRun(RUN_A, makeDeps({ fs: garble('review-findings.json', '{not json') }));
+  assert.equal(bad.findings, null);
+  assert.ok(bad.why.includes('findings-unreadable'));
+  const notArray = readRun(RUN_A, makeDeps({ fs: garble('review-findings.json', '{"a":1}') }));
+  assert.ok(notArray.why.includes('findings-unreadable'));
+  const absent = readRun(path.join(ARCHIVE, 'run-b'), makeDeps({ fs: { ...fs, readFileSync: (p, enc) => { if (String(p).endsWith('review-findings.json')) { const e = new Error('gone'); e.code = 'ENOENT'; throw e; } return fs.readFileSync(p, enc); } } }));
+  assert.equal(absent.findings, null);
+  assert.ok(!absent.why.includes('findings-unreadable'));
+  assert.ok(schema.EXCLUSION_REASONS.includes('findings-unreadable'));
+});
+
 test('a digested status:DONE tiebreak line is a failed judge counted by reason, not a cant-tell verdict', () => {
   const a = readRun(RUN_A, makeDeps());
   const m = matchVerdicts(a.findings, a.verdicts, a.failedJudges);
