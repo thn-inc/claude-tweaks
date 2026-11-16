@@ -43,7 +43,9 @@ function needsAssociation(record) {
 
 function integerNumbers(numbers) {
   const list = Array.isArray(numbers) ? numbers : [];
-  return [...new Set(list.filter((n) => Number.isInteger(n) && n > 0))];
+  // Safe integers only: an unsafe one (1e21) prints as `1e+21`, which is not a
+  // valid alias or argument and would fail the whole batch.
+  return [...new Set(list.filter((n) => Number.isSafeInteger(n) && n > 0))];
 }
 
 function buildAssociationQuery(numbers) {

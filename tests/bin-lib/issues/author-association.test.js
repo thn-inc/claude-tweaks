@@ -13,6 +13,7 @@ const {
   enrichRecordsFile,
 } = require('../../../plugin/bin/lib/issues/author-association');
 const { hasOriginLine } = require('../../../plugin/bin/lib/issues/provenance');
+const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
 
 // Fake runners are lazy functions inspecting `args` only when called, and throw
 // on anything they do not handle so a wrong call fails loudly.
@@ -55,13 +56,13 @@ test('needsAssociation: Origin line and unknown author trust only', () => {
 });
 
 test('buildAssociationQuery emits one alias per integer number and drops non-integers', () => {
-  const q = buildAssociationQuery([4577, '7; x', -1, 1.5, 12]);
+  const q = buildAssociationQuery([4577, '7; x', -1, 1.5, 1e21, 12]);
   assert.equal(
     q,
     'query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){'
       + 'i4577: issue(number:4577){authorAssociation} i12: issue(number:12){authorAssociation}}}',
   );
-  assert.doesNotMatch(q, /7; x|-1|1\.5/);
+  assert.doesNotMatch(q, /7; x|-1|1\.5|e\+21/);
   assert.equal(buildAssociationQuery([]), '');
   assert.equal(buildAssociationQuery(['7; x', 0]), '');
 });
@@ -228,4 +229,55 @@ test('enrichRecordsFile writes exactly one warning line when a batch fails', () 
   assert.match(lines[0], /author-association enrichment incomplete \(1 batch\(es\) failed\)/);
   assert.equal(lines[0].split('\n').filter(Boolean).length, 1);
   assert.equal(fs.readFileSync(file, 'utf8'), before, 'nothing attached, nothing written');
+});
+
+test('enrichRecordsFile names repo-unresolved on one warning line and leaves the file untouched', () => {
+  const file = tempFile(JSON.stringify([originRecord(5)], null, 2));
+  const before = fs.readFileSync(file, 'utf8');
+  const lines = [];
+  const runner = (args) => {
+    if (isRepoView(args)) throw new Error('not a git repository');
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const out = enrichRecordsFile(file, { runner, stderr: (s) => lines.push(s) });
+  assert.equal(out.skipped, 'repo-unresolved');
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /author-association enrichment incomplete \(skipped: repo-unresolved\)/);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+});
+
+const cannotDenyWrite = process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0);
+test('enrichRecordsFile reports write-failed when the snapshot cannot be written back', { skip: cannotDenyWrite && 'file modes do not deny writes here' }, () => {
+  const file = tempFile(JSON.stringify([originRecord(5)], null, 2));
+  const before = fs.readFileSync(file, 'utf8');
+  fs.chmodSync(file, 0o444);
+  const lines = [];
+  try {
+    const out = enrichRecordsFile(file, { owner: 'o', repo: 'r', runner: fakeRunner({ 5: 'MEMBER' }, []), stderr: (s) => lines.push(s) });
+    assert.equal(out.skipped, 'write-failed');
+    assert.equal(out.records[0].authorAssociation, 'MEMBER', 'the enriched records are still returned');
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /author-association enrichment incomplete \(skipped: write-failed\)/);
+    assert.equal(fs.readFileSync(file, 'utf8'), before);
+  } finally {
+    fs.chmodSync(file, 0o644);
+  }
+});
+
+// 10000 is below GH_BATCH_TIMEOUT_MS's 30000 floor, so the two bounds differ.
+function runnerTimeout(args) {
+  const modulePath = require.resolve('../../../plugin/bin/lib/issues/author-association');
+  return captureGhTimeout({
+    envValue: '10000',
+    modulePaths: [modulePath],
+    exercise: (setEnv) => {
+      setEnv();
+      require(modulePath).defaultRunner(args);
+    },
+  });
+}
+
+test('defaultRunner bounds api graphql by GH_BATCH_TIMEOUT_MS and repo view by GH_TIMEOUT_MS', () => {
+  assert.equal(runnerTimeout(['api', 'graphql', '-f', 'query=q', '-f', 'owner=o', '-f', 'repo=r']), 30000);
+  assert.equal(runnerTimeout(['repo', 'view', '--json', 'owner,name']), 10000);
 });
