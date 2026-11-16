@@ -22,7 +22,7 @@ Scope keywords: superpowers-plans-retention, prune-after-wrapup, IL-36
 - `docs/plans/` (run ledgers) and `docs/superpowers/plans/` (plans) are different things (IL-37). The tidy prune touches only `docs/superpowers/plans/`.
 - `docs/superpowers/specs/` is out of scope.
 - No tracked file may name this plan's own filename (`2026-11-16-plans-prune-after-wrapup.md`): wrap-up's cleanup item 1 keeps a cited plan, and AC3 needs this plan deleted on the branch. Name it only in the PR body or the run dir — and never in a row of the tracked open-items ledger `docs/plans/2026-11-16-plans-prune-after-wrapup-ledger.md` (the citation check reads `docs/plans/`; refer to "this run's plan" there).
-- Never `git stash`; never `git rm` a plan outside the tidy pass (spec Gotcha: "do not replace the tidy pass with a bare `git rm`").
+- Never `git stash`; never `git rm` a plan that tidy's own scan did not route Delete and that has not passed tidy's own fresh re-verify (spec Gotcha: "do not replace the tidy pass with a bare `git rm`" — Task 3 applies tidy's routing and re-verify, it does not replace them).
 - Decision rule for an unsettled reading (spec, author 2026-11-16): prefer the reading that keeps a run on the previous plugin release working; then the one that puts the rule in code, not prose; then the one inside the Key Files. State each such choice in the PR body (Task 6).
 - Commit style: `{Verb} {what} — {detail}`, "refs #5562" (never closes/fixes), trailer `Claude-Session: https://claude.ai/code/session_017vXcAfgnMHSKjpcUW23qJj`.
 - Governing project skills: none apply — no task edits `plugin/bin/**`, a test, or `plugin/skills/**` (`skill-prose-conformance-tests` and `bin-source-scan-conformance` govern test and bin edits only).
@@ -43,8 +43,8 @@ Waived bin/lib/policy-schema.js: read-only (installed copy), Task 2 Step 2's AC8
 | AC1.2, AC1.4, AC1.5 | Task 1 Steps 2-3 (exempt list, BLOCKED stop) |
 | AC1.6 | Task 2 Step 7 (ADR-0034 states the rule and lists the readers) |
 | AC2.1 | Task 2 Steps 1, 3, 8 |
-| AC4.1 | Task 3 Step 2 |
-| AC4.2 | Task 3 Step 3, Task 6 Step 1 |
+| AC4.1 | Task 3 Steps 2-3 |
+| AC4.2 | Task 3 Step 4, Task 6 Step 1 |
 | AC5.1 | Task 2 Step 8 |
 | AC6.1 | Task 4 Steps 1-2, Task 6 Step 1 |
 | AC7.1 | Task 5 Step 1 |
@@ -123,12 +123,14 @@ Append `superpowers-plans-retention: prune-after-wrapup` as the last non-comment
 Replace `docs/donts.md` line 67 with exactly:
 
 ```
-- For a design-mode build (brainstorm → design doc → plans → SDD, skipping `/specify`), keep the design doc under `docs/superpowers/specs/` at wrap-up — nothing consumes it, and bulk pruning is a separate deliberate action (ADR-0007). The plan follows `superpowers-plans-retention`: this repository sets `prune-after-wrapup`, so the run's own wrap-up deletes it on the branch (ADR-0034); the plugin default stays `keep-forever` `[IL-36]`
+- For a design-mode build (brainstorm → design doc → plans → SDD, skipping `/specify`), keep the design doc under `docs/superpowers/specs/` at wrap-up — nothing consumes it, and bulk pruning is a separate deliberate action (ADR-0007). The plan follows `superpowers-plans-retention`, which this repository sets to `prune-after-wrapup` (ADR-0034): wrap-up's cleanup item 1 deletes a record-based run's plan on the branch, and a design-mode build has no record, so `/claude-tweaks:tidy` removes its plan instead; the plugin default stays `keep-forever` `[IL-36]`
 ```
+
+(Cleanup item 1's Condition column is "record-based work", `plugin/skills/wrap-up/cleanup-procedures.md:11`; a design-mode run's plan is tidy's orphan-plan route, judgment tier.)
 
 - [ ] **Step 5: Reword the IL-36 incident entry**
 
-Replace the body paragraph under `## IL-36 — Design-mode build artifacts at wrap-up` (line 163; keep the heading) with a paragraph that: keeps the history (the rule originally kept both design doc and plan as permanent record, with the archive pruned in bulk per ADR-0007); states what the repository does now (design doc still kept for a design-mode build; the plan follows `superpowers-plans-retention`, set to `prune-after-wrapup` here since #5562, so each run deletes its own plan at wrap-up's cleanup item 1 and tidy deletes leftovers of closed records; ADR-0034); keeps "`docs/decisions/` ADRs are excluded from any such prune". Do not name this plan's filename.
+Replace the body paragraph under `## IL-36 — Design-mode build artifacts at wrap-up` (line 163; keep the heading) with a paragraph that: keeps the history (the rule originally kept both design doc and plan as permanent record, with the archive pruned in bulk per ADR-0007); states what the repository does now (design doc still kept for a design-mode build; the plan follows `superpowers-plans-retention`, set to `prune-after-wrapup` here since #5562, so a record-based run deletes its own plan at wrap-up's cleanup item 1, a design-mode build — which has no record and so no cleanup item 1 — leaves its plan to tidy's orphan route, and tidy deletes leftovers of closed records; ADR-0034); keeps "`docs/decisions/` ADRs are excluded from any such prune". Do not name this plan's filename.
 
 - [ ] **Step 6: Add the ADR-0007 narrowing line**
 
@@ -136,7 +138,7 @@ Directly under `- **Status:** accepted` add: `- **Narrowed by:** [0034](0034-thi
 
 - [ ] **Step 7: Write ADR-0034**
 
-Follow `docs/decisions/0033-*.md`'s shape (title `# 0034. This repository deletes each run's plan at wrap-up`, Status accepted, Date 2026-11-16, Context #5562; sections Context / Decision / Alternatives considered / Consequences). Context: the measured churn from the spec's Current State (699 added, 641 deleted in 30 days on 2026-11-15; 79 tracked, 2.8 MB) and that nothing reads a plan after the merge. Decision: `superpowers-plans-retention: prune-after-wrapup` in this repository; the rule "a plan exists on its run's branch only"; it narrows ADR-0007 for this repository — a plan is deleted by its own run, a design doc is still kept until `/claude-tweaks:specify` consumes it; the plugin default stays `keep-forever`. A "Readers that rely on this rule" list: every Task 1 row with Verdict `ok` or `exempt`, one line each (path — what it reads — why it is safe). Alternatives: keep `keep-forever` plus periodic bulk prunes (rejected: a commit per prune and plans on `main` between prunes); change the plugin default (rejected: consuming projects that keep plans would change). Consequences: runs that close without wrap-up leave their plan until tidy prunes it once the record closes; the parked measurement record (Task 5) checks the result. Do not name this plan's filename.
+Follow `docs/decisions/0033-*.md`'s shape (title `# 0034. This repository deletes each run's plan at wrap-up`, Status accepted, Date 2026-11-16, Context #5562; sections Context / Decision / Alternatives considered / Consequences). Context: the measured churn from the spec's Current State (699 added, 641 deleted in 30 days on 2026-11-15; 79 tracked, 2.8 MB) and that nothing reads a plan after the merge. Decision: `superpowers-plans-retention: prune-after-wrapup` in this repository; the rule "a plan exists on its run's branch only", with its one stated exception — a design-mode build has no record, so cleanup item 1 (record-based work only) does not run and tidy's orphan-plan route removes the plan later (say so in Consequences too); it narrows ADR-0007 for this repository — a plan is deleted by its own run, a design doc is still kept until `/claude-tweaks:specify` consumes it; the plugin default stays `keep-forever`. A "Readers that rely on this rule" list: every Task 1 row with Verdict `ok` or `exempt`, one line each (path — what it reads — why it is safe). Alternatives: keep `keep-forever` plus periodic bulk prunes (rejected: a commit per prune and plans on `main` between prunes); change the plugin default (rejected: consuming projects that keep plans would change). Consequences: runs that close without wrap-up leave their plan until tidy prunes it once the record closes; the parked measurement record (Task 5) checks the result. Do not name this plan's filename.
 
 - [ ] **Step 8: Verify (AC2.1, AC5.1)**
 
@@ -147,12 +149,15 @@ Run: `node --test tests/tidy-plan-retention-conformance.test.js tests/bin-lib/pl
 
 `git add` the five files by path; commit `Set plans retention to prune-after-wrapup — reword IL-36, add ADR-0034 narrowing ADR-0007, refs #5562`.
 
+AC5's full-suite clause ("the full suite passes with the reworded rule") is carried by the `/claude-tweaks:test` phase after the build and by PR #5629's CI (which runs the whole suite); a test it turns red is fixed in this record.
+
 ### Task 3: One tidy prune under the new setting
 
 **Role:** judgment
+**Review risk:** high
 
 **Files:**
-- Delete (via tidy only): plans under `docs/superpowers/plans/` that tidy routes Delete
+- Delete: plans under `docs/superpowers/plans/` that tidy's dry-run routes Delete for a closed record and that pass the fresh re-verify
 - Create (run dir): `{run-dir}/evidence/kept-plans.md`
 
 **Interfaces:**
@@ -163,13 +168,17 @@ Run: `node --test tests/tidy-plan-retention-conformance.test.js tests/bin-lib/pl
 
 Run: `node "{plugin-root}/bin/resolve-policy.js" --values superpowers-plans-retention` from the worktree — Expected: `prune-after-wrapup`.
 
-- [ ] **Step 2: Run the tidy pass (AC4.1)**
+- [ ] **Step 2: Run the tidy scan, dry-run (AC4.1)**
 
-Invoke the Skill `claude-tweaks:tidy` with args `--scope=plans`, from this worktree. Under `prune-after-wrapup` tidy's Step 4 routes a plan whose related record is complete as Delete and re-verifies each before deleting (`_shared/reverify-before-write.md`); the 30-plan threshold and 7-day cutoff belong to `keep-forever` and do not apply. The session is already isolated in this record's worktree, which carries the setting: when tidy's Step 7.5 says to provision a scratch worktree, adopt this worktree instead (per `_shared/worktree-setup.md`'s Adopt-or-create — `EnterWorktree` refuses inside a worktree session), run Step 7 and the tidy commit here, and skip tidy's own PR open/arm (the commit rides PR #5629). Log that adoption as one `AUTO` line in `{run-dir}/decisions.md`. Only plan deletions under `docs/superpowers/plans/` may land in this commit; any other tidy finding is left staged/unapproved. This run's own plan must be kept (live run).
+Invoke the Skill `claude-tweaks:tidy` with args `--scope=plans --dry-run`, from this worktree, with `PIPELINE_RUN_DIR` set to the run dir above. `--scope=plans` runs all of tidy's Step 4, which also routes orphan `docs/plans/*-ledger.md` files as auto-applied Deletes (`step-6-auto.md`'s Delete row) — and this record does not fix ledgers (Deliverable 5) and Task 4 needs every tracked ledger — so the scan must not execute. `--dry-run` stages every finding and writes one `DRY-RUN … — would: {action}` line per finding to `{run-dir}/decisions.md` without mutating anything. Under `prune-after-wrapup` tidy's Step 4 routes a plan whose related record is complete as Delete; the 30-plan threshold and 7-day cutoff belong to `keep-forever` and do not apply.
 
-- [ ] **Step 3: Record what was kept (AC4.2)**
+- [ ] **Step 3: Apply only the closed-record plan Deletes, each re-verified**
 
-From tidy's report, list every plan still tracked (`git ls-files docs/superpowers/plans`) with its reason. Save to `{run-dir}/evidence/kept-plans.md`; log an `AC evidence` entry: `AC4: tidy --scope=plans deleted {D} plans, kept {K}; every kept plan has an open record, open PR, live run or citing file — {path}`. A kept plan whose reason is none of those (e.g. state unreadable) is listed with that reason.
+From the dry-run's findings, take only the Delete rows for files under `docs/superpowers/plans/` whose related record is complete (tidy's "plans whose related spec is complete" Delete row). Decline every other row: ledger Deletes, orphan plans with no related record, plans whose spec is unclear or not started (judgment tier), and anything outside `docs/superpowers/plans/`. For each taken row, run tidy's own pre-delete re-verify (`step-6-auto.md`'s Delete row, `_shared/reverify-before-write.md`) with freshly read state, as separate calls: the related record is still closed (`gh issue view {n} --json state`), and `git grep -lF -- '{basename}' -- ':!docs/superpowers/plans/' ':!.claude-tweaks/'` still exits 1 (`plan-citation-check.md`). Only then `git rm -- {plan}`; a row whose re-verify fails is kept and listed with the failure as its reason. This run's own plan is never taken (live run). Commit the deletions in one commit, `Tidy (scope: plans): delete {D} plans of closed records under prune-after-wrapup — refs #5562`. Log one `AUTO` line explaining that tidy ran as a dry-run and its closed-record plan Deletes were applied with tidy's own re-verify, so the orphan-ledger Deletes the same scan routes stayed unapplied (Deliverable 5).
+
+- [ ] **Step 4: Record what was kept (AC4.2)**
+
+List every plan still tracked (`git ls-files docs/superpowers/plans`) with its reason. Save to `{run-dir}/evidence/kept-plans.md`; log an `AC evidence` entry: `AC4: tidy --scope=plans (dry-run + re-verified apply) deleted {D} plans, kept {K}; {X} AC4 exceptions — {path}`. A kept plan whose reason is none of open record / open PR / live run / cited (e.g. no related record, state unreadable) is listed with that reason and counted as an AC4 exception (spec's Plan Review Clarifications): Task 6 reports each one in the PR body; never delete it to make the count zero.
 
 ### Task 4: Ledger table and one filed record
 
@@ -192,14 +201,14 @@ Invoke the Skill `claude-tweaks:capture` with a spec-shaped body (Current State:
 
 ### Task 5: Parked measurement record
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - none in the repo (forge write via `/claude-tweaks:capture`)
 
 - [ ] **Step 1: File the parked record (AC7.1)**
 
-Invoke the Skill `claude-tweaks:capture` to file one parked record, wake date 2026-11-30 (14 days after filing on 2026-11-16; if filed on a later day, filing date + 14), `Related: #5562`, carrying verbatim: count commands `git log --since=<filing date> --diff-filter=A --name-only --format=%H origin/main -- docs/superpowers/plans` (files added) and `git ls-tree -r --name-only origin/main -- docs/superpowers/plans` (files still tracked), with `<filing date>` filled in; baseline: 699 files added in the 30 days before 2026-11-15, 79 tracked; pass bound: fewer than 65 files added in the 14 days, and no tracked plan whose record has been closed for more than 7 days; a plan added and then deleted by a later commit counts as added; on a miss: name the PR each adding commit belongs to and the lane that ran it, and file a fix record. Include a `### Key Files` naming `.claude-tweaks/policy.yml` and `plugin/skills/wrap-up/cleanup-procedures.md`. Read the record back (`gh issue view {n} --json labels,body`) and confirm the parked label and wake date. Log an `AC evidence` entry naming AC7 and the record number.
+Invoke the Skill `claude-tweaks:capture` to file one parked record titled `Measure plan files reaching main in the 14 days after prune-after-wrapup (#5562)` — spec-shaped body: Current State (this repository set `superpowers-plans-retention: prune-after-wrapup` in #5562; the baseline below), one Deliverable (run the two count commands and compare against the pass bound), Acceptance Criteria (the pass bound; the on-a-miss action) — wake date 2026-11-30 (14 days after filing on 2026-11-16; if filed on a later day, filing date + 14), `Related: #5562`, carrying verbatim: count commands `git log --since=<filing date> --diff-filter=A --name-only --format=%H origin/main -- docs/superpowers/plans` (files added) and `git ls-tree -r --name-only origin/main -- docs/superpowers/plans` (files still tracked), with `<filing date>` filled in; baseline: 699 files added in the 30 days before 2026-11-15, 79 tracked; pass bound: fewer than 65 files added in the 14 days, and no tracked plan whose record has been closed for more than 7 days; a plan added and then deleted by a later commit counts as added; on a miss: name the PR each adding commit belongs to and the lane that ran it, and file a fix record. Include a `### Key Files` naming `.claude-tweaks/policy.yml` and `plugin/skills/wrap-up/cleanup-procedures.md`. Read the record back (`gh issue view {n} --json labels,body`) and confirm the parked label and wake date. Log an `AC evidence` entry naming AC7 and the record number.
 
 ### Task 6: PR body evidence
 
