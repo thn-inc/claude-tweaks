@@ -165,6 +165,9 @@ function probeRelease({ scope, run, integrationBranch } = {}) {
   // heading, and a tag below it is not a missing entry. No footer (or a footer
   // over no headings): no floor, today's behavior. Distinct from
   // extractChangelogRange's `partial` rule, which keys on the newest removed version.
+  // The floor uses the probe's own `headings`, not parseChangelogVersions: this grammar is a
+  // superset of HEADER_RE, so the floor is <= the parser's and can only report more, and the
+  // same headings decide presence — keep them together in any DRY refactor.
   let floor = null;
   if (parseChangelogFooter(changelog)) {
     floor = headings.reduce((oldest, v) => (oldest === null || !versionGte(v, oldest) ? v : oldest), null);

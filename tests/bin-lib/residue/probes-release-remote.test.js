@@ -191,6 +191,15 @@ test('AC5.2: the same file without the footer reports the three missing versions
   assert.deepStrictEqual(subjects, ['CHANGELOG entry for v1.0.0', 'CHANGELOG entry for v1.0.1', 'CHANGELOG entry for v1.0.2']);
 });
 
+test('AC5: a footer over zero retained headings sets no floor — every tag is reported', () => {
+  const root = trimmedFixture({ withFooter: true });
+  const file = path.join(root, 'CHANGELOG.md');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/## \[1\.0\.\d\][^\n]*\n\n\* note \d\n\n?/g, ''));
+  git(root, 'commit', '-q', '-am', 'hand-edit: no retained headings');
+  const r = probeRelease({ scope: SCOPE, run: runner(root) });
+  assert.strictEqual(r.findings.length, 6, JSON.stringify(r.findings.map((f) => f.subject)));
+});
+
 test('AC5: the floor is the oldest retained section — a missing heading at or above it is still reported', () => {
   const root = trimmedFixture({ withFooter: true });
   const file = path.join(root, 'CHANGELOG.md');
