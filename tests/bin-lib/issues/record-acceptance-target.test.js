@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { parseAcceptanceTarget, itemOverrideOf } = require('../../../plugin/bin/lib/issues/record-acceptance-target');
+const { parseRiskFlags } = require('../../../plugin/bin/lib/issues/record-risk-flags');
 const { resolveAcceptanceTarget } = require('../../../plugin/bin/lib/accept/target');
 
 const OK_BODY = 'Surface: web\nAcceptance-target: local\n\n## Overview\n';
@@ -47,6 +48,24 @@ test('a malformed line never falls through to the policy default', () => {
     });
     assert.deepStrictEqual(result, { target: 'local', reason: 'invalid-input' }, body);
   }
+});
+
+test('trailing whitespace reads malformed', () => {
+  const p = parseAcceptanceTarget('Surface: web\nAcceptance-target: local \n\n## Overview\n');
+  assert.strictEqual(p.status, 'malformed');
+  assert.strictEqual(itemOverrideOf(p), null);
+});
+
+test('an unclosed frontmatter block is read as preamble, like parseRiskFlags', () => {
+  const body = '---\nAcceptance-target: local\nRisk-flags: none\n\n## Overview\n';
+  assert.strictEqual(parseAcceptanceTarget(body).status, 'ok');
+  assert.strictEqual(parseRiskFlags(body).status, 'ok');
+});
+
+test('a blockquote variant beside an exact line reads malformed', () => {
+  const p = parseAcceptanceTarget('> Acceptance-target: local\nAcceptance-target: local\n\n## Overview\n');
+  assert.strictEqual(p.status, 'malformed');
+  assert.strictEqual(itemOverrideOf(p), null);
 });
 
 test('absent when missing, fenced, or below the first ## heading, or inside frontmatter', () => {

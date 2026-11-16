@@ -459,7 +459,7 @@ them in the body, never in `facets`. They are not the `risk:*` scoring axis.
 
 ## Acceptance-target line
 
-One body-metadata line (#4615, grammar in `specify/spec-template.md`): `Acceptance-target: local`, a per-item override of where the human accepts the work. `parseAcceptanceTarget` (`bin/lib/issues/record.js`) is the one reader: an absent line is no override, and a malformed line or any value but `local` reads invalid, which resolves to `local` (`bin/lib/accept/target.js`). `/claude-tweaks:specify`'s interactive path is the only writer; never hand-edit the line. `local-files` carries it in the body, never in `facets`.
+One body-metadata line (#4615, grammar in `specify/spec-template.md`): `Acceptance-target: local`, a per-item acceptance override. `parseAcceptanceTarget` (`bin/lib/issues/record.js`) is the one reader: an absent line is no override, and a malformed line or any value but `local` reads invalid, which resolves to `local` (`bin/lib/accept/target.js`). `/claude-tweaks:specify`'s interactive path is the only writer; never hand-edit the line. The reader reports a `dev` line as well-formed; `accept/target.js` rejects it as `invalid-input`. `local-files` carries it in the body, never in `facets`.
 
 ## Type
 

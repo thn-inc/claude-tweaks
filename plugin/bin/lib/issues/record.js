@@ -4,7 +4,7 @@
 // skills, /capture, /specify, /backlog, and /dispatch is exposed here (defined in the
 // sub-modules below); other modules import from this file, never their own copies. No network.
 //
-// #2805: split into cohesive sub-modules (four then, a fifth added in #4618, a sixth in #4615) — this
+// #2805: split into cohesive sub-modules (six: four then, a fifth added in #4618, a sixth in #4615) — this
 // file is a thin aggregator that re-exports the exact same public API from them, so every
 // existing `require('./record')`/`require('../issues/record')` call site
 // (or a re-require of this same path from any depth) keeps working unchanged:
