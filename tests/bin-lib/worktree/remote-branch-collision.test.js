@@ -456,8 +456,39 @@ test('AC1.1: checkAdoptedBranch with no repo skips the PR lookup', () => {
   const gh = countingGh([]);
   const result = checkAdoptedBranch({ branch: 'b', records: [1], git: checkGit({ ls: 'present', head: 'not' }), gh });
   assert.equal(gh.calls, 0);
-  assert.equal(result.state, 'foreign');
-  assert.ok(result.card.includes('PR status unknown (lookup failed)'));
+  assert.deepEqual(result, {
+    state: 'foreign',
+    reason: null,
+    remoteSha: SHA_A,
+    card: [
+      '## Build: Adopted branch collides with an unrelated branch on origin',
+      '',
+      "`b` already exists on `origin` at `aaaaaaaaa`, and that commit is not in this worktree's history — PR status unknown (lookup failed). Pushing this branch would be rejected non-fast-forward.",
+      '',
+      "Options: (1) rename this worktree's local branch (`git branch -m b-{suffix}`) and re-run, (2) delete the stale remote branch (`git push origin --delete b`) and re-run, (3) stop and resume the existing remote branch/PR instead.",
+    ].join('\n'),
+  });
+});
+
+test('AC1.1: checkAdoptedBranch unreachable on a failed ancestry check carries the unknown-relation card', () => {
+  const result = checkAdoptedBranch({
+    branch: 'b',
+    repo: 'o/r',
+    git: checkGit({ ls: 'present', head: 'unknown' }),
+    gh: countingGh([]),
+  });
+  assert.deepEqual(result, {
+    state: 'unreachable',
+    reason: 'ancestry-check-failed',
+    remoteSha: SHA_A,
+    card: [
+      '## Build: Adopted branch collides with an unrelated branch on origin',
+      '',
+      "`b` already exists on `origin` at `aaaaaaaaa`, and its relation to this worktree's history could not be determined (`ancestry-check-failed`) — no PR found for it. Pushing this branch may be rejected non-fast-forward.",
+      '',
+      "Options: (1) rename this worktree's local branch (`git branch -m b-{suffix}`) and re-run, (2) delete the stale remote branch (`git push origin --delete b`) and re-run, (3) stop and resume the existing remote branch/PR instead.",
+    ].join('\n'),
+  });
 });
 
 test('AC1.1: checkAdoptedBranch looks up the prior attempt only for foreign', () => {
