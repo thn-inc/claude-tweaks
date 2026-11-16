@@ -109,6 +109,15 @@ test('git-C-own needs an unquoted git word; file-less rows are separate sessions
   assert.deepEqual(bad.byPattern, { bad: { error: 'invalid pattern' }, ok: { count: 1, rewritten: 0 } });
 });
 
+test('git-C-own counts a path-prefixed git command word, not a lookalike', () => {
+  const count = (command) => replay([row({ command })]).byClass['git-C-own']?.total ?? 0;
+  assert.equal(count('/usr/bin/git -C . log'), 1);
+  assert.equal(count('./bin/git -C . log'), 1);
+  assert.equal(count('my-git -C . log'), 0);
+  assert.equal(count('x.git -C . log'), 0);
+  assert.equal(count('echo "git -C . log"'), 0);
+});
+
 test('a throwing scanner does not abort the replay', () => {
   const p = row({ guard: 'plugin:worktree', command: 'git log' });
   const h = row({ command: 'ls /a\\ b' });

@@ -202,7 +202,7 @@ function gitWordArgument(text) {
   return commandSegments(bare, 'git').some(([s, e]) => {
     const open = bare.slice(s, e).indexOf('(');
     // A backslash-newline continuation vanishes in shell, joining the word it splits.
-    return shellWords(text.slice(s, open === -1 ? e : s + open).replace(/\\\r?\n/g, '')).slice(1).some((w) => GIT_BASENAME.test(w.slice(w.lastIndexOf('/') + 1)));
+    return shellWords(text.slice(s, open === -1 ? e : s + open).replace(/(?<!\\)((?:\\\\)*)\\\r?\n/g, '$1')).slice(1).some((w) => GIT_BASENAME.test(w.slice(w.lastIndexOf('/') + 1)));
   });
 }
 
@@ -277,7 +277,8 @@ const STDOUT_FILE_REDIRECT = /(?:&|(?<![<>&\d]))>>?(?!&)\s*\S/;
 // joined: `bare` (quoted, comment and heredoc text blanked: shell structure)
 // and `args` (single-quoted, comment and heredoc text blanked: what expands).
 function views(text) {
-  const join = (s) => s.replace(/\\\r?\n/g, (m) => ' '.repeat(m.length));
+  // Only an unescaped backslash continues a line: `\\` + newline is a literal backslash, then a real break.
+  const join = (s) => s.replace(/(?<!\\)((?:\\\\)*)(\\\r?\n)/g, (m, pre, cont) => pre + ' '.repeat(cont.length));
   return { bare: join(stripQuoted(text)), args: join(stripSingle(text)) };
 }
 

@@ -346,6 +346,7 @@ test('--shape-patterns without --replay, a missing file, bad JSON, a non-array a
     [['--replay', '--shape-patterns', scratchFile('obj.json', '{"id":"x"}')], /must be a JSON array/],
     [['--replay', '--shape-patterns', scratchFile('re.json', JSON.stringify([{ id: 'x', pattern: '(' }]))], /pattern for "x" is not a valid regular expression/],
     [['--replay', '--shape-patterns', scratchFile('shape.json', JSON.stringify([{ id: 'x' }]))], /needs a string id and pattern/],
+    [['--replay', '--shape-patterns', scratchFile('dup.json', JSON.stringify([{ id: 'dup-id', pattern: 'a' }, { id: 'dup-id', pattern: 'b' }]))], /duplicate id "dup-id"/],
   ];
   for (const [extra, message] of cases) {
     const { code, c } = replayRun(extra);
@@ -392,8 +393,18 @@ test('caller-shape-patterns.json: every pattern compiles and matches one hand-wr
   };
   const list = JSON.parse(fs.readFileSync(PATTERNS_FILE, 'utf8'));
   assert.deepEqual(list.map((e) => e.id).sort(), Object.keys(positives).sort());
+  const records = {
+    'mkdir-chain-playwright': [4990, 4931], 'cd-worktree-prefix': [4990, 4931], 'shell-function-wrapper': [4990, 4931],
+    'heredoc-python-node': 4990,
+    'playwright-var-filename': 4931, 'playwright-pwd-filename': 4931, 'playwright-for-loop': 4931, 'playwright-pipe-head': 4931,
+  };
+  const negatives = {
+    'cd-worktree-prefix': ['cd "/abs/dir"'],
+    'shell-function-wrapper': ['ls -la', 'echo "a()"'],
+  };
   for (const { id, issue, pattern } of list) {
-    assert.ok([4990, 4931].some((n) => [].concat(issue).includes(n)), `${id} names its record`);
+    assert.deepEqual(issue, records[id], `${id} cites its records`);
     assert.match(positives[id], new RegExp(pattern), id);
+    for (const neg of negatives[id] || []) assert.doesNotMatch(neg, new RegExp(pattern), `${id} must not match ${neg}`);
   }
 });

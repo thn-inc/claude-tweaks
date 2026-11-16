@@ -301,10 +301,13 @@ function loadPatterns(file, deps) {
     return { error: `--shape-patterns ${file} is not valid JSON` };
   }
   if (!Array.isArray(list)) return { error: `--shape-patterns ${file} must be a JSON array of { id, pattern }` };
+  const seen = new Set();
   for (const e of list) {
     if (!e || typeof e.id !== 'string' || !e.id || typeof e.pattern !== 'string') {
       return { error: `--shape-patterns ${file}: every entry needs a string id and pattern` };
     }
+    if (seen.has(e.id)) return { error: `--shape-patterns ${file}: duplicate id "${e.id}"` };
+    seen.add(e.id);
     try {
       new RegExp(e.pattern); // eslint-disable-line no-new
     } catch (_) {

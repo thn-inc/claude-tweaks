@@ -473,6 +473,12 @@ test('#5590: git-word-argument flags a git argument whose basename is git or git
   }
 });
 
+test('#5590: git-word-argument reads an escaped backslash before a newline as a literal backslash, not a continuation', () => {
+  // `\\` then a real line break: `git` on the next line is its own command, not an argument.
+  assert.deepStrictEqual(detectShapes('git log -1 -- \\\\\ngit'), []);
+  assert.deepStrictEqual(detectShapes('git log -1 -- gi\\\nt'), ['git-word-argument']);
+});
+
 test('#5590: git-word-argument passes the live-run forms', () => {
   for (const c of ['git grep -c "[g]it-discipline" -- f.md', 'git log -1 -- gitx', 'git log -1 -- x-git', 'git log -1 -- git.md', 'git log -1 -- plugin/skills/_shared/git-discipline.md', 'git log -1 --grep=git', 'git log -1 --grep "a git-b c"', 'git log -1 -- "git x"', 'ls -d git-nonexistent', 'grep -c "git-discipline" README.md', 'git rev-parse --short HEAD && git log --oneline -1', 'git status; ls git']) {
     assert.deepStrictEqual(detectShapes(c), [], c);

@@ -105,7 +105,8 @@ function gitCOwn(text, cwd) {
     alts.push(`${c}\\/?${END}`, `'${c}\\/?'`, `"${c}\\/?"`);
   }
   // `git` must be an unquoted word of its own: not inside quotes, not the tail of `my-git`, `./git` or `x.git`.
-  const re = new RegExp(`(?<![\\w./-])git\\s+-C\\s+(?:${alts.join('|')})`, 'g');
+  // A directory prefix (`/usr/bin/git`, `./bin/git`) still runs real git.
+  const re = new RegExp(`(?<![\\w./-])(?:(?:\\.{0,2}\\/)?(?:(?!\\.+\\/)[\\w.-]+\\/)+|\\/)?git\\s+-C\\s+(?:${alts.join('|')})`, 'g');
   const kinds = lexShell(text);
   for (let m = re.exec(text); m; m = re.exec(text)) {
     if (kinds[m.index] === 'plain') return true;
