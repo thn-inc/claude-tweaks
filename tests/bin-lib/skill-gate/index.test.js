@@ -372,8 +372,33 @@ test('readJourneys: inline files: value and an unclosed fence are errors naming 
   }
 });
 
-test('readJourneys: a readdir error other than ENOENT is an error; ENOENT is not', () => {
+test('readJourneys: an outside directory is never listed', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-j-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-out-'));
+  fs.mkdirSync(path.join(root, 'docs'));
+  try {
+    fs.symlinkSync(outside, path.join(root, 'docs', 'journeys'));
+  } catch (e) {
+    if (e.code === 'EPERM' && process.platform === 'win32') { t.skip('symlink creation needs privilege'); return; }
+    throw e;
+  }
+  const listed = [];
+  const fsImpl = { ...fs, readdirSync: (...a) => { listed.push(a[0]); return fs.readdirSync(...a); } };
+  assert.match(gate.readJourneys(root, { fsImpl }).error, /outside the checkout/);
+  assert.deepEqual(listed, []);
+});
+
+test('readJourneys: an lstat failure on docs or docs/journeys is an error, not "no journeys"', () => {
+  const root = journeyRoot({ 'a.md': '# A\n' });
+  const denied = { ...fs, lstatSync: (p, ...rest) => {
+    if (String(p).endsWith('journeys')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    return fs.lstatSync(p, ...rest);
+  } };
+  assert.match(gate.readJourneys(root, { fsImpl: denied }).error, /could not be read \(EACCES\)/);
+});
+
+test('readJourneys: a readdir error other than ENOENT is an error; ENOENT is not', () => {
+  const root = journeyRoot({ 'a.md': '# A\n' });
   const failing = (code) => ({ ...fs, readdirSync: () => { throw Object.assign(new Error(code), { code }); } });
   assert.ok(gate.readJourneys(root, { fsImpl: failing('EACCES') }).error);
   assert.ok(gate.readJourneys(root, { fsImpl: failing('ENOTDIR') }).error);

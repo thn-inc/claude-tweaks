@@ -23,6 +23,8 @@ const {
 const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
 const { splitFrontmatterFence, parseFrontmatterListField } = require('../health-core/frontmatter-list');
 const { resolveBase, changedFiles } = require('../verify/changed-files');
+// GIT_TIMEOUT_MS is a getter (env var and policy); read it at call time.
+const sharedPrimitives = require('../shared-primitives');
 
 const SKILLS = ['journeys', 'visual-review', 'design-wrapper'];
 const WRAPPER_MODES = ['pre-build', 'test', 'review', 'polish', 'survey'];
@@ -247,30 +249,46 @@ function parseJourneyText(text) {
   return { files: items.map((i) => i.replace(/^(["'])(.*)\1$/, '$2')) };
 }
 
-const GIT_TIMEOUT_MS = 30000;
-
 function errMessage(e) {
   return (e && e.message) || String(e);
 }
 
-// Top-level `docs/journeys/*.md` only, sorted by name. A missing directory is
-// no journeys; every other read problem is an error the caller turns into a
-// cannot-tell. A symlinked entry is read only when it resolves inside `root`.
+// One directory on the way to the journeys: `{ missing: true }` when it is
+// absent (lstat, never followed), `{ error }` when it is a symlink that
+// dangles or resolves outside the checkout, or cannot be read; else `{}`.
+function guardDir(p, label, rootReal, fsImpl) {
+  const leaf = lstatType(p, { fsImpl });
+  if (leaf.type === 'missing') return { missing: true };
+  if (leaf.type === 'unreadable') return { error: `${label} could not be read (${leaf.code})` };
+  if (leaf.type !== 'symlink') return {};
+  const resolved = resolveLeaf(p, { fsImpl });
+  if (resolved.state === 'dangling') return { error: `${label} is a dangling symlink` };
+  if (resolved.state !== 'resolved') return { error: `${label} could not be resolved (${resolved.state})` };
+  if (!isAncestorOrSelf(rootReal, resolved.path)) return { error: `${label} is a symlink that resolves outside the checkout` };
+  return {};
+}
+
+// Top-level `docs/journeys/*.md` only, sorted by name. A directory that is
+// truly missing (not a symlink) is no journeys; every other read problem is an
+// error the caller turns into a cannot-tell. `docs` and `docs/journeys` are
+// checked before the directory is listed, and a symlinked entry is read only
+// when it resolves inside `root`.
 function readJourneys(root, { fsImpl = fs } = {}) {
-  const dir = path.join(root, 'docs', 'journeys');
+  const docsDir = path.join(root, 'docs');
+  const dir = path.join(docsDir, 'journeys');
+  const rootReal = canonicalRealpath(root, { fsImpl });
+  if (rootReal === null) return { error: 'the checkout root could not be resolved' };
+  for (const [p, label] of [[docsDir, 'docs'], [dir, 'docs/journeys']]) {
+    const g = guardDir(p, label, rootReal, fsImpl);
+    if (g.error) return { error: g.error };
+    if (g.missing) return { journeys: [] };
+  }
   let names;
   try {
     names = fsImpl.readdirSync(dir);
   } catch (e) {
     if (e && e.code === 'ENOENT') return { journeys: [] };
     return { error: `docs/journeys could not be read: ${errMessage(e)}` };
-  }
-  // `docs` or `docs/journeys` may itself be a symlink: the directory's real
-  // path must sit inside the checkout before any entry is read.
-  const rootReal = canonicalRealpath(root, { fsImpl });
-  const dirReal = canonicalRealpath(dir, { fsImpl });
-  if (rootReal === null || dirReal === null || !isAncestorOrSelf(rootReal, dirReal)) {
-    return { error: 'docs/journeys resolves outside the checkout' };
   }
   const journeys = [];
   for (const entry of names.filter((n) => n.endsWith('.md')).sort()) {
@@ -304,7 +322,7 @@ function gate({
   skill, mode, surface, files, integrationBranch, root, designIntegration,
   env, execImpl, decideImpl = decide, fsImpl,
 }) {
-  const exec = execImpl || ((cmd, args, opts) => execFileSync(cmd, args, { ...opts, cwd: root, env, timeout: GIT_TIMEOUT_MS, windowsHide: true }));
+  const exec = execImpl || ((cmd, args, opts) => execFileSync(cmd, args, { ...opts, cwd: root, env, timeout: sharedPrimitives.GIT_TIMEOUT_MS, windowsHide: true }));
   let list = files;
   if (list == null && integrationBranch) {
     try {
@@ -328,7 +346,6 @@ function gate({
 }
 
 module.exports = {
-  GIT_TIMEOUT_MS,
   parseJourneyText,
   readJourneys,
   gate,

@@ -74,7 +74,7 @@ function cliLogged(main, argv, opts = {}) {
   return r;
 }
 
-const SKIP_FILES ='tests/a.test.js,.claude-tweaks/pipelines/r/work/1-spec.md';
+const SKIP_FILES = 'tests/a.test.js,.claude-tweaks/pipelines/r/work/1-spec.md';
 
 test('AC1.1-AC1.7: test-only diff skips journeys, visual-review and every wrapper mode', () => {
   const main = repo();
@@ -176,7 +176,32 @@ test('a docs/journeys directory symlinked outside the checkout is never read, ca
   fs.mkdirSync(path.join(main, 'docs'), { recursive: true });
   if (!symlinkOrSkip(t, outside, path.join(main, 'docs', 'journeys'))) return;
   const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
-  assert.match(r.json.reason, /docs\/journeys resolves outside the checkout/);
+  assert.match(r.json.reason, /docs\/journeys is a symlink that resolves outside the checkout/);
+});
+
+test('a dangling docs/journeys symlink is cannot tell, not "no journeys"', (t) => {
+  const main = repo();
+  const gone = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-gone-')), 'missing');
+  fs.mkdirSync(path.join(main, 'docs'), { recursive: true });
+  if (!symlinkOrSkip(t, gone, path.join(main, 'docs', 'journeys'))) return;
+  const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
+  assert.match(r.json.reason, /docs\/journeys is a dangling symlink/);
+});
+
+test('a dangling docs symlink is cannot tell, not "no journeys"', (t) => {
+  const main = repo();
+  const gone = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-gone-')), 'missing');
+  if (!symlinkOrSkip(t, gone, path.join(main, 'docs'))) return;
+  const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
+  assert.match(r.json.reason, /docs is a dangling symlink/);
+});
+
+test('a docs symlink to an outside directory without journeys is cannot tell', (t) => {
+  const main = repo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-outnoj-'));
+  if (!symlinkOrSkip(t, outside, path.join(main, 'docs'))) return;
+  const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
+  assert.match(r.json.reason, /docs is a symlink that resolves outside the checkout/);
 });
 
 test('a docs directory symlinked outside the checkout is never read, cannot tell', (t) => {
@@ -185,7 +210,7 @@ test('a docs directory symlinked outside the checkout is never read, cannot tell
   write(outside, 'journeys/x.md', '---\nfiles:\n  - plugin/bin/x.js\n---\n');
   if (!symlinkOrSkip(t, outside, path.join(main, 'docs'))) return;
   const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
-  assert.match(r.json.reason, /resolves outside the checkout/);
+  assert.match(r.json.reason, /docs is a symlink that resolves outside the checkout/);
 });
 
 test('AC6.5: a dangling journey symlink is cannot tell', (t) => {
@@ -392,11 +417,17 @@ test('-h and --help as a flag value are values, not help; a repeated flag exits 
   }
 });
 
-test('the real repoRoot default and the timeout constant are exposed', () => {
+test('git calls take their timeout from the shared getter, with no literal of their own', () => {
+  for (const rel of [['plugin', 'bin', 'skill-gate.js'], ['plugin', 'bin', 'lib', 'skill-gate', 'index.js']]) {
+    const src = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', ...rel), 'utf8');
+    assert.match(src, /sharedPrimitives\.GIT_TIMEOUT_MS/, rel.join('/'));
+    assert.ok(!/timeout:\s*\d/.test(src), `${rel.join('/')} hard-codes a timeout`);
+  }
+});
+
+test('the real repoRoot default resolves the checkout top level', () => {
   const real = require(CLI);
-  const lib = require('../../../plugin/bin/lib/skill-gate');
   assert.equal(typeof real.realDeps.repoRoot, 'function');
-  assert.equal(typeof lib.GIT_TIMEOUT_MS, 'number');
   const main = repo();
   assert.equal(real.realDeps.repoRoot(main, ENV), fs.realpathSync(main));
 });

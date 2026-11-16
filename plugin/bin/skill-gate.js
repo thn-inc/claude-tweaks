@@ -23,9 +23,8 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
-const {
-  SKILLS, WRAPPER_MODES, CANNOT_TELL, GIT_TIMEOUT_MS, gate: libGate,
-} = require('./lib/skill-gate');
+const { SKILLS, WRAPPER_MODES, CANNOT_TELL, gate: libGate } = require('./lib/skill-gate');
+const sharedPrimitives = require('./lib/shared-primitives');
 const { readDesignIntegrationFlagFromFile } = require('./lib/design-detect');
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
 
@@ -113,7 +112,7 @@ const realDeps = {
   readDesignIntegration: (root) => readDesignIntegrationFlagFromFile(root),
   // (cwd, env) -> the checkout's top-level directory; throws outside a git repo.
   repoRoot: (cwd, env) => String(execFileSync('git', ['rev-parse', '--show-toplevel'], {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, cwd, env, timeout: GIT_TIMEOUT_MS,
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, cwd, env, timeout: sharedPrimitives.GIT_TIMEOUT_MS,
   })).trim(),
 };
 
