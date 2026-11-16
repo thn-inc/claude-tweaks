@@ -133,7 +133,7 @@ const VERBS = {
   'ledger-row': { usage: 'ledger-row [--run <dir>] [--ledger <path>] (--phase <phase> (--item <text> | --item-file <path>) | --row <n>) --status <status> [--resolution <text> | --resolution-file <path>]', run: runLedgerRow },
   'teardown-run': { usage: 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]', run: runTeardownRun },
   'archive-run': { usage: 'archive-run [--run <dir>]', run: runArchiveRun },
-  'resolve-console': { usage: 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>]', run: runResolveConsole },
+  'resolve-console': { usage: 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>] [--digested <id,id,...>]', run: runResolveConsole },
   'check-resume-freshness': { usage: 'check-resume-freshness [--run <dir>]', run: runCheckResumeFreshness },
   'check-staged-inventory': { usage: 'check-staged-inventory [--run <dir>]', run: runCheckStagedInventory },
   'check-session-residue': { usage: 'check-session-residue [--run <dir>]', run: runCheckSessionResidue },
@@ -189,7 +189,7 @@ const KNOWN_FLAGS = {
   // it from `KNOWN_FLAGS` and from its `VERBS` usage line here. Until then a session can still hold pre-(1) prose in context
   // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
-  'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed', '--filing-failed'],
+  'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--digested'],
   'check-pass-reentry': ['--run', '--online'],
   'resolve-run-dir': ['--spec-slug', '--mode', '--standalone', '--create', '--root-only', '--archived'],
   'sweep-shadow': ['--run', '--worktree'],
@@ -209,7 +209,7 @@ const KNOWN_FLAGS = {
 // with "--", and the handler would otherwise read the stray flag as the value.
 // One set for every verb: a flag name here takes a value on every verb that
 // declares it, so it must never be a boolean flag on another verb.
-const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks', '--item', '--item-file', '--resolution', '--resolution-file', '--row']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--digested', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks', '--item', '--item-file', '--resolution', '--resolution-file', '--row']);
 
 // Returns the first refused `--*` token in `args`: an undeclared flag, as
 // `{ token, valueFlag: null }`, or any `--*` token sitting in a declared value
@@ -1589,6 +1589,7 @@ async function runResolveConsole(argv, deps) {
   const decline = splitIds(flagVal(argv.slice(1), '--decline'));
   const reverseFailed = splitIds(flagVal(argv.slice(1), '--reverse-failed'));
   const filingFailed = splitIds(flagVal(argv.slice(1), '--filing-failed'));
+  const digested = splitIds(flagVal(argv.slice(1), '--digested'));
 
   const mainRoot = wtDetect.mainCheckoutRoot(deps.cwd()) || deps.cwd();
   const execFileAsync = promisify(execFile);
@@ -1606,7 +1607,7 @@ async function runResolveConsole(argv, deps) {
   };
   const { resolveConsoleExecution, renderExecutedLines } = require('./lib/reconcile/console-execute');
   const result = await resolveConsoleExecution(runDir, {
-    approve, decline, reverseFailed, filingFailed,
+    approve, decline, reverseFailed, filingFailed, digested,
   }, consoleDeps);
   if (result.status === 'executed') {
     deps.stdout(renderExecutedLines(result, path.basename(runDir)));
@@ -1625,11 +1626,12 @@ async function runResolveConsole(argv, deps) {
     return 1;
   }
   if (result.reason === 'not-finding-items') {
-    deps.stdout(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are neither finding rows nor sdd-ruling rows (no findingItem, no isRulingRow flag), console not resolved\n`);
+    const flag = digested.some((id) => result.ids.includes(id)) && !filingFailed.some((id) => result.ids.includes(id)) ? '--digested' : '--filing-failed';
+    deps.stdout(`claude-tweaks: ${flag} id(s) ${result.ids.join(', ')} are ${flag === '--digested' ? 'not finding rows (no findingItem)' : 'neither finding rows nor sdd-ruling rows (no findingItem, no isRulingRow flag)'}, console not resolved\n`);
     return 1;
   }
   if (result.reason === 'conflicting-failure-ids') {
-    deps.stdout(`claude-tweaks: id(s) ${result.ids.join(', ')} named in both --reverse-failed and --filing-failed, console not resolved\n`);
+    deps.stdout(`claude-tweaks: id(s) ${result.ids.join(', ')} named in both ${digested.some((id) => result.ids.includes(id)) ? '--digested' : '--reverse-failed'} and --filing-failed, console not resolved\n`);
     return 1;
   }
   deps.stdout(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);

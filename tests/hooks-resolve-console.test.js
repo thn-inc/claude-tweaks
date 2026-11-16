@@ -33,6 +33,7 @@ test('resolve-console --help prints usage and exits 0, no --run required', () =>
   assert.match(result.stdout, /resolve-console --run <dir>/);
   assert.match(result.stdout, /\[--reverse-failed <id,id,\.\.\.>\]/);
   assert.match(result.stdout, /\[--filing-failed <id,id,\.\.\.>\]/);
+  assert.match(result.stdout, /\[--digested <id,id,\.\.\.>\]/);
 });
 
 test('resolve-console accepts --filing-failed as a declared flag', () => {
