@@ -70,9 +70,10 @@ files:
 - **URL:** `node tools/review-replay.js counterfactual --runs .claude-tweaks/pipelines --transcripts <claude projects dir> [--select ...]`
 - **Action:** read the paired reviewers' transcripts for each archived review, and report the share of confirmed findings that one reviewer alone would have raised.
 - **Should feel:** a quick second number for a pairing decision, from data already on disk.
-- **Should understand:** a reviewer transcript with no findings table is unreadable, not zero findings. Any unreadable transcript makes the run exit 3.
+- **Should understand:** a reviewer transcript with no findings table is unreadable, not zero findings. Any unreadable transcript, a lens dispatched to one reviewer only, or a set with no lens pair makes the run exit 3.
 - **Red flags:**
-  - Exit 0 with a non-zero `unreadableShare`.
+  - Exit 0 with a non-zero `unreadableShare` or `unpairedLenses`.
+  - Exit 0 with `lensPairs: 0`.
 
 ## Origin
 - Created during the build of #5557 (run `2026-11-16T000458-record-5557`, PR #5574). That build turned the 2026-11-15 scratch replay into this tested tool. The first live run against the nine 2026-11-15 runs is tracked in #5630.

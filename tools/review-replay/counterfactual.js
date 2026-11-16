@@ -5,8 +5,8 @@
 
 const path = require('path');
 const { readRun, selectRuns } = require('./archive.js');
+const { split } = require('./util.js');
 
-const SPLIT = /\r?\n/;
 const SEVERITIES = /^(critical|high|medium|low|info)$/;
 const TRANSCRIPT_FILE = /^agent-(.+)\.jsonl$/;
 const NEAR_LINES = 5;
@@ -21,7 +21,7 @@ const NO_FINDINGS = /^[\s*_`>#-]*No findings[ \t*_`.!]*$/im;
 function parseFindings(text) {
   const rows = [];
   let skipped = 0;
-  for (const line of String(text).split(SPLIT)) {
+  for (const line of split(text)) {
     const c = line.split('|').map((s) => s.trim());
     if (c.length < 2) continue;
     const sev = c[1].toLowerCase().replace(/[*`]/g, '');
@@ -79,7 +79,7 @@ function lastAssistantText(file, fs) {
     return null;
   }
   let last = null;
-  for (const line of raw.split(SPLIT)) {
+  for (const line of split(raw)) {
     if (!line) continue;
     let e;
     try {
@@ -122,7 +122,8 @@ function lensPairs(r, files, fs) {
     pair[a.side] = { rows: parsed ? parsed.rows : null, skipped: parsed ? parsed.skipped : 0 };
     by.set(a.lens, pair);
   }
-  return { pairs: [...by.entries()].filter(([, pair]) => pair.A && pair.B), extra };
+  const entries = [...by.entries()];
+  return { pairs: entries.filter(([, pair]) => pair.A && pair.B), unpaired: entries.filter(([, pair]) => !(pair.A && pair.B)).length, extra };
 }
 
 function counterfactual(opts, deps) {
@@ -132,12 +133,13 @@ function counterfactual(opts, deps) {
     return 2;
   }
   const { files, duplicateIds } = indexTranscripts(opts.transcripts, deps.fs);
-  const t = { runs: 0, pairs: 0, transcripts: 0, unreadable: 0, skipped: 0, extra: 0, confirmed: 0, located: 0, byA: 0, byB: 0, byBoth: 0, refuted: 0, refA: 0, refB: 0 };
+  const t = { runs: 0, pairs: 0, unpaired: 0, transcripts: 0, unreadable: 0, skipped: 0, extra: 0, confirmed: 0, located: 0, byA: 0, byB: 0, byBoth: 0, refuted: 0, refA: 0, refB: 0 };
   for (const dir of dirs) {
     const r = readRun(dir, deps);
     if (r.excluded) continue;
-    const { pairs, extra } = lensPairs(r, files, deps.fs);
+    const { pairs, unpaired, extra } = lensPairs(r, files, deps.fs);
     t.extra += extra;
+    t.unpaired += unpaired;
     if (pairs.length === 0) continue;
     t.runs += 1;
     const confirmed = [...r.pairConfirmed, ...r.verdicts.filter((v) => v.verdict === 'confirmed')];
@@ -168,6 +170,7 @@ function counterfactual(opts, deps) {
   deps.log(JSON.stringify({
     runs: t.runs,
     lensPairs: t.pairs,
+    unpairedLenses: t.unpaired,
     transcripts: {
       total: t.transcripts, unreadable: t.unreadable, unreadableShare: share(t.unreadable, t.transcripts),
       rowsSkipped: t.skipped, extraDispatches: t.extra, duplicateIds,
@@ -175,8 +178,9 @@ function counterfactual(opts, deps) {
     confirmed: { total: t.confirmed, located: t.located, byA: t.byA, byB: t.byB, byBoth: t.byBoth, singleReviewerShare: share((t.byA + t.byB) / 2, t.located) },
     refuted: { total: t.refuted, byA: t.refA, byB: t.refB },
   }, null, 2));
-  // An unreadable transcript is left out of the shares, so the result is not a clean one.
-  return t.unreadable > 0 ? EXIT_NOT_CLEAN : 0;
+  // An unreadable transcript or a lens with one reviewer is left out of the shares, and an empty set measures nothing
+  // (a wrong --runs root, or runs with no lens pair), so none of the three is a clean result.
+  return t.unreadable > 0 || t.unpaired > 0 || t.pairs === 0 ? EXIT_NOT_CLEAN : 0;
 }
 
 module.exports = { counterfactual, parseFindingsTable };

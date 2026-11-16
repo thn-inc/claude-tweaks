@@ -280,13 +280,46 @@ test('a reply citing the absolute tree path settles as the repo-relative path', 
   }
 });
 
-test('a transcript whose assistant messages repeat an id counts each id once at its largest usage', async () => {
+test('a transcript whose assistant messages repeat an id counts each id once, not once per streamed entry', async () => {
   const s = await setup();
   try {
     fullSet(s);
     const r = await s.score();
     assert.equal(r.json.arms.one.cost.requests, 8);
     assert.equal(r.json.arms.one.cost.output, 60, 'the streamed partial of output 1 never adds to the final count');
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('an agent transcript that exists but cannot be read leaves its agent unidentified, instead of aborting score', async () => {
+  const s = await setup();
+  try {
+    fullSet(s);
+    const file = path.join(s.transcripts, 'agent-ag-3.jsonl');
+    fs.rmSync(file);
+    fs.mkdirSync(file); // a directory where the transcript should be: readFileSync throws EISDIR
+    const r = await s.score();
+    assert.equal(r.code, 3, r.deps.errs.join('\n'));
+    assert.equal(r.json.unidentifiedAgents, 1);
+    assert.deepEqual(r.json.arms.one.notJudgedByReason, { 'unidentified-agent': 1 });
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('a run whose baseline cost is unknown (no timing.json) is left out of the baseline total and counted', async () => {
+  const s = await setup();
+  try {
+    fullSet(s);
+    const file = path.join(s.out, 'fixture.json');
+    const fixture = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fixture.runs[1].baselineTiebreak = null;
+    fs.writeFileSync(file, JSON.stringify(fixture));
+    const r = await s.score();
+    assert.equal(r.json.baselineRunsWithoutCost, 1);
+    const whole = fixture.runs[0].baselineTiebreak;
+    assert.deepEqual(r.json.baseline, { agents: whole.agents, out: whole.out, cc: whole.cc, cr: whole.cr, seconds: whole.seconds });
   } finally {
     s.cleanup();
   }

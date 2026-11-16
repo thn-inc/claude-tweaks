@@ -3,23 +3,26 @@
 // artifact, the fix commit the review head derives from, the recorded base and the agent cost in timing.json.
 
 const path = require('path');
+const { split } = require('./util.js');
 
-const SPLIT = /\r?\n/;
-const CONSOLE_ITEM = /Console item/;
+// Every marker is matched from the start of the line with no double quote before it: the resolver quotes source text
+// ("{quote}") after its own words, so a quoted line that reads like a verdict is never one.
+const BEFORE_QUOTE = '^[^"]*?';
+const CONSOLE_ITEM = /^[^"]*?Console item/;
 const LOCATION = '"([^"]+)" finding (\\S+):(\\d+)';
-const TIEBREAK_ID = /\bTiebreak tiebreak:([0-9a-f]{12}):/;
-const PAIR_RE = new RegExp(`Reproduction: lens ${LOCATION} reproduced\\b`);
-const NOT_REPRODUCED_RE = new RegExp(`lens ${LOCATION} not reproduced`);
-const CONFIRMED_RE = new RegExp(`lens ${LOCATION} confirmed by tiebreak(?::([0-9a-f]{12}))?`);
-const REFUTED_RE = new RegExp(`lens ${LOCATION} dropped: refuted by tiebreak`);
-const DIGESTED_RE = new RegExp(`Tiebreak tiebreak:([0-9a-f]{12}): lens ${LOCATION} (?:digested|console): (\\S+)`);
+const TIEBREAK_ID = /^[^"]*?\bTiebreak tiebreak:([0-9a-f]{12}):/;
+const PAIR_RE = new RegExp(`${BEFORE_QUOTE}Reproduction: lens ${LOCATION} reproduced\\b`);
+const NOT_REPRODUCED_RE = new RegExp(`${BEFORE_QUOTE}lens ${LOCATION} not reproduced`);
+const CONFIRMED_RE = new RegExp(`${BEFORE_QUOTE}lens ${LOCATION} confirmed by tiebreak(?::([0-9a-f]{12}))?`);
+const REFUTED_RE = new RegExp(`${BEFORE_QUOTE}lens ${LOCATION} dropped: refuted by tiebreak`);
+const DIGESTED_RE = new RegExp(`${BEFORE_QUOTE}Tiebreak tiebreak:([0-9a-f]{12}): lens ${LOCATION} (?:digested|console): (\\S+)`);
 const FIX_COMMIT_RE = /Step 3 Routing: applied .*\(commit ([0-9a-f]{7,40})\)/;
 const CANT_TELL_REASONS = new Set(['verdict:cant-tell', 'evidence-unverified']);
 
 // decisions.md text -> the verdict lines, failed-judge lines, reproduced pairs, fix commits and whether a review ran.
 function parseDecisions(text) {
   const out = { verdicts: [], failedJudges: [], pairConfirmed: [], fixCommits: [], hasReview: false };
-  for (const line of String(text).split(SPLIT)) {
+  for (const line of split(text)) {
     const fix = FIX_COMMIT_RE.exec(line);
     if (fix) out.fixCommits.push(fix[1]);
     if (CONSOLE_ITEM.test(line)) continue;
@@ -165,7 +168,7 @@ function readFindings(deps, dir) {
   } catch (e) {
     return { findings: null, why: e && e.code === 'ENOENT' ? null : 'findings-unreadable' };
   }
-  if (!Array.isArray(raw)) return { findings: null, why: 'findings-unreadable' };
+  if (!Array.isArray(raw) || raw.some((f) => f === null || typeof f !== 'object')) return { findings: null, why: 'findings-unreadable' };
   return {
     why: null,
     findings: raw.map((f) => ({
@@ -248,20 +251,22 @@ function readRun(dir, deps) {
   };
 }
 
-// Run directories directly under `root` and under `root/archive`, sorted by basename.
+// Run directories directly under `root` and under `root/archive`, sorted by basename. An unreadable `root` throws (a
+// mistyped --runs is not an empty archive); only an absent `root/archive`, which most roots lack, is skipped.
 function listRuns(root, fs) {
   const dirs = [];
-  const collect = (parent, skipArchive) => {
+  const collect = (parent, skipArchive, optional) => {
     let entries;
     try {
       entries = fs.readdirSync(parent, { withFileTypes: true });
-    } catch {
-      return;
+    } catch (e) {
+      if (optional && e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return;
+      throw e;
     }
     for (const e of entries) if (e.isDirectory() && !(skipArchive && e.name === 'archive')) dirs.push(path.join(parent, e.name));
   };
-  collect(root, true);
-  collect(path.join(root, 'archive'), false);
+  collect(root, true, false);
+  collect(path.join(root, 'archive'), false, true);
   // A code-unit order, so the listing does not depend on the machine's locale.
   return dirs.sort((a, b) => {
     const x = path.basename(a);

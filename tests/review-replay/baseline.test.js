@@ -114,6 +114,9 @@ test('a malformed review-findings.json is findings-unreadable in why; an absent 
   assert.ok(bad.why.includes('findings-unreadable'));
   const notArray = readRun(RUN_A, makeDeps({ fs: garble('review-findings.json', '{"a":1}') }));
   assert.ok(notArray.why.includes('findings-unreadable'));
+  const nullElement = readRun(RUN_A, makeDeps({ fs: garble('review-findings.json', '[null]') }));
+  assert.equal(nullElement.findings, null);
+  assert.ok(nullElement.why.includes('findings-unreadable'), 'a null element excludes the run with a reason instead of throwing');
   const absent = readRun(path.join(ARCHIVE, 'run-b'), makeDeps({ fs: { ...fs, readFileSync: (p, enc) => { if (String(p).endsWith('review-findings.json')) { const e = new Error('gone'); e.code = 'ENOENT'; throw e; } return fs.readFileSync(p, enc); } } }));
   assert.equal(absent.findings, null);
   assert.ok(!absent.why.includes('findings-unreadable'));
@@ -146,6 +149,28 @@ test('parseDecisions ignores Console item lines, keeps reproduced pairs and fix 
   const none = parseDecisions('- AUTO 1 — Reproduction: lens "3a" finding a.js:1 not reproduced. Staged.');
   assert.equal(none.hasReview, true);
   assert.deepEqual(none.pairConfirmed, []);
+});
+
+test('a verdict-looking line quoted inside an Evidence clause is not a verdict, and does not hide the line that quotes it', () => {
+  const quoted = 'see lens "3a" finding b.js:2 confirmed by tiebreak:aaaaaaaaaaa8 and Console item 3';
+  const text = `- AUTO 1 — Tiebreak tiebreak:aaaaaaaaaaa7: lens "3b" finding a.js:1 dropped: refuted by tiebreak. Evidence: a.js:1 "${quoted}". Severity: low. Reversibility: high.`;
+  assert.deepEqual(parseDecisions(text).verdicts, [{ id: 'aaaaaaaaaaa7', lens: '3b', path: 'a.js', line: 1, verdict: 'refuted' }]);
+});
+
+test('a run whose decisions.md names no fix commit has no head, with why no-fix-commit', () => {
+  const real = fs.readFileSync(path.join(RUN_A, 'decisions.md'), 'utf8');
+  const noFix = real.split('\n').filter((l) => !l.includes('Step 3 Routing: applied')).join('\n');
+  assert.notEqual(noFix, real);
+  const deps = makeDeps({ fs: { ...fs, readFileSync: (p, enc) => (String(p).endsWith('decisions.md') ? noFix : fs.readFileSync(p, enc)) } });
+  const r = readRun(RUN_A, deps);
+  assert.equal(r.head, null);
+  assert.ok(r.why.includes('no-fix-commit'));
+});
+
+test('listRuns throws for a root it cannot read, and skips only an absent archive directory under it', () => {
+  assert.throws(() => listRuns(path.join(ARCHIVE, 'no-such-root'), fs), { code: 'ENOENT' });
+  const noArchive = listRuns(RUN_A, fs).map((d) => path.basename(d));
+  assert.ok(noArchive.includes('context'), 'a root with no archive subdirectory lists its own directories');
 });
 
 test('readRun returns the run\'s context/review-dispatch.md text as dispatchBundle, null for a run without one', () => {

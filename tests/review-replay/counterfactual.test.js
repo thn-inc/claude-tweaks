@@ -64,7 +64,8 @@ test('a No findings reply is a readable empty table', async () => {
   assert.deepEqual(parseFindingsTable('Reviewed everything.\n\nNo findings'), []);
   const root = withReplyB('No findings.');
   try {
-    const { code, out } = await counterfactual(root);
+    // run-b holds a lens with one reviewer (counted as unpaired, below), so this one is read alone.
+    const { code, out } = await counterfactual(root, ['--select', 'run-a']);
     assert.equal(code, 0, 'every transcript is readable');
     assert.deepEqual(out.transcripts, { total: 4, unreadable: 0, unreadableShare: 0, ...CLEAN });
     // Now the 3b pair is readable: refuted beta.js:20 was raised by A (line 22) and not by B.
@@ -114,9 +115,31 @@ test('counterfactual needs --transcripts, rejects an unknown run name and honour
   assert.equal(bad.code, 2);
   assert.match(bad.deps.errs.join('\n'), /run-nope/);
   const none = await counterfactual(TRANSCRIPTS, ['--select', 'run-b']);
-  assert.equal(none.code, 0);
+  assert.equal(none.code, 3, 'a selected run with no lens pair measures nothing, which is not a clean result');
   assert.equal(none.out.runs, 0);
   assert.equal(none.out.lensPairs, 0);
+});
+
+test('a --runs root that holds no run exits 1 instead of reporting an empty measurement', async () => {
+  const missing = path.join(os.tmpdir(), 'rr-cf-no-such-root');
+  const { code, deps } = await counterfactual(TRANSCRIPTS, [], missing);
+  assert.equal(code, 1);
+  assert.match(deps.errs.join('\n'), /ENOENT|no such file/i);
+});
+
+test('a lens with one reviewer dispatched is counted as unpaired and is not a clean result', async () => {
+  const archive = archiveCopy({ timingItems: [{ agentId: '3c-a', description: 'Review lens 3c errors (A)', wallClockMs: 1, tokens: {} }] });
+  try {
+    const alone = await counterfactual(TRANSCRIPTS, ['--select', 'run-b']);
+    assert.equal(alone.out.unpairedLenses, 1, 'run-b dispatched lens 3a to reviewer A only');
+    assert.equal(alone.code, 3);
+    const { code, out } = await counterfactual(TRANSCRIPTS, ['--select', 'run-a'], archive);
+    assert.equal(code, 3);
+    assert.equal(out.unpairedLenses, 1, 'the added 3c reviewer has no partner');
+    assert.equal(out.lensPairs, 2, 'the paired lenses are still measured');
+  } finally {
+    fs.rmSync(archive, { recursive: true, force: true });
+  }
 });
 
 test('prose that mentions "no findings" mid-sentence is unreadable, not an empty table', async () => {

@@ -9,6 +9,7 @@ const { disciplineLines } = require('../../tools/review-replay/prompt');
 const schema = require('../../tools/review-replay/schema');
 const { PROFILES } = require('../../plugin/bin/lib/model-profiles/profiles');
 const { ARCHIVE, HEAD_A, BASE_A, HEAD_C, makeDeps } = require('./helpers');
+const { readText } = require('../helpers/read-skill.js');
 
 const ARMS = ['--arm', 'name=pair,chunk=2,profile=fast,repeat=2', '--arm', 'name=single,chunk=1,profile=standard'];
 
@@ -97,6 +98,32 @@ test('AC2.1/AC2.2: no prompt contains an archived verdict, an archived rationale
     }
   } finally {
     x.cleanup();
+  }
+});
+
+test('AC5.2: extract builds every prompt from the template file it is given, and records that file in the manifest', async () => {
+  const sentence = 'Extra sentence the replay must carry.';
+  const live = readText(path.join(__dirname, '..', '..', 'plugin', 'skills', 'review', 'step3-tiebreak.md'));
+  const edited = live.replace(
+    'Recommendation file means the finding is worth a fix or a work record;',
+    `${sentence} Recommendation file means the finding is worth a fix or a work record;`);
+  assert.notEqual(edited, live);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-template-'));
+  const template = path.join(dir, 'step3-tiebreak.md');
+  fs.writeFileSync(template, edited);
+  const edit = await extractInto(['--template', template]);
+  const plain = await extractInto();
+  try {
+    assert.equal(edit.code, 0, edit.deps.errs.join('\n'));
+    const prompts = allPrompts(edit.json(schema.MANIFEST_FILE));
+    assert.ok(prompts.length > 0);
+    for (const p of prompts) assert.ok(read(p.file).includes(sentence), `${p.name}: lacks the edited sentence`);
+    assert.equal(edit.json(schema.MANIFEST_FILE).template.path, template);
+    for (const p of allPrompts(plain.json(schema.MANIFEST_FILE))) assert.ok(!read(p.file).includes(sentence), `${p.name}: carries the sentence without the edited template`);
+  } finally {
+    edit.cleanup();
+    plain.cleanup();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -388,6 +415,7 @@ test('findings under .claude-tweaks: policy.yml and a spec under an earlier pipe
     assert.equal(code, 0, deps.errs.join('\n'));
     const fixture = JSON.parse(fs.readFileSync(path.join(out, schema.FIXTURE_FILE), 'utf8'));
     assert.deepEqual(fixture.runs[0].findings.map((f) => f.id), ['ccccccccccc1', 'ccccccccccc2']);
+    assert.equal(fixture.runs[0].baselineTiebreak, null, 'run-ct has no timing.json, so its baseline cost is unknown, not zero');
     assert.deepEqual(fixture.excluded, [
       { run: 'run-ct', finding: 'ccccccccccc3', reason: 'file-absent-at-head' },
       { run: 'run-ct', finding: 'ccccccccccc4', reason: 'file-absent-at-head' },

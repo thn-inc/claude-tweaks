@@ -8,19 +8,17 @@ const path = require('path');
 const crypto = require('crypto');
 const { readRun, selectRuns, matchVerdicts } = require('./archive.js');
 const { loadTemplate, disciplineLines, buildPrompt } = require('./prompt.js');
+const { split, bump } = require('./util.js');
 const {
   SCHEMA_VERSION, MANIFEST_FILE, FIXTURE_FILE, VERDICTS_FILE, isRunRecordPath, specFileCited,
 } = require('./schema.js');
 
-const SPLIT = /\r?\n/;
 const POSITIVE_INT = /^[1-9]\d*$/;
 const ARM_NAME = /^[A-Za-z0-9._-]+$/;
 const ARM_KEYS_ACCEPTED = new Set(['name', 'chunk', 'profile', 'repeat']);
 const HEAD_REASONS = ['no-fix-commit', 'fix-commit-not-in-clone'];
 const EXIT_SHORTFALL = 3;
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info', 'unknown'];
-
-const split = (text) => String(text).split(SPLIT);
 
 function positiveInt(flag, value) {
   if (!POSITIVE_INT.test(String(value))) return { error: `${flag} must be a positive integer` };
@@ -97,10 +95,6 @@ function isEmptyOrAbsent(fs, dir) {
     return false;
   }
 }
-
-const bump = (map, key, by = 1) => {
-  map[key] = (map[key] || 0) + by;
-};
 
 // Why a run that has no usable review head is excluded: the head reason readRun recorded.
 function headReason(r) {
@@ -263,7 +257,8 @@ function writeOutputs(c, deps) {
     for (const f of p.eligible) verdicts[`${r.run}/${f.id}`] = f.verdict;
     fixtureRuns.push({
       run: r.run, tree, head: r.head, base: r.base, findings,
-      baselineTiebreak: { agents: r.cost.tiebreakAgents, out: r.cost.tbOut, cc: r.cost.tbCc, cr: r.cost.tbCr, seconds: r.cost.tbSeconds },
+      // null for a run with no readable timing.json: its cost is unknown, not zero, and score reports how many runs lack it.
+      baselineTiebreak: r.why.includes('no-timing') ? null : { agents: r.cost.tiebreakAgents, out: r.cost.tbOut, cc: r.cost.tbCc, cr: r.cost.tbCr, seconds: r.cost.tbSeconds },
     });
 
     manifestArms.forEach((arm) => {

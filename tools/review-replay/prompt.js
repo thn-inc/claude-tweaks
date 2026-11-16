@@ -5,6 +5,7 @@
 // what the replay sends. Pure text; no file or process access.
 
 const { toPosix } = require('./schema.js');
+const { split: splitLines } = require('./util.js');
 
 const CHUNK_HEADER_RE = /^#{1,6}\s*Finding\s+([0-9a-f]{12})\s*$/;
 
@@ -12,10 +13,6 @@ const REPLY_MARKER = 'Reply with exactly';
 const REPLY_LINE = 'Reply with exactly these lines, then your status line:';
 const CHUNK_REPLY_LINE =
   'For each finding, write its "### Finding {id}" header on its own line followed by exactly these lines; after the last finding, your one status line:';
-
-function splitLines(text) {
-  return String(text).split(/\r?\n/);
-}
 
 function loadTemplate(tiebreakMdText) {
   const lines = splitLines(tiebreakMdText);

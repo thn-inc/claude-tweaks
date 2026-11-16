@@ -5,20 +5,16 @@
 
 const path = require('path');
 const { CHUNK_HEADER_RE } = require('./prompt.js');
+const { split, bump } = require('./util.js');
 const {
   MANIFEST_FILE, FIXTURE_FILE, VERDICTS_FILE, JOURNAL_FILE, JOURNAL_EVENT_TYPES, VERDICT_CLASSES,
   IDENTITY_RE, toPosix, armLabel, parseArmLabel, validateManifest,
 } = require('./schema.js');
 
-const SPLIT = /\r?\n/;
 const EXIT_NOT_CLEAN = 3;
 // Reasons from resolveTiebreak that settle as cant-tell; every other non-confirmed, non-refuted reason is notJudged.
 const CANT_TELL_REASONS = ['verdict:cant-tell', 'evidence-unverified'];
 
-const split = (text) => String(text).split(SPLIT);
-const bump = (map, key, by = 1) => {
-  map[key] = (map[key] || 0) + by;
-};
 const tally = () => ({ agree: 0, n: 0 });
 const add = (t, agree) => {
   t.n += 1;
@@ -169,7 +165,12 @@ function identifyAgents(fsImpl, dir, started, slots) {
   const unidentifiedCost = emptyCost();
   for (const agentId of started) {
     const file = path.join(dir, `agent-${agentId}.jsonl`);
-    const text = fsImpl.existsSync(file) ? fsImpl.readFileSync(file, 'utf8') : null;
+    let text = null;
+    try {
+      text = fsImpl.readFileSync(file, 'utf8');
+    } catch {
+      // a transcript that is absent or unreadable leaves its agent unidentified, counted below
+    }
     const parsed = text === null ? null : parseArmLabel(agentIdentity(text));
     const slot = parsed ? slots.get(armLabel(parsed.arm, parsed.repeat, parsed.name)) : undefined;
     if (!slot) {
@@ -305,9 +306,16 @@ function score(opts, deps) {
   }
 
   const baseline = { agents: 0, out: 0, cc: 0, cr: 0, seconds: 0 };
-  for (const r of fixture.runs) for (const k of Object.keys(baseline)) baseline[k] += r.baselineTiebreak[k];
+  let baselineRunsWithoutCost = 0;
+  for (const r of fixture.runs) {
+    if (r.baselineTiebreak === null) {
+      baselineRunsWithoutCost += 1;
+      continue;
+    }
+    for (const k of Object.keys(baseline)) baseline[k] += r.baselineTiebreak[k];
+  }
   deps.log(JSON.stringify({
-    findings: fixture.totals.findings, reference, counts: fixture.counts, baseline, unidentifiedAgents: unidentified, unidentifiedCost, arms,
+    findings: fixture.totals.findings, reference, counts: fixture.counts, baseline, baselineRunsWithoutCost, unidentifiedAgents: unidentified, unidentifiedCost, arms,
   }, null, 2));
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }

@@ -22,7 +22,8 @@
 // (tools/review-replay/counterfactual.js).
 //
 // Exit codes (as tools/driver-merge-check-eval.js): 0 ok; 1 a runtime failure; 2 a malformed invocation; 3 not a clean
-// result (extract shortfall or empty set, score with any notJudged, counterfactual with any unreadable transcript).
+// result (extract shortfall or empty set, score with any notJudged, counterfactual with an unreadable transcript, a
+// lens with one reviewer or no pair at all).
 //
 // Seam: run({ argv, deps }) returns the exit code. deps: fs, git(args) -> stdout (throws), writeTree(head, destDir),
 // log(line), err(line), pluginRoot.
