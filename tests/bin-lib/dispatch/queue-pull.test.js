@@ -4024,14 +4024,28 @@ test('#5584: a failed AUTO-line write does not admit the record (fail closed), p
   assert.deepEqual(r.state.typedNumbers, new Set());
 });
 
-test('#5584 fix 1: a typed record carrying bot:in-progress is refused before admission: one claimed line, no AUTO line, no transcript read', () => {
+test('#5584 fix 1: a typed record carrying bot:in-progress is refused before admission: one claimed line, no AUTO line', () => {
   const r = pullNamed(withNamedView(S1(), [ungranted(12, { labels: ['ready', 'bot:in-progress'] })]), { typedFor: [12], decisions: PRIOR_DECISIONS });
   assert.ok(!inGroups(r, 12));
   assert.equal(r.stdout, '#12 is already claimed (bot:in-progress) — not built this firing\n');
-  assert.deepEqual(r.asked, []);
+  assert.deepEqual(r.asked, [12], 'the rule runs first (it answered typed); the claim is checked before admission');
   assert.equal(r.decisions, PRIOR_DECISIONS, 'no AUTO line for a record the eligibility filter would drop');
   assert.deepEqual(r.state.typedNumbers, new Set());
   assertNoLabelWrite(r);
+});
+
+test('#5584 fix 2 (AC15): bot:in-progress beside bot:parked keeps the rule\'s held line, not the claimed line', () => {
+  const r = named12(ungranted(12, { labels: ['ready', 'bot:in-progress', 'bot:parked'] }));
+  assertRefused(r, 12, 'held', 'clear bot:blocked, bot:parked or parked on #12 once its trigger has fired, then type the command again');
+  assert.ok(!r.stdout.includes('already claimed'), r.stdout);
+  assert.deepEqual(r.asked, []);
+});
+
+test('#5584 fix 2 (AC6): bot:in-progress with no ready keeps the rule\'s not-ready line, not the claimed line', () => {
+  const r = named12(ungranted(12, { labels: ['bot:in-progress'] }));
+  assertRefused(r, 12, 'not-ready', 'run /claude-tweaks:specify #12');
+  assert.ok(!r.stdout.includes('already claimed'), r.stdout);
+  assert.deepEqual(r.asked, []);
 });
 
 test('#5584: under --transport files, --named admits nothing and prints one refusal line per named number; no gh call', () => {

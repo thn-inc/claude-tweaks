@@ -351,11 +351,18 @@ function makeContext(options = {}, deps = {}) {
 // are untouched: a named record already in the pool is left alone (no fetch, no line); any other is
 // fetched and judged by the one build-authority rule. A record the rule answers `typed` for is
 // appended to the queue file and to state.typedNumbers, which the blocked pass's grant filter
-// accepts; every later pass then judges it as it judges a granted record. Each judged record prints
-// one line on stdout; a `typed` one also appends one AUTO line to options.runDir's decisions.md,
-// and is admitted only once that line is written. A record that is not OPEN is refused before the
-// rule runs. Nothing here writes a label. Under the files transport nothing is fetched: one line
-// per named number says the label is required.
+// accepts; every later pass then judges it as it judges a granted record. Each fetched record prints
+// exactly one line on stdout:
+//   - not OPEN: the open-records-only line, printed before the rule runs;
+//   - `none`: formatAuthorityLine's refusal, naming the rule's reason words;
+//   - `label` (carries auto:build, yet the pool fetch missed it): the not-in-this-pull's-queue line;
+//   - `typed` but carrying bot:in-progress: the already-claimed line, no AUTO line (the eligibility
+//     filter would drop it);
+//   - `typed`, AUTO line written to options.runDir's decisions.md: the admit line, and the record is
+//     admitted (only once that line is written);
+//   - `typed`, AUTO write failed: the not-admitted line (the cause goes to stderr).
+// Nothing here writes a label. Under the files transport nothing is fetched: one line per named
+// number says the label is required.
 function admitNamed(ctx, queueFile) {
   const { deps, state } = ctx;
   const named = ctx.options.named || [];
@@ -379,11 +386,6 @@ function admitNamed(ctx, queueFile) {
     } else if (raw.state !== 'OPEN') {
       deps.stdout(`#${number} is ${raw.state.toLowerCase()} — not built: the queue pull takes open records only\n`);
       continue;
-    } else if (Array.isArray(raw.labels) && parseRecordFacets(raw.labels).bot.inProgress) {
-      // The blocked pass's eligibility filter drops a claimed record, granted or typed: say so here,
-      // before an admission and its AUTO line could claim a build that will not happen.
-      deps.stdout(`#${number} is already claimed (bot:in-progress) — not built this firing\n`);
-      continue;
     } else {
       result = deps.buildAuthority({
         number,
@@ -395,6 +397,14 @@ function admitNamed(ctx, queueFile) {
       });
     }
     if (result.authority === 'typed') {
+      // The blocked pass's eligibility filter drops a claimed record, granted or typed: refuse it here,
+      // before an AUTO line could record a build that will not happen. Checked only on `typed`, so a
+      // refusal the rule names (held, not-ready, ...) keeps its own words. A typed answer means the
+      // labels read as an array.
+      if (parseRecordFacets(raw.labels).bot.inProgress) {
+        deps.stdout(`#${number} is already claimed (bot:in-progress) — not built this firing\n`);
+        continue;
+      }
       const text = `#${number} admitted on a typed /claude-tweaks:dispatch command (no auto:build label)`;
       if (!step(ctx, `named #${number}`, () => deps.appendDecision({ runDir: ctx.options.runDir, text, now: deps.now() })).ok) {
         deps.stdout(`#${number} not admitted: the decisions.md audit line could not be written\n`);
