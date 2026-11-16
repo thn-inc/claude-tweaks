@@ -16,6 +16,10 @@
 // origins (a Test guide with no URL in it has nothing stale), recordingUrl for the
 // Recording link when the section holds a link to replace. Any other field is `unverified`.
 //
+// A record is already decided when it carries an approved label, or a changes-requested label
+// with no pending label beside it. Changes-requested plus a pending label is a rebuilt record
+// awaiting re-acceptance, classified by its packet like any other.
+//
 // Pure: no fs, git or gh.
 'use strict';
 
@@ -51,6 +55,8 @@ if (!APPROVAL_PROVENANCE_LABELS.includes(ACCEPT_APPROVED_BATCH)) {
   throw new Error(`accept-entry: ${ACCEPT_APPROVED_BATCH} is not among acceptance.js's APPROVAL_PROVENANCE_LABELS`);
 }
 const PENDING = Object.freeze([LABELS.DEMO_PENDING, LABELS.ACCEPT_PENDING]);
+const APPROVED = Object.freeze([LABELS.DEMO_APPROVED, LABELS.ACCEPT_APPROVED]);
+const CHANGES_REQUESTED = Object.freeze([LABELS.DEMO_CHANGES_REQUESTED, LABELS.ACCEPT_CHANGES_REQUESTED]);
 const BATCH_MARKERS = Object.freeze([APPROVAL_PROVENANCE_LABEL, ACCEPT_APPROVED_BATCH]);
 
 const namesOf = (labels) => (Array.isArray(labels) ? labels.filter((name) => typeof name === 'string') : []);
@@ -98,14 +104,23 @@ function devState(deployText, guideText) {
   return ORIGIN_RE.test(guide) ? 'live-on-dev' : 'waiting-for-deploy';
 }
 
+// The recorded verdict that stops an on-demand walk, or null. A changes-requested record
+// that also carries a pending label of either spelling was rebuilt and is awaiting
+// re-acceptance, so it is not decided; an approved label decides whatever else is present.
+function decidedVerdict(labels) {
+  const names = namesOf(labels);
+  const has = (spellings) => spellings.some((name) => names.includes(name));
+  if (has(CHANGES_REQUESTED) && !has(PENDING)) return 'changes-requested';
+  if (has(APPROVED)) return 'approved';
+  return null;
+}
+
 function packetStateOf({ packet, labels } = {}) {
   const status = packet?.status;
   const lines = typeof packet?.body === 'string' ? splitLines(packet.body) : [];
   const recording = status === 'found' ? recordingOf(lines) : false;
-  const disposition = dispositionState(namesOf(labels));
-  if (disposition === 'approved' || disposition === 'changes-requested') {
-    return { state: 'already-decided', recording, verdict: disposition, message: null };
-  }
+  const verdict = decidedVerdict(labels);
+  if (verdict !== null) return { state: 'already-decided', recording, verdict, message: null };
   if (status === 'none') return { state: 'no-packet', recording: false, verdict: null, message: null };
   if (status === 'unreadable') return unhandled('packet comment unreadable: non-current schema');
   if (status !== 'found') return unhandled('unknown packet status');

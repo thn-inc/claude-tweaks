@@ -75,7 +75,8 @@ none of those, the closing-commit recovery below builds a packet.
 
 If the labels just fetched carry a pending acceptance label in either spelling
 (`_shared/work-record.md`), even one a verdict outranks so the acceptance facet reads otherwise
-(a re-run on a rejected record leaves exactly that, and its fresh brief is the one to show), fetch
+(a re-run on a rejected record leaves exactly that, and its fresh brief is the one to show — `state`
+reads changes-requested beside a pending label as awaiting re-acceptance, never `already-decided`), fetch
 its Verification Brief: the last issue
 comment **containing** `## Verification Brief`. Fetch every comment (`gh issue view {n} --json
 comments`) and take the last one carrying that heading — test the heading, never assume the

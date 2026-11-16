@@ -54,18 +54,18 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" LABELS=accept-labels-{n}
    block between `<!-- acceptance-packet:start -->` and `<!-- acceptance-packet:end -->` reads as
    `found` when present and as `none` when absent.
 4. **Post only a missing packet**, routing on that `status`:
-   - `status: none` — post the rendered packet, as its own Bash call, with `--label accept:pending`
-     only when the label is owed and `--pr` only when the run has a PR:
+   - `status: none` — post the rendered packet, as its own Bash call:
 
      ```bash
-     node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" post --record {n} --body-file "{PACKET}" --label accept:pending --pr {pr-number}
+     node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" post --record {n} --body-file "{PACKET}"
      ```
 
-     `local-files`, with `--pending` on the same condition as the label (`{record-file}` per the
-     caller's Post paragraph):
+     Append `--label accept:pending` only when the label is owed, and `--pr {pr-number}` only when
+     the run has a PR; otherwise run it as shown. `local-files` (`{record-file}` per the caller's
+     Post paragraph), appending `--pending` only when the label is owed:
 
      ```bash
-     node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}" --pending
+     node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}"
      ```
 
      Route the exit code and result line as the caller's Post paragraph does (exit 0, 1, 2 and 4).

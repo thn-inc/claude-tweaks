@@ -37,12 +37,13 @@ Step 1 clears a pending label), with `{VERDICT_LABELS}` resolved per `_shared/se
 gh issue view {n} --json labels > "{VERDICT_LABELS}"
 ```
 
-Then, as its own Bash call, with `--verdict approved` or `--verdict changes-requested`, and
-`--batch` only for a batch-sourced Approve:
+Then, as its own Bash call, with `{verdict}` `approved` or `changes-requested`:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/accept-entry.js" labels --labels-json "{VERDICT_LABELS}" --verdict approved --batch
+node "${CLAUDE_PLUGIN_ROOT}/bin/accept-entry.js" labels --labels-json "{VERDICT_LABELS}" --verdict {verdict}
 ```
+
+Append `--batch` only for a batch-sourced Approve (the Provenance signal note below).
 
 It prints one line, `{"add":[…],"remove":[…]}`. `remove` holds a label from the rule above **only
 when those labels hold it**, `demo:pending` included: `gh issue edit --remove-label` exits 1 with

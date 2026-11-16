@@ -537,6 +537,8 @@ test('every acceptance bootstrap list provisions the four accept:* rows, byte-eq
 test('/demo fetches the fresh brief when any pending label is present, even one a verdict outranks', () => {
   const paths = collapse(skillText('accept', 'entry-paths.md'));
   assert.match(paths, /If the labels just fetched carry a pending acceptance label in either spelling .{0,120}even one a verdict outranks/);
+  // #4613 R1: the state classifier agrees, so the fresh brief is reachable.
+  assert.match(paths, /reads changes-requested beside a pending label as awaiting re-acceptance, never `already-decided`/);
   assert.match(paths, /If the record carries \*\*no\*\* pending acceptance label/);
   assert.doesNotMatch(paths, /acceptance facet does \*\*not\*\* read `pending`/);
 });

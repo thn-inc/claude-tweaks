@@ -102,11 +102,14 @@ It prints one line: `status` (`found`, `unreadable` or `none`), the comment's `u
 the untrusted copies to name. A found or unreadable comment's body is written to `"{PACKET_FILE}"`.
 `work-backend: local-files`: write the record body's delimited packet block (`entry-paths.md`) to
 `"{PACKET_FILE}"` with the Write tool and treat it as `found`, or as `none` with no block. Then
-classify, as its own Bash call, passing `--packet-file` only for `found` or `unreadable`:
+classify, as its own Bash call, with `{status}` the value the read printed:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/accept-entry.js" state --labels-json "{RECORD}" --packet-status found --packet-file "{PACKET_FILE}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/accept-entry.js" state --labels-json "{RECORD}" --packet-status {status}
 ```
+
+For `found` or `unreadable`, add `--packet-file "{PACKET_FILE}"` (an `unreadable` packet then
+classifies as `unhandled`); for `none`, add nothing.
 
 `local-files` reads the record's `acceptance:` facet into `--acceptance-facet "{facet}"` in place of
 `--labels-json`, pasting it only when it is `pending`, `approved`, `changes-requested` or empty. It
@@ -117,8 +120,8 @@ prints `{state, recording, verdict, message}`. Route on `state`:
 | `awaiting-local` | Start the app from the record's PR branch — a checkout of the PR's head per `_shared/scratch-worktree.md`, never switching the human's own checkout — running the packet's Test guide commands there, then walk the guide with its local links |
 | `waiting-for-deploy` | Show the deploy status (the packet's Deploy status section), skip the link step (Validate and the URL Show), and say plainly that the dev deploy is not confirmed live; walk the rest |
 | `live-on-dev` | Walk the guide with its dev links |
-| `already-decided` | Show the recorded verdict (`verdict`) and stop this ref: no second verdict, no label change |
-| `no-packet` | Build one via the packet module (**No-packet build** below), then walk it; a legacy brief already on the record renders as itself (`entry-paths.md`) |
+| `already-decided` | An approved label, or a changes-requested label with no pending label beside it: show the recorded verdict (`verdict`) and stop this ref: no second verdict, no label change. Changes-requested beside a pending label is a rebuilt record awaiting re-acceptance and takes its packet's state instead |
+| `no-packet` | Build one via the packet module (**No-packet build** below), then walk it; a legacy brief already on the record renders first, as itself, and no packet is built (`entry-paths.md`) |
 | `unhandled` | Print the CLI's one-line `message` and stop this ref; never guess |
 
 **No recording** — `recording: false` on a found packet: say there is no recording in one line,
@@ -144,10 +147,22 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" post --record {n} --body-f
 `post` finds the marker comment and edits it in place: never a second packet, and never a packet
 posted as a fresh comment by hand. `local-files`: `acceptance-packet.js local --record-file
 "{record-file}" --body-file "{REFRESHED}"`, with no `--pending`. Then re-run `state` with
-`--packet-file "{REFRESHED}"` and walk the refreshed body. A non-zero refresh, or a failed post
-(which clears a pending label, per its contract), is stated in one line, and the packet walks as read.
+`--packet-file "{REFRESHED}"` and walk the refreshed body. A non-zero refresh is stated in one
+line, and the packet walks as read. A failed post is stated in one line too, and the walk continues
+on the unrefreshed packet; `post` clears a pending label when its edit fails (its contract), so
+before the verdict question re-apply each pending label `"{RECORD}"` showed the record holding,
+and only that one, as its own Bash call per label:
 
-**No-packet build** — the packet module builds it; this skill writes only the narrative. Inputs,
+```bash
+gh issue edit {n} --add-label {pending-label}
+```
+
+`{pending-label}` is `accept:pending` or `demo:pending`, exactly as `"{RECORD}"` listed it.
+`local-files` needs nothing here: `local` changes no facet when it fails.
+
+**No-packet build** — a legacy brief already on the record (`entry-paths.md`'s pending-label brief
+or its PR pointer) renders as itself, and nothing is built. Otherwise the packet module builds it;
+this skill writes only the narrative. Inputs,
 each dropped when it does not resolve: the record body written with the Write tool to `"{SPEC}"`
 (or the record file under `local-files`), the newest run directory under
 `$RUN_ROOT/.claude-tweaks/pipelines/archive/` whose name ends `-record-{n}` as `--run`, and the
@@ -368,9 +383,8 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention) �
 `/claude-tweaks:accept` has two entries. The on-demand entry, this file, is typed by a human and
 has no `PIPELINE_RUN_DIR` signal to check; the `## Next Actions` block always renders. The
 automatic entry is the non-interactive sub-file `automatic-entry.md`, which
-`wrap-up/verification-brief.md` Step 4 reads for `/claude-tweaks:wrap-up` and
-`/claude-tweaks:dispatch`; it is never invoked through the Skill tool, renders no Next Actions and
-returns to its caller.
+`wrap-up/verification-brief.md` Step 4 reads (its Routing table lists the callers); it is never
+invoked through the Skill tool, renders no Next Actions and returns to its caller.
 
 ## Anti-Patterns
 

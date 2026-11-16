@@ -87,6 +87,35 @@ test('AC4b.1 decided: a verdict label wins over the packet', () => {
   assert.equal(changes.verdict, 'changes-requested');
 });
 
+test('AC4b.1 re-acceptance: changes-requested beside a pending label falls through to the packet', () => {
+  for (const changes of ['demo:changes-requested', 'accept:changes-requested']) {
+    for (const pending of ['demo:pending', 'accept:pending']) {
+      const name = `${changes}+${pending}`;
+      assert.deepEqual(stateOf(packet({ deploy: ['target: dev, confirmed live'] }), [changes, pending]),
+        { state: 'live-on-dev', recording: false, verdict: null, message: null }, name);
+      assert.equal(packetStateOf({ packet: { status: 'none' }, labels: [changes, pending] }).state, 'no-packet', name);
+    }
+  }
+});
+
+test('AC4b.1 decided: changes-requested with no pending label → already-decided', () => {
+  for (const changes of ['demo:changes-requested', 'accept:changes-requested']) {
+    const result = stateOf(packet({ deploy: ['target: local'] }), [changes]);
+    assert.equal(result.state, 'already-decided', changes);
+    assert.equal(result.verdict, 'changes-requested', changes);
+  }
+});
+
+test('AC4b.1 decided: approved beside a pending label → already-decided', () => {
+  for (const approved of ['demo:approved', 'accept:approved']) {
+    for (const pending of ['demo:pending', 'accept:pending']) {
+      const result = stateOf(packet({ deploy: ['target: local'] }), [approved, pending]);
+      assert.equal(result.state, 'already-decided', `${approved}+${pending}`);
+      assert.equal(result.verdict, 'approved', `${approved}+${pending}`);
+    }
+  }
+});
+
 test('AC4b.1 no packet: status none → no-packet', () => {
   const result = packetStateOf({ packet: { status: 'none' }, labels: ['accept:pending'] });
   assert.deepEqual(result, { state: 'no-packet', recording: false, verdict: null, message: null });

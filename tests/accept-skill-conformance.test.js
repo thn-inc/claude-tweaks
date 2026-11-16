@@ -112,9 +112,18 @@ test('AC4.2: an existing packet is never re-posted by the automatic entry', () =
 
 test('AC2.1/AC2.2: on-demand reuse edits rather than posts', () => {
   const skill = read('SKILL.md');
-  const refresh = skill.indexOf(REFRESH);
-  assert.notEqual(refresh, -1, `SKILL.md must call ${REFRESH}`);
-  assert.ok(skill.indexOf(POST, refresh) > refresh, 'the refreshed packet is posted (edited in place) after the refresh');
+  // Scoped to the Reuse and refresh paragraph: the No-packet build below it posts too.
+  const from = skill.indexOf('**Reuse and refresh**');
+  const to = skill.indexOf('**No-packet build**', from);
+  assert.ok(from !== -1 && to > from, 'SKILL.md must carry Reuse and refresh before No-packet build');
+  const reuse = skill.slice(from, to);
+  const refresh = reuse.indexOf(REFRESH);
+  assert.notEqual(refresh, -1, `Reuse and refresh must call ${REFRESH}`);
+  const post = reuse.indexOf(POST, refresh);
+  assert.ok(post > refresh, 'the refreshed packet is posted (edited in place) after the refresh');
+  assert.match(reuse.slice(refresh), /Only when `refreshed` is non-empty/, 'the post is conditional on a refreshed field');
+  assert.match(reuse.slice(post), /--body-file "\{REFRESHED\}"/, 'the post publishes the refreshed body');
+  assert.match(reuse, /--add-label \{pending-label\}/, 'a failed refresh post re-applies the pending label it cleared');
   assert.ok(skill.includes(READ), 'the packet is read through accept-entry.js read');
   for (const name of ACCEPT_FILES) {
     assert.ok(!read(name).includes('gh issue comment'), `${name} must never post a comment with gh issue comment`);
@@ -152,6 +161,7 @@ test('AC4b.1: each state table row carries the state\'s minimal behavior', () =>
   assert.match(row('live-on-dev'), /dev links/);
   assert.match(row('already-decided'), /stop/);
   assert.match(row('already-decided'), /no second verdict/);
+  assert.match(row('already-decided'), /Changes-requested beside a pending label is a rebuilt record awaiting re-acceptance/);
   assert.match(row('no-packet'), /packet module/);
   assert.match(row('unhandled'), /`message`/);
   assert.match(row('unhandled'), /stop/);
