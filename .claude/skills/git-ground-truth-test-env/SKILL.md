@@ -8,6 +8,7 @@ description: Use when writing or reviewing a test that asks real git for an expe
 A test that compares code against real git, or that leaves an `env` parameter at its `process.env` default, takes its git configuration from wherever it runs. Two places differ from a bare local `node --test`:
 
 - `tools/run-tests.js` exports `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` to every test (`gitFixtureConfigEnv`, #5297). A reader that hands the question back to git whenever `GIT_CONFIG*` is set then defers in every test, so each "defers to git" test passes whatever the reader does.
+- The runner also exports `GIT_TEMPLATE_DIR` (#5768), so every repo a test creates gets `maintenance.auto`, `gc.auto` and `receive.autogc` set in its own config. A control that expects maintenance to run, git's default repo config or a developer's init template masks the same way: drop `GIT_TEMPLATE_DIR` from the env its git calls use.
 - GitHub's Ubuntu runner image carries `safe.directory = *` in its system git config. A git child that should refuse a repo for ownership opens it there, so a "git refuses this repo" expectation is false.
 
 Both hit #5266's status line tests. Under the runner, 10 of 210 tests failed and every origin "defers to git" test passed without proving anything (fixed in `4b3c66a3b`). On the branch's first Ubuntu CI run, two ownership tests failed in shard 2 of 4 (run 43404443208).

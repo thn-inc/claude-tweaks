@@ -1684,7 +1684,7 @@ const gitSucceeds = (args, env) => {
   return r.stdout.trim();
 };
 // process.env minus every template / env-config key, so the helper's own settings are the only source.
-function cleanGitEnv() {
+function envWithoutGitConfig() {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k === 'GIT_TEMPLATE_DIR' || k.startsWith('GIT_CONFIG_')) delete env[k];
   return env;
@@ -1704,14 +1704,14 @@ function emptyGlobalConfig(tmp) {
   return p;
 }
 const cfgOf = (dir, key) => {
-  const r = gitOut(['config', '--file', path.join(dir, 'config'), '--get', key], cleanGitEnv());
+  const r = gitOut(['config', '--file', path.join(dir, 'config'), '--get', key], envWithoutGitConfig());
   return r.status === 0 ? r.stdout.trim() : null;
 };
 
 test('AC1.1: writeGitTemplateDir writes the maintenance-off keys and keeps git\'s default template files', () => {
   withGitTemp((tmp) => {
     const dir = path.join(tmp, 'tpl');
-    assert.strictEqual(writeGitTemplateDir(dir, cleanGitEnv()), dir);
+    assert.strictEqual(writeGitTemplateDir(dir, envWithoutGitConfig()), dir);
     assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
     assert.strictEqual(cfgOf(dir, 'gc.auto'), '0');
     assert.strictEqual(cfgOf(dir, 'receive.autogc'), 'false');
@@ -1725,8 +1725,8 @@ test('AC1.1: writeGitTemplateDir writes the maintenance-off keys and keeps git\'
 test('AC1.1: a repo initialized from the template carries the keys, bare and non-bare', () => {
   withGitTemp((tmp) => {
     const dir = path.join(tmp, 'tpl');
-    assert.strictEqual(writeGitTemplateDir(dir, cleanGitEnv()), dir);
-    const env = { ...cleanGitEnv(), GIT_TEMPLATE_DIR: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) };
+    assert.strictEqual(writeGitTemplateDir(dir, envWithoutGitConfig()), dir);
+    const env = { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) };
     for (const [name, flags, bare] of [['plain', [], 'false'], ['bare', ['--bare'], 'true']]) {
       const repo = path.join(tmp, name);
       gitSucceeds(['init', '-q', ...flags, repo], env);
@@ -1742,9 +1742,11 @@ test('writeGitTemplateDir keeps an inherited GIT_TEMPLATE_DIR\'s files and confi
     fs.mkdirSync(path.join(inherited, 'info'), { recursive: true });
     fs.writeFileSync(path.join(inherited, 'config'), '[core]\n\tct-probe = yes');
     fs.writeFileSync(path.join(inherited, 'info', 'marker'), 'm');
+    fs.writeFileSync(path.join(inherited, 'stray'), 's'); // an inherited entry outside hooks/info/description
     const dir = path.join(tmp, 'tpl');
-    assert.strictEqual(writeGitTemplateDir(dir, { ...cleanGitEnv(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
     assert.ok(fs.existsSync(path.join(dir, 'info', 'marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'stray')));
     assert.strictEqual(cfgOf(dir, 'core.ct-probe'), 'yes');
     assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
   });
@@ -1753,14 +1755,14 @@ test('writeGitTemplateDir keeps an inherited GIT_TEMPLATE_DIR\'s files and confi
 test('writeGitTemplateDir ignores an inherited GIT_DIR and object-store variables', () => {
   withGitTemp((tmp) => {
     const other = path.join(tmp, 'other');
-    gitSucceeds(['init', '-q', other], { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) });
+    gitSucceeds(['init', '-q', other], { ...envWithoutGitConfig(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) });
     const gitDir = path.join(other, '.git');
     const third = path.join(tmp, 'third');
     fs.mkdirSync(third);
     const listing = () => fs.readdirSync(path.join(gitDir, 'objects'), { recursive: true }).map(String).sort();
     const configBefore = fs.readFileSync(path.join(gitDir, 'config'));
     const listingBefore = listing();
-    const env = { ...cleanGitEnv(), GIT_DIR: gitDir, GIT_OBJECT_DIRECTORY: path.join(gitDir, 'objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: third };
+    const env = { ...envWithoutGitConfig(), GIT_DIR: gitDir, GIT_OBJECT_DIRECTORY: path.join(gitDir, 'objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: third };
     const dir = path.join(tmp, 'tpl');
     assert.strictEqual(writeGitTemplateDir(dir, env), dir);
     assert.ok(fs.readFileSync(path.join(gitDir, 'config')).equals(configBefore), 'the other repo\'s config is untouched');
@@ -1775,7 +1777,7 @@ test('writeGitTemplateDir ignores an inherited GIT_DIR and object-store variable
 test('writeGitTemplateDir falls back to git\'s default when the inherited GIT_TEMPLATE_DIR is missing or its config is unreadable', () => {
   withGitTemp((tmp) => {
     const missing = path.join(tmp, 'tpl-missing');
-    assert.strictEqual(writeGitTemplateDir(missing, { ...cleanGitEnv(), GIT_TEMPLATE_DIR: path.join(tmp, 'nope') }), missing);
+    assert.strictEqual(writeGitTemplateDir(missing, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: path.join(tmp, 'nope') }), missing);
     assert.ok(fs.existsSync(path.join(missing, 'info', 'exclude')));
     assert.strictEqual(cfgOf(missing, 'maintenance.auto'), 'false');
 
@@ -1784,11 +1786,12 @@ test('writeGitTemplateDir falls back to git\'s default when the inherited GIT_TE
     fs.mkdirSync(path.join(inherited, 'config'), { recursive: true });
     fs.mkdirSync(path.join(inherited, 'info'));
     fs.writeFileSync(path.join(inherited, 'info', 'marker'), 'm');
-    fs.writeFileSync(path.join(inherited, 'stray'), 's'); // not one of the copied entries on either path
+    fs.writeFileSync(path.join(inherited, 'stray'), 's'); // an inherited entry outside hooks/info/description
     const dir = path.join(tmp, 'tpl-unreadable');
-    assert.strictEqual(writeGitTemplateDir(dir, { ...cleanGitEnv(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
     assert.ok(fs.existsSync(path.join(dir, 'info', 'marker')));
-    assert.ok(!fs.existsSync(path.join(dir, 'stray')));
+    assert.ok(fs.existsSync(path.join(dir, 'stray')), 'every inherited entry is copied, on the init-failure path too');
+    assert.ok(fs.statSync(path.join(dir, 'config')).isFile(), 'the unreadable config directory is not copied: config is rebuilt as a file');
     assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
   });
 });
@@ -1803,7 +1806,7 @@ test('writeGitTemplateDir ignores the developer\'s init.templateDir', () => {
     const globalCfg = path.join(tmp, 'dev-gitconfig');
     fs.writeFileSync(globalCfg, `[init]\n\ttemplateDir = ${devPath}\n`);
     const env = {
-      ...cleanGitEnv(),
+      ...envWithoutGitConfig(),
       GIT_CONFIG_GLOBAL: globalCfg,
       GIT_CONFIG_COUNT: '1',
       GIT_CONFIG_KEY_0: 'init.templateDir',
@@ -1819,12 +1822,49 @@ test('writeGitTemplateDir ignores the developer\'s init.templateDir', () => {
   });
 });
 
+test('writeGitTemplateDir ignores an init.templateDir set in the developer\'s own ~/.gitconfig', () => {
+  withGitTemp((tmp) => {
+    const devTpl = path.join(tmp, 'dev-template');
+    fs.mkdirSync(path.join(devTpl, 'info'), { recursive: true });
+    fs.writeFileSync(path.join(devTpl, 'info', 'dev-marker'), 'd');
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(home);
+    fs.writeFileSync(path.join(home, '.gitconfig'), `[init]\n\ttemplateDir = ${devTpl.split(path.sep).join('/')}\n`);
+    // No GIT_CONFIG_GLOBAL / GIT_CONFIG_COUNT: the template reaches git only through the home directory.
+    const env = { ...envWithoutGitConfig(), HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config') };
+    const control = path.join(tmp, 'control');
+    gitSucceeds(['init', '-q', control], env);
+    assert.ok(fs.existsSync(path.join(control, '.git', 'info', 'dev-marker')), 'the fixture really sets a template through ~/.gitconfig');
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, env), dir);
+    assert.ok(!fs.existsSync(path.join(dir, 'info', 'dev-marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')), 'git\'s built-in default template');
+  });
+});
+
+test('writeGitTemplateDir does not append its keys twice to a nested runner\'s template config', () => {
+  withGitTemp((tmp) => {
+    const outer = path.join(tmp, 'outer');
+    assert.strictEqual(writeGitTemplateDir(outer, envWithoutGitConfig()), outer);
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: outer }), dir);
+    for (const key of ['maintenance.auto', 'gc.auto', 'receive.autogc']) {
+      const r = gitOut(['config', '--file', path.join(dir, 'config'), '--get-all', key], envWithoutGitConfig());
+      assert.strictEqual(r.stdout.trim().split('\n').length, 1, `${key} appears once: ${r.stdout}`);
+    }
+    const repo = path.join(tmp, 'repo');
+    const env = { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) };
+    gitSucceeds(['init', '-q', repo], env);
+    gitSucceeds(['-C', repo, 'config', 'gc.auto', '1'], env);
+  });
+});
+
 test('writeGitTemplateDir returns null when git fails', () => {
   withGitTemp((tmp) => {
     const git = () => { throw new Error('git is gone'); };
-    assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl'), cleanGitEnv(), { git }), null);
+    assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl'), envWithoutGitConfig(), { git }), null);
     const seen = [];
-    assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl2'), cleanGitEnv(), { git, onError: (err) => seen.push(err.message) }), null);
+    assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl2'), envWithoutGitConfig(), { git, onError: (err) => seen.push(err.message) }), null);
     assert.deepStrictEqual(seen, ['git is gone']);
   });
 });

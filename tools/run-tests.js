@@ -620,7 +620,6 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
     if (inherited) initEnv.GIT_TEMPLATE_DIR = inherited;
     initEnv.GIT_CONFIG_NOSYSTEM = '1';
     initEnv.GIT_CONFIG_GLOBAL = emptyConfig;
-    let overlay = false;
     try {
       git(['init', '-q', src], { env: initEnv });
     } catch (err) {
@@ -630,14 +629,20 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
       fs.rmSync(src, { recursive: true, force: true });
       delete initEnv.GIT_TEMPLATE_DIR;
       git(['init', '-q', src], { env: initEnv });
-      overlay = true;
     }
-    // The same three entries on both paths: `config` is never copied (it holds per-repository core.* keys).
-    for (const name of ['hooks', 'info', 'description']) {
-      const from = path.join(src, '.git', name);
-      if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, name), { recursive: true });
-      const own = overlay ? path.join(inherited, name) : null;
-      if (own && fs.existsSync(own)) fs.cpSync(own, path.join(dir, name), { recursive: true });
+    // `config` is never copied as a file (it holds per-repository core.* keys; the template's own is
+    // rebuilt below). With an inherited template every entry of its own is copied wholesale from it, on
+    // both paths, so they stay identical; otherwise git's default template files come from the init.
+    if (inherited) {
+      for (const name of fs.readdirSync(inherited)) {
+        if (name === 'config') continue;
+        fs.cpSync(path.join(inherited, name), path.join(dir, name), { recursive: true });
+      }
+    } else {
+      for (const name of ['hooks', 'info', 'description']) {
+        const from = path.join(src, '.git', name);
+        if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, name), { recursive: true });
+      }
     }
     let base = '';
     if (inherited) {
@@ -646,7 +651,9 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
         if (base && !base.endsWith('\n')) base += '\n';
       } catch (_) { base = ''; }
     }
-    fs.writeFileSync(path.join(dir, 'config'), base + GIT_TEMPLATE_CONFIG);
+    // An outer runner's template already ends in GIT_TEMPLATE_CONFIG: appending it again would
+    // duplicate the keys and make `git config gc.auto 1` fail on a multi-valued key.
+    fs.writeFileSync(path.join(dir, 'config'), base.endsWith(GIT_TEMPLATE_CONFIG) ? base : base + GIT_TEMPLATE_CONFIG);
     return dir;
   } catch (err) {
     onError(err);
