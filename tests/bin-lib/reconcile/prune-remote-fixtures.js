@@ -26,20 +26,7 @@ function buildBase({ origin, dir }) {
   git(dir, 'push', '-u', 'origin', 'main');
 }
 
-// Push `branch` with one commit, cherry-pick it onto main (squash-merge shape), then dispose
-// the local branch; the remote lingers.
-function pushedAndCherryPicked(dir, branch, file, content, msg) {
-  git(dir, 'checkout', '-b', branch);
-  fs.writeFileSync(path.join(dir, file), content);
-  git(dir, 'add', file);
-  git(dir, 'commit', '-m', msg);
-  git(dir, 'push', 'origin', branch);
-  git(dir, 'checkout', 'main');
-  git(dir, 'cherry-pick', branch);
-  git(dir, 'branch', '-D', branch);
-}
-
-// Push `branch` with one commit, back on main, then dispose the local branch; never merged.
+// Push `branch` with one commit and return to main; the local branch stays, never merged.
 function pushedUnmerged(dir, branch, file, content, msg) {
   git(dir, 'checkout', '-b', branch);
   fs.writeFileSync(path.join(dir, file), content);
@@ -47,6 +34,14 @@ function pushedUnmerged(dir, branch, file, content, msg) {
   git(dir, 'commit', '-m', msg);
   git(dir, 'push', 'origin', branch);
   git(dir, 'checkout', 'main');
+}
+
+// Push `branch` with one commit, cherry-pick it onto main (squash-merge shape), then dispose
+// the local branch; the remote lingers.
+function pushedAndCherryPicked(dir, branch, file, content, msg) {
+  pushedUnmerged(dir, branch, file, content, msg);
+  git(dir, 'cherry-pick', branch);
+  git(dir, 'branch', '-D', branch);
 }
 
 function buildTwoPrunable({ dir }) {
@@ -101,12 +96,7 @@ const VARIANTS = {
     pushedAndCherryPicked(dir, 'build/merged2', 'f.txt', 'f\n', 'change2');
   },
   worktree: ({ dir, wt }) => {
-    git(dir, 'checkout', '-b', 'build/wt');
-    fs.writeFileSync(path.join(dir, 'e.txt'), 'e\n');
-    git(dir, 'add', 'e.txt');
-    git(dir, 'commit', '-m', 'wt');
-    git(dir, 'push', 'origin', 'build/wt');
-    git(dir, 'checkout', 'main');
+    pushedUnmerged(dir, 'build/wt', 'e.txt', 'e\n', 'wt');
     git(dir, 'cherry-pick', 'build/wt'); // even cherry-equivalent…
     git(dir, 'worktree', 'add', path.join(wt, 'w'), 'build/wt'); // …but attached to a live worktree
   },
