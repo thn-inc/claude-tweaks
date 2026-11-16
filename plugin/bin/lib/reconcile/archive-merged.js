@@ -65,9 +65,8 @@ const ORPHAN_MINT_TTL_MS = 24 * 60 * 60 * 1000;
 // file (the adhoc-superseded and orphaned-mint classifications and
 // isStructurallyStuck all carried byte-identical copies). Fail-closed toward
 // "not stale" on any stat failure (ENOENT, EACCES, …) — every caller relies on
-// an unreadable directory
-// being left alone rather than swept. Strict `>` (not `>=`): exactly-at-TTL is
-// not yet stale.
+// an unreadable directory being left alone rather than swept. Strict `>` (not
+// `>=`): exactly-at-TTL is not yet stale.
 function isStaleDir(dir, ttlMs, now = Date.now()) {
   let mtimeMs;
   try {
