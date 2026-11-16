@@ -1377,7 +1377,7 @@ test('#4626: under revocationOnly every record lands in exactly one outcome colu
     operationalFixture(7, 20),
   ];
   const gitLog = [
-    commitFor(1), commitFor(2), commitFor(6), commitFor(7),
+    commitFor(1), commitFor(2), commitFor(4), commitFor(6), commitFor(7),
     { sha: sha40(999), message: `This reverts commit ${sha40(7)}.` },
   ];
   const [row] = trustRows(records, gitLog, NOW, {});
@@ -1389,10 +1389,14 @@ test('#4626: under revocationOnly every record lands in exactly one outcome colu
 
 test('#4626: an unstructured cell stays insufficient-evidence under revocationOnly', () => {
   const overlong = 'Origin: ' + 'x'.repeat(80);
+  // Operational evidence with closing commits clears both floors, so the
+  // UNGRADABLE_KIND pin is the only thing that can yield insufficient-evidence.
   const many = Array.from({ length: MIN_SAMPLES + 4 }, (_, i) => ({
-    number: i + 1, labels: ['risk:low', 'accept:approved'], body: overlong, state: 'CLOSED', closedAt: RECENT,
+    ...operationalFixture(i + 1, 20), labels: ['risk:low', 'accept:approved'], body: overlong,
   }));
-  const [row] = trustRows(many);
+  const gitLog = many.map((r) => commitFor(r.number));
+  const [row] = trustRows(many, gitLog, NOW, {});
   assert.equal(row.provenance, 'unstructured:unstructured');
+  assert.equal(row.revocationOnly.operationalGood, MIN_SAMPLES + 4);
   assert.equal(row.revocationOnly.verdict, 'insufficient-evidence');
 });

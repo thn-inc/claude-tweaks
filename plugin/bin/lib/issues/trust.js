@@ -432,8 +432,9 @@ function trustRows(records, gitLog, now, policy) {
       // deliberately, symmetric with the pre-existing operational branch: a
       // record already carrying a definitive acceptance verdict (approved,
       // changes-requested, or pending below) keeps that verdict as its own
-      // disposition — an earlier failed attempt on the way to an eventual
-      // approval is not read as contradicting that approval.
+      // disposition — for `verdict`, an earlier failed attempt on the way to an
+      // eventual approval is not read as contradicting that approval
+      // (`revocationOnly` does read it, via the 'approved' branch above).
       const outcome = operationalOutcomeOf(record, gitLog, clock, windowDays);
       if (outcome === 'good') cell.operationalGood += 1;
       else if (outcome === 'bad') cell.negativeEvidence += 1;
@@ -488,6 +489,8 @@ function trustRows(records, gitLog, now, policy) {
     // this table exists to grade autonomy on, so a cell resting entirely on it
     // does not earn 'clean' — see the verdict computation below.
     const batchOnly = cell.approved > 0 && cell.approvedBatch === cell.approved && cell.operationalGood === 0;
+    // Shared by `verdict` and `revocationOnly` so the two gradings cannot drift.
+    const followUpRateExceeded = followUpRecords * 100 > followUpRateMaxPercent * shipped;
     let verdict = 'insufficient-evidence';
     let mixedReasons = [];
     if (
@@ -522,7 +525,7 @@ function trustRows(records, gitLog, now, policy) {
       // stop, the same as one changes-requested already was.
       const failing = {
         'changes-requested': cell.changesRequested !== 0,
-        'follow-up-rate': followUpRecords * 100 > followUpRateMaxPercent * shipped,
+        'follow-up-rate': followUpRateExceeded,
         'negative-evidence': cell.negativeEvidence !== 0,
         'batch-only': batchOnly,
       };
@@ -549,7 +552,7 @@ function trustRows(records, gitLog, now, policy) {
     ) {
       const roFailing = {
         'changes-requested': cell.changesRequested !== 0,
-        'follow-up-rate': followUpRecords * 100 > followUpRateMaxPercent * shipped,
+        'follow-up-rate': followUpRateExceeded,
         'negative-evidence': roNegative !== 0,
       };
       roMixedReasons = MIXED_REASON_ORDER.filter((reason) => roFailing[reason]);
