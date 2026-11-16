@@ -48,6 +48,8 @@ These are plain body-metadata lines, not YAML frontmatter — capitalized keys, 
 
 `Ui-stack:` has no fixed enumeration — it's a free-form string (component library name, styling approach, or an explicit no-preference answer). See `design-pre-steps.md`'s Step 2.5c2 for the preset options offered interactively.
 
+`Acceptance-target: local` (#4615) is asked about on the interactive path only: one `AskUserQuestion` per run, whether the human wants to accept this item locally rather than on the deployed dev environment. On yes, stamp the exact line `Acceptance-target: local`; on no, write nothing. It is never stamped under `--chained` or the `next` form, and no other value is ever written (grammar in `spec-template.md`).
+
 `spec-template.md` stays canonical for the full metadata-block field set these two tables slice — including `Design-seed:`/`Visual-reference:`/`Parent:`, which shaping mode never writes. The `Design-intent:` one-liners above restate `design-pre-steps.md`'s Step 2.5c `AskUserQuestion` descriptions; keep both tables in sync by hand if either enum ever changes. `Ui-stack:` has no enum to restate — Step 2.5c2's preset options are documentation, not a closed value set.
 
 ### Risk flags
@@ -160,6 +162,7 @@ Design-intent: {value}
 Ui-stack: {value}
 Risk-flags: {value}                ← written by ### Risk flags' settle, never typed
 Risk-flags-unconfirmed: true       ← only when settle marks the set unconfirmed
+Acceptance-target: local           ← interactive path only, when the human chose local acceptance; omitted otherwise
 
 ## Current State
 ...
