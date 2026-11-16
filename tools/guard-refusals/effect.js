@@ -41,9 +41,11 @@ const WRITE_WORDS = {
   dd: { prefix: ['of='] },
   find: { exact: ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprint', '-fprint0', '-fprintf', '-fls'] },
   curl: {
-    short: 'oODcK',
-    long: ['--output', '--remote-name', '--remote-name-all', '--dump-header', '--cookie-jar', '--trace', '--trace-ascii', '--stderr', '--libcurl', '--etag-save', '--hsts', '--alt-svc', '--config'],
+    // -d/--data*/--json/-F/--form*/-T/--upload-file send a body: a remote mutation.
+    short: 'oODcKdFT',
+    long: ['--data', '--data-ascii', '--data-binary', '--data-raw', '--data-urlencode', '--json', '--form', '--form-string', '--upload-file', '--output', '--remote-name', '--remote-name-all', '--dump-header', '--cookie-jar', '--trace', '--trace-ascii', '--stderr', '--libcurl', '--etag-save', '--hsts', '--alt-svc', '--config'],
   },
+  less: { short: 'oO', long: ['--log-file', '--LOG-FILE'] },
   sort: { short: 'o', long: ['--output', '--compress-program'] },
   rm: { any: true },
   mv: { any: true },
@@ -302,6 +304,8 @@ function tokenize(text) {
       if (twin) i++;
       continue;
     }
+    // `]]` right against an operator (`]]&&`, `]]|`, `]]>f`) still closes [[ ]].
+    if (dbl && cur === ']]' && (c === '&' || c === '|' || c === '<' || c === '>' || c === '(' || c === ')')) flushWord();
     if (!dbl) {
       if (c === '|') {
         endCommand(text[i + 1] === '|' ? '||' : '|');
@@ -410,6 +414,23 @@ const WRAPPERS = {
     return { next: k };
   },
 };
+
+// curl with a request method other than GET/HEAD (-X, --request, --request=,
+// -XPOST, a cluster ending in X) mutates the remote: a write, as `gh api` is.
+function curlMutates(words, from) {
+  for (let k = from; k < words.length; k++) {
+    const a = words[k].t;
+    let method = null;
+    if (a === '--request') method = k + 1 < words.length ? words[k + 1] : { t: '', dyn: true };
+    else if (a.startsWith('--request=')) method = { t: a.slice('--request='.length), dyn: words[k].dyn };
+    else if (a.length > 1 && a[0] === '-' && a[1] !== '-') {
+      const x = a.indexOf('X', 1);
+      if (x !== -1) method = x + 1 < a.length ? { t: a.slice(x + 1), dyn: words[k].dyn } : (words[k + 1] || { t: '', dyn: true });
+    }
+    if (method && (method.dyn || !['GET', 'HEAD'].includes(method.t.toUpperCase()))) return true;
+  }
+  return false;
+}
 
 function hitsWrite(entry, words, from) {
   if (entry.any) return true;
@@ -625,6 +646,8 @@ function judgeWords(words, start) {
   for (;;) {
     const w = words[s];
     if (w.dyn || (w.glob && w.t !== '[' && w.t !== '[[' && w.t !== '{')) return unknown('computed command name');
+    // An absolute path runs the program its basename names; a relative one may be any local script.
+    if (w.t.includes('/') && w.t[0] !== '/') return unknown('relative path command');
     const base = basename(w.t);
     if (Object.hasOwn(WRAPPERS, base)) {
       const r = WRAPPERS[base](words, s + 1);
@@ -635,6 +658,13 @@ function judgeWords(words, start) {
     }
     const entry = Object.hasOwn(WRITE_WORDS, base) ? WRITE_WORDS[base] : null;
     if (entry && hitsWrite(entry, words, s + 1)) return write(`write word: ${base}`);
+    if (base === 'curl' && curlMutates(words, s + 1)) return write('write word: curl');
+    if (base === 'export') {
+      for (let k = s + 1; k < words.length; k++) {
+        const m = ASSIGN.exec(words[k].t);
+        if (m && HAZARD_ENV.test(m[1])) return unknown(`env ${m[1]}`);
+      }
+    }
     if (base === 'git') return judgeGit(words, s + 1);
     if (base === 'gh') return judgeGh(words, s + 1);
     if (READER_SET.has(base)) {
@@ -659,7 +689,9 @@ function classifyText(text, depth) {
 
   let caseDepth = 0;
   let casePattern = false;
-  for (const cmd of tokenize(outer)) {
+  // for-of walks entries pushed during the loop: a `for f do …` body is queued.
+  const commands = tokenize(outer);
+  for (const cmd of commands) {
     if (casePattern && (cmd.term === ')' || cmd.term === '|')) {
       if (cmd.term === ')') casePattern = false;
       continue;
@@ -683,7 +715,11 @@ function classifyText(text, depth) {
       if (head === 'case') {
         caseDepth++;
         casePattern = cmd.term !== ')';
-      } else if (head !== 'for' && head !== 'select') add(judgeWords(words, s));
+      } else if (head === 'for' || head === 'select') {
+        // The header is data, but `for f do BODY` (no `in`, no `;`) puts the body in it.
+        const doAt = words.findIndex((x, j) => j > s && x.t === 'do');
+        if (doAt !== -1 && doAt + 1 < words.length) commands.push({ words: words.slice(doAt + 1), redirWrite: null, term: cmd.term });
+      } else add(judgeWords(words, s));
     }
     if (caseDepth > 0 && cmd.term === ';;') casePattern = true;
   }
@@ -713,4 +749,8 @@ function classifyEffect(command) {
   return classifyText(command, 0);
 }
 
-module.exports = { classifyEffect, WRITE_WORDS, READERS, GIT_READ, GH_READ, GIT_WRITE, GH_WRITE };
+// The word tables alone, without step 1's gate: lets a test prove each table
+// member writes on its own rather than being masked by git-command.js.
+const classifyByTables = (command) => classifyText(command, 0);
+
+module.exports = { classifyEffect, classifyByTables,WRITE_WORDS, READERS, GIT_READ, GH_READ, GIT_WRITE, GH_WRITE };

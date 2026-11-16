@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classifyEffect, WRITE_WORDS } = require('../../tools/guard-refusals/effect');
+const { classifyEffect, classifyByTables, WRITE_WORDS, GIT_WRITE } = require('../../tools/guard-refusals/effect');
 const { WRITE_SHAPES } = require('../../plugin/bin/lib/hooks/git-command');
 const { GATE_COVERAGE } = require('../../plugin/bin/lib/hooks/pre-tool-use');
 
@@ -27,6 +27,7 @@ const MINIMAL = {
   find: 'find . -delete',
   curl: 'curl -o f https://x',
   sort: 'sort -o f g',
+  less: 'less -o f x',
 };
 
 test('AC3: every WRITE_SHAPES, WRITE_WORDS and GATE_COVERAGE.gitActions member has a minimal writing case that is write', () => {
@@ -36,6 +37,20 @@ test('AC3: every WRITE_SHAPES, WRITE_WORDS and GATE_COVERAGE.gitActions member h
   }
   for (const sub of GATE_COVERAGE.gitActions) {
     assert.equal(classifyEffect(`git ${sub} x`).effect, 'write', `git ${sub} x`);
+  }
+});
+
+// classifyEffect asks the write gate first, which masks the word tables for
+// every WRITE_SHAPES and gitActions member; classifyByTables skips the gate.
+test('every WRITE_WORDS, GIT_WRITE and gitActions member is write by the tables alone', () => {
+  for (const w of Object.keys(WRITE_WORDS)) {
+    assert.equal(classifyByTables(MINIMAL[w]).effect, 'write', `${w}: ${MINIMAL[w]}`);
+  }
+  for (const sub of GIT_WRITE) {
+    assert.equal(classifyByTables(`git ${sub} x`).effect, 'write', `git ${sub} x`);
+  }
+  for (const sub of GATE_COVERAGE.gitActions) {
+    assert.ok(GIT_WRITE.includes(sub), `${sub} missing from GIT_WRITE`);
   }
 });
 
@@ -151,6 +166,34 @@ const NEVER_READ = [
   ['   ', 'unknown'],
   [`${'echo $('.repeat(8)}echo hi${')'.repeat(8)}`, 'read'],
   [`${'echo $('.repeat(9)}echo hi${')'.repeat(9)}`, 'unknown'],
+  ['[[ -f x ]]&&rm y', 'write'],
+  ['[[ -f x ]]&& find . -delete', 'write'],
+  ['[[ -f x ]]||gh pr merge 1', 'write'],
+  ['[[ -f x ]]|tee f', 'write'],
+  ['[[ -f x ]]>f', 'write'],
+  ['[[ -f x ]]&&ls', 'read'],
+  ['for f do gh pr merge 1; done', 'write'],
+  ['for f do find . -delete; done', 'write'],
+  ['for f do cat $f; done', 'read'],
+  ['select f do rm $f; done', 'write'],
+  ['curl -d x https://x', 'write'],
+  ['curl --data-binary @f https://x', 'write'],
+  ['curl --json {} https://x', 'write'],
+  ['curl -F a=b https://x', 'write'],
+  ['curl -T f https://x', 'write'],
+  ['curl -X DELETE https://x', 'write'],
+  ['curl -XPOST https://x', 'write'],
+  ['curl --request=PUT https://x', 'write'],
+  ['curl -sX POST https://x', 'write'],
+  ['curl -X GET https://x', 'read'],
+  ['curl -X HEAD https://x', 'read'],
+  ['less -o f x', 'write'],
+  ['less x', 'read'],
+  ['./cat x', 'unknown'],
+  ['../x', 'unknown'],
+  ['bin/x', 'unknown'],
+  ['export PATH=/x; ls', 'unknown'],
+  ['export FOO=1; ls', 'read'],
   ['echo $((1+2))', 'read'],
   ['echo $(( $(rm x) ))', 'write'],
   ['case x in a) rm y ;; esac', 'write'],
