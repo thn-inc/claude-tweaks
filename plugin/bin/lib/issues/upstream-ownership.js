@@ -130,19 +130,21 @@ const single = (values) => (values.size === 1 ? [...values][0] : null);
 // A staged wrap-up-upstream-*.md file -> { targetRepo, title, body }. Line 1 is
 // `<!-- upstream-target: {owner/name} -->`, line 2 `Title: {title}`, a blank line,
 // then the body; lines split on /\r?\n/ (a Windows checkout may write CRLF).
-// Headers are read only from the leading header block — the lines before the
-// first line that is neither a header nor blank — so a body line that looks like
-// a header is body text, never read or removed. In the block, one distinct value
+// Headers are read only from the leading header block — leading blank lines, then
+// consecutive header lines, ending at the first line after a header that is not a
+// header (the blank separator included) — so a body line that looks like a header,
+// the first one after the separator included, is body text, never read or removed. In the block, one distinct value
 // is the field; two distinct values are ambiguous and read null, as does a target
 // marker anywhere in the body naming a different repo (the marker stays in the
 // body). The body is everything after the block, less the one blank line after it.
 function parseStagedUpstream(text) {
   const lines = (typeof text === 'string' ? text : '').split(LINE_SPLIT_RE);
-  // The block ends after the last header line of the leading run of header and blank lines.
-  let end = 0;
-  for (let i = 0; i < lines.length && (isBlank(lines[i]) || isHeaderLine(lines[i])); i++) {
-    if (!isBlank(lines[i])) end = i + 1;
-  }
+  // The block is the leading blank lines, then consecutive header lines; with no header it is empty.
+  let first = 0;
+  while (first < lines.length && isBlank(lines[first])) first++;
+  let end = first;
+  while (end < lines.length && isHeaderLine(lines[end])) end++;
+  if (end === first) end = 0;
   const targets = new Set();
   const titles = new Set();
   for (const line of lines.slice(0, end)) {

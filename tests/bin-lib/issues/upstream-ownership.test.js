@@ -218,9 +218,12 @@ test('parseStagedUpstream: a later marker with the block\'s own value keeps the 
   assert.strictEqual(parseStagedUpstream('Title: T\n\nbody\n<!-- upstream-target: a/b -->').targetRepo, null);
 });
 
-test('parseStagedUpstream: the header block is the leading run of header and blank lines', () => {
-  // Blank lines before and between headers belong to the block; one blank after it is dropped.
+test('parseStagedUpstream: the header block is leading blank lines, then consecutive header lines', () => {
+  // Leading blank lines belong to the block; the first blank after a header ends it and is dropped,
+  // so a header after that blank is body text.
   assert.deepStrictEqual(parseStagedUpstream('\n<!-- upstream-target: a/b -->\n\nTitle: T\n\nbody'),
+    { targetRepo: 'a/b', title: null, body: 'Title: T\n\nbody' });
+  assert.deepStrictEqual(parseStagedUpstream('\n\n<!-- upstream-target: a/b -->\nTitle: T\n\nbody'),
     { targetRepo: 'a/b', title: 'T', body: 'body' });
   // Only one blank line after the block is dropped.
   assert.deepStrictEqual(parseStagedUpstream('<!-- upstream-target: a/b -->\nTitle: T\n\n\npara'),
@@ -228,6 +231,16 @@ test('parseStagedUpstream: the header block is the leading run of header and bla
   // Inside the block a header twice with different values reads null; the other field is kept.
   assert.deepStrictEqual(parseStagedUpstream('<!-- upstream-target: a/b -->\nTitle: one\nTitle: two\n\nbody'),
     { targetRepo: 'a/b', title: null, body: 'body' });
+});
+
+test('parseStagedUpstream: a Title-shaped first body line after the blank separator is body text', () => {
+  assert.deepStrictEqual(parseStagedUpstream('<!-- upstream-target: a/b -->\nTitle: Real\n\nTitle: quoted first body line\nmore'),
+    { targetRepo: 'a/b', title: 'Real', body: 'Title: quoted first body line\nmore' });
+});
+
+test('parseStagedUpstream: a target-marker first body line after the blank separator is body text', () => {
+  assert.deepStrictEqual(parseStagedUpstream('<!-- upstream-target: a/b -->\nTitle: Real\n\n<!-- upstream-target: a/b -->\nmore'),
+    { targetRepo: 'a/b', title: 'Real', body: '<!-- upstream-target: a/b -->\nmore' });
 });
 
 test('ownedOwnersList: an element with no string form is ignored, never thrown on', () => {
