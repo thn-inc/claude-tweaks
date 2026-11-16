@@ -32,6 +32,9 @@
 
 ### Task 1: Detectors and section 7 rows
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `tools/guard-refusals/shapes.js`
 - Modify: `plugin/skills/_shared/scratch-worktree.md` (section 7 table only)
@@ -127,9 +130,13 @@ git commit -m "Record the read shapes no rewrite fixes as section 7 rows — ref
 
 ### Task 2: The replay module
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Create: `tools/guard-refusals/replay.js`
 - Create: `tests/guard-refusals/replay.test.js`
+- Modify: `tools/guard-refusals.js` (move `REWRITE_DEPS` out, import it from `./guard-refusals/replay`; nothing else)
 
 **Interfaces:**
 - Consumes: rows shaped like `summarize()`'s `rows` in `tools/guard-refusals.js` plus `cwd` (`{ toolUseId, file, tool, guard, command, truncated, reason, effect, readClass, ts, cwd }`); `detectShapes` from `./shapes`; `RULE_IDS` from `../../plugin/bin/lib/hooks/guard-rewrite`.
@@ -139,19 +146,22 @@ git commit -m "Record the read shapes no rewrite fixes as section 7 rows — ref
   - `detect(text) -> string[]`; default `(t) => detectShapes(t, { placeholders: false })`.
 
 Semantics (spec Deliverables 1, 2, 5; decisions stated in the PR):
-- `dispositions`: `{ plugin: { 'still-denied', 'no-longer-denied' }, harness: { 'other-checkout', rewritten, 'refused-shape', 'long-chain', unexplained }, refusedShapeById: {id: n}, rows: [{ toolUseId, disposition, detector? }] }` over rows with `effect === 'read'`. Plugin rows (`guard` starts `plugin:`): `still-denied` when `gitTargets(command, cwd)` holds an action in `GATE_COVERAGE.gitActions` (`pre-tool-use.js`) or `fileWriteTargets`/`mkdirTargets` return a non-empty list; cwd fallback `'/'` when absent. Harness rows (`guard === 'harness-command'`), first match wins: `other-checkout` (`readClass`); `rewritten` (rule changes it and `detect(rewritten)` is empty); `refused-shape` with `detector` = first id of `detect(rewritten ?? original)` (when rewritten text is clean the row was already `rewritten`); `long-chain` (`chainLength(command) >= 4`); else `unexplained`.
+- `dispositions`: `{ plugin: { 'still-denied', 'no-longer-denied', 'scanner-failed' }, harness: { 'other-checkout', rewritten, 'refused-shape', 'long-chain', unexplained }, refusedShapeById: {id: n}, rows: [{ toolUseId, disposition, detector? }] }` over rows with `effect === 'read'`. Plugin rows (`guard` starts `plugin:`): `still-denied` when `gitTargets(command, cwd)` holds an action in `GATE_COVERAGE.gitActions` (`pre-tool-use.js`) or `fileWriteTargets`/`mkdirTargets` return a non-empty list; cwd fallback `'/'` when absent. Harness rows (`guard === 'harness-command'`), first match wins: `other-checkout` (`readClass`); `rewritten` (rule changes it and `detect(rewritten)` is empty); `refused-shape` with `detector` = first id of `detect(rewritten ?? original)` (when rewritten text is clean the row was already `rewritten`); `long-chain` (`chainLength(command) >= 4`); else `unexplained`.
 - `chainLength(text)`: simple commands at the top level, split at `;`, `&&`, `||`, `|`, newline in `plain` lexShell state outside `$(…)`/backtick/`(…)` nesting; empty segments not counted.
 - `writeTargetsMoved`: over every Bash row (any guard, any effect) with an absolute cwd, not truncated, that `rewrite` changes: 1 when any of the three scanner lists differs (`JSON.stringify`) between original and rewritten; `writeTargetsChecked` counts the rows compared.
-- `ruleNotApplied`: harness-command Bash rows, any effect, whose rewrite applies and whose rewritten text `detect` leaves empty; per applied rule with `RULE_SINCE[rule]` non-null and `ts >= RULE_SINCE[rule] + 1 day` (strictly after the release day, UTC). Shape `{ total, byRule: { [rule]: { total, byVersion: { [version]: { main, subagent } } } } }`; `total` counts distinct rows. `version = pluginVersion(command)`: the `x.y.z` after `/plugins/cache/<marketplace>/claude-tweaks/`, else `'unknown'`. A row is `subagent` when its `file` path has a `subagents` directory segment.
-- `byClass`: `{ 'git-C-own', 'exit-status', 'collision-fence' }`, each `{ total, unknownVersion, byVersion }` over all rows. `git-C-own`: `effect === 'read'` and the text holds `git -C .` (bare or quoted dot) or `git -C` followed by the row's cwd (bare, single- or double-quoted, optional trailing `/`). `exit-status`: `effect === 'read'` and a `$?` at a `plain` lexShell position. `collision-fence`: any effect, text includes both `node-eval-file.js` and `remote-branch-collision`.
+- `ruleNotApplied`: harness-command Bash rows, any effect, whose rewrite applies and whose rewritten text `detect` leaves empty, counted only when EVERY applied rule has a non-null `RULE_SINCE[rule]` and `ts >= RULE_SINCE[rule] + 1 day` for each (strictly after the release day, UTC; spec Plan Review Clarifications); the row then counts under each of its applied rules. Shape `{ total, byRule: { [rule]: { total, byVersion: { [version]: { main, subagent } } } } }`; `total` counts distinct rows. `version = pluginVersion(command)`: the `x.y.z` after `/plugins/cache/<marketplace>/claude-tweaks/`, else `'unknown'`. A row is `subagent` when its `file` path has a `subagents` directory segment.
+- `byClass`: `{ 'git-C-own', 'exit-status', 'collision-fence' }`, each `{ total, unknownVersion, byVersion }` over all rows, keyed by SESSION version: the first `pluginVersion` any row with the same `file` yields, else `'unknown'` (spec Plan Review Clarifications). `git-C-own`: `effect === 'read'` and the text holds `git -C .` (bare or quoted dot) or `git -C` followed by the row's cwd (bare, single- or double-quoted, optional trailing `/`). `exit-status`: `effect === 'read'` and a `$?` at a `plain` lexShell position. `collision-fence`: any effect, text includes both `node-eval-file.js` and `remote-branch-collision`.
 - `byPattern`: when `patterns` (array of `{ id, pattern }`, `pattern` a RegExp source) is given, `{ [id]: { count, rewritten } }` over all rows; `rewritten` = matching rows a rule changes. `null` when no patterns.
-- A `rewrite`/`scanner`/`detect` throw on one row: that row's check is skipped (`unexplained` for disposition, not compared for `writeTargetsMoved`); the replay never throws.
+- A `rewrite`/`scanner`/`detect` throw on one row: that row's check is skipped (a harness row → `unexplained`; a plugin row → `scanner-failed`, never `no-longer-denied`; not compared for `writeTargetsMoved`); the replay never throws.
+- `byPattern[id].rewritten` feeds the close/narrow/keep rule: a shape counts as changed only when `rewritten === count` (spec Plan Review Clarifications).
 
 - [ ] **Step 1: Write the failing tests** in `tests/guard-refusals/replay.test.js` (hand-written rows, no transcript text):
   - `AC1`: plugin `git log` read row; scanner stub whose `gitTargets` returns `[{ action: 'commit', dir: '/wt' }]` → `still-denied`; stub returning `[]` everywhere → `no-longer-denied`.
   - `AC2` (default deps, cwd `/wt`): `ls /a\ b/c` → `rewritten`; `grep -n "source" f.md` → `refused-shape` with `detector: 'source-token'`; row with `readClass: 'other-checkout'` (reason `git-redirect-shared`) → `other-checkout`; `cat f` reason `too-complex` → `unexplained`; `cat a && cat b && cat c && cat d && cat e` → `long-chain`.
   - `AC3`: default rewrite on `ls "/wt/a b"` spelled `ls /wt/a\ b` → `writeTargetsMoved === 0`, `writeTargetsChecked === 1`; a stub rewrite that turns `cd /other && git commit -m x` into `git commit -m x` with the real scanner → `writeTargetsMoved === 1`.
-  - `AC4`: harness row `ls /a\ b/c`, cwd `/wt`, command naming `/Users/x/.claude/plugins/cache/m/claude-tweaks/6.160.0/bin/x.js`, `ts: '2026-11-01T00:00:00Z'` → `ruleNotApplied.byRule['quote-escaped-space'].byVersion['6.160.0'].main === 1`; same row with `ts: '2026-10-20T00:00:00Z'` → not counted; same row under a `.../s1/subagents/a.jsonl` file → `subagent === 1`.
+  - `AC4`: harness row `ls /a\ b/c`, cwd `/wt`, command naming `/Users/x/.claude/plugins/cache/m/claude-tweaks/6.160.0/bin/x.js`, `ts: '2026-11-01T00:00:00Z'` → `ruleNotApplied.byRule['quote-escaped-space'].byVersion['6.160.0'].main === 1`; same row with `ts: '2026-10-20T00:00:00Z'` → not counted; same row under a `.../s1/subagents/a.jsonl` file → `subagent === 1`; a row that also needs `drop-git-C-cwd` (unreleased, e.g. `git -C /wt log -- /a\ b`) → not counted.
+  - Review Focus 3 covers both a throwing scanner on a plugin row (→ `scanner-failed`) and a throwing rewrite on a harness row (→ `unexplained`).
+  - `byClass` session version: a `git -C . log` row with no cache path in a file where another row names `6.160.0` counts under `byVersion['6.160.0']`; alone in its file it counts under `unknownVersion`.
   - `AC11`: `Object.keys(RULE_SINCE)` deep-equals `RULE_IDS` (sorted both); a go-red copy check: a map missing one key fails the same comparison helper. `byClass` returns one entry for each of the three classes on rows built to hit each; `byPattern` with one pattern counts its matches.
   - `chainLength`: `a | b` 2, `a && b; c || d` 4, `echo "a;b"` 1, `x=$(a; b)` 1, heredoc body lines not counted.
   - Review Focus 1-3 tests named as listed there.
