@@ -2439,6 +2439,7 @@ test('#5227 cross-PR: gh pr list feeds detectCrossPRFileOverlap; a failure write
   assert.equal(files.text['dispatch-crosspr-overlap.json'], '[]');
   assert.equal(files.ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'list').length, 0);
   assert.equal(files.text['dispatch-open-prs.json'], undefined, 'the open-PR file is not written on files');
+  assert.ok(!files.stderr.includes(OPEN_PR_FAIL), 'files makes no fetch, so it prints no failure Warning');
 
   const prs = (n) => Array.from({ length: n }, (_, i) => ({ number: 600 + i, files: [], closingIssuesReferences: [] }));
   assert.ok(pull5(withGh(PIPE(), OPEN_PRS_ARGV, { stdout: JSON.stringify(prs(100)) })).stderr.includes(`${OPEN_PR_CAP}\n`));
