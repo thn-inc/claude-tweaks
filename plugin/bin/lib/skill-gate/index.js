@@ -238,13 +238,34 @@ function decide({ skill, mode, surface, files, designIntegration, loadJourneys }
 // empty. CRLF reads as LF; surrounding quotes are stripped from each item.
 function parseJourneyText(text) {
   const source = String(text);
-  if (source.split(/\r?\n/, 1)[0] !== '---') return { files: null };
+  const firstLine = source.split(/\r?\n/, 1)[0];
+  if (firstLine !== '---') {
+    // A fence the list reader would not see (BOM, trailing space) is frontmatter
+    // the gate cannot read, not a journey that lists nothing.
+    if (firstLine.replace(/^﻿/, '').trim() === '---') return { error: 'frontmatter fence is not exactly ---' };
+    return { files: null };
+  }
   const fence = splitFrontmatterFence(source);
   if (!fence) return { error: 'frontmatter never closes' };
   if (fence.frontmatter.some((l) => /^files:\s*\S/.test(l))) {
     return { error: 'files: has an inline value; the gate reads only the block list form' };
   }
-  if (!fence.frontmatter.some((l) => /^files:\s*$/.test(l))) return { files: null };
+  const fieldIdx = fence.frontmatter.findIndex((l) => /^files:\s*$/.test(l));
+  if (fieldIdx === -1) return { files: null };
+  // The list reader stops at the first line that is not a bare `- item`, and keeps
+  // an inline comment in the item. Either misread would list less than the journey
+  // does, so a comment or blank line inside the list, or an item with ` #`, is an error.
+  for (let i = fieldIdx + 1; i < fence.frontmatter.length; i++) {
+    const line = fence.frontmatter[i];
+    const m = line.match(/^\s*-\s*(.+?)\s*$/);
+    if (m) {
+      if (/\s#/.test(m[1])) return { error: 'files: has an item with an inline comment' };
+    } else if (/^[A-Za-z_][\w-]*:/.test(line)) {
+      break;
+    } else {
+      return { error: 'files: list has a blank, comment or unreadable line' };
+    }
+  }
   const items = parseFrontmatterListField(source, 'files');
   return { files: items.map((i) => i.replace(/^(["'])(.*)\1$/, '$2')) };
 }

@@ -340,6 +340,15 @@ test('parseJourneyText: a fence that never closes and an inline files: value are
   assert.ok(gate.parseJourneyText('---\nfiles: a.js\n---\n').error);
 });
 
+test('parseJourneyText: a list the reader would cut short or a fence it would miss is an error, not an empty list', () => {
+  assert.ok(gate.parseJourneyText('---\nfiles:\n  - tests/a.test.js # helper\n---\n').error);
+  assert.ok(gate.parseJourneyText('---\nfiles:\n\n  - tests/a.test.js\n---\n').error);
+  assert.ok(gate.parseJourneyText('---\nfiles:\n  # helpers\n  - tests/a.test.js\n---\n').error);
+  assert.ok(gate.parseJourneyText('﻿---\nfiles:\n  - tests/a.test.js\n---\n').error);
+  assert.ok(gate.parseJourneyText('--- \nfiles:\n  - tests/a.test.js\n---\n').error);
+  assert.deepEqual(gate.parseJourneyText('---\nfiles:\n  - a.js\nname: x\n---\n'), { files: ['a.js'] });
+});
+
 test('readJourneys: a missing docs/journeys is no journeys', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-j-'));
   assert.deepEqual(gate.readJourneys(root), { journeys: [] });
