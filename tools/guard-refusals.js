@@ -57,6 +57,7 @@ const { REASONS, buildFenceIndex, traceFence } = require('./guard-refusals/trace
 const { detectShapes } = require('./guard-refusals/shapes');
 const { classifyEffect } = require('./guard-refusals/effect');
 const { rewriteForGuard } = require('../plugin/bin/lib/hooks/guard-rewrite');
+const { REWRITE_DEPS } = require('./guard-refusals/replay');
 
 const USAGE = [
   'usage: node tools/guard-refusals.js [--projects-dir <dir>] [--match <slug-substring>] [--since-days <n>=14]',
@@ -124,9 +125,6 @@ const round2 = (n) => Math.round(n * 100) / 100;
 // Reasons that mean the command reached a checkout other than the worktree (not a shape the scanner could not read).
 const OTHER_CHECKOUT_REASONS = new Set(['git-redirect-shared', 'cd-shared', 'other-worktree-cwd']);
 const FILE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
-// The rewriter's worktree and realpath probes are stubbed (its plugin-root probe still reads this checkout):
-// the verdict is "the rules in this checkout change this text", never a claim about the session's disk.
-const REWRITE_DEPS = { isLinkedWorktree: () => true, canonicalRealpath: (p) => p.replace(/\/+$/, '') || p };
 
 function rowEffect(r) {
   if (r.tool === 'Bash') {

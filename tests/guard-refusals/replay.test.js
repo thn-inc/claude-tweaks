@@ -1,0 +1,139 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { replay, RULE_SINCE, chainLength, pluginVersion, defaultDeps } = require('../../tools/guard-refusals/replay');
+const { RULE_IDS } = require('../../plugin/bin/lib/hooks/guard-rewrite');
+
+let n = 0;
+function row(over) {
+  return {
+    toolUseId: `t${++n}`, file: '/p/s1.jsonl', tool: 'Bash', guard: 'harness-command', command: 'cat f',
+    truncated: false, reason: 'too-complex', effect: 'read', readClass: 'shape',
+    ts: '2026-11-01T00:00:00Z', cwd: '/wt', ...over,
+  };
+}
+const dispOf = (res, r) => res.dispositions.rows.find((x) => x.toolUseId === r.toolUseId);
+const emptyScan = { gitTargets: () => [], fileWriteTargets: () => [], mkdirTargets: () => [] };
+
+test('AC1: plugin read row is still-denied or no-longer-denied by the scanner', () => {
+  const r = row({ guard: 'plugin:worktree', command: 'git log', readClass: null });
+  const denied = replay([r], { scanner: { ...emptyScan, gitTargets: () => [{ action: 'commit', dir: '/wt' }] } });
+  assert.equal(dispOf(denied, r).disposition, 'still-denied');
+  assert.equal(denied.dispositions.plugin['still-denied'], 1);
+  const clear = replay([r], { scanner: emptyScan });
+  assert.equal(dispOf(clear, r).disposition, 'no-longer-denied');
+});
+
+test('AC2: harness dispositions with the default deps', () => {
+  const rows = [
+    row({ command: 'ls /a\\ b/c' }),
+    row({ command: 'grep -n "source" f.md' }),
+    row({ command: 'cat f', reason: 'git-redirect-shared', readClass: 'other-checkout' }),
+    row({ command: 'cat f' }),
+    row({ command: 'cat a && cat b && cat c && cat d && cat e' }),
+  ];
+  const res = replay(rows);
+  assert.deepEqual(rows.map((r) => dispOf(res, r).disposition),
+    ['rewritten', 'refused-shape', 'other-checkout', 'unexplained', 'long-chain']);
+  assert.equal(dispOf(res, rows[1]).detector, 'source-token');
+  assert.deepEqual(res.dispositions.refusedShapeById, { 'source-token': 1 });
+});
+
+test('AC3: a quote-only rewrite moves no write target; a dropped cd does', () => {
+  const same = replay([row({ command: 'ls /wt/a\\ b' })]);
+  assert.equal(same.writeTargetsMoved, 0);
+  assert.equal(same.writeTargetsChecked, 1);
+  const moved = replay([row({ command: 'cd /other && git commit -m x', effect: 'write' })], {
+    rewrite: () => ({ command: 'git commit -m x', applied: ['drop-redundant-cd'] }),
+  });
+  assert.equal(moved.writeTargetsMoved, 1);
+  assert.equal(moved.writeTargetsChecked, 1);
+});
+
+const CACHE = '/Users/x/.claude/plugins/cache/m/claude-tweaks/6.160.0/bin/x.js';
+test('AC4: ruleNotApplied counts a released rule after its release day, by version and agent kind', () => {
+  const base = { command: `ls /a\\ b/c ${CACHE}` };
+  const res = replay([row(base)]);
+  assert.equal(res.ruleNotApplied.total, 1);
+  assert.equal(res.ruleNotApplied.byRule['quote-escaped-space'].byVersion['6.160.0'].main, 1);
+  const before = replay([row({ ...base, ts: '2026-10-20T00:00:00Z' })]);
+  assert.equal(before.ruleNotApplied.total, 0);
+  const sameDay = replay([row({ ...base, ts: '2026-10-25T23:00:00Z' })]);
+  assert.equal(sameDay.ruleNotApplied.total, 0);
+  const sub = replay([row({ ...base, file: '/p/s1/subagents/a.jsonl' })]);
+  assert.equal(sub.ruleNotApplied.byRule['quote-escaped-space'].byVersion['6.160.0'].subagent, 1);
+  const unreleased = replay([row({ command: 'git -C /wt log -- /a\\ b' })]);
+  assert.equal(unreleased.ruleNotApplied.total, 0);
+});
+
+test('Review Focus 3: a throwing scanner on a plugin row is scanner-failed, a throwing rewrite on a harness row unexplained', () => {
+  const p = row({ guard: 'plugin:worktree', command: 'git log' });
+  const h = row({ command: 'ls /a\\ b' });
+  const res = replay([p, h], {
+    scanner: { ...emptyScan, gitTargets: () => { throw new Error('x'); } },
+    rewrite: () => { throw new Error('y'); },
+  });
+  assert.equal(dispOf(res, p).disposition, 'scanner-failed');
+  assert.equal(dispOf(res, h).disposition, 'unexplained');
+  assert.equal(res.writeTargetsChecked, 0);
+});
+
+test('byClass keys by session version: a cache path elsewhere in the file, else unknownVersion', () => {
+  const shared = [row({ command: `git -C . log` }), row({ command: `node ${CACHE}` })];
+  const res = replay(shared);
+  assert.equal(res.byClass['git-C-own'].total, 1);
+  assert.equal(res.byClass['git-C-own'].byVersion['6.160.0'], 1);
+  const alone = replay([row({ command: 'git -C . log', file: '/p/other.jsonl' })]);
+  assert.equal(alone.byClass['git-C-own'].unknownVersion, 1);
+});
+
+test('byClass hits each class; git-C-own takes the row cwd and ignores a longer sibling path', () => {
+  const rows = [
+    row({ command: 'git -C "/wt/" log' }),
+    row({ command: 'git -C /wt/sub log' }),
+    row({ command: 'echo $?' }),
+    row({ command: "echo '$?'" }),
+    row({ command: 'node node-eval-file.js remote-branch-collision', effect: 'write' }),
+  ];
+  const { byClass } = replay(rows);
+  assert.equal(byClass['git-C-own'].total, 1);
+  assert.equal(byClass['exit-status'].total, 1);
+  assert.equal(byClass['collision-fence'].total, 1);
+});
+
+test('byPattern counts matches and the rows a rule changes; null without patterns', () => {
+  const rows = [row({ command: 'ls /a\\ b' }), row({ command: 'ls /c\\ d' }), row({ command: 'cat f' })];
+  const res = replay(rows, { patterns: [{ id: 'esc', pattern: 'ls /' }] });
+  assert.deepEqual(res.byPattern, { esc: { count: 2, rewritten: 2 } });
+  assert.equal(replay(rows).byPattern, null);
+});
+
+function setsMatch(map, ids) {
+  return JSON.stringify(Object.keys(map).sort()) === JSON.stringify([...ids].sort());
+}
+test('AC11: RULE_SINCE names exactly the rewriter rules', () => {
+  assert.ok(setsMatch(RULE_SINCE, RULE_IDS));
+  const { 'quote-exit-status': _drop, ...short } = RULE_SINCE;
+  assert.ok(!setsMatch(short, RULE_IDS));
+});
+
+test('chainLength counts top-level simple commands', () => {
+  assert.equal(chainLength('a | b'), 2);
+  assert.equal(chainLength('a && b; c || d'), 4);
+  assert.equal(chainLength('echo "a;b"'), 1);
+  assert.equal(chainLength('x=$(a; b)'), 1);
+  assert.equal(chainLength('cat <<EOF\na; b\nc && d\nEOF\necho x'), 2);
+  assert.equal(chainLength('a 2>&1 | b'), 2);
+});
+
+test('pluginVersion reads the cache version, else unknown', () => {
+  assert.equal(pluginVersion(CACHE), '6.160.0');
+  assert.equal(pluginVersion('ls'), 'unknown');
+});
+
+test('defaultDeps wires the real rewrite, scanner and detector', () => {
+  const d = defaultDeps();
+  assert.equal(typeof d.rewrite, 'function');
+  assert.deepEqual(Object.keys(d.scanner).sort(), ['fileWriteTargets', 'gitTargets', 'mkdirTargets']);
+  assert.deepEqual(d.detect('cat f'), []);
+});
