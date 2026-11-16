@@ -19,15 +19,17 @@
 // --recount (#4359) instead rebuilds each run's timing from the transcripts its timing.json lists
 // (phase-timing.js buildTiming) and prints per-file skill-file reads per run over all phases — median
 // and mean over the recounted runs, a missing file counted as 0, and a total — with the counts of runs
-// skipped (no listed transcript still exists) and with no reached review phase. --since <YYYY-MM-DD>
+// skipped (no listed transcript still exists), with no reached review phase, and failed (the rebuild
+// threw; one stderr line each, and exit 1 when every candidate failed or any failure is other than an
+// unreadable events.jsonl). --since <YYYY-MM-DD>
 // keeps only runs whose directory name's leading date is on or after it, in either mode.
 //
 // --archive defaults to {main checkout}/.claude-tweaks/pipelines/archive, where the main checkout is
 // the dirname of `git rev-parse --path-format=absolute --git-common-dir` — the same archive from any
 // worktree. The tool only reads.
 //
-// Exit codes: 0 rendered; 1 the archive is missing or unreadable (or the default cannot be resolved);
-// 2 malformed invocation.
+// Exit codes: 0 rendered; 1 the archive is missing or unreadable (or the default cannot be resolved),
+// or a --recount that failed loudly (above); 2 malformed invocation.
 //
 // Seam: run({ argv, deps }) resolves to the exit code; deps holds fs, git(args, {cwd}) (stdout; throws
 // on failure), cwd, buildTiming (phase-timing.js's) and the log/err line writers.
@@ -36,6 +38,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseFlatLines } = require('../plugin/bin/lib/policy-schema');
+const { buildTiming, EVENTS_UNREADABLE } = require('../plugin/bin/phase-timing');
 
 const USAGE = 'usage: node tools/efficiency-report.js [--archive <dir>] [--json] [--recount] [--since <YYYY-MM-DD>]';
 const NO_PROFILE = 'none';
@@ -51,7 +54,7 @@ function defaultDeps() {
       cwd: opts.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     })),
     cwd: process.cwd(),
-    buildTiming: (args) => require('../plugin/bin/phase-timing').buildTiming(args),
+    buildTiming,
     log: (s) => process.stdout.write(`${s}\n`),
     err: (s) => process.stderr.write(`${s}\n`),
   };
@@ -123,6 +126,15 @@ function reviewFilesOf(timing) {
     }
   }
   return files;
+}
+
+// The archive directory itself could not be listed: the one recount failure run() reports as
+// "cannot read the archive".
+class ArchiveUnreadable extends Error {
+  constructor(cause) {
+    super(errText(cause));
+    this.cause = cause;
+  }
 }
 
 const isMissing = (e) => e && (e.code === 'ENOENT' || e.code === 'ENOTDIR');
@@ -246,13 +258,22 @@ function exists(file, fsImpl) {
 // (phase-timing.js buildTiming, which writes nothing) and count its skill-file reads over every
 // phases[] bucket — `unattributed` is left out, since a dispatcher's session transcript also holds
 // other runs. A run with no `transcripts` list is not a candidate. One whose listed paths all are
-// gone, or whose events.jsonl cannot be read, is skipped; one whose recount has no reached review
-// phase is noReview. Relative transcript paths resolve against cwd, as phase-timing.js resolves them.
+// gone is skipped; one whose buildTiming throws is failed ({ run, error }); one whose recount has no
+// reached review phase is noReview. failLoud is set when every candidate failed or any failure is
+// other than an unreadable events.jsonl. Relative transcript paths resolve against cwd, as
+// phase-timing.js resolves them. -> { recount, failLoud }.
 async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
   const perRun = [];
+  const failed = [];
   let skipped = 0;
   let noReview = 0;
-  for (const entry of keptEntries(archiveDir, fsImpl, since)) {
+  let entries;
+  try {
+    entries = keptEntries(archiveDir, fsImpl, since);
+  } catch (e) {
+    throw new ArchiveUnreadable(e);
+  }
+  for (const entry of entries) {
     const dir = path.join(archiveDir, entry);
     const t = readJson(path.join(dir, 'timing.json'), fsImpl);
     if (!t || !Array.isArray(t.transcripts) || t.transcripts.length === 0) continue;
@@ -265,8 +286,8 @@ async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
     let timing;
     try {
       timing = await buildTiming({ runDir: dir, paths, cwd, worktree });
-    } catch (_) {
-      skipped += 1;
+    } catch (e) {
+      failed.push({ run: entry, error: errText(e), eventsUnreadable: Boolean(e && e.code === EVENTS_UNREADABLE) });
       continue;
     }
     const phases = Array.isArray(timing.phases) ? timing.phases : [];
@@ -287,16 +308,28 @@ async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
     return [key, { median: median(counts), mean: Math.round((total / counts.length) * 10) / 10, total }];
   });
   rows.sort(byTotalThenKey);
-  return { runs: perRun.length, skipped, noReview, files: Object.fromEntries(rows), perRun };
+  // A recount that every candidate failed, or that failed for any reason other than an unreadable
+  // events.jsonl (a code defect, not archive data), must fail loudly rather than read as "no data".
+  const candidates = perRun.length + noReview + failed.length;
+  const failLoud = failed.length > 0 && (failed.length === candidates || failed.some((f) => !f.eventsUnreadable));
+  return {
+    recount: { runs: perRun.length, skipped, noReview, failed: failed.map(({ run, error }) => ({ run, error })), files: Object.fromEntries(rows), perRun },
+    failLoud,
+  };
 }
 
 const RECOUNT_TOP = 20;
+
+function recountCountsLine(recount) {
+  const failed = recount.failed.length ? `, failed: ${recount.failed.length}` : '';
+  return `runs recounted: ${recount.runs} (skipped: ${recount.skipped}, no review: ${recount.noReview}${failed})`;
+}
 
 function renderRecount(recount) {
   const lines = [
     '## Recounted skill-file reads per run (all phases)',
     '',
-    `runs recounted: ${recount.runs} (skipped: ${recount.skipped}, no review: ${recount.noReview})`,
+    recountCountsLine(recount),
     '',
     '| File | Median reads/run | Mean reads/run | Total reads |',
     '|---|---|---|---|',
@@ -410,16 +443,22 @@ async function run({ argv, deps: given = {} }) {
     }
   }
   if (opts.recount) {
-    let recount;
+    let result;
     try {
-      recount = await recountRuns(archive, { fsImpl: deps.fs, since: opts.since || null, cwd: deps.cwd, buildTiming: deps.buildTiming });
+      result = await recountRuns(archive, { fsImpl: deps.fs, since: opts.since || null, cwd: deps.cwd, buildTiming: deps.buildTiming });
     } catch (e) {
-      deps.err(`efficiency-report.js: cannot read the archive ${archive}: ${errText(e)}`);
+      deps.err(e instanceof ArchiveUnreadable
+        ? `efficiency-report.js: cannot read the archive ${archive}: ${errText(e)}`
+        : `efficiency-report.js: recount failed: ${errText(e)}`);
       return 1;
     }
+    const { recount, failLoud } = result;
+    for (const f of recount.failed) deps.err(`efficiency-report.js: recount of ${f.run} failed: ${f.error}`);
     if (opts.json) deps.log(JSON.stringify({ archive, recount }, null, 2));
-    else deps.log(recount.runs ? renderRecount(recount) : 'no archived run has a readable transcript');
-    return 0;
+    else if (recount.runs) deps.log(renderRecount(recount));
+    // The success message only when nothing failed loudly; the counts line always.
+    else deps.log([...(failLoud ? [] : ['no archived run has a readable transcript']), recountCountsLine(recount)].join('\n'));
+    return failLoud ? 1 : 0;
   }
   let collected;
   try {

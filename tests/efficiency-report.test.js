@@ -314,15 +314,71 @@ test('#4359: --since keeps runs dated on or after the date, in --recount and in 
   }
 });
 
-test('#4359: --recount with no recountable run says so and exits 0', async () => {
+test('#4359: --recount with no recountable run says so, prints the counts, and exits 0', async () => {
   const { root, archive } = recountTree();
   try {
-    const { code, out } = await runCli(['--archive', archive, '--recount', '--since', '2027-02-05'], { cwd: root });
-    assert.strictEqual(code, 0);
-    assert.strictEqual(out, 'no archived run has a readable transcript');
+    const none = await runCli(['--archive', archive, '--recount', '--since', '2027-02-05'], { cwd: root });
+    assert.strictEqual(none.code, 0);
+    assert.strictEqual(none.out, 'no archived run has a readable transcript\nruns recounted: 0 (skipped: 0, no review: 0)');
+    // Only run-noreview is a candidate: readable, but no reached review — the counts say so.
+    const noReview = await runCli(['--archive', archive, '--recount', '--since', '2027-02-04'], { cwd: root });
+    assert.strictEqual(noReview.code, 0);
+    assert.strictEqual(noReview.out, 'no archived run has a readable transcript\nruns recounted: 0 (skipped: 0, no review: 1)');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// A buildTiming that throws `error` for the runs `failing` names, else the real one.
+const { buildTiming: realBuildTiming, EVENTS_UNREADABLE } = require(path.join(ROOT, 'plugin', 'bin', 'phase-timing.js'));
+const throwingBuild = (failing, makeError) => async (args) => {
+  if (failing(path.basename(args.runDir))) throw makeError();
+  return realBuildTiming(args);
+};
+const eventsError = () => Object.assign(new Error('events.jsonl unreadable (EISDIR)'), { code: EVENTS_UNREADABLE });
+
+test('#4359: a run whose rebuild throws is failed, never skipped, and named on stderr', async () => {
+  const { root, archive } = recountTree();
+  try {
+    // An unreadable events.jsonl on one run is archive data: counted and named, exit 0.
+    const data = await runCli(['--archive', archive, '--recount', '--json'], { cwd: root, buildTiming: throwingBuild((r) => r.endsWith('run-a'), eventsError) });
+    assert.strictEqual(data.code, 0, data.errs);
+    const r = JSON.parse(data.out).recount;
+    assert.strictEqual(r.runs, 1);
+    assert.strictEqual(r.skipped, 1);
+    assert.deepStrictEqual(r.failed, [{ run: '2027-02-01T090000-run-a', error: 'events.jsonl unreadable (EISDIR)' }]);
+    assert.strictEqual(data.errs, 'efficiency-report.js: recount of 2027-02-01T090000-run-a failed: events.jsonl unreadable (EISDIR)');
+    const md = await runCli(['--archive', archive, '--recount'], { cwd: root, buildTiming: throwingBuild((r) => r.endsWith('run-a'), eventsError) });
+    assert.ok(md.out.split('\n').includes('runs recounted: 1 (skipped: 1, no review: 1, failed: 1)'), md.out);
+
+    // Any other throw is a defect, not data: the same counts, but exit 1.
+    const defect = await runCli(['--archive', archive, '--recount', '--json'], { cwd: root, buildTiming: throwingBuild((r) => r.endsWith('run-a'), () => new TypeError('x is not a function')) });
+    assert.strictEqual(defect.code, 1);
+    assert.deepStrictEqual(JSON.parse(defect.out).recount.failed, [{ run: '2027-02-01T090000-run-a', error: 'x is not a function' }]);
+    assert.match(defect.errs, /recount of 2027-02-01T090000-run-a failed: x is not a function/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#4359: a recount whose every candidate fails exits 1 without the no-data message', async () => {
+  const { root, archive } = recountTree();
+  try {
+    // Even an events.jsonl error on every candidate (run-a, run-b, run-noreview) fails loudly.
+    const { code, out, errs } = await runCli(['--archive', archive, '--recount'], { cwd: root, buildTiming: throwingBuild(() => true, eventsError) });
+    assert.strictEqual(code, 1);
+    assert.ok(!out.includes('no archived run has a readable transcript'), out);
+    assert.strictEqual(out, 'runs recounted: 0 (skipped: 1, no review: 0, failed: 3)');
+    assert.strictEqual(errs.split('\n').length, 3, errs);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#4359: --recount on an archive that cannot be listed says so and exits 1', async () => {
+  const { code, errs } = await runCli(['--archive', path.join(FIXTURE, 'does-not-exist'), '--recount']);
+  assert.strictEqual(code, 1);
+  assert.match(errs, /^efficiency-report\.js: cannot read the archive /);
 });
 
 test('#4029: isoWeek puts a date near New Year in the ISO week-year it belongs to', () => {

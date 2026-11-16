@@ -466,6 +466,25 @@ test('#4359: buildTiming returns what run() writes, and writes nothing', async (
   assert.deepEqual(built.unattributed.procedureFiles, { 'skills/review/code-mode-steps.md': 1 });
 });
 
+test('#4359: buildTiming reads run-state.json worktree when none is given, and an explicit null wins', async () => {
+  const { buildTiming } = require(CLI);
+  const src = path.join(__dirname, '..', '..', 'fixtures', 'efficiency-report', 'recount');
+  const dir = tmpRun(false);
+  // run-b's worktree sits under a skills/ directory: only the worktree-relative key is right.
+  for (const f of ['events.jsonl', 'run-state.json']) fs.copyFileSync(path.join(src, 'archive', '2027-02-03T090000-run-b', f), path.join(dir, f));
+  const paths = [path.join(src, 'transcripts', 'b.jsonl')];
+  const review = (t) => t.phases.find((p) => p.phase === 'review').procedureFiles;
+  assert.deepEqual(review(await buildTiming({ runDir: dir, paths, cwd: dir })), { 'skills/review/code-mode-steps.md': 1, 'skills/review/step3-lens-dispatch.md': 2 });
+  assert.deepEqual(Object.keys(review(await buildTiming({ runDir: dir, paths, cwd: dir, worktree: null }))), ['skills/run-b/plugin/skills/review/code-mode-steps.md', 'skills/run-b/plugin/skills/review/step3-lens-dispatch.md']);
+});
+
+test('#4359: buildTiming rejects an unreadable events.jsonl with code EVENTS_UNREADABLE', async () => {
+  const { buildTiming, EVENTS_UNREADABLE } = require(CLI);
+  const dir = tmpRun(false);
+  fs.mkdirSync(path.join(dir, 'events.jsonl'));
+  await assert.rejects(buildTiming({ runDir: dir, paths: [], cwd: dir }), (e) => e.code === EVENTS_UNREADABLE && /events\.jsonl unreadable/.test(e.message));
+});
+
 // --- #4029 turn-class telemetry -----------------------------------------------
 const TC_FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'turn-classes');
 const TC_HAND = { edit: 1, read: 1, explore: 1, procedure: 1, bookkeeping: 1, orientation: 2, verify: 1, 'guard-refusal': 1, dispatch: 1, other: 1 };
