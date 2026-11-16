@@ -292,6 +292,8 @@ function buildProbes({ runDirReal, runId, mainRoot, cwd, config, state, deps, ex
       }
       const names = [...flat.values()].sort();
       if (names.length) {
+        // `path` is relative to whichever location matched, live or archived:
+        // an archived-only header still reads `work/{name}`. No consumer reads it.
         const record = recordOf(names[0]);
         return { path: `work/${names[0]}`, present: true, record, records: [record] };
       }

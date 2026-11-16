@@ -648,6 +648,32 @@ test('AC9.4 resolveTargetRecords: an unreadable archived base is absent', () => 
   assert.strictEqual(resolveTargetRecords({ runDir: fx.runDir, fsImpl }), null);
 });
 
+test('AC9.4 resolveTargetRecords: an unreadable archived run-dir listing hides its spec-{N} dirs, the readable archived work/ still resolves', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  const archived = archivedOf(fx.runDir);
+  putHeader(archived, 9, { nested: true });
+  putHeader(archived, 8);
+  const fsImpl = { ...fs, readdirSync: (d, ...rest) => {
+    if (String(d) === archived) throw new Error('EACCES');
+    return fs.readdirSync(d, ...rest);
+  } };
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, fsImpl }), ['#8']);
+});
+
+test('resolveTargetRecords: archived-only spec-{N} dirs follow a live manifest.yml\'s non-ascending order', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  fs.writeFileSync(path.join(fx.runDir, 'manifest.yml'), MANIFEST(RUN_ID, [3926, 3817, 945]));
+  for (const n of [945, 3817, 3926]) putHeader(archivedOf(fx.runDir), n, { nested: true });
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#3926', '#3817', '#945']);
+});
+
+test('resolveTargetRecords: an archived-only header in the worktree copy wins over a live header in the run dir (root by root)', () => {
+  const fx = runFixture({ spec: 'none' });
+  putHeader(archivedOf(path.join(fx.wt, '.claude-tweaks', 'pipelines', RUN_ID)), 5);
+  putHeader(fx.runDir, 6);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, worktree: fx.wt, gitRoot: fx.root }), ['#5']);
+});
+
 test('AC8 context-gauge no-target message names no header path', async () => {
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const none = runFixture({ spec: 'none' });

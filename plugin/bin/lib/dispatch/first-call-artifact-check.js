@@ -72,8 +72,9 @@ function resolveIntegrationModel(configRaw) {
 //      `pr.number` is recorded AND `pr.branch` exists on `origin`.
 //   5. Every member of `issueNumbers` has a materialized header (#2775): a readable
 //      `{n}-spec.md` at `work/{n}-spec.md` or `spec-{n}/work/{n}-spec.md`, in the run
-//      dir or its worktree mirror, live before moved (`run-header.js`'s precedence, so a run
-//      whose header moved after wrap-up still reads as materialized) -- the same two shapes and mirror rule
+//      dir or its worktree mirror, live before moved (`run-header.js`'s precedence,
+//      so a run whose header moved after wrap-up still reads as materialized) -- the
+//      same two shapes and mirror rule
 //      `wrap-up/pack.js`'s resolveRecords ladder reads, so a group that clears this
 //      gate never reaches its second call with records unresolved. A header whose
 //      `record:` line names another number does not count. A group mixing `work/` and

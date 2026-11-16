@@ -2104,11 +2104,20 @@ test('AC7.1 a record present at both locations is counted once, the live copy\'s
   assert.deepStrictEqual(resolveRecords(fsDeps(), path.join(t2.pipelines, ARCH_RUN_ID), null).parkedAtShaping, { 7: true });
 });
 
-test('AC9.4 an unreadable archived header is skipped as absent', () => {
-  const t = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+test('AC2.1 resolveRecords: an archived spec-{N} header the manifest does not list still counts — manifest 9, archived spec-11 → [9, 11]', () => {
+  const manifest = 'multispec:\n  parent: 1\n  specs:\n    - id: 9\n      status: complete\n      subdir: spec-9\n';
+  const t = runTree({ [`${ARCH_RUN_ID}/manifest.yml`]: manifest, [`archive/${ARCH_RUN_ID}/spec-11/work/11-spec.md`]: archHeader(11) });
+  const res = resolveRecords(fsDeps(), path.join(t.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(res.records, [9, 11]);
+  assert.strictEqual(res.source, 'manifest');
+});
+
+test('AC9.4 an unreadable archived header is skipped as absent, a readable archived sibling still resolves', () => {
+  const t = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7), [`archive/${ARCH_RUN_ID}/work/8-spec.md`]: archHeader(8) });
   const deps = fsDeps();
-  const readFile = (p) => { if (p.includes(`${path.sep}archive${path.sep}`)) throw new Error('EACCES'); return deps.readFile(p); };
+  const unreadable = path.join('archive', ARCH_RUN_ID, 'work', '7-spec.md');
+  const readFile = (p) => { if (p.endsWith(unreadable)) throw new Error('EACCES'); return deps.readFile(p); };
   const res = resolveRecords({ ...deps, readFile }, path.join(t.pipelines, ARCH_RUN_ID), null);
-  assert.deepStrictEqual(res.records, []);
-  assert.strictEqual(res.source, 'unavailable');
+  assert.deepStrictEqual(res.records, [8]);
+  assert.strictEqual(res.source, 'headers');
 });

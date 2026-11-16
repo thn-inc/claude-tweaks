@@ -1322,6 +1322,9 @@ test('AC2.1 hasMaterializeCommit: a commit touching only archive/{id}/spec-{N}/w
 test('AC3.1 hasMaterializeCommit: branch whose last commit git-mv\'d the header live -> archived', () => {
   // The live materialize commit is inherited from main; the worktree's one own
   // commit is the move, so it is the only commit in `{integration}..HEAD`.
+  // This fixture alone does not prove the archived pathspecs: a `git mv` commit
+  // deletes the live path, so it already matches through the live pathspec's
+  // delete side. The archived-only variants (AC1.1, AC2.1) carry that proof.
   const main = repoOnLocalMain();
   commitHeaderAt(main, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
   const wt = linkedWorktreeOf(main);

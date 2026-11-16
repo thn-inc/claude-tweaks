@@ -995,7 +995,17 @@ test('hasMaterializedHeader: an archived header naming another record does not c
   assert.equal(hasMaterializedHeader(nested, [HDR_RUN], 7), false);
 });
 
-test('AC9.4 hasMaterializedHeader: an unreadable archived header is absent', () => {
+test('AC9.4 hasMaterializedHeader: an unreadable archived header is absent, the next archived candidate still answers', () => {
+  const unreadable = path.join(HDR_ARCHIVE, 'work', '7-spec.md');
+  const serve = hdrServing({ [path.join(HDR_ARCHIVE, 'spec-7', 'work', '7-spec.md')]: 'record: 7\n' });
+  const reads = [];
+  const read = (p) => {
+    reads.push(p);
+    if (p === unreadable) throw new Error('EACCES');
+    return serve(p);
+  };
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+  assert.ok(reads.includes(unreadable), 'the unreadable archived candidate was tried and skipped');
   const throwing = () => { throw new Error('EACCES'); };
   assert.equal(hasMaterializedHeader(throwing, [HDR_RUN], 7), false);
 });

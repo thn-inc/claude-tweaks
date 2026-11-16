@@ -284,14 +284,19 @@ function numberedEntries(dir, re, wantType, fsImpl) {
 }
 
 // { runDir, worktree?, gitRoot?, fsImpl?, manifest? } -> ['#N', ...] | null.
-// A multi-spec run's records are its spec-{N}/ subdirectories, in the order
-// of manifest.yml's specs list (lib/flow/manifest.js) when the run has one —
-// a spec dir the manifest does not list goes after, ascending — else
-// ascending. A single-record run's are its work/{n}-spec.md names, and that
-// spec is committed inside the worktree at the run dir's path relative to the
-// main checkout — so the worktree copy (run-state.json's `worktree`) is read
-// first, the run dir's own work/ second. `manifest` is the parsed manifest
-// (readManifest's shape); undefined reads {runDir}/manifest.yml.
+// Each root is read at its live location and at its archived one (a header
+// moves there after wrap-up), through lib/run-header.js's listHeaderDirs.
+// A multi-spec run's records are its spec-{N}/ subdirectories, live or
+// archived, in the order of manifest.yml's specs list (lib/flow/manifest.js)
+// when the run has one — a spec dir the manifest does not list goes after,
+// ascending — else ascending. A single-record run's are its {n}-spec.md
+// header names, and that spec is committed inside the worktree at the run
+// dir's path relative to the main checkout — so the worktree copy
+// (run-state.json's `worktree`) is read first, the run dir second, root by
+// root: within a root the live and archived headers merge by record, and the
+// first root holding any header answers. `manifest` is the parsed manifest
+// (readManifest's shape); undefined reads {runDir}/manifest.yml, which stays
+// at the live run dir.
 function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl = fs, manifest } = {}) {
   const roots = [];
   if (typeof worktree === 'string' && worktree && gitRoot && isPathContained(runDir, gitRoot)) {

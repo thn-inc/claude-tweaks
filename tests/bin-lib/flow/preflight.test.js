@@ -869,3 +869,13 @@ test('AC9.4 spec probe: an unreadable archived dir is absent', async () => {
   const readdir = (p) => { if (p.startsWith(archived)) return []; try { return fs.readdirSync(p); } catch { return []; } };
   assert.deepStrictEqual(await probeSpec(fx, { readdir }), { path: null, present: false, record: null, records: [] });
 });
+
+test('AC9.4 spec probe: an unreadable archived work/ is absent, a readable archived spec-{N}/work/ still answers', async () => {
+  const fx = realMainRoot();
+  const archived = archiveBase(fx);
+  seedHeader(archived, 7); // really on disk; only the injected readdir cannot see it
+  seedHeader(archived, 8, 'spec-8');
+  const unreadable = path.join(archived, 'work');
+  const readdir = (p) => { if (p === unreadable) return []; try { return fs.readdirSync(p); } catch { return []; } };
+  assert.deepStrictEqual(await probeSpec(fx, { readdir }), { path: null, present: true, record: null, records: [8] });
+});
