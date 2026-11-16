@@ -547,7 +547,12 @@ test('AC4.6: --converge with an unwritable decisions.json exits 6, marks the car
   assert.strictEqual(printed.items[3].factId, undefined);
   assert.match(r.err, /could not carry 2 item\(s\) to the acceptance packet .*insight-4, ledger-5/);
   assert.strictEqual(fs.readFileSync(FACTS(fx), 'utf8'), 'not json', 'the unreadable file is never overwritten');
-  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /Residue insight-4 \(insight\): failed/);
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  // A failed item is a degrade: SKIP in the Degrade-trace shape, never AUTO.
+  assert.match(decisions, /^- SKIP \d\d:\d\d:\d\d — Residue convergence \(degraded\): condition: Residue insight-4 \(insight\) failed — .+ → fallback: not converged; the failure card names it\. Reversibility: n\/a\.$/m);
+  assert.match(decisions, /^- SKIP .*Residue ledger-5 \(ledger\) failed/m);
+  assert.doesNotMatch(decisions, /^- AUTO .*Residue (insight-4|ledger-5)\b/m);
+  assert.match(decisions, /^- AUTO .*Residue ledger-3 \(ledger\): filed/m);
 });
 
 test('--converge rejects a malformed items file with exit 2', async () => {

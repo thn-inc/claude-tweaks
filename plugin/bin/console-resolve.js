@@ -47,7 +47,7 @@
 // (lib/console/residue-convergence.js), called from _shared/ledger-format.md's control-mode paragraph.
 // It reads a JSON array of `{ id, source: ledger|insight, text, status, deferReason?, belowFloor?,
 // filingFailed? }`, ends every item resolved, filed, digested or carried, writes every carried item's
-// decision fact through writeDecisionFacts, logs one AUTO line per item, and prints `{ items: [{ id,
+// decision fact through writeDecisionFacts, logs one AUTO line per item (SKIP for a failed one), and prints `{ items: [{ id,
 // state, proposal?, factId?, error? }], failed: [ids] }` as JSON. It needs no ceiling and takes no
 // other flag (`--dry-run` included). Exit 0 converged, 2 malformed (any other flag, or an unreadable,
 // unparseable or malformed items file), 3 --run not anchored or the decisions.md entries could not be
@@ -577,7 +577,10 @@ function converge(o, runDir, { stdout, stderr, now, cwd }) {
   stdout(`${JSON.stringify({ items: out, failed }, null, 2)}\n`);
   const sourceOf = new Map(items.map((it) => [it.id, it.source]));
   const reversibility = (state) => (state === 'filed' ? 'high' : 'n/a');
-  const lines = out.map((r) => formatEntry({ status: 'AUTO', now: now(), step: 'Residue convergence', text: `Residue ${r.id} (${sourceOf.get(r.id)}): ${r.state}${r.factId ? ` as ${r.factId}` : ''}${r.error ? ` — ${r.error}` : ''}`, reversibility: reversibility(r.state) }));
+  // A failed item is a degrade, logged `SKIP` in _shared/auto-decision-log.md's Degrade-trace shape (never `AUTO`).
+  const lines = out.map((r) => (r.state === RESIDUE_FAILED
+    ? formatEntry({ status: 'SKIP', now: now(), step: 'Residue convergence (degraded)', text: `condition: Residue ${r.id} (${sourceOf.get(r.id)}) failed — ${r.error} → fallback: not converged; the failure card names it`, reversibility: 'n/a' })
+    : formatEntry({ status: 'AUTO', now: now(), step: 'Residue convergence', text: `Residue ${r.id} (${sourceOf.get(r.id)}): ${r.state}${r.factId ? ` as ${r.factId}` : ''}`, reversibility: reversibility(r.state) })));
   let logError = null;
   if (lines.length > 0) {
     try { appendEntry({ runDir, section: '/wrap-up', entry: lines.join('\n') }); } catch (err) { logError = err; }

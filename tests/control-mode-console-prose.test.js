@@ -66,6 +66,7 @@ const LEDGER_CLAIMS = [
   ['- `digested`:', 'the narrowing section does not handle the digested state'],
   ['- `carried`:', 'the narrowing section does not handle the carried state'],
   ['Generic gate failure', 'the narrowing section does not stop a failed convergence with the Generic gate failure card'],
+  ['Exit 2, 3 or 6', 'the narrowing section does not route exits 2 and 3 to the failure card'],
 ];
 
 function convergeProblems(text) {
@@ -93,26 +94,78 @@ function step10Line(text) {
   return line;
 }
 
+const STEP_10_CLAIMS = [
+  ['--converge', 'step 10 does not converge a refused insight with --converge'],
+  ["source: 'insight'", "step 10 does not converge a refused insight as source: 'insight'"],
+  ["id: 'insight-{row}'", "step 10 does not give an insight item the id insight-{row}"],
+  ["status: 'open'", "step 10 does not give an insight item status 'open'"],
+  ["Recommended-cell reason", "step 10 does not source an insight's deferReason from its Recommended cell"],
+  ['writes no ledger row', 'step 10 does not say an insight writes no ledger row'],
+  ['as step 7 creates a `Q#`', 'step 10 does not create a filed insight the way step 7 creates a Q#'],
+  ['`carried` → nothing more', 'step 10 does not settle a carried insight with nothing more'],
+  ['`digested` → the digest entry only', 'step 10 does not settle a digested insight with the digest entry only'],
+  ['exit 2, 3 or 6', 'step 10 does not route exits 2, 3 and 6 to the failure card'],
+];
+
 function step10Problems(text) {
   const line = step10Line(text);
-  const problems = [];
-  if (!line.includes('--converge')) problems.push('step 10 does not converge a refused insight with --converge');
-  if (!line.includes("source: 'insight'")) problems.push("step 10 does not converge a refused insight as source: 'insight'");
-  return problems;
+  return STEP_10_CLAIMS.filter(([needle]) => !line.includes(needle)).map(([, message]) => message);
 }
 
 test('AC2.1: review-console.md step 10 converges a refused insight under control mode', () => {
   assert.deepStrictEqual(step10Problems(REVIEW_CONSOLE), []);
 });
 
-test('AC2.1 go-red: step 10 without --converge is caught with its own message', () => {
-  const line = step10Line(REVIEW_CONSOLE);
-  const mutated = REVIEW_CONSOLE.replace(line, line.split('--converge').join('--set-item'));
-  assert.deepStrictEqual(step10Problems(mutated), ['step 10 does not converge a refused insight with --converge']);
+for (const [needle, message] of STEP_10_CLAIMS) {
+  test(`AC2.1 go-red: ${message}`, () => {
+    const line = step10Line(REVIEW_CONSOLE);
+    const mutated = REVIEW_CONSOLE.replace(line, line.split(needle).join('[removed]'));
+    assert.deepStrictEqual(step10Problems(mutated), [message]);
+  });
+}
+
+// The digested row the narrowing paragraph prescribes must be one the real ledger writer and reader
+// treat as complete: accepted by checkLedgerStatus, and counted by parseLedger as neither open,
+// an incomplete deferral, nor a build row missing its Defer-reason — on both work backends.
+const { checkLedgerStatus } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'stage-item', 'ledger'));
+const { parseLedger } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack'));
+const DIGEST_ALTERNATIVES = '{digest comment URL | specs/digest.md}';
+const BACKEND_LOCATIONS = ['https://github.com/o/r/issues/9#issuecomment-123', 'specs/digest.md'];
+
+function digestedRowProblems(text) {
+  const bullet = narrowingSlice(text).split('\n').find((l) => l.startsWith('- `digested`:'));
+  if (!bullet) return ['no digested bullet'];
+  const m = /write the row `(\w+)`(?: \(`([^`]+)`\)| with Resolution `([^`]+)`)/.exec(bullet);
+  if (!m) return ['the digested bullet prescribes no row status and Resolution'];
+  const status = m[1];
+  const template = m[3] || m[2];
+  const problems = [];
+  for (const location of BACKEND_LOCATIONS) {
+    const resolution = template.split(DIGEST_ALTERNATIVES).join(location);
+    const check = checkLedgerStatus(status, resolution, {});
+    if (check.refusal !== null || check.incompleteDeferral) problems.push(`the ledger writer does not accept the digested row for ${location}`);
+    const parsed = parseLedger(`| # | Phase | Item | Status | Resolution |\n|---|---|---|---|---|\n| 1 | build | a typo | ${status} | ${resolution} |\n`);
+    if (parsed.open + parsed.deferredUnstaged + parsed.missingDeferReason + parsed.unrecognized !== 0) problems.push(`parseLedger counts the digested row for ${location} as blocking`);
+  }
+  return problems;
+}
+
+test('AC4.7: the digested ledger row is complete for the real writer and reader on both backends', () => {
+  assert.deepStrictEqual(digestedRowProblems(LEDGER_FORMAT), []);
 });
 
-test("AC2.1 go-red: step 10 without source: 'insight' is caught with its own message", () => {
-  const line = step10Line(REVIEW_CONSOLE);
-  const mutated = REVIEW_CONSOLE.replace(line, line.split("source: 'insight'").join("source: 'ledger'"));
-  assert.deepStrictEqual(step10Problems(mutated), ["step 10 does not converge a refused insight as source: 'insight'"]);
+test('AC4.7 go-red: the old `deferred` (`→ digest`) row is refused by the ledger writer', () => {
+  const s = narrowingSlice(LEDGER_FORMAT);
+  const bullet = s.split('\n').find((l) => l.startsWith('- `digested`:'));
+  const old = '- `digested`: append the digest entry per `_shared/materiality-floor.md`, and write the row `deferred` (`→ digest`).';
+  const mutated = LEDGER_FORMAT.replace(bullet, old);
+  assert.deepStrictEqual(digestedRowProblems(mutated), BACKEND_LOCATIONS.flatMap((l) => [`the ledger writer does not accept the digested row for ${l}`, `parseLedger counts the digested row for ${l} as blocking`]));
+});
+
+test('AC4.7 go-red: a deferred digest row carrying only a Defer-reason is an incomplete deferral', () => {
+  const bullet = narrowingSlice(LEDGER_FORMAT).split('\n').find((l) => l.startsWith('- `digested`:'));
+  const mutated = LEDGER_FORMAT.replace(bullet, '- `digested`: write the row `deferred` with Resolution `→ digest at {digest comment URL | specs/digest.md}. Defer-reason: tangential`.');
+  const problems = digestedRowProblems(mutated);
+  assert.ok(problems.includes('the ledger writer does not accept the digested row for specs/digest.md'), problems.join('; '));
+  assert.ok(problems.includes('parseLedger counts the digested row for specs/digest.md as blocking'), problems.join('; '));
 });
