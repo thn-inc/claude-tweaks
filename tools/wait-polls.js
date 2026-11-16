@@ -177,7 +177,12 @@ function collect({ roots, match, sinceMs, untilMs, fsImpl }) {
     for (const slug of names) {
       if (match && !slug.includes(match)) continue;
       const real = guarded(path.join(realRoot, slug), () => fsImpl.realpathSync(path.join(realRoot, slug)));
-      if (real.gone || seenSlugs.has(real.value)) continue;
+      if (real.gone) {
+        if (guarded(realRoot, () => fsImpl.realpathSync(realRoot)).gone) throw new ReadFailure(realRoot, 'ENOENT');
+        // A skipped slug is fine; a vanished root is not (every slug would skip and the totals look complete).
+        continue;
+      }
+      if (seenSlugs.has(real.value)) continue;
       seenSlugs.add(real.value);
       const dir = guarded(real.value, () => fsImpl.statSync(real.value).isDirectory());
       if (dir.gone || !dir.value) continue;

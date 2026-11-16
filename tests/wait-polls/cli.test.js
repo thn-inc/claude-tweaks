@@ -253,6 +253,62 @@ test('a vanished entry is skipped, any other read error exits 2', () => {
   assert.equal(c.out.length, 0);
 });
 
+test('a non-ENOENT error resolving a slug or reading a transcript exits 2', () => {
+  const { root, realSlug } = aliasedStore();
+  const denied = (code) => Object.assign(new Error('denied'), { code });
+  const slugDenied = {
+    ...fs,
+    realpathSync(p, ...rest) {
+      if (path.resolve(String(p)) === realSlug) throw denied('EACCES');
+      return fs.realpathSync(p, ...rest);
+    },
+  };
+  let c = capture();
+  assert.equal(run({ argv: ['--projects-dir', root, '--until', UNTIL], deps: { ...c.deps, fs: slugDenied } }), 2);
+  assert.match(c.err.join('\n'), /cannot read .*EACCES/);
+  assert.equal(c.out.length, 0);
+
+  const readDenied = {
+    ...fs,
+    openSync(p, ...rest) {
+      if (String(p).endsWith('s1.jsonl')) throw denied('EACCES');
+      return fs.openSync(p, ...rest);
+    },
+  };
+  c = capture();
+  assert.equal(run({ argv: ['--projects-dir', root, '--until', UNTIL], deps: { ...c.deps, fs: readDenied } }), 2);
+  assert.match(c.err.join('\n'), /cannot read .*s1\.jsonl.*EACCES/);
+  assert.equal(c.out.length, 0);
+});
+
+test('a root that vanishes after the up-front listing exits 2, not complete-looking totals', () => {
+  const { root } = aliasedStore();
+  let gone = false;
+  const gone_ = (p) => gone && path.resolve(String(p)).startsWith(root);
+  const enoent = () => Object.assign(new Error('gone'), { code: 'ENOENT' });
+  const vanishing = {
+    ...fs,
+    readdirSync(p, ...rest) {
+      if (gone_(p)) throw enoent();
+      const r = fs.readdirSync(p, ...rest);
+      if (path.resolve(String(p)) === root) gone = true;
+      return r;
+    },
+    realpathSync(p, ...rest) {
+      if (gone_(p)) throw enoent();
+      return fs.realpathSync(p, ...rest);
+    },
+    statSync(p, ...rest) {
+      if (gone_(p)) throw enoent();
+      return fs.statSync(p, ...rest);
+    },
+  };
+  const c = capture();
+  assert.equal(run({ argv: ['--projects-dir', root, '--until', UNTIL], deps: { ...c.deps, fs: vanishing } }), 2);
+  assert.match(c.err.join('\n'), new RegExp(`cannot read ${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(ENOENT\\)`));
+  assert.equal(c.out.length, 0);
+});
+
 test('usage errors exit 2 and --help exits 0', () => {
   const root = tmp();
   const missing = path.join(root, 'no-such-dir');
