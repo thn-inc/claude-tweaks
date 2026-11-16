@@ -1349,7 +1349,7 @@ async function runLedgerRow(argv, deps) {
       repo = repoResolve.originSpecOf(repoResolve.originUrl(worktree, deps.env));
     } catch { repo = null; }
   }
-  const verdict = checkLedgerStatus(status, resolution.text, { excludeRecords, repo });
+  const verdict = checkLedgerStatus(status, resolution.text, { excludeRecords, repo, runDir });
   if (verdict.refusal) return refuse(verdict.refusal);
   if (settle && status !== 'observation' && isBlank(resolution.text)) {
     return refuse(`settling row #${row} to '${status}' needs --resolution or --resolution-file`);

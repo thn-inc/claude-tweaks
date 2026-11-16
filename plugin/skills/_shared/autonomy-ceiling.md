@@ -284,12 +284,27 @@ Same resolution order as every other lever, implemented by `resolveCeiling`:
 1. Explicit CLI arg
 2. `config.yml` (this run's Manifesto answer)
 3. `.claude-tweaks/policy.yml` project default
-4. Skill default: `supervised`
+4. `control-mode: on` (run config or `policy.yml`) → `unattended`
+5. Skill default: `supervised`
 
 An unrecognized value at any level is **skipped, not honored and not thrown on** — resolution
 continues to the next source, so a typo lands on whatever the next source says and in the worst
 case on `supervised`. Matching is exact and case-sensitive: `Trusted` is not `trusted`, and
 resolves to the default rather than to the tier it resembles.
+
+`console-resolve.js --run <dir> --ceiling` is the query for the resolved tier. An invalid `autonomy` value suppresses rung 4 and resolves `supervised`, reported as `source invalid-autonomy`.
+
+## Control mode (#4620)
+
+**Composition.** `control-mode: on` implies the `unattended` capability set through `effectiveCeiling`, which composes it below any explicit `autonomy`. An explicit value wins and `--ceiling` reports `source explicit`. `bookkeepingPermissions(null, { controlMode: true })` equals `bookkeepingPermissions('unattended')`, so control mode adds no capability of its own. The run reads it as `ceiling {tier} consoleAutoResolve {true|false} control-mode {on|off} source {...}`, and an unreadable policy exits 3.
+
+**Carry route.** Every item the console would leave `pending`, `keep-staged` or `refused` resolves `carried` and becomes a `decision` fact in `{run-dir}/packet-facts/decisions.json` (`_shared/acceptance-packet.md`'s Decision facts). Can't-tell items still file.
+
+**Residue terminal states.** Each leftover ends in one of four. `resolved`. `filed`: a spec-shaped record with a valid `Defer-reason:`, authorized by `queueWriteAutoFile`. `digested`: below the floor in `_shared/materiality-floor.md`, so the ledger row is `accepted` and names the digest. `carried`: the row is `deferred` and names the fact id, written only after `console-resolve.js --converge` has written that fact. A failed carry exits 6 and is a failure card naming the item.
+
+**Memory writes.** They go through `console-resolve.js --memory-write` with a logged path, the prior sha256 and a reversible whole-file diff.
+
+**HARD-GATEs.** Every HARD-GATE in `_shared/auto-mode-contract.md`'s "What `auto` does NOT silence" table, its merge-conflict resolution row included, still stops a control-mode run; the stop is reported with `flow/failure-cards.md`'s Generic gate failure card, never as a question. Nothing in the carry route or residue convergence applies to a HARD-GATE.
 
 ## Floor rule
 

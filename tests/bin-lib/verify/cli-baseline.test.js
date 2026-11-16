@@ -6,7 +6,7 @@ const os = require('os');
 const fs = require('fs');
 const { spawn, execFileSync } = require('child_process');
 const { slotEnv } = require('../../helpers/suite-slot-env');
-const { CLI, tmpDir, runCli, tmpGitRepo, commitFile, baselineRepo, SUITE, PER_FILE, nestedRunEnv, headCommit } = require('./cli-helpers');
+const { CLI, tmpDir, runCli, tmpGitRepo, passStampFiles, commitFile, baselineRepo, SUITE, PER_FILE, nestedRunEnv, headCommit } = require('./cli-helpers');
 
 test('--baseline: failures that also fail at base exit 0, stamp a baseline pass, and --stamp-status says verifiedHead (#3043 AC1)', async () => {
   const r = baselineRepo();
@@ -27,7 +27,7 @@ test('--baseline: failures that also fail at base exit 0, stamp a baseline pass,
   assert.strictEqual(status.verifiedHead, true);
   assert.strictEqual(status.match, false);
   assert.strictEqual(status.baselineAdjudicated, true);
-  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass')), 'no legacy twin for an adjudicated pass');
+  assert.deepStrictEqual(passStampFiles(r.gitDir), ['claude-tweaks-verify-pass.json'], 'an adjudicated pass writes the JSON stamp and nothing else');
 });
 
 // #3757: adjudication re-runs failing files at HEAD, so a commit landing during

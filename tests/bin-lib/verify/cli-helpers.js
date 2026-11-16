@@ -96,6 +96,10 @@ function stampOf(gitDir) {
   return JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify-pass.json'), 'utf8'));
 }
 
+// Every file in a git dir that shares the pass stamp's name prefix: the JSON stamp, plus
+// anything that should not be there (a bare-SHA file, a stray tmp). Sorted for a stable compare.
+const passStampFiles = (gitDir) => fs.readdirSync(gitDir).filter((f) => f.startsWith('claude-tweaks-verify-pass')).sort();
+
 function commitFile(r, rel, content) {
   fs.mkdirSync(path.dirname(path.join(r.repo, rel)), { recursive: true });
   fs.writeFileSync(path.join(r.repo, rel), content);
@@ -190,6 +194,7 @@ module.exports = {
   nodeCmd,
   scopedRepo,
   stampOf,
+  passStampFiles,
   commitFile,
   flakyRepo,
   anchoredRunDir,

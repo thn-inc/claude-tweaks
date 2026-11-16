@@ -22,6 +22,12 @@ const { withLock } = require('../file-lock');
 const CONSOLE_LOCK = '.console.lock';
 // target resolution -> the stored resolutions it may replace.
 const REWRITE_FROM = Object.freeze({ 'keep-staged': Object.freeze(['apply']), pending: Object.freeze(['approve']) });
+// `carried` (#4620, control mode): a failed execution or a can't-tell filing whose create failed (`filed`)
+// moves to the acceptance packet instead of back to residue. Its own table, not a REWRITE_FROM key, so the
+// original table stays byte-equal for the suites that pin it; REWRITE_TARGETS is every rewritable resolution.
+const CARRIED_RESOLUTION = 'carried';
+const CARRY_REWRITE_FROM = Object.freeze(['apply', 'approve', 'filed']);
+const REWRITE_TARGETS = Object.freeze([...Object.keys(REWRITE_FROM), CARRIED_RESOLUTION]);
 // target resolution -> the one console section whose items it may replace (absent: any section).
 const REWRITE_ONLY_IN = Object.freeze({ pending: 'Reference repairs' });
 
@@ -42,7 +48,7 @@ function rewriteItemResolution({ consolePath, id, resolution, reason, at }) {
     if (matches.length > 1) return { status: 'refused', why: `console.json holds ${matches.length} items with id ${id}` };
     const item = matches[0];
     if (item.resolution === resolution) return { status: 'unchanged', item };
-    const allowed = REWRITE_FROM[resolution] || [];
+    const allowed = resolution === CARRIED_RESOLUTION ? CARRY_REWRITE_FROM : REWRITE_FROM[resolution] || [];
     if (!allowed.includes(item.resolution)) return { status: 'refused', why: `item ${id} is ${item.resolution}, not rewritable to ${resolution} (only ${allowed.join('/') || 'nothing'} → ${resolution})` };
     const onlyIn = REWRITE_ONLY_IN[resolution];
     if (onlyIn && item.section !== onlyIn) return { status: 'refused', why: `item ${id} is in section ${item.section}, not rewritable to ${resolution} (only a ${onlyIn} item)` };
@@ -54,4 +60,4 @@ function rewriteItemResolution({ consolePath, id, resolution, reason, at }) {
   });
 }
 
-module.exports = { CONSOLE_LOCK, REWRITE_FROM, REWRITE_ONLY_IN, rewriteItemResolution };
+module.exports = { CONSOLE_LOCK, REWRITE_FROM, CARRY_REWRITE_FROM, REWRITE_TARGETS, REWRITE_ONLY_IN, rewriteItemResolution };

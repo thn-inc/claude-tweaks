@@ -287,7 +287,7 @@ function fingerprintMap(rows) {
 }
 
 module.exports = {
-  findingFingerprint, composeFindingProposal, planFilings, fingerprintMap,
+  findingFingerprint, composeFindingProposal, planFilings, fingerprintMap, capWords, oneLine,
   CANT_TELL_DEFER_REASON, DIGEST_DEFER_REASON, DIGEST_FINDING_MAX, areaOfPath, consoleFindingMarker, composeFindingDigest, planDigests, heldConsoleFindings,
   isDropRecommended, planDigestsBesideFilings,
 };

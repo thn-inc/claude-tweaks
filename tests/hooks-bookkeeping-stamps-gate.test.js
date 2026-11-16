@@ -1357,3 +1357,83 @@ test('bookkeeping-stamps gate (#1460 control): the same dangling-run shape still
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/);
 });
+
+// #3974 AC5: after wrap-up a run's header moves to
+// `.claude-tweaks/pipelines/archive/{run-id}/...`. The gate arms the same way
+// whether this worktree's in-range commit materialized the header at the live
+// path, git-mv'd it to the archived path (the live commit inherited from the
+// integration branch), or added it at the archived path only. Same missing `pr`
+// stamp under pr-first, same deny reason once the paths that differ by fixture
+// are normalized out.
+function archivedGateFixture(shape) {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'branch', '-M', 'main']); // a deterministic local integration bound
+  const liveRel = `.claude-tweaks/pipelines/${RUN_ID}/work/991-spec.md`;
+  const archivedRel = `.claude-tweaks/pipelines/archive/${RUN_ID}/work/991-spec.md`;
+  if (shape === 'move') commitMaterializedSpec(main, path.join('work', '991-spec.md')); // inherited, outside the range
+  const wt = linkedWorktreeOf(main);
+  const archivedFull = path.join(wt, ...archivedRel.split('/'));
+  if (shape === 'live') commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  // The move shape passes without the archived pathspecs too: a `git mv` commit
+  // deletes the live path, so it already matches through the live pathspec's
+  // delete side. The archived-only shape carries the archived-path proof.
+  if (shape === 'move') {
+    fs.mkdirSync(path.dirname(archivedFull), { recursive: true });
+    execFileSync('git', ['-C', wt, 'mv', liveRel, archivedRel]);
+    execFileSync('git', ['-C', wt, 'commit', '-m', 'Archive run', '-q']);
+  }
+  if (shape === 'archived-only') {
+    fs.mkdirSync(path.dirname(archivedFull), { recursive: true });
+    fs.writeFileSync(archivedFull, '---\nrecord: 991\n---\nbody\n');
+    execFileSync('git', ['-C', wt, 'add', '-f', archivedRel]);
+    execFileSync('git', ['-C', wt, 'commit', '-m', 'Archive run', '-q']);
+  }
+  const { run } = mkRunDir(projectDir(), wt, undefined);
+  const out = pre.run(
+    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  return { out, wt, run };
+}
+
+function normalizedDenyReason({ out, wt, run }, label) {
+  assert.ok(out.json && out.json.hookSpecificOutput, `${label}: expected the gate to arm and deny`);
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny', label);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr'), `${label}: record-pr deny event`);
+  return spec.permissionDecisionReason.split(run).join('<run>').split(wt).join('<wt>');
+}
+
+test('AC5.1/AC5.2 checkBookkeepingStampsGate arms identically for an archived-path move and a live materialize', () => {
+  const live = normalizedDenyReason(archivedGateFixture('live'), 'live materialize');
+  assert.match(live, /record-pr|PR-early/);
+  assert.strictEqual(normalizedDenyReason(archivedGateFixture('move'), 'archived-path move'), live);
+  assert.strictEqual(normalizedDenyReason(archivedGateFixture('archived-only'), 'archived-only header'), live);
+});
+
+// #3974: getMaterializedRecordNumbers feeds the claim-log branch. An archived-only
+// header must name its record there, or the branch would find no records, latch
+// `claimExempt: true` and never check the claim. Same fixture shape as the
+// claim-log tests in hooks-bookkeeping-stamps-gate-claim-memo.test.js: a
+// github-issues CLAUDE.md in the worktree, no decisions.md, `worktree` unstamped.
+test('bookkeeping-stamps gate (#3974): an archived-only header under github-issues with no claim line -> claim-log deny naming the record', () => {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'branch', '-M', 'main']); // a deterministic local integration bound
+  const wt = linkedWorktreeOf(main);
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# Fixture\n\nwork-backend: github-issues\nwork-types: labels\n');
+  const archivedRel = `.claude-tweaks/pipelines/archive/${RUN_ID}/work/991-spec.md`;
+  const archivedFull = path.join(wt, ...archivedRel.split('/'));
+  fs.mkdirSync(path.dirname(archivedFull), { recursive: true });
+  fs.writeFileSync(archivedFull, '---\nrecord: 991\n---\nbody\n');
+  execFileSync('git', ['-C', wt, 'add', '-f', archivedRel]);
+  execFileSync('git', ['-C', wt, 'commit', '-m', 'Archive run', '-q']);
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a claim-log deny');
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /Step 2\.8/);
+  assert.match(spec.permissionDecisionReason, /#991/);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+  assert.notStrictEqual(readRunState(run).claimExempt, true, 'claimExempt must not latch for an archived-only header');
+});
