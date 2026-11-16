@@ -2,6 +2,7 @@
 // bin/queue-pull.js — the dispatch queue pull and the `next` ranking as one CLI (#5227).
 //   node bin/queue-pull.js --transport gh|files [--queue-raw <p>] [--dep-freshness <p>] [--open-numbers <p>]
 //                          [--verified-open-deps <p>] [--in-flight-raw <p>] [--in-flight-claims <p>] [--foreign-states <p>]
+//                          [--named <n[,m…]> --run <id-or-path>]
 //   node bin/queue-pull.js --rank [--priority high|medium|low]
 //   node bin/queue-pull.js --help
 // A thin wrapper over lib/dispatch/queue-pull.js: `queuePull` runs the pull the fenced script in
@@ -29,6 +30,16 @@
 // computed over the queue instead is not safe: a queued record that an earlier pass drops becomes a
 // neighbour, never a candidate. A number left out reads as a failed claim read: the pass prints the
 // AUTO claim-read line and counts that record as not in flight.
+//
+// --named (#5584): record numbers a person typed after /claude-tweaks:dispatch, as a comma list
+// (`#` optional). Each one not in the auto:build pool is fetched and judged by the build-authority
+// rule; one the rule answers `typed` for joins the pool before any pass runs (lib/dispatch/queue-pull.js
+// admitNamed). It needs --run, the firing's run dir, where each admission's AUTO line lands: a value
+// holding a path separator is that path, any other a run id under <main checkout>/.claude-tweaks/pipelines.
+// The dir must pass log-decision/append.js's resolveTarget (anchored under the main checkout), else
+// exit 1 with nothing written. Under --transport files --named admits nothing and says the label is
+// required. --named without --run, --run without --named, an empty or non-numeric list, and either
+// flag with --rank exit 1.
 //
 // Exit codes (Split-1/2 base, plus 4 for a pull that stopped; one vocabulary, never mixed):
 //   0  success: the pull ran to the end (or the pick was written, `null` when nothing is eligible)
@@ -75,6 +86,7 @@ const PRIORITY_LIST = `${PRIORITIES.slice(0, -1).join(', ')} or ${PRIORITIES[PRI
 const USAGE = `usage:
   queue-pull.js --transport gh|files [--queue-raw <p>] [--dep-freshness <p>] [--open-numbers <p>]
                 [--verified-open-deps <p>] [--in-flight-raw <p>] [--in-flight-claims <p>] [--foreign-states <p>]
+                [--named <n[,m…]> --run <id-or-path>]
   queue-pull.js --rank [--priority ${PRIORITIES.join('|')}]
   queue-pull.js --help
 --transport gh pulls through gh; --transport files reads the files the agent fetched through MCP
@@ -85,6 +97,8 @@ filter is set: an empty value exits 1. A value flag may be given only once.
 The --in-flight-claims file must cover the claim of every record in the --in-flight-raw file:
 the pull prints no claim-targets list (mcp-transport.md Step 2's Claim reads), and a
 number left out reads as a failed claim read (an AUTO line; that record counts as not in flight).
+--named admits the named records without auto:build that a typed command accepts (gh only); it
+needs --run, the firing's run dir (an id under .claude-tweaks/pipelines, or a path).
 exit codes:
   0  success
   1  malformed invocation (usage printed)
@@ -104,9 +118,23 @@ const INPUT_FLAGS = {
   '--in-flight-claims': 'inFlightClaims',
   '--foreign-states': 'foreignStates',
 };
-const VALUE_FLAGS = new Set(['--transport', '--priority', ...Object.keys(INPUT_FLAGS)]);
+const VALUE_FLAGS = new Set(['--transport', '--priority', '--named', '--run', ...Object.keys(INPUT_FLAGS)]);
+const NAMED_ELEMENT_RE = /^#?[1-9][0-9]*$/;
 
-// -> { help: true } | { error } | { mode: 'pull'|'rank', transport, priority, inputs }
+// "#12,13" -> [12, 13] (each number once), or null for an empty or non-numeric element.
+function parseNamed(value) {
+  const numbers = [];
+  for (const element of value.split(',')) {
+    if (!NAMED_ELEMENT_RE.test(element)) return null;
+    const n = Number(element.replace(/^#/, ''));
+    if (!Number.isSafeInteger(n)) return null;
+    if (!numbers.includes(n)) numbers.push(n);
+  }
+  return numbers;
+}
+
+// -> { help: true } | { error } | { mode: 'pull'|'rank', transport, priority, inputs, named?, run? }
+// (named and run are present only when given, so a call without them parses as before)
 function parseArgs(argv) {
   if (argv.some((a) => a === '--help' || a === '-h')) return { help: true };
   const out = { mode: null, transport: null, priority: null, inputs: {} };
@@ -130,19 +158,49 @@ function parseArgs(argv) {
     } else if (arg === '--priority') {
       if (!PRIORITIES.includes(value)) return { error: `--priority must be ${PRIORITY_LIST}, got: ${value}` };
       out.priority = value;
+    } else if (arg === '--named') {
+      out.named = parseNamed(value);
+      if (!out.named) return { error: `--named must be a comma list of record numbers, got: ${value}` };
+    } else if (arg === '--run') {
+      out.run = value;
     } else {
       out.inputs[INPUT_FLAGS[arg]] = value;
     }
   }
   if (out.mode === 'rank') {
+    if (out.named || out.run) return { error: '--rank takes no --named or --run' };
     if (out.transport || Object.keys(out.inputs).length) return { error: '--rank takes no --transport or input-path flags' };
     return out;
   }
   if (!out.transport) return { error: 'no mode: pass --transport gh|files or --rank' };
   if (out.priority) return { error: '--priority applies only to --rank' };
+  if (out.named && !out.run) return { error: '--named needs --run <id-or-path>' };
+  if (out.run && !out.named) return { error: '--run is valid only with --named' };
   if (out.transport !== 'files' && Object.keys(out.inputs).length) return { error: 'the input-path flags are valid only with --transport files' };
   out.mode = 'pull';
   return out;
+}
+
+// --run's value -> { runDir } (the anchored real directory) | { error }. A value holding a path
+// separator is a path (relative to cwd); any other is a run id under the main checkout's
+// .claude-tweaks/pipelines. resolveTarget is the guard log-decision.js uses; no second one is written.
+function resolveRunDir(value, cwd) {
+  const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
+  const { resolveTarget } = require('./lib/log-decision/append');
+  let candidate;
+  if (value.includes('/') || value.includes(path.sep)) {
+    candidate = path.resolve(cwd, value);
+  } else {
+    const main = mainCheckoutRoot(cwd);
+    if (!main) return { error: `${value}: no main checkout found from ${cwd} to place a run id under` };
+    candidate = path.join(main, '.claude-tweaks', 'pipelines', value);
+  }
+  const target = resolveTarget({ runDir: candidate, cwd });
+  if (!target.ok) {
+    const why = target.reason === 'missing' ? 'names no run directory' : 'is not anchored under the main checkout';
+    return { error: `${value}: ${candidate} ${why}` };
+  }
+  return { runDir: path.dirname(target.file) };
 }
 
 function realDeps() {
@@ -197,6 +255,18 @@ function run(argv, deps = {}) {
       return EXIT.OK;
     }
 
+    // --run is resolved before gh is probed: a run dir that cannot take the AUTO lines is a
+    // malformed invocation, and nothing runs (or is written) on it.
+    let runDir = null;
+    if (args.run) {
+      const resolved = resolveRunDir(args.run, dep('cwd') || process.cwd());
+      if (resolved.error) {
+        err(`queue-pull.js: --run ${resolved.error}\n${USAGE}`);
+        return EXIT.USAGE;
+      }
+      runDir = resolved.runDir;
+    }
+
     if (args.transport === 'gh') {
       let available = false;
       try {
@@ -214,7 +284,9 @@ function run(argv, deps = {}) {
     const cwd = dep('cwd') || process.cwd();
     const inputs = {};
     for (const [key, value] of Object.entries(args.inputs)) inputs[key] = path.resolve(cwd, value);
-    dep('queuePull')({ transport: args.transport, sessionId, cwd, env, inputs, omit: [] }, { stdout: out, stderr: err });
+    const options = { transport: args.transport, sessionId, cwd, env, inputs, omit: [] };
+    if (args.named) Object.assign(options, { named: args.named, runDir });
+    dep('queuePull')(options, { stdout: out, stderr: err });
     return EXIT.OK;
   } catch (e) {
     // QueuePullStopped is thrown without printing, so the CLI prints its stop line here. Any other
