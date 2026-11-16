@@ -249,12 +249,24 @@ So before writing a parser for an event that has a carrier: `grep -l` the event'
 `<task-notification>`) across `{store}/projects/*/*/subagents/*.jsonl`, group the matches by the
 `version` field on each line, and read one line per distinct version and per distinct `type`.
 Build fixtures from those verbatim lines (long values truncated with `…`) and name the source file
-and line beside each. Fail closed on a carrier you did not recognize: `subagent-stop.js` returns an
-indeterminate result when `<task-notification>` or `<fork-boilerplate>` shows up in any other entry
-shape, and its tests pin both the recognized carriers and that fallback. A test that asserts only the
-fail-closed outcome (`block`) passes whether the carrier is recognized or not, so also assert the
-parsed value (a count of `0`, not `null`). Keep the versions you observed beside the rule, as
-`subagent-stop.js`'s header comment does.
+and line beside each. Fail closed on a carrier you did not recognize: `subagent-stop.js`'s gate
+count (`countPendingDispatches`) returns an indeterminate result when `<task-notification>` or
+`<fork-boilerplate>` shows up in any other entry shape, and its tests pin both the recognized
+carriers and that fallback. A test that asserts only the fail-closed outcome (`block`) passes whether
+the carrier is recognized or not, so also assert the parsed value (a count of `0`, not `null`). Keep
+the versions you observed beside the rule, as `subagent-stop.js`'s header comment does.
+
+**Pick each reader's indeterminate rule by what its wrong answer costs.** One scan can feed two
+readers whose failures cost different things. Record #5706 is the instance: `scanPendingDispatches`
+returns `{ gate, marker }` from one pass. The gate count decides whether a reply is blocked, so it
+still returns `null` on any unrecognized carrier. The stop-marker count only decides when
+`wait-for.js agents` returns, and a `null` there is a wait that never sees a finished child. So the
+marker skips a `<task-notification>` found in the agent's first user message (its own prompt), a
+`toolUseResult` line or an assistant line, and keeps counting; any other shape still nulls both
+counts. Before loosening one reader, show that no shape it skips can ever be a completion, so its
+count never falls below the true pending count, and leave the stricter reader alone unless
+something measured says it is wrong. Measure the skipped shapes on real transcripts first (#5706
+tallied 31,980 final stops across 2.1.283 to 2.1.325) and record that range beside the rule.
 
 A new carrier must reach every reader of the event, not only the one that surfaced it. #3015
 taught `countPendingDispatches` the `queued_command` shape while `isAsyncWaitSignal` (#2041), which
