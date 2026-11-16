@@ -201,3 +201,67 @@ test('AC4a.2: verdicts write accept:* through the labels command', () => {
 test('no standalone-only restriction', () => {
   assert.ok(!read('SKILL.md').includes('standalone-only'));
 });
+
+const REPO = path.join(__dirname, '..');
+const readRepo = (rel) => readText(path.join(REPO, rel));
+const firstFence = (text) => {
+  const open = text.indexOf('```');
+  assert.notEqual(open, -1, 'no fenced block');
+  const close = text.indexOf('\n```', open + 3);
+  assert.notEqual(close, -1, 'unclosed fenced block');
+  return text.slice(open, close);
+};
+
+test('AC7.1: graph, help diagram and README diagram list accept', () => {
+  const graph = readRepo('docs/skill-graph.md');
+  assert.match(graph, /^## accept$/m, 'docs/skill-graph.md has an accept section');
+  const demoRows = section(graph, '## demo').split('\n').filter((line) => line.startsWith('| `'));
+  assert.deepEqual(demoRows.length, 1, '## demo keeps exactly one row');
+  assert.match(demoRows[0], /^\| `\/accept` \| Deprecated alias/, 'the one demo row is the alias forwarding to /accept');
+  const strayDemoRows = graph.split('\n').filter((line) => line.startsWith('| `/demo` |'));
+  assert.deepEqual(strayDemoRows, [], 'no section keeps a /demo target row; it is /accept now');
+  assert.match(firstFence(readRepo('plugin/skills/help/SKILL.md')), /\/claude-tweaks:accept/, "help's lifecycle diagram lists accept");
+  const lifecycle = section(readRepo('README.md'), '## How it works');
+  const acceptLine = lifecycle.split('\n').find((line) => line.includes('/claude-tweaks:accept resolves'));
+  assert.ok(acceptLine, "README's lifecycle diagram has the /claude-tweaks:accept line");
+  assert.match(acceptLine, /resolves accept:pending/, 'the accept line resolves accept:pending');
+  assert.match(acceptLine, /accept:approved/, 'the accept line names the accept:* verdicts');
+});
+
+test('AC7.2: reference card grammar lists /claude-tweaks:accept', () => {
+  const card = readRepo('plugin/skills/help/reference-card.md').split('\n');
+  const acceptRow = card.find((line) => line.startsWith('| `/claude-tweaks:accept` |'));
+  assert.ok(acceptRow, 'the reference card has a /claude-tweaks:accept row');
+  assert.ok(acceptRow.endsWith('| `[#N[,#M...]]` |'), 'its Takes cell is the accept argument grammar');
+  const demoRow = card.find((line) => line.startsWith('| `/demo` |'));
+  assert.ok(demoRow && demoRow.includes('Deprecated alias'), 'the demo row is marked a deprecated alias');
+});
+
+test('AC7.3: the journey names accept', () => {
+  const journey = readRepo('docs/journeys/accept-built-work-via-demo.md');
+  assert.ok(journey.includes('/claude-tweaks:accept'), 'the journey names /claude-tweaks:accept');
+  const front = journey.split('\n---\n')[0];
+  const files = [...front.matchAll(/^ {2}- (.+)$/gm)].map((m) => m[1].trim());
+  for (const required of ['plugin/skills/accept/automatic-entry.md', 'plugin/skills/accept/verdict-interim.md', 'plugin/bin/accept-entry.js']) {
+    assert.ok(files.includes(required), `the journey's files list carries ${required}`);
+  }
+  for (const file of files) assert.ok(fs.existsSync(path.join(REPO, file)), `journey files entry exists: ${file}`);
+  const success = journey.split('\n').find((line) => line.startsWith('**Success state:**'));
+  assert.ok(success && success.includes('accept:approved'), 'the success state is accept:approved');
+  assert.doesNotMatch(success, /`demo:approved/, 'the success state names no demo:* verdict');
+});
+
+test('AC7.4: plugin-structure lists accept, its sub-files and the accept-entry CLI', () => {
+  const doc = readRepo('docs/plugin-structure.md');
+  const utility = doc.split('\n').find((line) => line.startsWith('**Utility:**'));
+  assert.match(utility, /\baccept\b/, 'the Utility list names accept');
+  const rowFor = (skill) => doc.split('\n').find((line) => line.startsWith(`| ${skill} | `));
+  const acceptRow = rowFor('accept');
+  assert.ok(acceptRow, 'the sub-file table has an accept row');
+  for (const name of ACCEPT_FILES.filter((n) => n !== 'SKILL.md')) {
+    assert.ok(acceptRow.split(' | ')[1].includes(name), `the accept row lists ${name}`);
+  }
+  const demoFiles = fs.readdirSync(path.join(REPO, 'plugin', 'skills', 'demo')).filter((n) => n.endsWith('.md') && n !== 'SKILL.md');
+  assert.deepEqual(rowFor('demo').split(' | ')[1].split(', ').sort(), demoFiles.sort(), 'the demo row lists exactly the alias directory');
+  assert.match(doc, /^node plugin\/bin\/accept-entry\.js /m, 'the CLI list carries accept-entry.js');
+});

@@ -93,7 +93,7 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
   release ──────────────►  Tag + Release      (on demand, suggested when unreleased commits exist, or the train)
      │  drives release-please (pr-first) or bin/release-local.js (local-merge); pre-bump whole-branch review, one console
      │
-  ┈┈ /claude-tweaks:accept resolves demo:pending → approved/changes-requested (utility skill, no fixed position — run anytime, resolves one item per ref: a specific #N, a #N,#M list one at a time, or this session's own unrecorded work via session-recall) ┈┈
+  ┈┈ /claude-tweaks:accept resolves accept:pending (demo:pending on a decomposition parent) → accept:approved/accept:changes-requested (utility skill, no fixed position — run anytime, resolves one item per ref: a specific #N, a #N,#M list one at a time, or this session's own unrecorded work via session-recall) ┈┈
      │
   ┈┈ /claude-tweaks:routine fleet status aggregates routine health + weekly counters, fleet off pauses (utility skill, no fixed position — run anytime) ┈┈
 ```
