@@ -34,6 +34,7 @@ const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
+const { headerPathspecs, listHeaderDirs } = require('../run-header');
 const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS, FORGE_DEGRADE_MEMO_TTL_MS } = require('../policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 // toPosix: git always reports/accepts forward-slash paths regardless of
@@ -1333,13 +1334,14 @@ function resolveLocalDefaultBranchBound(repoRoot) {
 // Returns null for every other shape (a real top-level run dir, an unrelated
 // directory, or a `spec-{N}` dir with no run-id-shaped parent) so the caller
 // falls through to the existing single-record/parent-dir pathspec unchanged.
+// #3974: the pathspecs come from run-header.js and cover the spec's live and
+// archived header locations.
 const PER_SPEC_SUBDIR_RE = /^spec-\d+$/;
 function perSpecPathspec(runDir, runId) {
   if (!PER_SPEC_SUBDIR_RE.test(runId)) return null;
   const parentId = path.basename(path.dirname(runDir));
   if (!ctxLib.RUN_ID_RE.test(parentId)) return null;
-  const parentRel = toPosix(path.join(PIPELINE_STATE_DIR, parentId));
-  return ['--', `${parentRel}/${runId}/work/*`];
+  return ['--', ...headerPathspecs(parentId, { specDir: runId })];
 }
 
 // Read-only, best-effort: any git failure (no commits yet, git unavailable)
@@ -1350,9 +1352,11 @@ function hasMaterializeCommit(worktreeRoot, runDir) {
   const runId = path.basename(runDir);
   if (!runId || runId === '.' || runId === '..') return false;
   const perSpec = perSpecPathspec(runDir, runId);
-  // PIPELINE_STATE_DIR (not a second hardcoded literal) + toPosix, since git
-  // pathspecs are always forward-slash regardless of platform.
-  const runRel = toPosix(path.join(PIPELINE_STATE_DIR, runId));
+  // #3974: run-header.js's headerPathspecs builds the forward-slash pathspecs
+  // (git's on every platform) for the header's live location and its archived
+  // one, where wrap-up moves it. Only the pathspec list grows: the range bound
+  // below is unchanged, so an archived header inherited from the integration
+  // branch can no more arm the gate than an inherited live one can.
   // 'spec-*/work' (no trailing wildcard) does NOT match, empirically —
   // re-verified against a scratch repo with commits at both canonical shapes
   // after the run-id segment became a literal: git's default (non-glob-magic)
@@ -1413,7 +1417,7 @@ function hasMaterializeCommit(worktreeRoot, runDir) {
   // ref when one exists (no fetch — see `preferRemoteTrackingRef` in
   // worktree-reap.js). The probed `main`/`master` fallback just below gets the
   // same upgrade for the same reason.
-  const paths = perSpec || ['--', `${runRel}/work`, `${runRel}/spec-*/work/*`];
+  const paths = perSpec || ['--', ...headerPathspecs(runId)];
   const bound = resolveIntegrationBranch(worktreeRoot) || resolveLocalDefaultBranchBound(worktreeRoot);
   const integration = bound ? preferRemoteTrackingRef(worktreeRoot, bound) : null;
   // Two distinct ways the bound can be unusable, and both must fall back the
@@ -1578,25 +1582,31 @@ function hasPrEarlyStep1LineFor(body, branch) {
 // this runs). Read-only, best-effort — any fs error (unreadable directory, a
 // race with a concurrent write) resolves to an empty array, never a throw;
 // ambiguity never triggers a deny for a record this check couldn't even name.
+//
+// #3974: run-header.js's listHeaderDirs names the header dirs at the run's live
+// location and then its archived one. The set merges the two by record, so a
+// record whose header sits at both (a stale live copy, a mid-move state) counts
+// once. Only real directories are walked into, as before: a `spec-*` symlink or
+// file is skipped.
+function listSubdirNames(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch { return []; }
+}
+
 function getMaterializedRecordNumbers(worktreeRoot, runDir) {
   const numbers = new Set();
   const runId = path.basename(runDir);
   if (!runId || runId === '.' || runId === '..') return [];
   const base = path.join(worktreeRoot, PIPELINE_STATE_DIR, runId);
   const specFileRe = /^(\d+)-spec\.md$/;
-  const collectFrom = (dir) => {
+  for (const { dir } of listHeaderDirs([base], { readdir: listSubdirNames })) {
     let entries;
-    try { entries = fs.readdirSync(dir); } catch { return; }
+    try { entries = fs.readdirSync(dir); } catch { continue; }
     for (const entry of entries) {
       const m = specFileRe.exec(entry);
       if (m) numbers.add(Number(m[1]));
     }
-  };
-  collectFrom(path.join(base, 'work'));
-  let baseEntries;
-  try { baseEntries = fs.readdirSync(base, { withFileTypes: true }); } catch { baseEntries = []; }
-  for (const entry of baseEntries) {
-    if (entry.isDirectory() && entry.name.startsWith('spec-')) collectFrom(path.join(base, entry.name, 'work'));
   }
   return [...numbers];
 }
@@ -2643,6 +2653,10 @@ module.exports = {
   isPolicyFile,
   isUntrackedOrIgnored,
   hasMaterializeCommit,
+  // Exported only for its unit tests (#3974): the live-plus-archived header
+  // merge is pinned directly. Its sole production caller is
+  // checkBookkeepingStampsGate's claim-log branch.
+  getMaterializedRecordNumbers,
   isPolicyOnlyCommit,
   POLICY_COMMIT_ALLOWLIST,
   isDeleteOnlyPush,

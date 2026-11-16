@@ -1357,3 +1357,53 @@ test('bookkeeping-stamps gate (#1460 control): the same dangling-run shape still
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/);
 });
+
+// #3974 AC5: after wrap-up a run's header moves to
+// `.claude-tweaks/pipelines/archive/{run-id}/...`. The gate arms the same way
+// whether this worktree's in-range commit materialized the header at the live
+// path, git-mv'd it to the archived path (the live commit inherited from the
+// integration branch), or added it at the archived path only. Same missing `pr`
+// stamp under pr-first, same deny reason once the paths that differ by fixture
+// are normalized out.
+function archivedGateFixture(shape) {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'branch', '-M', 'main']); // a deterministic local integration bound
+  const liveRel = `.claude-tweaks/pipelines/${RUN_ID}/work/991-spec.md`;
+  const archivedRel = `.claude-tweaks/pipelines/archive/${RUN_ID}/work/991-spec.md`;
+  if (shape === 'move') commitMaterializedSpec(main, path.join('work', '991-spec.md')); // inherited, outside the range
+  const wt = linkedWorktreeOf(main);
+  const archivedFull = path.join(wt, ...archivedRel.split('/'));
+  if (shape === 'live') commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  if (shape === 'move') {
+    fs.mkdirSync(path.dirname(archivedFull), { recursive: true });
+    execFileSync('git', ['-C', wt, 'mv', liveRel, archivedRel]);
+    execFileSync('git', ['-C', wt, 'commit', '-m', 'Archive run', '-q']);
+  }
+  if (shape === 'archived-only') {
+    fs.mkdirSync(path.dirname(archivedFull), { recursive: true });
+    fs.writeFileSync(archivedFull, '---\nrecord: 991\n---\nbody\n');
+    execFileSync('git', ['-C', wt, 'add', '-f', archivedRel]);
+    execFileSync('git', ['-C', wt, 'commit', '-m', 'Archive run', '-q']);
+  }
+  const { run } = mkRunDir(projectDir(), wt, undefined);
+  const out = pre.run(
+    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  return { out, wt, run };
+}
+
+function normalizedDenyReason({ out, wt, run }, label) {
+  assert.ok(out.json && out.json.hookSpecificOutput, `${label}: expected the gate to arm and deny`);
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny', label);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'record-pr'), `${label}: record-pr deny event`);
+  return spec.permissionDecisionReason.split(run).join('<run>').split(wt).join('<wt>');
+}
+
+test('AC5.1/AC5.2 checkBookkeepingStampsGate arms identically for an archived-path move and a live materialize', () => {
+  const live = normalizedDenyReason(archivedGateFixture('live'), 'live materialize');
+  assert.match(live, /record-pr|PR-early/);
+  assert.strictEqual(normalizedDenyReason(archivedGateFixture('move'), 'archived-path move'), live);
+  assert.strictEqual(normalizedDenyReason(archivedGateFixture('archived-only'), 'archived-only header'), live);
+});
