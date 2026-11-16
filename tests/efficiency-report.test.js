@@ -377,6 +377,46 @@ test('#4359: a run whose rebuild throws is failed, never skipped, and named on s
   }
 });
 
+test('#4359: a malformed timing.json is failed and named, while a missing one is not a candidate', async () => {
+  const { root, archive } = recountTree();
+  try {
+    fs.writeFileSync(path.join(archive, '2027-02-01T090000-run-a', 'timing.json'), '{not json');
+    fs.writeFileSync(path.join(archive, '2027-02-03T090000-run-b', 'timing.json'), '[]');
+    const { code, out, errs } = await runCli(['--archive', archive, '--recount', '--json'], { cwd: root });
+    // Archive data, so the exit stays 0 while a candidate (run-noreview) still recounts.
+    assert.strictEqual(code, 0, errs);
+    const r = JSON.parse(out).recount;
+    assert.deepStrictEqual(r.failed, [
+      { run: '2027-02-01T090000-run-a', error: 'timing.json is not a JSON object' },
+      { run: '2027-02-03T090000-run-b', error: 'timing.json is not a JSON object' },
+    ]);
+    assert.strictEqual(r.runs, 0);
+    // run-no-list has no timing.json at all and stays out of every count: only run-gone is skipped.
+    assert.strictEqual(r.skipped, 1);
+    assert.match(errs, /recount of 2027-02-01T090000-run-a failed: timing\.json is not a JSON object/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#4359: a run whose transcripts yield no usage rows is skipped, never counted as zero reads', async () => {
+  const { root, archive } = recountTree();
+  try {
+    // run-a reaches review in events.jsonl, but its one transcript is now empty: nothing was measured.
+    fs.writeFileSync(path.join(root, 'transcripts', 'a.jsonl'), '');
+    const { code, out, errs } = await runCli(['--archive', archive, '--recount', '--json'], { cwd: root });
+    assert.strictEqual(code, 0, errs);
+    const r = JSON.parse(out).recount;
+    assert.strictEqual(r.runs, 1);
+    assert.strictEqual(r.skipped, 2);
+    assert.deepStrictEqual(r.perRun.map((x) => x.run), ['2027-02-03T090000-run-b']);
+    // run-b alone: the median and mean are not pulled toward zero by run-a.
+    assert.deepStrictEqual(r.files['skills/review/code-mode-steps.md'], { median: 1, mean: 1, total: 1 });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('#4359: a recount whose every candidate fails exits 1 without the no-data message', async () => {
   const { root, archive } = recountTree();
   try {

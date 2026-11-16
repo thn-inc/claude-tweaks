@@ -255,6 +255,23 @@ function readJson(file, fsImpl) {
   }
 }
 
+// A timing.json read that tells a missing file (an older run: not a candidate) from one that is
+// there but is not a JSON object (an archive defect a recount must name, never drop silently).
+function readTimingJson(file, fsImpl) {
+  let text;
+  try {
+    text = fsImpl.readFileSync(file, 'utf8');
+  } catch (_) {
+    return { absent: true };
+  }
+  try {
+    const v = JSON.parse(text);
+    return isPlainObject(v) ? { value: v } : { malformed: true };
+  } catch (_) {
+    return { malformed: true };
+  }
+}
+
 function exists(file, fsImpl) {
   try {
     fsImpl.statSync(file);
@@ -268,7 +285,8 @@ function exists(file, fsImpl) {
 // (phase-timing.js buildTiming, which writes nothing) and count its skill-file reads over every
 // phases[] bucket — `unattributed` is left out, since a dispatcher's session transcript also holds
 // other runs. A run with no `transcripts` list is not a candidate. One whose listed paths all are
-// gone is skipped; one whose buildTiming throws is failed ({ run, error }); one whose recount has no
+// gone, or whose transcripts all yielded no usage rows, is skipped; one whose buildTiming throws, or
+// whose timing.json is not a JSON object, is failed ({ run, error }); one whose recount has no
 // reached review phase is noReview. failLoud is set when every candidate failed or any failure is
 // other than an unreadable events.jsonl. Relative transcript paths resolve against cwd, as
 // phase-timing.js resolves them. -> { recount, failLoud }.
@@ -285,8 +303,14 @@ async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
   }
   for (const entry of entries) {
     const dir = path.join(archiveDir, entry);
-    const t = readJson(path.join(dir, 'timing.json'), fsImpl);
-    if (!t || !Array.isArray(t.transcripts) || t.transcripts.length === 0) continue;
+    const read = readTimingJson(path.join(dir, 'timing.json'), fsImpl);
+    if (read.absent) continue;
+    if (read.malformed) {
+      failed.push({ run: entry, error: 'timing.json is not a JSON object', eventsUnreadable: true });
+      continue;
+    }
+    const t = read.value;
+    if (!Array.isArray(t.transcripts) || t.transcripts.length === 0) continue;
     const paths = t.transcripts
       .map((x) => (x && typeof x.path === 'string' && x.path ? x.path : null))
       .filter((p) => p !== null && exists(path.resolve(cwd, p), fsImpl));
@@ -302,6 +326,10 @@ async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
     }
     const phases = Array.isArray(timing.phases) ? timing.phases : [];
     if (!phases.some(isReachedReview)) { noReview += 1; continue; }
+    // Transcripts that exist but yielded no usage rows (empty, or unreadable) measured nothing: that
+    // run is skipped like one whose transcripts are gone, never counted as a run with zero reads.
+    const rebuilt = Array.isArray(timing.transcripts) ? timing.transcripts : [];
+    if (rebuilt.length > 0 && !rebuilt.some((x) => x && x.rows > 0)) { skipped += 1; continue; }
     const reads = {};
     for (const p of phases) addFileCounts(reads, p.procedureFiles);
     perRun.push({ run: entry, reads });
