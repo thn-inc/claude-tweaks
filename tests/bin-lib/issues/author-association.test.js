@@ -22,7 +22,7 @@ const isGraphQL = (args) => args[0] === 'api' && args[1] === 'graphql';
 const isRepoView = (args) => args.join(' ') === 'repo view --json owner,name';
 const numbersIn = (args) => {
   const q = args.find((a) => a.startsWith('query='));
-  return [...q.matchAll(/i(\d+): issue\(number:\1\)\{authorAssociation\}/g)].map((m) => Number(m[1]));
+  return [...q.matchAll(/i(\d+): issue\(number:\1\)\{ authorAssociation \}/g)].map((m) => Number(m[1]));
 };
 function answer(numbers, byNumber) {
   const repository = {};
@@ -58,11 +58,10 @@ test('needsAssociation: Origin line and unknown author trust only', () => {
 
 test('buildAssociationQuery emits one alias per integer number and drops non-integers', () => {
   const q = buildAssociationQuery([4577, '7; x', -1, 1.5, 1e21, 12]);
-  assert.equal(
-    q,
-    'query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){'
-      + 'i4577: issue(number:4577){authorAssociation} i12: issue(number:12){authorAssociation}}}',
-  );
+  assert.match(q, /query\(\$owner:String!,\$repo:String!\)/);
+  assert.match(q, /i4577: issue\(number:4577\)\{ authorAssociation \}/);
+  assert.match(q, /i12: issue\(number:12\)\{ authorAssociation \}/);
+  assert.equal((q.match(/issue\(number:/g) || []).length, 2);
   assert.doesNotMatch(q, /7; x|-1|1\.5|e\+21/);
   assert.equal(buildAssociationQuery([]), '');
   assert.equal(buildAssociationQuery(['7; x', 0]), '');

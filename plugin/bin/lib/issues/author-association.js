@@ -28,6 +28,7 @@ const { ghOptions } = require('../repo-resolve');
 const sharedPrimitives = require('../shared-primitives');
 const { hasOriginLine, issueAuthorTrust } = require('./provenance');
 const { writeSnapshot } = require('./record-snapshot');
+const { buildAuthorAssociationQuery } = require('./record-dependencies');
 
 const DEFAULT_BATCH_SIZE = 200;
 
@@ -49,10 +50,7 @@ function integerNumbers(numbers) {
 }
 
 function buildAssociationQuery(numbers) {
-  const ns = integerNumbers(numbers);
-  if (ns.length === 0) return '';
-  const aliases = ns.map((n) => `i${n}: issue(number:${n}){authorAssociation}`).join(' ');
-  return `query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){${aliases}}}`;
+  return buildAuthorAssociationQuery(integerNumbers(numbers)) || '';
 }
 
 // A partial NOT_FOUND (a PR number, a transferred issue) makes gh exit 1 while
