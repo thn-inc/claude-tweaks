@@ -46,6 +46,10 @@ stays under the measured 180-second foreground ceiling
 (docs/reference/blocking-wait-probe.md).
   agents --ids <a,b>   returns when a listed subagent id has a final stop (not
                        blocked, pending 0) not returned to an earlier call
+  ci --pr <n>          returns when the PR's checks leave pending, classified as
+                       pr-checks.js --pr does (green, red, inherited-red, no-ci, stale)
+  ci --run <id>        returns when the workflow run's status is completed
+  pid --pid <n>        returns when the process is gone
 A verify run and a suite slot are not targets: verify.js waits on both itself.
 
 Calls with the same target and ids (or key) share one window of --window-seconds;
@@ -54,13 +58,16 @@ CLAUDE_CODE_SESSION_ID ([A-Za-z0-9_-]).
 
 Output keys: target, state, changed, elapsedSeconds, deadlineEpoch, window,
 bound (exit 3 only: "call" or "deadline"), plus the target's own keys
-(agents: reported, pending, stops).
+(agents: reported, pending, stops; ci: readFailures, and conclusion for --run;
+a ci read that fails after a good one counts as pending and adds to readFailures,
+a first read that fails exits 2).
 
 Exit codes: 0 the target changed; 3 a bound was hit; 2 a malformed invocation,
 a missing or invalid session id, a refused marker file, or an unexpected error.
 `;
 
-const POSITIVE_INT = /^[1-9]\d*$/;
+const MAX_PID = 2147483647;
+const POSITIVE_INT =/^[1-9]\d*$/;
 const COMMON_FLAGS = { '--max-seconds': 'maxSeconds', '--window-seconds': 'windowSeconds', '--session': 'session' };
 const TARGET_FLAGS = {
   agents: { '--ids': 'ids' },
@@ -102,6 +109,9 @@ function parseArgs(argv) {
     if (Object.hasOwn(opts, 'pr') === Object.hasOwn(opts, 'run')) return { error: 'ci needs exactly one of --pr and --run' };
   } else if (!Object.hasOwn(opts, 'pid')) {
     return { error: 'pid needs --pid' };
+  } else if (opts.pid > MAX_PID) {
+    // process.kill rejects a pid above int32, which isPidAlive would read as "gone".
+    return { error: `--pid must be at most ${MAX_PID}` };
   }
   return opts;
 }
@@ -127,7 +137,58 @@ const agents = {
   },
 };
 
-const TARGETS = { agents };
+const pid = {
+  key: (opts) => `pid:${opts.pid}`,
+  poll({ opts, deps }) {
+    const alive = deps.isPidAlive(opts.pid);
+    return { changed: !alive, state: alive ? 'alive' : 'gone', extra: {} };
+  },
+};
+
+// Why a runner answer is not a usable read, or null. A `pr-checks.js --pr` envelope of
+// read-failed, gh-absent or no-pr is a failed read, not a change (the spec's "2 ... a
+// source that cannot be read").
+const FAILED_PR_STATES = new Set(['read-failed', 'gh-absent', 'no-pr']);
+function readProblem(opts, read) {
+  if (read === null || typeof read !== 'object' || Array.isArray(read)) return 'the CI read returned no object';
+  if (opts.pr !== undefined) {
+    if (typeof read.state !== 'string') return 'the PR checks read has no state';
+    if (FAILED_PR_STATES.has(read.state)) return `the PR checks read is ${read.state}${typeof read.reason === 'string' ? `: ${read.reason}` : ''}`;
+  } else if (typeof read.status !== 'string') {
+    return 'the workflow run read has no status';
+  }
+  return null;
+}
+
+const ci = {
+  key: (opts) => (opts.pr !== undefined ? `pr:${opts.pr}` : `run:${opts.run}`),
+  poll({ opts, deps, scratch }) {
+    let read = null;
+    let problem;
+    try {
+      read = deps.runner(opts.pr !== undefined ? { pr: opts.pr } : { run: opts.run }, { cwd: deps.cwd(), env: deps.env });
+      problem = readProblem(opts, read);
+    } catch (err) {
+      problem = err && err.message ? err.message : String(err);
+    }
+    if (problem) {
+      if (!scratch.good) throw new Error(`CI read failed: ${problem}`);
+      scratch.readFailures += 1;
+    } else {
+      scratch.good = read;
+    }
+    const last = scratch.good;
+    const byRun = opts.pr === undefined;
+    const state = byRun ? last.status : last.state;
+    return {
+      changed: byRun ? state === 'completed' : state !== 'pending',
+      state,
+      extra: { readFailures: scratch.readFailures, ...(byRun ? { conclusion: last.conclusion } : {}) },
+    };
+  },
+};
+
+const TARGETS = { agents, pid, ci };
 
 // The open window this call joins, or a new one it appends. -> the open record.
 function resolveWindow(opts, key, { sessionId, tmpDir, start }) {
@@ -183,7 +244,6 @@ async function run(argv, deps) {
       return usageError(deps, 'no session id: CLAUDE_CODE_SESSION_ID is unset and --session was not given');
     }
     if (!SESSION_ID_RE.test(sessionId)) return usageError(deps, `session id must match [A-Za-z0-9_-]: ${sessionId}`);
-    if (!Object.hasOwn(TARGETS, opts.target)) return usageError(deps, `target ${opts.target} is not available in this release`);
 
     const target = TARGETS[opts.target];
     const tmpDir = deps.tmpDir();
@@ -195,7 +255,7 @@ async function run(argv, deps) {
     const monoStart = deps.monotonicNow();
     const callEnd = monoStart + opts.maxSeconds * 1000;
     const deadlineMs = win.deadline * 1000;
-    const ctx = { opts, sessionId, tmpDir, window: win.window, deps };
+    const ctx = { opts, sessionId, tmpDir, window: win.window, deps, scratch: { good: null, readFailures: 0 } };
     const print = (res, bound) => {
       const out = {
         target: opts.target,

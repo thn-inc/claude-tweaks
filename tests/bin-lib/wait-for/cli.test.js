@@ -397,3 +397,199 @@ test('AC9.1: a real process exits 0 when a second process appends a final stop a
   assert.equal(code, 0, stderr);
   assert.deepEqual(JSON.parse(stdout).reported, ['x']);
 });
+
+// ---- pid and ci targets (Task 4) ----
+
+// A bounded fake runner: returns or throws the next answer, throws past the end, records each query.
+function scripted(answers) {
+  const queries = [];
+  const runner = (query) => {
+    queries.push(query);
+    if (queries.length > answers.length) throw new Error('unexpected call');
+    const a = answers[queries.length - 1];
+    if (a instanceof Error) throw a;
+    return a;
+  };
+  return { runner, queries };
+}
+
+// call() with extra deps (runner, isPidAlive, cwd) merged in.
+async function callWith(argv, { c, dir, env = ENV, deps = {} }) {
+  const res = await runCli(CLI, argv, { env, deps: { now: c.now, monotonicNow: c.monotonicNow, sleep: c.sleep, tmpDir: () => dir, ...deps } });
+  return { ...res, out: res.stdout ? JSON.parse(res.stdout) : null };
+}
+
+test('AC3.1: pid with no change exits 3 at the call bound', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  let calls = 0;
+  const r = await callWith(['pid', '--pid', '42'], { c, dir, deps: { isPidAlive: () => { calls += 1; return true; } } });
+  assert.equal(r.code, 3, r.stderr);
+  assert.equal(r.out.bound, 'call');
+  assert.equal(r.out.state, 'alive');
+  assert.deepEqual(c.sleeps, new Array(100).fill(1000));
+  assert.equal(calls, 101);
+});
+
+test('AC3.1: ci with no change sleeps ceil(100/30) times, the last cut to the time left', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  const { runner, queries } = scripted(new Array(10).fill({ state: 'pending' }));
+  const r = await callWith(['ci', '--pr', '7', '--max-seconds', '100'], { c, dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 3, r.stderr);
+  assert.equal(r.out.bound, 'call');
+  assert.deepEqual(c.sleeps, [30000, 30000, 30000, 10000]);
+  assert.equal(queries.length, 5);
+  assert.equal(r.out.readFailures, 0);
+});
+
+test('AC6.1: pid exits 0 once the process is gone, and 2 for a pid that is not a positive integer', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  const answers = [true, true, false];
+  let i = 0;
+  const r = await callWith(['pid', '--pid', '42'], { c, dir, deps: { isPidAlive: () => answers[i++] } });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(c.sleeps.length, 2);
+  assert.equal(r.out.state, 'gone');
+  assert.equal(r.out.changed, true);
+  for (const bad of ['0', '-3', '1.5', 'abc', '99999999999']) {
+    const rb = await callWith(['pid', '--pid', bad], { c: clock(T), dir, deps: { isPidAlive: () => false } });
+    assert.equal(rb.code, 2, bad);
+    assert.equal(rb.stdout, '', bad);
+  }
+});
+
+test('AC6.2: a real process — wait-for.js pid exits 0 after a child that lives one second exits', { timeout: 60000 }, async (t) => {
+  const dir = tmp(t);
+  const sid = `ac6-${process.pid}`;
+  const env = { ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir };
+  const target = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 1000)'], { windowsHide: true });
+  const targetClosed = new Promise((resolve) => target.on('close', resolve));
+  const waiter = spawn(process.execPath, [CLI, 'pid', '--pid', String(target.pid), '--max-seconds', '30', '--session', sid], { env, windowsHide: true });
+  let stdout = '';
+  let stderr = '';
+  waiter.stdout.on('data', (d) => { stdout += d; });
+  waiter.stderr.on('data', (d) => { stderr += d; });
+  const closed = new Promise((resolve) => waiter.on('close', resolve));
+  const [code] = await Promise.all([closed, targetClosed]);
+  assert.equal(code, 0, stderr);
+  assert.equal(JSON.parse(stdout).state, 'gone');
+});
+
+test('AC5.1: ci --pr exits 0 with green after two sleeps', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  const { runner, queries } = scripted([{ state: 'pending' }, { state: 'pending' }, { state: 'green' }]);
+  const r = await callWith(['ci', '--pr', '7'], { c, dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.out.state, 'green');
+  assert.equal(r.out.changed, true);
+  assert.equal(c.sleeps.length, 2);
+  assert.deepEqual(queries, [{ pr: 7 }, { pr: 7 }, { pr: 7 }]);
+});
+
+for (const state of ['red', 'inherited-red', 'no-ci', 'stale']) {
+  test(`AC5.2: ci --pr exits 0 on the first poll for ${state}`, async (t) => {
+    const dir = tmp(t);
+    const c = clock(T);
+    const { runner } = scripted([{ state }]);
+    const r = await callWith(['ci', '--pr', '7'], { c, dir, deps: { runner, cwd: () => dir } });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.out.state, state);
+    assert.equal(c.sleeps.length, 0);
+  });
+}
+
+test('AC5.3: ci --run exits 0 when the run completes and prints its conclusion', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  const { runner, queries } = scripted([{ status: 'in_progress', conclusion: '' }, { status: 'completed', conclusion: 'success' }]);
+  const r = await callWith(['ci', '--run', '99'], { c, dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.out.state, 'completed');
+  assert.equal(r.out.conclusion, 'success');
+  assert.deepEqual(queries, [{ run: '99' }, { run: '99' }]);
+});
+
+test('AC5.4: a runner that throws on the first read exits 2', async (t) => {
+  const dir = tmp(t);
+  const { runner } = scripted([new Error('gh exploded')]);
+  const r = await callWith(['ci', '--pr', '7'], { c: clock(T), dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /gh exploded/);
+  assert.equal(r.stdout, '');
+});
+
+test('AC5.5: a throw after a good read counts as pending', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  const { runner } = scripted([{ state: 'pending' }, new Error('flaky'), { state: 'green' }]);
+  const r = await callWith(['ci', '--pr', '7'], { c, dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.out.readFailures, 1);
+  assert.equal(r.out.state, 'green');
+});
+
+test('a read-failed envelope is a failed read', async (t) => {
+  const dir = tmp(t);
+  const first = scripted([{ state: 'read-failed' }]);
+  const r1 = await callWith(['ci', '--pr', '7'], { c: clock(T), dir, deps: { runner: first.runner, cwd: () => dir } });
+  assert.equal(r1.code, 2);
+  assert.equal(r1.stdout, '');
+  for (const bad of ['gh-absent', 'no-pr']) {
+    const { runner } = scripted([{ state: 'pending' }, { state: bad }, { state: 'green' }]);
+    const r = await callWith(['ci', '--pr', '7'], { c: clock(T), dir, deps: { runner, cwd: () => dir } });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.out.readFailures, 1, bad);
+  }
+});
+
+test('a non-object answer, a non-string state and a non-string status are failed reads', async (t) => {
+  const dir = tmp(t);
+  for (const [argv, answer] of [
+    [['ci', '--pr', '7'], 'green'],
+    [['ci', '--pr', '7'], { state: 3 }],
+    [['ci', '--run', '9'], { status: null }],
+    [['ci', '--run', '9'], null],
+  ]) {
+    const { runner } = scripted([answer]);
+    const r = await callWith(argv, { c: clock(T), dir, deps: { runner, cwd: () => dir } });
+    assert.equal(r.code, 2, JSON.stringify(answer));
+  }
+});
+
+test('AC12.1: ci and pid with no session id exit 2 and name it', async (t) => {
+  const dir = tmp(t);
+  const boom = () => { throw new Error('must not be called'); };
+  for (const argv of [['ci', '--pr', '7'], ['pid', '--pid', '42']]) {
+    const r = await callWith(argv, { c: clock(T), dir, env: {}, deps: { runner: boom, isPidAlive: boom, cwd: boom } });
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /CLAUDE_CODE_SESSION_ID/);
+  }
+});
+
+test('realDeps.runner\'s gh call passes ghOptions, windowsHide and the gh timeout', () => {
+  const cp = require('child_process');
+  const { GH_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
+  const real = cp.execFileSync;
+  const seen = [];
+  const key = require.resolve('../../../plugin/bin/wait-for.js');
+  const saved = require.cache[key];
+  try {
+    cp.execFileSync = (...a) => { seen.push(a); return '{"conclusion":"","status":"queued"}'; };
+    delete require.cache[key];
+    const { realDeps } = require(key);
+    const out = realDeps.runner({ run: 5 }, { cwd: os.tmpdir(), env: {} });
+    assert.deepEqual(out, { conclusion: '', status: 'queued' });
+  } finally {
+    cp.execFileSync = real;
+    if (saved) require.cache[key] = saved; else delete require.cache[key];
+  }
+  assert.equal(seen.length, 1);
+  const [file, args, opts] = seen[0];
+  assert.equal(file, 'gh');
+  assert.deepEqual(args, ['run', 'view', '5', '--json', 'status,conclusion']);
+  assert.equal(opts.windowsHide, true);
+  assert.equal(opts.timeout, GH_TIMEOUT_MS);
+});

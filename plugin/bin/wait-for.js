@@ -13,10 +13,36 @@
 'use strict';
 
 const os = require('os');
+const { execFileSync } = require('child_process');
 const { performance } = require('perf_hooks');
 const lib = require('./lib/wait-for');
+const { isPidAlive } = require('./lib/suite-slot');
+const { ghOptions } = require('./lib/repo-resolve');
+const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
+
+// One CI read. { pr } -> the `pr-checks.js --pr` envelope; { run } -> `gh run view`'s
+// { status, conclusion }. Throws on any failure; the target decides what a failed read means.
+// pr-checks.js is loaded lazily: the agents and pid targets never need it.
+function runner(query, { cwd, env }) {
+  if (query.pr !== undefined) {
+    let text = '';
+    const code = require('./pr-checks').run(['--pr', String(query.pr)], {
+      stdout: (s) => { text += s; },
+      stderr: () => {},
+      cwd: () => cwd,
+    });
+    const envelope = code === 0 ? JSON.parse(text) : null;
+    if (envelope === null || typeof envelope !== 'object') throw new Error(`pr-checks.js --pr ${query.pr} exited ${code} without an envelope`);
+    return envelope;
+  }
+  const args = ['run', 'view', String(query.run), '--json', 'status,conclusion'];
+  return JSON.parse(execFileSync('gh', args, ghOptions(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true })));
+}
 
 const realDeps = {
+  isPidAlive,
+  cwd: () => process.cwd(),
+  runner,
   now: () => Date.now(),
   monotonicNow: () => performance.now(),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
