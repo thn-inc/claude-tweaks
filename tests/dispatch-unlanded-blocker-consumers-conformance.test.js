@@ -12,6 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { rowWithContinuations } = require('./helpers/plugin-structure-entry');
 const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 const { NATIVE_MISSING_CAUSE, malformedRecords } = require('../plugin/bin/lib/dispatch/unlanded-blockers');
 
@@ -181,7 +182,7 @@ const STRUCTURE_CLAUSE = 'and where the not-spec-shaped, open-linked-PR, named-t
 
 test("plugin-structure.md describes queue-pull-notes.md's pass-placement section", () => {
   const HEADING = '### Skills with sub-files';
-  const dispatchRow = (text) => lineStartingWith(sectionOf(text, HEADING), '| dispatch |');
+  const dispatchRow = (text) => rowWithContinuations(sectionOf(text, HEADING), '| dispatch |');
   const row = dispatchRow(PLUGIN_STRUCTURE);
   assert.ok(row, 'the dispatch row exists under the sub-files heading');
   assert.ok(collapse(row).includes(STRUCTURE_CLAUSE), 'the dispatch row carries the pass-placement clause');
@@ -190,9 +191,16 @@ test("plugin-structure.md describes queue-pull-notes.md's pass-placement section
   assert.ok(!collapse(without).includes(STRUCTURE_CLAUSE));
 
   // Control: the row moved out of the sub-files section (to just under `## Commands`) is no longer found.
-  const stripped = PLUGIN_STRUCTURE.split('\n').filter((l) => l !== row).join('\n');
+  // The row spans its physical line plus its `| | | ` continuation rows; move all of them together.
+  const all = PLUGIN_STRUCTURE.split('\n');
+  const headingAt = all.indexOf(HEADING);
+  const at = all.findIndex((l, i) => i > headingAt && l.startsWith('| dispatch |'));
+  let end = at + 1;
+  while (end < all.length && all[end].startsWith('| | | ')) end++;
+  const rowLines = all.slice(at, end);
+  const stripped = [...all.slice(0, at), ...all.slice(end)].join('\n');
   assert.notEqual(stripped, PLUGIN_STRUCTURE);
-  const moved = stripped.replace('\n## Commands\n', `\n## Commands\n${row}\n`);
+  const moved = stripped.replace('\n## Commands\n', `\n## Commands\n${rowLines.join('\n')}\n`);
   assert.notEqual(moved, stripped);
   assert.equal(dispatchRow(moved), '', 'a dispatch row outside the sub-files section is not found');
 });
