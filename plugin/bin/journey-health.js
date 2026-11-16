@@ -23,9 +23,10 @@ const { evaluateQaEvidence } = require('./lib/journey-health/qa-evidence');
 
 const TOOL_NAME = 'journey-health';
 
-// Mirrors code-health's RISK_RANK/validateRiskArg shape (bin/code-health.js)
-// for the analogous --min-confidence floor, scoped to journey-health's own
-// three-tier confidence vocabulary (validate-finding.js's CONFIDENCE_VALUES).
+// Mirrors code-health's RISK_RANK/validateRiskArg shape (bin/code-health.js,
+// as used for its `--min-risk` check) for the analogous --min-confidence floor,
+// scoped to journey-health's own three-tier confidence vocabulary
+// (validate-finding.js's CONFIDENCE_VALUES).
 // Unlike code-health's --min-risk, this floor is opt-in only (no internal
 // default) and drops a sub-threshold finding for this run only, rather than
 // diverting it into a `remembered` cache tier — journey-health's cache.js

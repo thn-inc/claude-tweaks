@@ -39,7 +39,8 @@ const CONFIDENCE_RANK = { high: 0, med: 1, low: 2 };
 
 // Rejects a --min-confidence value that isn't a CONFIDENCE_RANK key: writes an
 // error to `stderr` and returns { ok: false, code: 2 }; { ok: true } otherwise
-// (an omitted flag included) — mirrors bin/code-health.js's validateRiskArg.
+// (an omitted flag included) — mirrors bin/code-health.js's validateRiskArg, as
+// used for its `--min-risk` check.
 function validateConfidenceArg(value, stderr) {
   if (value == null) return { ok: true };
   if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return { ok: true };

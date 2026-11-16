@@ -155,3 +155,19 @@ test('next-slice: a change inside a subdirectory does not make the "." slice loo
   assert.ok(result !== null, 'the changed "sub" slice should still be picked');
   assert.strictEqual(result.id, 'sub', 'a change inside "sub" must not make "." look changed instead');
 });
+
+// Real-process pin of the script entry (#5381): the refusal path's code, stdout and stderr are
+// byte-identical before and after the in-process entry conversion.
+test('AC2.1, AC2.2: code-health.js no-such-command and pull-issues both exit 2 with the usage text on stderr (real process)', () => {
+  const { spawnCli } = require('../../helpers/run-cli');
+  for (const cmd of ['no-such-command', 'pull-issues']) {
+    const r = spawnCli(CLI, [cmd], { env: { ...process.env }, cwd: tmp() });
+    assert.strictEqual(r.code, 2, cmd);
+    assert.strictEqual(r.stdout, '', cmd);
+    assert.strictEqual(
+      r.stderr,
+      'usage: code-health.js <command> [options]\ncommands: validate-findings [--slice <id>], classify, next-slice, status, churn-report, retry-queue drain, retry-queue update <results.json>\n',
+      cmd,
+    );
+  }
+});

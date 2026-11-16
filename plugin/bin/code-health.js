@@ -58,10 +58,8 @@ function readGateCache(root) {
   return { ok: true, cache };
 }
 
-// Shared by cmdPullIssues' --min-severity and cmdValidateFindings' --min-risk —
-// both reject a value that isn't a RISK_RANK key, print an error naming the
-// offending flag/command, and return { ok: false, code: 2 }, so a future change to
-// RISK_RANK's tiers (or the error-reporting convention) only has to be made in one place.
+// cmdValidateFindings' --min-risk check — rejects a value that isn't a RISK_RANK key,
+// prints an error naming the offending flag/command, and returns { ok: false, code: 2 }.
 function validateRiskArg(value, { argName, cmdName, consequence }, stderr) {
   if (value == null) return { ok: true };
   if (Object.prototype.hasOwnProperty.call(RISK_RANK, value)) return { ok: true };
@@ -84,13 +82,8 @@ function parseArgs(argv, cwd = process.cwd()) {
     else if (a === '--slice') args.slice = argv[++i];
     else if (a === '--fail-on') args['fail-on'] = argv[++i];
     else if (a === '--fail-on-high-churn') args['fail-on-high-churn'] = argv[++i];
-    else if (a === '--label') args.label = argv[++i];
     else if (a === '--min-risk') args['min-risk'] = argv[++i];
-    // --min-severity is pull-issues' own flag name (distinct from --min-risk because it
-    // filters already-filed GitHub issues' risk:<tier> label, not a freshly computed risk
-    // tier pre-filing) but shares --min-risk's 3-tier low|medium|high vocabulary/RISK_RANK.
-    else if (a === '--min-severity') args['min-severity'] = argv[++i];
-    else if (a === '--budget' || a === '--max-slices') args.budget = Number(argv[++i]);
+    else if (a === '--budget') args.budget = Number(argv[++i]);
     else args._.push(a);
   }
   return args;
@@ -156,38 +149,6 @@ function cmdStatus(args, ctx) {
     return 1;
   }
   ctx.stdout(line);
-  return 0;
-}
-
-function cmdPullIssues(args, ctx) {
-  const { pullReconIssues } = require('./lib/code-health/pull-issues');
-  if (!args.issues) {
-    ctx.stderr('usage: code-health.js pull-issues --label <label> --issues <file> [--min-severity <sev>]\n');
-    return 2;
-  }
-  const risk = validateRiskArg(args['min-severity'], {
-    argName: 'min-severity',
-    cmdName: 'pull-issues',
-    consequence: 'an unrecognized value silently disables the severity filter instead of restricting output.',
-  }, ctx.stderr);
-  if (!risk.ok) return risk.code;
-  let issuesJson;
-  try {
-    issuesJson = JSON.parse(fs.readFileSync(resolveAgainst(ctx.cwd(), args.issues), 'utf8'));
-  } catch {
-    ctx.stderr(`pull-issues: could not read or parse issues file: ${args.issues}\n`);
-    return 1;
-  }
-  if (!Array.isArray(issuesJson)) {
-    ctx.stderr('pull-issues: issues file must contain a JSON array\n');
-    return 1;
-  }
-  const briefs = pullReconIssues({
-    label: args.label || 'code-health',
-    minSeverity: args['min-severity'],
-    issuesJson,
-  });
-  ctx.stdout(JSON.stringify(briefs, null, 2) + '\n');
   return 0;
 }
 
@@ -430,7 +391,6 @@ function run(argv, deps = realDeps) {
   const cmd = args._[0];
   if (cmd === 'status') return cmdStatus(args, ctx);
   if (cmd === 'churn-report') return ctx.cmdChurnReport(args);
-  if (cmd === 'pull-issues') return cmdPullIssues(args, ctx);
   if (cmd === 'validate-findings') return cmdValidateFindings(args, ctx);
   if (cmd === 'classify') return cmdClassify(args, ctx);
   if (cmd === 'next-slice') return cmdNextSlice(args, ctx);
@@ -447,7 +407,7 @@ function run(argv, deps = realDeps) {
   }
   ctx.stderr(
     'usage: code-health.js <command> [options]\n' +
-    'commands: validate-findings [--slice <id>], classify, next-slice, status, churn-report, pull-issues, ' +
+    'commands: validate-findings [--slice <id>], classify, next-slice, status, churn-report, ' +
     'retry-queue drain, retry-queue update <results.json>\n',
   );
   return 2;
