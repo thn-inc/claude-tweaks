@@ -36,6 +36,15 @@ function paragraph(text, heading) {
   return text.slice(start, end === -1 ? undefined : end);
 }
 
+// The gate and routing clauses, pinned exactly (a token-presence check passes a flipped value).
+const FINISH_CLAUSES = [
+  'printed `push.state` `pushed` and `commit.clean` `true`',
+  'any other state skips the merge',
+  'naming the state or the `commit.dirty` paths',
+  '"Approve all + merge", or `console.json`\'s `merge.resolution` `merge`',
+  'carry no merge decision: they skip the merge',
+];
+
 // The order the AC pins: no tree-changing action of execution-and-verification.md, nor
 // cleanup items 1, 2, 3 and 5, is ordered after the branch-finish merge.
 function assertFinishAfterLastWriter(execText, consoleText) {
@@ -58,6 +67,7 @@ function assertFinishAfterLastWriter(execText, consoleText) {
     assert.ok(finish.includes(needle), `Branch finish must carry ${JSON.stringify(needle)}`);
   }
   assert.ok(finish.indexOf(MERGE) < finish.indexOf('items 4, 6, 7 and 8'), 'items 4, 6, 7 and 8 run after the merge');
+  for (const clause of FINISH_CLAUSES) assert.ok(finish.includes(clause), `Branch finish must carry the exact clause ${JSON.stringify(clause)}`);
 
   const start = consoleText.indexOf('13. **');
   const end = consoleText.indexOf('14. ', start);
@@ -97,6 +107,26 @@ test('go-red: a Branch finish that merges whatever the push did fails the pin', 
   const mutated = exec.split('push.state').join('push result');
   assert.notStrictEqual(mutated, exec);
   assert.throws(() => assertFinishAfterLastWriter(mutated, read('wrap-up/review-console.md')), /push\.state/);
+});
+
+test('go-red: each exact Branch finish gate and routing clause fails the pin when its value flips', () => {
+  const exec = read('wrap-up/execution-and-verification.md');
+  const consoleText = read('wrap-up/review-console.md');
+  const mutants = [
+    ['push.state gate value', 'printed `push.state` `pushed` and', 'printed `push.state` `skipped` and'],
+    ['dropped pushed requirement', 'printed `push.state` `pushed` and `commit.clean`', 'printed `push.state` and `commit.clean`'],
+    ['commit.clean guard value', '`commit.clean` `true`', '`commit.clean` `false`'],
+    ['merge.resolution routing', '`merge.resolution` `merge`', '`merge.resolution` `leave-open`'],
+    ['Approve all + merge label', '"Approve all + merge", or', '"Approve all", or'],
+    ['leave-open skip', 'they skip the merge', 'they merge'],
+    ['SKIP line drops the commit.dirty paths', 'naming the state or the `commit.dirty` paths', 'naming the state'],
+    ['any other state', 'any other state skips the merge', 'any other state merges'],
+  ];
+  for (const [name, from, to] of mutants) {
+    const mutated = exec.replace(from, to);
+    assert.notStrictEqual(mutated, exec, name);
+    assert.throws(() => assertFinishAfterLastWriter(mutated, consoleText), /exact clause/, name);
+  }
 });
 
 test('go-red: an ordering paragraph that drops item 2 (Override console never deletes the ledger) fails the pin', () => {
