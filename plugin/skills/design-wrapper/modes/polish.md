@@ -75,7 +75,7 @@ Every cached finding is consumed one of exactly four ways, keyed on `source`, `d
 A `craft-critic` finding has no `suggestion` by construction (`review.md` Step 4 writes `null`) and is
 never fed to Step 5's resolution — it is not an unclassified observation either; it is context.
 
-**Why the `dispositionByReview` check comes first.** `review/code-mode-steps.md`'s Step 6.7 (Late
+**Why the `dispositionByReview` check comes first.** `review/late-findings-routing.md` (review's Step 6.7, Late
 Findings Routing) writes this field back onto a cache entry once it has already routed that finding
 under the run's `review-auto-apply-ceiling` — auto-applying it, staging it for a human, or prompting
 inline. Without this branch, this step's own suggestion-driven dispatch would independently re-derive

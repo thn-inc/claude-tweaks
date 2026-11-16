@@ -27,7 +27,7 @@ full procedure documented in each skill's own `SKILL.md` instead.
 | Step 5 — Simplify Changed Code | run | `code-mode-steps.md` |
 | Step 6 — Visual Review | run (browser/dev-server permitting) | `code-mode-steps.md` |
 | Step 6.5 — Design Quality Pass | run (per `design-critique` lever) | `code-mode-steps.md`, `ux-analysis.md` |
-| Step 6.7 — Late Findings Routing | run | `code-mode-steps.md` |
+| Step 6.7 — Late Findings Routing | run | `code-mode-steps.md`, `late-findings-routing.md` |
 | Step 7 — Present Review Summary | run | `code-mode-steps.md`, `review-summary-template.md` |
 
 A finding at any severity in Step 3 (or a Safety-regression finding at wrap-up's Reflect step

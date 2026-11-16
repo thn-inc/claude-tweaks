@@ -22,6 +22,7 @@ const PLUGIN = path.join(__dirname, '..', 'plugin');
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
 const LENS_DISPATCH = path.join(PLUGIN, 'skills', 'review', 'step3-lens-dispatch.md');
 const CONTRACT = path.join(PLUGIN, 'skills', '_shared', 'subagent-output-contract.md');
+const BUILD_DISPATCH = path.join(PLUGIN, 'skills', 'build', 'dispatch.md');
 
 // Documented gaps: a `_shared/` citation with no compose step behind it yet. Each entry must
 // still occur on a governed line with no fallback clause on it — a stale-exemption check
@@ -202,13 +203,54 @@ test('claims.md stays an on-demand citation with its fallback in both templates;
   assert.match(item5, /`\{minted-run-dir\}\/context\/merge\.md` is read once, whole, up front by the second call only/);
 });
 
+// Whether some line carries the `--phase {phase}` compose call with the phase name ending where
+// the line's token ends — `--phase review-lens` is a prefix of `--phase review-lens-child`, so a
+// bare substring match would accept the wrong line.
+function hasPhaseLine(lines, phase) {
+  const want = `node "\${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --phase ${phase}`;
+  return lines.some((l) => l.split(want).slice(1).some((after) => !/^[\w-]/.test(after)));
+}
+
 test('review/step3-lens-dispatch.md composes its bundle with --phase review-lens', () => {
   const text = readText(LENS_DISPATCH);
-  assert.ok(
-    text.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --phase review-lens'),
-    'step3-lens-dispatch.md is missing its --phase review-lens compose line',
-  );
+  assert.ok(hasPhaseLine(text.split('\n'), 'review-lens'), 'step3-lens-dispatch.md is missing its --phase review-lens compose line');
   assert.ok(!text.includes('--step review-dispatch'), 'step3-lens-dispatch.md still composes with --step review-dispatch');
+});
+
+test('the --phase line check is token-bounded: a review-lens-child line alone is no review-lens line (discrimination proof)', () => {
+  const lines = readText(LENS_DISPATCH).split('\n');
+  const withoutLens = lines.filter((l) => !/--phase review-lens(?![\w-])/.test(l));
+  assert.notEqual(withoutLens.length, lines.length, 'setup: no review-lens line to drop');
+  assert.ok(hasPhaseLine(withoutLens, 'review-lens-child'), 'setup: the review-lens-child line must remain');
+  assert.equal(hasPhaseLine(withoutLens, 'review-lens'), false);
+});
+
+// #4359: a child-facing on-demand bundle is composed by its own `--phase` line, and every citation
+// of it carries the fallback that names the `_shared/` source it composes. Each citation is
+// conditional: the bundle path with `{run}` filled in literally when the bundle was composed, and
+// a standalone branch that cites a `_shared/` file directly.
+function assertChildBundleCited(file, phase, bundlePath, fallbackSource) {
+  const text = readText(file);
+  const lines = text.split('\n');
+  assert.ok(hasPhaseLine(lines, phase), `${path.basename(file)} is missing its --phase ${phase} compose line`);
+  assert.ok(
+    lines.some((l) => l.includes(bundlePath) && FALLBACK_RE.test(l) && l.includes(`read \`${fallbackSource}\` directly`)),
+    `${path.basename(file)} has no line citing ${bundlePath} with a fallback naming ${fallbackSource}`,
+  );
+  const cites = lines.filter((l) => l.includes(`{run}/${bundlePath}`) && FALLBACK_RE.test(l));
+  assert.ok(cites.length > 0, `${path.basename(file)} has no {run}/${bundlePath} citation`);
+  for (const l of cites) {
+    assert.ok(l.includes('`{run}` filled in literally'), `${path.basename(file)}: a ${bundlePath} citation does not say {run} is filled in literally`);
+    assert.match(l, /[Ss]tandalone[^.]*`_shared\/[^`]+`/, `${path.basename(file)}: a ${bundlePath} citation has no standalone branch citing _shared/ directly`);
+  }
+}
+
+test('step3-lens-dispatch.md cites lens-child.md with its fallback', () => {
+  assertChildBundleCited(LENS_DISPATCH, 'review-lens-child', 'context/lens-child.md', '_shared/subagent-output-contract.md');
+});
+
+test('build/dispatch.md composes and cites sdd-child', () => {
+  assertChildBundleCited(BUILD_DISPATCH, 'sdd-child', 'context/sdd-child.md', '_shared/subagent-dispatch-core.md');
 });
 
 test('subagent-output-contract.md names the phase registry as the one home and the always-bundle read rule', () => {
