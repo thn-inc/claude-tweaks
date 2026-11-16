@@ -635,6 +635,64 @@ test('an isolated run that passes cleanly on the first try never triggers a retr
   assert.deepStrictEqual(calls.runs.filter((c) => c.kind === 'isolated-retry'), []);
 });
 
+// The full run's spec log when node --test's child for R was killed (SIGTERM under load):
+// the shape probed on Node 20 and 26 — a file-level entry, no signal in the spec text (#4424).
+const KILLED_SPEC = ['✔ other passes (1ms)', `✖ ${R} (6337000.5ms)`, 'ℹ tests 2', 'ℹ suites 0', 'ℹ pass 1', 'ℹ fail 1', 'ℹ cancelled 0',
+  'ℹ skipped 0', 'ℹ todo 0', 'ℹ duration_ms 6337001', '', '✖ failing tests:', '', `test at ${R}:1:1`, `✖ ${R} (6337000.5ms)`, "  'test failed'", ''].join('\n');
+// The same kill in a TAP full run (cwd /repo, as fakes() uses).
+const KILLED_TAP = ['TAP version 13', `# Subtest: ${R}`, `not ok 1 - ${R}`, '  ---', '  duration_ms: 6337000.5', "  type: 'test'",
+  `  location: '/repo/${R}:1:1'`, "  failureType: 'testCodeFailure'", '  exitCode: ~', "  signal: 'SIGTERM'", "  error: 'test failed'",
+  "  code: 'ERR_TEST_FAILURE'", '  ...', '1..1', '# tests 1', '# suites 0', '# pass 0', '# fail 1', '# cancelled 0', '# skipped 0', '# todo 0', '# duration_ms 6337001'].join('\n');
+const killedCase = ({ head = KILLED_SPEC, isolatedCode = 0, isolatedLog = PASS_LOG, retryLog, retryCode } = {}) => {
+  const { p, dir } = logFile(head);
+  const { git, runOne, calls } = fakes({
+    outcomes: { [`baseline:${R}`]: 1, [`isolated:${R}`]: isolatedCode, ...(retryCode !== undefined ? { [`isolated-retry:${R}`]: retryCode } : {}) },
+    // Base fails one test unrelated to the kill (the #3064 SIGINT-case shape in #3315's run).
+    logs: { [`baseline:${R}`]: NAMED({ fails: [['unrelated']], passes: ['x'] }), [`isolated:${R}`]: isolatedLog, ...(retryLog !== undefined ? { [`isolated-retry:${R}`]: retryLog } : {}) },
+  });
+  return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git })
+    .then((r) => ({ ...r, calls }));
+};
+
+test('AC1.1, AC1.2: a SIGTERM-killed file (file-level in the full run) passing cleanly in isolation at HEAD is baseline-flaky though its base run fails an unrelated test (#4424)', async () => {
+  const r = await killedCase();
+  assert.strictEqual(r.verdict, 'pass');
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.deepStrictEqual(r.attributable, []);
+  assert.match(r.flakyLogs[R], /tests-isolated-tests\+r\.test\.js\.log$/);
+  assert.deepStrictEqual(r.calls.runs.filter((c) => c.kind === 'isolated-retry'), []);
+});
+
+test('AC2.1: the same killed file whose isolated HEAD run also fails stays ATTRIBUTABLE (#4424)', async () => {
+  const r = await killedCase({ isolatedCode: 1, isolatedLog: NAMED({ fails: [['x']] }), retryCode: 1, retryLog: NAMED({ fails: [['x']] }) });
+  assert.strictEqual(r.verdict, 'fail');
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.flakyPassed, []);
+});
+
+test('TAP SIGTERM block: a killed file in a TAP full run classifies the same way (#4424)', async () => {
+  const r = await killedCase({ head: KILLED_TAP });
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.strictEqual(r.verdict, 'pass');
+});
+
+test('mixed file-level + test-level: a kill beside a real test failure in the same file keeps the per-test rule — attributable (#4424)', async () => {
+  const head = KILLED_SPEC.replace('ℹ fail 1', 'ℹ fail 2').replace(`test at ${R}:1:1`, `test at ${R}:9:3\n✖ works (1ms)\n  AssertionError\n\ntest at ${R}:1:1`);
+  const r = await killedCase({ head });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.flakyPassed, []);
+});
+
+test('isolated cancelled / all-skipped: a killed file is flaky only when its isolated run passes every accounting guard (#4424)', async () => {
+  const cancelled = ['✔ x (1ms)', 'ℹ tests 2', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 1'].join('\n');
+  const allSkipped = ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 0', 'ℹ cancelled 0'].join('\n');
+  for (const isolatedLog of [cancelled, allSkipped]) {
+    const r = await killedCase({ isolatedCode: 0, isolatedLog });
+    assert.deepStrictEqual(r.attributable, [R]);
+    assert.deepStrictEqual(r.flakyPassed, []);
+  }
+});
+
 test('absence is not a pass: an isolated run cut short (the extra test never ran) or skipping it stays attributable (#3043)', async () => {
   // A child killed mid-file after `x` failed: `slow` never appears.
   assert.deepStrictEqual((await isolationCase(NAMED({ fails: [['x']], passes: ['first'] }))).attributable, [R]);

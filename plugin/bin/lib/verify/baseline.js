@@ -4,7 +4,8 @@
 // failing test files: at the base commit in a scratch detached worktree, and
 // — for files existing at base but not proven failing there — once more in
 // isolation at HEAD. A file failing at base is baseline; one passing in
-// isolation at HEAD is flaky; the rest, including every file absent at base,
+// isolation at HEAD is flaky (a file the full run killed outright included);
+// the rest, including every file absent at base,
 // are attributable. Fails closed: anything not classified with evidence (no
 // extractable file, a failing entry naming no test file, a fail-fast skip, a
 // spawn error, a base run with no numeric exit) is never "fails at base" — a
@@ -686,7 +687,10 @@ async function adjudicate({
     // Flaky is symmetric evidence: the isolated run exited 0, its log accounts
     // for itself (nothing cancelled), tests actually ran and passed (an
     // all-skipped run is not clean — `echo {file}` proves nothing), and every
-    // test that failed in the full run shows its own pass there.
+    // test that failed in the full run shows its own pass there. A wholly
+    // file-level full-run failure (a killed or timed-out child — the spec
+    // reporter cannot tell which) names no test to show a pass for, so the
+    // clean isolated run is the evidence (#4424).
     const ranCleanly = (r, k) => {
       if (!r || r.exitCode !== 0) return false;
       const text = readLog(r.logPath);
@@ -696,7 +700,9 @@ async function adjudicate({
       const counts = parseCounts(text, family);
       if (!(counts.tests > 0 && counts.pass > 0 && counts.fail === 0)) return false;
       const tree = testTree(text, family);
-      return tree.wellFormed && work[k].headTests.length > 0 && work[k].headTests.every(passedIn(tree));
+      if (!tree.wellFormed) return false;
+      if (work[k].headFileLevel) return true;
+      return work[k].headTests.length > 0 && work[k].headTests.every(passedIn(tree));
     };
     // Baseline after an isolated HEAD run: the isolated log (same accounting
     // guards, nothing cancelled, naming only this file, never a file-level
