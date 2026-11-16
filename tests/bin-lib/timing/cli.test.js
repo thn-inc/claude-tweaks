@@ -410,6 +410,45 @@ test('#3375: a late worktree-reaped event does not stretch the run window over t
   assert.match(r.stdout, /^dispatches: 1 outside the run window excluded$/m);
 });
 
+// --- #4359 per-file procedure reads -------------------------------------------
+// One assistant line whose Read tool_use names `file` (a skills/ path -> a key).
+const readLine = (agentId, ts, id, file) => JSON.stringify({ type: 'assistant', agentId, isSidechain: true, timestamp: ts, message: { id, role: 'assistant', model: 'claude-sonnet-5-5', content: [{ type: 'tool_use', id: `tu-${id}`, name: 'Read', input: { file_path: file } }], usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }) + '\n';
+const SKILL_A = '/Users/x/.claude/plugins/cache/m/claude-tweaks/1.0.0/skills/review/SKILL.md';
+const SKILL_B = '/Users/x/.claude/plugins/cache/m/claude-tweaks/1.0.0/skills/review/lenses.md';
+// build [09:58, 10:02) inside call-1; review [10:02, 10:10).
+const SPAN_EVENTS = '{"ts":"2026-10-17T09:58:00.000Z","type":"skill_invoked","skill":"claude-tweaks:flow"}\n{"ts":"2026-10-17T09:58:30.000Z","type":"skill_invoked","skill":"claude-tweaks:build"}\n{"ts":"2026-10-17T10:02:00.000Z","type":"skill_invoked","skill":"claude-tweaks:review"}\n{"ts":"2026-10-17T10:10:00.000Z","type":"session-end"}\n';
+
+test('#4359: a dispatch spanning two phases books each read to its own phase', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:00:00.000Z', 'mx1', SKILL_A) + readLine('x', '2026-10-17T10:05:00.000Z', 'mx2', SKILL_B));
+  const r = await run(['--run', s.dir, '--json', '--transcript', s.transcript]);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  const p = Object.fromEntries(t.phases.map((x) => [x.phase, x]));
+  assert.deepEqual(p.build.procedureFiles, { 'skills/review/SKILL.md': 1 });
+  assert.deepEqual(p.review.procedureFiles, { 'skills/review/lenses.md': 1 });
+  assert.deepEqual(t.totals.procedureFiles, { 'skills/review/SKILL.md': 1, 'skills/review/lenses.md': 1 });
+  assert.deepEqual(t.unattributed.procedureFiles, {});
+  // the dispatch reads never become main rows
+  assert.equal(t.transcripts[0].rows, 1);
+});
+
+test('#4359: an agent transcript passed as --transcript is not counted again as a dispatch', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  const agent = path.join(sub, 'agent-x.jsonl');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(agent, readLine('x', '2026-10-17T10:05:00.000Z', 'mx1', SKILL_A));
+  const r = await run(['--run', s.dir, '--json', '--transcript', agent]);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.ok(t.dispatches.items.some((i) => i.agentId === 'x'), 'agent-x is still listed as a dispatch');
+  assert.deepEqual(t.totals.procedureFiles, { 'skills/review/SKILL.md': 1 });
+  assert.deepEqual(t.phases.find((x) => x.phase === 'review').procedureFiles, { 'skills/review/SKILL.md': 1 });
+});
+
 // --- #4029 turn-class telemetry -----------------------------------------------
 const TC_FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'turn-classes');
 const TC_HAND = { edit: 1, read: 1, explore: 1, procedure: 1, bookkeeping: 1, orientation: 2, verify: 1, 'guard-refusal': 1, dispatch: 1, other: 1 };

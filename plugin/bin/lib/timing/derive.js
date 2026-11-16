@@ -327,8 +327,14 @@ const ZERO_TOKENS = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 }
 // tokens. Rows outside every phase land in `unattributed`. Token fields
 // come from assistant rows, round-trips/procedure bytes from user rows;
 // the reader keeps the groups exclusive per row, so sums never double.
-function joinTokens(phases, usageRows) {
+// Every bucket also carries procedureFiles ({ [skills/… key]: count }, keys
+// ascending, #4359): the rows' own counts plus each dispatchFileReads entry
+// ({ ts, procedureFiles }, one per subagent row that read a skill file), which
+// joins the phase containing its ts by the same rule and adds to
+// procedureFiles only — never to rows, tokens or round trips.
+function joinTokens(phases, usageRows, { dispatchFileReads = [] } = {}) {
   const rows = Array.isArray(usageRows) ? usageRows : [];
+  const fileReads = Array.isArray(dispatchFileReads) ? dispatchFileReads : [];
   const phaseList = Array.isArray(phases) ? phases : [];
   const spans = phaseList.map((p) => ({
     phase: p.phase, start: ms(p.start), end: ms(p.end), source: p.source,
@@ -337,15 +343,19 @@ function joinTokens(phases, usageRows) {
   // `samples` (one contextTokens per turn start) is internal: finalize()
   // folds it into `context` and removes it before a bucket leaves joinTokens.
   const bucket = () => ({
-    tokens: ZERO_TOKENS(), procedureBytes: 0, toolRoundTrips: 0, rows: 0,
+    tokens: ZERO_TOKENS(), procedureBytes: 0, procedureFiles: {}, toolRoundTrips: 0, rows: 0,
     turnClasses: Object.fromEntries(TURN_CLASSES.map((c) => [c, 0])), modelMix: {}, samples: [],
   });
+  const addFiles = (b, files) => {
+    for (const [k, n] of Object.entries(files || {})) b.procedureFiles[k] = (b.procedureFiles[k] || 0) + (Number(n) || 0);
+  };
   const add = (b, r) => {
     b.tokens.input += Number(r.inputTokens) || 0;
     b.tokens.output += Number(r.outputTokens) || 0;
     b.tokens.cacheRead += Number(r.cacheRead) || 0;
     b.tokens.cacheCreate += Number(r.cacheCreate) || 0;
     b.procedureBytes += Number(r.procedureBytes) || 0;
+    addFiles(b, r.procedureFiles);
     if (r.toolRoundTrip) b.toolRoundTrips += 1;
     b.rows += 1;
     for (const [cls, n] of Object.entries(r.turnClasses || {})) b.turnClasses[Object.hasOwn(b.turnClasses, cls) ? cls : 'other'] += Number(n) || 0;
@@ -364,6 +374,7 @@ function joinTokens(phases, usageRows) {
     const { samples, ...rest } = b;
     return {
       ...rest,
+      procedureFiles: Object.fromEntries(Object.keys(b.procedureFiles).sort().map((k) => [k, b.procedureFiles[k]])),
       context: { turns: sorted.length, p50: percentile(sorted, 0.5), p90: percentile(sorted, 0.9) },
       subagents: b.turnClasses.dispatch,
       ceremonyShare: calls ? Math.round((ceremony / calls) * 1000) / 1000 : null,
@@ -371,23 +382,30 @@ function joinTokens(phases, usageRows) {
   };
   for (const s of spans) acc.set(s.phase, bucket());
   const unattributed = bucket();
-  for (const r of rows) {
-    const t = ms(r && r.ts);
-    if (t === null) continue;
+  // ts -> the bucket of the innermost phase containing it, else unattributed.
+  const bucketFor = (t) => {
     let best = null;
     for (const s of spans) {
       if (s.start === null || s.end === null || s.source === 'unattributed') continue;
       if (!(t >= s.start && t < s.end)) continue;
       if (!best || (s.end - s.start) < (best.end - best.start) || ((s.end - s.start) === (best.end - best.start) && s.start > best.start)) best = s;
     }
-    add(best ? acc.get(best.phase) : unattributed, r);
+    return best ? acc.get(best.phase) : unattributed;
+  };
+  for (const r of rows) {
+    const t = ms(r && r.ts);
+    if (t === null) continue;
+    add(bucketFor(t), r);
   }
+  const timedReads = fileReads.filter((e) => ms(e && e.ts) !== null);
+  for (const e of timedReads) addFiles(bucketFor(ms(e.ts)), e.procedureFiles);
   const outPhases = phaseList.map((p) => {
     const { rows: _rows, ...b } = finalize(acc.get(p.phase));
     return { ...p, ...b };
   });
   const totalsAcc = bucket();
   for (const r of rows) if (ms(r && r.ts) !== null) add(totalsAcc, r);
+  for (const e of timedReads) addFiles(totalsAcc, e.procedureFiles);
   const { rows: _totalRows, ...totals } = finalize(totalsAcc);
   return { phases: outPhases, unattributed: finalize(unattributed), totals };
 }

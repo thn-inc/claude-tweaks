@@ -66,6 +66,7 @@ const { readManifest } = require('./lib/flow/manifest');
 const { TURN_CLASSES, CEREMONY_CLASSES } = require('./lib/timing/turn-class');
 const { checkBudgets, defaultGh } = require('./lib/timing/budget');
 const { resolveAgainst } = require('./lib/health-core/io');
+const { canonicalRealpath } = require('./lib/path-guard');
 
 const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript] [--check-budgets]\n';
 
@@ -301,6 +302,23 @@ async function collectDispatches(paths, events, cwd) {
   return out;
 }
 
+// (dispatches, transcript paths, cwd) -> joinTokens' dispatchFileReads (#4359):
+// every item's procedureFileRows, in item order. An item whose transcript is
+// one of the run's own --transcript paths (realpath on both sides, path.resolve
+// when that fails) is skipped: its reads are already main rows.
+function dispatchFileReads(dispatches, paths, cwd) {
+  if (!dispatches || !Array.isArray(dispatches.items)) return [];
+  const real = (p) => { const abs = path.resolve(cwd, p); return canonicalRealpath(abs) || abs; };
+  const own = new Set(paths.map(real));
+  const reads = [];
+  for (const item of dispatches.items) {
+    if (!Array.isArray(item.procedureFileRows)) continue;
+    if (typeof item.transcriptPath === 'string' && own.has(real(item.transcriptPath))) continue;
+    reads.push(...item.procedureFileRows);
+  }
+  return reads;
+}
+
 // Resolve the transcript list: explicit --transcript paths, plus the
 // auto-located one. Returns { paths, notes }.
 function resolveTranscripts(o, runState, deps) {
@@ -363,7 +381,8 @@ async function run(argv, deps) {
       notes.push(`tokens: transcript not found (${reason})`);
     }
   }
-  const tokens = wantTokens ? joinTokens(out.phases, rows) : null;
+  const dispatches = wantTokens ? await collectDispatches(paths, events.events, cwd) : null;
+  const tokens = wantTokens ? joinTokens(out.phases, rows, { dispatchFileReads: dispatchFileReads(dispatches, paths, cwd) }) : null;
   if (tokens) tokens.totals.rows = rows.length;
   const guard = wantTokens ? countGuardEvents(events.events) : null;
 
@@ -373,12 +392,13 @@ async function run(argv, deps) {
     timing.unattributed = tokens.unattributed;
     timing.totals.tokens = tokens.totals.tokens;
     timing.totals.procedureBytes = tokens.totals.procedureBytes;
+    timing.totals.procedureFiles = tokens.totals.procedureFiles;
     timing.totals.toolRoundTrips = tokens.totals.toolRoundTrips;
     for (const k of ['turnClasses', 'context', 'modelMix', 'subagents', 'ceremonyShare']) timing.totals[k] = tokens.totals[k];
     timing.totals.guard = guard;
     timing.transcripts = transcripts;
     if (notes.length) timing.notes = notes;
-    timing.dispatches = await collectDispatches(paths, events.events, cwd);
+    timing.dispatches = dispatches;
   }
   // #4029: the efficiency-budget check. A transcript that yielded no rows leaves
   // the transcript-backed totals out, so they read as unmeasured, never as 0 -> ok.

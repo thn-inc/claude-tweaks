@@ -316,6 +316,60 @@ test('#1929: joinTokens with no rows leaves zeroed columns and never throws on u
   assert.equal(joined.totals.toolRoundTrips, 0);
 });
 
+// #4359: per-file procedure reads. record-1535's review phase is [13:50, 13:57).
+test('#4359: joinTokens sums per-file reads per phase, keyed and sorted', () => {
+  const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
+  const joined = joinTokens(out.phases, [
+    usageRow('2026-09-05T13:51:00.000Z', { procedureFiles: { 'skills/b.md': 1 } }),
+    usageRow('2026-09-05T13:52:00.000Z', { procedureFiles: { 'skills/b.md': 1, 'skills/a.md': 2 } }),
+  ]);
+  const review = joined.phases.find((x) => x.phase === 'review');
+  assert.deepEqual(review.procedureFiles, { 'skills/a.md': 2, 'skills/b.md': 2 });
+  assert.deepEqual(Object.keys(review.procedureFiles), ['skills/a.md', 'skills/b.md']);
+  assert.deepEqual(joined.phases.find((x) => x.phase === 'wrap-up').procedureFiles, {});
+  assert.deepEqual(joined.unattributed.procedureFiles, {});
+  assert.deepEqual(Object.keys(joined.totals.procedureFiles), ['skills/a.md', 'skills/b.md']);
+});
+
+test('#4359: joinTokens attributes dispatch reads by start ts and never counts them as rows', () => {
+  const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
+  const rows = [usageRow('2026-09-05T13:51:00.000Z', { role: 'user', toolRoundTrip: true, procedureFiles: { 'skills/a.md': 1 } })];
+  const base = joinTokens(out.phases, rows);
+  const joined = joinTokens(out.phases, rows, { dispatchFileReads: [
+    { ts: '2026-09-05T13:53:00.000Z', procedureFiles: { 'skills/c.md': 2, 'skills/a.md': 1 } },
+    { ts: '2026-09-05T12:00:00.000Z', procedureFiles: { 'skills/z.md': 3 } },
+    { ts: 'not-a-date', procedureFiles: { 'skills/q.md': 9 } },
+  ] });
+  const review = joined.phases.find((x) => x.phase === 'review');
+  const baseReview = base.phases.find((x) => x.phase === 'review');
+  assert.deepEqual(review.procedureFiles, { 'skills/a.md': 2, 'skills/c.md': 2 });
+  assert.equal(review.rows, undefined);
+  assert.equal(review.toolRoundTrips, baseReview.toolRoundTrips);
+  assert.deepEqual(review.tokens, baseReview.tokens);
+  assert.deepEqual(joined.unattributed.procedureFiles, { 'skills/z.md': 3 });
+  assert.equal(joined.unattributed.rows, base.unattributed.rows);
+  assert.equal(joined.totals.toolRoundTrips, base.totals.toolRoundTrips);
+  // everything but procedureFiles is identical to the join without dispatch reads
+  const strip = (b) => { const { procedureFiles: _f, ...rest } = b; return rest; };
+  assert.deepEqual(joined.phases.map(strip), base.phases.map(strip));
+  assert.deepEqual(strip(joined.unattributed), strip(base.unattributed));
+  assert.deepEqual(strip(joined.totals), strip(base.totals));
+});
+
+test('#4359: totals.procedureFiles is the main-transcript row counts plus every dispatch entry', () => {
+  const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
+  const joined = joinTokens(out.phases, [
+    usageRow('2026-09-05T12:59:00.000Z', { procedureFiles: { 'skills/a.md': 1 } }), // unattributed row
+    usageRow('2026-09-05T14:00:00.000Z', { procedureFiles: { 'skills/b.md': 1 } }), // wrap-up
+  ], { dispatchFileReads: [
+    { ts: '2026-09-05T13:10:00.000Z', procedureFiles: { 'skills/a.md': 2 } },
+    { ts: '2026-09-05T12:00:00.000Z', procedureFiles: { 'skills/b.md': 4 } },
+  ] });
+  assert.deepEqual(joined.totals.procedureFiles, { 'skills/a.md': 3, 'skills/b.md': 5 });
+  assert.deepEqual(joined.phases.find((x) => x.phase === 'tasks').procedureFiles, { 'skills/a.md': 2 });
+  assert.deepEqual(joined.unattributed.procedureFiles, { 'skills/a.md': 1, 'skills/b.md': 4 });
+});
+
 // #4029: the hand-counted turn-classes fixture, built inline. Ten turns k=1..10
 // (context k*1000 + k*10); m3 runs on sonnet, the rest on opus; the user rows
 // carry the per-class counts, so the 11 calls ride 10 round trips.
