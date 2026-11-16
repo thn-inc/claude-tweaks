@@ -116,4 +116,4 @@ function fixture(t, { capturedTargets = [X, Z], autocrlf, originConflict = false
   return { root, origin, repo, runDir, mergeBase, mainTip: mergeBase };
 }
 
-module.exports = { fixture, sh, write, read, X, Z, BODY, RUN_ID, BRANCH, NOW };
+module.exports = { fixture, sh, write, read, X, Z, RUN_ID, BRANCH, NOW };

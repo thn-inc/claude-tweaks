@@ -69,13 +69,19 @@ const remoteBranch = (f) => {
     throw new Error(`remoteBranch reads the files ref backend only; ${f.origin} uses reftable`);
   }
   const ref = `refs/heads/${BRANCH}`;
-  const absent = (e) => e.code === 'ENOENT' || e.code === 'ENOTDIR';
-  try { return fs.readFileSync(path.join(f.origin, ref), 'utf8').trim() || null; } catch (e) { if (!absent(e)) throw e; }
-  try {
-    const line = fs.readFileSync(path.join(f.origin, 'packed-refs'), 'utf8').split(/\r?\n/).find((l) => l.endsWith(` ${ref}`));
-    return line ? line.split(' ')[0] : null;
-  } catch (e) { if (!absent(e)) throw e; }
-  return null;
+  const readOrNull = (rel) => {
+    try {
+      return fs.readFileSync(path.join(f.origin, rel), 'utf8');
+    } catch (e) {
+      if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null;
+      throw e;
+    }
+  };
+  const loose = readOrNull(ref);
+  if (loose !== null) return loose.trim() || null;
+  const packed = readOrNull('packed-refs');
+  const line = packed && packed.split(/\r?\n/).find((l) => l.endsWith(` ${ref}`));
+  return line ? line.split(' ')[0] : null;
 };
 const decisions = (f) => fs.readFileSync(path.join(f.runDir, 'decisions.md'), 'utf8');
 const pushes = (gitCalls) => gitCalls.filter((c) => c.args.includes('push'));
