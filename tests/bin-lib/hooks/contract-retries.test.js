@@ -78,3 +78,9 @@ test('recordRetry returns false and writes nothing for a missing agent id', () =
   assert.strictEqual(recordRetry(id, undefined, ENV), false);
   assert.strictEqual(fs.existsSync(retriesPath(id, ENV)), false, 'no file should be created without an agent id');
 });
+
+test('retriesPath, readRetried and recordRetry throw TypeError without an env (#5377: only SubagentStop calls them)', () => {
+  assert.throws(() => retriesPath('abc-123'), TypeError);
+  assert.throws(() => readRetried('abc-123'), TypeError);
+  assert.throws(() => recordRetry('abc-123', 'agent-1'), TypeError);
+});

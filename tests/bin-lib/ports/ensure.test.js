@@ -6,7 +6,10 @@ const os = require('os');
 const path = require('path');
 const net = require('net');
 
-const { ensure, isRegionCurrent } = require('../../../plugin/bin/lib/ports/ensure');
+const portsEnsure = require('../../../plugin/bin/lib/ports/ensure');
+const { isRegionCurrent } = portsEnsure;
+// #5377: ensure() takes `env` from its caller (SessionStart's hook context); these cases run it under the real one.
+const ensure = (cwd, opts) => portsEnsure.ensure(cwd, { env: process.env, ...opts });
 const { registryPath } = require('../../../plugin/bin/lib/ports/registry');
 const { writeEnvFiles, serviceVars, LEASE_KEY, readManagedRegion, mergeManagedRegion } = require('../../../plugin/bin/lib/ports/env-file');
 

@@ -12,7 +12,7 @@
 //           three default to the real process.env when `env` is left out, and a git child started
 //           without an `env` option inherits it, which no runtime tripwire can see.
 //
-// Tasks 4 and 5 of #5377 append the other event modules to EVENT_MODULES.
+// Every hook event module is listed (session-start.js joined in Task 5 of #5377).
 //
 // Both scans read blank-mode text (string, template and regex bodies blanked, comments blanked), so a
 // message that mentions `process.env` is not code. The verdict is taken on that same text, and a
@@ -38,6 +38,7 @@ const EVENT_MODULES = [
   'plugin/bin/lib/hooks/pre-compact.js',
   'plugin/bin/lib/hooks/subagent-stop.js',
   'plugin/bin/lib/hooks/user-prompt-submit.js',
+  'plugin/bin/lib/hooks/session-start.js',
 ];
 const CALL_NAMES = ['repoInfo', 'runGit', 'writeRunState'];
 
@@ -54,6 +55,7 @@ const FLOORS = {
   'plugin/bin/lib/hooks/pre-compact.js': { repoInfo: 0, runGit: 0, writeRunState: 1 },
   'plugin/bin/lib/hooks/subagent-stop.js': { repoInfo: 0, runGit: 0, writeRunState: 0 },
   'plugin/bin/lib/hooks/user-prompt-submit.js': { repoInfo: 0, runGit: 0, writeRunState: 0 },
+  'plugin/bin/lib/hooks/session-start.js': { repoInfo: 1, runGit: 0, writeRunState: 1 },
 };
 
 function lineOf(src, offset) {

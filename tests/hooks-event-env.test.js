@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runHookCli, hookEnv } = require('./helpers/hook-event');
-const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf, fixtureGit, cleanGitEnv } = require('./helpers/git-fixtures');
 const { gitRepoWithCommit } = require('./helpers/pre-tool-use');
 
 const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
@@ -367,5 +367,252 @@ test('the six light event modules throw TypeError on a context without env', () 
   const ctx = { input: {}, ownedRun: {}, cwd: os.tmpdir() };
   for (const mod of [postToolUse, postToolUseFailure, sessionEnd, preCompact, subagentStop, userPromptSubmit]) {
     assert.throws(() => mod.run(ctx), TypeError);
+  }
+});
+
+// --- session-start reads the context and starts its background child through ctx.spawn ---
+
+const sessionStart = require('../plugin/bin/lib/hooks/session-start');
+const { fixtureHomeEnv } = require('./helpers/fixture-home');
+const { HOOKS } = require('./helpers/hook-event');
+
+const sessionStartPayload = (cwd) => JSON.stringify({ session_id: SESSION, cwd, source: 'startup' });
+
+// A fake for the detached background child: records the call, and answers the two methods the helper uses.
+function fakeSpawn() {
+  const calls = [];
+  const spawn = (file, args, options) => {
+    calls.push({ file, args, options });
+    return { on() {}, unref() {} };
+  };
+  return { spawn, calls };
+}
+
+// A repo whose background status file is stale (completedAt 1), and a fixture home the env names.
+function sessionStartFixture(extraEnv = {}) {
+  const repo = gitRepo();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({ completedAt: 1, surfaced: true, summary: {} }));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-home-'));
+  return { repo, home, env: fixtureHomeEnv(home, hookEnv(extraEnv)) };
+}
+
+// Gives `repo` a bare origin with origin/HEAD set (`setHead`) or left unset, so reconcile resolves an
+// integration branch (or has to repair origin/HEAD). Returns the bare repository's path.
+function addOrigin(repo, { setHead = true } = {}) {
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-origin-'));
+  const git = (args) => fixtureGit(['-C', repo, ...args], { env: cleanGitEnv(), stdio: 'ignore' });
+  fixtureGit(['init', '-q', '--bare', '-b', 'main', bare], { env: cleanGitEnv(), stdio: 'ignore' });
+  git(['remote', 'add', 'origin', bare]);
+  git(['push', '-q', 'origin', 'HEAD:main']);
+  git(['fetch', '-q', 'origin']);
+  if (setHead) {
+    git(['remote', 'set-head', 'origin', 'main']);
+  } else {
+    // A recent git sets origin/HEAD on fetch; drop it, and tolerate a git that never set it.
+    try { git(['symbolic-ref', '--delete', 'refs/remotes/origin/HEAD']); } catch { /* already absent */ }
+  }
+  return bare;
+}
+
+test('session-start reads nothing from process.env', async () => {
+  // The rich fixture walks every branch of the event that a plain repo skips: a policy file (worktree-always
+  // and port-services), a stale run, and an origin, so reconcile resolves the integration branch and model.
+  const { repo, home, env } = sessionStartFixture();
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\nport-services: web\n');
+  mkRunAt(repo, '2026-07-01T090000-spec-1', repo);
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1', 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+  const bare = addOrigin(repo);
+  const { spawn } = fakeSpawn();
+  try {
+    const res = await runHookCli(['session-start'], { input: sessionStartPayload(repo), cwd: repo, env, deps: { spawn } });
+    assert.strictEqual(res.code, 0);
+    const context = JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /Interaction style/);
+    assert.match(context, /unfinished pipeline run/);
+    assert.match(context, /worktree-always: ON/);
+    assert.match(context, /claude-tweaks: ports \d+-\d+ \(/);
+    assert.ok(fs.existsSync(path.join(home, '.claude-tweaks', 'ports.json')), 'the port registry lands under the injected home');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(bare, { recursive: true, force: true });
+  }
+});
+
+test('session-start passes its context to reconcile: the model probe gets the injected env and homeDir', async () => {
+  const repo = gitRepo();
+  const bare = addOrigin(repo);
+  const reconcileLib = require('../plugin/bin/lib/reconcile');
+  const env = hookEnv({ CT_5377_SENTINEL: 'from-ctx-env' });
+  const homeDir = () => '/injected/home';
+  let seen = null;
+  try {
+    const result = await reconcileLib.reconcile({
+      cwd: repo, env, homeDir, checks: ['mirror'],
+      resolveIntegrationModel: (root, opts) => { seen = opts; return 'local-merge'; },
+    });
+    assert.ok(seen, 'the model probe ran');
+    assert.strictEqual(seen.env, env);
+    assert.strictEqual(seen.homeDir, homeDir);
+    assert.ok(result.skipped.some((s) => s.reason === 'local-merge-model'));
+  } finally {
+    fs.rmSync(bare, { recursive: true, force: true });
+  }
+});
+
+test('reconcile runs its integration-branch and origin/HEAD git children under the passed env', async () => {
+  const reconcileLib = require('../plugin/bin/lib/reconcile');
+  // GIT_DIR names no repository, so a git child that sees it cannot answer.
+  const broken = { ...hookEnv(), GIT_DIR: path.join(os.tmpdir(), 'ct-env5377-no-such-git-dir') };
+  const reasons = (result) => result.skipped.map((s) => s.reason);
+
+  // origin/HEAD set: a clean env resolves the branch and stops at the model; a broken one finds no remote.
+  const set = gitRepo();
+  const setBare = addOrigin(set);
+  // origin/HEAD unset: a clean env repairs it; a broken one reaches neither the lookup nor the repair.
+  const unset = gitRepo();
+  const unsetBare = addOrigin(unset, { setHead: false });
+  const noModel = () => 'local-merge';
+  try {
+    // The clean-env cases run with the real process.env broken, so a git child that reads it instead of the
+    // passed env fails and the case reads red; the broken-env cases run with a clean process.env.
+    const inBrokenProcess = (fn) => withProcessEnv({ GIT_DIR: broken.GIT_DIR }, fn);
+    const clean = await inBrokenProcess(() => reconcileLib.reconcile({ cwd: set, env: hookEnv(), checks: ['mirror'], resolveIntegrationModel: noModel }));
+    assert.ok(reasons(clean).includes('local-merge-model'), `clean env: ${JSON.stringify(clean.skipped)}`);
+    const bad = await reconcileLib.reconcile({ cwd: set, env: broken, checks: ['mirror'], resolveIntegrationModel: noModel });
+    assert.ok(reasons(bad).includes('no-remote'), `broken env: ${JSON.stringify(bad.skipped)}`);
+
+    const repaired = await inBrokenProcess(() => reconcileLib.reconcile({ cwd: unset, env: hookEnv(), checks: ['mirror'], resolveIntegrationModel: noModel }));
+    assert.deepStrictEqual(repaired.originHeadRepair && repaired.originHeadRepair.outcome, 'repaired', JSON.stringify(repaired));
+    // A fresh origin without origin/HEAD, so the repair is attempted again under the broken env.
+    const unset2 = gitRepo();
+    const unset2Bare = addOrigin(unset2, { setHead: false });
+    try {
+      const notRepaired = await reconcileLib.reconcile({ cwd: unset2, env: broken, checks: ['mirror'], resolveIntegrationModel: noModel });
+      assert.strictEqual(notRepaired.originHeadRepair, undefined, JSON.stringify(notRepaired));
+      assert.ok(reasons(notRepaired).includes('no-remote'));
+    } finally {
+      fs.rmSync(unset2Bare, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(setBare, { recursive: true, force: true });
+    fs.rmSync(unsetBare, { recursive: true, force: true });
+  }
+});
+
+test('reconcile prunes the declined store of its cwd and reads the lock wait from the passed env', async () => {
+  const reconcileLib = require('../plugin/bin/lib/reconcile');
+  const repo = gitRepo();
+  // One decline from the year 2000: the prune removes it, from the store the cwd names (not the process's).
+  const storeFile = path.join(repo, '.claude-tweaks', 'declined-learning', 'store.json');
+  fs.mkdirSync(path.dirname(storeFile), { recursive: true });
+  fs.writeFileSync(storeFile, JSON.stringify({ fp1: { declinedAt: '2000-01-01T00:00:00.000Z', reason: null, source: 'test' } }));
+  // The getter counts reads of the lock-wait knob made through the passed env.
+  let knobReads = 0;
+  const env = hookEnv();
+  Object.defineProperty(env, 'CLAUDE_TWEAKS_LOCK_WAIT_MS', { enumerable: true, get() { knobReads += 1; return '0'; } });
+  await reconcileLib.reconcile({ cwd: repo, env, checks: ['mirror'] });
+  assert.ok(knobReads >= 1, 'the store lock read its wait from the passed env');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(storeFile, 'utf8')), {}, 'the prune ran against the cwd\'s store');
+});
+
+test('ports ensure resolves the checkout under the passed env and rejects a missing env or home', async () => {
+  const portsEnsure = require('../plugin/bin/lib/ports/ensure');
+  const repo = gitRepo();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-home-'));
+  const broken = { ...hookEnv(), GIT_DIR: path.join(os.tmpdir(), 'ct-env5377-no-such-git-dir') };
+  const probe = async () => true;
+  try {
+    const clean = await portsEnsure.ensure(repo, { home, env: hookEnv(), policyServices: ['web'], probe });
+    assert.strictEqual(clean.active, true, 'control: a clean env resolves the checkout');
+    const bad = await portsEnsure.ensure(repo, { home, env: broken, policyServices: ['web'], probe });
+    assert.deepStrictEqual(bad, { active: false });
+    await assert.rejects(portsEnsure.ensure(repo, { home, policyServices: ['web'] }), TypeError);
+    await assert.rejects(portsEnsure.ensure(repo, { env: hookEnv(), policyServices: ['web'] }), TypeError);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('session-start resolves the superpowers install under the injected home', async () => {
+  const { repo, home, env } = sessionStartFixture();
+  const install = path.join(home, 'sp-install');
+  fs.mkdirSync(path.join(install, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(install, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'superpowers', version: '6.3.0' }));
+  fs.mkdirSync(path.join(home, '.claude', 'plugins'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), JSON.stringify({
+    version: 2,
+    plugins: { 'superpowers@claude-plugins-official': [{ scope: 'user', installPath: install, lastUpdated: '2026-01-01T00:00:00.000Z' }] },
+  }));
+  const { spawn } = fakeSpawn();
+  try {
+    const res = await runHookCli(['session-start'], { input: sessionStartPayload(repo), cwd: repo, env, deps: { spawn } });
+    assert.strictEqual(res.code, 0);
+    assert.match(JSON.parse(res.stdout).hookSpecificOutput.additionalContext, /superpowers 6\.3\.0 is older than/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('session-start helpers only the event calls throw TypeError when env or home is left out', () => {
+  const { effectiveSuperpowersVersion } = require('../plugin/bin/lib/superpowers-version');
+  assert.throws(() => sessionStart.saveNodePath({}), { name: 'TypeError', message: /home is required/ });
+  assert.throws(() => effectiveSuperpowersVersion(os.tmpdir(), { homedir: () => os.tmpdir() }), TypeError);
+  assert.throws(() => effectiveSuperpowersVersion(os.tmpdir(), { env: {} }), TypeError);
+});
+
+test('deps.collect reads PATH from the passed env', { skip: process.platform === 'win32' }, () => {
+  const { collect } = require('../plugin/bin/lib/deps');
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-bin-'));
+  try {
+    for (const name of ['git', 'playwright-cli']) fs.writeFileSync(path.join(bin, name), '#!/bin/sh\n', { mode: 0o755 });
+    assert.deepStrictEqual(collect({ env: { PATH: bin }, cwd: null }), [], 'both tools are found on the passed PATH');
+    const missing = collect({ env: { PATH: path.join(bin, 'nowhere') }, cwd: null });
+    assert.ok(missing.some((m) => /git not found/.test(m)), `git is missing from the passed PATH: ${JSON.stringify(missing)}`);
+    assert.ok(missing.some((m) => /playwright-cli/.test(m)));
+  } finally {
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+});
+
+test('session-start starts the background pass through the injected spawn with the injected env', async () => {
+  const { repo, home, env } = sessionStartFixture({ CT_5377_SENTINEL: 'from-ctx-env' });
+  const { spawn, calls } = fakeSpawn();
+  try {
+    const res = await runHookCli(['session-start'], { input: sessionStartPayload(repo), cwd: repo, env, deps: { spawn } });
+    assert.strictEqual(res.code, 0);
+    const bg = calls.filter((c) => c.args[1] === 'reconcile-background');
+    assert.strictEqual(bg.length, 1, `one background child: ${JSON.stringify(calls.map((c) => c.args))}`);
+    assert.deepStrictEqual(bg[0].args, [HOOKS, 'reconcile-background']);
+    assert.strictEqual(bg[0].options.env.CT_5377_SENTINEL, 'from-ctx-env');
+    assert.strictEqual(bg[0].options.env.CLAUDE_TWEAKS_SESSION_ID, SESSION);
+    assert.strictEqual(bg[0].options.cwd, repo);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('session-start without a spawn fake rejects', async () => {
+  const { repo, home, env } = sessionStartFixture();
+  try {
+    await assert.rejects(runHookCli(['session-start'], { input: sessionStartPayload(repo), cwd: repo, env }), /real spawn reached/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('session-start run throws on a context without env', async () => {
+  await assert.rejects(sessionStart.run({ input: {}, cwd: os.tmpdir() }), { name: 'TypeError', message: /hook context has no env/ });
+});
+
+test('session-start writes the node path under the injected home', async () => {
+  const { repo, home, env } = sessionStartFixture();
+  const { spawn } = fakeSpawn();
+  try {
+    const res = await runHookCli(['session-start'], { input: sessionStartPayload(repo), cwd: repo, env, deps: { spawn } });
+    assert.strictEqual(res.code, 0);
+    assert.strictEqual(fs.readFileSync(path.join(home, '.claude-tweaks', 'node-path'), 'utf8'), process.execPath + '\n');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });

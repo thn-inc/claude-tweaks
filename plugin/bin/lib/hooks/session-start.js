@@ -3,7 +3,6 @@
 // policy requires it.
 'use strict';
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
 const deps = require('../deps');
@@ -54,8 +53,8 @@ const FAST_CHECKS = ['mirror', 'red-tip', 'console'];
 // agent reading its own context -- a catalog read here would add a network
 // dependency to every session start for a diagnostic only ever consulted when
 // something already looks wrong (decided, not left open, per the record's own
-// Deliverables). `env` is injectable for tests; production omits it.
-function resolveBuildLine(env = process.env) {
+// Deliverables). `env` is the hook context's (#5377): no fallback to the process.
+function resolveBuildLine(env) {
   const pluginRoot = env.CLAUDE_PLUGIN_ROOT;
   if (!pluginRoot) return null;
   // #1837 review finding: the plugin.json read/parse/extract this function
@@ -84,22 +83,24 @@ function restampOwnerPidOnResume(ctx) {
   if (!input || typeof input !== 'object' || input.source !== 'resume') return;
   const owned = ctx.ownedRun || {};
   if (!owned.dir || owned.attribution === 'fallback') return;
-  const patch = ctxLib.ownerPidPatch(process.env);
+  const patch = ctxLib.ownerPidPatch(ctx.env);
   if (!('ownerPid' in patch)) return;
   const state = ctxLib.readRunState(owned.dir);
   if (!state || typeof state.sessionId !== 'string' || state.sessionId !== input.session_id) return;
   if (!Number.isInteger(state.ownerPid) || state.ownerPid === patch.ownerPid) return;
-  ctxLib.writeRunState(owned.dir, patch);
+  ctxLib.writeRunState(owned.dir, patch, { env: ctx.env });
 }
 
 // #5392: the launcher (bin/hooks.sh) finds node by PATH, then by the first
 // line of $HOME/.claude-tweaks/node-path, then by well-known install
 // locations. This fills that second rung with the node running this hook, so a
-// later session whose PATH lacks node still reaches hooks.js. `home` defaults
-// to HOME before os.homedir() because on win32 os.homedir() reads USERPROFILE,
-// which can differ from the HOME the launcher's shell reads. Rewrites only on
-// a content difference; a write failure throws and the caller swallows it.
-function saveNodePath({ execPath = process.execPath, home = process.env.HOME || os.homedir() } = {}) {
+// later session whose PATH lacks node still reaches hooks.js. `home` comes from
+// the caller: the context's HOME before its homeDir(), because on win32
+// os.homedir() reads USERPROFILE, which can differ from the HOME the
+// launcher's shell reads. Rewrites only on a content difference; a write
+// failure throws and the caller swallows it.
+function saveNodePath({ execPath = process.execPath, home } = {}) {
+  if (typeof home !== 'string' || !home) throw new TypeError('saveNodePath: home is required');
   const dir = path.join(home, '.claude-tweaks');
   const file = path.join(dir, 'node-path');
   const content = execPath + '\n';
@@ -112,6 +113,7 @@ function saveNodePath({ execPath = process.execPath, home = process.env.HOME || 
 }
 
 async function run(ctx) {
+  const env = ctxLib.requireEnv(ctx);
   const parts = [];
   // Per-invocation cache (#381): memoizes `git worktree list --porcelain` and
   // `resolveIntegrationBranch`'s resolved name, each keyed by repo root, so the
@@ -140,19 +142,19 @@ async function run(ctx) {
   // plain string push that cannot throw, and every session gets it regardless
   // of what else this hook finds to report.
   parts.push(INTERACTION_STYLE_DIRECTIVE);
-  // `nodePathHome` is a test-only seam (undefined falls through to
-  // saveNodePath's own default home); bin/hooks.js never sets it.
-  try { saveNodePath({ home: ctx && ctx.nodePathHome }); } catch { /* best-effort */ }
+  // `nodePathHome` is a test-only seam (undefined falls through to the
+  // context's HOME, then its homeDir()); bin/hooks.js never sets it.
+  try { saveNodePath({ home: ctx.nodePathHome || env.HOME || ctx.homeDir() }); } catch { /* best-effort */ }
   // #2070: single upstream read of CLAUDE_PLUGIN_ROOT, threaded into both
   // resolveBuildLine (below) and the stale-runs report line's fallback
   // (further down) — one place for a future normalization/validation fix to
   // land, instead of two reads that can drift.
-  const pluginRootEnv = process.env.CLAUDE_PLUGIN_ROOT;
+  const pluginRootEnv = env.CLAUDE_PLUGIN_ROOT;
   try { restampOwnerPidOnResume(ctx); } catch { /* best-effort */ }
   // #3973: re-stamp the owner block (a resume runs under a new process) before anything below spawns.
   // #4150: restampWhileFresh keeps the full pid probe here — a resume must re-stamp at once, not at the next window edge.
   try { ctxLib.refreshOwnerBlock(ctx, { restampWhileFresh: true }); } catch { /* best-effort */ }
-  try { parts.push(...deps.collect()); } catch { /* best-effort */ }
+  try { parts.push(...deps.collect({ env, cwd: ctx.cwd })); } catch { /* best-effort */ }
   try {
     const buildLine = resolveBuildLine({ CLAUDE_PLUGIN_ROOT: pluginRootEnv });
     if (buildLine) parts.push(buildLine);
@@ -168,7 +170,7 @@ async function run(ctx) {
     const source = ctx.input && typeof ctx.input === 'object' ? ctx.input.source : undefined;
     if (typeof source !== 'string' || source === 'startup') {
       const notice = superpowersNotice({
-        effective: effectiveSuperpowersVersion(ctx.cwd, ctx.superpowersDeps),
+        effective: effectiveSuperpowersVersion(ctx.cwd, { env, homedir: ctx.homeDir, ...ctx.superpowersDeps }),
         floor: SUPERPOWERS_FLOOR,
         projectDir: ctx.cwd,
       });
@@ -283,7 +285,7 @@ async function run(ctx) {
     // reconcile() inline, and a real session id is genuinely reachable at it.
     // forgeProbeTimeoutMs: the same hook bound the PreToolUse PR-stamp gate passes (#4578 Decision Q1).
     const result = await reconcile({
-      cwd: ctx.cwd, checks: FAST_CHECKS, skipIfFresh: true, ttlMs: DEFAULT_TTL_MS, cache, sessionId,
+      cwd: ctx.cwd, env, homeDir: ctx.homeDir, checks: FAST_CHECKS, skipIfFresh: true, ttlMs: DEFAULT_TTL_MS, cache, sessionId,
       forgeProbeTimeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS,
     });
 
@@ -463,7 +465,7 @@ async function run(ctx) {
     // check already applies for the same reason; this file's copy
     // previously forked git on every single SessionStart regardless.
     if (wtDetect.findPolicyFile(ctx.cwd)) {
-      const { repoRoot, isLinkedWorktree } = wtDetect.repoInfo(ctx.cwd);
+      const { repoRoot, isLinkedWorktree } = wtDetect.repoInfo(ctx.cwd, {}, { env });
       if (repoRoot) {
         const { on, matchedKey } = policy.resolveWorktreeAlways(repoRoot);
         parts.push(
@@ -497,7 +499,7 @@ async function run(ctx) {
           );
         } else if (services.length) {
           try {
-            const result = await portsEnsure.ensure(ctx.cwd, { policyServices: services });
+            const result = await portsEnsure.ensure(ctx.cwd, { policyServices: services, home: ctx.homeDir(), env });
             if (result.active) {
               const range = `${result.base}-${result.base + result.ports.length - 1}`;
               // #1927: CLAUDE_TWEAKS_LEASE rides in vars for the env file, not in this line (#1792 AC3's shape).

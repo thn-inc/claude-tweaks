@@ -100,7 +100,10 @@ function expandChecks(checks) {
   return out;
 }
 
-// opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number }
+// opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number, env?: object, homeDir?: function }
+// `env` and `homeDir` (a hook event's context, #5377) reach the declined-store prune, the integration-branch
+// and origin/HEAD git children and the forge probe; absent, each reads the inherited environment as before.
+// The pr-first checks past that point (mirror, red-tip, console, the preflight) still read the inherited one.
 // -> { mirror, redTip, worktrees, claims, postMerge, runs, branches, remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }
 // A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
 // tracking would have done (an array on a dry run when archive ran, null otherwise), and
@@ -167,7 +170,7 @@ async function reconcileInner(opts, state) {
   // #4180: skipped on a dry run — the prune rewrites the store file (and takes its lock directory).
   if (!dryRun) {
     try {
-      require('../declined-learning/store').pruneDeclines();
+      require('../declined-learning/store').pruneDeclines({}, { cwd, env: opts.env });
     } catch {
       /* best-effort — never break reconcile over declined-learning maintenance */
     }
@@ -215,7 +218,7 @@ async function reconcileInner(opts, state) {
   // its own `origin/${integration}` ref or issues `git fetch origin
   // {integration}` on the assumption that `integration` is bare — normalize
   // once here so the whole module keeps that contract.
-  let integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
+  let integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache, { env: opts.env }));
   // #3132: a fresh clone can lack refs/remotes/origin/HEAD even with a
   // working `origin` — repair it once here (reconcile already does network
   // work) and re-resolve, rather than adding a network call to the shared
@@ -224,7 +227,7 @@ async function reconcileInner(opts, state) {
   if (!integration) {
     // #4180: on a dry run the repair is reported as skipped, never attempted (it writes a git ref
     // and, on failure, the cache); the pass then falls through to the no-remote skip below.
-    const repair = repairOriginHead(root, { dryRun });
+    const repair = repairOriginHead(root, { dryRun, env: opts.env });
     if (repair) {
       // Re-resolve after EVERY attempt, not only 'repaired' — a concurrent
       // session may have written origin/HEAD while this one's set-head lost
@@ -232,7 +235,7 @@ async function reconcileInner(opts, state) {
       // skipped under recent-failure (skipped). The caller's resolver cache
       // may already hold this root's null either way.
       if (opts.cache && opts.cache.integrationBranch) opts.cache.integrationBranch.delete(root);
-      integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
+      integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache, { env: opts.env }));
       if (integration) {
         result.originHeadRepair = { ...repair, branch: integration };
       } else {
@@ -264,6 +267,9 @@ async function reconcileInner(opts, state) {
   if (opts.forgeProbeTimeoutMs !== undefined && opts.forgeProbeTimeoutMs !== null) {
     modelOpts.timeoutMs = opts.forgeProbeTimeoutMs;
   }
+  // A hook event's context env and homeDir reach the forge probe's git and gh children (#5377).
+  if (opts.env !== undefined) modelOpts.env = opts.env;
+  if (opts.homeDir !== undefined) modelOpts.homeDir = opts.homeDir;
   const model = resolveModel(root, modelOpts);
   if (model !== 'pr-first') {
     // local-merge / no-forge: only `reap` has a defined fallback here — the
