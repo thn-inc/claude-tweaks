@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { readText } = require('./helpers/read-skill');
+const { shellQuote } = require('./helpers/shell-quote');
 
 // Every verdict below is read through classifyCommandOrThrow and judgeOrThrow, which let an internal error
 // through, so a bug can never pass an allow row by landing in the catching wrapper.
@@ -714,6 +715,8 @@ function scriptReasonFor(word, { ref, literal, runText }) {
   ].join('\n');
 }
 
+// A command fixture names a path under this directory through shellQuote: an unquoted Windows path loses
+// its backslashes as a bash word, so the guard would look for a file that is not there and allow.
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'direct-test-run-guard-'));
   try {
@@ -741,16 +744,16 @@ test('AC8.1: a scratch script that spawns node --test is denied, and allowed onc
   withTempDir((dir) => {
     const file = path.join(dir, 'mutant-run.js');
     fs.writeFileSync(file, OFFENDING_JS);
-    const verdict = judgeOrThrow(bash(`node ${file}`), realDeps());
+    const verdict = judgeOrThrow(bash(`node ${shellQuote(file)}`), realDeps());
     assert.equal(verdict.decision, 'deny');
     assert.equal(verdict.reason, scriptReasonFor(file, { ref: 'process.execPath' }));
 
     fs.writeFileSync(file, RUNNER_JS);
-    assert.deepEqual(judgeOrThrow(bash(`node ${file}`), realDeps()), { decision: 'allow' });
+    assert.deepEqual(judgeOrThrow(bash(`node ${shellQuote(file)}`), realDeps()), { decision: 'allow' });
     fs.writeFileSync(file, "spawnSync(process.execPath, ['--test', 'tests/a.test.js']);");
-    assert.deepEqual(judgeOrThrow(bash(`node ${file}`), realDeps()), { decision: 'allow' });
+    assert.deepEqual(judgeOrThrow(bash(`node ${shellQuote(file)}`), realDeps()), { decision: 'allow' });
     fs.writeFileSync(file, "const cp = require('child_process'); cp.spawnSync('node', ['--test-only']);");
-    assert.deepEqual(judgeOrThrow(bash(`node ${file}`), realDeps()), { decision: 'allow' });
+    assert.deepEqual(judgeOrThrow(bash(`node ${shellQuote(file)}`), realDeps()), { decision: 'allow' });
   });
 });
 
@@ -1007,7 +1010,7 @@ test('a JavaScript script is denied or allowed by the same rows through judgeOrT
     const file = path.join(dir, 'scratch.js');
     for (const [what, text, ref] of JS_ROWS) {
       fs.writeFileSync(file, text);
-      const verdict = judgeOrThrow(bash(`node ${file}`), realDeps());
+      const verdict = judgeOrThrow(bash(`node ${shellQuote(file)}`), realDeps());
       assert.deepEqual(verdict, ref === null ? { decision: 'allow' } : { decision: 'deny', reason: scriptReasonFor(file, { ref }) }, what);
     }
   });
@@ -1033,7 +1036,7 @@ test('a call that has nothing to do with node loads neither the runner nor the c
   withTempDir((dir) => {
     const file = path.join(dir, 'scratch.js');
     fs.writeFileSync(file, RUNNER_JS);
-    assert.equal(endsWith(loaded(`node ${file}`), '/plugin/bin/lib/strip-comments.js'), true);
+    assert.equal(endsWith(loaded(`node ${shellQuote(file)}`), '/plugin/bin/lib/strip-comments.js'), true);
   });
 });
 
@@ -1051,13 +1054,13 @@ test('AC8.2: a shell script holding a direct test run is denied', () => {
   withTempDir((dir) => {
     const file = path.join(dir, 'loop.sh');
     fs.writeFileSync(file, 'node --test a.test.js b.test.js\n');
-    for (const command of [`bash ${file}`, file]) {
+    for (const command of [`bash ${shellQuote(file)}`, shellQuote(file)]) {
       const verdict = judgeOrThrow(bash(command), realDeps());
       assert.equal(verdict.decision, 'deny', command);
       assert.equal(verdict.reason, scriptReasonFor(file, { runText: 'node --test a.test.js b.test.js' }), command);
     }
     fs.writeFileSync(file, 'echo done\n');
-    assert.deepEqual(judgeOrThrow(bash(`bash ${file}`), realDeps()), { decision: 'allow' });
+    assert.deepEqual(judgeOrThrow(bash(`bash ${shellQuote(file)}`), realDeps()), { decision: 'allow' });
   });
 });
 
@@ -1080,13 +1083,13 @@ test('AC8.3 AC8.4: repo tooling is allowed unread, and an unreadable or missing 
 
   assert.deepEqual(judgeOrThrow(bash('node /no/such/script.js'), realDeps()), { decision: 'allow' });
   withTempDir((dir) => {
-    assert.deepEqual(judgeOrThrow(bash(`node ${dir}`), realDeps()), { decision: 'allow' });
+    assert.deepEqual(judgeOrThrow(bash(`node ${shellQuote(dir)}`), realDeps()), { decision: 'allow' });
     const file = path.join(dir, 'big.js');
     fs.writeFileSync(file, OFFENDING_JS + ' '.repeat(262144));
-    assert.deepEqual(judgeOrThrow(bash(`node ${file}`), realDeps()), { decision: 'allow' });
+    assert.deepEqual(judgeOrThrow(bash(`node ${shellQuote(file)}`), realDeps()), { decision: 'allow' });
     fs.writeFileSync(file, OFFENDING_JS + ' '.repeat(262144 - OFFENDING_JS.length));
     assert.equal(fs.statSync(file).size, 262144);
-    assert.equal(judgeOrThrow(bash(`node ${file}`), realDeps()).decision, 'deny');
+    assert.equal(judgeOrThrow(bash(`node ${shellQuote(file)}`), realDeps()).decision, 'deny');
   });
 });
 
@@ -1158,7 +1161,7 @@ test('the guard as a real process denies a scratch script that spawns node --tes
   withTempDir((dir) => {
     const file = path.join(dir, 'mutant-run.js');
     fs.writeFileSync(file, OFFENDING_JS);
-    const res = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(bash(`node ${file}`)), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
+    const res = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(bash(`node ${shellQuote(file)}`)), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
     assert.equal(res.status, 0);
     assert.equal(JSON.parse(res.stdout).hookSpecificOutput.permissionDecisionReason, scriptReasonFor(file, { ref: 'process.execPath' }));
   });
