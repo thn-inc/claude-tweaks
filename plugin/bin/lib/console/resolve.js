@@ -67,7 +67,11 @@ const SECTION_MAP = [
   [/^review-unconfirmed-/, SECTIONS.LOW],
   [/^review-(contested|debate)-/, SECTIONS.CONTESTED],
   [/\.patch$/, SECTIONS.PENDING],
-  [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
+  [/^(polish-suggestion|visual-review|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
+  // design-decision- (#4038): design-wrapper/modes/review.md Step 5.5 stages it with no
+  // diff and a `Remedy:` naming a human-run upstream command (DESIGN.md stays
+  // upstream-owned), so there is nothing to apply — it resolves pending.
+  [/^design-decision-/, SECTIONS.PENDING, 'design-decision-human-remedy'],
   // sibling-premise-disproof- (#3488): bin/materialize.js stages it as a note for a
   // human to read, not a change to apply — so it resolves pending.
   [/^sibling-premise-disproof-/, SECTIONS.PENDING, 'sibling-premise-disproof-note'],
@@ -120,7 +124,8 @@ const SECTION_MAP = [
 const CANONICAL_PREFIXES = [
   'review-unconfirmed-',
   'review-contested-', 'review-debate-',
-  'polish-suggestion-', 'visual-review-', 'design-decision-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
+  'polish-suggestion-', 'visual-review-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
+  'design-decision-',
   'sibling-premise-disproof-', 'plan-citation-', 'translation-',
   'wrap-up-skill-', 'skills-',
   'wrap-up-doc-', 'tidy-doc-', 'docs-',

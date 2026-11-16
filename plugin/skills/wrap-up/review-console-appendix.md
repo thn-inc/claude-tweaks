@@ -79,8 +79,12 @@ procedure — no row is left unrouted:
 - `apply` on a **Pending review** item — step 1, which covers every staged item 5–7, not only the
   patches: a `.patch` via `_shared/staged-patch.md`'s `git apply` (a stale one takes the
   `Invariant:` re-derivation below), and a staged `.md` proposal (`polish-suggestion-*`,
-  `visual-review-*`, `design-decision-*`, `build-deviation-*`, `simplify-*`, `deepen-*`, `sdd-ruling-*`) applied
+  `visual-review-*`, `build-deviation-*`, `simplify-*`, `deepen-*`, `sdd-ruling-*`) applied
   as that step already describes for a non-patch item.
+- A `design-decision-*` item never resolves `apply`: it carries no diff, so it stays `pending — design-decision-human-remedy`
+  for a human to run its `Remedy:` command (`/impeccable:impeccable document`, or
+  `/claude-tweaks:design-wrapper explore` for the nudge). Approving it means running that command,
+  never editing `DESIGN.md` by hand — `DESIGN.md` stays upstream-owned.
 - `apply` on an `sdd-ruling-*` item — ratify. It executes no code change, and what it writes
   depends on the staged header, classified by `bin/lib/console/sdd-ruling.js`'s
   `sddRulingRatifyAction` (#3942):

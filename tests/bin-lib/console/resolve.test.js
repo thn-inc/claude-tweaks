@@ -76,7 +76,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
   const expect = {
     'review-2.patch': 'Pending review', 'test-fix-1.patch': 'Pending review', 'deepen-collapse-1.patch': 'Pending review', 'simplify-1.patch': 'Pending review',
     'review-unconfirmed-3.md': 'Low-confidence findings', 'review-contested-4.md': 'Contested findings', 'review-debate-1.md': 'Contested findings',
-    'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'design-decision-2.md': 'Pending review', 'build-deviation-1.md': 'Pending review', 'sdd-ruling-1.md': 'Pending review',
+    'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'build-deviation-1.md': 'Pending review', 'sdd-ruling-1.md': 'Pending review',
     'wrap-up-skill-1.md': 'Skill updates', 'wrap-up-skill-new-auth.md': 'Skill updates', 'wrap-up-skill-restructure.md': 'Skill updates',
     'wrap-up-doc-1.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
     'wrap-up-claude-md-1.md': 'Configuration updates', 'wrap-up-adr-1.md': 'Configuration updates',
@@ -2375,6 +2375,32 @@ test('#3488: resolveAll never auto-applies a plan-citation or translation propos
     assert.ok(item, id);
     assert.strictEqual(item.resolution, 'pending', id);
   }
+});
+
+test('#4038: every design-decision item, the nudge included, classifies pending with the human-remedy reason', () => {
+  for (const id of ['design-decision-1.md', 'design-decision-nudge.md']) {
+    assert.deepStrictEqual(classifyStagedItem(id), { section: 'Pending review', reason: 'design-decision-human-remedy' }, id);
+  }
+});
+
+test('#4038: resolveAll never applies a design-decision item — it resolves pending, not "patch validated"', () => {
+  const body = 'Kind: decisions\nMessage: DESIGN.md is silent on the new card\nRemedy: /impeccable:impeccable document\n';
+  const runDir = fixture({ staged: { 'design-decision-1.md': body, 'polish-suggestion-1.md': 'polish' } });
+  const items = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items;
+  const item = items.find((i) => i.id === 'design-decision-1.md');
+  assert.ok(item, 'the design decision is an item');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'design-decision-human-remedy');
+  assert.ok(!/patch validated/.test(item.reason));
+  assert.strictEqual(items.find((i) => i.id === 'polish-suggestion-1.md').resolution, 'apply', 'the shared Pending-review row keeps its apply stance');
+});
+
+test('#4038: review-console-appendix.md keeps design-decision-* out of the apply list and names its pending reason', () => {
+  const text = APPENDIX.replace(/\s+/g, ' ');
+  const applyList = text.match(/a staged `\.md` proposal \(([^)]*)\) applied/);
+  assert.ok(applyList, 'the apply-executes list is present');
+  assert.ok(!applyList[1].includes('design-decision-'), applyList[1]);
+  assert.ok(text.includes('pending — design-decision-human-remedy'));
 });
 
 test('#3488: resolveAll never auto-files an upstream-draft hand-off — it resolves pending', () => {

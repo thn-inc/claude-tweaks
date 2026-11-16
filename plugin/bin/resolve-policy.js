@@ -41,6 +41,11 @@
 // additive `degraded: 'timeout' | 'timeout-then-exit'` reason code, and a
 // non-degraded entry keeps exactly { value, source }. merge-verification's
 // own detection honours a valid --run config.yml integration-model pin first.
+// A linked worktree whose own checkout has no policy.yml (a project that
+// gitignores .claude-tweaks/) reads the main checkout's file instead (#4492) and
+// writes one first stderr line, in every output mode (stdout and the exit code
+// unchanged): `resolve-policy: note — {root} has no .claude-tweaks/policy.yml;
+// read the main checkout's {policyPath}`.
 // Repo root comes from `git rev-parse --show-toplevel` at the
 // injected cwd (`deps.cwd()`, the process cwd when run as a script; that cwd
 // itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
@@ -121,7 +126,7 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   // #4141: the rejected raw value rides a side channel, so the entry shape
   // stays exactly as the JSON output documents it.
   const invalidRaw = new Map();
-  const { root, policyRaw, runConfigRaw, result } = resolvePolicyConfig({
+  const { root, policyRaw, runConfigRaw, result, policyPath, policySource } = resolvePolicyConfig({
     git: (args) => deps.git(args, { cwd, env: deps.env }),
     readFile: deps.readFile,
     runDir: runDirPath,
@@ -172,7 +177,7 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
     }
   }
 
-  return { code: EXIT_OK, result, invalidRaw, degrades };
+  return { code: EXIT_OK, result, invalidRaw, degrades, root, policySource, policyPath };
 }
 
 // The --values rule: an {error} entry and a null/undefined value (no-default key
@@ -185,9 +190,14 @@ function scalarValue(entry) {
 
 // The stderr lines run writes for a successful core call, newline-terminated:
 // the degraded-forge lines in every mode, then (values only) one invalid-value
-// warning per requested key. out is { keys, result, invalidRaw, degrades }.
-function warningLines({ keys, result, invalidRaw, degrades }, { values }) {
+// warning per requested key. out is { keys, result, invalidRaw, degrades, root,
+// policySource, policyPath }. When the policy was read from the main checkout
+// (#4492), the note line comes first, in every mode.
+function warningLines({ keys, result, invalidRaw, degrades, root, policySource, policyPath }, { values }) {
   const lines = [];
+  if (policySource === 'main-checkout') {
+    lines.push(`resolve-policy: note — ${root} has no .claude-tweaks/policy.yml; read the main checkout's ${policyPath}\n`);
+  }
   // One stderr line per degraded key, in every output mode; stdout is unchanged.
   for (const key of ['integration-model', 'merge-verification']) {
     if (!degrades.has(key)) continue;
