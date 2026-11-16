@@ -72,6 +72,7 @@ test('archivedRunDir: run dir and per-spec child dir under pipelines', () => {
 test('archivedRunDir: no archived dir is invented for other shapes', () => {
   assert.equal(archivedRunDir('/tmp/x/run'), null);
   assert.equal(archivedRunDir('/m/.claude-tweaks/pipelines/archive/R'), null);
+  assert.equal(archivedRunDir('/m/.claude-tweaks/pipelines/archive'), null);
   assert.equal(archivedRunDir('/m/.claude-tweaks/pipelines/not-a-run-id/spec-4'), null);
   assert.equal(archivedRunDir('/tmp/x/2026-11-16T020801-record-1/spec-4'), null);
 });
@@ -133,8 +134,48 @@ test('listHeaderDirs: default readdir over an archived-only layout lists the arc
   }
 });
 
-test('listHeaderDirs: unreadable directories (default readdir) yield only the flat work dirs', () => {
+test('listHeaderDirs: absent directories (default readdir) yield only the flat work dirs', () => {
   const runDir = path.join(os.tmpdir(), 'run-header-absent', '.claude-tweaks', 'pipelines', '2026-11-16T020801-record-1');
   const out = listHeaderDirs([runDir]);
   assert.deepEqual(out.map((e) => [e.location, e.specDir]), [['live', null], ['archived', null]]);
+});
+
+test('listHeaderDirs: a default readdir that errors (ENOTDIR) returns [] instead of throwing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-header-file-'));
+  try {
+    const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+    fs.mkdirSync(pipelines, { recursive: true });
+    const runDir = path.join(pipelines, '2026-11-16T020801-record-1');
+    fs.writeFileSync(runDir, 'not a directory');
+    assert.throws(() => fs.readdirSync(runDir), { code: 'ENOTDIR' });
+    const out = listHeaderDirs([runDir]);
+    assert.deepEqual(out, [
+      { dir: path.join(runDir, 'work'), location: 'live', specDir: null, specN: null },
+      { dir: path.join(pipelines, 'archive', '2026-11-16T020801-record-1', 'work'), location: 'archived', specDir: null, specN: null },
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const WIN_RUN = 'C:\\m\\.claude-tweaks\\pipelines\\2026-11-16T020801-record-1';
+const WIN_ARCH = 'C:\\m\\.claude-tweaks\\pipelines\\archive\\2026-11-16T020801-record-1';
+
+test('headerFileCandidates: win32 path module yields exact backslash strings', () => {
+  assert.deepEqual(headerFileCandidates([WIN_RUN], 7, path.win32), [
+    `${WIN_RUN}\\work\\7-spec.md`,
+    `${WIN_RUN}\\spec-7\\work\\7-spec.md`,
+    `${WIN_ARCH}\\work\\7-spec.md`,
+    `${WIN_ARCH}\\spec-7\\work\\7-spec.md`,
+  ]);
+});
+
+test('listHeaderDirs: win32 path module yields exact backslash strings', () => {
+  const readdir = () => ['spec-2'];
+  assert.deepEqual(listHeaderDirs([WIN_RUN], { readdir, pathImpl: path.win32 }), [
+    { dir: `${WIN_RUN}\\work`, location: 'live', specDir: null, specN: null },
+    { dir: `${WIN_RUN}\\spec-2\\work`, location: 'live', specDir: 'spec-2', specN: 2 },
+    { dir: `${WIN_ARCH}\\work`, location: 'archived', specDir: null, specN: null },
+    { dir: `${WIN_ARCH}\\spec-2\\work`, location: 'archived', specDir: 'spec-2', specN: 2 },
+  ]);
 });

@@ -13,11 +13,14 @@
 // discovers a mirror.
 //
 // Only this file spells the archive segment. The eight readers go through it:
-// plugin/bin/lib/flow/preflight.js (the `spec` probe and `specOnBranch`),
-// plugin/bin/lib/timing/context-gauge.js (`resolveTargetRecords`),
-// plugin/bin/lib/wrap-up/pack.js (`manifestRecords`), plugin/bin/verify-run-bookends.js
-// (`specCandidatePaths`, `isSpecCommitted`), plugin/bin/lib/hooks/pre-tool-use.js
-// (`hasMaterializeCommit`) and plugin/bin/context-gauge.js.
+// - plugin/bin/verify-run-bookends.js `isSpecCommitted`
+// - plugin/bin/lib/flow/preflight.js `specOnBranch`
+// - plugin/bin/lib/hooks/pre-tool-use.js `hasMaterializeCommit` and `getMaterializedRecordNumbers`
+// - plugin/bin/lib/pr-bookkeeping/precondition.js, which reads through `hasMaterializeCommit`
+// - plugin/bin/lib/wrap-up/pack.js `resolveRecords` and `closingRecords`
+// - plugin/bin/lib/dispatch/first-call-artifact-check.js `hasMaterializedHeader`
+// - the `spec` probe in plugin/bin/lib/flow/preflight.js
+// - `resolveTargetRecords` in plugin/bin/lib/timing/context-gauge.js
 //
 // Git-facing functions return POSIX repo-relative literals (`/` on every OS); the
 // filesystem-facing ones return native paths built with `pathImpl.join`. Nothing here
@@ -25,7 +28,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { RUN_ID_RE } = require('./hooks/context');
+const { RUN_ID_RE } = require('./hooks/run-dir-resolve');
 
 const PIPELINES_REL = '.claude-tweaks/pipelines';
 const SPEC_DIR_RE = /^spec-([1-9]\d*)$/;
@@ -70,7 +73,9 @@ function headerPathspecs(runId, { specDir = null } = {}) {
 function archivedRunDir(runDir, pathImpl = path) {
   const base = pathImpl.basename(runDir);
   const parent = pathImpl.dirname(runDir);
-  if (pathImpl.basename(parent) === 'pipelines') return pathImpl.join(parent, 'archive', base);
+  if (pathImpl.basename(parent) === 'pipelines') {
+    return base === 'archive' ? null : pathImpl.join(parent, 'archive', base);
+  }
   if (/^spec-/.test(base) && RUN_ID_RE.test(pathImpl.basename(parent))) {
     const grandparent = pathImpl.dirname(parent);
     if (pathImpl.basename(grandparent) === 'pipelines') {
