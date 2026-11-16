@@ -55,10 +55,13 @@ test('validateFindingV2: unknown criterion id fails', () => {
 test('AC9.1: validateFindingV2 rejects a finding with a missing or blank criterion — the only guard in front of fingerprint() (#5536)', () => {
   const missing = validV2Finding();
   delete missing.criterion;
-  for (const finding of [missing, validV2Finding({ criterion: '   ' })]) {
+  for (const [label, finding] of [
+    ['missing criterion', missing],
+    ['blank criterion', validV2Finding({ criterion: '   ' })],
+  ]) {
     const result = validateFindingV2(finding);
-    assert.strictEqual(result.ok, false);
-    assert.ok(result.errors.some((e) => e.startsWith('criterion: required non-empty string')), result.errors.join('; '));
+    assert.strictEqual(result.ok, false, `${label}: expected ok:false`);
+    assert.ok(result.errors.some((e) => e.startsWith('criterion: required non-empty string')), `${label}: ${result.errors.join('; ')}`);
   }
 });
 
