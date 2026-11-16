@@ -246,6 +246,8 @@ const ITEM7 = [
   [/Ignore\s+a\s+late\s+result/, 'item 7 ignores a late result'],
   ...REQUIRED,
   [/run\s+the\s+project's\s+test\s+command\s+and\s+every\s+other\s+long-running\s+command/, "item 7 names the project's test command"],
+  [/log\s+the\s+downgrade/i, "item 7's fallback logs the downgrade"],
+  [/output\s+redirected\s+to\s+a\s+file/i, 'item 7 says long output is redirected to a file'],
   ...SHARED_RULE,
 ];
 const item7Missing = missingFactsOf(ITEM7);
