@@ -24,7 +24,8 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # The durations reporter needs the per-file test:summary event, which Node 20 does not emit.
+          node-version: 24
       - run: sudo apt-get install -y --no-install-recommends zsh || (sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh)
       - name: Record per-file test durations
         shell: bash
