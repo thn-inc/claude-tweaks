@@ -170,6 +170,12 @@ function cleanGitEnv(base = process.env) {
   return env;
 }
 
+// The complete environment a hooks.js test hands `runCli`/`spawnCli`: the runner's minus the four git-location
+// variables, with the ambient run dir neutralized (#1130), plus the caller's keys (which win).
+function hookEnv(extra = {}) {
+  return { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', ...extra };
+}
+
 // A fresh repository with one commit of `file` (content `${prefix}\n`, so two repos built with distinct
 // prefixes hold distinct commits): `{ dir, head, git }`. `git(...args)` runs in `dir` under cleanGitEnv()
 // with a fixed identity and returns trimmed stdout; the caller removes `dir`.
@@ -184,4 +190,4 @@ function committedRepo({ prefix = 'ct-fx-', file = 'seed.txt', branch } = {}) {
   return { dir, head: git('rev-parse', 'HEAD'), git };
 }
 
-module.exports = { gitRepo, linkedWorktreeOf, harnessWorktreeOf, originWithTwoClones, fixtureGit, FIXTURE_TIMEOUT_MS, cleanGitEnv, committedRepo };
+module.exports = { gitRepo, linkedWorktreeOf, harnessWorktreeOf, originWithTwoClones, fixtureGit, FIXTURE_TIMEOUT_MS, cleanGitEnv, hookEnv, committedRepo };
