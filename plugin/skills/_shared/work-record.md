@@ -465,7 +465,10 @@ none}`, plus `Risk-flags-unconfirmed: true` when no human confirmed the set. `pa
 malformed line or an unknown slug reads all four built-in categories flagged, never "no flags".
 `bin/risk-flags.js` is the one writer path (`/claude-tweaks:specify` settles the set,
 `/claude-tweaks:backlog refine` confirms it); never hand-edit the lines. `local-files` carries
-them in the body, never in `facets`. They are not the `risk:*` scoring axis.
+them in the body, never in `facets`. They are not the `risk:*` scoring axis. A third line,
+`Risk-flags-added-by-tripwire: {slugs}` (#4619), names the flags the diff tripwire added beyond
+the declared set: `parseTripwireFlags` is its one reader and `addTripwireRiskFlags` its one writer
+(both in `bin/lib/issues/record.js`), and `parseRiskFlags` ignores it.
 
 ## Acceptance-target line
 

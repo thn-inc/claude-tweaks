@@ -13,7 +13,8 @@
 //   - record-fingerprint.js — fingerprint handling
 //   - record-dependencies.js — dependency/blocker/sub-issue query building
 //   - record-risk-flags.js  — the `Risk-flags:` body line: parseRiskFlags and its
-//                             sanctioned writers (#4618)
+//                             sanctioned writers (#4618), and the `Risk-flags-added-by-tripwire:` line:
+//                             parseTripwireFlags and addTripwireRiskFlags (#4619)
 //   - record-acceptance-target.js — the `Acceptance-target:` body line: parseAcceptanceTarget
 //                             and itemOverrideOf (#4615)
 // It also re-exports fenceFor/fencedBlock/extractSection, the fence and section
@@ -47,6 +48,7 @@ const {
 
 const {
   RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  parseTripwireFlags, addTripwireRiskFlags,
 } = require('./record-risk-flags');
 
 const { parseAcceptanceTarget, itemOverrideOf } = require('./record-acceptance-target');
@@ -59,6 +61,7 @@ module.exports = {
   buildNativeSubIssuesQuery, buildNativeParentQuery, buildAuthorAssociationQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, typeOf, extractSection,
   RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  parseTripwireFlags, addTripwireRiskFlags,
   parseAcceptanceTarget, itemOverrideOf,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,
 };

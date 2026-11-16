@@ -20,9 +20,9 @@ const ANY_TARGET_LINE_RE = /^target:/;
 const PARK_LINE_RES = [ANY_TARGET_LINE_RE, REASON_LINE_RE, HEAD_LINE_RE, BASE_LINE_RE];
 
 // Control mode is on only for the boolean true: any other value never consults the resolver.
-function decideAcceptanceRoute({ controlMode, keptRiskFlags, itemOverride, policyDefault } = {}) {
+function decideAcceptanceRoute({ controlMode, keptRiskFlags, itemOverride, policyDefault, tripwire } = {}) {
   if (controlMode !== true) return { consulted: false, park: false, target: null, reason: null };
-  const { target, reason } = resolveAcceptanceTarget({ keptRiskFlags, itemOverride, policyDefault });
+  const { target, reason } = resolveAcceptanceTarget({ keptRiskFlags, itemOverride, policyDefault, tripwire });
   return { consulted: true, park: target === 'local', target, reason };
 }
 

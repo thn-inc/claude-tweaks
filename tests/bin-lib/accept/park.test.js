@@ -241,3 +241,24 @@ test('with an empty Deploy status section no stray blank line is added', () => {
   const out = writeParkDeployStatus('### Deploy status\n', { headSha: HEAD, baseSha: BASE }).body;
   assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\npark-base: ${BASE}\n`);
 });
+
+test('decideAcceptanceRoute threads the tripwire input', () => {
+  const base = { controlMode: true, keptRiskFlags: [], policyDefault: 'dev' };
+  assert.deepEqual(decideAcceptanceRoute({ ...base, tripwire: { status: 'ok', newFlags: ['auth'] } }),
+    { consulted: true, park: true, target: 'local', reason: 'risk-flag' });
+  assert.deepEqual(decideAcceptanceRoute({ ...base, tripwire: { status: 'could-not-run', newFlags: [] } }),
+    { consulted: true, park: true, target: 'local', reason: 'tripwire' });
+  assert.deepEqual(decideAcceptanceRoute({ ...base, tripwire: { status: 'ok', newFlags: [] } }),
+    { consulted: true, park: false, target: 'dev', reason: 'policy' });
+  assert.deepEqual(decideAcceptanceRoute({ ...base, controlMode: false, tripwire: { status: 'ok', newFlags: ['auth'] } }),
+    { consulted: false, park: false, target: null, reason: null });
+});
+
+test('decideSeries spreads each record\'s tripwire input', () => {
+  const series = decideSeries([
+    { record: 1, input: { controlMode: true, keptRiskFlags: [], policyDefault: 'dev', tripwire: { status: 'ok', newFlags: [] } } },
+    { record: 2, input: { controlMode: true, keptRiskFlags: [], policyDefault: 'dev', tripwire: { status: 'ok', newFlags: ['migrations'] } } },
+  ]);
+  assert.equal(series.park, true);
+  assert.deepEqual(series.decisions.map((d) => [d.record, d.park, d.reason]), [[1, false, 'policy'], [2, true, 'risk-flag']]);
+});

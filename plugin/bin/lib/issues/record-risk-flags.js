@@ -1,7 +1,8 @@
 // bin/lib/issues/record-risk-flags.js
 // Pure: the `Risk-flags:` body line (#4618) — the one reader every consumer shares
 // (parseRiskFlags) and the sanctioned writers (addRiskFlags, removeRiskFlag,
-// confirmRiskFlags, appendRiskProofGotcha). A record body, not a facet, carries the
+// confirmRiskFlags, appendRiskProofGotcha) plus, for the diff tripwire (#4619), the
+// `Risk-flags-added-by-tripwire:` line (parseTripwireFlags, addTripwireRiskFlags). A record body, not a facet, carries the
 // line, so the GitHub and local-files backends read it through the same function.
 // No I/O.
 //
@@ -21,6 +22,11 @@
 // one list marker (`-`, `*`, `+`, `1.`, `1)`), and `*`/`_` emphasis around the key, so
 // `**Risk-flags:** auth`, `- Risk-flags: auth` and `> Risk-flags: auth` read malformed
 // (all four), never "no flags". The writers' repair rewrites such a line in the exact form.
+//
+// `Risk-flags-added-by-tripwire: {slugs}` names the flags the tripwire added beyond what the human
+// declared, directly below the `Risk-flags:` line (and its unconfirmed marker). It is written only by
+// addTripwireRiskFlags, never composed into a body, and parseRiskFlags ignores it: it is not a flag
+// line. Detection is as wide as FLAG_LINE_RE's, so a variant spelling reads malformed, not absent.
 //
 // Writers only ever widen unless a human decided otherwise: removeRiskFlag and
 // confirmRiskFlags refuse without `humanConfirmed === true`, and refuse again on an
@@ -44,7 +50,9 @@ const FLAG_LINE_RE = new RegExp(String.raw`${LINE_PREFIX}risk[-_ ]?flags[*_]*\s*
 const MARKER_LINE_RE = new RegExp(String.raw`${LINE_PREFIX}risk[-_ ]?flags[-_ ]unconfirmed[*_]*\s*:`, 'i');
 // The emphasis a variant line may leave right after its colon (`**Risk-flags:** auth`).
 const LEADING_EMPHASIS_RE = /^[*_]+/;
+const TRIPWIRE_LINE_RE = new RegExp(String.raw`${LINE_PREFIX}risk[-_ ]?flags[-_ ]added[-_ ]by[-_ ]tripwire[*_]*\s*:`, 'i');
 const EXACT_FLAG_RE = /^Risk-flags: (.*)$/;
+const EXACT_TRIPWIRE_RE = /^Risk-flags-added-by-tripwire: (.*)$/;
 const MARKER_TRUE = 'Risk-flags-unconfirmed: true';
 const MARKER_FALSE = 'Risk-flags-unconfirmed: false';
 // The policy schema's own slug rule, so a `risk-categories` entry the resolver accepts reads here.
@@ -123,14 +131,16 @@ function scanPreamble(lines) {
   }
   const flagIdx = [];
   const markerIdx = [];
+  const tripwireIdx = [];
   let anchor = -1;
   for (let i = start; i < end; i += 1) {
     if (fenced[i - start]) continue;
     if (!isBlank(lines[i])) anchor = i;
     if (MARKER_LINE_RE.test(lines[i])) markerIdx.push(i);
+    else if (TRIPWIRE_LINE_RE.test(lines[i])) tripwireIdx.push(i);
     else if (FLAG_LINE_RE.test(lines[i])) flagIdx.push(i);
   }
-  return { start, end, flagIdx, markerIdx, anchor };
+  return { start, end, flagIdx, markerIdx, tripwireIdx, anchor };
 }
 
 // flag lines -> the slugs of one exact `Risk-flags: {value}` line, [] for `none`, or
@@ -177,6 +187,28 @@ function parseRiskFlags(body, opts) {
 
 function flagLineFor(flags) {
   return `Risk-flags: ${flags.length > 0 ? flags.join(', ') : RISK_FLAGS_NONE}`;
+}
+
+// tripwire lines -> the slugs of one exact `Risk-flags-added-by-tripwire: {slugs}` line, or null
+// when malformed (any other spelling, two lines, an empty value, a non-slug or `none`).
+function readTripwireLines(tripwireLines) {
+  if (tripwireLines.length !== 1) return null;
+  const match = EXACT_TRIPWIRE_RE.exec(tripwireLines[0]);
+  if (!match) return null;
+  const value = match[1].trim();
+  if (value === '') return null;
+  const tokens = value.split(',').map((token) => token.trim());
+  if (tokens.some((token) => !SLUG_RE.test(token) || token === RISK_FLAGS_NONE)) return null;
+  return unique(tokens);
+}
+
+// body -> { status: 'absent' | 'ok' | 'malformed', flags }. `flags` is [] unless ok.
+function parseTripwireFlags(body) {
+  const lines = toLines(toText(body));
+  const { tripwireIdx } = scanPreamble(lines);
+  if (tripwireIdx.length === 0) return { status: 'absent', flags: [] };
+  const slugs = readTripwireLines(tripwireIdx.map((i) => lines[i]));
+  return slugs === null ? { status: 'malformed', flags: [] } : { status: 'ok', flags: slugs };
 }
 
 // lines, flag line text, marker mode -> lines with exactly one flag line.
@@ -227,6 +259,29 @@ function addRiskFlags(body, slugs, opts) {
   return editBody(body, (lines) => applyFlagLine(lines, flagLineFor(merged), markerMode));
 }
 
+// body, slugs, { unconfirmed, extraCategories } -> body. addRiskFlags, then exactly one
+// `Risk-flags-added-by-tripwire:` line holding the union of what it already named (a malformed line
+// names none and is rewritten exact) and `slugs`, canonical order, directly below the flag line and
+// its marker; an existing line is rewritten in place. `[]` returns the body unchanged.
+function addTripwireRiskFlags(body, slugs, opts) {
+  assertSlugs('addTripwireRiskFlags', slugs);
+  if (slugs.length === 0) return toText(body);
+  const widenedBody = addRiskFlags(body, slugs, opts);
+  return editBody(widenedBody, (lines) => {
+    const scan = scanPreamble(lines);
+    const existing = readTripwireLines(scan.tripwireIdx.map((i) => lines[i])) ?? [];
+    const text = `Risk-flags-added-by-tripwire: ${canonicalOrder([...existing, ...slugs]).join(', ')}`;
+    if (scan.tripwireIdx.length > 0) {
+      const [first, ...rest] = scan.tripwireIdx;
+      const dropped = new Set(rest);
+      return lines.flatMap((line, i) => (i === first ? [text] : dropped.has(i) ? [] : [line]));
+    }
+    let at = scan.flagIdx[0] + 1;
+    if (at < lines.length && MARKER_LINE_RE.test(lines[at])) at += 1;
+    return [...lines.slice(0, at), text, ...lines.slice(at)];
+  });
+}
+
 function refuseWithoutHuman(name, humanConfirmed) {
   if (humanConfirmed !== true) {
     throw new Error(`${name} refused: humanConfirmed must be exactly true, because narrowing or confirming a risk flag set is a human decision`);
@@ -261,7 +316,20 @@ function removeRiskFlag(body, slug, opts) {
   if (typeof slug !== 'string') throw new TypeError(`removeRiskFlag: invalid slug ${JSON.stringify(slug)}`);
   if (!current.flags.includes(slug)) return toText(body);
   const rest = current.flags.filter((flag) => flag !== slug);
-  return editBody(body, (lines) => applyFlagLine(lines, flagLineFor(rest), 'clear'));
+  return editBody(body, (lines) => dropFromTripwireLine(applyFlagLine(lines, flagLineFor(rest), 'clear'), slug));
+}
+
+// lines, slug -> lines without `slug` on the tripwire line (the line goes when it empties), so that
+// line never names a flag the flag line no longer carries. A missing or malformed line is left as is.
+function dropFromTripwireLine(lines, slug) {
+  const { tripwireIdx } = scanPreamble(lines);
+  const named = readTripwireLines(tripwireIdx.map((i) => lines[i]));
+  if (named === null || !named.includes(slug)) return lines;
+  const rest = named.filter((flag) => flag !== slug);
+  const [at] = tripwireIdx;
+  return rest.length === 0
+    ? lines.filter((_, i) => i !== at)
+    : lines.map((line, i) => (i === at ? `Risk-flags-added-by-tripwire: ${rest.join(', ')}` : line));
 }
 
 // body, { humanConfirmed, extraCategories } -> body without the unconfirmed marker;
@@ -374,4 +442,5 @@ module.exports = {
   // MARKER_LINE_RE is exported for /backlog refine's Step 3.7 pre-filter, so its narrowing
   // detects the same marker lines parseRiskFlags does.
   RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, MARKER_LINE_RE, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  parseTripwireFlags, addTripwireRiskFlags,
 };
