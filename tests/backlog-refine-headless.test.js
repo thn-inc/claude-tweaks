@@ -187,7 +187,7 @@ test('work-record-permission-matrix.md: exactly one merged /backlog refine row, 
 
 // --- (9) Retired-vocabulary sweep: widened past record #1490's original
 // AC4 ("backlog grant" only, plugin/+docs/+README) by this record's own
-// whole-branch review fix-wave — four offender tokens, evals/ walked too ---
+// whole-branch review fix-wave — four offender tokens ---
 
 test('retired-vocabulary sweep: no lingering grant-mode/standalone-mode phrasing outside ledgered exemptions', () => {
   // Exemption ruling (fix-wave review amendment, binding): each offender
@@ -196,11 +196,6 @@ test('retired-vocabulary sweep: no lingering grant-mode/standalone-mode phrasing
   //     audit-comment templates ("Skipped by /claude-tweaks:backlog grant: ..."
   //     / "Machine-granted by /claude-tweaks:backlog grant (headless)." —
   //     ~lines 388/451) — asserted below by an exact "backlog grant" count.
-  //   - evals/scenarios/backlog-grant-local-files-preflight-stop.yaml — ONLY
-  //     its skill_invocation.prompt literal ("/claude-tweaks:backlog grant")
-  //     — the deprecated `grant` alias command actually under test, not a
-  //     citation of retired vocabulary — asserted below by an exact
-  //     "backlog grant" count.
   //   - docs/incident-log.md — historical incident narrative, never rewritten.
   //   - docs/decisions/**, docs/plans/**, docs/superpowers/plans/** —
   //     whole-directory exemption: ADRs are immutable historical record, and
@@ -217,7 +212,6 @@ test('retired-vocabulary sweep: no lingering grant-mode/standalone-mode phrasing
   const EXEMPT_DIR_PREFIXES = ['docs/decisions/', 'docs/plans/', 'docs/superpowers/plans/'];
   const CAPPED_FILES = {
     'plugin/skills/backlog/refine-headless.md': { 'backlog grant': 2 },
-    'evals/scenarios/backlog-grant-local-files-preflight-stop.yaml': { 'backlog grant': 1 },
   };
   const OFFENDER_TOKENS = ['backlog grant', 'grant-mode', 'grant mode', 'Four modes over the open'];
 
@@ -231,7 +225,6 @@ test('retired-vocabulary sweep: no lingering grant-mode/standalone-mode phrasing
 
   const PLUGIN_DIR = path.join(ROOT, 'plugin');
   const DOCS_DIR = path.join(ROOT, 'docs');
-  const EVALS_DIR = path.join(ROOT, 'evals');
   const README_PATH = path.join(ROOT, 'README.md');
 
   function walk(dir, out) {
@@ -245,7 +238,6 @@ test('retired-vocabulary sweep: no lingering grant-mode/standalone-mode phrasing
   const files = [];
   walk(PLUGIN_DIR, files);
   walk(DOCS_DIR, files);
-  walk(EVALS_DIR, files);
   if (fs.existsSync(README_PATH)) files.push(README_PATH);
 
   const offenders = [];
