@@ -135,6 +135,8 @@ Read governed markdown through `tests/helpers/read-skill.js`'s `readText()`, nev
 
 Slice with `tests/helpers/conformance-asserts.js`'s `sectionOf(text, '## Heading')` and `lineStartingWith(text, prefix)` instead of writing another local copy; `tests/review-tiebreak-step-conformance.test.js` uses both. `sectionOf` matches the whole heading line, throws when it is missing, and ends at the next `## ` or the end of the text. `lineStartingWith` returns one line, so a hard-wrapped paragraph needs the blank-line split below. It returns `''` on a miss, so a bare absence check over its result passes with the line gone: assert the line itself first.
 
+A `docs/plugin-structure.md` entry is not one line: since #5049, long entries wrap onto continuation lines (`| | | ` table rows, indented tree lines, `# ` command lines), so `lineStartingWith` returns only the entry's first line and a needle on a later line reads as absent. Look the entry up with `tests/helpers/plugin-structure-entry.js` (`rowWithContinuations`, `treeEntryWithContinuations`, `commandWithContinuations`), which joins the entry with its own continuations; `tests/review-tier-variants-split-conformance.test.js` uses `rowWithContinuations`.
+
 ### Doctor by structural boundary, not a magic line-span regex
 
 A discrimination proof that removes an anchor paragraph to prove the sniff can go red needs a
