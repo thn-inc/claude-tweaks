@@ -560,15 +560,14 @@ function checkPostTeardownReanchor(ctx) {
 // (e.g. `Your questions have been answered: "..."="...". You can now
 // continue with these answers in mind.`) with a varying prefix/suffix, and
 // the embedded question text can contain unescaped nested double quotes —
-// not safely regex-parseable into a
-// structured per-question answer map. So there is no per-question `answer`
-// field; instead ONE raw `response` string for the whole event, extracted via
-// this file's own `extractToolResponseText` (reused, not reimplemented — see
-// that function's header comment, which already documents this exact class
-// of `tool_response`-shape problem for other tools). Never throws — a
-// malformed tool_input/tool_response degrades to an empty questions array
-// and/or a null response rather than breaking the session, per CLAUDE.md's
-// Hooks section ("Never break a session").
+// not safely regex-parseable into a structured per-question answer map. So
+// there is no per-question `answer` field; instead ONE raw `response` string
+// for the whole event, extracted via this file's own `extractToolResponseText`
+// (reused, not reimplemented — see that function's header comment, which
+// already documents this exact class of `tool_response`-shape problem for
+// other tools). Never throws — a malformed tool_input/tool_response degrades
+// to an empty questions array and/or a null response rather than breaking the
+// session, per CLAUDE.md's Hooks section ("Never break a session").
 function logAskUserQuestion(ctx) {
   const ownedRun = ctx.ownedRun || {};
   if (!ownedRun.dir) return {};

@@ -11,10 +11,9 @@
 // "AskUserQuestion input/output shapes" section's Correction) show it is
 // always a plain natural-language string with a varying prefix/suffix, and
 // the embedded question text can contain unescaped nested double quotes,
-// making it unsafe to regex-parse into a
-// structured per-question answer map. So there is no per-question `answer`
-// field — only the whole-event `response` string, extracted via this file's
-// existing `extractToolResponseText` helper.
+// making it unsafe to regex-parse into a structured per-question answer map.
+// So there is no per-question `answer` field — only the whole-event `response`
+// string, extracted via this file's existing `extractToolResponseText` helper.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
