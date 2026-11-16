@@ -194,8 +194,9 @@ const GH_REPO_URL = new RegExp(`${CMD}gh\\s[^\\n]*--repo[\\s=]+["']?(?:https?://
 // (one line), or -1.
 function latestSeparator(text, start, end, seps, status) {
   if (end - start < status.length) return -1;
-  const at = text.lastIndexOf(status, end - status.length);
-  if (at < start) return -1;
+  const found = text.slice(start, end).lastIndexOf(status);
+  if (found < 0) return -1;
+  const at = start + found;
   for (let p = at - 1; p >= start; p -= 1) {
     if (seps.some((s) => p + s.length <= at && text.startsWith(s, p))) return p;
   }

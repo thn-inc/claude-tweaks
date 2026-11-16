@@ -35,6 +35,11 @@ const CASES = [
   { what: "'echo $?; ' then 'git x; ' x 2000", text: 'echo $?; ' + 'git x; '.repeat(2000), id: 'git-chained-status', expect: false },
   { what: "'git x; ' x 2000 then 'echo $?'", text: 'git x; '.repeat(2000) + 'echo $?', id: 'git-chained-status', expect: true },
   { what: "'gh x --repo github.com/o/r; ' x 1000 then 'echo $?'", text: 'gh x --repo github.com/o/r; '.repeat(1000) + 'echo $?', id: 'gh-jq-pipe-chained', expect: true },
+  // Multi-line text: each line's search for `$?` stays inside that line.
+  { what: "'git x\\n' x 40000, no $?", text: 'git x\n'.repeat(40000), id: 'git-chained-status', expect: false },
+  { what: "'echo $?\\n' then 'git x\\n' x 40000", text: 'echo $?\n' + 'git x\n'.repeat(40000), id: 'git-chained-status', expect: false },
+  { what: "'gh x --repo github.com/o/r\\n' x 10000, no $?", text: 'gh x --repo github.com/o/r\n'.repeat(10000), id: 'gh-jq-pipe-chained', expect: false },
+  { what: "'echo $?\\n' then 'gh x --repo github.com/o/r\\n' x 10000", text: 'echo $?\n' + 'gh x --repo github.com/o/r\n'.repeat(10000), id: 'gh-jq-pipe-chained', expect: false },
 ];
 
 for (const { what, text, id, expect } of CASES) {
