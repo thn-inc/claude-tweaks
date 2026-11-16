@@ -28,4 +28,5 @@ own variable or rendering.
 Ask: does the idea, as stated, leave more than one viable direction with no tradeoff decided? If
 yes, `needed` — file with `needs:definition` and a one-line rationale naming the undecided
 directions. If the idea names one clear ask (even if the *implementation* has incidental
-sub-decisions), `clear` — file without the label. When unsure, `clear`: `needed` only when the idea genuinely names an undecided choice.
+sub-decisions), `clear` — file without the label. When unsure, `clear`: `needed` only when the
+idea genuinely names an undecided choice.
