@@ -39,7 +39,8 @@
 //   `:(literal)` pathspec; an empty pathspec would commit the whole index. It takes `env`'s identity and runs its hooks.
 //   Throws a TypeError for a `runId` (a run-id segment with no glob or path characters) or
 //   `specDir` that is not shaped like one: a
-//   caller bug, never a repo state.
+//   caller bug, never a repo state. `validRunId(runId)` and `SPEC_DIR_RE` are those two checks,
+//   exported so a CLI refuses a malformed value (bin/archive-run-header.js, exit 2) before the call.
 //
 // pushRunBranch({ worktree, env, git = runGit })
 //   -> { pushed: boolean, branch?, reason?: 'detached-head' | 'invalid-branch' | 'push-failed', detail? }
@@ -272,4 +273,4 @@ function pushRunBranch({ worktree, env, git = runGit } = {}) {
     : { pushed: true, branch };
 }
 
-module.exports = { ARCHIVE_HEADER_SUBJECT, archiveRunHeader, pushRunBranch };
+module.exports = { ARCHIVE_HEADER_SUBJECT, SPEC_DIR_RE, archiveRunHeader, pushRunBranch, validRunId };

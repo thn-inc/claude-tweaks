@@ -17,7 +17,7 @@
 // decisions.md section the entry lands under (default /wrap-up).
 //
 // Prints exactly one JSON line:
-//   {outcome, reason?, detail?, commit?, moved, push?: {pushed, reason?}, logged, logError?}
+//   {outcome, reason?, detail?, commit?, moved, push?: {pushed, reason?, detail?}, logged, logError?}
 // outcome moved | noop | refused. `moved` is the POSIX repo-relative live paths moved. `reason` (refused):
 // the library's own (missing-worktree, dirty-index, archived-copy-differs, git-mv-failed, commit-failed,
 // the two *-partial-revert forms, git-failed -- a partial-revert reason is not a clean refusal: `detail`
@@ -25,24 +25,25 @@
 // only with --push on a move; a rejected push leaves the outcome `moved`.
 //
 // Self-logging (_shared/auto-decision-log.md's roster): moved -> one AUTO line, a refusal -> one SKIP
-// naming the fallback, a failed push -> a second SKIP, noop -> nothing (so `logged: false` on a noop is
-// not a failed append). A failed append never changes the exit code: `logged: false`, `logError` and one
-// stderr line `could not append the decisions.md entry`; the caller hand-logs only then.
+// naming the fallback, a failed push -> a second SKIP, noop -> nothing. `logged` means every line the
+// outcome owes is in decisions.md, so a noop (which owes none) reports `logged: true`; it is `false` only
+// when the append failed. That never changes the exit code: `logged: false`, `logError` and one stderr
+// line `could not append the decisions.md entry`; the caller hand-logs only then.
 //
 // Status is data: exit 0 whenever an envelope was printed, whatever its outcome or reason.
 // 2 malformed invocation (a missing or option-shaped value, an unknown flag, a --run that is not under
-//   `.claude-tweaks/pipelines/` or whose run id or spec segment is not shaped like one); git is never spawned.
+//   `.claude-tweaks/pipelines/` or whose run id or spec segment is not shaped like one; a TypeError the
+//   move throws anyway); git is never spawned for a malformed --run.
 // 3 run dir missing or not anchored under the main checkout (a worktree-local shadow --
 //   _shared/pipeline-run-dir.md, [IL-127]); an archive/{run-id} dir in the main checkout is anchored.
 //   Checked before any git call. Same vocabulary as post-merge-run.js (the Sanctioned-writer family).
 'use strict';
 
 const path = require('path');
-const { archiveRunHeader, pushRunBranch } = require('./lib/run-header-archive');
+const { archiveRunHeader, pushRunBranch, validRunId, SPEC_DIR_RE } = require('./lib/run-header-archive');
 const { resolveTarget, formatEntry, appendEntries } = require('./lib/log-decision/append');
 const { readRunStateWithParent, readRunState } = require('./lib/hooks/context');
 const { mainCheckoutRoot, safeReal } = require('./lib/hooks/worktree-detect');
-const { RUN_ID_RE } = require('./lib/hooks/run-dir-resolve');
 
 const NAME = 'archive-run-header.js';
 const STEP = 'Archive spec header';
@@ -50,15 +51,11 @@ const DEFAULT_SECTION = '/wrap-up';
 const FALLBACK = "header left live; reconcile's archiveRunDir archives it after the merge";
 const PUSH_FALLBACK = 'the merge proceeds without the move; archiveRunDir archives the header after the merge';
 const DETAIL_MAX = 200;
-// What run-header-archive.js accepts as a run id (RUN_ID_RE plus a glob- and separator-free charset) and
-// as a spec dir; a value outside either would make it throw, so the CLI refuses it first.
-const SAFE_RUN_ID_RE = /^\d{4}-\d{2}-\d{2}T[0-9A-Za-z._-]+$/;
-const SPEC_DIR_RE = /^spec-[1-9]\d*$/;
 
 const USAGE = `usage: ${NAME} --run <run-dir> [--worktree <path>] [--push] [--section </skill>] [--help]\n`
   + '  moves the run\'s tracked spec header to .claude-tweaks/pipelines/archive/{run-id}/ in one commit on the run branch\n'
   + '  prints {outcome, reason?, detail?, commit?, moved, push?, logged, logError?}; outcome: moved | noop | refused\n'
-  + `  logs one AUTO (moved) or SKIP (refused, failed push) line under ${DEFAULT_SECTION} unless --section names another; noop logs nothing\n`
+  + `  logs one AUTO (moved) or SKIP (refused, failed push) line under ${DEFAULT_SECTION} unless --section names another; noop logs nothing and reports logged: true\n`
   + '  exit 0 an envelope was printed (every outcome and reason is data)\n'
   + '       2 malformed invocation\n'
   + '       3 run dir missing or not anchored under the main checkout\n';
@@ -90,6 +87,8 @@ const realDeps = {
   env: process.env,
   mainRoot: (cwd) => mainCheckoutRoot(cwd),
   now: () => new Date(),
+  archiveRunHeader,
+  pushRunBranch,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -104,7 +103,7 @@ function runIdentity(mainRoot, runDir) {
   const rest = segs.slice(2);
   if (rest[0] === 'archive') rest.shift();
   const [runId, ...tail] = rest;
-  if (!runId || !RUN_ID_RE.test(runId) || !SAFE_RUN_ID_RE.test(runId) || runId.includes('..')) {
+  if (!runId || !validRunId(runId)) {
     return { error: `--run does not name a run id (a pipelines/ or pipelines/archive/ child shaped like 2026-01-02T030405-...): ${runDir}` };
   }
   if (tail.length > 1 || (tail.length === 1 && !SPEC_DIR_RE.test(tail[0]))) {
@@ -147,7 +146,7 @@ function entriesFor({ result, push, runId, now }) {
     text: `moved ${result.moved.length} file(s) to archive/${runId}/ in ${sha}${pushNote}`,
     reversibility: 'high (git revert)',
   })];
-  if (push && !push.pushed) entries.push(skip(`condition: push failed (${push.reason}) → fallback: ${PUSH_FALLBACK}`));
+  if (push && !push.pushed) entries.push(skip(`condition: push failed (${push.reason})${push.detail ? ` (${oneLine(push.detail)})` : ''} → fallback: ${PUSH_FALLBACK}`));
   return entries;
 }
 
@@ -194,9 +193,15 @@ function run(argv, overrides = {}) {
   } else if (safeReal(worktree) === mainRoot) {
     result = { outcome: 'refused', reason: 'not-a-linked-worktree', detail: `${worktree} is the main checkout`, moved: [] };
   } else {
-    result = archiveRunHeader({ worktree, runId, specDir, env: deps.env });
+    try {
+      result = deps.archiveRunHeader({ worktree, runId, specDir, env: deps.env });
+    } catch (e) {
+      // The checks above are the library's own, so this is a caller bug, never a repo state: exit 2, not a crash.
+      if (e instanceof TypeError) { deps.stderr(`${NAME}: the move refused its arguments: ${e.message}\n`); return 2; }
+      throw e;
+    }
   }
-  const push = o.push && result.outcome === 'moved' ? pushRunBranch({ worktree, env: deps.env }) : null;
+  const push = o.push && result.outcome === 'moved' ? deps.pushRunBranch({ worktree, env: deps.env }) : null;
 
   // 5. The audit line(s); a failed append is data, never an exit code.
   const body = {
@@ -205,15 +210,15 @@ function run(argv, overrides = {}) {
     ...(result.detail ? { detail: result.detail } : {}),
     ...(result.commit ? { commit: result.commit } : {}),
     moved: result.moved,
-    ...(push ? { push: { pushed: push.pushed, ...(push.reason ? { reason: push.reason } : {}) } } : {}),
-    logged: false,
+    ...(push ? { push: { pushed: push.pushed, ...(push.reason ? { reason: push.reason } : {}), ...(push.detail ? { detail: push.detail } : {}) } } : {}),
+    logged: true,
   };
   const entries = entriesFor({ result, push, runId, now: deps.now() });
   if (entries.length) {
     try {
       appendEntries({ runDir, items: entries.map((entry) => ({ section: o.section, entry })) });
-      body.logged = true;
     } catch (e) {
+      body.logged = false;
       body.logError = String((e && e.message) || e);
       deps.stderr(`${NAME}: could not append the decisions.md entry: ${body.logError}\n`);
     }
@@ -222,6 +227,6 @@ function run(argv, overrides = {}) {
   return 0;
 }
 
-module.exports = { run, realDeps, parseArgs };
+module.exports = { run, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

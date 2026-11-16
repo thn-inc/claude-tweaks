@@ -8,6 +8,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
@@ -126,6 +127,7 @@ test('a second call is a no-op and logs nothing', () => {
   assert.equal(res.code, 0, res.stderr);
   const env = envelope(res);
   assert.equal(env.outcome, 'noop');
+  assert.equal(env.logged, true, 'a noop owes no line, so every owed line is logged');
   assert.deepEqual(env.moved, []);
   assert.equal(f.head(), head, 'no new commit');
   assert.deepEqual(fs.readFileSync(f.decisionsFile), before, 'decisions.md byte-unchanged');
@@ -274,13 +276,82 @@ test('--push pushes the move; a rejected push is a SKIP and outcome stays moved'
   assert.equal(rejected.code, 0, rejected.stderr);
   const renv = envelope(rejected);
   assert.equal(renv.outcome, 'moved', 'a rejected push never un-moves');
-  assert.deepEqual(renv.push, { pushed: false, reason: 'push-failed' });
+  assert.equal(renv.push.pushed, false);
+  assert.equal(renv.push.reason, 'push-failed');
+  assert.ok(renv.push.detail, 'the rejection text reaches the envelope');
   assert.equal(renv.logged, true);
   assert.deepEqual(g.tree(`${ARCH}/`), [`${ARCH}/work/7-spec.md`]);
   const rlines = g.entries(g.decisions());
   assert.equal(rlines.length, 2);
   assert.match(rlines[0], /^- AUTO .* — Archive spec header: moved 1 file\(s\) to archive\/2026-11-16T000000-record-7\/ in [0-9a-f]{7}, not pushed\./);
-  assert.match(rlines[1], /^- SKIP .* — Archive spec header: condition: push failed \(push-failed\) → fallback: the merge proceeds without the move; archiveRunDir archives the header after the merge/);
+  assert.match(rlines[1], /^- SKIP .* — Archive spec header: condition: push failed \(push-failed\) \(.+\) → fallback: the merge proceeds without the move; archiveRunDir archives the header after the merge/);
+});
+
+test('a parent --run moves the flat and every spec-{N} header in one commit', () => {
+  const f = makeFixture();
+  const headers = [`${LIVE}/work/7-spec.md`, `${LIVE}/spec-8/work/8-spec.md`, `${LIVE}/spec-9/work/9-spec.md`];
+  for (const rel of headers) f.header(rel);
+  const before = Number(f.git(f.wt, 'rev-list', '--count', 'HEAD'));
+
+  const res = cli(f, ['--run', f.runDir]);
+
+  assert.equal(res.code, 0, res.stderr);
+  const env = envelope(res);
+  assert.equal(env.outcome, 'moved');
+  assert.deepEqual([...env.moved].sort(), [...headers].sort());
+  assert.equal(Number(f.git(f.wt, 'rev-list', '--count', 'HEAD')), before + 1, 'exactly one move commit');
+  assert.deepEqual(f.tree('.claude-tweaks').sort(), headers.map((rel) => rel.replace(LIVE, ARCH)).sort(), 'every header is under archive/, none live');
+  assert.deepEqual(f.tree(`${LIVE}/`), []);
+  assert.match(f.entries(f.decisions())[0], /moved 3 file\(s\) to archive\//);
+});
+
+test('the move commit runs with the injected env', () => {
+  const f = makeFixture();
+  f.header(`${LIVE}/work/7-spec.md`);
+  // A value this process does not carry: only the injected env can put it on the commit.
+  assert.notEqual(process.env.GIT_AUTHOR_NAME, 'ArchiveCliEnvProbe');
+
+  const res = cli(f, ['--run', f.runDir], { env: { ...ENV, GIT_AUTHOR_NAME: 'ArchiveCliEnvProbe' } });
+
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(envelope(res).outcome, 'moved');
+  assert.equal(f.git(f.wt, 'log', '-1', '--format=%an'), 'ArchiveCliEnvProbe');
+});
+
+test('the push runs with the injected env', () => {
+  const f = makeFixture({ origin: true });
+  f.header(`${LIVE}/work/7-spec.md`);
+  const branch = f.git(f.wt, 'symbolic-ref', '--short', 'HEAD');
+  const second = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-arh-push-')));
+  roots.push(second);
+  fixtureGit(['init', '-q', '--bare', second], { env: ENV });
+  // A push url set only through GIT_CONFIG_*: neither this process nor the repo's own config carries it.
+  // The runner may already export some GIT_CONFIG_* pairs (verify.js does), so the new pair goes after them.
+  const n = Number(process.env.GIT_CONFIG_COUNT || 0);
+  for (let i = 0; i < n; i++) assert.notEqual(process.env[`GIT_CONFIG_KEY_${i}`], 'remote.origin.pushurl');
+  const env = { ...ENV, GIT_CONFIG_COUNT: String(n + 1), [`GIT_CONFIG_KEY_${n}`]: 'remote.origin.pushurl', [`GIT_CONFIG_VALUE_${n}`]: second };
+
+  const res = cli(f, ['--run', f.runDir, '--push'], { env });
+
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(envelope(res).push.pushed, true);
+  assert.equal(f.git(second, 'rev-parse', `refs/heads/${branch}`), f.head(), 'the push landed at the injected push url');
+  assert.equal(f.git(f.main, 'ls-remote', 'origin', `refs/heads/${branch}`), '', 'and not at origin');
+});
+
+test('a TypeError from the move exits 2 with one stderr line; any other throw is not swallowed', () => {
+  const f = makeFixture();
+  f.header(`${LIVE}/work/7-spec.md`);
+  const head = f.head();
+
+  const res = cli(f, ['--run', f.runDir], { deps: { archiveRunHeader: () => { throw new TypeError('boom'); } } });
+
+  assert.equal(res.code, 2);
+  assert.equal(res.stdout, '');
+  assert.deepEqual(res.stderr.split('\n').filter(Boolean), ['archive-run-header.js: the move refused its arguments: boom']);
+  assert.equal(f.decisions(), '');
+  assert.equal(f.head(), head);
+  assert.throws(() => cli(f, ['--run', f.runDir], { deps: { archiveRunHeader: () => { throw new Error('other'); } } }), /other/);
 });
 
 test('an unanchored worktree-local shadow --run exits 3 and leaves the shadow byte-unchanged', () => {
@@ -396,6 +467,6 @@ test('spawnCli smoke: script entry exits 0 on a noop', () => {
   const res = spawnCli(CLI, ['--run', f.runDir], { env: ENV, cwd: f.main });
   assert.equal(res.code, 0, res.stderr);
   const env = JSON.parse(res.stdout);
-  assert.deepEqual(env, { outcome: 'noop', moved: [], logged: false });
+  assert.deepEqual(env, { outcome: 'noop', moved: [], logged: true });
   assert.equal(f.decisions(), '');
 });
