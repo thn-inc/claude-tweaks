@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`, git CLI, git trace2 (`GIT_TRACE2_EVENT`).
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-16T162739-record-5770/work/5770-spec.md` (record #5770)
+**Spec:** `.claude-tweaks/pipelines/2026-11-16T183913-record-5770/work/5770-spec.md` (record #5770; re-materialized on resume, carries the record author's Decision paragraph and the plan-review clarifications)
 
 Waived tests/bin-lib/learned-skills/capture.test.js: it gets the templated fixture only through `tests/helpers/learned-skills-capture.js` (Task 1) and is not edited; Task 1 Step 4 and Task 3 Step 4 run it and compare its test names and count.
 
@@ -143,7 +143,7 @@ Expected: FAIL with `Cannot find module './helpers/learned-skills-land'`
 - [ ] **Step 4: Run tests**
 
 Run: `node --test tests/helpers-git-template.test.js tests/bin-lib/learned-skills/land.test.js`
-Expected: PASS. `land.test.js` reports `# tests 57`, with the same names as `node --test tests/bin-lib/learned-skills/land.test.js` at the merge base (AC4.1). The diff of `land.test.js` removes or loosens no `assert.` line (AC4.2): check with `git diff -U0 -- tests/bin-lib/learned-skills/land.test.js | grep '^-.*assert'`, which must print nothing.
+Expected: PASS. `land.test.js` reports `# tests 57`, with the same names as `node --test tests/bin-lib/learned-skills/land.test.js` at the merge base (AC4.1). The diff removes or loosens no `assert.` line (AC4.2): every `assert` line that `git diff -U0 {merge-base} -- tests/bin-lib/learned-skills/land.test.js | grep '^-.*assert'` prints must reappear byte-identical (modulo indentation) as an added line in `tests/helpers/learned-skills-land.js` (the `assert.equal(res.route, 'captured')` the moved fixture carries); any other removed `assert` line fails the check.
 
 - [ ] **Step 5: Commit**
 
@@ -153,6 +153,8 @@ git commit -m "Template the learned-skills land fixture and drop state-arranging
 ```
 
 ### Task 3: Remove doubled read-only helper git calls in the matrix path
+
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/helpers/learned-skills-capture.js:62-424`
@@ -174,7 +176,7 @@ git commit -m "Template the learned-skills land fixture and drop state-arranging
 - [ ] **Step 4: Run tests**
 
 Run: `node --test tests/bin-lib/learned-skills/`
-Expected: PASS, with every file's `# tests` unchanged.
+Expected: PASS, with every file's `# tests` unchanged. AC4.2 for this task: `git diff -U0 {merge-base} -- tests/helpers/learned-skills-capture.js tests/bin-lib/learned-skills/ | grep '^-.*assert'` prints only lines that reappear as added lines elsewhere in the diff, and for each reused read the trace grouping from Step 1 shows no state-changing git call between the first read and the reuse.
 
 - [ ] **Step 5: Commit**
 
@@ -193,14 +195,15 @@ If Step 1 finds no helper repeat, make no commit and report the trace grouping a
 - [ ] **Step 2:** Before count.
   - `git archive` the merge-base into a scratch dir.
   - For each file, run its own one-line list with its own empty trace dir: `GIT_TRACE2_EVENT=<abs empty dir> CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <one-file list>`.
-  - Also do one empty-list baseline run, which measures the runner's own git calls.
+  - No empty-list baseline run: `tools/run-tests.js` rejects an empty list, and on the `--files-from` path the runner starts no git process of its own, so every trace2 `start` event belongs to the file.
 - [ ] **Step 3:** After count. Do the same at HEAD, back to back with Step 2.
-- [ ] **Step 4:** Count per file (each trace file holding a `start` event is one process), minus the runner baseline.
-  - AC1.1: `land.test.js` must be ≤ 1,730.
+- [ ] **Step 4:** Count per file (each trace2 `start` event is one process), as is.
+  - AC1.1: `land.test.js` is judged against both ≤ 1,730 and ≤ 50% of its re-taken merge-base count (spec Plan Review Clarifications); the PR body reports both and names the one the verdict rests on.
   - AC1.2: otherwise name the shortfall and attribute it to fixture setup or to `capture()`/`land()` git.
   - AC2.1: the counting method, before at the merge base and after at HEAD, back to back.
 - [ ] **Step 5:** Record the evidence.
   - Save the full count output to `$PIPELINE_RUN_DIR/evidence/git-process-counts.txt` (absolute run-dir path, plain Bash redirect).
   - Log one `log-decision.js --status AUTO --step "AC evidence" --text-file` entry that names AC1.1, AC1.2 and AC2.1, the command shape, the counts and that path.
-- [ ] **Step 6:** Add the per-file before/after table, the Task 3 findings and any shortfall attribution to the PR body.
+- [ ] **Step 5b:** File each product-code repeat Task 3 Step 3 listed with `/claude-tweaks:capture` (spec-shaped body, `### Key Files`), and keep the record numbers for the PR body. None listed → say so in the PR body.
+- [ ] **Step 6:** Add the per-file before/after table, the Task 3 findings (with any filed record numbers) and any shortfall attribution to the PR body.
 - [ ] **Step 7:** AC4.1, AC4.2 and AC5.1 are checked by `/claude-tweaks:test`'s full suite (verify.js), and by the Windows regression job dispatched on the PR after the last code change. Task 2 Step 4's assertion-diff check also covers AC4.2.
