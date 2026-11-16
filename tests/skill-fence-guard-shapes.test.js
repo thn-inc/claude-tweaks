@@ -221,6 +221,7 @@ function applyAllowlist(hits, allowlist) {
 
 // `hits` without each LATER_SHAPE_IDS hit on a file:line site where a ratchet
 // entry covers another hit. A later-id hit on an uncovered site stays.
+// Removing the #4217 ratchet entries for a site surfaces the later-id hits on that same site.
 function dropRatchetCoveredLaterHits(hits, allowlist) {
   const sites = new Set();
   for (const e of allowlist) {

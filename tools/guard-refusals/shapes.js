@@ -201,7 +201,8 @@ function gitWordArgument(text) {
   // command word, not an argument of this one.
   return commandSegments(bare, 'git').some(([s, e]) => {
     const open = bare.slice(s, e).indexOf('(');
-    return shellWords(text.slice(s, open === -1 ? e : s + open)).slice(1).some((w) => GIT_BASENAME.test(w.slice(w.lastIndexOf('/') + 1)));
+    // A backslash-newline continuation vanishes in shell, joining the word it splits.
+    return shellWords(text.slice(s, open === -1 ? e : s + open).replace(/\\\r?\n/g, '')).slice(1).some((w) => GIT_BASENAME.test(w.slice(w.lastIndexOf('/') + 1)));
   });
 }
 

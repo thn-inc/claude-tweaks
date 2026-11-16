@@ -468,7 +468,7 @@ test('#5590: complete, eval and source tokens are refused in any letter case', (
 });
 
 test('#5590: git-word-argument flags a git argument whose basename is git or git-*', () => {
-  for (const c of ['git grep -c "git-discipline" -- f.md', 'git log --oneline -1 -- git', 'git log -1 -- GIT', 'git log -1 -- x/git-y', 'git log -1 --grep "git"', '/usr/bin/git log -1 -- git']) {
+  for (const c of ['git grep -c "git-discipline" -- f.md', 'git log --oneline -1 -- git', 'git log -1 -- GIT', 'git log -1 -- x/git-y', 'git log -1 --grep "git"', '/usr/bin/git log -1 -- git', 'git log -1 -- gi\\\nt']) {
     assert.deepStrictEqual(detectShapes(c), ['git-word-argument'], c);
   }
 });
