@@ -432,8 +432,7 @@ function gitCGlob(text) {
   GIT_C_OPERAND.lastIndex = 0;
   let segEnd = -1;
   let lastGlob = -1;
-  let m;
-  while ((m = GIT_C_OPERAND.exec(text)) !== null) {
+  while (GIT_C_OPERAND.exec(text) !== null) {
     const from = GIT_C_OPERAND.lastIndex;
     if (from > segEnd) {
       segEnd = text.length;
