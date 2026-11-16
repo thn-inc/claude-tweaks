@@ -274,7 +274,10 @@ function writeTripwireLine(lines, kept, added = []) {
     const [first, ...rest] = scan.tripwireIdx;
     if (rest.length === 0 && lines[first] === text) return null;
     const dropped = new Set(rest);
-    return lines.flatMap((line, i) => (i === first ? (text === null ? [] : [text]) : dropped.has(i) ? [] : [line]));
+    return lines.flatMap((line, i) => {
+      if (i === first) return text === null ? [] : [text];
+      return dropped.has(i) ? [] : [line];
+    });
   }
   if (text === null || scan.flagIdx.length === 0) return null;
   let at = scan.flagIdx[0] + 1;
