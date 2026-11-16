@@ -37,6 +37,9 @@ Scope keywords: evaluateMaturation, AUTHORIZING_LABEL
 
 ### Task 1: `evaluateMaturation` takes the build label and fails closed
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/issues/grant-maturation.js:82-122`
 - Test: `tests/bin-lib/issues/grant-maturation.test.js`
@@ -73,9 +76,13 @@ git commit -m "Add no-build-grant state to evaluateMaturation — fails closed w
 
 ### Task 2: Driver merge step requires `auto:build` at both label reads
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/driver/merge.js:2-1092` (lines 2, 96-97, 242-244, 1088-1092)
 - Test: `tests/bin-lib/driver/merge.test.js`
+- Test: `tests/bin-lib/driver/run.test.js` (its own merge-harness label reply at line ~6117 gains `{ name: 'auto:build' }`; tests there expect `outcome === 'merged'`)
 
 **Interfaces:**
 - Consumes: `LABELS.AUTO_BUILD` from `plugin/bin/lib/issues/record-vocabulary.js` (already imported as `LABELS`).
@@ -99,19 +106,22 @@ Expected: FAIL — the two new tests (outcome `merged` instead of `pending-revie
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test tests/bin-lib/driver/merge.test.js`
-Expected: PASS
+Run: `node --test tests/bin-lib/driver/merge.test.js tests/bin-lib/driver/run.test.js`
+Expected: PASS (run.test.js after its line ~6117 fixture gains `auto:build`)
 
 - [ ] **Step 5: AC8.1 go-red control** — temporarily delete both new `AUTO_BUILD` checks, run `node --test tests/bin-lib/driver/merge.test.js > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-16T183729-record-5734/evidence/red-driver.txt" 2>&1`, confirm exactly the two new tests fail, restore, re-run Step 4 green.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/lib/driver/merge.js tests/bin-lib/driver/merge.test.js
+git add plugin/bin/lib/driver/merge.js tests/bin-lib/driver/merge.test.js tests/bin-lib/driver/run.test.js
 git commit -m "Require auto:build at both driver merge label reads — a leftover auto:merge no longer merges, refs #5734"
 ```
 
 ### Task 3: Console resolver and executor pass the build label
+
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/console/resolve.js:448-463`
@@ -120,6 +130,15 @@ git commit -m "Require auto:build at both driver merge label reads — a leftove
 - Test: `tests/console-execute.test.js`
 - Test: `tests/bin-lib/console/cli.test.js`
 - Test: `tests/review-console-unattended-no-ask-conformance.test.js`
+- Test: `tests/auto-merge-short-circuit-verdict-backstop.test.js` (line ~82 `readGrants`)
+- Test: `tests/bin-lib/console/control-mode-cli.test.js` (line ~45 gh reply)
+- Test: `tests/bin-lib/console/reflect-apply.test.js` (line ~71 `readGrants`)
+- Test: `tests/bin-lib/console/resolve-control-mode.test.js` (line ~31 `readGrants`)
+- Test: `tests/bin-lib/console/shadow-dup-proposal.test.js` (line ~472 `readGrants`)
+- Test: `tests/bin-lib/review-coordination/cli.test.js` (line ~732 `readGrants`)
+- Test: `tests/console-failed-execution-residue-conformance.test.js` (line ~135 gh reply)
+- Test: `tests/review-tiebreak-step-conformance.test.js` (line ~1182 `readGrants`)
+- No-change (classified): `tests/bin-lib/wrap-up/pack.test.js` (audit snapshot of labels, no grant evaluation); `finding-outcomes.test.js`, `memory-write.test.js`, `stack-check.test.js` (empty grants — leave-open either way).
 - No-change (classified): `plugin/bin/console-resolve.js` and `plugin/bin/lib/issues/merge-lane-breaker.js` mention `evaluateMaturation` in comments only; `plugin/skills/_shared/console-execution.md:230` says the executor uses "the same `evaluateMaturation` helper" — still true.
 
 **Interfaces:**
@@ -132,7 +151,7 @@ git commit -m "Require auto:build at both driver merge label reads — a leftove
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `node --test tests/bin-lib/console/resolve.test.js tests/console-execute.test.js tests/bin-lib/console/cli.test.js tests/review-console-unattended-no-ask-conformance.test.js`
+Run: `node --test tests/bin-lib/console/resolve.test.js tests/console-execute.test.js tests/bin-lib/console/cli.test.js tests/review-console-unattended-no-ask-conformance.test.js tests/auto-merge-short-circuit-verdict-backstop.test.js tests/bin-lib/console/control-mode-cli.test.js tests/bin-lib/console/reflect-apply.test.js tests/bin-lib/console/resolve-control-mode.test.js tests/bin-lib/console/shadow-dup-proposal.test.js tests/bin-lib/review-coordination/cli.test.js tests/console-failed-execution-residue-conformance.test.js tests/review-tiebreak-step-conformance.test.js`
 Expected: FAIL after Step 1 — and after Task 1 has landed: the callers pass no `hasBuildLabel`, so merge-expecting tests get `no-build-grant`, and the two new tests fail on the reason text.
 
 - [ ] **Step 3: Implement** — both callers pass `hasBuildLabel: labels.includes('auto:build')` (console-execute: `hasBuildLabel: (grant.labels || []).includes('auto:build')`). In resolve.js, `mat.state === 'no-build-grant'` returns the reason in the Interfaces block; other non-mature states keep today's text. The `merge` reason string stays unchanged (pinned by three tests and read from `console.json` by an installed previous release).
@@ -145,14 +164,18 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/console/resolve.js plugin/bin/lib/reconcile/console-execute.js tests/bin-lib/console/resolve.test.js tests/console-execute.test.js tests/bin-lib/console/cli.test.js tests/review-console-unattended-no-ask-conformance.test.js
+git add plugin/bin/lib/console/resolve.js plugin/bin/lib/reconcile/console-execute.js tests/bin-lib/console/resolve.test.js tests/console-execute.test.js tests/bin-lib/console/cli.test.js tests/review-console-unattended-no-ask-conformance.test.js tests/auto-merge-short-circuit-verdict-backstop.test.js tests/bin-lib/console/control-mode-cli.test.js tests/bin-lib/console/reflect-apply.test.js tests/bin-lib/console/resolve-control-mode.test.js tests/bin-lib/console/shadow-dup-proposal.test.js tests/bin-lib/review-coordination/cli.test.js tests/console-failed-execution-residue-conformance.test.js tests/review-tiebreak-step-conformance.test.js
 git commit -m "Pass the build label to evaluateMaturation from the console resolver and executor, refs #5734"
 ```
 
 ### Task 4: Skill snippets pass the build label, pinned by a caller conformance scan
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Create: `tests/evaluate-maturation-build-label-conformance.test.js`
+- Test: `tests/comment-trust-conformance.test.js` (line ~313 prelude `['auto:merge-pending']` becomes `['auto:build', 'auto:merge-pending']`; it runs both snippets and asserts `state === 'matured'`)
 - Modify: `plugin/skills/wrap-up/auto-merge-short-circuit.md:9-63`
 - Modify: `plugin/skills/dispatch/grant-maturation-gate.md:17-70`
 - Modify: `tests/helpers/strip-comments.js` (header caller list)
@@ -176,22 +199,24 @@ Expected: FAIL — offenders in `plugin/skills/wrap-up/auto-merge-short-circuit.
 
 - [ ] **Step 3: Edit the snippets and their surrounding prose**
   - Both snippets: `hasBuildLabel: labels.includes('auto:build'),` as the first property of the `evaluateMaturation({` object.
-  - `auto-merge-short-circuit.md` (AC7.1, AC7.2): applicability (lines 12-14) reads "the issue's live labels carry `auto:build` together with `auto:merge` or `auto:merge-pending`"; Authorization's first bullet requires `auto:build` beside `auto:merge`; line 48 adds `'no-build-grant'` (no live `auto:build`) to the states that fail Authorization and says it is never promoted — the promotion below runs only on `'matured'`. Header lines 5-7 keep their meaning.
+  - `auto-merge-short-circuit.md` (AC7.1, AC7.2): applicability (lines 12-14) reads "the issue's live labels carry `auto:build` together with `auto:merge` or `auto:merge-pending`"; Authorization's first bullet requires `auto:build` beside `auto:merge`; line 48 adds `'no-build-grant'` (no live `auto:build`) to the states that fail Authorization and says it is never promoted — the promotion below runs only on `'matured'`. The third Authorization bullet (line 63, today "`auto:merge` and `auto:merge-pending` are both absent") becomes "neither bullet above cleared, and `manifesto-authorized-merge.md`'s applicability check passed", so the out-of-scope `merge-authorization: pre-authorized` lever still clears on a record whose leftover merge grant lacks `auto:build` (spec Gotchas: the lever "is out of scope and unchanged"). Header lines 5-7 keep their meaning.
   - `grant-maturation-gate.md` (AC7.1): line 58's failing-states list gains `no-build-grant` (a member with no live `auto:build`) — no promotion, the group falls back.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test tests/evaluate-maturation-build-label-conformance.test.js tests/strip-comments-callers-twin.test.js`
-Expected: PASS
+Run: `node --test tests/evaluate-maturation-build-label-conformance.test.js tests/strip-comments-callers-twin.test.js tests/comment-trust-conformance.test.js`
+Expected: PASS (comment-trust after its prelude gains `auto:build`)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/evaluate-maturation-build-label-conformance.test.js plugin/skills/wrap-up/auto-merge-short-circuit.md plugin/skills/dispatch/grant-maturation-gate.md tests/helpers/strip-comments.js .claude/skills/parse-signal-discipline/SKILL.md
+git add tests/evaluate-maturation-build-label-conformance.test.js tests/comment-trust-conformance.test.js plugin/skills/wrap-up/auto-merge-short-circuit.md plugin/skills/dispatch/grant-maturation-gate.md tests/helpers/strip-comments.js .claude/skills/parse-signal-discipline/SKILL.md
 git commit -m "Pin every evaluateMaturation call to pass the build label — skill snippets and a conformance scan, refs #5734"
 ```
 
 ### Task 5: Prose merge gates require both labels
+
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/skills/dispatch/settle-and-merge.md:3-262` (lines 3, 244-262)
@@ -225,6 +250,9 @@ git commit -m "Require auto:build beside the merge grant in every prose merge ga
 ```
 
 ### Task 6: Arm route, ceiling text and canonical docs state the rule
+
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/_shared/github-pr-scan.md:224-255`
