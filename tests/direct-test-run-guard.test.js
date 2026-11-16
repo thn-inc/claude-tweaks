@@ -375,9 +375,15 @@ const GUARD = path.join(ROOT, 'tools', 'direct-test-run-guard.js');
 const OFFENDING_JS = "const { spawnSync } = require('child_process'); spawnSync(process.execPath, ['--test', '--test-reporter=tap', 'tests/a.test.js']);";
 const RUNNER_JS = "const { spawnSync } = require('child_process'); spawnSync(process.execPath, ['tools/run-tests.js', '--test-reporter=tap', 'tests/a.test.js']);";
 
-function scriptReasonFor(word) {
+// `ref` is the node reference as found in a JavaScript script; `runText` the first direct test run of a
+// shell script (exactly one of the two).
+function scriptReasonFor(word, { ref, runText }) {
+  const matched = ref !== undefined
+    ? `Matched in the script: the string literal '--test', a child_process reference, and a node program (${ref}).`
+    : `Matched in the script: ${runText}`;
   return [
     `This repository's guard blocked a script that starts node --test itself: ${word}. ${SAFEGUARDS_TEXT}`,
+    matched,
     'Have the script start the runner instead, from inside the checkout it tests, with the same flags and files:',
     '',
     'node tools/run-tests.js --test-reporter=tap <files>',
@@ -414,7 +420,7 @@ test('AC8.1: a scratch script that spawns node --test is denied, and allowed onc
     fs.writeFileSync(file, OFFENDING_JS);
     const verdict = judgeOrThrow(bash(`node ${file}`), realDeps());
     assert.equal(verdict.decision, 'deny');
-    assert.equal(verdict.reason, scriptReasonFor(file));
+    assert.equal(verdict.reason, scriptReasonFor(file, { ref: 'process.execPath' }));
 
     fs.writeFileSync(file, RUNNER_JS);
     assert.deepEqual(judgeOrThrow(bash(`node ${file}`), realDeps()), { decision: 'allow' });
@@ -428,19 +434,22 @@ test('AC8.1: a scratch script that spawns node --test is denied, and allowed onc
 test('AC8.1: a script is found behind a prefix command, a cd, and a program path', () => {
   const files = { '/tmp/mutant-run.js': OFFENDING_JS, '/tmp/loop.sh': 'node --test a.test.js' };
   const deps = fakeDeps(files);
+  const js = { ref: 'process.execPath' };
+  const sh = { runText: 'node --test a.test.js' };
   const rows = [
-    ['node /tmp/mutant-run.js', '/tmp/mutant-run.js'],
-    ['timeout 600 node /tmp/mutant-run.js', '/tmp/mutant-run.js'],
-    ['env X=1 node --no-warnings /tmp/mutant-run.js', '/tmp/mutant-run.js'],
-    ['cd /tmp && node mutant-run.js', 'mutant-run.js'],
-    ['bash /tmp/loop.sh', '/tmp/loop.sh'],
-    ['/tmp/loop.sh', '/tmp/loop.sh'],
-    ['/tmp/mutant-run.js', '/tmp/mutant-run.js'],
+    ['node /tmp/mutant-run.js', '/tmp/mutant-run.js', js],
+    ['timeout 600 node /tmp/mutant-run.js', '/tmp/mutant-run.js', js],
+    ['env X=1 node --no-warnings /tmp/mutant-run.js', '/tmp/mutant-run.js', js],
+    ['cd /tmp && node mutant-run.js', 'mutant-run.js', js],
+    ['bash /tmp/loop.sh', '/tmp/loop.sh', sh],
+    ['/tmp/loop.sh', '/tmp/loop.sh', sh],
+    ['/tmp/mutant-run.js', '/tmp/mutant-run.js', js],
+    ['sh -c "node /tmp/mutant-run.js"', '/tmp/mutant-run.js', js],
   ];
-  for (const [command, word] of rows) {
+  for (const [command, word, matched] of rows) {
     const verdict = judgeOrThrow(bash(command, '/repo'), deps);
     assert.equal(verdict.decision, 'deny', command);
-    assert.equal(verdict.reason, scriptReasonFor(word), command);
+    assert.equal(verdict.reason, scriptReasonFor(word, matched), command);
   }
   // The same rows over a harmless script allow, so each deny above is decided by the script's text.
   const harmless = fakeDeps({ '/tmp/mutant-run.js': 'console.log(1)', '/tmp/loop.sh': 'echo done' });
@@ -451,10 +460,151 @@ test('a script operand is the first non-option word, and inline code and -c form
   const deps = fakeDeps({ '/tmp/mutant-run.js': OFFENDING_JS });
   assert.equal(judgeOrThrow(bash('node -r ./hook.js /tmp/mutant-run.js', '/repo'), deps).decision, 'deny');
   assert.equal(judgeOrThrow(bash('node --no-warnings /tmp/mutant-run.js arg', '/repo'), deps).decision, 'deny');
-  assert.equal(judgeOrThrow(bash('node -e "1" /tmp/mutant-run.js', '/repo'), deps).decision, 'allow');
   assert.equal(judgeOrThrow(bash('bash -c "echo /tmp/mutant-run.js"', '/repo'), deps).decision, 'allow');
   assert.equal(judgeOrThrow(bash('echo /tmp/mutant-run.js', '/repo'), deps).decision, 'allow');
   assert.equal(judgeOrThrow(bash('cat /tmp/mutant-run.js', '/repo'), deps).decision, 'allow');
+});
+
+// Each row is decided by the one scan rule it names: with that rule deleted, its verdict flips.
+const SCAN_RULE_ROWS = [
+  ['the -o value skip of a shell', 'bash -o pipefail /tmp/loop.sh', 'deny'],
+  ['a shell short-option cluster', 'bash -x /tmp/loop.sh', 'deny'],
+  ['a shell long option', 'bash --norc /tmp/loop.sh', 'deny'],
+  ['a shell -- ends the options', 'cd /tmp && bash -- -x', 'deny'],
+  ['a redirect operator and its target', 'node > out.txt /tmp/mutant-run.js', 'deny'],
+  ['a glued redirect', 'node >out.txt /tmp/mutant-run.js', 'deny'],
+  ['a node -- ends the options', 'cd /tmp && node -- -mutant.js', 'deny'],
+  ['a node -- before a path', 'node -- /tmp/mutant-run.js', 'deny'],
+  ['inline code is no script', 'node -e /tmp/mutant-run.js', 'allow'],
+  ['inline code with = is no script', 'node --eval=/tmp/mutant-run.js', 'allow'],
+  ['a node value option takes its value', 'node -r /tmp/hook.js /tmp/mutant-run.js', 'deny'],
+  ['a node test value option takes its value', 'node --test-reporter spec /tmp/mutant-run.js', 'deny'],
+  ['a program with no words after the prefix', 'timeout 600', 'allow'],
+  ['node reads a script from stdin', 'node < /tmp/mutant-run.js', 'deny'],
+  ['source skips a redirect operator', 'source > out /tmp/loop.sh', 'deny'],
+  ['source skips a glued redirect', 'source >out /tmp/loop.sh', 'deny'],
+  ['a program word without a slash is no path', 'runner', 'allow'],
+  ['node runs a .sh file as JavaScript', 'node /tmp/script.sh', 'deny'],
+  ['a shell runs a .js file as JavaScript', 'bash /tmp/shellrun.js', 'deny'],
+];
+
+test('each scan rule is decided by its own input', () => {
+  const deps = fakeDeps({
+    '/tmp/mutant-run.js': OFFENDING_JS, '/tmp/loop.sh': 'node --test a.test.js', '/tmp/-x': 'node --test a.test.js', '/tmp/-mutant.js': OFFENDING_JS,
+    '/repo/runner': '#!/bin/bash\nnode --test a.test.js b.test.js\n', '/tmp/script.sh': OFFENDING_JS, '/tmp/shellrun.js': OFFENDING_JS,
+  });
+  for (const [rule, command, decision] of SCAN_RULE_ROWS) {
+    assert.equal(judgeOrThrow(bash(command, '/repo'), deps).decision, decision, `${rule}: ${command}`);
+  }
+});
+
+test('a program run by path is a script whatever its extension, decided by its first line', () => {
+  const two = 'node --test a.test.js b.test.js\n';
+  const run = (text, command = '/tmp/runner') => judgeOrThrow(bash(command, '/repo'), fakeDeps({ '/tmp/runner': text, '/tmp/other.py': text }));
+  const denied = run(`#!/usr/bin/env bash\n${two}`);
+  assert.equal(denied.decision, 'deny');
+  assert.equal(denied.reason, scriptReasonFor('/tmp/runner', { runText: 'node --test a.test.js b.test.js' }));
+  assert.equal(run(`#!/bin/sh\n${two}`).decision, 'deny');
+  assert.equal(run(`#!/bin/zsh -e\n${two}`).decision, 'deny');
+  assert.equal(run(`#!/usr/bin/env node\n${OFFENDING_JS}`).decision, 'deny');
+  assert.equal(run(`#!/usr/bin/node\n${OFFENDING_JS}`).decision, 'deny');
+  assert.equal(run(`#!/usr/bin/env bash\n${two}`, '/tmp/other.py').decision, 'deny');
+  assert.deepEqual(run(`#!/usr/bin/env python3\n${two}`), { decision: 'allow' });
+  assert.deepEqual(run(`#!/usr/bin/env bash\necho done\n`), { decision: 'allow' });
+  assert.deepEqual(run(`${two}`), { decision: 'allow' });
+  assert.deepEqual(run(`#!/usr/bin/env\n${two}`), { decision: 'allow' });
+  // The size check and the skipped directories come before any read.
+  const unreadable = { ...fakeDeps({}), readScript: () => { throw new Error('read must not happen'); } };
+  assert.deepEqual(judgeOrThrow(bash('./tools/runner', '/repo'), unreadable), { decision: 'allow' });
+  assert.deepEqual(judgeOrThrow(bash('/usr/bin/true'), realDeps()), { decision: 'allow' });
+  assert.deepEqual(judgeOrThrow(bash('/no/such/runner'), realDeps()), { decision: 'allow' });
+});
+
+test('source and . scan their file as shell, and so does a shell fed a file on stdin', () => {
+  const deps = fakeDeps({ '/tmp/loop.sh': 'node --test a.test.js b.test.js\n' });
+  const harmless = fakeDeps({ '/tmp/loop.sh': 'echo done\n' });
+  const reason = scriptReasonFor('/tmp/loop.sh', { runText: 'node --test a.test.js b.test.js' });
+  for (const command of ['source /tmp/loop.sh', '. /tmp/loop.sh', 'sh < /tmp/loop.sh', 'bash < /tmp/loop.sh', 'zsh < /tmp/loop.sh', 'bash </tmp/loop.sh']) {
+    const verdict = judgeOrThrow(bash(command, '/repo'), deps);
+    assert.equal(verdict.decision, 'deny', command);
+    assert.equal(verdict.reason, reason, command);
+    assert.deepEqual(judgeOrThrow(bash(command, '/repo'), harmless), { decision: 'allow' }, command);
+  }
+  // A here-string or here-document is no file.
+  assert.deepEqual(judgeOrThrow(bash('bash <<< /tmp/loop.sh', '/repo'), deps), { decision: 'allow' });
+  assert.deepEqual(judgeOrThrow(bash('bash << /tmp/loop.sh', '/repo'), deps), { decision: 'allow' });
+  // Glued forms: a file named like the redirect text exists, so only the rule that excludes `<<` decides.
+  const odd = fakeDeps({ '/repo/<EOF': 'node --test a.test.js b.test.js\n', '/repo/<<x': 'node --test a.test.js b.test.js\n' });
+  assert.deepEqual(judgeOrThrow(bash('bash <<EOF', '/repo'), odd), { decision: 'allow' });
+  assert.deepEqual(judgeOrThrow(bash('bash <<<x', '/repo'), odd), { decision: 'allow' });
+});
+
+// Each JavaScript row: [what it shows, script text, the node reference the deny names or null for allow].
+const JS_ROWS = [
+  ['it only writes fixture files that hold --test inside a longer string', "const fs = require('fs'); const g = require('./tools/direct-test-run-guard'); fs.writeFileSync('f.js', \"const a = ['--test']; require('child_process'); node\"); g.classifyCommand('x', {}); spawnSync(process.execPath, ['-e', \"x = ['--test']\"]);", null],
+  ['git with an unrelated --test list', "const cp = require('child_process'); cp.execFileSync('git', ['log','--oneline']); const f = ['--test'].filter(Boolean);", null],
+  ['process.execPath', "const { spawnSync } = require('child_process'); spawnSync(process.execPath, ['--test', 'a.test.js']);", 'process.execPath'],
+  ['a node string', "const { spawn } = require(\"node:child_process\"); spawn('node', ['--test', 'a.test.js']);", "'node'"],
+  ['an absolute node path', "const { execFileSync } = require('child_process'); execFileSync('/opt/homebrew/bin/node', [\"--test\"]);", "'/opt/homebrew/bin/node'"],
+  ['the corrected script', "const { spawnSync } = require('child_process'); spawnSync(process.execPath, ['tools/run-tests.js', '--test-reporter=tap', 'a.test.js']);", null],
+  ['--test only in a line comment', "// '--test'\nconst cp = require('child_process'); cp.spawnSync(process.execPath, ['x']);", null],
+  ['--test only in a block comment', "/* '--test' */ const cp = require('child_process'); cp.spawnSync(process.execPath, ['x']);", null],
+  ['child_process only in a comment', "// child_process\nspawnSync(process.execPath, ['--test']);", null],
+  ['child_process only in a longer string', "console.log('see child_process docs'); spawnSync(process.execPath, ['--test']);", null],
+  ['no node reference', "require('child_process').execFileSync('git', ['--test']);", null],
+  ['node only inside a longer string', "require('child_process'); run('start node now', ['--test']);", null],
+  ['node only in a comment', "// node\nrequire('child_process'); run('git', ['--test']);", null],
+  ['--test only inside a longer string', "require('child_process'); spawnSync(process.execPath, ['a --test b']);", null],
+  ['process.argv0', "require('child_process').spawnSync(process.argv0, ['--test']);", 'process.argv0'],
+  ['process.argv[0]', "require('child_process').spawnSync(process.argv[0], ['--test']);", 'process.argv[0]'],
+  ['a backtick --test', 'require(`child_process`).spawnSync(process.execPath, [`--test`]);', 'process.execPath'],
+  ['a node.exe path', "require('child_process').spawnSync('C:/n/node.exe', ['--test']);", "'C:/n/node.exe'"],
+  ['no child_process', "spawnSync(process.execPath, ['--test']);", null],
+  ['child_process as code only', "const child_process = require('cp-shim'); child_process.spawnSync(process.execPath, ['--test']);", 'process.execPath'],
+  ['a node.exe literal', "require('child_process').spawnSync('node.exe', ['--test']);", "'node.exe'"],
+  ['the first of two node references, a literal', "require('child_process').spawnSync('node', ['--test'], { x: process.execPath });", "'node'"],
+  ['the first of two node references, code', "require('child_process').spawnSync(process.execPath, ['--test'], { x: 'node' });", 'process.execPath'],
+];
+
+test('a shell script names its first direct test run, cut at 120 characters', () => {
+  const run = `node --test ${Array(20).fill('abcdefgh.test.js').join(' ')}`;
+  const verdict = judgeOrThrow(bash('bash /tmp/long.sh', '/repo'), fakeDeps({ '/tmp/long.sh': `${run}\n` }));
+  assert.equal(verdict.decision, 'deny');
+  assert.equal(verdict.reason, scriptReasonFor('/tmp/long.sh', { runText: run.slice(0, 120) }));
+  assert.equal(run.length > 120, true);
+});
+
+test('realDeps: a tools/run-tests.js that is a directory is no runner, and a relative directory resolves', () => {
+  withTempDir((dir) => {
+    fs.mkdirSync(path.join(dir, 'tools', 'run-tests.js'), { recursive: true });
+    assert.equal(realDeps().hasRunner(dir), null);
+  });
+  assert.equal(realDeps().hasRunner(path.relative(process.cwd(), path.join(ROOT, 'tests'))), ROOT);
+});
+
+test('scanScript reads comments and literals as such, one condition at a time', () => {
+  for (const [what, text, ref] of JS_ROWS) assert.equal(scanScript(text, 'js'), ref !== null, what);
+});
+
+test('a JavaScript script is denied or allowed by the same rows through judgeOrThrow, naming what matched', () => {
+  withTempDir((dir) => {
+    const file = path.join(dir, 'scratch.js');
+    for (const [what, text, ref] of JS_ROWS) {
+      fs.writeFileSync(file, text);
+      const verdict = judgeOrThrow(bash(`node ${file}`), realDeps());
+      assert.deepEqual(verdict, ref === null ? { decision: 'allow' } : { decision: 'deny', reason: scriptReasonFor(file, { ref }) }, what);
+    }
+  });
+});
+
+test('C: a load-time failure leaves stdout empty and the status 0', () => {
+  withTempDir((dir) => {
+    const copy = path.join(dir, 'direct-test-run-guard.js');
+    fs.copyFileSync(GUARD, copy);
+    const res = spawnSync(process.execPath, [copy], { input: JSON.stringify(bash('node --test tests/a.test.js tests/b.test.js')), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
+    assert.equal(res.status, 0);
+    assert.equal(res.stdout, '');
+  });
 });
 
 test('AC8.2: a shell script holding a direct test run is denied', () => {
@@ -465,7 +615,7 @@ test('AC8.2: a shell script holding a direct test run is denied', () => {
     for (const command of [`bash ${file}`, file]) {
       const verdict = judgeOrThrow(bash(command), realDeps());
       assert.equal(verdict.decision, 'deny', command);
-      assert.equal(verdict.reason, scriptReasonFor(file), command);
+      assert.equal(verdict.reason, scriptReasonFor(file, { runText: 'node --test a.test.js b.test.js' }), command);
     }
     fs.writeFileSync(file, 'echo done\n');
     assert.deepEqual(judgeOrThrow(bash(`bash ${file}`), realDeps()), { decision: 'allow' });
@@ -537,7 +687,8 @@ test('realDeps: hasRunner finds the checkout root and none of the three throws',
 test('scanScript discriminates each condition', () => {
   assert.equal(scanScript(OFFENDING_JS, 'js'), true);
   assert.equal(scanScript("spawn('node', [\"--test\"]); require(\"child_process\")", 'js'), true);
-  assert.equal(scanScript('exec(`x`, [`--test`]); require("child_process")', 'js'), true);
+  assert.equal(scanScript('exec(`node`, [`--test`]); require("child_process")', 'js'), true);
+  assert.equal(scanScript('exec(`x`, [`--test`]); require("child_process")', 'js'), false);
   assert.equal(scanScript(RUNNER_JS, 'js'), false);
   assert.equal(scanScript("spawnSync('node', ['--test', 'a'])", 'js'), false);
   assert.equal(scanScript("require('child_process'); spawnSync('node', ['--test-only'])", 'js'), false);
@@ -569,7 +720,7 @@ test('the guard as a real process denies a scratch script that spawns node --tes
     fs.writeFileSync(file, OFFENDING_JS);
     const res = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(bash(`node ${file}`)), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
     assert.equal(res.status, 0);
-    assert.equal(JSON.parse(res.stdout).hookSpecificOutput.permissionDecisionReason, scriptReasonFor(file));
+    assert.equal(JSON.parse(res.stdout).hookSpecificOutput.permissionDecisionReason, scriptReasonFor(file, { ref: 'process.execPath' }));
   });
 });
 

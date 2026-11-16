@@ -2,17 +2,25 @@
 
 // The repo-local guard against direct `node --test` runs (#5547): a multi-file or looped direct run skips
 // what tools/run-tests.js gives a run (SAFEGUARDS_TEXT), so a typed Bash command holding one is denied with
-// the runner command that runs the same files. This module is the pure core: `classifyCommand` decides a
-// typed command, `hasDirectTestRun` says whether any segment of a text is a direct test run at all (a
-// single-file one included). Every file-system answer comes in through `hasRunner` and `isDirectory`; OS
-// path rules come from `pathImpl`. Segments, effective cwds and assignment substitution come from the
-// hooks' shared shell scanner (forEachCommandSegment), so quoted text (`echo "node --test a b"`) is one
-// word and never a command.
+// the runner command that runs the same files. This file holds four things: the classifier
+// (`classifyCommand` decides a typed command; `hasDirectTestRun` says whether any segment of a text is a
+// direct test run at all, a single-file one included), the script scan (`judge` also reads the script file
+// a Bash call runs, since a scratch script can start `node --test` itself; `scanScript` reads one text), the
+// real file-system dependencies (`realDeps`), and the PreToolUse hook entry (`main`, run when the file is
+// the process entry). The classifier and scan take every file-system answer through `hasRunner`,
+// `isDirectory` and `readScript`; OS path rules come from `pathImpl`. Segments, effective cwds and
+// assignment substitution come from the hooks' shared shell scanner (forEachCommandSegment), so quoted text
+// (`echo "node --test a b"`) is one word and never a command.
+
+// The hook must never exit non-zero or print on a fault, a failed require below included: as the process
+// entry, an uncaught error is swallowed (stdout stays empty, the status stays 0).
+if (require.main === module) process.on('uncaughtException', () => {});
 
 const fs = require('fs');
 const path = require('path');
 const { NODE_TEST_VALUE_FLAGS } = require('./run-tests');
 const { forEachCommandSegment } = require('../plugin/bin/lib/hooks/git-command');
+const { stripComments } = require('../plugin/bin/lib/strip-comments');
 
 const SAFEGUARDS_TEXT = 'A direct node --test over several files, or in a loop, skips what tools/run-tests.js gives a run: git auto-maintenance off for fixture repos, a per-run TMPDIR removed on exit, the machine-wide suite slot, and bounded file concurrency.';
 const EXPANSION_LINE = 'The runner takes *.test.js files only and refuses anything else the expansion names, so make it name test files only.';
@@ -438,51 +446,84 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
   return { decision: 'deny', kind: 'typed', reason, replacement: line };
 }
 
-// The script a segment runs, as the word typed, or null: the first non-option operand of a `node`, `bash`,
-// `sh` or `zsh` program (a `-c` shell form runs text, not a file, and inline node code runs no file), or the
-// program word itself when it holds a `/` and ends in a script extension.
+const JS_SCRIPT_RE = /\.(?:js|mjs|cjs)$/;
+
+// The index of the script operand of a `node`, `bash`, `sh` or `zsh` program: its first non-option word
+// (inline node code runs no file), or null.
 function scriptOperand(seg, prog) {
   const { t } = seg;
-  const name = seg.name(prog.at);
-  const isNode = NODE_NAMES.has(name);
-  if (isNode || SHELLS.has(name)) {
-    if (!isNode && wrapperText(seg, prog.at, prog.end) !== null) return null;
-    for (let i = prog.at + 1; i < prog.end; i += 1) {
-      const w = t[i];
-      if (seg.isRedirect(i)) {
-        if (seg.isRedirectOp(i)) i += 1;
-        continue;
-      }
-      if (w === '--') return i + 1 < prog.end ? i + 1 : null;
-      if (isNode) {
-        if (w.length > 1 && w[0] === '-') {
-          if (INLINE_CODE_OPTIONS.has(w.split('=')[0])) return null;
-          if (!w.includes('=') && (NODE_TEST_VALUE_SET.has(w) || NODE_VALUE_OPTIONS.has(w))) i += 1;
-          continue;
-        }
-      } else if (SHELL_CLUSTER_RE.test(w)) {
-        if (w.endsWith('o')) i += 1;
-        continue;
-      } else if (w.startsWith('--')) {
-        continue;
-      }
-      return i;
+  const isNode = NODE_NAMES.has(seg.name(prog.at));
+  for (let i = prog.at + 1; i < prog.end; i += 1) {
+    const w = t[i];
+    if (seg.isRedirect(i)) {
+      if (seg.isRedirectOp(i)) i += 1;
+      continue;
     }
-    return null;
+    if (w === '--') return i + 1 < prog.end ? i + 1 : null;
+    if (isNode) {
+      if (w.length > 1 && w[0] === '-') {
+        if (INLINE_CODE_OPTIONS.has(w.split('=')[0])) return null;
+        if (NODE_TEST_VALUE_SET.has(w) || NODE_VALUE_OPTIONS.has(w)) i += 1;
+        continue;
+      }
+    } else if (SHELL_CLUSTER_RE.test(w)) {
+      if (w.endsWith('o')) i += 1;
+      continue;
+    } else if (w.startsWith('--')) {
+      continue;
+    }
+    return i;
   }
-  return /\/.*\.(?:sh|js|mjs|cjs)$/.test(t[prog.at]) ? prog.at : null;
+  return null;
 }
 
-// Records the script file a segment runs in `ctx.scripts`, resolved against the segment's working directory.
+// The word a `<` input redirect of the segment names, or null (a here-string or here-document is no file).
+function stdinFile(seg, prog) {
+  const { t } = seg;
+  for (let i = prog.at + 1; i < prog.end; i += 1) {
+    if (!seg.bare(i)) continue;
+    if (t[i] === '<') return i + 1 < prog.end ? t[i + 1] : null;
+    if (/^<[^<>&(]/.test(t[i])) return t[i].slice(1);
+  }
+  return null;
+}
+
+// Records the script file a segment runs in `ctx.scripts`, resolved against the segment's working directory:
+// the operand of a `node` or shell program, the file a shell reads from stdin, the file `source` or `.`
+// reads (shell), or the program word itself when it holds a `/` (its `kind` is 'auto' unless an extension
+// says: a script of any other name is judged by its first line).
 function collectScript(seg, prog, segCwd, ctx) {
-  if (segCwd === null || prog.at >= seg.t.length) return;
-  const i = scriptOperand(seg, prog);
-  if (i === null || i >= seg.t.length) return;
-  const word = seg.t[i];
-  if (word === '' || EXPANSION_RE.test(word)) return;
+  const program = seg.t[prog.at];
+  if (segCwd === null || typeof program !== 'string') return;
   const name = seg.name(prog.at);
-  const kind = NODE_NAMES.has(name) || /\.(?:js|mjs|cjs)$/.test(word) ? 'js' : 'shell';
-  ctx.scripts.push({ word, kind, abs: ctx.pathImpl.resolve(segCwd, word) });
+  const isNode = NODE_NAMES.has(name);
+  let word = null;
+  let kind = 'shell';
+  if (isNode || SHELLS.has(name)) {
+    const i = scriptOperand(seg, prog);
+    word = i === null ? stdinFile(seg, prog) : seg.t[i];
+    if (isNode || (word !== null && JS_SCRIPT_RE.test(word))) kind = 'js';
+  } else if (program === 'source' || program === '.') {
+    for (let i = prog.at + 1; i < prog.end && word === null; i += 1) {
+      if (!seg.isRedirect(i)) word = seg.t[i];
+      else if (seg.isRedirectOp(i)) i += 1;
+    }
+  } else if (program.includes('/')) {
+    word = program;
+    kind = JS_SCRIPT_RE.test(program) ? 'js' : (program.endsWith('.sh') ? 'shell' : 'auto');
+  }
+  if (word !== null) ctx.scripts.push({ word, kind, abs: ctx.pathImpl.resolve(segCwd, word) });
+}
+
+// 'js' or 'shell' for a script whose first line is a `#!` naming node or a shell (directly or through
+// `env`), else null: any other interpreter, or no `#!` line, is no script to scan.
+function kindFromShebang(text) {
+  const m = /^#![ \t]*(\S+)(?:[ \t]+(\S+))?/.exec(text);
+  if (!m) return null;
+  let program = path.posix.basename(m[1]);
+  if (program === 'env') program = m[2] ? path.posix.basename(m[2]) : '';
+  if (NODE_NAMES.has(program)) return 'js';
+  return SHELLS.has(program) ? 'shell' : null;
 }
 
 // Walks `text` segment by segment. In 'detect' mode it records whether any segment is a direct test run;
@@ -532,7 +573,7 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirMoved: false }) {
     const repeated = state.loops.length > 0 || prog.ledRepeat || ctx.repeated;
     const segCwd = typeof effCwd === 'string' ? effCwd : null;
     const isEval = !prog.ledRepeat && t[prog.at] === 'eval' && seg.bare(prog.at);
-    if (ctx.mode === 'scripts' && !isEval) collectScript(seg, prog, segCwd, ctx);
+    if (ctx.mode === 'scripts') collectScript(seg, prog, segCwd, ctx);
     if (isEval || SHELLS.has(seg.name(prog.at))) {
       // `eval` runs its arguments joined by a space; a shell its `-c` script.
       const inner = isEval ? t.slice(prog.at + 1, prog.end).join(' ') : wrapperText(seg, prog.at, prog.end);
@@ -548,6 +589,7 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirMoved: false }) {
     if (!run) return;
     if (ctx.mode === 'detect') {
       state.found = true;
+      ctx.hits.push(t.slice(prog.at, run.end).map((_, k) => seg.render(prog.at + k)).join(' '));
       return;
     }
     if (segCwd === null) return;
@@ -575,37 +617,95 @@ function classifyCommand(command, options) {
   }
 }
 
-// Whether any command segment of `text` (shell wrappers included) is a direct test run, a single-file one
-// included. Never throws: an unreadable text is no run.
-function hasDirectTestRun(text, { cwd, pathImpl = path } = {}) {
+// The text of the first direct test run among the command segments of `text` (shell wrappers included, a
+// single-file run too), or null. Never throws: an unreadable text is no run.
+function findDirectTestRun(text, { cwd, pathImpl = path } = {}) {
   try {
-    if (typeof text !== 'string' || text === '') return false;
-    return walk(text, cwd || '.', { mode: 'detect', depth: 0, repeated: false, callCwd: cwd || '.', pathImpl }).found;
+    if (typeof text !== 'string' || text === '') return null;
+    const hits = [];
+    walk(text, cwd || '.', { mode: 'detect', depth: 0, repeated: false, callCwd: cwd || '.', pathImpl, hits });
+    return hits.length ? hits[0] : null;
   } catch (_) {
-    return false;
+    return null;
   }
 }
 
-// Whether a script's text starts node --test itself. `kind` 'js': the exact string literal `--test` in
-// single, double or backtick quotes and the substring `child_process`. `kind` 'shell': any direct test run
-// (a script is a repeatable run by nature, so a single-file one is enough). Never throws.
-function scanScript(text, kind, { cwd, pathImpl = path } = {}) {
-  try {
-    if (typeof text !== 'string') return false;
-    if (kind === 'js') return /(['"`])--test\1/.test(text) && text.includes('child_process');
-    if (kind === 'shell') return hasDirectTestRun(text, { cwd, pathImpl });
-    return false;
-  } catch (_) {
-    return false;
+// Whether any command segment of `text` is a direct test run.
+function hasDirectTestRun(text, options) {
+  return findDirectTestRun(text, options) !== null;
+}
+
+const QUOTES = '\'"`';
+const NODE_CODE_RE = /process\s*\.\s*(?:execPath|argv0)\b|process\s*\.\s*argv\s*\[\s*0\s*\]/g;
+const CHILD_PROCESS_NAMES = new Set(['child_process', 'node:child_process']);
+
+// Whether a string literal's whole content names a node program.
+function isNodeName(body) {
+  return body === 'node' || body === 'node.exe' || body.endsWith('/node') || body.endsWith('/node.exe');
+}
+
+// The node reference of a JavaScript text that starts node --test itself, as found, or null. Reads the
+// text with comments removed and string literals read as literals: stripComments's `blank` form
+// (plugin/bin/lib/strip-comments.js) blanks comments and literal bodies, keeping delimiters and offsets, so
+// a quote character the same in the text and in that form is a real delimiter, and what is code is what
+// that form leaves. All three must hold: a string literal whose
+// whole content is `--test`, a `child_process` reference (in code, or a module-name literal), and a node
+// program (`process.execPath`, `process.argv[0]`, `process.argv0`, or a literal naming node).
+function matchJs(text) {
+  const keep = text;
+  const blank = stripComments(text, { literals: 'blank' });
+  const isDelimiter = (i) => QUOTES.includes(keep[i]) && blank[i] === keep[i];
+  const literals = [];
+  for (let i = 0; i < keep.length; i += 1) {
+    if (!isDelimiter(i)) continue;
+    let j = i + 1;
+    while (j < keep.length && !isDelimiter(j)) j += 1;
+    if (j >= keep.length) break;
+    if (keep[j] === keep[i]) {
+      literals.push({ at: i, body: keep.slice(i + 1, j), text: keep.slice(i, j + 1) });
+      i = j;
+    }
   }
+  if (!literals.some((l) => l.body === '--test')) return null;
+  if (!/\bchild_process\b/.test(blank) && !literals.some((l) => CHILD_PROCESS_NAMES.has(l.body))) return null;
+  const found = literals.filter((l) => isNodeName(l.body)).map((l) => ({ at: l.at, ref: l.text }));
+  for (const m of blank.matchAll(NODE_CODE_RE)) found.push({ at: m.index, ref: keep.slice(m.index, m.index + m[0].length) });
+  if (!found.length) return null;
+  return found.reduce((a, b) => (b.at < a.at ? b : a)).ref;
+}
+
+// The line naming what a script text matched, or null when it starts no node --test. `kind` 'js': see
+// matchJs. `kind` 'shell': any direct test run (a script is a repeatable run by nature, so a single-file one
+// is enough), named by its text trimmed to 120 characters. Never throws.
+function matchScript(text, kind, { cwd, pathImpl = path } = {}) {
+  try {
+    if (typeof text !== 'string') return null;
+    if (kind === 'js') {
+      const ref = matchJs(text);
+      return ref === null ? null : `Matched in the script: the string literal '--test', a child_process reference, and a node program (${ref}).`;
+    }
+    if (kind === 'shell') {
+      const run = findDirectTestRun(text, { cwd, pathImpl });
+      return run === null ? null : `Matched in the script: ${run.slice(0, 120)}`;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Whether a script's text starts node --test itself (see matchScript).
+function scanScript(text, kind, options) {
+  return matchScript(text, kind, options) !== null;
 }
 
 // The checkout directories whose scripts are repo tooling: never read by the script scan.
 const SKIPPED_SCRIPT_DIRS = new Set(['tools', 'plugin', 'tests', 'perf', 'evals', 'scripts']);
 
-function scriptReason(word) {
+function scriptReason(word, matched) {
   return [
     `This repository's guard blocked a script that starts node --test itself: ${word}. ${SAFEGUARDS_TEXT}`,
+    matched,
     'Have the script start the runner instead, from inside the checkout it tests, with the same flags and files:',
     '',
     'node tools/run-tests.js --test-reporter=tap <files>',
@@ -637,9 +737,9 @@ function judgeOrThrow(payload, deps) {
       if (SKIPPED_SCRIPT_DIRS.has(first)) continue;
     }
     const text = readScript(abs);
-    if (typeof text === 'string' && scanScript(text, kind, { cwd: pathImpl.dirname(abs), pathImpl })) {
-      return { decision: 'deny', reason: scriptReason(word) };
-    }
+    const scanKind = kind === 'auto' ? kindFromShebang(text) : kind;
+    const matched = matchScript(text, scanKind, { cwd: pathImpl.dirname(abs), pathImpl });
+    if (matched !== null) return { decision: 'deny', reason: scriptReason(word, matched) };
   }
   return ALLOW();
 }
