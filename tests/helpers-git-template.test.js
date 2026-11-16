@@ -343,8 +343,8 @@ for (const builder of [
     scratch.push(second.root);
     assert.deepStrictEqual(fs.readdirSync(trace), []);
     if (builder === 'makeRegistryWithClaims') {
-      assert.strictEqual(second.tipAfter.get(44), first.tipAfter.get(44));
-      assert.strictEqual(git(second.cloneDir, ['rev-parse', 'origin/claims-registry']), second.tipAfter.get(44));
+      assert.strictEqual(git(first.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
+      assert.strictEqual(git(second.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
     }
   });
 }

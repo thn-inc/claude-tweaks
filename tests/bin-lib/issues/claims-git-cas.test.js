@@ -62,8 +62,6 @@ test('readClaimBlobGit: a non-timeout runner error reports transport-failure wit
 
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 
 // Every git call below pipes stderr — the house convention for a bare-repo
 // fixture (tests/bin-lib/reconcile/prune-remote.test.js's `git` helper).

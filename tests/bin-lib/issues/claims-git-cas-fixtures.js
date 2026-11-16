@@ -98,7 +98,9 @@ function makeRegistryWithClaims() {
     }
     claimsResult = { tipAfter, writes };
   }, { prefix: 'claims-git-cas-' });
-  return { ...paths(root), tipAfter: claimsResult.tipAfter, writes: claimsResult.writes };
+  // Fresh copies per call, so a test mutating one cannot leak into a later test.
+  const writes = new Map([...claimsResult.writes].map(([n, w]) => [n, { ...w }]));
+  return { ...paths(root), tipAfter: new Map(claimsResult.tipAfter), writes };
 }
 
 module.exports = {
