@@ -247,8 +247,8 @@ function readCalls(fsImpl, file) {
 
 const pair = () => ({ main: 0, subagent: 0 });
 
-function run({ argv, deps: given = {} }) {
-  const deps = { ...defaultDeps(), ...given };
+function run({ argv, deps: overrides = {} }) {
+  const deps = { ...defaultDeps(), ...overrides };
   const usageErr = (msg) => {
     deps.err(`wait-polls.js: ${msg}\n${USAGE}`);
     return 2;
@@ -264,8 +264,8 @@ function run({ argv, deps: given = {} }) {
   if (!Number.isFinite(days) || days <= 0) return usageErr('--since-days must be a positive number');
   const untilMs = o['--until'] === undefined ? deps.now() : Date.parse(o['--until']);
   if (!Number.isFinite(untilMs)) return usageErr('--until must be an ISO timestamp');
-  const given_ = o['--projects-dir'];
-  const roots = (given_.length ? given_ : [path.join(deps.env.CLAUDE_CONFIG_DIR || path.join(deps.homedir(), '.claude'), 'projects')])
+  const projectDirs = o['--projects-dir'];
+  const roots = (projectDirs.length ? projectDirs : [path.join(deps.env.CLAUDE_CONFIG_DIR || path.join(deps.homedir(), '.claude'), 'projects')])
     .map((d) => path.resolve(d));
   // Resolve, deduplicate and list every root up front: a root that cannot be resolved or read is a usage
   // error, never a skipped root (a skipped root would print totals that look complete).

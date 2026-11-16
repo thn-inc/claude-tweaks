@@ -50,40 +50,39 @@ function scenario(blocks) {
 }
 
 test('classifies each target', () => {
-  const calls = (blocks) => scenario(blocks);
-  let out = calls([use('a', 'Agent', { prompt: 'x' }), bash('1', 'sleep 20'), bash('2', 'sleep 20'), bash('3', 'sleep 20')]);
+  let out = scenario([use('a', 'Agent', { prompt: 'x' }), bash('1', 'sleep 20'), bash('2', 'sleep 20'), bash('3', 'sleep 20')]);
   assert.equal(out.targets['agent-notification'].calls, 3);
 
-  out = calls([bash('1', 'sleep 20; gh pr checks 12')]);
+  out = scenario([bash('1', 'sleep 20; gh pr checks 12')]);
   assert.equal(out.targets.ci.calls, 1);
 
-  out = calls([bash('1', 'sleep 20'), use('2', 'Read', { file_path: '/x/tasks/abc.output' }), bash('3', 'sleep 20')]);
+  out = scenario([bash('1', 'sleep 20'), use('2', 'Read', { file_path: '/x/tasks/abc.output' }), bash('3', 'sleep 20')]);
   assert.equal(out.targets['output-file'].calls, 2);
 
-  out = calls([bash('1', 'sleep 20'), bash('2', 'git -C "/w" rev-parse HEAD'), bash('3', 'sleep 20')]);
+  out = scenario([bash('1', 'sleep 20'), bash('2', 'git -C "/w" rev-parse HEAD'), bash('3', 'sleep 20')]);
   assert.equal(out.targets['worktree-git'].calls, 2);
 
-  out = calls([bash('1', 'sleep 30 && node plugin/bin/verify.js --stamp-status')]);
+  out = scenario([bash('1', 'sleep 30 && node plugin/bin/verify.js --stamp-status')]);
   assert.equal(out.targets.verify.calls, 1);
 
-  out = calls([bash('1', 'sleep 5; curl -s http://localhost:3000')]);
+  out = scenario([bash('1', 'sleep 5; curl -s http://localhost:3000')]);
   assert.equal(out.targets['dev-server'].calls, 1);
 
-  out = calls([bash('1', 'sleep 10; tail -5 /tmp/build.log')]);
+  out = scenario([bash('1', 'sleep 10; tail -5 /tmp/build.log')]);
   assert.equal(out.targets['background-process'].calls, 1);
 
-  out = calls([bash('1', 'sleep 20; ls /tmp/ct-suite-slot')]);
+  out = scenario([bash('1', 'sleep 20; ls /tmp/ct-suite-slot')]);
   assert.equal(out.targets['suite-slot'].calls, 1);
 
-  out = calls([bash('1', 'sleep 20')]);
+  out = scenario([bash('1', 'sleep 20')]);
   assert.equal(out.targets.other.calls, 1);
 
-  out = calls([bash('1', 'echo sleep 20')]);
+  out = scenario([bash('1', 'echo sleep 20')]);
   assert.equal(out.bashCalls.main, 1);
   assert.equal(out.sleepLed.main, 0);
   assert.equal(out.targets.other.share, 0);
 
-  out = calls([use('a', 'Agent', { prompt: 'x' }), bash('1', 'sleep 20'), bash('2', 'sleep 20; gh run watch 9'), bash('3', 'sleep 5')]);
+  out = scenario([use('a', 'Agent', { prompt: 'x' }), bash('1', 'sleep 20'), bash('2', 'sleep 20; gh run watch 9'), bash('3', 'sleep 5')]);
   assert.equal(out.sleepLed.main, Object.values(out.targets).reduce((n, t) => n + t.calls, 0));
   assert.deepEqual(Object.keys(out), ['window', 'transcripts', 'bashCalls', 'sleepLed', 'targets']);
   assert.deepEqual(Object.keys(out.targets), TARGETS);
@@ -284,22 +283,22 @@ test('a non-ENOENT error resolving a slug or reading a transcript exits 2', () =
 test('a root that vanishes after the up-front listing exits 2, not complete-looking totals', () => {
   const { root } = aliasedStore();
   let gone = false;
-  const gone_ = (p) => gone && path.resolve(String(p)).startsWith(root);
+  const isGone = (p) => gone && path.resolve(String(p)).startsWith(root);
   const enoent = () => Object.assign(new Error('gone'), { code: 'ENOENT' });
   const vanishing = {
     ...fs,
     readdirSync(p, ...rest) {
-      if (gone_(p)) throw enoent();
+      if (isGone(p)) throw enoent();
       const r = fs.readdirSync(p, ...rest);
       if (path.resolve(String(p)) === root) gone = true;
       return r;
     },
     realpathSync(p, ...rest) {
-      if (gone_(p)) throw enoent();
+      if (isGone(p)) throw enoent();
       return fs.realpathSync(p, ...rest);
     },
     statSync(p, ...rest) {
-      if (gone_(p)) throw enoent();
+      if (isGone(p)) throw enoent();
       return fs.statSync(p, ...rest);
     },
   };
