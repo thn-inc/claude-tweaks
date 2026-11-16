@@ -35,7 +35,9 @@ const { readText } = require('./helpers/read-skill');
 // a member `.exec(` (RegExp.prototype.exec shares the name; a bare exec( and any child_process
 // require are flagged); a source-file read whose path literal sits in a variable declared
 // elsewhere; a directory walk (readdir/readdirSync) over a source tree; a dynamic import of a
-// computed specifier.
+// computed specifier; bare Harness, Renovate and quay (English words: only product forms are
+// denied); Depot, Namespace and ADO (ordinary words or too short); workflow_dispatch and the
+// other workflow-syntax keys, which the skill legitimately reads.
 const REPO = path.join(__dirname, '..');
 const SKILL_DIR = path.join(REPO, 'plugin', 'skills', 'ci-health');
 const SHARED_DIR = path.join(REPO, 'plugin', 'skills', '_shared');
@@ -51,25 +53,37 @@ const DENYLIST = [
   ['forge', ci('gitea'), 'pre'],
   ['forge CLI', ci('gh'), 'tok'],
   ['forge CLI env', cs('GH_[A-Z0-9_]*[A-Z0-9]'), 'tok'],
-  ['forge registry', ci('ghcr'), 'any'],
-  ['CI product', ci('circleci|buildkite|appveyor|codefresh|bitrise|buildjet'), 'any'],
+  ['forge', cs('GHES'), 'tok'],
+  ['forge', ci('forgejo'), 'any'],
+  ['forge registry', ci('ghcr|quay\\.io|jfrog'), 'any'],
+  ['forge registry', cs('ECR'), 'tok'],
+  ['CI product', ci('circleci|buildkite|appveyor|codefresh|bitrise|buildjet|buildbot|codemagic'), 'any'],
+  // One-word product names no English word contains; the spaced forms are case-sensitive below.
+  ['CI product', ci('codebuild|cloudbuild|codepipeline|codedeploy|codecommit|blacksmith|cirrus[ -]?ci|earthfile|earthly\\/'), 'pre'],
+  // "earthly" is an English adjective: the capitalized product name only.
+  ['CI product', cs('Earthly'), 'tok'],
+  // Harness's product forms only: the bare word is this plugin's own vocabulary (harness-health).
+  ['CI product', ci('harness(?:\\.io|[ -]?ci|[ -]?cd)'), 'tok'],
   ['CI product', ci('github[ -]?actions|gitlab[ -]?ci|circle[ -]?ci|jenkins|travis|azure[ -]?pipelines|team[ -]?city|bitbucket[ -]?pipelines|app[ -]?veyor|tekton|woodpecker'), 'pre'],
-  // `semaphore` alone is a concurrency primitive and `argo` a prefix of argument words: tokens only.
-  ['CI product', ci('gha|drone(?:[ -]?ci)?|semaphore[ -]?ci|semaphoreci|bamboo|concourse|argo(?:cd)?'), 'tok'],
+  // `semaphore` and `drone` alone are English words (product forms only); `argo` is a token.
+  ['CI product', ci('gha|drone[ -]?ci|semaphore[ -]?ci|semaphoreci|bamboo|concourse|argo(?:cd)?'), 'tok'],
   // Product spellings only: "the code build step" and "a cloud build" are ordinary phrases.
-  ['CI product', cs('Code[ -]?Build|Code[ -]?Pipeline|Cloud[ -]?Build|Harness|Blacksmith'), 'tok'],
+  ['CI product', cs('Code[ -]Build|Code[ -]Pipeline|Cloud[ -]Build'), 'tok'],
   // The product's own nouns, case-sensitive, so the word "actions" and "Next Actions" stay clean.
-  ['CI product', cs('Actions[ ]+(?:workflow|tab|runner|minute|job|step|cache|secret|log)s?'), 'tok'],
+  ['CI product', cs('Actions[ ]+(?:[Ww]orkflow|[Tt]ab|[Rr]unner|[Mm]inute|[Jj]ob|[Ss]tep|[Cc]ache|[Ss]ecret|[Ll]og)s?'), 'tok'],
   ['hosted runner', ci('ubuntu(?:-[a-z0-9.]+)?|macos-(?:latest|\\d[a-z0-9.]*)|windows-(?:latest|\\d{4})|self[ -]?hosted|runs-on'), 'tok'],
   ['hosted runner', ci('microsoft'), 'pre'],
   ['cache service', ci('actions\\/cache|cache@v|sccache|turborepo|buildkit'), 'any'],
-  ['cache service', ci('ccache|bazel|turbo[ -]?repo|nx[ -]?cloud|build[ -]?kit|registry[ -]?cache|type=registry|docker|artifactory'), 'pre'],
+  ['cache service', ci('ccache|bazel|turbo[ -]?repo|nx[ _-]?cloud|turbo[ -]?cache|registry[ -]?cache|type=registry|docker|artifactory'), 'pre'],
   ['cache service', ci('s3|gcs|nix'), 'tok'],
   ['cloud vendor', ci('cloudflare|digitalocean|heroku|vercel|netlify'), 'any'],
   ['cloud vendor', ci('amazon|google|azure|digital[ -]?ocean'), 'pre'],
   ['cloud vendor', ci('aws|gcp'), 'tok'],
-  ['dependency bot', ci('dependabot|renovatebot|renovate\\.json'), 'any'],
-  ['dependency bot', cs('Renovate'), 'tok'],
+  ['dependency bot', ci('dependabot|renovatebot'), 'any'],
+  // Renovate's product forms only: a bare sentence-initial Renovate is an English verb.
+  ['dependency bot', ci('renovate(?:bot|\\[bot\\]|\\.json|config|-config)'), 'pre'],
+  // Workflow-syntax forms specific to one forge's CI.
+  ['forge workflow syntax', ci('pull_request_target|\\$\\{\\{\\s*secrets'), 'raw'],
   // A workflow step reference (`actions/checkout`), never the English word "actions".
   ['forge step reference', ci('actions\\/[a-z]'), 'pre'],
 ];
@@ -85,7 +99,8 @@ function readWorkflowListing(root = REPO) {
 }
 // The plugin's own names: a workflow that runs one of its skills is named after the skill, and
 // the skill naming itself is not a repository-specific name.
-const OWN_NAMES = new Set([...fs.readdirSync(path.join(REPO, 'plugin', 'skills')), 'ci-audit', 'ci-health']);
+const normName = (n) => n.toLowerCase().replace(/[ _]+/g, '-');
+const OWN_NAMES = new Set([...fs.readdirSync(path.join(REPO, 'plugin', 'skills')), 'ci-audit', 'ci-health'].map(normName));
 // Every workflow file basename, plus every hyphenated stem and every top-level `name:` that is not
 // one plain word (a bare `test` would match prose) and not one of the plugin's own names.
 function repoWorkflowRules(listing = readWorkflowListing()) {
@@ -95,7 +110,7 @@ function repoWorkflowRules(listing = readWorkflowListing()) {
     const stem = file.replace(/\.ya?ml$/, '');
     const top = /^name:[ \t]*(['"]?)(.+?)\1[ \t]*$/m.exec(text);
     for (const n of [stem, top && top[2]]) {
-      if (n && /[\s-]/.test(n) && !OWN_NAMES.has(n.toLowerCase())) names.add(n);
+      if (n && /[\s_-]/.test(n) && !OWN_NAMES.has(normName(n))) names.add(n);
     }
   }
   return [...names].map((n) => ['this repository\'s workflow', ci(`(?<![a-z0-9_.-])${escapeRe(n)}(?![a-z0-9_-])`), 'raw']);
@@ -105,7 +120,7 @@ const LETTER = /[A-Za-z]/;
 const UP = /[A-Z]/;
 const LO = /[a-z]/;
 const startsWord = (t, i) => i === 0 || !LETTER.test(t[i - 1]) || (LO.test(t[i - 1]) && UP.test(t[i]));
-const endsWord = (t, j) => j >= t.length || !LETTER.test(t[j]) || (LO.test(t[j - 1]) && UP.test(t[j]));
+const endsWord = (t, j) => j >= t.length || !LETTER.test(t[j]) || (/[a-z0-9]/.test(t[j - 1]) && UP.test(t[j]));
 const BOUNDED = {
   any: () => true,
   raw: () => true,
@@ -278,8 +293,12 @@ test('AC7.2: names inside identifiers, env names and the wider product list are 
     'const onAzureHost = 1, AWS_REGION = 2, useDockerCache = 3;', // 2
     "const t = process.env.GH_TOKEN || process.env.GH_HOST || 'GHA';", // 3
     "const img = 'ghcr.io/x'; // Docker Hub, Microsoft-hosted", // 4
-    '// the Actions runner, GCS, Dependabot, Renovate, Bitrise, Harness, BuildJet, Blacksmith, Artifactory, Nix', // 5
-    '// CodeBuild, CodePipeline, Cloud Build', // 6
+    '// the Actions runner, GCS, Dependabot, renovate[bot], Bitrise, Harness CI, BuildJet, Blacksmith, Artifactory, Nix', // 5
+    '// CodeBuild, CodePipeline, Cloud Build, Code Build', // 6
+    'const codebuild = 1, cloudBuild = 2, codepipeline = 3, codedeploy = 4, codecommit = 5; // cloudbuild.yaml', // 7
+    'const s3Bucket = 1, NX_CLOUD = 2, nx_cloud = 3, renovateConfig = 4, blacksmithRunner = 5, isGHES = 6, turboCache = 7;', // 8
+    "const u = 'harness.io', v = 'blacksmith-4vcpu', harnessCi = 1; // Actions Workflow, Actions Runner Controller", // 9
+    '// ECR, quay.io, JFrog, Cirrus CI, Forgejo, Earthly, Buildbot, Codemagic, pull_request_target, ${{ secrets.X }}', // 10
   ];
   const found = plant(t, mod, `\n${plants.join('\n')}\n`);
   assert.deepEqual(rows(found, baseLines(mod)), [
@@ -287,22 +306,80 @@ test('AC7.2: names inside identifiers, env names and the wider product list are 
     [2, 'cache service', 'Docker'], [2, 'cloud vendor', 'AWS'], [2, 'cloud vendor', 'Azure'],
     [3, 'CI product', 'GHA'], [3, 'forge CLI env', 'GH_HOST'], [3, 'forge CLI env', 'GH_TOKEN'], [3, 'forge CLI', 'GH'], [3, 'forge CLI', 'GH'],
     [4, 'cache service', 'Docker'], [4, 'forge registry', 'ghcr'], [4, 'hosted runner', 'Microsoft'],
-    [5, 'CI product', 'Actions runner'], [5, 'CI product', 'Bitrise'], [5, 'CI product', 'Blacksmith'], [5, 'CI product', 'BuildJet'], [5, 'CI product', 'Harness'],
-    [5, 'cache service', 'Artifactory'], [5, 'cache service', 'GCS'], [5, 'cache service', 'Nix'], [5, 'dependency bot', 'Dependabot'], [5, 'dependency bot', 'Renovate'],
-    [6, 'CI product', 'Cloud Build'], [6, 'CI product', 'CodeBuild'], [6, 'CI product', 'CodePipeline'],
-  ]);
+    [5, 'CI product', 'Actions runner'], [5, 'CI product', 'Bitrise'], [5, 'CI product', 'Blacksmith'], [5, 'CI product', 'BuildJet'],
+    [5, 'cache service', 'Artifactory'], [5, 'cache service', 'GCS'], [5, 'cache service', 'Nix'], [5, 'dependency bot', 'Dependabot'],
+    [5, 'CI product', 'Harness CI'], [5, 'dependency bot', 'renovate[bot]'],
+    [6, 'CI product', 'Cloud Build'], [6, 'CI product', 'Code Build'], [6, 'CI product', 'CodeBuild'], [6, 'CI product', 'CodePipeline'],
+    [7, 'CI product', 'cloudBuild'], [7, 'CI product', 'cloudbuild'], [7, 'CI product', 'codebuild'], [7, 'CI product', 'codecommit'],
+    [7, 'CI product', 'codedeploy'], [7, 'CI product', 'codepipeline'],
+    [8, 'CI product', 'blacksmith'], [8, 'cache service', 'NX_CLOUD'], [8, 'cache service', 'nx_cloud'], [8, 'cache service', 's3'],
+    [8, 'cache service', 'turboCache'], [8, 'dependency bot', 'renovateConfig'], [8, 'forge', 'GHES'],
+    [9, 'CI product', 'Actions Runner'], [9, 'CI product', 'Actions Workflow'], [9, 'CI product', 'blacksmith'], [9, 'CI product', 'harness.io'],
+    [9, 'CI product', 'harnessCi'],
+    [10, 'CI product', 'Buildbot'], [10, 'CI product', 'Cirrus CI'], [10, 'CI product', 'Codemagic'], [10, 'CI product', 'Earthly'],
+    [10, 'forge registry', 'ECR'], [10, 'forge registry', 'JFrog'], [10, 'forge registry', 'quay.io'], [10, 'forge', 'Forgejo'],
+    [10, 'forge workflow syntax', '${{ secrets'], [10, 'forge workflow syntax', 'pull_request_target'],
+  ].sort());
 });
 
 test('AC7.2: ordinary words that share letters with a denylisted name are not reported', (t) => {
   const md = path.join(SKILL_DIR, 'checklist.md');
   assert.deepEqual(plant(t, md, ''), []);
   const ok = [
-    '## Next Actions', '## Allowed Steps',
-    'the actions it takes, the code build step, a cloud build, the code pipeline stage, renovate the flow,',
-    'harness-health, the test harness, Unix, phoenix, high, ghost, laws, draws, cargo, Argon, arguments,',
-    'the cache, jobsCache, drones, a semaphore, windows, docket, ghostly, Ghosts, nixed, gcsx.',
-  ].join('\n');
-  assert.deepEqual(plant(t, md, `\n${ok}\n`), [], 'ordinary words are not vendor names');
+    "## Next Actions",
+    "## Allowed Steps",
+    "## Harness",
+    "Harness-health owns that check.",
+    "The Harness section lists the runner.",
+    "the harness, the test harness, `harness-health`, `/claude-tweaks:harness-health`, a harness for the parser.",
+    "Renovate the checklist before the next release.",
+    "renovate the flow when the runner process changes.",
+    "the actions it takes, the code build step, a cloud build, the code pipeline stage.",
+    "Record unix timestamps in milliseconds; Unix time is the reference.",
+    "A semaphore bounds the concurrency; semaphores are cheap.",
+    "Run it nightly; a nightly window is fine.",
+    "the runner process exits; a runner pool is shared.",
+    "Report the cache hit ratio and the cache miss count.",
+    "the cache, jobsCache, cacheKey, a warm cache.",
+    "high, highest, ghost, ghostly, Ghosts, sigh, laughs, the night shift.",
+    "laws, draws, jaws, paws, cargo, Argon, arguments, argue.",
+    "drones, a drone of noise, bamboos, phoenix, nixed, onyx.",
+    "docket, gcsx, s3cret, s3x, ecru, secrets in a vault, a secret value.",
+    "windows, a window, macOS-like hosts, a hosted service, self-contained.",
+    "earth, the earth, unearthly, an earthly concern, earthbound, quay side, a depot, a namespace.",
+    "concurrency groups, a concurrency key, a dependency on the build.",
+    "Each step declares a command; a step with no command counts as setup.",
+    "waiting, setup and running phases per job.",
+    "the critical path, a shard, shard skew, the slowest shard.",
+    "repeated work across jobs; a step repeated in five jobs.",
+    "missing timeout, a declared timeout, a timeout margin.",
+    "workflow files, a workflow file, the workflow-files directory.",
+    "job names, step names, workflow names are untrusted.",
+    "pull requests, a pull request, the request target.",
+    "the queue wait, a queue, queueing time.",
+    "environment preparation, a prebuilt image, prepared dependencies.",
+    "the forge CLI, the forge, a forge write, the hosted runner service.",
+    "Next actions follow; Allowed steps follow.",
+    "actions, Actions, the Actions list, actions taken.",
+    "a build kit, a toolkit, a kitchen.",
+    "a smith, black text, a locksmith.",
+    "code review, code health, code paths, cloud costs.",
+    "microservice, micro-benchmarks, soft limits.",
+    "azul, azimuth, amazing, a goggle.",
+    "nightly-free prose, release notes, test plans.",
+    "the CI health check, a CI health sweep, CI timing.",
+    "p50 and p90 figures in milliseconds.",
+    "the gather report, the findings file, the issue index.",
+    "born-ready, risk:low, size:low.",
+    "a remedy direction, not a product.",
+    "the threshold override, the default threshold.",
+    "shells, ghosts, highs, thighs, weights.",
+    "Sigh: highly ghostlike lights.",
+    "the end.",
+  ];
+  assert.ok(ok.length >= 50, 'the ordinary-prose twin keeps at least 50 lines');
+  const okText = ok.join('\n');
+  assert.deepEqual(plant(t, md, `\n${okText}\n`), [], 'ordinary words are not vendor names');
 });
 
 test('AC7.2: a planted name in a copy of checklist.md is reported', (t) => {
@@ -333,14 +410,17 @@ test('AC7.1 go-red: a hard-coded workflow-file location and a repository workflo
   ]);
 });
 
-test('a repository workflow named after one of the plugin\'s skills denies only its file name', (t) => {
+test('a repository workflow named after one of the plugin\'s skills (any case, spaces or underscores) denies only its file name', (t) => {
   const listing = [...readWorkflowListing(), { file: 'ci-health.yml', text: 'name: ci-health\non:\n  schedule: []\n' },
-    { file: 'nightly-docs.yml', text: 'name: docs-health nightly\n' }];
+    { file: 'nightly-docs.yml', text: 'name: docs-health nightly\n' },
+    { file: 'audit.yml', text: 'name: CI Health\n' }, { file: 'audit2.yml', text: 'name: "CI health"\n' },
+    { file: 'ci_health.yml', text: 'name: Nightly Bench\n' }];
   const rules = repoWorkflowRules(listing);
   for (const { abs, rel } of scanned()) assert.deepEqual(nameRules(scanFile(abs, rel, rules).offenders), [], rel);
-  const found = plant(t, path.join(SKILL_DIR, 'SKILL.md'), '\nSee ci-health.yml, nightly-docs and docs-health nightly.\n', 'SKILL.md', rules);
+  const found = plant(t, path.join(SKILL_DIR, 'SKILL.md'), '\nSee ci-health.yml, nightly-docs, docs-health nightly and the Nightly Bench run.\n', 'SKILL.md', rules);
   assert.deepEqual(rows(found, baseLines(path.join(SKILL_DIR, 'SKILL.md'))), [
-    [1, 'this repository\'s workflow', 'ci-health.yml'], [1, 'this repository\'s workflow', 'docs-health nightly'], [1, 'this repository\'s workflow', 'nightly-docs'],
+    [1, 'this repository\'s workflow', 'Nightly Bench'], [1, 'this repository\'s workflow', 'ci-health.yml'],
+    [1, 'this repository\'s workflow', 'docs-health nightly'], [1, 'this repository\'s workflow', 'nightly-docs'],
   ]);
 });
 
