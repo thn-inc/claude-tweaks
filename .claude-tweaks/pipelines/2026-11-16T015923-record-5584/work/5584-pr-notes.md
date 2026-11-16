@@ -33,8 +33,8 @@ Marks:
 | Site | Behaviour | Mark |
 |---|---|---|
 | `plugin/bin/lib/dispatch/queue-pull.js:523` (+ `plugin/bin/queue-pull.js --named`) | Admits `typedNumbers` beside `grants.build`. | `fixed here` |
-| `plugin/bin/lib/dispatch/resume-eligibility.js:344-349` | `authority` from the rule; `not-granted` only on `none`. | `fixed here` |
-| `plugin/bin/lib/driver/admission.js:125`, `steps.js:317`, `run.js:150` | `noBuildGrant` only when the rule answers `none`. | `fixed here` |
+| `plugin/bin/lib/dispatch/resume-eligibility.js:345-357` (at `42490b3066`) | `authority` from the rule; `not-granted` only on `none`, naming the first reason word's remedy. | `fixed here` |
+| `plugin/bin/lib/driver/admission.js:125`, `steps.js:332-368` (the admission step's rule call and refusal), `run.js:479` (`checkRecord`, `--check`) and `run.js:607` (the drive loop), at `ad5e0db550` | `noBuildGrant` only when the rule answers `none`; both command-line paths name their record, `--budget` never does. | `fixed here` |
 | `plugin/skills/dispatch/settle-and-merge.md` Auto-merge gate (Authorization layer, lines 246-261, 354) | Reads fresh labels per member. A member with no `auto:merge` and no matured `auto:merge-pending` sends the whole group to pending-review. A typed record never merges unattended. | `reads live labels` |
 | `plugin/skills/dispatch/grant-maturation-gate.md` | For a typed record `evaluateMaturation` reads `not-pending`, and the group falls back to pending-review. | `reads live labels` |
 | `plugin/skills/wrap-up/auto-merge-short-circuit.md` | The Authorization layer reads live labels. With no grant it renders the console as an `auto:build`-only record would. | `reads live labels` |
@@ -104,11 +104,12 @@ The body is under Filings, entry C.
 
 **Gating cases.** Part 1 found (a) `typed`, (g) `not-typed` and (h) `not-typed`. Part 2 ran the shipped hook and `tools/typed-command-probe.js` at `418be37f26` and found the same answers: (g) and (h) were `none` with `not-typed` (`ea77adad11`).
 
-**#5232 bound: not observed.** #5232 has not landed, so a later member of a typed list never reached `drive.js --check` past the 30-minute bound in this build.
+**#5232's route: landed with the catch-up merge; the 30-minute bound not observed.** #5232 reached this branch with the catch-up merge `3ada44a643`. Until `ad5e0db550` its `drive.js --check` route refused every typed record. `checkRecord` built its context unnamed, so the rule answered `not-named` and the check printed `record lacks auto:build` for a record that `drive.js #N` admits (the final review's Important 1). Since that commit `--check #N` names its record, as the drive loop does. A refused check also prints the typed-command words as its last reason (`typed command not accepted: …`), and the driver route's `SKIP` line carries them. The 30-minute bound cannot be observed live on that route in this build. No driver-route run over a typed list was made, so no later member reached `--check` past the bound. The `expired` refusal is shown only by unit tests (`tests/bin-lib/issues/typed-command.test.js`) and by `--check`'s injected-check tests. Nothing past the bound was observed.
 
 **Measured sizes. No size test is committed, by ruling.**
 - AC16: `plugin/skills/dispatch/settle-and-merge.md` was 50,974 bytes on the base and 50,951 at `29f7dcb879`, measured once. It is still 50,951 at `f4bde86bfa`.
 - AC13: `plugin/skills/dispatch/SKILL.md` was 52,088 bytes on the base and 52,083 at `dda1ef7aa`. It is still 52,083 at `f4bde86bfa`.
+- After the catch-up merge `3ada44a643`, the merge base is `51a042653b`. There `SKILL.md` is 51,668 bytes and `settle-and-merge.md` 51,143; on this branch they are 51,833 and 51,120. So `SKILL.md` is under the spec's 52,088 but 165 bytes over the new merge base. `settle-and-merge.md` is 23 bytes under the new merge base but over the spec's 50,974, because main grew it.
 
 **Choices made under the Decision rule, and other build rulings.** These come from the SDD ledger's Ruling lines and the run's `decisions.md`.
 
@@ -124,6 +125,8 @@ The body is under Filings, entry C.
 | 8 | Task 6, an extra stderr line on an already-failed pool pull | Left as is. | Harmless; only on a failed pull |
 | 9 | Typed-command linearity bound | Moved from a wall-clock assertion in `tests/` to `perf/` (wall-clock-budget-conformance). | The perf bound misses a native-speed quadratic (about 0.3 s) |
 | 10 | Process: implementers ran the suites for touched paths, not `verify.js` | `verify.js` queued on the single suite slot behind sibling sessions. The full impact-selected verify runs once at Common Step 5. Mutation probes used `git archive` extracts. | An indirect reader missed until Step 5 |
+| 11 | Catch-up merge `3ada44a643` of `origin/main` (`51a042653b`, which carries #5232) before the final review | Conflicts in six files: `plugin/bin/lib/driver/steps.js`, `plugin/skills/dispatch/SKILL.md`, `docs/driver.md`, `docs/hooks.md`, `tests/bin-lib/driver/run.test.js` and `tests/bin-lib/timing/transcript.test.js`. Both sides were kept. In `steps.js` the admission step keeps #5584's `authority` extra and typed-command suffix, built on #5232's `ctx.admissionReasons`. The final review checked that resolution. It did not cover #5232's `checkRecord`, which still built an unnamed context; that was fixed in `ad5e0db550`. | A side's line dropped in another resolved hunk |
+| 12 | Final-review fix wave | `--check` names its record and appends the typed-command words after `ctx.admissionReasons`, whose contract is unchanged (`ad5e0db550`, `0390a77d61`). Resume's not-granted line names the first reason word's remedy (`42490b3066`). `docs/driver.md` and `docs/hooks.md` say the session path is the default for a model-run `drive.js`, and that spoofing from a session's Bash child is not prevented (`e906dc3ab3`). | A `--check` consumer that took the last reason for an admission reason |
 
 Review Minors left as they are:
 - Task 7: the `held` cross-check. The real rule runs in `runVerdict`, and Task 3's suite pins `held`.
