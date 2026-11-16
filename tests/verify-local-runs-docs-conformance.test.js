@@ -9,7 +9,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
+const { missingFactsOf, assertEachPatternGoesRed, sectionOf } = require('./helpers/conformance-asserts');
+const { commandWithContinuations } = require('./helpers/plugin-structure-entry');
 const { LOCAL_REQUESTED, NOT_CONSULTED } = require('../plugin/bin/lib/verify/ci-source');
 const { EXIT_NO_VERDICT } = require('../plugin/bin/lib/verify/args');
 
@@ -95,7 +96,7 @@ const CI_ENTRY_FACTS = [
 
 test('docs/plugin-structure.md: the verify.js synopsis and the ci-source.js entry state the key, the flag and exit 3', () => {
   const text = readText(PLUGIN_STRUCTURE);
-  checkFacts(lineStartingWith(text, 'node plugin/bin/verify.js'), VERIFY_LINE_FACTS, 'the verify.js line');
+  checkFacts(commandWithContinuations(text, 'node plugin/bin/verify.js'), VERIFY_LINE_FACTS, 'the verify.js line');
   const entryStart = text.indexOf('ci-source.js (#4347');
   assert.notEqual(entryStart, -1, 'the ci-source.js (#4347 entry is missing');
   const entryEnd = text.indexOf('slot.js (#5119', entryStart);
