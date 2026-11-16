@@ -899,3 +899,168 @@ test('writePhaseTimingSync never calls readUsage or locateTranscripts', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// --- #5556: step-yield.json beside timing.json, on every close ---
+
+const stepYield = require('../../../plugin/bin/lib/timing/step-yield');
+const YIELD = stepYield.STEP_YIELD_FILE;
+const readYield = (dir) => JSON.parse(fs.readFileSync(path.join(dir, YIELD), 'utf8'));
+const yieldSkips = (dir) => skipLines(dir).filter((l) => l.includes('step yield could not be written'));
+
+test('AC6.1: writeTimingAtClose leaves step-yield.json beside timing.json (written, kept and phase-only closes alike)', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wt = path.join(root, 'wt-a');
+    const runDir = closedRun(root, 'run', wt);
+    writeTranscript(cfg, wt, [A, B]);
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    assert.equal(readYield(runDir).schemaVersion, stepYield.SCHEMA_VERSION);
+    fs.rmSync(path.join(runDir, YIELD));
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'kept');
+    assert.ok(readYield(runDir).steps.length > 0, 'a kept timing.json still gets a yield');
+    const plain = closedRun(root, 'run-phase', wt);
+    assert.equal(writePhaseTimingSync(plain).status, 'written');
+    assert.ok(readYield(plain).steps.length > 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC6.1: a failed timing result on a run dir that exists still gets a yield; a spec-N child gets none', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    fs.mkdirSync(path.join(runDir, 'timing.json'));
+    const r = await writeTimingAtClose(runDir, { tokens: false });
+    assert.equal(r.status, 'failed');
+    assert.ok(readYield(runDir).steps.length > 0);
+    const child = path.join(runDir, 'spec-3');
+    fs.mkdirSync(child);
+    fs.writeFileSync(path.join(child, 'events.jsonl'), '');
+    assert.equal((await writeTimingAtClose(child, { tokens: false })).status, 'not-top-level');
+    assert.equal(fs.existsSync(path.join(child, YIELD)), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rewritesWhole: a pre-existing step-yield.json with junk is replaced by a whole derived file', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    fs.writeFileSync(path.join(runDir, YIELD), '{"junk":true');
+    await writeTimingAtClose(runDir, { tokens: false });
+    const y = readYield(runDir);
+    assert.equal(y.schemaVersion, stepYield.SCHEMA_VERSION);
+    assert.equal(Object.hasOwn(y, 'junk'), false);
+    assert.deepStrictEqual(fs.readdirSync(runDir).filter((f) => f.includes(YIELD) && f !== YIELD), [], 'no temp file left behind');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('keptKeepsWaits: a kept timing.json carrying questions gives the rewritten yield non-null waitedMinutes', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const events = [
+      { skill: 'claude-tweaks:build', ts: '2020-01-01T10:00:00.000Z', type: 'skill_invoked' },
+      { type: 'ask-user-question', ts: '2020-01-01T10:05:00.000Z', toolUseId: 'toolu_k1', questions: [{ question: 'Merge now?', options: [] }], response: 'yes' },
+      { type: 'commit', ts: '2020-01-01T10:08:00.000Z', action: 'push' },
+      { skill: 'claude-tweaks:test', ts: '2020-01-01T10:10:00.000Z', type: 'skill_invoked' },
+    ];
+    fs.writeFileSync(path.join(runDir, 'events.jsonl'), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    fs.writeFileSync(path.join(runDir, 'timing.json'), JSON.stringify({
+      phases: [], totals: { tokens: { input: 5, output: 0, cacheRead: 0, cacheCreate: 0 } },
+      questions: [{ id: 'toolu_k1', askTs: '2020-01-01T10:03:00.000Z', answerTs: '2020-01-01T10:05:00.000Z', questions: ['Merge now?'] }],
+    }));
+    const before = fs.readFileSync(path.join(runDir, 'timing.json'));
+    assert.equal((await writeTimingAtClose(runDir)).status, 'kept');
+    assert.ok(before.equals(fs.readFileSync(path.join(runDir, 'timing.json'))));
+    const qs = readYield(runDir).steps.flatMap((s) => s.questions);
+    assert.equal(qs.length, 1);
+    assert.equal(typeof qs[0].waitedMinutes, 'number');
+    assert.ok(qs[0].waitedMinutes > 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC6.2: deriveStepYield throwing → the close result is unchanged and exactly one SKIP names the yield', async () => {
+  const root = tmpRoot();
+  try {
+    const a = closedRun(root, 'run-a', path.join(root, 'wt'));
+    const b = closedRun(root, 'run-b', path.join(root, 'wt'));
+    const expected = await writeTimingAtClose(a, { tokens: false });
+    const thrown = await withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom yield'); }, () => writeTimingAtClose(b, { tokens: false }));
+    assert.deepStrictEqual(thrown, expected);
+    assert.deepStrictEqual(yieldSkips(a), []);
+    const skips = yieldSkips(b);
+    assert.equal(skips.length, 1, JSON.stringify(skips));
+    assert.match(skips[0], /condition: step yield could not be written \(boom yield\) → fallback: no step-yield\.json written/);
+    assert.equal(fs.existsSync(path.join(b, YIELD)), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('vanishedDir: the run dir removed before the yield write → nothing recreated, no throw, at most one SKIP', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    fs.rmSync(runDir, { recursive: true, force: true });
+    const r = atClose.writeStepYieldSafe(runDir);
+    assert.equal(r.status, 'failed');
+    assert.equal(fs.existsSync(runDir), false);
+    assert.equal(fs.existsSync(path.join(root, 'archive')), false);
+
+    // Removed between the derive and the write: the temp-then-rename never resurrects the dir.
+    const racing = closedRun(root, 'run-racing', path.join(root, 'wt'));
+    const out = await withStub(stepYield, 'deriveStepYield', (d) => {
+      fs.rmSync(d, { recursive: true, force: true });
+      return { schemaVersion: 1, steps: [] };
+    }, () => atClose.writeStepYieldSafe(racing));
+    assert.equal(out.status, 'failed');
+    assert.equal(fs.existsSync(racing), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('vanishedDir: a run dir an archive moved away → the yield lands in the archive twin, the run dir is not recreated', () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const twin = path.join(root, 'archive', 'run');
+    fs.mkdirSync(path.dirname(twin), { recursive: true });
+    fs.renameSync(runDir, twin);
+    const r = atClose.writeStepYieldSafe(runDir);
+    assert.equal(r.status, 'written');
+    assert.equal(fs.existsSync(runDir), false);
+    assert.ok(readYield(twin).steps.length > 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('vanishedDir: the dir moves to the twin between the derive and the write → retried once at the twin', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const twin = path.join(root, 'archive', 'run');
+    fs.mkdirSync(path.dirname(twin), { recursive: true });
+    const real = stepYield.deriveStepYield;
+    let moved = false;
+    const r = await withStub(stepYield, 'deriveStepYield', (d, o) => {
+      const y = real(d, o);
+      if (!moved) { moved = true; fs.renameSync(d, twin); }
+      return y;
+    }, () => atClose.writeStepYieldSafe(runDir));
+    assert.equal(r.status, 'written');
+    assert.equal(fs.existsSync(runDir), false);
+    assert.ok(readYield(twin).steps.length > 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

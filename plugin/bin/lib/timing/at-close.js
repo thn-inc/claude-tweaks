@@ -152,8 +152,53 @@ function write(runDir, timing, skip, deadlineAt, needRunState) {
   return { dir: twin, result: { status: 'failed', tokens: false, skip: `condition: run dir and its archive twin are gone → fallback: ${NOTHING_WRITTEN}` } };
 }
 
+const NO_YIELD = 'no step-yield.json written';
+const isArchivedDir = (d) => path.basename(path.dirname(d)) === 'archive';
+
+// Where the yield belongs: dir itself, or its archive twin when a concurrent archive moved the
+// run away (dir gone, or its run-state.json already moved while the twin holds the run).
+function yieldTarget(dir) {
+  if (isArchivedDir(dir)) return dir;
+  const twin = archiveTwin(dir);
+  if (!isDir(dir)) return twin;
+  if (lstatType(path.join(dir, 'run-state.json')).type === 'missing' && isDir(twin)) return twin;
+  return dir;
+}
+
+// dir -> { status: 'written'|'failed', skip }: step-yield.json, derived whole from the run dir and
+// written temp-then-rename, never into a dir that is not there (a run dir gone is retried once at
+// its archive twin, never recreated). Never throws; a failure is one SKIP line. step-yield.js is
+// resolved through require at call time so a test can stub it.
+function writeStepYieldSafe(dir) {
+  let target = dir;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      target = yieldTarget(target);
+      if (!isDir(target)) return { status: 'failed', skip: `condition: run dir and its archive twin are gone → fallback: ${NO_YIELD}` };
+      try {
+        const sy = require('./step-yield');
+        sy.writeStepYield(target, sy.deriveStepYield(target));
+        return { status: 'written', skip: null };
+      } catch (err) {
+        // The dir vanished under the write (an archive moved it): follow it once.
+        if (attempt === 0 && !isDir(target) && !isArchivedDir(target)) continue;
+        throw err;
+      }
+    }
+    return { status: 'failed', skip: `condition: run dir and its archive twin are gone → fallback: ${NO_YIELD}` };
+  } catch (err) {
+    const skip = `condition: step yield could not be written (${errText(err)}) → fallback: ${NO_YIELD}`;
+    logTimingSkip(target, skip);
+    return { status: 'failed', skip };
+  }
+}
+
+// Every result a close settles on ends here: its SKIP, then the step yield — read from the run dir
+// after the timing write, so it sees the fresh timing.json (a kept one included: its persisted
+// questions re-derive the wait times). A spec-N child gets none, like timing.json.
 function finish(runDir, result) {
   if (result.skip) logTimingSkip(runDir, result.skip);
+  if (result.status !== 'not-top-level') module.exports.writeStepYieldSafe(runDir);
   return result;
 }
 
@@ -249,4 +294,4 @@ function spawnTokenPass(runDir, { env } = {}) {
   }
 }
 
-module.exports = { TIMING_BOUND_MS, PHASE_LOCK_WAIT_MS, ownTranscripts, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, logTimingSkip, spawnTokenPass };
+module.exports = { TIMING_BOUND_MS, PHASE_LOCK_WAIT_MS, ownTranscripts, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, writeStepYieldSafe, logTimingSkip, spawnTokenPass };
