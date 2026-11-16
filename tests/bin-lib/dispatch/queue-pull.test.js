@@ -3414,6 +3414,8 @@ const FAULT_EXPECT = {
 const FILES_STOPPED_NEIGHBOUR = { status: 1, stderr: [STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] };
 const FILES_FOREIGN = (why) => ({ status: 0, base: 'S2-files-miss', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`], drops: [] });
 const FILES_EXPECT = {
+  // #5309: gh present on files, resolve-blockers.js exits 3: the fence's files exit-3 branch fails closed.
+  'F-native-files': { status: 0, base: 'S2-files-miss', stderr: [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault: injected failure`], drops: [], adds: ['blocked:9001', 'blocked:9030'], blob: null },
   'files-queueRaw-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-queueRaw-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-depFreshness-missing': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },

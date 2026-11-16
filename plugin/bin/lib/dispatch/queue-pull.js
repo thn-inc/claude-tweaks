@@ -524,12 +524,14 @@ function runBlocked(ctx) {
   put(ctx, paths['dispatch-native-deps.json'], '{}');
   if (!skip && state.workLinks === 'native') {
     step(ctx, 'native-deps', () => {
-      // #5309: a throw anywhere in this step (the read, the call, the writes, the rename) is a failed
-      // query with no step line: the one Warning carries the message, and the transport rule applies.
+      // A failed read of the eligible list keeps step()'s line, as the fence's does (#5309's
+      // fail-closed Warning covers only a failed query and its own writes, below).
+      const nativeNums = readJson(paths['dispatch-eligible.json']).map((i) => i.number).join(',');
+      if (!nativeNums) return;
+      // #5309: a throw from the call or its writes is a failed query with no step line: the one
+      // Warning carries the message, and the transport rule applies.
       let r;
       try {
-        const nativeNums = readJson(paths['dispatch-eligible.json']).map((i) => i.number).join(',');
-        if (!nativeNums) return;
         r = deps.spawnCli('resolve-blockers.js', [nativeNums], cliOpts(ctx));
         fs.writeFileSync(paths['dispatch-native-deps.tmp.json'], r.stdout || '');
         fs.writeFileSync(paths['dispatch-native-deps.err'], r.stderr || '');

@@ -701,9 +701,11 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     fs.writeFileSync(path.join(runDir, 'decisions.md'), '');
 
     const onFiles = transport === 'files';
+    // #5309: a files scenario with `filesGh` holds a gh shim too (the GraphQL-blocked route: gh present, files transport).
+    const ghShim = !onFiles || Boolean(scenario.filesGh);
     const shimDir = dir('shim');
     fs.writeFileSync(tablePath, JSON.stringify(table));
-    writeShims({ bin, shimDir, root, realGit, table, gh: !onFiles });
+    writeShims({ bin, shimDir, root, realGit, table, gh: ghShim });
     const agentDir = dir('agent');
     for (const [file, content] of Object.entries(agent)) fs.writeFileSync(path.join(agentDir, file), content);
     let foreignStates = null;
@@ -752,7 +754,7 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     const setScenario = (next) => {
       const nextTable = shimTable(next);
       fs.writeFileSync(tablePath, JSON.stringify(nextTable));
-      writeShims({ bin, shimDir, root, realGit, table: nextTable, gh: !onFiles });
+      writeShims({ bin, shimDir, root, realGit, table: nextTable, gh: ghShim });
     };
     return {
       name, transport, scenario, root, home, proj, bin, logs, agentDir, origin: originDir, runDir, runs: 0, runEnv, orderBlob, cleanup, setScenario,

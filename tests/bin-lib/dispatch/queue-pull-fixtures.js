@@ -579,6 +579,16 @@ function failGraphql(scenario, kind) {
   return scenario;
 }
 
+// #5309: the files transport with gh present (the GraphQL-blocked route): a gh shim answers
+// --version and the failing native query, and every other gh call misses (filesGh, oracle).
+function nativeFaultOnFiles(scenario) {
+  const native = failGraphql(scenario, 'native').gh.find((e) => e.graphql === 'native');
+  // agentInputs derives the agent's files from the queue, open-numbers and dependency-search answers: kept as the base has them.
+  const agentAnswers = scenario.gh.filter((e) => Array.isArray(e.argv)
+    && (sameArgv(e.argv, QUEUE_ARGV) || sameArgv(e.argv, OPEN_NUMBERS_ARGV) || (e.argv[0] === 'issue' && e.argv[2] === '--search')));
+  return { ...scenario, filesGh: true, gh: [{ argv: ['--version'], stdout: 'gh version 2.0.0\n' }, ...agentAnswers, native] };
+}
+
 // `effect` lands on the graphql entry of `kind`, which still answers (exit 0).
 function effectOn(scenario, kind, effect) {
   scenario.gh = scenario.gh.map((e) => (e.graphql === kind ? { ...e, effect } : e));
@@ -746,6 +756,9 @@ FILES_FAULTS.push(
   // string is written as is.
   { id: 'files-foreignStates-missing', input: 'foreignStates', mode: 'missing', pass: 'blocked', scenario: () => Object.assign(S2(), { foreign: null }), agent: (f) => f },
   { id: 'files-foreignStates-malformed', input: 'foreignStates', mode: 'malformed', pass: 'blocked', scenario: () => Object.assign(S2(), { foreign: NOT_JSON }), agent: (f) => f },
+  // #5309: the files transport with gh present (the GraphQL-blocked route): resolve-blockers.js
+  // answers --version, then its native query throws (exit 3). Every other gh call misses.
+  { id: 'F-native-files', input: 'gh', mode: 'GraphQL-blocked (exit 3)', pass: 'blocked', scenario: () => nativeFaultOnFiles(S2()), agent: (f) => f },
 );
 
 // D1: two pulls in one session. The second's open-numbers fetch returns nothing (exit 1), and
