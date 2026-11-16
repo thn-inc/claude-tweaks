@@ -3,12 +3,14 @@
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
 | 1 | ops | Pre-flight branch-divergence-check: origin/main was 1 commit ahead at flow Step 2.5 | fixed | Caught up by Post-creation catch-up merge c11ed39a56 |
-| 2 | build | SDD ruling — plan-mandated local-branch base (finding I1): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
-| 3 | build | SDD ruling — accept implementer deviations: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
-| 4 | build | SDD ruling — closed-PR refusal (I2, plan-mandated): ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
-| 5 | build | SDD ruling — summary-line selection (I1, plan-mandated): ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
-| 6 | build | SDD ruling — arming (final-review C1, spec/plan defect): ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
-| 7 | build | SDD ruling — untwinned dirs do not raise the CLI exit code to 1: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
-| 8 | build | SDD ruling — per-task implementers from Task 3 on run the fallback affected set (touched-path tests + tests that : ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
+| 2 | build | SDD ruling — plan-mandated local-branch base (finding I1): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | accepted | ratified at Review Console — plan-mandated local-branch base: merge origin/{integration} into an existing local branch before the loop |
+| 3 | build | SDD ruling — accept implementer deviations: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | accepted | ratified at Review Console — implementer deviations accepted: new-commit count against origin/BRANCH else origin/{integration} |
+| 4 | build | SDD ruling — closed-PR refusal (I2, plan-mandated): ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | accepted | ratified at Review Console — closed-PR refusal: a closed PR with its remote branch gone counts as no PR, with the branch present the CLI refuses exit 2 naming both remedies |
+| 5 | build | SDD ruling — summary-line selection (I1, plan-mandated): ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | accepted | ratified at Review Console — summary-line selection: only clean-twin shell skips marked shell true print the archive-stranded-shells line |
+| 6 | build | SDD ruling — arming (final-review C1, spec/plan defect): ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | accepted | ratified at Review Console — arming: arm with gh pr merge --auto --squash only when the forge holds the merge (mergeStateStatus BLOCKED), else leave unarmed with a note |
+| 7 | build | SDD ruling — untwinned dirs do not raise the CLI exit code to 1: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | accepted | ratified at Review Console — untwinned dirs do not raise the CLI exit code to 1; the envelope names them |
+| 8 | build | SDD ruling — per-task implementers from Task 3 on run the fallback affected set (touched-path tests + tests that : ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | accepted | ratified at Review Console — per-task implementers ran the fallback affected set, with Common Step 5's verify.js run covering the whole branch |
 | 9 | build | SDD ruling — residual scratch-worktree race windows left open after the targeted fix (2a11543566) and its scoped : ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
-| 10 | build | SDD ruling — plan-review spec gap: ratify or reverse at the Review Console (staged/sdd-ruling-9.md) | open | — |
+| 10 | build | SDD ruling — plan-review spec gap: ratify or reverse at the Review Console (staged/sdd-ruling-9.md) | accepted | ratified at Review Console — plan-review gap settled by the author decision rule: CLI command and one-per-pass cap apply only to clean-twin shells |
+| 11 | review | gh pr create failure exited 1 against the header contract (exit 2) | fixed | Fixed in 0448b51ff: exit 2 with the envelope; four tests re-pinned |
+| 12 | review | reconcile reports clean-twin dirs with no tracked file that the CLI leaves in untracked | accepted | Deliberate and recorded as Build Deviation 1; untracked was 0 in the one-time dry run, so no convergence gap is observed |
