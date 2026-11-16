@@ -116,6 +116,8 @@ Under `control-mode: on`, a record can be parked for local acceptance: its accep
 
 Accept and merge is withheld that round if the PR's head or base moved since the park. When offered, it merges only the exact head you tried. The recreated worktree is removed after the chosen option finishes.
 
+A record shaped with no risk flag can still park this way. Under control mode the merge decision (`bin/accept-park.js decide`) diffs the PR branch against its base: a changed path matching a `risk-path-globs` category, or a category the agent's reading of the diff names (`plugin/skills/_shared/tripwire-classification.md`), that the record does not flag is appended to its `Risk-flags:` line and named on `Risk-flags-added-by-tripwire:`. A flag removed during shaping is added back when the diff crosses it, and a diff that cannot be read parks the run rather than counting as clean. The reason is in the packet's Deploy status as `tripwire…` lines, or in the report when `/claude-tweaks:tidy`'s record-linked arm made the decision.
+
 Discovery of what's outstanding across the backlog is `/claude-tweaks:help`'s job (Stage 4.7), not `/accept`'s.
 
 **`/demo`** — Deprecated alias of `/claude-tweaks:accept`: prints one deprecation notice (naming `/claude-tweaks:accept` and the alias's recorded removal condition), then forwards its arguments to `/claude-tweaks:accept` unchanged.
