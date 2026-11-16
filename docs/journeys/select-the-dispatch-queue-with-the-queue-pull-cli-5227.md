@@ -6,6 +6,11 @@ files:
   - plugin/skills/dispatch/next-ranking.md
   - plugin/skills/dispatch/mcp-transport.md
   - tests/bin-lib/dispatch/queue-pull.test.js
+  - tests/bin-lib/dispatch/queue-pull-helpers.js
+  - tests/bin-lib/dispatch/queue-pull-parity-ac1.test.js
+  - tests/bin-lib/dispatch/queue-pull-parity-ac4.test.js
+  - tests/bin-lib/dispatch/queue-pull-parity-ac5.test.js
+  - tests/bin-lib/dispatch/queue-pull-parity-ac7.test.js
   - tests/bin-lib/dispatch/queue-pull-oracle.js
 ---
 
@@ -47,7 +52,7 @@ files:
 - **Red flags:** A partial `dispatch-groups.json` ranked after an exit 4. An exit 4 on a fetch the script fails open on.
 
 ### 5. Keep the two implementations equal
-- **URL:** `tests/bin-lib/dispatch/queue-pull.test.js` (the parity describes); `tests/bin-lib/dispatch/queue-pull-oracle.js`; the oracle's two bash fences, `plugin/skills/dispatch/queue-pull-script.md` and `plugin/skills/dispatch/next-ranking.md`
+- **URL:** `tests/bin-lib/dispatch/queue-pull-parity-ac1.test.js`, `queue-pull-parity-ac4.test.js`, `queue-pull-parity-ac5.test.js` and `queue-pull-parity-ac7.test.js` (the parity describes, one file each, over `queue-pull-helpers.js`); `tests/bin-lib/dispatch/queue-pull-oracle.js`; the oracle's two bash fences, `plugin/skills/dispatch/queue-pull-script.md` and `plugin/skills/dispatch/next-ranking.md`
 - **Action:** A **maintainer editing either script** runs the parity suite. It runs the embedded script under PATH shims for `gh` and `git` and the module over the same canned-response table, on both transports and both cache paths, plus every fetch-failure and files-input fault. It then compares the exit status, every session file, the staged proposals, `decisions.md`, the queue-order cache blob, and the reported lines on both streams: the stop, `AUTO`, `Warning:`, cache, `express-lane:` and `resolve-policy:` lines. Other lines on either stream are not compared as text. A change to a pass lands with the matching module change in the same pull request until the removal unit lands.
 - **Should feel:** Like a tripwire. A script edit without the module edit turns the suite red, naming the pair and the file that differ.
 - **Should understand:** On win32, or without bash 4 or later, the parity describes skip with `no bash oracle`, and the module's in-process fixtures still run. A `queue-pull: <step>:` diagnostic from the module also fails parity when the script's stderr for the same run shows no error, so a module step that throws and carries on cannot pass as equal.
