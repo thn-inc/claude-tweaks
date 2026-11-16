@@ -19,6 +19,11 @@ const SCREEN_CALL = 'bin/closing-links.js" --mode screen --body-file';
 const SCREEN_FAIL_REPORT = 'PR NOT opened — closing-keyword screen failed';
 const ARM_ANCHOR = '**Arm before `ExitWorktree`**';
 const CREATION_CALLER = '**Creation-time caller:**';
+const BODY_FILE = 'pr-early-body-{run-id}.md';
+const ARM_CONFLICT = "Step 2.5's Conflict path";
+const ARM_VERBATIM = 'any Step 2.5 or Step 3 stop reason, verbatim';
+const ARM_NO_POST_MERGE = 'runs no Step 4 or Step 5 post-merge step';
+const ARM_CI_GATE = "Step 2.5's `ci-gate` record calls";
 
 function armParagraph(text) {
   const s = text.indexOf(ARM_ANCHOR);
@@ -32,6 +37,16 @@ function assertScreenBeforeCreate(text) {
   assert.notEqual(at, -1, `step-7-5 lacks ${SCREEN_CALL}`);
   const create = text.indexOf('before `gh pr create`', text.lastIndexOf('. ', at));
   assert.ok(create !== -1 && create < at, 'the screen sentence must say it runs before `gh pr create`');
+}
+
+function assertScreenNamesBodyFile(text) {
+  const at = text.indexOf(SCREEN_CALL);
+  assert.notEqual(at, -1, `step-7-5 lacks ${SCREEN_CALL}`);
+  const s = text.lastIndexOf('. ', at);
+  const e = text.indexOf('. ', at);
+  const sentence = text.slice(s === -1 ? 0 : s, e === -1 ? text.length : e);
+  assert.ok(sentence.includes(BODY_FILE), `the screen sentence must name the body file ${BODY_FILE}`);
+  assert.ok(sentence.includes('gh pr create --body-file'), 'the screen sentence must say gh pr create reads the same path');
 }
 
 function assertScreenFailureStops(text) {
@@ -56,6 +71,14 @@ function assertArmCitesStep25(text) {
   assert.equal(arm.includes('never an immediate merge (checks pending)'), false, 'the blind --auto claim is retired');
 }
 
+function assertArmPlanReviewGaps(text) {
+  const arm = armParagraph(text);
+  assert.ok(arm.includes(ARM_CONFLICT), "Step 2.5's Conflict path routes leave the PR unarmed (plan review 2026-11-16)");
+  assert.ok(arm.includes(ARM_VERBATIM), 'every Step 2.5 or Step 3 stop reason is reported verbatim');
+  assert.ok(arm.includes(ARM_NO_POST_MERGE), 'a merged housekeeping PR runs no post-merge step');
+  assert.ok(arm.includes(ARM_CI_GATE), "Step 2.5's ci-gate records still run (Reading A)");
+}
+
 function assertCreationCallerCitesStep25(text) {
   const s = text.indexOf(CREATION_CALLER);
   assert.notEqual(s, -1, 'Creation-time caller line missing');
@@ -74,6 +97,10 @@ test('AC1.1: step-7-5 screens the housekeeping PR body before gh pr create', () 
   assertScreenBeforeCreate(STEP75);
 });
 
+test('AC1.1: the screen and gh pr create read the same named body file (plan review 2026-11-16)', () => {
+  assertScreenNamesBodyFile(STEP75);
+});
+
 test('AC1.1: a failed screen opens no PR and never takes the local-merge fall-through (plan-review Q2)', () => {
   assertScreenFailureStops(STEP75);
 });
@@ -83,11 +110,20 @@ test('AC1.1: the creation-time arm runs the merge-verification gate before Step 
   assertCreationCallerCitesStep25(PR_FIRST);
 });
 
+test('AC1.1: the arm leaves Conflict path routes unarmed, reports reasons verbatim, skips post-merge steps and records ci-gate (plan review 2026-11-16)', () => {
+  assertArmPlanReviewGaps(STEP75);
+});
+
 test('go-red controls: each assert fails with its block removed', () => {
   assert.throws(() => assertScreenBeforeCreate(cut(STEP75, SCREEN_CALL, null)));
   assert.throws(() => assertScreenFailureStops(cut(STEP75, SCREEN_FAIL_REPORT, null)));
   assert.throws(() => assertArmCitesStep25(STEP75.replace('`_shared/pr-first-merge.md` Step 2.5', 'Step 3')));
   assert.throws(() => assertArmCitesStep25(STEP75.replace(ARM_ANCHOR, `${ARM_ANCHOR} never an immediate merge (checks pending)`)));
+  assert.throws(() => assertScreenNamesBodyFile(STEP75.replace(BODY_FILE, 'body.md')));
+  const arm = armParagraph(STEP75);
+  for (const lit of [ARM_CONFLICT, ARM_VERBATIM, ARM_NO_POST_MERGE, ARM_CI_GATE]) {
+    assert.throws(() => assertArmPlanReviewGaps(STEP75.replace(arm, arm.split(lit).join('X'))), lit);
+  }
   const line = PR_FIRST.slice(PR_FIRST.indexOf(CREATION_CALLER), PR_FIRST.indexOf('\n', PR_FIRST.indexOf(CREATION_CALLER)));
   assert.throws(() => assertCreationCallerCitesStep25(PR_FIRST.replace(line, CREATION_CALLER)));
 });

@@ -1663,6 +1663,7 @@ test('screen invocation errors exit 2 with no stdout', () => {
     { name: 'no body file', argv: ['--mode', 'screen'] },
     { name: 'screen with --run', argv: ['--mode', 'screen', '--body-file', phrase, '--run', 'r'] },
     { name: 'screen with --settle-ms', argv: ['--mode', 'screen', '--body-file', phrase, '--settle-ms', '0'] },
+    { name: 'screen with --close-window-ms', argv: ['--mode', 'screen', '--body-file', phrase, '--close-window-ms', '1'] },
     { name: 'pre-merge with --body-file', argv: ['--run', 'r', '--mode', 'pre-merge', '--body-file', phrase] },
     { name: 'unreadable body file', argv: ['--mode', 'screen', '--body-file', phrase], overrides: { readFile: () => { throw new Error('EACCES'); } } },
     { name: 'unwritable body file', argv: ['--mode', 'screen', '--body-file', phrase], overrides: { writeFile: () => { throw new Error('EROFS'); } } },
