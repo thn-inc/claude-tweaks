@@ -1033,14 +1033,15 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       const opt = readShortCluster(w, spec.value || '');
       const valueLength = opt === null || opt.value === null ? 0 : opt.value.length;
       const switches = opt === null ? w.slice(1) : w.slice(1, w.length - 1 - valueLength);
-      if (opt !== null && opt.value === null && opt.letter === spec.split && ![...switches].some((c) => stops.includes(c))) {
+      const switchStops = [...switches].some((c) => stops.includes(c));
+      if (opt !== null && opt.value === null && opt.letter === spec.split && !switchStops) {
         const at = splitCommandWord(i + 1);
         if (at !== -1) {
           i = at;
           continue outer;
         }
       }
-      if ([...switches].some((c) => stops.includes(c)) || (opt !== null && stops.includes(opt.letter))) return noCommand();
+      if (switchStops || (opt !== null && stops.includes(opt.letter))) return noCommand();
       i += 1;
       if (spec.home !== undefined && ([...switches].includes(spec.home) || (opt !== null && opt.letter === spec.home))) unprovable = unprovableBase = true;
       if (opt === null) continue;
