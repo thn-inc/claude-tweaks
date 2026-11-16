@@ -121,9 +121,9 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     assertFailOpenPostures(pool, 'files', t);
   });
 
-  test('AC4.3 [files]: F-corrupt and F-groups stop the pull on both sides (oracle exit 1, CLI exit 4)', () => {
-    // The files share of AC4.3: F-corrupt and F-groups are gh rows (AC4.3 [gh], queue-pull-parity-ac4.test.js),
-    // and no files row prints a `$(cat <err file>)` line, so every files row compares both .err files whole.
+  test('AC4.3 [files]: no files fault row prints a $(cat <err file>) tail line, so each compares both .err files whole', () => {
+    // The files share of AC4.3: the F-corrupt and F-groups stops are gh rows, asserted in AC4.3 [gh]
+    // (queue-pull-parity-ac4.test.js).
     const tailRows = FILES_FAULTS.filter((f) => faultComparison(R[f.id], 'files').tailErr.length).map((f) => f.id);
     assert.deepEqual(tailRows, []);
   });
