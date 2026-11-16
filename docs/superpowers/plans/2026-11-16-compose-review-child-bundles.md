@@ -4,11 +4,11 @@
 
 **Goal:** Make review-phase skill-file reads measurable per file, deliver `/review`'s code-mode procedure and its lens-dispatch procedure as composed bundles read once, and give review lens children and SDD children a registered, composed bundle for the `_shared` content their prompts cite.
 
-**Architecture:** Measurement first (Tasks 1-4): the timing pipeline (`plugin/bin/lib/timing/`) gains a per-file procedure-read count (Read tool calls plus `cat`/`sed`/`grep`/... Bash reads of skill paths), carried per phase into `timing.json` (subagent reads included, attributed by dispatch start time), and `tools/efficiency-report.js` reports the review phase per file. Then the review procedure (Tasks 5-6): Step 6.7's lazily-needed body moves out of `review/code-mode-steps.md` (52,358 B, 142 B under the 52,500 B Read rail) so the file composes comfortably under the rail, and two hand-written `--step` compose lines replace the raw reads of `code-mode-steps.md` and `step3-lens-dispatch.md`. Last (Task 7), two new phases in `plugin/bin/lib/compose-context/phases.js` — `review-lens-child` and `sdd-child` — each with a shipped `--phase` line at its dispatch site.
+**Architecture:** Measurement first (Tasks 1-5): the timing pipeline (`plugin/bin/lib/timing/`) gains a per-file procedure-read count (Read tool calls plus `cat`/`sed`/`grep`/... Bash reads of skill paths), carried per phase into `timing.json` (subagent reads included, attributed by dispatch start time), and `tools/efficiency-report.js` reports the review phase per file (Task 4) and recounts archived runs from their transcripts, all phases, to give the per-run baseline the spec's Q1 Decision calls for (Task 5). Then the review procedure (Tasks 6-7): Step 6.7's lazily-needed body moves out of `review/code-mode-steps.md` (52,358 B, 142 B under the 52,500 B Read rail) so the file composes comfortably under the rail, and two hand-written `--step` compose lines replace the raw reads of `code-mode-steps.md` and `step3-lens-dispatch.md`. Then (Task 8), two new phases in `plugin/bin/lib/compose-context/phases.js` — `review-lens-child` and `sdd-child` — each with a shipped `--phase` line at its dispatch site. Last (Task 9, controller-run after the final code review), the build runs Task 5's recount over the pre-ship archive, puts the baseline in the PR body, and files the parked measurement record.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, skill markdown.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-15T231225-record-4359/work/4359-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-16T000452-record-4359/work/4359-spec.md`
 
 ## Global Constraints
 
@@ -18,8 +18,10 @@
 - Compose source paths in prose are `"${CLAUDE_PLUGIN_ROOT}/skills/..."`, never `plugin/skills/...` (`tests/skill-prose-plugin-root-invocations.test.js`). A compose call stays on one physical line.
 - Every compose call site carries, verbatim: *if the compose command is unavailable or exits non-zero, read the named source files directly.*
 - A child-prompt citation of a bundle carries `if that bundle is absent, read \`_shared/{file}\` directly` (`tests/dispatch-prompt-bundle-citations.test.js`'s `FALLBACK_RE`), and says whether the bundle is read once whole up front or on demand (`_shared/subagent-output-contract.md:33`).
-- No `<!-- when: -->` fences are added in this plan. Fence survey (measured at plan time): `code-mode-steps.md` has about 2.3 KB fenceable on today's six keys (the pr-first verdict-comment paragraph, the gh cherry-pick lookup). Any marker adds an all-`unresolved` row that composes at 52,516 B before Task 5, over the rail. Fencing would also never drop bytes on a default `pr-first` + `gh` run. The ceremony fast-lane branch has no compose key. Record this in the PR body, not as a fence.
+- No `<!-- when: -->` fences are added in this plan. Fence survey (measured at plan time): `code-mode-steps.md` has about 2.3 KB fenceable on today's six keys (the pr-first verdict-comment paragraph, the gh cherry-pick lookup). Any marker adds an all-`unresolved` row that composes at 52,516 B before Task 6, over the rail. Fencing would also never drop bytes on a default `pr-first` + `gh` run. The ceremony fast-lane branch has no compose key. Record this in the PR body, not as a fence.
 - Commit messages: `{Verb} {what} — {detail}`, body line `refs #4359`.
+- AC1 baseline (spec Decision, plan review Q1): AC1's 80% fall is measured against a per-run baseline recounted by the new counter over archived pre-ship transcripts, all phases, for at least 20 `/flow` runs, never against #4027's 398 / 342. AC1 is met at build time when that baseline is in the PR body and one parked measurement record carrying the baseline, the counter command and the 80% bound exists.
+- Decision rule for an unsettled reading (spec): keep a run on the previous plugin release working; put the rule in code, not skill prose; stay inside the record's Key Files. State each such choice in the PR body.
 
 ## Review Focus
 
@@ -27,7 +29,8 @@
 2. The installed-cache path (`~/.claude/plugins/cache/m/claude-tweaks/6.170.0/skills/review/x.md`) and the repo path (`plugin/skills/review/x.md`) fold to the same key `skills/review/x.md`, so runs from consumers and from this repo aggregate. Pinned in Task 1.
 3. Reading a composed bundle (`{run}/context/review-code-mode.md`) is not a skill-file read. It must not be counted, and no skill path may be counted twice for one Read. Pinned in Task 1, and in Task 2's per-row count.
 4. A subagent dispatch whose `startTs` falls in no phase lands in `unattributed`, never in `review`. An older `timing.json` with no `procedureFiles` is skipped by the efficiency report's per-file table instead of being counted as zero reads. Pinned in Tasks 3 and 4.
-5. A standalone `/review` (no `$PIPELINE_RUN_DIR`) still gets the whole procedure, from the raw files. Pinned in Task 6's prose test.
+5. A standalone `/review` (no `$PIPELINE_RUN_DIR`) still gets the whole procedure, from the raw files. Pinned in Task 7's prose test.
+6. The recount never writes into the archive: an archived run's `timing.json` is byte-identical after `--recount`. A run whose listed transcripts are all gone is skipped and counted in `skipped`, never recounted as zero reads. Pinned in Task 5.
 
 ---
 
@@ -105,7 +108,7 @@ Expected: PASS. If a golden fixture pins row shapes, update it to the new field.
   - Every phase bucket, `unattributed` and `totals` gains `procedureFiles: { [key]: count }`, with keys sorted ascending.
   - Row counts join by the existing innermost-phase rule.
   - A `dispatchFileReads` entry joins the phase containing its `ts` by the same rule, else `unattributed`. It adds only to `procedureFiles`, never to `rows`, tokens or `toolRoundTrips`.
-- `phase-timing.js` passes `dispatchFileReads` built from `readDispatches` items whose `procedureFiles` is non-null, as `{ ts: d.startTs, procedureFiles: d.procedureFiles }`. Its emitted `timing.json` `phases[i].procedureFiles` and `totals.procedureFiles` are what Task 4 reads.
+- `phase-timing.js` passes `dispatchFileReads` built from `readDispatches` items whose `procedureFiles` is non-null, as `{ ts: d.startTs, procedureFiles: d.procedureFiles }`. Today `run()` calls `joinTokens` (line 366) before `collectDispatches` (line 381), so move the `collectDispatches` call ahead of `joinTokens` and build `dispatchFileReads` from its `items` (`aggregateDispatches` spreads each item, so `startTs` and `procedureFiles` survive). A `notFound` dispatches result yields `[]`. Its emitted `timing.json` `phases[i].procedureFiles` and `totals.procedureFiles` are what Tasks 4 and 5 read.
 
 - [ ] **Step 1: Write the failing tests**
   - `joinTokens sums per-file reads per phase, keyed and sorted`. Two rows inside phase `review` carry `{ 'skills/b.md': 1 }` and `{ 'skills/a.md': 2, 'skills/b.md': 1 }`. Then `phases[review].procedureFiles` deep-equals `{ 'skills/a.md': 2, 'skills/b.md': 2 }`, and `Object.keys` is in that order.
@@ -160,7 +163,45 @@ Expected: PASS
 
 - [ ] **Step 5: Commit** — `Report review-phase skill-file reads per file — efficiency-report reads timing.json procedureFiles`
 
-### Task 5: Move Step 6.7's body into its own lazily-read file
+### Task 5: Recount archived runs from their transcripts (the AC1 baseline)
+
+**Files:**
+- Modify: `plugin/bin/phase-timing.js` (extract the transcript-reading half of `run()` into an exported builder)
+- Modify: `tools/efficiency-report.js` (a `--recount` mode and a `--since` filter)
+- Test: `tests/bin-lib/timing/cli.test.js`, `tests/efficiency-report.test.js`, a new fixture archive under `tests/fixtures/efficiency-report/recount/`
+
+**Interfaces:**
+- Consumes: Task 3's `phases[].procedureFiles` and the `dispatchFileReads` join.
+- Produces in `phase-timing.js`: `async buildTiming({ runDir, paths, cwd, worktree }) -> timing`. It does everything `run()` does between reading `events.jsonl` and the `checkBudgets` block, for an explicit transcript `paths` list, and writes nothing. `run()` calls it, so `timing.json` from a normal run is unchanged in shape. Exported next to `run`.
+- Produces in `efficiency-report.js`: `--recount` (with the existing `--archive` and `--json`) and `--since <YYYY-MM-DD>`.
+  - A run is recounted when it is a direct child of the archive, its `timing.json` lists `transcripts[].path` of which at least one exists, and its `timing.json` has a `review` phase. Existing paths are passed to `buildTiming` with the archived run dir and the run's `run-state.json` `worktree`. Nothing is written into the archive.
+  - `--since` keeps only runs whose directory name's leading `YYYY-MM-DD` is on or after the given date. It applies to `--recount` and to the default report.
+  - Per recounted run, `reads` is the sum over every `phases[]` bucket's `procedureFiles` (the run's windows, all phases; `unattributed` left out, since a dispatcher's session transcript also holds other runs).
+  - The result is `recount: { runs: N, skipped: M, files: { [key]: { median, mean, total } }, perRun: [{ run, reads: { [key]: count } }] }`. `median`/`mean` are over the N runs, a run missing the key counted as 0, `mean` rounded to one decimal. Keys sort by `total` descending, then by key. `skipped` counts runs that had a `transcripts` list but no existing path.
+  - Markdown prints `## Recounted skill-file reads per run (all phases)`, a line `runs recounted: N (skipped: M)`, then `| File | Median reads/run | Mean reads/run | Total reads |` for the top 20 keys. `--json` carries `recount`.
+  - `--recount` with no recountable run prints `no archived run has a readable transcript` and exits 0.
+
+- [ ] **Step 1: Write the failing tests**
+  - Fixture archive `tests/fixtures/efficiency-report/recount/`: two run dirs with `events.jsonl` (a `review` phase window), `run-state.json`, and a `timing.json` whose `transcripts[].path` names a JSONL fixture inside the fixture tree (written as a path relative to the test's temp copy, resolved at test time). Run A's transcript reads `plugin/skills/review/code-mode-steps.md` 3 times inside the window and once outside every phase; run B's reads it once and `plugin/skills/review/step3-lens-dispatch.md` twice. A third run dir's `timing.json` lists only a missing transcript path.
+  - `--recount counts all-phase reads per run, leaving out unattributed`: `--json` gives `recount.runs === 2`, `recount.skipped === 1`, `files['skills/review/code-mode-steps.md']` deep-equals `{ median: 2, mean: 2, total: 4 }`, and `files['skills/review/step3-lens-dispatch.md']` deep-equals `{ median: 1, mean: 1, total: 2 }`.
+  - `--recount writes nothing into the archive`: every fixture `timing.json` is byte-identical before and after.
+  - `--since keeps runs dated on or after the date`: with `--since` set to run B's date, `recount.runs === 1`.
+  - `buildTiming returns what run() writes`: for one fixture run, `buildTiming(...)`'s `phases` deep-equal the `phases` that `run(['--run', dir, '--transcript', p, '--json'])` prints.
+  - Discrimination: reverting the `unattributed` exclusion makes run A count 4 and the first assertion fail; prove it once by editing and reverting, never committed.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+Run: `node --test tests/efficiency-report.test.js tests/bin-lib/timing/`
+Expected: FAIL after Step 1 — `--recount` is an unknown flag and `buildTiming is not a function`.
+
+- [ ] **Step 3: Extract `buildTiming`, then add `--recount` and `--since`**
+
+- [ ] **Step 4: Run the tests to verify they pass**
+Run: `node --test tests/efficiency-report.test.js tests/bin-lib/timing/`
+Expected: PASS, with the existing phase-timing golden and CLI fixtures unchanged.
+
+- [ ] **Step 5: Commit** — `Recount archived runs' skill-file reads from transcripts — efficiency-report --recount gives a per-run baseline`
+
+### Task 6: Move Step 6.7's body into its own lazily-read file
 
 **Files:**
 - Create: `plugin/skills/review/late-findings-routing.md`
@@ -195,7 +236,7 @@ Expected: PASS
 
 - [ ] **Step 5: Commit** — `Move Step 6.7's body to late-findings-routing.md — code-mode-steps.md drops under the rail with headroom`
 
-### Task 6: Compose the code-mode and lens-dispatch procedures
+### Task 7: Compose the code-mode and lens-dispatch procedures
 
 **Files:**
 - Modify: `plugin/skills/review/SKILL.md:73` (the "In `code` and `full` mode, read `code-mode-steps.md`…" sentence)
@@ -230,7 +271,7 @@ Expected: PASS
 
 - [ ] **Step 5: Commit** — `Compose review's code-mode and lens-dispatch procedures — one read per bundle instead of piecewise raw reads`
 
-### Task 7: Register and cite the lens-child and SDD-child phases
+### Task 8: Register and cite the lens-child and SDD-child phases
 
 **Files:**
 - Modify: `plugin/bin/lib/compose-context/phases.js`
@@ -275,14 +316,30 @@ Expected: PASS. The `rail:` composed test prints `[]`.
 
 - [ ] **Step 5: Commit** — `Register lens-child and sdd-child phases — child prompts cite a composed on-demand bundle`
 
+### Task 9: Record the baseline and file the measurement record (controller, after the final code review)
+
+Run by the `/build` controller, not an SDD implementer: it needs the real archive, the PR and `/claude-tweaks:capture`. It changes no tracked file.
+
+**Files:** none tracked. The recount output goes to a session temp file.
+
+**Interfaces:**
+- Consumes: Task 5's `--recount`.
+
+- [ ] **Step 1: Run the recount over the pre-ship archive**
+Run: `node tools/efficiency-report.js --recount --json`, output redirected to a session temp file.
+Expected: exit 0, `recount.runs >= 20`. Fewer than 20 → stop and report; never pad with non-`/flow` runs.
+
+- [ ] **Step 2: Put the baseline in the PR body** — a `## AC1 baseline` section with: `runs recounted: N (skipped: M)`, the median and mean reads per run for `skills/review/code-mode-steps.md` and `skills/review/step3-lens-dispatch.md`, the exact counter command, and the 80% bound as two numbers (20% of each median). It also states the Decision-rule choices this build made (Global Constraints).
+
+- [ ] **Step 3: File the parked measurement record** via `/claude-tweaks:capture`, spec-shaped, parked until 10 `/flow` runs have archived after the release that ships this: it carries the baseline numbers, the command `node tools/efficiency-report.js --recount --since {release date} --json`, and the bound (median per run for each of the two files at or below 20% of its baseline median over at least 10 recounted runs).
+Expected: the record exists; its number is quoted in the PR body's `## AC1 baseline` section.
+
 ## Spec coverage
 
 | AC clause | Covered by |
 |---|---|
-| AC1.1 | Measured after ship with Task 4's report. The tests in Tasks 5-7 remove the raw reads, since composed-bundle reads are not skill-file reads (Task 1's `procedureFileKey` returns `null` for them). |
-| AC2.1 | Task 7 Step 4 (every phase has a line; the `rail:` composed test prints `[]`) and Task 6 Step 4 |
+| AC1.1 | Per the spec's Q1 Decision: met at build time by Task 9 (baseline from Task 5's recount in the PR body, parked measurement record filed). The tests in Tasks 6-8 remove the raw reads, since composed-bundle reads are not skill-file reads (Task 1's `procedureFileKey` returns `null` for them). |
+| AC2.1 | Task 8 Step 4 (every phase has a line; the `rail:` composed test prints `[]`) and Task 7 Step 4 |
 | AC3.1 | The final verification (Common Step 5) runs the whole suite. No task adds a skip. |
 
-Waived AC1.1: an 80% fall over 10 `/flow` runs after ship can only be measured after merge, with `tools/efficiency-report.js`'s review-phase table from Task 4. The PR body says so.
-
-Waived plugin/skills/_shared/subagent-output-contract.md: read only. Line 33 already states the rule that a child prompt cites the composed bundle, which Task 7 applies. Task 7 adds it as a `lens-child` bundle source, and no text change is needed.
+Waived plugin/skills/_shared/subagent-output-contract.md: read only. Line 33 already states the rule that a child prompt cites the composed bundle, which Task 8 applies. Task 8 adds it as a `lens-child` bundle source, and no text change is needed.
