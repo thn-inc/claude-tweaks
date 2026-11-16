@@ -376,6 +376,7 @@ const countingGh = (prs) => {
   gh.calls = 0;
   return gh;
 };
+const priorPrFor1 = () => closedPr({ closingIssuesReferences: [ref(1)], body: closedPr().body.replace('#42', '#1') });
 const FOREIGN_CARD = [
   '## Build: Adopted branch collides with an unrelated branch on origin',
   '',
@@ -411,7 +412,7 @@ test('AC1.1: checkAdoptedBranch prior-attempt carries the PR and no card', () =>
     repo: 'o/r',
     records: [1],
     git: checkGit({ ls: 'present', head: 'not' }),
-    gh: countingGh([closedPr({ closingIssuesReferences: [ref(1)], body: closedPr().body.replace('#42', '#1') })]),
+    gh: countingGh([priorPrFor1()]),
   });
   assert.deepEqual(result, {
     state: 'prior-attempt',
@@ -497,7 +498,7 @@ test('AC1.1: checkAdoptedBranch looks up the prior attempt only for foreign', ()
     repo: 'o/r',
     records: [1],
     git: checkGit({ ls: 'present', head: 'unknown', fetchFails: true }),
-    gh: countingGh([closedPr({ closingIssuesReferences: [ref(1)], body: closedPr().body.replace('#42', '#1') })]),
+    gh: countingGh([priorPrFor1()]),
   });
   assert.equal(result.state, 'unreachable');
   assert.equal(typeof result.card, 'string');
