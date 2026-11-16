@@ -58,7 +58,7 @@ test('claim-targets contest path removes a self-minted empty dir immediately (#7
   const content = read('plugin/skills/flow/claim-targets.md');
   assert.match(content, /remove (the|it|that) (self-)?mint(ed)?[^.]*immediately/i);
   assert.match(content, /PIPELINE_RUN_DIR[^.]*unset on entry/);
-  assert.doesNotMatch(content, /isOrphanedMint` sweep reclaims after 24h if it was freshly minted here/);
+  assert.doesNotMatch(content, /orphaned-mint` sweep reclaims after 24h if it was freshly minted here/);
 });
 
 test('claim-targets spec-slug rule cites run-dir-resolution.md, not manifesto.md (#724)', () => {

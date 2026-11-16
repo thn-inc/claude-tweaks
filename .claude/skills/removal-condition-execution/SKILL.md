@@ -41,6 +41,8 @@ Identifiers (the date, the step number, the guard's name) are what acceptance gr
 
 When a sentence covered the removed step and a survivor together, deleting the step can leave the survivor with a qualifier it never had. #3847's `wrap-up/flags.md` ended up saying step 3.6's close-run runs **unconditionally**, but 3.6 runs only when a run dir was established. Review caught it, and `b40271381` reworded it to "never skipped by `cleanup-only` … conditions included". Read each re-pointed sentence against the survivor's own conditions.
 
+A name-replacement table has the same hazard at scale. #5544 removed test-only wrappers from `plugin/bin/lib/reconcile/archive-merged.js` and reworded about 40 sentences by a table mapping each removed name to its replacement. Four of them then credited `decideArchiveCore` with behavior it does not have: a no-worktree/no-branch skip and a live-worktree precondition, both of which belong to the main loop. A grep that the old name is gone passed all four. A Task 4 review and the whole-branch review caught them; the whole-branch review's three now say "the merged-PR path". For each sentence the table rewrites, read the replacement's code and check that it does what the sentence now says.
+
 ### Re-anchor an absence sentinel built from the removed text
 
 A test that proves a section is excluded by asserting the removed text is absent passes vacuously once that text is deleted. `tests/bin-lib/wrap-up/engine-cli.test.js`'s appendix-exclusion check used the sunset sentence. #3847 replaced it with a string found only in the appendix (`producing **no merge commit at all**`), checked with `grep -c -F` against both the appendix and the head file.
