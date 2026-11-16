@@ -582,6 +582,108 @@ test('resolveTargetRecords: worktree copy first, then the run dir; spec-{N}/ win
   assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, worktree: fx.wt, gitRoot: fx.root }), ['#12']);
 });
 
+// A header at `work/{n}-spec.md` under `base`, or under `base/spec-{n}/work` when `nested`.
+function putHeader(base, n, { nested = false } = {}) {
+  const dir = nested ? path.join(base, `spec-${n}`, 'work') : path.join(base, 'work');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${n}-spec.md`), '# spec\n');
+}
+const archivedOf = (runDir) => path.join(path.dirname(runDir), 'archive', path.basename(runDir));
+
+test('AC1.1 resolveTargetRecords: archived-only work/ header gives the live answer', () => {
+  const live = runFixture({ spec: 'none', worktree: false });
+  putHeader(live.runDir, 4027);
+  const expected = resolveTargetRecords({ runDir: live.runDir });
+  assert.deepStrictEqual(expected, ['#4027']);
+
+  const arch = runFixture({ spec: 'none', worktree: false });
+  putHeader(archivedOf(arch.runDir), 4027);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: arch.runDir }), expected);
+
+  const wtArch = runFixture({ spec: 'none' });
+  putHeader(archivedOf(path.join(wtArch.wt, '.claude-tweaks', 'pipelines', RUN_ID)), 4027);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: wtArch.runDir, worktree: wtArch.wt, gitRoot: wtArch.root }), expected);
+});
+
+test('AC2.1 resolveTargetRecords: archived-only spec-{N} dirs give the live answer', () => {
+  const live = runFixture({ spec: 'none', worktree: false });
+  putHeader(live.runDir, 945, { nested: true });
+  putHeader(live.runDir, 3817, { nested: true });
+  const expected = resolveTargetRecords({ runDir: live.runDir });
+  assert.deepStrictEqual(expected, ['#945', '#3817']);
+
+  const arch = runFixture({ spec: 'none', worktree: false });
+  putHeader(archivedOf(arch.runDir), 945, { nested: true });
+  putHeader(archivedOf(arch.runDir), 3817, { nested: true });
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: arch.runDir }), expected);
+});
+
+test('AC7.1 resolveTargetRecords: a record live and archived is listed once', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  putHeader(fx.runDir, 7);
+  putHeader(archivedOf(fx.runDir), 7);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#7']);
+});
+
+test('resolveTargetRecords: live work/8 and archived work/7 in one root merge; across roots the first non-empty root wins', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  putHeader(fx.runDir, 8);
+  putHeader(archivedOf(fx.runDir), 7);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#7', '#8']);
+
+  const two = runFixture({ spec: 'none' });
+  putHeader(path.join(two.wt, '.claude-tweaks', 'pipelines', RUN_ID), 5);
+  putHeader(two.runDir, 6);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: two.runDir, worktree: two.wt, gitRoot: two.root }), ['#5']);
+});
+
+test('guard: resolveTargetRecords — an unreadable archived base is absent', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  const archivedBase = path.dirname(archivedOf(fx.runDir));
+  putHeader(archivedOf(fx.runDir), 9);
+  const fsImpl = { ...fs, readdirSync: (d, ...rest) => {
+    if (String(d).startsWith(archivedBase)) throw new Error('EACCES');
+    return fs.readdirSync(d, ...rest);
+  } };
+  assert.strictEqual(resolveTargetRecords({ runDir: fx.runDir, fsImpl }), null);
+});
+
+test('AC9.4 resolveTargetRecords: an unreadable archived run-dir listing hides its spec-{N} dirs, the readable archived work/ still resolves', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  const archived = archivedOf(fx.runDir);
+  putHeader(archived, 9, { nested: true });
+  putHeader(archived, 8);
+  const fsImpl = { ...fs, readdirSync: (d, ...rest) => {
+    if (String(d) === archived) throw new Error('EACCES');
+    return fs.readdirSync(d, ...rest);
+  } };
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, fsImpl }), ['#8']);
+});
+
+test('resolveTargetRecords: archived-only spec-{N} dirs follow a live manifest.yml\'s non-ascending order', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  fs.writeFileSync(path.join(fx.runDir, 'manifest.yml'), MANIFEST(RUN_ID, [3926, 3817, 945]));
+  for (const n of [945, 3817, 3926]) putHeader(archivedOf(fx.runDir), n, { nested: true });
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#3926', '#3817', '#945']);
+});
+
+test('resolveTargetRecords: an archived-only header in the worktree copy wins over a live header in the run dir (root by root)', () => {
+  const fx = runFixture({ spec: 'none' });
+  putHeader(archivedOf(path.join(fx.wt, '.claude-tweaks', 'pipelines', RUN_ID)), 5);
+  putHeader(fx.runDir, 6);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, worktree: fx.wt, gitRoot: fx.root }), ['#5']);
+});
+
+test('AC8 context-gauge no-target message names no header path', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const none = runFixture({ spec: 'none' });
+  const c = cli(none);
+  assert.strictEqual(await run(['--run', none.runDir, '--transcript', t, '--next-steps', 'test'], c.deps), 0);
+  const { reason } = c.json();
+  assert.match(reason, /no spec header for /);
+  assert.doesNotMatch(reason, /work\/\{?n\}?-spec\.md/);
+});
+
 test('CLI: malformed invocations exit 2 and write nothing', async () => {
   const fx = runFixture();
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);

@@ -144,3 +144,21 @@ test main = main
 ```bash
 cat /Users/me/My\ Docs/a.md
 ```
+
+## git-C-dot
+
+```bash
+git -C . rev-parse --short HEAD
+```
+
+## git-C-glob
+
+```bash
+git -C /abs/wt grep -c X -- tools/*.js
+```
+
+## git-chained-status
+
+```bash
+git merge-base --is-ancestor HEAD HEAD; echo exit=$?
+```

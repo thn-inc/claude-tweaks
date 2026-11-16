@@ -4,8 +4,9 @@
 // prove stay inside the worktree, including several whose meaning is fully
 // known from the text: a literal assigned and then referenced, the plugin-root
 // placeholder, `node -e '<s>' "$A"` without `--`, a backslash-escaped space, a
-// `cd` into the directory the shell is already in. This module rewrites those,
-// and the hook hands the result back as `hookSpecificOutput.updatedInput`.
+// `cd` into the directory the shell is already in, a `git -C` naming that
+// directory, an unquoted `exit=$?` after a git or gh call. This module rewrites
+// those, and the hook hands the result back as `hookSpecificOutput.updatedInput`.
 //
 // Measured premise (Claude Code 2.1.302): updatedInput is applied BEFORE the
 // guard, and the guard re-checks the rewritten command. A rewrite therefore
@@ -24,15 +25,31 @@
 //   - node-eval-separator: the same process.argv unless the runtime value
 //     starts with `-`, which the original hands to node as an OPTION (accepted
 //     by ruling: that is the injection the guard refuses over).
+//   - drop-git-C-cwd: the same argv after `git -C <dir>`: `git -C .` and `git -C
+//     <cwd spelling>` run git in the directory it is already in. The literal
+//     form rests on drop-redundant-cd's premise that the shell starts in the
+//     cwd the hook input names. The rewritten text is what the harness's
+//     permission rules then read, and how a rule written for the `-C` spelling
+//     treats the plain one is unmeasured, so only read subcommands rewrite.
+//   - quote-exit-status: the same argv. A word of literal characters (no
+//     quote, glob, tilde, brace or `$` but its final `$?`) expands the same
+//     quoted and unquoted: `$?` is digits, and with no `IFS` in the text it is
+//     not split. Only an argument is quoted: an assignment word (`rc=$?`, or one
+//     after a reserved word, `then`, a redirection or a `{`) would become a
+//     command. The rule also declines after a declaring word, conservatively,
+//     and after `coproc`, where quoting changes meaning.
 // Residual risk the text cannot show: a function or alias from the user's
 // shell snapshot that sets an uppercase variable at runtime (`nvm use`, `conda
 // activate`, a zsh `chpwd` hook) between an assignment and its reference: a
 // plain command word can name such a function, and so can a zsh glob qualifier
 // (`*(e/fn/)`, `*(+fn)`), which runs it in the current shell. Code run from the command text
 // itself (`source`, `.`, `eval`, `trap`, an expansion as the command word) makes
-// rules 1 and 2 decline: every command word must be a plain literal outside the
-// runner set (commandWordsPlain). On Windows, drop-redundant-cd still compares
-// exact spellings: with cwd `D:\w\cwd`, `cd "D:/w/cwd"`, `cd "/d/w/cwd"` and
+// rules 1 and 2 and drop-git-C-cwd decline: every command word must be a plain
+// literal outside the runner set (commandWordsPlain). Such a function could also
+// move the shell before a `git -C <cwd spelling>`, so that form rewrites only on
+// the text's first command (after leading literal assignments). On Windows,
+// drop-redundant-cd and drop-git-C-cwd (spellsCwd) still compare exact
+// spellings: with cwd `D:\w\cwd`, `cd "D:/w/cwd"`, `cd "/d/w/cwd"` and
 // `cd "d:\w\cwd"` all decline, because the literal must spell the cwd and how
 // Git Bash sets $PWD for those spellings is unmeasured (a trailing `/` after an
 // otherwise exact spelling stays tolerated, trimSlashes, so only those three
@@ -581,11 +598,47 @@ function shippedUnder(root, s, at, { pathImpl, lstat }) {
 const NODE_EVAL = /node[ \t]+(?:-e|-p|--eval|--print)[ \t]+/g;
 const SEGMENT_END = /[;&|\n)]/;
 
+// True when s[p] is an unquoted command separator other than `(`: `;`, `&`, `|` (`|&` is a pipe) or
+// a newline. The `&` of a `>&`/`<&` redirection is not one: the word after it is the redirection's
+// target.
+function plainSeparatorAt(s, kind, p) {
+  if (kind[p] !== TOP) return false;
+  const c = s[p];
+  if (c === '&') return s[p - 1] !== '>' && s[p - 1] !== '<';
+  return c === ';' || c === '|' || c === '\n';
+}
+
+// Per scan, which unquoted `(` opens a subshell: one itself at a command start. The `(` of an array
+// assignment (`a=(…)`, `a+=(…)`), a zsh glob group (`x*(…)`) or a `$(` starts no command. One forward
+// pass, cached per `kind` array, so a caller probing every position stays linear.
+const SUBSHELL_OPENERS = new WeakMap();
+function subshellOpeners(s, kind) {
+  let marks = SUBSHELL_OPENERS.get(kind);
+  if (marks) return marks;
+  marks = new Uint8Array(s.length);
+  let start = true;
+  for (let p = 0; p < s.length; p += 1) {
+    const c = s[p];
+    if (c === ' ' || c === '\t') continue;
+    if (kind[p] === TOP && c === '(') marks[p] = start ? 1 : 0;
+    else start = plainSeparatorAt(s, kind, p);
+  }
+  SUBSHELL_OPENERS.set(kind, marks);
+  return marks;
+}
+
+// True when s[p] is an unquoted command separator: a plainSeparatorAt one, or a `(` that is itself
+// at a command start (a subshell opener).
+function separatorAt(s, kind, p) {
+  if (kind[p] === TOP && s[p] === '(') return subshellOpeners(s, kind)[p] === 1;
+  return plainSeparatorAt(s, kind, p);
+}
+
 function atCommandStart(s, kind, i) {
   let p = i - 1;
   while (p >= 0 && (s[p] === ' ' || s[p] === '\t')) p -= 1;
   if (p < 0) return true;
-  return kind[p] === TOP && (s[p] === ';' || s[p] === '&' || s[p] === '|' || s[p] === '\n' || s[p] === '(');
+  return separatorAt(s, kind, p);
 }
 
 // Rule 3: `node -e '<s>' "$A"` → `node -e '<s>' -- "$A"`. The guard accepts a
@@ -660,12 +713,25 @@ function quoteEscapedSpace(s) {
   return replaceSpans(s, edits, (edit) => edit.text);
 }
 
-const LEADING_CD = /^[ \t]*cd[ \t]+(?:'([^']*)'|"((?:[^"$`\\]|\\[^$`"\\\n])*)"|([A-Za-z0-9_.\/:@%+,=-]+))[ \t]*&&[ \t\n]*/;
+// The three directory-operand forms drop-redundant-cd and drop-git-C-cwd accept: single-quoted,
+// double-quoted with no `$`, backtick or shell-consumed escape, or a bare word. Groups 1-3 hold
+// the value.
+const CD_OPERAND = /'([^']*)'|"((?:[^"$`\\]|\\[^$`"\\\n])*)"|([A-Za-z0-9_.\/:@%+,=-]+)/.source;
+const LEADING_CD = new RegExp(`^[ \\t]*cd[ \\t]+(?:${CD_OPERAND})[ \\t]*&&[ \\t\\n]*`);
 const OLDPWD_USE = /OLDPWD|~-|(?:^|[^A-Za-z0-9_])cd[ \t]+-(?:[\s;&|)]|$)/;
 
 function trimSlashes(p) {
   const t = p.replace(/\/+$/, '');
   return t || '/';
+}
+
+// True when the literal `target` spells the cwd itself, not merely resolves to it: a symlinked or
+// re-cased spelling would change $PWD and `pwd` (a trailing `/` stays tolerated).
+function spellsCwd(target, { cwd, pathImpl, realpath }) {
+  if (!pathImpl.isAbsolute(target) || target.includes('~') || target.includes('$')) return false;
+  if (trimSlashes(target) !== trimSlashes(cwd)) return false;
+  const real = realpath(target);
+  return real !== null && real === realpath(cwd);
 }
 
 // Rule 5: a leading `cd <the cwd> && ` changes nothing but OLDPWD → dropped.
@@ -676,31 +742,174 @@ function trimSlashes(p) {
 // pattern excludes, so a Windows `D:\w\cwd` spelling means exactly its text. An
 // unquoted backslash is stripped by the shell, so that branch stays backslash-free,
 // and the single-quoted branch already took any text.
-function dropRedundantCd(s, { cwd, pathImpl, realpath }) {
+function dropRedundantCd(s, ctx) {
   const m = LEADING_CD.exec(s);
   if (!m) return null;
   const target = m[1] ?? m[2] ?? m[3];
   const rest = s.slice(m[0].length);
   // `cd X && # note` is a syntax error; `# note` alone is not.
   if (!/\S/.test(rest) || rest[0] === '#' || OLDPWD_USE.test(rest)) return null;
-  if (!pathImpl.isAbsolute(target) || target.includes('~') || target.includes('$')) return null;
-  if (trimSlashes(target) !== trimSlashes(cwd)) return null;
-  const real = realpath(target);
-  if (real === null || real !== realpath(cwd)) return null;
-  return rest;
+  return spellsCwd(target, ctx) ? rest : null;
+}
+
+// `git<blanks>-C<blanks><operand><blanks>`, read from just after the `git` word.
+const GIT_C = new RegExp(`[ \\t]+-C[ \\t]+(?:${CD_OPERAND})[ \\t]+`, 'y');
+// Subcommands that only read: how the harness's permission rules treat the plain spelling of a rule
+// written for the `-C` one is unmeasured, so writes keep their `-C`.
+const GIT_READS = new Set([
+  'log', 'show', 'diff', 'status', 'grep', 'rev-parse', 'rev-list', 'ls-files', 'ls-tree', 'merge-base', // git-path-read: not a path list (subcommand names, no git call)
+  'cat-file', 'blame', 'describe', 'for-each-ref', 'show-ref', 'check-ignore',
+]);
+const OPERAND_DOUBT = /[$`*?[~]/;
+const CWD_MOVER = /(?<![A-Za-z0-9_-])(?:cd|pushd|popd)(?![A-Za-z0-9_-])/;
+// `(` too, so a non-candidate's `-C` scan never runs into the next candidate's simple command.
+const SIMPLE_COMMAND_END = /[;&|\n()]/;
+
+// True when an unquoted `-C` word starts at j.
+function cWordAt(s, kind, j) {
+  return kind[j] === TOP && s[j] === '-' && s[j + 1] === 'C' && atWordStart(s, kind, j)
+    && (j + 2 >= s.length || WORD_BREAK.test(s[j + 2]));
+}
+
+// True when an unquoted `-C` word starts in [from, end).
+function hasCWord(s, kind, from, end) {
+  for (let j = from; j < end; j += 1) if (cWordAt(s, kind, j)) return true;
+  return false;
+}
+
+// Rule 6: `git -C . <read>` and `git -C <the cwd> <read>` → `git <read>`: git runs in the directory
+// it is already in. A `.` is the shell's directory wherever the `git` sits. A literal must spell the
+// cwd (spellsCwd) on the text's first command with no `cd`/`pushd`/`popd` word anywhere, because a
+// snapshot function, alias, zsh AUTO_CD or an earlier function could move the shell before it. The
+// text `GIT_` anywhere declines the rule: GIT_DIR, GIT_WORK_TREE and the like point git elsewhere,
+// and the dropped `-C` would then no longer be the directory git acts on.
+function dropGitCCwd(s, ctx) {
+  if (!s.includes('-C') || s.includes('GIT_')) return null;
+  const sc = scan(s);
+  if (inDoubt(s, sc) || !commandWordsPlain(s, sc)) return null;
+  const { kind } = sc;
+  const n = s.length;
+  const edits = [];
+  let bodyStart = -1;
+  let moverSeen = null;
+  for (let i = s.indexOf('git'); i >= 0; i = s.indexOf('git', i + 3)) {
+    // atCommandStart implies a word start: only blanks sit between `i` and an unquoted separator.
+    if (kind[i] !== TOP || !atCommandStart(s, kind, i)) continue;
+    if (i + 3 >= n || !WORD_BREAK.test(s[i + 3])) continue;
+    GIT_C.lastIndex = i + 3;
+    const m = GIT_C.exec(s);
+    if (!m) {
+      // No `-C <operand>` as the first option: any `-C` word in this git call declines.
+      let end = i + 3;
+      while (end < n && !(kind[end] === TOP && SIMPLE_COMMAND_END.test(s[end]))) end += 1;
+      if (hasCWord(s, kind, i + 3, end)) return null;
+      continue;
+    }
+    // git reads `-C <path>` only before the subcommand, and the subcommand word follows the operand
+    // directly, so a second `-C` there is the subcommand word and the read allowlist declines it.
+    // A `-C` after the subcommand is that subcommand's own option (grep context, log copy detection).
+    const sub = GIT_C.lastIndex;
+    let subEnd = sub;
+    while (subEnd < n && !WORD_BREAK.test(s[subEnd])) subEnd += 1;
+    if (!GIT_READS.has(s.slice(sub, subEnd))) return null;
+    const value = m[1] ?? m[2] ?? m[3];
+    if (OPERAND_DOUBT.test(value)) return null;
+    if (value !== '.') {
+      if (bodyStart < 0) bodyStart = leadingAssignments(s).bodyStart;
+      if (moverSeen === null) moverSeen = CWD_MOVER.test(s);
+      if (i !== bodyStart || moverSeen || !spellsCwd(value, ctx)) return null;
+    }
+    edits.push({ start: i + 3, end: sub });
+  }
+  if (!edits.length) return null;
+  return replaceSpans(s, edits, () => ' ');
+}
+
+// A word of literal characters ending in `$?`. The lookbehind starts a match only at the start of
+// a run of the class, so each run is scanned once (linear).
+const EXIT_STATUS_WORD = /(?<![A-Za-z0-9_.:=\/-])[A-Za-z0-9_.:=\/-]+\$\?/g;
+const GIT_OR_GH_WORD = /(?<![A-Za-z0-9_.\/-])(?:git|gh)(?![A-Za-z0-9_.\/-])/;
+// Command words after which a `name=value` argument is (or may be) an assignment: the declaring
+// builtins and env take it as one; coproc's command takes assignment prefixes (probed, bash and zsh).
+const ASSIGNING_COMMAND_WORDS = new Set(['export', 'declare', 'local', 'readonly', 'typeset', 'env', 'coproc']);
+// Unquoted characters that, before the word in its simple command, put the word somewhere this scan
+// does not place: a redirection (`2>/dev/null rc=$?` is an assignment) or a `{` / `}` (`function g {`).
+const POSITION_DOUBT = /[<>{}]/;
+
+// The first word of the simple command starting at `from` (blanks skipped), read up to an unquoted
+// word break.
+function firstWordAt(s, kind, from) {
+  let i = from;
+  while (s[i] === ' ' || s[i] === '\t') i += 1;
+  let j = i;
+  while (j < s.length && !(kind[j] === TOP && WORD_BREAK.test(s[j]))) j += 1;
+  return s.slice(i, j);
+}
+
+// True when `word`, the first word of a simple command, makes the later words of that command
+// arguments. PLAIN_COMMAND_WORD holds no `=` or `$`, so an assignment prefix (`X=1 echo r=$?`) and
+// the `$?` word itself (`rc=$?`, an assignment) both fail it.
+function argumentsFollow(word) {
+  return PLAIN_COMMAND_WORD.test(word) && !RESERVED_WORDS.has(word) && !KEYWORD_PREFIXES.has(word)
+    && !ASSIGNING_COMMAND_WORDS.has(word);
+}
+
+// Rule 7: an unquoted argument word `exit=$?` → `"exit=$?"`, only when the text names git or gh
+// (a command the guard already accepts is left alone). A bare `$?` never matches: its quoted form
+// is refused too.
+function quoteExitStatus(s) {
+  if (!s.includes('$?') || s.includes('IFS') || !GIT_OR_GH_WORD.test(s)) return null;
+  const sc = scan(s);
+  if (inDoubt(s, sc)) return null;
+  const { kind, subMark } = sc;
+  const edits = [];
+  // One forward walk, shared by every match (linear): where the current simple command starts, and
+  // whether a POSITION_DOUBT character sits between that start and the walk's position. A `)` ends a
+  // simple command too (`arr=(x) rc=$?`); the `(` of a `$(` does not start one.
+  let walked = 0;
+  let segStart = 0;
+  let doubt = false;
+  let follows = null;
+  EXIT_STATUS_WORD.lastIndex = 0;
+  let m;
+  while ((m = EXIT_STATUS_WORD.exec(s)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    for (; walked < start; walked += 1) {
+      if ((separatorAt(s, kind, walked) && !(subMark[walked] & SUB_OPEN)) || (kind[walked] === TOP && s[walked] === ')')) {
+        segStart = walked + 1;
+        doubt = false;
+        follows = null;
+      } else if (kind[walked] === TOP && POSITION_DOUBT.test(s[walked])) doubt = true;
+    }
+    if (kind[start] !== TOP || !atWordStart(s, kind, start) || s[start] === '=') continue;
+    if (end < s.length && !WORD_BREAK.test(s[end])) continue;
+    if (doubt) continue;
+    if (follows === null) follows = argumentsFollow(firstWordAt(s, kind, segStart));
+    if (follows) edits.push({ start, end });
+  }
+  if (!edits.length) return null;
+  return replaceSpans(s, edits, (edit) => `"${s.slice(edit.start, edit.end)}"`);
 }
 
 // The order is load-bearing: each rule reads the previous rule's output. drop-redundant-cd runs
 // first so the leading `A=1; …` assignments that inline-literal-assignment and plugin-root-placeholder
 // look for sit at the start of the command once a redundant `cd <cwd> &&` is gone; the node-eval and
-// quote rules only reshape arguments and run last. The ids are exported (RULE_IDS) so a test pins
-// them against the prose that lists them (docs/hooks.md, the probe reference doc, scratch-worktree §7).
+// quote rules only reshape arguments. drop-git-C-cwd runs after both inlining rules, so
+// `W=/abs/wt; git -C "$W" log` is inlined and then judged, and after quote-escaped-space, so
+// `git -C /w/my\ wt log` is requoted and then judged in the same pass. quote-exit-status runs last:
+// it changes no command word, only quotes an argument, so it judges the text every other rule left
+// (a `$?` word another rule inlined into or requoted is judged in its final form). The ids are exported
+// (RULE_IDS) so a test pins them against the prose that lists them (docs/hooks.md, the probe
+// reference doc, scratch-worktree §7).
 const RULES = [
   ['drop-redundant-cd', dropRedundantCd],
   ['inline-literal-assignment', inlineLiteralAssignment],
   ['plugin-root-placeholder', pluginRootPlaceholder],
   ['node-eval-separator', nodeEvalSeparator],
   ['quote-escaped-space', quoteEscapedSpace],
+  ['drop-git-C-cwd', dropGitCCwd],
+  ['quote-exit-status', quoteExitStatus],
 ];
 const RULE_IDS = RULES.map(([id]) => id);
 
