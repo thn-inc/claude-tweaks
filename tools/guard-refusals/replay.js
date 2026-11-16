@@ -12,9 +12,12 @@
 //       changes the text and detect() finds nothing in the result); refused-shape (detect() finds a shape in
 //       the rewritten text, else the original; `detector` is its first id, counted in refusedShapeById);
 //       long-chain (chainLength >= 4); else unexplained. A throwing rewrite or detect leaves the row unexplained.
-//   writeTargetsMoved / writeTargetsChecked   over every Bash row (any guard, any effect) with an absolute cwd,
-//     not truncated, that a rule changes: checked counts the rows compared, moved those where any scanner list
-//     (JSON.stringify) differs between the original and rewritten text. A throw skips the row.
+//     `unexplainedByReason` counts the unexplained harness rows by the row's `reason` (null as `none`).
+//   writeTargetsMoved / writeTargetsLost / writeTargetsChecked   over every Bash row (any guard, any effect) with
+//     an absolute cwd, not truncated, that a rule changes: checked counts the rows compared, moved those where
+//     any scanner list (JSON.stringify) differs between the original and rewritten text, lost those where a
+//     target in a before-list is missing from the matching after-list (a gained target alone is moved, not
+//     lost). A throw skips the row.
 //   ruleNotApplied   harness-command Bash rows, any effect, not truncated, whose rewrite applies and whose
 //     rewritten text detect() leaves clean, counted only when EVERY applied rule shipped (RULE_SINCE non-null)
 //     and the row's ts is on or after the day AFTER that release day (UTC): a refusal on the release day itself
@@ -150,6 +153,7 @@ function replay(rows, given = {}) {
     plugin: { 'still-denied': 0, 'no-longer-denied': 0, 'scanner-failed': 0 },
     harness: { 'other-checkout': 0, rewritten: 0, 'refused-shape': 0, 'long-chain': 0, unexplained: 0 },
     refusedShapeById: {},
+    unexplainedByReason: {},
     rows: [],
   };
   const ruleNotApplied = { total: 0, byRule: {} };
@@ -157,6 +161,7 @@ function replay(rows, given = {}) {
   for (const id of ['git-C-own', 'exit-status', 'collision-fence']) byClass[id] = { total: 0, unknownVersion: 0, byVersion: {} };
   let writeTargetsMoved = 0;
   let writeTargetsChecked = 0;
+  let writeTargetsLost = 0;
 
   // A row without a file is its own session, never pooled with other file-less rows.
   const sessionKey = (r) => (typeof r.file === 'string' && r.file ? r.file : r);
@@ -221,15 +226,21 @@ function replay(rows, given = {}) {
       }
       dispositions.harness[d]++;
       if (detector) bump(dispositions.refusedShapeById, detector);
+      if (d === 'unexplained') bump(dispositions.unexplainedByReason, r.reason || 'none');
       dispositions.rows.push(detector ? { toolUseId: r.toolUseId, disposition: d, detector } : { toolUseId: r.toolUseId, disposition: d });
     }
 
     if (isBash && !r.truncated && absCwd && rw) {
       try {
-        const before = JSON.stringify(scanAll(scanner, command, r.cwd));
-        const after = JSON.stringify(scanAll(scanner, rw.command, r.cwd));
+        const before = scanAll(scanner, command, r.cwd);
+        const after = scanAll(scanner, rw.command, r.cwd);
         writeTargetsChecked++;
-        if (before !== after) writeTargetsMoved++;
+        if (JSON.stringify(before) !== JSON.stringify(after)) writeTargetsMoved++;
+        const lost = before.some((list, i) => {
+          const kept = new Set(after[i].map((t) => JSON.stringify(t)));
+          return list.some((t) => !kept.has(JSON.stringify(t)));
+        });
+        if (lost) writeTargetsLost++;
       } catch { /* skipped: not compared */ }
     }
 
@@ -264,7 +275,7 @@ function replay(rows, given = {}) {
     }
   }
 
-  return { dispositions, writeTargetsMoved, writeTargetsChecked, ruleNotApplied, byClass, byPattern };
+  return { dispositions, writeTargetsMoved, writeTargetsLost, writeTargetsChecked, ruleNotApplied, byClass, byPattern };
 }
 
 module.exports = { replay, RULE_SINCE, REWRITE_DEPS, chainLength, pluginVersion, defaultDeps };

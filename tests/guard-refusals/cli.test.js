@@ -366,6 +366,19 @@ test('the text output has a replay section', () => {
   assert.match(table, /by pattern/);
 });
 
+test('the text output prints lost targets, unexplained reasons and a per-rule total', () => {
+  const late = (e) => ({ ...e, timestamp: '2026-11-05T00:00:00.000Z' });
+  const entries = [late(use('t_a', 'Bash', { command: 'ls /a\\ b/c' })), result('t_a', HARNESS_BASH),
+    use('t_c', 'Bash', { command: 'ls /a/b' }), result('t_c', HARNESS_BASH)];
+  const { code, c } = replayRun(['--replay'], entries);
+  assert.equal(code, 0);
+  const table = c.out.join('\n');
+  assert.match(table, /writeTargetsMoved \d+ of 1 \(lost \d+\)/);
+  assert.match(table, /unexplained by reason/);
+  assert.match(table, /^ {4}quote-escaped-space {2}total 1$/m);
+  assert.match(table, /^ {4}quote-escaped-space {2}\S+ {2}main 1 {2}subagent 0$/m);
+});
+
 test('caller-shape-patterns.json: every pattern compiles and matches one hand-written positive', () => {
   const positives = {
     'mkdir-chain-playwright': 'mkdir -p out && playwright-cli open x',

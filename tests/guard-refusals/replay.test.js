@@ -174,6 +174,54 @@ test('pluginVersion reads the cache version, else unknown', () => {
   assert.equal(pluginVersion('ls'), 'unknown');
 });
 
+test('writeTargetsLost counts rows where a before-target is missing after; a gained target is moved, not lost', () => {
+  const lost = replay([row({ command: 'cd /other && git commit -m x', effect: 'write' })], {
+    rewrite: () => ({ command: 'git commit -m x', applied: ['drop-redundant-cd'] }),
+  });
+  assert.equal(lost.writeTargetsMoved, 1);
+  assert.equal(lost.writeTargetsLost, 1);
+  const gain = replay([row({ command: 'a' })], {
+    rewrite: () => ({ command: 'b', applied: ['drop-redundant-cd'] }),
+    scanner: { ...emptyScan, gitTargets: (c) => (c === 'b' ? [{ action: 'commit', dir: '/wt' }] : []) },
+  });
+  assert.equal(gain.writeTargetsMoved, 1);
+  assert.equal(gain.writeTargetsLost, 0);
+  const same = replay([row({ command: 'ls /wt/a\\ b' })]);
+  assert.equal(same.writeTargetsLost, 0);
+});
+
+test('unexplainedByReason counts unexplained harness reads by reason, null as none', () => {
+  const res = replay([
+    row({ command: 'cat f', reason: 'runs-complete' }),
+    row({ command: 'cat g', reason: 'runs-complete' }),
+    row({ command: 'cat h', reason: null }),
+    row({ command: 'ls /a\\ b/c', reason: 'too-complex' }),
+  ]);
+  assert.equal(res.dispositions.harness.unexplained, 3);
+  assert.deepEqual(res.dispositions.unexplainedByReason, { 'runs-complete': 2, none: 1 });
+});
+
+test('ruleNotApplied counts only harness-command rows', () => {
+  const res = replay([row({ guard: 'plugin:worktree-always', command: `ls /a\\ b/c ${CACHE}` })], { scanner: emptyScan });
+  assert.equal(res.ruleNotApplied.total, 0);
+  assert.deepEqual(res.ruleNotApplied.byRule, {});
+});
+
+test('a plugin read row is still-denied only for a GATE_COVERAGE git action', () => {
+  const r = row({ guard: 'plugin:worktree', command: 'git log', readClass: null });
+  const res = replay([r], { scanner: { ...emptyScan, gitTargets: () => [{ action: 'not-a-gate-action', dir: '/wt' }] } });
+  assert.equal(dispOf(res, r).disposition, 'no-longer-denied');
+});
+
+test('a plugin read row with a relative cwd is scanned from /', () => {
+  const seen = [];
+  const rec = (c, cwd) => { seen.push(cwd); return []; };
+  replay([row({ guard: 'plugin:worktree', command: 'git log', cwd: 'wt/rel', readClass: null })], {
+    scanner: { gitTargets: rec, fileWriteTargets: rec, mkdirTargets: rec },
+  });
+  assert.deepEqual(seen, ['/', '/', '/']);
+});
+
 test('defaultDeps wires the real rewrite, scanner and detector', () => {
   const d = defaultDeps();
   assert.equal(typeof d.rewrite, 'function');
