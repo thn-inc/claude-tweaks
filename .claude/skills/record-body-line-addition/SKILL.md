@@ -48,7 +48,7 @@ When the line must not be hand-edited, put its writers in the reader's module an
 |---|---|
 | A consumer matching the line with its own regex | Its detection drifts from the reader's, so a variant the reader reads as malformed reads as absent there |
 | Reading a malformed value or an unknown slug as empty | A misspelling silently drops what the line asserts; `parseRiskFlags` reads one as every built-in category flagged |
-| Scanning the whole body for the line | A later mention in prose or a fenced example reads as the record's own; the line is a header line by contract (#4618 review accepted the preamble-only scan) |
+| Scanning the whole body for the line | A later mention in prose or a fenced example reads as the record's own; the line is a header line by contract (#4618 review accepted the preamble-only scan); the one whole-body exception is `ownOriginLine` (see Preamble only, fences ignored) |
 
 ## Reference
 
