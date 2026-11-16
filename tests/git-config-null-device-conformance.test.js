@@ -23,7 +23,10 @@ const { readText } = require('./helpers/read-skill');
 //   (b) a value held in a variable (`const NUL = os.devNull; … GIT_CONFIG_GLOBAL: NUL`)
 //       is not followed;
 //   (c) a key and its value split across lines are not matched, the scan being
-//       one regex per line.
+//       one regex per line;
+//   (d) a wrapped or conditional value, where `os.devNull` does not directly
+//       follow the separator (`GIT_CONFIG_GLOBAL: cond ? os.devNull : x`,
+//       `GIT_CONFIG_GLOBAL: (os.devNull)`), is not matched.
 // It matches raw lines, not comment-stripped code, so a comment that holds the
 // pattern is flagged too. The suite skips its own file by name: its planted
 // offenders are text, so scanning it would report them.
