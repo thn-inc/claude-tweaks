@@ -778,7 +778,9 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 // the value it appends to. As for isAssignmentWord (#4281), the name and its `=` (or `+=`) must
 // be bare: `"x"=1 cd M` and `A\=x cd M` run the command `x=1` or `A=x` and never change directory.
 const WORD_OPENERS = { '(': 'c', '{': 'p', '[': 'a' };
-const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=.*$/; // SIMPLE_ASSIGNMENT_RE, plus `+=`
+// A subscripted name (`a[0]=1`, `a[0]+=1`) is an assignment word too: bash 3.2 and 5 strip it and run
+// the command after it (bash 5 prints `a[0]: not a valid identifier` first; zsh refuses the line).
+const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]=]*\])?\+?=.*$/; // SIMPLE_ASSIGNMENT_RE, plus `+=` and a subscript
 function assignmentWordEnd(rawT, spanKinds, i) {
   if (i >= rawT.length || !isAssignmentWord(rawT[i], spanKinds[i], ASSIGNMENT_WORD_RE)) return i;
   let stack = '';
@@ -808,7 +810,10 @@ function assignmentWordEnd(rawT, spanKinds, i) {
 // #4448: the words bash strips before the command word it runs, besides assignment words (a word
 // shape, read by assignmentWordEnd) and redirections (redirectionWidth). The record's "Scope under
 // ADR 0028" list, pinned by tests/hooks-gate-coverage.test.js; exported with commandWord so a later
-// recogniser reuses the one reading rather than retyping it.
+// recogniser reuses the one reading rather than retyping it. Two older lists name overlapping words
+// for their own walks: READER_WRAPPER_WORDS (heredoc readers) and COMMAND_PREFIX_WORDS (reserved
+// words that resume command position); a new prefix word belongs here, and in those only if their
+// walk needs it.
 const STRIPPED_PREFIX_WORDS = Object.freeze(['!', 'builtin', 'command', 'doas', 'env', 'exec', 'nice', 'nohup', 'sudo', 'time']);
 // The ones that are programs on PATH too, so a path-qualified spelling (`/usr/bin/nice`) strips as
 // well, as findGitLead's lead matches `/git`.
@@ -843,6 +848,7 @@ const PREFIX_OPTIONS = Object.freeze({
   env: {
     value: 'CuSPLUa',
     stop: 'SP',
+    split: 'S', // `-S word` / `--split-string word` with a plain word: env runs that word (splitCommandWord)
     chdir: 'C',
     dash: true,
     assignments: true,
@@ -853,11 +859,12 @@ const PREFIX_OPTIONS = Object.freeze({
   },
   sudo: {
     value: 'aCcDghpRrTtUu',
-    stop: 'eRilvK',
+    stop: 'eRlvK',
     chdir: 'D',
+    home: 'i', // `-i` / `--login` runs the command from the target user's home: a relative target is unprovable
     assignments: true,
     long: {
-      chdir: 'chdir', edit: 'stop', chroot: 'stop', login: 'stop', list: 'stop', validate: 'stop', 'remove-timestamp': 'stop',
+      chdir: 'chdir', edit: 'stop', chroot: 'stop', login: 'home', list: 'stop', validate: 'stop', 'remove-timestamp': 'stop',
       'auth-type': 'value', 'close-from': 'value', group: 'value', host: 'value', 'login-class': 'value', prompt: 'value', role: 'value',
       type: 'value', 'command-timeout': 'value', 'other-user': 'value', user: 'value', askpass: 'flag', background: 'flag', bell: 'flag',
       'preserve-env': 'flag', 'set-home': 'flag', help: 'flag', 'non-interactive': 'flag', 'preserve-groups': 'flag',
@@ -865,6 +872,9 @@ const PREFIX_OPTIONS = Object.freeze({
     },
   },
 });
+
+// The string of env's `-S` that names one program with no argument of its own (splitCommandWord).
+const PLAIN_SPLIT_WORD_RE = /^[A-Za-z0-9_./+@%][A-Za-z0-9_./+@%-]*$/;
 
 // The long option `word` (`--name` or `--name=value`) names among `names`, by getopt's rule: an
 // exact name, or a prefix of exactly one. null when unknown or ambiguous.
@@ -919,14 +929,27 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
     return i;
   };
   const noCommand = () => ({ index: -1, dir, unprovable, split: false }); // no word left, or a `stop` option read
+  // A repeated chdir option of one prefix keeps the last value only, resolved from the cwd the prefix
+  // started in (GNU env's `-C /tmp -C ..` runs in the parent of that cwd, not of /tmp): `chdirBase` and
+  // `unprovableBase` are the walk's state when the current prefix word began.
+  let chdirBase = dir;
+  let unprovableBase = false;
   const chdir = (value) => {
     if (value === undefined) return;
-    const next = resolveCd(dir, value, pathImpl);
-    if (next === null) unprovable = true;
-    else dir = next;
+    const next = resolveCd(chdirBase, value, pathImpl);
+    unprovable = next === null || unprovableBase;
+    if (next !== null) dir = next;
+  };
+  // env's `-S`/`--split-string` read from `at` (the index of its string): a plain word with no blank,
+  // quote, `$`, `=` or leading `-` is the one word env splits out and runs, with the rest of the line as
+  // its arguments (`env -S git commit -m x` runs git commit -m x), so the command word is that word,
+  // read again as any word. Any other string is opaque (-1).
+  const splitCommandWord = (at) => {
+    const j = skipRedirections(at);
+    return j < t.length && PLAIN_SPLIT_WORD_RE.test(t[j]) ? j : -1;
   };
   let i = 0;
-  for (;;) {
+  outer: for (;;) {
     for (;;) {
       i = skipRedirections(i);
       const next = assignmentWordEnd(raw, spanKinds, i);
@@ -971,6 +994,8 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
     }
     const spec = PREFIX_OPTIONS[name];
     if (spec === null) continue;
+    chdirBase = dir;
+    unprovableBase = unprovable;
     const longNames = Object.keys(spec.long || {});
     for (;;) {
       i = skipRedirections(i);
@@ -985,9 +1010,16 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       if (w.startsWith('--')) {
         const opt = longOptionName(w, longNames);
         const kind = opt === null ? 'flag' : spec.long[opt];
+        if (kind === 'stop' && opt === 'split-string' && !w.includes('=')) {
+          const at = splitCommandWord(i + 1);
+          if (at === -1) return noCommand();
+          i = at;
+          continue outer;
+        }
         if (kind === 'stop') return noCommand();
         i += 1;
-        if (kind === 'flag') continue;
+        if (kind === 'home') unprovable = unprovableBase = true;
+        if (kind === 'flag' || kind === 'home') continue;
         let value;
         if (w.includes('=')) value = w.slice(w.indexOf('=') + 1);
         else {
@@ -1001,8 +1033,16 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       const opt = readShortCluster(w, spec.value || '');
       const valueLength = opt === null || opt.value === null ? 0 : opt.value.length;
       const switches = opt === null ? w.slice(1) : w.slice(1, w.length - 1 - valueLength);
+      if (opt !== null && opt.value === null && opt.letter === spec.split && ![...switches].some((c) => stops.includes(c))) {
+        const at = splitCommandWord(i + 1);
+        if (at !== -1) {
+          i = at;
+          continue outer;
+        }
+      }
       if ([...switches].some((c) => stops.includes(c)) || (opt !== null && stops.includes(opt.letter))) return noCommand();
       i += 1;
+      if (spec.home !== undefined && ([...switches].includes(spec.home) || (opt !== null && opt.letter === spec.home))) unprovable = unprovableBase = true;
       if (opt === null) continue;
       let value = opt.value;
       if (value === null) {
@@ -1658,7 +1698,10 @@ function matchRedirectOperator(tok) {
 // because any program not named here (a shell, `make -f -`, `at`, a glob-named
 // `/bin/ba[s]h`) may run the body as commands, and the set of those cannot be listed.
 const DATA_READER_WORDS = new Set(['cat', 'tee', 'git', 'gh', 'read', 'node', 'python', 'python3', 'jq', 'wc']);
-// Commands that run what follows them: followed to the program they run.
+// Commands that run what follows them: followed to the program they run. Its own heredoc walk, not
+// the commandWord reader: it lacks `!` and `builtin` and reads fewer options, and a body is kept
+// whenever the walk is unsure. STRIPPED_PREFIX_WORDS (#4448) is the write gate's list of the same
+// kind of word; moving this walk onto it is separate work (#4448's tiebreak ruling, a filed record).
 const READER_WRAPPER_WORDS = new Set(['sudo', 'doas', 'env', 'nice', 'time', 'nohup', 'command', 'exec']);
 // `env` options that choose the program it runs: -S/--split-string re-splits a string into a
 // command line, -P searches another PATH. Matched in a short-option cluster too (`-iS…`).
@@ -2126,7 +2169,9 @@ const CONTINUATION_RE = /(?:\|\||&&|\|)\s*(?:#.*)?$/;
 
 // Reserved words that open a compound command, keyed to the word that closes it.
 const COMPOUND_OPENERS = new Map([['if', 'fi'], ['for', 'done'], ['while', 'done'], ['until', 'done'], ['select', 'done'], ['case', 'esac']]);
-// Reserved words after which the next word is again at command position.
+// Reserved words after which the next word is again at command position. Not the stripped prefixes
+// (STRIPPED_PREFIX_WORDS, which the write gate reads past): `builtin` and `command` are not reserved
+// words and stay out of this set, which only marks where a structure opened on a heredoc line resumes.
 const COMMAND_PREFIX_WORDS = new Set(['if', 'while', 'until', 'then', 'do', 'else', 'elif', '!', 'time']);
 
 // True when the logical line `line` leaves a structure open at its end, so a later line

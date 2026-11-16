@@ -528,8 +528,8 @@ function teardownTargets(ctx, { pathImpl } = {}) {
     // Shares gitTargets' own findGitLead -> skipGlobalFlags preamble via
     // resolveGitCommand: findGitLead reads the command word through
     // git-command.js's commandWord, past assignment words, redirections and
-    // the stripped prefixes (`!`, builtin, command, doas, env with its flags
-    // including -C/--chdir, exec, nice, nohup, sudo, time, #4448) to find
+    // the stripped prefixes (git-command.js's STRIPPED_PREFIX_WORDS, with
+    // their options, #4448) to find
     // the real git/.../git lead token — a bare
     // `toks[0] !== 'git'` check misses every wrapped form (#1308) — and
     // skipGlobalFlags then walks past any global flag ahead of the

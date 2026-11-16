@@ -171,6 +171,13 @@ for (const [label, name, from, to] of [
   });
 }
 
+test('#4448: policy-schema-coverage.md names exactly the words git-command.js\'s STRIPPED_PREFIX_WORDS holds', () => {
+  const words = proseList(readText(SCHEMA), 'redirections, and the words ', ' with their options');
+  assert.strictEqual(new Set(words).size, words.length, `the prose names a stripped prefix twice: ${words.join(', ')}`);
+  assert.deepStrictEqual([...words].sort(), [...gitCommand.STRIPPED_PREFIX_WORDS].sort(),
+    'STRIPPED_PREFIX_WORDS and the stripped-prefix sentence in skills/_shared/policy-schema-coverage.md have diverged');
+});
+
 test('GATE_COVERAGE is frozen, so a caller cannot mutate the contract at runtime', () => {
   assert.ok(Object.isFrozen(GATE_COVERAGE));
   for (const key of Object.keys(GATE_COVERAGE)) {
@@ -2053,11 +2060,11 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     for (const cmd of ["env -S 'cp a /main/f.js'", "env --split-string='cp a /main/f.js'", 'env --split-string x cp a /main/f.js',
       'env -P /x cp a /main/f.js',
       "env -iS 'cp a /main/f.js'", 'sudo -e /main/f.js', 'sudo --edit /main/f.js', 'sudo -R /x cp a /main/f.js',
-      'sudo -i cp a /main/f.js', 'sudo -l cp a /main/f.js', 'sudo -v cp a /main/f.js', 'sudo -K cp a /main/f.js',
+      'sudo -l cp a /main/f.js', 'sudo -v cp a /main/f.js', 'sudo -K cp a /main/f.js',
       'doas -C /x cp a /main/f.js', 'doas -s', 'doas -L cp a /main/f.js',
       'env -S x cp a /main/f.js', 'env --split-string=x cp a /main/f.js', 'sudo -e cp a /main/f.js', 'doas -s cp a /main/f.js',
       'sudo --chroot /x cp a /main/f.js', 'sudo --chroot=/x cp a /main/f.js',
-      ...['edit', 'login', 'list', 'validate', 'remove-timestamp'].flatMap((o) => [`sudo --${o} cp a /main/f.js`, `sudo --${o}=x cp a /main/f.js`])]) {
+      ...['edit', 'list', 'validate', 'remove-timestamp'].flatMap((o) => [`sudo --${o} cp a /main/f.js`, `sudo --${o}=x cp a /main/f.js`])]) {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
     }
   });
@@ -2137,7 +2144,7 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     // split cd (2^16 of them for sixteen).
     const sixteen = Array.from({ length: 16 }, (_, k) => `! time cd d${k}; `).join('') + 'cp a f.js';
     const readings = fileWriteTargets(sixteen, '/r').filter((x) => x.reading);
-    assert.ok(readings.length <= 16, `${readings.length} readings`);
+    assert.strictEqual(readings.length, 1, `${readings.length} readings`);
   });
 
   // From M, all three write M/f.js for each (`X=1 time`, `X=1 !` and `>g !`: zsh refuses to parse
@@ -2230,6 +2237,52 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     for (const cmd of ['command -v git -C /main commit -m x', 'command -V git -C /main commit -m x', 'command -v git commit -m x']) {
       assert.deepStrictEqual(gitTargets(cmd, '/r'), [], cmd);
     }
+  });
+
+  // `env -S word` and GNU's `--split-string word` split their string and run the first word with the
+  // rest of the line as its arguments (env(1)), so `env -S git commit -m x` commits: base skipped `-S`
+  // as a plain flag and denied it, so reading it again keeps base's coverage. A string that is not one
+  // plain word (a blank, a quote, `$X`) or one glued to its option stays opaque, owned by #4572. The
+  // worktree guard refused the oracle run of `env -S` in the review that added these rows: the
+  // verdicts are env(1)'s, the manual's, not a bash oracle's.
+  test('#4448: env -S with one plain word reads that word as the command, as base read git behind it', () => {
+    for (const cmd of ['env -S git -C /main commit -m x', 'env --split-string git -C /main commit -m x', 'env -iS git -C /main commit -m x',
+      'env -S nice git -C /main commit -m x']) {
+      assert.ok(gitTargets(cmd, '/r').some((x) => x.dir === MAIN_ROOT), `${cmd}: ${JSON.stringify(gitTargets(cmd, '/r'))}`);
+    }
+    includesFor(['env -S cp a /main/f.js', 'env --split-string cp a /main/f.js'], MAIN_F);
+    for (const cmd of ["env -S 'git -C /main commit -m x'", 'env -Sgit -C /main commit -m x', 'env -S $X git -C /main commit -m x',
+      'env -S -i git -C /main commit -m x']) {
+      assert.deepStrictEqual(gitTargets(cmd, '/r'), [], cmd);
+    }
+  });
+
+  // sudo(8): `-i` runs the command from the target user's home, so a relative target cannot be
+  // resolved (like an unresolvable `env -C`) while an absolute one still lands where it names.
+  test('#4448: sudo -i and --login resolve an absolute target only', () => {
+    for (const cmd of ['sudo -i cp a /main/f.js', 'sudo --login cp a /main/f.js', 'sudo -iu bob cp a /main/f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyMain, cmd);
+    }
+    for (const cmd of ['sudo -i cp a f.js', 'sudo --login cp a f.js']) assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+  });
+
+  // GNU env(1) and sudo(8) keep the last of repeated directory options and resolve it from the cwd
+  // the command started in, not from the earlier option's directory: from /r/w, `-C /tmp -C ..` runs
+  // in /r (the parent of /r/w), where a cumulative reading wrote /tmp's parent.
+  test('#4448: a repeated env -C or sudo -D keeps the last value, resolved from the starting cwd', () => {
+    const copyParent = [{ action: 'copy', file: path.resolve('/r/f') }];
+    for (const cmd of ['env -C /tmp -C .. cp a f', 'env -C /tmp --chdir=.. cp a f', 'sudo -D /tmp -D .. cp a f', 'sudo -D /tmp --chdir=.. cp a f']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r/w'), copyParent, cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('env -C $X -C /main cp a f.js', '/r'), copyMain);
+    assert.deepStrictEqual(fileWriteTargets('env -C /main -C $X cp a f.js', '/r'), []);
+  });
+
+  // bash 3.2 and 5 strip a subscripted assignment word and run the command after it (bash 5 prints
+  // `a[0]: not a valid identifier` first; `a[0]=1 cd /tmp` still changes into /tmp); zsh refuses the line.
+  test('#4448: a subscripted assignment word is stripped like any assignment word', () => {
+    includesFor(['a[0]=1 cp a /main/f.js', 'a[0]+=1 cp a /main/f.js', 'env a[0]=1 cp a /main/f.js'], MAIN_F);
+    assert.deepStrictEqual(fileWriteTargets('a[0]=1 cd /main; cp a f.js', '/r'), copyMain);
   });
 
   // The record's body, "Scope under ADR 0028", lists the stripped prefixes: assignment words and
