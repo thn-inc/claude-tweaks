@@ -366,6 +366,12 @@ test('AC4.1: originWithTwoClones with a seed and no key throws', () => {
   assert.throws(() => gitFixtures.originWithTwoClones('ct-gt-otc-', { seed: () => {} }), /seed needs a key/);
 });
 
+test('catchupFixture rejects an unknown shape, inherited object keys included', () => {
+  for (const shape of ['no-such-shape', 'constructor', '__proto__']) {
+    assert.throws(() => catchupFixtures.catchupFixture(shape), /unknown shape/, shape);
+  }
+});
+
 test('a catchupFixture copy is on feat with origin/main equal to main in work and other', () => {
   const f = catchupFixtures.catchupFixture();
   scratch.push(f.root);
@@ -382,6 +388,17 @@ test('a catchupFixture shape copy holds the shape setup: a feat edit in work, an
     const f = catchupFixtures.catchupFixture(shape);
     scratch.push(f.root);
     assert.strictEqual(git(f.work, ['rev-list', '--count', 'main..HEAD']), '1', shape);
+    // The file content each shape's setup leaves: work's own edit, and upstream's pushed edit as `other` last saw origin.
+    const line = (text, n) => text.split('\n')[n - 1];
+    const workA = fs.readFileSync(path.join(f.work, 'a.txt'), 'utf8');
+    const upstreamA = () => git(f.other, ['show', 'origin/main:a.txt']);
+    if (shape === 'conflicting-edit') {
+      assert.strictEqual(line(workA, 3), 'FEAT', shape);
+      assert.strictEqual(line(upstreamA(), 3), 'UPSTREAM', shape);
+    } else {
+      assert.strictEqual(line(workA, 1), 'F1', shape);
+      if (shape === 'feat-edit-overlapping-upstream') assert.strictEqual(line(upstreamA(), 5), 'O5', shape);
+    }
     git(f.work, ['fetch', '-q', 'origin']);
     const upstream = git(f.work, ['rev-list', '--count', 'main..origin/main']);
     assert.strictEqual(upstream, shape === 'feat-edit-only' ? '0' : '1', shape);

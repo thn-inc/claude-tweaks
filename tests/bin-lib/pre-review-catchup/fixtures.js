@@ -58,7 +58,7 @@ function seedBase({ work, other, run }) {
 }
 
 function catchupFixture(shape) {
-  const steps = shape === undefined ? [] : CATCHUP_SHAPE_STEPS[shape];
+  const steps = shape === undefined ? [] : Object.hasOwn(CATCHUP_SHAPE_STEPS, shape) && CATCHUP_SHAPE_STEPS[shape];
   if (!steps) throw new Error(`catchupFixture: unknown shape "${shape}"`);
   const f = originWithTwoClones('ct-precatchup-', {
     key: shape === undefined ? 'pre-review-catchup' : `pre-review-catchup:${shape}`,
@@ -75,4 +75,4 @@ function catchupFixture(shape) {
   return { ...f, editLine, pushUpstream, head: () => f.run(f.work, ['rev-parse', 'HEAD']).trim() };
 }
 
-module.exports = { FIVE_LINES, CATCHUP_SHAPES, catchupFixture };
+module.exports = { CATCHUP_SHAPES, catchupFixture };
