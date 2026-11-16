@@ -107,7 +107,7 @@ test('tool-scoped: path rules do not pick suites, static still follows the rules
 });
 
 test('a stamp with no fullSha anchors on its sha', () => {
-  const r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: { sha: FULL, scope: 'full', legacy: true } });
+  const r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: { sha: FULL, scope: 'full' } });
   assert.strictEqual(r.base, FULL);
 });
 
