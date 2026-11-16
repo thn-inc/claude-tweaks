@@ -1,8 +1,9 @@
 'use strict';
 // #5227: queue-pull module suite: the registry, passes, CLI, rank and the oracle pins that need no pair
 // pool. The oracle/parity header, the fence and the strings read from it, and the parity-pair machinery
-// live in queue-pull-helpers.js; the four `#5227 parity` describes run as
-// queue-pull-parity-{ac1,ac5,ac4,ac7}.test.js, one process each.
+// live in queue-pull-helpers.js, with the in-process pull harness (pull, pull4, inOwnTmp); the four
+// `#5227 parity` describes run as queue-pull-parity-{ac1,ac5,ac4,ac7}.test.js, one process each, and the
+// slow whole-fence oracle runs and cross-checks as queue-pull-oracle-checks.test.js.
 const { test, mock, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -30,7 +31,8 @@ const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions
 const { aliasMcpTimestamps } = require('../../../plugin/bin/lib/issues/mcp-issue-shape');
 const {
   FENCE, fenceText, HIT_MESSAGE, NATIVE_WARNING_PREFIX, GROUPING_STOP_RE, CACHE_HIT_STOP_RE, LINKED_WARNING, OPEN_FILTER_WARNING, OPEN_STOP,
-  TARGET_STOP, NEIGHBOUR_STOP, IN_FLIGHT_POOL_AUTO, MALFORMED_CAUSE, cannedLanding, ALL_REASONS, FILES_S1_REASONS,
+  TARGET_STOP, NEIGHBOUR_STOP, IN_FLIGHT_POOL_AUTO, MALFORMED_CAUSE, cannedLanding, ALL_REASONS, FILES_S1_REASONS, inOwnTmp, EXPRESS_OFF,
+  pull, entriesOf, FULL, pull4,
 } = require('./queue-pull-helpers');
 
 const ORACLE_ENV_KEYS = new Set([
@@ -38,23 +40,6 @@ const ORACLE_ENV_KEYS = new Set([
   'GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_DATE',
   'QP_SHIM_TABLE', 'QP_LOG_DIR', 'QP_TMPNAME_COUNTER_FILE', 'NODE_OPTIONS',
 ]);
-
-test('#5227 oracle: queue-pull-script.md runs whole over a one-record fixture', { skip: oracleSkip() }, async () => {
-  const r = await withEscapeGuard(REPO, () => runOracle(createSandbox(S0()), FENCE));
-  assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(JSON.parse(r.files['dispatch-groups.json']).flat().map((c) => c.number), [9001]);
-  assert.deepEqual(JSON.parse(r.files['dispatch-exclusions.json']), []);
-  assert.equal(r.ghArgv.filter((a) => a.tag === 'UNHANDLED').length, 0);
-  assert.deepEqual(r.gitArgv.filter((a) => a.tag === 'REFUSED'), [], 'the fence never trips the git shim containment');
-  // The write-back reached the sandbox origin, stamped by the preloaded frozen clock.
-  assert.equal(r.orderBlob.computedAt, '2026-11-12T12:00:00.000Z');
-});
-
-test('#5227 oracle: an unmatched gh call fails loudly (go-red control for the shim table)', { skip: oracleSkip() }, async () => {
-  const s = S0(); s.gh = s.gh.filter((e) => !(Array.isArray(e.argv) && e.argv.includes('number') && e.argv.includes('200')));
-  const r = await runOracle(createSandbox(s), FENCE);
-  assert.match(r.stderr, /gh-shim: no canned response for: issue list --state open --json number --limit 200/);
-});
 
 test('#5227 oracle: oracleSkip names "no bash oracle" on win32 and without bash >= 4', () => {
   assert.match(oracleSkip('win32', '/bin/bash'), /no bash oracle/);
@@ -511,21 +496,6 @@ test('AC11.2: every registry field has a fixed value set', () => {
   assert.ok(Object.isFrozen(PASSES) && Object.isFrozen(PASSES[0]));
 });
 
-// Runs fn with TMPDIR (and the win32 spellings) pointed at a test-owned dir, never the host one.
-function inOwnTmp(fn) {
-  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-'));
-  const keys = ['TMPDIR', 'TEMP', 'TMP', 'QP_TMPNAME_COUNTER_FILE'];
-  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  for (const k of ['TMPDIR', 'TEMP', 'TMP']) process.env[k] = own;
-  delete process.env.QP_TMPNAME_COUNTER_FILE;
-  try {
-    return fn(own);
-  } finally {
-    for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
-    fs.rmSync(own, { recursive: true, force: true });
-  }
-}
-
 test('#5227 truncate keeps only firing entries (Q28)', () => inOwnTmp((own) => {
   const paths = sessionPaths('qp-truncate');
   const file = paths['dispatch-exclusions.json'];
@@ -654,64 +624,7 @@ test('#5227 queuePull runs every registry pass in order and returns the final gr
 
 // ---- Task 3: fetch, blocked, oversized (grouping) and write-back, both transports (in-process) ----
 
-const T3_PASSES = PASSES.slice(0, 5); // truncate, fetch, blocked, oversized, write-back
-const NOW = new Date('2026-11-12T12:00:00.000Z');
-const EXPRESS_OFF = () => ({ enabled: false, grouping: 'per-record', keepSingleton: () => false });
-
-// Runs truncate..write-back over a scenario in a test-owned TMPDIR and returns everything a test
-// asserts on. o: { transport, omit, persisted, writeResult, spawn (CLI overrides), env, inputs,
-// prepare(own) -> extra options, before(ctx), deps, run, allowThrow }.
-function pull(scenario, o = {}) {
-  return inOwnTmp((own) => {
-    const cwd = path.join(own, 'proj');
-    fs.mkdirSync(cwd);
-    const sessionId = o.sessionId || 'qp-t3';
-    const paths = sessionPaths(sessionId);
-    fs.mkdirSync(path.dirname(paths['dispatch-groups.json']), { recursive: true });
-    const errs = [];
-    const ghCalls = [];
-    const base = o.run || fakeRun(scenario, { sessionDir: path.dirname(paths['dispatch-groups.json']) });
-    const store = { persisted: o.persisted || null, written: [] };
-    const spawnCli = fakeSpawnCli(scenario, o.spawn || {});
-    const deps = {
-      run: (cmd, args, opts) => { ghCalls.push(args); return base(cmd, args, opts); },
-      spawnCli,
-      stderr: (s) => errs.push(s),
-      now: () => NOW,
-      expressQueuePolicy: EXPRESS_OFF,
-      // Production lets the library spawn resolve-foreign-blockers.js; tests inject through the seam.
-      foreignDeps: { spawn: o.foreignSpawn || ((argv) => spawnCli(path.basename(argv[0]), argv.slice(1))) },
-      queueOrder: {
-        readOrder: () => store.persisted,
-        writeOrder: (root, blob) => { store.written.push({ root, blob }); return o.writeResult || { ok: true }; },
-      },
-      ...(o.deps || {}),
-    };
-    const extra = o.prepare ? o.prepare(own) : {};
-    const options = { transport: o.transport || 'gh', sessionId, cwd, env: o.env || {}, omit: o.omit || [], inputs: o.inputs, ...extra };
-    const ctx = (o.lib || { makeContext }).makeContext(options, deps);
-    if (o.before) o.before(ctx, own);
-    let thrown = null;
-    try { (o.lib || { runPasses }).runPasses(o.passes || T3_PASSES, ctx); } catch (err) { thrown = err; }
-    if (thrown && !o.allowThrow) throw thrown;
-    const text = {};
-    for (const name of SESSION_FILES) if (fs.existsSync(paths[name]) && fs.statSync(paths[name]).isFile()) text[name] = fs.readFileSync(paths[name], 'utf8');
-    // Any other file a pass left in the session dir (the shipped Close proposals).
-    for (const name of fs.readdirSync(path.dirname(paths['dispatch-groups.json']))) {
-      const file = path.join(path.dirname(paths['dispatch-groups.json']), name);
-      if (!(name in text) && fs.statSync(file).isFile()) text[name] = fs.readFileSync(file, 'utf8');
-    }
-    for (const file of Object.values(ctx.state.files)) if (fs.existsSync(file)) text[file] = fs.readFileSync(file, 'utf8');
-    return {
-      thrown, cwd, errs, ghCalls, store, state: ctx.state, text, stderr: errs.join(''),
-      cliCalls: spawnCli.calls.map((c) => [c.name, ...c.args]),
-      json: (name) => JSON.parse(text[name]),
-    };
-  });
-}
-
 const groupNumbers = (r) => r.json('dispatch-groups.json').map((g) => g.map((c) => c.number));
-const entriesOf = (r, reason) => r.json('dispatch-exclusions.json').filter((e) => e.reason === reason);
 const CAP_WARNING = fenceText(/echo "(Warning: the auto:build queue pull returned exactly the --limit cap \(500\)[^"]*)" >&2/);
 const asserts = (fn) => assert.throws(fn, (err) => err instanceof assert.AssertionError);
 
@@ -750,18 +663,6 @@ test('AC2.2 oversized: three fast-lane singletons bundle into one group over a g
   assert.deepEqual(entriesOf(omitted, 'oversized'), []);
   assert.deepEqual(groupNumbers(omitted), [[9101, 9102, 9103]], 'the grouping block still ran');
   assert.deepEqual(omitted.json('dispatch-fastlane-bundles.json'), [{ records: [9101, 9102, 9103] }], 'the bundles file is still written');
-});
-
-test('#5227 oracle cross-check: the S1 and SFast fixtures give the oracle the same groups, blocked and oversized entries (PF15: the oversized entry is non-empty)', { skip: oracleSkip() }, async () => {
-  for (const [scenario, reason] of [[S1(), 'blocked'], [SFast(), 'oversized']]) {
-    const r = await withEscapeGuard(REPO, () => runOracle(createSandbox(scenario), FENCE));
-    assert.equal(r.status, 0, r.stderr);
-    const oracle = JSON.parse(r.files['dispatch-exclusions.json']).filter((e) => e.reason === reason);
-    assert.ok(oracle.length > 0, `the oracle run of ${scenario.name} yields a ${reason} entry`);
-    const mine = pull(scenario);
-    assert.deepEqual(entriesOf(mine, reason), oracle);
-    assert.deepEqual(mine.json('dispatch-groups.json'), JSON.parse(r.files['dispatch-groups.json']));
-  }
 });
 
 test('#5227 native: work-links native spawns resolve-blockers.js over the eligible numbers and excludes through openBlockerRefs; a non-zero exit prints the fence Warning and filters nothing', () => {
@@ -1219,49 +1120,7 @@ test('#5227 stop: a cache-hit pass that cannot append (corrupt exclusions file) 
 
 // ---- Task 4: not-spec-shaped, open-pr, target-missing and shipped (in-process, S1 full) ----
 
-const T4_PASSES = PASSES.slice(0, 9); // truncate .. shipped
 const T4_SESSION = 'qp-t3'; // pull()'s default session id
-const FULL = () => S1({ full: true });
-
-// pull() with the Task 4 CLIs faked: hooks.js answers the run dir (o.hooksOut(callIndex, runDir)
-// overrides one answer), log-decision.js and stage-item.js record their argv and the staged file's
-// body at call time, and the claim reader answers o.claims (number -> blob content, default absent).
-function pull4(scenario, o = {}) {
-  const cap = { runDir: null, hooks: [], log: [], staged: [], stdout: [], order: [] };
-  const spawn = {
-    'hooks.js': (args) => {
-      cap.hooks.push(args);
-      const out = o.hooksOut ? o.hooksOut(cap.hooks.length - 1, cap.runDir) : cap.runDir;
-      return { status: 0, stdout: `${out}\n`, stderr: o.hooksErr ? o.hooksErr(cap.hooks.length - 1) : '' };
-    },
-    'log-decision.js': (args) => { cap.log.push(args); return { status: 0, stdout: `logged ${args[args.indexOf('--text') + 1]}\n`, stderr: '' }; },
-    'stage-item.js': (args) => {
-      const id = args[args.indexOf('--id') + 1];
-      const file = args[args.indexOf('--file') + 1];
-      cap.staged.push({ args, id, file, body: file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null });
-      return { status: 0, stdout: `staged ${id}\n`, stderr: '' };
-    },
-    ...(o.spawn || {}),
-  };
-  const claims = o.claims || {};
-  const r = pull(scenario, {
-    passes: T4_PASSES,
-    ...o,
-    spawn,
-    prepare: (own) => {
-      cap.runDir = path.join(own, 'run');
-      fs.mkdirSync(cap.runDir);
-      return o.prepare ? o.prepare(own) : {};
-    },
-    deps: {
-      stdout: (s) => cap.stdout.push(s),
-      createClaimReader: () => ({ read: (n) => ({ content: Object.prototype.hasOwnProperty.call(claims, n) ? claims[n] : null }) }),
-      onPass: (id) => cap.order.push(id),
-      ...(o.deps || {}),
-    },
-  });
-  return { ...r, cap, cli: (name) => r.cliCalls.filter(([n]) => n === name) };
-}
 
 const reasonsOf = (r, number) => r.json('dispatch-exclusions.json').filter((e) => e.records.includes(number)).map((e) => e.reason);
 const PR_VIEW = (pr) => ['pr', 'view', String(pr), '--json', 'files', '-q', '[.files[].path]'];
@@ -1744,26 +1603,6 @@ test('#5227 omit: each Task 4 runner is called under omit and its omission remov
     const keepsOthers = reasons.filter((x) => x !== reason && x !== 'shipped' && !(reason === 'not-spec-shaped' && x === 'open-pr') && !(reason === 'open-pr' && x === 'shipped'));
     for (const other of keepsOthers) assert.deepEqual(entriesOf(omitted, other), entriesOf(base, other), `${reason} omitted, ${other}`);
   }
-});
-
-test('#5227 oracle cross-check: S1 full gives the oracle the same groups, the four reasons and the staged Close bodies the module yields', { skip: oracleSkip() }, async () => {
-  const oracle = await withEscapeGuard(REPO, () => runOracle(createSandbox(FULL()), FENCE));
-  assert.equal(oracle.status, 0, oracle.stderr);
-  const mine = pull4(FULL());
-  const oracleEntries = JSON.parse(oracle.files['dispatch-exclusions.json']);
-  for (const reason of ['not-spec-shaped', 'open-pr', 'target-missing', 'shipped']) {
-    assert.ok(oracleEntries.some((e) => e.reason === reason), `the oracle yields a ${reason} entry`);
-    assert.deepEqual(entriesOf(mine, reason), oracleEntries.filter((e) => e.reason === reason), reason);
-  }
-  assert.deepEqual(mine.json('dispatch-groups.json'), JSON.parse(oracle.files['dispatch-groups.json']));
-  const bodies = (staged) => Object.fromEntries(Object.entries(staged).map(([name, body]) => [name.replace(/\..*$/, ''), body]));
-  const myBodies = Object.fromEntries(mine.cap.staged.map((s) => [s.id, s.body]));
-  assert.deepEqual(myBodies, bodies(oracle.staged), 'the staged Close bodies match');
-  assert.ok(Object.keys(oracle.staged).some((n) => /^dispatch-target-missing-9009\.qp\d{8}$/.test(n)), `the oracle names the target-missing item after the mktemp suffix: ${Object.keys(oracle.staged)}`);
-  assert.deepEqual(mine.json('dispatch-linked-prs.json'), JSON.parse(oracle.files['dispatch-linked-prs.json']));
-  assert.deepEqual(mine.json('dispatch-shipped-probe-prs.json'), JSON.parse(oracle.files['dispatch-shipped-probe-prs.json']));
-  assert.equal(mine.text['dispatch-shipped-pr-files.jsonl'], oracle.files['dispatch-shipped-pr-files.jsonl']);
-  assert.equal(mine.text['dispatch-named-targets.json'], oracle.files['dispatch-named-targets.json']);
 });
 
 // ---- Task 5: blocker-landing, neighbour-in-flight, cross-PR overlap, near-duplicate; the omit sweep ----

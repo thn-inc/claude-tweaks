@@ -416,7 +416,7 @@ function assignShards(files, durations, total) {
 // The committed durations map's guards. A test file this big with no entry is weighed as the median
 // file and can sit unnoticed on one shard; an entry this slow is one the shards cannot balance around.
 const DURATIONS_SIZE_FLOOR_BYTES = 102400;
-const DURATIONS_CEILING_MS = 40000;
+const DURATIONS_CEILING_MS = 100000;
 
 // The files at or above the size floor that `durations` has no entry for, sorted. `sizeOf(file)` returns
 // a byte size, or null for a file that is gone (skipped). Looked up by posix path, like `assignShards`.

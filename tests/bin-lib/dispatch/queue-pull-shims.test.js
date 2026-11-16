@@ -2,7 +2,7 @@
 // #5366: the fast tests for the queue-pull oracle's PATH shims (tests/bin-lib/dispatch/
 // queue-pull-oracle.js): the NUL-framed shim log and its reader, and each generated sh shim run
 // directly in a sandbox, with no bash oracle run. The parity suite (the
-// queue-pull-parity-*.test.js files) holds the slow, whole-fence tests.
+// queue-pull-parity-*.test.js files) and queue-pull-oracle-checks.test.js hold the slow, whole-fence tests.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

@@ -7,6 +7,7 @@ files:
   - plugin/skills/dispatch/mcp-transport.md
   - tests/bin-lib/dispatch/queue-pull.test.js
   - tests/bin-lib/dispatch/queue-pull-helpers.js
+  - tests/bin-lib/dispatch/queue-pull-oracle-checks.test.js
   - tests/bin-lib/dispatch/queue-pull-parity-ac1.test.js
   - tests/bin-lib/dispatch/queue-pull-parity-ac4.test.js
   - tests/bin-lib/dispatch/queue-pull-parity-ac5.test.js

@@ -50,24 +50,25 @@
 // it is read only when there are dependency numbers to search; otherwise the fence's `echo '[]'`
 // holds (S2-files-miss, whose queue declares no dependency, diverged on the write-back blob).
 //
-// This module holds what queue-pull.test.js and the four queue-pull-parity-*.test.js files share (one
-// file per `#5227 parity` describe, each its own node:test process): the fence and the strings read
-// from it, the parity-pair machinery (one memoized runPair per config name, per process) and the
-// fetch-failure fault pool. State that must be one instance per process (PAIR_MEMO, the fault-pool
+// This module holds what queue-pull.test.js, queue-pull-oracle-checks.test.js and the four
+// queue-pull-parity-*.test.js files share (one file per `#5227 parity` describe, each its own node:test
+// process): the fence and the strings read from it, the in-process pull harness, the parity-pair
+// machinery (one memoized runPair per config name, per process) and the fetch-failure fault pool. State that must be one instance per process (PAIR_MEMO, the fault-pool
 // promise) lives here and is never exported; each parity file registers the cleanup hooks through
 // registerParityCleanup().
 const { after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
+const path = require('node:path');
 
 const { readText } = require('../../helpers/read-skill');
 const {
   SCRIPT_MD, FENCE_FIRST_LINE, extractFence, createSandbox, runOracle, runModuleCli, runPair, normalize, reported, assertParity, runAll, failedJobs,
   STREAM_TRUNCATED, TAIL_LINES,
 } = require('./queue-pull-oracle');
-const { S1, S2, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, S1LiveDep } = require('./queue-pull-fixtures');
-const { PASSES, SESSION_FILES } = require('../../../plugin/bin/lib/dispatch/queue-pull');
+const { S1, S2, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, S1LiveDep, fakeRun, fakeSpawnCli } = require('./queue-pull-fixtures');
+const { PASSES, SESSION_FILES, sessionPaths, makeContext, runPasses } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
 
 const FENCE = extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE);
@@ -362,6 +363,124 @@ function registerParityCleanup() {
   });
 }
 
+// ---- The in-process pull harness (Tasks 3 and 4), shared by queue-pull.test.js and
+// queue-pull-oracle-checks.test.js, whose oracle cross-checks compare the fence run against it. ----
+
+// Runs fn with TMPDIR (and the win32 spellings) pointed at a test-owned dir, never the host one.
+function inOwnTmp(fn) {
+  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-'));
+  const keys = ['TMPDIR', 'TEMP', 'TMP', 'QP_TMPNAME_COUNTER_FILE'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  for (const k of ['TMPDIR', 'TEMP', 'TMP']) process.env[k] = own;
+  delete process.env.QP_TMPNAME_COUNTER_FILE;
+  try {
+    return fn(own);
+  } finally {
+    for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+    fs.rmSync(own, { recursive: true, force: true });
+  }
+}
+
+const T3_PASSES = PASSES.slice(0, 5); // truncate, fetch, blocked, oversized, write-back
+const NOW = new Date('2026-11-12T12:00:00.000Z');
+const EXPRESS_OFF = () => ({ enabled: false, grouping: 'per-record', keepSingleton: () => false });
+
+// Runs truncate..write-back over a scenario in a test-owned TMPDIR and returns everything a test
+// asserts on. o: { transport, omit, persisted, writeResult, spawn (CLI overrides), env, inputs,
+// prepare(own) -> extra options, before(ctx), deps, run, allowThrow }.
+function pull(scenario, o = {}) {
+  return inOwnTmp((own) => {
+    const cwd = path.join(own, 'proj');
+    fs.mkdirSync(cwd);
+    const sessionId = o.sessionId || 'qp-t3';
+    const paths = sessionPaths(sessionId);
+    fs.mkdirSync(path.dirname(paths['dispatch-groups.json']), { recursive: true });
+    const errs = [];
+    const ghCalls = [];
+    const base = o.run || fakeRun(scenario, { sessionDir: path.dirname(paths['dispatch-groups.json']) });
+    const store = { persisted: o.persisted || null, written: [] };
+    const spawnCli = fakeSpawnCli(scenario, o.spawn || {});
+    const deps = {
+      run: (cmd, args, opts) => { ghCalls.push(args); return base(cmd, args, opts); },
+      spawnCli,
+      stderr: (s) => errs.push(s),
+      now: () => NOW,
+      expressQueuePolicy: EXPRESS_OFF,
+      // Production lets the library spawn resolve-foreign-blockers.js; tests inject through the seam.
+      foreignDeps: { spawn: o.foreignSpawn || ((argv) => spawnCli(path.basename(argv[0]), argv.slice(1))) },
+      queueOrder: {
+        readOrder: () => store.persisted,
+        writeOrder: (root, blob) => { store.written.push({ root, blob }); return o.writeResult || { ok: true }; },
+      },
+      ...(o.deps || {}),
+    };
+    const extra = o.prepare ? o.prepare(own) : {};
+    const options = { transport: o.transport || 'gh', sessionId, cwd, env: o.env || {}, omit: o.omit || [], inputs: o.inputs, ...extra };
+    const ctx = (o.lib || { makeContext }).makeContext(options, deps);
+    if (o.before) o.before(ctx, own);
+    let thrown = null;
+    try { (o.lib || { runPasses }).runPasses(o.passes || T3_PASSES, ctx); } catch (err) { thrown = err; }
+    if (thrown && !o.allowThrow) throw thrown;
+    const text = {};
+    for (const name of SESSION_FILES) if (fs.existsSync(paths[name]) && fs.statSync(paths[name]).isFile()) text[name] = fs.readFileSync(paths[name], 'utf8');
+    // Any other file a pass left in the session dir (the shipped Close proposals).
+    for (const name of fs.readdirSync(path.dirname(paths['dispatch-groups.json']))) {
+      const file = path.join(path.dirname(paths['dispatch-groups.json']), name);
+      if (!(name in text) && fs.statSync(file).isFile()) text[name] = fs.readFileSync(file, 'utf8');
+    }
+    for (const file of Object.values(ctx.state.files)) if (fs.existsSync(file)) text[file] = fs.readFileSync(file, 'utf8');
+    return {
+      thrown, cwd, errs, ghCalls, store, state: ctx.state, text, stderr: errs.join(''),
+      cliCalls: spawnCli.calls.map((c) => [c.name, ...c.args]),
+      json: (name) => JSON.parse(text[name]),
+    };
+  });
+}
+
+const entriesOf = (r, reason) => r.json('dispatch-exclusions.json').filter((e) => e.reason === reason);
+const T4_PASSES = PASSES.slice(0, 9); // truncate .. shipped
+const FULL = () => S1({ full: true });
+
+// pull() with the Task 4 CLIs faked: hooks.js answers the run dir (o.hooksOut(callIndex, runDir)
+// overrides one answer), log-decision.js and stage-item.js record their argv and the staged file's
+// body at call time, and the claim reader answers o.claims (number -> blob content, default absent).
+function pull4(scenario, o = {}) {
+  const cap = { runDir: null, hooks: [], log: [], staged: [], stdout: [], order: [] };
+  const spawn = {
+    'hooks.js': (args) => {
+      cap.hooks.push(args);
+      const out = o.hooksOut ? o.hooksOut(cap.hooks.length - 1, cap.runDir) : cap.runDir;
+      return { status: 0, stdout: `${out}\n`, stderr: o.hooksErr ? o.hooksErr(cap.hooks.length - 1) : '' };
+    },
+    'log-decision.js': (args) => { cap.log.push(args); return { status: 0, stdout: `logged ${args[args.indexOf('--text') + 1]}\n`, stderr: '' }; },
+    'stage-item.js': (args) => {
+      const id = args[args.indexOf('--id') + 1];
+      const file = args[args.indexOf('--file') + 1];
+      cap.staged.push({ args, id, file, body: file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null });
+      return { status: 0, stdout: `staged ${id}\n`, stderr: '' };
+    },
+    ...(o.spawn || {}),
+  };
+  const claims = o.claims || {};
+  const r = pull(scenario, {
+    passes: T4_PASSES,
+    ...o,
+    spawn,
+    prepare: (own) => {
+      cap.runDir = path.join(own, 'run');
+      fs.mkdirSync(cap.runDir);
+      return o.prepare ? o.prepare(own) : {};
+    },
+    deps: {
+      stdout: (s) => cap.stdout.push(s),
+      createClaimReader: () => ({ read: (n) => ({ content: Object.prototype.hasOwnProperty.call(claims, n) ? claims[n] : null }) }),
+      onPass: (id) => cap.order.push(id),
+      ...(o.deps || {}),
+    },
+  });
+  return { ...r, cap, cli: (name) => r.cliCalls.filter(([n]) => n === name) };
+}
+
 module.exports = {
   FENCE,
   fenceText,
@@ -402,4 +521,10 @@ module.exports = {
   FOREIGN_UNREADABLE,
   assertFaultRow,
   runFaultPool,
+  inOwnTmp,
+  EXPRESS_OFF,
+  pull,
+  entriesOf,
+  FULL,
+  pull4,
 };

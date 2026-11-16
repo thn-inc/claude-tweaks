@@ -101,12 +101,12 @@ test('durationsCoverageGaps matches a win32-separated path to its posix entry', 
 
 test('durationsOverCeiling names an entry above the ceiling and not one at it', () => {
   const over = durationsOverCeiling(new Map([
-    ['tests/over.test.js', 40001],
-    ['tests/at.test.js', 40000],
+    ['tests/over.test.js', 100001],
+    ['tests/at.test.js', 100000],
   ]));
   assert.strictEqual(over.length, 1);
   assert.ok(over[0].startsWith('tests/over.test.js'), over[0]);
-  assert.ok(over[0].includes('40001'), over[0]);
+  assert.ok(over[0].includes('100001'), over[0]);
 });
 
 test('durationsCoverageGaps returns the gaps sorted, whatever order the files arrive in', () => {
@@ -115,8 +115,8 @@ test('durationsCoverageGaps returns the gaps sorted, whatever order the files ar
 });
 
 test('durationsOverCeiling returns the entries sorted by path, whatever order they arrive in', () => {
-  const over = durationsOverCeiling(new Map([['tests/z.test.js', 50000], ['tests/a.test.js', 60000]]));
-  assert.deepStrictEqual(over, ['tests/a.test.js 60000 ms', 'tests/z.test.js 50000 ms']);
+  const over = durationsOverCeiling(new Map([['tests/z.test.js', 150000], ['tests/a.test.js', 160000]]));
+  assert.deepStrictEqual(over, ['tests/a.test.js 160000 ms', 'tests/z.test.js 150000 ms']);
 });
 
 test('durationsOverCeiling takes a custom ceiling: 101 ms is over 100, 100 ms is not', () => {

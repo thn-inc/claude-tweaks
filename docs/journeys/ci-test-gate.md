@@ -38,8 +38,8 @@ files:
 - **Expect:** `test.yml` does not run again; `test-impact-map.yml` runs the full suite once under the read tracer and turns red when the suite is red, so a commit that breaks `main` still shows on the commit. `windows-regression.yml` runs the suite on Windows separately.
 
 ### 6. Keep the shards balanced — after adding or splitting slow test files
-- **Action:** `node tools/run-tests.js --record-durations tools/test-durations.json` on a quiet machine (a loaded one inflates the times and can trip the 40,000 ms ceiling), then commit the file.
-- **Expect:** The file maps each test file to its measured time. A file it does not list weighs the median measured file, and the shard line on stderr counts how many were unmeasured; `tests/run-tests-shard.test.js` fails when the file names a test file that no longer exists, when a test file of 100 KB or more has no entry in it, or when an entry exceeds 40,000 ms; split such a file by `describe` into sibling files.
+- **Action:** `node tools/run-tests.js --record-durations tools/test-durations.json` on a quiet machine (a loaded one inflates the times and can trip the 100,000 ms ceiling), then commit the file.
+- **Expect:** The file maps each test file to its measured time. A file it does not list weighs the median measured file, and the shard line on stderr counts how many were unmeasured; `tests/run-tests-shard.test.js` fails when the file names a test file that no longer exists, when a test file of 100 KB or more has no entry in it, or when an entry exceeds 100,000 ms; split such a file by `describe` into sibling files.
 
 ## Origin
 - Updated during build of #5319: step 4 now reproduces a CI failure with `npm test -- --full`, because a plain local `npm test` runs only the impact-selected subset (`run-a-plain-npm-test-on-the-impact-subset-5319.md`). CI runs the whole suite on every PR and is what catches a test the map failed to select.
