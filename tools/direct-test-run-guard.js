@@ -510,7 +510,7 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
 
   const other = place.target !== place.root;
   const runnerAbs = P.join(place.target, 'tools', 'run-tests.js');
-  const runnerRef = other ? quoteIfBlank(toSlash(runnerAbs, P)) : toSlash(P.relative(effCwd, runnerAbs), P);
+  const runnerRef = quotePath(other ? toSlash(runnerAbs, P) : toSlash(P.relative(effCwd, runnerAbs), P));
   const moved = P.resolve(effCwd) !== P.resolve(ctx.callCwd);
   // `note`, when set, replaces the line with REFUSED_PLACEHOLDER and says why no command can be pasted.
   let note = null;
@@ -580,7 +580,7 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
     line = REFUSED_PLACEHOLDER;
   } else if (moved) {
     const typed = state.typedDirs.get(P.resolve(effCwd));
-    line = `cd ${typed !== undefined ? typed : quoteIfBlank(toSlash(P.relative(ctx.callCwd, effCwd), P))} && ${line}`;
+    line = `cd ${typed !== undefined ? typed : quotePath(toSlash(P.relative(ctx.callCwd, effCwd), P))} && ${line}`;
   }
   const reason = [
     `This repository's guard blocked a direct test run. ${SAFEGUARDS_TEXT}`,
@@ -611,7 +611,13 @@ function operandWords(seg, run, ctx) {
   return run.operands.flatMap((i) => seg.wordsOf(i).map((w) => homeWord(seg, i, w, ctx)));
 }
 
-const quoteIfBlank = (s) => (/\s/.test(s) ? `"${s}"` : s);
+// A path the guard composed (never typed), quoted so the pasted line runs it as one word: bare when it holds
+// only safe characters, in double quotes when nothing in it is special there, else in single quotes.
+const quotePath = (s) => {
+  if (/^[\w@%+=:,./~-]+$/.test(s)) return s;
+  if (!/["$`\\!]/.test(s)) return `"${s}"`;
+  return `'${s.replace(/'/g, "'\\''")}'`;
+};
 
 // The runner's refusal of `args` run from `cwd` against the checkout `repoRoot`, as the note line, or null
 // when its parser accepts them. A fault in the injected isFile is let through, never read as a refusal.
@@ -627,7 +633,9 @@ function runnerRefusal(args, cwd, repoRoot, ctx) {
   };
   try {
     const realpath = typeof ctx.realpath === 'function' ? ctx.realpath : (p) => p;
-    runner().parseRunnerOperands(args, { cwd, repoRoot, isFile, realpath, pathImpl: ctx.pathImpl });
+    // The parser compares each operand's real path with the root, so the root, found as spelled, is made
+    // real too: from a cwd reached through a symlink the files would otherwise read as outside the checkout.
+    runner().parseRunnerOperands(args, { cwd, repoRoot: realpath(repoRoot), isFile, realpath, pathImpl: ctx.pathImpl });
     return null;
   } catch (e) {
     if (fault !== null) throw fault;

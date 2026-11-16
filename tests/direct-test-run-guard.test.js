@@ -449,6 +449,41 @@ test('B3: a replacement the runner would refuse is printed as a placeholder with
   assert.equal(classifyCommandOrThrow('node --test tests/x.test.js tests/', noIsFile).replacement, 'node tools/run-tests.js tests/x.test.js tests/');
 });
 
+test('B3: a named test file that does not exist is printed as a placeholder with the runner\'s message', () => {
+  const missing = { ...opts, isFile: (p) => p !== '/repo/tests/missing.test.js' && opts.isFile(p) };
+  const verdict = classifyCommandOrThrow('node --test tests/a.test.js tests/missing.test.js', missing);
+  assert.equal(verdict.replacement, REFUSED_PLACEHOLDER);
+  assert.equal(
+    verdict.reason,
+    reasonFor(REFUSED_PLACEHOLDER, { note: 'The runner refuses the command as typed: tests/missing.test.js does not exist or is not a file.' }),
+  );
+});
+
+test('B3: a checkout reached through a symlink still gets a runnable replacement', () => {
+  const linked = {
+    ...opts,
+    cwd: '/link',
+    hasRunner: (d) => (d === '/link' || d.startsWith('/link/') ? '/link' : null),
+    isFile: (p) => opts.isFile(p.replace(/^\/link(?=\/|$)/, '/repo')),
+    realpath: (p) => p.replace(/^\/link(?=\/|$)/, '/repo'),
+  };
+  assert.equal(
+    classifyCommandOrThrow('node --test tests/a.test.js tests/b.test.js', linked).replacement,
+    'node tools/run-tests.js tests/a.test.js tests/b.test.js',
+  );
+});
+
+const QUOTED_DIRS = roundTrip(SPACED, [
+  ["cd 'x;y' && node --test a.test.js b.test.js", 'cd "x;y" && node ../tools/run-tests.js a.test.js b.test.js'],
+  ["cd \"it's\" && node --test a.test.js b.test.js", "cd \"it's\" && node ../tools/run-tests.js a.test.js b.test.js"],
+]);
+
+test('the directory prefix quotes a directory holding a shell metacharacter', () => {
+  for (const [command, replacement] of QUOTED_DIRS) {
+    assert.equal(classifyCommandOrThrow(command, SPACED).replacement, replacement, command);
+  }
+});
+
 const B4_ROWS = roundTrip(MULTI, [
   ['NODE_PATH="/repo/node_modules" node --test "/other/tests/a.test.js" "/other/tests/b.test.js"', 'NODE_PATH="/repo/node_modules" node /other/tools/run-tests.js "/other/tests/a.test.js" "/other/tests/b.test.js"'],
   ['node --test "/my repo/tests/a.test.js" "/my repo/tests/b.test.js"', 'node "/my repo/tools/run-tests.js" "/my repo/tests/a.test.js" "/my repo/tests/b.test.js"'],

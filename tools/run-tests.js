@@ -52,8 +52,8 @@
 //
 // Elsewhere the explicit file list goes to `node --test`; on Windows (Node >= 22) the root globs
 // go instead, because ~780 paths overflow the 32,767-char command line (#3316). A `--files-from`
-// subset has no globs to fall back to, so on Windows one whose command line would overflow runs
-// the full suite instead, with a named reason on stderr (#4134).
+// subset, or test files named on the command line, has no globs to fall back to, so on Windows one
+// whose command line would overflow runs the full suite instead, with a named reason on stderr (#4134).
 //
 // The slot lock itself lives in plugin/bin/lib/suite-slot.js, shared with bin/verify.js.
 //

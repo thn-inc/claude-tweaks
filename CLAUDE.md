@@ -48,7 +48,7 @@ Invocation: `/claude-tweaks:release` (no arguments) — this repo dogfoods the s
 
 ### Hooks
 
-All hook registrations run `plugin/bin/hooks.sh` → `hooks.js <event>` — one dispatcher, one module per event in `plugin/bin/lib/hooks/`. The full contract — tiered posture, run-dir resolution and ownership, and the never-break-a-session invariant — is in `docs/hooks.md`. Read it before touching `plugin/bin/hooks.{sh,js}`, `plugin/bin/lib/hooks/`, or `plugin/hooks/hooks.json`.
+All plugin hook registrations run `plugin/bin/hooks.sh` → `hooks.js <event>` — one dispatcher, one module per event in `plugin/bin/lib/hooks/`. The full contract — tiered posture, run-dir resolution and ownership, and the never-break-a-session invariant — is in `docs/hooks.md`. Read it before touching `plugin/bin/hooks.{sh,js}`, `plugin/bin/lib/hooks/`, or `plugin/hooks/hooks.json`.
 
 ### Reconcile
 
