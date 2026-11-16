@@ -1,8 +1,43 @@
 {
-  "computedAt": "2026-11-16T15:52:52.277Z",
-  "runId": null,
+  "computedAt": "2026-11-16T16:01:26.459Z",
+  "runId": "2026-11-16T160046-dispatch-standalone",
   "freshnessSignal": {
     "issues": [
+      {
+        "number": 5773,
+        "updatedAt": "2026-11-16T16:00:20Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5772,
+        "updatedAt": "2026-11-16T16:00:13Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5771,
+        "updatedAt": "2026-11-16T16:00:04Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5770,
+        "updatedAt": "2026-11-16T15:59:48Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5769,
+        "updatedAt": "2026-11-16T15:59:39Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5768,
+        "updatedAt": "2026-11-16T15:59:32Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5767,
+        "updatedAt": "2026-11-16T15:59:24Z",
+        "state": "OPEN"
+      },
       {
         "number": 5694,
         "updatedAt": "2026-11-16T10:47:56Z",
@@ -10,7 +45,7 @@
       },
       {
         "number": 5604,
-        "updatedAt": "2026-11-16T02:01:19Z",
+        "updatedAt": "2026-11-16T15:57:06Z",
         "state": "OPEN"
       },
       {
@@ -25,7 +60,7 @@
       },
       {
         "number": 5595,
-        "updatedAt": "2026-11-16T00:33:22Z",
+        "updatedAt": "2026-11-16T15:56:25Z",
         "state": "OPEN"
       },
       {
@@ -61,6 +96,11 @@
       {
         "number": 5409,
         "updatedAt": "2026-11-16T05:17:11Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5324,
+        "updatedAt": "2026-11-16T15:59:56Z",
         "state": "OPEN"
       },
       {
@@ -680,7 +720,7 @@
       },
       {
         "number": 4251,
-        "updatedAt": "2026-10-31T09:59:28Z",
+        "updatedAt": "2026-11-16T15:54:31Z",
         "state": "OPEN"
       },
       {
@@ -878,8 +918,8 @@
   "groups": [
     [
       {
-        "body": "Surface: infra\n\n**Related:** #5601, #5602, #4959, #4989, #5147, #5066, #5254, #4831, #4663, #5134, #5168\nRisk-flags: none\n\n## Current State\n\nEvery instruction that tells a dispatched agent how to wait names `sleep`. Checked on 2026-11-16 at `026e203f3`:\n\n- The keep-alive rule for nested `Agent` children says \"repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children\". Its one definition is the Foreground Execution Discipline section of `plugin/skills/_shared/subagent-dispatch-core.md` (line 72). After #5601 removes the four template copies from the dispatch prompts, two more copies remain: item 7 of the Context pack in `plugin/skills/dispatch/task-prompt.md` and the `Async-wait discipline (required):` paragraph of the template in `plugin/skills/flow/context-handoff.md`.\n- The same section's \"Bounded polling for a long external wait\" paragraph gives `sleep 20 && gh run view {id} --json status,conclusion` as the pattern for a CI run or a deploy (line 131).\n- `flow/context-handoff.md` line 52 restates the bound in prose (\"`sleep 20` at most 60 times, 20 minutes\").\n- `docs/skill-graph.md`'s `_shared/subagent-dispatch-core.md` row describes the rule and its copies. Four files under `docs/journeys/` state it with the same numbers: `hand-a-phase-to-a-fresh-agent-at-the-context-cap-4027.md`, `keep-a-second-reader-in-a-dispatched-review-3078.md`, `keep-waiting-on-a-progressing-implementer-4557.md` and `route-a-late-rendered-ui-review-result-5280.md`.\n- `tests/foreground-execution-instruction.test.js` pins the primitive (`PRIMITIVE`, `EXPECTED_PRIMITIVE = '20/60/20'`) and the sentences around it (`SHARED_RULE`, `PROGRESS_CHECK`) in every copy.\n- Under the rule, the child's `<task-notification>` is what tells the agent a child has reported. The sleeps only keep the turn alive until it arrives.\n\nThe bound is a count of calls, not elapsed time, which #4959 reports as a defect: waits that return early end the 20 minutes early.\n\n#5602 adds `plugin/bin/wait-for.js`, and this record is built after it and #5601 have merged. Nothing reads the command until this record lands. What this record's prose relies on, from #5602:\n\n- `wait-for.js agents --ids <a,b>` blocks until a listed child agent has stopped for good, or a bound passes. `wait-for.js ci --pr <n>`, `ci --run <id>` and `pid --pid <n>` do the same for a pull request's checks, a workflow run and a process.\n- `--max-seconds` bounds one call (default 100, at most 150). The command keeps a 20-minute window per wait by itself: every call of one wait prints the same `deadlineEpoch` and `window` number, and the call after a deadline opens the next window. The caller passes no deadline.\n- It prints one JSON line and exits 0 on a change, 3 at a bound (`\"bound\":\"call\"` or `\"bound\":\"deadline\"`) and 2 on a failed call.\n- A stop is returned by one call only, so repeating a call never returns the same stop twice.\n- #5602 ships the `agents` target only if its probe (`docs/reference/blocking-wait-probe.md`) showed that a child's stop reaches a waiting subagent in an interactive session, under a headless worker and in a handoff child. If #5602 merged with its probe and tool only, this record is not built; it goes back to shaping.\n\nMeasured on 2026-11-16 over the 30 days from 2026-10-17 (#5602's Current State has the table): 54,034 of the 696,991 Bash calls subagents made begin with `sleep` (7.8%). 53,509 of those (99.0%) are exactly `sleep 20`, the primitive this prose names, and 96.5% wait on a child agent's notification.\n\nDesign: `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`, Phase 4, unit 4.1, last part: \"the prompts name it\".\n\n## Deliverables\n\n1. **The keep-alive rule names the command.** In the core section, item 7 and the handoff template, the wait on nested children is one invocation line, stated once per copy:\n   `node \"{plugin-root}/bin/wait-for.js\" agents --ids {ids} --max-seconds 150`\n   (the core section writes `${CLAUDE_PLUGIN_ROOT}` where the two prompt copies write `{plugin-root}`). The rule states:\n   - `{ids}` are the agent ids of the children whose notification has not arrived, comma-separated;\n   - every call is a foreground Bash call with no `timeout` parameter: the command returns within 150 seconds, under the 180-second ceiling #5602's probe measured for a dispatched agent;\n   - exit 0 means a listed child stopped: its notification is in hand or arrives next, and the agent calls again while any child is outstanding;\n   - exit 3 with `\"bound\":\"call\"` means call again;\n   - exit 3 with `\"bound\":\"deadline\"` means the 20-minute window is over, and the at-bound rule applies as it does today; when that rule grants another window, the next call is that window;\n   - exit 2, or a call the harness blocks, is a failed wait call. The present sentence covers it unchanged: it is not a wait, it is never retried in another form (a `sleep` included), and every child still outstanding is treated as silent at the bound;\n   - the command's output line is the wait's log line, so the agent writes no separate one.\n2. **The windows keep their meaning.** A window is 20 minutes by the clock. Five sentences are reworded, and only these:\n   - \"repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children\" becomes the invocation line and \"20 minutes per wave of children\";\n   - \"each wait logged per the bounded-polling paragraph below (what is waited on, the iteration against the bound, how many children are still pending)\" becomes the last bullet above;\n   - \"grant one more 60-wait window\" becomes \"grant one more 20-minute window\";\n   - \"(a longer, wrapped or backgrounded sleep)\" names a `sleep` of any length among the forms a failed call is never retried in;\n   - \"is not a wait and never counts toward the bound\" says a failed call does not move the window's deadline.\n   Unchanged, word for word: the read-only probe commands, \"stop when a whole window passes with no change\", the ceiling of 3 windows (60 minutes) per wave, the two stop reasons, \"A failed wait call counts as no wait but ends its window\", the read-only self-judge at the first bound, the rendered-UI exception, never reading a running child's `output_file`, and never redoing a write-capable child in-session.\n3. **The bounded-polling paragraph names the command.** For a pull request's checks it names `wait-for.js ci --pr`, for a workflow run `wait-for.js ci --run`, for a local process `wait-for.js pid`, each called as the `agents` form is (foreground, no `timeout`, `--max-seconds 150`) with the same three exit codes: 0 read the result, 3 with `call` call again, 3 with `deadline` do what the paragraph says today for an exhausted bound. For any other external condition (a deploy, a log line) the paragraph keeps its present wording, a bounded check-interval loop of foreground calls, without the `sleep 20 && gh run view` example. Decided 2026-11-16: no generic target is added for those conditions. The targets the command does not cover are 1,096 of the 54,034 sleep-led calls (2.0%), and the parked record's per-target table shows whether one of them is worth a target.\n4. **Restatements follow.** `flow/context-handoff.md` line 52, the `_shared/subagent-dispatch-core.md` row of `docs/skill-graph.md`, and the four journey files state the new primitive.\n5. **Tests.** `tests/foreground-execution-instruction.test.js` pins the invocation line and each reworded sentence in every copy, each with a go-red proof; `PRIMITIVE` and `EXPECTED_PRIMITIVE` are replaced by the invocation line and the 20-minute window. One test byte-pins the invocation line as it appears in the core section and runs it against the real CLI.\n6. **A parked measurement record**, filed through `/claude-tweaks:capture` during the build. It measures the share of sleep-led Bash calls in subagent transcripts once this release has been in use for 30 days.\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Acceptance Criteria\n\n- [ ] AC1: The core section, item 7 and the handoff template each hold the invocation line exactly once and state each fact of Deliverable 1. A pattern list in `tests/foreground-execution-instruction.test.js` asserts them per copy, and each pattern goes red when its one occurrence is removed.\n- [ ] AC2: `git grep -n -F \"sleep 20\" -- plugin/skills docs/journeys` prints nothing. (Run on 2026-11-16 at `026e203f3`, it printed 14 lines.)\n- [ ] AC3: A test finds, in every file under `plugin/skills/`, no backtick that is followed at once by the word `sleep`, a space and a digit. The bounded-watch loop in `plugin/skills/_shared/pr-first-merge.md` writes its two `sleep 30` lines with no backtick and is not matched. The test fails when such text is added to a fixture copy.\n- [ ] AC4: A first-call and a second-call prompt rendered through `renderTaskPrompt` each contain `/bin/wait-for.js\" agents --ids` exactly once, with `{plugin-root}` filled.\n- [ ] AC5: The invocation line byte-pinned from the core section, with its placeholders filled by the test, runs against `plugin/bin/wait-for.js` in a real process with `--max-seconds 1` in place of `150`, fixture ids and a fixture `CLAUDE_CODE_SESSION_ID` in its environment, exits 3 and prints `\"bound\":\"call\"` and `\"window\":1`.\n- [ ] AC6: The `PROGRESS_CHECK`, `STANDING_RULES`, `RENDERED_UI_EXCEPTION_FACTS` and `CORE_ABANDONED` patterns of `tests/foreground-execution-instruction.test.js` hold in every copy that held them. The one pattern among them that changes is `PROGRESS_CHECK`'s \"grant one more 60-wait window\".\n- [ ] AC7: The bounded-polling paragraph names `wait-for.js ci --pr`, `wait-for.js ci --run` and `wait-for.js pid`, and a test asserts each.\n- [ ] AC8: The pull request links a record that carries the `parked` label and whose body holds: a `Trigger:` line with a calendar date 30 days after the day the pull request is opened, and the instruction to move it to 30 days after the release that carries this change if that release came later; the baseline share re-derived at build time with `node tools/wait-polls.js --since-days 30`; that command as the one to run again; the threshold of 0.5% of subagent Bash calls; that the share covers the transcript store of the machine it is run on and no cloud routine runs; and the instruction to report the share per target and to file a follow-up for the largest remaining target when the share is above the threshold.\n- [ ] AC9: `plugin/skills/dispatch/task-prompt.md` grows by no more than 1,200 bytes against the merge base. (#5601 leaves it near 45,400 bytes; the read limit is 52,500.)\n- [ ] AC10: `npm test -- --full` passes.\n\n## Technical Approach\n\nThe three copies are edited in one change, core section first, since item 7 and the handoff template restate it for an agent that never reads the core file. The handoff paragraph is pinned to item 7 word for word (`tests/flow-context-handoff-conformance.test.js`), so it is copied again from item 7 after the edit.\n\nPlugin root: the core section writes `${CLAUDE_PLUGIN_ROOT}`; item 7 and the handoff template write `{plugin-root}`, which the dispatching session fills (`flow/context-handoff.md` step 1 resolves it for the handoff template). A dispatched agent's shell has no `CLAUDE_PLUGIN_ROOT`.\n\nThis record owns the primitive and the five sentences of Deliverable 2. Records that edit the same copies keep their own clauses and take this wording for those five.\n\nThe parked record's baseline and its later measurement use the same tool with the same flags, so the two numbers compare.\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-dispatch-core.md`\n- `plugin/skills/dispatch/task-prompt.md`\n- `plugin/skills/flow/context-handoff.md`\n- `tests/foreground-execution-instruction.test.js`\n- `tests/flow-context-handoff-conformance.test.js`\n- `docs/skill-graph.md`\n- `docs/journeys/hand-a-phase-to-a-fresh-agent-at-the-context-cap-4027.md`\n- `docs/journeys/keep-a-second-reader-in-a-dispatched-review-3078.md`\n- `docs/journeys/keep-waiting-on-a-progressing-implementer-4557.md`\n- `docs/journeys/route-a-late-rendered-ui-review-result-5280.md`\n\n## Gotchas\n\n- Done for the design means a 30-day replay of new transcripts shows sleep-led Bash calls in subagents under 0.5% of their Bash calls. That can be seen only after a release has been in use, so it is the parked record's job, not a criterion here. The threshold can be reached through the keep-alive rule alone: the sleeps that wait on anything but a child agent are 1,902 calls in the measured window, 0.27% of subagent Bash calls. The measurement reads one machine's transcript store; cloud routine runs are not in it, and the parked record says so.\n- #4959 asks for the same sentence to measure elapsed time. The command's window does that. If #4959 lands first, keep its wording for elapsed time and replace only the primitive; if this lands first, #4959's first two criteria are met and its test criterion is re-read against the new patterns.\n- #4989, #5147, #4663 and #5254 edit the same copies or their tests. Rebase on whichever has landed, under the ownership rule in the Technical Approach.\n- #5066 adds a hook check that a dispatched implementer did not start a long command with `run_in_background`. A `wait-for.js` call is a foreground call and is outside that check. #5066 also edits `tests/foreground-execution-instruction.test.js`.\n- A run in flight on the previous release holds a prompt that says `sleep 20`. Nothing here makes that fail. An agent that reads the new prose has the command, because the prose and `wait-for.js` ship in one plugin version and the prompt names the dispatching session's own plugin root. If the root is wrong or unfilled, every CLI call in the prompt fails, this one with exit 127 or 2; that is a failed wait call, and the rule's own terminal path applies: the children are treated as silent at the bound.\n- The merge gate's 15-minute bounded watch in `_shared/pr-first-merge.md` is a shell loop inside one Bash call and keeps its two `sleep 30` lines. It is not a sleep-led call, and thirteen open records list that file. It is out of scope here; the parked record's per-target table shows whether CI waits remain worth a follow-up.\n- AC2 and AC3 bind skill prose and the journeys, the text an agent is told to follow. Docs elsewhere that describe the old rule (the incident log, the changelog) are history and stay.\n- The harness moves a dispatched agent's foreground Bash call to the background after 180 seconds, with or without `timeout` (`docs/reference/blocking-wait-probe.md`, from #5602), which is the failure the foreground rule exists to prevent. `--max-seconds 150` keeps every call under that ceiling, and the command refuses a larger value. Its default of 100 seconds covers an agent that passes no flag, and its default 20-minute window bounds the whole wait.\n- Read `.claude/skills/skill-prose-conformance-tests` for the byte-pinned snippet and the go-red proofs.\n\n## Release Note\n\nDispatched agents now wait on child agents, CI checks and background processes with one blocking command instead of repeated sleep calls.\n\n\n<!-- work-fingerprint: process-efficiency:wait-instructions-name-wait-for-js-instead-of-sleep-20-and-a -->\nwork-fingerprint: process-efficiency:wait-instructions-name-wait-for-js-instead-of-sleep-20-and-a",
-        "createdAt": "2026-11-16T00:15:40Z",
+        "body": "**Related:** #5378, #5294\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nOne `verify.js` run starts about six git processes before and around the tests it runs, and a third of them repeat a question the same process already asked.\n\nProbed on 2026-11-16 at c059556f, by logging every git child of `tests/bin-lib/verify/cli-stamp-discovery.test.js`: 90 `verify.js` processes made 585 git calls (6.5 each), and 183 of those calls had the same arguments as an earlier call in the same process.\n\n| Call | Count over 90 runs | Asked from |\n|---|---|---|\n| `rev-parse --show-toplevel` | 156 | `realGit(scopeCwd).repoRoot()` in `lib/verify/baseline.js`, reached from `checkoutRoot` and from `scopeSelfPath` in `plugin/bin/verify.js` |\n| `rev-parse HEAD` | 137 | `lib/verify/report.js` (the tree-state read), from four places in `verify.js` |\n| `status --porcelain` | 137 | the same tree-state read |\n| `rev-parse --git-dir` | 90 | `lib/verify/report.js`, from three places in `verify.js` |\n\nNot every repeat is waste. The tree-state read (`rev-parse HEAD` plus `status --porcelain`) runs before and after the suites on purpose, because the tree can change while they run. A second read with nothing in between is waste.\n\nThis matters beyond the tests. In the full-suite profile on main at 8646f7c, five verify CLI test files start 4,464 git processes, 3,155 of them from spawned `verify.js` runs (`cli.test.js` 1,073, `impact-cli.test.js` 942, `ci-cli.test.js` 912, `cli-scope-integration.test.js` 771, `cli-stamp-discovery.test.js` 766). Every real verify run in a pipeline pays the same repeats.\n\n`plugin/bin/lib/hooks/repo-info-cache.js` (#5294) is the existing pattern for remembering a git answer in memory: one multi-flag `rev-parse` answers several questions, and the memo is keyed on directory and git-relevant environment.\n\n## Deliverables\n\n1. A trace of one `verify.js` invocation in each mode (whole suite, `--scope`, `--baseline`, impact-selected, CI-answered), listing its git calls in order and marking each same-arguments, same-directory, same-environment repeat with whether anything that could change the answer ran in between. The table goes in the PR body.\n2. The repeats with nothing in between are removed: the toplevel, the git directory and the common directory are read once per invocation (one `rev-parse` with several flags can answer them together), and a tree-state read is reused until the next point where the tree may have changed.\n3. The memory lives for one process only, is keyed on the directory and the git-relevant environment, and is never written to disk. A read after the suites ran, after a baseline worktree was created or removed, or in another directory asks git again.\n4. The injected `execImpl` and `deps` seams keep working. A test that stubs git by argument shape is updated to the merged call without losing an assertion.\n5. The PR body reports git calls per invocation per mode, and git processes for the five test files, before and after.\n\n## Acceptance Criteria\n\n- [ ] In a traced invocation of each mode, no git call repeats with the same arguments, directory and environment unless the PR body names it and says what may have changed between the two calls.\n- [ ] A test pins the number of git calls a whole-suite invocation makes around a no-op suite, counted through the injectable exec seam (no wall clock). It goes red when one removed repeat is restored; the PR body quotes that red output.\n- [ ] A test shows freshness: a tree change made while the suites run is seen by the read after them.\n- [ ] Total git processes across the five verify CLI test files fall to at most 3,571 (80% of the 4,464 measured at 8646f7c). Otherwise the PR body names the remaining shortfall and attributes it.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count re-taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] `verify.js` prints the same report, writes the same `verify-report.json` fields and exits with the same codes as before: the existing verify tests pass with changes only to stubbed call shapes, and no test is deleted, skipped or loosened.\n- [ ] The full suite and the Windows regression job pass.\n\n## Release Note\n\nverify.js starts fewer git processes on each run.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/verify.js` — read toplevel, git dir and tree state once per invocation\n- `plugin/bin/lib/verify/baseline.js` — reuse the invocation's repo-root answer\n- `plugin/bin/lib/verify/report.js` — reuse the tree-state and git-dir reads\n- `plugin/bin/lib/verify/impact.js` — reuse the toplevel and common-dir answers\n- `plugin/bin/lib/verify/changed-files.js` — reuse the HEAD read\n- `tests/bin-lib/verify/cli.test.js` — pin the per-invocation git call count\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-16T15:52:42Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -892,6 +932,252 @@
             "name": "size:medium",
             "description": "Scoring: moderate change, may span several files",
             "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 5773,
+        "state": "OPEN",
+        "title": "verify.js: ask git each read-only question once per invocation",
+        "updatedAt": "2026-11-16T16:00:20Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes; fixture setup (`init`, `config`, `add`, `commit`) is 25% of them. #5297 moved the shared builders onto `tests/helpers/git-template.js`, which builds a fixture once per process and gives each caller a copy that starts no git process. #5324 covers the repo-plus-worktree pairs in `tests/hooks-pre-tool-use.test.js` and the verify scenario builders in `tests/bin-lib/verify/cli-helpers.js`.\n\nFour of the heaviest remaining files still build their repositories per test:\n\n| File | Git processes | Largest subcommands |\n|---|---|---|\n| `tests/statusline.test.js` | 2,298 (1,542 from the test process, 444 children of another git) | config 525, add 334, rev-parse 272, init 204 |\n| `tests/bin-lib/reconcile/archive-merged.test.js` | 1,422 | config 193, commit 169, add 152, worktree 122 |\n| `tests/bin-lib/reconcile/archive-merged-record-guards.test.js` | 1,253 | worktree 180, remote 155, config 148, commit 145 |\n| `tests/bin-lib/staged-patch/stack-check.test.js` | 1,094 | apply 237, config 192, init 176, add 136 |\n\n- `statusline.test.js` builds through `makeCommittedRepo()`, `withRepo(remoteUrl, fn)`, `withWorktrees(fn)` and several inline init, config, config, add, commit sequences.\n- The two archive-merged files start from `tests/helpers/reconcile-fixtures.js` (already templated) and then add their own repos, commits and worktrees per test.\n- `stack-check.test.js` builds through `gitFixture(t, content)` and `repoWith(t, files)`, each an init plus identity config plus add plus commit per call, under `gitEnv()`.\n\nIn `archive-merged-record-guards.test.js` the `remote get-url origin` and `worktree list --porcelain` calls come from `archiveMerged` itself, once per call (probed 2026-11-16). They are the code under test and stay.\n\n## Deliverables\n\n1. In each of the four files, a builder whose output is fixed, or fixed for a given set of arguments, comes from `fromTemplate` or `fromTemplateSet`, keyed by its arguments. Return shapes, directory prefixes and the commit identity stay the same.\n2. A builder that cannot be a template (its content differs per test) makes its repo without a `git config` process: the identity goes in through the template it starts from, an inline `-c`, or the config file.\n3. `stack-check.test.js`'s fixture repos carry `maintenance.auto = false` and `gc.auto = 0` in their own config. `gitEnv()` drops the runner's environment config on purpose, so nothing else reaches the commits made under it.\n4. Repo-plus-linked-worktree sets with a fixed shape come from one `fromTemplateSet` layout. A worktree added to an arbitrary per-test repo stays a real `git worktree add`.\n5. Each new template has a spawn test in `tests/helpers-git-template.test.js`: after a warm-up call the builder starts no git process.\n6. The PR body reports git processes per file, before and after, with the split by subcommand.\n\n## Acceptance Criteria\n\n- [ ] Total git processes across the four files fall to at most 3,640 (60% of the 6,067 measured at 8646f7c). Otherwise the PR body names the remaining shortfall and attributes it to fixture setup or to git run by the code under test.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count re-taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] Each migrated builder starts no git process after its warm-up call (the spawn tests in deliverable 5).\n- [ ] A traced run of `stack-check.test.js` shows zero `maintenance` git processes.\n- [ ] Each file reports the same test names and the same number of tests as before, all passing. The diff changes fixture construction only: no assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] The full suite and the Windows regression job pass.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/statusline.test.js` — template the committed repo, remote and worktree builders\n- `tests/bin-lib/reconcile/archive-merged.test.js` — template the per-test repos and worktrees\n- `tests/bin-lib/reconcile/archive-merged-record-guards.test.js` — template the per-test repos and worktrees\n- `tests/bin-lib/staged-patch/stack-check.test.js` — template gitFixture and repoWith\n- `tests/helpers-git-template.test.js` — spawn tests for the new templates\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-16T15:52:34Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          }
+        ],
+        "number": 5772,
+        "state": "OPEN",
+        "title": "Move the statusline, archive-merged and stack-check test fixtures onto git-template",
+        "updatedAt": "2026-11-16T16:00:13Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "high",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes. Fixture setup (`init`, `config`, `add`, `commit`) is 14,732 of them (25%) across 274 test files, 76 of which start 50 or more.\n\n- `git config` alone is 3,409 processes. Nearly all are an identity pair run right after an init: `config user.name Test` 660, `config user.email test@example.com` 550, `config user.name t` 457, `config user.email t@t` 317.\n- `git init` is 3,579 processes at 17–19 ms of CPU each on the measuring machine, because the default template copies the sample hooks into every new repo. With an empty template directory an init costs 13.5 ms.\n- Measured on one five-process fixture (init, config, config, add, commit): writing the identity straight into `.git/config` and using an empty template directory cut it from 61 ms to 38 ms of CPU.\n\nAt c059556f, 131 files under `tests/` mention `user.name` or `user.email`: 78 under `tests/bin-lib/` (215 sites), 49 top-level test files (147 sites) and 4 helpers (10 sites). 41 files already pass the identity inline as `-c user.name=...`, which costs no extra process.\n\n`tests/helpers/git-fixtures.js` holds the shared builders (`gitRepo`, `committedRepo`, `fixtureGit`). `tools/run-tests.js` already injects environment into its child tree (`gitFixtureConfigEnv`, `TMPDIR`), and `tests/helpers/git-template.js` sets the same kind of default for a bare `node --test` run.\n\nSibling records own these files, and this record leaves them alone: `tests/hooks-pre-tool-use.test.js`, `tests/hooks-pre-tool-use-forge-memo.test.js` and `tests/bin-lib/verify/cli-helpers.js` (#5324); `tests/bin-lib/reconcile/prune-remote.test.js`, `tests/bin-lib/pre-review-catchup/cli.test.js` and `tests/bin-lib/issues/claims-git-cas.test.js`; everything under `tests/bin-lib/learned-skills/` and `tests/helpers/learned-skills-capture.js`; `tests/statusline.test.js`, `tests/bin-lib/reconcile/archive-merged.test.js`, `tests/bin-lib/reconcile/archive-merged-record-guards.test.js` and `tests/bin-lib/staged-patch/stack-check.test.js`.\n\n## Deliverables\n\n1. A helper in `tests/helpers/git-fixtures.js` that makes a repository with one git process: it runs `git init` (optional branch, optional bare) and writes the identity into the repository's config file with `fs`, giving the same `user.name` and `user.email` values a `git config` call would. A second export writes the identity into an existing repository's config for callers that init some other way.\n2. Every `git init` in a runner child uses an empty template directory, set once in `tools/run-tests.js`'s child environment, with the same default applied for a bare `node --test` run by the helper module. Tests that write into `.git/hooks/` or `.git/info/` without creating the directory keep working (ship those two empty directories in the template, or fix the callers). Tests that assert on template content (a sample hook, `description`, `info/exclude`) are found and kept green.\n3. Every fixture `git config user.name` / `git config user.email` process in the test tree is replaced by the helper, except in the sibling-owned files listed in Current State and in tests where a `git config` call is itself the behaviour under test. The name and email each fixture commits with stay the same.\n4. A suite test that keeps it that way: it scans the test tree for a spawned `config user.name` or `config user.email` and fails on any outside a per-file allowlist whose entries each carry a reason. The sibling-owned files start on the allowlist with their record number as the reason.\n5. The PR body reports, for the touched files, total git processes and `git config` processes before and after.\n\n## Acceptance Criteria\n\n- [ ] The helper starts exactly one git process for an init with an identity, shown by a trace2 test in the style of `tests/helpers-git-template.test.js`.\n- [ ] A fresh fixture repo made in a runner child, and one made under a bare `node --test` run that loads the helper module, holds no `.git/hooks/*.sample` file. A test asserts both.\n- [ ] A traced run of the swept files shows zero `git config user.name` and `git config user.email` processes outside the allowlist.\n- [ ] The scan test in deliverable 4 goes red when one swept call site is restored. The PR body quotes that red output.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] Every touched test file reports the same test names and the same number of tests as before, all passing. No assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] The full suite and the Windows regression job pass.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/helpers/git-fixtures.js` — one-process init helper and identity writer\n- `tests/helpers/git-template.js` — empty template directory default for a bare node --test run\n- `tools/run-tests.js` — empty template directory in the child environment\n- `tests/helpers/reconcile-fixtures.js` — use the identity writer in the template builds\n- `tests/bin-lib/wrap-up/facts.test.js` — replace the identity config calls (20 sites)\n- `tests/hooks-session-start.test.js` — replace the identity config calls (18 sites)\n- `tests/console-execute.test.js` — replace the identity config calls (10 sites)\n- `tests/bin-lib/hooks/reconcile-background.test.js` — replace the identity config calls (10 sites)\n- `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` — replace the identity config calls (10 sites)\n- `tests/helpers-git-template.test.js` — trace2 and template-directory tests for the helper\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-16T15:52:26Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          }
+        ],
+        "number": 5771,
+        "state": "OPEN",
+        "title": "Give test fixtures a one-process repo init and remove the per-fixture git config identity calls",
+        "updatedAt": "2026-11-16T16:00:04Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "high",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes. The test files under `tests/bin-lib/learned-skills/` start 10,629 of them (18%):\n\n| File | Git processes | Notes |\n|---|---|---|\n| `land.test.js` | 3,460 | 57 tests; 2,414 from the test process, 1,046 children of another git; diff 367, rev-parse 295, status 250, apply 220. 161 s of git time, the most of any file in the suite |\n| `capture-matrix-joined-crlf.test.js` | 1,009 | diff 343, hash-object 194, apply 190, status 136 |\n| `capture.test.js` | 961 | diff 241, status 149, checkout 85, apply 82 |\n| `capture-matrix-joined.test.js` | 937 | diff 343, apply 190, status 136, hash-object 122 |\n| the other seven `capture-matrix-*` files | the remaining 4,262 | not broken down in the profile |\n\n- `land.test.js`: `fixture(t, { capturedTargets, autocrlf })` runs for every test. It inits a bare origin, inits a clone, commits two skill files, pushes `main`, makes a run directory and captures one patch per target (each capture is several git calls). Five tests then clone a second checkout and push from it, or force-push a foreign commit onto the run's branch, to arrange a state.\n- `tests/helpers/learned-skills-capture.js`: `fixture(t, extraFiles, { autocrlf })` inits and commits per call for `capture.test.js`. The matrix files already reuse per-process scenario templates (`scenario()` over the `templates` map).\n- In the matrix files most of what remains is `capture()` itself plus the helper's own read-only checks around each fault combination (`breaches`, `status`, `diffOf`, `headOf`).\n\n`capture()` and `land()` in `plugin/bin/lib/learned-skills/` re-read tree and index state after each step that changes it. Those reads are part of their failure handling and are not repeats to remove.\n\n`tests/helpers/git-template.js` (`fromTemplate`, `fromTemplateSet`) builds a fixture once per process and gives each caller a copy that starts no git process.\n\n## Deliverables\n\n1. `land.test.js`: the state `fixture()` returns (bare origin, clone, run directory with its captured patches and manifest) is built once per distinct option set through `fromTemplateSet` and copied per test. Any absolute path stored outside git's own files (manifest, patch files, `decisions.md`) is rewritten for the copy or shown not to exist.\n2. `land.test.js`: a clone, push or force-push that only arranges state is folded into a template variant or replaced by a local ref update in the bare origin. Pushes, fetches and `ls-remote` calls made by `land()` itself stay real, as does `gitCalls` recording them.\n3. `tests/helpers/learned-skills-capture.js`: `fixture()` comes from a template keyed by its arguments.\n4. In the matrix path, a read-only git call the helper makes twice for one fault combination with nothing changed in between is made once. Product code under `plugin/bin/lib/learned-skills/` is not changed by this record.\n5. If the traces show a same-question repeat inside one `capture()` or `land()` call with no state change between the two reads, the PR body lists it and it is filed with `/claude-tweaks:capture`.\n6. The PR body reports git processes for every file in `tests/bin-lib/learned-skills/`, before and after.\n\n## Acceptance Criteria\n\n- [ ] `land.test.js` starts at most 1,730 git processes (50% of the 3,460 measured at 8646f7c). Otherwise the PR body names the remaining shortfall and attributes it to fixture setup or to git run by `capture()` and `land()`.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count re-taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] After a warm-up call, `fixture()` in `land.test.js` and `fixture()` in the capture helper start no git process, shown by a trace2 spawn test in the style of `tests/helpers-git-template.test.js`.\n- [ ] Every file in the directory reports the same test names and the same number of tests as before, all passing, including the `core.autocrlf=true` variants. No assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] The full suite and the Windows regression job pass.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/learned-skills/land.test.js` — template the origin, clone and captured run directory\n- `tests/helpers/learned-skills-capture.js` — template the capture fixture and drop repeated helper reads\n- `tests/bin-lib/learned-skills/capture.test.js` — use the templated fixture\n- `tests/helpers-git-template.test.js` — spawn tests for the new templates\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-16T15:52:19Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACry2pJg",
@@ -912,31 +1198,25 @@
             "color": "BFDADC"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
             "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
           }
         ],
-        "number": 5604,
+        "number": 5770,
         "state": "OPEN",
-        "title": "Wait instructions name wait-for.js instead of sleep 20, and a parked record measures the result after 30 days",
-        "updatedAt": "2026-11-16T02:01:19Z",
+        "title": "Build the learned-skills test fixtures once per process instead of once per test",
+        "updatedAt": "2026-11-16T15:59:48Z",
         "facets": {
-          "origin": null,
-          "risk": "medium",
+          "origin": "capture",
+          "risk": "low",
           "size": "medium",
-          "ceremony": "standard",
+          "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
-          "priority": null,
+          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -956,8 +1236,8 @@
     ],
     [
       {
-        "body": "Surface: backend\n\n**Related:** #5540, #5535, #5214, #4663, #3835, #5481, #5523, #4672, #4472, #3822, #3381\nRisk-flags: none\n\n## Current State\n\nAfter a lens pair returns, `/claude-tweaks:review` Step 3 calls `review-coordination.js categorise-reproduction <A.json> <B.json>`. The CLI prints `{ confirmed, unconfirmed }` and logs nothing (`plugin/bin/review-coordination.js:122`). The reviewing session then writes one `decisions.md` line per finding by hand, from templates in `plugin/skills/review/step3-lens-dispatch.md`.\n\nChecked on 2026-11-16 at `026e203f3`:\n\n- `step3-lens-dispatch.md` is 49,090 bytes against the 52,500-byte read limit (`RAIL_BYTES` in `plugin/bin/lib/skill-audit/budgets.js`). Its six reproduction bullets (lines 100 to 105) take 5,794 bytes.\n- Those bullets hold seven line templates, not six; the lens 3f vacuity bullet holds two:\n  1. `AUTO … Reproduction: lens \"{lens}\" finding {path}:{line} reproduced. Confirmed.`\n  2. `AUTO … reproduced, severity contested (took the lower of the two). Confirmed.`\n  3. `STAGED … not reproduced. Staged to Review Console as low-confidence.`\n  4. `STAGED … lens \"{lens}\" findings {path}:{lineA} / {path}:{lineB} share a location but not substance; both staged unconfirmed.`\n  5. `AUTO … lens \"{lens}\" absence claim {path}:{symbol} refuted by ground-truth check ({command} found it at {path}:{line}). Not staged.`\n  6. `STAGED … lens \"3f\" vacuity finding {path}:{line} downgraded to unconfirmed — reproduction agreement overridden, no execution evidence. Staged to Review Console as low-confidence.`\n  7. `AUTO … lens \"3f\" vacuity finding {path}:{line} re-confirmed by executed run: {command} → {observed output}. Confirmed.`\n- `categoriseReproduction` (`plugin/bin/lib/coordination.js:347`) decides forms 1 to 4. Forms 5 to 7 record a judgment the reviewing session makes after it has seen the split.\n- No code defines any of the forms. `plugin/bin/lib/log-decision/aggregate-reproduction.js` exists because hand-written lines drift: its header records that 124 of 1,414 archived STAGED reproduction lines named several findings in one line, which the Review Console cannot settle.\n- `review-coordination.js resolve-tiebreak --run` (#4026) already logs its own verdict line: it formats with `formatEntry`, appends under `## /review` with `appendEntry`, adds `logged` to its JSON, and keeps its exit code when the append fails (`plugin/bin/review-coordination.js:189`).\n- Readers of the pair lines: `plugin/bin/lib/console/resolve.js` with `plugin/bin/lib/console/finding-path.js` (finding keys, the two-location coincidence clause), `plugin/bin/lib/console/backfill.js`, `aggregate-reproduction.js`, `plugin/skills/release/SKILL.md:196` (quotes form 1), and the step yield reader #5556 adds.\n- Tests that read a template out of the prose: `tests/multi-agent-coordination.test.js` (lines 178, 234, 1249, 1252), `tests/review-tiebreak-step-conformance.test.js:1262`, `tests/review-absence-claim-ground-truth-conformance.test.js:47`, `tests/review-vacuity-evidence-conformance.test.js:57`, and `tests/review-cross-lens-corroboration-conformance.test.js` (lines 111 to 133).\n- Two ordering rules sit in the prose. An unpaired absence claim is checked against the live file before any STAGED line is written for it. At `medium`, forms 3 and 4 wait until cross-lens corroboration has run (`plugin/skills/review/step3-cross-lens-corroboration.md`, step 4).\n\nDesign: `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`, Phase 6. The design counts six forms; the file has seven.\n\n## Deliverables\n\n1. **One composer.** A new pure module, `plugin/bin/lib/reproduction-log.js`, holds all seven forms. Each form returns `{ status, step: 'Reproduction', text, reversibility: 'high' }`, the fields `formatEntry` takes. The formatted line is byte-identical to the base commit's template with its placeholders filled.\n2. **`categorise-reproduction --run`.** `categorise-reproduction <A.json> <B.json> --lens <lens> --run <dir> --only confirmed|unconfirmed` appends its lines under `## /review`, one line per finding and one line for the two sides of a coincidence, in the order of the printed result. Its JSON gains `entries`, the composed lines in the shape `log-decision.js --entries` takes, and `logged`: `true` when they were appended, or `false` with one stderr line when the append threw, which never changes the exit code. Without `--run` the output, the exit codes and the argument check are unchanged, and that form stays: a standalone review has no run directory.\n3. **Two calls, in one order.** `--only confirmed` writes forms 1 and 2. `--only unconfirmed` writes forms 3 and 4, and `--hold <file>` names unconfirmed entries that get no line. The split is recomputed from the same two files on each call, so both calls see the same findings in the same order. Decided 2026-11-16: `--run` requires `--only`, and a `--run` call without it exits 2, so the one order the CLI offers is confirmed lines first and unconfirmed lines second, with no judgment about which form to use. Decided 2026-11-16: the CLI does not de-duplicate. `decisions.md` is append-only and a second line for the same finding can be legitimate (a delta review reproduces it again; a finding is staged again after a verdict, #4583), so code cannot tell a repeat from those. A call is made once per pair, and its lines go in with one write (`appendEntries`), so a call writes all of them or none.\n4. **Judged lines.** A new verb, `review-coordination.js log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>`, writes one of forms 5 to 7 from a one-object file: `{ kind: \"absence-refuted\", path, symbol, command, foundAt }`, `{ kind: \"vacuity-downgraded\", path, line }` or `{ kind: \"vacuity-reconfirmed\", path, line, command, output }`. **Closed rule:** these three kinds are the complete set. Any other kind is refused with exit 2 and one line naming the kind and the three accepted ones. A plan review that finds a fourth judged line adds its refusal case as a plan amendment, never as a `needs-human` gap. The verb formats what the session reports. It does not check that the command ran or that the output is real, which is the trust a hand-written line carries today, and its docs say so. `reversibility` is `high` for all seven forms because all seven templates say so.\n5. **Prose.** The reproduction bullets in `step3-lens-dispatch.md` name the calls and no longer carry a template. They keep what the reader must do with the result: surface `severityContested` in the routing entry, add the `nearLocation` clause to a routing row, send `unconfirmed` findings to Step 3.7, run the absence check before the `--only unconfirmed` call, and hold forms 3 and 4 at `medium`. `step3-cross-lens-corroboration.md` step 4 names the `--only unconfirmed --hold` call for the lines it deferred.\n6. **Tests follow the writer.** Each test listed under Current State takes its expected line from the composer, not from the prose. The step yield reader's pair-line test (#5556) generates each form from the composer and no longer reads `step3-lens-dispatch.md`.\n7. **Docs.** `docs/plugin-structure.md` describes the new options and verb. `plugin/skills/release/SKILL.md:196` names the composer as the home of the form it quotes.\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Acceptance Criteria\n\n- [ ] AC1: For each of the seven forms, the composer's entry formatted by `formatEntry` equals an expected string written out in the test, copied from the base commit's template. One test per form. Decided 2026-11-16: \"the base commit\" in this record is the commit the build branches from, after #5556, #5541 and #4359 have landed. The seven templates are re-read there (lines 100 to 105 of `step3-lens-dispatch.md` at `026e203f3`; Current State shows them with `…` for the unchanged lead-in), and AC10's byte figures are re-measured there. From this change on the composer is the only home of the forms: a form changes in `reproduction-log.js` and its test, nowhere else.\n- [ ] AC2: `categorise-reproduction <A> <B>` with no `--run` prints output byte-identical to the base commit for the existing fixtures, and the existing tests in `tests/bin-lib/review-coordination/cli.test.js` pass with no edit to their expectations.\n- [ ] AC3: For a fixture pair holding one same-severity pair, one severity-contested pair, one single-reviewer finding and one coincidence, the `--only confirmed` call adds two lines under `## /review` and the `--only unconfirmed` call adds two more. Each call's `entries` lists what it added and `logged` is `true`.\n- [ ] AC4: With an empty hold file, `--only unconfirmed` writes the same lines as with no `--hold`. With one side of a coincidence held, the other side gets form 3. With both sides held, no line is written for them. The form 3 line for the remaining side is intended: once one side is refuted or promoted, the other is a plain single-reviewer finding. Its entry in the printed JSON keeps `nearLocation`, so its routing row keeps the clause.\n- [ ] AC5: A hold file with an entry that matches no unconfirmed finding, or more than one, exits 2 and writes nothing. So do an unreadable or malformed hold file, `--run` with no `--lens` or no `--only`, `--only` or `--hold` with no `--run`, `--hold` with `--only confirmed`, an `--only` value other than the two, a blank `--run` or `--lens`, a lens that `FINDING_LENS_CLASS` (`plugin/bin/lib/console/finding-path.js`) does not match, and a finding path that holds a line break. A run directory that is missing or not anchored under the main checkout exits 3.\n- [ ] AC6: With the append stubbed to throw, the CLI prints its result with the `entries` it composed and `logged: false`, writes one stderr line and exits 0.\n- [ ] AC7: Every STAGED line the composer can produce makes `aggregateReproductionProblem` return `null`. A fixture `decisions.md` written by the CLI gives the same `console/resolve.js` result as the same lines written by hand. One table-driven test also runs each of the seven composed lines through every reader listed under Current State and asserts the reader gives the same result as for the hand-written line of the same form (the expected strings of AC1 are that hand-written set): `aggregateReproductionProblem`, `findingKey` and `parseCoincidence`, `console/backfill.js`, and #5556's reader, where each form adds to exactly one counter. Form 5 is an AUTO line with no `Confirmed` sentence, so it settles nothing and makes no console item.\n- [ ] AC8: A fixture run with form 1 followed by form 6 for the same finding is listed by `console/resolve.js` as an open low-confidence item, and a tiebreak verdict line logged after it settles it. Checked on 2026-11-16 in `plugin/bin/lib/console/resolve.js` (`tiebreakModel`, `coordinationItems`): a STAGED line is settled only by a settler logged after it, and a producer's AUTO line holding `Confirmed` is such a settler (#3772). So form 6 after form 1 stays open, and form 7 after form 6 settles it. In the other order form 1 would settle the downgrade silently. Decided 2026-11-16: `log-reproduction-judgment` refuses `vacuity-downgraded` with exit 2 when `## /review` holds no form 1 or form 2 line for that lens and location, so the downgrade is always the later line; one test covers the refusal. A second downgrade line is a second console item, and one verdict settles both.\n- [ ] AC9: `log-reproduction-judgment` writes the expected line for each kind (one test each) and exits 2 on an unknown kind, a missing field, or a field holding a line break. `foundAt` is `{ path, line }` with a whole-number `line` of 1 or more, printed as `{foundAt.path}:{foundAt.line}`; any other shape exits 2, with its own test.\n- [ ] AC10: `git grep -F 'reproduced. Confirmed. Reversibility' -- plugin/skills/review/step3-lens-dispatch.md` prints nothing (it prints line 100 at the base commit), and the same holds for one distinctive phrase from each other template. `step3-lens-dispatch.md` is at least 1,500 bytes smaller than at the base commit.\n- [ ] AC11: A conformance test pins that the prose names `--lens`, `--run` and `--only` on the call line, runs the absence check before the `--only unconfirmed` call, and holds forms 3 and 4 at `medium`. The test fails when any of the three is removed.\n- [ ] AC12: The full suite passes (`npm test -- --full`).\n\n## Technical Approach\n\n`categoriseReproduction` does not change. The CLI calls it, passes the result to the composer, formats each entry with `formatEntry` and appends the batch with `appendEntries` (`plugin/bin/lib/log-decision/append.js`), under one lock and with one timestamp from `deps.now()`. The run directory goes through the existing `anchorRunDir` helper, unchanged; this record adds no path rule.\n\nThe hold file is a JSON array of entries copied whole from the `unconfirmed` list the first call printed. Its typical contents are the absence claims the ground-truth check refuted and, at `medium`, the findings corroboration promoted. Decided 2026-11-16: a hold entry is the whole unconfirmed entry as printed, and it matches on `source`, `path`, `line` (absent for a finding with no line) and `text`. An entry that matches no unconfirmed finding, or more than one, exits 2. `--only` and `--hold` need `--run`, and `--hold` needs `--only unconfirmed`; AC5 lists each refusal.\n\nThe session calls with `--only confirmed` first. When the printed `unconfirmed` list is empty it is done with the pair. Otherwise it runs the absence check, and at `medium` waits for the corroboration pass, and then calls with `--only unconfirmed`, adding `--hold` when either took a finding out. Decided 2026-11-16: whether the absence check ran between the two calls stays a rule in the prose, pinned by AC11. Code cannot enforce it, because whether a finding asserts that code is absent is a reading of its text. A second call that is never made leaves that pair's unconfirmed findings with no line, and nothing in code detects it; a skipped hand-written line is equally silent today. On `logged: false` nothing was written: the session repeats the same call once, and if that fails too it writes the printed `entries` with `log-decision.js --entries`. A review resumed in a new session reads `## /review` for the pair's lines before it calls.\n\nA lens 3f vacuity downgrade is logged after the reproduced line, not in place of it: the CLI writes form 1 or 2, then the session logs form 6 through the judgment verb. The step yield reader counts it that way (#5556: a downgrade relabels a finding already counted).\n\nA finding with no numeric line gets its line with `{path}` alone in place of `{path}:{line}`, and the JSON lists it under `unlocated`. The Review Console cannot key such a line today either. `unlocated` appears only in a `--run` call's JSON, so AC2 holds. A coincidence needs two numeric lines (`sameLocation` in `coordination.js`), so form 4 never names a finding without one.\n\n`command`, `output` and `symbol` reach the judgment verb in a file, never on the command line (`docs/skill-authoring.md`, \"Untrusted text into a shell or paste command\").\n\nThe new options follow this CLI's existing hand-written parsing, as `resolve-tiebreak --root` and `--run` do. Checked on 2026-11-16: #5533 lists the shared argument parser (the audit's Phase 3) as not yet specified, so no record has started on it. If one has started on `review-coordination.js` when this is built, land after it.\n\n### Key Files\n\n- `plugin/bin/lib/reproduction-log.js`\n- `plugin/bin/review-coordination.js`\n- `plugin/bin/lib/log-decision/append.js`\n- `plugin/bin/lib/log-decision/aggregate-reproduction.js`\n- `plugin/bin/lib/console/finding-path.js`\n- `plugin/bin/lib/console/resolve.js`\n- `plugin/skills/review/step3-lens-dispatch.md`\n- `plugin/skills/review/step3-cross-lens-corroboration.md`\n- `plugin/skills/release/SKILL.md`\n- `tests/bin-lib/review-coordination/cli.test.js`\n- `tests/multi-agent-coordination.test.js`\n- `tests/review-tiebreak-step-conformance.test.js`\n- `tests/review-absence-claim-ground-truth-conformance.test.js`\n- `tests/review-vacuity-evidence-conformance.test.js`\n- `tests/review-cross-lens-corroboration-conformance.test.js`\n- `docs/plugin-structure.md`\n\n## Gotchas\n\n- Order with #5556: #5556 lands first and this record is blocked by it. #5556 pins the templates with a test that reads `step3-lens-dispatch.md`; this record removes the templates, so it moves that test and the reader's patterns onto the composer in the same change. #5556 does nothing differently. The test and the reader module to move are the ones #5556's merged PR adds; its Key Files name them.\n- This record is also blocked by #5541 (after #5540, which edits `review-coordination.js` and its CLI test) and by #4359 (in progress on `step3-lens-dispatch.md`). Build on what they left.\n- A session on the previous plugin release keeps its own prose and its own CLI and goes on writing the lines by hand. The forms do not change by a byte, so every reader handles a run directory written by either release.\n- Do not add text to `plugin/skills/review/code-mode-steps.md`: it is 52,358 bytes, 142 under the read limit (#5076).\n- The partner-died line in `step3-tier-variants.md` and the two `Single-read (low tier)` lines are not pair lines. They stay hand-written.\n- When trimming the bullets, cut the restated pairing rules, which the code decides, and keep every clause that tells the reader what to do. #4801's trim dropped a warning that way.\n- Other open records list `step3-lens-dispatch.md`: #5523, #5481, #4672, #4663, #4472, #3835, #3822, #3381. #5535 and #5214 edit `review-coordination.js`. Rebase on whichever has landed.\n- Read `.claude/skills/gh-api-module-pattern` (its CLI wrapper contract covers the run-directory writers), `.claude/skills/skill-prose-conformance-tests`, `.claude/skills/prose-code-twin-pin` and `.claude/skills/windows-checkout-test-parity` (the cross-lens conformance test reads the file through a CRLF checkout).\n\n## Release Note\n\n`/claude-tweaks:review` now has its pairing command write the per-finding reproduction lines to the decision log itself, in one fixed form, instead of the reviewing session typing them.\n\n\n<!-- work-fingerprint: process-efficiency:reproduction-lines-in-cli -->\nwork-fingerprint: process-efficiency:reproduction-lines-in-cli",
-        "createdAt": "2026-11-16T00:12:10Z",
+        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes. Push, fetch, clone and the git processes they start are 5,995 of them (10%) but 33% of all git time: one push starts receive-pack, rev-list, pack-objects, index-pack and, without `receive.autogc = false`, a maintenance run.\n\nThree files build their remote state from scratch in every test:\n\n| File | Git processes | From the test process | Children of another git | Largest subcommands |\n|---|---|---|---|---|\n| `tests/bin-lib/reconcile/prune-remote.test.js` | 1,150 | 692 | 458 | for-each-ref 97, rev-list 80, push 74, receive-pack 74 |\n| `tests/bin-lib/pre-review-catchup/cli.test.js` | 1,064 | 593 | 471 | rev-list 115, commit 97, add 96, pack-objects 86 |\n| `tests/bin-lib/issues/claims-git-cas.test.js` | 661 | 332 | 329 | rev-list 68, push 45, receive-pack 45, maintenance 44 |\n\n- `prune-remote.test.js`: `makeRepoWithOrigin()` inits a bare origin and a repo and pushes `main` per test. Each test then pushes the branches it needs (`build/merged`, `build/stale`, `build/squashed` and so on), and three tests clone a second checkout to advance or delete a branch.\n- `pre-review-catchup/cli.test.js`: `fixture()` starts from the `originWithTwoClones` template (#5297), then commits, pushes and pulls again in every test to reach its own starting state.\n- `claims-git-cas.test.js`: `makeBareOriginAndClone()` inits a bare origin, clones it and pushes twice (`main`, then `main:claims-registry`) per test.\n\n`tests/helpers/git-template.js` (`fromTemplate`, `fromTemplateSet`) builds a fixture once per process and gives each caller a copy that starts no git process. It already rewrites remote urls and linked-worktree pointers in the copy.\n\n## Deliverables\n\n1. Each file's starting state (bare origin, clones, seed commits, the registry branch, the extra pushed and pulled commits) is built once per process through `fromTemplateSet` or `fromTemplate` and copied per test. Bare origins in these templates call `disableReceiveAutoGc`.\n2. A push, clone, pull or fetch that only arranges state the test needs, and is not what the test checks, is replaced by something cheaper that leaves the same refs and objects: built into a template variant, or a local ref update where the objects are already present.\n3. Remote operations that are the behaviour under test stay real: `pruneRemote`'s own fetch and delete pushes, the claims compare-and-swap push and its lease, the catch-up's fetch and merge, and the tests that need a second clone to advance a branch after the fixture was built.\n4. Each new template has a spawn test in `tests/helpers-git-template.test.js`, in the style of #5297's: after a warm-up call the builder starts no git process.\n5. The PR body reports git processes per file, before and after, with the split by subcommand.\n\n## Acceptance Criteria\n\n- [ ] Total git processes across the three files fall to at most 1,725 (60% of the 2,875 measured at 8646f7c). Otherwise the PR body names the remaining shortfall and attributes it to fixture setup or to git run by the code under test.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count re-taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] Each file reports the same test names and the same number of tests as before, all passing. The diff changes fixture construction only: no assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] Each migrated builder starts no git process after its warm-up call (the spawn tests in deliverable 4).\n- [ ] The full suite and the Windows regression job pass.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/reconcile/prune-remote.test.js` — template the origin, repo and pushed branches\n- `tests/bin-lib/pre-review-catchup/cli.test.js` — fold the per-test push and pull into a template\n- `tests/bin-lib/issues/claims-git-cas.test.js` — template the bare origin, clone and registry branch\n- `tests/helpers-git-template.test.js` — spawn tests for the new templates\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-16T15:52:11Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -966,10 +1246,22 @@
             "color": "2EA44F"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAACruzLxQ",
             "name": "size:medium",
             "description": "Scoring: moderate change, may span several files",
             "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACry2pJg",
@@ -990,31 +1282,193 @@
             "color": "BFDADC"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
             "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
           }
         ],
-        "number": 5595,
+        "number": 5769,
         "state": "OPEN",
-        "title": "Write the review pair lines from categorise-reproduction, not from prose templates",
-        "updatedAt": "2026-11-16T00:33:22Z",
+        "title": "Cut remote-protocol git work in the prune-remote, pre-review-catchup and claims-git-cas test fixtures",
+        "updatedAt": "2026-11-16T15:59:39Z",
         "facets": {
-          "origin": null,
-          "risk": "medium",
+          "origin": "capture",
+          "risk": "low",
           "size": "medium",
-          "ceremony": "standard",
+          "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
-          "priority": null,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\n#5297 switched git's auto-maintenance off for the suite: `gitFixtureConfigEnv` in `tools/run-tests.js` appends `maintenance.auto=false` and `gc.auto=0` to the `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` environment of the runner's child, and `withMaintenanceOff` in `tests/helpers/git-template.js` does the same around a template build.\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) still counted 559 `git maintenance run --auto --quiet --detach` processes, every one a child of another git process. Each is a wasted process start, and a detached one can touch `.git/objects` while a later step reads it.\n\nThree ways the environment config fails to reach a git process are visible in the code. Which of them accounts for the 559 has not been measured:\n\n- **The receiving side of a local push.** Git's local transport strips `GIT_CONFIG_*` from the receive-pack side, so a push into a local bare origin starts maintenance unless the origin's own config says `receive.autogc = false`. `disableReceiveAutoGc` in `tests/helpers/git-template.js` writes that line, but only `originWithTwoClones`, the reconcile fixtures and `tests/hooks-session-start.test.js` call it. In the profile `tests/bin-lib/issues/claims-git-cas.test.js` shows 45 pushes, 45 receive-packs and 44 maintenance runs.\n- **Code under test that drops environment config.** `gitEnv` in `plugin/bin/lib/staged-patch/stack-check.js` deletes `GIT_CONFIG_COUNT` and its keys on purpose (#3997) and points the global and system config at nothing, so every commit `tests/bin-lib/staged-patch/stack-check.test.js` makes under `gitEnv()` runs without the runner's settings. Only the fixture repo's own config can reach those.\n- **Tests that overwrite the count.** `tests/archive-run-verb.test.js` and `tests/bin-lib/residue/cli.test.js` build an environment with their own `GIT_CONFIG_COUNT` and `GIT_CONFIG_KEY_0`, which replaces the runner's entries instead of appending to them. Whether a maintenance run follows depends on what the child then does.\n\nSibling records filed with this one rebuild the fixtures in `tests/bin-lib/issues/claims-git-cas.test.js`, `tests/bin-lib/reconcile/prune-remote.test.js`, `tests/bin-lib/pre-review-catchup/cli.test.js`, `tests/bin-lib/learned-skills/` and `tests/bin-lib/staged-patch/stack-check.test.js`, and switch maintenance off in those fixtures themselves. This record attributes them but does not edit them.\n\n## Deliverables\n\n1. An attribution of every maintenance process in one traced run: the test file, the parent git command, and why the config did not reach it. The table goes in the PR body. The pipeline's own full verify run can carry the trace (`GIT_TRACE2_EVENT=<absolute path of an empty directory>` writes one file per git process).\n2. Each class is closed at the most central point that works, so new tests are covered without knowing about it. Candidates, to be probed before one is relied on: a runner-written config file that survives the local transport (check whether `GIT_CONFIG_SYSTEM` or `GIT_CONFIG_GLOBAL` reaches receive-pack, and what the tests that set those to `/dev/null` then lose), a shared bare-origin builder that always calls `disableReceiveAutoGc`, and the fixture repo's own `.git/config`. Product code keeps its environment scrubbing.\n3. A test that the attribution shows starting maintenance because it replaced the inherited `GIT_CONFIG_COUNT` entries appends to them instead, where the test does not depend on replacing them.\n4. A test that keeps it closed: a push into a bare origin from the shared builder, and a commit in a fixture repo, start no maintenance process (counted by trace2 files, in the style of `tests/helpers-git-template.test.js`).\n\n## Acceptance Criteria\n\n- [ ] A traced run over every test file named in deliverable 1's table, less the sibling-owned files listed in Current State, shows zero `maintenance` git processes. Any that remain are listed in the PR body with the reason they cannot be closed.\n- [ ] The PR body gives the maintenance process count and the total git process count for those files, before (at the branch's merge-base with main) and after (at HEAD), measured back to back on the same machine.\n- [ ] The new test in deliverable 4 fails when the fix is reverted. The PR body quotes that red output.\n- [ ] Every touched test file reports the same number of tests as before, all passing; no test is deleted, skipped or loosened, and test concurrency is unchanged.\n- [ ] The full suite and the Windows regression job pass.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tools/run-tests.js` — carry the maintenance settings to the git processes the environment config misses\n- `tests/helpers/git-template.js` — apply the bare-origin setting from the shared builders\n- `tests/helpers/git-fixtures.js` — shared bare-origin builder\n- `tests/helpers-git-template.test.js` — trace2 test that no maintenance process starts\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-16T15:52:02Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          }
+        ],
+        "number": 5768,
+        "state": "OPEN",
+        "title": "Stop the git auto-maintenance processes that still start inside test runs",
+        "updatedAt": "2026-11-16T15:59:32Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Related:** #5324, #5373\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\n`tests/bin-lib/hooks/guard-rewrite.test.js` checks that each command rewrite behaves the same under bash and zsh. It puts three stub executables first on `PATH` (`ls`, `node` and `git`, written at lines 773–778 at c059556f) and compares what the original and the rewritten command print.\n\nEach stub ends by starting a full node process to print its arguments:\n\n- `ls` and the `node` stub's fallback: `exec \"<node>\" -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- \"$@\"`\n- `git`: honours leading `-C <dir>` with `cd`, then `exec \"<node>\" -e 'console.log(JSON.stringify([process.env.PWD, ...process.argv.slice(1)]))' -- \"$@\"`\n\nA bare node start costs about 34 ms of CPU on the measuring machine (12 cores, load 50–110). A 45-second process sample on 2026-11-16 saw about 335 node starts from the `git` stub of one run of this file.\n\nThe `node` stub's `-e|-p|--eval|--print` branch hands off to the real node on purpose: the `node-eval-separator` rule is tested against real `process.argv`. Only the print-the-arguments path is waste.\n\n## Deliverables\n\n1. The `ls` stub, the `git` stub and the `node` stub's fallback branch print their output with shell builtins only: no node and no other child process per call.\n2. The printed text is byte-identical to today's JSON for every input the suite sends, so every existing assertion is unchanged. That includes arguments holding a space, a double quote, a backslash, a newline or a non-ASCII character.\n3. The `node` stub still execs the real node for `-e`, `-p`, `--eval` and `--print`.\n4. The stubs run under the interpreter their shebang names on macOS and on the ubuntu CI image.\n5. The PR body reports, for this file, node processes started by the stubs and git processes, before and after. The stubs run with a reduced environment (`PATH`, `HOME`, `A`), so a `NODE_OPTIONS` preload does not reach them: count stub node starts with a scratch wrapper around the node path, not committed.\n\n## Acceptance Criteria\n\n- [ ] A run of the file starts no node process from the `ls` stub, the `git` stub or the `node` stub's fallback branch. The PR body shows the before and after counts.\n- [ ] The stubs' output for a fixed argument list holding a space, a double quote, a backslash, a newline and a non-ASCII character equals `JSON.stringify` of the same list, checked by a test in the file.\n- [ ] The equivalence tests still fail when they should: with the rewrite temporarily broken so that it drops an argument, joins two arguments, or drops a `-C <dir>` that changes the directory, the file goes red. The PR body quotes the red output for each of the three.\n- [ ] The file reports the same number of tests as before, all passing under bash and zsh; no test is deleted, skipped or loosened.\n- [ ] The full suite and the Windows regression job pass.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/hooks/guard-rewrite.test.js` — replace the node-backed print stubs with builtin-only ones\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-16T15:51:50Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 5767,
+        "state": "OPEN",
+        "title": "guard-rewrite.test.js: print the shell stubs' argv from sh instead of starting node per call",
+        "updatedAt": "2026-11-16T15:59:24Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -1331,6 +1785,90 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Verified-as-of: 8ce3275ebfcb0bda4da59264d7167625a179834e\n\nOrigin: #5297 whole-branch review: AC3.1 (60% git-process target) shortfall levers\n\nDefer-reason: tangential\n\n## Current State\n\n#5297 moved the suite's reused fixture builders onto `tests/helpers/git-template.js`, which builds each fixture once per process and copies it per test with zero git processes. It also turned off auto-maintenance for the suite.\n\nMeasured on its branch, through `node tools/run-tests.js --files-from <list>` with `CT_TEST_CONCURRENCY=6` (git processes counted by `GIT_TRACE2_EVENT` file):\n\n| Set | Before | After |\n|---|---|---|\n| A: tests/hooks-pre-tool-use, hooks-session-start, hooks-teardown-run, issue-branch-tracking, reconcile-archive-residue, load-delta-cli | 3,632 | 2,319 |\n| B: tests/bin-lib/verify/cli-baseline, cli-flaky-preexisting, cli-scope-integration, cli-slot-queue | 2,527 | 1,940 |\n\nThe combined total is 4,259 of 6,159, or 69%. That misses #5297's 60% target.\n\nMost of the residue is git run by the code under test, not by fixtures. In `hooks-pre-tool-use`, the hook's own `rev-parse` ran 230 times, `ls-files` 141 and `check-ignore` 36. In `cli-baseline`, most calls are verify.js's own `rev-parse HEAD`, `status`, `merge-base` and `worktree list`.\n\nTwo fixture levers remain:\n\n- **Fixed repo-plus-linked-worktree pairs.** `tests/hooks-pre-tool-use.test.js`'s `mainAndWorktree()` (~line 49) and its other `gitRepoWithCommit()` + `linkedWorktreeOf(main)` pairs run a real `git worktree add` per test. That is 3 processes each (worktree add, plus its `branch` and `reset` children), about 190 of the file's 729 git processes. A fixed pair can come from `fromTemplateSet` with a `{ main, wtparent }` layout. Teardown-run's fixture already shows that the template rewrites a linked worktree's `gitdir` and `.git` pointers correctly.\n- **Argument-keyed verify scenario builders.** `tests/bin-lib/verify/cli-helpers.js`'s `scopedRepo(rules)`, `flakyRepo(opts)` and `baselineRepo()` still init, add and commit per test. In set B's run, the commits `base` ran 26 times, `declare verify scope` 15, `pre-existing fixture` 15, `flaky fixture` 11 and `head` 12, each with its `add`.\n\n## Deliverables\n\n1. The fixed repo-plus-linked-worktree pairs in `tests/hooks-pre-tool-use.test.js` (and `tests/hooks-pre-tool-use-forge-memo.test.js` where it has the same shape) come from `fromTemplateSet` templates, with shape and prefixes unchanged. A pair built against an arbitrary per-test repo stays a real `git worktree add`.\n2. `scopedRepo`, `flakyRepo` and `baselineRepo` in `tests/bin-lib/verify/cli-helpers.js` come from `fromTemplate`. Each is keyed by its arguments (`JSON.stringify`), with return shapes unchanged.\n3. The PR body reports sets A and B before and after, measured as in Current State.\n\n## Acceptance Criteria\n\n- [ ] After a warm-up call, each migrated builder starts no git process. This is a trace2 test in `tests/helpers-git-template.test.js`, in the style of #5297's.\n- [ ] Total git processes across sets A and B, measured as in Current State, fall to at most 3,695 (60% of #5297's 6,159 baseline), with the same tests passing. Otherwise, the PR body names the remaining shortfall and attributes it.\n- [ ] The full `npm test` suite and the Windows CI job pass.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/hooks-pre-tool-use.test.js` — template fixed repo+worktree pairs\n- `tests/bin-lib/verify/cli-helpers.js` — template scenario builders\n- `tests/helpers-git-template.test.js` — spawn tests for the new templates\n\n## Absorbed: 2026-11-16 — Suite-wide git process reduction: scope split with the sibling records\n\nThis record is now one of eight that cut the test suite's git process cost. A full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes per run; fixture setup (`init`, `config`, `add`, `commit`) is 14,732 of them (25%) across 274 test files.\n\nThe work is split by file so the records can build in parallel:\n\n- **This record** keeps `tests/hooks-pre-tool-use.test.js`, `tests/hooks-pre-tool-use-forge-memo.test.js` and `tests/bin-lib/verify/cli-helpers.js`. No sibling edits them.\n- #5771 adds a one-process repo init helper (identity written to `.git/config`, empty template directory) and removes the per-fixture `git config user.*` calls everywhere else. Its scan test allowlists this record's three files by record number.\n- #5772 moves the statusline, archive-merged and stack-check fixtures onto `git-template`.\n- #5769 (prune-remote, pre-review-catchup, claims-git-cas) and #5770 (learned-skills) cut remote-protocol and per-test fixture work in their files.\n- #5768 closes the auto-maintenance processes that still start, #5767 removes a node start per fake command in `guard-rewrite.test.js`, and #5773 removes repeated git reads inside one `verify.js` run.\n\nAdded to this record's Deliverables:\n\n4. In the three files this record owns, no fixture starts a `git config user.name` or `git config user.email` process: the identity goes in through the template, an inline `-c`, or #5771's helper when that has merged. If #5771 has merged, this record removes its three files from that scan test's allowlist.\n5. The PR body also reports git processes per touched file, before and after, with the split by subcommand.\n\nAdded to this record's Acceptance Criteria:\n\n- [ ] A traced run of the three files shows zero `git config user.name` and `git config user.email` processes.\n- [ ] Each touched file reports the same test names and the same number of tests as before; no assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n\n_Filed by `capture` via specShapedBody._\n",
+        "createdAt": "2026-11-13T02:27:47Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          }
+        ],
+        "number": 5324,
+        "state": "OPEN",
+        "title": "Template the remaining per-test fixture builders: repo+worktree pairs and verify scenario repos",
+        "updatedAt": "2026-11-16T15:59:56Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -7288,78 +7826,6 @@
         "state": "OPEN",
         "title": "local-merge: the merge fences compose the merge commit without --keep-open, so a deferred record still gets a closing keyword",
         "updatedAt": "2026-11-03T08:34:36Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n- `bin/closing-links.js --mode post-merge` (the reopen backstop) runs only from `_shared/pr-first-merge-post-merge.md` Step 4.0, which an `armed` pr-first outcome never reaches: the merge lands later, when the forge is satisfied.\n- The reconciler finishes `armed` runs on merged-PR evidence but does not run the CLI. With `compose-subject.js --keep-open` the squash message and the PR body no longer name a kept-open record, so the only closing channel left is a Development-sidebar link added by hand; on an armed merge nothing reopens a record that link closes.\n- Found by the final whole-branch review of the closing-link guard (ledger row of the build run); shipped with a prose note in Step 4.0 naming the gap.\n\n## Deliverables\n\n- [ ] Add a reconcile convergence check (registration sites per `docs/reconcile-checks.md`) that, for a merged pr-first run whose fixes span carries `Refs #n` records, runs `bin/closing-links.js --mode post-merge` once and logs the outcome.\n- [ ] Drop the \"armed outcome never reaches this step\" caveat from `_shared/pr-first-merge-post-merge.md` Step 4.0 once the check lands.\n\n## Acceptance Criteria\n\n- [ ] A test drives the new check with a fake `gh` that reports a merged PR, a `Refs #n` record closed after `mergedAt`, and asserts the record is reopened and a decisions line is written.\n- [ ] A run whose fixes span has no `Refs` record triggers no `gh issue` call.\n\n## Release Note\n\nA pr-first run that merges through auto-merge now also reopens a record it left open, even when a manual sidebar link closes it.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/closing-links.js` — reuse\n- `docs/reconcile-checks.md` — follow\n- `plugin/skills/_shared/pr-first-merge-post-merge.md` — modify\n\n_Filed by `ledger resolve gate` via specShapedBody._",
-        "createdAt": "2026-10-25T11:01:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4251,
-        "state": "OPEN",
-        "title": "pr-first: an armed merge never runs the closing-links post-merge reopen, so a Development-sidebar link can still close a kept-open record",
-        "updatedAt": "2026-10-31T09:59:28Z",
         "facets": {
           "origin": null,
           "risk": "medium",
