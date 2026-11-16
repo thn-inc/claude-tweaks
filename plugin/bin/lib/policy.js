@@ -183,7 +183,23 @@ function readEfficiencyCeilings(repoRoot, profile) {
   return { roundTrips: read('round-trip'), procedureKb: read('procedure-kb'), verifyMinutes: read('verify-minutes') };
 }
 
-const SERVICE_NAME_RE = /^[a-z][a-z0-9-]*$/;
+// `changelog-max-releases` (#5563) — takes the raw policy.yml reader as a dep so
+// the release consumers keep their own file access. null (absent file) or an
+// absent/invalid key is 0 (never trim); a throwing reader is reported in `error`
+// rather than read as 0 silently.
+function readChangelogMaxReleases(readPolicy) {
+  let raw;
+  try {
+    raw = readPolicy();
+  } catch (err) {
+    return { count: 0, error: err.message };
+  }
+  if (raw == null) return { count: 0, error: null };
+  const key = 'changelog-max-releases';
+  return { count: resolveValue(key, parseFlatLines(raw)[key]), error: null };
+}
+
+const SERVICE_NAME_RE =/^[a-z][a-z0-9-]*$/;
 
 // `port-services` (#1792): the list-key convention above, plus per-entry
 // name validation and a block-capacity check session-start.js needs to
@@ -220,5 +236,5 @@ function resolvePortServices(repoRoot) {
 
 module.exports = {
   isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, resolvePortServices, readGhTimeoutMs,
-  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn, readRiskPolicy,
+  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn, readRiskPolicy, readChangelogMaxReleases,
 };

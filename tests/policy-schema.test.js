@@ -150,9 +150,10 @@ test('POLICY_KEYS entries are unique', () => {
   // 100 -> 103, #5216 (pipeline driver admission): express-driver — enum off|split|on, default off; express-driver-wall-clock-minutes, express-driver-spend-ceiling-dollars — integer >= 1, ceilings
   // 103 -> 104, #5222: express-driver-review — enum off|on|beyond-express, default beyond-express, policyOnly
   // 104 -> 106, #5291 (trust verdict window bridge): trust-evaluation-window-days — integer >= 1, default 30; trust-follow-up-rate-max-percent — integer 0..100, default 30
+  // 109 -> 110, #5563: changelog-max-releases — integer >= 0, default 0 (never trim)
   // 106 -> 109, #5224: express-driver-max-size — enum low|medium, default low; express-driver-max-key-files — integer >= 1, default 3; express-driver-max-lines — integer >= 1, Shape B (base 40, derives auto-merge-max-lines while source is default); all policyOnly
-  assert.strictEqual(POLICY_KEYS.length, 109);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 109);
+  assert.strictEqual(POLICY_KEYS.length, 110);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 110);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
