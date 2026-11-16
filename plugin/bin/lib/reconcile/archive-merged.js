@@ -1482,10 +1482,11 @@ function archiveRunDir(root, runDir, { env } = {}) {
   // layout) and one per spec-{N}/ subdirectory (multi-spec parent layout,
   // #593) — moves via `git mv` in one batch, then one commit covers all of
   // them. `work/` is deliberately git-tracked (materialize.md, "committed
-  // as audit trail, never gitignored") while the archive path itself is
-  // gitignored, so a plain mv + git add would register as a deletion; a
-  // multi-spec parent whose spec-{N}/work/ subtrees were previously left
-  // out of this move is exactly the bug this fixes — they used to survive
+  // during the run and archived on the branch at wrap-up, never gitignored")
+  // while the archive path itself is gitignored, so a plain mv + git add
+  // would register as a deletion; a multi-spec parent whose spec-{N}/work/
+  // subtrees were previously left out of this move is exactly the bug this
+  // fixes — they used to survive
   // untouched at the pre-archive path and resurrect on the next checkout,
   // same mechanism as the top-level case the rest of this function already
   // handled.

@@ -54,7 +54,8 @@ test('auto-merge-short-circuit.md: the ledger-deletion commit is stated to land 
 });
 
 test('auto-merge-short-circuit.md: pr-first pushes the ledger-deletion commit before gh pr merge runs', () => {
-  assertPinned(/pr-first.{0,60}push this commit now/s, 'pr-first push-before-merge step');
+  // #3976: the push now carries the ledger commit and the spec-header move commit ("these commits").
+  assertPinned(/pr-first.{0,60}push these commits now/s, 'pr-first push-before-merge step');
 });
 
 test('auto-merge-short-circuit.md: local-merge explicitly skips the push (local refs suffice)', () => {
