@@ -87,6 +87,8 @@ test('the collision-check snippet, run verbatim with CLAUDE_PLUGIN_ROOT left to 
   assert.match(foreign.card, /worktree-record-1/, 'foreign must carry the stop card naming the branch');
 });
 
+const PINNED_SHA = 'c19a97b7a4ff1b8e9ff51f5834326eaabbd189b5';
+
 // A stub plugin root: the real bin/remote-branch-collision.js (copied) over the real
 // checkAdoptedBranch composition, with only its two process seams pinned — `gh` answers `prs` and,
 // when `gitFake` is set, `git` answers a pinned unreachable shape (ls-remote returns a sha,
@@ -116,8 +118,6 @@ function stubPluginRoot(t, gitFake, prs = []) {
   ].join('\n'));
   return dir.split(path.sep).join('/');
 }
-
-const PINNED_SHA = 'c19a97b7a4ff1b8e9ff51f5834326eaabbd189b5';
 
 test('the snippet prints the unknown-relation card for unreachable with remoteSha set, and no card without one (#3093)', (t) => {
   const r = originWithTwoClones('adopted-branch-unreachable-');
@@ -196,8 +196,31 @@ test('AC1.1: the snippet adopts this record\'s own prior attempt instead of card
 });
 
 // #5589 AC5.1: the point of the CLI is a fence the worktree guard accepts.
+// The structural rules shared by the live fence and its go-red control: one plain line, no heredoc,
+// no command substitution. The shape catalogue has no row for the heredoc shape yet (#5590), so this
+// is the assertion that discriminates the old fence.
+function assertPlainOneLineCommand(text) {
+  assert.ok(!text.trim().includes('\n'), 'the fence must be a single line');
+  assert.ok(!text.includes('<<'), 'the fence must carry no heredoc');
+  assert.ok(!text.includes('$('), 'the fence must carry no command substitution');
+}
+
 test('AC5.1: the fence carries no shape the worktree guard is known to refuse', () => {
   const snippet = extractSnippet();
+  const filled = fill(snippet, { branch: 'worktree-record-1', repo: 'o/r', records: '1,2' });
+  assertPlainOneLineCommand(snippet);
+  assertPlainOneLineCommand(filled);
+  // Regression floor only: detectShapes is non-discriminating for the heredoc shape until #5590 adds that row.
   assert.deepEqual(detectShapes(snippet), []);
-  assert.deepEqual(detectShapes(fill(snippet, { branch: 'worktree-record-1', repo: 'o/r', records: '1,2' })), []);
+  assert.deepEqual(detectShapes(filled), []);
+});
+
+test('AC5.1 go-red: the same structural assertion throws on the pre-#5589 heredoc fence', () => {
+  const oldFence = [
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "{branch}" "{repo}" "{records}" <<NODE_EVAL_EOF',
+    'const x = 1;',
+    'NODE_EVAL_EOF',
+  ].join('\n');
+  assert.throws(() => assertPlainOneLineCommand(oldFence), /the fence must be a single line/);
+  assert.throws(() => assertPlainOneLineCommand(oldFence.split('\n').join(' ')), /the fence must carry no heredoc/);
 });

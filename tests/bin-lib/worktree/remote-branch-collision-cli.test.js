@@ -138,11 +138,14 @@ test('AC1.1: the CLI prints one line that parses to checkAdoptedBranch\'s object
 });
 
 test('AC2.1: --records "3887,3890" reaches the prior-attempt lookup as [3887, 3890]', () => {
-  const out = parsed(call(['--branch', 'b', '--repo', 'o/r', '--records', '3887,3890'], {
-    git: checkGit({ ls: 'present', head: 'not' }),
-    gh: countingGh([priorPr(3890)]),
-  }));
-  assert.equal(out.state, 'prior-attempt');
+  // Each item must reach the lookup: a parse keeping only the last (or only the first) would fail one run.
+  for (const closes of [3890, 3887]) {
+    const out = parsed(call(['--branch', 'b', '--repo', 'o/r', '--records', '3887,3890'], {
+      git: checkGit({ ls: 'present', head: 'not' }),
+      gh: countingGh([priorPr(closes)]),
+    }));
+    assert.equal(out.state, 'prior-attempt', `a closed PR closing #${closes} must match`);
+  }
 });
 
 test('AC2.2: an absent or empty --records reaches it as []', () => {

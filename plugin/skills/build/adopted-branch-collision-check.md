@@ -48,7 +48,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/remote-branch-collision.js" --branch "{branch}" 
 ```
 
 `{records}` is this run's record numbers, comma-joined (`3887`, or `3887,3890` for a bundle) — the
-targets the run was invoked with.
+targets the run was invoked with. They are bare numbers with no `#`: a pasted `#3887` exits 2.
 
 It prints one JSON line. Exit 2, with a usage line on stderr, is a malformed call: correct the call,
 never re-run it unchanged. No output, or output that does not parse, is not a result: re-run once,
