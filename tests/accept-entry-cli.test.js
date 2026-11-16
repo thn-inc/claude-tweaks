@@ -117,9 +117,9 @@ test('read passes --repo to gh', (t) => {
   assert.equal(pinned.length, 1);
 });
 
-test('read with no packet reports none and writes nothing', (t) => {
+test('read with no packet reports none and leaves no packet file, an earlier one included', (t) => {
   const dir = tempDir(t);
-  const out = path.join(dir, 'packet.md');
+  const out = write(path.join(dir, 'packet.md'), 'an earlier run\'s packet');
   const result = cli(['read', '--record', '7', '--out', out], { deps: { gh: ghReturning([{ body: 'hi', authorAssociation: 'OWNER' }]) } });
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(json(result), { status: 'none', url: null, extras: [], skipped: [] });
@@ -138,9 +138,9 @@ test('read with an older-schema packet reports unreadable and writes its body', 
   assert.equal(fs.readFileSync(out, 'utf8'), body);
 });
 
-test('read with a throwing gh runner exits 1 and never reports none', (t) => {
+test('read with a throwing gh runner exits 1, never reports none, and removes an earlier --out', (t) => {
   const dir = tempDir(t);
-  const out = path.join(dir, 'packet.md');
+  const out = write(path.join(dir, 'packet.md'), 'an earlier run\'s packet');
   const result = cli(['read', '--record', '7', '--out', out], { deps: { gh: () => { throw new Error('gh: HTTP 502'); } } });
   assert.equal(result.code, 1);
   assert.equal(result.stdout, '');
