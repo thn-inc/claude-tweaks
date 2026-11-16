@@ -312,6 +312,35 @@ test('a scratch worktree locked with no pid in its reason refuses with exit 2 na
   assert.ok(fs.existsSync(worktreeDir(root)));
 });
 
+test('a run that locks the scratch worktree after this run read the worktree list keeps it: no forced remove, exit 2', () => {
+  for (const stale of [false, true]) {
+    const { root } = makeFixture();
+    addShell(root, `2026-11-10T00001${stale ? 1 : 0}-record-1`);
+    if (stale) {
+      fs.mkdirSync(worktreeDir(root), { recursive: true });
+      fs.writeFileSync(path.join(worktreeDir(root), 'stale.txt'), 'x\n');
+    }
+    // Run A (pid 424244) takes the scratch path just after this run's first worktree-list read.
+    let raced = false;
+    const racing = (args, o) => {
+      const res = realDeps.git(args, o);
+      if (!raced && args[0] === 'worktree' && args[1] === 'list') {
+        raced = true;
+        fs.rmSync(worktreeDir(root), { recursive: true, force: true });
+        git(root, 'worktree', 'add', '-q', '--lock', '--reason', 'archive-tracked-shells (pid 424244)', '-b', 'run-a', worktreeDir(root), 'main');
+        fs.writeFileSync(path.join(worktreeDir(root), 'in-flight.txt'), 'x\n');
+      }
+      return res;
+    };
+    const r = call(root, ['--root', root, '--no-pr'], { extra: { git: racing, pid: () => 31338, pidAlive: (pid) => pid === 424244 } });
+    assert.ok(raced, 'the race was staged');
+    assert.equal(r.code, 2, `stale=${stale}: ${r.stderr}`);
+    assert.match(r.stderr, /another archive-tracked-shells run is in progress \(pid 424244\)/);
+    assert.ok(fs.existsSync(path.join(worktreeDir(root), 'in-flight.txt')), `stale=${stale}: run A's worktree is untouched`);
+    assert.match(git(root, 'worktree', 'list', '--porcelain'), /locked archive-tracked-shells \(pid 424244\)/);
+  }
+});
+
 test('the scratch worktree is created locked with this run\'s pid', () => {
   const { root } = makeFixture();
   addShell(root, '2026-11-10T000004-record-1');
@@ -622,21 +651,31 @@ test('AC5.1: housekeeping-auto-merge true on a PR the forge holds (BLOCKED) arms
   ], 'one merge-state read before arming and one after');
 });
 
-test('housekeeping-auto-merge true on a repo with no required checks (not BLOCKED) leaves the PR unarmed with a note, exit 0', () => {
-  for (const mergeState of ['CLEAN', 'UNSTABLE', 'UNKNOWN', 'BEHIND']) {
+test('housekeeping-auto-merge true on a PR the forge does not hold (not BLOCKED) leaves it unarmed with a note naming the state it read, exit 0', () => {
+  const NOTES = {
+    CLEAN: 'merge state CLEAN: no required check holds it, so --auto would merge it before CI',
+    UNSTABLE: 'merge state UNSTABLE: only checks that are not required are failing or pending, so no required check holds it and --auto would merge it before CI',
+    HAS_HOOKS: 'merge state HAS_HOOKS: mergeable with only pre-receive hooks to run, so no required check holds it and --auto would merge it before CI',
+    UNKNOWN: 'merge state UNKNOWN (not yet computed, as GitHub reports right after a PR opens); the housekeeping backstop can arm it later',
+    BEHIND: 'merge state BEHIND (its branch is out of date with the base); the housekeeping backstop can arm it once it is updated',
+    DIRTY: 'merge state DIRTY (it conflicts with the base); the housekeeping backstop can arm it once the conflict is resolved',
+    DRAFT: 'merge state DRAFT (it is a draft); the housekeeping backstop can arm it once it is marked ready',
+    SOMETHING_NEW: 'merge state SOMETHING_NEW is not one this CLI knows; only BLOCKED (the forge holds the merge for its required checks) is armed',
+    '': 'merge state not reported; only BLOCKED (the forge holds the merge for its required checks) is armed',
+  };
+  let i = 0;
+  for (const [mergeState, note] of Object.entries(NOTES)) {
+    i += 1;
     const { root } = makeFixture();
-    addShell(root, `2026-11-17T00000${mergeState.length}-record-1`, { twin: 'absent' });
-    const fake = fakeGh({ mergeState, mergeOnArm: true });
+    addShell(root, `2026-11-17T0001${String(i).padStart(2, '0')}-record-1`, { twin: 'absent' });
+    const fake = fakeGh({ mergeState: mergeState || null, mergeOnArm: true });
     const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(fake.merges, [], `${mergeState}: no gh pr merge call`);
     assert.equal(r.envelope.pr.armed, false);
     assert.equal(r.envelope.pr.merged, false);
     assert.equal(fake.prs[0].state, 'OPEN');
-    assert.ok(
-      r.envelope.notes.includes(`PR #1 left unarmed: mergeStateStatus is ${mergeState}, not BLOCKED — the repository holds no required check for it, so --auto would merge before CI`),
-      JSON.stringify(r.envelope.notes),
-    );
+    assert.deepEqual(r.envelope.notes, [`PR #1 left unarmed: ${note}`], mergeState);
   }
 });
 

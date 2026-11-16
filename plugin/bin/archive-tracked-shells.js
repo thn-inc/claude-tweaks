@@ -22,9 +22,9 @@
 //
 // Arming (housekeeping-auto-merge 'true'): the PR is armed with `gh pr merge --auto --squash`
 // only when its state read shows mergeStateStatus BLOCKED — the forge holds the merge for its
-// required checks. Any other value means the repository has no required check pending, and
-// `--auto` would merge before CI (`_shared/pr-first-merge.md` Step 2.5), so the PR is left
-// unarmed with a note. A read after arming reports `pr.armed` / `pr.merged` / `pr.state`. The PR
+// required checks. On any other value `--auto` is not a wait (`_shared/pr-first-merge.md` Step
+// 2.5), so the PR is left unarmed with a note naming the value read and what it means (UNKNOWN,
+// common right after the create, is a later arm, not a missing check). A read after arming reports `pr.armed` / `pr.merged` / `pr.state`. The PR
 // body carries `<!-- tidy-housekeeping-pr -->`, the housekeeping marker the unarmed-ready-PR
 // backstop (`_shared/github-pr-scan.md` item 9) recognises, so a green PR can be armed later.
 //
@@ -160,33 +160,45 @@ function resolveIntegration(root, deps, policyValue, noPr) {
   return gitText(deps.git(['symbolic-ref', '--short', '--quiet', 'HEAD'], { cwd: root, env: deps.env })) || null;
 }
 
-// Why the scratch worktree may not be replaced, or null when it may. Our own runs lock it with
-// lockReason(pid); a lock whose pid is dead is a crashed run's and is replaced. A lock held by a
-// live pid, or one with no pid in its reason, is someone else's and is left alone.
-function scratchHolder(root, wt, deps) {
+// The scratch worktree's registration -> { holder, entry }. `holder` says why it may not be
+// replaced, or is null when it may. Our own runs lock it with lockReason(pid): a lock naming this
+// run's pid, or a dead pid (a crashed run), is replaceable. A lock held by another live pid, or one
+// with no pid in its reason, is someone else's and is left alone.
+function scratchState(root, wt, deps) {
   const listed = deps.git(['worktree', 'list', '--porcelain'], { cwd: root, env: deps.env });
-  if (listed.failure) return `git worktree list failed: ${firstLine(listed.stderr) || listed.failure}`;
+  if (listed.failure) return { holder: `git worktree list failed: ${firstLine(listed.stderr) || listed.failure}`, entry: null };
   const entry = findWorktreeEntry(parseWorktreeList(listed.stdout), wt);
-  if (!entry || !entry.locked) return null;
+  if (!entry || !entry.locked) return { holder: null, entry };
   if (Number.isInteger(entry.pid)) {
-    if (!deps.pidAlive(entry.pid)) return null;
-    return `another archive-tracked-shells run is in progress (pid ${entry.pid}): its scratch worktree ${wt} is locked`;
+    if (entry.pid === deps.pid() || !deps.pidAlive(entry.pid)) return { holder: null, entry };
+    return { holder: `another archive-tracked-shells run is in progress (pid ${entry.pid}): its scratch worktree ${wt} is locked`, entry };
   }
-  return `the scratch worktree ${wt} is locked (${entry.lockReason || 'no reason given'}), not by an archive-tracked-shells run — once nothing uses it, run git worktree unlock "${wt}" and re-run`;
+  return { holder: `the scratch worktree ${wt} is locked (${entry.lockReason || 'no reason given'}), not by an archive-tracked-shells run — once nothing uses it, run git worktree unlock "${wt}" and re-run`, entry };
 }
 
-// Best-effort and never throws: it runs from a `finally`. The scratch path is this CLI's own, so a
-// leftover that git no longer (or never) registered is deleted outright; `--force --force` also
-// removes a registered worktree that is locked.
+// Removes the scratch worktree unless another run holds it. -> null once removed (or absent), else
+// why it was left. Never throws: it runs from a `finally`. The holder is read immediately before
+// the remove, and `--force --force` (which removes a locked worktree) is passed only when that read
+// saw a lock judged ours or a dead run's. Otherwise one `--force`, which git refuses on a locked
+// worktree, so a run that locked the path after the read keeps it. A leftover is deleted outright
+// only when git registers nothing at the path.
 function removeWorktree(root, wt, deps) {
   const attempt = (args) => { try { deps.git(args, { cwd: root, env: deps.env }); } catch { /* best-effort */ } };
+  const read = () => {
+    try { return scratchState(root, wt, deps); } catch (err) { return { holder: `reading the scratch worktree failed: ${(err && err.message) || err}`, entry: null }; }
+  };
+  const before = read();
+  if (before.holder) return before.holder;
   if (lstatType(wt).type !== 'missing') {
-    attempt(['worktree', 'remove', '--force', '--force', wt]);
+    attempt(['worktree', 'remove', '--force', ...(before.entry && before.entry.locked ? ['--force'] : []), wt]);
     if (lstatType(wt).type !== 'missing') {
+      const after = read();
+      if (after.holder || after.entry) return after.holder || `the scratch worktree ${wt} could not be removed`;
       try { fs.rmSync(wt, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
   }
   attempt(['worktree', 'prune']);
+  return null;
 }
 
 // Whether the scratch tree holds this run's archived `work/` (top-level or a spec-N/work).
@@ -291,6 +303,25 @@ function readMergeState(gh, number) {
   return parsed;
 }
 
+// Why a PR whose mergeStateStatus is not BLOCKED is left unarmed, naming the value read. Only CLEAN,
+// UNSTABLE and HAS_HOOKS say no required check holds it; UNKNOWN (GitHub computes the state lazily,
+// so a PR just opened often reads it) and the states the forge must clear first are a later arm.
+const BACKSTOP = 'the housekeeping backstop can arm it';
+const NOT_HELD = 'no required check holds it and --auto would merge it before CI';
+const ONLY_BLOCKED = 'only BLOCKED (the forge holds the merge for its required checks) is armed';
+function unarmedMergeState(status) {
+  switch (status) {
+    case 'CLEAN': return 'merge state CLEAN: no required check holds it, so --auto would merge it before CI';
+    case 'UNSTABLE': return `merge state UNSTABLE: only checks that are not required are failing or pending, so ${NOT_HELD}`;
+    case 'HAS_HOOKS': return `merge state HAS_HOOKS: mergeable with only pre-receive hooks to run, so ${NOT_HELD}`;
+    case 'UNKNOWN': return `merge state UNKNOWN (not yet computed, as GitHub reports right after a PR opens); ${BACKSTOP} later`;
+    case 'BEHIND': return `merge state BEHIND (its branch is out of date with the base); ${BACKSTOP} once it is updated`;
+    case 'DIRTY': return `merge state DIRTY (it conflicts with the base); ${BACKSTOP} once the conflict is resolved`;
+    case 'DRAFT': return `merge state DRAFT (it is a draft); ${BACKSTOP} once it is marked ready`;
+    default: return status ? `merge state ${status} is not one this CLI knows; ${ONLY_BLOCKED}` : `merge state not reported; ${ONLY_BLOCKED}`;
+  }
+}
+
 // housekeeping-auto-merge decides whether to arm; it never bypasses the merge-verification gate.
 // `--auto` is a wait only when the forge holds the merge (mergeStateStatus BLOCKED); on any other
 // value it merges at once, checks pending or not (`_shared/pr-first-merge.md` Step 2.5), so the
@@ -310,7 +341,7 @@ function armPr(envelope, gh, autoMerge) {
   if (before.state !== 'OPEN') { unarmed(`it is ${before.state || 'in an unknown state'}, not open`); return; }
   if (before.autoMergeRequest) { pr.armed = true; envelope.notes.push(`PR #${pr.number} was already armed`); return; }
   if (before.mergeStateStatus !== 'BLOCKED') {
-    unarmed(`mergeStateStatus is ${before.mergeStateStatus || 'unknown'}, not BLOCKED — the repository holds no required check for it, so --auto would merge before CI`);
+    unarmed(unarmedMergeState(before.mergeStateStatus));
     return;
   }
   const armed = gh(['pr', 'merge', String(pr.number), '--auto', '--squash']);
@@ -363,9 +394,9 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts, prog
   if (g(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], root).failure) {
     return refuse(`cannot resolve ${base} to start ${BRANCH} from`);
   }
-  const holder = scratchHolder(root, wt, deps);
+  const holder = removeWorktree(root, wt, deps);
   if (holder) return refuse(holder);
-  removeWorktree(root, wt, deps);
+  // No --force: a registration or directory that reappeared since the remove makes the add fail.
   const added = g(['worktree', 'add', '--lock', '--reason', lockReason(deps.pid()), '-B', BRANCH, wt, base], root);
   if (added.failure) return refuse(`git worktree add failed: ${added.stderr || added.failure}`);
   try {
