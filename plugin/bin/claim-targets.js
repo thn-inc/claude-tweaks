@@ -53,8 +53,9 @@ const realDeps = {
   // #4794: the origin-host gate's verdict ({ spec, refusal }), for run() to refuse an
   // unknown or SSH-alias origin before any gh call. `originUrl` carries the git timeout. The gate
   // is git-exec.js's repoTargetOfRemote (#5109), with its one loose fallback on: a remote the gate
-  // cannot read (an unparseable sandbox proxy remote) gets a spec whose host is `GH_HOST` or
-  // github.com, as `resolveGhHost`'s null gave before; only an unreadable origin gives no spec.
+  // cannot read (an unparseable sandbox proxy remote) gets a spec whose host is an exported host
+  // override or github.com, as `resolveGhHost`'s null gave before; only an unread or wholly
+  // unparseable origin gives no spec.
   gateOrigin: () => {
     let remote = null;
     try { remote = originUrl(process.cwd()); } catch { remote = null; }
@@ -69,7 +70,8 @@ const realDeps = {
   // admitted a spec, run() passes its host (`gateHost`) so the one origin read decides: a second
   // `resolveGhHost` read could time out alone and send the run's calls to github.com although the
   // gate admitted a GHE origin. `resolveGhHost` is now the fallback only for an origin that was
-  // never read (`originUrl` threw or gave nothing), the host the seam's memoized read gave `gh repo view`.
+  // unread (`originUrl` threw or gave nothing) or wholly unparseable, the host the seam's
+  // memoized read gave `gh repo view`.
   repoTarget: (owner, repo, gateHost) => resolveRepoTarget({
     owner, repo, originHost: gateHost || resolveGhHost(process.cwd()),
   }),

@@ -520,9 +520,10 @@ test('AC1.1 (#4794): teardown-run on a *.ghe.com origin sends its remote-ref del
 
 // #4794 Task 12: claim-targets.js gates its origin to refuse only (through git-exec.js's
 // repoTargetOfRemote since #5109); its repo still comes from `gh repo view`, so it is not in
-// CLI_TABLE (no origin-derived slug in its argv). The fake gh answers the repo, one TTL-expired claim blob for RUN_ID (the contents
-// read, through the nested key) and a marked same-repo PR on the case's host. GIT_ALLOW_PROTOCOL=file
-// (gatedEnv) makes the git-CAS leg fail fast, so the read takes the contents API.
+// CLI_TABLE (no origin-derived slug in its argv). The fake gh answers the repo, one TTL-expired
+// claim blob for RUN_ID (the contents read, through the nested key) and a marked same-repo PR on
+// the case's host. GIT_ALLOW_PROTOCOL=file (gatedEnv) makes the git-CAS leg fail fast, so the read
+// takes the contents API.
 const CT_STALE_CLAIM = JSON.stringify({ runId: RUN_ID, sessionId: 's1', claimedAt: new Date(Date.now() - 100 * 3600 * 1000).toISOString(), ttlHours: 72, host: 'h' });
 const CT_PR_LIST_ARGV = 'pr list --repo acme/widgets --state open --json url,body,isCrossRepository --limit 1000';
 
