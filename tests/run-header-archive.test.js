@@ -34,12 +34,14 @@ test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: 
 
 // A repo with the real .gitignore committed. `put(rel, content, {force})` writes and
 // `git add`s a file (not committed); `commit(msg)` commits the index.
-// The .gitignore the repo ships today, or the narrowed form (#3976 Task 5) in which only
-// work/*-spec.md is un-ignored: each `!…/work/**` line becomes `…/work/*` then `!…/work/*-spec.md`.
+// The pre-narrowing .gitignore (every file under work/ un-ignored) or the narrowed form (#3976 Task 5)
+// in which only work/*-spec.md is un-ignored: each `!…/work/**` line is `…/work/*` then `!…/work/*-spec.md`.
+// The repo's real file is the narrowed form; the wide variant is derived from it, so both stay covered.
 function gitignoreText({ narrowed }) {
-  const text = readText(REAL_GITIGNORE);
-  if (!narrowed) return text;
-  return text.replace(/^!(\.claude-tweaks\/pipelines\/.*\/work)\/\*\*$/gm, (_m, work) => `${work}/*\n!${work}/*-spec.md`);
+  const wide = readText(REAL_GITIGNORE)
+    .replace(/^(\.claude-tweaks\/pipelines\/.*\/work)\/\*\r?\n!\1\/\*-spec\.md$/gm, (_m, work) => `!${work}/**`);
+  if (!narrowed) return wide;
+  return wide.replace(/^!(\.claude-tweaks\/pipelines\/.*\/work)\/\*\*$/gm, (_m, work) => `${work}/*\n!${work}/*-spec.md`);
 }
 
 function makeRepo({ narrowed = false } = {}) {
