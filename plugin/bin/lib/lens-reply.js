@@ -129,10 +129,11 @@ function mapRow(cells, columns) {
   return out;
 }
 
-// Same window the SubagentStop hook's detectStatus uses: `ok` when the last
-// non-empty line is canonical; else `misplaced` when the first or last three
-// non-empty lines hold a canonical or lenient status line (the latest such
-// line supplies the word); else `missing`.
+// The window is the first three and last three of ALL non-empty lines: the same
+// size as the SubagentStop hook's detectStatus window, but without its table-row
+// filter. `ok` when the last non-empty line is canonical; else `misplaced` when
+// that window holds a canonical or lenient status line (the latest such line
+// supplies the word); else `missing`.
 function readStatus(nonEmpty) {
   if (nonEmpty.length > 0) {
     const last = CANONICAL_RE.exec(nonEmpty[nonEmpty.length - 1]);
