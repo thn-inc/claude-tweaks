@@ -76,7 +76,9 @@ Two consequences, both load-bearing:
   #3976), so it reaches the main checkout already archived. After wrap-up no consumer reads
   the header from the live path directly: every header reader resolves it through
   `bin/lib/run-header.js`'s resolver (#3974) or, like `/tidy`'s backstop `find`, matches both
-  the live and the archived path.
+  the live and the archived path — the one accepted exception is `flow/multispec-review-console.md`'s
+  Shared teardown header capture, which, when resumed after step 0 already moved the headers,
+  falls back to the manifest id and a `SKIP`.
 - **A `*-tidy-standalone*` run's own audit files are the second exception (#1493)** — under
   `pr-first`, `decisions.md`, `report.md`, and `staged/**` are copied into the worktree's own
   copy of the run dir (`tidy/SKILL.md` Step 7.5) and committed there, the same shape as
