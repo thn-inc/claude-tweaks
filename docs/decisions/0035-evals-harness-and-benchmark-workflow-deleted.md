@@ -1,4 +1,4 @@
-# 0034. The evals harness and its benchmark workflow are deleted
+# 0035. The evals harness and its benchmark workflow are deleted
 
 - **Status:** accepted
 - **Date:** 2026-11-15
