@@ -451,7 +451,7 @@ test('an unreadable --deploy or --ac-results is a stated partial', (t) => {
 test('AC2.6: a malformed deploy ref is not read', (t) => {
   const ws = workspace(t);
   const note = '--deploy input not read — treated as absent';
-  for (const ref of ['not a sha', '0123ab', 'ABCDEF0', 'g123abc', 'a'.repeat(65), 123, null, '']) {
+  for (const ref of ['not a sha', '0123ab', 'ABCDEF0', 'g123abc', 'a'.repeat(65), 123, null, '', ['0123abc']]) {
     const deploy = writeJson(ws.file('deploy.json'), { target: 'dev', ref });
     const { facts } = gather(ws, ['--deploy', deploy]);
     assert.ok(facts.partial.includes(note), JSON.stringify(ref));

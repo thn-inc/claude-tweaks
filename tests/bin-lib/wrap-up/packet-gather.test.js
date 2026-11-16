@@ -1035,7 +1035,7 @@ test('AC2.4: deploy fact carries the ref', () => {
 });
 
 test('a deploy ref outside the hex grammar is left off the fact', () => {
-  for (const ref of [123, null, true, ['0123abc'], 'not a sha', '0123AB', '0123ab', `${'a'.repeat(65)}`, '']) {
+  for (const ref of [123, null, true, ['0123abc'], 'not a sha', '0123ABC', '0123ab', `${'a'.repeat(65)}`, '']) {
     const fact = factOf(gather({ deploy: { target: 'dev', live: true, ref } }), 'deploy:status');
     assert.ok(!Object.hasOwn(fact, 'ref'), JSON.stringify(ref));
     assert.equal(fact.text, 'target: dev, confirmed live');
