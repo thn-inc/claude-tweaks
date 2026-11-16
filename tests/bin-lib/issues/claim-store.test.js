@@ -162,12 +162,6 @@ test('writeClaimBlob: content that is not even a string (the caller forgot to se
   assert.deepEqual(r, { ok: false, failure: 'invalid-content' });
 });
 
-test('listClaimEntries: failure -> empty entries, failure propagated', () => {
-  const ghApi = () => ({ stdout: null, failure: 'gh-absent', status: null });
-  const r = listClaimEntries(ghApi, 'acme/w');
-  assert.deepEqual(r, { entries: [], failure: 'gh-absent' });
-});
-
 test('defaultGhApi is exported (existence only — no real gh call)', () => {
   assert.equal(typeof defaultGhApi, 'function');
 });
@@ -315,6 +309,12 @@ test('listClaimEntries: a truncated tree response surfaces as its own failure, n
   });
   const r = listClaimEntries(ghApi, 'acme/w');
   assert.deepEqual(r, { entries: [], failure: 'truncated' });
+});
+
+test('listClaimEntries: failure -> empty entries, failure propagated', () => {
+  const ghApi = () => ({ stdout: null, failure: 'gh-absent', status: null });
+  const r = listClaimEntries(ghApi, 'acme/w');
+  assert.deepEqual(r, { entries: [], failure: 'gh-absent' });
 });
 
 test('listClaimEntries: never passes recursive=1 as a -f/-F field (#3098 regression -- gh api switches GET to POST the instant any -f/-F is present, and git/trees has no POST route; confirmed live: a -f recursive=1 call 404s, the identical request with recursive=1 folded into the path succeeds)', () => {

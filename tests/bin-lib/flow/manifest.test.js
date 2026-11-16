@@ -490,4 +490,11 @@ test('#5542: a legacy baseSha line on an older manifest parses and is dropped on
   const after = readManifest(dir);
   assert.deepEqual(after.multispec.specs.map((s) => [s.id, s.status]), [[1, 'running'], [2, 'pending']]);
   assert.equal(after.multispec.parent, 'x/');
+
+  // The other writer: a status write (hooks.js spec-status) drops the line too.
+  const dir2 = tmpRunDir();
+  fs.writeFileSync(path.join(dir2, 'manifest.yml'), text);
+  assert.equal(transitionSpec({ runDir: dir2, specId: 1, status: 'running', phase: 'test', now: new Date('2026-01-01T00:00:00.000Z') }).ok, true);
+  assert.doesNotMatch(fs.readFileSync(path.join(dir2, 'manifest.yml'), 'utf8'), /baseSha/);
+  assert.equal(readManifest(dir2).multispec.specs[0].phase, 'test');
 });
