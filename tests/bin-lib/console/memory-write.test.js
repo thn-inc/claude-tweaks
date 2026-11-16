@@ -185,6 +185,27 @@ test('a missing parent directory is refused with its own why (parent-missing), e
   assert.strictEqual(decisions(fx), '');
 });
 
+test('a missing parent outside the memory dir stays outside-memory-dir (never parent-missing)', async () => {
+  const fx = fixture();
+  for (const target of ['../nope/x.md', path.join(fx.root, 'elsewhere', 'nope', 'x.md'), 'in/../../nope/x.md']) {
+    const r = await write(fx, target, 'x\n');
+    assert.strictEqual(r.code, 5, `${target}: ${r.err}`);
+    assert.match(r.err, /memory write refused \(outside-memory-dir\) — nothing written/, target);
+  }
+  assert.strictEqual(fs.existsSync(path.join(fx.root, 'nope')), false);
+  assert.strictEqual(fs.existsSync(path.join(fx.root, 'elsewhere')), false);
+});
+
+test('a symlink inside the memory dir pointing at a directory inside it is refused, nothing written', async () => {
+  const fx = fixture();
+  fs.mkdirSync(path.join(fx.memoryDir, 'sub'));
+  fs.symlinkSync(path.join(fx.memoryDir, 'sub'), path.join(fx.memoryDir, 'sublink'), process.platform === 'win32' ? 'junction' : 'dir');
+  const r = await write(fx, 'sublink', 'x\n');
+  assert.strictEqual(r.code, 5, r.err);
+  assert.deepStrictEqual(fs.readdirSync(path.join(fx.memoryDir, 'sub')), []);
+  assert.strictEqual(decisions(fx), '');
+});
+
 test('a dangling symlink target is refused and nothing is created behind it', async () => {
   const fx = fixture();
   const gone = path.join(fx.root, 'gone.md');

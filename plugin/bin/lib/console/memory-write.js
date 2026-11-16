@@ -50,7 +50,13 @@ function resolveMemoryTarget({ memoryDir, target }) {
   if (leaf.type === 'missing') {
     const parentPath = path.dirname(abs);
     const parent = resolveWithin(parentPath, memoryDir);
-    if (parent === null && lstatType(parentPath).type === 'missing') return { ok: false, why: 'parent-missing' };
+    if (parent === null && lstatType(parentPath).type === 'missing') {
+      // The parent does not exist: it is `parent-missing` only when its nearest existing ancestor is inside
+      // the memory dir; an escape keeps `outside-memory-dir`.
+      let ancestor = path.dirname(parentPath);
+      while (lstatType(ancestor).type === 'missing' && path.dirname(ancestor) !== ancestor) ancestor = path.dirname(ancestor);
+      return { ok: false, why: resolveWithin(ancestor, memoryDir) !== null ? 'parent-missing' : 'outside-memory-dir' };
+    }
     if (parent !== null) resolved = path.join(parent, path.basename(abs));
   } else if (leaf.type === 'file' || leaf.type === 'symlink') {
     resolved = resolveWithin(abs, memoryDir);
