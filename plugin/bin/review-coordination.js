@@ -3,7 +3,7 @@
 // comparison/resolution helpers, for /claude-tweaks:review's Step 3/3.5 procedures
 // (step3-lens-dispatch.md, step3-debate-and-refutation.md). Replaces the multi-line
 // `node -e` invocations the harness worktree guard refuses (refs #887).
-//   node bin/review-coordination.js categorise-reproduction <agentA.json> <agentB.json>
+//   node bin/review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]
 //   node bin/review-coordination.js detect-overlap <findings-by-lens.json>
 //   node bin/review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
@@ -57,6 +57,16 @@
 // no verdict line, for the caller to judge again at capable ([] at capable). The one-finding
 // form at standard prints {escalated: true, id, reason: 'raised', severity} for a raised
 // finding — exit 0, nothing appended; any other reply resolves as at capable.
+// categorise-reproduction --run (#5595) appends the reproduction pair lines (lib/reproduction-log.js's
+// forms 1 to 4) under decisions.md's `## /review`, one line per finding and one per coincidence, in the
+// order of the printed result: `--only confirmed` writes forms 1/2, `--only unconfirmed` forms 3/4 minus
+// the findings of --hold (a JSON array of unconfirmed findings, each matching exactly one, that a tiebreak
+// or the cross-lens pass already settled). The JSON gains `entries` (each carrying `section: "/review"`,
+// the shape log-decision.js --entries takes), `unlocated` (unconfirmed findings with no integer line) and
+// `logged`: false, with one stderr line, when the append threw, which never changes the exit code. --lens is
+// a lens token plus an optional suffix, never a `"` or line break. Every refusal (a flag combination, a lens,
+// a hold file, a finding path with a line break) exits 2 before the run dir is anchored and writes nothing.
+// Without --run the output, exit codes and argument check are unchanged. Calling it twice appends twice.
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
 // also a run dir that does not exist); 3 run dir unanchored (write-findings,
 // check-coverage, resolve-tiebreak --run), or missing (write-findings,
@@ -79,10 +89,12 @@ const {
 const { resolveWithin } = require('./lib/path-guard');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { writeArtifact } = require('./lib/run-artifact/write');
-const { formatEntry, appendEntry } = require('./lib/log-decision/append');
+const { formatEntry, appendEntry, appendEntries } = require('./lib/log-decision/append');
+const { FINDING_LENS_CLASS } = require('./lib/console/finding-path');
+const { pairEntries, holdKey } = require('./lib/reproduction-log');
 
 const USAGE =
-  'usage: review-coordination.js categorise-reproduction <agentA.json> <agentB.json>\n' +
+  'usage: review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]\n' +
   '       review-coordination.js detect-overlap <findings-by-lens.json>\n' +
   '       review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>\n' +
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
@@ -140,6 +152,7 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
   now: () => new Date(),
   appendDecision: appendEntry,
+  appendDecisions: appendEntries,
 };
 
 // Appends one resolved verdict's decisions.md line under --run and sets `result.logged`;
@@ -153,6 +166,52 @@ function appendVerdict(result, anchoredDir, now, deps) {
   } catch (err) {
     result.logged = false;
     deps.stderr(`review-coordination.js: could not append the decisions.md entry (- ${result.logLine}): ${(err && err.message) || err}\n`);
+  }
+}
+
+const REPRODUCTION_FLAGS = ['--lens', '--run', '--only', '--hold'];
+
+// A lens is the token class finding lines read (console/finding-path.js's FINDING_LENS_CLASS) plus an
+// optional suffix such as ` (Security)`; never a `"` or a line break, which would end the quoted lens
+// in the line or split the line. Returns the refusal text, or null for a usable lens.
+const LENS_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+[^"\\r\\n]*$`);
+function lensProblem(lens) {
+  if (typeof lens === 'string' && LENS_RE.test(lens)) return null;
+  return `--lens must start with a lens token (letters, digits, _ or -) and hold no quote or line break, got ${JSON.stringify(lens)}`;
+}
+
+// The hold file's refusal text, or null: a JSON array of findings, each matching exactly one
+// unconfirmed finding by holdKey. A finding matching none was never staged here; one matching
+// several cannot say which it settled.
+function holdProblem(hold, file, unconfirmed) {
+  if (!Array.isArray(hold)) return `${file} must hold a JSON array of findings`;
+  for (const [i, entry] of hold.entries()) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return `${file} entry ${i} is not a finding object`;
+    const matches = unconfirmed.filter((f) => holdKey(f) === holdKey(entry)).length;
+    if (matches !== 1) return `${file} entry ${i} matches ${matches} unconfirmed findings, it must match exactly 1`;
+  }
+  return null;
+}
+
+// The findings one categorise-reproduction call writes lines for: the confirmed ones, or the
+// unconfirmed ones the hold file does not name.
+function writtenFindings(result, only, hold) {
+  if (only === 'confirmed') return result.confirmed;
+  const held = new Set(hold.map(holdKey));
+  return result.unconfirmed.filter((f) => !held.has(holdKey(f)));
+}
+
+// Appends already-composed entries (each carrying its `section`) under one now and one lock; returns
+// true when appended (an empty batch included), false after one stderr line when the append threw,
+// which never changes the exit code. Shared by every verb that writes composed decisions.md lines.
+function appendDecisionEntries(entries, anchoredDir, deps) {
+  try {
+    const now = deps.now();
+    deps.appendDecisions({ runDir: anchoredDir, items: entries.map((e) => ({ section: e.section, entry: formatEntry({ ...e, now }) })) });
+    return true;
+  } catch (err) {
+    deps.stderr(`review-coordination.js: could not append the decisions.md entries (${(err && err.message) || err})\n`);
+    return false;
   }
 }
 
@@ -235,19 +294,81 @@ function run(argv, overrides = {}) {
     return 0;
   }
   if (command === 'categorise-reproduction') {
-    if (rest.length !== 2) {
+    const flags = {};
+    const positional = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (REPRODUCTION_FLAGS.includes(rest[i])) {
+        // A trailing bare flag or a blank value (an unset $PIPELINE_RUN_DIR expands to "") is a usage error.
+        if (i + 1 >= rest.length || rest[i + 1].trim() === '') {
+          deps.stderr(`review-coordination.js: ${rest[i]} needs a value\n` + USAGE);
+          return 2;
+        }
+        flags[rest[i].slice(2)] = rest[++i];
+      } else positional.push(rest[i]);
+    }
+    if (positional.length !== 2) {
       deps.stderr('review-coordination.js: categorise-reproduction takes exactly 2 JSON file paths\n' + USAGE);
       return 2;
     }
-    const a = readJson(rest[0], deps);
+    const written = flags.run !== undefined;
+    if (!written && (flags.lens !== undefined || flags.only !== undefined || flags.hold !== undefined)) {
+      deps.stderr('review-coordination.js: --lens, --only and --hold apply only with --run\n' + USAGE);
+      return 2;
+    }
+    if (written && (flags.lens === undefined || flags.only === undefined)) {
+      deps.stderr('review-coordination.js: categorise-reproduction --run needs --lens and --only\n' + USAGE);
+      return 2;
+    }
+    if (written && flags.only !== 'confirmed' && flags.only !== 'unconfirmed') {
+      deps.stderr('review-coordination.js: --only needs confirmed or unconfirmed\n' + USAGE);
+      return 2;
+    }
+    if (flags.hold !== undefined && flags.only === 'confirmed') {
+      deps.stderr('review-coordination.js: --hold applies only with --only unconfirmed\n' + USAGE);
+      return 2;
+    }
+    if (written) {
+      const problem = lensProblem(flags.lens);
+      if (problem) {
+        deps.stderr(`review-coordination.js: ${problem}\n`);
+        return 2;
+      }
+    }
+    const a = readJson(positional[0], deps);
     if (a.failed) return 2;
-    const b = readJson(rest[1], deps);
+    const b = readJson(positional[1], deps);
     if (b.failed) return 2;
     if (!Array.isArray(a.value) || !Array.isArray(b.value)) {
       deps.stderr('review-coordination.js: both inputs must be JSON arrays of findings\n');
       return 2;
     }
-    deps.stdout(JSON.stringify(categoriseReproduction(a.value, b.value)) + '\n');
+    const result = categoriseReproduction(a.value, b.value);
+    if (!written) {
+      deps.stdout(JSON.stringify(result) + '\n');
+      return 0;
+    }
+    let hold = [];
+    if (flags.hold !== undefined) {
+      const held = readJson(flags.hold, deps);
+      if (held.failed) return 2;
+      const problem = holdProblem(held.value, flags.hold, result.unconfirmed);
+      if (problem) {
+        deps.stderr(`review-coordination.js: ${problem}\n`);
+        return 2;
+      }
+      hold = held.value;
+    }
+    const { entries, unlocated } = pairEntries(result, { lens: flags.lens, only: flags.only, hold });
+    const bad = writtenFindings(result, flags.only, hold).find((f) => typeof f.path !== 'string' || f.path === '' || /[\r\n]/.test(f.path));
+    if (bad) {
+      deps.stderr(`review-coordination.js: a finding path must be a non-empty single line, got ${JSON.stringify(bad.path)}\n`);
+      return 2;
+    }
+    const anchored = anchorRunDir(flags.run, deps, 3);
+    if (anchored.exitCode !== undefined) return anchored.exitCode;
+    const sectioned = entries.map((e) => ({ ...e, section: '/review' }));
+    const logged = appendDecisionEntries(sectioned, anchored.dir, deps);
+    deps.stdout(JSON.stringify({ ...result, entries: sectioned, unlocated, logged }) + '\n');
     return 0;
   }
   if (command === 'detect-overlap') {
