@@ -6,7 +6,9 @@ other than Impeccable. Reference only — no mode's dispatch logic loads it.
 
 Moved here from `plugin/skills/design-wrapper/` (#5550). A bare file name below, such as
 `critics.md` or `impeccable-cli.md`, names a file in that directory unless the sentence says it
-belongs to the skill being compared.
+belongs to the skill being compared; the two exceptions are
+`claude-design-skill-comparison.md`, which moved here with this file, and `design-craft.md`, which
+is `plugin/skills/_shared/design-craft.md`.
 
 Anthropic's native `/design` skill is deliberately **not** here: its record (#2690,
 `claude-design-skill-comparison.md`) is a first-party skill decided on a structural invocation
