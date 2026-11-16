@@ -16,14 +16,14 @@ const ROOT = path.join(__dirname, '..');
 const FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'efficiency-report', 'archive');
 const { run, collectRuns, median, summarize, isoWeek, reviewFilesOf } = require(path.join(ROOT, 'tools', 'efficiency-report.js'));
 
-function runCli(argv, extra = {}) {
+async function runCli(argv, extra = {}) {
   const out = [];
   const errs = [];
-  const code = run({ argv, deps: { log: (s) => out.push(s), err: (s) => errs.push(s), ...extra } });
+  const code = await run({ argv, deps: { log: (s) => out.push(s), err: (s) => errs.push(s), ...extra } });
   return { code, out: out.join('\n'), errs: errs.join('\n') };
 }
 
-test('#4029: efficiency report computes medians, ISO weeks and per-profile groups over a fixture archive', () => {
+test('#4029: efficiency report computes medians, ISO weeks and per-profile groups over a fixture archive', async () => {
   const { runs, skipped } = collectRuns(FIXTURE, fs);
   assert.strictEqual(skipped, 1);
   assert.deepStrictEqual(runs.map((r) => r.runId).sort(), [
@@ -82,7 +82,7 @@ test('#4029: efficiency report computes medians, ISO weeks and per-profile group
     minutes: 30, roundTrips: 500, procedureKb: 5, verifyMinutes: 5, ceremonyShare: 0.4,
   });
 
-  const { code, out, errs } = runCli(['--archive', FIXTURE]);
+  const { code, out, errs } = await runCli(['--archive', FIXTURE]);
   assert.strictEqual(code, 0, errs);
   const lines = out.split('\n');
   assert.strictEqual(
@@ -100,8 +100,8 @@ test('#4029: efficiency report computes medians, ISO weeks and per-profile group
   ]);
 });
 
-test('#4029: --json prints the summary as JSON', () => {
-  const { code, out } = runCli(['--archive', FIXTURE, '--json']);
+test('#4029: --json prints the summary as JSON', async () => {
+  const { code, out } = await runCli(['--archive', FIXTURE, '--json']);
   assert.strictEqual(code, 0);
   const j = JSON.parse(out);
   assert.strictEqual(j.skipped, 1);
@@ -111,8 +111,8 @@ test('#4029: --json prints the summary as JSON', () => {
   assert.deepStrictEqual(Object.keys(j.byWeek), ['2026-W53', '2027-W01']);
 });
 
-test('#4359: review-phase per-file reads: median over runs with data, missing key counts as 0', () => {
-  const { code, out } = runCli(['--archive', FIXTURE, '--json']);
+test('#4359: review-phase per-file reads: median over runs with data, missing key counts as 0', async () => {
+  const { code, out } = await runCli(['--archive', FIXTURE, '--json']);
   assert.strictEqual(code, 0);
   const r = JSON.parse(out).reviewFileReads;
   // Only records 6 and 7 reached review with per-file data; record-8's review never started and the
@@ -124,7 +124,7 @@ test('#4359: review-phase per-file reads: median over runs with data, missing ke
   // record-7 lacks the key and counts as 0: median of [2, 0] is 1.
   assert.deepStrictEqual(r.files['skills/review/step3-lens-dispatch.md'], { median: 1, total: 2 });
 
-  const md = runCli(['--archive', FIXTURE]);
+  const md = await runCli(['--archive', FIXTURE]);
   assert.strictEqual(md.code, 0, md.errs);
   const lines = md.out.split('\n');
   const at = lines.indexOf('## Review-phase skill-file reads');
@@ -135,7 +135,7 @@ test('#4359: review-phase per-file reads: median over runs with data, missing ke
   assert.ok(lines.includes('| skills/review/step3-lens-dispatch.md | 1 | 2 |'), md.out);
 });
 
-test('#4359: review-phase per-file reads sum every reached review row, tie-break by key, and say so when no run has data', () => {
+test('#4359: review-phase per-file reads sum every reached review row, tie-break by key, and say so when no run has data', async () => {
   const reviewRow = (procedureFiles, extra = {}) => ({
     phase: 'review', start: '2027-01-07T09:00:00.000Z', end: '2027-01-07T09:10:00.000Z', source: 'skill_invoked', procedureFiles, ...extra,
   });
@@ -171,7 +171,7 @@ test('#4359: review-phase per-file reads sum every reached review row, tie-break
   try {
     fs.mkdirSync(path.join(root, '2027-01-07T090000-old'));
     fs.writeFileSync(path.join(root, '2027-01-07T090000-old', 'timing.json'), JSON.stringify({ totals: { minutes: 3 } }));
-    const { code, out } = runCli(['--archive', root]);
+    const { code, out } = await runCli(['--archive', root]);
     assert.strictEqual(code, 0);
     const lines = out.split('\n');
     assert.ok(lines.includes('## Review-phase skill-file reads'), out);
@@ -183,19 +183,23 @@ test('#4359: review-phase per-file reads sum every reached review row, tie-break
   }
 });
 
-test('#4029: missing archive exits 1', () => {
-  const { code, errs } = runCli(['--archive', path.join(FIXTURE, 'does-not-exist')]);
+test('#4029: missing archive exits 1', async () => {
+  const { code, errs } = await runCli(['--archive', path.join(FIXTURE, 'does-not-exist')]);
   assert.strictEqual(code, 1);
   assert.match(errs, /archive/);
 });
 
-test('#4029: a malformed invocation exits 2', () => {
-  assert.strictEqual(runCli(['--bogus']).code, 2);
-  assert.strictEqual(runCli(['--archive']).code, 2);
-  assert.strictEqual(runCli(['--archive', '--json']).code, 2);
+test('#4029: a malformed invocation exits 2', async () => {
+  assert.strictEqual((await runCli(['--bogus'])).code, 2);
+  assert.strictEqual((await runCli(['--archive'])).code, 2);
+  assert.strictEqual((await runCli(['--archive', '--json'])).code, 2);
+  // #4359: --since needs a real YYYY-MM-DD date.
+  assert.strictEqual((await runCli(['--since'])).code, 2);
+  assert.strictEqual((await runCli(['--since', '2027-2-3'])).code, 2);
+  assert.strictEqual((await runCli(['--since', '2027-02-31'])).code, 2);
 });
 
-test('#4029: the default archive is resolved from git rev-parse --git-common-dir (absolute) in the main checkout', () => {
+test('#4029: the default archive is resolved from git rev-parse --git-common-dir (absolute) in the main checkout', async () => {
   const calls = [];
   const git = (args, opts) => {
     calls.push(args);
@@ -211,16 +215,114 @@ test('#4029: the default archive is resolved from git rev-parse --git-common-dir
       throw new Error('unexpected read');
     },
   };
-  const { code } = runCli([], { git, fs: fakeFs, cwd: '/some/checkout/.claude/worktrees/w' });
+  const { code } = await runCli([], { git, fs: fakeFs, cwd: '/some/checkout/.claude/worktrees/w' });
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(calls, [['rev-parse', '--path-format=absolute', '--git-common-dir']]);
   assert.deepStrictEqual(seen, [path.join('/some/checkout', '.claude-tweaks', 'pipelines', 'archive')]);
 });
 
-test('#4029: an unresolvable default archive exits 1 rather than guessing', () => {
-  const { code, errs } = runCli([], { git: () => { throw new Error('not a git repo'); } });
+test('#4029: an unresolvable default archive exits 1 rather than guessing', async () => {
+  const { code, errs } = await runCli([], { git: () => { throw new Error('not a git repo'); } });
   assert.strictEqual(code, 1);
   assert.match(errs, /--archive/);
+});
+
+// --- #4359 --recount ---------------------------------------------------------------------------
+// tests/fixtures/efficiency-report/recount/ holds an archive/ and the transcripts/ its timing.json
+// files name by a path relative to the fixture root, so each test copies the tree to a temp dir and
+// runs with cwd there. run-a reads code-mode-steps 3 times in review and once before every phase;
+// run-b reads it once and step3-lens-dispatch twice (and lists one missing transcript beside b.jsonl),
+// from a worktree under a `skills/` directory, so its keys are right only when run-state.json's
+// worktree reaches the recount;
+// run-gone lists only a missing transcript; run-noreview has a transcript but no review span;
+// run-no-list has no transcripts list at all.
+const RECOUNT_FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'efficiency-report', 'recount');
+
+function recountTree() {
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'effrep-recount-'));
+  fs.cpSync(RECOUNT_FIXTURE, root, { recursive: true });
+  return { root, archive: path.join(root, 'archive') };
+}
+
+const timingFiles = (archive) => Object.fromEntries(fs.readdirSync(archive).sort()
+  .filter((e) => fs.existsSync(path.join(archive, e, 'timing.json')))
+  .map((e) => [e, fs.readFileSync(path.join(archive, e, 'timing.json'))]));
+
+test('#4359: --recount counts all-phase reads per run, leaving out unattributed', async () => {
+  const { root, archive } = recountTree();
+  try {
+    const { code, out, errs } = await runCli(['--archive', archive, '--recount', '--json'], { cwd: root });
+    assert.strictEqual(code, 0, errs);
+    const r = JSON.parse(out).recount;
+    assert.strictEqual(r.runs, 2);
+    assert.strictEqual(r.skipped, 1);
+    assert.strictEqual(r.noReview, 1);
+    // run-a: 3 (the read before every phase is unattributed and left out); run-b: 1.
+    assert.deepStrictEqual(r.files['skills/review/code-mode-steps.md'], { median: 2, mean: 2, total: 4 });
+    // run-a lacks the key and counts as 0: median and mean of [0, 2] are 1.
+    assert.deepStrictEqual(r.files['skills/review/step3-lens-dispatch.md'], { median: 1, mean: 1, total: 2 });
+    assert.deepStrictEqual(Object.keys(r.files), ['skills/review/code-mode-steps.md', 'skills/review/step3-lens-dispatch.md']);
+    assert.deepStrictEqual(r.perRun, [
+      { run: '2027-02-01T090000-run-a', reads: { 'skills/review/code-mode-steps.md': 3 } },
+      { run: '2027-02-03T090000-run-b', reads: { 'skills/review/code-mode-steps.md': 1, 'skills/review/step3-lens-dispatch.md': 2 } },
+    ]);
+
+    const md = await runCli(['--archive', archive, '--recount'], { cwd: root });
+    assert.strictEqual(md.code, 0, md.errs);
+    const lines = md.out.split('\n');
+    assert.strictEqual(lines[0], '## Recounted skill-file reads per run (all phases)');
+    assert.ok(lines.includes('runs recounted: 2 (skipped: 1, no review: 1)'), md.out);
+    assert.ok(lines.includes('| File | Median reads/run | Mean reads/run | Total reads |'), md.out);
+    assert.ok(lines.includes('| skills/review/code-mode-steps.md | 2 | 2 | 4 |'), md.out);
+    assert.ok(lines.includes('| skills/review/step3-lens-dispatch.md | 1 | 1 | 2 |'), md.out);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#4359: --recount writes nothing into the archive', async () => {
+  const { root, archive } = recountTree();
+  try {
+    const before = timingFiles(archive);
+    const listing = fs.readdirSync(archive, { recursive: true }).sort();
+    const { code } = await runCli(['--archive', archive, '--recount', '--json'], { cwd: root });
+    assert.strictEqual(code, 0);
+    assert.deepStrictEqual(timingFiles(archive), before);
+    assert.deepStrictEqual(fs.readdirSync(archive, { recursive: true }).sort(), listing);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#4359: --since keeps runs dated on or after the date, in --recount and in the default report', async () => {
+  const { root, archive } = recountTree();
+  try {
+    const { code, out } = await runCli(['--archive', archive, '--recount', '--json', '--since', '2027-02-03'], { cwd: root });
+    assert.strictEqual(code, 0);
+    const r = JSON.parse(out).recount;
+    assert.strictEqual(r.runs, 1);
+    assert.strictEqual(r.skipped, 0);
+    assert.strictEqual(r.noReview, 1);
+    assert.deepStrictEqual(r.perRun.map((x) => x.run), ['2027-02-03T090000-run-b']);
+    // The default report: run-b, run-noreview and run-no-list are dated 2027-02-03 or later.
+    const all = JSON.parse((await runCli(['--archive', archive, '--json'], { cwd: root })).out);
+    const since = JSON.parse((await runCli(['--archive', archive, '--json', '--since', '2027-02-03'], { cwd: root })).out);
+    assert.strictEqual(all.overall.runs, 5);
+    assert.strictEqual(since.overall.runs, 3);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#4359: --recount with no recountable run says so and exits 0', async () => {
+  const { root, archive } = recountTree();
+  try {
+    const { code, out } = await runCli(['--archive', archive, '--recount', '--since', '2027-02-05'], { cwd: root });
+    assert.strictEqual(code, 0);
+    assert.strictEqual(out, 'no archived run has a readable transcript');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('#4029: isoWeek puts a date near New Year in the ISO week-year it belongs to', () => {

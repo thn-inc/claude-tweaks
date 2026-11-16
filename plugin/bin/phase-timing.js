@@ -343,30 +343,16 @@ function resolveTranscripts(o, runState, deps) {
   return { paths, notes };
 }
 
-async function run(argv, deps) {
-  const o = parseArgs(argv);
-  if (!o) { deps.stderr(USAGE); return 2; }
-  if (o.run === '') {
-    deps.stderr('timing: no run directory (PIPELINE_RUN_DIR unset)\n');
-    return 0;
-  }
-  const cwd = deps.cwd();
-  const runDir = path.resolve(cwd, o.run);
-  let stat = null;
-  try { stat = fs.statSync(runDir); } catch { /* not a directory, handled below */ }
-  if (!stat || !stat.isDirectory()) { deps.stderr(`phase-timing.js: --run ${o.run} is not a directory\n${USAGE}`); return 2; }
-  const events = readEvents(path.join(runDir, 'events.jsonl'));
-  if (!events.ok) { deps.stderr(`phase-timing.js: events.jsonl unreadable (${events.error})\n`); return 2; }
-  const runState = readJsonOrNull(path.join(runDir, 'run-state.json'));
-  const out = derivePhases({ events: events.events, manifest: readManifest(runDir), runState });
-
-  const wantTokens = o.transcripts.length > 0 || o.autoTranscript;
-  const { paths, notes } = wantTokens ? resolveTranscripts(o, runState, deps) : { paths: [], notes: [] };
+// The transcript-reading half of run(), writing nothing: events -> phases,
+// then (wantTokens) each path's usage rows, the dispatches and the token join.
+// notes is appended to. -> { out, tokens, guard, timing }.
+async function deriveTiming({ runDir, events, runState, paths, notes, wantTokens, cwd, worktree }) {
+  const out = derivePhases({ events, manifest: readManifest(runDir), runState });
   const transcripts = [];
   let rows = [];
   for (const p of paths) {
     try {
-      const r = await readUsage(resolveAgainst(cwd, p), { worktree: runState && runState.worktree ? runState.worktree : null });
+      const r = await readUsage(resolveAgainst(cwd, p), { worktree });
       if (r.length === 0) {
         const note = `transcript had no usage rows (${p})`;
         transcripts.push({ path: p, rows: 0, note });
@@ -381,10 +367,10 @@ async function run(argv, deps) {
       notes.push(`tokens: transcript not found (${reason})`);
     }
   }
-  const dispatches = wantTokens ? await collectDispatches(paths, events.events, cwd) : null;
+  const dispatches = wantTokens ? await collectDispatches(paths, events, cwd) : null;
   const tokens = wantTokens ? joinTokens(out.phases, rows, { dispatchFileReads: dispatchFileReads(dispatches, paths, cwd) }) : null;
   if (tokens) tokens.totals.rows = rows.length;
-  const guard = wantTokens ? countGuardEvents(events.events) : null;
+  const guard = wantTokens ? countGuardEvents(events) : null;
 
   const timing = { runDir, generatedAt: new Date().toISOString(), phases: tokens ? tokens.phases : out.phases, totals: { ...out.totals } };
   if (out.ciGate) timing.ciGate = out.ciGate;
@@ -400,6 +386,40 @@ async function run(argv, deps) {
     if (notes.length) timing.notes = notes;
     timing.dispatches = dispatches;
   }
+  return { out, tokens, guard, timing };
+}
+
+// #4359: a run's timing for an explicit transcript `paths` list, as run()
+// would build it, writing nothing (efficiency-report.js --recount reads
+// archived runs with it). An unreadable events.jsonl throws.
+async function buildTiming({ runDir, paths, cwd = process.cwd(), worktree = null }) {
+  const events = readEvents(path.join(runDir, 'events.jsonl'));
+  if (!events.ok) throw new Error(`events.jsonl unreadable (${events.error})`);
+  const runState = readJsonOrNull(path.join(runDir, 'run-state.json'));
+  const r = await deriveTiming({ runDir, events: events.events, runState, paths, notes: [], wantTokens: true, cwd, worktree });
+  return r.timing;
+}
+
+async function run(argv, deps) {
+  const o = parseArgs(argv);
+  if (!o) { deps.stderr(USAGE); return 2; }
+  if (o.run === '') {
+    deps.stderr('timing: no run directory (PIPELINE_RUN_DIR unset)\n');
+    return 0;
+  }
+  const cwd = deps.cwd();
+  const runDir = path.resolve(cwd, o.run);
+  let stat = null;
+  try { stat = fs.statSync(runDir); } catch { /* not a directory, handled below */ }
+  if (!stat || !stat.isDirectory()) { deps.stderr(`phase-timing.js: --run ${o.run} is not a directory\n${USAGE}`); return 2; }
+  const events = readEvents(path.join(runDir, 'events.jsonl'));
+  if (!events.ok) { deps.stderr(`phase-timing.js: events.jsonl unreadable (${events.error})\n`); return 2; }
+  const runState = readJsonOrNull(path.join(runDir, 'run-state.json'));
+
+  const wantTokens = o.transcripts.length > 0 || o.autoTranscript;
+  const { paths, notes } = wantTokens ? resolveTranscripts(o, runState, deps) : { paths: [], notes: [] };
+  const worktree = runState && runState.worktree ? runState.worktree : null;
+  const { out, tokens, guard, timing } = await deriveTiming({ runDir, events: events.events, runState, paths, notes, wantTokens, cwd, worktree });
   // #4029: the efficiency-budget check. A transcript that yielded no rows leaves
   // the transcript-backed totals out, so they read as unmeasured, never as 0 -> ok.
   let budgetLine = null;
@@ -438,7 +458,7 @@ const realDeps = {
 // Kept for callers that import it. Removal condition: no file under plugin/, tests/, tools/, perf/ or evals/ calls main.
 async function main(argv) { return run(argv, realDeps); }
 
-module.exports = { run, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
+module.exports = { run, buildTiming, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
 if (require.main === module) {
   run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; }).catch((err) => {
     process.stderr.write(`phase-timing.js: ${err && err.message}\n`);

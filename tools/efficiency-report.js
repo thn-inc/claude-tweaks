@@ -2,7 +2,7 @@
 'use strict';
 // tools/efficiency-report.js — cross-run efficiency report over archived pipeline timing.json files (#4029).
 //
-//   node tools/efficiency-report.js [--archive <dir>] [--json]
+//   node tools/efficiency-report.js [--archive <dir>] [--json] [--recount] [--since <YYYY-MM-DD>]
 //
 // Reads {archive}/{run}/timing.json for every run directory (never a nested spec-N/timing.json) and
 // prints the median minutes, tool round trips, procedure KB, verify minutes and ceremony share overall,
@@ -16,6 +16,12 @@
 // of each run's reached review phase, as a median per run (over the runs that carry the data, a
 // missing file counted as 0) and a total.
 //
+// --recount (#4359) instead rebuilds each run's timing from the transcripts its timing.json lists
+// (phase-timing.js buildTiming) and prints per-file skill-file reads per run over all phases — median
+// and mean over the recounted runs, a missing file counted as 0, and a total — with the counts of runs
+// skipped (no listed transcript still exists) and with no reached review phase. --since <YYYY-MM-DD>
+// keeps only runs whose directory name's leading date is on or after it, in either mode.
+//
 // --archive defaults to {main checkout}/.claude-tweaks/pipelines/archive, where the main checkout is
 // the dirname of `git rev-parse --path-format=absolute --git-common-dir` — the same archive from any
 // worktree. The tool only reads.
@@ -23,15 +29,15 @@
 // Exit codes: 0 rendered; 1 the archive is missing or unreadable (or the default cannot be resolved);
 // 2 malformed invocation.
 //
-// Seam: run({ argv, deps }) returns the exit code; deps holds fs, git(args, {cwd}) (stdout; throws on
-// failure), cwd and the log/err line writers.
+// Seam: run({ argv, deps }) resolves to the exit code; deps holds fs, git(args, {cwd}) (stdout; throws
+// on failure), cwd, buildTiming (phase-timing.js's) and the log/err line writers.
 
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseFlatLines } = require('../plugin/bin/lib/policy-schema');
 
-const USAGE = 'usage: node tools/efficiency-report.js [--archive <dir>] [--json]';
+const USAGE = 'usage: node tools/efficiency-report.js [--archive <dir>] [--json] [--recount] [--since <YYYY-MM-DD>]';
 const NO_PROFILE = 'none';
 const NO_WEEK = 'unknown';
 const MEDIAN_KEYS = ['minutes', 'roundTrips', 'procedureKb', 'verifyMinutes', 'ceremonyShare'];
@@ -45,6 +51,7 @@ function defaultDeps() {
       cwd: opts.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     })),
     cwd: process.cwd(),
+    buildTiming: (args) => require('../plugin/bin/phase-timing').buildTiming(args),
     log: (s) => process.stdout.write(`${s}\n`),
     err: (s) => process.stderr.write(`${s}\n`),
   };
@@ -97,15 +104,17 @@ function verifyMinutesOf(timing) {
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// The per-file procedure reads of every reached review phase, summed: a phases[] row with phase
-// 'review', a non-null start and a source other than 'unattributed' (derive.js emits a span-less
-// review row for a run that never reached review). null when no reached review row carries a
-// procedureFiles object — an older timing.json, or a run that stopped before review.
+// A reached review phase: a phases[] row with phase 'review', a non-null start and a source other
+// than 'unattributed' (derive.js emits a span-less review row for a run that never reached review).
+const isReachedReview = (p) => Boolean(p) && p.phase === 'review' && p.start != null && p.source !== 'unattributed';
+
+// The per-file procedure reads of every reached review phase, summed. null when no reached review row
+// carries a procedureFiles object — an older timing.json, or a run that stopped before review.
 function reviewFilesOf(timing) {
   if (!Array.isArray(timing.phases)) return null;
   let files = null;
   for (const p of timing.phases) {
-    if (!p || p.phase !== 'review' || p.start == null || p.source === 'unattributed') continue;
+    if (!isReachedReview(p)) continue;
     if (!isPlainObject(p.procedureFiles)) continue;
     files = files || {};
     for (const [key, count] of Object.entries(p.procedureFiles)) {
@@ -129,12 +138,23 @@ function profileOf(runDir, fsImpl) {
   return v ? v.replace(/^(["'])(.*)\1$/, '$2') : null;
 }
 
+// --since: a run is kept when its directory name's leading YYYY-MM-DD is on or after `since`; a name
+// with no leading date is dropped. No `since` keeps every entry.
+function keptEntries(archiveDir, fsImpl, since) {
+  const entries = fsImpl.readdirSync(archiveDir).sort();
+  if (!since) return entries;
+  return entries.filter((e) => {
+    const m = /^\d{4}-\d{2}-\d{2}/.exec(e);
+    return Boolean(m) && m[0] >= since;
+  });
+}
+
 // Reads only {archiveDir}/{entry}/timing.json: a missing file is no run, a malformed one is skipped.
 // Throws when the archive directory itself cannot be listed.
-function collectRuns(archiveDir, fsImpl) {
+function collectRuns(archiveDir, fsImpl, since = null) {
   const runs = [];
   let skipped = 0;
-  for (const entry of fsImpl.readdirSync(archiveDir).sort()) {
+  for (const entry of keptEntries(archiveDir, fsImpl, since)) {
     const dir = path.join(archiveDir, entry);
     let text;
     try {
@@ -198,8 +218,91 @@ function reviewFileReads(runs) {
     const counts = withData.map((r) => r.reviewFiles[key] || 0);
     return [key, { median: median(counts), total: counts.reduce((a, b) => a + b, 0) }];
   });
-  rows.sort((a, b) => b[1].total - a[1].total || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  rows.sort(byTotalThenKey);
   return { runs: withData.length, files: Object.fromEntries(rows) };
+}
+
+const byTotalThenKey = (a, b) => b[1].total - a[1].total || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+
+function readJson(file, fsImpl) {
+  try {
+    const v = JSON.parse(fsImpl.readFileSync(file, 'utf8'));
+    return isPlainObject(v) ? v : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function exists(file, fsImpl) {
+  try {
+    fsImpl.statSync(file);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// --recount (#4359): rebuild each archived run's timing from the transcripts its timing.json lists
+// (phase-timing.js buildTiming, which writes nothing) and count its skill-file reads over every
+// phases[] bucket — `unattributed` is left out, since a dispatcher's session transcript also holds
+// other runs. A run with no `transcripts` list is not a candidate. One whose listed paths all are
+// gone, or whose events.jsonl cannot be read, is skipped; one whose recount has no reached review
+// phase is noReview. Relative transcript paths resolve against cwd, as phase-timing.js resolves them.
+async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
+  const perRun = [];
+  let skipped = 0;
+  let noReview = 0;
+  for (const entry of keptEntries(archiveDir, fsImpl, since)) {
+    const dir = path.join(archiveDir, entry);
+    const t = readJson(path.join(dir, 'timing.json'), fsImpl);
+    if (!t || !Array.isArray(t.transcripts) || t.transcripts.length === 0) continue;
+    const paths = t.transcripts
+      .map((x) => (x && typeof x.path === 'string' && x.path ? x.path : null))
+      .filter((p) => p !== null && exists(path.resolve(cwd, p), fsImpl));
+    if (!paths.length) { skipped += 1; continue; }
+    const state = readJson(path.join(dir, 'run-state.json'), fsImpl);
+    const worktree = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
+    let timing;
+    try {
+      timing = await buildTiming({ runDir: dir, paths, cwd, worktree });
+    } catch (_) {
+      skipped += 1;
+      continue;
+    }
+    const phases = Array.isArray(timing.phases) ? timing.phases : [];
+    if (!phases.some(isReachedReview)) { noReview += 1; continue; }
+    const reads = {};
+    for (const p of phases) {
+      for (const [key, count] of Object.entries(isPlainObject(p.procedureFiles) ? p.procedureFiles : {})) {
+        const n = num(count);
+        if (n !== null) reads[key] = (reads[key] || 0) + n;
+      }
+    }
+    perRun.push({ run: entry, reads });
+  }
+  const keys = new Set(perRun.flatMap((r) => Object.keys(r.reads)));
+  const rows = [...keys].map((key) => {
+    const counts = perRun.map((r) => r.reads[key] || 0);
+    const total = counts.reduce((a, b) => a + b, 0);
+    return [key, { median: median(counts), mean: Math.round((total / counts.length) * 10) / 10, total }];
+  });
+  rows.sort(byTotalThenKey);
+  return { runs: perRun.length, skipped, noReview, files: Object.fromEntries(rows), perRun };
+}
+
+const RECOUNT_TOP = 20;
+
+function renderRecount(recount) {
+  const lines = [
+    '## Recounted skill-file reads per run (all phases)',
+    '',
+    `runs recounted: ${recount.runs} (skipped: ${recount.skipped}, no review: ${recount.noReview})`,
+    '',
+    '| File | Median reads/run | Mean reads/run | Total reads |',
+    '|---|---|---|---|',
+  ];
+  for (const [key, f] of Object.entries(recount.files).slice(0, RECOUNT_TOP)) lines.push(`| ${key} | ${fmt(f.median)} | ${fmt(f.mean)} | ${f.total} |`);
+  return lines.join('\n');
 }
 
 function summarize(runs) {
@@ -252,12 +355,26 @@ function renderMarkdown(summary, roundTripRuns, skipped) {
   ].join('\n');
 }
 
+// A real calendar date written YYYY-MM-DD (2027-02-31 is not one).
+function isDate(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof v === 'string' ? v : '');
+  if (!m) return false;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3]);
+}
+
 function parseArgs(args) {
   const opts = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--json') opts.json = true;
+    else if (a === '--recount') opts.recount = true;
     else if (a === '--help' || a === '-h') opts.help = true;
+    else if (a === '--since') {
+      const v = args[++i];
+      if (!isDate(v)) return { error: '--since needs a YYYY-MM-DD date' };
+      opts.since = v;
+    }
     else if (a === '--archive') {
       const v = args[++i];
       if (v === undefined || v === '' || v.startsWith('-')) return { error: '--archive needs a value' };
@@ -269,7 +386,7 @@ function parseArgs(args) {
 
 const errText = (e) => String((e && e.message) || e);
 
-function run({ argv, deps: given = {} }) {
+async function run({ argv, deps: given = {} }) {
   const deps = { ...defaultDeps(), ...given };
   const parsed = parseArgs(argv);
   if (parsed.error) {
@@ -292,9 +409,21 @@ function run({ argv, deps: given = {} }) {
       return 1;
     }
   }
+  if (opts.recount) {
+    let recount;
+    try {
+      recount = await recountRuns(archive, { fsImpl: deps.fs, since: opts.since || null, cwd: deps.cwd, buildTiming: deps.buildTiming });
+    } catch (e) {
+      deps.err(`efficiency-report.js: cannot read the archive ${archive}: ${errText(e)}`);
+      return 1;
+    }
+    if (opts.json) deps.log(JSON.stringify({ archive, recount }, null, 2));
+    else deps.log(recount.runs ? renderRecount(recount) : 'no archived run has a readable transcript');
+    return 0;
+  }
   let collected;
   try {
-    collected = collectRuns(archive, deps.fs);
+    collected = collectRuns(archive, deps.fs, opts.since || null);
   } catch (e) {
     deps.err(`efficiency-report.js: cannot read the archive ${archive}: ${errText(e)}`);
     return 1;
@@ -308,8 +437,11 @@ function run({ argv, deps: given = {} }) {
   return 0;
 }
 
-module.exports = { run, collectRuns, median, summarize, isoWeek, reviewFilesOf };
+module.exports = { run, collectRuns, recountRuns, median, summarize, isoWeek, reviewFilesOf };
 
 if (require.main === module) {
-  process.exitCode = run({ argv: process.argv.slice(2) });
+  run({ argv: process.argv.slice(2) }).then((code) => { process.exitCode = code; }).catch((e) => {
+    process.stderr.write(`efficiency-report.js: ${errText(e)}\n`);
+    process.exitCode = 1;
+  });
 }

@@ -449,6 +449,23 @@ test('#4359: an agent transcript passed as --transcript is not counted again as 
   assert.deepEqual(t.phases.find((x) => x.phase === 'review').procedureFiles, { 'skills/review/SKILL.md': 1 });
 });
 
+test('#4359: buildTiming returns what run() writes, and writes nothing', async () => {
+  const { buildTiming } = require(CLI);
+  const src = path.join(__dirname, '..', '..', 'fixtures', 'efficiency-report', 'recount');
+  const dir = tmpRun(false);
+  for (const f of ['events.jsonl', 'run-state.json']) fs.copyFileSync(path.join(src, 'archive', '2027-02-01T090000-run-a', f), path.join(dir, f));
+  const transcript = path.join(src, 'transcripts', 'a.jsonl');
+  const built = await buildTiming({ runDir: dir, paths: [transcript], cwd: dir, worktree: '/w/run-a' });
+  assert.ok(!fs.existsSync(path.join(dir, 'timing.json')), 'buildTiming wrote timing.json');
+  const r = await run(['--run', dir, '--transcript', transcript, '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const printed = JSON.parse(r.stdout);
+  assert.deepEqual(built.phases, printed.phases);
+  assert.deepEqual(built.unattributed, printed.unattributed);
+  assert.deepEqual(built.phases.find((p) => p.phase === 'review').procedureFiles, { 'skills/review/code-mode-steps.md': 3 });
+  assert.deepEqual(built.unattributed.procedureFiles, { 'skills/review/code-mode-steps.md': 1 });
+});
+
 // --- #4029 turn-class telemetry -----------------------------------------------
 const TC_FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'turn-classes');
 const TC_HAND = { edit: 1, read: 1, explore: 1, procedure: 1, bookkeeping: 1, orientation: 2, verify: 1, 'guard-refusal': 1, dispatch: 1, other: 1 };
