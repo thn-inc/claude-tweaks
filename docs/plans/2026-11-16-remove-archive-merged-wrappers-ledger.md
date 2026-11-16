@@ -12,3 +12,5 @@
 | 8 | review | Low architecture finding: plugin/bin/lib/reconcile/archive-merged.js:1942 CLASSIFY_ORDER default reached only by tests | accepted | Intentional: spec Deliverable 3 keeps CLASSIFY_ORDER (minus merged) as the no-kinds default; the main loop's kinds list is a deliberate subset; predates this change |
 | 9 | wrap-up | Reflect (Near-misses, systemic): a retired function name can return through another branch's prose; the first catch-up merge re-introduced two in docs/hooks.md and open draft PR 4445 adds prose naming one. Recommended: no action (staged/reflect-1.md). | observation | — |
 | 10 | wrap-up | Reflect (Friction): a resumed session's own run stays at status interrupted, since only record-worktree sets it back to active; no harm observed this run. Recommended: no action (staged/reflect-2.md). | observation | — |
+| 11 | wrap-up | pr — PR #5642 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 12 | wrap-up | suite — residue probe did not re-run the suite (skipped via --no-suite); this run's suite state is the verification stamp, CI run 43834098045 passed on 9505f9ddf | observation | — |
