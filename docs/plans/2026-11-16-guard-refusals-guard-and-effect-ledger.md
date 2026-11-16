@@ -10,3 +10,4 @@
 | 6 | build | SDD ruling — Task 5 measurement had no separate task review: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
 | 7 | build | SDD ruling — git -C $W with an unquoted computed value still classifies read: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
 | 8 | build | SDD ruling — git -- stop misreads -- given as an option value: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
+| 9 | build/skill | [skill: NEW - shell-effect-allowlist] tools/guard-refusals/effect.js establishes a read-direction allowlist for judging whether a shell command only reads (unlisted word unknown, write flags per word, computed arguments unknown, wrapper and keyword transparency); no project skill covers classifying command effect, and the review rounds found the same leak classes (operator-adjacent tokens, computed arguments, value-taking option clusters) twice | observation | — |
