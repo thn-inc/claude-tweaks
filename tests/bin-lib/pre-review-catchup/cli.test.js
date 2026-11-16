@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { originWithTwoClones } = require('../../helpers/git-fixtures');
+const { catchupFixture } = require('./fixtures');
 const { readText } = require('../../helpers/read-skill');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { run, parseArgs } = require('../../../plugin/bin/pre-review-catchup');
@@ -16,32 +16,13 @@ test.after(() => {
   for (const dir of roots) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const FIVE_LINES = ['l1', 'l2', 'l3', 'l4', 'l5'];
-
 // `work` is the build checkout on branch `feat` (cut from `main`, which already carries
-// a.txt and b.txt); `other` pushes upstream commits to origin's `main`.
-function fixture() {
-  const f = originWithTwoClones('ct-precatchup-');
+// a.txt and b.txt); `other` pushes upstream commits to origin's `main`. A shape name adds
+// the pre-call setup that several tests share (fixtures.js), built once per process.
+function fixture(shape) {
+  const f = catchupFixture(shape);
   roots.push(f.root);
-  const { work, other } = f;
-  const write = (dir, name, lines, msg) => {
-    fs.writeFileSync(path.join(dir, name), `${lines.join('\n')}\n`);
-    f.run(dir, ['add', name]);
-    f.run(dir, ['commit', '-q', '-m', msg]);
-  };
-  write(work, 'a.txt', FIVE_LINES, 'a');
-  write(work, 'b.txt', FIVE_LINES, 'b');
-  f.run(work, ['push', '-q', 'origin', 'main']);
-  f.run(other, ['pull', '-q', 'origin', 'main']);
-  f.run(work, ['checkout', '-q', '-b', 'feat']);
-  // Replace line `n` (1-based) of a file with `value`, commit it.
-  const editLine = (dir, name, n, value, msg) => {
-    const lines = [...FIVE_LINES];
-    lines[n - 1] = value;
-    write(dir, name, lines, msg);
-  };
-  const pushUpstream = () => f.run(other, ['push', '-q', 'origin', 'main']);
-  return { ...f, editLine, pushUpstream, head: () => f.run(work, ['rev-parse', 'HEAD']).trim() };
+  return f;
 }
 
 // A fake-.git anchored run dir under the fixture root, the shape resolveTarget accepts
@@ -80,10 +61,7 @@ const decisionsOf = (runDir) => fs.readFileSync(path.join(runDir, 'decisions.md'
 const MAIN = ['--integration-branch', 'main'];
 
 test('AC1.1: overlapping upstream commit is merged before review', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
-  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
-  f.pushUpstream();
+  const f = fixture('feat-edit-overlapping-upstream');
   const r = invoke(f, MAIN);
   assert.equal(r.code, 0);
   assert.equal(r.json.outcome, 'merged');
@@ -123,10 +101,7 @@ test('overlapCommits counts commits, not files: two upstream commits on one over
 });
 
 test('AC1.2: the merged tree is what the review sees (reviewBase)', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
-  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
-  f.pushUpstream();
+  const f = fixture('feat-edit-overlapping-upstream');
   const r = invoke(f, MAIN);
   assert.equal(r.json.outcome, 'merged');
   assert.equal(r.json.reviewBase, f.run(f.work, ['rev-parse', 'origin/main']).trim());
@@ -158,9 +133,8 @@ test('AC2.1: no overlap runs no merge and logs the check', () => {
 });
 
 test('AC2.1: zero upstream commits is still a logged no-overlap', () => {
-  const f = fixture();
+  const f = fixture('feat-edit-only');
   const runDir = withRunDir(f);
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
   const r = invoke(f, [...MAIN, '--run', runDir]);
   assert.equal(r.json.outcome, 'no-overlap');
   assert.equal(r.json.upstreamCommits, 0);
@@ -169,10 +143,7 @@ test('AC2.1: zero upstream commits is still a logged no-overlap', () => {
 });
 
 test('AC3.1: conflicting catch-up stops with the merge in progress', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 3, 'FEAT', 'feat edit');
-  f.editLine(f.other, 'a.txt', 3, 'UPSTREAM', 'upstream edit');
-  f.pushUpstream();
+  const f = fixture('conflicting-edit');
   const r = invoke(f, MAIN);
   assert.equal(r.code, 0);
   assert.equal(r.json.outcome, 'conflict');
@@ -186,10 +157,7 @@ test('AC3.1: conflicting catch-up stops with the merge in progress', () => {
 // The resume path a HARD-GATE conflict stop sets up: the tree is mid-merge, so the
 // unmerged paths show as uncommitted changes. That must stay `conflict`, never `dirty-tree`.
 function conflictedFixture() {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 3, 'FEAT', 'feat edit');
-  f.editLine(f.other, 'a.txt', 3, 'UPSTREAM', 'upstream edit');
-  f.pushUpstream();
+  const f = fixture('conflicting-edit');
   assert.equal(invoke(f, MAIN).json.outcome, 'conflict');
   return f;
 }
@@ -229,8 +197,7 @@ test('AC3.1: a resolved but uncommitted merge is conflict with no conflictFiles'
 });
 
 test('fetch failure fails open with a distinct SKIP line', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const f = fixture('feat-edit-only');
   f.run(f.work, ['remote', 'set-url', 'origin', path.join(f.root, 'missing.git')]);
   const r = invoke(f, MAIN);
   assert.equal(r.code, 0);
@@ -242,8 +209,7 @@ test('fetch failure fails open with a distinct SKIP line', () => {
 });
 
 test('fetch-failed carries reviewBase from the last-fetched ref, null when it does not resolve', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const f = fixture('feat-edit-only');
   f.run(f.work, ['remote', 'set-url', 'origin', path.join(f.root, 'missing.git')]);
   const r = invoke(f, MAIN);
   assert.equal(r.json.outcome, 'fetch-failed');
@@ -282,10 +248,7 @@ test("overlap counts a rename's old path", () => {
 
 test('Filename too long is windows-longpath, not fetch-failed', () => {
   const stderr = 'error: unable to create file x: Filename too long';
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
-  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
-  f.pushUpstream();
+  const f = fixture('feat-edit-overlapping-upstream');
   for (const verb of ['fetch', 'merge']) {
     const r = invoke(f, MAIN, { git: trapGit(f, (a) => a[0] === verb, stderr) });
     assert.equal(r.code, 0, verb);
@@ -298,8 +261,7 @@ test('Filename too long is windows-longpath, not fetch-failed', () => {
 });
 
 test('a timed-out or prompting fetch is bounded, non-interactive and lands in fetch-failed', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const f = fixture('feat-edit-only');
   const fetchOpts = [];
   const fetchArgs = [];
   const real = f.gitIn(f.work);
@@ -324,8 +286,7 @@ test('a timed-out or prompting fetch is bounded, non-interactive and lands in fe
 });
 
 test('the real CLI wiring forwards the fetch timeout and no-prompt env to the spawn', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const f = fixture('feat-edit-only');
   const childProcess = require('child_process');
   const original = childProcess.execFileSync;
   const fetchCalls = [];
@@ -357,10 +318,7 @@ test('the real CLI wiring forwards the fetch timeout and no-prompt env to the sp
 });
 
 test('a failed merge with no unmerged paths is an undecided crash: exit 1, HEAD unchanged', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
-  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
-  f.pushUpstream();
+  const f = fixture('feat-edit-overlapping-upstream');
   const before = f.head();
   const r = invoke(f, MAIN, { git: trapGit(f, (a) => a[0] === 'merge', 'fatal: refusing') });
   assert.equal(r.code, 1);
@@ -371,10 +329,7 @@ test('a failed merge with no unmerged paths is an undecided crash: exit 1, HEAD 
 
 test('a long-path merge failure aborts a partial merge, best effort', () => {
   const stderr = 'error: unable to create file x: Filename too long';
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
-  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
-  f.pushUpstream();
+  const f = fixture('feat-edit-overlapping-upstream');
   const real = f.gitIn(f.work);
   const seam = ({ mergeHead, abortThrows }) => {
     const calls = [];
@@ -420,10 +375,7 @@ test('a long-path merge failure aborts a partial merge, best effort', () => {
 });
 
 test('dirty tree refuses', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
-  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
-  f.pushUpstream();
+  const f = fixture('feat-edit-overlapping-upstream');
   fs.appendFileSync(path.join(f.work, 'a.txt'), 'uncommitted\n');
   const before = f.head();
   const r = invoke(f, MAIN);
@@ -436,8 +388,7 @@ test('dirty tree refuses', () => {
 });
 
 test('no --run: line is returned, nothing logged', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const f = fixture('feat-edit-only');
   const r = invoke(f, MAIN);
   assert.equal(r.code, 0);
   assert.equal(r.json.logged, false);
@@ -446,14 +397,11 @@ test('no --run: line is returned, nothing logged', () => {
 });
 
 test('unanchored --run keeps the outcome and reports logError', () => {
-  const f = fixture();
+  const f = fixture('feat-edit-overlapping-upstream');
   withRunDir(f);
   const shadow = path.join(f.work, '.claude-tweaks', 'pipelines', 'r1');
   fs.mkdirSync(shadow, { recursive: true });
   fs.writeFileSync(path.join(shadow, 'decisions.md'), 'shadow\n');
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
-  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
-  f.pushUpstream();
   const r = invoke(f, [...MAIN, '--run', shadow]);
   assert.equal(r.code, 0);
   assert.equal(r.json.outcome, 'merged');
@@ -469,11 +417,8 @@ test('unanchored --run keeps the outcome and reports logError', () => {
 // log-decision.js --entries must yield exactly `line`, never a re-prefixed copy of it.
 test('entry is the parts of line: formatEntry and log-decision --entries reproduce it', () => {
   const NOW = Date.UTC(2026, 9, 28, 7, 8, 9);
-  const f = fixture();
+  const f = fixture('feat-edit-overlapping-upstream');
   const runDir = withRunDir(f);
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
-  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
-  f.pushUpstream();
   const r = invoke(f, MAIN, { now: () => NOW });
   assert.equal(r.json.outcome, 'merged');
   assert.deepEqual(Object.keys(r.json.entry).sort(), ['reversibility', 'section', 'status', 'step', 'text']);
@@ -492,9 +437,8 @@ test('entry is the parts of line: formatEntry and log-decision --entries reprodu
 });
 
 test('a missing --run dir keeps the outcome and reports logError', () => {
-  const f = fixture();
+  const f = fixture('feat-edit-only');
   withRunDir(f);
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
   const r = invoke(f, [...MAIN, '--run', path.join(f.root, 'no-such-run')]);
   assert.equal(r.code, 0);
   assert.equal(r.json.outcome, 'no-overlap');
@@ -503,9 +447,8 @@ test('a missing --run dir keeps the outcome and reports logError', () => {
 });
 
 test('a throwing append keeps the outcome and reports logError', () => {
-  const f = fixture();
+  const f = fixture('feat-edit-only');
   const runDir = withRunDir(f);
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
   const r = invoke(f, [...MAIN, '--run', runDir], { appendDecision: () => { throw new Error('disk full'); } });
   assert.equal(r.code, 0);
   assert.equal(r.json.logged, false);
@@ -514,8 +457,7 @@ test('a throwing append keeps the outcome and reports logError', () => {
 });
 
 test('an undecided git failure outside the fetch exits 1', () => {
-  const f = fixture();
-  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const f = fixture('feat-edit-only');
   const r = invoke(f, MAIN, { git: trapGit(f, (a) => a[0] === 'merge-base', 'fatal: boom') });
   assert.equal(r.code, 1);
   assert.equal(r.json, null);

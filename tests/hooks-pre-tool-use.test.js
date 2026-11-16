@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
+const { harnessWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 const { canonicalRealpath } = require('../plugin/bin/lib/path-guard');
 const { shellQuote } = require('./helpers/shell-quote');
 const { STUB_SKIP } = require('./helpers/path-stub');
@@ -2038,4 +2039,46 @@ test('#3900 AC2.1 control: a genuine git commit chained after the same prose is 
   const cmd = 'node bin/log-decision.js --run x --text "evidence via git show HEAD:foo"; git commit -m x';
   const out = pre.run({ input: bashInput(cmd, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+// #4492 F1: a submodule initialized inside a linked worktree must keep its own (absent) policy.
+// The worktree-always policy lives only in the main checkout (untracked); the submodule's .git
+// file points under <main>/.git/worktrees/<wt>/modules, which a loose marker match mistook for
+// a linked worktree of the superproject — so the gate denied a Write the base commit allowed.
+// A harness worktree sits under main, so findPolicyFile's ancestor walk reaches main's policy.
+test('#4492 F1: worktree-required allows a Write inside a submodule initialized in a linked worktree', () => {
+  const main = gitRepoWithCommit();
+  const subSrc = gitRepoWithCommit();
+  fs.writeFileSync(path.join(main, '.gitignore'), '.claude-tweaks/\n');
+  withPolicy(main, 'worktree-always: true\nintegration-branch: develop\n');
+  fixtureGit(['-C', main, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', subSrc, 'sub']);
+  fixtureGit(['-C', main, 'add', '.gitignore', '.gitmodules', 'sub']);
+  fixtureGit(['-C', main, 'commit', '-q', '-m', 'add sub']);
+  const wt = harnessWorktreeOf(main);
+  fixtureGit(['-C', wt, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '-q']);
+  const sub = path.join(wt, 'sub');
+  const write = (file) => pre.run({ input: { tool_name: 'Write', tool_input: { file_path: file } }, runDir: null, runState: null, cwd: sub });
+  assert.deepStrictEqual(write(path.join(sub, 'file.txt')), {});
+  // Control: the main checkout itself is still gated by the same policy.
+  const denied = pre.run({ input: { tool_name: 'Write', tool_input: { file_path: path.join(main, 'file.txt') } }, runDir: null, runState: null, cwd: main });
+  assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+// #4492 F1 + F3: the same submodule case from a SIBLING-placed linked worktree (outside main),
+// reached through findPolicyFile's mainPolicyRoot -> locatePolicyFile(sub).
+test('#4492 F1: worktree-required allows a Write inside a submodule of a sibling-placed linked worktree', () => {
+  const main = gitRepoWithCommit();
+  const subSrc = gitRepoWithCommit();
+  fs.writeFileSync(path.join(main, '.gitignore'), '.claude-tweaks/\n');
+  withPolicy(main, 'worktree-always: true\nintegration-branch: develop\n');
+  fixtureGit(['-C', main, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', subSrc, 'sub']);
+  fixtureGit(['-C', main, 'add', '.gitignore', '.gitmodules', 'sub']);
+  fixtureGit(['-C', main, 'commit', '-q', '-m', 'add sub']);
+  const wt = linkedWorktreeOf(main);
+  fixtureGit(['-C', wt, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '-q']);
+  const sub = path.join(wt, 'sub');
+  const allowed = pre.run({ input: { tool_name: 'Write', tool_input: { file_path: path.join(sub, 'file.txt') } }, runDir: null, runState: null, cwd: sub });
+  assert.deepStrictEqual(allowed, {});
+  const denied = pre.run({ input: { tool_name: 'Write', tool_input: { file_path: path.join(main, 'file.txt') } }, runDir: null, runState: null, cwd: main });
+  assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
 });
