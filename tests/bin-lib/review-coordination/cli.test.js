@@ -1249,6 +1249,19 @@ test('AC5: every refusal exits 2 with nothing written; a run dir that is missing
     assert.strictEqual(res.out, '', name);
     assert.ok(res.err.startsWith('review-coordination.js: '), name);
   }
+  // each flag-pairing refusal names its own cause (a later check would also refuse these shapes)
+  const named = [
+    [['--run', inp.runDir, '--only', 'unconfirmed'], /--run needs --lens and --only/],
+    [['--lens', 'security', '--run', inp.runDir], /--run needs --lens and --only/],
+    [['--hold', holdFile(inp, 'h-only.json', [])], /apply only with --run/],
+    [['--lens', 'security'], /apply only with --run/],
+    [['--only', 'confirmed'], /apply only with --run/],
+  ];
+  for (const [extra, why] of named) {
+    const res = reproRun(inp, extra);
+    assert.strictEqual(res.code, 2, extra.join(' '));
+    assert.match(res.err, why, extra.join(' '));
+  }
   // a hold entry that matches two unconfirmed findings (two identical ones, one key)
   const dup = [{ path: 'x.js', line: 1, severity: 'low', text: 'same words here' }, { path: 'x.js', line: 1, severity: 'low', text: 'same words here' }];
   const dupA = writeText(inp.d, 'dup-a.json', JSON.stringify(dup));
