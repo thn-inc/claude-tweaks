@@ -43,7 +43,7 @@
 
 **Interfaces:**
 - Produces: CLI `node plugin/bin/closing-links.js --mode screen --body-file <path>`. Exit 0 prints one JSON line, `{"action":"clean","neutralized":[]}` or `{"action":"neutralized","neutralized":[{"number":N,"phrase":"..."}]}`. `neutralized` comes from `neutralizeClosingPhrases(text)` with `targets` unset (every phrase) and no owner/repo scope (over-neutralizing is the safe direction). The file is rewritten only when the text changed. Exit 2 on a malformed invocation, an unreadable `--body-file`, or a failed write; each prints `closing-links.js: {message}` on stderr and nothing on stdout.
-- `parseArgs` gains `bodyFile` (default `null`) in its returned object. `MODES` becomes `['pre-merge', 'post-merge', 'screen']`.
+- `parseArgs` gains `bodyFile` (default `null`) in its returned object. `MODES` stays `['pre-merge', 'post-merge']` (it also validates the in-process `closingLinks()` core, which does not implement screen); the CLI validates `--mode` against `CLI_MODES = [...MODES, 'screen']` (plan review 2026-11-16).
 - New deps seams on `realDeps`: `readFile: (p) => fs.readFileSync(p, 'utf8')`, `writeFile: (p, s) => fs.writeFileSync(p, s)`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/flow/closing-links-cli.test.js`. Reuse the file's existing `run` import and temp-dir pattern; call `run(argv, deps)` capturing stdout/stderr.
@@ -51,6 +51,7 @@
   - `screen leaves a clean body byte-identical and reports clean`: body `'no keywords here, see #3\n'` → exit 0, JSON `{action:'clean', neutralized:[]}`, and `writeFile` is never called (a `writeFile` override that throws).
   - `screen invocation errors exit 2`: each of `['--mode','screen']` (no body file), `['--mode','screen','--body-file','f','--run','r']`, `['--mode','screen','--body-file','f','--settle-ms','0']`, `['--run','r','--mode','pre-merge','--body-file','f']`, a `--body-file` whose `readFile` throws, and one whose `writeFile` throws on a phrase-bearing body → exit 2, stdout empty, stderr starts with `closing-links.js: `.
   - Update the existing `parseArgs` shape deepEqual to include `bodyFile: null`, and add `assert.equal(parseArgs(['--mode','screen','--body-file','b']).bodyFile, 'b')`.
+  - (Plan review 2026-11-16) `['--mode','screen','--body-file','f','--close-window-ms','1']` is also exit 2 — added by Task 3.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -118,4 +119,49 @@ Expected: PASS, 0 failures
 ```bash
 git add plugin/skills/tidy/step-7-5-worktree-always.md plugin/skills/_shared/pr-first-merge.md docs/skill-graph.md tests/tidy-housekeeping-pr-check-wait-conformance.test.js
 git commit -m "Gate tidy's housekeeping-PR arm on the merge-verification gate — screen its body for closing keywords, refs #4467"
+```
+
+### Task 3: Plan-review amendments (2026-11-16) on the landed Tasks 1-2
+
+Tasks 1 and 2 landed (`f7a455db7`, `dca79d5b9`). A resumed run's plan review found gaps in them; this task closes those gaps in the landed code and prose.
+
+**Role:** judgment
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/skills/tidy/step-7-5-worktree-always.md` (the `pr-first` bullet: screen body path, arm paragraph)
+- Modify: `docs/skill-graph.md` (the `_shared/pr-first-merge.md` row's `Since #5160` sentence, in the `## dispatch` table, line ~256)
+- Modify: `tests/tidy-housekeeping-pr-check-wait-conformance.test.js`
+- Modify: `tests/bin-lib/flow/closing-links-cli.test.js`
+
+**Covers:** AC1.1 (as amended by Q1), plus the spec's 2026-11-16 "Settled by plan review" line (Reading A: ci-gate events are recorded).
+
+**Interfaces:**
+- Consumes: `_shared/pr-first-merge.md` Step 2.5 as it stands (its Conflict path routes at the `DIRTY`/`CONFLICTING` empty-rollup row and the ready-run `awaiting`-on-conflict row; its `state-read-failed` and `draft-skip-without-ready-trigger:{files}` reasons; its `bin/ci-gate-record.js` record calls for green, red and timeout-park verdicts). Do not edit `pr-first-merge.md`: the composed `merge` bundle is within 20 B of its 52500 B rail.
+
+- [ ] **Step 1: Write the failing tests.**
+  - In `tests/bin-lib/flow/closing-links-cli.test.js`'s "screen invocation errors" test, add `['--mode','screen','--body-file','f','--close-window-ms','1']` → exit 2, stdout empty, stderr starting `closing-links.js: `.
+  - In `tests/tidy-housekeeping-pr-check-wait-conformance.test.js`, extend `assertArmCitesStep25` (or add asserts, each with a go-red control in the existing go-red test) so the arm paragraph must: (a) name Step 2.5's Conflict path among the routes that leave the PR unarmed (a literal such as `Step 2.5's Conflict path`); (b) say the stop reasons are reported verbatim (pin the literal written, e.g. `any Step 2.5 or Step 3 stop reason, verbatim`); (c) say tidy runs no Step 4 or Step 5 post-merge step on `merged` (pin the literal written); (d) say Step 2.5's `ci-gate` records still run (pin a literal containing `ci-gate`). Add one assert that the screen sentence names the body file as the same literal path `gh pr create --body-file` reads (pin `pr-early-body-{run-id}.md` in the screen call's sentence).
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `node --test tests/tidy-housekeeping-pr-check-wait-conformance.test.js`
+Expected: FAIL
+
+- [ ] **Step 3: Edit the prose and the graph row.**
+  - Screen sentence: replace `--body-file "{body-path}"` with the literal resolved path of `pr-early-run-lifecycle.md` Step 3's body file — resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-early-body-{run-id}.md` once, as its own call, and paste the printed path into both the screen call and `gh pr create --body-file`, since a shell variable does not survive between Bash calls.
+  - Arm paragraph: (a) widen the leave-unarmed substitution to Step 2.5's Conflict path routes (the empty-rollup `DIRTY`/`CONFLICTING` row and the ready-run `awaiting` conflict row) as well as Step 3's; (b) replace the closed reason list with "any Step 2.5 or Step 3 stop reason, verbatim" (keeping the named examples is fine); (c) state that a `merged` outcome runs no Step 4 or Step 5 post-merge step — tidy reports it and tears down via `ExitWorktree`, since a housekeeping PR has no Fixes record and no `run-state.json` `pr`; (d) state that Step 2.5's `ci-gate` record calls (`bin/ci-gate-record.js`, green, red and timeout-park) run unchanged with `--run` naming this run's dir — only the park and label steps are substituted.
+  - Keep every phrase `tests/sweep-backstop.test.js` and the existing conformance asserts pin byte-identical.
+  - `docs/skill-graph.md`: in the `Since #5160` sentence, change "`dispatch/close-out.md` and `/tidy`'s Arm ready PR reach Step 3 directly and record none" so it also says `/tidy`'s Step 7.5 creation-time arm enters Step 2.5 and records them (#4467).
+
+- [ ] **Step 4: Run the new and the pinning suites**
+
+Run: `node --test tests/tidy-housekeeping-pr-check-wait-conformance.test.js tests/bin-lib/flow/closing-links-cli.test.js tests/sweep-backstop.test.js tests/closing-links-prose-conformance.test.js tests/pr-first-merge.test.js tests/merge-verification-gate-conformance.test.js tests/bin-lib/skill-audit/context-cost.test.js`
+Expected: PASS, 0 failures
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/skills/tidy/step-7-5-worktree-always.md docs/skill-graph.md tests/tidy-housekeeping-pr-check-wait-conformance.test.js tests/bin-lib/flow/closing-links-cli.test.js
+git commit -m "Close #4467's plan-review gaps — Conflict path, verbatim reasons, ci-gate records and a named body file in tidy's housekeeping-PR arm, refs #4467"
 ```
