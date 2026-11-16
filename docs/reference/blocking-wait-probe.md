@@ -10,7 +10,7 @@ Measured 2026-11-16 on Claude Code 2.1.325 (`claude --version` printed `2.1.325 
 |---|---|---|---|
 | Q1. `SubagentStop` fires when the waiter's own child finishes, and its `session_id` equals the waiter's `CLAUDE_CODE_SESSION_ID` | yes | yes | yes |
 | Q2. The payload's `agent_id` equals the `agentId` in the waiter's launch result | yes | yes | yes |
-| Q3. A child's completion notification that arrives while a foreground Bash call blocks is delivered when that call returns | yes | not applicable: the child ran synchronously, no notification exists | yes |
+| Q3. A child's completion notification that arrives while a foreground Bash call blocks is delivered when that call returns | yes | not measured: no launch requested the background (`requested.background: 0`); the child ran synchronously | yes |
 | Q4. A foreground Bash call may run 540 seconds with `timeout` 600000 | **no**: moved to the background after 180 s | yes | **no**: moved to the background after 180 s |
 
 ## How each waiter was probed
@@ -33,7 +33,7 @@ Waiter 1's shell, `printenv CLAUDE_CODE_SESSION_ID CLAUDE_PLUGIN_ROOT CLAUDE_COD
 b979e2ab-48eb-4f61-a8ee-7134e913a163
 ```
 
-(`CLAUDE_PLUGIN_ROOT` is not set in a subagent's shell.) Waiter 3 reported:
+(The command printed one line, so `CLAUDE_PLUGIN_ROOT` and `CLAUDE_CODE_ENTRYPOINT` were both unset in the subagent's shell.) Waiter 3 reported:
 
 ```
 SESSION_ID: b979e2ab-48eb-4f61-a8ee-7134e913a163
@@ -95,7 +95,7 @@ STATUS: DONE</result>
 
 Waiter 3 reported the same order (`NOTIFICATION_TIMING: … It was delivered after step 4's call returned its "moved to the background" message`), with task-id `aa5ce0b38f41f6fe9`.
 
-Waiter 2: in the headless worker the `Agent` call did not launch async. Its tool result was the child's final report (`… The report follows: probe-grandchild reply agentId: a22f5347ef209e63b …`), and no notification followed. The worker's result JSON counts it: `"subagent_stats":{"spawned":2,"requested":{"background":0,"foreground":1,"unset":1},"started_in_background":0,"max_depth":2, …}`. A waiter in a headless worker has nothing to wait for on a child agent: the launch itself blocks until the child is done.
+Waiter 2: in the headless worker the `Agent` call did not launch async. Its tool result was the child's final report (`… The report follows: probe-grandchild reply agentId: a22f5347ef209e63b …`), and no notification followed. The worker's result JSON counts it: `"subagent_stats":{"spawned":2,"requested":{"background":0,"foreground":1,"unset":1},"started_in_background":0,"max_depth":2, …}`. No launch requested the background, so this shows only that a launch that did not request it ran synchronously; whether a headless subagent can launch a child in the background was not tried.
 
 ### Q4
 
@@ -119,6 +119,6 @@ Waiter 2: `SLEEP_EPOCHS: 1794790072 1794790612 foreground` — 540 s in one fore
 
 ## What this changes for the design
 
-- In a dispatched subagent of an interactive session, at any depth, a foreground Bash call is moved to the background after 180 s, with or without `timeout`. A 150 s call with no `timeout` stayed in the foreground. So `plugin/skills/test/verification.md`'s Foreground rule ("a call with no explicit `timeout` is moved to the background after about 120 seconds, and 600,000 ms is the largest `timeout`") does not hold for these waiters, and the record's `--max-seconds 540` with `timeout` 600000 would be backgrounded. By the record's own rule for other limits, the per-call cap would be 30 s under the measured 180 s.
-- In a headless `claude -p` worker a 540 s foreground call ran to the end, and `Agent` launches are synchronous, so an `agents` target has no use there.
+- In a dispatched subagent of an interactive session, at depths 1 and 2 (both tried), a foreground Bash call is moved to the background after 180 s, with or without `timeout`. A 150 s call with no `timeout` stayed in the foreground. So `plugin/skills/test/verification.md`'s Foreground rule ("a call with no explicit `timeout` is moved to the background after about 120 seconds, and 600,000 ms is the largest `timeout`") does not hold for these waiters, and the record's `--max-seconds 540` with `timeout` 600000 would be backgrounded. The spec's Technical Approach says: "If the probe measured other limits, the default stays 20 seconds under the measured default window and the cap 30 seconds under the measured largest timeout, and the probe file says so." With one 180 s ceiling governing calls with and without `timeout`, that gives a cap of 150 s and a default of 160 s, so the default would exceed the cap.
+- In a headless `claude -p` worker a 540 s foreground call ran to the end, and a launch that did not request the background ran synchronously; whether a headless subagent can launch in the background was not tried.
 - The `SubagentStop` side holds at every depth tried: the hook fires for a child of a dispatched agent and of a depth-2 agent, keyed by the root session's id, which equals `CLAUDE_CODE_SESSION_ID` in the waiter's shell, with the launch result's `agentId` as `agent_id`.

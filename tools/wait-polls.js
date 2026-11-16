@@ -32,14 +32,14 @@
 //      classifyProbe matches it;
 //   2. the tool calls between this sleep and the next sleep-led call of the same file, then those between
 //      the previous sleep-led call and this one, each segment only when it holds at most PROBE_GAP_MAX calls
-//      (Agent and Task calls never count as probes);
+//      (Agent and Task calls are never probes, but they do count toward PROBE_GAP_MAX);
 //   3. `agent-notification` when an Agent or Task call precedes the sleep in the same file;
 //   4. `other`.
 // classifyProbe tries the RULES table below in order; the first match wins.
 //
 // Exit codes: 0 success; 2 an unknown flag, a flag with no value, a non-positive --since-days, an
-// unparseable --until, a --projects-dir that is missing, not a directory or unreadable, or a mid-walk
-// read error other than ENOENT.
+// unparseable --until, a --projects-dir that is missing, not a directory, cannot be resolved or is
+// unreadable, or a mid-walk read error other than ENOENT.
 //
 // Seam: run({ argv, deps }) returns the exit code; deps holds fs, env, now, homedir, log and err.
 
@@ -116,7 +116,15 @@ function probeText(call) {
   return `${call.name} ${JSON.stringify(call.input || {})}`;
 }
 
-function classifyCall(calls, i) {
+// Per-file facts classifyCall needs, computed once: the sleep-led indexes (and each one's position in
+// that list) and the index of the first Agent/Task call.
+function fileContext(calls) {
+  const sleeps = [];
+  calls.forEach((c, idx) => { if (c.sleepLed) sleeps.push(idx); });
+  return { sleeps, pos: new Map(sleeps.map((idx, p) => [idx, p])), firstAgent: calls.findIndex(isAgent) };
+}
+
+function classifyCall(calls, i, ctx) {
   const own = calls[i];
   const chain = SLEEP_CHAIN.exec(String((own.input || {}).command || ''));
   const chained = chain ? chain[1].trim() : '';
@@ -124,9 +132,8 @@ function classifyCall(calls, i) {
     const t = classifyProbe(chained);
     if (t) return t;
   }
-  const sleeps = [];
-  calls.forEach((c, idx) => { if (c.sleepLed) sleeps.push(idx); });
-  const at = sleeps.indexOf(i);
+  const { sleeps } = ctx;
+  const at = ctx.pos.get(i);
   const segments = [];
   if (at + 1 < sleeps.length) segments.push(calls.slice(i + 1, sleeps[at + 1]));
   if (at > 0) segments.push(calls.slice(sleeps[at - 1] + 1, i));
@@ -138,7 +145,7 @@ function classifyCall(calls, i) {
       if (t) return t;
     }
   }
-  if (calls.slice(0, i).some(isAgent)) return 'agent-notification';
+  if (ctx.firstAgent !== -1 && ctx.firstAgent < i) return 'agent-notification';
   return 'other';
 }
 
@@ -161,16 +168,12 @@ function guarded(p, fn) {
   }
 }
 
-// Every transcript file in the window, as { file, kind }, each root and slug directory visited once by real path.
+// Every transcript file in the window, as { file, kind }, each slug directory visited once by real path.
+// `roots` are { realRoot, names } already resolved, deduplicated and listed by run's up-front check.
 function collect({ roots, match, sinceMs, untilMs, fsImpl }) {
-  const seenRoots = new Set();
   const seenSlugs = new Set();
   const found = [];
-  for (const root of roots) {
-    const realRoot = fsImpl.realpathSync(root);
-    if (seenRoots.has(realRoot)) continue;
-    seenRoots.add(realRoot);
-    const names = guarded(realRoot, () => fsImpl.readdirSync(realRoot)).value.sort();
+  for (const { realRoot, names } of roots) {
     for (const slug of names) {
       if (match && !slug.includes(match)) continue;
       const real = guarded(path.join(realRoot, slug), () => fsImpl.realpathSync(path.join(realRoot, slug)));
@@ -228,7 +231,7 @@ function readCalls(fsImpl, file) {
     const content = entry && entry.message && entry.message.content;
     if (!Array.isArray(content)) return;
     for (const b of content) {
-      if (!b || b.type !== 'tool_use' || typeof b.name !== 'string' || ids.has(b.id)) continue;
+      if (!b || b.type !== 'tool_use' || typeof b.name !== 'string' || typeof b.id !== 'string' || ids.has(b.id)) continue;
       ids.add(b.id);
       const command = b.name === 'Bash' && b.input ? b.input.command : undefined;
       calls.push({ id: b.id, name: b.name, input: b.input || {}, sleepLed: typeof command === 'string' && SLEEP_LED.test(command) });
@@ -259,17 +262,31 @@ function run({ argv, deps: given = {} }) {
   const given_ = o['--projects-dir'];
   const roots = (given_.length ? given_ : [path.join(deps.env.CLAUDE_CONFIG_DIR || path.join(deps.homedir(), '.claude'), 'projects')])
     .map((d) => path.resolve(d));
+  // Resolve, deduplicate and list every root up front: a root that cannot be resolved or read is a usage
+  // error, never a skipped root (a skipped root would print totals that look complete).
+  const seenRoots = new Set();
+  const resolved = [];
   for (const dir of roots) {
     let isDir = false;
     try {
       isDir = deps.fs.statSync(dir).isDirectory();
     } catch (_) { /* a missing or unstat-able path is reported as not a directory below */ }
     if (!isDir) return usageErr(`--projects-dir ${dir} is not a directory`);
+    let realRoot;
     try {
-      deps.fs.readdirSync(dir);
+      realRoot = deps.fs.realpathSync(dir);
+    } catch (err) {
+      return usageErr(`--projects-dir ${dir} cannot be resolved (${err.code || err.message})`);
+    }
+    if (seenRoots.has(realRoot)) continue;
+    seenRoots.add(realRoot);
+    let names;
+    try {
+      names = deps.fs.readdirSync(realRoot);
     } catch (err) {
       return usageErr(`--projects-dir ${dir} cannot be read (${err.code || err.message})`);
     }
+    resolved.push({ realRoot, names: names.slice().sort() });
   }
 
   const sinceMs = untilMs - days * DAY_MS;
@@ -280,11 +297,12 @@ function run({ argv, deps: given = {} }) {
   const counts = Object.fromEntries(TARGETS.map((t) => [t, 0]));
   const seen = new Set();
   try {
-    for (const { file, kind } of collect({ roots, match: o['--match'] || null, sinceMs, untilMs, fsImpl: deps.fs })) {
+    for (const { file, kind } of collect({ roots: resolved, match: o['--match'] || null, sinceMs, untilMs, fsImpl: deps.fs })) {
       const read = guarded(file, () => readCalls(deps.fs, file));
       if (read.gone) continue;
       const calls = read.value;
       transcripts[kind]++;
+      const ctx = fileContext(calls);
       calls.forEach((c, i) => {
         if (seen.has(c.id)) return;
         seen.add(c.id);
@@ -292,7 +310,7 @@ function run({ argv, deps: given = {} }) {
         bashCalls[kind]++;
         if (!c.sleepLed) return;
         sleepLed[kind]++;
-        counts[classifyCall(calls, i)]++;
+        counts[classifyCall(calls, i, ctx)]++;
       });
     }
   } catch (err) {

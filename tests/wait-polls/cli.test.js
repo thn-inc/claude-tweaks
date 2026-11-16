@@ -152,10 +152,83 @@ test('AC11.2: the test fails when the script walks both names', () => {
   const { root } = aliasedStore();
   const rootAlias = path.join(tmp(), 'projects-alias');
   fs.symlinkSync(root, rootAlias, 'junction');
+  const reads = [];
+  const counting = {
+    ...fs,
+    readdirSync(p, ...rest) {
+      reads.push(path.resolve(String(p)));
+      return fs.readdirSync(p, ...rest);
+    },
+  };
   const c = capture();
-  assert.equal(run({ argv: ['--projects-dir', root, '--projects-dir', rootAlias, '--until', UNTIL], deps: c.deps }), 0);
-  // The id dedup alone keeps bashCalls at 2; only transcripts shows a double walk.
+  assert.equal(run({ argv: ['--projects-dir', root, '--projects-dir', rootAlias, '--until', UNTIL], deps: { ...c.deps, fs: counting } }), 0);
+  // The slug real-path dedup alone already keeps every count at the single-root value, so the
+  // transcripts count cannot pin the root dedup; reading each real directory once does.
   assert.equal(JSON.parse(c.out[0]).transcripts.main, 1);
+  assert.equal(reads.filter((p) => p === root).length, 1);
+});
+
+test('a projects dir that cannot be resolved exits 2', () => {
+  const { root } = aliasedStore();
+  const failing = {
+    ...fs,
+    realpathSync(p, ...rest) {
+      if (path.resolve(String(p)) === root) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      return fs.realpathSync(p, ...rest);
+    },
+  };
+  const c = capture();
+  assert.equal(run({ argv: ['--projects-dir', root, '--until', UNTIL], deps: { ...c.deps, fs: failing } }), 2);
+  assert.match(c.err.join('\n'), /cannot be resolved \(ENOENT\)[\s\S]*usage: node tools\/wait-polls\.js/);
+  assert.equal(c.out.length, 0);
+});
+
+test('tool_use blocks without a string id are skipped, never merged under one key', () => {
+  const out = scenario([{ name: 'Bash', input: { command: 'sleep 20' } }, { name: 'Bash', input: { command: 'sleep 30' } }]);
+  assert.equal(out.bashCalls.main, 0);
+  assert.equal(out.sleepLed.main, 0);
+});
+
+test('--match reads only the slugs it matches', () => {
+  const root = tmp();
+  writeFile(path.join(root, '-Users-me-alpha', 's1.jsonl'), [bash('1', 'sleep 20')]);
+  writeFile(path.join(root, '-Users-me-beta', 's1.jsonl'), [bash('2', 'sleep 21')]);
+  const c = capture();
+  assert.equal(run({ argv: ['--projects-dir', root, '--match', 'alpha', '--until', UNTIL], deps: c.deps }), 0);
+  const out = JSON.parse(c.out[0]);
+  assert.equal(out.transcripts.main, 1);
+  assert.equal(out.sleepLed.main, 1);
+});
+
+test('the next segment is tried before the previous one', () => {
+  const out = scenario([
+    bash('1', 'sleep 20'), use('2', 'Read', { file_path: '/x/tasks/a.output' }),
+    bash('3', 'sleep 20'), bash('4', 'gh pr checks 3'),
+    bash('5', 'sleep 20'),
+  ]);
+  // sleep 3 sees the ci probe (next) before the output-file probe (previous).
+  assert.equal(out.targets.ci.calls, 2);
+  assert.equal(out.targets['output-file'].calls, 1);
+});
+
+test('a segment longer than PROBE_GAP_MAX is not read for probes', () => {
+  const out = scenario([
+    bash('1', 'sleep 20'),
+    bash('2', 'echo a'), bash('3', 'echo b'), bash('4', 'gh pr checks 3'), bash('5', 'echo c'),
+    bash('6', 'sleep 20'),
+  ]);
+  assert.equal(out.targets.ci.calls, 0);
+  assert.equal(out.targets.other.calls, 2);
+});
+
+test('a dangling non-transcript entry inside a slug is skipped', () => {
+  const { root, realSlug } = aliasedStore();
+  fs.symlinkSync(path.join(tmp(), 'gone'), path.join(realSlug, 'dangling-note'), 'junction');
+  const c = capture();
+  assert.equal(run({ argv: ['--projects-dir', root, '--until', UNTIL], deps: c.deps }), 0);
+  const out = JSON.parse(c.out[0]);
+  assert.deepEqual(out.transcripts, { main: 1, subagent: 0 });
+  assert.equal(out.bashCalls.main, 2);
 });
 
 test('a vanished entry is skipped, any other read error exits 2', () => {
