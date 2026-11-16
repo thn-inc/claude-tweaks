@@ -428,8 +428,8 @@ the migration window (read both, emit only `work-fingerprint`). `bin/lib/issues/
 
 ## Freshness stamp
 
-Records filed by a health-sweep skill (`/ci-health` included) also carry the commit the sweep actually read, as
-a plain body-metadata line:
+Records filed by the four health-sweep skills also carry the commit the sweep actually read, as
+a plain body-metadata line (`/ci-health` files none):
 
 ```
 Verified-as-of: {git sha}

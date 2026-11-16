@@ -462,7 +462,7 @@ function extractKeyFilesSection(body) {
 // issue: { labels } shaped like `gh api .../issues/{n}` output. True when
 // extractKeyFiles reads this issue via the `### Key Files` fallthrough branch
 // below (a /specify-produced sub-issue, a /capture record, or a hand-filed
-// one) rather than one of the four health-sweep origin headers — i.e. when an
+// one) rather than one of the five health-sweep origin headers (code-, harness-, journey-, docs-, ci-health) — i.e. when an
 // empty extractKeyFiles([]) result for this issue is actually meaningful (the
 // record was supposed to carry a `### Key Files` subsection and doesn't) as
 // opposed to expected-and-correct (a health-sweep record's own header shape
@@ -470,7 +470,7 @@ function extractKeyFilesSection(body) {
 // that explicitly returns [] regardless). Callers that want to warn on an
 // empty extraction — multi-spec.md's Cross-spec conflict detection,
 // dispatch's queue-pull-script.md, help/status-scan.md's Conflict detection —
-// gate the warning on this, so the four health-sweep origins never trip it.
+// gate the warning on this, so the five health-sweep origins never trip it.
 function expectsKeyFilesSection(issue) {
   const names = normalizeLabelNames(issue && issue.labels);
   return !hasOrigin(names, 'code-health')
@@ -526,12 +526,12 @@ function extractKeyFiles(issue) {
   // file it builds in, so it contributes nothing to the overlap map.
   if (hasOrigin(names, 'ci-health')) return [];
 
-  // Fallthrough — every record that is not one of the four health sweeps: a
+  // Fallthrough — every record that is not one of the five health sweeps (ci-health included): a
   // /claude-tweaks:specify-produced sub-issue, a /claude-tweaks:capture record, a
   // hand-filed one. These carry no by:* origin header to key off, but a shaped
   // body already lists its targets under `### Key Files`.
   //
-  // This must stay BELOW the four branches above, which all return early. An
+  // This must stay BELOW the five branches above, which all return early. An
   // origin-labelled record whose body happens to contain a `### Key Files`
   // heading is still read from its own header line, not from here ([IL-83]).
   return extractKeyFilesSection(body);

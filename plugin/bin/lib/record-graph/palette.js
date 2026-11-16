@@ -16,7 +16,7 @@ const ORIGIN_COLORS = {
   'docs-health': '#e67e22',
   capture: '#34495e',
   dispatch: '#c0392b',
-  'ci-health': '#d81b60',
+  'ci-health': '#a3a31f',
   human: '#7f8c8d',
 };
 
