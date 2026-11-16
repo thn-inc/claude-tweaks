@@ -884,6 +884,19 @@ test('#5309 (b) gh: a throw inside the native step prints only the fail-closed W
   assert.equal(r.store.written.length, 0);
 });
 
+test('#5309 (b2) gh: a non-spawn throw in the native step (its own write fails) takes the same fail-closed path, one Warning, no step line', () => {
+  const r = pull(nativeScenario(), {
+    spawn: { 'resolve-blockers.js': { status: 0, stdout: '{}', stderr: '' } },
+    before: (ctx) => fs.mkdirSync(ctx.paths['dispatch-native-deps.tmp.json']),
+  });
+  assert.equal(r.errs.length, 1, r.stderr);
+  assert.ok(r.errs[0].startsWith(NATIVE_FAIL_CLOSED_PREFIX), r.stderr);
+  assert.ok(!r.stderr.includes('queue-pull: native-deps:'), r.stderr);
+  assert.deepEqual(entriesOf(r, 'blocked').slice(1).map((e) => e.records), [[9001], [9003]]);
+  assert.deepEqual(groupNumbers(r), []);
+  assert.equal(r.store.written.length, 0);
+});
+
 test('#5309 (c) files: resolve-blockers.js exit 2 (gh absent) keeps the gh-absent fallback and its Warning, filters nothing native, and writes back', () => {
   const r = pull(nativeScenario(), { transport: 'files', run: noGhOnFiles, prepare: (own) => nativeFiles(own),
     spawn: { 'resolve-blockers.js': { status: 2, stdout: '', stderr: 'gh is required\n' } } });
@@ -3376,7 +3389,8 @@ const FAULT_EXPECT = {
   'F-depfresh': { status: 0, stderr: [], drops: [] },
   'F-depview': { status: 0, base: 'gh-livedep', stderr: [], drops: ['blocked:9002'] },
   // #5309: both eligible records are excluded fail-closed (9030 was already blocked, now with the unreadable detail); the unlanded-blocker pass has no candidate left, so it prints nothing.
-  'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault: injected failure`], drops: [], adds: ['blocked:9001'] },
+  // blob: null, both sides, the row's cold origin left no order blob (no write-back); parityView compares the blobs only against each other.
+  'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault: injected failure`], drops: [], adds: ['blocked:9001'], blob: null },
   'F-foreign': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
   'F-foreign-states': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (ENOENT: ', 'Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
   'F-linked': { status: 0, stderr: [`${LINKED_WARNING}gh-fault: injected failure`], drops: ['open-pr:9005', 'open-pr:9008', 'shipped:9010'] },
@@ -3472,6 +3486,10 @@ function assertFaultRow(row, expect, R, transport) {
     for (const e of expect.drops) assert.ok(baseEntries.includes(e), `${row.id}: the base writes ${e} (control)`);
     const want = [...baseEntries.filter((e) => !expect.drops.includes(e)), ...(expect.adds || [])].sort();
     assert.deepEqual([...entries].sort(), want, `${row.id}: the oracle's exclusions against its base's`);
+  }
+  if (expect.blob === null) {
+    assert.equal(oracle.orderBlob, null, `${row.id}: the oracle writes no order blob`);
+    assert.equal(pair.module.orderBlob, null, `${row.id}: the module writes no order blob`);
   }
   if (transport === 'gh' && row.pass !== '(stop)') {
     // The fault fired: each side logged an injected call its base did not make.

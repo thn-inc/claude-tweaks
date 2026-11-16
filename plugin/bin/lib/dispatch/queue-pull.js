@@ -262,7 +262,7 @@ const readArray = (file) => {
   return value;
 };
 
-// The `gh issue list --search "#a #b" --state all ...` dependency-freshness fetch (fence 104, 271):
+// The `gh issue list --search "#a #b" --state all ...` dependency-freshness fetch (fence 98, 272):
 // stderr dropped, any failure writes [].
 function fetchDepFreshness(ctx, numbersCsv, file) {
   const search = numbersCsv.split(',').join(' ').replace(/[0-9]+/g, '#$&');
@@ -442,7 +442,7 @@ function nativeQueryFailed(ctx, r) {
   ctx.deps.stderr(`Warning: native dependency query failed — every candidate excluded as blocked (native blockers unreadable, fail closed) this run: ${trimNl(r.stderr)}\n`);
 }
 
-// Fence 159-213 on a miss (the eligible list, the unresolved-dependency check, the body-text and
+// Fence 159-214 on a miss (the eligible list, the unresolved-dependency check, the body-text and
 // native blocker filtering); on a hit the persisted `excluded` entries replayed as 'blocked'.
 function runBlocked(ctx) {
   const { deps, paths, omit, state } = ctx;
@@ -524,28 +524,26 @@ function runBlocked(ctx) {
   put(ctx, paths['dispatch-native-deps.json'], '{}');
   if (!skip && state.workLinks === 'native') {
     step(ctx, 'native-deps', () => {
-      const nativeNums = readJson(paths['dispatch-eligible.json']).map((i) => i.number).join(',');
-      if (!nativeNums) return;
+      // #5309: a throw anywhere in this step (the read, the call, the writes, the rename) is a failed
+      // query with no step line: the one Warning carries the message, and the transport rule applies.
       let r;
       try {
+        const nativeNums = readJson(paths['dispatch-eligible.json']).map((i) => i.number).join(',');
+        if (!nativeNums) return;
         r = deps.spawnCli('resolve-blockers.js', [nativeNums], cliOpts(ctx));
+        fs.writeFileSync(paths['dispatch-native-deps.tmp.json'], r.stdout || '');
+        fs.writeFileSync(paths['dispatch-native-deps.err'], r.stderr || '');
+        if (r.status === 0) fs.renameSync(paths['dispatch-native-deps.tmp.json'], paths['dispatch-native-deps.json']);
       } catch (err) {
-        // #5309: a throw is a failed call with no step line: the one Warning carries the message.
         nativeQueryFailed(ctx, { status: null, stderr: errText(err) });
         return;
       }
-      fs.writeFileSync(paths['dispatch-native-deps.tmp.json'], r.stdout || '');
-      fs.writeFileSync(paths['dispatch-native-deps.err'], r.stderr || '');
-      if (r.status === 0) {
-        fs.renameSync(paths['dispatch-native-deps.tmp.json'], paths['dispatch-native-deps.json']);
-      } else {
-        nativeQueryFailed(ctx, r);
-      }
+      if (r.status !== 0) nativeQueryFailed(ctx, r);
     });
   }
 }
 
-// Fence 214-261 on a miss: the grouping block, which writes dispatch-groups.json, then the
+// Fence 215-262 on a miss: the grouping block, which writes dispatch-groups.json, then the
 // bundles, then the 'blocked' appends, then the 'oversized' appends. On a hit it runs the size
 // guard over the persisted groups and keeps the persisted bundles.
 function runOversized(ctx) {
@@ -600,7 +598,7 @@ function runOversized(ctx) {
   }
 }
 
-// Fence 264-303, the cache-miss path only: the dependency-freshness refetch over every eligible
+// Fence 263-304, the cache-miss path only: the dependency-freshness refetch over every eligible
 // record's dependencies, then the best-effort write-back of the queue-order blob.
 function runWriteBack(ctx) {
   const { deps, paths, state } = ctx;
