@@ -6,7 +6,7 @@ const cp = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { reapMerged, resolveOwningRunDir } = require('../../../plugin/bin/lib/reconcile/reap-merged');
+const { reapMerged, resolveOwningRunDir, createRunLookupMemo } =require('../../../plugin/bin/lib/reconcile/reap-merged');
 const { writeRunState } = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
@@ -188,6 +188,31 @@ test('resolveOwningRunDir: a clean match stops the archive walk at the first arc
   // (The clean tier's own archive-twin probe of the newest run's name is not a walk read.)
   const archivedReads = read.filter((p) => p.startsWith(path.join(archiveBase, '2025-')));
   assert.deepEqual(archivedReads, [], 'nothing under an older archived name can win, so none is read');
+});
+
+test('resolveOwningRunDir: two lookups sharing one memo read each archived run-state at most once, and agree with unshared lookups', (t) => {
+  const { root, wtPath, runDir } = buildReapableFixture();
+  fs.rmSync(runDir, { recursive: true, force: true });
+  const archiveBase = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
+  const names = ['2025-01-01T000000-a', '2025-06-01T000000-b', '2026-01-01T000000-c'];
+  for (const name of names) {
+    fs.mkdirSync(path.join(archiveBase, name), { recursive: true });
+    writeRunState(path.join(archiveBase, name), { status: 'clean', worktree: null, worktreeAtClose: path.join(root, '.claude', 'worktrees', 'elsewhere') });
+  }
+  const second = path.join(root, '.claude', 'worktrees', 'issue-2');
+  writeRunState(path.join(archiveBase, names[0]), { status: 'clean', worktree: null, worktreeAtClose: second });
+  const read = [];
+  const realRead = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (...args) => { read.push(String(args[0])); return realRead.apply(fs, args); });
+  const memo = createRunLookupMemo();
+  const opts = { includeClosed: true, memo };
+  assert.equal(resolveOwningRunDir(root, wtPath, opts), null, 'no archived run records the first path');
+  assert.equal(resolveOwningRunDir(root, second, opts), path.join(archiveBase, names[0]), 'the second path joins the oldest run');
+  assert.equal(resolveOwningRunDir(root, wtPath, opts), null, 'a repeat lookup is served from the memo');
+  for (const name of names) {
+    const file = path.join(archiveBase, name, 'run-state.json');
+    assert.equal(read.filter((p) => p === file).length, 1, `${name} read once`);
+  }
 });
 
 test('resolveOwningRunDir: a recorded path spelled through a symlink matches the canonical worktree path', (t) => {

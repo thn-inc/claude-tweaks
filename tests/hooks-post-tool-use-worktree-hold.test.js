@@ -6,6 +6,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
 const hold = require('../plugin/bin/lib/hooks/worktree-hold');
 const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
@@ -79,6 +81,33 @@ test('a subagent\'s EnterWorktree (agent_id set) leaves the main thread\'s hold 
   post.run(enterCtx(b, { agent_id: 'ag1' }));
   assert.deepStrictEqual(keys(a), [`s1__main__${process.pid}`]);
   assert.deepStrictEqual(keys(b), [`s1__ag1__${process.pid}`]);
+}));
+
+test('a subagent\'s ExitWorktree (agent_id set) clears only its own hold, not the main thread\'s', () => withPid(() => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'hold-a');
+  const b = harnessWorktreeOf(main, 'hold-b');
+  post.run(enterCtx(a));
+  post.run(enterCtx(b, { agent_id: 'ag1' }));
+  assert.deepStrictEqual(keys(b), [`s1__ag1__${process.pid}`]);
+  post.run({ input: { tool_name: 'ExitWorktree', cwd: main, session_id: 's1', agent_id: 'ag1' }, cwd: main });
+  assert.deepStrictEqual(hold.readHolds(b), []);
+  assert.deepStrictEqual(keys(a), [`s1__main__${process.pid}`]);
+}));
+
+test('a failed hold write leaves a worktree-hold-failed event in the owned run, and never changes the outcome', () => withPid(() => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'hold-a');
+  const holdDir = hold.holdDirOf(a);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hold-failed-run-'));
+  const ctx = { ...enterCtx(a), ownedRun: { dir: runDir } };
+  const clean = post.run(ctx);
+  fs.rmSync(holdDir, { recursive: true });
+  fs.writeFileSync(holdDir, 'not a directory');
+  const out = post.run(ctx);
+  assert.deepStrictEqual(out, clean);
+  const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(events.filter((e) => e.type === 'worktree-hold-failed').map((e) => e.tool), ['EnterWorktree']);
 }));
 
 test('no resolvable Claude pid writes no hold', () => {

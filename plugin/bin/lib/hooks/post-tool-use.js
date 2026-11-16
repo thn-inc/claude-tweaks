@@ -775,9 +775,14 @@ function run(ctx) {
   // on Bash/Write calls, so an EnterWorktree/ExitWorktree call always reaches it; it also runs
   // ahead of the later nudges that return. Never changes this hook's answer.
   try {
-    holdLib.syncHoldForToolUse(ctx.input, {
+    const holdOutcome = holdLib.syncHoldForToolUse(ctx.input, {
       cwd: ctx.cwd, env: process.env, ownerBlock: ctxLib.ownerBlock, resolveEnteredPath: () => resolveCreatedWorktreePath(ctx),
     });
+    // A failed write leaves the session standing in the worktree unheld: leave a trace (owned run only).
+    const ownedRun = ctx.ownedRun || {};
+    if (holdOutcome === 'failed' && ownedRun.dir) {
+      ctxLib.appendEvent(ownedRun.dir, 'worktree-hold-failed', { tool: ctx.input.tool_name }, ownedRun.attribution);
+    }
   } catch { /* log tier: never break a session */ }
 
   // Ad-hoc-session run-dir stamping (log tier, side effect only — no

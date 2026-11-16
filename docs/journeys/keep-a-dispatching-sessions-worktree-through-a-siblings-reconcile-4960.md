@@ -45,7 +45,7 @@ files:
   Either way the worktree is skipped.
 - **Should feel:** Quiet for the normal case:
   - a `held` skip writes no event;
-  - the SessionStart banner may list `X (held)`, like `in-use`.
+  - the SessionStart banner does not list it, like `in-use`.
   A `held-unverifiable` skip is reported on every pass, so a stuck hold cannot hide.
 - **Should understand:** Deleting a file under `{gitdir}/claude-tweaks-holds/` is safe once no session stands in that worktree. That is the way out of a hold that stays unverifiable, for example after a crashed session and a hostname change.
 - **Red flags:**

@@ -93,6 +93,20 @@ test('a throw out of the hold library never changes any of the four hook sites\'
   }
 }));
 
+test('SessionStart: a failed hold write leaves a worktree-hold-failed event in the owned run', () => withPid(async () => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'wire-start-failed');
+  const holdDir = hold.holdDirOf(a);
+  fs.writeFileSync(holdDir, 'not a directory');
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-failed-run-'));
+  await sessionStart.run({
+    input: { session_id: 's1' }, runDir: null, runState: null, cwd: a, superpowersDeps: NO_INSTALL,
+    nodePathHome: fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-failed-home-')), ownedRun: { dir: runDir },
+  });
+  const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(events.filter((e) => e.type === 'worktree-hold-failed').map((e) => e.tool), ['SessionStart']);
+}));
+
 test('SubagentStop releases the finished subagent\'s hold and leaves the main thread\'s; its answer is unchanged', () => withPid(() => {
   const main = gitRepo();
   const a = harnessWorktreeOf(main, 'wire-sub-main');

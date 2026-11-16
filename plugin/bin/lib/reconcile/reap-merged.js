@@ -48,9 +48,31 @@ function logReapEvent(runDir, type, data) {
 // The closed and archived tiers compare through the same canonicalizer as the live tier
 // (context.js's worktreeMatches: path-guard's .native canonicalRealpath, #3769), so a case-only
 // mismatch on a case-insensitive volume joins on every tier.
-function recordedMatches(state, real, canonical) {
-  const target = canonical(real) || real;
+function recordedMatches(state, real, canonical, target) {
   return worktreeMatches({ worktree: priorWorktree(state) }, target, real, canonical);
+}
+
+// One reap pass's reads of the closed and archived tiers, shared by every worktree's lookup:
+// each run's state is read at most once however many worktrees ask. Both tiers fill lazily, so
+// a lookup that stops early never pays for the rest.
+function createRunLookupMemo() {
+  return { cleanIter: null, cleanSeen: [], archiveNames: null, archiveStates: new Map() };
+}
+
+function* cleanRuns(root, memo) {
+  for (let i = 0; ; i++) {
+    if (i < memo.cleanSeen.length) { yield memo.cleanSeen[i]; continue; }
+    if (!memo.cleanIter) memo.cleanIter = iterRunDirsWithState(root, { status: 'clean' });
+    const next = memo.cleanIter.next();
+    if (next.done) return;
+    memo.cleanSeen.push(next.value);
+    yield next.value;
+  }
+}
+
+function archivedState(dir, memo) {
+  if (!memo.archiveStates.has(dir)) memo.archiveStates.set(dir, readRunState(dir));
+  return memo.archiveStates.get(dir);
 }
 
 // Resolves the owning run dir BEFORE any removal — findRunByWorktreePath
@@ -70,29 +92,34 @@ function recordedMatches(state, real, canonical) {
 // tiers wins. Skip events keep the live-only lookup: a closed run would
 // otherwise take an unbounded skip line per pass and every pass would scan the
 // whole archive.
-function resolveOwningRunDir(root, real, { includeClosed = false, fsImpl } = {}) {
+// `memo` (createRunLookupMemo) lets a reap pass share its closed/archived reads across lookups.
+function resolveOwningRunDir(root, real, { includeClosed = false, fsImpl, memo = createRunLookupMemo() } = {}) {
   try {
     const live = findRunByWorktreePath(root, real, { skipAdHoc: true, fsImpl });
     if (live) return live.runDir;
     if (!includeClosed) return null;
     const canonical = (p) => canonicalRealpath(p, { fsImpl });
+    const target = canonical(real) || real;
     let clean = null;
-    for (const { dir, state } of iterRunDirsWithState(root, { status: 'clean' })) {
+    for (const { dir, state } of cleanRuns(root, memo)) {
       if (isAdHocRunDir(dir)) continue;
-      if (recordedMatches(state, real, canonical)) { clean = dir; break; }
+      if (recordedMatches(state, real, canonical, target)) { clean = dir; break; }
     }
     let archived = null;
     const archiveBase = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
-    let names = [];
-    try { names = fs.readdirSync(archiveBase); } catch { /* no archive dir */ }
-    for (const name of names.filter((n) => RUN_ID_RE.test(n)).sort().reverse()) {
+    if (!memo.archiveNames) {
+      let names = [];
+      try { names = fs.readdirSync(archiveBase); } catch { /* no archive dir */ }
+      memo.archiveNames = names.filter((n) => RUN_ID_RE.test(n)).sort().reverse();
+    }
+    for (const name of memo.archiveNames) {
       // Newest first: once the clean tier matched, an archived name at or below its basename can
       // never win the comparison below, so stop reading. Only the no-match full scan stays; it
       // runs once per reap, in the background.
       if (clean && name <= path.basename(clean)) break;
       const dir = path.join(archiveBase, name);
       if (isAdHocRunDir(dir)) continue;
-      if (recordedMatches(readRunState(dir), real, canonical)) { archived = dir; break; }
+      if (recordedMatches(archivedState(dir, memo), real, canonical, target)) { archived = dir; break; }
     }
     if (clean && archived) return path.basename(clean) > path.basename(archived) ? clean : archived;
     return clean || archived;
@@ -258,6 +285,7 @@ function reapMerged({
   // read-modify-write per reaped/failed candidate. See cache.js's
   // `beginCacheBatch` for the atomicity tradeoff this accepts.
   const cacheBatch = beginCacheBatch(root);
+  const runMemo = createRunLookupMemo();
   const domain = safeReal(path.join(root, HARNESS_WORKTREE_DIR)) || path.join(root, HARNESS_WORKTREE_DIR);
   for (const wt of parseWorktreeList(list.stdout)) {
     const real = safeReal(wt.path);
@@ -269,7 +297,7 @@ function reapMerged({
     // worktree the caller is standing in is never a reap candidate (#644).
     if (isOwnCwd(here, real)) { skipped.push({ path: real, reason: 'own-cwd' }); continue; }
     if (isWorktreeLocked(real, { cwd: root })) { skipped.push({ path: real, reason: 'in-use' }); continue; }
-    // A live session in another process, read from its hold (#4960). 'held' writes no event, like 'in-use' (the SessionStart banner may still list it);
+    // A live session in another process, read from its hold (#4960). 'held' writes no event and, like 'in-use', stays off the SessionStart banner (QUIET_SKIP_REASONS);
     // a hold that cannot be verified keeps the worktree and is logged, so a stuck one surfaces.
     const held = holdVerdict(real);
     if (held === 'held') { skipped.push({ path: real, reason: 'held' }); continue; }
@@ -297,7 +325,7 @@ function reapMerged({
     if (dryRun) { reaped.push(real); continue; }
 
     // Resolved before removal — see resolveOwningRunDir's own header comment.
-    const owningRunDir = resolveOwningRunDir(root, real, { includeClosed: true });
+    const owningRunDir = resolveOwningRunDir(root, real, { includeClosed: true, memo: runMemo });
     const rm = runGit(['worktree', 'remove', real], root);
     if (rm.failure) {
       // #2566 — before escalating, try the long-path fallback: it succeeds
@@ -353,5 +381,5 @@ function reapMerged({
 }
 
 module.exports = {
-  reapMerged, resolveOwningRunDir, prefetchReapPrStates, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
+  reapMerged, resolveOwningRunDir, createRunLookupMemo, prefetchReapPrStates, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
 };

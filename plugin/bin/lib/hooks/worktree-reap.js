@@ -86,8 +86,9 @@ const REASON = {
 
 // Skip reasons that are the normal, expected state of a healthy repo and would
 // otherwise be reprinted on every single SessionStart. Consumed by
-// session-start.js, which reports only the reasons NOT in this set.
-const QUIET_SKIP_REASONS = new Set([REASON.IN_USE, REASON.OUT_OF_DOMAIN, REASON.RECENT, REASON.HELD]);
+// session-start.js, which reports only the reasons NOT in this set. 'held' and 'in-use' are
+// reap-merged.js's short codes for the same two states (its skips reach the same banner).
+const QUIET_SKIP_REASONS = new Set([REASON.IN_USE, REASON.OUT_OF_DOMAIN, REASON.RECENT, REASON.HELD, 'held', 'in-use']);
 
 function parseWorktreeList(porcelain) {
   const out = [];
@@ -465,11 +466,6 @@ function holdVerdict(wtPath, { hostname = os.hostname, isAlive = isPidAlive, sta
   }
 }
 
-// Both non-free verdicts keep the worktree (fail closed).
-function isHeldByLiveSession(wtPath, opts) {
-  return holdVerdict(wtPath, opts) !== 'free';
-}
-
 module.exports = {
   parseWorktreeList,
   findWorktreeEntry,
@@ -484,7 +480,6 @@ module.exports = {
   bareIntegrationName,
   isWorktreeLocked,
   holdVerdict,
-  isHeldByLiveSession,
   HARNESS_WORKTREE_DIR,
   ORPHAN_GRACE_MS,
   MAX_EXAMINED_PER_RUN,

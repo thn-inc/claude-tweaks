@@ -1,5 +1,5 @@
 'use strict';
-// #4960: holdVerdict / isHeldByLiveSession — the liveness predicate over a worktree's holds,
+// #4960: holdVerdict — the liveness predicate over a worktree's holds,
 // and reapWorktrees honouring it.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  holdVerdict, isHeldByLiveSession, reapWorktrees, REASON, QUIET_SKIP_REASONS, MAX_EXAMINED_PER_RUN,
+  holdVerdict, reapWorktrees, REASON, QUIET_SKIP_REASONS, MAX_EXAMINED_PER_RUN,
 } = require('../../../plugin/bin/lib/hooks/worktree-reap');
 const { holdKey, writeHold, holdDirOf } = require('../../../plugin/bin/lib/hooks/worktree-hold');
 const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
@@ -37,38 +37,33 @@ function garbageHold(wt, name = 'garbage__main__1') {
   fs.writeFileSync(path.join(dir, `${name}.json`), '{not json');
 }
 
-test('isHeldByLiveSession: no hold directory -> false', () => {
+test("holdVerdict: no hold directory -> 'free'", () => {
   const { wt } = worktree();
   assert.equal(holdVerdict(wt), 'free');
-  assert.equal(isHeldByLiveSession(wt), false);
 });
 
-test('isHeldByLiveSession: a hold naming this live process -> true', () => {
+test("holdVerdict: a hold naming this live process -> 'held'", () => {
   const { wt } = worktree();
   hold(wt);
   assert.equal(holdVerdict(wt), 'held');
-  assert.equal(isHeldByLiveSession(wt), true);
 });
 
-test('isHeldByLiveSession: a hold whose pid is dead -> false', () => {
+test("holdVerdict: a hold whose pid is dead -> 'free'", () => {
   const { wt } = worktree();
   hold(wt);
   assert.equal(holdVerdict(wt, { isAlive: () => false }), 'free');
-  assert.equal(isHeldByLiveSession(wt, { isAlive: () => false }), false);
 });
 
-test("holdVerdict: an unparseable hold -> 'unverifiable', and isHeldByLiveSession -> true (fails closed)", () => {
+test("holdVerdict: an unparseable hold -> 'unverifiable' (fails closed)", () => {
   const { wt } = worktree();
   garbageHold(wt);
   assert.equal(holdVerdict(wt), 'unverifiable');
-  assert.equal(isHeldByLiveSession(wt), true);
 });
 
 test("holdVerdict: a hold from another host -> 'unverifiable'", () => {
   const { wt } = worktree();
   hold(wt, { host: 'elsewhere' });
   assert.equal(holdVerdict(wt), 'unverifiable');
-  assert.equal(isHeldByLiveSession(wt), true);
 });
 
 test("holdVerdict: a hold with no usable pid -> 'unverifiable'", () => {
@@ -82,7 +77,6 @@ test("holdVerdict: a live hold beside an unparseable one -> 'held' (a verified l
   hold(wt);
   garbageHold(wt);
   assert.equal(holdVerdict(wt), 'held');
-  assert.equal(isHeldByLiveSession(wt), true);
 });
 
 test("holdVerdict: a dead hold beside an unparseable one -> 'unverifiable' (the dead one does not mask it)", () => {
@@ -93,14 +87,12 @@ test("holdVerdict: a dead hold beside an unparseable one -> 'unverifiable' (the 
   assert.equal(holdVerdict(wt, opts), 'unverifiable');
 });
 
-test('isHeldByLiveSession: a recycled pid (start time differs) -> false; an unknown start time never frees it', () => {
+test("holdVerdict: a recycled pid (start time differs) -> 'free'; an unknown start time never frees it", () => {
   const { wt } = worktree();
   hold(wt, { pidStartedAt: 'A' });
   assert.equal(holdVerdict(wt, { startTime: () => 'B' }), 'free');
-  assert.equal(isHeldByLiveSession(wt, { startTime: () => 'B' }), false);
   assert.equal(holdVerdict(wt, { startTime: () => 'A' }), 'held');
   assert.equal(holdVerdict(wt, { startTime: () => null }), 'held');
-  assert.equal(isHeldByLiveSession(wt, { startTime: () => null }), true);
   assert.equal(holdVerdict(wt, { startTime: () => '' }), 'held');
 });
 
@@ -115,7 +107,6 @@ test("holdVerdict: never throws — a throwing probe reads 'unverifiable'", () =
   hold(wt);
   const boom = () => { throw new Error('probe broke'); };
   assert.equal(holdVerdict(wt, { isAlive: boom }), 'unverifiable');
-  assert.equal(isHeldByLiveSession(wt, { isAlive: boom }), true);
   assert.equal(holdVerdict(wt, { hostname: boom }), 'unverifiable');
 });
 

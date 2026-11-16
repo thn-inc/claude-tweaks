@@ -14,6 +14,7 @@ const path = require('path');
 const { safeReal, nearestExistingDir, mainCheckoutRoot } = require('./worktree-detect');
 const processProbe = require('../run-liveness/process-probe');
 const { isPathContained } = require('../shared-primitives');
+const { writeFileAtomic } = require('../atomic-write');
 
 const HOLD_DIR_NAME = 'claude-tweaks-holds';
 // A key part never contains `__` (the key's separator), so one part layout cannot
@@ -102,16 +103,8 @@ function writeHold(wtPath, { key, block, agentId } = {}) {
     // Create the last level only: a pruned or non-directory admin dir fails here (ENOENT /
     // ENOTDIR) and is never resurrected.
     try { fs.mkdirSync(dir); } catch (e) { if (!e || e.code !== 'EEXIST') throw e; }
-    const file = path.join(dir, `${key}.json`);
-    const tmp = `${file}.tmp-${process.pid}`;
     const body = { ...block, agentId: agentId || null, worktree: wtPath, key };
-    try {
-      fs.writeFileSync(tmp, JSON.stringify(body));
-      fs.renameSync(tmp, file);
-    } catch (e) {
-      try { fs.rmSync(tmp, { force: true }); } catch { /* best effort */ }
-      throw e;
-    }
+    writeFileAtomic(path.join(dir, `${key}.json`), JSON.stringify(body));
     return true;
   } catch {
     return false;
@@ -139,7 +132,10 @@ function readHolds(wtPath) {
       try {
         const parsed = JSON.parse(fs.readFileSync(path.join(loc.dir, name), 'utf8'));
         if (parsed && typeof parsed === 'object') hold = parsed;
-      } catch { /* unreadable or unparseable: hold stays null */ }
+      } catch (e) {
+        // Released between the listing and the read: no hold. Any other failure stays unverifiable.
+        if (e && e.code === 'ENOENT') continue;
+      }
       out.push({ key: name.slice(0, -'.json'.length), hold });
     }
     return out;
@@ -208,7 +204,9 @@ function clearSessionHolds(mainRoot, { sessionId, pid } = {}) {
 // resolveOwnerPid answer the run-state writers stamp.
 
 // Stamps `{sessionId, agentId}`'s hold in the worktree containing `where`, then clears the
-// same key from every other worktree so the hold follows the session.
+// same key from every other worktree so the hold follows the session. 'failed' (distinct from
+// 'skipped': not a linked worktree, or no valid key) means the worktree and key were valid but
+// the write failed, so the session stands in that worktree unheld; the caller records it.
 // `keyAgent` is the key's agent part when it differs from the block's `agentId`.
 // `move: false` only adds the hold and leaves the same key where it already is.
 function stampHold({ where, sessionId, agentId, keyAgent = agentId, move = true, env, ownerBlock }) {
@@ -217,7 +215,7 @@ function stampHold({ where, sessionId, agentId, keyAgent = agentId, move = true,
   const block = ownerBlock({ sessionId, env });
   const key = holdKey({ sessionId, agentId: keyAgent, pid: block && block.pid });
   if (!key) return 'skipped';
-  if (!writeHold(wt, { key, block, agentId })) return 'skipped';
+  if (!writeHold(wt, { key, block, agentId })) return 'failed';
   if (!move) return 'stamped';
   const mainRoot = mainCheckoutRoot(wt);
   if (mainRoot) clearHolds(mainRoot, { key, except: wt });

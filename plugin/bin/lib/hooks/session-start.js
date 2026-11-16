@@ -152,7 +152,12 @@ async function run(ctx) {
   // #4960: stamp this session's worktree hold before anything below can spawn a reconcile pass
   // that reaps — a resume re-stamps under its new pid.
   try {
-    holdLib.stampHoldForCwd({ cwd: ctx.cwd, sessionId, env: process.env, ownerBlock: ctxLib.ownerBlock });
+    const holdOutcome = holdLib.stampHoldForCwd({ cwd: ctx.cwd, sessionId, env: process.env, ownerBlock: ctxLib.ownerBlock });
+    // A failed write leaves the session standing in its worktree unheld: leave a trace (owned run only).
+    const owned = ctx.ownedRun || {};
+    if (holdOutcome === 'failed' && owned.dir) {
+      ctxLib.appendEvent(owned.dir, 'worktree-hold-failed', { tool: 'SessionStart' }, owned.attribution);
+    }
   } catch { /* best-effort */ }
   try { restampOwnerPidOnResume(ctx); } catch { /* best-effort */ }
   // #3973: re-stamp the owner block (a resume runs under a new process) before anything below spawns.

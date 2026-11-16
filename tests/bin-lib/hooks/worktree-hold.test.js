@@ -310,3 +310,32 @@ test('releaseAgentHolds: a finished subagent\'s hold is removed; the main thread
   assert.deepStrictEqual(readHolds(b), []);
   assert.deepStrictEqual(readHolds(a).map((h) => h.key), [`s1__main__${process.pid}`]);
 });
+
+test("stampHoldForCwd: a failed hold write returns 'failed', apart from 'skipped' for a non-worktree (#4960)", () => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'wt-failed');
+  const holdDir = holdDirOf(a);
+  fs.writeFileSync(holdDir, 'not a directory');
+  const env = { CLAUDE_PID: String(process.pid) };
+  assert.strictEqual(stampHoldForCwd({ cwd: a, sessionId: 's1', env, ownerBlock }), 'failed');
+  assert.strictEqual(stampHoldForCwd({ cwd: main, sessionId: 's1', env, ownerBlock }), 'skipped');
+  assert.strictEqual(stampHoldForCwd({ cwd: a, sessionId: '../x', env, ownerBlock }), 'skipped');
+});
+
+test('readHolds: a hold that vanishes between the listing and the read is released; any other read failure stays unverifiable', (t) => {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'wt-vanish');
+  assert.ok(writeHold(wt, { key: 'gone__main__1', block: BLOCK }));
+  assert.ok(writeHold(wt, { key: 'kept__main__2', block: BLOCK }));
+  const real = fs.readFileSync;
+  const failing = (code) => t.mock.method(fs, 'readFileSync', (p, ...rest) => {
+    if (String(p).endsWith('gone__main__1.json')) throw Object.assign(new Error(code), { code });
+    return real.call(fs, p, ...rest);
+  });
+  let spy = failing('ENOENT');
+  assert.deepStrictEqual(readHolds(wt).map((e) => e.key), ['kept__main__2']);
+  spy.mock.restore();
+  spy = failing('EACCES');
+  assert.deepStrictEqual(readHolds(wt).map((e) => [e.key, e.hold === null]), [['gone__main__1', true], ['kept__main__2', false]]);
+  spy.mock.restore();
+});
