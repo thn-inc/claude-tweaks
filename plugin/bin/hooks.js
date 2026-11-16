@@ -704,7 +704,7 @@ async function runRecordWorktree(argv, deps) {
   const worktreeArg = positional[0];
   // #1124: every real caller already passes --run explicitly (build's
   // worktree-setup.md Step 4.5, the run-resume-freshness re-stamp, the
-  // subagent-output-contract re-stamp) — nothing legitimate depends on the
+  // subagent-dispatch-core re-stamp) — nothing legitimate depends on the
   // implicit fallback below. An invocation that omits --run previously fell
   // through to resolveRunDir's "newest non-terminal run" GUESS and could
   // silently clobber a DIFFERENT live session's run-state.json (reproduced
