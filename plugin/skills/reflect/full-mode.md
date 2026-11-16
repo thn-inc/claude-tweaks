@@ -179,11 +179,11 @@ logged too, confirmed end-to-end by `tests/friction-main-checkout-denial-coverag
 practice either (`/flow`'s Manifesto is what writes one; `bin/set-config.js`'s `setConfigLever`
 also creates the file in whatever run dir its `--run` names, but no caller ever points it at an
 ad-hoc dir), which is also the signal the background reconcile sweep
-(`bin/lib/reconcile/archive-merged.js`'s `isOrphanedMint`) uses to detect an abandoned
+(`bin/lib/reconcile/archive-merged.js`'s `orphaned-mint` classification) uses to detect an abandoned
 `/flow`/`/dispatch` pre-Manifesto mint and silently archive it after 24h of no mtime activity — a
 real dev session left untouched for that long before wrap-up finally runs would otherwise lose its
 whole friction record with no error, reopening exactly the blind spot this section exists to close.
-`isOrphanedMint` exempts any `-adhoc-standalone`-suffixed dir from that mtime sweep entirely
+The `orphaned-mint` classification exempts any `-adhoc-standalone`-suffixed dir from that mtime sweep entirely
 (`isAdHocStandaloneMint`) rather than racing it against a blind age heuristic built for a
 different case. It carries a real `worktree` in its `run-state.json`, unlike a genuine orphaned
 mint, which has none — but the ordinary merged-PR archival path `archiveMerged` runs for every
@@ -191,7 +191,7 @@ other run dir requires both a still-registered worktree at sweep time and a `con
 written into that exact directory, and nothing in this codebase writes one there. **A genuinely-
 abandoned ad-hoc dir (its recorded worktree no longer resolves in `git worktree list` at all) is
 swept separately once `ADHOC_SUPERSEDED_TTL_MS` (30 days) has elapsed since it was last touched
-(`isAdHocStandaloneSuperseded`, #1604) — a still-live one (worktree still registered) is never
+(the `adhoc-superseded` classification, #1604) — a still-live one (worktree still registered) is never
 swept by this path, no matter its age, preserving this section's own invariant.**
 A dir stamped with the main checkout never reaches that path (the main checkout is always
 registered); `adhoc-session-ended` sweeps it instead, once its session reads `dead` and the dir has

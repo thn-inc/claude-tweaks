@@ -39,7 +39,7 @@ The twelve flat keys (moved from `_shared/policy-schema.md`'s Control mode table
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
 | `control-mode` | `policy.yml` | `/claude-tweaks:wrap-up` (the Review Console's carry route and residue convergence, #4620); the rest of its implied set, #4624 | `off` | `off`/`on` |
-| `acceptance-target` | `policy.yml` | none yet (#4608) | `local` | `local`/`dev` |
+| `acceptance-target` | `policy.yml` | `bin/accept-park.js decide` (#4615) | `local` | `local`/`dev` |
 | `deploy-reach` | `policy.yml` | none yet (#4608) | `none` | `on-merge`/`command`/`none` |
 | `deploy-command` | `policy.yml`, base branch only | none yet (#4608) | unset | Executed command; spaces allowed |
 | `deploy-live-workflow` | `policy.yml` | none yet (#4608) | unset | CI workflow name; spaces allowed |

@@ -10,7 +10,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  isOrphanedMint,
   archiveMerged,
   STRUCTURALLY_STUCK_TTL_MS,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
@@ -148,7 +147,7 @@ function fixtureCleanUnarchivedRun({ runId, consoleResolved = true, prNumber, or
 }
 
 // #1673: a torn-down, shipped, `interrupted` run — the shape
-// `isAbandonedInterrupted` + `checkRunIntegrity` must recognize as
+// the `abandoned-interrupted` classification + `checkRunIntegrity` must recognize as
 // auto-closeable. Mirrors tests/run-integrity.test.js's `fixtureTornDownRepo`
 // (a merged feature branch whose worktree is later removed, `pr.branch`
 // stamped on run-state.json as the #1672 fallback-evidence source) rather
@@ -157,7 +156,7 @@ function fixtureCleanUnarchivedRun({ runId, consoleResolved = true, prNumber, or
 // pinned date (10:00:00) so checkRunIntegrity's run-start corroboration
 // passes. The one seed event is dated 2020 — far outside the 24h staleness
 // window — so it satisfies checkRunIntegrity's "at least one skill_invoked,
-// no wrap-up" evidence bar AND lastOwnEventMs' recency check in one line;
+// no wrap-up" evidence bar AND ownEventRecency's recency check in one line;
 // `extraEventLines` lets a caller (case 3) append a second, recent,
 // fallback-attributed line without disturbing that.
 function fixtureAbandonedShippedRun({ runId, ownerSessionId, extraEventLines = [] } = {}) {
@@ -252,7 +251,7 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
   if (origin) git(root, 'remote', 'add', 'origin', typeof origin === 'string' ? origin : 'git@github.com:acme/w.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n'); // adopted — keeps isOrphanedMint out of the way
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n'); // adopted — keeps the orphaned-mint classification out of the way
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
     status: 'active',
     worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`), // stamped, already torn down
