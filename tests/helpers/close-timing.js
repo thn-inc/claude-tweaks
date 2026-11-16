@@ -78,6 +78,16 @@ async function boundedWithHungReader(call) {
   }
 }
 
+// Makes at-close.js fail the way a load fault does: whatever a caller's require() of it hands back
+// throws on first use. Done through the module cache entry, restored afterwards.
+async function withLoadFault(fn) {
+  const entry = require.cache[require.resolve('../../plugin/bin/lib/timing/at-close')];
+  assert.ok(entry, 'at-close.js must be loaded before it can be faulted');
+  const real = entry.exports;
+  entry.exports = new Proxy({}, { get() { throw new Error('load fault'); } });
+  try { return await fn(); } finally { entry.exports = real; }
+}
+
 module.exports = {
-  SID, A, B, writeEvents, writeTranscript, sum, pickTokens, readTiming, skipLines, assertPhaseRows, withStub, boundedWithHungReader,
+  SID, A, B, writeEvents, writeTranscript, sum, pickTokens, readTiming, skipLines, assertPhaseRows, withStub, withLoadFault, boundedWithHungReader,
 };

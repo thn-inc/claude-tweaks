@@ -314,6 +314,24 @@ test('AC4.1 close-run: writeTimingAtClose stubbed to throw → stdout and exit c
   }
 });
 
+test('AC4.2 close-run: at-close.js failing at load → stdout and exit code equal the no-op stub\'s (exit 0), one SKIP line', async () => {
+  const base = closeFixture();
+  const faulty = closeFixture();
+  try {
+    const expected = await T.withStub(atClose, 'writeTimingAtCloseSafe', async () => ({}), () => closeRun(base));
+    const actual = await T.withLoadFault(() => closeRun(faulty));
+    assert.strictEqual(actual.code, 0);
+    assert.strictEqual(actual.code, expected.code);
+    assert.strictEqual(actual.stdout, expected.stdout);
+    const skips = T.skipLines(faulty.runDir);
+    assert.strictEqual(skips.length, 1);
+    assert.match(skips[0], /load fault/);
+  } finally {
+    cleanup(base);
+    cleanup(faulty);
+  }
+});
+
 // Mock timers drive the real TIMING_BOUND_MS (no 60 s wait): see boundedWithHungReader.
 test('AC5.1 close-run: the transcript reader never resolves → returns at the TIMING_BOUND_MS bound, phase rows written, one SKIP line', { timeout: 10000 }, async () => {
   const fx = closeFixture();
@@ -333,6 +351,7 @@ test('AC5.1 close-run: the transcript reader never resolves → returns at the T
 });
 
 test('AC10.2 close-run: run-state.json in the older shape (no worktree, no worktreeAtClose) → same stdout and exit code as without the change, phase rows, no token totals', async () => {
+  // No worktree recorded: that, not a missing transcript, is why the fixture gets no token totals.
   const base = closeFixture({ worktree: false });
   const older = closeFixture({ worktree: false });
   try {

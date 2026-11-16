@@ -1125,9 +1125,9 @@ async function runCloseRun(argv, deps) {
     }
     if (r.status === 'closed' && r.writeOk) {
       // #5555: timing.json is written in-process, inside at-close's own time bound; lazy so no hook event loads it.
-      const atClose = require('./lib/timing/at-close');
-      try { await atClose.writeTimingAtClose(runDir, { env: deps.env }); } catch (err) {
-        atClose.logTimingSkip(runDir, `condition: timing at close failed (${err && err.message ? err.message : err}) → fallback: no timing.json written`);
+      try { await require('./lib/timing/at-close').writeTimingAtCloseSafe(runDir, { env: deps.env }); } catch (err) {
+        // The module itself failed to load, so the SKIP line is written without it.
+        try { const log = require('./lib/log-decision/append'); log.appendEntry({ runDir, section: '/wrap-up', entry: log.formatEntry({ status: 'SKIP', now: Date.now(), step: 'timing at close', text: `condition: timing module failed to load (${err && err.message}) → fallback: no timing.json written` }) }); } catch { /* a failed trace line never fails the close */ }
       }
     }
   } else {
@@ -1408,9 +1408,8 @@ async function runTeardownRun(argv, deps) {
     const result = teardownRun(runDir, { mode, sessionId: deps.env.CLAUDE_CODE_SESSION_ID, cwd: deps.cwd() });
     deps.stdout(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
     if (result.closed) {
-      const atClose = require('./lib/timing/at-close');
-      try { await atClose.writeTimingAtClose(runDir, { env: deps.env }); } catch (err) {
-        atClose.logTimingSkip(runDir, `condition: timing at close failed (${err && err.message ? err.message : err}) → fallback: no timing.json written`);
+      try { await require('./lib/timing/at-close').writeTimingAtCloseSafe(runDir, { env: deps.env }); } catch (err) {
+        try { const log = require('./lib/log-decision/append'); log.appendEntry({ runDir, section: '/wrap-up', entry: log.formatEntry({ status: 'SKIP', now: Date.now(), step: 'timing at close', text: `condition: timing module failed to load (${err && err.message}) → fallback: no timing.json written` }) }); } catch { /* a failed trace line never fails the close */ }
       }
     }
   } else {

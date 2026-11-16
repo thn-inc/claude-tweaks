@@ -849,6 +849,18 @@ test('AC4.1 teardown-run: writeTimingAtClose stubbed to throw → stdout and exi
   assert.match(skips[0], /boom/);
 });
 
+test('AC4.2 teardown-run: at-close.js failing at load → stdout and exit code equal the no-op stub\'s (exit 0), one SKIP line', async () => {
+  const base = timingFixture();
+  const faulty = timingFixture();
+  const expected = await T.withStub(atClose, 'writeTimingAtCloseSafe', async () => ({}), () => teardown(base));
+  const actual = await T.withLoadFault(() => teardown(faulty));
+  assert.strictEqual(actual.code, 0);
+  assert.deepStrictEqual(masked(faulty, actual), masked(base, expected));
+  const skips = T.skipLines(faulty.runDir);
+  assert.strictEqual(skips.length, 1);
+  assert.match(skips[0], /load fault/);
+});
+
 // Mock timers drive the real TIMING_BOUND_MS (no 60 s wait): see boundedWithHungReader.
 test('AC5.2 teardown-run: the transcript reader never resolves → returns at the TIMING_BOUND_MS bound, phase rows written, one SKIP line', { timeout: 10000 }, async () => {
   const fx = timingFixture();

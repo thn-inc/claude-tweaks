@@ -145,6 +145,18 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
   return finish(runDir, result);
 }
 
+// Same as writeTimingAtClose, and a throw out of it (a stub, a defect) is one SKIP line too: the
+// in-process closing verbs call this, so a close never fails on timing. Resolved through
+// module.exports at call time, like TIMING_BOUND_MS, so a test can stub the writer.
+async function writeTimingAtCloseSafe(runDir, opts) {
+  try {
+    return await module.exports.writeTimingAtClose(runDir, opts);
+  } catch (err) {
+    logTimingSkip(runDir, `condition: timing at close failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}`);
+    return { status: 'failed', tokens: false, skip: null };
+  }
+}
+
 // runDir -> { spawned, reason }: starts bin/timing-at-close.js detached, so a
 // close never waits on a transcript read.
 function spawnTokenPass(runDir) {
@@ -161,4 +173,4 @@ function spawnTokenPass(runDir) {
   }
 }
 
-module.exports = { TIMING_BOUND_MS, ownTranscripts, isSpecChildDir, writeTimingAtClose, writePhaseTimingSync, logTimingSkip, spawnTokenPass };
+module.exports = { TIMING_BOUND_MS, ownTranscripts, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, logTimingSkip, spawnTokenPass };
