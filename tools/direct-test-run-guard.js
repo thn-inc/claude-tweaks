@@ -972,13 +972,12 @@ function jsLiterals(keep, blank) {
 // direct test run, quoted as typed and cut at 120 characters).
 function matchJs(text) {
   const { stripComments } = require('../plugin/bin/lib/strip-comments'); // lazy: most calls scan no script
-  const keep = text;
   const blank = stripComments(text, { literals: 'blank' });
-  const literals = jsLiterals(keep, blank);
+  const literals = jsLiterals(text, blank);
   if (!/\bchild_process\b/.test(blank) && !literals.some((l) => CHILD_PROCESS_NAMES.has(l.body))) return null;
   if (literals.some((l) => l.body === '--test')) {
     const found = literals.filter((l) => isNodeName(l.body)).map((l) => ({ at: l.at, ref: l.text }));
-    for (const m of blank.matchAll(NODE_CODE_RE)) found.push({ at: m.index, ref: keep.slice(m.index, m.index + m[0].length) });
+    for (const m of blank.matchAll(NODE_CODE_RE)) found.push({ at: m.index, ref: text.slice(m.index, m.index + m[0].length) });
     if (found.length) return { ref: found.reduce((a, b) => (b.at < a.at ? b : a)).ref };
   }
   for (const l of literals) {
