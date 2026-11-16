@@ -18,7 +18,7 @@
 - Replacement vocabulary for a removed name in prose and comments, keeping the sentence's rule: `isOrphanedMint` → the `orphaned-mint` classification; `isAbandonedInterrupted` → the `abandoned-interrupted` classification; `isAdHocStandaloneSuperseded` → the `adhoc-superseded` classification; `lastOwnEventMs` → `ownEventRecency`; `decideArchive` → `decideArchiveCore`, or "the merged-PR decision" where the sentence is about the removed `merged` kind.
 - `git grep -E` with `\b` matches nothing on this machine. Use `-w`, `-F` or `-P`.
 - One plain command per Bash call in this worktree session (no `&&`, no `$(...)` around git, no heredocs). Write file content with the Write or Edit tool.
-- Commit style `{Verb} {what} — {detail}`, body line `refs #5544`, last line `Claude-Session: https://claude.ai/code/session_01UwjosFpW1CPUSQZtTWpCad`. Stage files by explicit path.
+- Commit style `{Verb} {what} — {detail}`, body line `refs #5544`, last line `Claude-Session: https://claude.ai/code/session_01X7gPFAUGRPwG2oefMhPhpp`. Stage files by explicit path.
 - Scope: "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
 - Evidence: every scratch check a task runs to prove an acceptance criterion writes its full output to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-15T231130-spec-5544/evidence/{name}.txt` (create the directory first with `mkdir -p`, write with a plain Bash redirect) and the task report quotes the command and the pass/fail counts verbatim. The check's code is never committed.
 - Scratch mutations run in a `git archive` extract under the session scratchpad, never in this worktree and never in a linked worktree: `git archive --format=tar --output={scratchpad}/t{N}.tar HEAD`, `mkdir -p {scratchpad}/t{N}`, `tar -xf {scratchpad}/t{N}.tar -C {scratchpad}/t{N}`, each its own call; edit the extract's copy and run `node --test` with the extract's absolute test paths. If a test file cannot run from the extract, say so in the report rather than mutating the worktree.
@@ -26,7 +26,7 @@
   - "`assert.deepEqual(offenders, [])` over the walk also passes when the matcher matches nothing. For a scan that matches compliant and non-compliant sites alike, assert a lower bound on matches across the tree, and make the message say what a low count means. … Set the floor to the count at the time the scan lands. Raise it when sites are added. Never lower it to make the suite green."
   - "A floor that counts allow-listed sites drops when a change moves those sites onto the convention, and that drop is not lost recall. Lower it in the same change by exactly the number of sites moved, update the per-file exact count beside it, and name the record and the move in the floor's comment. … A floor with no exact per-file count beside it has no such proof, so it stays where it is."
   - "Changing an existing scan's matcher | Add the planted case that motivated the change to its self-test first, and watch it fail against the old code"
-  - Ruling for this plan: `SCOPED_SITE_FLOOR` counts one file's allowed sites and has no per-file count beside it, and deleting `lastOwnEventMs` removes exactly one allowed site (its body's `ownEventRecency(runDir)` call, `archive-merged.js:405`), which leaves 7 and makes a floor of 8 unsatisfiable. Task 2 lowers it by exactly one, names #5544 and that site in the comment, and records the measured count before (8) and after (7) as the proof the skill asks for. The planted case that "fails against the old code" cannot name the retired function (AC1 bans the name in `tests/`), so the go-red rows use `newHelper` and `ttlReader`.
+  - Decided by the user at plan review (spec `## Plan Review Clarifications`): deleting `lastOwnEventMs` removes exactly one allowed site (its body's `ownEventRecency(runDir)` call, `archive-merged.js:405`), which leaves 7 and makes a floor of 8 unsatisfiable. Task 2 first adds an exact per-file count beside the floor (`SCOPED_SITE_COUNT = 7`, asserted with `assert.equal` on the live tree), then lowers `SCOPED_SITE_FLOOR` by exactly one, and names #5544 and that site in the floor's comment. The planted case that "fails against the old code" cannot name the retired function (AC1 bans the name in `tests/`), so the go-red rows use `newHelper` and `ttlReader`.
 
 ## Plan-time probes (recorded output)
 
@@ -52,6 +52,7 @@
 ### Task 1: Repoint the wrapper tests at the surviving functions
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/reconcile.test.js`
@@ -144,7 +145,8 @@ Expected: FAIL after Step 1 — `kind` is `'merged'` on the unmodified source.
 - [ ] **Step 4: Narrow the scan in `tests/run-liveness-callers-conformance.test.js`**
 
 - Header comment (`:64-66`), `allowedRegions` (`:154`), the hit message (`:194`) and `assertSiteFloor` (`:211`): one allowed function span, `classifyRunDir`; message `${m[1]} outside classifyRunDir`.
-- `SCOPED_SITE_FLOOR`: 8 → 7, comment naming #5544 and the removed site (the deleted wrapper body's `ownEventRecency(runDir)` call), per the Global Constraints ruling.
+- Beside `SCOPED_SITE_FLOOR`, add `const SCOPED_SITE_COUNT = 7;` (comment: the exact number of allowed scoped-token sites in `archive-merged.js`; change it together with the floor when a site is added or removed). In the test `floor: the scoped-token sites are located`, after `assertSiteFloor(readEntries())`, add `assert.equal(scopedSites(ARCHIVE, raw).allowed, SCOPED_SITE_COUNT, …)` over the live file's text, with a message saying which way the count moved.
+- `SCOPED_SITE_FLOOR`: 8 → 7, replacing the "never lower this floor" comment with one that names #5544 and the removed site (the deleted wrapper body's `ownEventRecency(runDir)` call) and says the exact count beside it is what proves a drop.
 - `AC4.1` test (`:376-385`): keep the `classifyRunDir` rename assertion, delete the second one.
 - Self-test fixture (`:392-393`): the fixture is `require` line, `STALE_INTERRUPTED_TTL_MS` declaration, `classifyRunDir` (lines 3-6, body reading both tokens), `function newHelper(d) { return ownEventRecency(d); }` (lines 7-9), `function ttlReader() { return STALE_INTERRUPTED_TTL_MS; }` (lines 10-12), then the export list; expected hits exactly `['8:ownEventRecency outside classifyRunDir', '11:STALE_INTERRUPTED_TTL_MS outside classifyRunDir']`.
 - Update the remaining expected strings (`:412-420`) to the new message.
@@ -165,7 +167,7 @@ Expected: PASS, 0 failures (AC6.1's first half; AC4.2 — the `isStructurallyStu
 
 - [ ] **Step 7: Verify with scratch proofs, saved as evidence**
 
-- Floor proof: in an archive extract of the pre-task commit and of the working tree, print `scopedSites(ARCHIVE, raw).allowed` (a scratch script requiring nothing from the test file: copy the four functions it needs, or temporarily log from an extract's copy of the test). Expected 8 before, 7 after. Save to `{evidence}/task2-floor-count.txt`.
+- Floor proof: in an archive extract of the pre-task commit, print `scopedSites(ARCHIVE, raw).allowed` (log it from the extract's copy of the test). Expected 8; the committed `SCOPED_SITE_COUNT` assertion proves 7 after. Then, in an extract of the edited tree, add one more `STALE_INTERRUPTED_TTL_MS;` read inside `classifyRunDir` and run the conformance test. Expected: FAIL on the exact count (8 vs 7). Save both to `{evidence}/task2-floor-count.txt`.
 - AC6.1's second half: in an extract of the edited tree, add `function scratchHelper(d) { return ownEventRecency(d); }` to `archive-merged.js` outside `classifyRunDir` and run `node --test {extract}/tests/run-liveness-callers-conformance.test.js`. Expected: FAIL, naming `ownEventRecency outside classifyRunDir`. Save to `{evidence}/task2-ac6-scratch.txt`.
 - AC7.1: `node plugin/bin/hooks.js reconcile --dry-run --json > {evidence}/task2-reconcile-after.json`, then print its exit code and sorted top-level keys. Expected: exit 0 and the 15 keys recorded under Plan-time probes.
 
@@ -183,33 +185,35 @@ Stage the three edited files by path and commit `Remove the unused archive-merge
 - Modify: `docs/reconcile-checks.md`
 - Modify: `docs/hooks.md`
 - Modify: `docs/donts.md`
+- Modify: `docs/plugin-structure.md`
 
 **Interfaces:**
-- Consumes: Task 2's shape (five kinds, no wrappers, `decideArchiveCore` is the merged-PR decision).
-- Produces: no doc under `docs/reconcile-checks.md`, `docs/hooks.md`, `docs/donts.md` names a removed wrapper.
+- Consumes: Task 2's shape (five kinds, no wrappers, `decideArchiveCore` is the merged-PR decision; the scan's one allowed function span is `classifyRunDir`).
+- Produces: none of `docs/reconcile-checks.md`, `docs/hooks.md`, `docs/donts.md`, `docs/plugin-structure.md` names a removed wrapper.
 
 - [ ] **Step 1: Edit**
 
 - `docs/reconcile-checks.md:260`: replace the parenthetical about the wrapper with the mechanism that is true now: a `decideArchiveCore` call that passes no `coverage` skips the guard (`archiveUnlessTiebreakGap` returns `archive` for an absent `coverage`).
 - `docs/reconcile-checks.md:309-326`: the kind set loses `'merged'`; replace the "five pre-consolidation predicates … are now thin wrappers" sentences and "Only `archiveMerged()`'s own main loop passes the full, ordered kind set" with: `classifyRunDir` and `decideArchiveCore` are the two seams tests and production both call; every caller scopes `ctx.kinds` — the main loop passes `['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended']`, its companion re-classify (when the `checkRunIntegrity` gate fails) passes `['adhoc-superseded', 'adhoc-session-ended']`, and `isStructurallyStuck`, the one remaining wrapper, passes `['structurally-stuck']` for `trackStuckSkip`; the merged-PR decision is `decideArchiveCore`, called by `archiveMergedRun`, and is not a classifier kind. Keep the `adhoc-session-ended` (#4179) sentence without "has no wrapper predicate".
 - `docs/hooks.md:32` (two names) and `:39` (one name), `docs/donts.md:185` (`decideArchive` → the merged-PR decision, `decideArchiveCore`): Global Constraints vocabulary, sentence rule kept.
+- `docs/plugin-structure.md:46`: "to archive-merged.js's classifyRunDir and lastOwnEventMs, its import and export lists" becomes "to archive-merged.js's classifyRunDir, its import and export lists" (decided at plan review; this line is the only mention of a removed name outside AC1's paths).
 
 - [ ] **Step 2: Verify**
 
-Run: `git grep -n -w -e isOrphanedMint -e isAbandonedInterrupted -e isAdHocStandaloneSuperseded -e lastOwnEventMs -e decideArchive -- docs/reconcile-checks.md docs/hooks.md docs/donts.md`
+Run: `git grep -n -w -e isOrphanedMint -e isAbandonedInterrupted -e isAdHocStandaloneSuperseded -e lastOwnEventMs -e decideArchive -- docs/reconcile-checks.md docs/hooks.md docs/donts.md docs/plugin-structure.md`
 Expected: no output (AC1.1 for the docs).
 Run: `npm test > {scratchpad}/task3-npm-test.txt 2>&1` (impact-selected), then read the file's summary.
 Expected: PASS — 0 failures; quote the summary lines.
 
 - [ ] **Step 3: Commit**
 
-Stage the three files by path and commit `Describe classifyRunDir and decideArchiveCore as the archive seams — drop the removed wrappers from the docs`.
+Stage the four files by path and commit `Describe classifyRunDir and decideArchiveCore as the archive seams — drop the removed wrappers from the docs`.
 
 ---
 
-### Task 4: Reword the wrapper names in skill prose and comments [batch]
+### Task 4: Reword the wrapper names in skill prose and comments
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/skills/dispatch/SKILL.md`
