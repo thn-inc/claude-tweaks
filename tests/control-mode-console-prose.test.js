@@ -430,6 +430,48 @@ for (const [needle, message] of STEP_9_CLAIMS) {
   });
 }
 
+// Code twin: every `--upstream-route` command step 9 documents parses through console-resolve.js's real parseArgs
+// once its placeholders are filled, so a misspelled or misplaced flag in the prose is a usage error here, not at a run.
+const { parseArgs } = require(path.join(__dirname, '..', 'plugin', 'bin', 'console-resolve'));
+const UPSTREAM_SPAN_RE = /`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/console-resolve\.js" (--upstream-route [^`]*)`/g;
+const PLACEHOLDERS = [['{id}', 'wrap-up-upstream-1.md'], ['{url}', 'https://github.com/o/r/issues/1'], ['{why}', 'a reason'], ['$PIPELINE_RUN_DIR', '/run']];
+const shellWords = (s) => (s.match(/"[^"]*"|'[^']*'|\S+/g) || []).map((w) => w.replace(/^(["'])(.*)\1$/, '$2'));
+
+function documentedCommandProblems(text) {
+  const spans = [...stepNine(text).matchAll(UPSTREAM_SPAN_RE)].map((m) => m[1]);
+  const problems = [];
+  const shapes = new Set();
+  for (const span of spans) {
+    for (const hold of span.includes('filing-failed|scrub-hit') ? ['filing-failed', 'scrub-hit'] : [null]) {
+      let args = hold === null ? span : span.replace('filing-failed|scrub-hit', hold);
+      for (const [placeholder, value] of PLACEHOLDERS) args = args.split(placeholder).join(value);
+      try {
+        const o = parseArgs(shellWords(args));
+        if (o.upstreamRoute !== 'wrap-up-upstream-1.md') problems.push(`${span}: the id did not parse as the id`);
+        shapes.add(o.hold !== null ? 'hold' : o.filed !== null ? 'filed' : 'route');
+      } catch (err) {
+        problems.push(`${span}: ${err.message}`);
+      }
+    }
+  }
+  for (const shape of ['route', 'filed', 'hold']) if (!shapes.has(shape)) problems.push(`step 9 documents no ${shape} command`);
+  return problems;
+}
+
+test('#4621: every --upstream-route command in step 9 parses through console-resolve.js parseArgs', () => {
+  assert.deepStrictEqual(documentedCommandProblems(REVIEW_CONSOLE), []);
+});
+
+test('#4621 go-red: a misspelled flag, a dropped --reason or a dropped command in step 9 is caught', () => {
+  const s = stepNine(REVIEW_CONSOLE);
+  const misspelled = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.replace('--filed {url}', '--file {url}')));
+  assert.ok(misspelled.some((p) => p.includes('unknown flag: --file')), misspelled.join('; '));
+  const noReason = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.replace(" --reason '{why}'", '')));
+  assert.ok(noReason.some((p) => p.includes('--hold requires --reason')), noReason.join('; '));
+  const noFiled = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.split('--upstream-route {id} --filed').join('--removed {id} --filed')));
+  assert.ok(noFiled.includes('step 9 documents no filed command'), noFiled.join('; '));
+});
+
 function sectionOf(text, heading) {
   const start = text.indexOf(`\n${heading}`);
   assert.notStrictEqual(start, -1, `heading not found: ${heading}`);

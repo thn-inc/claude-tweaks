@@ -70,8 +70,8 @@
 // Seventh shape (#4621): `--run <dir> --upstream-route <staged-id> [--hold filing-failed|scrub-hit --reason <text> |
 // --filed <url>]` — the per-item ownership route for a wrap-up upstream-feedback item, for every ceiling below
 // `unattended` under control mode (the `unattended` resolve shape routes the same items in-process). The id must match
-// `wrap-up-upstream-*` (no whitespace) and, except under `--filed`, name a regular file in `{run}/staged/`, else exit 5;
-// that check runs BEFORE the policy read, so a bad id is exit 5 even with control mode off. Then
+// `wrap-up-upstream-*` (no whitespace) and, except under `--filed`, name a regular file in `{run}/staged/`, else
+// exit 5; that check runs BEFORE the policy read, so a bad id is exit 5 even with control mode off. Then
 // `bookkeepingPermissions(ceiling, { controlMode }).ownedUpstreamFiling !== true` (a policy that cannot be read counts
 // as off) prints `upstream-route {id} unchanged (control mode off)`, exits 0 and writes nothing. With no modifier it
 // prints `upstream-route {id} {file|hold} target {repo|none} reason {reason|none}`; a `hold` also carries the item
@@ -79,14 +79,16 @@
 // reads no ownership. `--filed URL` (one line, no whitespace) logs a filing at every ceiling, `unattended` included,
 // and needs no staged file: `/claude-tweaks:feedback --pre-confirmed` deletes it on success, before this call. Its
 // target is the repo the URL names, parsed strictly from `https://github.com/{owner}/{name}/issues/{n}` (anything else
-// is an unresolved target) and routed like a staged one. On `file` it logs `filed into {repo} as {url}`; otherwise it
-// still logs the issue that exists — `filed as {url} against a hold verdict ({reason})` — writes no fact and exits 5.
+// is an unresolved target) and routed like a staged one. On `file` it logs `filed into {repo} as {url}`; otherwise
+// it still logs the issue that exists — `filed as {url} against a hold verdict ({reason})` — writes no fact and
+// exits 5.
 // The hold writes run in this order, so a fact exists before anything claims the item
 // carried: the decision fact (writeDecisionFacts; a failed write exits 6), then the console.json rewrite `filed` →
 // `carried` (only when the auto-resolve shape holds the id as `filed`; any other console is left alone), then one AUTO
 // line. A repeated `--hold` for the same id writes no second fact (merge by id, first copy wins) and logs again. Each
 // failed ownership read logs one SKIP line (step `Upstream ownership`), as the resolve shape does: on the route call,
-// and on a `--filed` call only when it ends on a hold verdict, so one filing logs one set of notes. Ownership is not
+// and on a `--filed` call only when it ends on a hold verdict, so a filing that stays `file` logs one set of notes
+// and one that ends on a hold verdict logs a second. Ownership is not
 // read at all when the target is missing or malformed (the verdict is `external` from the target alone). It takes no
 // other flag. Exit 0 routed, 2 malformed, 3 --run not anchored, a decisions.md entry could not be written, or the
 // console.json rewrite threw (the decision fact has landed), 5 the id refused (nothing written), `--filed` against a
@@ -142,7 +144,7 @@ const EXIT_CARRY_FAILED = 6;
 // #4621: the hold reasons a caller can report to `--upstream-route`; `external` and `owner-unresolved` are only ever the route's own verdict.
 const UPSTREAM_CALLER_HOLDS = Object.freeze(['filing-failed', 'scrub-hit']);
 const UPSTREAM_ROUTE_ID_RE = /^wrap-up-upstream-[^/\\]+$/;
-const ISSUE_URL_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)$/;
+const ISSUE_URL_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)$/;
 
 // The `owner/name` a filed issue's URL names, parsed strictly from `https://github.com/{owner}/{name}/issues/{n}`
 // and validated by the one owner/name grammar (parseTargetRepo); anything else is null, an unresolved target.
@@ -895,7 +897,7 @@ function upstreamRoute(o, runDir, { stdout, stderr, now, execFile, cwd }) {
   const { ownerContext, ownedOwners, notes } = ownership;
   const verdict = upstreamFilingRoute({ permissions, targetRepo: staged.targetRepo, ownerContext, ownedOwners });
   if (verdict.route === 'file') {
-    // One filing, one set of notes: the route call logs them, so the `--filed` call that follows logs only the filing.
+    // A `file` verdict leaves the notes to the route call, so the `--filed` call that follows logs only the filing.
     const lines = o.filed !== null
       ? [auto(`Upstream filing: ${id} filed into ${verdict.targetRepo} as ${o.filed} (control mode: owned target, no prompt)`)]
       : skipLines(notes);

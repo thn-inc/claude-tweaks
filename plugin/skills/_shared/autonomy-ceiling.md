@@ -297,7 +297,7 @@ resolves to the default rather than to the tier it resembles.
 
 ## Control mode (#4620)
 
-**Composition.** `control-mode: on` implies the `unattended` capability set through `effectiveCeiling`, which composes it below any explicit `autonomy`. An explicit value wins and `--ceiling` reports `source explicit`. `bookkeepingPermissions(null, { controlMode: true })` equals `bookkeepingPermissions('unattended', { controlMode: true })`, so control mode adds exactly one capability to the `unattended` set: `ownedUpstreamFiling`, at every ceiling. The run reads it as `ceiling {tier} consoleAutoResolve {true|false} control-mode {on|off} source {...}`, and an unreadable policy exits 3.
+**Composition.** `control-mode: on` implies the `unattended` capability set through `effectiveCeiling`, which composes it below any explicit `autonomy`. An explicit value wins and `--ceiling` reports `source explicit`. `bookkeepingPermissions(null, { controlMode: true })` is that set plus one capability, `ownedUpstreamFiling`, which no ceiling grants without control mode and control mode grants at every ceiling. The run reads it as `ceiling {tier} consoleAutoResolve {true|false} control-mode {on|off} source {...}`, and an unreadable policy exits 3.
 
 **Hold over `unattended`.** Under control mode a `U#` files only when `upstreamFilingRoute` says `file`; any other target is held at every ceiling, `unattended` included, overriding `consoleAutoResolve`'s file-unconditionally `U#` stance. Outside control mode that stance is unchanged.
 

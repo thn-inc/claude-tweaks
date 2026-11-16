@@ -417,7 +417,8 @@ goes via `--body-file`.
    draft as a fresh upstream proposal — and tell the user the filing did not happen and the draft
    is preserved. This row means the CLI's own single retry (above) already ran and still failed —
    not that no retry was attempted. Under control mode the row also runs the `--hold filing-failed`
-   call of `wrap-up/review-console.md`'s step 9 for that draft.
+   call of `wrap-up/review-console.md`'s step 9 for that draft, its `{why}` a short phrase you write
+   (not pasted tool output), any `'` in it written `'\''`.
 5. **On success when invoked via `--pre-confirmed`:** run `pre-confirmed.md`'s Step 8 section
    (this skill's directory) — the per-draft `staged/wrap-up-upstream-{N}.md` cleanup keyed on the
    CLI table's `filed`/`dedup-hit` status. A direct invocation has no staged file — no-op.

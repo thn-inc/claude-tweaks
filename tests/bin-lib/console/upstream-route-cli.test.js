@@ -207,6 +207,8 @@ test('--filed with a URL that is not a strict issue URL is an unresolved target:
     'https://github.com/thn-inc/claude-tweaks/issues/9?x=1',
     'https://github.com/thn-inc/claude-tweaks/issues/9#issuecomment-1',
     'https://github.com/thn-inc/claude-tweaks/issues/9x',
+    'https://github.com/thn-inc/claude-tweaks/issues/0',
+    'https://github.com/thn-inc/claude-tweaks/issues/09',
     'https://github.com/thn-inc/claude-tweaks/issues/',
     'https://github.com.evil.example/thn-inc/claude-tweaks/issues/9',
     'https://evilgithub.com/thn-inc/claude-tweaks/issues/9',

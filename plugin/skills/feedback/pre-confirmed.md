@@ -23,7 +23,8 @@ line goes into `body`.
    treat it exactly like a Step 6 stop anywhere else in a batch: drop this one item (report why)
    and continue processing the rest of the chunk — it never aborts sibling items. Under control
    mode this stop also runs the `--hold scrub-hit` call of `wrap-up/review-console.md`'s step 9
-   for the item.
+   for the item, its `{why}` a short phrase you write (not pasted tool output), any `'` in it
+   written `'\''`.
 2. **Drift check** — if `staged/wrap-up-upstream-{N}.md` no longer exists, treat this as "already
    filed" (see Step 8's cleanup-on-success below) and skip this item without re-filing or
    erroring. Otherwise, re-read it fresh from disk (the post-scrub content from step 1 above) and
