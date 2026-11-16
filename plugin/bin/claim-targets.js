@@ -55,7 +55,7 @@ const realDeps = {
   // is git-exec.js's repoTargetOfRemote (#5109), with its one loose fallback on: a remote the gate
   // cannot read (an unparseable sandbox proxy remote) gets a spec whose host is an exported host
   // override or github.com, as `resolveGhHost`'s null gave before; only an unread or wholly
-  // unparseable origin gives no spec.
+  // unparseable origin gives neither a spec nor a refusal.
   gateOrigin: () => {
     let remote = null;
     try { remote = originUrl(process.cwd()); } catch { remote = null; }
