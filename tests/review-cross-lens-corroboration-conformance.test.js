@@ -74,8 +74,9 @@ function assertInputScope(file) {
   assert.doesNotMatch(step, /direct[- ]verification/i, 'input step still names the retired Direct-verification override');
 }
 
-// Since #5595 the deferred lines are written by the pair's `--only unconfirmed --hold` call (step 4 names it).
-const DEFERRED_CALL = '`categorise-reproduction --only unconfirmed --hold "{path-H}"` call';
+// Since #5595 the deferred lines are written by the pair's Mode 1 call with `--only unconfirmed`, `--hold` only when
+// this pass promoted or the absence check refuted a finding (step 4 names it).
+const DEFERRED_CALL = 'same Mode 1 call (`step3-lens-dispatch.md`) with `--only unconfirmed`, plus `--hold "{path-H}"` when this pass promoted or the absence check refuted a finding';
 
 function assertKeepsStaged(file, dispatch) {
   assert.match(file, /not reproduced/);

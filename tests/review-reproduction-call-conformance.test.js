@@ -18,6 +18,10 @@ const CALL_HEAD = 'categorise-reproduction "{path-A}" "{path-B}"';
 const CALL_FLAGS = ['--lens "{lens}"', '--run "$PIPELINE_RUN_DIR"', '--only confirmed'];
 const ABSENCE_FIRST = 'run the absence-claim ground-truth check';
 const UNCONFIRMED_CALL = '--only unconfirmed';
+// An empty `unconfirmed` is the all-confirmed case, whose lens 3f vacuity check and `severityContested`/`nearLocation`
+// routing still run, so the prose may skip only the second call there, never end the pair.
+const EMPTY_UNCONFIRMED_ENDS_PAIR = /\bwhen `?unconfirmed`? is empty\b[^.]*\b(?:done|finished|complete|over|ends?)\b/i;
+const NO_SECOND_CALL = 'When `unconfirmed` is empty no second call is needed.';
 const MEDIUM_WAIT = "At `medium`, make the `--only unconfirmed` call (the `not reproduced` and share-a-location lines) only after `step3-cross-lens-corroboration.md`'s pass has run";
 // One distinctive phrase per base-commit template (AC10's grep); the composer is their only home.
 const TEMPLATE_PHRASES = [
@@ -43,6 +47,7 @@ function reproductionProblems(text) {
   if (absence === -1) problems.push('the absence check is not stated');
   else if (unconfirmed === -1) problems.push('no --only unconfirmed call is named');
   else if (absence > unconfirmed) problems.push('the absence check comes after the first --only unconfirmed mention');
+  if (EMPTY_UNCONFIRMED_ENDS_PAIR.test(flat)) problems.push('the prose ends the pair when unconfirmed is empty');
   if (!flat.includes(MEDIUM_WAIT)) problems.push('forms 3 and 4 are not held at medium');
   for (const phrase of TEMPLATE_PHRASES) if (flat.includes(collapse(phrase))) problems.push(`template phrase still in the prose: ${phrase}`);
   return problems;
@@ -92,5 +97,12 @@ test('AC11.2 go-red: dropping the medium wait is caught', () => {
 test('AC10.1 go-red: a template phrase planted back in the prose is caught', () => {
   for (const phrase of TEMPLATE_PHRASES) {
     assert.deepEqual(reproductionProblems(`${read()}\n> Write \`AUTO {HH:MM:SS} — Reproduction: ${phrase}\`.\n`), [`template phrase still in the prose: ${phrase}`], phrase);
+  }
+});
+
+test('#5595 go-red: saying the pair is done when unconfirmed is empty is caught', () => {
+  const live = read();
+  for (const end of ['the pair is done', 'the pair is finished', "the pair's handling is complete"]) {
+    assert.deepEqual(reproductionProblems(doctor(live, NO_SECOND_CALL, `When \`unconfirmed\` is empty ${end}.`)), ['the prose ends the pair when unconfirmed is empty'], end);
   }
 });

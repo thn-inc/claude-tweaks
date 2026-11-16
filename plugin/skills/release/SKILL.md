@@ -193,7 +193,7 @@ KEPT-PROMPT {time} — Step 3 Routing: critical finding {category} at {file:line
 STAGED {time} — Step 3 Routing: high-severity finding {category} at {file:line}. Stage path: staged/review-{n}.patch. Reversibility: high.
 ```
 
-A critical finding's line carries **no** stage-path clause — it is surfaced inline, not staged — so a classifier keyed on `Routing:` plus a `review-{n}.patch` mention would miss the most severe finding there is. The `Reproduction:` lines (composed by `plugin/bin/lib/reproduction-log.js`; this one is its `reproduced`) carry no severity at all — `AUTO {time} — Reproduction: lens "{lens}" finding {path}:{line} reproduced. Confirmed. …` — so `Confirmed` is not a severity signal and must not be read as one.
+A critical finding's line carries **no** stage-path clause — it is surfaced inline, not staged — so a classifier keyed on `Routing:` plus a `review-{n}.patch` mention would miss the most severe finding there is. The `Reproduction:` lines (composed by `plugin/bin/lib/reproduction-log.js`; this one is its `reproduced`) carry no severity at all — `AUTO {time} — Reproduction: lens "{lens}" finding {path}:{line} reproduced. Confirmed. Reversibility: high.` — so `Confirmed` is not a severity signal and must not be read as one.
 
 | Verdict | Condition |
 |---------|-----------|

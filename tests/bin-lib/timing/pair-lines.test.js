@@ -6,7 +6,7 @@
 //   plugin/skills/review/step3-tier-variants.md  — the single-read-coverage notice (pinned below)
 //   plugin/bin/lib/tiebreak.js, plugin/bin/lib/console/resolve.js — the tiebreak forms,
 //     owned by parseTiebreakLine (a pair-lines null, asserted below)
-// Mention that is not a producer: release/SKILL.md (quotes form 1, naming the composer).
+// Mention that is not a producer: release/SKILL.md (quotes form 1, naming the composer; pinned below to rl.reproduced).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -17,6 +17,7 @@ const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 
 const SKILL_DIR = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'review');
 const TIER = path.join(SKILL_DIR, 'step3-tier-variants.md');
+const RELEASE = path.join(SKILL_DIR, '..', 'release', 'SKILL.md');
 const COVERAGE_PHRASES = ['session limit twice', 'unavailable', 'timed out'];
 const RULE = 'pair-line patterns are additive: add a pattern for the new wording, never replace one, so archived runs keep parsing';
 
@@ -440,4 +441,25 @@ test('AC3.3: a reworded composed line matches no form, and a drifted template fa
   for (const [k, v] of FILL) naive = naive.split(k).join(v);
   assert.notEqual(actionOf(composedLine(COMPOSED[3])), naive);
   assert.equal(actionOf(composedLine(COMPOSED[3])), fill(absence.template));
+});
+
+// release/SKILL.md quotes form 1; the quote is the composer's output with the quote's own placeholders.
+function releaseQuoteProblem(text) {
+  const m = /`(AUTO \{time\} — Reproduction: [^`\n]*)`/.exec(text);
+  if (!m) return 'release/SKILL.md quotes no Reproduction line';
+  // location() drops a non-integer line, so compose with a sentinel line and put the quote's `{line}` back.
+  const composed = composedLine(rl.reproduced({ lens: '{lens}', path: '{path}', line: 987 }))
+    .replace(/^- (\w+) \d{2}:\d{2}:\d{2} /, '$1 {time} ').replace('{path}:987', '{path}:{line}');
+  return m[1] === composed ? null : `release/SKILL.md quote drifted from rl.reproduced: ${m[1]} vs ${composed}`;
+}
+
+test('#5595: release/SKILL.md\'s quoted form 1 line equals rl.reproduced composed with its placeholders', () => {
+  assert.equal(releaseQuoteProblem(readText(RELEASE)), null);
+});
+
+test('#5595 go-red: a drifted release/SKILL.md quote is caught', () => {
+  const live = readText(RELEASE);
+  const drifted = live.replace('reproduced. Confirmed. Reversibility: high.`', 'reproduced. Confirmed. …`');
+  assert.notEqual(drifted, live);
+  assert.match(releaseQuoteProblem(drifted), /drifted/);
 });
