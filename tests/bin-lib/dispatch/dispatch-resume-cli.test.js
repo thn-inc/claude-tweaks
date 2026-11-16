@@ -663,6 +663,67 @@ test('bot:parked label -> exit 3 unlisted-label', () => {
   assert.equal(exec(env).json.reason, 'unlisted-label');
 });
 
+// #5584: resume takes a typed command as the build grant, through the build-authority rule.
+// An attended cli session whose every condition holds, so the transcript check decides.
+const TYPED_ENV = {
+  CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'sess-5584', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CODE_SESSION_ATTENDED: '1', TMPDIR: '/t/tmp',
+};
+function typedEnv(labels, answer = { answer: 'typed', promptId: 'p-1' }) {
+  const env = makeEnv();
+  env.cfg.issue.labels = labels.map((name) => ({ name }));
+  env.calls.typed = [];
+  env.deps.env = { ...TYPED_ENV };
+  env.deps.readTypedCommand = (opts) => { env.calls.typed.push(opts); return answer; };
+  return env;
+}
+
+test('#5584 AC10: an ungranted ready record resumes on an accepted typed command', () => {
+  const env = typedEnv(['ready']);
+  const r = exec(env);
+  assert.equal(r.code, 0, r.lines.join('\n'));
+  assert.equal(r.json.eligible, true);
+  assert.equal(env.calls.typed.length, 1);
+  const [opts] = env.calls.typed;
+  assert.equal(opts.number, N);
+  assert.strictEqual(opts.env, env.deps.env);
+  assert.ok(opts.now instanceof Date);
+  assert.equal(opts.now.getTime(), NOW);
+  assert.equal(opts.tmpdir, '/t/tmp');
+});
+
+test('#5584 AC10: an ungranted record whose typed command is refused -> not-granted naming the reason', () => {
+  const env = typedEnv(['ready'], { answer: 'none', reason: 'expired' });
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'not-granted');
+  assert.equal(r.json.line, `#${N} lacks auto:build (typed command not accepted: expired) — re-grant it with /claude-tweaks:backlog refine #${N}, then run /claude-tweaks:dispatch resume #${N}`);
+});
+
+test('#5584 AC10: a granted record never reads the typed command', () => {
+  const env = typedEnv(['ready', 'auto:build']);
+  assert.equal(exec(env).code, 0);
+  assert.equal(env.calls.typed.length, 0);
+});
+
+test('#5584 AC15: bot:blocked, bot:parked and parked refuse with an accepted typed command', () => {
+  for (const held of ['bot:blocked', 'bot:parked', 'parked']) {
+    const env = typedEnv(['ready', held]);
+    const r = exec(env);
+    assert.equal(r.code, 3, held);
+    assert.equal(r.json.reason, 'not-granted', held);
+    const why = held === 'bot:blocked' ? 'carries bot:blocked' : 'lacks auto:build (typed command not accepted: held)';
+    assert.equal(r.json.line, `#${N} ${why} — re-grant it with /claude-tweaks:backlog refine #${N}, then run /claude-tweaks:dispatch resume #${N}`, held);
+    assert.equal(env.calls.typed.length, 0, held);
+  }
+});
+
+test('#5584 AC15: a record without ready is refused with an accepted typed command', () => {
+  const env = typedEnv(['type:task']);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'not-granted');
+  assert.match(r.json.line, /\(typed command not accepted: not-ready\)/);
+});
+
 test('the issue read is one gh issue view with the labels,state,body field list', () => {
   const env = makeEnv();
   exec(env);
@@ -1865,6 +1926,8 @@ test('realDeps carries the production seams the CLI needs', () => {
     'listRunDirsWithState', 'probes', 'workLinks', 'fetchNative', 'resolveTarget', 'now', 'stdout', 'stderr']) {
     assert.ok(realDeps[key] !== undefined, key);
   }
+  assert.strictEqual(realDeps.env, process.env);
+  assert.strictEqual(realDeps.readTypedCommand, require('../../../plugin/bin/lib/issues/typed-command').readTypedCommand);
   assert.strictEqual(realDeps.findSibling, findConflictingSession);
   assert.strictEqual(realDeps.findSiblingOnWorktree, findSessionOnWorktree);
   assert.equal(typeof realDeps.probes.pidAlive, 'function');

@@ -78,6 +78,9 @@ const { DEFAULT_PROBES } = require('./lib/run-liveness/probes');
 const { MAX_PID, probeOwnerPid } = require('./lib/run-liveness/owner-pid-probe');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { lstatType } = require('./lib/path-guard');
+const { envTmpdir } = require('./lib/session-tmp');
+const { resolveBuildAuthority } = require('./lib/issues/build-authority');
+const { readTypedCommand } = require('./lib/issues/typed-command');
 const {
   selectResumePr, resumeEligibility, resumeContext, worktreePathForHead, isObject, nonEmptyString, refusalDetail, closeOutCannotResolve,
   ownMarkerRunId,
@@ -167,6 +170,10 @@ const realDeps = {
   probes: DEFAULT_PROBES,
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
   now: () => Date.now(),
+  // The build-authority rule's inputs (#5584): a typed `/claude-tweaks:dispatch resume #N` grants an
+  // ungranted record when the transcript check accepts it.
+  env: process.env,
+  readTypedCommand,
   workLinks: resolveWorkLinks,
   // The aliased foreign-state lookup: one batched GraphQL call, so it runs on the batched bound.
   ghBatch: nativeGh,
@@ -636,6 +643,14 @@ function runVerdict(ctx) {
     || siblingOnWorktree(ctx, priorListing, pr.headRefName, ctx.worktreePath) !== null;
   const wt = readWorktreeState(ctx);
   const local = wt.exists ? { localBranchSha: null, branchCheckedOutAt: null } : readLocalBranch(ctx, pr.headRefName);
+  const authority = resolveBuildAuthority({
+    number: issue,
+    labels: record.labels,
+    named: true,
+    env: deps.env,
+    typedCommand: () => deps.readTypedCommand({ number: issue, env: deps.env, now: new Date(deps.now()), tmpdir: envTmpdir(deps.env) }),
+    stdinIsTTY: false,
+  });
 
   const verdict = resumeEligibility({
     issue,
@@ -655,6 +670,8 @@ function runVerdict(ctx) {
     localBranchSha: local.localBranchSha,
     branchCheckedOutAt: local.branchCheckedOutAt,
     mainRoot: ctx.mainRoot,
+    buildAuthority: authority.authority,
+    authorityReasons: authority.reasons,
   });
   if (!verdict.eligible) return refusal(ctx, prs, verdict, prior);
   // The --bound-run scan, run here too so a run left bound to the worktree refuses at Step 2, before

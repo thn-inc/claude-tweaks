@@ -285,6 +285,7 @@ function resumeEligibility(input) {
   const {
     issue: n, prs, claimContent, labels, now, priorRunDir, priorRunOpen, priorRunOwnerHost, siblingLive,
     worktreePath, worktreeDirty, worktreeBranch, issueState, openBlockers, localBranchSha, branchCheckedOutAt, mainRoot,
+    buildAuthority, authorityReasons,
   } = input;
 
   const runGone = closeOutCannotResolve(priorRunDir);
@@ -338,8 +339,14 @@ function resumeEligibility(input) {
   }
 
   const labelList = Array.isArray(labels) ? labels : [];
-  if (labelList.includes('bot:blocked') || !labelList.includes('auto:build')) {
-    const why = labelList.includes('bot:blocked') ? 'carries bot:blocked' : 'lacks auto:build';
+  // #5584: the build-authority rule's answer (bin/lib/issues/build-authority.js) when the gatherer
+  // passes one; omitted, the label decides as before. Any value but 'label' or 'typed' is none.
+  let authority = labelList.includes('auto:build') ? 'label' : 'none';
+  if (buildAuthority !== undefined) authority = buildAuthority === 'label' || buildAuthority === 'typed' ? buildAuthority : 'none';
+  if (labelList.includes('bot:blocked') || authority === 'none') {
+    const words = Array.isArray(authorityReasons) ? authorityReasons.filter((w) => typeof w === 'string' && w !== '') : [];
+    const notAccepted = words.length > 0 ? ` (typed command not accepted: ${words.join(', ')})` : '';
+    const why = labelList.includes('bot:blocked') ? 'carries bot:blocked' : `lacks auto:build${notAccepted}`;
     return refuse('not-granted', `#${n} ${why} — re-grant it with /claude-tweaks:backlog refine #${n}, then run ${resumeCmd}`);
   }
   if (labelList.includes('bot:in-progress') && claimState !== 'stale') {

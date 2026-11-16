@@ -413,6 +413,40 @@ test('carries bot:blocked wins over lacks auto:build', () => {
   assert.ok(v.line.startsWith('#4589 carries bot:blocked'), v.line);
 });
 
+// #5584 AC10: the build-authority fact the gatherer derives. Omitted, the label decides (the
+// 'no auto:build' table row above pins that line unchanged).
+test('#5584 AC10: an ungranted record resumes when buildAuthority is typed', () => {
+  const v = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'typed', authorityReasons: [] });
+  assert.equal(v.eligible, true, v.line);
+});
+
+test('#5584 AC10: an ungranted record is refused not-granted when buildAuthority is none, naming the reasons', () => {
+  const v = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'none', authorityReasons: ['expired', 'not-typed'] });
+  assert.equal(v.reason, 'not-granted');
+  assert.equal(v.line, '#4589 lacks auto:build (typed command not accepted: expired, not-typed) — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589');
+  const bare = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'none' });
+  assert.equal(bare.reason, 'not-granted');
+  assert.equal(bare.line, '#4589 lacks auto:build — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589');
+  assert.equal(verdict({ labels: ['ready'], buildAuthority: 'none', authorityReasons: [] }).line, bare.line);
+});
+
+test('#5584 AC10: buildAuthority none refuses even a record carrying auto:build', () => {
+  assert.equal(verdict({ buildAuthority: 'none', authorityReasons: ['labels-unreadable'] }).reason, 'not-granted');
+});
+
+test('#5584 AC10: bot:blocked is refused not-granted with buildAuthority typed and with none', () => {
+  for (const buildAuthority of ['typed', 'none', 'label']) {
+    const v = verdict({ labels: ['ready', 'bot:blocked'], buildAuthority, authorityReasons: ['held'] });
+    assert.equal(v.reason, 'not-granted', buildAuthority);
+    assert.ok(v.line.startsWith('#4589 carries bot:blocked — '), v.line);
+  }
+});
+
+test('#5584 AC10: a typed record still meets the gates after the grant check', () => {
+  assert.equal(verdict({ labels: ['ready', 'bot:in-progress'], buildAuthority: 'typed' }).reason, 'label-drift');
+  assert.equal(verdict({ labels: ['ready', 'bot:zeta'], buildAuthority: 'typed' }).reason, 'unlisted-label');
+});
+
 test('branch-diverged does not fire when the worktree exists, nor when the tips match', () => {
   assert.equal(verdict({ worktreeBranch: HEAD, localBranchSha: 'b'.repeat(40) }).eligible, true);
   assert.equal(verdict({ worktreeBranch: null, localBranchSha: OID }).eligible, true);
