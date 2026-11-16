@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { contentHash, sliceRecursive } = require('../../../plugin/bin/lib/code-health/scope');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { spawnCli } = require('../../helpers/run-cli');
 const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 // Every setup git call runs without an inherited GIT_DIR and friends, so they cannot land in another repo.
@@ -159,7 +160,6 @@ test('next-slice: a change inside a subdirectory does not make the "." slice loo
 // Real-process pin of the script entry (#5381): an unknown command exits 2 with empty stdout and
 // the usage text on stderr.
 test('AC2.1, AC2.2: code-health.js no-such-command exits 2 with the usage text on stderr, naming no removed command (real process)', () => {
-  const { spawnCli } = require('../../helpers/run-cli');
   const r = spawnCli(CLI, ['no-such-command'], { env: { ...process.env }, cwd: tmp() });
   assert.strictEqual(r.code, 2);
   assert.strictEqual(r.stdout, '');
