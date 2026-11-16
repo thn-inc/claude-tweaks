@@ -10,7 +10,7 @@ const { run: runChecklist } = require('../../../plugin/bin/pr-checklist');
 const { composePrEarlyBody } = require('../../../plugin/bin/lib/flow/pr-body');
 const { hasPrEarlyStep1LineFor, hasLoggedPrDegrade } = require('../../../plugin/bin/lib/hooks/pre-tool-use');
 const logDecision = require('../../../plugin/bin/log-decision');
-const { gitRepo } = require('../../helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 const { readText } = require('../../helpers/read-skill');
 
 const RUN_ID = '2026-10-25T000001-record-4027';
@@ -704,7 +704,9 @@ test('the written line is byte-identical to what log-decision.js --section /buil
 
 // A run dir under a real git main checkout's .claude-tweaks/pipelines/. --run
 // is anchored strictly, so a dir outside every checkout is refused.
-function cliFixture({ policy = null, runState = null } = {}) {
+// linked: fx.wt is a real linked worktree of fx.root (the fake git then answers
+// `rev-parse --show-toplevel` with it, as real git would from inside a worktree).
+function cliFixture({ policy = null, runState = null, linked = false } = {}) {
   const root = gitRepo();
   created.push(root);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
@@ -713,9 +715,14 @@ function cliFixture({ policy = null, runState = null } = {}) {
   if (runState) fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(runState));
   const summaryFile = path.join(root, 'summary.md');
   fs.writeFileSync(summaryFile, 'A summary with `backticks` and $(dollar).\n');
+  if (linked) {
+    const wt = linkedWorktreeOf(root);
+    created.push(path.dirname(wt));
+    return { root, runDir, summaryFile, wt, top: wt };
+  }
   const wt = path.join(root, 'wt');
   fs.mkdirSync(wt);
-  return { root, runDir, summaryFile, wt };
+  return { root, runDir, summaryFile, wt, top: root };
 }
 
 function cliDeps(fx, { list = [], lists = null, create = `${URL42}\n`, push = null, ghAvailable = true, defaultBranch = 'main', view = null } = {}) {
@@ -746,7 +753,7 @@ function cliDeps(fx, { list = [], lists = null, create = `${URL42}\n`, push = nu
       calls.push(['git', ...args]);
       assert.equal(opts && opts.cwd, fx.wt);
       if (args[0] === 'branch' && args[1] === '--show-current') return `${BRANCH}\n`;
-      if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return `${fx.root}\n`;
+      if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return `${fx.top}\n`;
       if (args[0] === 'push') { if (push) throw push; return ''; }
       throw new Error(`unexpected git ${args.join(' ')}`);
     },
@@ -785,6 +792,26 @@ test('CLI: base falls back to the GitHub default branch when integration-branch 
   assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
   const createCall = h.calls.find(isCreate);
   assert.equal(createCall[createCall.indexOf('--base') + 1], 'trunk');
+  assert.equal(h.err.join(''), '', 'AC3.1: the main checkout prints no warning');
+});
+
+test("AC1.1: CLI from a linked worktree without policy.yml resolves base develop from the main checkout's policy", async () => {
+  const fx = cliFixture({ policy: 'integration-branch: develop\n', linked: true });
+  const h = cliDeps(fx);
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  const createCall = h.calls.find(isCreate);
+  assert.equal(createCall[createCall.indexOf('--base') + 1], 'develop');
+  assert.equal(h.err.join(''), '');
+});
+
+test('AC4.1: CLI from a linked worktree with no integration-branch anywhere warns on stderr and still opens against the GitHub default', async () => {
+  const fx = cliFixture({ linked: true });
+  const h = cliDeps(fx, { defaultBranch: 'trunk' });
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  const createCall = h.calls.find(isCreate);
+  assert.equal(createCall[createCall.indexOf('--base') + 1], 'trunk');
+  assert.equal(h.err.join(''), `pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — opening the draft PR against the GitHub default branch "trunk" from linked worktree ${fx.wt}\n`);
+  assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
 });
 
 test('CLI: a run-pinned config.yml integration-branch overrides policy', async () => {
