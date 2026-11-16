@@ -23,7 +23,9 @@
 // A node start measured about 50 ms on the same machine, so the 25 ms ceiling is half a node start.
 // With one piece cap removed in a scratch copy of the prefilter, the matching payload measured
 // 3.9 to 67 times `word` (cap 1 quotes 67x sh / 39x dash; cap 2 newlines 27x / 25x; cap 3
-// fragments 20x / 33x), against the 12 times budget.
+// fragments 20x / 33x), against the 12 times budget. The `description` row is a secondary row for
+// the quote-piece cap (with that cap removed it measures about 7 times a plain payload under sh,
+// inside the 12 times budget); the `quotes` row is the one that pins that cap.
 'use strict';
 
 const { test } = require('node:test');
@@ -65,9 +67,10 @@ function buildLine({ prefix, fill, bytes, inDescription = false }) {
     const filled = fill.repeat(n) + 'a'.repeat(pad);
     return inDescription ? hookPayload(prefix, filled) : hookPayload(prefix + filled, 'Run it');
   };
-  let n = 0;
-  while (Buffer.byteLength(make(n + 1, 0)) <= bytes) n += 1;
-  const line = make(n, bytes - Buffer.byteLength(make(n, 0)));
+  const base = Buffer.byteLength(make(0, 0));
+  const unit = Buffer.byteLength(make(1, 0)) - base; // bytes one fill character adds once JSON-escaped
+  const n = Math.floor((bytes - base) / unit);
+  const line = make(n, bytes - base - n * unit);
   assert.strictEqual(Buffer.byteLength(line), bytes, 'payload builder missed its byte length');
   return line;
 }

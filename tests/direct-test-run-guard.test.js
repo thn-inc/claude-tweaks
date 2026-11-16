@@ -1293,6 +1293,8 @@ test('AC10.4: the guard requires no child_process', () => {
   assert.equal(requiresChildProcess.test(readText(GUARD)), false);
 });
 
+const HOOK_COMMAND_TEXT = 'd="$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard"; [ -r "$d.sh" ] && command . "$d.sh"; node "$d.js"; exit 0';
+
 test('AC11.1: .claude/settings.json registers the guard for Bash and the file exists', () => {
   const settings = JSON.parse(readText(path.join(ROOT, '.claude', 'settings.json')));
   const entry = settings.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
@@ -1555,11 +1557,9 @@ test('#5794 AC6.2: under a shell that does not split words every call goes to no
 
 // ---- the registered hook command, run the way Claude Code runs it (#5794) ----
 
-const HOOK_COMMAND_TEXT = 'd="$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard"; [ -r "$d.sh" ] && command . "$d.sh"; node "$d.js"; exit 0';
-const HOOK_COMMAND = JSON.parse(readText(path.join(ROOT, '.claude', 'settings.json'))).hooks.PreToolUse.find((e) => e.matcher === 'Bash').hooks[0].command;
 // Runs the registered command the way Claude Code does: `<sh> -c <command>` with the payload on stdin.
 function runHook(shellFile, input, env) {
-  return spawnSync(shellFile, ['-c', HOOK_COMMAND], { input, env, timeout: 30000, killSignal: 'SIGKILL', windowsHide: true });
+  return spawnSync(shellFile, ['-c', HOOK_COMMAND_TEXT], { input, env, timeout: 30000, killSignal: 'SIGKILL', windowsHide: true });
 }
 
 const ORIGINAL_PATH = process.env[Object.keys(process.env).find((k) => /^path$/i.test(k))] || '';
@@ -1636,7 +1636,7 @@ perPrefilterShell('#5794 AC3.1 AC3.2: node reads the bytes the hook received', (
   const inputs = [
     D + '\n', D, JSON.stringify(JSON.parse(D), null, 2) + '\n', JSON.stringify(JSON.parse(D), null, 2),
     D + '\nextra', D + '\nextra\n', hookPayload('git status') + '\n\n', '', '\n', 'not json\n',
-    hookPayload('node "a b.js" c.js # æøå   \\ $HOME `id`') + '\n',
+    hookPayload('node "a b.js" c.js # æøå \u2028 \\ $HOME `id`') + '\n',
   ];
   withHookProject(GOOD_PREFILTER, RECORDER, ({ dir, seen }) => {
     const env = nodeEnv(dir, { DTRG_SEEN: seen });
@@ -1685,6 +1685,23 @@ perPrefilterShell('#5794 AC5.1 AC5.2 AC5.3: a missing, CRLF or broken prefilter 
       const res = runHook(sh.file, DENIED + '\n', nodeEnv(dir, { DTRG_REAL: GUARD }));
       assert.equal(res.status, 0, `[${sh.name}] ${state}`);
       parsesAsDeny(res.stdout);
+    });
+  }
+});
+
+perPrefilterShell('#5794 AC5.2: a guard that cannot load or exits non-zero still ends in status 0', (sh) => {
+  const guards = [
+    ['cannot load', 'this is ( not js\n', ''],
+    ['exits 3 after printing', "process.stdin.resume(); process.stdin.on('end', () => { process.stdout.write('{}'); process.exit(3); });\n", '{}'],
+  ];
+  for (const [state, guardSource, stdout] of guards) {
+    withHookProject(GOOD_PREFILTER, guardSource, ({ dir }) => {
+      for (const input of [D + '\n', D, D + '\n' + D + '\n']) {
+        const res = runHook(sh.file, input, nodeEnv(dir));
+        const label = `[${sh.name}] ${state} ${JSON.stringify(input).slice(0, 40)}`;
+        assert.equal(res.status, 0, label);
+        assert.equal(res.stdout.toString(), stdout, label);
+      }
     });
   }
 });

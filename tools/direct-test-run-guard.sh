@@ -15,11 +15,13 @@
 # file cannot read plainly: another JSON escape, a payload of another shape, or one over the caps.
 # Cutting inside quotes only adds fragments, so it can add node runs and never remove one.
 #
-# Faults. Everything below this comment is one brace group, so the shell parses all of it before
-# it runs any of it: a syntax fault anywhere (CRLF line endings, conflict markers, a cut-off file)
-# is found before anything reads stdin. `command .` then returns, and the hook command's own
+# Faults. Everything below this comment is one brace group, so the shell reads the whole group
+# before it runs any command in it: a syntax fault inside it (conflict markers, a cut-off file) is
+# found before anything reads stdin. With CRLF line endings the brace is not read as a brace: the
+# shell reports unknown commands on stderr and then stops at a syntax error in the first function,
+# again before anything reads stdin. `command .` then returns, and the hook command's own
 # `node "$d.js"` runs the guard on the untouched stdin, as the registration did before #5794. The
-# hook command ends in `exit 0`, and nothing here prints.
+# hook command ends in `exit 0`, and nothing here prints to stdout.
 #
 # POSIX sh only: dash, bash 3.2 (macOS /bin/sh) and Git Bash run it. No [[, local, arrays, $'...'
 # or ${v//...}. Claude Code passes a hook command to `sh -c` on macOS and Linux and to Git Bash on
@@ -120,10 +122,8 @@ direct_test_run_guard_needs_node() {
 }
 
 # The hook entry. Claude Code writes one JSON line and a newline: that shape is judged, and node,
-# when needed, replaces this shell and reads the line back from a here-document (no fork). When
-# that exec does not happen (bash writes a here-document to a temp file, so an unwritable TMPDIR
-# fails it) the line is piped to node instead. Any other stdin (no final newline, more than one
-# line, nothing) goes to node byte for byte.
+# when needed, gets the line back through a pipe. Any other stdin (no final newline, more than one
+# line, nothing) goes to node byte for byte. Every path ends in `exit 0`, whatever node returned.
 direct_test_run_guard_main() {
   dtrg_js=$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard.js
   dtrg_stdin=
@@ -134,9 +134,6 @@ direct_test_run_guard_main() {
     elif [ -n "$dtrg_tail" ]; then
       printf '%s\n%s' "$dtrg_stdin" "$dtrg_tail" | node "$dtrg_js"
     elif direct_test_run_guard_needs_node "$dtrg_stdin" && command -v node >/dev/null 2>&1; then
-      command exec node "$dtrg_js" <<DTRG_EOF
-$dtrg_stdin
-DTRG_EOF
       printf '%s\n' "$dtrg_stdin" | node "$dtrg_js"
     fi
   else
