@@ -214,7 +214,7 @@ function mainPolicyRoot(p) {
   try {
     let dir = nearestExistingDir(p);
     while (dir) {
-      if (fs.existsSync(path.join(dir, '.git'))) {
+      if (fs.lstatSync(path.join(dir, '.git'), { throwIfNoEntry: false })) {
         const loc = require('../policy-file').locatePolicyFile(dir);
         return loc.source === 'main-checkout' ? path.dirname(path.dirname(loc.path)) : null;
       }
