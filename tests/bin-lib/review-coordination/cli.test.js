@@ -699,8 +699,76 @@ test('AC5.1, AC5.2: check-coverage and console/resolve.js read a chunk-settled r
   const a = resolveAll({ runDir: chunked.runDir, policy: 'console-auto', deps: resolveDeps });
   const b = resolveAll({ runDir: legacy.runDir, policy: 'console-auto', deps: resolveDeps });
   assert.ok(a.items.some((i) => i.tiebreak), 'the can\'t-tell verdict reaches the console as a tiebreak item');
-  assert.ok(a.items.length >= 1);
   const normalize = (r, dirs) => JSON.parse(JSON.stringify(r.items).split(dirs.runDir).join('<run>'));
   assert.deepStrictEqual(normalize(a, chunked), normalize(b, legacy));
   assert.deepStrictEqual(a.droppedByTiebreak, b.droppedByTiebreak);
+});
+
+test('the chunk form takes a CHUNK_MAX-entry array: 8 entries and 8 reply blocks exit 0 with 8 results', (t) => {
+  const d = tmpDir(t);
+  const root = path.join(d, 'repo');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'auth.ts'), 'x\ny\nconst ok = 1;\n');
+  const findings = Array.from({ length: CHUNK_MAX }, (_, i) => ({ ...TB_FINDING, line: 3, claim: `claim ${i}` }));
+  const reply = findings.flatMap((f) => [`Id: ${findingId(f)}`, 'Verdict: refuted', 'Severity: high', 'Evidence: src/auth.ts:3 `const ok = 1;`', 'Recommendation: drop']).concat('STATUS: DONE').join('\n');
+  const res = chunkRun([writeText(d, 'max-chunk.json', JSON.stringify(findings)), writeText(d, 'max-reply.txt', reply), '--root', root], d);
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.strictEqual(printed.results.length, CHUNK_MAX);
+  assert.deepStrictEqual(printed.unsettled, []);
+});
+
+// ---- #5540: finding-ids prints the Id: headers a chunk agent is given ----
+
+const findingIdsRun = (argv, cwd) => {
+  const { deps, out, err } = tbDeps(cwd);
+  const code = run(['finding-ids', ...argv], deps);
+  return { code, out: out.join(''), err: err.join('') };
+};
+
+test('finding-ids prints one {index, id} per entry, each id findingId of that entry, and writes nothing', (t) => {
+  const d = tmpDir(t);
+  const { findings, ids, chunkFile } = chunkInputs(d);
+  const before = fs.readdirSync(d).sort();
+  const res = findingIdsRun([chunkFile], d);
+  assert.strictEqual(res.code, 0, res.err);
+  assert.strictEqual(res.err, '');
+  assert.deepStrictEqual(JSON.parse(res.out), { ids: findings.map((f, index) => ({ index, id: findingId(f) })) });
+  assert.deepStrictEqual(JSON.parse(res.out).ids.map((e) => e.id), ids);
+  assert.strictEqual(res.out.split('\n').filter(Boolean).length, 1, 'one JSON line');
+  assert.deepStrictEqual(fs.readdirSync(d).sort(), before, 'finding-ids writes no file');
+});
+
+test('finding-ids exits 2 with one stderr line for an empty, oversize, repeated, malformed or non-array input', (t) => {
+  const d = tmpDir(t);
+  const { findings } = chunkInputs(d);
+  const nine = Array.from({ length: CHUNK_MAX + 1 }, (_, i) => ({ ...TB_FINDING, claim: `claim ${i}` }));
+  const bad = [
+    ['empty', []],
+    ['nine', nine],
+    ['repeated id', [findings[0], { ...findings[0] }]],
+    ['malformed entry', [findings[0], { ...findings[1], kind: 'bogus' }]],
+    ['single object', findings[0]],
+  ];
+  for (const [name, entries] of bad) {
+    const res = findingIdsRun([writeText(d, 'bad-ids.json', JSON.stringify(entries))], d);
+    assert.strictEqual(res.code, 2, name);
+    assert.strictEqual(res.out, '', name);
+    assert.strictEqual(res.err.split('\n').filter(Boolean).length, 1, name);
+  }
+  const unreadable = findingIdsRun([path.join(d, 'no-such.json')], d);
+  assert.strictEqual(unreadable.code, 2);
+  assert.strictEqual(unreadable.out, '');
+});
+
+test('finding-ids exits 2 through the usage message on a wrong arity', (t) => {
+  const d = tmpDir(t);
+  const { chunkFile } = chunkInputs(d);
+  for (const argv of [[], [chunkFile, chunkFile]]) {
+    const res = findingIdsRun(argv, d);
+    assert.strictEqual(res.code, 2, JSON.stringify(argv));
+    assert.strictEqual(res.out, '');
+    assert.match(res.err, /^review-coordination\.js: finding-ids takes exactly 1 JSON file path\n/);
+    assert.ok(res.err.includes('review-coordination.js finding-ids <entries.json>'), 'the usage lists finding-ids');
+  }
 });

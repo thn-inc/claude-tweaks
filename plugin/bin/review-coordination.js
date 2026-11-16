@@ -9,6 +9,7 @@
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
 //   node bin/review-coordination.js resolve-refutation <verdict>
 //   node bin/review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>]
+//   node bin/review-coordination.js finding-ids <entries.json>
 //   node bin/review-coordination.js write-findings <run-dir> <findings.json>
 //   node bin/review-coordination.js check-coverage <run-dir>
 // categorise-reproduction/detect-overlap/corroborate-cross-lens print JSON
@@ -38,6 +39,9 @@
 // missing or repeated id settles nothing and is named in unsettled with reason
 // missing|duplicated, for the caller to re-dispatch alone. An empty, oversize or
 // malformed array, or one repeating a finding id, exits 2 before anything is written.
+// finding-ids (#5540) runs the chunk form's input checks over a JSON array of entries
+// and prints {ids: [{index, id}]} — each id tiebreak.js's findingId, the `Id:` header a
+// chunk agent is given — with no run dir and no writes; a failed check exits 2.
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
 // also a run dir that does not exist); 3 run dir unanchored (write-findings,
 // check-coverage, resolve-tiebreak --run), or missing (write-findings,
@@ -68,6 +72,7 @@ const USAGE =
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
   '       review-coordination.js resolve-refutation <verdict>\n' +
   '       review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>]\n' +
+  '       review-coordination.js finding-ids <entries.json>\n' +
   '       review-coordination.js write-findings <run-dir> <findings.json>\n' +
   '       review-coordination.js check-coverage <run-dir>\n';
 
@@ -124,22 +129,30 @@ const realDeps = {
 // 1..CHUNK_MAX findings and the reply file holds one block per finding. Every exit-2
 // check runs before the reply is read, the run dir is anchored, or anything is
 // appended, so a refused chunk writes nothing.
-function resolveTiebreakChunkCommand(findings, positional, root, runDir, deps) {
+// The chunk form's input checks, shared by resolve-tiebreak's chunk form and finding-ids:
+// returns { ids } (one finding id per entry, in entry order) or { exitCode: 2 } after one stderr line.
+function validateChunk(findings, file, deps) {
   if (findings.length === 0 || findings.length > CHUNK_MAX) {
-    deps.stderr(`review-coordination.js: a tiebreak chunk holds 1 to ${CHUNK_MAX} findings, ${positional[0]} holds ${findings.length}\n`);
-    return 2;
+    deps.stderr(`review-coordination.js: a tiebreak chunk holds 1 to ${CHUNK_MAX} findings, ${file} holds ${findings.length}\n`);
+    return { exitCode: 2 };
   }
   let ids;
   try {
     ids = buildFindingsArtifact(findings).map((f) => f.id);
   } catch (err) {
-    deps.stderr(`review-coordination.js: malformed finding in ${positional[0]}: ${err.message}\n`);
-    return 2;
+    deps.stderr(`review-coordination.js: malformed finding in ${file}: ${err.message}\n`);
+    return { exitCode: 2 };
   }
   if (new Set(ids).size !== ids.length) {
-    deps.stderr(`review-coordination.js: two findings in ${positional[0]} share a finding id\n`);
-    return 2;
+    deps.stderr(`review-coordination.js: two findings in ${file} share a finding id\n`);
+    return { exitCode: 2 };
   }
+  return { ids };
+}
+
+function resolveTiebreakChunkCommand(findings, positional, root, runDir, deps) {
+  const checked = validateChunk(findings, positional[0], deps);
+  if (checked.exitCode !== undefined) return checked.exitCode;
   let reply;
   try {
     reply = fs.readFileSync(at(deps, positional[1]), 'utf8');
@@ -310,6 +323,22 @@ function run(argv, overrides = {}) {
       }
     }
     deps.stdout(JSON.stringify(result) + '\n');
+    return 0;
+  }
+  if (command === 'finding-ids') {
+    if (rest.length !== 1) {
+      deps.stderr('review-coordination.js: finding-ids takes exactly 1 JSON file path\n' + USAGE);
+      return 2;
+    }
+    const input = readJson(rest[0], deps);
+    if (input.failed) return 2;
+    if (!Array.isArray(input.value)) {
+      deps.stderr(`review-coordination.js: ${rest[0]} must hold a JSON array of tiebreak entries\n`);
+      return 2;
+    }
+    const checked = validateChunk(input.value, rest[0], deps);
+    if (checked.exitCode !== undefined) return checked.exitCode;
+    deps.stdout(JSON.stringify({ ids: checked.ids.map((id, index) => ({ index, id })) }) + '\n');
     return 0;
   }
   if (command === 'write-findings') {

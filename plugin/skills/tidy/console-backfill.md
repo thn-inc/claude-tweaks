@@ -101,7 +101,7 @@ When Step 6.5 found no disposition and a non-empty `awaitingVerdict`: print the 
 node -e "const fs=require('fs');const [list,plan,n]=process.argv.slice(1);const w=JSON.parse(fs.readFileSync(list,'utf8'));const p=JSON.parse(fs.readFileSync(plan,'utf8'));const want=new Set(p.awaitingVerdict);const out=[];for(const r of w.runs)for(const i of r.items){if(out.length>=Number(n))break;if(!want.has(i.itemId))continue;out.push({itemId:i.itemId,name:i.itemId.replace(/^bf:/,'').replace(/[^A-Za-z0-9_-]/g,'_'),finding:i.finding,claimText:i.claimText,context:i.context});}console.log(JSON.stringify(out,null,1))" "{BATCHLIST}" "{PLAN}" 24 > "{AWAITING}"
 ```
 
-Dispatch one fresh agent per finding in **waves of 8** — a wave in one batch, every agent returned before the next wave — following `review/step3-tiebreak.md`'s `## Dispatch` (its wait rules, foreground discipline and parallel-execution form). Model `Capable`: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable` (no run directory exists).
+Dispatch one fresh agent per finding in **waves of 8** — a wave in one batch, every agent returned before the next wave — following `review/step3-tiebreak.md`'s `## Dispatch` (its wait rules and foreground discipline); each backfill agent returns the single-finding template's reply, not a chunk reply. Model `Capable`: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable` (no run directory exists).
 
 Read `review/step3-tiebreak.md` and inline the single-finding template, the first fenced block under its `## Dispatch`, verbatim into each `Task()` prompt, with these field values and nothing else changed:
 
