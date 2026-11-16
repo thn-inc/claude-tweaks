@@ -1266,3 +1266,32 @@ test('AC3.1: a follow-up with no author data still counts', () => {
   const row = targetRow(trustRows([originTarget(), originFollowUp({})]));
   assert.equal(row.followUps, 1);
 });
+
+test('AC1.2: an absorbed Origin "from #7" adds no follow-up to #7\'s class (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: ['## Current State', 'x', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n'), state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 0);
+});
+test('a fenced Origin "from #7" adds no follow-up (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: ['```', 'Origin: demo changes-requested from #7', '```'].join('\n'), state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 0);
+});
+test('class and follow-up come from the same line: a bare own Origin: hides a later one (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: 'Origin:\n\n## Original request\nOrigin: demo changes-requested from #7', state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 0);
+});
+test('an own Origin "from #7" under ## Original request still counts (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: '## Current State\nx\n\n## Original request\nOrigin: demo changes-requested from #7', state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 1);
+});
