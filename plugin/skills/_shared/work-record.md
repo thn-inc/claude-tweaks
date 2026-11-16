@@ -59,7 +59,7 @@ label (absence = human-filed). Records created as side effects of other skills (
 `/wrap-up` leftovers) also carry no `by:*` — they record provenance as an `Origin: {context}`
 body line instead (e.g. `Origin: wrap-up leftover from #42`). The `by:*` family's membership
 is stated once — the Label taxonomy table's Origin row below — and never restated in prose
-here or in a consuming skill; read that row rather than re-deriving the list. An `Origin:` line counts only when its author is trusted or a bot (`provenance.js`'s `issueAuthorTrust`); an outsider's line is ignored.
+here or in a consuming skill; read that row rather than re-deriving the list. An `Origin:` line counts only when its author is trusted or a bot (`provenance.js`'s `issueAuthorTrust`); an outsider's line is ignored. Only the record's own line counts: one inside a fenced block or under a `## Absorbed:` section never does, while one under `## Original request` still does (`record-payload.js`'s `ownOriginLine`, #4502).
 
 **"Effort" has three surviving meanings — know which one a given field is.** The Scoring axis's
 `size:*` above is one of them, not the only one: (1) the record facet documented here is
