@@ -227,7 +227,9 @@ function bashProcedureFiles(command, worktree, pathImpl = path) {
     const tokens = stripWrappers(tokenize(segment));
     const head = (tokens[0] || '').replace(/^.*\//, '');
     if (!READ_HEADS.has(head)) continue;
-    let patternPending = PATTERN_HEADS.has(head);
+    // grep permutes its arguments: a pattern flag anywhere means no operand is the pattern.
+    const patternHead = PATTERN_HEADS.has(head);
+    let patternPending = patternHead && !tokens.slice(1).some((t) => PATTERN_FLAG_RE.test(t) || PATTERN_FLAG_ATTACHED_RE.test(t));
     for (let i = 1; i < tokens.length; i++) {
       let t = tokens[i];
       const redirect = OUT_REDIRECT_RE.exec(t);
@@ -235,9 +237,7 @@ function bashProcedureFiles(command, worktree, pathImpl = path) {
       if (t.startsWith('<') && !t.startsWith('<<')) t = t.slice(1); // input redirect: still a read
       if (!t) continue;
       if (t.startsWith('-')) {
-        if (!patternPending) continue;
-        if (PATTERN_FLAG_RE.test(t)) { patternPending = false; i++; }
-        else if (PATTERN_FLAG_ATTACHED_RE.test(t)) patternPending = false;
+        if (patternHead && PATTERN_FLAG_RE.test(t)) i++; // its value is a pattern or pattern file
         continue;
       }
       if (patternPending) { patternPending = false; continue; }

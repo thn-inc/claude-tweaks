@@ -152,6 +152,7 @@ test('turn-class: bashProcedureFiles skips output-redirect targets and counts in
   assert.deepEqual(bashProcedureFiles('cat a.txt >plugin/skills/x.md 2>&1', null), []);
   assert.deepEqual(bashProcedureFiles('cat < plugin/skills/a/x.md', null), ['skills/a/x.md']);
   assert.deepEqual(bashProcedureFiles('wc -l <plugin/skills/a/x.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('wc -l <skills/a/x.md', null), ['skills/a/x.md']);
 });
 
 test('turn-class: bashProcedureFiles skips glob tokens', () => {
@@ -169,6 +170,11 @@ test('turn-class: bashProcedureFiles never counts a grep/rg/ugrep pattern as a p
   assert.deepEqual(bashProcedureFiles('grep -f plugin/skills/pats.md plugin/skills/a/x.md', null), ['skills/a/x.md']);
   assert.deepEqual(bashProcedureFiles('grep --file=plugin/skills/pats.md plugin/skills/a/x.md', null), ['skills/a/x.md']);
   assert.deepEqual(bashProcedureFiles('grep -ne x plugin/skills/a/x.md', null), ['skills/a/x.md']);
+  // every -e value is a pattern, and a pattern flag anywhere (grep permutes) leaves no positional pattern
+  assert.deepEqual(bashProcedureFiles('grep -e x -e plugin/skills/p.md plugin/skills/a/x.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('grep plugin/skills/a/x.md -e x', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('grep plugin/skills/a/x.md -ne x', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('grep plugin/skills/a/x.md --regexp=x', null), ['skills/a/x.md']);
   // a non-grep head has no pattern slot: cat's first operand is a path
   assert.deepEqual(bashProcedureFiles('cat plugin/skills/a/x.md', null), ['skills/a/x.md']);
 });
