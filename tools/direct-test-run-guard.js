@@ -17,6 +17,7 @@
 if (require.main === module) process.on('uncaughtException', () => {});
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { forEachCommandSegment } = require('../plugin/bin/lib/hooks/git-command');
 
@@ -498,7 +499,7 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
   const P = ctx.pathImpl;
   const { t } = seg;
   if (!ctx.hasRunner(effCwd)) return null;
-  const words = run.operands.flatMap((i) => seg.wordsOf(i));
+  const words = operandWords(seg, run, ctx);
   const deny = repeated
     || words.length >= 2
     || (run.sawTest && words.length === 0)
@@ -518,6 +519,7 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
   let line = null;
   let expansion = false;
   let relative = false;
+  let leftOut = [];
   const foreign = [];
   // A loop-variable operand becomes the loop's word list when every word is literal or a glob. The files a
   // `while`/`until` loop, an `xargs`/`find` lead or an expanded word list runs cannot be named, and no
@@ -552,7 +554,7 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
           if (listed.has(item.text)) continue;
           listed.add(item.text);
           parts.push(item.text);
-          if (!item.bareGlob && !EXPANSION_RE.test(item.value)) args.push(item.value);
+          if (!item.bareGlob && !EXPANSION_RE.test(item.value)) args.push(plan.subst.has(i) ? item.value : homeWord(seg, i, item.value, ctx));
         }
       } else {
         parts.push(seg.render(i));
@@ -567,7 +569,9 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
     if (note === null) {
       line = parts.join(' ');
       expansion = run.operands.some((i) => !plan.subst.has(i) && EXPANSION_RE.test(t[i]));
-      relative = (moved || other) && keptPathValues(seg, run, plan).some(isRelativePath);
+      // The runner starts node from its checkout root: a relative value is read from there.
+      relative = P.resolve(effCwd) !== P.resolve(place.target) && keptPathValues(seg, run, plan).some(isRelativePath);
+      leftOut = [...plan.drop].sort((a, b) => a - b).map(seg.render);
     } else {
       foreign.length = 0;
     }
@@ -588,10 +592,23 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
     ...(expansion ? [EXPANSION_LINE] : []),
     ...(foreign.length ? [`The runner does not take ${foreign.join(' ')}; if the tests need them, set NODE_OPTIONS.`] : []),
     ...(relative ? [RELATIVE_VALUE_LINE] : []),
+    ...(leftOut.length ? [`Left out because they depend on the loop: ${leftOut.join(' ')}.`] : []),
     'In a checkout older than this guard, write the files to a list and use: node tools/run-tests.js --files-from <list>',
     'A single test file outside a loop can still be run directly.',
   ].join('\n');
   return { decision: 'deny', kind: 'typed', reason, replacement: line };
+}
+
+// Word `w` of word `i` with an unquoted leading `~` or `~/` read as `ctx.homedir`, as the shell expands it;
+// as typed when no home directory was given, for a quoted `~`, or for `~user` (whose home is unknown).
+function homeWord(seg, i, w, ctx) {
+  if (typeof ctx.homedir !== 'string' || !/^~(?:\/|$)/.test(w) || seg.t[i] !== w || !seg.bareText(i).startsWith('~')) return w;
+  return ctx.pathImpl.join(ctx.homedir, w.slice(1));
+}
+
+// The file words of a run's operands, a `~` word read as the home directory (homeWord).
+function operandWords(seg, run, ctx) {
+  return run.operands.flatMap((i) => seg.wordsOf(i).map((w) => homeWord(seg, i, w, ctx)));
 }
 
 const quoteIfBlank = (s) => (/\s/.test(s) ? `"${s}"` : s);
@@ -609,7 +626,8 @@ function runnerRefusal(args, cwd, repoRoot, ctx) {
     }
   };
   try {
-    runner().parseRunnerOperands(args, { cwd, repoRoot, isFile, pathImpl: ctx.pathImpl });
+    const realpath = typeof ctx.realpath === 'function' ? ctx.realpath : (p) => p;
+    runner().parseRunnerOperands(args, { cwd, repoRoot, isFile, realpath, pathImpl: ctx.pathImpl });
     return null;
   } catch (e) {
     if (fault !== null) throw fault;
@@ -821,7 +839,9 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirUnknown: false, typedD
     const repeated = state.loops.length > 0 || prog.ledRepeat || ctx.repeated;
     const segCwd = typeof effCwd === 'string' && !state.dirUnknown ? effCwd : null;
     const isEval = !prog.ledRepeat && t[prog.at] === 'eval' && seg.bare(prog.at);
-    if (ctx.mode === 'scripts') collectScript(seg, prog, segCwd, ctx);
+    // A direct test run's operands are test files, not scripts: the classifier judges that run.
+    const testRun = ctx.mode === 'scripts' && NODE_NAMES.has(seg.name(prog.at)) && readRun(seg, prog.at, prog.end, state.loops) !== null;
+    if (ctx.mode === 'scripts' && !testRun) collectScript(seg, prog, segCwd, ctx);
     if (isEval || SHELLS.has(seg.name(prog.at))) {
       // `eval` runs its arguments joined by a space; a shell its `-c` script.
       const inner = isEval ? t.slice(prog.at + 1, prog.end).join(' ') : wrapperText(seg, prog.at, prog.end);
@@ -837,7 +857,7 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirUnknown: false, typedD
     if (!run) continue;
     if (ctx.mode === 'detect') {
       // Given the file-system answers (a script's scan), a run outside the runner's reach is no match.
-      if (ctx.hasRunner && segCwd !== null && !placeRun(run.operands.flatMap((i) => seg.wordsOf(i)), segCwd, ctx)) continue;
+      if (ctx.hasRunner && segCwd !== null && !placeRun(operandWords(seg, run, ctx), segCwd, ctx)) continue;
       state.found = true;
       ctx.hits.push(t.slice(prog.at, run.end).map((_, i) => seg.render(prog.at + i)).join(' '));
       continue;
@@ -852,11 +872,12 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirUnknown: false, typedD
 // denied direct test run in `command`. `hasRunner(dir)` returns the checkout root holding
 // tools/run-tests.js at or above `dir`, or null; `isDirectory(absPath)` a boolean; `isFile(absPath)`, when
 // given, a boolean the runner's own operand parser reads to check a replacement before it is printed (no
-// check without it). Lets any internal error (or one from the three) through, so a test can tell a bug
-// from an allow.
-function classifyCommandOrThrow(command, { cwd, hasRunner, isDirectory, isFile, pathImpl = path } = {}) {
+// check without it); `realpath(absPath)`, when given, the canonical path that check compares (the runner's
+// own rule); `homedir`, when given, the directory an unquoted leading `~` or `~/` names. Lets any internal
+// error (or one from the injected answers) through, so a test can tell a bug from an allow.
+function classifyCommandOrThrow(command, { cwd, hasRunner, isDirectory, isFile, realpath, homedir, pathImpl = path } = {}) {
   if (typeof command !== 'string' || command === '' || typeof cwd !== 'string') return ALLOW();
-  const ctx = { mode: 'classify', depth: 0, repeated: false, callCwd: cwd, hasRunner, isDirectory, isFile, pathImpl };
+  const ctx = { mode: 'classify', depth: 0, repeated: false, callCwd: cwd, hasRunner, isDirectory, isFile, realpath, homedir, pathImpl };
   return walk(command, cwd, ctx).result || ALLOW();
 }
 
@@ -872,11 +893,11 @@ function classifyCommand(command, options) {
 // The text of the first direct test run among the command segments of `text` (shell wrappers included, a
 // single-file run too), or null. Given `hasRunner` and `isDirectory`, a run outside the runner's reach
 // (placeRun) is skipped. Never throws: an unreadable text is no run.
-function findDirectTestRun(text, { cwd, hasRunner, isDirectory, pathImpl = path } = {}) {
+function findDirectTestRun(text, { cwd, hasRunner, isDirectory, homedir, pathImpl = path } = {}) {
   try {
     if (typeof text !== 'string' || text === '') return null;
     const hits = [];
-    walk(text, cwd || '.', { mode: 'detect', depth: 0, repeated: false, callCwd: cwd || '.', hasRunner, isDirectory, pathImpl, hits });
+    walk(text, cwd || '.', { mode: 'detect', depth: 0, repeated: false, callCwd: cwd || '.', hasRunner, isDirectory, homedir, pathImpl, hits });
     return hits.length ? hits[0] : null;
   } catch (_) {
     return null;
@@ -971,7 +992,7 @@ function matchJs(text) {
 // matchJs. `kind` 'shell': any direct test run in the runner's reach (a script is a repeatable run by
 // nature, so a single-file one is enough), its `cd`s read from `cwd`, the directory the script runs from,
 // named by its text trimmed to 120 characters. Never throws.
-function matchScript(text, kind, { cwd, hasRunner, isDirectory, pathImpl = path } = {}) {
+function matchScript(text, kind, { cwd, hasRunner, isDirectory, homedir, pathImpl = path } = {}) {
   try {
     if (typeof text !== 'string') return null;
     if (kind === 'js') {
@@ -982,7 +1003,7 @@ function matchScript(text, kind, { cwd, hasRunner, isDirectory, pathImpl = path 
         : `Matched in the script: a string literal that runs node --test as a command, and a child_process reference (${m.literal}).`;
     }
     if (kind === 'shell') {
-      const run = findDirectTestRun(text, { cwd, hasRunner, isDirectory, pathImpl });
+      const run = findDirectTestRun(text, { cwd, hasRunner, isDirectory, homedir, pathImpl });
       return run === null ? null : `Matched in the script: ${run.slice(0, 120)}`;
     }
     return null;
@@ -1022,7 +1043,7 @@ const HEAD_BYTES = 256;
 // non-Bash call, or one outside a checkout holding tools/run-tests.js, is allowed. Lets any error through
 // (judge catches it).
 function judgeOrThrow(payload, deps) {
-  const { hasRunner, isDirectory, readScript, readHead, pathImpl = path } = deps;
+  const { hasRunner, isDirectory, readScript, readHead, homedir, pathImpl = path } = deps;
   if (!payload || payload.tool_name !== 'Bash') return ALLOW();
   const command = payload.tool_input && payload.tool_input.command;
   const cwd = payload.cwd;
@@ -1046,7 +1067,7 @@ function judgeOrThrow(payload, deps) {
       if (scanKind === null) continue;
     }
     const text = readScript(abs);
-    const matched = matchScript(text, scanKind, { cwd: scriptCwd, hasRunner, isDirectory, pathImpl });
+    const matched = matchScript(text, scanKind, { cwd: scriptCwd, hasRunner, isDirectory, homedir, pathImpl });
     if (matched !== null) return { decision: 'deny', reason: scriptReason(word, matched) };
   }
   return ALLOW();
@@ -1063,24 +1084,63 @@ function judge(payload, deps) {
 
 const MAX_SCRIPT_BYTES = 262144;
 
+// The checkout root holding tools/run-tests.js at or above `dir`, as spelled, or null.
+function climbToRunner(dir) {
+  let d = dir;
+  for (;;) {
+    try {
+      if (fs.statSync(path.join(d, 'tools', 'run-tests.js')).isFile()) return d;
+    } catch (_) { /* not here: look one level up */ }
+    const parent = path.dirname(d);
+    if (parent === d) return null;
+    d = parent;
+  }
+}
+
+// `p` with its deepest existing ancestor replaced by that ancestor's real path (the runner's canonicalPath
+// rule, kept here so a Bash call with no node program never loads tools/run-tests.js). Never throws.
+function realPathOf(p) {
+  const below = [];
+  let current = path.resolve(p);
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(current), ...below);
+    } catch (_) {
+      const parent = path.dirname(current);
+      if (parent === current) return path.resolve(p);
+      below.unshift(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 // The file-system answers the hook reads through. None of them throws.
 function realDeps() {
+  let homedir;
+  try {
+    homedir = os.homedir();
+  } catch (_) { /* no home directory: a ~ word is read as typed */ }
   return {
     pathImpl: path,
-    // The checkout root holding tools/run-tests.js at or above `dir`, or null.
+    homedir,
+    // The checkout root holding tools/run-tests.js at or above `dir`, or null: first as spelled, then, for a
+    // spelling through a symlink, at or above the directory's real path.
     hasRunner(dir) {
       try {
-        let d = path.resolve(dir);
-        for (;;) {
-          try {
-            if (fs.statSync(path.join(d, 'tools', 'run-tests.js')).isFile()) return d;
-          } catch (_) { /* not here: look one level up */ }
-          const parent = path.dirname(d);
-          if (parent === d) return null;
-          d = parent;
-        }
+        const spelled = path.resolve(dir);
+        const root = climbToRunner(spelled);
+        if (root) return root;
+        const real = realPathOf(spelled);
+        return real === spelled ? null : climbToRunner(real);
       } catch (_) {
         return null;
+      }
+    },
+    realpath(p) {
+      try {
+        return realPathOf(p);
+      } catch (_) {
+        return p;
       }
     },
     isDirectory(p) {
