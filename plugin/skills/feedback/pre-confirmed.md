@@ -10,7 +10,10 @@ Contract). A direct invocation never reads this file. `--dry-run` takes preceden
 
 **`--pre-confirmed`:** the caller passes both the item's staged-file path and the exact body text
 it rendered and got approval for (the approved snapshot) — not just a path reference. Before
-filing, two checks run, always in this order:
+filing, two checks run, always in this order. The staged draft opens with a header — a
+`<!-- upstream-target: … -->` line and a `Title: …` line, ending at the blank line
+(`wrap-up/upstream-feedback.md` Step 2): the title becomes the drafts file's `title`, and neither
+line goes into `body`.
 
 1. **Scrub rerun (unconditional)** — Step 6's scrub always reruns first, on the current on-disk
    staged content, as a defense-in-depth safety net before publishing — regardless of whether the
@@ -18,7 +21,9 @@ filing, two checks run, always in this order:
    reintroduced content that needs scrubbing. This produces the content that will actually be
    filed. If this rerun trips Step 6's own hard-stop ("cannot survive the scrub") for this item,
    treat it exactly like a Step 6 stop anywhere else in a batch: drop this one item (report why)
-   and continue processing the rest of the chunk — it never aborts sibling items.
+   and continue processing the rest of the chunk — it never aborts sibling items. Under control
+   mode this stop also runs the `--hold scrub-hit` call of `wrap-up/review-console.md`'s step 9
+   for the item.
 2. **Drift check** — if `staged/wrap-up-upstream-{N}.md` no longer exists, treat this as "already
    filed" (see Step 8's cleanup-on-success below) and skip this item without re-filing or
    erroring. Otherwise, re-read it fresh from disk (the post-scrub content from step 1 above) and

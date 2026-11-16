@@ -388,3 +388,109 @@ test('Minor 1: the flow summary merge row reads the ceiling through console-reso
   assert.deepStrictEqual(summaryProblems(SUMMARY.replace(SUMMARY_NEW, 'the ceiling')), ['the summary row does not read the ceiling through console-resolve.js --ceiling']);
   assert.deepStrictEqual(summaryProblems(`${SUMMARY}\n${SUMMARY_OLD}`), ['the summary row still reads the ceiling through resolve-policy.js --values autonomy']);
 });
+
+// #4621: under control mode a wrap-up upstream-feedback item files only into a repo the project owns. The prose points at
+// the CLI, the capability key and the staged layout, so each pin follows its code twin and is proved red on a mutated copy.
+const AUTONOMY_CEILING = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'autonomy-ceiling.md'));
+const UPSTREAM_FEEDBACK = readText(path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'upstream-feedback.md'));
+const { bookkeepingPermissions } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'issues', 'autonomy'));
+const { parseStagedUpstream } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'issues', 'upstream-ownership'));
+
+function stepNine(text) {
+  const start = text.indexOf('\n9. For `U#` upstream feedback rows');
+  assert.notStrictEqual(start, -1, 'step 9 not found');
+  const end = text.indexOf('\n10. ', start);
+  assert.notStrictEqual(end, -1, 'no step 10 after step 9');
+  return text.slice(start, end);
+}
+
+// Flag-first, like `--ceiling`: console-resolve-conformance.test.js pins exactly one `console-resolve.js" --run`.
+const ROUTE_CALL = 'console-resolve.js" --upstream-route {id} --run "$PIPELINE_RUN_DIR"';
+const STEP_9_CLAIMS = [
+  [ROUTE_CALL, 'step 9 does not route each U# through --upstream-route'],
+  ['with no per-item prompt, causal tag or not', 'step 9 does not file an owned item with no per-item prompt, causal tag or not'],
+  ['console-resolve.js" --upstream-route {id} --filed {url} --run "$PIPELINE_RUN_DIR"', 'step 9 does not log an owned filing with --filed'],
+  ['at every tier, `unattended` included', 'step 9 does not log the filing at every tier'],
+  ["--hold filing-failed|scrub-hit --reason '{why}'", 'step 9 does not hold a failed filing or a scrub stop with --hold'],
+];
+
+function stepNineProblems(text) {
+  const s = stepNine(text);
+  return STEP_9_CLAIMS.filter(([needle]) => !s.includes(needle)).map(([, message]) => message);
+}
+
+test('#4621: review-console.md step 9 routes each U# by ownership under control mode', () => {
+  assert.deepStrictEqual(stepNineProblems(REVIEW_CONSOLE), []);
+});
+
+for (const [needle, message] of STEP_9_CLAIMS) {
+  test(`#4621 go-red: ${message}`, () => {
+    const s = stepNine(REVIEW_CONSOLE);
+    assert.deepStrictEqual(stepNineProblems(REVIEW_CONSOLE.replace(s, s.split(needle).join('[removed]'))), [message]);
+  });
+}
+
+function sectionOf(text, heading) {
+  const start = text.indexOf(`\n${heading}`);
+  assert.notStrictEqual(start, -1, `heading not found: ${heading}`);
+  const end = text.indexOf('\n## ', start + heading.length + 1);
+  return text.slice(start, end === -1 ? undefined : end);
+}
+
+// Code twin: every key bookkeepingPermissions returns has a row in the capabilities table, `ownedUpstreamFiling` included.
+function capabilityRowProblems(text) {
+  const table = sectionOf(text, '## Bookkeeping capabilities');
+  return Object.keys(bookkeepingPermissions('supervised', { controlMode: true })).filter((key) => !table.includes(`| \`${key}\` |`)).map((key) => `no capability row for ${key}`);
+}
+
+test('#4621: autonomy-ceiling.md has a capabilities row for every bookkeepingPermissions key, ownedUpstreamFiling included', () => {
+  assert.ok(Object.keys(bookkeepingPermissions('supervised', { controlMode: true })).includes('ownedUpstreamFiling'), 'the code twin lost the key');
+  assert.deepStrictEqual(capabilityRowProblems(AUTONOMY_CEILING), []);
+});
+
+test('#4621 go-red: dropping the ownedUpstreamFiling row is caught', () => {
+  const mutated = AUTONOMY_CEILING.replace('| `ownedUpstreamFiling` |', '| `renamed` |');
+  assert.notStrictEqual(mutated, AUTONOMY_CEILING);
+  assert.deepStrictEqual(capabilityRowProblems(mutated), ['no capability row for ownedUpstreamFiling']);
+});
+
+const NO_CAPABILITY_CLAIM = 'adds no capability of its own';
+function controlModeSectionProblems(text) {
+  const s = sectionOf(text, '## Control mode (#4620)');
+  const problems = [];
+  if (!s.includes('ownedUpstreamFiling')) problems.push('the Control mode section does not name ownedUpstreamFiling');
+  if (s.includes(NO_CAPABILITY_CLAIM)) problems.push('the Control mode section still says control mode adds no capability of its own');
+  return problems;
+}
+
+test('#4621: the Control mode section names the one capability control mode adds', () => {
+  assert.deepStrictEqual(controlModeSectionProblems(AUTONOMY_CEILING), []);
+});
+
+test('#4621 go-red: the Control mode section naming no capability, or the retired claim, is caught', () => {
+  const section = sectionOf(AUTONOMY_CEILING, '## Control mode (#4620)');
+  assert.deepStrictEqual(controlModeSectionProblems(AUTONOMY_CEILING.replace(section, section.split('ownedUpstreamFiling').join('[removed]'))), ['the Control mode section does not name ownedUpstreamFiling']);
+  assert.deepStrictEqual(controlModeSectionProblems(AUTONOMY_CEILING.replace(section, `${section}\n${NO_CAPABILITY_CLAIM}`)), ['the Control mode section still says control mode adds no capability of its own']);
+});
+
+// Code twin: the staged layout the prose documents parses to a target, a title and a body through parseStagedUpstream.
+function stagedLayoutProblems(text) {
+  const m = /```\n(<!-- upstream-target:[\s\S]*?)\n```/.exec(text);
+  if (!m) return ['wrap-up/upstream-feedback.md documents no staged layout block'];
+  const parsed = parseStagedUpstream(m[1].replace('{title}', 'A title').replace('{scrubbed body}', 'A body'));
+  const problems = [];
+  if (parsed.targetRepo !== 'thn-inc/claude-tweaks') problems.push(`the layout's target parses as ${parsed.targetRepo}`);
+  if (parsed.title !== 'A title') problems.push(`the layout's title parses as ${parsed.title}`);
+  if (parsed.body !== 'A body') problems.push(`the layout's body parses as ${JSON.stringify(parsed.body)}`);
+  return problems;
+}
+
+test('#4621: the staged layout in wrap-up/upstream-feedback.md parses through parseStagedUpstream', () => {
+  assert.deepStrictEqual(stagedLayoutProblems(UPSTREAM_FEEDBACK), []);
+});
+
+test('#4621 go-red: a layout whose marker or Title prefix drifts from the parser is caught', () => {
+  const noPrefix = stagedLayoutProblems(UPSTREAM_FEEDBACK.replace('Title: {title}', '{title}'));
+  assert.ok(noPrefix.includes("the layout's title parses as null"), noPrefix.join('; '));
+  assert.deepStrictEqual(stagedLayoutProblems(UPSTREAM_FEEDBACK.replace('<!-- upstream-target:', '<!-- target:')), ['wrap-up/upstream-feedback.md documents no staged layout block']);
+});
