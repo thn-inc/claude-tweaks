@@ -134,7 +134,8 @@ function scenario(t, kind, autocrlf) {
 function buildScenario(t, kind, autocrlf) {
   const f = fixture(t, {}, autocrlf ? { autocrlf } : {});
   const body = read(f.repo, X);
-  const s = { f, kind, joined: kind === 'joined', head: sh(f.repo, ['rev-parse', 'HEAD']).trim() };
+  // The fixture's merge base is its one commit, which is HEAD until a call commits.
+  const s = { f, kind, joined: kind === 'joined', head: f.mergeBase };
   if (kind === 'untracked') {
     s.target = '.claude/skills/y/SKILL.md';
     write(f.repo, s.target, '# y\n\nbrand new\n');
