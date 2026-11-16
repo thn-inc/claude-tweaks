@@ -212,7 +212,7 @@ test('#1929 AC2: readUsage streams rows, sums procedure bytes for skills Reads o
   assert.equal(rows.reduce((s, r) => s + r.procedureBytes, 0), 18);
   const assistants = rows.filter((r) => r.role === 'assistant');
   assert.deepEqual(assistants.map((r) => r.toolRoundTrip), [false, false, false, false, false]);
-  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: true, contextTokens: 350 });
+  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: true, contextTokens: 350, procedureFiles: { 'skills/review/SKILL.md': 1 } });
   assert.equal(assistants[3].inputTokens, 100);
   assert.equal(users[0].inputTokens, 0);
   // #1929 whole-branch review fix 1: a duplicate message.id (same turn,
@@ -286,6 +286,66 @@ test('#4029: tool_result text parts are joined for the guard-refusal check, and 
   const users = rows.filter((r) => r.role === 'user');
   assert.deepEqual(users[0].turnClasses, { 'guard-refusal': 1 });
   assert.deepEqual(users[1].turnClasses, { bookkeeping: 1 });
+});
+
+test('readUsage counts per-file procedure reads on the tool_use row', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const file = 'plugin/skills/review/code-mode-steps.md';
+  fs.writeFileSync(f, [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
+      { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: file } },
+      { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: `sed -n '1,9p' ${file}` } },
+    ], usage: {} } }),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:01.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r1', content: 'x' }] } }),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:02.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b1', content: 'y' }] } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f, { worktree: '/repo' });
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows[0].procedureFiles, { 'skills/review/code-mode-steps.md': 2 });
+  assert.deepEqual(rows[1].procedureFiles, {});
+  assert.deepEqual(rows[2].procedureFiles, {});
+});
+
+test('#4359 I1: readUsage counts a Read and a sed of a context bundle under context/, adding no procedure bytes', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const bundle = '/main/.claude-tweaks/pipelines/2026-11-16T000452-record-4359/context/review-code-mode.md';
+  fs.writeFileSync(f, [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
+      { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: bundle } },
+      { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: `sed -n "1,80p" ${bundle}` } },
+    ], usage: {} } }),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:01.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r1', content: 'x'.repeat(50) }] } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f, { worktree: '/main/.claude/worktrees/wt' });
+  assert.deepEqual(rows[0].procedureFiles, { 'context/review-code-mode.md': 2 });
+  assert.equal(rows[1].procedureBytes, 0, 'a bundle Read is not a skill-file read');
+  assert.deepEqual(rows[1].turnClasses, { read: 1 });
+});
+
+test('#4359: a bundle Read and sed under a main checkout inside a skills/ directory key under context/', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const bundle = '/home/u/skills/repo/.claude-tweaks/pipelines/run-a/context/lens-child.md';
+  fs.writeFileSync(f, JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
+    { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: bundle } },
+    { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: `sed -n "1,80p" ${bundle}` } },
+  ], usage: {} } }) + '\n');
+  const rows = await readUsage(f, { worktree: '/home/u/skills/repo/.claude/worktrees/wt' });
+  assert.deepEqual(rows[0].procedureFiles, { 'context/lens-child.md': 2 });
+});
+
+test('#4359 T2-1: a timestamp-less api-request-blob row carrying a skill Read adds no procedure read', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const read = (id) => ({ type: 'tool_use', id, name: 'Read', input: { file_path: 'plugin/skills/review/code-mode-steps.md' } });
+  fs.writeFileSync(f, [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [read('r1')], usage: {} } }),
+    // the replayed request blob repeats r1's tool_use id, with no timestamp
+    JSON.stringify({ type: 'api-request-blob', message: { id: 'm1', role: 'assistant', content: [read('r1')], usage: {} } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f, {});
+  assert.equal(rows.length, 1);
+  const total = {};
+  for (const r of rows) for (const [k, n] of Object.entries(r.procedureFiles)) total[k] = (total[k] || 0) + n;
+  assert.deepEqual(total, { 'skills/review/code-mode-steps.md': 1 });
 });
 
 test('#1929: readUsage on a missing file rejects with a code the CLI can name', async () => {
@@ -404,6 +464,63 @@ test('AC4.1: a meta file whose transcript is unreadable yields notFound and null
   assert.equal(it.metaModel, 'haiku');
   assert.equal(it.parentAgentId, 'p1');
   assert.equal(it.spawnDepth, 2);
+  assert.equal(it.procedureFiles, null);
+  assert.equal(it.procedureFileRows, null);
+  assert.equal(it.transcriptPath, path.join(dir, 'agent-x.jsonl'));
+});
+
+function readLine(ts, id, filePath) {
+  return JSON.stringify({ type: 'assistant', timestamp: ts, message: { id, role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'tool_use', id: `tu-${id}`, name: 'Read', input: { file_path: filePath } }], usage: { input_tokens: 1, output_tokens: 1 } } });
+}
+
+test('readDispatches sums a subagent\'s per-file reads', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-p1.jsonl'), [
+    readLine('2026-11-16T10:00:00.000Z', 'mp1', 'plugin/skills/_shared/a.md'),
+    aLine('assistant', '2026-11-16T10:00:05.000Z', 'mp2', 'claude-sonnet-5', [1, 1, 0, 0]),
+    readLine('2026-11-16T10:00:09.000Z', 'mp3', 'plugin/skills/_shared/a.md'),
+  ].join('\n') + '\n');
+  const r = await readDispatches(dir);
+  const it = r.items[0];
+  assert.deepEqual(it.procedureFiles, { 'skills/_shared/a.md': 2 });
+  assert.deepEqual(it.procedureFileRows, [
+    { ts: '2026-11-16T10:00:00.000Z', procedureFiles: { 'skills/_shared/a.md': 1 } },
+    { ts: '2026-11-16T10:00:09.000Z', procedureFiles: { 'skills/_shared/a.md': 1 } },
+  ]);
+  assert.ok(it.transcriptPath.endsWith('agent-p1.jsonl'));
+  assert.equal(it.transcriptPath, path.join(dir, 'agent-p1.jsonl'));
+});
+
+test('readDispatches: a dispatch with no procedure reads carries {} and [], an untimed kept row takes startTs, and window-dropped rows are not counted', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-q1.jsonl'), aLine('assistant', '2026-11-16T10:00:00.000Z', 'mq1', 'claude-sonnet-5', [1, 1, 0, 0]) + '\n');
+  fs.writeFileSync(path.join(dir, 'agent-q2.jsonl'), [
+    readLine('2026-11-16T08:00:00.000Z', 'mr0', 'plugin/skills/_shared/early.md'),
+    readLine('2026-11-16T10:00:03.000Z', 'mr1', 'plugin/skills/_shared/b.md'),
+    readLine('not-a-time', 'mr2', 'plugin/skills/_shared/c.md'),
+    readLine('2026-11-16T10:00:07.000Z', 'mr3', 'plugin/skills/_shared/d.md'),
+    readLine('2026-11-16T10:00:08.000Z', 'mr4', '/repo/src/not-a-skill.md'),
+  ].join('\n') + '\n');
+  const r = await readDispatches(dir, { window: { start: Date.parse('2026-11-16T09:00:00.000Z'), end: Date.parse('2026-11-16T11:00:00.000Z') } });
+  const by = Object.fromEntries(r.items.map((i) => [i.agentId, i]));
+  assert.deepEqual(by.q1.procedureFiles, {});
+  assert.deepEqual(by.q1.procedureFileRows, []);
+  assert.deepEqual(by.q2.procedureFiles, { 'skills/_shared/b.md': 1, 'skills/_shared/c.md': 1, 'skills/_shared/d.md': 1 });
+  // transcript order: the untimed c row sits between b and d, booked at startTs
+  assert.deepEqual(by.q2.procedureFileRows, [
+    { ts: '2026-11-16T10:00:03.000Z', procedureFiles: { 'skills/_shared/b.md': 1 } },
+    { ts: '2026-11-16T10:00:03.000Z', procedureFiles: { 'skills/_shared/c.md': 1 } },
+    { ts: '2026-11-16T10:00:07.000Z', procedureFiles: { 'skills/_shared/d.md': 1 } },
+  ]);
+});
+
+test('#4359 T2-2: readDispatches keys a subagent\'s reads against the worktree it is given', async () => {
+  const dir = tmpSubagents();
+  // a worktree under a skills/ directory: only the worktree-relative key is right
+  const wt = '/home/u/skills/wt';
+  fs.writeFileSync(path.join(dir, 'agent-w1.jsonl'), readLine('2026-11-16T10:00:00.000Z', 'mw1', `${wt}/plugin/skills/review/x.md`) + '\n');
+  assert.deepEqual((await readDispatches(dir, { worktree: wt })).items[0].procedureFiles, { 'skills/review/x.md': 1 });
+  assert.deepEqual((await readDispatches(dir)).items[0].procedureFiles, { 'skills/wt/plugin/skills/review/x.md': 1 });
 });
 
 test('AC4.1: no subagents/ directory reports notFound, no items', async () => {

@@ -31,6 +31,18 @@ const PHASES = Object.freeze({
       bundle('review-dispatch', ['skills/_shared/subagent-dispatch-core.md', 'skills/_shared/run-dir-resolution.md'], 'always'),
     ]),
   }),
+  // Child-facing bundles (#4359): a dispatched lens or SDD child reads the
+  // `_shared` rules its prompt cites from one composed file, on demand.
+  'review-lens-child': Object.freeze({
+    bundles: Object.freeze([
+      bundle('lens-child', ['skills/_shared/subagent-output-contract.md', 'skills/_shared/criteria-architecture-depth.md'], 'on-demand'),
+    ]),
+  }),
+  'sdd-child': Object.freeze({
+    bundles: Object.freeze([
+      bundle('sdd-child', ['skills/_shared/subagent-dispatch-core.md'], 'on-demand'),
+    ]),
+  }),
 });
 
 // (phase, pluginRoot) -> [{ step, load, sources: [{ label, file }] }], or null
