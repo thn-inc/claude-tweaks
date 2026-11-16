@@ -3,7 +3,7 @@
 // The per-session files `wait-for.js` coordinates through, in the OS temp dir:
 //
 //   ct-agent-stops-{sessionId}.jsonl   one line per SubagentStop event:
-//       {"agentId":"…","at":<ms>,"blocked":<bool>,"pending":<int|null>}
+//       {"agentId":"…","at":<epoch seconds>,"blocked":<bool>,"pending":<int|null>}
 //   ct-agent-waits-{sessionId}.jsonl   one line per wait-record event:
 //       {"kind":"open","window","target","key","openedAt","deadline","n"[,"ids"]}
 //       {"kind":"close","window","reason":"deadline"|"done"}
@@ -52,9 +52,11 @@ function formatStop({ agentId, at, blocked, pending }) {
 }
 
 // One writeSync of one line to an append-only, no-follow fd. A missing
-// O_NOFOLLOW (Windows) contributes 0.
+// O_NOFOLLOW (Windows) contributes 0. O_NONBLOCK makes a FIFO with no reader
+// fail with ENXIO instead of hanging the caller; regular files ignore it.
 function appendLine(p, line, constants) {
-  const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW || 0);
+  const flags =
+    constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0);
   const fd = fs.openSync(p, flags, 0o600);
   try {
     fs.writeSync(fd, line);
