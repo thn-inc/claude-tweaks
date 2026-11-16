@@ -341,9 +341,7 @@ function stampStatus(parsed) {
   // cover a verified-clean HEAD, regardless of the live tree's current state:
   // the write gate never consults dirty, so a stamp written mid-edit is
   // otherwise indistinguishable from one written on a pristine HEAD once the
-  // edit is discarded. A legacy bare-SHA stamp carries no dirty field at all
-  // — undefined is "not false", so it can never prove the tree was clean when
-  // it was recorded either (review finding, refs #1921).
+  // edit is discarded (review finding, refs #1921).
   const storedClean = present && stamp.dirty === false;
   const stampCoversCleanHead = !foreignGitDir && storedClean && git.sha !== null && stamp.sha === git.sha && effectiveDirty === false;
   // A baseline-adjudicated pass (#3043) carries a `baseline` marker: HEAD was
@@ -400,7 +398,6 @@ function stampStatus(parsed) {
     baselineAdjudicated,
     preExistingAdjudicated,
     reportPath: present && typeof stamp.reportPath === 'string' ? stamp.reportPath : null,
-    legacy: present ? stamp.legacy === true : false,
     suiteComposed,
     // #2987: the stamp's own recorded exemption (what was dirty-but-exempt
     // when it was written), and this call's own live re-check (null when no

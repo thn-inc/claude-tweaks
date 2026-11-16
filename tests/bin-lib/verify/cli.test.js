@@ -322,7 +322,7 @@ test('--stamp-status reports match/mismatch/absent as data with exit 0 (#1921 AC
   assert.strictEqual(m.head, m.sha);
   assert.strictEqual(m.dirty, false);
   assert.strictEqual(m.scope, 'full');
-  assert.strictEqual(m.legacy, false);
+  assert.ok(!('legacy' in m), '#5534 AC4.1: --stamp-status prints no legacy key');
   assert.ok(fs.existsSync(m.reportPath));
 
   git('commit', '-q', '--allow-empty', '-m', 'move head');
