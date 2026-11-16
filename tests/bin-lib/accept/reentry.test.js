@@ -68,7 +68,12 @@ function fixture() {
     setup(['checkout', '-q', '--detach', tip], clone);
     return oid;
   };
-  return { base, clone, tip, git, gh, calls, ghCalls, setup, other, list: () => setup(['worktree', 'list', '--porcelain'], clone) };
+  const list = () => setup(['worktree', 'list', '--porcelain'], clone);
+  // Git for Windows lists a worktree with forward slashes where path.join builds backslashes, so
+  // a native path is matched against the listing on git's spelling.
+  const slashed = (p) => p.replace(/\\/g, '/');
+  const listed = (wt) => list().split(/\r?\n/).some((line) => line.startsWith('worktree ') && slashed(line.slice('worktree '.length)) === slashed(wt));
+  return { base, clone, tip, git, gh, calls, ghCalls, setup, other, list, listed };
 }
 
 const enter = (f, extra = {}) => reenter({ record: 42, pr: 7, repoRoot: f.clone, parkHead: f.tip, parkBase: BASE, git: f.git, gh: f.gh, ...extra });
@@ -85,7 +90,7 @@ test('AC4.1: reenter fetches and adds the worktree from the PR branch', () => {
   assert.deepEqual(f.ghCalls, [['pr', 'view', '7', '--json', 'headRefName,headRefOid,baseRefOid']]);
   assert.equal(res.prBase, BASE);
   assert.equal(res.parkBase, BASE);
-  assert.ok(f.list().includes(`worktree ${expected}`));
+  assert.ok(f.listed(expected));
   // The ref and path operands are fenced from option parsing.
   assert.ok(f.calls.filter((a) => a.includes('fetch') || a.includes('add') || a.includes('remove')).every((a) => a.includes('--end-of-options')));
 });
@@ -223,13 +228,13 @@ test('a registered but deleted accept directory is stale: no add attempted, reen
   const f = fixture();
   const { worktree } = enter(f);
   fs.rmSync(worktree, { recursive: true, force: true });
-  assert.ok(f.list().includes(`worktree ${worktree}`), 'git still lists the deleted directory');
+  assert.ok(f.listed(worktree), 'git still lists the deleted directory');
   const before = f.calls.length;
   assert.throws(() => enter(f), (err) => err.code === 'stale-dir' && /reenter-remove/.test(err.message));
   assert.equal(f.calls.slice(before).some((a) => a.includes('add') || a.includes('fetch')), false, 'no worktree add or fetch ran');
   assert.equal(f.ghCalls.length, 1, 'no gh call after the refusal');
   assert.deepEqual(reenterRemove({ worktree, repoRoot: f.clone, git: f.git }), { removed: true });
-  assert.ok(!f.list().includes(worktree), 'the registration is gone');
+  assert.ok(!f.listed(worktree), 'the registration is gone');
   assert.equal(enter(f).head, f.tip, 're-entry works again');
 });
 
@@ -241,7 +246,7 @@ test('reenter-remove refuses a listed worktree that is not accept-<n> under .cla
   for (const wt of [elsewhere, named, nested]) f.setup(['worktree', 'add', '--detach', '--end-of-options', wt, f.tip], f.clone);
   for (const wt of [elsewhere, named, nested]) {
     assert.throws(() => reenterRemove({ worktree: wt, repoRoot: f.clone, git: f.git }), (err) => err.code === 'not-accept-worktree', wt);
-    assert.ok(f.list().includes(`worktree ${wt}`), `${wt} survives`);
+    assert.ok(f.listed(wt), `${wt} survives`);
   }
 });
 
