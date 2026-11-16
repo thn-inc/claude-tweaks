@@ -1,6 +1,6 @@
 'use strict';
 const { test } = require('node:test');
-require('./helpers/stub-token-pass').installTokenPassStub();
+const tokenPassCalls = require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -966,8 +966,7 @@ test('a failed GIF write gives encoder-failed and exit 0', (t) => {
 // A workspace whose checkout is a real git repository, for what only real git can answer.
 function repoWorkspace(t) {
   const root = gitRepo();
-  // Windows reports EBUSY for a directory something still briefly holds after the archive's renames; maxRetries is Node's documented retry for EBUSY/EPERM/ENOTEMPTY (#5694).
-  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-1');
   fs.mkdirSync(runDir, { recursive: true });
   const gitDir = path.join(root, 'gitdir');
@@ -1284,7 +1283,10 @@ test('Decision 2: a gather live and a gather after the real archive name the sam
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.ok(result.movedEntries.includes('packet-inputs'), JSON.stringify(result));
   assert.throws(() => fs.statSync(ws.runDir), 'the archive took the whole run dir');
-  const archived = gatherRecording(ws, path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive', 'run-1'));
+  const archivedRun = path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive', 'run-1');
+  // The archive's token pass reached the file-level stub. A real one is a detached child started in pipelines/archive, which Windows then refuses to remove (#5694).
+  assert.equal(tokenPassCalls.at(-1), archivedRun);
+  const archived = gatherRecording(ws, archivedRun);
   assert.deepEqual(archived, live);
   assert.equal(fs.readFileSync(path.join(ws.root, ...archived.archive_path.split('/')), 'utf8'), GIF_BYTES);
 });
