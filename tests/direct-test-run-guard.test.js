@@ -1064,6 +1064,25 @@ test('AC8.2: a shell script holding a direct test run is denied', () => {
   });
 });
 
+test('AC8.2: under win32 path rules a script run by its backslash path is read, as its forward-slash twin is', () => {
+  const script = 'C:\\work\\loop.sh';
+  const files = { [script]: 'node --test a.test.js b.test.js\n' };
+  const deps = {
+    hasRunner: (d) => (d === 'C:\\repo' || d.startsWith('C:\\repo\\') ? 'C:\\repo' : null),
+    isDirectory: () => false,
+    readScript: (p) => (Object.prototype.hasOwnProperty.call(files, p) ? files[p] : null),
+    readHead: (p, bytes) => (Object.prototype.hasOwnProperty.call(files, p) ? files[p].slice(0, bytes) : null),
+    pathImpl: path.win32,
+  };
+  for (const command of [shellQuote(script), 'C:/work/loop.sh', `bash ${shellQuote(script)}`]) {
+    assert.equal(judgeOrThrow(bash(command, 'C:\\repo'), deps).decision, 'deny', command);
+  }
+  // A bare name is found through PATH, never read as a script, whatever the path rules.
+  assert.deepEqual(judgeOrThrow(bash('loop.sh', 'C:\\repo'), deps), { decision: 'allow' });
+  // Under POSIX rules a backslash is a file-name character, so the word is one bare name.
+  assert.deepEqual(judgeOrThrow(bash(shellQuote('work\\loop.sh'), '/repo'), fakeDeps({ '/repo/work\\loop.sh': files[script] })), { decision: 'allow' });
+});
+
 test('AC8.3 AC8.4: repo tooling is allowed unread, and an unreadable or missing script is allowed', () => {
   const unreadable = fakeDeps({});
   unreadable.readScript = () => { throw new Error('read must not happen'); };

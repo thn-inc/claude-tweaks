@@ -714,8 +714,9 @@ function stdinFile(seg, prog) {
 
 // Records the script file a segment runs in `ctx.scripts`, resolved against the segment's working directory:
 // the operand of a `node` or shell program, the file a shell reads from stdin, the file `source` or `.`
-// reads (shell), or the program word itself when it holds a `/` (its `kind` is 'auto' unless an extension
-// says: a script of any other name is judged by its first line).
+// reads (shell), or the program word itself when it holds a path separator: a `/`, and under win32 path
+// rules a `\` too, as `seg.name` already reads it (its `kind` is 'auto' unless an extension says: a script
+// of any other name is judged by its first line).
 function collectScript(seg, prog, segCwd, ctx) {
   const program = seg.t[prog.at];
   if (segCwd === null || typeof program !== 'string') return;
@@ -733,7 +734,7 @@ function collectScript(seg, prog, segCwd, ctx) {
       if (!seg.isRedirect(i)) word = seg.t[i];
       else if (seg.isRedirectOp(i)) i += 1;
     }
-  } else if (program.includes('/')) {
+  } else if (program.includes('/') || (ctx.pathImpl.sep === '\\' && program.includes('\\'))) {
     word = program;
     kind = JS_SCRIPT_RE.test(program) ? 'js' : (program.endsWith('.sh') ? 'shell' : 'auto');
   }
