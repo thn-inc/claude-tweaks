@@ -182,7 +182,7 @@ test('AC4b.2: unhandled state prints one line and stops', () => {
 });
 
 test('a withheld Deploy status body is unhandled, not awaiting-local', () => {
-  for (const deploy of [[WITHHELD_TEXT], [WITHHELD_TEXT, 'ref: aaa']]) {
+  for (const deploy of [[WITHHELD_TEXT], [WITHHELD_TEXT, 'ref: aaa1111']]) {
     const result = stateOf(packet({ deploy }));
     assert.equal(result.state, 'unhandled', deploy.join(' / '));
     assert.match(result.message, /^accept: unhandled packet state \(.+\) — stopping$/);
@@ -204,12 +204,12 @@ test('REFRESHABLE_FIELDS is the frozen closed list', () => {
 });
 
 const SOURCE = Object.freeze({
-  ref: 'bbb', text: 'target: dev', devBaseUrl: 'https://dev.example.com', recordingUrl: 'https://dev.example.com/rec',
+  ref: 'bbb2222', text: 'target: dev', devBaseUrl: 'https://dev.example.com', recordingUrl: 'https://dev.example.com/rec',
 });
 const stalePacket = () => packet({
   recording: ['- Walkthrough: <https://old.example.com/old.gif>'],
   testGuide: ['- Open the page: <http://localhost:3000/x>', '- Then <http://localhost:3000/y?z=1>'],
-  deploy: ['target: local', 'ref: aaa'],
+  deploy: ['target: local', 'ref: aaa1111'],
 });
 
 test('AC2.3: stale fields refreshed in place', () => {
@@ -217,9 +217,9 @@ test('AC2.3: stale fields refreshed in place', () => {
   assert.deepEqual(refreshed, [...REFRESHABLE_FIELDS]);
   assert.deepEqual(unverified, []);
   const deploy = sectionOf(body, 'Deploy status');
-  assert.match(deploy, /^ref: bbb$/m);
+  assert.match(deploy, /^ref: bbb2222$/m);
   assert.match(deploy, /^target: dev$/m);
-  assert.doesNotMatch(deploy, /ref: aaa|target: local/);
+  assert.doesNotMatch(deploy, /ref: aaa1111|target: local/);
   const guide = sectionOf(body, 'Test guide');
   assert.match(guide, /<https:\/\/dev\.example\.com\/x>/);
   assert.match(guide, /<https:\/\/dev\.example\.com\/y\?z=1>/);
@@ -243,36 +243,36 @@ test('refresh rewrites only the three fields: a URL outside Test guide keeps its
   const before = packet({
     whatChanged: ['- See <http://localhost:3000/notes>'],
     testGuide: ['- Open <http://localhost:3000/x>'],
-    deploy: ['target: local', 'ref: aaa'],
+    deploy: ['target: local', 'ref: aaa1111'],
   });
   const { body } = refreshPacket(before, SOURCE);
   assert.match(sectionOf(body, 'What changed'), /<http:\/\/localhost:3000\/notes>/);
 });
 
 test('a source without devBaseUrl or recordingUrl leaves those fields unverified', () => {
-  const { body, refreshed, unverified } = refreshPacket(stalePacket(), { ref: 'bbb', text: 'target: dev' });
+  const { body, refreshed, unverified } = refreshPacket(stalePacket(), { ref: 'bbb2222', text: 'target: dev' });
   assert.deepEqual(refreshed, ['deploy-status']);
   assert.deepEqual(unverified, ['test-guide-base-url', 'recording-link']);
   assert.match(sectionOf(body, 'Test guide'), /localhost:3000/);
 });
 
 test('a source line spelling its own ref is replaced by the one ref line', () => {
-  const { body } = refreshPacket(stalePacket(), { ref: 'bbb', text: 'target: dev\nref: zzz' });
+  const { body } = refreshPacket(stalePacket(), { ref: 'bbb2222', text: 'target: dev\nref: zzz' });
   const deploy = sectionOf(body, 'Deploy status');
   assert.equal(deploy.match(/^ref: /gm).length, 1);
-  assert.match(deploy, /^ref: bbb$/m);
+  assert.match(deploy, /^ref: bbb2222$/m);
 });
 
 const waitingPacket = () => packet({
   whatChanged: [`- Kept as written: <http://localhost:3000/a>${UNVERIFIED_SUFFIX}`],
   testGuide: [`- Open: <https://dev.example.com/x>${UNVERIFIED_SUFFIX}`, `- Then: <https://dev.example.com/y>${UNVERIFIED_SUFFIX}`],
-  deploy: ['target: dev, not confirmed live', 'ref: aaa'],
+  deploy: ['target: dev, not confirmed live', 'ref: aaa1111'],
 });
 
 test('a refresh to a confirmed-live deploy drops the unverified suffix and round-trips to live-on-dev', () => {
   const before = waitingPacket();
   assert.equal(stateOf(before).state, 'waiting-for-deploy');
-  const { body } = refreshPacket(before, { ref: 'bbb', text: 'target: dev, confirmed live' });
+  const { body } = refreshPacket(before, { ref: 'bbb2222', text: 'target: dev, confirmed live' });
   assert.doesNotMatch(sectionOf(body, 'Test guide'), /link unverified/);
   assert.match(sectionOf(body, 'Test guide'), /^- Open: <https:\/\/dev\.example\.com\/x>$/m);
   assert.equal(sectionOf(body, 'What changed'), sectionOf(before, 'What changed'));
@@ -280,14 +280,14 @@ test('a refresh to a confirmed-live deploy drops the unverified suffix and round
 });
 
 test('a refresh to a deploy still not confirmed live keeps the unverified suffix', () => {
-  const { body } = refreshPacket(waitingPacket(), { ref: 'bbb', text: 'target: dev, not confirmed live' });
+  const { body } = refreshPacket(waitingPacket(), { ref: 'bbb2222', text: 'target: dev, not confirmed live' });
   assert.equal(sectionOf(body, 'Test guide').split('link unverified').length - 1, 2);
   assert.equal(stateOf(body).state, 'waiting-for-deploy');
 });
 
 test('equal refs → unchanged, both lists empty', () => {
   const before = stalePacket();
-  const result = refreshPacket(before, { ...SOURCE, ref: 'aaa' });
+  const result = refreshPacket(before, { ...SOURCE, ref: 'aaa1111' });
   assert.deepEqual(result, { body: before, refreshed: [], unverified: [] });
 });
 
@@ -301,17 +301,42 @@ test('no deploy source → unchanged and unverified', () => {
 
 test('pre-change packet without a ref line is unverified, never stale', () => {
   const before = packet({ deploy: ['target: local'] });
-  const result = refreshPacket(before, { ref: 'bbb', text: 'target: dev' });
+  const result = refreshPacket(before, { ref: 'bbb2222', text: 'target: dev' });
   assert.equal(result.body, before);
   assert.deepEqual(result.refreshed, []);
   assert.deepEqual(result.unverified, [...REFRESHABLE_FIELDS]);
+});
+
+test('a ref line outside the producer grammar is no stored ref: unverified, never stale', () => {
+  for (const line of ['ref: `aaa1111`', 'ref: AAA1111', `ref: ${WITHHELD_TEXT}`, 'ref: aaa', `ref: ${'a'.repeat(65)}`]) {
+    const before = packet({ deploy: ['target: dev, confirmed live', line] });
+    const result = refreshPacket(before, { ref: 'bbb2222', text: 'target: dev, confirmed live' });
+    assert.equal(result.body, before, line);
+    assert.deepEqual(result.refreshed, [], line);
+    assert.deepEqual(result.unverified, [...REFRESHABLE_FIELDS], line);
+  }
+});
+
+test('a stored short sha and the full sha it prefixes are the same commit', () => {
+  const full = `aaa1111${'0'.repeat(33)}`;
+  for (const [stored, ref] of [['aaa1111', full], [full, 'aaa1111']]) {
+    const before = packet({ deploy: ['target: dev, confirmed live', `ref: ${stored}`] });
+    assert.deepEqual(refreshPacket(before, { ref, text: 'target: dev, confirmed live' }), { body: before, refreshed: [], unverified: [] }, stored);
+  }
+});
+
+test('two different shas of different lengths are different commits', () => {
+  const before = packet({ deploy: ['target: dev, not confirmed live', 'ref: aaa1111'] });
+  const result = refreshPacket(before, { ref: `bbb2222${'0'.repeat(33)}`, text: 'target: dev, confirmed live' });
+  assert.deepEqual(result.refreshed, ['deploy-status']);
+  assert.match(result.body, new RegExp(`^ref: bbb2222${'0'.repeat(33)}$`, 'm'));
 });
 
 test('refresh preserves CRLF line endings outside and inside the refreshed section', () => {
   const before = stalePacket().replace(/\n/g, '\r\n');
   const { body } = refreshPacket(before, SOURCE);
   assert.ok(!/[^\r]\n/.test(body), 'a bare LF was introduced');
-  assert.match(body, /ref: bbb\r\n/);
+  assert.match(body, /ref: bbb2222\r\n/);
 });
 
 // --- verdictLabelEdits ---

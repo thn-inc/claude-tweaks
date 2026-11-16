@@ -173,8 +173,8 @@ test('truncation counts the deploy ref line and never drops it', () => {
   assert.ok(result.truncated > 0);
   assert.ok(result.markdown.length <= 60000, `chars ${result.markdown.length}`);
   assert.deepEqual(sectionLines(result.markdown, 'Deploy status'), [text, `ref: ${ref}`]);
-  const without = render([fact('change:a', 'passed'), fact('deploy:status', 'passed', { text })], claims);
-  assert.ok(result.truncated >= without.truncated);
+  // Every omitted item is a What changed claim, never the ref line.
+  assert.equal(sectionLines(result.markdown, 'What changed').length + result.truncated, claims.length);
 });
 
 test('truncation drops from the longest section and spares the marker, notes and poster', () => {
@@ -461,7 +461,7 @@ test('AC2.5: render emits the stored ref', () => {
 });
 
 test('AC2.7: render output round-trips through refresh', () => {
-  const { refreshPacket } = require('../../../plugin/bin/lib/issues/accept-entry');
+  const { refreshPacket, REFRESHABLE_FIELDS } = require('../../../plugin/bin/lib/issues/accept-entry');
   const { markdown } = render([fact('deploy:status', 'passed', {
     target: 'dev', live: false, text: 'target: dev, not confirmed live', ref: 'aaa1111',
   })]);
@@ -471,7 +471,9 @@ test('AC2.7: render output round-trips through refresh', () => {
   assert.deepEqual(sectionLines(result.body, 'Deploy status'), ['target: dev, confirmed live', 'ref: bbb2222']);
   // A packet rendered with no ref has no stored value, so it refreshes as unverified.
   const { markdown: old } = render([fact('deploy:status', 'passed', { target: 'dev', live: false, text: 'target: dev, not confirmed live' })]);
-  assert.deepEqual(refreshPacket(old, { ref: 'bbb2222', text: 'target: dev, confirmed live' }).refreshed, []);
+  const oldResult = refreshPacket(old, { ref: 'bbb2222', text: 'target: dev, confirmed live' });
+  assert.deepEqual(oldResult.refreshed, []);
+  assert.deepEqual(oldResult.unverified, [...REFRESHABLE_FIELDS]);
 });
 
 test('a decision or recording with blank text falls back to its id', () => {

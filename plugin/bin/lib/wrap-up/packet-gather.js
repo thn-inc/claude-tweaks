@@ -12,6 +12,7 @@ const {
   COMMANDS_ONLY_SURFACES,
   encodeFactKey,
   NEGATIVE_ID_PREFIX,
+  isDeployRef,
 } = require('./packet-contract');
 const {
   BEARER_SEGMENT_REASON, checkLink, findCredentialInText, hasBearerUrl,
@@ -450,7 +451,7 @@ function deployFact(deploy) {
   if (target === 'dev') text += live === true ? ', confirmed live' : ', not confirmed live';
   const fact = { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
   // The deployed commit, which a later /accept refresh compares against (#4613).
-  if (deploy?.ref !== undefined) fact.ref = deploy.ref;
+  if (isDeployRef(deploy?.ref)) fact.ref = deploy.ref;
   return fact;
 }
 

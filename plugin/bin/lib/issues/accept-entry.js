@@ -23,7 +23,7 @@
 // Pure: no fs, git or gh.
 'use strict';
 
-const { SECTIONS, WITHHELD_TEXT } = require('../wrap-up/packet-contract');
+const { SECTIONS, WITHHELD_TEXT, DEPLOY_REF_SOURCE, isDeployRef } = require('../wrap-up/packet-contract');
 const { dispositionState, APPROVAL_PROVENANCE_LABEL, APPROVAL_PROVENANCE_LABELS } = require('./acceptance');
 const { LABELS } = require('./record-vocabulary');
 
@@ -43,7 +43,11 @@ const UNVERIFIED_LINK = '(link unverified: deploy not confirmed live)';
 const TARGET_RE = /(?:^|\s)target:[ \t]*([^\s,]+)/;
 const NOT_CONFIRMED_RE = /\bnot confirmed live\b/;
 const CONFIRMED_RE = /\bconfirmed live\b/;
+// Any `ref:` line, which is never deploy content and never kept from a source's text; only
+// one in the producer's grammar (packet-contract.js's DEPLOY_REF_SOURCE) is a stored ref, so
+// a backticked, uppercase or withheld ref reads as none: unverified, never stale.
 const REF_LINE_RE = /^ref:[ \t]*(\S+)$/;
+const STORED_REF_RE = new RegExp(`^ref:[ \\t]*(${DEPLOY_REF_SOURCE})$`);
 // An origin: scheme, then host and port up to the first character that ends one.
 const ORIGIN_RE = /\bhttps?:\/\/[^\s/?#<>()[\]`'"]+/gi;
 const AUTOLINK_RE = /<https?:\/\/[^\s<>]+>/gi;
@@ -141,10 +145,17 @@ function packetStateOf({ packet, labels } = {}) {
 
 function storedRef(lines, range) {
   for (const { text } of lines.slice(range.start, range.end)) {
-    const match = REF_LINE_RE.exec(text.trim());
+    const match = STORED_REF_RE.exec(text.trim());
     if (match) return match[1];
   }
   return null;
+}
+
+// One commit spelled at two lengths: a short sha is a prefix of the full one. A source ref
+// outside the grammar matches only itself.
+function sameCommit(stored, ref) {
+  if (!isDeployRef(ref)) return stored === ref;
+  return stored.length <= ref.length ? ref.startsWith(stored) : stored.startsWith(ref);
 }
 
 // The Deploy status body replaced by the source's text and one `ref:` line. Blank lines at
@@ -173,7 +184,7 @@ function refreshPacket(body, source) {
   const deployRange = sectionRange(lines, DEPLOY);
   const ref = deployRange === null ? null : storedRef(lines, deployRange);
   if (ref === null) return unchangedUnverified;
-  if (ref === source.ref) return { body, refreshed: [], unverified: [] };
+  if (sameCommit(ref, source.ref)) return { body, refreshed: [], unverified: [] };
 
   const refreshed = ['deploy-status'];
   lines = replaceDeploy(lines, deployRange, source);

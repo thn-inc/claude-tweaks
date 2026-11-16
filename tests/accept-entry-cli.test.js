@@ -200,19 +200,19 @@ test('state with an unreadable --packet-file exits 1', (t) => {
 
 test('refresh writes --out and prints refreshed and unverified', (t) => {
   const dir = tempDir(t);
-  write(path.join(dir, 'packet.md'), packetBody(['target: local', 'ref: aaa']));
-  writeJson(path.join(dir, 'deploy.json'), { ref: 'bbb', text: 'target: dev, confirmed live', devBaseUrl: 'https://dev.example.com' });
+  write(path.join(dir, 'packet.md'), packetBody(['target: local', 'ref: aaa1111']));
+  writeJson(path.join(dir, 'deploy.json'), { ref: 'bbb2222', text: 'target: dev, confirmed live', devBaseUrl: 'https://dev.example.com' });
   const result = cli(['refresh', '--packet-file', 'packet.md', '--out', 'fresh.md', '--deploy-json', 'deploy.json'], { cwd: dir });
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(json(result), { refreshed: ['deploy-status', 'test-guide-base-url'], unverified: ['recording-link'] });
   const fresh = fs.readFileSync(path.join(dir, 'fresh.md'), 'utf8');
-  assert.match(fresh, /^ref: bbb$/m);
+  assert.match(fresh, /^ref: bbb2222$/m);
   assert.match(fresh, /<https:\/\/dev\.example\.com\/x>/);
 });
 
 test('refresh with no --deploy-json writes the packet unchanged and reports every field unverified', (t) => {
   const dir = tempDir(t);
-  const body = packetBody(['target: local', 'ref: aaa']);
+  const body = packetBody(['target: local', 'ref: aaa1111']);
   const packet = write(path.join(dir, 'packet.md'), body);
   const out = path.join(dir, 'fresh.md');
   const result = cli(['refresh', '--packet-file', packet, '--out', out]);
@@ -223,7 +223,7 @@ test('refresh with no --deploy-json writes the packet unchanged and reports ever
 
 test('refresh with an invalid --deploy-json or unreadable --packet-file exits 1 and removes an earlier --out', (t) => {
   const dir = tempDir(t);
-  const packet = write(path.join(dir, 'packet.md'), packetBody(['target: local', 'ref: aaa']));
+  const packet = write(path.join(dir, 'packet.md'), packetBody(['target: local', 'ref: aaa1111']));
   const out = path.join(dir, 'fresh.md');
   const noRef = writeJson(path.join(dir, 'noref.json'), { text: 'target: dev' });
   const badUrl = writeJson(path.join(dir, 'badurl.json'), { ref: 'b', text: 'target: dev', devBaseUrl: 'not a url' });
@@ -241,7 +241,7 @@ test('refresh with an invalid --deploy-json or unreadable --packet-file exits 1 
 
 test('refresh with an unwritable --out exits 1', (t) => {
   const dir = tempDir(t);
-  const packet = write(path.join(dir, 'packet.md'), packetBody(['target: local', 'ref: aaa']));
+  const packet = write(path.join(dir, 'packet.md'), packetBody(['target: local', 'ref: aaa1111']));
   const result = cli(['refresh', '--packet-file', packet, '--out', path.join(dir, 'no', 'such', 'dir', 'fresh.md')]);
   assert.equal(result.code, 1);
   assert.equal(result.stdout, '');
@@ -250,7 +250,7 @@ test('refresh with an unwritable --out exits 1', (t) => {
 
 test('refresh refuses an --out that is the --packet-file with exit 2 and leaves the input', (t) => {
   const dir = tempDir(t);
-  const body = packetBody(['target: local', 'ref: aaa']);
+  const body = packetBody(['target: local', 'ref: aaa1111']);
   const packet = write(path.join(dir, 'packet.md'), body);
   const badDeploy = writeJson(path.join(dir, 'deploy.json'), { text: 'no ref' });
   const same = cli(['refresh', '--packet-file', packet, '--out', packet, '--deploy-json', badDeploy]);
@@ -262,7 +262,7 @@ test('refresh refuses an --out that is the --packet-file with exit 2 and leaves 
 
 test('refresh refuses a symlinked --out that points at the --packet-file with exit 2', (t) => {
   const dir = tempDir(t);
-  const body = packetBody(['target: local', 'ref: aaa']);
+  const body = packetBody(['target: local', 'ref: aaa1111']);
   const packet = write(path.join(dir, 'packet.md'), body);
   const badDeploy = writeJson(path.join(dir, 'deploy.json'), { text: 'no ref' });
   try {
@@ -279,7 +279,7 @@ test('refresh refuses a symlinked --out that points at the --packet-file with ex
 
 test('refresh refuses a case alias of the --packet-file on a case-insensitive filesystem', (t) => {
   const dir = tempDir(t);
-  const body = packetBody(['target: local', 'ref: aaa']);
+  const body = packetBody(['target: local', 'ref: aaa1111']);
   const packet = write(path.join(dir, 'packet.md'), body);
   const alias = path.join(dir, 'PACKET.md');
   let caseInsensitive = false;
@@ -300,7 +300,7 @@ test('refresh refuses a case alias of the --packet-file on a case-insensitive fi
 
 test('refresh refuses the same spelling even when no file identity is known (an --out not yet written)', (t) => {
   const dir = tempDir(t);
-  const body = packetBody(['target: local', 'ref: aaa']);
+  const body = packetBody(['target: local', 'ref: aaa1111']);
   const packet = write(path.join(dir, 'packet.md'), body);
   const result = cli(['refresh', '--packet-file', packet, '--out', path.join(dir, 'x', '..', 'packet.md')], {
     deps: { fileId: () => null },
@@ -311,7 +311,7 @@ test('refresh refuses the same spelling even when no file identity is known (an 
 
 test('refresh refuses with exit 2 when a file identity cannot be read, and removes nothing', (t) => {
   const dir = tempDir(t);
-  const body = packetBody(['target: local', 'ref: aaa']);
+  const body = packetBody(['target: local', 'ref: aaa1111']);
   const packet = write(path.join(dir, 'packet.md'), body);
   const out = write(path.join(dir, 'out.md'), 'an earlier refresh');
   const result = cli(['refresh', '--packet-file', packet, '--out', out], {
