@@ -641,6 +641,9 @@ const realDeps = {
     timeout: remoteWrite === true ? sharedPrimitives.GIT_PUSH_TIMEOUT_MS : sharedPrimitives.GIT_TIMEOUT_MS,
     maxBuffer: MAX_BUFFER, windowsHide: true,
   }),
+  // The live GIT_TIMEOUT_MS (env, then policy, then the default), read at call time: the merge
+  // step's park budget counts accept-park.js's own git calls, which run under this same bound.
+  gitTimeoutMs: () => sharedPrimitives.GIT_TIMEOUT_MS,
   // A plugin/bin CLI under this Node; never throws on a non-zero exit.
   // The child gets the env the caller passes (steps pass deps.env); a call that omits `env`
   // falls back to process.env.

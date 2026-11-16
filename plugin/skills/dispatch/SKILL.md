@@ -205,7 +205,7 @@ only: no `config.yml`, no `decisions.md`, and no claim written here either). The
 `decisions.md` (Step 1's standalone dir, not this new one): `AUTO {time} — Step 4: minted {$GROUP_RUN_DIR} for group [{issue list}]{, naming it a fast-lane bundle when this group's member set
 matches an entry in dispatch-fastlane-bundles.json — see reporting.md for the full wording}.`
 A minted-but-never-claimed directory is reclaimed by
-the reconciler's archive sweep (`bin/lib/reconcile/archive-merged.js`'s `isOrphanedMint`
+the reconciler's archive sweep (`bin/lib/reconcile/archive-merged.js`'s `orphaned-mint`
 criterion) once its TTL elapses.
 
 Nothing else happens in this step. Claiming, the `bot:in-progress` bootstrap, and the claim

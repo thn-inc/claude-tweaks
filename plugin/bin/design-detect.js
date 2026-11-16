@@ -168,13 +168,6 @@ const realDeps = {
   stdin: () => { try { return fs.readFileSync(0, 'utf8'); } catch { return ''; } },
 };
 
-// Removal condition: delete once no file under plugin/, tests/, tools/, perf/ or evals/
-// imports it — callers use run(argv, deps) instead. Takes the full process.argv; returns
-// the exit code and never sets process.exitCode.
-function main(argv) {
-  return run(argv.slice(2), realDeps);
-}
-
-module.exports = { main, run, realDeps };
+module.exports = { run, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

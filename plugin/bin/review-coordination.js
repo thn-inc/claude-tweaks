@@ -7,15 +7,14 @@
 //   node bin/review-coordination.js detect-overlap <findings-by-lens.json>
 //   node bin/review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
-//   node bin/review-coordination.js resolve-refutation <verdict>
 //   node bin/review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>] [--tier capable|standard]
 //   node bin/review-coordination.js finding-ids <entries.json>
 //   node bin/review-coordination.js plan-chunks <entries.json>
 //   node bin/review-coordination.js write-findings <run-dir> <findings.json>
 //   node bin/review-coordination.js check-coverage <run-dir>
 // categorise-reproduction/detect-overlap/corroborate-cross-lens print JSON
-// (corroborate-cross-lens: #3604); resolve-debate/resolve-refutation print
-// the bare resolution string. resolve-tiebreak/write-findings/check-coverage
+// (corroborate-cross-lens: #3604); resolve-debate prints the bare
+// resolution string. resolve-tiebreak/write-findings/check-coverage
 // (#3945) print one JSON line: the resolver result (a could-not-parse reply is
 // parse:"could-not-parse" with exit 0 — the signal is in the JSON), {path, count}
 // of the review-findings.json written through the run-dir anchoring guard, and
@@ -70,7 +69,6 @@ const {
   detectCrossLensOverlap,
   corroborateCrossLens,
   resolveDebate,
-  resolveRefutation,
 } = require('./lib/coordination');
 const {
   resolveTiebreak, resolveTiebreakChunk, CHUNK_MAX, buildFindingsArtifact, checkRunTiebreakCoverage, FINDINGS_ARTIFACT,
@@ -86,7 +84,6 @@ const USAGE =
   '       review-coordination.js detect-overlap <findings-by-lens.json>\n' +
   '       review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>\n' +
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
-  '       review-coordination.js resolve-refutation <verdict>\n' +
   '       review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>] [--tier capable|standard]\n' +
   '       review-coordination.js finding-ids <entries.json>\n' +
   '       review-coordination.js plan-chunks <entries.json>\n' +
@@ -288,17 +285,6 @@ function run(argv, overrides = {}) {
       return 2;
     }
     deps.stdout(resolveDebate(rest[0], rest[1]) + '\n');
-    return 0;
-  }
-  if (command === 'resolve-refutation') {
-    // No skill prose invokes it since #3947, where refutation step 5 moved to resolve-tiebreak.
-    // Removal condition: remove it with `resolveRefutation` and its tests once #3950 decommissions
-    // the pre-tiebreak paths.
-    if (rest.length !== 1) {
-      deps.stderr('review-coordination.js: resolve-refutation takes exactly 1 verdict\n' + USAGE);
-      return 2;
-    }
-    deps.stdout(resolveRefutation(rest[0]) + '\n');
     return 0;
   }
   if (command === 'resolve-tiebreak') {
