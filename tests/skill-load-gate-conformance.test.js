@@ -168,11 +168,14 @@ const STEPS = [
 
 const liveStep = (step) => step.slice(read(...step.file));
 
+// `--flag value` as a whole token, so `--skill design-wrapper-x` does not pass for `design-wrapper`.
+const namesFlag = (text, flag, value) => new RegExp(`${flag} ${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(text);
+
 function assertStep(text, step) {
   const cite = text.indexOf(GATE_CITE);
   const invoke = text.indexOf(step.invocation);
   assert.ok(cite >= 0 && invoke >= 0 && cite < invoke, `${step.name}: gate citation must precede the first '${step.invocation}'`);
-  assert.ok(text.includes(`--skill ${step.skill}`) && (!step.mode || text.includes(`--mode ${step.mode}`)), `${step.name}: names --skill/--mode`);
+  assert.ok(namesFlag(text, '--skill', step.skill) && (!step.mode || namesFlag(text, '--mode', step.mode)), `${step.name}: names --skill/--mode`);
   assert.ok(/on `?skip`?[^.]*\bnot invoke/i.test(text) || /skill is not (invoked|loaded) on `?skip/i.test(text), `${step.name}: says the skill is not invoked on skip`);
 }
 
