@@ -49,8 +49,15 @@ test('#5595: an unlocated not-reproduced line (no :line) classifies with line nu
   assert.deepEqual(classifyPairLine(unlocated), { form: 'not-reproduced', lens: '3c', path: 'plugin/x.js', line: null });
   assert.deepEqual(classifyPairLine(unlocated.replace('plugin/x.js', 'docs/a b.md')), { form: 'not-reproduced', lens: '3c', path: 'docs/a b.md', line: null });
   assert.deepEqual(classifyPairLine(unlocated.replace('plugin/x.js', 'plugin/x.js:12')), { form: 'not-reproduced', lens: '3c', path: 'plugin/x.js', line: 12 });
-  // A path ending in `:{digits}` is never read as unlocated, so a located line that fails its own pattern is no pair line.
-  assert.equal(classifyPairLine(unlocated.replace('plugin/x.js', 'plugin/x.js:12').replace(' Reversibility: high.', ' Reversibility: high. extra')), null);
+});
+
+// A located line carrying a note keeps its path and line: the unlocated pattern, tried first among the strict
+// ones, must not read the note as part of a path. (Archived line, verbatim: archive/2026-10-20T124340-record-3048.)
+test('#5595: a located not-reproduced line with a note keeps its line (the unlocated pattern never takes it)', () => {
+  const noted = '- STAGED 18:13:35 — Reproduction: lens "3c" finding plugin/bin/lib/verify/changed-files.js:78 (exit-1 message says "no usable stamp anchor" under --ignore-stamp) not reproduced. Staged to Review Console as low-confidence. Reversibility: high.';
+  assert.deepEqual(classifyPairLine(noted), { form: 'not-reproduced', lens: '3c', path: 'plugin/bin/lib/verify/changed-files.js', line: 78 });
+  // A noted line with no location is no pair line (as before #5595).
+  assert.equal(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding tests/x.test.js (no test for the guard) not reproduced. Staged to Review Console as low-confidence. ${R}`)), null);
 });
 
 test('AC3.2: a path containing a space still parses', () => {

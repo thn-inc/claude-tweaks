@@ -2,7 +2,9 @@
 // Review step 3 used to carry each line as a prose template an agent typed by hand; this module composes them, so the
 // agent states findings and a CLI writes the lines. Each composer returns a log-decision entry
 // `{ status, step: 'Reproduction', text, reversibility: 'high' }`; log-decision's formatEntry adds the clock, the
-// `Reproduction: ` label and the ` Reversibility: high.` tail. Pure, no I/O.
+// `Reproduction: ` label and the ` Reversibility: high.` tail. Pure, no I/O. The composers do not validate their
+// inputs: the callers (review-coordination.js's CLI) check every required field before composing, so a missing
+// `lens` or `path` is refused there rather than printed as `undefined`.
 //
 // Readers of these lines (a change to a form's wording must keep each one reading it):
 //   - timing/pair-lines.js classifyPairLine — the pair-line counters (#5556), one pattern set per form

@@ -50,6 +50,9 @@ const HEAD = `(?:- (?:${DECISION_STATUSES.join('|')}) \\d{2}:\\d{2}:\\d{2} — $
 const LENS = 'lens "([^"]*)"';
 // A path may hold spaces, but never the start of a verdict: `a.js:1 not reproduced; … b.js:2` is two findings.
 const PATH_STRICT = '((?:(?!\\s(?:not )?reproduced\\b)[^\\n])+)';
+// The path of a finding with no line (`finding {path} not reproduced.`): never a `:{digits}` (that is a located
+// finding, read by its own pattern) and never a trailing note (` (…)`, ` — …`), which only a located line carries.
+const PATH_UNLOCATED = '((?:(?!\\s(?:not )?reproduced\\b|:\\d| \\(| — )[^\\n])+)';
 const TAIL = ' Reversibility: [a-z/]+\\.$';
 
 // Loose wording (see the header): the label before the body, the tail after it.
@@ -121,7 +124,7 @@ const PAIR_FORMS = Object.freeze([
     'Reproduction: lens "{lens}" finding {path}:{line} not reproduced. Staged to Review Console as low-confidence. Reversibility: high.',
     [`Reproduction: ${LENS} finding ${PATH_STRICT}:(\\d+) not reproduced\\. Staged to Review Console as low-confidence\\.`,
       // A finding with no line (reproduction-log.js writes `finding {path} not reproduced.`, #5595): line null.
-      `Reproduction: ${LENS} finding ${PATH_STRICT}(?<!:\\d+) not reproduced\\. Staged to Review Console as low-confidence\\.`], { lens: 1, path: 2, line: 3 },
+      `Reproduction: ${LENS} finding ${PATH_UNLOCATED} not reproduced\\. Staged to Review Console as low-confidence\\.`], { lens: 1, path: 2, line: 3 },
     [`Reproduction:${TAG} ${LENS_LOOSE} finding ${LOC}${NOTE_OPT} not reproduced\\. Staged to Review Console as low-confidence\\.`],
     [`Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} not reproduced(?:;|${NOTE_FREE})${SOME_CONTENT}${TEMPER}$`,
       `Reproduction:${TAG} ${LENS_FREE} finding ${LOC} not reproduced\\. Staged to Review Console as low-confidence(?:;|,|${NOTE_FREE})${SOME_CONTENT}${TEMPER}$`,

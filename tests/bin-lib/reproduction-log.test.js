@@ -5,12 +5,15 @@
 // readers that consume it (pair-lines, finding-path, console/backfill).
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { formatEntry } = require('../../plugin/bin/lib/log-decision/append');
 const { aggregateReproductionProblem } = require('../../plugin/bin/lib/log-decision/aggregate-reproduction');
 const { categoriseReproduction } = require('../../plugin/bin/lib/coordination');
-const { classifyPairLine } = require('../../plugin/bin/lib/timing/pair-lines');
-const { FINDING_LOCATION, readsLocation, parseCoincidence } = require('../../plugin/bin/lib/console/finding-path');
-const { splitDecisionLine } = require('../../plugin/bin/lib/console/backfill');
+const { PAIR_FORMS, classifyPairLine } = require('../../plugin/bin/lib/timing/pair-lines');
+const { readsLocation, parseCoincidence } = require('../../plugin/bin/lib/console/finding-path');
+const { findingItems, lineKeys } = require('../../plugin/bin/lib/console/resolve');
 const rl = require('../../plugin/bin/lib/reproduction-log');
 
 const now = new Date(2026, 10, 16, 10, 0, 0);
@@ -193,26 +196,38 @@ const COMPOSE = {
   'vacuity-downgraded': (p) => rl.vacuityDowngraded({ path: p, line: 12 }),
   'vacuity-reconfirmed': (p) => rl.vacuityReconfirmed({ path: p, line: 12, command: `grep -n foo ${p}`, output: '1 failing' }),
 };
-const READERS = {
-  classifyPairLine,
-  parseCoincidence: (l) => parseCoincidence(l),
-  readsLocation: (l) => readsLocation(l),
-  findingLocation: (l) => { const m = new RegExp(FINDING_LOCATION).exec(l); return m && [m[1], m[2]]; },
-  analyseLine: (l) => splitDecisionLine(l),
+
+// What each reader must yield for a composed line, written out (not derived from the hand-written line):
+// the console keys (console/resolve.js lineKeys, the `{lens}|{path}:{line}` a STAGED line is settled by) and the
+// one counter #5556's pair-line reader (PAIR_FORMS[].counts) adds the line to.
+const EXPECT = {
+  'reproduced': { counter: 'both' },
+  'reproduced-severity-contested': { counter: 'both' },
+  'not-reproduced': { counter: 'one', keys: (p) => [`3a|${p}:12`] },
+  'coincidence': { counter: 'one', keys: (p) => [`3a|${p}:12`, `3a|${p}:14`] },
+  'absence-refuted': { counter: 'one' },
+  'vacuity-downgraded': { counter: 'relabel', keys: (p) => [`3f|${p}:12`] },
+  'vacuity-reconfirmed': { counter: 'one' },
 };
 
-test('AC7.3 reader table: every form once, composed line equals the hand-written line through each reader', () => {
+test('AC7.3 reader table: each form reads as its own form, adds to one counter, and keys the console as written', () => {
   const seen = [];
   for (const id of Object.keys(HAND)) {
     for (const p of ['plugin/x.js', 'docs/a b.md']) {
       const composed = line(COMPOSE[id](p));
       assert.equal(composed, HAND[id](p), `${id} ${p}`);
-      for (const [name, read] of Object.entries(READERS)) {
-        assert.deepEqual(read(composed), read(HAND[id](p)), `${name} ${id} ${p}`);
-      }
       const pair = classifyPairLine(composed);
       assert.ok(pair, `${id} ${p} classifies`);
-      assert.equal(pair.form, id);
+      assert.equal(pair.form, id, `${id} ${p}`);
+      assert.equal(pair.path, p, `${id} ${p} path`);
+      const counts = PAIR_FORMS.find((f) => f.id === id).counts;
+      const nonzero = Object.entries(counts).filter(([, n]) => n > 0).map(([k]) => k);
+      assert.deepEqual(nonzero, [EXPECT[id].counter], `${id} counter`);
+      if (EXPECT[id].keys) {
+        const want = EXPECT[id].keys(p);
+        // `known` names the settled key whole, so a path holding a space keys whole as the console writes it (#4632).
+        assert.deepEqual(lineKeys(composed, new Set(want)), want, `${id} ${p} console keys`);
+      }
       if (p === 'plugin/x.js') seen.push(pair.form);
     }
   }
@@ -220,10 +235,31 @@ test('AC7.3 reader table: every form once, composed line equals the hand-written
   assert.equal(new Set(seen).size, 7);
 });
 
-test('AC7.3 reader table: the coincidence line is read by the coincidence reader and form 5 names no console item', () => {
-  const co = parseCoincidence(line(COMPOSE.coincidence('plugin/x.js')));
+test('AC7.3 coincidence reader: parseCoincidence reads both sides of the composed clause', () => {
+  const co = parseCoincidence(line(COMPOSE.coincidence('docs/a b.md')));
   assert.equal(co.lens, '3a');
-  assert.match(co.first, /plugin\/x\.js:12$/);
-  assert.match(co.second, /^plugin\/x\.js:14 share a location/);
-  assert.equal(classifyPairLine(line(COMPOSE['absence-refuted']('plugin/x.js'))).line, null);
+  assert.equal(co.first, 'docs/a b.md:12');
+  assert.equal(co.second, 'docs/a b.md:14 share a location');
+  assert.equal(readsLocation(co.first), true);
+});
+
+test('AC7.3 console: only the STAGED forms become console items, and form 5 makes none', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reproduction-log-'));
+  try {
+    // Distinct lines per form: a confirmed line at a location settles a STAGED line at the same one.
+    const p = 'plugin/x.js';
+    const composed = [
+      rl.reproduced({ lens: '3a', path: p, line: 12 }), rl.reproduced({ lens: '3a', path: p, line: 14, severityContested: true }),
+      rl.notReproduced({ lens: '3a', path: p, line: 16 }), rl.coincidence({ lens: '3a', path: p, lineA: 20, lineB: 22 }),
+      rl.absenceRefuted({ lens: '3a', path: p, symbol: 'foo', command: 'grep -n foo plugin/x.js', foundAt: { path: p, line: 40 } }),
+      rl.vacuityDowngraded({ path: p, line: 30 }), rl.vacuityReconfirmed({ path: p, line: 32, command: 'c', output: 'o' }),
+    ];
+    fs.writeFileSync(path.join(dir, 'decisions.md'), `${composed.map(line).join('\n')}\n`);
+    const deps = { readFile: (f) => fs.readFileSync(f, 'utf8'), readdir: (f) => { try { return fs.readdirSync(f); } catch { return []; } } };
+    const { items } = findingItems({ runDir: dir, deps });
+    assert.equal(items.length, 3);
+    assert.ok(items.every((i) => i.section === 'Low-confidence findings' && i.id.startsWith('decision:STAGED ')));
+    assert.deepEqual(items.map((i) => /Reproduction: (lens "3[af]" (?:vacuity finding|findings|finding))/.exec(i.id)[1]),
+      ['lens "3a" finding', 'lens "3a" findings', 'lens "3f" vacuity finding']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

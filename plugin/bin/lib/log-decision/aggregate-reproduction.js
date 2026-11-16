@@ -4,7 +4,8 @@
 // stays as residue. Detection is by grammar — a plural `findings` subject (a count, a lens noun phrase, or the
 // marker's own subject) or two `lens … finding` clauses — with the location shape shared with that reader
 // (console/finding-path.js), and lineKeys's two-location coincidence clause exempted: both locations readable by
-// that grammar, or both on one path (an extension-less `Makefile:30 / Makefile:31`, #5595) with a numeric line each. Pure, no I/O.
+// that grammar, or both on one path (an extension-less `Makefile:30 / Makefile:31`, #5595) with a numeric line
+// each. Pure, no I/O.
 // The word windows below were sized against the real archive. Before widening or narrowing one, run this from the
 // main checkout's root; the refused count (124 of 1414 lines on 2026-11-01) should move only by the lines you meant:
 //   node -e "const fs=require('fs'),{aggregateReproductionProblem:f}=require('./plugin/bin/lib/log-decision/aggregate-reproduction'),d=process.argv[1];let n=0,r=0;for(const p of fs.readdirSync(d,{recursive:true}))if(/(^|\/)decisions\.md$/.test(p))for(const l of fs.readFileSync(d+'/'+p,'utf8').split('\n')){const m=/^- STAGED \d\d:\d\d:\d\d — (.*)$/.exec(l);if(m&&/\breproduction:\s/i.test(m[1])){n++;if(f({status:'STAGED',text:m[1]}))r++}}console.log(n,r)" .claude-tweaks/pipelines
