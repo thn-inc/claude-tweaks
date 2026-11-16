@@ -190,9 +190,11 @@ test('AC2.2: no resolvable parent is a no-op for the post-merge Step 4.0b entry,
 });
 
 test('AC1.1: /demo no longer claims to be the only closer of a parent', () => {
-  const demo = read('accept/SKILL.md');
-  assert.ok(!collapse(demo).includes('nothing else in the system ever closes a parent'));
-  assert.match(demo, /Close the parent below the floor/);
+  // #4613 moved the Approve step's parent close from accept/SKILL.md into accept/verdict-interim.md.
+  const interim = read('accept/verdict-interim.md');
+  assert.ok(!collapse(read('accept/SKILL.md')).includes('nothing else in the system ever closes a parent'));
+  assert.ok(!collapse(interim).includes('nothing else in the system ever closes a parent'));
+  assert.match(interim, /Close the parent below the floor/);
 });
 
 // Go-red controls: the pre-change files carry the literals the absence assertions above reject, so

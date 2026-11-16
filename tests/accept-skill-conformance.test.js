@@ -1,0 +1,177 @@
+// tests/accept-skill-conformance.test.js
+//
+// Conformance for #4613's packet-centric /claude-tweaks:accept: the automatic entry never
+// prompts and never re-posts an existing packet, the on-demand entry reuses and refreshes a
+// packet rather than posting a second one, an unresolved #N never falls back to session
+// recall, every packet state accept-entry.js classifies is named with its minimal behavior,
+// and the interim verdict file writes accept:* through the labels command. The skill prose is
+// the contract an agent runs, so the live files are read.
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
+const { PACKET_STATES } = require('../plugin/bin/lib/issues/accept-entry');
+
+const ACCEPT_DIR = path.join(__dirname, '..', 'plugin', 'skills', 'accept');
+const ACCEPT_FILES = fs.readdirSync(ACCEPT_DIR).filter((name) => name.endsWith('.md')).sort();
+const read = (name) => readText(path.join(ACCEPT_DIR, name));
+
+const AUTO_LABEL = 'accept-entry.js" auto-label';
+const READ = 'accept-entry.js" read';
+const REFRESH = 'accept-entry.js" refresh';
+const LABELS = 'accept-entry.js" labels';
+const POST = 'acceptance-packet.js" post';
+
+const indexesOf = (text, literal) => {
+  const found = [];
+  for (let at = text.indexOf(literal); at !== -1; at = text.indexOf(literal, at + 1)) found.push(at);
+  return found;
+};
+
+// The text from `heading` up to the next heading of the same or a higher level.
+function section(text, heading) {
+  const start = text.indexOf(`\n${heading}\n`);
+  assert.notEqual(start, -1, `heading not found: ${heading}`);
+  const level = heading.match(/^#+/)[0].length;
+  const rest = text.slice(start + heading.length + 2);
+  const next = rest.search(new RegExp(`^#{1,${level}} `, 'm'));
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
+// The list item holding `literal`: from it to the next list item, numbered or bulleted.
+function listItemAt(text, literal) {
+  const start = text.indexOf(literal);
+  assert.notEqual(start, -1, `not found: ${literal}`);
+  const rest = text.slice(start + literal.length);
+  const next = rest.search(/\n\s*(?:- |\d+\. )/);
+  return text.slice(start, next === -1 ? undefined : start + literal.length + next);
+}
+
+// The accept/ files `name` cites by filename, followed transitively: every file a reader of
+// `name` may be sent to inside this skill's directory.
+function reachableFrom(name) {
+  const seen = new Set([name]);
+  const queue = [name];
+  while (queue.length > 0) {
+    const text = read(queue.shift());
+    for (const cited of text.match(/[A-Za-z0-9_-]+\.md/g) || []) {
+      if (ACCEPT_FILES.includes(cited) && !seen.has(cited)) {
+        seen.add(cited);
+        queue.push(cited);
+      }
+    }
+  }
+  seen.delete(name);
+  return [...seen].sort();
+}
+
+test('AC4.4: automatic-entry.md reaches no AskUserQuestion', () => {
+  const auto = read('automatic-entry.md');
+  for (const literal of ['AskUserQuestion', 'Verdict', 'verdict question']) {
+    assert.ok(!auto.includes(literal), `automatic-entry.md must not contain ${literal}`);
+  }
+  for (const name of reachableFrom('automatic-entry.md')) {
+    assert.ok(!read(name).includes('AskUserQuestion'), `automatic-entry.md reaches ${name}, which calls AskUserQuestion`);
+  }
+  // The scan itself goes red on a citation of a prompting file.
+  assert.ok(read('SKILL.md').includes('AskUserQuestion'), 'control: SKILL.md prompts');
+  assert.ok(ACCEPT_FILES.includes('SKILL.md') && ACCEPT_FILES.includes('entry-paths.md'), 'control: the directory listing saw the skill');
+});
+
+test('AC4.1/AC4.2/AC4.3: automatic entry labels through auto-label', () => {
+  const auto = read('automatic-entry.md');
+  const autoLabel = auto.indexOf(AUTO_LABEL);
+  assert.notEqual(autoLabel, -1, `automatic-entry.md must call ${AUTO_LABEL}`);
+  assert.ok(auto.includes('--label accept:pending'), 'the post applies accept:pending');
+  assert.ok(auto.includes('--add-label accept:pending'), 'the label-only branch applies accept:pending');
+  assert.doesNotMatch(auto, /--(?:add-)?label[\s=]+demo:pending/, 'never applies demo:pending');
+  assert.ok(auto.includes('--acceptance-facet'), 'local-files reads the acceptance: facet');
+  const post = auto.indexOf(POST);
+  assert.notEqual(post, -1, `automatic-entry.md must call ${POST}`);
+  assert.ok(autoLabel < post, 'auto-label runs before the post');
+  assert.ok(auto.includes('apply-pending'), 'the label keys on the auto-label action');
+});
+
+test('AC4.2: an existing packet is never re-posted by the automatic entry', () => {
+  const auto = read('automatic-entry.md');
+  const posts = indexesOf(auto, POST);
+  assert.equal(posts.length, 1, 'exactly one post call');
+  const readAt = auto.indexOf(READ);
+  assert.notEqual(readAt, -1, `automatic-entry.md must call ${READ}`);
+  assert.ok(readAt < posts[0], 'the packet is read before the post');
+  const none = auto.indexOf('status: none');
+  assert.notEqual(none, -1, 'the status: none branch exists');
+  const nextStatus = auto.indexOf('status:', none + 'status: none'.length);
+  assert.ok(posts[0] > none && (nextStatus === -1 || posts[0] < nextStatus), 'the post sits under the status: none branch');
+  const found = listItemAt(auto, 'status: found');
+  assert.ok(!found.includes('acceptance-packet.js"'), `the found branch posts nothing: ${found}`);
+  assert.ok(found.includes('--add-label accept:pending'), 'the found branch only labels');
+});
+
+test('AC2.1/AC2.2: on-demand reuse edits rather than posts', () => {
+  const skill = read('SKILL.md');
+  const refresh = skill.indexOf(REFRESH);
+  assert.notEqual(refresh, -1, `SKILL.md must call ${REFRESH}`);
+  assert.ok(skill.indexOf(POST, refresh) > refresh, 'the refreshed packet is posted (edited in place) after the refresh');
+  assert.ok(skill.includes(READ), 'the packet is read through accept-entry.js read');
+  for (const name of ACCEPT_FILES) {
+    assert.ok(!read(name).includes('gh issue comment'), `${name} must never post a comment with gh issue comment`);
+  }
+});
+
+test('AC3.1: no-record path keeps session recall', () => {
+  const paths = read('entry-paths.md');
+  assert.ok(paths.includes('\n## No arguments: session-recall\n'), 'the session-recall heading stays');
+  assert.ok(paths.replace(/\s+/g, ' ').includes('Report "Nothing awaiting sign-off." and stop'), 'the nothing-found stop stays');
+});
+
+test('AC4b.3: an unresolved #N is an error, never session recall', () => {
+  const input = section(read('SKILL.md'), '## Input').replace(/\s+/g, ' ');
+  assert.match(input, /does not resolve[^.]*error/);
+  assert.match(input, /never falls back to (the )?(no-record|session-recall)/);
+});
+
+test('AC4b.1: every packet state is named', () => {
+  const skill = read('SKILL.md');
+  assert.equal(PACKET_STATES.length, 6, 'the module still has six states');
+  for (const state of PACKET_STATES) assert.ok(skill.includes(`\`${state}\``), `SKILL.md must name ${state}`);
+});
+
+test('AC4b.1: each state table row carries the state\'s minimal behavior', () => {
+  const rows = read('SKILL.md').split('\n').filter((line) => line.startsWith('| `'));
+  const row = (state) => {
+    const found = rows.find((line) => line.startsWith(`| \`${state}\` |`));
+    assert.ok(found, `the state table must have a ${state} row`);
+    return found;
+  };
+  assert.match(row('awaiting-local'), /PR branch/);
+  assert.match(row('waiting-for-deploy'), /deploy status/);
+  assert.match(row('waiting-for-deploy'), /skip/i);
+  assert.match(row('live-on-dev'), /dev links/);
+  assert.match(row('already-decided'), /stop/);
+  assert.match(row('already-decided'), /no second verdict/);
+  assert.match(row('no-packet'), /packet module/);
+  assert.match(row('unhandled'), /`message`/);
+  assert.match(row('unhandled'), /stop/);
+  assert.match(read('SKILL.md'), /no recording/i, 'the no-recording case is named');
+});
+
+test('AC7a.1: Approve still closes a decomposition parent', () => {
+  const interim = read('verdict-interim.md');
+  assert.ok(interim.includes('gh issue close {n} --reason completed'));
+  assert.ok(interim.includes('isParentIssue'));
+});
+
+test('AC4a.2: verdicts write accept:* through the labels command', () => {
+  const interim = read('verdict-interim.md');
+  assert.ok(interim.includes(LABELS), `verdict-interim.md must call ${LABELS}`);
+  assert.ok(interim.includes('accept:approved-batch'));
+  assert.doesNotMatch(interim, /--add-label[\s=]+demo:/, 'no demo:* label is added');
+  assert.match(interim.split('\n').slice(0, 6).join(' '), /#4614 replaces this file wholesale/, 'the opening says #4614 replaces this file');
+});
+
+test('no standalone-only restriction', () => {
+  assert.ok(!read('SKILL.md').includes('standalone-only'));
+});

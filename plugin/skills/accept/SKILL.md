@@ -1,50 +1,49 @@
 ---
 name: accept
-description: Use for a human verdict on one built thing at a time: unrecorded work, a `#N` record, or a `#N,#M` list. Distinct from /test and /review. Keywords - acceptance, sign-off, demo, verification brief, human verdict, demo:pending, session-recall, closing commit.
+description: Use for a human acceptance verdict on one built thing at a time — unrecorded work, a `#N` record, or a `#N,#M` list — walking its acceptance packet. Distinct from /test and /review. Keywords - acceptance, sign-off, packet, verdict, accept:pending, demo, verification brief, human verdict, demo:pending, session-recall, closing commit.
 argument-hint: "[#N[,#M...]]"
 ---
 
-# Demo — Human Acceptance Sign-Off
+# Accept — Human Acceptance Sign-Off
 
 Gives one built thing a real human verdict — approve or request changes: either this
-conversation's own unrecorded work, or a specific `#N` record. Sits after wrap-up when a record
-exists; independent of it entirely for conversation-based work with no record to wait on. This
-skill resolves one item at a time — a bare `#N`, or a `#N[,#M...]` list taken in order, never
-combined — and it never discovers or lists what's outstanding across the backlog; `/claude-tweaks:help`'s dashboard (Stage 4.7) is where that list lives:
+conversation's own unrecorded work, or a specific `#N` record. This skill resolves one item at a
+time — a bare `#N`, or a `#N[,#M...]` list taken in order, never combined — and it never discovers
+or lists what's outstanding across the backlog; `/claude-tweaks:help`'s dashboard (Stage 4.7) is where that list lives.
+
+**Same flow, two entries.** A record's acceptance packet (`_shared/acceptance-packet.md`) is the one
+thing both entries work on, and the packet module, `bin/acceptance-packet.js`, is its only builder:
+this skill never composes a packet itself.
+
+- **Automatic entry** — `automatic-entry.md` in this skill's directory, read by
+  `wrap-up/verification-brief.md` Step 4 in a pipeline run. It posts the packet when none exists and
+  applies `accept:pending` when no acceptance label is present and the record clears the oversight
+  floor. It never prompts, never blocks and returns after labelling.
+- **On-demand entry** — `/claude-tweaks:accept [#N[,#M...]]`, typed by a human. It finds the packet,
+  refreshes its stale parts in place, walks the human through it and takes the verdict.
 
 ```
-/claude-tweaks:build → /claude-tweaks:test → /claude-tweaks:review → /claude-tweaks:wrap-up
-                                                                              │
-                                                                              v
-                                                              [ /claude-tweaks:demo ]   <- utility (no fixed lifecycle position — run anytime, on one item at a time)
-                                                                              │
-                                                       ┌──────────────────────┴──────────────────────┐
-                                                       v                                              v
-                                              demo:approved                          demo:changes-requested → follow-up record (backlog)
+pipeline run ─→ automatic entry ─→ packet + accept:pending ─┐
+                                                            v
+human ─→ /claude-tweaks:accept #N ─→ refresh ─→ walk ─→ verdict ─→ accept:approved | accept:changes-requested → follow-up record
 ```
 
-**`demo:pending` is no longer unconditional (`#367`).** `/claude-tweaks:wrap-up`'s acceptance-labeling
-step only applies the label to a record whose `risk:*`/`size:*`
-facets exceed the configured oversight floor (`exceedsOversightFloor`,
-`bin/lib/issues/oversight-floor.js`; a decomposition parent is gated on the max risk tier across
-its sub-issues, aggregated by `wrap-up/verification-brief.md`'s Parent-Gate Procedure, never on
-size). A record that doesn't clear the floor closes with **no** acceptance label at all — not a new
-`demo:exempt` marker, just the absence of one — and, with no parent, still carries its acceptance
-packet (`_shared/acceptance-packet.md`), which Step 1 reads whatever the labels. It is never
-unreachable by this skill: with no packet either (a record closed before the packet), the
-closing-commit-reconstruction fallback below (previously exercised only for the occasional record
-that closed outside `/wrap-up`'s normal flow) resolves it
-exactly as it always has for any other unlabeled record.
+A record that doesn't clear the oversight floor (`exceedsOversightFloor`,
+`bin/lib/issues/oversight-floor.js`) closes with **no** acceptance label and, with no parent, still
+carries its packet, which this skill reads whatever the labels. A decomposition parent keeps the
+Parent-Gate Procedure (`wrap-up/verification-brief-parent-gate.md`), which still writes
+`demo:pending`; this skill reads both spellings. With no packet either (a record closed before the
+packet), Step 1's closing-commit recovery resolves it.
 
 ## When to Use
 
-- You just finished ad hoc work in this same conversation — no `/capture`, no work record — and want a clean recap plus an explicit sign-off gate before moving on; `/demo`'s session-recall source (Step 1) picks this up automatically, no filing required.
+- You just finished ad hoc work in this same conversation — no `/capture`, no work record — and want a clean recap plus an explicit sign-off gate before moving on; `/accept`'s session-recall source (Step 1) picks this up automatically, no filing required.
 - `/claude-tweaks:help`'s dashboard told you a specific `#N` is awaiting sign-off (Stage 4.7 — fires on either driver) — including an autonomously `auto:merge`'d record already closed — and you want to walk through that one record now.
-- `/claude-tweaks:tidy`'s `acceptance-gap` rows — Step 4.8 under `work-backend: github-issues`, Step 1's Shape 8 under `local-files`; a hand-closed decomposition parent comes from `parent-gate` or Shape 7 — named a record that closed with no disposition at all: no brief, no label or `acceptance:` facet, and typically no session anywhere that remembers it. Step 1 reconstructs one from the closing commit.
-- You keep having to ask "how do I test this" days after a build finished — this skill surfaces the brief `/wrap-up` already wrote at build time, so you never re-derive it.
+- `/claude-tweaks:tidy`'s `acceptance-gap` rows — Step 4.8 under `work-backend: github-issues`, Step 1's Shape 8 under `local-files`; a hand-closed decomposition parent comes from `parent-gate` or Shape 7 — named a record that closed with no disposition at all: no packet, no label or `acceptance:` facet, and typically no session anywhere that remembers it. Step 1 builds a packet from the closing commit.
+- You keep having to ask "how do I test this" days after a build finished — this skill walks the packet the pipeline already wrote at build time, so you never re-derive it.
 - Some of what you're reviewing has no interactive surface at all (docs, config, a harness or skill file) — this skill still gives it a lightweight human look, just not a click-through.
 
-Not for: discovering what's outstanding across the backlog (`/claude-tweaks:help`'s job — Stage 4.7 lists every `#N` on either driver), merging or opening PRs (`/superpowers:finishing-a-development-branch`'s job), re-running mechanical checks (`/test`'s job), or code-quality judgment (`/review`'s job). `/demo` only ever resolves the Acceptance axis, one item at a time.
+Not for: discovering what's outstanding across the backlog (`/claude-tweaks:help`'s job — Stage 4.7 lists every `#N` on either driver), merging or opening PRs (`/superpowers:finishing-a-development-branch`'s job), re-running mechanical checks (`/test`'s job), or code-quality judgment (`/review`'s job). `/accept` only ever resolves the Acceptance axis, one item at a time.
 
 ## Input
 
@@ -56,13 +55,19 @@ is an explicit human-supplied batch: each ref
 runs the `#N` path in list order,
 Step 1 → Step 2 → Step 3 to completion before the next ref begins, so a batch aborted part-way
 has already applied every verdict given so far and lost nothing.
+
+**The no-record path** (session-recall, no record) is taken only with no `#N` argument and
+unrecorded work in this session. A `#N` that does not resolve — no such record, the wrong repo, a
+failed record read — is an error: report it and stop that ref. It never falls back to the no-record path; the
+`#N`-scoped recall above needs a record that resolved.
+
 Per-item failure isolation: a ref that resolves to nothing — no such record, wrong repo, a
 malformed or empty token from a stray comma (`_shared/record-batch-input.md`'s classification
 failures) — is reported and skipped, and the remaining
-refs still run; the batch never aborts on one bad element — demo's own execution semantics,
+refs still run; the batch never aborts on one bad element — accept's own execution semantics,
 that contract's Out-of-scope section. One verdict question per item —
 never a combined verdict, never cross-item merging, never a Task fan-out.
-A batch is the human's own list — never a sweep: `/demo` still never scans the backlog for what
+A batch is the human's own list — never a sweep: `/accept` still never scans the backlog for what
 to include, and the no-argument session-recall path cannot be combined with refs. Never sweeps
 the backlog — `/claude-tweaks:help` (Stage 4.7) is where the full outstanding list lives.
 The Interaction style directive's multi-item batch table does not apply to a batch here — a
@@ -71,10 +76,107 @@ gets its own verdict question.
 
 ## Step 1: Resolve the one item
 
-`/claude-tweaks:demo` resolves one item at a time — never a sweep; a `#N[,#M...]` list is still
+`/claude-tweaks:accept` resolves one item at a time — never a sweep; a `#N[,#M...]` list is still
 one item at a time, repeated in list order (`## Input`). `$ARGUMENTS` selects which path
 runs — read only the matching branch in `entry-paths.md` in this skill's directory: no arguments
 (session-recall) or `#N` given (single-record lookup — entered once per ref for a list).
+
+### The packet's state (`#N` only)
+
+Resolve the session-temp paths as its own call (`_shared/session-tmp-root.md`), and paste each
+printed path where a call below names it:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RECORD=accept-record-{n}.json PACKET_FILE=accept-packet-{n}.md REFRESHED=accept-refreshed-{n}.md FACTS=accept-facts-{n}.json NARRATIVE=accept-narrative-{n}.json SPEC=accept-spec-{n}.md BUILT=accept-built-{n}.md
+```
+
+The `#N` branch writes the record's `gh issue view` result to `"{RECORD}"`. The packet is always
+read with this call, as its own Bash call — never by fetching comments and matching the marker by
+hand:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/accept-entry.js" read --record {n} --out "{PACKET_FILE}"
+```
+
+It prints one line: `status` (`found`, `unreadable` or `none`), the comment's `url`, and `skipped`,
+the untrusted copies to name. A found or unreadable comment's body is written to `"{PACKET_FILE}"`.
+`work-backend: local-files`: write the record body's delimited packet block (`entry-paths.md`) to
+`"{PACKET_FILE}"` with the Write tool and treat it as `found`, or as `none` with no block. Then
+classify, as its own Bash call, passing `--packet-file` only for `found` or `unreadable`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/accept-entry.js" state --labels-json "{RECORD}" --packet-status found --packet-file "{PACKET_FILE}"
+```
+
+`local-files` reads the record's `acceptance:` facet into `--acceptance-facet "{facet}"` in place of
+`--labels-json`, pasting it only when it is `pending`, `approved`, `changes-requested` or empty. It
+prints `{state, recording, verdict, message}`. Route on `state`:
+
+| State | Minimal behavior |
+|---|---|
+| `awaiting-local` | Start the app from the record's PR branch — a checkout of the PR's head per `_shared/scratch-worktree.md`, never switching the human's own checkout — running the packet's Test guide commands there, then walk the guide with its local links |
+| `waiting-for-deploy` | Show the deploy status (the packet's Deploy status section), skip the link step (Validate and the URL Show), and say plainly that the dev deploy is not confirmed live; walk the rest |
+| `live-on-dev` | Walk the guide with its dev links |
+| `already-decided` | Show the recorded verdict (`verdict`) and stop this ref: no second verdict, no label change |
+| `no-packet` | Build one via the packet module (**No-packet build** below), then walk it; a legacy brief already on the record renders as itself (`entry-paths.md`) |
+| `unhandled` | Print the CLI's one-line `message` and stop this ref; never guess |
+
+**No recording** — `recording: false` on a found packet: say there is no recording in one line,
+and walk the rest.
+
+**Reuse and refresh** — a found packet in one of the first three states is reused, never posted
+again. Refresh its stale parts first, as its own Bash call, always to a distinct `--out`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/accept-entry.js" refresh --packet-file "{PACKET_FILE}" --out "{REFRESHED}"
+```
+
+It prints `{refreshed, unverified}`. Only the Deploy status section, the Test guide links' base URL
+and the Recording link are ever rewritten; every other byte, a human's edits included, stays. No
+deploy-status source exists yet, so pass no `--deploy-json` until one does: a field with no source
+is left as is and named `unverified`, in one line. Only when `refreshed` is non-empty, publish the
+refreshed body, as its own Bash call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" post --record {n} --body-file "{REFRESHED}"
+```
+
+`post` finds the marker comment and edits it in place: never a second packet, and never a packet
+posted as a fresh comment by hand. `local-files`: `acceptance-packet.js local --record-file
+"{record-file}" --body-file "{REFRESHED}"`, with no `--pending`. Then re-run `state` with
+`--packet-file "{REFRESHED}"` and walk the refreshed body. A non-zero refresh, or a failed post
+(which clears a pending label, per its contract), is stated in one line, and the packet walks as read.
+
+**No-packet build** — the packet module builds it; this skill writes only the narrative. Inputs,
+each dropped when it does not resolve: the record body written with the Write tool to `"{SPEC}"`
+(or the record file under `local-files`), the newest run directory under
+`$RUN_ROOT/.claude-tweaks/pipelines/archive/` whose name ends `-record-{n}` as `--run`, and the
+closing commit `entry-paths.md`'s recovery finds as `--base "{sha}^" --head "{sha}"`. With no
+closing commit there is nothing to build from: the recovery's session-recall fallback runs. Paste
+`{sha}` only as hex digits and `{run-dir}` only with none of `"`, backtick, `$`, `\` or a line
+break, else drop its flag. As separate Bash calls:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" gather --record {n} --out "{FACTS}" --run "{run-dir}" --spec "{SPEC}" --base "{sha}^" --head "{sha}"
+```
+
+Write `"{NARRATIVE}"` with the Write tool from the record body and the closing commit's diff, every
+claim citing fact ids copied from `"{FACTS}"` (`_shared/acceptance-packet.md`'s Facts and claims);
+it asserts nothing past what the commit shows. Then:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" render --facts "{FACTS}" --narrative "{NARRATIVE}" --out "{BUILT}" --poster "/claude-tweaks:accept"
+```
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" post --record {n} --body-file "{BUILT}"
+```
+
+`local-files`: `local --record-file "{record-file}" --body-file "{BUILT}"`. No label is applied:
+the verdict follows. Classify the built packet with `state` and walk it. A gather, render or post
+failure is stated in one line, and the closing-commit reconstruction in `entry-paths.md` composes
+the brief in this session instead; a post exit 4 (`gh` absent) walks the built packet unposted and
+says so.
 
 ## Step 2: Per-item walkthrough
 
@@ -91,7 +193,7 @@ and before any Prepare/Validate output — render the record's Try it block (`_s
 as Step 1 resolved it: the brief's `### Try it` section (a parent brief's `### Try it — end to
 end`), found on the issue or — under `pr-first` — on the PR its pointer names, or, for a record
 whose walkthrough was posted alone, its closing PR's `try-it` run comment (`entry-paths.md`'s PR
-run-comment lookup). Either way `/claude-tweaks:demo #N` opens on the same walkthrough the
+run-comment lookup). Either way `/claude-tweaks:accept #N` opens on the same walkthrough the
 Pipeline Summary and the PR showed. Step 1 composed a fresh one only when none exists; a
 label-backed brief carrying none (posted before this shipped) — compose one now per that contract
 from the record's Acceptance Criteria and Step 1's entry point, and never render it empty.
@@ -135,7 +237,8 @@ instead) and a session-recall entry whose recall yielded no confident path list 
 rule) — both skip this whole subsection and go straight to the Verdict question below, per the
 routing above. Only a brief carrying a retired `### See it yourself` / `### Verify it yourself
 (manual)` heading (posted before this schema shipped) walks the Compatibility branch below
-instead.
+instead. Step 1's packet state narrows it: `waiting-for-deploy` skips Validate and the URL Show,
+and `awaiting-local` runs Prepare from the PR branch.
 
 **Prepare** — run the plan's Prepare commands, one at a time (`Prepare: none` → skip entirely). If
 a Prepare command exits non-zero, or — for a `rendered-page`/`app-route` entry point — the entry
@@ -177,13 +280,13 @@ check, not a substitute for it — the Verdict question below still asks only ab
 **Failure posture:** a Prepare or Validate failure is evidence for Request changes, never a
 debugging detour to chase mid-conversation — capture what broke (screenshot, console error,
 command output) and fold it directly into this record's brief as grounds for the verdict.
-`/claude-tweaks:demo` never debugs or fixes the underlying application code itself — that stays
+`/claude-tweaks:accept` never debugs or fixes the underlying application code itself — that stays
 out of scope the same way code-quality judgment already does (`/claude-tweaks:review`'s job).
 
-**Caching:** Prepare/Validate runs once per record per `/claude-tweaks:demo` invocation. What's
+**Caching:** Prepare/Validate runs once per record per `/claude-tweaks:accept` invocation. What's
 cached is the resolved entry-point URL/port/credentials and the validation outcome — never a live
 browser session handle, since Validate's own session closes before Show runs. A Request-changes
-verdict ends that record's walkthrough; any later re-demo of the same record is a new invocation
+verdict ends that record's walkthrough; any later re-run of the same record is a new invocation
 with fresh Prepare/Validate.
 
 ### Verdict
@@ -195,7 +298,7 @@ Validate above already gates on, and only when browser tools resolve (the same g
 runs the `_shared/visual-decision.md` turn loop, maps each event to a verdict outcome (a Pick
 **replaces** the terminal question; an Exit **falls back** to it with Approve omitted; everything
 else falls back unchanged), and stops the server on every exit path. A `cli`/`flow`/`diff` plan
-never reads it. No auto-mode path reaches this — `/claude-tweaks:demo` is standalone-only
+never reads it. No auto-mode path reaches this — the automatic entry never walks a packet or asks
 (`## Component-Skill Contract` below).
 
 **Fallback — terminal `AskUserQuestion`, reused every round (unchanged from before this
@@ -205,7 +308,7 @@ Option 1 (Approve) — the browser round already ruled it out:
 
 - Option 1 — `label`: `"Approve"`, `description`: `"This does what was asked"`
 - Option 2 — `label`: `"Request changes"`, `description`: `"There's a gap — I'll describe it"`
-- Option 3 — for a label-backed entry: `label`: `"Skip for now"`, `description`: `"Leave it pending — I'll come back to this"`. For a closing-commit reconstruction, or a packet on a record with no pending label (never pending — there is nothing to leave), read the record's `risk:*`/`size:*` facets against `exceedsOversightFloor` (`bin/lib/issues/oversight-floor.js`, the same predicate both sweeps filter on). Above the floor: `label`: `"Skip for now"`, `description`: `"Nothing is written — it still carries no acceptance disposition, so /claude-tweaks:tidy's acceptance-gap scan will surface it again"` (true on both drivers — the disposition is an acceptance label under `github-issues` and an `acceptance:` facet under `local-files`, and each driver has its own sweep for it). Below the floor, where both sweeps filter it out: `label`: `"Skip for now"`, `description`: `"Nothing is written — below the oversight floor no disposition is owed, and /claude-tweaks:demo #N still reads the packet"`. For a session-recall entry: `label`: `"Skip for now"`, `description`: `"Nothing is written — unlike a label-backed record, this won't resurface in a later session"`
+- Option 3 — for a label-backed entry: `label`: `"Skip for now"`, `description`: `"Leave it pending — I'll come back to this"`. For a closing-commit reconstruction, or a packet on a record with no pending label (never pending — there is nothing to leave), read the record's `risk:*`/`size:*` facets against `exceedsOversightFloor` (`bin/lib/issues/oversight-floor.js`, the same predicate both sweeps filter on). Above the floor: `label`: `"Skip for now"`, `description`: `"Nothing is written — it still carries no acceptance disposition, so /claude-tweaks:tidy's acceptance-gap scan will surface it again"` (true on both drivers — the disposition is an acceptance label under `github-issues` and an `acceptance:` facet under `local-files`, and each driver has its own sweep for it). Below the floor, where both sweeps filter it out: `label`: `"Skip for now"`, `description`: `"Nothing is written — below the oversight floor no disposition is owed, and /claude-tweaks:accept #N still reads the packet"`. For a session-recall entry: `label`: `"Skip for now"`, `description`: `"Nothing is written — unlike a label-backed record, this won't resurface in a later session"`
 
 ### Compatibility: briefs with no Observation plan
 
@@ -221,13 +324,13 @@ live-or-manual sub-choice — in place of the Show-first walkthrough above; read
 
 If, anywhere in this walkthrough, the human asks for something beyond confirming this record's
 existing behavior — a new feature, a change beyond what Prepare/Validate needed to make the
-environment checkable — stop once per item (the first time this happens for the record being demoed — a `#N,#M` batch resets the once-per-item stop for each ref) before doing it. Call
-`AskUserQuestion` with `question`: `"That's new scope beyond what's being demoed here. Want me to
+environment checkable — stop once per item (the first time this happens for the record being accepted — a `#N,#M` batch resets the once-per-item stop for each ref) before doing it. Call
+`AskUserQuestion` with `question`: `"That's new scope beyond what's being accepted here. Want me to
 capture it as a backlog item now and come back to your sign-off decision, or build it now as its
-own thing outside /claude-tweaks:demo?"`, `header`: `"Scope fork"`, `multiSelect`: `false`:
+own thing outside /claude-tweaks:accept?"`, `header`: `"Scope fork"`, `multiSelect`: `false`:
 
 - Option 1 — `label`: `"Capture it"`, `description`: `"File it as a backlog item, then come back to your sign-off decision"`
-- Option 2 — `label`: `"Build it now"`, `description`: `"Build it now as its own thing, outside /claude-tweaks:demo"`
+- Option 2 — `label`: `"Build it now"`, `description`: `"Build it now as its own thing, outside /claude-tweaks:accept"`
 
 "Capture it" routes through the same follow-up-record mechanism Step 3's Request-changes branch
 already uses (`follow-up-record.md` in this skill's directory),
@@ -243,93 +346,31 @@ This record's verdict — not yet Approved/Request-changes/Skipped — must neve
 dropped because the conversation moves on, whether from a declined `AskUserQuestion`, a
 Prepare/Validate failure that grows its own back-and-forth, a scope-fork detour above, or any other
 detour. Once any such detour concludes, before shifting to a new unrelated topic, restate that
-this record's decision is still outstanding and offer to resume. Never end a `/claude-tweaks:demo` run with a
+this record's decision is still outstanding and offer to resume. Never end a `/claude-tweaks:accept` run with a
 record left mid-decision and unmentioned.
 
 ## Step 3: Apply verdicts
 
-For a `#N[,#M...]` batch this step runs per item, immediately after that item's verdict — never
-batched across items — so the next ref's Step 1 starts only once this ref's label swap (or
-follow-up filing) has landed.
-
-**Label-backed entries** (Step 1's `#N` lookup): bootstrap `demo:approved`,
-`demo:changes-requested`, `demo:approved-batch`, `accept:pending`, `accept:approved`,
-`accept:approved-batch` and `accept:changes-requested` via the check-then-create loop from
-`_shared/label-bootstrap.md` before the first swap this run, copying each row from that file's
-canonical `LABELS_JSON`. The `accept:*` rows only create the labels in the repo; this skill applies
-none of them.
-
-**A verdict replaces any prior acceptance label the record carries.** This skill still adds only
-`demo:*`, but most-conservative-wins (`_shared/work-record.md`) would otherwise let a leftover label
-outrank the new verdict: an Approve on a previously rejected record would keep reading
-`changes-requested`. So the verdict command below also passes, in the same invocation, one
-`--remove-label` for each of these that the labels Step 1 fetched for this ref hold:
-
-- **Every verdict:** `demo:pending`, `accept:pending`.
-- **Approve:** `demo:changes-requested`, `accept:changes-requested`.
-- **Single-record Approve** (not batch-sourced): `demo:approved-batch`, `accept:approved-batch`, since the human's individual verdict replaces the batch one.
-- **Request changes:** `demo:approved`, `accept:approved`, `demo:approved-batch`, `accept:approved-batch`.
-
-A batch-sourced Approve (the Provenance signal note below) removes neither batch label: it is the
-batch action, and it writes its own batch label in the same invocation.
-
-Pass each **only when those labels hold it**, `demo:pending` included: `gh issue edit --remove-label`
-exits 1 with "not found" on a label the repo has never created and fails the whole edit, dropping
-the verdict, while a label the record holds is known to exist. A closing-commit reconstruction, or a packet on a record with no pending label, needs
-no variant: it passes whichever of these it holds, usually none.
-
-**Provenance signal (Approve only).** A single-record verdict and a `#N,#M` batch-list verdict
-are otherwise byte-identical on the wire — both run Step 2's per-item walkthrough in full — so
-the Approve action below records which invocation shape produced this verdict: a bare `#N`
-invocation or the no-argument session-recall path is single-record-backed, the default, nothing
-extra written. A `#N,#M...` batch invocation (more than one ref in this run's list — see Input)
-is batch-sourced — the Approve action additionally applies `demo:approved-batch`, so
-`bin/lib/issues/trust.js`'s coverage/verdict computation (via `acceptance.js`'s
-`approvalProvenance`) can tell a rapid multi-item batch pass apart from a dedicated single-record
-session. This is a `work-backend: github-issues`-only signal — the trust table it feeds is
-already github-issues-only (`_shared/trust-table.md`'s framing note), so `work-backend: local-files`
-writes no equivalent facet. A pre-existing approved label carries no such marker and reads
-as single-record-backed — the safer default, since promoting an unlabeled historical approval to
-"batch" would understate coverage rather than overstate it.
-
-- **Approve** — `gh issue edit {n} --add-label demo:approved`, plus the `--remove-label` flags the replacement rule above selects for Approve — for a batch-sourced verdict (per the Provenance signal note above), add `--add-label demo:approved-batch` to the same invocation. `work-backend: local-files`: set `facets.acceptance = 'approved'` via `writeRecord` — no equivalent provenance facet on this driver (see the Provenance signal note above). For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`) — close it too: below the oversight floor the Parent-Gate Procedure's **Close the parent below the floor** (`wrap-up/verification-brief-parent-gate.md`) closes a parent with no sign-off, but a parent above the floor is closed only here, so without this the parent stays open forever and the acceptance label is the only trace the parent issue was ever accepted. `work-backend: github-issues`: `gh issue close {n} --reason completed`. `work-backend: local-files`: `closeRecord(path)` (`bin/lib/issues/local-store.js`), run **after** the `writeRecord` call above — `closeRecord` does its own fresh read of the file, so calling it second means it preserves the `acceptance: 'approved'` facet just written rather than racing it.
-- **Request changes** — prompt for a short reason inline, then:
-  1. **`work-backend: github-issues`:** `gh issue edit {n} --add-label demo:changes-requested`, plus the `--remove-label` flags the replacement rule above selects for Request changes. **`work-backend: local-files`:** set `facets.acceptance = 'changes-requested'` via `writeRecord`. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`), the same two-driver test the Approve branch above uses — nothing further follows this: the parent stays open, since a changes-requested verdict means the parent issue's work is not done.
-  2. File a linked follow-up record and note the bidirectional link back on the original — read
-     `follow-up-record.md` in this skill's directory and follow its items 2 and 3 (both drivers:
-     `recordPayload` under `work-backend: github-issues`, `createRecord`+`deriveSlug` under
-     `local-files`, the `Origin: demo changes-requested from #{n}` provenance line).
-- **Skip for now** — no label change.
-
-**Session-recall entries** (Step 1's no-arguments path) — no record exists, so nothing here ever
-bootstraps a label or writes to GitHub/local-files for Approve or Skip:
-
-- **Approve** — nothing written anywhere. The verdict lives in this conversation.
-- **Skip for now** — nothing written anywhere. Unlike a label-backed record, this will not
-  reappear in a future `/claude-tweaks:demo` run — a different session has no memory of this conversation to
-  recall from. This is the accepted tradeoff of not persisting anything, not a bug.
-- **Request changes** — the exact same follow-up-filing procedure as the label-backed path's
-  Request changes above (step 2, `follow-up-record.md` in this skill's directory), reusing
-  `recordPayload` (`work-backend: github-issues`) or
-  `createRecord`+`deriveSlug` (`work-backend: local-files`) directly — the only difference is
-  there is no original record to relabel or comment a link back onto, or reference within the
-  follow-up's own body — the `Origin:` line is the sole provenance marker for a session-recall
-  follow-up. The `Origin:` body line reads `Origin: demo changes-requested from session recall`
-  instead of `from #{n}`.
+Read `verdict-interim.md` in this skill's directory and follow it, for label-backed and
+session-recall entries alike. It writes `accept:*` labels only and removes a present `demo:*` twin
+in the same edit. A verdict given in Dispatch is not handled by this skill until #4614 lands.
 
 ## Next Actions
 
 Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention) — exactly once, after the last item of a `#N[,#M...]` batch; each conditional line keys on the batch as a whole. Exactly one of these three outcome branches applies per invocation — render only that branch's line, bolded and suffixed `(recommended)`:
 
-- **A `demo:changes-requested` follow-up was filed for any item this run** (Request-changes outcome): **`/claude-tweaks:backlog refine`** — the new gap record needs shaping/authorization like any other backlog item (recommended)
+- **A changes-requested follow-up was filed for any item this run** (Request-changes outcome): **`/claude-tweaks:backlog refine`** — the new gap record needs shaping/authorization like any other backlog item (recommended)
 - **No follow-up was filed, and any item this run remains pending after Skip:** **`/claude-tweaks:help`** — lists every #N still awaiting sign-off (Stage 4.7) (recommended)
 - **Approved, or Skip resolved with nothing left pending across the batch:** **`/claude-tweaks:help`** — full pipeline status (recommended)
 
 ## Component-Skill Contract
 
-`/claude-tweaks:demo` is a **standalone-only** skill — it is never invoked by a parent skill
-in the workflow. There is no `PIPELINE_RUN_DIR` signal to check; the `## Next Actions` block
-always renders.
+`/claude-tweaks:accept` has two entries. The on-demand entry, this file, is typed by a human and
+has no `PIPELINE_RUN_DIR` signal to check; the `## Next Actions` block always renders. The
+automatic entry is the non-interactive sub-file `automatic-entry.md`, which
+`wrap-up/verification-brief.md` Step 4 reads for `/claude-tweaks:wrap-up` and
+`/claude-tweaks:dispatch`; it is never invoked through the Skill tool, renders no Next Actions and
+returns to its caller.
 
 ## Anti-Patterns
 
@@ -339,16 +380,18 @@ always renders.
 | Asking for the verdict before Prepare/Validate/Show have run | Show-first means the human judges evidence already surfaced, not a promise to go look later |
 | Blocking the walkthrough on a stale `flow` Inspect pointer instead of stating it and continuing | A missing artifact is evidence for the verdict, not a reason to stall the record — run its `Regenerate:` line or say so and move on |
 | Skipping Validate and handing the human an unverified URL | Validate is silent and headless — skipping it for convenience hands over exactly the broken-link risk it exists to catch |
-| Re-deriving "how do I test this" from the diff when a brief already exists | `/wrap-up` wrote it at build time with full context — Step 1's closing-commit reconstruction is the fallback for records that never got a brief, not a substitute for reading one |
+| Re-deriving "how do I test this" from the diff when a packet or brief already exists | The pipeline wrote it at build time with full context — Step 1's no-packet build is for records that never got one, not a substitute for reading one |
+| Posting a second packet, or posting a packet as a fresh comment by hand | One marker comment per record is the contract; `acceptance-packet.js post` edits it in place, and a second copy splits the human's edits from what the next reader sees |
+| Falling back to session recall for a `#N` that does not resolve | Recall would describe whatever this session did under the wrong number — an unresolved ref is an error to report |
 | Writing a reconstruction's `### Confirmed` as though someone watched the work | A closing commit evidences what shipped, not that anyone checked it — name the reconstruction and stop at what the commit itself shows |
-| Merging or opening a PR from within this skill | Those belong to `/superpowers:finishing-a-development-branch` — `/demo` only resolves the Acceptance axis |
+| Merging or opening a PR from within this skill | Those belong to `/superpowers:finishing-a-development-branch` — `/accept` only resolves the Acceptance axis |
 | Silently dropping a record mid-decision because the conversation moved on | A pending verdict must be restated before shifting topic — see Step 2's Task-anchor discipline |
 | Treating a record with no interactive surface as not needing sign-off | A `cli`/`flow`/`diff` plan still gets a real human look — it pairs the diff/rationale with concrete pointers, not just "review the diff" |
 | Handing a sub-issue's `cli`/`diff` plan to a human as if the slice were the feature | The plan must say which siblings gate the real check and what that check is — render the Full verification block when the record carries one |
 | Debugging or fixing an application bug a Prepare/Validate check uncovers | Out of scope like code-quality judgment — capture it as a Request-changes candidate |
 | Leaving a live browser session open after Validate or Show finishes | Leaked sessions consume resources — Validate's own session must close before Show runs; Show's `open`/`xdg-open` hands the browser off to the human, it never holds a session open itself |
-| Writing `demo:approved`/`demo:pending` for a session-recall entry | No record holds it — the verdict lives in the conversation, not a label; only Request-changes produces a real record |
-| Sweeping the pending acceptance backlog from within this skill | Discovery is `/claude-tweaks:help`'s job (Stage 4.7 lists every outstanding `#N`) — `/demo` resolves one item at a time — never a sweep; a `#N,#M` list is the human's own explicit list, never a backlog scan |
+| Writing `accept:approved`/`accept:pending` for a session-recall entry | No record holds it — the verdict lives in the conversation, not a label; only Request-changes produces a real record |
+| Sweeping the pending acceptance backlog from within this skill | Discovery is `/claude-tweaks:help`'s job (Stage 4.7 lists every outstanding `#N`) — `/accept` resolves one item at a time — never a sweep; a `#N,#M` list is the human's own explicit list, never a backlog scan |
 | Summarizing, re-wording, or reordering the direction contract's five blocks | The blocks are the pre-build promise the human is checking the result against; a paraphrase is one more reading of the result, which is exactly the circularity this section exists to break |
 | Rendering the design-contract heading when no contract resolved, or with only the blocks that parsed | Most records have no contract — an empty section is noise on all of them, and a partial one is worse, because it reads as complete (`_shared/design-contract.md` collapses malformed into absent for this reason) |
-| Dropping a malformed contract silently because the section is omitted either way | Omitting the section is right; omitting the *trace* is not. `/demo` has no run dir to log to, so its one plain line is the only place an upstream block rename becomes visible instead of looking like a record that never had a contract |
+| Dropping a malformed contract silently because the section is omitted either way | Omitting the section is right; omitting the *trace* is not. `/accept` has no run dir to log to, so its one plain line is the only place an upstream block rename becomes visible instead of looking like a record that never had a contract |

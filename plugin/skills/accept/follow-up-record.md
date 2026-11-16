@@ -1,10 +1,10 @@
 # Demo Step 3 — Filing the Follow-Up Record
 
-Referenced by `skills/accept/SKILL.md` Step 3 (both the label-backed and the session-recall
-**Request changes** branches) and Step 2's Scope-fork checkpoint ("Capture it"). Read only when a
+Referenced by `skills/accept/verdict-interim.md` (Step 3: both the label-backed and the session-recall
+**Request changes** branches) and `skills/accept/SKILL.md` Step 2's Scope-fork checkpoint ("Capture it"). Read only when a
 Request-changes verdict was given or a scope-fork capture was chosen — an Approve or Skip verdict
 never reads this file. Step 3's Request-changes items 2 and 3, verbatim (item 1, the label swap,
-stays in `SKILL.md`); a session-recall entry runs the same procedure with no original record to
+stays in `verdict-interim.md`); a session-recall entry runs the same procedure with no original record to
 relabel, comment on, or reference, and its `Origin:` line reads `Origin: demo changes-requested
 from session recall`; a scope-fork capture's `Origin:` line reads `Origin: demo scope-fork from
 #{n}` (or `from session recall`).

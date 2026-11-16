@@ -675,5 +675,11 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   //   plugin/skills/demo/SKILL.md alias stub carries a one-row table ("Adding
   //   acceptance logic here"). Measured by RUNNING the parser on the working
   //   tree (actual 424), not by adding 1 to 423 (`[IL-99]`).
-  assert.strictEqual(total, 424);
+  //
+  //   424 -> 426, #4613 (accept rewritten as the packet-centric acceptance step). Two
+  //   rows ADDED to plugin/skills/accept/SKILL.md's Anti-Patterns table: "Posting a
+  //   second packet, or posting a packet as a fresh comment by hand" and "Falling back
+  //   to session recall for a `#N` that does not resolve". Measured by RUNNING the
+  //   parser on the working tree (actual 426), not by adding 2 to 424 (`[IL-99]`).
+  assert.strictEqual(total, 426);
 });

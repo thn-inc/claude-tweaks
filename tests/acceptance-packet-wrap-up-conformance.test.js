@@ -598,7 +598,7 @@ test('the Skip text tells a below-floor record the truth: no scan resurfaces it'
   assert.ok(above.includes("acceptance-gap scan will surface it again"), above);
   const below = option.slice(option.indexOf('Below the floor'));
   assert.ok(below.includes('below the oversight floor no disposition is owed'), below);
-  assert.ok(below.includes('/claude-tweaks:demo #N still reads the packet'), below);
+  assert.ok(below.includes('/claude-tweaks:accept #N still reads the packet'), below);
   assert.ok(!below.includes('acceptance-gap scan will surface'), below);
   const scan = flat(read('_shared/github-pr-scan-acceptance.md'));
   assert.ok(scan.includes('a record that closed below the floor never needed a disposition in the first place'), 'the premise stays true');
@@ -672,7 +672,8 @@ test('demo Step 2 renders a packet, never a fresh Try it block', () => {
 test('a packet on a record with no pending label takes the nothing-to-leave Skip wording and the no-variant Step 3 rule', () => {
   const doc = flat(read(DEMO));
   assert.ok(doc.includes('For a closing-commit reconstruction, or a packet on a record with no pending label (never pending'), 'Option 3');
-  assert.ok(doc.includes('A closing-commit reconstruction, or a packet on a record with no pending label, needs no variant'), 'Step 3');
+  // #4613 moved Step 3 into verdict-interim.md.
+  assert.ok(flat(read('accept/verdict-interim.md')).includes('A closing-commit reconstruction, or a packet on a record with no pending label, needs no variant'), 'Step 3');
 });
 
 test('the landed check drops the stale premise and keeps the label check', () => {
