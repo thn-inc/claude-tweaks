@@ -76,6 +76,7 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { repoSpecOf } = require('../hooks/git-exec');
 const { readWorkBackend } = require('../work-backend');
 const { resolvePolicyKeys, POLICY_KEYS } = require('../policy-schema');
+const { locatePolicyFile } = require('../policy-file');
 const { isAlive: pidAlive } = require('../file-lock');
 const { appendEntries, appendEntry, formatEntry, parseEntry } = require('../log-decision/append');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
@@ -215,7 +216,7 @@ function countAttempts(decisionsText) {
 // resolve risk-floor to the schema default, looser than a configured medium or low floor.
 function readPolicyRaw(root) {
   try {
-    return { raw: fs.readFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'utf8') };
+    return { raw: fs.readFileSync(locatePolicyFile(root).path, 'utf8') };
   } catch (e) {
     if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { raw: null };
     return { raw: null, error: (e && (e.code || e.message)) || String(e) };
