@@ -21,11 +21,12 @@
 // (a severity, optional) is the severity a Standard judge raised the finding to
 // (#5541): only resolveTiebreak reads it, and only where the Capable judge
 // settled no verdict (a finding field refused as bad-finding-field, could-not-parse,
-// a non-DONE status, can't-tell, no verified evidence, a finding with no line): there it settles at the higher of what it computes and the floor, so
-// a failed re-judge still reaches the console at the raised severity. A confirm
-// or refute settles on its own verdict and ignores it. It is not part of the
-// finding's id, the artifact does not keep it, and an absent, null or unknown
-// value changes nothing.
+// a non-DONE status, can't-tell, no verified evidence, a finding with no line):
+// there it settles at the higher of what it computes and the floor, so a failed
+// re-judge still reaches the console at the raised severity. A confirm or refute
+// settles on its own verdict and ignores it. It is not part of the finding's id,
+// the artifact does not keep it, and an absent, null or unknown value changes
+// nothing.
 //
 // Reply grammar (parseTiebreakReply). Lines are trimmed; each field line is
 // `Field: value`, the field name matched case-insensitively:
@@ -442,8 +443,7 @@ const TIERS = ['capable', 'standard'];
 
 function judgeTier(finding) {
   if (finding && finding.kind === 'contested' && Array.isArray(finding.positions) && finding.positions.length > 0) {
-    const known = finding.positions.map((p) => knownSeverity(p && p.severity));
-    if (known.some((s) => s === null)) return 'capable';
+    if (finding.positions.some((p) => knownSeverity(p && p.severity) === null)) return 'capable';
   }
   return reporterSeverityOf(finding) === 'info' ? 'standard' : 'capable';
 }

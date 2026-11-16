@@ -1174,6 +1174,7 @@ test('planChunks: [] gives []; a malformed entry throws TypeError', () => {
 
 const INFO1 = withSeverity('info', 'first info');
 const INFO2 = withSeverity('info', 'second info');
+const LOW1 = withSeverity('low', 'low claim');
 const [INFO_ID1, INFO_ID2] = [INFO1, INFO2].map(findingId);
 const tierResolve = (findings, text, tier) => resolveTiebreakChunk(findings, text, { readFile: reader, now: NOW, ...(tier ? { tier } : {}) });
 
@@ -1209,10 +1210,8 @@ test('resolveTiebreakChunk at standard: a vacuity entry raised to medium still e
 });
 
 test('resolveTiebreakChunk: capable never escalates; default tier is capable', () => {
-  const lowFinding = withSeverity('low', 'low claim');
-  const lowId = findingId(lowFinding);
-  const text = `${block(lowId, CONFIRMED_BODY.replace('medium', 'high'))}\nSTATUS: DONE`;
-  for (const chunk of [tierResolve([lowFinding], text, 'capable'), tierResolve([lowFinding], text)]) {
+  const text = `${block(findingId(LOW1), CONFIRMED_BODY.replace('medium', 'high'))}\nSTATUS: DONE`;
+  for (const chunk of [tierResolve([LOW1], text, 'capable'), tierResolve([LOW1], text)]) {
     assert.deepEqual(chunk.escalated, []);
     assert.deepEqual(chunk.unsettled, []);
     assert.equal(chunk.results.length, 1);
@@ -1221,12 +1220,11 @@ test('resolveTiebreakChunk: capable never escalates; default tier is capable', (
 });
 
 test('resolveTiebreakChunk at standard refuses a capable-tier finding; an unknown tier throws', () => {
-  const lowFinding = withSeverity('low', 'low claim');
-  const text = `${block(findingId(lowFinding), CONFIRMED_BODY)}\nSTATUS: DONE`;
-  assert.throws(() => tierResolve([lowFinding], text, 'standard'), TypeError);
-  assert.throws(() => tierResolve([INFO1, lowFinding], text, 'standard'), TypeError);
-  assert.throws(() => tierResolve([lowFinding], text, 'fast'), TypeError);
-  assert.throws(() => resolveTiebreakChunk([lowFinding], text, { readFile: reader, now: NOW, tier: null }), TypeError);
+  const text = `${block(findingId(LOW1), CONFIRMED_BODY)}\nSTATUS: DONE`;
+  assert.throws(() => tierResolve([LOW1], text, 'standard'), TypeError);
+  assert.throws(() => tierResolve([INFO1, LOW1], text, 'standard'), TypeError);
+  assert.throws(() => tierResolve([LOW1], text, 'fast'), TypeError);
+  assert.throws(() => resolveTiebreakChunk([LOW1], text, { readFile: reader, now: NOW, tier: null }), TypeError);
 });
 
 // ---- severityFloor: a failed escalation re-judge keeps the raised severity (#5541) ----
