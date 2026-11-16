@@ -1790,7 +1790,7 @@ async function runCheckSiblingSessions(argv, deps) {
     deps.stdout('claude-tweaks: --record <id-or-slug> is required — sibling-session check not run\n');
     return 0;
   }
-  const match = siblingSessions.findConflictingSession(recordRef, { cwd: deps.cwd(), sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
+  const match = siblingSessions.findConflictingSession(recordRef, { cwd: deps.cwd(), env: deps.env, sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
   if (match) {
     deps.stdout(
       `claude-tweaks: sibling session may already hold record ${recordRef} — ` +
@@ -1801,7 +1801,7 @@ async function runCheckSiblingSessions(argv, deps) {
   }
   // The worktree lock above sees only local siblings; the live claim is the
   // remote-facing half (another machine, the cloud, no worktree yet).
-  const claim = siblingSessions.findLiveClaim(recordRef, { cwd: deps.cwd(), sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
+  const claim = siblingSessions.findLiveClaim(recordRef, { cwd: deps.cwd(), env: deps.env, sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
   if (claim) {
     deps.stdout(
       `claude-tweaks: sibling session may already hold record ${recordRef} — ` +

@@ -1360,6 +1360,9 @@ function perSpecPathspec(runDir, runId) {
 // Read-only, best-effort: any git failure (no commits yet, git unavailable)
 // and an unusable runDir both resolve to false — ambiguity never triggers the
 // gate, same posture as every other check in this file.
+// `env` stays optional here, unlike the asserting event-path helpers:
+// pr-bookkeeping/precondition.js calls this as a CLI without one, so it falls
+// back to the inherited environment there.
 function hasMaterializeCommit(worktreeRoot, runDir, { env } = {}) {
   if (typeof runDir !== 'string' || !runDir) return false;
   const runId = path.basename(runDir);

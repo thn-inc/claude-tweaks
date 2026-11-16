@@ -679,7 +679,7 @@ function resolveLockWaitMs(env = process.env) {
   const n = Number(raw);
   // raw.trim() !== '' guards the JS quirk that Number('') === 0 — an empty
   // or whitespace-only value is garbage and falls back like any other.
-  return raw !== undefined && raw.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : 500;
+  return typeof raw === 'string' && raw.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : 500;
 }
 const LOCK_POLL_MS = 10;
 const LOCK_STALE_MS = 5000; // a lock dir older than this is treated as abandoned (holder crashed) and reclaimed
@@ -768,10 +768,6 @@ function writeRunState(runDir, patchOrFn, { env = process.env } = {}) {
   }
 }
 
-// #2783/#2813: resolveRun's 'fallback' arm is a GUESS — the newest unowned,
-// worktree-compatible run, routinely a sibling session's *-standalone dir in a
-// busy checkout. It is never this session's own run, so no write path that
-// stamps or logs friction may treat it as owned.
 // The one check behind every required-env throw on an event path: `who` names the caller in the
 // default message `${who}: env is required`, `message` replaces it where a pinned text exists.
 function assertEnvObject(env, who, message) {
@@ -785,6 +781,10 @@ function requireEnv(ctx) {
   return assertEnvObject(ctx && ctx.env, 'hook context', 'hook context has no env: hooks.js builds it for every event');
 }
 
+// #2783/#2813: resolveRun's 'fallback' arm is a GUESS — the newest unowned,
+// worktree-compatible run, routinely a sibling session's *-standalone dir in a
+// busy checkout. It is never this session's own run, so no write path that
+// stamps or logs friction may treat it as owned.
 function isTrustedOwnedRun(ownedRun) {
   return !!(ownedRun && ownedRun.dir && ownedRun.attribution !== 'fallback');
 }

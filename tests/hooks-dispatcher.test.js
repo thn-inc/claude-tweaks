@@ -1976,21 +1976,44 @@ test('#2783: an ad-hoc dir is never a step-3 candidate — it cannot turn one re
 
 // #5377: the three real-process smoke tests. Every other hook-event test runs in-process; these stay
 // on a real `node hooks.js` child because the process is their subject (script entry, stdin payload,
-// exit code). Each stores what it ran under its own key so the in-process parity check can replay the
-// same call and compare. They are never edited again in this plan: that is what makes "same as
-// before" provable.
-const SMOKE = {};
+// exit code). Each runs once through the memoized smoke(key) helper, which keeps what it ran so the
+// in-process parity check can replay the same call and compare, whatever test runs first. They are
+// never edited again in this plan: that is what makes "same as before" provable.
+const SMOKE_RUNS = new Map();
+const SMOKE_RUNNERS = {
+  deny() {
+    const project = gitRepo();
+    writeWorktreeAlwaysPolicy(project);
+    const input = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: path.join(project, 'a.txt') } });
+    const args = ['pre-tool-use'];
+    const env = hookEnv();
+    const result = spawnCli(HOOKS, args, { cwd: project, env, stdin: input });
+    return { args, input, cwd: project, env, result };
+  },
+  allow() {
+    const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi' } });
+    const args = ['pre-tool-use'];
+    const env = hookEnv();
+    const result = spawnCli(HOOKS, args, { cwd: HOOK_SANDBOX, env, stdin: input });
+    return { args, input, cwd: HOOK_SANDBOX, env, result };
+  },
+  sessionEnd() {
+    const input = JSON.stringify({ reason: 'other', session_id: 'sess-5377-smoke' });
+    const args = ['session-end'];
+    const env = hookEnv();
+    const result = spawnCli(HOOKS, args, { cwd: HOOK_SANDBOX, env, stdin: input });
+    return { args, input, cwd: HOOK_SANDBOX, env, result };
+  },
+};
+function smoke(key) {
+  if (!SMOKE_RUNS.has(key)) SMOKE_RUNS.set(key, SMOKE_RUNNERS[key]());
+  return SMOKE_RUNS.get(key);
+}
 
 test('AC6.1 AC8.1 smoke: pre-tool-use deny through the script entry', () => {
   // Real process proves: the script entry reads the Edit payload from stdin and the deny JSON reaches
   // stdout with exit 0.
-  const project = gitRepo();
-  writeWorktreeAlwaysPolicy(project);
-  const input = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: path.join(project, 'a.txt') } });
-  const args = ['pre-tool-use'];
-  const env = hookEnv();
-  const result = spawnCli(HOOKS, args, { cwd: project, env, stdin: input });
-  SMOKE.deny = { args, input, cwd: project, env, result };
+  const { cwd: project, result } = smoke('deny');
   const reason = "claude-tweaks: this project requires an isolated worktree for Edit/Write/NotebookEdit, git commit/push/mv/rm/update-ref/apply, Bash cp/mv/tee/sed/perl/install/ln/truncate/dd writes, and Bash >/>>/>|/&>/&>>/>& redirects (not every possible Bash write shape — see _shared/policy-schema-coverage.md's worktree-always coverage block; exempt: .claude-tweaks/pipelines/, .claude-tweaks/policy.yml, an allowlisted (policy-only) commit, an allowlisted (delete-only or ff-integration-branch) push, and a write target that is gitignored in its own repo) (policy: worktree-always in .claude-tweaks/policy.yml). "
     + `You're currently working in a non-isolated checkout (${project}). Set one up first: invoke /superpowers:using-git-worktrees, then follow \`_shared/worktree-setup.md\`'s post-creation catch-up before any other action, then retry this edit inside the new worktree.`;
   assert.strictEqual(result.code, 0);
@@ -2000,11 +2023,7 @@ test('AC6.1 AC8.1 smoke: pre-tool-use deny through the script entry', () => {
 
 test('AC6.1 AC8.1 smoke: pre-tool-use allow through the script entry', () => {
   // Real process proves: the script entry exits 0 with nothing on stdout for an allowed Bash call.
-  const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi' } });
-  const args = ['pre-tool-use'];
-  const env = hookEnv();
-  const result = spawnCli(HOOKS, args, { cwd: HOOK_SANDBOX, env, stdin: input });
-  SMOKE.allow = { args, input, cwd: HOOK_SANDBOX, env, result };
+  const { result } = smoke('allow');
   assert.strictEqual(result.code, 0);
   assert.strictEqual(result.stderr, '');
   assert.strictEqual(result.stdout, '');
@@ -2013,11 +2032,7 @@ test('AC6.1 AC8.1 smoke: pre-tool-use allow through the script entry', () => {
 test('AC8.1 smoke: session-end through the script entry', () => {
   // Real process proves: the script entry reads the session-end payload from stdin and exits 0 with
   // nothing on stdout. The event has no non-zero refusal path, so it has no refusal test.
-  const input = JSON.stringify({ reason: 'other', session_id: 'sess-5377-smoke' });
-  const args = ['session-end'];
-  const env = hookEnv();
-  const result = spawnCli(HOOKS, args, { cwd: HOOK_SANDBOX, env, stdin: input });
-  SMOKE.sessionEnd = { args, input, cwd: HOOK_SANDBOX, env, result };
+  const { result } = smoke('sessionEnd');
   assert.strictEqual(result.code, 0);
   assert.strictEqual(result.stderr, '');
   assert.strictEqual(result.stdout, '');
@@ -2042,7 +2057,7 @@ test('AC9.1: hooks-dispatcher — an event call uses the injected cwd and env', 
   });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /"permissionDecision":"deny"/);
-  assert.ok(result.stdout.includes(project), 'the deny reason names the injected cwd');
+  assert.ok(result.stdout.includes(JSON.stringify(project).slice(1, -1)), 'the deny reason names the injected cwd');
   const events = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.strictEqual(events.length, 1, 'the injected env picked the older run');
   assert.strictEqual(events[0].type, 'gate-denial');
@@ -2055,16 +2070,15 @@ test('AC9.1: hooks-dispatcher — an event call uses the injected cwd and env', 
     env: { PIPELINE_RUN_DIR: run },
   });
   assert.match(commit.stdout, /"permissionDecision":"deny"/);
-  assert.ok(commit.stdout.includes(`non-isolated checkout (${project})`), 'the deny reason names the injected cwd as the checkout the call ran in');
+  assert.ok(commit.stdout.includes(`non-isolated checkout (${JSON.stringify(project).slice(1, -1)})`), 'the deny reason names the injected cwd as the checkout the call ran in');
 });
 
 // #5377: the in-process call and the script entry agree. Each smoke test above stored its own args,
-// input, cwd, env and result in SMOKE; replaying them through runHookCli adds no process.
+// input, cwd, env and result behind smoke(key); replaying them through runHookCli adds no process.
 test('smoke parity: in-process and script-entry agree', async () => {
   for (const key of ['deny', 'allow', 'sessionEnd']) {
-    const smoke = SMOKE[key];
-    assert.ok(smoke, `SMOKE.${key} is missing — the smoke tests above did not run (a filtered run?)`);
-    const inProcess = await runHookCli(smoke.args, { input: smoke.input, cwd: smoke.cwd, env: smoke.env });
-    assert.deepStrictEqual(inProcess, smoke.result, `${key}: the in-process result differs from the script entry's`);
+    const ran = smoke(key);
+    const inProcess = await runHookCli(ran.args, { input: ran.input, cwd: ran.cwd, env: ran.env });
+    assert.deepStrictEqual(inProcess, ran.result, `${key}: the in-process result differs from the script entry's`);
   }
 });

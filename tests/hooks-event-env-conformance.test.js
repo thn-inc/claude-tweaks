@@ -150,6 +150,16 @@ for (const rel of EVENT_MODULES) {
   });
 }
 
+test('every event module hooks.js dispatches is in the scan list', () => {
+  const code = stripComments(readText(path.join(REPO, 'plugin/bin/hooks.js')));
+  const map = /const EVENT_MODULES = \{([\s\S]*?)\n\};/.exec(code);
+  assert.ok(map, 'hooks.js no longer declares `const EVENT_MODULES = { ... };`: update this test');
+  const dispatched = [...map[1].matchAll(/require\('\.\/(lib\/hooks\/[\w-]+)'\)/g)].map((m) => `plugin/bin/${m[1]}.js`);
+  assert.ok(dispatched.length >= 8, `matched ${dispatched.length} EVENT_MODULES entries: the matcher stopped matching`);
+  const missing = dispatched.filter((rel) => !EVENT_MODULES.includes(rel));
+  assert.deepEqual(missing, [], `hooks.js dispatches event modules the scans do not read: add them to EVENT_MODULES and FLOORS here:\n${missing.join('\n')}`);
+});
+
 // --- the matcher flags what it must and nothing else ---
 
 test('self-test: a planted process.env read is flagged with its line', () => {
