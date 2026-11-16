@@ -9,7 +9,7 @@
 
 const nodePath = require('node:path');
 const { ORIGINS, TYPES, TIERS, CEREMONY_TIERS, PRIORITIES, LABELS } = require('./record-vocabulary');
-const { unfencedText } = require('../markdown-blocks');
+const { unfencedText, fencedLineMask } = require('../markdown-blocks');
 
 // The closed Defer-reason: vocabulary — the code twin of
 // skills/_shared/deferral-gate.md's "Defer-reason: vocabulary" section
@@ -29,9 +29,9 @@ const DEFER_REASONS = Object.freeze([
 // the first line of the body is where the insert path and producers put it
 // (deferral-gate.md's "Where the reason lives"). Read through unfencedText: a
 // Defer-reason: line quoted inside a fenced block is never the record's own
-// (#4368). Still fence-blind, not covered by #4368: the Origin: readers
-// (provenance.js, trust.js) and the work-fingerprint reader — #4368 scopes to the
-// metadata lines an executor, the drift checks, or this insert path consume.
+// (#4368). The Origin: readers (provenance.js, trust.js) read through
+// ownOriginLine below (#4502); the work-fingerprint reader stays out of that scope
+// (it defuses quoted markers at compose time).
 const DEFER_REASON_LINE_RE = /^Defer-reason: (\S+)[ \t]*$/m;
 
 // Freshness stamp (#117): the commit each health-sweep skill actually read at
@@ -182,6 +182,34 @@ function extractPremiseCheck(body) {
   if (typeof body !== 'string' || !body) return null;
   const m = PREMISE_CHECK_RE.exec(unfencedText(body));
   return m ? m[1].trim() : null;
+}
+
+// body -> the text after `Origin:` on the record's own Origin: line (leading/trailing
+// spaces and tabs trimmed; '' for a bare `Origin:`), or null when there is none or body
+// is not a string (#4502). A record's provenance comes from its own line only, so three
+// rules: a line inside a fenced block never counts (fencedLineMask, default options — an
+// unclosed fence hides every later line, same as unfencedText under #4368); a line under a
+// `## Absorbed: …` heading never counts (the section runs to the next unfenced `## `
+// heading; `###` sub-headings keep it open); a line under `## Original request` still
+// counts, because that is the record's own earlier text. Fenced lines are never read and
+// never change the Absorbed state.
+function ownOriginLine(body) {
+  if (typeof body !== 'string' || !body) return null;
+  const lines = body.split(/\r\n|\r|\n/);
+  const fenced = fencedLineMask(lines);
+  let inAbsorbed = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (fenced[i]) continue;
+    const line = lines[i];
+    if (line.startsWith('## ')) {
+      inAbsorbed = line.startsWith('## Absorbed:');
+      continue;
+    }
+    if (inAbsorbed) continue;
+    const m = /^Origin:[ \t]*(.*?)[ \t]*$/.exec(line);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 // body -> { path, version } the harness-health finding's Proposed block was
@@ -358,5 +386,5 @@ function specShapedBody({
 
 module.exports = {
   DEFER_REASONS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
-  extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp,
+  extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine,
 };
