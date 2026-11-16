@@ -60,7 +60,6 @@ test('readClaimBlobGit: a non-timeout runner error reports transport-failure wit
   assert.equal('timedOut' in result, false);
 });
 
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 
 const fixtureRoots = [];

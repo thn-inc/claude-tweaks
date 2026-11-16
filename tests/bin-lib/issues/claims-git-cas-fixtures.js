@@ -7,12 +7,13 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { fromTemplate, disableReceiveAutoGc } = require('../../helpers/git-template');
+const { fixtureGit } = require('../../helpers/git-fixtures');
 const {
   readClaimBlobGit, writeClaimBlobGit, CLAIMS_BRANCH,
 } = require('../../../plugin/bin/lib/issues/claims-git-cas');
 
 // Every git call below pipes stderr — the house convention for a bare-repo
-// fixture (tests/bin-lib/reconcile/prune-remote.test.js's `git` helper).
+// fixture (tests/bin-lib/reconcile/prune-remote-fixtures.js's `git` helper).
 // Without it execFileSync echoes the child's stderr to this process's
 // stderr *as well as* capturing it, so the failure paths these tests
 // exercise on purpose (`git show` on an absent claim, the rejected
@@ -29,7 +30,7 @@ function realRunner(args, opts = {}) {
 }
 
 function setupGit(args) {
-  return execFileSync('git', args, { encoding: 'utf8', stdio: PIPE_ALL });
+  return fixtureGit(args, { encoding: 'utf8', stdio: PIPE_ALL });
 }
 
 // Bare origin + clone with a seeded `main`; `withRegistry` also pushes claims-registry.

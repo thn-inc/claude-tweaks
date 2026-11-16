@@ -3,13 +3,13 @@
 // pushed branches are built once per test process and copied per call, so a further call
 // starts no git process (tests/helpers/git-template.js). No test runner import here.
 
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { fromTemplateSet, disableReceiveAutoGc } = require('../../helpers/git-template');
+const { fixtureGit } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return fixtureGit(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 // A clone wired to a real bare origin — push --delete must actually land.
