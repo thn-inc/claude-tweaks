@@ -10,14 +10,19 @@
 // different claims get different ids. A non-object finding, or a lens, path or
 // claim that is not a string, throws a TypeError rather than hashing `undefined`.
 //
-// A finding is { lens, path, line, claim, reporterSeverity, kind, positions?, vacuity? }:
+// A finding is { lens, path, line, claim, reporterSeverity, kind, positions?, vacuity?, severityFloor? }:
 // kind is 'unconfirmed' | 'contested'; positions ([{ severity }], optional,
 // contested only) are the two sides' severities. A contested finding's reporter
 // severity is the higher known position severity; buildFindingsArtifact stores
 // it as reporterSeverity, since the artifact does not keep positions. vacuity
 // (boolean, optional) marks a lens 3f "this test cannot fail" finding: only
 // resolveTiebreakChunk reads it (see its comment), the artifact does not keep it,
-// and a non-boolean value is refused rather than silently ignored.
+// and a non-boolean value is refused rather than silently ignored. severityFloor
+// (a severity, optional) is the severity a Standard judge raised the finding to
+// (#5541): only resolveTiebreak reads it, settling at the higher of what it
+// computes and the floor, so a failed Capable re-judge still reaches the console
+// at the raised severity. It is not part of the finding's id, the artifact does
+// not keep it, and an absent, null or unknown value changes nothing.
 //
 // Reply grammar (parseTiebreakReply). Lines are trimmed; each field line is
 // `Field: value`, the field name matched case-insensitively:
@@ -299,7 +304,9 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   const shownLine = line !== null ? line : String(finding.line ?? 'unknown');
   const reporterSev = reporterSeverityOf(finding);
   const tiebreakSev = parsed.severity;
-  const higherSev = higher(reporterSev, tiebreakSev) || 'medium';
+  // An escalation re-judge carries the severity the Standard judge raised the finding to (#5541).
+  const floor = knownSeverity(finding.severityFloor);
+  const higherSev = higher(higher(reporterSev, tiebreakSev) || 'medium', floor);
   const where = `lens "${finding.lens}" finding ${finding.path}:${shownLine}`;
   const result = (fields) => ({
     id, evidence: null, recommendation: parsed.recommendation, listInConsole: false, parse: parsed.parse, ...fields,
@@ -333,7 +340,7 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   if (parsed.verdict === 'confirmed') {
     return result({
       outcome: 'confirmed',
-      severity: lower(reporterSev, tiebreakSev) || 'medium',
+      severity: higher(lower(reporterSev, tiebreakSev) || 'medium', floor),
       evidence: ev,
       reason: 'confirmed by tiebreak',
       ...entry('AUTO', 'Reproduction', `${where} confirmed by tiebreak:${id}. Confirmed.`),
@@ -367,10 +374,11 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // Judge tiers (#5541): a finding's tier follows its severity. `info` is judged at
 // Standard, everything else — low, medium, high, critical, and a null, missing
 // or unknown severity — at Capable, because a cheaper judge is only trusted
-// where a wrong verdict costs least. A contested finding is read from its raw
-// `positions`, never from the artifact's reporterSeverity or positionSeverity,
-// both of which drop an unknown position: a contested finding with any null or
-// unknown position severity is Capable even when every known position is info.
+// where a wrong verdict costs least. A contested finding's unknown-position check
+// reads its raw `positions`, because positionSeverity (and the artifact's
+// reporterSeverity built from it) drops an unknown position: a contested finding
+// with any null or unknown position severity is Capable even when every known
+// position is info. The tier never reads severityFloor.
 // planChunks groups entries by tier (TIERS order, entry order within a tier,
 // CHUNK_MAX per chunk, a repeated finding id kept once at its first index), so
 // a chunk never mixes tiers. escalation is the guard on the cheap tier: a

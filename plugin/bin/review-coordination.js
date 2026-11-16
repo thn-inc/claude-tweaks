@@ -46,7 +46,8 @@
 // plan-chunks (#5541) takes a JSON array of entries of any length and prints
 // {chunks: [{chunk, tier, indexes}]}: tiebreak.js's planChunks, numbered from 1 in output
 // order, each chunk one judge tier ('capable' | 'standard') of at most CHUNK_MAX entries,
-// `indexes` positions in the input; [] prints {chunks: []}. No writes; an unreadable file, a
+// `indexes` positions in the input, a repeated finding id kept once at its first index (its later
+// indexes appear in no chunk); [] prints {chunks: []}. No writes; an unreadable file, a
 // non-array or a malformed entry exits 2 with the cause on stderr.
 // resolve-tiebreak --tier (#5541), capable (the default) or standard; a missing or unknown
 // value exits 2. At standard every entry must be Standard-tier (tiebreak.js's judgeTier); a
@@ -324,7 +325,7 @@ function run(argv, overrides = {}) {
       } else positional.push(rest[i]);
     }
     if (positional.length !== 2) {
-      deps.stderr('review-coordination.js: resolve-tiebreak takes <finding.json> <reply-file> [--root <dir>] [--run <dir>]\n' + USAGE);
+      deps.stderr('review-coordination.js: resolve-tiebreak takes <finding.json> <reply-file> [--root <dir>] [--run <dir>] [--tier capable|standard]\n' + USAGE);
       return 2;
     }
     const input = readJson(positional[0], deps);

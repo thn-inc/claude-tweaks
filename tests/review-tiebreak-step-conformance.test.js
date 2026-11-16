@@ -1491,6 +1491,7 @@ const CHUNK_LADDER = [
   [tiebreakSection('Resolve and act'), /For an entry carrying `vacuity: true` the code rewrites its block's `Verdict: confirmed` line to `Verdict: cant-tell`, so the dispatcher never edits a chunk reply/, 'the code, not the dispatcher, rewrites a vacuity entry in a chunk reply'],
   [tiebreakSection('Dispatch'), /one number per finding, since no chunk holds more than 8/, '{n} is one number per finding, since no chunk holds more than 8'],
   [tiebreakSection('Dispatch'), /`\(c − 1\) × 8 \+ i \+ 1`/, "a chunk result's per-finding position is (c − 1) × 8 + i + 1"],
+  [tiebreakSection('Dispatch'), /On the `plan-chunks` double-failure path there is no output, so `\{n\}` is the finding's 1-based position in E\./, '{n} is the 1-based position in E on the plan-chunks double-failure path'],
   [tiebreakSection('Dispatch'), /in a pipeline run and standalone alike: `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/review-coordination\.js" finding-ids "\{path-F\}"`/, 'the chunk ids come from one finding-ids call over F, in both modes'],
   [tiebreakSection('Dispatch'), /with `\{id\}` the entry's `id` from that chunk's `finding-ids` call/, "the chunk template's {id} is the finding-ids output"],
   [tiebreakSection('Dispatch'), /On exit 2, fix the entry stderr names and re-run it once/, 'a finding-ids exit 2 is fixed and re-run once'],
@@ -1668,11 +1669,15 @@ const MIXED_ENTRIES = [
   tierEntry('info 1', 'info'),
   tierEntry('contested info/high', 'info', { kind: 'contested', positions: [{ severity: 'info' }, { severity: 'high' }] }),
   tierEntry('null severity', null),
+  // Plan Review Clarification: a null position makes it Capable even though its one known position is info.
+  tierEntry('contested info/null', 'info', { kind: 'contested', positions: [{ severity: 'info' }, { severity: null }] }),
 ];
 
 const CHUNK_TIER_PLAN = [
   [/a chunk never mixes tiers/, 'a chunk never mixes tiers'],
   [/`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/review-coordination\.js" plan-chunks "\{path-E\}"`/, 'the chunks come from one plan-chunks call over the entries file E'],
+  [/resolved with one plain `session-tmp-resolve\.js` call of its own, before `plan-chunks` runs, in a pipeline run and standalone alike/, 'E is resolved with its own plain session-tmp-resolve.js call, before plan-chunks runs'],
+  [/`Write` the chunk's entries as one JSON array to `F` — the entries of E at the chunk's `indexes` from `plan-chunks`, in that order/, "the chunk file holds the entries of E at the chunk's indexes, in that order"],
 ];
 const chunkTierPlanMissing = missingFactsOf(CHUNK_TIER_PLAN);
 
@@ -1684,13 +1689,13 @@ test('AC3: a chunk holds findings of one tier only', () => {
   const tierOf = (claim) => chunks.find((c) => c.indexes.some((i) => MIXED_ENTRIES[i].claim === claim)).tier;
   assert.equal(tierOf('contested info/high'), 'capable');
   assert.equal(tierOf('null severity'), 'capable');
-  assert.deepEqual(chunks.map((c) => c.tier).sort(), ['capable', 'standard'], 'the fixture reaches both tiers');
+  assert.equal(tierOf('contested info/null'), 'capable', 'a null position severity is Capable even when the known positions are all info');
+  assert.deepEqual(chunks.map((c) => c.tier).sort(), ['capable', 'capable', 'standard'], 'the fixture reaches both tiers, and its nine Capable entries span two chunks');
 });
-
 test('AC3: the chunk-tier assertions can go red', () => {
   assertEachPatternGoesRed(dispatchSection(), CHUNK_TIER_PLAN, chunkTierPlanMissing);
   // The code half, over hand-built plans: a chunk mixing tiers, an oversize chunk, and a dropped entry each turn it red.
-  assert.deepEqual(chunkTierProblems(MIXED_ENTRIES, [{ tier: 'capable', indexes: MIXED_ENTRIES.map((_, i) => i) }]), ['chunk of 10 exceeds CHUNK_MAX', 'a capable chunk holds an entry of the other tier']);
+  assert.deepEqual(chunkTierProblems(MIXED_ENTRIES, [{ tier: 'capable', indexes: MIXED_ENTRIES.map((_, i) => i) }]), ['chunk of 11 exceeds CHUNK_MAX', 'a capable chunk holds an entry of the other tier']);
   const real = planChunks(MIXED_ENTRIES);
   const contestedAt = MIXED_ENTRIES.findIndex((e) => e.claim === 'contested info/high');
   const misrouted = real.map((c) => ({ ...c, indexes: c.indexes.filter((i) => i !== contestedAt) }));
@@ -1730,6 +1735,8 @@ const ESCALATION = [
   [/plus one `capable` re-judge when a `standard` judge raised it/, 'the attempt count adds the one capable re-judge'],
   [/A one-finding call at `--tier standard` that prints `escalated: true` is re-judged the same way/, 'a one-finding escalated:true is re-judged the same way'],
   [/always resolves with `--tier capable`/, 'an inline verdict always resolves with --tier capable'],
+  [/The re-judge's entry is the finding's entry from E plus `"severityFloor": "\{severity\}"`, with `\{severity\}` from its `escalated` item \(or the one-finding form's `severity`\), so a failed or can't-tell re-judge still settles at the raised severity\./, "the re-judge's entry carries severityFloor, so a failed re-judge settles at the raised severity"],
+  [/At `--tier standard` the one-finding call may print `\{"escalated": true, …\}` in place of a result: nothing is logged, and the finding is re-judged as the `escalated` sentence above says\./, 'step 2 names the escalated: true output form of a one-finding call'],
 ];
 const escalationMissing = missingFactsOf(ESCALATION);
 

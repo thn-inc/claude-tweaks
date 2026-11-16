@@ -176,7 +176,7 @@ test('resolve-tiebreak exits 2 for a malformed finding, an unreadable reply, an 
   for (const args of [[good], [good, r, r]]) {
     const res = cli(['resolve-tiebreak', ...args]);
     assert.strictEqual(res.code, 2, args.join(' '));
-    assert.match(res.stderr, /^review-coordination\.js: resolve-tiebreak takes <finding\.json> <reply-file> \[--root <dir>\] \[--run <dir>\]\nusage: /, args.join(' '));
+    assert.match(res.stderr, /^review-coordination\.js: resolve-tiebreak takes <finding\.json> <reply-file> \[--root <dir>\] \[--run <dir>\] \[--tier capable\|standard\]\nusage: /, args.join(' '));
   }
   const noRoot = cli(['resolve-tiebreak', good, r, '--root']);
   assert.strictEqual(noRoot.code, 2);
@@ -893,6 +893,19 @@ test('plan-chunks prints one tier per chunk, numbered from 1, and writes nothing
   assert.strictEqual(empty.out, '{"chunks":[]}\n');
 });
 
+test('plan-chunks keeps a repeated finding id once, at its first index', (t) => {
+  const d = tmpDir(t);
+  const a = { ...TB_FINDING, claim: 'claim A', reporterSeverity: 'low' };
+  const b = { ...TB_FINDING, claim: 'claim B', reporterSeverity: 'info' };
+  const res = planRun([writeText(d, 'dup.json', JSON.stringify([a, b, a]))], d);
+  assert.strictEqual(res.code, 0, res.err);
+  assert.deepStrictEqual(JSON.parse(res.out), { chunks: [
+    { chunk: 1, tier: 'capable', indexes: [0] },
+    { chunk: 2, tier: 'standard', indexes: [1] },
+  ] });
+  assert.ok(JSON.parse(res.out).chunks.every((c) => !c.indexes.includes(2)), 'the later index of a repeated id is in no chunk');
+});
+
 test('plan-chunks exits 2 with one stderr line on a malformed entry, a non-array, an unreadable file or a wrong arity', (t) => {
   const d = tmpDir(t);
   const bad = [
@@ -997,6 +1010,31 @@ test('resolve-tiebreak --tier capable settles a raised finding like no --tier do
     outputs.push(res.out);
   }
   assert.strictEqual(outputs[0], outputs[1], 'an explicit capable tier is the default');
+});
+
+test('resolve-tiebreak --tier capable settles a failed re-judge of a raised finding at its severityFloor', (t) => {
+  const d = tmpDir(t);
+  const { root, make } = tierInputs(d);
+  const info = make('info', 'info');
+  const empty = writeText(d, 'empty-reply.txt', '');
+  const outcomes = {};
+  for (const [name, finding] of [['floored', { ...info, severityFloor: 'high' }], ['unfloored', info]]) {
+    const entry = writeText(d, `${name}.json`, JSON.stringify(finding));
+    const { main, runDir } = anchoredRunDir(t);
+    const res = chunkRun([entry, empty, '--root', root, '--run', runDir, '--tier', 'capable'], main);
+    assert.strictEqual(res.code, 0, res.err);
+    const printed = JSON.parse(res.out);
+    assert.strictEqual(printed.reason, 'could-not-parse', name);
+    assert.strictEqual(printed.id, findingId(info), `${name}: severityFloor is not part of the id`);
+    assert.strictEqual(printed.logged, true, name);
+    assert.strictEqual(verdictLines(runDir).length, 1, name);
+    outcomes[name] = printed;
+  }
+  assert.strictEqual(outcomes.floored.severity, 'high');
+  assert.strictEqual(outcomes.floored.outcome, 'console');
+  assert.match(outcomes.floored.logLine, /Severity: high\./);
+  assert.strictEqual(outcomes.unfloored.severity, 'info');
+  assert.strictEqual(outcomes.unfloored.outcome, 'digest');
 });
 
 test('resolve-tiebreak --tier with no value, an unknown value or a wrong case exits 2 and writes nothing', (t) => {

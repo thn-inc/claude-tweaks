@@ -1138,12 +1138,12 @@ test('planChunks: a chunk never mixes tiers', () => {
   const entries = [];
   for (let i = 0; i < 10; i += 1) {
     entries.push(withSeverity('low', `low ${i}`));
-    if (i % 3 === 0) entries.push(withSeverity('info', `info ${i}`));
+    if (i % 4 === 0) entries.push(withSeverity('info', `info ${i}`));
   }
   const lowIdx = entries.map((f, i) => (f.reporterSeverity === 'low' ? i : -1)).filter((i) => i >= 0);
   const infoIdx = entries.map((f, i) => (f.reporterSeverity === 'info' ? i : -1)).filter((i) => i >= 0);
   assert.equal(lowIdx.length, 10);
-  assert.equal(infoIdx.length, 4);
+  assert.equal(infoIdx.length, 3);
   const chunks = planChunks(entries);
   assert.deepEqual(chunks, [
     { tier: 'capable', indexes: lowIdx.slice(0, 8) },
@@ -1151,7 +1151,7 @@ test('planChunks: a chunk never mixes tiers', () => {
     { tier: 'standard', indexes: infoIdx },
   ]);
   for (const chunk of chunks) {
-    assert.ok(chunk.indexes.length <= CHUNK_MAX);
+    assert.ok(chunk.indexes.length <= 8, 'a chunk holds at most CHUNK_MAX (8) findings');
     assert.ok(chunk.indexes.every((i) => judgeTier(entries[i]) === chunk.tier));
   }
 });
@@ -1227,6 +1227,59 @@ test('resolveTiebreakChunk at standard refuses a capable-tier finding; an unknow
   assert.throws(() => tierResolve([INFO1, lowFinding], text, 'standard'), TypeError);
   assert.throws(() => tierResolve([lowFinding], text, 'fast'), TypeError);
   assert.throws(() => resolveTiebreakChunk([lowFinding], text, { readFile: reader, now: NOW, tier: null }), TypeError);
+});
+
+// ---- severityFloor: a failed escalation re-judge keeps the raised severity (#5541) ----
+
+test('severityFloor: a failed re-judge of a raised info finding settles can\'t-tell at the floor', () => {
+  const floored = { ...INFO1, severityFloor: 'high' };
+  for (const text of ['', 'garbage', reply({ verdict: 'cant-tell', evidence: null }), reply({ status: 'BLOCKED' })]) {
+    const r = resolve(floored, text);
+    assert.equal(r.severity, 'high', text);
+    assert.equal(r.outcome, 'console', text);
+    assert.equal(r.listInConsole, false, text);
+    assert.match(r.logLine, /Severity: high\./, text);
+  }
+  assert.equal(resolve(floored, reply({ verdict: 'refuted', severity: 'info' })).severity, 'high');
+  assert.equal(resolve(floored, reply({ verdict: 'refuted', severity: 'info' })).listInConsole, true);
+  assert.equal(resolve(floored, reply({ severity: 'low' })).severity, 'high');
+});
+
+test('severityFloor: the same finding without a floor still settles at info', () => {
+  const r = resolve(INFO1, '');
+  assert.equal(r.severity, 'info');
+  assert.equal(r.outcome, 'digest');
+  const settled = resolve(INFO1, reply({ severity: 'low' }));
+  assert.equal(settled.outcome, 'confirmed');
+  assert.equal(settled.severity, 'info');
+});
+
+test('severityFloor: a floor below the computed severity changes nothing', () => {
+  const finding = { ...withSeverity('high', 'high claim'), severityFloor: 'low' };
+  assert.deepEqual({ ...resolve(finding, ''), id: null }, { ...resolve(withSeverity('high', 'high claim'), ''), id: null });
+  assert.equal(resolve(finding, '').severity, 'high');
+});
+
+test('severityFloor: an absent, null or unknown floor is ignored', () => {
+  const base = resolve(INFO1, '');
+  for (const severityFloor of [undefined, null, 'bogus', '', 7, {}]) {
+    const r = resolve({ ...INFO1, severityFloor }, '');
+    assert.deepEqual(r, base, String(severityFloor));
+  }
+  assert.equal(resolve({ ...INFO1, severityFloor: ' High ' }, '').severity, 'high', 'a known severity is read like every other severity');
+});
+
+test('severityFloor: it is not part of the id, the tier or the artifact', () => {
+  const floored = { ...INFO1, severityFloor: 'high' };
+  assert.equal(findingId(floored), findingId(INFO1));
+  assert.equal(judgeTier(floored), 'standard');
+  assert.deepEqual(buildFindingsArtifact([floored]), buildFindingsArtifact([INFO1]));
+  assert.deepEqual(planChunks([floored]), [{ tier: 'standard', indexes: [0] }]);
+  assert.equal(escalation(floored, reply({ severity: 'info' }), 'standard'), null);
+  // A floored finding settles in the capable chunk form, never refused there.
+  const chunk = tierResolve([floored], `${block(INFO_ID1, CONFIRMED_BODY.replace('Severity: medium', 'Severity: low'))}\nSTATUS: DONE`, 'capable');
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].severity, 'high');
 });
 
 test('escalation: one-finding check', () => {
