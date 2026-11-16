@@ -31,7 +31,7 @@ files:
 - **Action:** The build runs `bin/remote-branch-collision.js`; the fresh `worktree-dispatch-record-{n}` branch's tip is not an ancestor of origin's, so `classifyRemoteBranch` says `foreign`; `findPriorAttemptPr` then finds a CLOSED, same-repo PR on that branch whose body opens with the `claude-tweaks-run:` marker, closes #{n} in this repo, and whose head is an ancestor of origin's tip → state `prior-attempt`. The build runs `git merge --no-edit {remoteSha}` and logs the adoption; a merge conflict it cannot resolve confidently is aborted and the branch stops as `foreign` instead.
 - **Should feel:** Hands-off — no stop card, no question.
 - **Should understand:** Only this record's own closed claude-tweaks PR qualifies. Another record's PR, a human's branch, an open or merged PR, a fork PR, or a failed lookup still stops as `foreign`; with `gh` absent there is no lookup, so it stops too (#3915 tracks the MCP path).
-- **Red flags:** A `## Build: Adopted branch collides with an unrelated branch on origin` card naming the record's own closed PR; or, conversely, a different record's branch being adopted.
+- **Red flags:** A `## Build: Adopted branch collides with an unrelated branch on origin` card naming the record's own closed PR; or, conversely, a different record's branch being adopted; or the collision-check command refused by the worktree guard ("too complex to verify") and retried in another form.
 
 ### 3. The push fast-forwards and the old PR is reopened and rebound — `_shared/pr-early-run-lifecycle.md` Step 1
 - **URL:** `https://github.com/{owner}/{repo}/pull/{pr}`
