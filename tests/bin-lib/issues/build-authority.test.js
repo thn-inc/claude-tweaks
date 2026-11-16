@@ -290,6 +290,8 @@ test('AC2 grammar: parseTypedDispatch rejects every other form', () => {
     '',
     ' /claude-tweaks:dispatch #12',
     '/claude-tweaks:dispatchx #12',
+    '/claude-tweaks:dispatch#12',
+    '/claude-tweaks:dispatch12',
     '/claude-tweaks:flow #12',
     '/claude-tweaks:Dispatch #12',
   ]) {
@@ -317,6 +319,10 @@ test('formatAuthorityLine: none names the reasons and the first reason\'s remedy
   assert.strictEqual(
     formatAuthorityLine(7, { authority: 'none', reasons: ['entrypoint', 'remote'] }),
     '#7 has no auto:build label — not built: typed command not accepted (entrypoint, remote); grant it with /claude-tweaks:backlog refine #7 (a typed command with any other argument records nothing)',
+  );
+  assert.strictEqual(
+    formatAuthorityLine(7, { authority: 'none', reasons: ['remote', 'launcher'] }),
+    '#7 has no auto:build label — not built: typed command not accepted (remote, launcher); grant it with /claude-tweaks:backlog refine #7 (a typed command with any other argument records nothing)',
   );
   assert.strictEqual(
     formatAuthorityLine(9, { authority: 'none', reasons: ['no-pointer'] }),
