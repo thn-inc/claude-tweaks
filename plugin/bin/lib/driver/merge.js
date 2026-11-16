@@ -5,7 +5,7 @@
 // `deps.judgments` supplier (production builds it from `deps.createJudgments`, #5228); a deps
 // object with no supplier changes nothing.
 //
-// Ported procedure, by section: `_shared/pr-first-merge.md` Steps 2 to 3,
+// Ported procedure, by section: `_shared/pr-first-merge.md` Steps 2 to 3 (Step 2.9 included),
 // `_shared/pr-first-merge-post-merge.md` Steps 4 and 5, and `_shared/express-lane.md` step 9.
 // No test reads that prose, and drift between it and this module is accepted by design (the
 // spec's Gotchas); each step function's comment names the section it ports, by symbol.
@@ -981,6 +981,77 @@ function timeoutSignature(err) {
   return null;
 }
 
+// One accept-park.js call. A throw reads as a reply with no exit code, so every caller fails closed.
+function acceptParkCli(s, args) {
+  const { ctx, deps } = s;
+  try {
+    return deps.node(bin('accept-park.js'), args, { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  } catch (err) {
+    return { code: null, stdout: '', stderr: errorText(err) };
+  }
+}
+
+const exitWords = (r) => `exit ${r.code === null || r.code === undefined ? 'none (timed out or failed to start)' : r.code}`;
+
+// The park's archive (its step 3) may have moved the run directory: follow it as reconcile does,
+// so the stop event lands in the archive and nothing recreates the old path.
+function followParkedRunDir(s) {
+  const { ctx, deps } = s;
+  if (isDirectory(deps, s.runDir)) return;
+  const archive = path.join(ctx.mainCheckout, '.claude-tweaks', 'pipelines', 'archive', path.basename(s.runDir));
+  if (isDirectory(deps, archive)) s.runDir = archive;
+  else s.eventsStdoutOnly = true;
+  if (typeof deps.rebindEvents === 'function') deps.rebindEvents(s.eventsStdoutOnly ? null : s.runDir);
+}
+
+// Ports `_shared/pr-first-merge.md` Step 2.9, the local acceptance park (control mode, #4615), as
+// `_shared/local-acceptance-park.md` lays it out: past the gate (Step 2.5), before Step 3's merge
+// call. `parked` exit 0 (parked) or 6 (unknown) refuses the merge; any exit but 5 fails closed.
+// Then `decide`: no park merges as before (control mode off prints `consulted: false` and reads
+// nothing), a park runs `park` for this run's one record, which owns the archive, the claim release
+// and the worktree removal, so no teardown runs here and no decision line follows it.
+function acceptPark(s) {
+  const { ctx } = s;
+  s.stage = 'merge-accept-park';
+  const record = String(ctx.record);
+  const repo = ['--repo', ctx.repo];
+  const parked = acceptParkCli(s, ['parked', '--record', record, '--run', s.runDir, ...repo]);
+  if (parked.code === 0 || parked.code === 6) {
+    const state = parked.code === 0 ? 'parked' : 'in an unknown park state';
+    return stop(s, 'merge-accept-park', 'awaiting-local-acceptance', `record #${record} is ${state} for local acceptance; not merged`);
+  }
+  if (parked.code !== 5) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js parked ${exitWords(parked)}; not merged`);
+  const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, ...repo]);
+  if (decided.code !== 0) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js decide ${exitWords(decided)}; not merged`);
+  const d = parseJson(String(decided.stdout).trim());
+  const decisions = isObject(d) && Array.isArray(d.decisions) ? d.decisions : null;
+  const parking = decisions && decisions.filter((x) => isObject(x) && x.park === true);
+  if (!decisions || typeof d.park !== 'boolean' || d.park !== parking.length > 0
+    || !parking.every((x) => x.record === ctx.record)) {
+    return stop(s, 'merge-accept-park', 'supplier-failed', 'accept-park.js decide printed an unusable decision; not merged');
+  }
+  if (!d.park) {
+    const consulted = decisions.some((x) => isObject(x) && x.consulted === true);
+    emit(s, 'merge-accept-park', 'ok', `not parked; no local park (${consulted ? 'target resolved' : 'control mode off'})`);
+    return { ok: true };
+  }
+  const r = acceptParkCli(s, ['park', '--run', s.runDir, '--record', record, '--claimed', record, '--pr', String(ctx.pr),
+    '--head', ctx.head, '--worktree', ctx.worktree, '--worktree-mode', ctx.adopted ? 'caller' : 'remove', ...repo]);
+  followParkedRunDir(s);
+  const out = parseJson(String(r.stdout).trim());
+  const failed = (isObject(out) && Array.isArray(out.steps) ? out.steps : [])
+    .filter((x) => isObject(x) && x.ok === false)
+    .map((x) => `${reduceDetail(String(x.name))}: ${reduceDetail(String(x.detail || ''))}`);
+  const failedNote = failed.length ? `; failed steps: ${failed.join('; ')}` : '';
+  if (r.code !== 0) {
+    const said = firstLine(r.stderr);
+    return stop(s, 'merge-accept-park', 'park-failed',
+      `accept-park.js park ${exitWords(r)}${said ? ` (${reduceDetail(said)})` : ''}${failedNote}; not merged`);
+  }
+  return stop(s, 'merge-accept-park', 'awaiting-local-acceptance',
+    `record #${record} parked for local acceptance at ${ctx.head}; PR #${ctx.pr} left open${failedNote}`);
+}
+
 // Ports Step 3's `gh pr merge` call. `mode` is 'auto' (merge-when-green: arm, or merge when GitHub
 // can now) or 'immediate' (the `wait` row). The labels are read again right before every call, so
 // an `auto:merge` removed since entry (during the supplier call or the watch) is honored. The
@@ -988,6 +1059,13 @@ function timeoutSignature(err) {
 // `--match-head-commit` is always ctx.head; never --admin, never --delete-branch.
 async function mergeCall(s, mode) {
   const { ctx, deps } = s;
+  // Step 2.9 runs once per run, before the first merge call of any mode: a degrade that calls
+  // again (an --auto refusal) has already passed it.
+  if (!s.acceptParkPassed) {
+    const p = acceptPark(s);
+    if (p.stop) return p;
+    s.acceptParkPassed = true;
+  }
   s.stage = 'merge-call';
   const labels = readLabels(s);
   if (labels.unreadable) return stop(s, 'merge-call', 'labels-unreadable', `pre-merge ${labels.unreadable}`);
@@ -1436,7 +1514,7 @@ async function merge(ctx, deps) {
   const s = {
     ctx, deps, runDir: ctx.runDir, value: 'wait', source: 'unresolved', valueRaw: '', keepOpen: [],
     subject: null, reentries: 0, recomposeOnReentry: false, ciWaitMs: 0, lastRead: null, lastVerdict: null, autoRefused: false,
-    watchBoundFrom: null, logFailures: [], logSeq: 0, eventsStdoutOnly: false, mergeCommit: null, pmFailures: [], stage: 'merge-entry',
+    watchBoundFrom: null, acceptParkPassed: false, logFailures: [], logSeq: 0, eventsStdoutOnly: false, mergeCommit: null, pmFailures: [], stage: 'merge-entry',
     startedAt: clock(deps),
   };
   try {
@@ -1469,7 +1547,7 @@ const REASONS = Object.freeze([
   'supplier-failed', 'verdict-not-confirmed', 'acceptance-not-completed', 'compose-refused', 'ready-failed',
   'state-read-failed', 'pr-not-open', 'moving-target', 'checks-read-failed', 'check-failed', 'checks-pending-timeout',
   'draft-skip-without-ready-trigger', 'conflict', 'merge-refused', 'drain-overlap', 'near-duplicate',
-  'in-flight-unreadable', 'in-flight-read-failed', 'unclassified',
+  'in-flight-unreadable', 'in-flight-read-failed', 'awaiting-local-acceptance', 'park-failed', 'unclassified',
 ]);
 const PREFIXED_REASONS = Object.freeze(['check-failed', 'draft-skip-without-ready-trigger']);
 

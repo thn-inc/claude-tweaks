@@ -64,6 +64,7 @@ const CONFIRMED = `${verdictLine()}\n`;
 const base = (p) => path.basename(p);
 const isNode = (name) => (c) => c.kind === 'node' && base(c.args[0]) === name;
 const isGh = (...words) => (c) => c.kind === 'gh' && words.every((w, i) => c.args[i] === w);
+const isAcceptPark = (verb) => (c) => isNode('accept-park.js')(c) && c.args[1] === verb;
 // `gh pr merge` goes out through the write-bound ghCreate kind; any kind is matched so a merge on the
 // wrong kind still counts as a merge.
 const isMergeCall = (c) => ['gh', 'ghBatch', 'ghCreate'].includes(c.kind) && c.args[0] === 'pr' && c.args[1] === 'merge';
@@ -202,6 +203,24 @@ function defaultMergeScript(over, files, logs, applied) {
       return '';
     }],
     [isGh('pr', 'comment'), ''],
+    // The local acceptance park (#4615): accept-park.js `parked` answers not-parked (exit 5) and
+    // `decide` answers no park, so a run that plans no park merges as it did before. `park` has no
+    // default: a run that parks must script it (over.park), and an unplanned park call throws.
+    [isAcceptPark('parked'), () => {
+      const r = knob(over.parked);
+      if (r instanceof Error) throw r;
+      return r || { code: 5, stdout: 'not-parked\n', stderr: '' };
+    }],
+    [isAcceptPark('decide'), () => {
+      const r = knob(over.decide);
+      if (r instanceof Error) throw r;
+      return r || { code: 0, stdout: `${JSON.stringify({ park: false, decisions: [] })}\n`, stderr: '' };
+    }],
+    [(c) => isAcceptPark('park')(c) && over.park !== undefined, (c) => {
+      const r = typeof over.park === 'function' ? over.park(c) : over.park;
+      if (r instanceof Error) throw r;
+      return r;
+    }],
     [isMergeCall, () => {
       const m = knob(over.prMerge);
       if (m instanceof Error) throw m;
@@ -267,6 +286,8 @@ function defaultMergeScript(over, files, logs, applied) {
 // a reconcile function runs real fs moves and returns the reply), closeRun (the hooks.js close-run
 // reply, or an Error), fetch / unlock / remove / revParse /
 // branchDelete / deleteBranch (an Error throws), describe (stdout or an Error), worktreeList (stdout or Error).
+// Local acceptance park knobs (#4615): parked / decide (full accept-park.js replies, each may be a
+// function), park (a full reply, or a function of the call returning one; no default).
 function mergeHarness(over = {}) {
   const calls = [];
   const events = [];
@@ -702,7 +723,7 @@ test('AC4.1: the tail runs closing links, compose, the isDraft read, gh pr ready
   const seq = beforePostMerge(h.calls.slice(h.calls.findIndex((c) => c.kind === 'judgments') + 1)).map((c) => (
     c.kind === 'node' ? base(c.args[0]) : c.kind === 'gh' ? `gh ${c.args.slice(0, 2).join(' ')}` : c.kind));
   assert.deepEqual(seq, ['closing-links.js', 'compose-subject.js', 'readFile', 'gh pr view', 'gh pr ready', 'log-decision.js',
-    'gh pr view', 'gh run list', 'ready-run.js', 'gh issue view', 'ghCreate', 'gh pr view']);
+    'gh pr view', 'gh run list', 'ready-run.js', 'accept-park.js', 'accept-park.js', 'gh issue view', 'ghCreate', 'gh pr view']);
   const cl = nodeCalls(h, 'closing-links.js')[0];
   assert.deepEqual(cl.args.slice(1), ['--run', CTX.runDir, '--mode', 'pre-merge']);
   assert.equal(cl.cwd, CTX.mainCheckout);
@@ -945,8 +966,8 @@ test('AC4.2: the gate reads state, the head runs and ready-run, each as specifie
   assert.equal(rr.cwd, CTX.mainCheckout);
   assert.equal(rr.timeout, 120000);
   assert.deepEqual(rr.env, { HARNESS: '1' });
-  assert.deepEqual(beforePostMerge(h.calls.slice(g + 3)).map(shortOf), ['gh issue view', 'ghCreate', 'gh pr view'],
-    'then the pre-merge label read, the merge call and the confirmation read');
+  assert.deepEqual(beforePostMerge(h.calls.slice(g + 3)).map(shortOf), ['accept-park.js', 'accept-park.js', 'gh issue view', 'ghCreate', 'gh pr view'],
+    'then the local acceptance park check (Step 2.9), the pre-merge label read, the merge call and the confirmation read');
   assert.deepEqual(h.events.filter((e) => e.step === 'merge-gate').map((e) => e.status), ['ok']);
   assert.match(h.events.find((e) => e.step === 'merge-gate').detail, /green/);
 });
@@ -1157,7 +1178,7 @@ test('AC9.2: a head change between the first read and the re-read re-enters once
   assert.deepEqual(after(h, (c) => isReadyCall(c)).map(shortOf), [
     'log-decision.js', 'gh pr view', 'gh run list', 'ready-run.js', 'gh pr view',
     'gh pr view', 'gh run list', 'ready-run.js', 'compose-subject.js', 'readFile', 'gh pr view',
-    'gh issue view', 'ghCreate', 'gh pr view',
+    'accept-park.js', 'accept-park.js', 'gh issue view', 'ghCreate', 'gh pr view',
   ]);
   assert.equal(h.calls.filter(isGateRead).length, 2);
   assert.equal(h.calls.filter(isReread).length, 2);
@@ -1245,7 +1266,7 @@ test('AC8.3: wait re-reads state and compares the head before the immediate merg
   assert.equal(rereads.length, 1);
   assert.deepEqual(rereads[0].args, ['pr', 'view', '9', '--repo', 'o/r', '--json', REREAD_FIELDS]);
   assert.ok(h.calls.indexOf(rereads[0]) > h.calls.findIndex((c) => isNode('ready-run.js')(c)));
-  assert.deepEqual(after(h, isReread).map(shortOf), ['gh issue view', 'ghCreate', 'gh pr view'],
+  assert.deepEqual(after(h, isReread).map(shortOf), ['accept-park.js', 'accept-park.js', 'gh issue view', 'ghCreate', 'gh pr view'],
     'the re-read is the last state read before the merge call');
   assert.ok(!h.calls.some((c) => c.args.includes('--auto')));
   // A re-read that fails is state-read-failed, no merge.
@@ -2074,7 +2095,7 @@ test('AC4.1, AC4.2: the happy path calls happen in this order', async () => {
   assert.deepEqual(sequenceFromSupplier(h.calls), [
     'judgments', 'closing-links.js --run', 'compose-subject.js 7', 'readFile title.txt', 'gh pr view isDraft', 'gh pr ready 9',
     'gh pr view state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup', 'gh run list --commit', 'ready-run.js --pr 9',
-    'gh issue view 7 labels', 'ghCreate pr merge 9 --auto --squash',
+    'accept-park.js parked', 'accept-park.js decide', 'gh issue view 7 labels', 'ghCreate pr merge 9 --auto --squash',
     'gh pr view state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit',
     'post-merge-run.js --run', 'git fetch --end-of-options origin main', `git describe --tags --contains --first-parent --match v* --end-of-options ${MERGE_SHA}`,
     'gh pr comment --body-file', 'hooks.js reconcile', `lstatType ${CTX.runDir}`,
@@ -2741,7 +2762,7 @@ const reasonOk = (site) => (site.literal === null
   ? REASON_PASSTHROUGHS[site.shape].includes(site.expr)
   : (site.literal.endsWith(':') ? PREFIXED_REASONS.includes(site.literal.slice(0, -1)) : isReason(site.literal)));
 
-test('REASONS: the frozen closed set is the spec\'s 24 reasons plus unclassified, and isReason reads both prefix forms', () => {
+test('REASONS: the frozen closed set is the spec\'s 26 reasons plus unclassified, and isReason reads both prefix forms', () => {
   assert.ok(Object.isFrozen(REASONS) && Object.isFrozen(PREFIXED_REASONS));
   // The spec's closed list (Acceptance Criteria, "Closed rule"), word for word and in its order; a
   // `:{…}` form is held in REASONS by its stem and listed in PREFIXED_REASONS.
@@ -2752,8 +2773,10 @@ test('REASONS: the frozen closed set is the spec\'s 24 reasons plus unclassified
     'draft-skip-without-ready-trigger:{files}', 'conflict', 'merge-refused',
     // #5232: the drain-overlap hold's four words.
     'drain-overlap', 'near-duplicate', 'in-flight-unreadable', 'in-flight-read-failed',
+    // #4615: the local acceptance park's two words (pr-first-merge.md Step 2.9).
+    'awaiting-local-acceptance', 'park-failed',
   ];
-  assert.equal(SPEC_REASONS.length, 24);
+  assert.equal(SPEC_REASONS.length, 26);
   const stem = (w) => w.replace(/:\{[a-z]+\}$/, '');
   assert.deepEqual([...REASONS], [...SPEC_REASONS.map(stem), 'unclassified']);
   assert.deepEqual([...PREFIXED_REASONS], SPEC_REASONS.filter((w) => w.includes(':')).map(stem));
@@ -3280,4 +3303,163 @@ test('#5232 docs/driver.md\'s merge sub-step list equals MERGE_STEP_NAMES', () =
   assert.throws(() => assert.deepEqual(names, [...MERGE_STEP_NAMES, 'merge-bogus'].sort()));
   assert.throws(() => assert.deepEqual([...names, 'merge-bogus'].sort(), [...MERGE_STEP_NAMES].sort()));
   assert.throws(() => assert.deepEqual(docMergeSteps(eventLinesSection(readText(DRIVER_DOCS)).replace('`merge-overlap`, ', '')), [...MERGE_STEP_NAMES].sort()));
+});
+
+// ---- #4615: the local acceptance park (pr-first-merge.md Step 2.9) ----
+
+const parkedReply = (code) => ({ code, stdout: `${code === 0 ? 'parked' : code === 6 ? 'unknown' : 'not-parked'}\n`, stderr: '' });
+const decideReply = (decisions, code = 0) => ({
+  code, stdout: `${JSON.stringify({ park: decisions.some((d) => d.park === true), decisions })}\n`, stderr: '',
+});
+const LOCAL = { record: 7, consulted: true, park: true, target: 'local', reason: 'risk-flag' };
+const PARK_STEPS = ['packet', 'deploy-status', 'archive', 'release', 'remove'].map((name, i) => ({ step: i + 1, name, ok: true, detail: '' }));
+const parkReply = (code = 0, steps = PARK_STEPS) => ({
+  code, stdout: `${JSON.stringify({ outcome: code === 0 ? 'parked' : 'park-failed', reason: 'awaiting-local-acceptance', steps })}\n`, stderr: '',
+});
+const parkCalls = (h, verb) => h.calls.filter(isAcceptPark(verb));
+const flagOf = (c, name) => c.args[c.args.indexOf(name) + 1];
+// No post-merge teardown ran: no worktree or branch git call, no post-merge-run.js, no reconcile.
+function assertNoTeardown(h) {
+  assert.ok(!h.calls.some((c) => c.kind === 'git' && ['worktree', 'branch'].includes(c.args[2])), 'no teardown git call');
+  assert.ok(!h.calls.some(isNode('post-merge-run.js')) && !h.calls.some(isNode('hooks.js')), 'no post-merge sequence');
+}
+
+test('AC3b.1: the auto-merge path never merges a parked PR', async () => {
+  for (const verification of [undefined, WAIT]) {
+    const h = mergeHarness({ parked: parkedReply(0), verification });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual([r.outcome, r.reason], ['pending-review', 'awaiting-local-acceptance']);
+    assert.equal(h.calls.filter(isMergeCall).length, 0, 'no pr merge call');
+    assert.deepEqual(parkCalls(h, 'parked')[0].args.slice(1), ['parked', '--record', '7', '--run', CTX.runDir, '--repo', 'o/r']);
+    assert.equal(parkCalls(h, 'decide').length + parkCalls(h, 'park').length, 0, 'a parked record is neither decided nor parked again');
+    assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-accept-park', 'stop']);
+    assertNoTeardown(h);
+  }
+});
+
+test('AC3b.1: an unknown parked state also refuses', async () => {
+  const h = mergeHarness({ parked: parkedReply(6) });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual([r.outcome, r.reason], ['pending-review', 'awaiting-local-acceptance']);
+  assert.equal(h.calls.filter(isMergeCall).length, 0);
+  assert.match(r.detail, /unknown/);
+});
+
+test('a parked check that fails another way never merges (fail closed)', async () => {
+  for (const reply of [parkedReply(2), parkedReply(3), { code: null, stdout: '', stderr: '' }, new Error('spawn failed')]) {
+    const h = mergeHarness({ parked: reply });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual([r.outcome, r.reason], ['pending-review', 'supplier-failed'], String(reply.code));
+    assert.equal(h.calls.filter(isMergeCall).length, 0);
+    assert.equal(parkCalls(h, 'decide').length, 0);
+  }
+});
+
+test('AC3.7: a local control-mode target parks instead of merging', async () => {
+  const h = mergeHarness({ decide: decideReply([LOCAL]), park: parkReply() });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual([r.outcome, r.reason], ['pending-review', 'awaiting-local-acceptance']);
+  assert.equal(h.calls.filter(isMergeCall).length, 0, 'no pr merge call');
+  assert.deepEqual(parkCalls(h, 'decide')[0].args.slice(1), ['decide', '--run', CTX.runDir, '--record', '7', '--repo', 'o/r']);
+  const [p] = parkCalls(h, 'park');
+  assert.equal(flagOf(p, '--head'), CTX.head, 'the head the gate read');
+  assert.deepEqual(['--run', '--record', '--claimed', '--pr', '--repo'].map((f) => flagOf(p, f)), [CTX.runDir, '7', '7', '9', 'o/r']);
+  // Step 2.9 sits after the gate (Step 2.5) and before Step 3's pre-merge label read.
+  const at = (pred) => h.calls.findIndex(pred);
+  assert.ok(at(isGateRead) < at(isAcceptPark('parked')) && at(isAcceptPark('parked')) < at(isAcceptPark('decide'))
+    && at(isAcceptPark('decide')) < at(isAcceptPark('park')));
+  assert.equal(h.calls.filter(isGh('issue', 'view')).length, 1, 'no pre-merge label read once parked');
+  assert.equal(h.calls.slice(at(isAcceptPark('park')) + 1).filter(isNode('log-decision.js')).length, 0, 'no driver decision line after the park');
+  assertNoTeardown(h);
+  assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-accept-park', 'stop']);
+});
+
+test('the park call names the driver\'s worktree', async () => {
+  const h = mergeHarness({ decide: decideReply([LOCAL]), park: parkReply() });
+  await merge(CTX, h.deps);
+  const [p] = parkCalls(h, 'park');
+  assert.equal(flagOf(p, '--worktree'), CTX.worktree);
+  assert.equal(flagOf(p, '--worktree-mode'), 'remove');
+  // A --run adoption's worktree is dispatch's: the park leaves it to the caller, as teardown does.
+  const adopted = mergeHarness({ decide: decideReply([LOCAL]), park: parkReply() });
+  await merge({ ...CTX, adopted: true }, adopted.deps);
+  assert.equal(flagOf(parkCalls(adopted, 'park')[0], '--worktree-mode'), 'caller');
+});
+
+test('a failed park never merges', async () => {
+  for (const code of [1, 2, 3, 4, null]) {
+    const steps = [{ step: 1, name: 'packet', ok: false, detail: 'packet unreadable' }];
+    const h = mergeHarness({ decide: decideReply([LOCAL]), park: { ...parkReply(1, steps), code, stderr: 'accept-park.js: refused\n' } });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual([r.outcome, r.reason], ['pending-review', 'park-failed'], String(code));
+    assert.equal(h.calls.filter(isMergeCall).length, 0, String(code));
+    assertNoTeardown(h);
+  }
+  const threw = mergeHarness({ decide: decideReply([LOCAL]), park: new Error('spawn failed') });
+  const r = await merge(CTX, threw.deps);
+  assert.deepEqual([r.outcome, r.reason], ['pending-review', 'park-failed']);
+  assert.equal(threw.calls.filter(isMergeCall).length, 0);
+});
+
+test('a park whose later steps failed still parks and names each failed step', async () => {
+  const steps = PARK_STEPS.map((s) => (s.name === 'archive' ? { ...s, ok: false, detail: 'console unresolved' }
+    : s.name === 'release' ? { ...s, ok: false, detail: 'claim release failed' } : s));
+  const h = mergeHarness({ decide: decideReply([LOCAL]), park: parkReply(0, steps) });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual([r.outcome, r.reason], ['pending-review', 'awaiting-local-acceptance']);
+  assert.match(r.detail, /archive: console unresolved/);
+  assert.match(r.detail, /release: claim release failed/);
+  assert.match(lastEvent(h).detail, /archive: console unresolved/);
+});
+
+test('a park that archived the run follows the run directory into the archive', async () => {
+  const f = fixture();
+  const archive = path.join(f.main, '.claude-tweaks', 'pipelines', 'archive', path.basename(f.runDir));
+  const h = mergeHarness({
+    fx: f, decide: decideReply([LOCAL]),
+    park: () => { fs.mkdirSync(path.dirname(archive), { recursive: true }); fs.renameSync(f.runDir, archive); return parkReply(); },
+  });
+  const order = [];
+  h.deps.rebindEvents = (dir) => { h.events.push({ step: 'REBIND', dir }); order.push(dir); };
+  const r = await merge(f.ctx, h.deps);
+  assert.deepEqual([r.outcome, r.reason, r.runDir, r.eventsStdoutOnly], ['pending-review', 'awaiting-local-acceptance', archive, false]);
+  assert.deepEqual(order, [archive]);
+  assert.equal(h.events[h.events.length - 2].step, 'REBIND', 'the stop event lands in the archive');
+  assert.ok(!fs.existsSync(f.runDir), 'nothing recreated the moved run directory');
+});
+
+test('decide failing closed never merges', async () => {
+  for (const reply of [decideReply([{ ...LOCAL, reason: 'invalid-input' }], 1), { code: 0, stdout: 'nope\n', stderr: '' },
+    { code: 0, stdout: '{"park":true,"decisions":[]}\n', stderr: '' }, new Error('spawn failed')]) {
+    const h = mergeHarness({ decide: reply });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual([r.outcome, r.reason], ['pending-review', 'supplier-failed'], String(reply.stdout || reply.message));
+    assert.equal(h.calls.filter(isMergeCall).length, 0);
+    assert.equal(parkCalls(h, 'park').length, 0);
+  }
+});
+
+test('AC6.2: a dev resolution merges exactly as today', async () => {
+  const h = mergeHarness({ decide: decideReply([{ record: 7, consulted: true, park: false, target: 'dev', reason: 'no-risk-flags' }]) });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
+  assert.equal(h.calls.filter(isMergeCall).length, 1);
+  assert.equal(parkCalls(h, 'park').length, 0);
+  assert.ok(h.events.some((e) => e.step === 'merge-accept-park' && e.status === 'ok'));
+});
+
+test('AC2a.3: control mode off changes nothing', async () => {
+  const h = mergeHarness({ decide: decideReply([{ record: 7, consulted: false, park: false, target: 'dev', reason: 'control-mode-off' }]) });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
+  assert.equal(parkCalls(h, 'park').length, 0);
+});
+
+test('the park check runs once when an --auto refusal degrades to the wait row', async () => {
+  const h = mergeHarness({ prMerge: seq(ghErr(SIG.notAllowed), '') });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.equal(h.calls.filter(isMergeCall).length, 2);
+  assert.equal(parkCalls(h, 'parked').length, 1);
+  assert.equal(parkCalls(h, 'decide').length, 1);
 });
