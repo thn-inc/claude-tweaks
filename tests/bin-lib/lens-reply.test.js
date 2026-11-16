@@ -7,6 +7,48 @@ const { readText } = require('../helpers/read-skill');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 
+// Inline status-line patterns in a source file, in any spelling: a status word
+// inside a regex literal's body, any `RegExp` call (a string could become a
+// pattern), or a literal holding a `WORD|WORD` alternation or a `'WORD', 'WORD'`
+// list. Prose that names the words with ` / ` between them is not a pattern.
+// Literal bodies are found by diffing the comment-stripped text against its
+// `literals: 'blank'` twin; a body whose opening delimiter is `/` is a regex.
+const WORD = '(?:DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED|DONE)';
+const WORD_RE = new RegExp(`\\b${WORD}\\b`, 'g');
+const ALTERNATION_RE = new RegExp(`\\b${WORD}\\b\\s*\\\\*\\|\\s*\\b${WORD}\\b`);
+const WORD_LIST_RE = new RegExp(`['"\`]${WORD}['"\`]\\s*,\\s*['"\`]${WORD}['"\`]`);
+
+function inlineStatusPatterns(raw) {
+  const kept = stripComments(raw);
+  const blank = stripComments(raw, { literals: 'blank' });
+  assert.equal(stripperVerdict(raw, kept), 'ok');
+  assert.equal(stripperVerdict(raw, blank), 'ok');
+  const offenders = [];
+  if (/\bRegExp\b/.test(blank)) offenders.push('RegExp call');
+  if (ALTERNATION_RE.test(kept)) offenders.push('status-word alternation');
+  if (WORD_LIST_RE.test(kept)) offenders.push('status-word list');
+  for (const m of kept.matchAll(WORD_RE)) {
+    if (blank[m.index] === kept[m.index]) continue; // code, not a literal body
+    let j = m.index - 1;
+    while (j >= 0 && blank[j] === ' ' && kept[j] !== '\n') j -= 1;
+    if (blank[j] === '/') offenders.push(`regex literal holding ${m[0]}`);
+  }
+  return offenders;
+}
+
+test('AC9.1: the inline-status-pattern matcher catches every spelling (go-red self-test)', () => {
+  const planted = [
+    'const A = /^(?:-\\s*)?(?:STATUS:\\s+)?(BLOCKED)\\b/;',
+    "const B = new RegExp('^STATUS: (DONE)$');",
+    "const C = 'DONE|BLOCKED';",
+    "const D = ['DONE', 'BLOCKED'];",
+    'const E = /^STATUS: (?:DONE_WITH_CONCERNS)$/;',
+  ];
+  for (const src of planted) assert.notDeepStrictEqual(inlineStatusPatterns(src), [], src);
+  const clean = "const m = 'write STATUS: DONE (or DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED)'; // DONE|BLOCKED\nconst r = a / b;";
+  assert.deepStrictEqual(inlineStatusPatterns(clean), []);
+});
+
 test('AC9.1: the hook and the parser share one status-line module (subagent-stop.js keeps no pattern of its own)', () => {
   const sl = require('../../plugin/bin/lib/status-line');
   assert.ok(sl.CANONICAL_RE.test('STATUS: DONE'));
@@ -16,9 +58,8 @@ test('AC9.1: the hook and the parser share one status-line module (subagent-stop
   const raw = readText(path.join(ROOT, 'plugin/bin/lib/hooks/subagent-stop.js'));
   const src = stripComments(raw);
   assert.equal(stripperVerdict(raw, src), 'ok');
-  assert.match(src, /require\(['"]\.\.\/status-line['"]\)/);
-  assert.doesNotMatch(src, /\/\^STATUS: \(DONE/);
-  assert.doesNotMatch(src, /\^\(\?:-\\s\+\)\?/);
+  assert.match(src, /const \{ CANONICAL_RE, LENIENT_RE \} = require\(['"]\.\.\/status-line['"]\);/);
+  assert.deepStrictEqual(inlineStatusPatterns(raw), []);
 });
 
 // ---- parseLensReply (#5598) ----
@@ -177,6 +218,14 @@ test('Review Focus 2: an empty location cell is skipped, not a finding', () => {
   assert.deepStrictEqual(parseLensReply(`${HEADER}${emptyLoc}\n\nSTATUS: DONE`), result({
     parse: 'unparseable', skipped: 1,
   }));
+});
+
+test('a row whose severity is off the scale is counted in skipped; header and separator rows are not', () => {
+  assert.deepStrictEqual(parseLensReply('| high | a.js:1 | x | y |\n| Major | b.js:2 | y | z |\n\nSTATUS: DONE'), result({
+    findings: [{ severity: 'high', path: 'a.js', line: 1, text: 'x', evidence: 'y' }], skipped: 1,
+  }));
+  const twoTables = `${HEADER}| high | src/a.ts:10 | Null deref | \`x.y\` unguarded |\n\n${HEADER}| P1 | b.js:2 | y | z |\n\nSTATUS: DONE`;
+  assert.deepStrictEqual(parseLensReply(twoTables), result({ findings: [PLAIN_FINDINGS[0]], skipped: 1 }));
 });
 
 test('AC2.1: categoriseReproduction over the parser\'s output equals it over a hand-written transcription', () => {

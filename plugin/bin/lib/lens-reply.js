@@ -14,8 +14,11 @@
 //     evidence }], noFindings, overflow, skipped, status: 'ok'|'misplaced'|
 //     'missing', statusWord: string|null }
 // `parse: 'unparseable'` is its own signal: it never comes back as
-// `findings: []` with `noFindings: true`. `skipped` counts severity rows
-// dropped for an empty location cell, so a dropped row is never silent.
+// `findings: []` with `noFindings: true`. `skipped` counts every table row
+// that is not a header, a separator, an overflow row or a finding — a
+// severity row with an empty location cell, or a row whose severity cell is
+// outside the five-word scale (`Major`, `P1`) — so a dropped row is never
+// silent.
 //
 // Linearity: each table row is cut into cells by one hand-written forward
 // scan (splitRow) — no regex ever runs over a whole row. The regexes left run
@@ -163,8 +166,9 @@ function parseLensReply(text) {
     }
 
     const cells = splitRow(trimmed);
-    if (columns === null && stripMarks(cells[0]).toLowerCase() === 'severity') {
-      columns = mapHeader(cells);
+    // Every header row is skipped uncounted; only the first maps the columns.
+    if (stripMarks(cells[0]).toLowerCase() === 'severity') {
+      if (columns === null) columns = mapHeader(cells);
       continue;
     }
     if (cells.every((cell) => SEPARATOR_CELL_RE.test(cell))) continue;
@@ -177,9 +181,8 @@ function parseLensReply(text) {
 
     const row = mapRow(cells, columns || DEFAULT_COLUMNS);
     const severity = stripMarks(row[SEVERITY_COL]).toLowerCase();
-    if (!SEVERITIES.includes(severity)) continue;
     const location = stripMarks(row[LOCATION_COL]);
-    if (location === '') {
+    if (!SEVERITIES.includes(severity) || location === '') {
       skipped += 1;
       continue;
     }
