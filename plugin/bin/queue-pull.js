@@ -191,6 +191,8 @@ function resolveRunDir(value, cwd) {
   if (value.includes('/') || value.includes(path.sep)) {
     candidate = path.resolve(cwd, value);
   } else {
+    // `.` and `..` hold no separator yet name pipelines/ itself or its parent, never a run.
+    if (value === '.' || value === '..' || path.basename(value) !== value) return { error: `${value}: a run id must name one run directory` };
     const main = mainCheckoutRoot(cwd);
     if (!main) return { error: `${value}: no main checkout found from ${cwd} to place a run id under` };
     candidate = path.join(main, '.claude-tweaks', 'pipelines', value);

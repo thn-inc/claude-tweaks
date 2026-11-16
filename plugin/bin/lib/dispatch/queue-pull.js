@@ -379,6 +379,11 @@ function admitNamed(ctx, queueFile) {
     } else if (raw.state !== 'OPEN') {
       deps.stdout(`#${number} is ${raw.state.toLowerCase()} — not built: the queue pull takes open records only\n`);
       continue;
+    } else if (Array.isArray(raw.labels) && parseRecordFacets(raw.labels).bot.inProgress) {
+      // The blocked pass's eligibility filter drops a claimed record, granted or typed: say so here,
+      // before an admission and its AUTO line could claim a build that will not happen.
+      deps.stdout(`#${number} is already claimed (bot:in-progress) — not built this firing\n`);
+      continue;
     } else {
       result = deps.buildAuthority({
         number,
@@ -391,12 +396,18 @@ function admitNamed(ctx, queueFile) {
     }
     if (result.authority === 'typed') {
       const text = `#${number} admitted on a typed /claude-tweaks:dispatch command (no auto:build label)`;
-      if (!step(ctx, `named #${number}`, () => deps.appendDecision({ runDir: ctx.options.runDir, text, now: deps.now() })).ok) continue;
+      if (!step(ctx, `named #${number}`, () => deps.appendDecision({ runDir: ctx.options.runDir, text, now: deps.now() })).ok) {
+        deps.stdout(`#${number} not admitted: the decisions.md audit line could not be written\n`);
+        continue;
+      }
       admitted.push(raw);
       state.typedNumbers.add(number);
     }
-    const line = formatAuthorityLine(number, result);
-    if (line !== null) deps.stdout(`${line}\n`);
+    // A `label` answer here means the record carries auto:build yet the pool fetch did not return it.
+    const line = result.authority === 'label'
+      ? `#${number} carries auto:build but is not in this pull's queue — not built this firing`
+      : formatAuthorityLine(number, result);
+    deps.stdout(`${line}\n`);
   }
   if (admitted.length > 0) put(ctx, queueFile, JSON.stringify([...pool.value, ...admitted]));
 }

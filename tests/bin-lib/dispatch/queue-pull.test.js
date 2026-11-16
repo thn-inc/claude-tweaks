@@ -4004,14 +4004,15 @@ test('Review Focus 4: --named 12,13 with #12 already granted (in the pool) leave
   assertNoLabelWrite(r);
 });
 
-test('#5584: a named record that is labelled auto:build but missing from the pool is not admitted and prints nothing', () => {
+test('#5584: a named record that is labelled auto:build but missing from the pool is not admitted and prints one line saying so', () => {
   const r = pullNamed(withNamedView(S1(), [ghRecord(12, { body: withBody(12) })]), { typedFor: [12] });
   assert.ok(!inGroups(r, 12));
-  assert.ok(!r.stdout.includes('#12'), r.stdout);
+  assert.equal(r.stdout, "#12 carries auto:build but is not in this pull's queue — not built this firing\n");
+  assert.deepEqual(r.asked, [], 'the label answer reads no transcript');
   assert.equal(r.decisions, null);
 });
 
-test('#5584: a failed AUTO-line write does not admit the record (fail closed) and names the failure on stderr', () => {
+test('#5584: a failed AUTO-line write does not admit the record (fail closed), prints one not-admitted line and names the failure on stderr', () => {
   const r = pull4(withNamedView(S1(), [ungranted(12)]), {
     env: TYPED_ENV,
     prepare: () => ({ named: [12], runDir: null }),
@@ -4019,7 +4020,18 @@ test('#5584: a failed AUTO-line write does not admit the record (fail closed) an
   });
   assert.ok(!inGroups(r, 12));
   assert.match(r.stderr, /queue-pull: named #12: disk full/);
-  assert.ok(!r.cap.stdout.join('').includes('#12'));
+  assert.equal(r.cap.stdout.join(''), '#12 not admitted: the decisions.md audit line could not be written\n');
+  assert.deepEqual(r.state.typedNumbers, new Set());
+});
+
+test('#5584 fix 1: a typed record carrying bot:in-progress is refused before admission: one claimed line, no AUTO line, no transcript read', () => {
+  const r = pullNamed(withNamedView(S1(), [ungranted(12, { labels: ['ready', 'bot:in-progress'] })]), { typedFor: [12], decisions: PRIOR_DECISIONS });
+  assert.ok(!inGroups(r, 12));
+  assert.equal(r.stdout, '#12 is already claimed (bot:in-progress) — not built this firing\n');
+  assert.deepEqual(r.asked, []);
+  assert.equal(r.decisions, PRIOR_DECISIONS, 'no AUTO line for a record the eligibility filter would drop');
+  assert.deepEqual(r.state.typedNumbers, new Set());
+  assertNoLabelWrite(r);
 });
 
 test('#5584: under --transport files, --named admits nothing and prints one refusal line per named number; no gh call', () => {
@@ -4098,7 +4110,8 @@ test('AC7.3: a --run that names no run directory, or one resolveTarget refuses, 
   fs.writeFileSync(path.join(linked, '.git'), 'gitdir: /nowhere/.git/worktrees/linked\n');
   try {
     const before = { runDir: listing(runDir), outside: listing(outside), linked: listing(path.join(linked, 'run-2')) };
-    for (const run of ['run-missing', path.join(root, 'nope'), outside, path.join(linked, 'run-2')]) {
+    // `.` and `..` are bare ids that would land on pipelines/ itself or on .claude-tweaks/.
+    for (const run of ['run-missing', '.', '..', path.join(root, 'nope'), outside, path.join(linked, 'run-2')]) {
       for (const transport of ['gh', 'files']) {
         let probed = 0; let pulled = 0;
         const r = cliRun(['--transport', transport, '--named', '12', '--run', run], {
