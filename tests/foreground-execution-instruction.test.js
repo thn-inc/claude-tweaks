@@ -336,6 +336,30 @@ test('AC3: REQUIRED holds on the handoff template paragraph (#5601)', () => {
   assertEachPatternGoesRed(paragraph, REQUIRED, missingFactsOf(REQUIRED));
 });
 
+// AC7.1: the multi-spec wave prompt copies items 1, 6 and 7 of the Context pack and no template clause.
+const MULTISPEC = path.join(PLUGIN, 'skills', 'flow', 'multispec-parallel-waves.md');
+const MULTISPEC_PACK = /`\{context-pack\}` is `dispatch\/task-prompt\.md`'s Context pack items 1 \(the literal plugin root\), 6 \(the worktree shell constraint\) and 7 \(async-wait discipline, with its `INTERIM_STATUS` rule\)/;
+const multispecPackGaps = (p) => [
+  ...(MULTISPEC_PACK.test(p) ? [] : ['names items 1, 6 and 7']),
+  ...(/template's Foreground execution clause/i.test(p) ? ['no template clause'] : []),
+];
+function multispecPackParagraph(text) {
+  const found = text.split(/\r?\n\r?\n/).filter((p) => p.startsWith('Inline the block below verbatim'));
+  assert.equal(found.length, 1, `expected exactly one "Inline the block below verbatim" paragraph, found ${found.length}`);
+  return found[0].replace(/\s+/g, ' ');
+}
+
+test('AC7.1: multispec-parallel-waves.md inlines items 1, 6 and 7 and no template clause (#5601)', () => {
+  const paragraph = multispecPackParagraph(readText(MULTISPEC));
+  assert.deepEqual(multispecPackGaps(paragraph), []);
+  const withClause = `${paragraph.replace(/ all copied verbatim/, ", plus that file's `build,test` template's Foreground execution clause, all copied verbatim")}`;
+  assert.notEqual(withClause, paragraph);
+  assert.deepEqual(multispecPackGaps(withClause), ['no template clause']);
+  const dropped = paragraph.replace(' and 7 (async-wait discipline, with its `INTERIM_STATUS` rule)', '');
+  assert.notEqual(dropped, paragraph);
+  assert.deepEqual(multispecPackGaps(dropped), ['names items 1, 6 and 7']);
+});
+
 // #5601: a dispatched agent's prompt states the foreground-wait rule once, through Context pack item 7;
 // the fenced templates no longer carry their own paragraph. Counted on the rendered prompt, because
 // that is the text the agent reads.

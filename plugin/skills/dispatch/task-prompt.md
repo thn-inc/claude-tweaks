@@ -267,7 +267,7 @@ pipeline's own steps still select their own models as usual. Resolve via
 `resolve-profile.js`'s JSON), an expected outcome the Context pack's per-group log line records.
 The later diff-size cap never applies: this invocation passes no `--diff-facts`.
 
-The Foreground execution clause above is backed by a mechanical check, not prose alone (#2429):
+Context pack item 7 is backed by a mechanical check, not prose alone (#2429):
 `sequential-execution.md`'s "The loop" section verifies this call's `STATUS:` line against the
 required pattern the moment the call returns, and treats a missing or malformed one as evidence
 of backgrounded/yielded execution.
@@ -275,14 +275,14 @@ of backgrounded/yielded execution.
 This call's own `decisions.md` writes (`log-decision.js`, called throughout `/flow`'s steps) are
 also what `sequential-execution.md`'s Heartbeat section (#2427) points a "still waiting?" user at
 for a long-running call like this one — a passive read of this group's run directory, never a
-reason to relax the Foreground execution clause above or have this call check in mid-turn.
+reason to relax Context pack item 7 or have this call check in mid-turn.
 
-The Foreground execution clause's nested-`Agent` rule (#2533, reworked in #3078) is restated in
-each template, because each template is inlined verbatim into a `Task()` prompt whose agent never
-sees the core file. `_shared/subagent-dispatch-core.md`'s Foreground Execution Discipline is the
-one definition of that rule, its keep-alive bound and its `unconfirmed` fallback.
-`_shared/dispatch-waiting.md` describes a top-level dispatcher waiting on its own children, not
-this agent, so it is not the basis for the clause.
+Context pack item 7 carries the nested-`Agent` rule (#2533, reworked in #3078) into each template
+through its `{context-pack}` placeholder, because each template is inlined verbatim into a
+`Task()` prompt whose agent never sees the core file. `_shared/subagent-dispatch-core.md`'s
+Foreground Execution Discipline is the one definition of that rule, its keep-alive bound and its
+`unconfirmed` fallback. `_shared/dispatch-waiting.md` describes a top-level dispatcher waiting on
+its own children, not this agent, so it is not the basis for item 7.
 
 ## Second call — review,polish,wrap-up (gated on the first call)
 
