@@ -10,7 +10,7 @@ When this run's spec has a materialized header (`{run-dir}/wrap-up-pack.json`'s 
 non-empty — see `skills/flow/materialize.md` for the header; when the pack file is absent, fall
 back to `cleanup-procedures-execution.md`'s Section C step 2 worktree-mirror glob instead) AND
 EITHER the issue's **live**
-labels carry `auto:merge` or `auto:merge-pending` (re-fetch via `gh issue view --json labels` —
+labels carry `auto:build` together with `auto:merge` or `auto:merge-pending` (re-fetch via `gh issue view --json labels` —
 the header's `grants:` field is a snapshot for audit only) OR `manifesto-authorized-merge.md`'s
 applicability check passes (the `merge-authorization` lever, #715), check the two-layer gate below
 — the single-record version of `skills/dispatch/SKILL.md`'s own group-scoped "Auto-merge gate,"
@@ -19,7 +19,7 @@ whether or not `/claude-tweaks:dispatch` was involved:
 The Authorization layer below always reads **live** labels (`gh issue view --json labels`), never the fact pack: a Phase 3 snapshot is minutes old by the time this gate runs, and a grant that was revoked in between must not authorize a merge (#1930). `pack.recordLabels` in `{run-dir}/wrap-up-pack.json` is the console's **audit snapshot** of those same labels — render it beside the live verdict so a mid-run change is visible, and never substitute it for the live read. When the pack file is absent, or its field is `ok: false` (`gh-absent`, `no-forge`, a failed query), omit the snapshot line entirely; the live fetch is unaffected, and a failure of *that* read is still the "Any layer fails" outcome below: proceed to render the console normally, exactly as an `auto:build`-only record would.
 
 1. **Authorization** — one of three ways to clear:
-   - `auto:merge` is already present on the live-fetched labels — clears immediately (`already-mature` by construction).
+   - `auto:build` and `auto:merge` are both present on the live-fetched labels — clears immediately (`already-mature` by construction). A leftover `auto:merge` with no live `auto:build` does not clear (a merge grant counts only together with a live build grant).
    - `auto:merge-pending` is present (and `auto:merge` is not) — fetch fresh (`gh issue view {n} --json labels,comments`) and evaluate maturation the same way `dispatch/grant-maturation-gate.md`'s Phase 1 does (cited from `dispatch/settle-and-merge.md`'s Auto-merge gate) — this is a single record, so that gate's group-wide phase-1/phase-2 split has nothing to preserve here:
 
      ```bash
@@ -33,6 +33,7 @@ The Authorization layer below always reads **live** labels (`gh issue view --jso
        skippedUntrusted.forEach((note) => console.error(note));
        const pendingSince = extractPendingGrantedAt(bodies);
        const result = evaluateMaturation({
+         hasBuildLabel: labels.includes('auto:build'),
          hasPendingLabel: labels.includes('auto:merge-pending'),
          hasMergeLabel: labels.includes('auto:merge'),
          pendingSince,
@@ -45,7 +46,7 @@ The Authorization layer below always reads **live** labels (`gh issue view --jso
 
      Carry each skipped-comment line the snippet prints to stderr into the Review Console's output, so a grant marker that did not count is visible (`_shared/pr-run-comments.md`'s Trusted authors).
 
-     `result.state === 'already-mature'` or `'matured'` clears Authorization. `'within-veto-window'`, `'not-pending'`, or `'unknown-age'` fails Authorization — fall through to the normal (non-short-circuit) Review Console path below, exactly as already happens today when `auto:merge` is simply absent. Log to `decisions.md`, matching the log-line shape and `[lever: grant-veto-window-hours=... (source)]` suffix `settle-and-merge.md` uses for its own non-clearing outcome:
+     `result.state === 'already-mature'` or `'matured'` clears Authorization. `'within-veto-window'`, `'not-pending'`, `'unknown-age'`, or `'no-build-grant'` (no live `auto:build`) fails Authorization — a `'no-build-grant'` result is never promoted, and the promotion below runs only on `'matured'`. Fall through to the normal (non-short-circuit) Review Console path below, exactly as already happens today when `auto:merge` is simply absent. Log to `decisions.md`, matching the log-line shape and `[lever: grant-veto-window-hours=... (source)]` suffix `settle-and-merge.md` uses for its own non-clearing outcome:
      `AUTO {time} — Auto-merge short-circuit: #{n}'s auto:merge-pending has not matured ({result.reason}) — falls back to normal Review Console. Reversibility: n/a (no label change). [lever: grant-veto-window-hours={result.windowHours ?? GRANT_VETO_WINDOW_HOURS} (source)]`.
 
      When `result.state === 'matured'`, promote right here before proceeding — `auto:merge-pending` and `auto:merge` are not swapped elsewhere on this path, so this Authorization step must do it itself:
@@ -60,7 +61,7 @@ The Authorization layer below always reads **live** labels (`gh issue view --jso
 
      This seeds the merge-lane circuit breaker's `watched.json` — the same write `dispatch/grant-maturation-gate.md`'s Phase 2 performs for the group path — since this singleton path has no other write path that ever seeds it; without this step a singleton machine-grant's merge trust is both unreachable and unwatched. Log:
      `AUTO {time} — Auto-merge short-circuit: matured #{n}'s auto:merge-pending to auto:merge ({result.ageHours}h old, past the {result.windowHours}h veto window). Reversibility: high (label re-removable; no merge has happened yet). [lever: grant-veto-window-hours={result.windowHours} (source)]`.
-   - `auto:merge` and `auto:merge-pending` are both absent — `manifesto-authorized-merge.md`'s applicability check passed instead (true by construction once this branch is reached under this condition).
+   - Neither bullet above cleared, and `manifesto-authorized-merge.md`'s applicability check passed — the `merge-authorization` lever clears on its own, including for a record whose leftover merge grant lacks `auto:build`.
 2. **Content judgment** — invoke `/claude-tweaks:assess-agent-autonomy` in `merge-check` mode (`Skill(skill: "claude-tweaks:assess-agent-autonomy", args: "merge-check #{n} --pack {run-dir}/wrap-up-pack.json")`), which weighs the diff's content, `/review`'s findings, and a test-exclusion-aware blast-radius summary holistically. `pack.blastRadius` is merge-check's Step 1 input (#1930); when the pack file is absent, omit `--pack` and merge-check runs `blast-radius.js` itself as before. The verdict must be `auto-merge` to proceed.
 
    **Log the verdict on either outcome, before anything else (#2941)** — the same "log a passing verdict too" rule `dispatch/settle-and-merge.md` applies on the group path (#2429). A pass gets its own line — the marker the Verdict backstop below re-reads:

@@ -37,6 +37,7 @@ node -e "
   skippedUntrusted.forEach((note) => console.error(note));
   const pendingSince = extractPendingGrantedAt(bodies);
   const result = evaluateMaturation({
+    hasBuildLabel: labels.includes('auto:build'),
     hasPendingLabel: labels.includes('auto:merge-pending'),
     hasMergeLabel: labels.includes('auto:merge'),
     pendingSince,
@@ -55,7 +56,7 @@ Phase 2 runs at all:
 
 - **Every member's `result.state` is `already-mature` or `matured`** — the group clears
   Authorization. Proceed to Phase 2.
-- **Any member's `result.state` is `within-veto-window`, `not-pending`, or `unknown-age`** — the
+- **Any member's `result.state` is `within-veto-window`, `not-pending`, `unknown-age`, or `no-build-grant`** (a member with no live `auto:build`) — the
   group does NOT clear Authorization this firing. Per this section's own group-wide rule above,
   the **whole group** falls back to the normal pending-review path — apply **zero** promotions
   this firing, including for any other member whose own `result.state` was independently
