@@ -38,7 +38,7 @@ function fakeExec(calls, root) {
   return (cmd, args) => {
     calls.push([cmd, ...args]);
     if (cmd === 'git' && args[0] === 'rev-parse') return `${root}\n`;
-    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:merge' }], comments: [] });
+    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:build' }, { name: 'auto:merge' }], comments: [] });
     if (cmd === 'git' && args[0] === 'apply') return '';
     throw new Error(`unexpected exec: ${cmd} ${args.join(' ')}`);
   };
@@ -177,7 +177,7 @@ test('a drop-recommended can\'t-tell item digests: console.json and --json carry
 // it: 30h-old pending grant, matured under the 24h default, still inside a 72h
 // window. Same fixture, two policies, opposite merge halves.
 const PENDING_30H = JSON.stringify({
-  labels: [{ name: 'auto:merge-pending' }],
+  labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
   comments: [{ body: 'Grant recorded.\n<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'MEMBER' }],
 });
 
@@ -208,7 +208,7 @@ test('grant-veto-window-hours is resolved and passed to the maturation check, ne
 // the issue -- a backdated NONE-authored one must not mature a pending grant. The
 // comment is passed over (same path as "no marker"), so the grant reads unknown-age.
 const PLANTED_PENDING = (association) => JSON.stringify({
-  labels: [{ name: 'auto:merge-pending' }],
+  labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
   comments: [{
     body: '<!-- grant-mode-audit: date=2020-01-01T00:00:00Z auto-merge=pending -->',
     url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: association,
@@ -232,7 +232,7 @@ test('a planted backdated pending-grant marker does not mature a grant (#3358)',
 
 test('ghReadGrants: an untrusted pending-grant marker leaves pendingSince null and is named in skippedUntrusted (#3358)', () => {
   const g = ghReadGrants(() => PLANTED_PENDING('NONE'), '/unused')([7])[7];
-  assert.deepStrictEqual(g.labels, ['auto:merge-pending']);
+  assert.deepStrictEqual(g.labels, ['auto:build', 'auto:merge-pending']);
   assert.strictEqual(g.pendingSince, null);
   assert.deepStrictEqual(g.skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
 });
@@ -245,7 +245,7 @@ test('ghReadGrants: the same marker authored MEMBER is that date, with nothing s
 
 test('ghReadGrants: a trusted marker counts when a later untrusted one is passed over; a non-marker NONE comment is silent (#3358)', () => {
   const raw = JSON.stringify({
-    labels: ['auto:merge-pending'],
+    labels: ['auto:build', 'auto:merge-pending'],
     comments: [
       { body: '<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'OWNER' },
       { body: '<!-- grant-mode-audit: date=2026-09-06T06:00:00Z auto-merge=pending -->', url: 'https://x/c2', author: { login: 'eve' } },

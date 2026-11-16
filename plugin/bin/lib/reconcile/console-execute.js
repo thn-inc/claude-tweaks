@@ -392,6 +392,7 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
           const grant = ctx.memberGrants[n];
           if (!grant) { mergeGrantGap = { member: n, reason: 'grant-unreadable' }; break; }
           const mat = evaluateMaturation({
+            hasBuildLabel: (grant.labels || []).includes('auto:build'),
             hasMergeLabel: (grant.labels || []).includes('auto:merge'),
             hasPendingLabel: (grant.labels || []).includes('auto:merge-pending'),
             pendingSince: grant.pendingSince || null,

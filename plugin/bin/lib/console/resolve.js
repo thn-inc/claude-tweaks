@@ -449,6 +449,7 @@ function mergeResolution(snapshot, deps) {
     const g = snapshot.grants[n] || { labels: [], pendingSince: null };
     const labels = g.labels || [];
     const mat = evaluateMaturation({
+      hasBuildLabel: labels.includes('auto:build'),
       hasMergeLabel: labels.includes('auto:merge'),
       hasPendingLabel: labels.includes('auto:merge-pending'),
       pendingSince: g.pendingSince || null,
@@ -459,6 +460,9 @@ function mergeResolution(snapshot, deps) {
       // #3358: name the untrusted marker comments ghReadGrants passed over, so an
       // unknown-age grant is not mistaken for "never granted".
       const passedOver = Array.isArray(g.skippedUntrusted) && g.skippedUntrusted.length ? ` — ${g.skippedUntrusted.join('; ')}` : '';
+      if (mat.state === 'no-build-grant') {
+        return { resolution: 'leave-open', reason: `#${n} lacks auto:build — a merge grant counts only together with a live auto:build (${mat.reason})${passedOver}` };
+      }
       return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${mat.reason})${passedOver}` };
     }
   }
