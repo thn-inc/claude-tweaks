@@ -43,11 +43,10 @@
 //     policy key, `git remote show origin` fails) skips the target-missing pass with one Warning and
 //     drops the unlanded-blocker:9011 exclusion beside it. (NEW cross-pass effects; each pass still
 //     fails open.)
-//   - A silent fail-open on the files transport: files-verifiedOpenDeps-missing and
-//     files-verifiedOpenDeps-malformed exit 0 with no Warning or AUTO line and drop the blocked:9002
-//     exclusion, so a blocked record becomes dispatchable with nothing printed (the files twin of
-//     F-depview).
-//   - The silent fail-opens (ledger row 6) are F-depfresh, F-depview, F-prview and F-openprs.
+//   - Fixed by #5311: a missing or malformed file fails closed (every unresolved dependency open, one
+//     Warning) — files-verifiedOpenDeps-missing and files-verifiedOpenDeps-malformed keep blocked:9002.
+//     F-depview fails closed too, with one Warning naming the view, since #5311.
+//   - The silent fail-opens (ledger row 6) are F-depfresh, F-prview and F-openprs.
 // One module divergence the matrix found and the module fixed (Task 3 carry): on `files` the
 // agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so
 // it is read only when there are dependency numbers to search; otherwise the fence's `echo '[]'`
@@ -1228,6 +1227,10 @@ test('#5227 cap warning: a 500-record queue prints the fence 500-cap Warning byt
   assert.deepEqual(pull(scenario(499)).errs.filter((e) => e.startsWith('Warning:')), []);
 });
 
+const DEP_VIEW_FAILED = (n) => `Warning: gh issue view ${n} failed — dependency #${n} treated as open (fail closed) this run`;
+const VERIFIED_UNREADABLE = 'Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run';
+const warningsOf = (r) => r.stderr.split('\n').filter((l) => l.startsWith('Warning: gh issue view') || l.startsWith('Warning: verified-open-deps'));
+
 function mcpRecord(number, body) {
   return {
     number, title: `Fixture record ${number}`, body, labels: [{ name: 'auto:build' }, { name: 'ready' }],
@@ -1263,8 +1266,18 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   assert.equal(held.store.written.length, 1, 'the write-back still runs on files');
 
   const absent = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: null }) });
-  assert.deepEqual(entriesOf(absent, 'blocked'), [], 'a missing verified-open-deps file reads as []');
-  assert.deepEqual(groupNumbers(absent), [[9001], [9002]]);
+  assert.deepEqual(entriesOf(absent, 'blocked'), [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }], 'AC2.1 (#5311): a missing verified-open-deps file fails closed');
+  assert.deepEqual(groupNumbers(absent), [[9001]]);
+  assert.deepEqual(warningsOf(absent), [VERIFIED_UNREADABLE]);
+  const malformed = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: 'this is not json\n' }) });
+  assert.deepEqual(groupNumbers(malformed), [[9001]], 'AC2.1 (#5311): a malformed file fails closed');
+  assert.deepEqual(warningsOf(malformed), [VERIFIED_UNREADABLE]);
+  const crlf = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '8000\r\n\n' }) });
+  assert.deepEqual(groupNumbers(crlf), [[9001]]);
+  assert.deepEqual(warningsOf(crlf), [], 'CRLF and a blank line are well-formed');
+  const empty = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '' }) });
+  assert.deepEqual(groupNumbers(empty), [[9001], [9002]], 'an empty file is a well-formed "none open" answer');
+  assert.deepEqual(warningsOf(empty), []);
   assert.deepEqual(calls, []);
 
   const foreign = pull(foreignScenario(), {
@@ -1281,6 +1294,45 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   });
   assert.deepEqual(entriesOf(foreign, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: ['acme-corp/other#12'] } }], 'PF17: foreignStates is read on files too');
   assert.deepEqual(foreign.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), []);
+});
+
+test('AC1.1 (#5311): a failed dependency view excludes the dependent record as blocked and prints the line naming the view', () => {
+  const r = pull(S1LiveDep({ viewFails: true }));
+  assert.deepEqual(entriesOf(r, 'blocked'), entriesOf(pull(S1LiveDep()), 'blocked'), 'the same blocked entry the answered view gives');
+  assert.ok(entriesOf(r, 'blocked').some((e) => e.records.includes(9002)));
+  assert.ok(!groupNumbers(r).flat().includes(9002), '#9002 is not dispatchable');
+  assert.deepEqual(warningsOf(r), [DEP_VIEW_FAILED(8000)]);
+  assert.equal(r.text['dispatch-verified-open-deps.txt'], '8000\n');
+  // S1({ parity: true }) also carries #9012 `Blocked by #0`: #0 is not an issue number, so it is never live-checked.
+  assert.ok(!r.ghCalls.some((a) => a[0] === 'issue' && a[1] === 'view' && a[2] === '0'), 'no gh issue view 0 call');
+  const full = pull5(S1LiveDep({ viewFails: true }));
+  assert.ok(entriesOf(full, 'malformed-blocker').some((e) => e.records.includes(9012)), '#9012 keeps its malformed-blocker exclusion');
+  assert.ok(!entriesOf(full, 'blocked').some((e) => e.records.includes(9012)), '#9012 is not reclassified as blocked');
+});
+
+test('AC1.1 (#5311) multi: one Warning names only the failed view, and the file lists the failed and OPEN numbers, never the CLOSED one', () => {
+  const s = S1LiveDep({ viewFails: true });
+  s.gh = s.gh.map((e) => (JSON.stringify(e.argv) === JSON.stringify(QUEUE_ARGV)
+    ? { ...e, stdout: JSON.stringify(JSON.parse(e.stdout).map((rec) => (rec.number === 9002
+      ? { ...rec, body: `Blocked by #8000\nBlocked by #8001\nBlocked by #8002\n\n${withBody(9002)}` } : rec))) + '\n' } : e));
+  s.gh.push({ argv: ['issue', 'view', '8001', '--json', 'state', '-q', '.state'], stdout: 'CLOSED\n' });
+  s.gh.push({ argv: ['issue', 'view', '8002', '--json', 'state', '-q', '.state'], stdout: 'OPEN\n' });
+  const r = pull(s);
+  assert.deepEqual(warningsOf(r), [DEP_VIEW_FAILED(8000)]);
+  assert.equal(r.text['dispatch-verified-open-deps.txt'], '8000\n8002\n');
+  assert.ok(entriesOf(r, 'blocked').some((e) => e.records.includes(9002)));
+});
+
+test('AC2.1 (#5311) control: with no unresolved dependency and no verified-open-deps file, no Warning and both records are grouped', () => {
+  const noGh = (cmd, args) => { throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
+  const control = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => ({ inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, withBody(9002))])),
+    openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
+    depFreshness: writeInput(own, 'dep.json', '[]'),
+    verifiedOpenDeps: path.join(own, 'absent.txt'),
+  } }) });
+  assert.deepEqual(groupNumbers(control), [[9001], [9002]]);
+  assert.deepEqual(warningsOf(control), []);
 });
 
 // Task 8 (the files-transport reading, confirmed against filesOracleScript's S2-files-miss run): the
@@ -3430,7 +3482,7 @@ const FAULT_EXPECT = {
   'F-queue': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'F-opennum': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'F-depfresh': { status: 0, stderr: [], drops: [] },
-  'F-depview': { status: 0, base: 'gh-livedep', stderr: [], drops: ['blocked:9002'] },
+  'F-depview': { status: 0, base: 'gh-livedep', stderr: ['Warning: gh issue view 8000 failed — dependency #8000 treated as open (fail closed) this run'], drops: [] },
   // #5309: both eligible records are excluded fail-closed (9030 was already blocked, now with the unreadable detail); the unlanded-blocker pass has no candidate left, so it prints nothing.
   // blob: null, both sides, the row's cold origin left no order blob (no write-back); parityView compares the blobs only against each other.
   'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault: injected failure`], drops: [], adds: ['blocked:9001'], blob: null },
@@ -3466,8 +3518,9 @@ const FILES_EXPECT = {
   'files-depFreshness-missing-cold': { status: 0, stderr: [], drops: [] },
   'files-openNumbers-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-openNumbers-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
-  'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
+  // #5311: #8001 (the unresolved dependency of #9011) counts as open too, so #9011 is held as blocked.
+  'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'] },
+  'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'] },
   'files-inFlightRaw-missing': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightRaw-malformed': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightClaims-missing': FILES_STOPPED_NEIGHBOUR,
@@ -3631,7 +3684,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     assert.equal(R['S1-gh-miss'].oracle.files['dispatch-shipped-pr-files.jsonl'], `{"pr":5016,"files":${JSON.stringify(WEAK_PR_FILES)}}\n`, 'the base probes the files (control)');
     for (const [side, r] of sides(R['F-openprs'])) assert.deepEqual(JSON.parse(r.files['dispatch-crosspr-overlap.json']), [], `F-openprs ${side}`);
     assert.notDeepEqual(JSON.parse(R['S1-gh-miss'].oracle.files['dispatch-crosspr-overlap.json']), [], 'the base reports #9001 against PR #41 (control)');
-    for (const [side, r] of sides(R['F-depview'])) assert.ok(groupedIn(r).includes(9002), `F-depview ${side}: #9002 is dispatchable`);
+    for (const [side, r] of sides(R['F-depview'])) assert.ok(!groupedIn(r).includes(9002), `F-depview ${side}: #9002 is held (fail closed)`);
     for (const [side, r] of sides(R['gh-livedep'])) assert.ok(r.ghArgv.some((a) => a.argv.join(' ') === 'issue view 8000 --json state -q .state'), `gh-livedep ${side}: the live check is what holds #9002`);
   });
 

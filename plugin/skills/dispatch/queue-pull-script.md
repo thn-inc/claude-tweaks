@@ -42,11 +42,7 @@ DISPATCH_SHIPPED_PR_FILES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve
 DISPATCH_SHIPPED_RELEASES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-releases.json)"
 DISPATCH_SHAPE_GATE_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shape-gate.err)"
 
-# #1752: truncate this run's session-scoped dispatch-exclusions.json, keeping
-# only 'firing'-reason entries -- those are appended incrementally by
-# SKILL.md's Loop BETWEEN successive re-runs of this script within one
-# firing (firing-exclusion.md) and must survive this script's own re-pull,
-# while every other reason below is recomputed fresh each run.
+# #1752: truncate dispatch-exclusions.json, keeping only 'firing' entries (SKILL.md's Loop appends them between re-runs, firing-exclusion.md); other reasons are recomputed.
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { readExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const fs = require('fs');
@@ -158,28 +154,28 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   const eligiblePreDep = issues
     .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
     .filter((i) => i.facets.grants.build && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
-  // '--limit 200' can silently truncate the open-issues pull on a repo with more open
-  // issues than that — a dependency number absent from openNumbers means 'not in the
-  // fetched 200', not 'closed'. Collect those as unresolved for a targeted live check below
-  // rather than treating the absence as proof the blocker is closed.
-  const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => !openNumbers.has(dep)))];
+  // A dependency outside the --limit 200 open pull is unresolved, not closed: checked live below.
+  const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => dep > 0 && dep <= 2147483647 && !openNumbers.has(dep)))];
   require('fs').writeFileSync(process.argv[3], JSON.stringify(eligiblePreDep));
   require('fs').writeFileSync(process.argv[4], JSON.stringify(unresolved));
 NODE_EVAL_EOF
 : > "$DISPATCH_VERIFIED_OPEN_DEPS"
 for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS"); do
-  STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null)
+  STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null) || { STATE=OPEN; echo "Warning: gh issue view $DEP failed — dependency #$DEP treated as open (fail closed) this run" >&2; }
   if [ "$STATE" = "OPEN" ]; then echo "$DEP" >> "$DISPATCH_VERIFIED_OPEN_DEPS"; fi
 done
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_VERIFIED_OPEN_DEPS" "$DISPATCH_ELIGIBLE" "$DISPATCH_BLOCKED_EXCLUDED_BODY" <<NODE_EVAL_EOF
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_VERIFIED_OPEN_DEPS" "$DISPATCH_ELIGIBLE" "$DISPATCH_BLOCKED_EXCLUDED_BODY" "$DISPATCH_UNRESOLVED_DEPS" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { partitionByOpenBodyBlockers } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const { bodyForeignBlockers } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-states.js');
   const eligiblePreDep = require(process.argv[1]);
   const openNumbers = new Set(require(process.argv[2]).map((i) => i.number));
-  const verifiedOpen = fs.existsSync(process.argv[3])
-    ? fs.readFileSync(process.argv[3], 'utf8').trim().split('\n').filter(Boolean).map(Number)
-    : [];
+  // #5311: a missing or malformed file: every unresolved dependency counts as open.
+  const lines = fs.existsSync(process.argv[3]) ? fs.readFileSync(process.argv[3], 'utf8').trim().split('\n').filter(Boolean) : null;
+  const bad = lines === null || lines.some((l) => !/^\d+$/.test(l.trim()));
+  const unresolved = require(process.argv[6]);
+  if (bad && unresolved.length) process.stderr.write('Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run\n');
+  const verifiedOpen = bad ? unresolved : lines.map(Number);
   for (const dep of verifiedOpen) openNumbers.add(dep);
   // #4793: DISPATCH_FOREIGN_STATES is set only on the MCP path (mcp-transport.md); unset asks gh.
   // #5304: after an ignored states file, the gh-absent lookup Warning is dropped (any other lookup failure stays).
@@ -383,11 +379,8 @@ fi
 
 # #1983: named-target existence exclusion. Why at the integration tip: queue-pull-notes.md.
 DISPATCH_STANDALONE_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug "dispatch-standalone")
-# {integration-branch} resolution follows _shared/integration-branch.md's ladder
-# rank 3 (policy.yml) with a rank-6 git-remote fallback (this call site has no
-# use for ranks 4-5's CLAUDE.md-prose/current-branch checks — a queue-pull
-# script has no human present to disambiguate a current-vs-default mismatch,
-# the same reasoning settle-and-merge.md's own citation of this file states).
+# {integration-branch}: _shared/integration-branch.md ladder rank 3 (policy.yml), rank-6 git-remote fallback;
+# ranks 4-5 need a human to disambiguate, and this script has none (settle-and-merge.md).
 INTEGRATION_BRANCH=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch)
 if [ -z "$INTEGRATION_BRANCH" ]; then
   INTEGRATION_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')

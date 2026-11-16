@@ -77,6 +77,7 @@ const { execFileSync, spawnSync } = require('child_process');
 
 const { readExclusions, appendExclusion, groupIsExcluded } = require('./exclusions');
 const { writeReleaseTimes, readReleaseTimes } = require('./shipped-releases');
+const { GRAPHQL_INT_MAX } = require('./unlanded-blockers');
 const { buildFreshnessSignal, cacheUsable, composeOrderBlob } = require('./queue-order');
 const { aliasMcpTimestamps } = require('../issues/mcp-issue-shape');
 const { parseRecordFacets, parseDependencies, partitionByOpenBodyBlockers, openBlockerRefs } = require('../issues/record');
@@ -580,7 +581,7 @@ function runBlocked(ctx) {
       .filter((i) => (i.facets.grants.build || state.typedNumbers.has(i.number)) && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
     // '--limit 200' can truncate the open-issues pull: a dependency absent from it is
     // unresolved, not closed, and is checked live below.
-    const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => !openNumbers.has(dep)))];
+    const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => dep > 0 && dep <= GRAPHQL_INT_MAX && !openNumbers.has(dep)))];
     fs.writeFileSync(paths['dispatch-eligible-pre-dep.json'], JSON.stringify(eligiblePreDep));
     fs.writeFileSync(paths['dispatch-unresolved-deps.json'], JSON.stringify(unresolved));
   });
@@ -591,7 +592,11 @@ function runBlocked(ctx) {
       const unresolved = readJson(paths['dispatch-unresolved-deps.json']).join(' ').split(/\s+/).filter(Boolean);
       for (const dep of unresolved) {
         const r = ghRun(ctx, ['issue', 'view', dep, '--json', 'state', '-q', '.state'], { quiet: true });
-        if (trimNl(r.stdout) === 'OPEN') fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
+        // #5311: a failed view fails closed.
+        if (!r.ok) {
+          ctx.deps.stderr(`Warning: gh issue view ${dep} failed — dependency #${dep} treated as open (fail closed) this run\n`);
+          fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
+        } else if (trimNl(r.stdout) === 'OPEN') fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
       }
     });
   }
@@ -604,12 +609,20 @@ function runBlocked(ctx) {
       return;
     }
     const openNumbers = new Set(readJson(f.openNumbers).map((i) => i.number));
-    let verifiedOpen = [];
+    let lines = null;
     try {
-      verifiedOpen = fs.readFileSync(f.verifiedOpenDeps, 'utf8').trim().split('\n').filter(Boolean).map(Number);
+      lines = fs.readFileSync(f.verifiedOpenDeps, 'utf8').trim().split('\n').filter(Boolean);
     } catch (err) {
       if (!err || err.code !== 'ENOENT') throw err;
     }
+    // #5311: a missing or malformed file fails closed: every unresolved dependency counts as open.
+    const bad = lines === null || lines.some((l) => !/^\d+$/.test(l.trim()));
+    let verifiedOpen;
+    if (bad) {
+      const unresolved = readJson(paths['dispatch-unresolved-deps.json']);
+      if (unresolved.length) deps.stderr('Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run\n');
+      verifiedOpen = unresolved.map(Number);
+    } else verifiedOpen = lines.map(Number);
     for (const dep of verifiedOpen) openNumbers.add(dep);
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
     // resolve-foreign-blockers.js through the library's own bounded spawn (tests inject

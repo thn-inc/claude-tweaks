@@ -624,13 +624,11 @@ function S1LiveDep({ viewFails = false } = {}) {
   s.gh = s.gh.map((e) => (sameArgv(e.argv, OPEN_NUMBERS_ARGV)
     ? { ...e, stdout: JSON.stringify(JSON.parse(e.stdout).filter((r) => r.number !== 8000)) + '\n' } : e));
   s.gh.unshift({ argv: view, stdout: 'OPEN\n' });
+  // #5311: `viewFails` makes that view fail, which fails closed: #8000 counts as open, so #9002 is still held.
+  // The full pass list's landing pass reads #8000 as an OPEN blocker, so it keeps its landing node.
   if (!viewFails) return s;
   failGh(s, view);
-  s.gh = s.gh.map((e) => {
-    if (e.graphql === 'linked') return { ...e, aliases: { ...e.aliases, i9002: linkedNode(9002) } };
-    if (e.graphql === 'landing') return { ...e, aliases: { ...e.aliases, b8000: OPEN_LANDING(8000) } };
-    return e;
-  });
+  s.gh = s.gh.map((e) => (e.graphql === 'landing' ? { ...e, aliases: { ...e.aliases, b8000: OPEN_LANDING(8000) } } : e));
   return s;
 }
 
