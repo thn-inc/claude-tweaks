@@ -506,4 +506,4 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
   }
 }
 
-module.exports = { land, stage, MARKER };
+module.exports = { land, stage, MARKER, defang, unmention };

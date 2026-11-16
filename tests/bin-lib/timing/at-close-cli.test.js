@@ -8,6 +8,7 @@ const { runCli, spawnCli } = require('../../helpers/run-cli');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 const { readTiming, pickTokens } = require('../../helpers/close-timing');
 const transcript = require('../../../plugin/bin/lib/timing/transcript');
+const stepYield = require('../../../plugin/bin/lib/timing/step-yield');
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 
@@ -103,6 +104,30 @@ test('a closed run with its transcript: exit 0, timing.json path on stdout, toke
     assert.equal(again.code, 0);
     assert.equal(again.stdout, path.join(runDir, 'timing.json') + '\n');
     assert.equal(fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8'), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC6.1: the token pass rewrites step-yield.json whole beside the timing.json it wrote', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wt = path.join(root, 'wt');
+    const runDir = closedRun(root, 'run', wt);
+    writeTranscript(cfg, wt);
+    const file = path.join(runDir, 'step-yield.json');
+    fs.writeFileSync(file, '{"stale":true}');
+    const r = await runCli(CLI, ['--run', runDir], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root });
+    assert.equal(r.code, 0);
+    const y = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(Object.hasOwn(y, 'stale'), false);
+    assert.equal(y.schemaVersion, stepYield.SCHEMA_VERSION);
+    assert.ok(y.steps.length > 0);
+    // A second pass keeps timing.json and still leaves a whole yield.
+    fs.writeFileSync(file, '{"stale":true');
+    assert.equal((await runCli(CLI, ['--run', runDir], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root })).code, 0);
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, stepYield.SCHEMA_VERSION);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

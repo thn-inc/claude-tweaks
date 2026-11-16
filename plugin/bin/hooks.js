@@ -289,7 +289,7 @@ function closestVerb(cmd, candidates) {
 // this file's own #280/#1183/#1299 twin check afterward — every later retry
 // reads the stub as "already archived elsewhere" and is refused as a shadow,
 // even long after the claim's own TTL (context.js's ARCHIVE_CLAIM_TTL_MS)
-// would let archive-merged.js's own decideArchive treat it as abandoned and
+// would let archive-merged.js's own archive pass treat it as abandoned and
 // retry. Mirrors that exact staleness rule here so the two callers agree.
 function isLiveArchiveTwin(p) {
   if (!isDirectory(p)) return false;
@@ -1452,7 +1452,7 @@ async function runArchiveRun(argv, deps) {
     );
     return 0;
   }
-  // #1130 AC4: same console gate decideArchive enforces on the reconcile
+  // #1130 AC4: same console gate decideArchiveCore enforces on the reconcile
   // path. A rendered-but-unanswered console (`unresolved`) always blocks.
   // 'none' is allowed in general — terminal status means close-run ran, i.e.
   // wrap-up's own flow (incl. the empty-console fast path) completed. #3668

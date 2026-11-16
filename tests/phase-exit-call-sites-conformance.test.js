@@ -166,6 +166,7 @@ const SELF_LOGGING_SOURCES = {
   'stash-guard.js compare': ['plugin/bin/stash-guard.js'],
   // The CLI appends its marker and AUTO/SKIP lines from the lib module it drives.
   'post-merge-run.js': ['plugin/bin/post-merge-run.js', 'plugin/bin/lib/reconcile/post-merge.js'],
+  'archive-run-header.js': ['plugin/bin/archive-run-header.js'],
 };
 
 function listedSelfLoggers(text) {

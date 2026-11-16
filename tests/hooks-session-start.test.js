@@ -275,6 +275,21 @@ test('#1738: a clean *-tidy-standalone* run with a fully-archived (clean) archiv
   }
 });
 
+test('AC10.2: unfinished-run report does not list a clean-twin work-only shell', async () => {
+  const project = tmpProject();
+  const runId = '2026-07-05T090000-spec-77';
+  const live = mkRun(project, runId);
+  fs.mkdirSync(path.join(live, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(live, 'work', '77-spec.md'), 'x');
+  mkRun(project, path.join('archive', runId), { status: 'clean' });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  if (out.json) {
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, new RegExp(runId));
+  } else {
+    assert.deepStrictEqual(out, {});
+  }
+});
+
 test('#1493: a cleanly-clean standalone run with EMPTY staged/ renders no tidy --approve line', async () => {
   const project = tmpProject();
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });
@@ -1070,11 +1085,12 @@ test('SessionStart: a throw while rendering the background summary still leaves 
 
 // #1687: the reconcile-background child had no way to learn the spawning
 // session's id at all — neither argv nor env — so archive-merged.js's
-// ownership gate (isAbandonedInterrupted) was permanently inert on the one
-// path that actually runs the 'archive' check in production. session-start.js
-// now threads ctx.input.session_id into the spawned child's own environment
-// via a dedicated var, never CLAUDE_CODE_SESSION_ID (this file's own header
-// comment documents that one as unreliable for a hook-spawned process).
+// ownership gate (the `abandoned-interrupted` classification) was permanently
+// inert on the one path that actually runs the 'archive' check in production.
+// session-start.js now threads ctx.input.session_id into the spawned child's
+// own environment via a dedicated var, never CLAUDE_CODE_SESSION_ID (this
+// file's own header comment documents that one as unreliable for a
+// hook-spawned process).
 test('SessionStart spawn gate: threads ctx.input.session_id into the background child\'s environment as CLAUDE_TWEAKS_SESSION_ID (#1687)', async () => {
   const cp = require('child_process');
   const originalSpawn = cp.spawn;

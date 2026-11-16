@@ -46,7 +46,7 @@ git grep -n -l -E "unlanded-blocker|target-missing" -- plugin docs tests
 Then run the derived-list test, the module suite (its parity tests fail when the module and the retained script disagree) and the new reason's conformance test:
 
 ```bash
-node --test tests/dispatch-named-form-exclusion-reasons.test.js tests/bin-lib/dispatch/queue-pull.test.js
+node tools/run-tests.js tests/dispatch-named-form-exclusion-reasons.test.js tests/bin-lib/dispatch/queue-pull.test.js
 ```
 
 ## Anti-Patterns

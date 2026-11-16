@@ -224,6 +224,31 @@ function findNonCanonicalRunDirs(cwd) {
     .sort();
 }
 
+// #3975: the shape half of "a run dir that is only a git-tracked leftover" —
+// readable, non-empty, and every entry is `work` or a `spec-*` directory whose
+// own entries are non-empty and all exactly `work`. No git calls: whether
+// those files are tracked is the caller's check.
+function isTrackedShellDir(dir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  if (entries.length === 0) return false;
+  return entries.every((e) => {
+    if (e.name === 'work') return true;
+    if (!e.isDirectory() || !e.name.startsWith('spec-')) return false;
+    let sub;
+    try {
+      sub = fs.readdirSync(path.join(dir, e.name));
+    } catch {
+      return false;
+    }
+    return sub.length > 0 && sub.every((n) => n === 'work');
+  });
+}
+
 // Lazily yields each candidate run dir (newest-first) paired with its
 // already-read state, reading run-state.json for one dir at a time instead
 // of mapping every candidate up front — callers that only need the first
@@ -297,7 +322,9 @@ function* iterRunDirsWithState(cwd, opts = {}) {
     // genuinely completed archive) and, unlike the removed one, cannot be
     // fooled by an incomplete archive attempt.
     const archiveState = readRunState(path.join(base, 'archive', name));
-    if (archiveState && archiveState.status === 'clean') continue;
+    // #3975: `includeTrackedShells` lets the archive loop see a clean-twin dir
+    // that is only a tracked work/ shell — the one shape that skip strands.
+    if (archiveState && archiveState.status === 'clean' && !(opts.includeTrackedShells && isTrackedShellDir(dir))) continue;
     // #1103 follow-up: a fresh 'archiving' claim (archive-merged.js writes
     // this the instant it mkdir's archiveDir, before moving anything) means
     // another process is already mid-archival of this exact run dir right
@@ -1107,7 +1134,7 @@ function appendEvent(runDir, type, data, attribution) {
 }
 
 module.exports = {
-  readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
+  readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState, isTrackedShellDir,
   readRunState, priorWorktree, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, isSessionOwnedAdHocRun, resolveDenialRunDir,
   claudePid, requireEnv, assertEnvObject, resolveLockWaitMs, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,

@@ -211,3 +211,140 @@ test('AC12.2: the hook writes no marker for a session id outside [A-Za-z0-9_-]',
   runHook(pEntries(), { session_id: sid, agent_id: 'agent-p' });
   assert.strictEqual(fs.existsSync(path.join(os.tmpdir(), `ct-agent-stops-bad.id-${process.pid}.jsonl`)), false);
 });
+
+// #5706: the marker has its own count from the same scan as the #3015 gate count.
+// It skips a <task-notification> in three given-or-written shapes (the first user
+// message, a toolUseResult line, an assistant line); the gate count stays null.
+const QUOTE = 'Wait until every child\'s <task-notification> has arrived.';
+function prompt(text, min) {
+  return { type: 'user', timestamp: at(min), message: { role: 'user', content: text } };
+}
+function agentCallWithPrompt(id, promptText, min) {
+  return { type: 'assistant', timestamp: at(min), message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Agent', input: { description: `Lens ${id}`, prompt: promptText } }] } };
+}
+function readCall(id, min) {
+  return { type: 'assistant', timestamp: at(min), message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Read', input: {} }] } };
+}
+function toolResult(toolUseId, text, min, toolUseResult) {
+  const entry = { type: 'user', timestamp: at(min), message: { role: 'user', content: [{ tool_use_id: toolUseId, type: 'tool_result', content: text }] } };
+  if (toolUseResult !== undefined) entry.toolUseResult = toolUseResult;
+  return entry;
+}
+function forkBoundary(directive, min) {
+  return {
+    type: 'user',
+    timestamp: at(min),
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_fork', content: [{ type: 'text', text: 'Fork started — processing in background' }] }, { type: 'text', text: '<fork-boilerplate>\nYou are a worker fork.\n</fork-boilerplate>\n\nYour directive: ' + directive }] },
+  };
+}
+const scanOf = (entries) => {
+  const lines = toLines(entries);
+  return substop.scanPendingDispatches(lines, lines.length - 1);
+};
+const gateOf = (entries) => {
+  const lines = toLines(entries);
+  return substop.countPendingDispatches(lines, lines.length - 1);
+};
+
+test('AC1.1: a first user message quoting <task-notification>, no launches, writes pending 0; the gate count is null', (t) => {
+  const sid = setup(t, 'ac1');
+  const entries = [prompt(QUOTE, 0), readCall('toolu_r', 1), toolResult('toolu_r', 'ok', 1, { stdout: 'ok' }), reply('Done.\nSTATUS: DONE', 2)];
+  runHook(entries, { session_id: sid, agent_id: 'agent-ac1' }, {});
+  const { stops } = marker.readStops(sid);
+  assert.strictEqual(stops.length, 1);
+  assert.strictEqual(stops[0].pending, 0);
+  assert.strictEqual(gateOf(entries), null);
+  assert.deepStrictEqual(scanOf(entries), { gate: null, marker: 0 });
+});
+
+test('AC1.1: the same prompt with an owned run and a non-compliant reply still writes pending 0 and grades as before', (t) => {
+  const sid = setup(t, 'ac1blocked');
+  const entries = [prompt(QUOTE, 0), readCall('toolu_r', 1), toolResult('toolu_r', 'ok', 1, { stdout: 'ok' }), reply('Finished, no status line.', 2)];
+  const out = runHook(entries, { session_id: sid, agent_id: 'agent-ac1b' });
+  assert.strictEqual(out.json.decision, 'block');
+  const { stops } = marker.readStops(sid);
+  assert.strictEqual(stops.length, 1);
+  assert.strictEqual(stops[0].blocked, true);
+  assert.strictEqual(stops[0].pending, 0);
+});
+
+test('AC2.1/AC2.2: the token in a tool-result line and in an assistant Agent call, two launches, one completion, writes pending 1; the gate count is null', (t) => {
+  const sid = setup(t, 'ac2');
+  const entries = [
+    prompt('Do the task.', 0),
+    agentCallWithPrompt('toolu_1', QUOTE, 0), launchAck('a1', 'toolu_1', 0),
+    agentCall('toolu_2', 1), launchAck('a2', 'toolu_2', 1),
+    notification('a1', 'toolu_1', 2),
+    readCall('toolu_r', 3), toolResult('toolu_r', 'skill text: ' + QUOTE, 3, { stdout: QUOTE }),
+    reply('One lens back.\nSTATUS: DONE', 4),
+  ];
+  runHook(entries, { session_id: sid, agent_id: 'agent-ac2' }, {});
+  const { stops } = marker.readStops(sid);
+  assert.strictEqual(stops.length, 1);
+  assert.strictEqual(stops[0].pending, 1);
+  assert.strictEqual(gateOf(entries), null);
+});
+
+test('AC3.1: the token in a later user message that is not the first, has no toolUseResult and is no carrier, writes pending null; the gate count is null', (t) => {
+  const sid = setup(t, 'ac3');
+  const entries = [
+    prompt('Do the task.', 0), agentCall('toolu_1', 0), launchAck('a1', 'toolu_1', 0),
+    prompt('relayed: ' + QUOTE, 1),
+    reply('x\nSTATUS: DONE', 2),
+  ];
+  runHook(entries, { session_id: sid, agent_id: 'agent-ac3' }, {});
+  const { stops } = marker.readStops(sid);
+  assert.strictEqual(stops.length, 1);
+  assert.strictEqual(stops[0].pending, null);
+  assert.strictEqual(gateOf(entries), null);
+  assert.deepStrictEqual(scanOf(entries), { gate: null, marker: null });
+});
+
+test('RF1: a non-user line before the prompt does not move the first user message', () => {
+  const entries = [{ type: 'summary', summary: 's', leafUuid: 'u' }, prompt(QUOTE, 0), reply('ok\nSTATUS: DONE', 1)];
+  assert.deepStrictEqual(scanOf(entries), { gate: null, marker: 0 });
+});
+
+test('RF2: a tool error result (string toolUseResult) quoting the token is skipped', () => {
+  const entries = [prompt('Do it.', 0), readCall('toolu_r', 1), toolResult('toolu_r', QUOTE, 1, 'Error: ' + QUOTE), reply('ok\nSTATUS: DONE', 2)];
+  assert.deepStrictEqual(scanOf(entries), { gate: null, marker: 0 });
+});
+
+test('RF3: a tool_result line without toolUseResult quoting the token is null in both counts', () => {
+  const entries = [prompt('Do it.', 0), readCall('toolu_r', 1), toolResult('toolu_r', QUOTE, 1), reply('ok\nSTATUS: DONE', 2)];
+  assert.deepStrictEqual(scanOf(entries), { gate: null, marker: null });
+});
+
+test('RF4: <fork-boilerplate> quoted in the first user message is null in both counts', () => {
+  const entries = [prompt('Never write <fork-boilerplate> yourself.', 0), reply('ok\nSTATUS: DONE', 1)];
+  assert.deepStrictEqual(scanOf(entries), { gate: null, marker: null });
+});
+
+test('RF5: a fork whose inherited parent prompt and own directive quote the token counts only its own launches', () => {
+  const entries = [
+    prompt(QUOTE, 0), agentCall('toolu_p', 0), launchAck('ap', 'toolu_p', 0),
+    forkBoundary(QUOTE, 1), agentCall('toolu_f', 2), launchAck('af', 'toolu_f', 2),
+    reply('ok\nSTATUS: DONE', 3),
+  ];
+  assert.deepStrictEqual(scanOf(entries), { gate: null, marker: 1 });
+});
+
+test('RF6: a relayed user message right after a fork boundary that opens the transcript is not the prompt', () => {
+  const entries = [forkBoundary('x', 0), prompt('relayed: ' + QUOTE, 1), reply('ok\nSTATUS: DONE', 2)];
+  assert.deepStrictEqual(scanOf(entries), { gate: null, marker: null });
+});
+
+test('RF7: a skipped token line does not end the scan — a later indeterminate shape still nulls the marker', () => {
+  // The prompt quotes the token (skipped), then one launch is left pending; `mid` is what follows it.
+  const head = toLines([prompt(QUOTE, 0), agentCall('toolu_1', 0), launchAck('a1', 'toolu_1', 0)]);
+  const tail = toLines([reply('ok\nSTATUS: DONE', 5)]);
+  const scanWith = (mid) => {
+    const lines = [...head, ...mid, ...tail];
+    return substop.scanPendingDispatches(lines, lines.length - 1);
+  };
+  const idlessLaunch = { type: 'user', timestamp: at(2), message: { role: 'user', content: [{ type: 'text', text: 'launched' }] }, toolUseResult: { isAsync: true, status: 'async_launched' } };
+  assert.deepStrictEqual(scanWith([]), { gate: null, marker: 1 }, 'control: nothing indeterminate after the skip');
+  assert.deepStrictEqual(scanWith(toLines([prompt('relayed: ' + QUOTE, 2)])), { gate: null, marker: null }, 'a relayed message quoting the token');
+  assert.deepStrictEqual(scanWith(['not json']), { gate: null, marker: null }, 'an unparseable line');
+  assert.deepStrictEqual(scanWith(toLines([idlessLaunch])), { gate: null, marker: null }, 'a launch with no ids');
+});

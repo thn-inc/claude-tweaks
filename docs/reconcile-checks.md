@@ -187,12 +187,23 @@ worktree PR, already archived the gitignored half while the tracked headers stay
   automatically (`git rm` when the twin's own copy is already tracked, `git mv -f` when it isn't)
   and the archival proceeds.
 - **`archived-pending-tracked-move`** — the split state itself: the archive twin exists AND the
-  live run dir holds nothing but tracked `work/` headers (no gitignored entries remain).  Under
-  `worktree-always: true` this sweep never commits the tracked-header move itself — it skips with
-  this reason and a paste-ready `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run
-  "<dir>"` command in `skipped[].command` instead of counting toward `move-failed` escalation.
-  Without `worktree-always`, the sweep completes the move itself via `archiveRunDir`'s normal
-  twin-resolution path above.
+  live run dir holds nothing but tracked `work/` headers (no gitignored entries remain).  Detection
+  covers a twin whose `run-state.json` is `clean` too (a spec shell, #3975) — only this sweep's loop
+  opts into that through `iterRunDirsWithState`'s `includeTrackedShells`. For a clean twin, under
+  `worktree-always: true` the sweep never commits the move itself: it skips with this reason and the
+  paste-ready `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "<root>"` in
+  `skipped[].command` (with `shell: true`), which the compact summary prints once per pass as
+  `archive stranded shells: <command>`; the CLI moves every such shell through one housekeeping PR.
+  The detection here asks no git, so a live `work/` whose files are untracked is reported too; the
+  CLI leaves such a dir alone and names it in its envelope's `untracked`. The command never needs
+  `--no-pr`: under `local-merge` the archive check does not run at all.
+  Without `worktree-always`, the sweep completes at most one non-conflicting shell in place per pass
+  and skips the rest with the same entry, delegating them to the CLI; a shell whose twin `work/`
+  differs from the live copy is skipped without using that slot (`work-twin-conflict` is the CLI's
+  verdict for it). A twin present but not `clean` keeps the older behavior: under `worktree-always`
+  a skip with `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "<dir>"` as its
+  `command`, instead of counting toward `move-failed` escalation; without it, the sweep completes the
+  move itself (uncapped) via `archiveRunDir`'s normal twin-resolution path above.
 
 **A merged PR is not a finished run (#3503).** When a run's PR is MERGED, the main loop's two
 paths still check one more thing before archiving: the branch-joined path (`archiveMergedRun`)
@@ -257,7 +268,7 @@ finding the run held would otherwise be lost at archive. `unfiledCantTellFinding
 `unfiledCantTell`, each finding of the run dir and of every `spec-*/` dir (prefixed `spec-N/`)
 with no `AUTO … filed as #{n} (work-fingerprint {fp})` line, and since #4679 no `AUTO … Queue write: {item} digested (work-fingerprint {fp})` line, in that dir's `decisions.md`. A read
 failure fails closed. `runTiebreakCoverage` carries the list as `unfiledCantTell`, and
-`archiveUnlessTiebreakGap`, the single choke point every archive decision that carries a run dir passes (`decideArchive`'s thin wrapper holds none, so it never evaluates the guard), evaluates it
+`archiveUnlessTiebreakGap`, the single choke point every archive decision that carries a run dir passes (a `decideArchiveCore` call that passes no `coverage` skips the guard: `archiveUnlessTiebreakGap` returns `archive` for an absent `coverage`), evaluates it
 last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`**, carrying
 `unfiled` and `CANT_TELL_UNFILED_HINT`. It is in `STRUCTURALLY_STUCK_REASONS`, the `status: clean`
 sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
@@ -315,15 +326,18 @@ that owns every mtime-TTL comparison (via `isStaleDir`), the events-log recency 
 `liveness` argument, default `adHocSessionLiveness`), and the run-liveness verdict `abandoned-interrupted`
 consults (through `ctx.runVerdict`, default `defaultRunVerdict`, #4421), returning `{ kind, ttlMs, evidence }` with
 `kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended',
-'merged', 'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
-The five pre-consolidation predicates (`isOrphanedMint`, `isAbandonedInterrupted`,
-`isAdHocStandaloneSuperseded`, `decideArchive`, `isStructurallyStuck`) are now thin wrappers that
-call `classifyRunDir` with `ctx.kinds` scoped to their own one kind — this is what keeps a
-standalone call (a unit test constructing a bare fixture dir, or `trackStuckSkip`'s own narrower
-question) answering exactly what it always asked, unaffected by whether the same dir would ALSO
-match some other, higher-precedence kind under the full order. `adhoc-session-ended` was added
-later (#4179) and has no wrapper predicate. Only `archiveMerged()`'s own main
-loop passes the full, ordered kind set.
+'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
+`classifyRunDir` and `decideArchiveCore` are the two seams tests and production both call. Every
+caller scopes `ctx.kinds`, so a call answers exactly what it asks, unaffected by whether the same
+dir would ALSO match some other, higher-precedence kind under the full order: the main loop passes
+`['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended']`, its
+companion re-classify (when the `checkRunIntegrity` gate fails) passes
+`['adhoc-superseded', 'adhoc-session-ended']`, and `isStructurallyStuck`, the one remaining
+wrapper, passes `['structurally-stuck']` for `trackStuckSkip`. The merged-PR decision is
+`decideArchiveCore`, called by `archiveMergedRun` and by the main loop's by-number fallback
+(`byNumberRecordSkip`, for a run with no resolvable branch), and is not a classifier kind.
+`adhoc-session-ended` joined the precedence order later (#4179), between `adhoc-superseded` and
+`structurally-stuck`.
 
 The `checkRunIntegrity` shipped-unclosed evidence gate for `abandoned-interrupted` stays
 call-site-only, never folded into the classifier itself (folding it in would misattribute the
