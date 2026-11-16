@@ -1672,8 +1672,11 @@ function archiveRunDir(root, runDir, { env } = {}) {
     // paths it staged — an empty pathspec after `--` commits the whole index.
     const commitPaths = [
       ...workMoves.flatMap(([src, dest]) => [src, dest]),
-      ...stagedOps.flatMap((op) => (op.kind === 'twin-rm' ? [op.srcFile]
-        : op.kind === 'twin-mv' ? [op.srcFile, op.destFile] : [])),
+      ...stagedOps.flatMap((op) => {
+        if (op.kind === 'twin-rm') return [op.srcFile];
+        if (op.kind === 'twin-mv') return [op.srcFile, op.destFile];
+        return [];
+      }),
     ];
     const commit = commitGit(['commit', '-m', archiveCommitSubject(runId), '--', ...commitPaths], root, { env });
     if (commit.failure) {
@@ -2524,7 +2527,8 @@ function archiveMerged({
     // (Deliverable 2's own AC). Without `worktree-always`, archive it
     // directly via archiveRunDir, same as any other archival.
     if (isArchivedPendingTrackedMove(root, dir)) {
-      const twinState = readRunState(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir)));
+      const twinArchiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir));
+      const twinState = readRunState(twinArchiveDir);
       if (twinState && twinState.status === 'clean') {
         // #3975: a clean-twin shell. The CLI is its completion; in place, only one per pass,
         // and never one whose work/ differs from the twin's (archiveRunDir would refuse it).
@@ -2538,7 +2542,7 @@ function archiveMerged({
           if (!result.ok) {
             // archiveRunDir merged `archiving` into the clean twin's run-state; a refusal after that
             // marker leaves it, which would hide the twin's clean status from the next pass. Best-effort.
-            try { writeRunState(path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir)), { status: 'clean' }); } catch { /* best-effort */ }
+            try { writeRunState(twinArchiveDir, { status: 'clean' }); } catch { /* best-effort */ }
           }
           return result;
         });

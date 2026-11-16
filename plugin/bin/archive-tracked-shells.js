@@ -235,7 +235,11 @@ function planPrBase(root, integration, hasLocal, fetchedOk, g, gh) {
   try { prs = JSON.parse(listed.stdout || '[]'); } catch { prs = null; }
   if (!Array.isArray(prs)) return { error: 'gh pr list printed no JSON array' };
   const created = (p) => String((p && p.createdAt) || '');
-  const newestFirst = [...prs].sort((a, b) => (created(b) > created(a) ? 1 : created(b) < created(a) ? -1 : b.number - a.number));
+  const newestFirst = [...prs].sort((a, b) => {
+    if (created(b) > created(a)) return 1;
+    if (created(b) < created(a)) return -1;
+    return b.number - a.number;
+  });
   const open = newestFirst.find((p) => p.state === 'OPEN');
   const latest = newestFirst[0] || null;
   const merged = newestFirst.find((p) => p.state === 'MERGED');
