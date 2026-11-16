@@ -1843,7 +1843,7 @@ async function runReconcile(argv, deps) {
   const opts = {
     dryRun: args.includes('--dry-run'),
     cwd: deps.cwd(),
-    // Reaches only the no-repo/no-remote gate's git children today (see reconcile()'s opts comment; #5606).
+    // Reaches the no-repo/no-remote gate, the model resolve, the gh preflight, the shared fetch and the fast checks (mirror, red-tip, console); the checks outside that set still inherit process.env (#5606).
     env: deps.env,
     mcpReachable: args.includes('--mcp-reachable'),
     // Unscoped: run everything except the janitorial checks deferred to the

@@ -66,10 +66,7 @@ function pluginRoot(env) {
 }
 
 // The helpers only a hook event calls take the event's env and have no process.env default: a call
-// that leaves it out is a programming error, never a silent read of the real environment.
-function requireOptEnv(env, who) {
-  if (env === null || typeof env !== 'object') throw new TypeError(`${who}: env is required`);
-}
+// that leaves it out is a programming error (ctxLib.assertEnvObject), never a silent read of the real environment.
 
 // The gate's two path-prefix/path-identity exemptions. `.claude-tweaks/pipelines/`
 // holds plugin-owned pipeline bookkeeping — run config, the auto-decision log,
@@ -317,7 +314,7 @@ function isPolicyFile(repoRoot, targetPath, { fsImpl } = {}) {
 // path is unprovable (the cwd it would resolve against is not necessarily
 // the one the write executes in), so it is never exempt.
 function isUntrackedOrIgnored(repoRoot, targetPath, { env } = {}) {
-  requireOptEnv(env, 'isUntrackedOrIgnored');
+  ctxLib.assertEnvObject(env, 'isUntrackedOrIgnored');
   if (!repoRoot || typeof targetPath !== 'string' || !targetPath) return false;
   if (!path.isAbsolute(targetPath)) return false;
   const resolved = path.resolve(targetPath);
@@ -363,7 +360,7 @@ const POLICY_COMMIT_ALLOWLIST = Object.freeze(new RegExp(
 // instead.
 const POLICY_COMMIT_STATUSES = new Set(['A', 'M', 'D']);
 function isPolicyOnlyCommit(command, cwd, { env } = {}) {
-  requireOptEnv(env, 'isPolicyOnlyCommit');
+  ctxLib.assertEnvObject(env, 'isPolicyOnlyCommit');
   if (typeof command !== 'string' || !POLICY_COMMIT_ALLOWLIST.test(command)) return false;
   try {
     const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd, { raw: true, env });
@@ -432,7 +429,7 @@ function unquoteCqArg(raw) {
 // not actually an ancestor of it (not provably a fast-forward) — not exempt,
 // the same fail-closed posture as every other check in this file.
 function isIntegrationBranchFastForwardPush(command, cwd, { env } = {}) {
-  requireOptEnv(env, 'isIntegrationBranchFastForwardPush');
+  ctxLib.assertEnvObject(env, 'isIntegrationBranchFastForwardPush');
   if (typeof command !== 'string') return false;
   const m = command.match(INTEGRATION_BRANCH_PUSH_RE);
   if (!m) return false;
@@ -453,7 +450,7 @@ function isIntegrationBranchFastForwardPush(command, cwd, { env } = {}) {
 // indeterminate/negative distinction that repoInfo now draws would change no
 // decision here. (The worktree gate is the caller that needed it.)
 function toplevel(dir, { env } = {}) {
-  requireOptEnv(env, 'toplevel');
+  ctxLib.assertEnvObject(env, 'toplevel');
   return runGit(['rev-parse', '--show-toplevel'], dir, { env }).stdout;
 }
 
@@ -735,7 +732,7 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
 // write. See WORK_SPEC_TAIL_RE above for exactly what this does and does
 // not cover.
 function shadowPipelineRunDir(targetPath, { fsImpl, env } = {}) {
-  requireOptEnv(env, 'shadowPipelineRunDir');
+  ctxLib.assertEnvObject(env, 'shadowPipelineRunDir');
   if (typeof targetPath !== 'string' || !targetPath || !path.isAbsolute(targetPath)) return null;
   const resolved = path.resolve(targetPath);
   // realTarget follows an existing symlink chain the same way the policy.yml
@@ -849,7 +846,7 @@ const REVIEW_CONSOLE_HEADER = 'Review Console';
 // process.cwd() — the gate then fails open rather than reading some other
 // checkout's policy.yml.
 function readConsoleCeiling(runDir, cwd, { env } = {}) {
-  requireOptEnv(env, 'readConsoleCeiling');
+  ctxLib.assertEnvObject(env, 'readConsoleCeiling');
   const top = runGit(['rev-parse', '--show-toplevel'], cwd, { env });
   if (top.failure) throw new Error(top.failure);
   const git = () => top.stdout;
@@ -932,7 +929,7 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
 // forEachCommandSegment/resolveGitCommand call of its own (#2065's second
 // half: the second full traversal this file used to pay on every Bash call).
 function checkGitStashWarn(segments, warnings, env) {
-  requireOptEnv(env, 'checkGitStashWarn');
+  ctxLib.assertEnvObject(env, 'checkGitStashWarn');
   // Caller only ever passes a real array here when ctx.input.tool_name is
   // already 'Bash' (runInner's own `segments` derivation) — re-checked
   // defensively rather than trusted, since a future caller could pass this
@@ -1664,7 +1661,7 @@ function hasLoggedClaim(runDir, n) {
 // closed), matching this file's stated posture for the #989 exemption's own
 // ambiguous cases (see hasNoUpstreamYet's comment above).
 function currentBranchName(dir, { env } = {}) {
-  requireOptEnv(env, 'currentBranchName');
+  ctxLib.assertEnvObject(env, 'currentBranchName');
   const res = runGit(['symbolic-ref', '--short', 'HEAD'], dir, { env });
   if (res.failure || !res.stdout) return null;
   return res.stdout.trim() || null;
@@ -1798,6 +1795,7 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   if (opts.timeoutMs !== undefined) detectOpts.timeoutMs = opts.timeoutMs;
   if (opts.onDegrade !== undefined) detectOpts.onDegrade = opts.onDegrade;
   if (opts.env !== undefined) detectOpts.env = opts.env;
+  if (opts.homeDir !== undefined) detectOpts.homeDir = opts.homeDir;
   const ttl = opts.degradeMemoTtlMs;
   if (!(Number.isInteger(ttl) && ttl > 0 && typeof runDir === 'string' && runDir !== '')) {
     return detectIntegrationModel(root, detectOpts);
@@ -2261,7 +2259,7 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     try {
       model = override
         ? override(mainRoot, { onDegrade })
-        : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade, env: ctx.env });
+        : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade, env: ctx.env, homeDir: ctx.homeDir });
     } catch {
       model = 'local-merge'; // fail open: an unresolvable model is not provably pr-first
       modelResolved = false;

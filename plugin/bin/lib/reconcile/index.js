@@ -315,7 +315,8 @@ async function reconcileInner(opts, state) {
   const ghDependentChecks = checks.filter((c) => c !== 'mirror');
   // A hook event's env, homeDir and cwd for the gh and git children below (#5377); undefined leaves each call as it was.
   const injected = opts.env !== undefined ? { env: opts.env, ...(opts.homeDir !== undefined ? { homeDir: opts.homeDir } : {}) } : {};
-  const ghInjected = opts.env !== undefined ? { ...injected, cwd: root } : undefined;
+  // The preflight child runs where the pass was told to run (the declined-store prune's cwd), as it ran in the process's own directory before #5377; no `cwd` key when the caller passed none.
+  const ghInjected = opts.env !== undefined ? { ...injected, ...(opts.cwd ? { cwd: opts.cwd } : {}) } : undefined;
   // #872: the FAST_CHECKS shape (mirror requested, remote-prune not — the
   // same "mirror only" shape shared-fetch.js's own header names) runs this
   // preflight and the shared git fetch below concurrently via Promise.all,

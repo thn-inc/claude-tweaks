@@ -772,13 +772,17 @@ function writeRunState(runDir, patchOrFn, { env = process.env } = {}) {
 // worktree-compatible run, routinely a sibling session's *-standalone dir in a
 // busy checkout. It is never this session's own run, so no write path that
 // stamps or logs friction may treat it as owned.
+// The one check behind every required-env throw on an event path: `who` names the caller in the
+// default message `${who}: env is required`, `message` replaces it where a pinned text exists.
+function assertEnvObject(env, who, message) {
+  if (env === null || typeof env !== 'object') throw new TypeError(message || `${who}: env is required`);
+  return env;
+}
+
 // The environment a hook event runs under: hooks.js builds it into every event's
 // context. A missing one is a programming error, never a reason to read process.env.
 function requireEnv(ctx) {
-  if (!ctx || ctx.env === null || typeof ctx.env !== 'object') {
-    throw new TypeError('hook context has no env: hooks.js builds it for every event');
-  }
-  return ctx.env;
+  return assertEnvObject(ctx && ctx.env, 'hook context', 'hook context has no env: hooks.js builds it for every event');
 }
 
 function isTrustedOwnedRun(ownedRun) {
@@ -1106,5 +1110,5 @@ module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, priorWorktree, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, isSessionOwnedAdHocRun, resolveDenialRunDir,
-  claudePid, requireEnv, resolveLockWaitMs, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
+  claudePid, requireEnv, assertEnvObject, resolveLockWaitMs, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
 };

@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
 const { envTmpdir } = require('../session-tmp');
+const { assertEnvObject } = require('./context');
 
 function resolveSessionId(sessionId) {
   return sessionId && String(sessionId).trim() ? String(sessionId).trim() : null;
@@ -21,13 +22,9 @@ function resolveSessionId(sessionId) {
 
 // Only the SubagentStop event calls these, so `env` (the hook context's) is required: no fallback to
 // the real process.env (#5377).
-function requireOptEnv(opts) {
-  if (!opts || opts.env === null || typeof opts.env !== 'object') throw new TypeError('contract-retries: env is required');
-  return opts.env;
-}
 
 function retriesPath(sessionId, opts) {
-  const env = requireOptEnv(opts);
+  const env = assertEnvObject(opts && opts.env, 'contract-retries');
   const id = resolveSessionId(sessionId);
   if (!id) return null;
   return path.join(envTmpdir(env), `ct-contract-retries-${id}.json`);

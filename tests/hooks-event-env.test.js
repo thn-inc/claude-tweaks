@@ -588,8 +588,11 @@ test('reconcile FAST_CHECKS under pr-first run their children under the passed e
     bares.push(a.bare);
     advanceOrigin(a.bare);
     // The real process.env is broken for git, so any git child that inherits it fails and the result reads red.
+    // The pass runs from a subdirectory, so its own cwd and the main checkout (its root) are two different directories.
+    const subA = path.join(a.repo, 'sub');
+    fs.mkdirSync(subA);
     const ahead = await withProcessEnv({ GIT_DIR: brokenGitDir }, () => reconcileLib.reconcile({
-      cwd: a.repo, env: prFirstEnv(stubDir, log), homeDir: () => os.tmpdir(), checks: ['mirror', 'red-tip', 'console'],
+      cwd: subA, env: prFirstEnv(stubDir, log), homeDir: () => os.tmpdir(), checks: ['mirror', 'red-tip', 'console'],
       resolveIntegrationModel: () => 'pr-first',
     }));
     assert.deepStrictEqual(ahead.skipped, [], JSON.stringify(ahead.skipped));
@@ -601,7 +604,7 @@ test('reconcile FAST_CHECKS under pr-first run their children under the passed e
     for (const needle of ['api rate_limit', 'check-runs', 'pr view 5', ' rev-parse origin/main', ' fetch origin main', ' status --porcelain', ' rev-list ', ' branch --show-current', ' merge --ff-only']) {
       assert.ok(lines.some((l) => l.includes(needle)), `a call matching ${needle}: ${lines.join(' | ')}`);
     }
-    assert.ok(lines.find((l) => l.includes('api rate_limit')).endsWith(`pwd=${a.repo}`), 'the preflight gh child ran in the main checkout');
+    assert.ok(lines.find((l) => l.includes('api rate_limit')).endsWith(`pwd=${subA}`), 'the preflight gh child ran in the pass\'s own cwd, not the main checkout');
 
     // 2. origin ahead, another branch checked out: the `fetch origin main:main` update path.
     const b = prFirstRepo();
@@ -625,14 +628,16 @@ test('reconcile FAST_CHECKS under pr-first run their children under the passed e
     const env3 = prFirstEnv(stubDir, log);
     preflight.ghHealthCheck = (o) => { seen = o; return { ok: false, reason: 'patched' }; };
     let narrowed;
+    const subC = path.join(c.repo, 'sub');
+    fs.mkdirSync(subC);
     try {
       narrowed = await withProcessEnv({ GIT_DIR: brokenGitDir }, () => reconcileLib.reconcile({
-        cwd: c.repo, env: env3, homeDir: () => os.tmpdir(), checks: ['mirror', 'remote-prune'], resolveIntegrationModel: () => 'pr-first',
+        cwd: subC, env: env3, homeDir: () => os.tmpdir(), checks: ['mirror', 'remote-prune'], resolveIntegrationModel: () => 'pr-first',
       }));
     } finally {
       preflight.ghHealthCheck = realHealth;
     }
-    assert.ok(seen && seen.env === env3 && seen.cwd === c.repo, `the sync preflight got the passed env and cwd: ${JSON.stringify(seen && Object.keys(seen))}`);
+    assert.ok(seen && seen.env === env3 && seen.cwd === subC, `the sync preflight got the passed env and cwd: ${JSON.stringify(seen && Object.keys(seen))}`);
     assert.ok(narrowed.skipped.some((s) => s.reason === 'preflight-patched'));
     assert.strictEqual(narrowed.mirror.action, 'fast-forwarded', JSON.stringify(narrowed.mirror));
   } finally {
@@ -746,6 +751,35 @@ test('the pr-first checks read gh\'s config dir through the passed homeDir', { s
   }
 });
 
+test('pre-tool-use\'s forge probe reads gh\'s config dir through the context\'s homeDir', { skip: process.platform === 'win32' }, async () => {
+  const { RUN_ID, commitMaterializedSpec } = require('./helpers/bookkeeping-stamps-gate');
+  const main = gitRepo();
+  // An origin on a non-github.com host sends ghOptions to gh's hosts file, found under homeDir() when neither
+  // GH_CONFIG_DIR nor XDG_CONFIG_HOME names a directory.
+  fixtureGit(['-C', main, 'remote', 'add', 'origin', 'https://127.0.0.1:1/o/r.git'], { env: cleanGitEnv(), stdio: 'ignore' });
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  mkRunAt(main, RUN_ID, wt);
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-home-'));
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  ghStub(stubDir);
+  try {
+    const log = path.join(stubDir, 'gh.log');
+    const env = prFirstEnv(stubDir, log, { HOME: fakeHome, USERPROFILE: fakeHome });
+    delete env.GH_CONFIG_DIR;
+    delete env.XDG_CONFIG_HOME;
+    delete env.GH_HOST;
+    // The probe runs (no `pr` is recorded and no model is pinned); a run that read the real home through
+    // os.homedir() is rejected by runCli's home guard, so a resolved call is the proof.
+    const res = await runHookCli(['pre-tool-use'], { input: writePayload(path.join(wt, 'src', 'x.js'), wt), cwd: wt, env });
+    assert.strictEqual(res.code, 0);
+    assert.ok(fs.readFileSync(log, 'utf8').includes('repo view'), 'the forge probe ran its gh call');
+  } finally {
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
+});
+
 test('ports ensure resolves the checkout under the passed env and rejects a missing env or home', async () => {
   const portsEnsure = require('../plugin/bin/lib/ports/ensure');
   const repo = gitRepo();
@@ -833,6 +867,12 @@ test('session-start without a spawn fake rejects', async () => {
 
 test('session-start run throws on a context without env', async () => {
   await assert.rejects(sessionStart.run({ input: {}, cwd: os.tmpdir() }), { name: 'TypeError', message: /hook context has no env/ });
+});
+
+test('session-start run throws on a context without homeDir', async () => {
+  const ctx = { input: {}, cwd: os.tmpdir(), env: hookEnv() };
+  await assert.rejects(sessionStart.run(ctx), { name: 'TypeError', message: /hook context has no homeDir/ });
+  await assert.rejects(sessionStart.run({ ...ctx, homeDir: '/tmp' }), { name: 'TypeError', message: /homeDir/ });
 });
 
 test('session-start writes the node path under the injected home', async () => {

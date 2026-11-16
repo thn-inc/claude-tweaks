@@ -114,6 +114,9 @@ function saveNodePath({ execPath = process.execPath, home } = {}) {
 
 async function run(ctx) {
   const env = ctxLib.requireEnv(ctx);
+  // The event tail always supplies the home lookup; a context without one would quietly drop the
+  // superpowers notice and fall back to os.homedir() in reconcile, the silent read #5377 closes.
+  if (typeof ctx.homeDir !== 'function') throw new TypeError('hook context has no homeDir: hooks.js builds it for every event');
   const parts = [];
   // Per-invocation cache (#381): memoizes `git worktree list --porcelain` and
   // `resolveIntegrationBranch`'s resolved name, each keyed by repo root, so the
@@ -154,6 +157,7 @@ async function run(ctx) {
   // #3973: re-stamp the owner block (a resume runs under a new process) before anything below spawns.
   // #4150: restampWhileFresh keeps the full pid probe here — a resume must re-stamp at once, not at the next window edge.
   try { ctxLib.refreshOwnerBlock(ctx, { restampWhileFresh: true }); } catch { /* best-effort */ }
+  // The scan uses the hook payload's cwd (the context's), which on win32 is searched first; it used the hook process's cwd before #5377.
   try { parts.push(...deps.collect({ env, cwd: ctx.cwd })); } catch { /* best-effort */ }
   try {
     const buildLine = resolveBuildLine({ CLAUDE_PLUGIN_ROOT: pluginRootEnv });
@@ -274,7 +278,7 @@ async function run(ctx) {
     // block below and its comment for why conflating the two was a bug).
     // `sessionId` (hoisted to the top of run(), above) is the hook payload's
     // own session id — the same field hooks.js's dispatcher already reads for
-    // `ownedRun` (`ctxLib.resolveRun(cwd, process.env, input.session_id)`).
+    // `ownedRun` (`ctxLib.resolveRun(cwd, deps.env, input.session_id, …)`, the injected env).
     // FAST_CHECKS never includes 'archive' (see this file's own constant
     // above), so passing it here has no effect on archive-merged.js's
     // ownership gate today — that check only ever runs off the detached
