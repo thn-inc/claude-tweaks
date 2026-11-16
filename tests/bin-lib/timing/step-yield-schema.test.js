@@ -60,7 +60,11 @@ function liveYield() {
   const timing = JSON.parse(fs.readFileSync(path.join(FIX, 'review-run', 'timing.json'), 'utf8'));
   timing.questions.push({ id: 'toolu_orphan', askTs: at(9000).toISOString(), questions: ['Asked after the run?'] });
   fs.writeFileSync(path.join(dir, 'timing.json'), JSON.stringify(timing));
-  return deriveStepYield(dir, { now: at(3000) });
+  try {
+    return deriveStepYield(dir, { now: at(3000) });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 const OUTPUT = liveYield();
 

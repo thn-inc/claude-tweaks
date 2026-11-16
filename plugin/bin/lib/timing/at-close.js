@@ -168,7 +168,8 @@ function writeYieldIn(dir, deadlineAt, needRunState) {
   if (!isDir(dir)) return { vanished: true };
   const waitMs = Math.max(0, Math.floor(Math.min(module.exports.PHASE_LOCK_WAIT_MS, deadlineAt - Date.now())));
   const held = acquireLock(path.join(dir, LOCK_NAME), { waitMs, env: {}, createParent: false });
-  if (!held) return isDir(dir) ? { status: 'skipped', skip: null } : { vanished: true };
+  // A miss that spent the close's whole bound is the bound running out (bound: true); a miss inside it stays silent.
+  if (!held) return isDir(dir) ? { status: 'skipped', skip: null, ...(Date.now() >= deadlineAt ? { bound: true } : {}) } : { vanished: true };
   const vacated = () => needRunState && lstatType(path.join(dir, 'run-state.json')).type === 'missing';
   try {
     if (vacated()) return { vanished: true };
@@ -196,17 +197,21 @@ function writeYieldIn(dir, deadlineAt, needRunState) {
 function writeStepYieldSafe(dir, { boundMs = module.exports.TIMING_BOUND_MS, deadlineAt = Date.now() + boundMs, logBound = true } = {}) {
   let target = isArchivedDir(dir) || isDir(dir) ? dir : archiveTwin(dir);
   try {
+    const boundSkip = `condition: close passed the ${boundMs} ms time bound before the step yield was derived → fallback: ${NO_YIELD}`;
+    // logBound false: the caller (finish) folds the bound into the close's one SKIP line, via the result's bound flag.
     if (Date.now() >= deadlineAt) {
-      const skip = `condition: close passed the ${boundMs} ms time bound before the step yield was derived → fallback: ${NO_YIELD}`;
-      // logBound false: the close's own SKIP already names the bound (a hung transcript read), so one line says it.
-      if (logBound) logTimingSkip(target, skip);
-      return { status: 'failed', skip };
+      if (logBound) logTimingSkip(target, boundSkip);
+      return { status: 'failed', skip: boundSkip, bound: true };
     }
     for (let attempt = 0; attempt < 2; attempt++) {
       if (!isDir(target)) return { status: 'failed', skip: YIELD_GONE };
       const needRunState = lstatType(path.join(target, 'run-state.json')).type !== 'missing';
       const r = writeYieldIn(target, deadlineAt, needRunState);
-      if (!r.vanished) return r;
+      if (!r.vanished) {
+        if (!r.bound) return r;
+        if (logBound) logTimingSkip(target, boundSkip);
+        return { ...r, skip: boundSkip };
+      }
       // The dir vanished under the write (an archive moved it): follow it once.
       if (attempt === 0 && !isArchivedDir(target)) { target = archiveTwin(target); continue; }
       break;
@@ -224,9 +229,13 @@ function writeStepYieldSafe(dir, { boundMs = module.exports.TIMING_BOUND_MS, dea
 // questions re-derive the wait times). A spec-N child gets none, like timing.json. deadlineAt is
 // the close's own time bound (TIMING_BOUND_MS from its start): the yield is written inside it.
 function finish(runDir, result, { deadlineAt, boundMs }) {
-  if (result.skip) logTimingSkip(runDir, result.skip);
-  const boundNamed = typeof result.skip === 'string' && result.skip.includes('ms time bound');
-  if (result.status !== 'not-top-level') module.exports.writeStepYieldSafe(runDir, { deadlineAt, boundMs, logBound: !boundNamed });
+  // One close logs at most one timing-family SKIP line. The yield runs first (logBound false) so a
+  // yield dropped for the bound is named in that one line: appended to the timing SKIP, or its own
+  // when the timing write logged none. A yield lock miss inside the bound is silent.
+  const y = result.status !== 'not-top-level' ? module.exports.writeStepYieldSafe(runDir, { deadlineAt, boundMs, logBound: false }) : null;
+  const yieldBound = Boolean(y && y.bound);
+  if (result.skip) logTimingSkip(runDir, yieldBound ? `${result.skip}; ${NO_YIELD}` : result.skip);
+  else if (yieldBound) logTimingSkip(runDir, y.skip);
   return result;
 }
 

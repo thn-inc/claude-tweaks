@@ -234,6 +234,7 @@ test('deadline: readUsage never settles → resolves at boundMs, phase rows writ
     const skips = skipLines(runDir);
     assert.equal(skips.length, 1, 'the one SKIP names the bound; the yield past it adds none of its own');
     assert.match(skips[0], /200 ms time bound/);
+    assert.match(skips[0], /; no step-yield\.json written/, 'the one SKIP names the dropped step-yield.json');
     // The bound is past, so the yield is not derived either.
     assert.equal(fs.existsSync(path.join(runDir, 'step-yield.json')), false);
   } finally {
@@ -594,9 +595,10 @@ test('item 7: the read-check-write holds the run dir\'s timing lock — a lock h
     const skips = timingSkips(runDir);
     assert.equal(skips.length, 1, JSON.stringify(skips));
     assert.match(skips[0], /condition: timing\.json lock not acquired within \d+ ms → fallback: no timing\.json written/);
-    // The wait spent the whole bound, so the yield past it is skipped with its own SKIP naming the bound.
-    assert.equal(yieldBoundSkips(runDir).length, 1);
-    assert.match(yieldBoundSkips(runDir)[0], /100 ms time bound before the step yield was derived/);
+    // The wait spent the whole bound, so the yield past it is skipped: the one SKIP names it, no second line.
+    assert.match(skips[0], /; no step-yield\.json written/);
+    assert.equal(yieldBoundSkips(runDir).length, 0);
+    assert.equal(skipLines(runDir).length, 1, JSON.stringify(skipLines(runDir)));
     // Released, the same call writes.
     sync = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
     assert.equal(sync.status, 'written');
@@ -1096,6 +1098,28 @@ test('lockHeld: a timing lock held by a live writer → no yield, silently (no S
     assert.deepStrictEqual(skipLines(runDir), [], 'a lock not acquired is not a SKIP');
     // Released, the same call writes.
     assert.equal(atClose.writeStepYieldSafe(runDir).status, 'written');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lock wait that spends the close bound: the yield logs its own one SKIP naming the file; inside the bound it stays silent', () => {
+  const root = tmpRoot();
+  const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const held = acquireLock(path.join(runDir, '.timing.lock'), { waitMs: 0, env: {} });
+    assert.ok(held);
+    let r;
+    try {
+      r = atClose.writeStepYieldSafe(runDir, { deadlineAt: Date.now() + 30, boundMs: 30 });
+    } finally {
+      releaseLock(held);
+    }
+    assert.equal(r.status, 'skipped');
+    assert.equal(r.bound, true);
+    assert.equal(skipLines(runDir).length, 1);
+    assert.match(skipLines(runDir)[0], /no step-yield\.json written/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
