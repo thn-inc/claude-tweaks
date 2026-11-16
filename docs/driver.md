@@ -182,7 +182,7 @@ What each `pending-review` reason leaves behind:
 | `conflict` | ready | none | one on the PR |
 | `drain-overlap`, `near-duplicate`, `in-flight-unreadable`, `in-flight-read-failed` | draft (the hold runs before mark-ready) | none written | none written by `merge` |
 | `awaiting-local-acceptance` (this run's `park` succeeded) | ready, open | `accept:pending` | the acceptance packet (posted or edited by `park`) |
-| `already-parked`, `park-state-unknown` | ready, open (the driver marked it ready this run before the park check) | none written (an `already-parked` record keeps the pending label an earlier park wrote; a `park-state-unknown` one may not carry it) | none written |
+| `already-parked`, `park-state-unknown` | ready (made ready, if draft, before the park check), open | none written (an `already-parked` record keeps the pending label an earlier park wrote; a `park-state-unknown` one may not carry it) | none written |
 | `park-failed` | ready, open | whatever `park`'s steps 1 and 2 wrote before failing; after a killed or unstarted call (no exit code), steps 3 to 5 may also have run, so the record may be parked (the detail says to re-check with `accept-park.js parked`) | as `park` left it |
 | `unclassified` | as the last call left it | none | none |
 

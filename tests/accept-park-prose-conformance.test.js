@@ -73,16 +73,16 @@ function pinStep29(text) {
   need(section.includes(M_DECIDE), 'Step 2.9 must run accept-park.js decide');
   need(/for each `Fixes` record/.test(section), 'Step 2.9 must run per Fixes record');
   need(/parked --record \{n\} --run "\$PIPELINE_RUN_DIR"/.test(section), 'Step 2.9 must give parked its --record and --run arguments');
-  need(/Never run Step 3 and report `pending-review`/.test(section), 'Step 2.9 must state the stop and the pending-review outcome');
+  need(/never run Step 3; report `pending-review` and read/.test(section), 'Step 2.9 must state the stop and the pending-review outcome');
   need(/decide --run "\$PIPELINE_RUN_DIR" --record \{n\}\[,\{m\}…\]/.test(section), 'Step 2.9 must give decide its --run and --record arguments');
   need(section.includes('_shared/local-acceptance-park.md'), 'Step 2.9 must point at local-acceptance-park.md');
-  need(/unless `parked` exits 5 and `decide` exits 0 with `park:false`/.test(section),
+  need(/Unless `parked` exits 5 and `decide` exits 0 with `park:false`:/.test(section),
     'Step 2.9 must gate the read of local-acceptance-park.md on the inverted condition');
   need(Buffer.byteLength(section.slice(section.indexOf('\n')).trim()) <= POINTER_BYTES, POINTER_MSG);
   const firstMerge = text.indexOf('gh pr merge', step3);
   need(firstMerge !== -1, 'Step 3 first gh pr merge missing');
   need(at < firstMerge, 'Step 2.9 must come before the first gh pr merge');
-  need(/\| `pending-review` \|[^\n]*`awaiting-local-acceptance`, `already-parked`, `park-state-unknown` or `park-failed` \(Step 2\.9\)/.test(text),
+  need(/\| `pending-review` \|[^\n]*`awaiting-local-acceptance`, `already-parked`, `park-state-unknown`, `supplier-failed` or `park-failed` \(Step 2\.9\)/.test(text),
     'the pending-review outcome row must name awaiting-local-acceptance (Step 2.9)');
 }
 
@@ -97,15 +97,15 @@ test('AC3b.2 control: each Step 2.9 claim goes red on its own message', () => {
   expectRed(() => pinStep29(MERGE.replace(section, section.replace(M_DECIDE, 'x'))), 'Step 2.9 must run accept-park.js decide');
   expectRed(() => pinStep29(MERGE.replace(section, section.replace('parked --record {n} --run "$PIPELINE_RUN_DIR"', 'parked --record {n}'))), 'Step 2.9 must give parked its --record and --run arguments');
   expectRed(() => pinStep29(MERGE.replace(section, section.replace('for each `Fixes` record', 'for the record'))), 'Step 2.9 must run per Fixes record');
-  expectRed(() => pinStep29(MERGE.replace(section, section.replace('Never run Step 3 and report `pending-review`, reading', 'Reading'))), 'Step 2.9 must state the stop and the pending-review outcome');
+  expectRed(() => pinStep29(MERGE.replace(section, section.replace('never run Step 3; report `pending-review` and read', 'read'))), 'Step 2.9 must state the stop and the pending-review outcome');
   expectRed(() => pinStep29(MERGE.replace(section, section.replace('decide --run "$PIPELINE_RUN_DIR" --record', 'decide --record'))),
     'Step 2.9 must give decide its --run and --record arguments');
-  expectRed(() => pinStep29(MERGE.replace(section, section.replace('unless', 'only when'))),
+  expectRed(() => pinStep29(MERGE.replace(section, section.replace('Unless', 'Only when'))),
     'Step 2.9 must gate the read of local-acceptance-park.md on the inverted condition');
   expectRed(() => pinStep29(MERGE.replace(section, `${section} ${'x'.repeat(120)}`)), POINTER_MSG);
-  expectRed(() => pinStep29(without(MERGE, '`awaiting-local-acceptance`, `already-parked`, `park-state-unknown` or `park-failed` (Step 2.9), ')),
+  expectRed(() => pinStep29(without(MERGE, '`awaiting-local-acceptance`, `already-parked`, `park-state-unknown`, `supplier-failed` or `park-failed` (Step 2.9), ')),
     'the pending-review outcome row must name awaiting-local-acceptance (Step 2.9)');
-  expectRed(() => pinStep29(without(MERGE, '`already-parked`, ')),
+  expectRed(() => pinStep29(without(MERGE, '`supplier-failed` or ').replace('`park-state-unknown`, ', '`park-state-unknown` or ')),
     'the pending-review outcome row must name awaiting-local-acceptance (Step 2.9)');
   // Ordering: permute — splice Step 2.9 below Step 3's first merge fence.
   const moved = without(MERGE, `${section}\n\n`).replace('## Step 4 and Step 5', `${section}\n\n## Step 4 and Step 5`);
@@ -172,6 +172,7 @@ test('pr-first-merge shape line lists Step 2.9 and the curation remedy stays out
 // AC3b.3 — tidy's Arm ready PR holds a parked PR before it reaches Step 3
 // ---------------------------------------------------------------------------------------------
 const HELD_LINE = 'Held (not armed): PR #{n} — parked awaiting local acceptance';
+const UNCONFIRMED_LINE = 'Held (not armed): PR #{n} — park state not confirmed (exit {code})';
 
 function pinTidy(actions, skill) {
   const arm = collapse(sectionOf(actions, '## Arm ready PR'));
@@ -185,6 +186,7 @@ function pinTidy(actions, skill) {
   need(arm.includes('park state not confirmed (exit {code})') && arm.includes('for exit 0'), 'Arm ready PR must say parked only for exit 0 and park state not confirmed otherwise');
   need(arm.includes(HELD_LINE), 'Arm ready PR must report the held line');
   need(collapse(skill).includes(HELD_LINE), 'tidy SKILL.md Step 7.5 template must carry the held line');
+  need(collapse(skill).includes(UNCONFIRMED_LINE), 'tidy SKILL.md Step 7.5 template must carry the park-state-not-confirmed line');
 }
 
 test('AC3b.3: tidy Arm ready PR holds a parked PR', () => {
@@ -203,6 +205,9 @@ test('AC3b.3 control: the tidy guard and its template line each go red', () => {
   const skillLine = TIDY_SKILL.split('\n').find((l) => l.includes(HELD_LINE));
   need(skillLine, 'the template line exists');
   expectRed(() => pinTidy(TIDY_ACTIONS, without(TIDY_SKILL, skillLine)), 'tidy SKILL.md Step 7.5 template must carry the held line');
+  const unconfirmed = TIDY_SKILL.split('\n').find((l) => l.includes(UNCONFIRMED_LINE));
+  need(unconfirmed, 'the unconfirmed template line exists');
+  expectRed(() => pinTidy(TIDY_ACTIONS, without(TIDY_SKILL, unconfirmed)), 'tidy SKILL.md Step 7.5 template must carry the park-state-not-confirmed line');
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -457,6 +462,8 @@ function pinLocalVerdict(text) {
   need(rec < s3 && s3 < s4, 'Accept and merge must order approval, Step 3, Step 4');
   need(merge.includes('`parked` then exits 5') && merge.includes('`moved:true` withholds this option'), 'Accept and merge must say parked then exits 5 and re-check the head');
   need(merge.includes('as `dispatch/close-out.md` step 5 does') && merge.includes('waits on the required checks, no bypass'), 'Accept and merge must cite close-out step 5 and the required checks');
+  need(merge.includes('`PIPELINE_RUN_DIR` bound as `dispatch/close-out.md` step 7 binds it') && merge.includes('the archived one included') && merge.includes('`claude-tweaks-run:` marker as its step 3 resolves it'),
+    'Accept and merge must bind PIPELINE_RUN_DIR for Step 4 as close-out step 7 does');
   need(merge.includes('Step 2.5 and Step 2.9 are skipped for this merge'), 'Accept and merge must skip Step 2.5 and Step 2.9');
   need(/#4614/.test(block), 'the broken option must hand off to the verdict handler (#4614)');
 }
@@ -490,6 +497,7 @@ test('AC5.1 control: a dropped or reordered option goes red', () => {
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, swapped)), 'local verdict options must come in order');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('Step 2.5 and Step 2.9 are skipped for this merge', ''))), 'Accept and merge must skip Step 2.5 and Step 2.9');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('as `dispatch/close-out.md` step 5 does', ''))), 'Accept and merge must cite close-out step 5 and the required checks');
+  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('with `PIPELINE_RUN_DIR` bound as `dispatch/close-out.md` step 7 binds it', 'with a run dir'))), 'Accept and merge must bind PIPELINE_RUN_DIR for Step 4 as close-out step 7 does');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('human-approved', 'x'))), 'Accept and merge must record approval, then Step 3 alone with human-approved, then Step 4');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('first records the approval', 'records the approval'))), 'Accept and merge must record approval, then Step 3 alone with human-approved, then Step 4');
 });

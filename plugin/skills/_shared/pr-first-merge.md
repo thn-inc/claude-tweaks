@@ -292,7 +292,7 @@ never suggest bypassing protection.
 
 ## Step 2.9: Local acceptance park (control mode)
 
-Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]`. Never run Step 3 and report `pending-review`, reading `_shared/local-acceptance-park.md`, unless `parked` exits 5 and `decide` exits 0 with `park:false`.
+Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]`. Unless `parked` exits 5 and `decide` exits 0 with `park:false`: never run Step 3; report `pending-review` and read `_shared/local-acceptance-park.md`.
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
 
@@ -464,7 +464,7 @@ exists from run start).
 |---|---|---|
 | `merged` | Confirmed synchronously via `gh pr view` | Step 4's reconcile call |
 | `armed` | `--auto` armed, checks still pending | None — reconciler completes it later |
-| `pending-review` | Checks red, `awaiting-local-acceptance`, `already-parked`, `park-state-unknown` or `park-failed` (Step 2.9), conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:parked, reason check-failed:{names}, checks-pending-timeout or draft-skip-without-ready-trigger:{files}), pr-not-open, moving-target | None — PR stays ready, human decides |
+| `pending-review` | Checks red, `awaiting-local-acceptance`, `already-parked`, `park-state-unknown`, `supplier-failed` or `park-failed` (Step 2.9), conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:parked, reason check-failed:{names}, checks-pending-timeout or draft-skip-without-ready-trigger:{files}), pr-not-open, moving-target | None — PR stays ready, human decides |
 | `failed` | This run never reached the merge attempt at all (upstream HARD-GATE) | Handled entirely by Settle, before this procedure is ever invoked |
 
 ## Comment ordering
