@@ -253,9 +253,11 @@ function parseRunnerOperands(rest, { cwd, repoRoot, isFile, realpath = (p) => p,
       }
       // The glob check reads `rel`, the path `node --test` receives, not the operand as typed: a cwd or
       // symlink target holding a glob character would otherwise run a different file, and a checkout whose
-      // own path holds one is harmless.
+      // own path holds one is harmless. When the character comes from the cwd or a symlink target, the
+      // message names the path it resolves to.
       if (GLOB_CHARS.test(rel)) {
-        throw new Error(`${arg} holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand`);
+        const what = GLOB_CHARS.test(arg) ? `${arg} holds` : `${arg} resolves to ${rel}, which holds`;
+        throw new Error(`${what} a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand`);
       }
       if (!isFile(abs)) throw new Error(`${arg} does not exist or is not a file`);
       if (firstFile === null) firstFile = arg;

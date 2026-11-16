@@ -1416,10 +1416,18 @@ test('AC4.1 AC4.2 AC4.3 AC4.4 AC4.5 AC4.6: refuses a missing file, a file outsid
 test('the glob check reads the path handed to node --test: a glob directory in cwd is refused, a glob in the checkout path is not', () => {
   for (const [label, p, root] of OPERAND_FLAVOURS) {
     // cwd inside a bracket directory: the repo-relative path `t/[a]/x.test.js` would run `t/a/x.test.js`.
+    // The typed operand holds no glob character, so the message names the path it resolves to.
     const bracketCwd = p.join(root, 't', '[a]');
     assert.throws(
       () => parseRunnerOperands(['x.test.js'], operandOptions(p, root, { cwd: bracketCwd, existing: ['t/[a]/x.test.js'] })),
-      { message: 'x.test.js holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand' },
+      { message: `x.test.js resolves to ${p.join('t', '[a]', 'x.test.js')}, which holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand` },
+      label,
+    );
+    // A symlink target holding one: the same message, naming the canonical path.
+    const linked = { ...operandOptions(p, root, { existing: ['t/[a]/x.test.js'] }), realpath: (abs) => (abs === p.join(root, 'tests', 'ln.test.js') ? p.join(root, 't', '[a]', 'x.test.js') : abs) };
+    assert.throws(
+      () => parseRunnerOperands(['tests/ln.test.js'], linked),
+      { message: `tests/ln.test.js resolves to ${p.join('t', '[a]', 'x.test.js')}, which holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand` },
       label,
     );
     // A checkout whose own path holds `(`: the repo-relative path `tests/a.test.js` is safe.
