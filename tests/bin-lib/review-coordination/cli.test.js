@@ -1662,7 +1662,7 @@ test('an append error whose message holds line breaks still gives one stderr lin
 // ---- #5598: settle-lens-replies settles the lens reviewers' reply texts ----
 
 const { parseLensReply } = require('../../../plugin/bin/lib/lens-reply');
-const { resolvePrinted } = require('../../../plugin/bin/session-tmp-resolve');
+const { resolvePrinted, formatPrintedPath } = require('../../../plugin/bin/session-tmp-resolve');
 
 const SETTLE_HEADER = '| Severity | Path:Line | Finding | Evidence |\n|---|---|---|---|\n';
 const settleRow = (f) => `| ${f.severity} | ${f.path}:${f.line} | ${f.text} | evidence |\n`;
@@ -2142,7 +2142,7 @@ test('the session id and temp dir come from deps.env, never process.env', (t) =>
   fs.mkdirSync(other);
   const res = settleRun(inp, settleBase(), ['--ctx-id', 'c1'], { env: { CLAUDE_CODE_SESSION_ID: 'another-session', TMPDIR: other, TMP: other, TEMP: other } });
   assert.strictEqual(res.code, 0, res.err);
-  assert.ok(JSON.parse(res.out).needsSession[0].reviewers[0].findingsPath.startsWith(path.join(other, 'ct-session-another-session')));
+  assert.ok(JSON.parse(res.out).needsSession[0].reviewers[0].findingsPath.startsWith(formatPrintedPath(path.join(other, 'ct-session-another-session'))));
   assert.deepStrictEqual(fs.readdirSync(inp.tmp), []);
 });
 

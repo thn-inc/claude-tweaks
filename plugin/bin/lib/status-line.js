@@ -15,7 +15,7 @@ const CANONICAL_RE = /^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$/
 // and `STATUS:\s+` prefixes widen the match to those exact literal shapes
 // (bullet dash and/or a bold or plain "Status:"/"STATUS:" label, then one of
 // the four contract words) — nothing looser: any other label, or the four
-// words appearing later in a sentence, still falls through to tier 3 below.
+// words appearing later in a sentence, still falls through to tier 3 (subagent-stop.js's detectStatus).
 // Same case-sensitive word alternation as CANONICAL_RE, applied off-position
 // (tier 2's "lenient" half) rather than requiring the exact whole-line match
 // tier 1 does.

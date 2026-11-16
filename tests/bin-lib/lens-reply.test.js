@@ -200,6 +200,23 @@ test('a lenient status line that is last reads as misplaced', () => {
   }));
 });
 
+test('a status line buried past the first and last three non-empty lines is missing, whatever the table rows around it', () => {
+  const rows = Array.from({ length: 6 }, (_, i) => `| low | src/r${i}.ts:${i + 1} | f${i} | e${i} |`).join('\n');
+  const reply = `one\ntwo\nthree\nfour\nfive\nSTATUS: DONE\n${rows}\n`;
+  const got = parseLensReply(reply);
+  assert.strictEqual(got.findings.length, 6);
+  assert.strictEqual(got.status, 'missing');
+  assert.strictEqual(got.statusWord, null);
+});
+
+test('an extra cell that is empty adds no separator to Evidence', () => {
+  const head = '| Severity | Path:Line | Finding |\n|---|---|---|\n';
+  const reply = `${head}| low | src/h.ts:4 | Two defaults | y |\n\nSTATUS: DONE`;
+  assert.deepStrictEqual(parseLensReply(reply), result({
+    findings: [{ severity: 'low', path: 'src/h.ts', line: 4, text: 'Two defaults', evidence: 'y' }],
+  }));
+});
+
 test('AC1.15: rows and No findings. together', () => {
   const reply = `No findings.\n\n${PLAIN}`;
   assert.deepStrictEqual(parseLensReply(reply), result({ findings: PLAIN_FINDINGS }));

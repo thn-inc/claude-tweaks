@@ -17,7 +17,7 @@
 // `findings: []` with `noFindings: true`. `skipped` counts every table row
 // that is not a header, a separator, an overflow row or a finding — a
 // severity row with an empty location cell, a location whose path is empty
-// (`:12`) or holds a control character (a stray \r would split a log line),
+// (`:12`) or holds a control or line-separator character (a stray \r would split a log line),
 // or a row whose severity cell is outside the five-word scale (`Major`,
 // `P1`) — so a dropped row is never silent.
 //
@@ -41,7 +41,7 @@ const EVIDENCE_COL = 3;
 // No header row: cells are taken in BRIEF_HEADER order.
 const DEFAULT_COLUMNS = [SEVERITY_COL, LOCATION_COL, FINDING_COL, EVIDENCE_COL];
 
-// C0 controls, DEL, and the Unicode line ends NEL, LS and PS (a multiline `^`/`$` reader sees them as line breaks).
+// C0 controls, DEL, and the line separators NEL, LS and PS. JS multiline `^`/`$` breaks only on \n, \r, LS and PS; NEL is covered because other readers (Java, Python `splitlines`) break on it.
 const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f\u0085\u2028\u2029]/;
 const SEPARATOR_CELL_RE = /^:?-+:?$/;
 const OVERFLOW_RE = /^\+\s*(\d+)\s+more$/i;
@@ -124,22 +124,21 @@ function mapRow(cells, columns) {
     if (columns[i] !== -1) out[columns[i]] = cells[i];
   }
   if (cells.length > columns.length) {
-    out[EVIDENCE_COL] = [out[EVIDENCE_COL], ...cells.slice(columns.length)].join(' | ');
+    out[EVIDENCE_COL] = [out[EVIDENCE_COL], ...cells.slice(columns.length)].filter((c) => c !== '').join(' | ');
   }
   return out;
 }
 
 // Same window the SubagentStop hook's detectStatus uses: `ok` when the last
 // non-empty line is canonical; else `misplaced` when the first or last three
-// non-table lines hold a canonical or lenient status line (the latest such
+// non-empty lines hold a canonical or lenient status line (the latest such
 // line supplies the word); else `missing`.
 function readStatus(nonEmpty) {
   if (nonEmpty.length > 0) {
     const last = CANONICAL_RE.exec(nonEmpty[nonEmpty.length - 1]);
     if (last) return { status: 'ok', statusWord: last[1] };
   }
-  const candidates = nonEmpty.filter((l) => l[0] !== '|');
-  const window = candidates.slice(0, 3).concat(candidates.slice(-3));
+  const window = nonEmpty.slice(0, 3).concat(nonEmpty.slice(-3));
   for (let i = window.length - 1; i >= 0; i -= 1) {
     const m = CANONICAL_RE.exec(window[i]) || LENIENT_RE.exec(window[i]);
     if (m) return { status: 'misplaced', statusWord: m[1] };
