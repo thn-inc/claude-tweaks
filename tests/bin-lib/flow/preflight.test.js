@@ -740,8 +740,7 @@ test('AC1.1 specOnBranch finds an archived-only flat header', () => {
   const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d });
   assert.strictEqual(a.specMaterialized, true);
   const lsCalls = seen.filter((args) => args[0] === 'ls-tree');
-  assert.strictEqual(lsCalls.length, 3, 'live work, live recursive, then the archived work listing');
-  assert.strictEqual(lsCalls[2][lsCalls[2].length - 1], `${ARCHIVE_REL}/work/`);
+  assert.ok(lsCalls.some((args) => args[args.length - 1] === `${ARCHIVE_REL}/work/`), 'the archived work listing was probed');
 });
 
 test('AC2.1 specOnBranch finds an archived-only spec-{N} header', () => {

@@ -252,6 +252,23 @@ test('checkPrBookkeepingPrecondition (#2664): a multi-spec per-spec runDir recog
   assert.match(r.message, /record-worktree/);
 });
 
+// AC2.1 (#3974): the multi-spec shape, header committed only at the archived path.
+test('AC2.1 precondition.js recognizes a per-spec runDir whose header is archived-only -> no-worktree-stamp', () => {
+  const parentId = '2026-09-17T000024-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  const rel = `.claude-tweaks/pipelines/archive/${parentId}/spec-7/work/7-spec.md`;
+  fs.mkdirSync(path.dirname(path.join(wt, ...rel.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(wt, ...rel.split('/')), 'spec\n');
+  execFileSync('git', ['-C', wt, 'add', '-f', rel]);
+  execFileSync('git', ['-C', wt, 'commit', '-m', 'materialize 7 (archived)', '-q']);
+  const runDir = path.join(makeRunDir(parentId), 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'no-worktree-stamp');
+});
+
 test('checkPrBookkeepingPrecondition (#2664): a stamped multi-spec per-spec runDir passes as pr-stamped-or-exempt', () => {
   const parentId = '2026-09-17T000013-spec-7-8';
   const main = gitRepoWithCommit();

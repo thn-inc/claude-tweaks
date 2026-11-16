@@ -1,5 +1,5 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -2018,8 +2018,11 @@ test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read un
 });
 
 // #3974: the record ladder reads a header at its live or its archived location.
+const archTmpRoots = [];
+after(() => { for (const r of archTmpRoots) fs.rmSync(r, { recursive: true, force: true }); });
 function runTree(files) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-archived-'));
+  archTmpRoots.push(root);
   const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
   for (const [rel, text] of Object.entries(files)) {
     const file = path.join(pipelines, ...rel.split('/'));
@@ -2044,6 +2047,7 @@ test('AC1.1 resolveRecords: an archived-only flat header resolves the same recor
 
 test('AC1.1 resolveRecords: an archived-only header in the worktree mirror resolves as worktree-headers', () => {
   const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-archived-main-'));
+  archTmpRoots.push(main);
   const liveTree = runTree({ [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
   const archTree = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', ARCH_RUN_ID);

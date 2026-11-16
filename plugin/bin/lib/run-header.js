@@ -12,7 +12,8 @@
 // flat `work/` before `spec-{N}/work/`. The caller supplies the roots; nothing here
 // discovers a mirror.
 //
-// Only this file spells the archive segment. The eight readers go through it:
+// Of the spec-header readers only this file spells the archive segment (the archive
+// writers and other run-dir code spell their own run-dir paths). The eight readers go through it:
 // - plugin/bin/verify-run-bookends.js `isSpecCommitted`
 // - plugin/bin/lib/flow/preflight.js `specOnBranch`
 // - plugin/bin/lib/hooks/pre-tool-use.js `hasMaterializeCommit` and `getMaterializedRecordNumbers`
@@ -44,7 +45,10 @@ function runRelDirs(runId, { specDir = null } = {}) {
 }
 
 // Concrete candidate paths for one record's header, in precedence order. For
-// `git cat-file -e` and the like, which cannot glob.
+// `git cat-file -e` and the like, which cannot glob. `layout` narrows the shapes:
+// 'any' (default) is flat `work/` then `spec-{N}/work/`, 'nested' only the latter (a
+// multi-spec parent never holds a flat header), 'flat' only the former. `layout` is
+// ignored when `specDir` names the per-spec run dir, whose only shape is `work/`.
 function headerRelPaths(runId, recordNumber, { specDir = null, layout = 'any' } = {}) {
   const [live, archived] = runRelDirs(runId);
   if (specDir) {
@@ -105,7 +109,8 @@ function headerFileCandidates(runDirs, recordNumber, pathImpl = path) {
 // The directories that may hold header files, per run dir: live then archived, each
 // as flat `work/` then every `spec-*` child's `work/` (plain string sort). The
 // returned dirs are not checked for existence; the caller's own listing decides.
-function listHeaderDirs(runDirs, { readdir = defaultReaddir, pathImpl = path } = {}) {
+// `nested: false` returns the flat `work/` dirs only and never lists the `spec-*` children.
+function listHeaderDirs(runDirs, { readdir = defaultReaddir, pathImpl = path, nested = true } = {}) {
   const out = [];
   for (const d of runDirs) {
     if (!d) continue;
@@ -114,7 +119,8 @@ function listHeaderDirs(runDirs, { readdir = defaultReaddir, pathImpl = path } =
     if (archived) places.push(['archived', archived]);
     for (const [location, base] of places) {
       out.push({ dir: pathImpl.join(base, 'work'), location, specDir: null, specN: null });
-      const names = readdir(base).filter((n) => n.startsWith('spec-')).sort();
+      if (!nested) continue;
+      const names =readdir(base).filter((n) => n.startsWith('spec-')).sort();
       for (const name of names) {
         const m = SPEC_DIR_RE.exec(name);
         out.push({

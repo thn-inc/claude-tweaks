@@ -302,6 +302,7 @@ function buildProbes({ runDirReal, runId, mainRoot, cwd, config, state, deps, ex
       // (multi-spec.md). `record`/`path` stay null — a parent has no single
       // one — and `records` carries every header found.
       const found = new Set();
+      // `\d+`, not the resolver's `specN`: a `spec-0` or zero-padded dir counted before #3974 and still does.
       for (const d of dirs.filter((x) => x.specDir !== null && /^spec-\d+$/.test(x.specDir))) {
         for (const n of headers(d.dir)) found.add(recordOf(n));
       }

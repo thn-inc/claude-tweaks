@@ -121,6 +121,13 @@ test('listHeaderDirs: flat work then sorted spec-* dirs, live then archived', ()
   assert.deepEqual(out, expected);
 });
 
+test('listHeaderDirs: nested false lists the flat work dirs only and never reads the run dir', () => {
+  const runDir = '/m/.claude-tweaks/pipelines/2026-11-16T020801-record-1';
+  const readdir = () => { throw new Error('readdir must not run'); };
+  const out = listHeaderDirs([runDir], { readdir, nested: false });
+  assert.deepEqual(out.map((e) => [e.location, e.specDir]), [['live', null], ['archived', null]]);
+});
+
 test('listHeaderDirs: default readdir over an archived-only layout lists the archived work dir', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-header-'));
   try {

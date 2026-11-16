@@ -198,8 +198,8 @@ function headerRecords(deps, dir) {
 // earlier (live) copy winning — its `parkedAtShaping` with it (#3974).
 function flatEntries(deps, runDir) {
   const byRecord = new Map();
-  // The flat dirs need no `spec-*` listing (the empty readdir skips it: one fewer run-dir read per call).
-  for (const { dir } of listHeaderDirs([runDir], { readdir: () => [] }).filter((e) => e.specDir === null)) {
+  // The flat dirs need no `spec-*` listing (`nested: false` skips it: one fewer run-dir read per call).
+  for (const { dir } of listHeaderDirs([runDir], { nested: false })) {
     for (const entry of headerEntries(deps, dir)) {
       if (!byRecord.has(entry.record)) byRecord.set(entry.record, entry);
     }

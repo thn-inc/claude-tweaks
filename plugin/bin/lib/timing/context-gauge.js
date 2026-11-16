@@ -305,6 +305,7 @@ function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl 
   roots.push(runDir);
   const format = (nums) => [...new Set(nums)].sort((a, b) => a - b).map((n) => `#${n}`);
   // Header dirs per root, live and archived (lib/run-header.js); an unreadable base lists as empty.
+  // The lstat filter below keeps the old rule that a `spec-N` symlink or file is not a spec dir.
   const readdir = (d) => { try { return fsImpl.readdirSync(d); } catch { return []; } };
   const dirsByRoot = roots.map((r) => listHeaderDirs([r], { readdir }));
   const specDirs = dirsByRoot.flat()
