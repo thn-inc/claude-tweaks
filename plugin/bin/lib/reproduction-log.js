@@ -10,9 +10,9 @@
 //   - timing/pair-lines.js classifyPairLine — the pair-line counters (#5556), one pattern set per form
 //   - console/finding-path.js (FINDING_LOCATION, readsLocation, parseCoincidence) and console/resolve.js's
 //     findingKey/lineKeys — the `{lens}|{path}:{line}` key a STAGED line is settled by
-//   - console/backfill.js analyseLine — the legacy line splitter
+//   - console/backfill.js splitDecisionLine (analyseLine) — the legacy line splitter
 //   - log-decision/aggregate-reproduction.js — refuses a STAGED line naming several findings
-// tests/bin-lib/reproduction-log.test.js reads every form back through all four.
+// tests/bin-lib/reproduction-log.test.js reads every form back through each of these.
 'use strict';
 
 const STEP = 'Reproduction';

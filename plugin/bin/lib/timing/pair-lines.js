@@ -52,6 +52,8 @@ const LENS = 'lens "([^"]*)"';
 const PATH_STRICT = '((?:(?!\\s(?:not )?reproduced\\b)[^\\n])+)';
 // The path of a finding with no line (`finding {path} not reproduced.`): never a `:{digits}` (that is a located
 // finding, read by its own pattern) and never a trailing note (` (…)`, ` — …`), which only a located line carries.
+// So an unlocated path holding ` (` (`docs/a (b).md`) is not read: it cannot be told from a note, and reading it
+// would move archive verdicts (a located line is unaffected, its path is read by the located patterns).
 const PATH_UNLOCATED = '((?:(?!\\s(?:not )?reproduced\\b|:\\d| \\(| — )[^\\n])+)';
 const TAIL = ' Reversibility: [a-z/]+\\.$';
 

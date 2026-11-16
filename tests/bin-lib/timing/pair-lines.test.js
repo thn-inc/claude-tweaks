@@ -59,6 +59,13 @@ test('#5595: a located not-reproduced line with a note keeps its line (the unloc
   // A line range: no strict located pattern reads it, so the loose one must, not the unlocated strict one.
   assert.deepEqual(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding plugin/x.js:12-14 not reproduced. Staged to Review Console as low-confidence. ${R}`)),
     { form: 'not-reproduced', lens: '3c', path: 'plugin/x.js', line: 12 });
+  // A dash-led note after an unlocated path is no pair line either: the unlocated path never holds ` — `.
+  assert.equal(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding tests/x.test.js — no test for the guard not reproduced. Staged to Review Console as low-confidence. ${R}`)), null);
+  // A path holding ` (` is read by the located pattern but not unlocated (it cannot be told from a note); the
+  // composer's unlocated form 3 for such a path is therefore no pair line (#5595).
+  assert.equal(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding docs/a (b).md not reproduced. Staged to Review Console as low-confidence. ${R}`)), null);
+  assert.deepEqual(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding docs/a (b).md:4 not reproduced. Staged to Review Console as low-confidence. ${R}`)),
+    { form: 'not-reproduced', lens: '3c', path: 'docs/a (b).md', line: 4 });
   // A noted line with no location is no pair line (as before #5595).
   assert.equal(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding tests/x.test.js (no test for the guard) not reproduced. Staged to Review Console as low-confidence. ${R}`)), null);
 });

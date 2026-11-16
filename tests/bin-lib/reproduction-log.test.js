@@ -2,7 +2,8 @@
 // tests/bin-lib/reproduction-log.test.js — #5595: the composer of the seven review reproduction decision-log
 // lines. The expected strings below are written out by hand (copied from the seven templates review step 3 carried
 // before #5595) so a drift in the composer shows as a diff here, and every composed line is read back through the
-// readers that consume it (pair-lines, finding-path, console/backfill).
+// readers that consume it (pair-lines, finding-path, console/resolve's lineKeys and findingKey, console/backfill's
+// splitDecisionLine) and through the console's findingItems.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -13,7 +14,8 @@ const { aggregateReproductionProblem } = require('../../plugin/bin/lib/log-decis
 const { categoriseReproduction } = require('../../plugin/bin/lib/coordination');
 const { PAIR_FORMS, classifyPairLine } = require('../../plugin/bin/lib/timing/pair-lines');
 const { readsLocation, parseCoincidence } = require('../../plugin/bin/lib/console/finding-path');
-const { findingItems, lineKeys } = require('../../plugin/bin/lib/console/resolve');
+const { findingItems, findingKey, lineKeys } = require('../../plugin/bin/lib/console/resolve');
+const { splitDecisionLine } = require('../../plugin/bin/lib/console/backfill');
 const rl = require('../../plugin/bin/lib/reproduction-log');
 
 const now = new Date(2026, 10, 16, 10, 0, 0);
@@ -200,6 +202,7 @@ const COMPOSE = {
 // What each reader must yield for a composed line, written out (not derived from the hand-written line):
 // the console keys (console/resolve.js lineKeys, the `{lens}|{path}:{line}` a STAGED line is settled by) and the
 // one counter #5556's pair-line reader (PAIR_FORMS[].counts) adds the line to.
+const SHORT_PATH = { 'plugin/x.js': 'plugin/x.js', 'docs/a b.md': 'b.md' };
 const EXPECT = {
   'reproduced': { counter: 'both' },
   'reproduced-severity-contested': { counter: 'both' },
@@ -227,6 +230,19 @@ test('AC7.3 reader table: each form reads as its own form, adds to one counter, 
         const want = EXPECT[id].keys(p);
         // `known` names the settled key whole, so a path holding a space keys whole as the console writes it (#4632).
         assert.deepEqual(lineKeys(composed, new Set(want)), want, `${id} ${p} console keys`);
+        // findingKey (the prose settlers' key) stops a path at its first space, for the composed and the hand-written line alike.
+        const first = `${want[0].split('|')[0]}|${SHORT_PATH[p]}:12`;
+        assert.equal(findingKey(composed), first, `${id} ${p} findingKey`);
+        assert.equal(findingKey(HAND[id](p)), first, `${id} ${p} findingKey (hand-written)`);
+        // splitDecisionLine (console/backfill.js, the legacy line splitter): the claim-less forms carry no finding, the
+        // vacuity form one located finding.
+        const split = id === 'vacuity-downgraded'
+          ? { findings: [['3f', SHORT_PATH[p], 12]], noClaim: null }
+          : { findings: [], noClaim: 'claim-empty' };
+        for (const l of [composed, HAND[id](p)]) {
+          const got = splitDecisionLine(l);
+          assert.deepEqual({ findings: got.findings.map((f) => [f.lens, f.path, f.line]), noClaim: got.noClaim }, split, `${id} ${p} splitDecisionLine`);
+        }
       }
       if (p === 'plugin/x.js') seen.push(pair.form);
     }
