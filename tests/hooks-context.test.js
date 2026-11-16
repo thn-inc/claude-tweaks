@@ -972,9 +972,11 @@ test('AC1.2: includeTrackedShells yields a spec-N/work-only multi-spec shell', (
 
 test('AC10.1: default call still skips the clean-twin shell', () => {
   const project = tmpProject();
-  mkShell(project, '2026-07-01T090000-spec-1');
-  assert.deepStrictEqual(ctx.listRunDirs(project), []);
-  assert.strictEqual(ctx.resolveRunDir(project, {}), null);
+  const open = mkRun(project, '2026-07-01T090000-spec-older', { status: 'active' });
+  const shell = mkShell(project, '2026-07-02T090000-spec-1'); // sorts newest
+  assert.deepStrictEqual(ctx.listRunDirs(project), [open]);
+  assert.strictEqual(ctx.resolveRunDir(project, {}), open);
+  assert.notStrictEqual(ctx.resolveRunDir(project, {}), shell);
 });
 
 test('AC10.x: fresh archiving claim still skipped with includeTrackedShells', () => {
