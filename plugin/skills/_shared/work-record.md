@@ -95,7 +95,7 @@ per-member), visually distinct from the graded dimensions above — see the Colo
 
 | Family | Labels | Color | Axis |
 |---|---|---|---|
-| Origin (6) | `by:code-health`, `by:harness-health`, `by:journey-health`, `by:docs-health`, `by:capture`, `by:dispatch` | `BFD4F2` | Origin |
+| Origin (7) | `by:code-health`, `by:harness-health`, `by:journey-health`, `by:docs-health`, `by:capture`, `by:dispatch`, `by:ci-health` | `BFD4F2` | Origin |
 | Risk (3) | `risk:low`, `risk:medium`, `risk:high` | `0E8A16` / `FBCA04` / `D93F0B` | Scoring |
 | Size (3) | `size:low`, `size:medium`, `size:high` | `D4C5F9` / `8B5CF6` / `5319E7` | Scoring |
 | Ceremony (2) | `ceremony:fast-lane`, `ceremony:standard` | `FEF2C0` | Ceremony depth — cross-cutting, not one of the axes; stamped by `/specify` alongside Scoring, always explicit (no unscored state) |
@@ -335,7 +335,7 @@ prerequisite-check grep as the only backstop.
 ## Born-ready rule
 
 Health-skill records (`by:code-health`, `by:harness-health`, `by:journey-health`,
-`by:docs-health`) are
+`by:docs-health`, `by:ci-health`) are
 agent-sized and spec-shaped **by construction** — their builders emit Current State /
 Deliverables / Acceptance Criteria / Release Note bodies with scoring (`releaseNote` is a
 required `specShapedBody` parameter, #2660 — each producer passes a plain-language sentence,
@@ -428,7 +428,7 @@ the migration window (read both, emit only `work-fingerprint`). `bin/lib/issues/
 
 ## Freshness stamp
 
-Records filed by the four health-sweep skills also carry the commit the sweep actually read, as
+Records filed by a health-sweep skill (`/ci-health` included) also carry the commit the sweep actually read, as
 a plain body-metadata line:
 
 ```
@@ -484,7 +484,7 @@ dispatch/auto-merge/fetch/staleness/promise-register thresholds the Consumers be
 
 | Skill | Role against the record |
 |---|---|
-| `/code-health`, `/harness-health`, `/journey-health`, `/docs-health` | File born-`ready` records with origin + scoring + fingerprint |
+| `/code-health`, `/harness-health`, `/journey-health`, `/docs-health`, `/ci-health` | File born-`ready` records with origin + scoring + fingerprint |
 | `/capture` | Files raw backlog records (`by:capture`, Type only) |
 | `/specify` | Shapes records to spec shape; decomposes designs into `ready` sub-issue records (plus a parent when Step 2.6 keeps one); seeds `## Cross-Spec Promises` on the parent for decompositions of 4 or more sub-issues |
 | `/backlog` | `refine` mode is the human gate — grants `auto:build`/`auto:merge` over the `ready` queue, and suggests `priority:*`/`**Related:**` (human-confirmed); its headless posture (`--source routine\|sweep`, or the deprecated `grant` alias) is the one machine-grant path — see Grant semantics above and `backlog/refine-headless.md`. `overview` mode is read-only — distribution views plus a "what to build next" recommendation. |

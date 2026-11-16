@@ -734,6 +734,12 @@ test('expectsKeyFilesSection is false for a by:docs-health-origin issue', () => 
   assert.strictEqual(expectsKeyFilesSection({ labels: ['by:docs-health'] }), false);
 });
 
+test('a by:ci-health record: expectsKeyFilesSection false, and its Check header id is never read as a file', () => {
+  const issue = { labels: ['by:ci-health', 'ready'], body: '**Check:** `repeated-work` | **Workflow:** `ci` | **Step:** `npm ci`\n\n## Current State\n' };
+  assert.strictEqual(expectsKeyFilesSection(issue), false);
+  assert.deepStrictEqual(extractKeyFiles(issue), []);
+});
+
 test('expectsKeyFilesSection is true for an issue with no labels at all', () => {
   assert.strictEqual(expectsKeyFilesSection({}), true);
 });

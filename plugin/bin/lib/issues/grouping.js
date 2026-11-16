@@ -476,7 +476,8 @@ function expectsKeyFilesSection(issue) {
   return !hasOrigin(names, 'code-health')
     && !hasOrigin(names, 'harness-health')
     && !hasOrigin(names, 'journey-health')
-    && !hasOrigin(names, 'docs-health');
+    && !hasOrigin(names, 'docs-health')
+    && !hasOrigin(names, 'ci-health');
 }
 
 // issue: { body, labels } shaped like `gh api .../issues/{n}` output.
@@ -518,6 +519,12 @@ function extractKeyFiles(issue) {
     // harness-health's, so the same extraction applies to both.
     return extractBoldHeaderFile(body);
   }
+
+  // ci-health's header ("**Check:** {id} | **Workflow:** ...", bin/lib/ci-audit/
+  // issue-payload.js) names a checklist id first, not a file, so the bold-header
+  // extraction above would return that id as a path. A CI timing finding names no
+  // file it builds in, so it contributes nothing to the overlap map.
+  if (hasOrigin(names, 'ci-health')) return [];
 
   // Fallthrough — every record that is not one of the four health sweeps: a
   // /claude-tweaks:specify-produced sub-issue, a /claude-tweaks:capture record, a
