@@ -140,6 +140,25 @@ test('AC1.14: a row with three cells', () => {
   }));
 });
 
+test('a table with no header row takes its cells in brief order', () => {
+  const reply = '| high | src/a.ts:10 | Null deref | `x.y` unguarded |\n\nSTATUS: DONE';
+  assert.deepStrictEqual(parseLensReply(reply), result({ findings: [PLAIN_FINDINGS[0]] }));
+});
+
+test('an unescaped pipe outside backticks joins the surplus cells onto Evidence', () => {
+  const reply = `${HEADER}| low | src/h.ts:4 | Two defaults | 3000 | 5000 |\n\nSTATUS: DONE`;
+  assert.deepStrictEqual(parseLensReply(reply), result({
+    findings: [{ severity: 'low', path: 'src/h.ts', line: 4, text: 'Two defaults', evidence: '3000 | 5000' }],
+  }));
+});
+
+test('a lenient status line that is last reads as misplaced', () => {
+  const reply = `${HEADER}| high | src/a.ts:10 | Null deref | \`x.y\` unguarded |\n\n- **Status:** BLOCKED`;
+  assert.deepStrictEqual(parseLensReply(reply), result({
+    findings: [PLAIN_FINDINGS[0]], status: 'misplaced', statusWord: 'BLOCKED',
+  }));
+});
+
 test('AC1.15: rows and No findings. together', () => {
   const reply = `No findings.\n\n${PLAIN}`;
   assert.deepStrictEqual(parseLensReply(reply), result({ findings: PLAIN_FINDINGS }));
