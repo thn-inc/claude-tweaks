@@ -451,14 +451,26 @@ test('AC2.2: drop-git-C-cwd declines a popd word', () => {
 });
 
 test('AC2.2: drop-git-C-cwd declines a second -C', () => {
+  // git reads -C only before the subcommand, so a second -C sits where the subcommand word does:
+  // the read allowlist is the check that earns this decline.
   assert.strictEqual(posix('git -C "/w/wt" -C sub log'), null);
-  assert.strictEqual(posix('git -C "/w/wt" log -C sub'), null, 'a later -C word in the same simple command');
-  assert.deepStrictEqual(rw('git -C . log a-C -C50'), { command: 'git log a-C -C50', applied: ['drop-git-C-cwd'] }, 'a-C and -C50 are not -C words');
+});
+
+test('drop-git-C-cwd keeps a -C that is the subcommand\'s own option', () => {
+  assert.deepStrictEqual(rw('git -C . grep -C 3 foo'), { command: 'git grep -C 3 foo', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(posix('git -C "/w/wt" log -C sub'), { command: 'git log -C sub', applied: ['drop-git-C-cwd'] });
+});
+
+test('drop-git-C-cwd leaves a git that is the target of a >& or <& redirection', () => {
+  assert.strictEqual(rw('echo x >& git -C . log'), null);
+  assert.strictEqual(rw('echo x 2>&git -C . log'), null);
+  assert.deepStrictEqual(rw('ls |& git -C . log'), { command: 'ls |& git log', applied: ['drop-git-C-cwd'] }, '|& is a pipe, not a redirection');
 });
 
 test('AC2.2: drop-git-C-cwd declines a -C that is not the first option', () => {
   assert.strictEqual(posix('git --no-pager -C "/w/wt" log'), null);
   assert.strictEqual(rw('git -C . log; git --no-pager -C . log'), null, 'the whole command declines, not just that call');
+  assert.deepStrictEqual(rw('git -C . log; git --no-pager a-C -C50 log'), { command: 'git log; git --no-pager a-C -C50 log', applied: ['drop-git-C-cwd'] }, 'a-C and -C50 are not -C words');
 });
 
 test('AC2.2: drop-git-C-cwd declines an operand holding $', () => {

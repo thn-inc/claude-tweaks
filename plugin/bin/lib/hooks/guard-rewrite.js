@@ -719,13 +719,27 @@ const GIT_READS = new Set([
 ]);
 const OPERAND_DOUBT = /[$`*?[~]/;
 const CWD_MOVER = /(?<![A-Za-z0-9_-])(?:cd|pushd|popd)(?![A-Za-z0-9_-])/;
-// `(` too, so a candidate's scan never runs into the next candidate's simple command.
+// `(` too, so a non-candidate's `-C` scan never runs into the next candidate's simple command.
 const SIMPLE_COMMAND_END = /[;&|\n()]/;
 
 // True when an unquoted `-C` word starts at j.
 function cWordAt(s, kind, j) {
   return kind[j] === TOP && s[j] === '-' && s[j + 1] === 'C' && atWordStart(s, kind, j)
     && (j + 2 >= s.length || WORD_BREAK.test(s[j + 2]));
+}
+
+// True when an unquoted `-C` word starts in [from, end).
+function hasCWord(s, kind, from, end) {
+  for (let j = from; j < end; j += 1) if (cWordAt(s, kind, j)) return true;
+  return false;
+}
+
+// True when the `&` atCommandStart accepted before i belongs to a `>&`/`<&` redirection, so the
+// word at i is that redirection's target (`echo x >& git -C . log` writes to a file named git).
+function afterFdRedirect(s, i) {
+  let p = i - 1;
+  while (p >= 0 && (s[p] === ' ' || s[p] === '\t')) p -= 1;
+  return s[p] === '&' && (s[p - 1] === '>' || s[p - 1] === '<');
 }
 
 // Rule 6: `git -C . <read>` and `git -C <the cwd> <read>` → `git <read>`: git runs in the directory
@@ -745,24 +759,23 @@ function dropGitCCwd(s, ctx) {
     // atCommandStart implies a word start: only blanks sit between `i` and an unquoted separator.
     if (kind[i] !== TOP || !atCommandStart(s, kind, i)) continue;
     if (i + 3 >= n || !WORD_BREAK.test(s[i + 3])) continue;
-    let end = i + 3;
-    while (end < n && !(kind[end] === TOP && SIMPLE_COMMAND_END.test(s[end]))) end += 1;
-    const hasCWord = (from) => {
-      for (let j = from; j < end; j += 1) if (cWordAt(s, kind, j)) return true;
-      return false;
-    };
+    if (afterFdRedirect(s, i)) return null;
     GIT_C.lastIndex = i + 3;
     const m = GIT_C.exec(s);
     if (!m) {
       // No `-C <operand>` as the first option: any `-C` word in this git call declines.
-      if (hasCWord(i + 3)) return null;
+      let end = i + 3;
+      while (end < n && !(kind[end] === TOP && SIMPLE_COMMAND_END.test(s[end]))) end += 1;
+      if (hasCWord(s, kind, i + 3, end)) return null;
       continue;
     }
+    // git reads `-C <path>` only before the subcommand, and the subcommand word follows the operand
+    // directly, so a second `-C` there is the subcommand word and the read allowlist declines it.
+    // A `-C` after the subcommand is that subcommand's own option (grep context, log copy detection).
     const sub = GIT_C.lastIndex;
     let subEnd = sub;
     while (subEnd < n && !WORD_BREAK.test(s[subEnd])) subEnd += 1;
     if (!GIT_READS.has(s.slice(sub, subEnd))) return null;
-    if (hasCWord(subEnd)) return null;
     const value = m[1] ?? m[2] ?? m[3];
     if (OPERAND_DOUBT.test(value)) return null;
     if (value !== '.') {
