@@ -183,7 +183,7 @@ test('parseStagedUpstream: headers, CRLF, ambiguity and the body', () => {
   const ambiguous = parseStagedUpstream(twoTargets);
   assert.strictEqual(ambiguous.targetRepo, null);
   assert.strictEqual(ambiguous.title, 'T');
-  assert.ok(!ambiguous.body.includes('upstream-target'));
+  assert.strictEqual(ambiguous.body, 'body\n<!-- upstream-target: obra/superpowers -->\n');
   // The same value on two lines is not ambiguous.
   assert.strictEqual(parseStagedUpstream('<!-- upstream-target: a/b -->\n<!-- upstream-target: a/b -->\n').targetRepo, 'a/b');
   assert.strictEqual(parseStagedUpstream('Title: one\nTitle: two\n').title, null);
@@ -196,6 +196,45 @@ test('parseStagedUpstream: headers, CRLF, ambiguity and the body', () => {
   assert.ok(!parsed.body.includes('upstream-target'));
   assert.ok(!parsed.body.includes('Title: '));
   assert.deepStrictEqual(parseStagedUpstream(undefined), { targetRepo: null, title: null, body: '' });
+});
+
+test('parseStagedUpstream: a Title-looking line after the header block is body text', () => {
+  const text = '<!-- upstream-target: thn-inc/x -->\nTitle: Real title\n\nIntro\nTitle: something else\n\nmore';
+  assert.deepStrictEqual(parseStagedUpstream(text),
+    { targetRepo: 'thn-inc/x', title: 'Real title', body: 'Intro\nTitle: something else\n\nmore' });
+});
+
+test('parseStagedUpstream: a later differing target marker nulls the target and stays in the body', () => {
+  const text = '<!-- upstream-target: a/b -->\nTitle: T\n\nsee\n<!-- upstream-target: c/d -->\nend';
+  assert.deepStrictEqual(parseStagedUpstream(text),
+    { targetRepo: null, title: 'T', body: 'see\n<!-- upstream-target: c/d -->\nend' });
+});
+
+test('parseStagedUpstream: a later marker with the block\'s own value keeps the target and stays in the body', () => {
+  const text = '<!-- upstream-target: a/b -->\nTitle: T\n\nquoted:\n<!-- upstream-target: a/b -->';
+  assert.deepStrictEqual(parseStagedUpstream(text),
+    { targetRepo: 'a/b', title: 'T', body: 'quoted:\n<!-- upstream-target: a/b -->' });
+  // A marker in the body never supplies a target the block lacks.
+  assert.strictEqual(parseStagedUpstream('Title: T\n\nbody\n<!-- upstream-target: a/b -->').targetRepo, null);
+});
+
+test('parseStagedUpstream: the header block is the leading run of header and blank lines', () => {
+  // Blank lines before and between headers belong to the block; one blank after it is dropped.
+  assert.deepStrictEqual(parseStagedUpstream('\n<!-- upstream-target: a/b -->\n\nTitle: T\n\nbody'),
+    { targetRepo: 'a/b', title: 'T', body: 'body' });
+  // Only one blank line after the block is dropped.
+  assert.deepStrictEqual(parseStagedUpstream('<!-- upstream-target: a/b -->\nTitle: T\n\n\npara'),
+    { targetRepo: 'a/b', title: 'T', body: '\npara' });
+  // Inside the block a header twice with different values reads null; the other field is kept.
+  assert.deepStrictEqual(parseStagedUpstream('<!-- upstream-target: a/b -->\nTitle: one\nTitle: two\n\nbody'),
+    { targetRepo: 'a/b', title: null, body: 'body' });
+});
+
+test('ownedOwnersList: an element with no string form is ignored, never thrown on', () => {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  assert.deepStrictEqual(ownedOwnersList([Object.create(null), proxy, 'obra']),
+    { owners: ['obra'], ignored: ['[object Object]', '(unprintable)'] });
 });
 
 test('AC4.2: a held item becomes one packet decision fact', () => {

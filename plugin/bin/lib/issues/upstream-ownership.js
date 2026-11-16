@@ -75,9 +75,22 @@ function ownedOwnersList(value) {
   const ignored = [];
   for (const el of elements) {
     if (isValidOwner(el)) owners.push(el);
-    else ignored.push(String(el));
+    else ignored.push(printable(el));
   }
   return { owners, ignored };
+}
+
+// String(el), total: an element with no primitive form (Object.create(null)) falls back to
+// its Object.prototype.toString tag, and one that refuses even that (a revoked proxy) to a marker.
+function printable(el) {
+  for (const show of [String, (v) => Object.prototype.toString.call(v)]) {
+    try {
+      return show(el);
+    } catch {
+      // try the next form
+    }
+  }
+  return '(unprintable)';
 }
 
 function isOwnedRepo({ targetRepo, currentRepoOwner, ownedOwners } = {}) {
@@ -110,35 +123,41 @@ function upstreamFilingRoute({ permissions, targetRepo, ownerContext, ownedOwner
   return verdict('hold', 'external');
 }
 
+const isBlank = (line) => line.trim() === '';
+const isHeaderLine = (line) => TARGET_LINE_RE.test(line) || line.startsWith(TITLE_PREFIX);
+const single = (values) => (values.size === 1 ? [...values][0] : null);
+
 // A staged wrap-up-upstream-*.md file -> { targetRepo, title, body }. Line 1 is
 // `<!-- upstream-target: {owner/name} -->`, line 2 `Title: {title}`, a blank line,
-// then the body; lines split on /\r?\n/ (a Windows checkout may write CRLF). Each
-// header is read from every line it appears on: one distinct value is the field,
-// two distinct values are ambiguous and read null, none reads null. The body drops
-// every header line and the one blank line directly after a run of them.
+// then the body; lines split on /\r?\n/ (a Windows checkout may write CRLF).
+// Headers are read only from the leading header block — the lines before the
+// first line that is neither a header nor blank — so a body line that looks like
+// a header is body text, never read or removed. In the block, one distinct value
+// is the field; two distinct values are ambiguous and read null, as does a target
+// marker anywhere in the body naming a different repo (the marker stays in the
+// body). The body is everything after the block, less the one blank line after it.
 function parseStagedUpstream(text) {
   const lines = (typeof text === 'string' ? text : '').split(LINE_SPLIT_RE);
+  // The block ends after the last header line of the leading run of header and blank lines.
+  let end = 0;
+  for (let i = 0; i < lines.length && (isBlank(lines[i]) || isHeaderLine(lines[i])); i++) {
+    if (!isBlank(lines[i])) end = i + 1;
+  }
   const targets = new Set();
   const titles = new Set();
-  const kept = [];
-  let afterHeader = false;
-  for (const line of lines) {
+  for (const line of lines.slice(0, end)) {
     const target = TARGET_LINE_RE.exec(line);
     if (target) targets.add(target[1]);
     else if (line.startsWith(TITLE_PREFIX)) titles.add(line.slice(TITLE_PREFIX.length));
-    if (target || line.startsWith(TITLE_PREFIX)) {
-      afterHeader = true;
-      continue;
-    }
-    if (afterHeader && line.trim() === '') {
-      afterHeader = false;
-      continue;
-    }
-    afterHeader = false;
-    kept.push(line);
   }
-  const single = (values) => (values.size === 1 ? [...values][0] : null);
-  return { targetRepo: single(targets), title: single(titles), body: kept.join('\n') };
+  const rest = lines.slice(end > 0 && end < lines.length && isBlank(lines[end]) ? end + 1 : end);
+  let targetRepo = single(targets);
+  // Review Focus 5: a marker in the body naming another repo makes the target ambiguous.
+  if (targetRepo !== null && rest.some((line) => {
+    const marker = TARGET_LINE_RE.exec(line);
+    return marker !== null && marker[1] !== targetRepo;
+  })) targetRepo = null;
+  return { targetRepo, title: single(titles), body: rest.join('\n') };
 }
 
 const collapse = (s) => s.replace(WHITESPACE_RUN_RE, ' ').trim();
