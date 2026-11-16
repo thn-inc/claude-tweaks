@@ -8,7 +8,10 @@ const {
   computePhaseA,
   resolveSubIssueNumbers,
   computeOutlook,
+  fetchAllRecords,
 } = require('../../../plugin/bin/lib/backlog-grant-gate/backlog-grant-gate');
+const recordSnapshot = require('../../../plugin/bin/lib/issues/record-snapshot');
+const { GH_TIMEOUT_MS, GH_BATCH_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
 
 // computeOutlook grades trust on the real clock, so a closed fixture must sit
 // inside trustRows' default 30-day evaluation window to form a cell.
@@ -170,7 +173,9 @@ test('#4505: resolveSubIssueNumbers (native) sends only the owner/repo calls thr
 
 // --- computeOutlook: the full Step 0 -> Step 2 Phase A pipeline ---
 
-// computeOutlook's three gh fetches, keyed by args[3]. There is deliberately
+// computeOutlook's three gh fetches, keyed by args[3], plus the two
+// author-association enrichment calls (`repo view`, `api graphql`) that run
+// only when a record carries an `Origin:` line. There is deliberately
 // no `--state open` case: the open-issue set the Blocked-by filter reads is
 // derived from the `--state all` rows' own `state` field, never a second fetch.
 function ghRunner({ candidates = [], records = [], parents = [] }) {
@@ -178,6 +183,8 @@ function ghRunner({ candidates = [], records = [], parents = [] }) {
     if (args[3] === 'ready') return JSON.stringify(candidates);
     if (args[3] === 'parent-issue') return JSON.stringify(parents);
     if (args[3] === 'all') return JSON.stringify(records);
+    if (args[0] === 'repo' && args[1] === 'view') return JSON.stringify({ owner: { login: 'o' }, name: 'r' });
+    if (args[0] === 'api' && args[1] === 'graphql') return JSON.stringify({ data: { repository: {} } });
     throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
   };
 }
@@ -351,4 +358,86 @@ test('#4793: computeOutlook fails closed on a failing lookup: the candidate is e
   assert.deepStrictEqual(out.candidates, []);
   assert.strictEqual(warnings.length, 1);
   assert.match(warnings[0], /^Warning: /);
+});
+
+// --- #4577: the live fetch is enriched with each Origin record's author association before it is cached ---
+
+const ORIGIN_RECORD = { ...issue(7, { body: 'Origin: by:code-health' }), state: 'OPEN', labels: [] };
+
+function enrichmentRunner({ graphql, calls = [] }) {
+  return (args, opts) => {
+    calls.push({ args, opts });
+    if (args[0] === 'issue') return JSON.stringify([ORIGIN_RECORD]);
+    if (args[0] === 'repo' && args[1] === 'view') return JSON.stringify({ owner: { login: 'resolved-owner' }, name: 'resolved-repo' });
+    if (args[0] === 'api' && args[1] === 'graphql') return graphql(args);
+    throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
+  };
+}
+
+function withSnapshotPath(fn) {
+  const sessionId = `enrich-test-${process.pid}-${Date.now()}`;
+  const snapPath = recordSnapshot.snapshotPath(sessionId);
+  try {
+    return fn(sessionId, snapPath);
+  } finally {
+    try { require('fs').unlinkSync(snapPath); } catch { /* absent */ }
+  }
+}
+
+test('#4577: fetchAllRecords enriches a live fetch before caching', () => {
+  withSnapshotPath((sessionId, snapPath) => {
+    const runner = enrichmentRunner({ graphql: () => JSON.stringify({ data: { repository: { i7: { authorAssociation: 'NONE' } } } }) });
+    const records = fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60 });
+    assert.strictEqual(records[0].authorAssociation, 'NONE');
+    assert.strictEqual(recordSnapshot.readSnapshot(snapPath)[0].authorAssociation, 'NONE');
+  });
+});
+
+test('#4577: a fresh cached snapshot is returned as written, with no list or association call', () => {
+  withSnapshotPath((sessionId, snapPath) => {
+    const calls = [];
+    const runner = enrichmentRunner({ calls, graphql: () => JSON.stringify({ data: { repository: { i7: { authorAssociation: 'NONE' } } } }) });
+    fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60 });
+    const firstCalls = calls.length;
+    assert.ok(firstCalls > 0, 'the first read fetched and enriched');
+    const again = fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60 });
+    assert.strictEqual(calls.length, firstCalls, 'the second read made no gh call');
+    assert.strictEqual(again[0].authorAssociation, 'NONE');
+  });
+});
+
+test('#4577: a failed association batch still returns and caches the records, with one stderr warning', () => {
+  withSnapshotPath((sessionId, snapPath) => {
+    const runner = enrichmentRunner({ graphql: () => { throw new Error('boom'); } });
+    const lines = [];
+    const records = fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60, stderr: (s) => lines.push(s) });
+    assert.strictEqual(records.length, 1);
+    assert.strictEqual('authorAssociation' in records[0], false);
+    assert.strictEqual('authorAssociation' in recordSnapshot.readSnapshot(snapPath)[0], false);
+    assert.strictEqual(lines.length, 1);
+    assert.match(lines[0], /^author-association enrichment incomplete \(1 batch\(es\) failed; first cause: boom\)/);
+  });
+});
+
+test('#4577: computeOutlook never threads fetch.owner into the association query', () => {
+  const calls = [];
+  const runner = enrichmentRunner({ calls, graphql: () => JSON.stringify({ data: { repository: { i7: { authorAssociation: 'NONE' } } } }) });
+  computeOutlook(
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
+    { limit: 100, workLinks: 'body-text', integrationBranch: 'main', owner: 'other', repo: 'elsewhere', runner, gitRunner: () => '' , stderr: () => {} },
+  );
+  const gql = calls.find((c) => c.args[0] === 'api' && c.args[1] === 'graphql');
+  assert.ok(gql, 'an association query was made');
+  assert.ok(gql.args.includes('owner=resolved-owner'), JSON.stringify(gql.args));
+  assert.ok(!gql.args.includes('owner=other'));
+});
+
+test('#4577: the runner wrapper bounds the association batch with GH_BATCH_TIMEOUT_MS and other calls with GH_TIMEOUT_MS', () => {
+  const calls = [];
+  const runner = enrichmentRunner({ calls, graphql: () => JSON.stringify({ data: { repository: { i7: { authorAssociation: 'NONE' } } } }) });
+  fetchAllRecords({ limit: 100, runner, sessionId: null, ttlSeconds: 60 });
+  const gql = calls.find((c) => c.args[0] === 'api' && c.args[1] === 'graphql');
+  assert.deepStrictEqual(gql.opts, { timeout: GH_BATCH_TIMEOUT_MS });
+  const view = calls.find((c) => c.args[0] === 'repo');
+  assert.deepStrictEqual(view.opts, { timeout: GH_TIMEOUT_MS });
 });

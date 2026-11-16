@@ -300,7 +300,7 @@ test('AC1.1, AC6.1: parallel waves — decision sub-file, opt-in token, merge-ba
 });
 
 test('parallel waves run on isolated agent worktrees, over the merge-gate kept set, with a consumed member marker (#2677 final review)', () => {
-  const { extractArgumentHint } = require('../plugin/bin/lib/skill-audit/argument-hint');
+  const { extractArgumentHint } = require('./helpers/argument-hint');
   const doc = read('plugin/skills/flow/multispec-parallel-waves.md');
   assert.match(doc, /isolation: "worktree"/);
   assert.match(doc, /worktreeBranch/);

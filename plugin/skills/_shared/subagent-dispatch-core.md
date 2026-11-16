@@ -60,7 +60,7 @@ one build phase, plus 2 more in a review/wrap-up session, corrected only externa
 Run long-running commands in the **foreground** of the current turn — a generous timeout, output
 redirected to a file if it's long — never `run_in_background`, and never end a turn hoping a
 notification will re-wake it. `test/verification.md`'s Foreground rule and
-`dispatch/task-prompt.md`'s foreground-execution instruction are the concrete pattern; point a new
+`dispatch/task-prompt.md`'s Context pack item 7 are the concrete pattern; point a new
 dispatch site at them rather than re-deriving it.
 
 **Nested `Agent` children (#2644, #3078).** A nested `Agent` call from a dispatched agent launches

@@ -316,6 +316,60 @@ test('#1929: joinTokens with no rows leaves zeroed columns and never throws on u
   assert.equal(joined.totals.toolRoundTrips, 0);
 });
 
+// #4359: per-file procedure reads. record-1535's review phase is [13:50, 13:57).
+test('#4359: joinTokens sums per-file reads per phase, keyed and sorted', () => {
+  const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
+  const joined = joinTokens(out.phases, [
+    usageRow('2026-09-05T13:51:00.000Z', { procedureFiles: { 'skills/b.md': 1 } }),
+    usageRow('2026-09-05T13:52:00.000Z', { procedureFiles: { 'skills/b.md': 1, 'skills/a.md': 2 } }),
+  ]);
+  const review = joined.phases.find((x) => x.phase === 'review');
+  assert.deepEqual(review.procedureFiles, { 'skills/a.md': 2, 'skills/b.md': 2 });
+  assert.deepEqual(Object.keys(review.procedureFiles), ['skills/a.md', 'skills/b.md']);
+  assert.deepEqual(joined.phases.find((x) => x.phase === 'wrap-up').procedureFiles, {});
+  assert.deepEqual(joined.unattributed.procedureFiles, {});
+  assert.deepEqual(Object.keys(joined.totals.procedureFiles), ['skills/a.md', 'skills/b.md']);
+});
+
+test('#4359: joinTokens attributes dispatch reads by start ts and never counts them as rows', () => {
+  const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
+  const rows = [usageRow('2026-09-05T13:51:00.000Z', { role: 'user', toolRoundTrip: true, procedureFiles: { 'skills/a.md': 1 } })];
+  const base = joinTokens(out.phases, rows);
+  const joined = joinTokens(out.phases, rows, [], { dispatchFileReads: [
+    { ts: '2026-09-05T13:53:00.000Z', procedureFiles: { 'skills/c.md': 2, 'skills/a.md': 1 } },
+    { ts: '2026-09-05T12:00:00.000Z', procedureFiles: { 'skills/z.md': 3 } },
+    { ts: 'not-a-date', procedureFiles: { 'skills/q.md': 9 } },
+  ] });
+  const review = joined.phases.find((x) => x.phase === 'review');
+  const baseReview = base.phases.find((x) => x.phase === 'review');
+  assert.deepEqual(review.procedureFiles, { 'skills/a.md': 2, 'skills/c.md': 2 });
+  assert.equal(review.rows, undefined);
+  assert.equal(review.toolRoundTrips, baseReview.toolRoundTrips);
+  assert.deepEqual(review.tokens, baseReview.tokens);
+  assert.deepEqual(joined.unattributed.procedureFiles, { 'skills/z.md': 3 });
+  assert.equal(joined.unattributed.rows, base.unattributed.rows);
+  assert.equal(joined.totals.toolRoundTrips, base.totals.toolRoundTrips);
+  // everything but procedureFiles is identical to the join without dispatch reads
+  const strip = (b) => { const { procedureFiles: _f, ...rest } = b; return rest; };
+  assert.deepEqual(joined.phases.map(strip), base.phases.map(strip));
+  assert.deepEqual(strip(joined.unattributed), strip(base.unattributed));
+  assert.deepEqual(strip(joined.totals), strip(base.totals));
+});
+
+test('#4359: totals.procedureFiles is the main-transcript row counts plus every dispatch entry', () => {
+  const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
+  const joined = joinTokens(out.phases, [
+    usageRow('2026-09-05T12:59:00.000Z', { procedureFiles: { 'skills/a.md': 1 } }), // unattributed row
+    usageRow('2026-09-05T14:00:00.000Z', { procedureFiles: { 'skills/b.md': 1 } }), // wrap-up
+  ], [], { dispatchFileReads: [
+    { ts: '2026-09-05T13:10:00.000Z', procedureFiles: { 'skills/a.md': 2 } },
+    { ts: '2026-09-05T12:00:00.000Z', procedureFiles: { 'skills/b.md': 4 } },
+  ] });
+  assert.deepEqual(joined.totals.procedureFiles, { 'skills/a.md': 3, 'skills/b.md': 5 });
+  assert.deepEqual(joined.phases.find((x) => x.phase === 'tasks').procedureFiles, { 'skills/a.md': 2 });
+  assert.deepEqual(joined.unattributed.procedureFiles, { 'skills/a.md': 1, 'skills/b.md': 4 });
+});
+
 // #4029: the hand-counted turn-classes fixture, built inline. Ten turns k=1..10
 // (context k*1000 + k*10); m3 runs on sonnet, the rest on opus; the user rows
 // carry the per-class counts, so the 11 calls ride 10 round trips.
@@ -562,4 +616,60 @@ test('#3375: an orphan (meta not found) counts, under unlabelled, with its tier 
 
 test('#3375: aggregateDispatches of nothing is empty', () => {
   assert.deepEqual(aggregateDispatches([]), { items: [], byTier: {}, byRole: {} });
+});
+
+// --- #5597 workflow agents count in subagents --------------------------------
+const WF_PHASES = () => derivePhases({ events: TC_EVENTS }).phases;
+const wfAt = (min, sec = 0) => `2026-10-24T10:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.000Z`;
+const REVIEW_EVENTS = [
+  { skill: 'claude-tweaks:flow', ts: wfAt(0), type: 'skill_invoked' },
+  { skill: 'claude-tweaks:review', ts: wfAt(10), type: 'skill_invoked' },
+  { ts: wfAt(20), type: 'session-end' },
+];
+const reviewRows = (agentCalls, dispatch) => [usageRow(wfAt(12), { role: 'user', toolRoundTrip: true, turnClasses: { dispatch }, agentCalls })];
+
+test('#5597 AC4.1: one Workflow call and two Agent calls in review with three workflow agents starting in review give subagents 5', () => {
+  const joined = joinTokens(derivePhases({ events: REVIEW_EVENTS }).phases, reviewRows(2, 3), [wfAt(13), wfAt(14), wfAt(15)]);
+  assert.equal(joined.phases.find((p) => p.phase === 'review').subagents, 5);
+});
+
+test('#5597 AC4.2: one Workflow call and two Agent calls in review with three workflow agents starting in review give a dispatch turn-class count of 3', () => {
+  const joined = joinTokens(derivePhases({ events: REVIEW_EVENTS }).phases, reviewRows(2, 3), [wfAt(13), wfAt(14), wfAt(15)]);
+  assert.equal(joined.phases.find((p) => p.phase === 'review').turnClasses.dispatch, 3);
+});
+
+test('#5597 AC9.1: a workflow agent starting after the last phase closes gives unattributed.subagents 1', () => {
+  const joined = joinTokens(derivePhases({ events: REVIEW_EVENTS }).phases, reviewRows(1, 1), [wfAt(50)]);
+  assert.equal(joined.unattributed.subagents, 1);
+});
+
+test('#5597 AC9.2: a workflow agent starting after the last phase closes leaves every phase subagents unchanged', () => {
+  const phases = derivePhases({ events: REVIEW_EVENTS }).phases;
+  const base = joinTokens(phases, reviewRows(1, 1));
+  const joined = joinTokens(phases, reviewRows(1, 1), [wfAt(50)]);
+  assert.deepEqual(joined.phases.map((p) => p.subagents), base.phases.map((p) => p.subagents));
+});
+
+test('#5597 AC9.3: a workflow agent starting after the last phase closes counts in totals.subagents', () => {
+  const phases = derivePhases({ events: REVIEW_EVENTS }).phases;
+  const base = joinTokens(phases, reviewRows(1, 1));
+  assert.equal(joinTokens(phases, reviewRows(1, 1), [wfAt(50)]).totals.subagents, base.totals.subagents + 1);
+});
+
+test('#5597: legacy row without agentCalls falls back to turnClasses.dispatch', () => {
+  const joined = joinTokens(WF_PHASES(), [usageRow(wfAt(5), { role: 'user', turnClasses: { dispatch: 2 } })]);
+  assert.equal(joined.totals.subagents, 2);
+});
+
+test('#5597: a non-numeric agentCalls falls back to turnClasses.dispatch and an unparseable start is ignored', () => {
+  const joined = joinTokens(WF_PHASES(), [usageRow(wfAt(5), { role: 'user', turnClasses: { dispatch: 2 }, agentCalls: 'x' })], ['not a date', null]);
+  assert.equal(joined.totals.subagents, 2);
+});
+
+test('#5597: the internal counters never reach the output', () => {
+  const joined = joinTokens(WF_PHASES(), [usageRow(wfAt(5), { role: 'user', turnClasses: { dispatch: 1 }, agentCalls: 1 })], [wfAt(6)]);
+  for (const b of [joined.phases[0], joined.unattributed, joined.totals]) {
+    assert.equal(Object.keys(b).includes('agentCalls'), false);
+    assert.equal(Object.keys(b).includes('workflowAgents'), false);
+  }
 });

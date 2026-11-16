@@ -101,6 +101,7 @@ test('the contract carries its headings in the specified order', () => {
     '## Sections',
     '## Canonical copy and lookup',
     '## Facts and claims',
+    '## Decision facts',
     '## Validation policy',
     '## The expected check set',
     '## Pipeline',

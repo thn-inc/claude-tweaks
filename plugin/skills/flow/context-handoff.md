@@ -83,9 +83,11 @@ ${CLAUDE_PLUGIN_ROOT}; your shell may not carry that variable.
 
 Async-wait discipline (required): you are a subagent, not a top-level session. Once your turn ends you
 cannot count on being re-woken: a reply that ends without a tool call ends your turn, whatever is
-still in flight, so a progress note rides alongside a tool call or is skipped (#3266). Run a long
-command (e.g. the full test suite) as a normal foreground call with a large explicit timeout
-(#1965). A nested `Agent` call launches async, and its completion notification reaches you only
+still in flight, so a progress note rides alongside a tool call or is skipped (#3266). Always
+run the project's test command and every other long-running command in the foreground, as a
+normal call with a large explicit timeout and its output redirected to a file if it's long —
+never with `run_in_background` — and never end the turn waiting on a background run you
+started (#1965). A nested `Agent` call launches async, and its completion notification reaches you only
 while your turn is alive (when the call instead returns the child's own reply, that child has
 reported and needs no wait): keep your turn alive with bounded foreground waits — repeated
 `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children (the set launched
