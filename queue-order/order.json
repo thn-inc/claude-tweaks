@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-16T16:05:33.117Z",
+  "computedAt": "2026-11-16T16:26:46.334Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -25,7 +25,7 @@
       },
       {
         "number": 5769,
-        "updatedAt": "2026-11-16T15:59:39Z",
+        "updatedAt": "2026-11-16T16:26:23Z",
         "state": "OPEN"
       },
       {
@@ -35,7 +35,7 @@
       },
       {
         "number": 5767,
-        "updatedAt": "2026-11-16T15:59:24Z",
+        "updatedAt": "2026-11-16T16:05:41Z",
         "state": "OPEN"
       },
       {
@@ -45,7 +45,7 @@
       },
       {
         "number": 5604,
-        "updatedAt": "2026-11-16T15:57:06Z",
+        "updatedAt": "2026-11-16T16:19:27Z",
         "state": "OPEN"
       },
       {
@@ -60,7 +60,7 @@
       },
       {
         "number": 5595,
-        "updatedAt": "2026-11-16T15:56:25Z",
+        "updatedAt": "2026-11-16T16:10:32Z",
         "state": "OPEN"
       },
       {
@@ -1291,7 +1291,7 @@
         "number": 5769,
         "state": "OPEN",
         "title": "Cut remote-protocol git work in the prune-remote, pre-review-catchup and claims-git-cas test fixtures",
-        "updatedAt": "2026-11-16T15:59:39Z",
+        "updatedAt": "2026-11-16T16:26:23Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -1385,90 +1385,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #5324, #5373\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\n`tests/bin-lib/hooks/guard-rewrite.test.js` checks that each command rewrite behaves the same under bash and zsh. It puts three stub executables first on `PATH` (`ls`, `node` and `git`, written at lines 773–778 at c059556f) and compares what the original and the rewritten command print.\n\nEach stub ends by starting a full node process to print its arguments:\n\n- `ls` and the `node` stub's fallback: `exec \"<node>\" -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- \"$@\"`\n- `git`: honours leading `-C <dir>` with `cd`, then `exec \"<node>\" -e 'console.log(JSON.stringify([process.env.PWD, ...process.argv.slice(1)]))' -- \"$@\"`\n\nA bare node start costs about 34 ms of CPU on the measuring machine (12 cores, load 50–110). A 45-second process sample on 2026-11-16 saw about 335 node starts from the `git` stub of one run of this file.\n\nThe `node` stub's `-e|-p|--eval|--print` branch hands off to the real node on purpose: the `node-eval-separator` rule is tested against real `process.argv`. Only the print-the-arguments path is waste.\n\n## Deliverables\n\n1. The `ls` stub, the `git` stub and the `node` stub's fallback branch print their output with shell builtins only: no node and no other child process per call.\n2. The printed text is byte-identical to today's JSON for every input the suite sends, so every existing assertion is unchanged. That includes arguments holding a space, a double quote, a backslash, a newline or a non-ASCII character.\n3. The `node` stub still execs the real node for `-e`, `-p`, `--eval` and `--print`.\n4. The stubs run under the interpreter their shebang names on macOS and on the ubuntu CI image.\n5. The PR body reports, for this file, node processes started by the stubs and git processes, before and after. The stubs run with a reduced environment (`PATH`, `HOME`, `A`), so a `NODE_OPTIONS` preload does not reach them: count stub node starts with a scratch wrapper around the node path, not committed.\n\n## Acceptance Criteria\n\n- [ ] A run of the file starts no node process from the `ls` stub, the `git` stub or the `node` stub's fallback branch. The PR body shows the before and after counts.\n- [ ] The stubs' output for a fixed argument list holding a space, a double quote, a backslash, a newline and a non-ASCII character equals `JSON.stringify` of the same list, checked by a test in the file.\n- [ ] The equivalence tests still fail when they should: with the rewrite temporarily broken so that it drops an argument, joins two arguments, or drops a `-C <dir>` that changes the directory, the file goes red. The PR body quotes the red output for each of the three.\n- [ ] The file reports the same number of tests as before, all passing under bash and zsh; no test is deleted, skipped or loosened.\n- [ ] The full suite and the Windows regression job pass.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/hooks/guard-rewrite.test.js` — replace the node-backed print stubs with builtin-only ones\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-16T15:51:50Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 5767,
-        "state": "OPEN",
-        "title": "guard-rewrite.test.js: print the shell stubs' argv from sh instead of starting node per call",
-        "updatedAt": "2026-11-16T15:59:24Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
