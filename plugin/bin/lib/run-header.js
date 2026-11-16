@@ -5,7 +5,8 @@
 // (or `.../{run-id}/spec-{N}/work/{N}-spec.md` for a multi-spec run), by /flow's
 // materialize step. After wrap-up it moves to
 // `.claude-tweaks/pipelines/archive/{run-id}/...` with the same layout beneath it —
-// by wrap-up's move (#3976) or by `archiveRunDir` in reconcile/archive-merged.js.
+// by wrap-up's pre-merge move (#3976, run-header-archive.js `archiveRunHeader`) or by
+// `archiveRunDir` in reconcile/archive-merged.js, the post-merge fallback.
 // Those are the two writers. The dual-path rule is permanent, not a compatibility
 // shim: a run is read live during its phases and archived afterwards, and both are
 // normal states. Precedence is root by root: within a root, live before archived and
