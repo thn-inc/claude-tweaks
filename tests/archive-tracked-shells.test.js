@@ -73,16 +73,16 @@ function addShell(root, id, { twin = 'identical', clean = true, push = true } = 
   return { id, file, live, twinWork };
 }
 
-function call(root, argv, { model = 'pr-first', ghOk = true, branch = 'main', extra = {} } = {}) {
+function call(root, argv, { model = 'pr-first', ghOk = true, branch = 'main', extra = {}, ghFake = null, auto = 'false' } = {}) {
   const ghCalls = [];
   const res = runCliSync(CLI, argv, {
     cwd: root,
     env: ENV,
     deps: {
       ...extra,
-      gh: (args) => { ghCalls.push(args); throw new Error(`unexpected gh ${args.join(' ')}`); },
+      gh: ghFake || ((args) => { ghCalls.push(args); throw new Error(`unexpected gh ${args.join(' ')}`); }),
       ghAvailable: () => ghOk,
-      policy: () => ({ 'integration-model': model, 'integration-branch': branch, 'housekeeping-auto-merge': 'false' }),
+      policy: () => ({ 'integration-model': model, 'integration-branch': branch, 'housekeeping-auto-merge': auto }),
     },
   });
   let envelope = null;
@@ -282,4 +282,278 @@ test('a stale locked registered worktree at the scratch path is replaced', () =>
   assert.deepEqual(r.envelope.deleted.map((m) => m.runId), [s.id]);
   assert.equal(fs.existsSync(worktreeDir(root)), false);
   assert.doesNotMatch(git(root, 'worktree', 'list'), /archive-tracked-shells/);
+});
+
+// A fake `gh` over an in-memory PR table. `pr list` projects only the requested --json fields
+// (so a dropped field is visible); `pr create` adds an OPEN row; `pr merge` records its argv.
+function fakeGh({ failCreate = false, failOpenList = false, failMerge = false } = {}) {
+  const st = { prs: [], calls: [], creates: 0, merges: [], bodies: [] };
+  const flag = (args, name) => args[args.indexOf(name) + 1];
+  const ok = (stdout) => ({ stdout, stderr: '', failure: null, exitCode: 0 });
+  const bad = (stderr) => ({ stdout: null, stderr, failure: 'gh-failed', exitCode: 1 });
+  st.gh = (args, o = {}) => {
+    st.calls.push({ args, input: o.input });
+    if (args[0] === 'pr' && args[1] === 'list') {
+      const state = flag(args, '--state');
+      if (state === 'open' && failOpenList) return bad('read-back down\nsecond line');
+      const fields = flag(args, '--json').split(',');
+      const rows = st.prs
+        .filter((p) => p.head === flag(args, '--head') && (state === 'all' || p.state.toLowerCase() === state))
+        .map((p) => Object.fromEntries(fields.map((f) => [f, p[f]])));
+      return ok(JSON.stringify(rows));
+    }
+    if (args[0] === 'pr' && args[1] === 'create') {
+      if (failCreate) return bad('create down');
+      st.creates += 1;
+      st.bodies.push(o.input);
+      const number = st.prs.length + 1;
+      st.prs.push({ number, url: `https://example.test/pull/${number}`, state: 'OPEN', head: flag(args, '--head') });
+      return ok(`https://example.test/pull/${number}`);
+    }
+    if (args[0] === 'pr' && args[1] === 'merge') {
+      if (failMerge) return bad('auto-merge not allowed\nsecond line');
+      st.merges.push(args);
+      return ok('');
+    }
+    throw new Error(`unexpected gh ${args.join(' ')}`);
+  };
+  return st;
+}
+
+const remoteTree = (origin, ref = BRANCH) => git(origin, 'ls-tree', '-r', '--name-only', ref).split('\n');
+const archivedOnRemote = (origin, s) => remoteTree(origin).includes(`.claude-tweaks/pipelines/archive/${s.id}/work/${s.file}`);
+
+test('AC2.1: under worktree-always the emitted command exits 0, creates the branch, moves the shell, opens one PR, main checkout HEAD unchanged', () => {
+  const { root, origin } = makeFixture();
+  const s = addShell(root, '2026-11-11T000000-record-1', { twin: 'absent' });
+  const head = git(root, 'rev-parse', 'HEAD');
+  const fake = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  assert.notEqual(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
+  assert.ok(archivedOnRemote(origin, s));
+  assert.equal(fake.creates, 1);
+  assert.equal(r.envelope.pr.url, 'https://example.test/pull/1');
+  assert.equal(git(root, 'rev-parse', 'HEAD'), head);
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+  const create = fake.calls.find((c) => c.args[1] === 'create');
+  assert.deepEqual(create.args, ['pr', 'create', '--base', 'main', '--head', BRANCH, '--title', 'Archive 1 stranded run spec headers', '--body-file', '-']);
+  assert.ok(create.input.includes(s.id));
+  const list = fake.calls.find((c) => c.args[1] === 'list');
+  assert.deepEqual(list.args, ['pr', 'list', '--head', BRANCH, '--state', 'all', '--json', 'number,url,state']);
+});
+
+test('AC3.1: three shells -> exactly one PR, branch carries every move', () => {
+  const { root, origin } = makeFixture();
+  const shells = [1, 2, 3].map((n) => addShell(root, `2026-11-12T00000${n}-record-${n}`, { twin: n === 2 ? 'identical' : 'absent' }));
+  const fake = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(fake.creates, 1);
+  for (const s of shells) assert.ok(archivedOnRemote(origin, s), s.id);
+});
+
+test('AC3.2: re-run after simulated merge is a no-op exiting 0 with moved empty', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-13T000000-record-1', { twin: 'absent' });
+  addShell(root, '2026-11-13T000001-record-2', { twin: 'identical' });
+  const fake = fakeGh();
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  git(root, 'fetch', '-q', 'origin');
+  git(root, 'push', '-q', 'origin', `refs/remotes/origin/${BRANCH}:refs/heads/main`);
+  fake.prs[0].state = 'MERGED';
+  git(root, 'pull', '-q', '--ff-only', 'origin', 'main');
+  const before = fake.creates;
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.envelope.moved, []);
+  assert.deepEqual(r.envelope.deleted, []);
+  assert.equal(fake.creates, before);
+});
+
+test('AC3.2b: after a squash merge whose head branch was deleted, a run with new shells bases on origin/main, not the stale local branch', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-14T000000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  git(root, 'fetch', '-q', 'origin');
+  git(root, 'merge', '--squash', `refs/remotes/origin/${BRANCH}`);
+  git(root, 'commit', '-q', '-m', 'squash of the housekeeping branch');
+  git(root, 'push', '-q', 'origin', 'main');
+  git(root, 'push', '-q', 'origin', `:refs/heads/${BRANCH}`);
+  fake.prs[0].state = 'MERGED';
+  git(root, 'rev-parse', '--verify', `refs/heads/${BRANCH}`); // the stale local branch is still there
+  const b = addShell(root, '2026-11-14T000001-record-2', { twin: 'absent' });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  git(root, 'fetch', '-q', 'origin');
+  const subjects = git(root, 'log', `origin/main..origin/${BRANCH}`, '--format=%s').split('\n');
+  assert.deepEqual(subjects, [`[reconcile] archive run ${b.id}`]);
+  assert.equal(fake.creates, 2);
+});
+
+test('a merged PR whose head branch still exists on the remote has that branch deleted first, then restarts from the integration branch', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-14T100000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  fake.prs[0].state = 'MERGED';
+  const b = addShell(root, '2026-11-14T100001-record-2', { twin: 'absent' });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  git(root, 'fetch', '-q', 'origin');
+  const subjects = git(root, 'log', `origin/main..origin/${BRANCH}`, '--format=%s').split('\n');
+  assert.ok(subjects.includes(`[reconcile] archive run ${b.id}`));
+  assert.equal(fake.creates, 2);
+});
+
+test('only a CLOSED PR for the branch exits 2 naming the PR and touches nothing', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-14T200000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  fake.prs.push({ number: 7, url: 'https://example.test/pull/7', state: 'CLOSED', head: BRANCH });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /#7/);
+  assert.equal(fake.creates, 0);
+  assert.equal(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+});
+
+test('AC3.3: re-run while the PR is open reuses the branch and PR and prints its URL', () => {
+  const { root, origin } = makeFixture();
+  [1, 2, 3].forEach((n) => addShell(root, `2026-11-15T00000${n}-record-${n}`, { twin: 'absent' }));
+  const fake = fakeGh();
+  const first = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(first.code, 0, first.stderr);
+  const fourth = addShell(root, '2026-11-15T000004-record-4', { twin: 'absent' });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(fake.creates, 1);
+  assert.equal(r.envelope.pr.url, first.envelope.pr.url);
+  assert.ok(archivedOnRemote(origin, fourth));
+});
+
+test('AC3.4: re-run after a crash resumes from the branch current state', () => {
+  const { root, origin } = makeFixture();
+  const a = addShell(root, '2026-11-16T000000-record-1', { twin: 'absent' });
+  assert.equal(call(root, ['--root', root, '--no-pr']).code, 0);
+  const b = addShell(root, '2026-11-16T000001-record-2', { twin: 'absent' });
+  const c = addShell(root, '2026-11-16T000002-record-3', { twin: 'identical' });
+  fs.mkdirSync(worktreeDir(root), { recursive: true });
+  fs.writeFileSync(path.join(worktreeDir(root), 'stale.txt'), 'x\n');
+  const fake = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(fake.creates, 1);
+  for (const s of [a, b, c]) assert.ok(archivedOnRemote(origin, s), s.id);
+  const subjects = git(root, 'log', `origin/main..${BRANCH}`, '--no-merges', '--format=%s').split('\n');
+  for (const s of [a, b, c]) assert.equal(subjects.filter((x) => x === `[reconcile] archive run ${s.id}`).length, 1);
+});
+
+test('AC5.1: housekeeping-auto-merge true arms with gh pr merge --auto --squash', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-17T000000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(fake.merges, [['pr', 'merge', '1', '--auto', '--squash']]);
+  assert.equal(r.envelope.pr.armed, true);
+});
+
+test('AC5.2: housekeeping-auto-merge false leaves the PR unarmed and says so', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-17T000001-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'false' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(fake.merges, []);
+  assert.equal(r.envelope.pr.armed, false);
+  assert.ok(r.envelope.notes.includes('housekeeping-auto-merge is false — PR left unarmed'));
+});
+
+test('AC5.3/AC5.4: a rejected arming call leaves the PR unarmed, reports the rejection, and is not an error exit', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-17T000002-record-1', { twin: 'absent' });
+  const fake = fakeGh({ failMerge: true });
+  const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.envelope.pr.armed, false);
+  assert.equal(r.envelope.pr.armError, 'auto-merge not allowed');
+});
+
+test('AC4.3: with one differing and one clean shell the PR still opens for the clean one and the CLI exits 1', () => {
+  const { root, origin } = makeFixture();
+  const good = addShell(root, '2026-11-18T000000-record-1', { twin: 'absent' });
+  const bad = addShell(root, '2026-11-18T000001-record-2', { twin: 'differs' });
+  const fake = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 1);
+  assert.equal(fake.creates, 1);
+  assert.ok(archivedOnRemote(origin, good));
+  assert.deepEqual(r.envelope.conflicts.map((c) => c.runId), [bad.id]);
+  assert.ok(fake.bodies[0].includes(bad.file));
+});
+
+test('the PR body lists untwinned dirs under their own heading', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-18T100000-record-1', { twin: 'absent' });
+  const odd = addShell(root, '2026-11-18T100001-record-2', { clean: false });
+  const fake = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(fake.bodies[0].includes('Untwinned (classify by hand)'));
+  assert.ok(fake.bodies[0].includes(odd.id));
+});
+
+test('AC7.5: a failure after the scratch worktree exists removes it and leaves no branch on the remote', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-19T000000-record-1', { twin: 'absent' });
+  const fake = fakeGh({ failCreate: true, failOpenList: true });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 1);
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+  assert.equal(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
+});
+
+test('a create failure on a branch the call did not create leaves the remote branch alone', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-19T100000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  fake.prs.length = 0; // the PR is gone: the branch is on the remote with no PR
+  addShell(root, '2026-11-19T100001-record-2', { twin: 'absent' });
+  const broken = fakeGh({ failCreate: true, failOpenList: true });
+  const r = call(root, ['--root', root], { ghFake: broken.gh });
+  assert.equal(r.code, 1);
+  assert.notEqual(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
+});
+
+test('a kept local branch that cannot merge the integration branch aborts with exit 2 and no scratch worktree', () => {
+  const { root } = makeFixture();
+  const a = addShell(root, '2026-11-20T000000-record-1', { twin: 'absent' });
+  assert.equal(call(root, ['--root', root, '--no-pr']).code, 0);
+  // origin/main adds the archive file the kept branch also added, with other bytes: an add/add conflict.
+  fs.mkdirSync(a.twinWork, { recursive: true });
+  fs.writeFileSync(path.join(a.twinWork, a.file), 'a different archived copy\n');
+  git(root, 'add', '--', path.join('.claude-tweaks', 'pipelines', 'archive', a.id, 'work', a.file));
+  git(root, 'commit', '-q', '-m', 'add a different archived copy');
+  git(root, 'push', '-q', 'origin', 'main');
+  addShell(root, '2026-11-20T000001-record-2', { twin: 'absent' });
+  const r = call(root, ['--root', root, '--no-pr']);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /merging refs\/remotes\/origin\/main into/);
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /archive-tracked-shells/);
+});
+
+test('every git call of a dry run and of enumeration carries the injected env', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-21T000000-record-1', { twin: 'absent' });
+  const seen = [];
+  const recording = (args, o) => { seen.push({ args, env: o && o.env }); return realDeps.git(args, o); };
+  const r = call(root, ['--root', root, '--dry-run'], { extra: { git: recording } });
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(seen.some((c) => c.args.includes('ls-files')));
+  for (const c of seen) assert.ok(c.env, `no env on git ${c.args.join(' ')}`);
 });

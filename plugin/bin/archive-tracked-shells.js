@@ -35,7 +35,7 @@ const { readRunState, isTrackedShellDir } = require('./lib/hooks/context');
 const { archiveRunDir, listSpecDirs, compareWorkTwin } = require('./lib/reconcile/archive-merged');
 const { lstatType } = require('./lib/path-guard');
 const { ghAvailable: probeGh, ghOptions } = require('./lib/repo-resolve');
-const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
+const { GH_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { resolvePolicy, callerDeps, scalarValue, EXIT_OK } = require('./resolve-policy');
 
 const BRANCH = 'housekeeping/archive-tracked-shells';
@@ -80,7 +80,7 @@ function findShells(root, deps) {
   }
   const candidates = names.filter((n) => isTrackedShellDir(path.join(base, n)));
   if (candidates.length === 0) return { shells: [], untwinned: [] };
-  const listed = deps.git(['ls-files', '-z', '--', '.claude-tweaks/pipelines'], { cwd: root });
+  const listed = deps.git(['ls-files', '-z', '--', '.claude-tweaks/pipelines'], { cwd: root, env: deps.env });
   if (listed.failure) throw new Error(`git ls-files failed: ${listed.stderr || listed.failure}`);
   const tracked = new Set(splitNul(listed.stdout || '').map((p) => p.split('/')[2]));
   const out = { shells: [], untwinned: [] };
@@ -123,7 +123,7 @@ function gitText(res) {
 // The integration branch: the policy value, else origin/HEAD's target, else null.
 function resolveIntegration(root, deps, policyValue) {
   if (policyValue) return policyValue;
-  const head = gitText(deps.git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { cwd: root }));
+  const head = gitText(deps.git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { cwd: root, env: deps.env }));
   return head.startsWith('origin/') ? head.slice('origin/'.length) : null;
 }
 
@@ -148,36 +148,102 @@ function hasArchivedWork(wt, runId) {
     || listSpecDirs(dir).some((spec) => lstatType(path.join(dir, spec, 'work')).type === 'directory');
 }
 
-// The real run: archive every shell in a scratch worktree on the local branch. The worktree
-// is always removed; the branch stays. -> { code, branch }
-function archiveInWorktree(root, shells, integration, deps, envelope) {
+const firstLine = (text) => String(text || '').split('\n')[0].trim();
+
+// Where the scratch branch starts, from the remote branch and the PRs that ever named it (a
+// real run without --no-pr). -> { base, merge, remoteExisted, openPr } | { error }
+//   open PR              -> origin/BRANCH, reuse the PR
+//   a merged PR          -> origin/{integration}; a lingering remote branch is deleted first
+//   closed PR only       -> error: nothing here can say what to do with it
+//   no PR ever           -> origin/BRANCH if on the remote (crash between push and create), else the
+//                           local BRANCH (crash before push), else origin/{integration}
+// `merge` says the base predates the integration branch's tip, so origin/{integration} is merged in.
+function planPrBase(root, integration, hasLocal, deps, g, gh) {
+  const originRef = `refs/remotes/origin/${integration}`;
+  const branchRef = `refs/remotes/origin/${BRANCH}`;
+  const ls = g(['ls-remote', '--heads', 'origin', `refs/heads/${BRANCH}`], root);
+  if (ls.failure) return { error: `git ls-remote origin failed: ${firstLine(ls.stderr) || ls.failure}` };
+  let remoteExisted = gitText(ls) !== '';
+  const listed = gh(['pr', 'list', '--head', BRANCH, '--state', 'all', '--json', 'number,url,state']);
+  if (listed.failure) return { error: `gh pr list failed: ${firstLine(listed.stderr) || listed.failure}` };
+  let prs;
+  try { prs = JSON.parse(listed.stdout || '[]'); } catch { prs = null; }
+  if (!Array.isArray(prs)) return { error: 'gh pr list printed no JSON array' };
+  const open = prs.find((p) => p.state === 'OPEN');
+  const closed = prs.find((p) => p.state === 'CLOSED');
+  const fetchBranch = () => !g(['fetch', 'origin', `+refs/heads/${BRANCH}:${branchRef}`], root).failure;
+  if (open) {
+    if (!remoteExisted || !fetchBranch()) return { error: `PR #${open.number} is open but ${BRANCH} could not be fetched from origin` };
+    return { base: branchRef, merge: true, remoteExisted, openPr: { number: open.number, url: open.url } };
+  }
+  if (prs.some((p) => p.state === 'MERGED')) {
+    // Its commits already landed, so the local branch is reset to the integration branch (-B).
+    if (remoteExisted) {
+      const gone = g(['push', 'origin', `:refs/heads/${BRANCH}`], root);
+      if (gone.failure) return { error: `deleting the merged remote branch ${BRANCH} failed: ${firstLine(gone.stderr) || gone.failure}` };
+      remoteExisted = false;
+    }
+    return { base: originRef, merge: false, remoteExisted, openPr: null };
+  }
+  if (closed) return { error: `PR #${closed.number} (${closed.url}) for ${BRANCH} was closed without merging — reopen it or delete the branch, then re-run` };
+  if (remoteExisted) {
+    if (!fetchBranch()) return { error: `${BRANCH} exists on origin but could not be fetched` };
+    return { base: branchRef, merge: true, remoteExisted, openPr: null };
+  }
+  if (hasLocal) return { base: `refs/heads/${BRANCH}`, merge: true, remoteExisted, openPr: null };
+  return { base: originRef, merge: false, remoteExisted, openPr: null };
+}
+
+function prBody(envelope) {
+  const lines = ['Archives stranded tracked run spec headers.', ''];
+  for (const m of envelope.moved) lines.push(`- moved ${m.runId}`);
+  for (const d of envelope.deleted) lines.push(`- deleted the live copy of ${d.runId} (archive twin identical)`);
+  for (const n of envelope.notes) if (/: already archived on /.test(n)) lines.push(`- ${n}`);
+  for (const c of envelope.conflicts) lines.push(`- left ${c.runId} (${c.reason}): ${c.differing.length ? c.differing.join(', ') : 'no differing paths'}`);
+  if (envelope.untwinned.length > 0) {
+    lines.push('', 'Untwinned (classify by hand)', '');
+    for (const u of envelope.untwinned) lines.push(`- ${u}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+// The real run: archive every shell in a scratch worktree on the local branch, and (unless
+// opts.noPr) push it and open or reuse its one PR. The worktree is always removed; the branch
+// stays. -> { code, branch }
+function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
   const wt = deps.worktreePath(root);
   const env = repoPinnedEnv(deps.env);
-  const g = (args, cwd) => deps.git(args, { cwd, env: deps.env });
+  const g = (args, cwd, extra) => deps.git(args, { cwd, env: deps.env, ...extra });
+  const gh = (args, input) => deps.gh(args, { cwd: root, input });
+  const refuse = (msg, branch = null) => {
+    deps.stderr(`archive-tracked-shells: ${msg}\n`);
+    return { code: 2, branch };
+  };
   const originRef = `refs/remotes/origin/${integration}`;
+  const branchRef = `refs/remotes/origin/${BRANCH}`;
   const fetched = g(['fetch', 'origin', `+refs/heads/${integration}:${originRef}`], root);
   if (fetched.failure) envelope.notes.push(`fetch of origin ${integration} failed; using the last fetched ref`);
   const hasLocal = !g(['rev-parse', '--verify', '--quiet', `refs/heads/${BRANCH}`], root).failure;
-  const base = hasLocal ? `refs/heads/${BRANCH}` : originRef;
+  let plan = { base: hasLocal ? `refs/heads/${BRANCH}` : originRef, merge: hasLocal, remoteExisted: false, openPr: null };
+  if (!opts.noPr) {
+    plan = planPrBase(root, integration, hasLocal, deps, g, gh);
+    if (plan.error) return refuse(plan.error);
+  }
+  const { base } = plan;
   if (g(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], root).failure) {
-    deps.stderr(`archive-tracked-shells: cannot resolve ${base} to start ${BRANCH} from\n`);
-    return { code: 2, branch: null };
+    return refuse(`cannot resolve ${base} to start ${BRANCH} from`);
   }
   removeWorktree(root, wt, deps);
   const added = g(['worktree', 'add', '-B', BRANCH, wt, base], root);
-  if (added.failure) {
-    deps.stderr(`archive-tracked-shells: git worktree add failed: ${added.stderr || added.failure}\n`);
-    return { code: 2, branch: null };
-  }
+  if (added.failure) return refuse(`git worktree add failed: ${added.stderr || added.failure}`);
   try {
-    if (hasLocal) {
-      // The kept branch predates this run: bring in what reached the integration branch since, so a
+    if (plan.merge) {
+      // The base predates this run: bring in what reached the integration branch since, so a
       // shell that landed later is in the scratch tree.
       const merged = g(['merge', '--no-edit', originRef], wt);
       if (merged.failure) {
         g(['merge', '--abort'], wt);
-        deps.stderr(`archive-tracked-shells: merging ${originRef} into ${BRANCH} failed: ${merged.stderr || merged.failure}\n`);
-        return { code: 2, branch: BRANCH };
+        return refuse(`merging ${originRef} into ${BRANCH} failed: ${merged.stderr || merged.failure}`, BRANCH);
       }
     }
     const dirty = g(['--no-optional-locks', 'status', '--porcelain'], wt); // git-path-read: not a path list (emptiness only)
@@ -212,9 +278,54 @@ function archiveInWorktree(root, shells, integration, deps, envelope) {
         });
       }
     }
-    // Task 4 (#3975) adds the push, the PR and its auto-merge arming here, after the loop
-    // and only without --no-pr; until then every real run stops at the local branch.
-    return { code: left > 0 ? 1 : 0, branch: BRANCH };
+    const leftCode = left > 0 ? 1 : 0;
+    if (opts.noPr) return { code: leftCode, branch: BRANCH };
+
+    const countAhead = (ref) => {
+      const res = g(['rev-list', '--count', `${ref}..HEAD`], wt);
+      const n = Number((res.stdout || '').trim());
+      if (res.failure || !Number.isInteger(n)) throw new Error(`git rev-list --count ${ref}..HEAD failed: ${res.stderr || res.failure}`);
+      return n;
+    };
+    // New work for the integration branch (decides whether a PR is needed) and for the remote
+    // branch (decides whether a push is).
+    const aheadOfIntegration = countAhead(originRef);
+    const toPush = plan.remoteExisted ? countAhead(branchRef) : aheadOfIntegration;
+    let createdRemote = false;
+    if (toPush > 0) {
+      const pushed = g(['push', 'origin', BRANCH], wt, { timeoutMs: GIT_PUSH_TIMEOUT_MS });
+      if (pushed.failure) return refuse(`git push origin ${BRANCH} failed: ${firstLine(pushed.stderr) || pushed.failure}`, BRANCH);
+      createdRemote = !plan.remoteExisted;
+    }
+    let pr = plan.openPr;
+    if (!pr && aheadOfIntegration > 0) {
+      const title = `Archive ${envelope.moved.length + envelope.deleted.length} stranded run spec headers`;
+      const created = gh(['pr', 'create', '--base', integration, '--head', BRANCH, '--title', title, '--body-file', '-'], prBody(envelope));
+      // The read-back is the truth: a create that errored after it landed still has its PR.
+      const back = gh(['pr', 'list', '--head', BRANCH, '--state', 'open', '--json', 'number,url']);
+      let rows = [];
+      if (!back.failure) { try { rows = JSON.parse(back.stdout || '[]'); } catch { rows = []; } }
+      pr = Array.isArray(rows) && rows.length > 0 ? { number: rows[0].number, url: rows[0].url } : null;
+      if (!pr) {
+        deps.stderr(`archive-tracked-shells: no pull request for ${BRANCH}: ${firstLine(created.failure ? created.stderr : back.stderr) || 'the open-PR read-back was empty'}\n`);
+        if (createdRemote) {
+          const gone = g(['push', 'origin', `:refs/heads/${BRANCH}`], wt);
+          envelope.notes.push(gone.failure ? `could not delete the remote branch ${BRANCH} after the failure` : `deleted the remote branch ${BRANCH} this run pushed`);
+        }
+        return { code: 1, branch: BRANCH };
+      }
+    }
+    if (pr) {
+      envelope.pr = { number: pr.number, url: pr.url, armed: false };
+      if (opts.autoMerge === 'true') {
+        const armed = gh(['pr', 'merge', String(pr.number), '--auto', '--squash']);
+        if (armed.failure) envelope.pr.armError = firstLine(armed.stderr) || String(armed.failure);
+        else envelope.pr.armed = true;
+      } else {
+        envelope.notes.push('housekeeping-auto-merge is false — PR left unarmed');
+      }
+    }
+    return { code: leftCode, branch: BRANCH };
   } finally {
     removeWorktree(root, wt, deps);
   }
@@ -285,7 +396,9 @@ function run(argv, deps) {
     }
     let out;
     try {
-      out = archiveInWorktree(root, found.shells, integration, deps, envelope);
+      out = archiveInWorktree(root, found.shells, integration, deps, envelope, {
+        noPr: opts.noPr, autoMerge: policy['housekeeping-auto-merge'],
+      });
     } catch (err) {
       deps.stderr(`archive-tracked-shells: archiving failed: ${(err && err.message) || err}\n`);
       return 2;
@@ -300,8 +413,8 @@ function run(argv, deps) {
 
 // git through runGit with the repo-locating env pinned, stdout untrimmed (-z readers need it).
 // `input` is ignored: no git call here reads stdin.
-function realGit(args, { cwd, env }) {
-  return runGit(args, cwd, { raw: true, env: repoPinnedEnv(env) });
+function realGit(args, { cwd, env, timeoutMs }) {
+  return runGit(args, cwd, { raw: true, env: repoPinnedEnv(env), ...(timeoutMs ? { timeoutMs } : {}) });
 }
 
 function realGh(args, { cwd, input } = {}) {
