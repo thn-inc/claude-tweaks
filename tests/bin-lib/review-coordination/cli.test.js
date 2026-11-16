@@ -839,3 +839,214 @@ test('finding-ids exits 2 through the usage message on a wrong arity', (t) => {
     assert.ok(res.err.includes('review-coordination.js finding-ids <entries.json>'), 'the usage lists finding-ids');
   }
 });
+
+// ---- #5541: plan-chunks and resolve-tiebreak --tier ----
+
+const planRun = (argv, cwd) => {
+  const { deps, out, err } = tbDeps(cwd);
+  const code = run(['plan-chunks', ...argv], deps);
+  return { code, out: out.join(''), err: err.join('') };
+};
+
+// Findings in files under a repo root, with reply-block lines for them. `info` entries are Standard
+// tier; `low` and `high` are Capable.
+function tierInputs(d) {
+  const root = path.join(d, 'repo');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  const make = (name, reporterSeverity) => {
+    fs.writeFileSync(path.join(root, 'src', `${name}.ts`), 'x\ny\nconst ok = 1;\n');
+    return { ...TB_FINDING, path: `src/${name}.ts`, line: 3, claim: `claim ${name}`, reporterSeverity };
+  };
+  const block = (f, verdict, severity) => [
+    `Id: ${findingId(f)}`, `Verdict: ${verdict}`, `Severity: ${severity}`, `Evidence: ${f.path}:3 \`const ok = 1;\``,
+    `Recommendation: ${verdict === 'confirmed' ? 'file — real' : 'drop'}`,
+  ];
+  const replyOf = (...blocks) => blocks.flat().concat('STATUS: DONE').join('\n');
+  return { root, make, block, replyOf };
+}
+
+// A decisions.md already holding one line, so "nothing appended" is a byte comparison, not an absence check.
+function seededRunDir(t) {
+  const { main, runDir } = anchoredRunDir(t);
+  const seed = '## /review\n- AUTO 09:00:00 — Seed: untouched. Reversibility: high.\n';
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), seed);
+  return { main, runDir, seed, current: () => fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8') };
+}
+
+test('plan-chunks prints one tier per chunk, numbered from 1, and writes nothing', (t) => {
+  const d = tmpDir(t);
+  const entries = Array.from({ length: 10 }, (_, i) => ({ ...TB_FINDING, path: `src/f${i}.ts`, claim: `claim ${i}`, reporterSeverity: i === 4 ? 'info' : 'low' }));
+  const file = writeText(d, 'plan.json', JSON.stringify(entries));
+  const before = fs.readdirSync(d).sort();
+  const res = planRun([file], d);
+  assert.strictEqual(res.code, 0, res.err);
+  assert.strictEqual(res.err, '');
+  assert.strictEqual(res.out.split('\n').filter(Boolean).length, 1, 'one JSON line');
+  assert.deepStrictEqual(JSON.parse(res.out), { chunks: [
+    { chunk: 1, tier: 'capable', indexes: [0, 1, 2, 3, 5, 6, 7, 8] },
+    { chunk: 2, tier: 'capable', indexes: [9] },
+    { chunk: 3, tier: 'standard', indexes: [4] },
+  ] });
+  assert.deepStrictEqual(fs.readdirSync(d).sort(), before, 'plan-chunks writes no file');
+  const empty = planRun([writeText(d, 'empty.json', '[]')], d);
+  assert.strictEqual(empty.code, 0);
+  assert.strictEqual(empty.out, '{"chunks":[]}\n');
+});
+
+test('plan-chunks exits 2 with one stderr line on a malformed entry, a non-array, an unreadable file or a wrong arity', (t) => {
+  const d = tmpDir(t);
+  const bad = [
+    ['non-array', JSON.stringify(TB_FINDING)],
+    ['malformed entry', JSON.stringify([TB_FINDING, { ...TB_FINDING, kind: 'bogus' }])],
+    ['non-object entry', JSON.stringify([TB_FINDING, 'a string'])],
+    ['invalid json', '{not json'],
+  ];
+  for (const [name, text] of bad) {
+    const res = planRun([writeText(d, 'bad-plan.json', text)], d);
+    assert.strictEqual(res.code, 2, name);
+    assert.strictEqual(res.out, '', name);
+    assert.strictEqual(res.err.split('\n').filter(Boolean).length, 1, name);
+  }
+  const nonArray = planRun([writeText(d, 'obj.json', JSON.stringify(TB_FINDING))], d);
+  assert.match(nonArray.err, /must hold a JSON array/);
+  const malformed = planRun([writeText(d, 'mal.json', JSON.stringify([{ ...TB_FINDING, kind: 'bogus' }]))], d);
+  assert.match(malformed.err, /kind must be one of/);
+  const unreadable = planRun([path.join(d, 'no-such.json')], d);
+  assert.strictEqual(unreadable.code, 2);
+  assert.strictEqual(unreadable.out, '');
+  for (const argv of [[], ['a.json', 'b.json']]) {
+    const res = planRun(argv, d);
+    assert.strictEqual(res.code, 2, JSON.stringify(argv));
+    assert.match(res.err, /^review-coordination\.js: plan-chunks takes exactly 1 JSON file path\n/);
+  }
+});
+
+test('resolve-tiebreak --tier standard escalates a raised finding, prints it, and logs nothing', (t) => {
+  const d = tmpDir(t);
+  const { root, make, block, replyOf } = tierInputs(d);
+  const info = make('info', 'info');
+  const entry = writeText(d, 'info.json', JSON.stringify(info));
+  const reply = writeText(d, 'info-reply.txt', replyOf(block(info, 'confirmed', 'medium').slice(1)));
+  const { main, runDir, seed, current } = seededRunDir(t);
+  const res = chunkRun([entry, reply, '--root', root, '--run', runDir, '--tier', 'standard'], main);
+  assert.strictEqual(res.code, 0, res.err);
+  assert.strictEqual(res.err, '');
+  assert.strictEqual(res.out, JSON.stringify({ escalated: true, id: findingId(info), reason: 'raised', severity: 'medium' }) + '\n');
+  assert.strictEqual(current(), seed, 'nothing is appended for an escalated finding');
+});
+
+test('resolve-tiebreak --tier standard settles an info finding the judge did not raise, and logs it', (t) => {
+  const d = tmpDir(t);
+  const { root, make, block, replyOf } = tierInputs(d);
+  const info = make('info', 'info');
+  const entry = writeText(d, 'info.json', JSON.stringify(info));
+  const reply = writeText(d, 'info-reply.txt', replyOf(block(info, 'refuted', 'info').slice(1)));
+  const { main, runDir } = anchoredRunDir(t);
+  const res = chunkRun([entry, reply, '--root', root, '--run', runDir, '--tier', 'standard'], main);
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.strictEqual(printed.escalated, undefined);
+  assert.strictEqual(printed.outcome, 'drop');
+  assert.strictEqual(printed.logged, true);
+  assert.strictEqual(verdictLines(runDir).length, 1);
+});
+
+test('resolve-tiebreak --tier standard on a Capable-tier finding exits 2 before the reply is read, in both forms', (t) => {
+  const d = tmpDir(t);
+  const { root, make, block, replyOf } = tierInputs(d);
+  const info = make('info', 'info');
+  const low = make('low', 'low');
+  const unknown = { ...make('unknown', 'info'), kind: 'contested', positions: [{ severity: 'info' }, { severity: 'bogus' }] };
+  const { main, runDir, seed, current } = seededRunDir(t);
+  const missingReply = path.join(d, 'no-such-reply.txt');
+  const realReply = writeText(d, 'reply.txt', replyOf(block(info, 'confirmed', 'info')));
+  const cases = [
+    ['one-finding low', writeText(d, 'one-low.json', JSON.stringify(low))],
+    ['one-finding contested unknown', writeText(d, 'one-unknown.json', JSON.stringify(unknown))],
+    ['chunk of one low', writeText(d, 'chunk-low.json', JSON.stringify([low]))],
+    ['mixed chunk', writeText(d, 'chunk-mixed.json', JSON.stringify([info, low]))],
+  ];
+  for (const [name, file] of cases) {
+    for (const reply of [missingReply, realReply]) {
+      const res = chunkRun([file, reply, '--root', root, '--run', runDir, '--tier', 'standard'], main);
+      assert.strictEqual(res.code, 2, name);
+      assert.strictEqual(res.out, '', name);
+      assert.strictEqual(res.err.split('\n').filter(Boolean).length, 1, name);
+      assert.match(res.err, /Capable-tier finding cannot be judged at standard/, `${name}: the tier is checked, not the reply file`);
+      assert.strictEqual(current(), seed, name);
+    }
+  }
+});
+
+test('resolve-tiebreak --tier capable settles a raised finding like no --tier does', (t) => {
+  const d = tmpDir(t);
+  const { root, make, block, replyOf } = tierInputs(d);
+  const info = make('info', 'info');
+  const entry = writeText(d, 'info.json', JSON.stringify(info));
+  const reply = writeText(d, 'info-reply.txt', replyOf(block(info, 'confirmed', 'medium').slice(1)));
+  const outputs = [];
+  for (const tierArgs of [['--tier', 'capable'], []]) {
+    const { main, runDir } = anchoredRunDir(t);
+    const res = chunkRun([entry, reply, '--root', root, '--run', runDir, ...tierArgs], main);
+    assert.strictEqual(res.code, 0, res.err);
+    const printed = JSON.parse(res.out);
+    assert.strictEqual(printed.escalated, undefined);
+    assert.strictEqual(printed.outcome, 'confirmed');
+    assert.strictEqual(printed.logged, true);
+    assert.strictEqual(verdictLines(runDir).length, 1);
+    outputs.push(res.out);
+  }
+  assert.strictEqual(outputs[0], outputs[1], 'an explicit capable tier is the default');
+});
+
+test('resolve-tiebreak --tier with no value, an unknown value or a wrong case exits 2 and writes nothing', (t) => {
+  const d = tmpDir(t);
+  const { root, make, block, replyOf } = tierInputs(d);
+  const info = make('info', 'info');
+  const entry = writeText(d, 'info.json', JSON.stringify(info));
+  const chunk = writeText(d, 'info-chunk.json', JSON.stringify([info]));
+  const reply = writeText(d, 'info-reply.txt', replyOf(block(info, 'refuted', 'info').slice(1)));
+  const { main, runDir, seed, current } = seededRunDir(t);
+  for (const file of [entry, chunk]) {
+    for (const tierArgs of [['--tier'], ['--tier', 'bogus'], ['--tier', 'Standard'], ['--tier', '']]) {
+      const res = chunkRun([file, reply, '--root', root, '--run', runDir, ...tierArgs], main);
+      const name = `${path.basename(file)} ${tierArgs.join(' ')}`;
+      assert.strictEqual(res.code, 2, name);
+      assert.strictEqual(res.out, '', name);
+      assert.match(res.err, /^review-coordination\.js: --tier needs one of capable, standard\n/, name);
+      assert.strictEqual(current(), seed, name);
+    }
+  }
+});
+
+test('the chunk form adds escalated beside results and unsettled, and appends nothing for an escalated entry', (t) => {
+  const d = tmpDir(t);
+  const { root, make, block, replyOf } = tierInputs(d);
+  const raised = make('raised', 'info');
+  const settled = make('settled', 'info');
+  const chunk = writeText(d, 'tier-chunk.json', JSON.stringify([raised, settled]));
+  const reply = writeText(d, 'tier-reply.txt', replyOf(block(raised, 'confirmed', 'medium'), block(settled, 'refuted', 'info')));
+  const { main, runDir } = anchoredRunDir(t);
+  const res = chunkRun([chunk, reply, '--root', root, '--run', runDir, '--tier', 'standard'], main);
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.deepStrictEqual(Object.keys(printed), ['chunk', 'results', 'unsettled', 'escalated']);
+  assert.deepStrictEqual(printed.escalated, [{ id: findingId(raised), index: 0, reason: 'raised', severity: 'medium' }]);
+  assert.deepStrictEqual(printed.results.map((r) => r.id), [findingId(settled)]);
+  assert.deepStrictEqual(printed.unsettled, []);
+  const lines = verdictLines(runDir);
+  assert.strictEqual(lines.length, 1);
+  assert.ok(lines[0].includes(`tiebreak:${findingId(settled)}`), 'the one verdict line is the settled finding\'s');
+  assert.ok(!lines[0].includes('src/raised.ts') && !lines[0].includes(findingId(raised)), 'no verdict line names the escalated finding');
+  assert.ok(printed.results.every((r) => r.logged === true));
+
+  const low = make('low', 'low');
+  const lowChunk = writeText(d, 'low-chunk.json', JSON.stringify([low]));
+  const lowReply = writeText(d, 'low-reply.txt', replyOf(block(low, 'confirmed', 'medium')));
+  const capable = chunkRun([lowChunk, lowReply, '--root', root], d);
+  assert.strictEqual(capable.code, 0, capable.err);
+  const capablePrinted = JSON.parse(capable.out);
+  assert.deepStrictEqual(Object.keys(capablePrinted), ['chunk', 'results', 'unsettled', 'escalated']);
+  assert.deepStrictEqual(capablePrinted.escalated, []);
+  assert.strictEqual(capablePrinted.results.length, 1);
+});
