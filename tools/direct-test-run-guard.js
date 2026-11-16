@@ -18,9 +18,7 @@ if (require.main === module) process.on('uncaughtException', () => {});
 
 const fs = require('fs');
 const path = require('path');
-const { NODE_TEST_VALUE_FLAGS } = require('./run-tests');
 const { forEachCommandSegment } = require('../plugin/bin/lib/hooks/git-command');
-const { stripComments } = require('../plugin/bin/lib/strip-comments');
 
 const SAFEGUARDS_TEXT = 'A direct node --test over several files, or in a loop, skips what tools/run-tests.js gives a run: git auto-maintenance off for fixture repos, a per-run TMPDIR removed on exit, the machine-wide suite slot, and bounded file concurrency.';
 const EXPANSION_LINE = 'The runner takes *.test.js files only and refuses anything else the expansion names, so make it name test files only.';
@@ -29,7 +27,13 @@ const LOOP_FILES_PLACEHOLDER = '<the test files this loop runs>';
 // it, cannot be named.
 const DIR_STACK_PLACEHOLDER = 'node <path to tools/run-tests.js> <the same flags and test files>';
 
-const NODE_TEST_VALUE_SET = new Set(NODE_TEST_VALUE_FLAGS);
+// The runner's test flags that take a value word, read lazily: tools/run-tests.js pulls in child_process and
+// the suite-slot modules, which a Bash call with no node program never needs (the hook runs on every call).
+let testValueCache = null;
+function nodeTestValueSet() {
+  if (testValueCache === null) testValueCache = new Set(require('./run-tests').NODE_TEST_VALUE_FLAGS);
+  return testValueCache;
+}
 // General node options (not test flags) that take their value as the next word: every option `node --help`
 // (Node 26.13.1) prints as `--name=...`, with its short and alias spellings. A value is never counted as a
 // file. The runner takes none of them, so the replacement line leaves them out and the reason names them.
@@ -256,6 +260,7 @@ function readRun(seg, at, end, loops) {
   } else {
     return null;
   }
+  const testValues = nodeTestValueSet();
   const role = new Map();
   let sawTest = false;
   let inline = false;
@@ -292,7 +297,7 @@ function readRun(seg, at, end, loops) {
         if (INLINE_CODE_OPTIONS.has(tok.split('=')[0])) inline = true;
         role.set(i, testFlag ? 'testflag' : 'foreign');
         const takesValue = !tok.includes('=')
-          && (NODE_TEST_VALUE_SET.has(tok) || NODE_VALUE_OPTIONS.has(tok) || INLINE_CODE_OPTIONS.has(tok));
+          && (testValues.has(tok) || NODE_VALUE_OPTIONS.has(tok) || INLINE_CODE_OPTIONS.has(tok));
         if (takesValue && i + 1 < end) {
           i += 1;
           role.set(i, testFlag ? 'testvalue' : 'foreignvalue');
@@ -449,10 +454,12 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
 const JS_SCRIPT_RE = /\.(?:js|mjs|cjs)$/;
 
 // The index of the script operand of a `node`, `bash`, `sh` or `zsh` program: its first non-option word
-// (inline node code runs no file), or null.
+// (-1 when node runs inline code: no file at all, and its stdin is data), or null (no operand: the program
+// reads its script from stdin).
 function scriptOperand(seg, prog) {
   const { t } = seg;
   const isNode = NODE_NAMES.has(seg.name(prog.at));
+  const testValues = isNode ? nodeTestValueSet() : null;
   for (let i = prog.at + 1; i < prog.end; i += 1) {
     const w = t[i];
     if (seg.isRedirect(i)) {
@@ -462,8 +469,8 @@ function scriptOperand(seg, prog) {
     if (w === '--') return i + 1 < prog.end ? i + 1 : null;
     if (isNode) {
       if (w.length > 1 && w[0] === '-') {
-        if (INLINE_CODE_OPTIONS.has(w.split('=')[0])) return null;
-        if (NODE_TEST_VALUE_SET.has(w) || NODE_VALUE_OPTIONS.has(w)) i += 1;
+        if (INLINE_CODE_OPTIONS.has(w.split('=')[0])) return -1;
+        if (testValues.has(w) || NODE_VALUE_OPTIONS.has(w)) i += 1;
         continue;
       }
     } else if (SHELL_CLUSTER_RE.test(w)) {
@@ -501,7 +508,8 @@ function collectScript(seg, prog, segCwd, ctx) {
   let kind = 'shell';
   if (isNode || SHELLS.has(name)) {
     const i = scriptOperand(seg, prog);
-    word = i === null ? stdinFile(seg, prog) : seg.t[i];
+    if (i === null) word = stdinFile(seg, prog);
+    else if (i !== -1) word = seg.t[i];
     if (isNode || (word !== null && JS_SCRIPT_RE.test(word))) kind = 'js';
   } else if (program === 'source' || program === '.') {
     for (let i = prog.at + 1; i < prog.end && word === null; i += 1) {
@@ -518,10 +526,19 @@ function collectScript(seg, prog, segCwd, ctx) {
 // 'js' or 'shell' for a script whose first line is a `#!` naming node or a shell (directly or through
 // `env`), else null: any other interpreter, or no `#!` line, is no script to scan.
 function kindFromShebang(text) {
-  const m = /^#![ \t]*(\S+)(?:[ \t]+(\S+))?/.exec(text);
+  const m = /^#![ \t]*([^\r\n]*)/.exec(text);
   if (!m) return null;
-  let program = path.posix.basename(m[1]);
-  if (program === 'env') program = m[2] ? path.posix.basename(m[2]) : '';
+  const words = m[1].split(/[ \t]+/).filter(Boolean);
+  let program = path.posix.basename(words[0] || '');
+  if (program === 'env') {
+    // env's own options (`-S`, `-i`, `-u NAME`, `--`) and `NAME=value` words come before the interpreter.
+    let i = 1;
+    while (i < words.length && (words[i].startsWith('-') || ASSIGNMENT_RE.test(words[i]))) {
+      const valued = words[i] === '-u' || words[i] === '--unset' || words[i] === '-C' || words[i] === '--chdir';
+      i += valued ? 2 : 1;
+    }
+    program = i < words.length ? path.posix.basename(words[i]) : '';
+  }
   if (NODE_NAMES.has(program)) return 'js';
   return SHELLS.has(program) ? 'shell' : null;
 }
@@ -636,7 +653,7 @@ function hasDirectTestRun(text, options) {
 }
 
 const QUOTES = '\'"`';
-const NODE_CODE_RE = /process\s*\.\s*(?:execPath|argv0)\b|process\s*\.\s*argv\s*\[\s*0\s*\]/g;
+const NODE_CODE_RE = /process\s*\.\s*(?:execPath|argv0)\b|process\s*\.\s*argv\s*\[\s*0\s*\]|process\s*\.\s*env\s*\.\s*npm_node_execpath\b/g;
 const CHILD_PROCESS_NAMES = new Set(['child_process', 'node:child_process']);
 
 // Whether a string literal's whole content names a node program.
@@ -652,6 +669,7 @@ function isNodeName(body) {
 // whole content is `--test`, a `child_process` reference (in code, or a module-name literal), and a node
 // program (`process.execPath`, `process.argv[0]`, `process.argv0`, or a literal naming node).
 function matchJs(text) {
+  const { stripComments } = require('../plugin/bin/lib/strip-comments'); // lazy: most calls scan no script
   const keep = text;
   const blank = stripComments(text, { literals: 'blank' });
   const isDelimiter = (i) => QUOTES.includes(keep[i]) && blank[i] === keep[i];

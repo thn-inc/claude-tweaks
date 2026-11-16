@@ -486,6 +486,11 @@ const SCAN_RULE_ROWS = [
   ['a program word without a slash is no path', 'runner', 'allow'],
   ['node runs a .sh file as JavaScript', 'node /tmp/script.sh', 'deny'],
   ['a shell runs a .js file as JavaScript', 'bash /tmp/shellrun.js', 'deny'],
+  ['inline code reads its stdin as data', 'node -e "1" < /tmp/mutant-run.js', 'allow'],
+  ['inline print reads its stdin as data', 'node -p "1" < /tmp/mutant-run.js', 'allow'],
+  ['inline eval= reads its stdin as data', 'node --eval=1 < /tmp/mutant-run.js', 'allow'],
+  ['a -c wrapper reads its stdin as data', 'bash -c "cat" < /tmp/loop.sh', 'allow'],
+  ['a shell with no operand runs its stdin', 'bash < /tmp/loop.sh', 'deny'],
 ];
 
 test('each scan rule is decided by its own input', () => {
@@ -508,6 +513,15 @@ test('a program run by path is a script whatever its extension, decided by its f
   assert.equal(run(`#!/bin/zsh -e\n${two}`).decision, 'deny');
   assert.equal(run(`#!/usr/bin/env node\n${OFFENDING_JS}`).decision, 'deny');
   assert.equal(run(`#!/usr/bin/node\n${OFFENDING_JS}`).decision, 'deny');
+  // env's own options and assignments are skipped to reach the interpreter.
+  assert.equal(run(`#!/usr/bin/env -S node --no-warnings\n${OFFENDING_JS}`).decision, 'deny');
+  assert.equal(run(`#!/usr/bin/env -S bash -x\n${two}`).decision, 'deny');
+  assert.equal(run(`#!/usr/bin/env -i bash\n${two}`).decision, 'deny');
+  assert.equal(run(`#!/usr/bin/env -u HOME bash\n${two}`).decision, 'deny');
+  assert.equal(run(`#!/usr/bin/env FOO=1 bash\n${two}`).decision, 'deny');
+  assert.equal(run(`#!/usr/bin/env -- bash\n${two}`).decision, 'deny');
+  assert.deepEqual(run(`#!/usr/bin/env -S python3 -u\n${two}`), { decision: 'allow' });
+  assert.deepEqual(run(`#!/usr/bin/env -S\n${two}`), { decision: 'allow' });
   assert.equal(run(`#!/usr/bin/env bash\n${two}`, '/tmp/other.py').decision, 'deny');
   assert.deepEqual(run(`#!/usr/bin/env python3\n${two}`), { decision: 'allow' });
   assert.deepEqual(run(`#!/usr/bin/env bash\necho done\n`), { decision: 'allow' });
@@ -563,7 +577,8 @@ const JS_ROWS = [
   ['child_process as code only', "const child_process = require('cp-shim'); child_process.spawnSync(process.execPath, ['--test']);", 'process.execPath'],
   ['a node.exe literal', "require('child_process').spawnSync('node.exe', ['--test']);", "'node.exe'"],
   ['the first of two node references, a literal', "require('child_process').spawnSync('node', ['--test'], { x: process.execPath });", "'node'"],
-  ['the first of two node references, code', "require('child_process').spawnSync(process.execPath, ['--test'], { x: 'node' });", 'process.execPath'],
+  ['process.env.npm_node_execpath', "require('child_process').spawnSync(process.env.npm_node_execpath, ['--test']);", 'process.env.npm_node_execpath'],
+  ['the first of two node references, code',"require('child_process').spawnSync(process.execPath, ['--test'], { x: 'node' });", 'process.execPath'],
 ];
 
 test('a shell script names its first direct test run, cut at 120 characters', () => {
@@ -594,6 +609,30 @@ test('a JavaScript script is denied or allowed by the same rows through judgeOrT
       const verdict = judgeOrThrow(bash(`node ${file}`), realDeps());
       assert.deepEqual(verdict, ref === null ? { decision: 'allow' } : { decision: 'deny', reason: scriptReasonFor(file, { ref }) }, what);
     }
+  });
+});
+
+test('a call that has nothing to do with node loads neither the runner nor the comment stripper', () => {
+  // The child requires the guard, judges one payload, and prints the module paths it loaded.
+  const loaded = (command) => {
+    const code = "const g = require(process.argv[1]); g.judge(JSON.parse(process.argv[2]), g.realDeps()); console.log(JSON.stringify(Object.keys(require.cache)));";
+    const res = spawnSync(process.execPath, ['-e', code, GUARD, JSON.stringify(bash(command))], { encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
+    assert.equal(res.status, 0, res.stderr);
+    return JSON.parse(res.stdout).map((p) => p.split(path.sep).join('/'));
+  };
+  const endsWith = (paths, suffix) => paths.some((p) => p.endsWith(suffix));
+  const plain = loaded('git status --short');
+  assert.equal(endsWith(plain, '/tools/direct-test-run-guard.js'), true);
+  assert.equal(endsWith(plain, '/tools/run-tests.js'), false);
+  assert.equal(endsWith(plain, '/plugin/bin/lib/strip-comments.js'), false);
+  assert.equal(endsWith(loaded('bash -x /no/such/loop.sh'), '/tools/run-tests.js'), false);
+  const node = loaded('node --test tests/a.test.js');
+  assert.equal(endsWith(node, '/tools/run-tests.js'), true);
+  assert.equal(endsWith(node, '/plugin/bin/lib/strip-comments.js'), false);
+  withTempDir((dir) => {
+    const file = path.join(dir, 'scratch.js');
+    fs.writeFileSync(file, RUNNER_JS);
+    assert.equal(endsWith(loaded(`node ${file}`), '/plugin/bin/lib/strip-comments.js'), true);
   });
 });
 
