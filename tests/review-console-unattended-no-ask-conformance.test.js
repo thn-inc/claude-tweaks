@@ -74,17 +74,17 @@ test('AC7: the unattended branch runs console-filings.js', () => {
 });
 
 // An unfiled can't-tell filing is residue (#4170): every `filings` entry reads as `filing-pending` until its
-// filed or deduped line is logged, and the residue lines carry the paste-ready `--only` re-run.
+// filed or deduped line is logged, and the residue lines carry the paste-ready default-selection re-run (#4679).
 const PENDING = 'every `console.json` `filings` entry reads as `filing-pending` residue';
-const REUSES_ONLY = "--only '{item},…'";
+const DEFAULT_RERUN = '--digest-comments "{DIGEST_COMMENTS}"` — the default selection, no ids';
 const ARCHIVAL = 'archival refuses the run';
 const STALE_CLAIM = 'so they are not residue';
 const filingsReadAsResidue = (text) => {
   const body = section(text, SHORT_CIRCUIT).replace(/\s+/g, ' ');
-  return body.includes(PENDING) && body.includes(REUSES_ONLY) && body.includes(ARCHIVAL) && !body.includes(STALE_CLAIM);
+  return body.includes(PENDING) && body.includes(DEFAULT_RERUN) && body.includes(ARCHIVAL) && !body.includes(STALE_CLAIM);
 };
 
-test("AC3.1: an unfiled can't-tell filing reads as residue with its --only re-run", () => {
+test("AC3.1: an unfiled can't-tell filing reads as residue with its default-selection re-run", () => {
   assert.ok(filingsReadAsResidue(REVIEW_CONSOLE));
   const mutated = REVIEW_CONSOLE.replace('reads as `filing-pending` residue', 'reads as filed');
   assert.notStrictEqual(mutated, REVIEW_CONSOLE);
@@ -97,7 +97,7 @@ test("AC3.1 controls: each remaining conjunct, broken alone, turns the filings-a
     assert.notStrictEqual(mutated, REVIEW_CONSOLE, `${from} is not in the console prose`);
     return mutated;
   };
-  assert.ok(!filingsReadAsResidue(swap(REUSES_ONLY, "--only <items>")), 'the --only re-run');
+  assert.ok(!filingsReadAsResidue(swap(DEFAULT_RERUN, "--only <items>")), 'the default-selection re-run');
   assert.ok(!filingsReadAsResidue(swap(ARCHIVAL, 'archival proceeds')), 'the archival refusal');
   assert.ok(!filingsReadAsResidue(swap(PENDING, `${PENDING}, ${STALE_CLAIM}`)), 'the retired "not residue" claim');
 });
@@ -244,4 +244,12 @@ test('AC4: the appendix mapping names dropped, routed to execute nothing', () =>
   const mutated = APPENDIX.replace(/\n- `dropped`/, '\n- `gone`');
   assert.notStrictEqual(mutated, APPENDIX);
   assert.strictEqual(droppedRoute(mutated), null, 'control: removing the bullet goes red');
+});
+
+// #4679: console-filings.js --digest-comments takes a JSON array (or string), so the digest issue's comments
+// are fetched as `--json comments --jq .comments` — bare `--json comments` prints an object and exits 2.
+test('the digest-comments fetch unwraps the comments array with --jq .comments (#4679)', () => {
+  const body = section(REVIEW_CONSOLE, SHORT_CIRCUIT);
+  assert.ok(body.includes('gh issue view {n} --json comments --jq .comments'));
+  assert.ok(!body.includes('gh issue view {n} --json comments`'), 'no bare --json comments fetch');
 });

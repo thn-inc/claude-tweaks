@@ -1,13 +1,14 @@
 // #3023: the release probe must read CHANGELOG.md from the integration
 // branch's remote-tracking ref, not a stale local HEAD — real git fixtures.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { probeRelease } = require('../../../plugin/bin/lib/residue/probes/release');
+const { renderChangelogFooter } = require('../../../plugin/bin/lib/changelog');
 
 const SCOPE = { ran: true, reason: null, base: 'a1b2c3d', headBranch: 'main', branches: [], worktrees: [] };
 
@@ -151,4 +152,62 @@ test('#3023: an unreadable remote CHANGELOG with HEAD not behind the remote fall
   assert.strictEqual(r.ran, true, JSON.stringify(r));
   assert.ok(r.findings.some((f) => f.evidence.includes('v1.1.0') && f.evidence.includes('HEAD')), JSON.stringify(r.findings));
   assert.ok(!r.findings.some((f) => f.evidence.includes('origin/main')), JSON.stringify(r.findings));
+});
+
+// #5563 AC5: a trimmed CHANGELOG.md (the `## Older releases` footer) keeps its
+// floor — tags below the oldest retained section are not reported as missing.
+const floorRoots = [];
+after(() => { for (const r of floorRoots) fs.rmSync(r, { recursive: true, force: true }); });
+function trimmedFixture({ withFooter }) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rel-floor-')));
+  floorRoots.push(root);
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 't@example.com');
+  git(root, 'config', 'user.name', 'T');
+  fs.writeFileSync(path.join(root, '.release-please-manifest.json'), '{".": "1.0.0"}\n');
+  fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-q', '-m', 'bootstrap');
+  for (let i = 0; i <= 5; i++) {
+    git(root, 'commit', '-q', '--allow-empty', '-m', `release ${i}`);
+    git(root, 'tag', `v1.0.${i}`);
+  }
+  const sha = git(root, 'rev-parse', 'HEAD');
+  const sections = [5, 4, 3].map((i) => `## [1.0.${i}](https://example.com/c) (2026-10-0${i})\n\n* note ${i}\n`).join('\n');
+  const footer = withFooter ? `\n${renderChangelogFooter({ version: '1.0.5', sha, newestRemoved: '1.0.2', repoUrl: null })}` : '';
+  fs.writeFileSync(path.join(root, 'CHANGELOG.md'), `# Changelog\n\n${sections}${footer}`);
+  git(root, 'commit', '-q', '-am', 'trimmed changelog');
+  return root;
+}
+
+test('AC5.1: a trimmed file with the footer reports no finding for the tags below its floor', () => {
+  const root = trimmedFixture({ withFooter: true });
+  const r = probeRelease({ scope: SCOPE, run: runner(root) });
+  assert.strictEqual(r.ran, true, JSON.stringify(r));
+  assert.deepStrictEqual(r.findings, [], JSON.stringify(r.findings));
+});
+
+test('AC5.2: the same file without the footer reports the three missing versions, as today', () => {
+  const root = trimmedFixture({ withFooter: false });
+  const r = probeRelease({ scope: SCOPE, run: runner(root) });
+  const subjects = r.findings.map((f) => f.subject).sort();
+  assert.deepStrictEqual(subjects, ['CHANGELOG entry for v1.0.0', 'CHANGELOG entry for v1.0.1', 'CHANGELOG entry for v1.0.2']);
+});
+
+test('AC5: a footer over zero retained headings sets no floor — every tag is reported', () => {
+  const root = trimmedFixture({ withFooter: true });
+  const file = path.join(root, 'CHANGELOG.md');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/## \[1\.0\.\d\][^\n]*\n\n\* note \d\n\n?/g, ''));
+  git(root, 'commit', '-q', '-am', 'hand-edit: no retained headings');
+  const r = probeRelease({ scope: SCOPE, run: runner(root) });
+  assert.strictEqual(r.findings.length, 6, JSON.stringify(r.findings.map((f) => f.subject)));
+});
+
+test('AC5: the floor is the oldest retained section — a missing heading at or above it is still reported', () => {
+  const root = trimmedFixture({ withFooter: true });
+  const file = path.join(root, 'CHANGELOG.md');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/## \[1\.0\.4\][^\n]*\n\n\* note 4\n\n/, ''));
+  git(root, 'commit', '-q', '-am', 'drop 1.0.4 heading');
+  const r = probeRelease({ scope: SCOPE, run: runner(root) });
+  assert.deepStrictEqual(r.findings.map((f) => f.subject), ['CHANGELOG entry for v1.0.4'], JSON.stringify(r.findings));
 });
