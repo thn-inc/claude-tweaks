@@ -1054,7 +1054,14 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
       if (opt.letter === spec.chdir) chdir(value);
     }
     if (spec.assignments) {
-      for (i = skipRedirections(i); i < t.length && t[i].includes('='); i = skipRedirections(i + 1));
+      // env and sudo read a word with an `=` as an assignment; one that holds a substitution spans
+      // several tokens (`X=$(echo a)`), as for a bare prefix, so skip it whole (assignmentWordEnd).
+      for (i = skipRedirections(i); i < t.length; i = skipRedirections(i)) {
+        const end = assignmentWordEnd(raw, spanKinds, i);
+        if (end > i) i = end;
+        else if (t[i].includes('=')) i += 1;
+        else break;
+      }
     }
   }
 }

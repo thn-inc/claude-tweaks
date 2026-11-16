@@ -2285,6 +2285,15 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     assert.deepStrictEqual(fileWriteTargets('a[0]=1 cd /main; cp a f.js', '/r'), copyMain);
   });
 
+  // bash 3.2 and 5 write M/f.js for each: `env` and `sudo` read a word with an `=` as an assignment, and one
+  // holding a command substitution that yields one word is a single argument, as for a bare prefix
+  // (`X=$(echo a) cp`). One that yields several words splits, and env runs the second as the command
+  // (nothing written): reading cp there is the same accepted fail-closed tradeoff as `builtin cp`.
+  test('#4448: an env or sudo assignment holding a command substitution spans its tokens', () => {
+    includesFor(['env X=$(echo a) cp a /main/f.js', 'sudo X=$(echo a) cp a /main/f.js', 'env -i X=`echo a` cp a /main/f.js',
+      'env X=$(echo a b) cp a /main/f.js'], MAIN_F);
+  });
+
   // The record's body, "Scope under ADR 0028", lists the stripped prefixes: assignment words and
   // these ten words. The exported set and reader are the one copy #4572 and #4244 reuse.
   test('AC4.1 #4448: the exported stripped-prefix rule matches the record\'s list', () => {
