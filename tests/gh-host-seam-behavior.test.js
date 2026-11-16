@@ -518,9 +518,9 @@ test('AC1.1 (#4794): teardown-run on a *.ghe.com origin sends its remote-ref del
   assert.match(argsOf(net[0]), /^api --method DELETE repos\/acme\/widgets\/git\/refs\/heads\/feat-branch /);
 });
 
-// #4794 Task 12: claim-targets.js gates its origin to refuse only; its repo still comes from
-// `gh repo view`, so it joins ORIGIN_GATED but not CLI_TABLE (no origin-derived slug in its
-// argv). The fake gh answers the repo, one TTL-expired claim blob for RUN_ID (the contents
+// #4794 Task 12: claim-targets.js gates its origin to refuse only (through git-exec.js's
+// repoTargetOfRemote since #5109); its repo still comes from `gh repo view`, so it is not in
+// CLI_TABLE (no origin-derived slug in its argv). The fake gh answers the repo, one TTL-expired claim blob for RUN_ID (the contents
 // read, through the nested key) and a marked same-repo PR on the case's host. GIT_ALLOW_PROTOCOL=file
 // (gatedEnv) makes the git-CAS leg fail fast, so the read takes the contents API.
 const CT_STALE_CLAIM = JSON.stringify({ runId: RUN_ID, sessionId: 's1', claimedAt: new Date(Date.now() - 100 * 3600 * 1000).toISOString(), ttlHours: 72, host: 'h' });
@@ -579,6 +579,13 @@ test('#4794: claim-targets.js on an unknown or SSH-alias origin exits 2 unknown-
   const opted = runGated(t, claimTargetsRow(UNKNOWN_HOST), { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: UNKNOWN_HOST });
   assert.ok(!opted.stderr.includes(NOT_KNOWN_MSG), `an exported GH_HOST opts in, but it was refused:\n${opted.stderr}`);
   assert.equal(opted.status, 3, `GH_HOST=${UNKNOWN_HOST}: expected exit 3 (in flight on that host); stderr:\n${opted.stderr}`);
+});
+
+test('#5109: claim-targets.js on a cloud sandbox proxy origin takes its repo from gh repo view and lists on github.com bare', { skip: STUB_SKIP }, (t) => {
+  const r = runGated(t, claimTargetsRow('github.com'), { origin: 'http://local_proxy@127.0.0.1:43215/git/acme/widgets' });
+  assert.equal(r.status, 3, `expected exit 3 (in flight); stderr:\n${r.stderr}`);
+  for (const line of r.lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on a proxy origin: ${line}`);
+  assert.deepEqual(r.lines.filter((l) => / ARGS=pr list /.test(l)).map(argsOf), [CT_PR_LIST_ARGV]);
 });
 
 // #4794 Task 13: stale-claim-pr.js routes its origin through git-exec.js's repoTargetOfRemote with
