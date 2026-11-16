@@ -316,3 +316,8 @@ test('RF5: a fork whose inherited parent prompt and own directive quote the toke
   ];
   assert.deepStrictEqual(scanOf(entries), { gate: null, marker: 1 });
 });
+
+test('RF6: a relayed user message right after a fork boundary that opens the transcript is not the prompt', () => {
+  const entries = [forkBoundary('x', 0), prompt('relayed: ' + QUOTE, 1), reply('ok\nSTATUS: DONE', 2)];
+  assert.deepStrictEqual(scanOf(entries), { gate: null, marker: null });
+});

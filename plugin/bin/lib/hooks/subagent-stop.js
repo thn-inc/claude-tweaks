@@ -134,14 +134,15 @@
 //    yields null, which run() grades exactly as before — never a blanket
 //    exemption. The stop marker (below) uses a second count from the same scan,
 //    which skips a `<task-notification>` outside a recognized carrier when the
-//    line is one of three given-or-written shapes — the agent's first user message
-//    (its own prompt), a `toolUseResult` line (a tool result, an error string
-//    included) or an assistant line (a call it wrote) — and keeps counting. Why:
-//    the gate's null decides whether a reply is blocked and nothing measured says
-//    it is wrong, so it stays; the marker only decides when a wait returns, and a
-//    skipped line is never a completion, so the marker can only move from null to
-//    a number, never below the true pending count. Any other shape still yields
-//    null in both counts (#5706). Bounded by PENDING_DISPATCH_MAX_AGE_MS (60 minutes, mirroring
+//    line is one of three given-or-written shapes — the agent's first user
+//    message (its own prompt), a `toolUseResult` line (a tool result, an error
+//    string included) or an assistant line (a call it wrote) — and keeps
+//    counting. Why: the gate's null decides whether a reply is blocked and
+//    nothing measured says it is wrong, so it stays; the marker only decides
+//    when a wait returns, and a skipped line is never a completion, so the
+//    marker can only move from null to a number, never below the true pending
+//    count. Any other shape still yields null in both counts (#5706). Bounded
+//    by PENDING_DISPATCH_MAX_AGE_MS (60 minutes, mirroring
 //    flow/claim-targets.md's liveness default): a launch older than that is
 //    presumed hung and no longer hides a real contract violation. Residual
 //    risk: within those 60 minutes a hung child (one that never reports) still
