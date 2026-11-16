@@ -153,7 +153,7 @@ Each `ask-user-question` event (the answer, written by the PostToolUse hook) bec
 
 ### Pair lines
 
-A review-marked decision line is a `Reproduction:` pair line, written by the agent from the templates in `plugin/skills/review/step3-lens-dispatch.md` (seven forms) and `plugin/skills/review/step3-tier-variants.md` (one form). `plugin/bin/lib/timing/pair-lines.js`'s `PAIR_FORMS` is the code twin and the source for this table; `tests/bin-lib/timing/pair-lines.test.js` pins every form to its prose template.
+A review-marked decision line is a `Reproduction:` pair line. Seven forms are composed by `plugin/bin/lib/reproduction-log.js` and written by `review-coordination.js categorise-reproduction --run` and `log-reproduction-judgment` (#5595); the agent writes one form from the template in `plugin/skills/review/step3-tier-variants.md`. `plugin/bin/lib/timing/pair-lines.js`'s `PAIR_FORMS` is the reader and the source for this table; `tests/bin-lib/timing/pair-lines.test.js` pins the seven composed forms to the composer and the eighth to its prose template.
 
 | Form (`PAIR_FORMS` id) | Template head | both | one | relabel |
 |---|---|---|---|---|
@@ -182,7 +182,7 @@ A review-marked decision line is a `Reproduction:` pair line, written by the age
 
 `direct-verification-elevated` is a relabel: an elevation changes the confidence of a finding a pair line already counted, so it adds to no finding count. (In the archive only 23 of 267 such lines sit beside a `not reproduced` line for the same location; the rest elevate a finding that has no pair line of its own, which therefore does not appear in `raised`. That undercount is accepted over guessing.) A line naming a count of findings (`5 unconfirmed findings staged …`) or several findings with no per-finding verdict is not classified and stays `unparsed`.
 
-Pair-line patterns are **additive**: a reworded template adds a pattern to its form, never replaces one, so archived runs keep parsing. Phase 6 of `docs/superpowers/specs/2026-11-15-process-efficiency-design.md` moves the pair-line write into `categorise-reproduction`; this reader (`pair-lines.js`) and its test then follow that writer.
+Pair-line patterns are **additive**: a reworded template adds a pattern to its form, never replaces one, so archived runs keep parsing. Since #5595 (Phase 6 of `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`) `categorise-reproduction --run` and `log-reproduction-judgment` write the pair lines, so this reader (`pair-lines.js`) and its test follow that writer: each composed form is pinned to `reproduction-log.js`, not to prose.
 
 ### Tiebreak lines
 
