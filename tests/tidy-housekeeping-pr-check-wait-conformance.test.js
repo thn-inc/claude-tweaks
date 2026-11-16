@@ -82,33 +82,57 @@ function assertArmPlanReviewGaps(text) {
   assert.ok(arm.includes(ARM_CI_GATE), "Step 2.5's ci-gate records still run (Reading A)");
 }
 
-const HINT_ROUTE = 'only when the route was `false` → no action';
-const HINT_NEVER = 'never after a Step 2.5 or Step 3 stop';
+const UNARMED_REPORT = 'Unarmed: `PR #{n} opened, NOT armed';
+const MERGED_REPORT = 'Merged: `PR #{n} opened and merged';
+const AUTO_COMMAND = '`gh pr merge {n} --auto`';
+const POLICY_HINT = '`housekeeping-auto-merge: true` in';
+const STAGED_ROUTE = '`true`∧`conservative` → stage an arm proposal';
+const ARM_NOW = 'Arm now first runs';
+const HINT_ROUTE = 'on the `false` → no action route only';
+const HINT_NEVER = 'never a `gh pr merge {n} --auto` command on any route';
+const STAGED_GATED = 'whose later apply runs the same Arm now sequence, gate first, never a bare `--auto`';
 const MERGED_OFF = '`PR #{n} opened and merged (merge-verification: off)`';
-const CALLER_DEGRADES = 'ready+comment degrades become leave-unarmed';
-const HINT_ROUTE_MSG = 'the manual --auto hint is printed only on the `false` route';
-const HINT_NEVER_MSG = 'the manual --auto hint is never printed after a Step 2.5 or Step 3 stop';
+const CALLER_DEGRADES = 'Red path, Conflict path and ready+comment degrades become leave-unarmed';
+const REPORT_SPAN_MSG = 'the Merged and Unarmed report lines must both be in the arm paragraph, Merged first';
+const HINT_ROUTE_MSG = 'the Unarmed follow-up line is printed only on the `false` route';
+const HINT_NEVER_MSG = 'the Unarmed report must say no --auto command is ever printed';
+const HINT_LINE_MSG = 'no standalone `gh pr merge {n} --auto` line may follow the Unarmed report';
+const STAGED_SPAN_MSG = 'the conservative route and the Arm now sentence must both be in the arm paragraph, in that order';
+const STAGED_MSG = 'a staged arm proposal must be applied through the gate, never as a bare --auto';
 const MERGED_OFF_MSG = 'a merge under `off` is not reported as "after its checks passed"';
-const CALLER_DEGRADES_MSG = 'Creation-time caller must limit leave-unarmed to the ready+comment degrades';
+const CALLER_DEGRADES_MSG = 'Creation-time caller must name the Red path, Conflict path and ready+comment degrades as leave-unarmed';
 
 function occurrences(text, lit) {
   return text.split(lit).length - 1;
 }
 
-// The Unarmed report's `gh pr merge {n} --auto` hint is itself the blind merge on a repo with no
-// required checks, so it must not follow a red-check or timeout stop (final review, #4467).
+// A printed `gh pr merge {n} --auto` is itself the blind merge on a repo with no required checks,
+// on every route: after a gate stop the checks are red or pending, and on the `false` route they
+// have only just started (final review, #4467).
 function assertUnarmedHintGated(text) {
   const arm = armParagraph(text);
-  const unarmed = arm.indexOf('Unarmed: `PR #{n} opened, NOT armed');
-  const hint = arm.indexOf('`gh pr merge {n} --auto`');
-  assert.ok(unarmed !== -1 && hint !== -1 && unarmed < hint, 'the Unarmed report line and its --auto hint must both be in the arm paragraph');
-  const between = arm.slice(unarmed, hint);
-  assert.ok(occurrences(between, HINT_ROUTE) === 1, HINT_ROUTE_MSG);
-  assert.ok(occurrences(between, HINT_NEVER) === 1, HINT_NEVER_MSG);
+  const unarmed = arm.indexOf(UNARMED_REPORT);
+  assert.ok(unarmed !== -1, REPORT_SPAN_MSG);
+  const tail = arm.slice(unarmed);
+  assert.ok(occurrences(tail, HINT_ROUTE) === 1, HINT_ROUTE_MSG);
+  assert.ok(occurrences(tail, HINT_NEVER) === 1, HINT_NEVER_MSG);
+  assert.ok(arm.split('\n').every((line) => line.trim() !== AUTO_COMMAND), HINT_LINE_MSG);
+}
+
+function assertStagedArmGated(text) {
+  const arm = armParagraph(text);
+  const staged = arm.indexOf(STAGED_ROUTE);
+  const armNow = arm.indexOf(ARM_NOW);
+  assert.ok(staged !== -1 && armNow !== -1 && staged < armNow, STAGED_SPAN_MSG);
+  assert.ok(occurrences(arm.slice(staged, armNow), STAGED_GATED) === 1, STAGED_MSG);
 }
 
 function assertMergedReportNamesOff(text) {
-  assert.ok(occurrences(armParagraph(text), MERGED_OFF) === 1, MERGED_OFF_MSG);
+  const arm = armParagraph(text);
+  const merged = arm.indexOf(MERGED_REPORT);
+  const unarmed = arm.indexOf(UNARMED_REPORT);
+  assert.ok(merged !== -1 && unarmed !== -1 && merged < unarmed, REPORT_SPAN_MSG);
+  assert.ok(occurrences(arm.slice(merged, unarmed), MERGED_OFF) === 1, MERGED_OFF_MSG);
 }
 
 function creationCallerLine(text) {
@@ -160,23 +184,32 @@ test('AC1.1: the arm leaves Conflict path routes unarmed, reports reasons verbat
   assertArmPlanReviewGaps(STEP75);
 });
 
-test('AC1.1: the Unarmed report offers the manual --auto arm only on the `false` route, never after a gate stop', () => {
+test('AC1.1: the Unarmed report never prints a manual --auto command, and its policy hint is for the `false` route only', () => {
   assertUnarmedHintGated(STEP75);
 });
 
-test('AC1.1: a merge under merge-verification off is reported as such, and the caller line limits leave-unarmed to ready+comment degrades', () => {
+test('AC1.1: a staged arm proposal is applied through the gate, never as a bare --auto', () => {
+  assertStagedArmGated(STEP75);
+});
+
+test('AC1.1: a merge under merge-verification off is reported as such, and the caller line names every leave-unarmed substitution', () => {
   assertMergedReportNamesOff(STEP75);
   assertCreationCallerLimitsDegrades(PR_FIRST);
 });
 
 test('go-red controls: the report-line asserts fail with their own clause removed or moved', () => {
+  // Move-out controls keep the clause in the arm paragraph but outside the span its assert reads.
+  const moveToAnchor = (lit) => STEP75.replace(lit, 'X').replace(ARM_ANCHOR, `${ARM_ANCHOR} ${lit}`);
   expectRed(STEP75, STEP75.replace(HINT_ROUTE, 'X'), assertUnarmedHintGated, HINT_ROUTE_MSG);
   expectRed(STEP75, STEP75.replace(HINT_NEVER, 'X'), assertUnarmedHintGated, HINT_NEVER_MSG);
-  // Move-out: the clause stays in the arm paragraph but leaves the Unarmed report's own span.
-  const moved = STEP75.replace(HINT_NEVER, 'X').replace(ARM_ANCHOR, `${ARM_ANCHOR} ${HINT_NEVER}`);
-  expectRed(STEP75, moved, assertUnarmedHintGated, HINT_NEVER_MSG);
+  expectRed(STEP75, moveToAnchor(HINT_NEVER), assertUnarmedHintGated, HINT_NEVER_MSG);
+  expectRed(STEP75, STEP75.replace(POLICY_HINT, `${AUTO_COMMAND}\n${POLICY_HINT}`), assertUnarmedHintGated, HINT_LINE_MSG);
+  expectRed(STEP75, STEP75.replace(STAGED_GATED, 'X'), assertStagedArmGated, STAGED_MSG);
+  expectRed(STEP75, STEP75.replace(STAGED_GATED, 'X').replace(ARM_NOW, `${ARM_NOW} ${STAGED_GATED}`), assertStagedArmGated, STAGED_MSG);
   expectRed(STEP75, STEP75.replace(MERGED_OFF, 'X'), assertMergedReportNamesOff, MERGED_OFF_MSG);
+  expectRed(STEP75, moveToAnchor(MERGED_OFF), assertMergedReportNamesOff, MERGED_OFF_MSG);
   expectRed(PR_FIRST, PR_FIRST.replace(CALLER_DEGRADES, 'degrades become leave-unarmed'), assertCreationCallerLimitsDegrades, CALLER_DEGRADES_MSG);
+  expectRed(PR_FIRST, PR_FIRST.replace('Conflict path and ready+comment degrades', 'ready+comment degrades'), assertCreationCallerLimitsDegrades, CALLER_DEGRADES_MSG);
 });
 
 test('go-red controls: each assert fails with its block removed', () => {
