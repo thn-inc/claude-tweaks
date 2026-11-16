@@ -527,7 +527,8 @@ function grade(ctx, memo) {
   // still pending is not its final reply. Bounded (PENDING_DISPATCH_MAX_AGE_MS);
   // null (indeterminate transcript shape) grades as today. Computed only here,
   // after every cheaper skip, since it parses the whole transcript.
-  if (countPendingDispatches(lines, replyIndex) > 0) return {};
+  memo.pending = countPendingDispatches(lines, replyIndex); // shared with recordStop so a stop parses once
+  if (memo.pending > 0) return {};
   if (toolUseCount === 0) {
     ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
   }
@@ -573,10 +574,10 @@ function recordStop(ctx, out, memo) {
   try {
     const { agent_id: agentId, session_id: sessionId, agent_transcript_path: transcriptPath, transcript_path: mainPath } = ctx.input;
     if (!nonEmptyString(agentId) || !nonEmptyString(sessionId) || !nonEmptyString(transcriptPath) || transcriptPath === mainPath) return;
-    let marker;
-    try { marker = require('../wait-for/marker'); } catch { return; }
+    const marker = require('../wait-for/marker');
     memo.last ??= lastAssistantText(transcriptPath);
-    const pending = typeof memo.last.text === 'string' ? countPendingDispatches(memo.last.lines, memo.last.replyIndex) : null;
+    if (!('pending' in memo)) memo.pending = typeof memo.last.text === 'string' ? countPendingDispatches(memo.last.lines, memo.last.replyIndex) : null;
+    const pending = memo.pending;
     const blocked = Boolean(out && out.json && out.json.decision === 'block');
     marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending });
   } catch { /* the marker never changes the hook's answer */ }

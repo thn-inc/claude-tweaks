@@ -14,8 +14,15 @@ const substop = require('../plugin/bin/lib/hooks/subagent-stop');
 const contractRetries = require('../plugin/bin/lib/hooks/contract-retries');
 const marker = require('../plugin/bin/lib/wait-for/marker');
 
+// mkdtemp directories the fixtures create; every test removes them in t.after.
+const tmpDirs = [];
+function drainTmpDirs() {
+  for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+}
+
 function mkRun() {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-substop-m-'));
+  tmpDirs.push(project);
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   return run;
@@ -47,7 +54,9 @@ function reply(text, min) {
 }
 const toLines = (entries) => entries.map((e) => JSON.stringify(e));
 function writeTranscript(entries) {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-substop-mt-')), 'agent.jsonl');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-substop-mt-'));
+  tmpDirs.push(dir);
+  const f = path.join(dir, 'agent.jsonl');
   fs.writeFileSync(f, toLines(entries).join('\n') + '\n');
   return f;
 }
@@ -69,6 +78,7 @@ const vEntries = () => [
 function setup(t, name) {
   const sid = `marker-${name}-${process.pid}`;
   t.after(() => {
+    drainTmpDirs();
     for (const p of [marker.stopsPath(sid), contractRetries.retriesPath(sid)]) {
       if (p) { try { fs.unlinkSync(p); } catch { /* already absent */ } }
     }
@@ -185,6 +195,7 @@ test('an unreadable agent transcript writes pending null', (t) => {
 
 test('AC12.2: the hook writes no marker for a session id outside [A-Za-z0-9_-]', (t) => {
   const sid = `bad.id-${process.pid}`;
+  t.after(drainTmpDirs);
   runHook(pEntries(), { session_id: sid, agent_id: 'agent-p' });
   assert.strictEqual(fs.existsSync(path.join(os.tmpdir(), `ct-agent-stops-bad.id-${process.pid}.jsonl`)), false);
 });
