@@ -21,7 +21,7 @@ files:
 
 ### 1. Fetch the session snapshot — `_shared/record-queue-fetch.md`'s read-fresh-or-fetch block
 - **URL:** any consumer's first `gh issue list --state all --json {UNION_FIELDS}` pull (or `fetchAllRecords` in `bin/lib/backlog-grant-gate/backlog-grant-gate.js`)
-- **Action:** The snapshot is stale or missing, so the fetch runs. It now includes the `author` field. It then calls `author-association.js`'s enrichment, which looks up `authorAssociation` with aliased GraphQL batches of 200 for every non-bot record carrying an `Origin:` line.
+- **Action:** The snapshot is stale or missing, so the fetch runs. It now includes the `author` field. It then calls `author-association.js`'s enrichment, which looks up `authorAssociation` with aliased GraphQL batches of 200 for every non-bot record carrying its own `Origin:` line (step 4's rule, via `hasOriginLine`).
 - **Should feel:** Invisible. The extra lookup adds a few seconds to a fresh pull, nothing is printed, and a fresh cached snapshot is reused without re-querying.
 - **Should understand:** `gh issue list --json` has no author-association field, so the lookup is a separate step. Only records whose `Origin:` line could matter are queried, and bot authors are skipped since they are trusted anyway.
 - **Red flags:** Every record queried, not just the `Origin:` ones. A cached snapshot re-enriched on every read. The snapshot fetch failing because the lookup failed.
