@@ -192,7 +192,8 @@ function entries(numbers, promptId, at = NOW.toISOString()) {
 // The real dispatcher, TMPDIR pointed at a temp dir; asserts the never-break contract.
 function submitDispatch(tmpdir, payload, cwd = HOOK_SANDBOX) {
   const r = runHook(['user-prompt-submit'], {
-    input: JSON.stringify({ cwd, ...payload }), cwd, env: { TMPDIR: tmpdir },
+    // win32's os.tmpdir() reads TEMP, then TMP; POSIX reads TMPDIR first.
+    input: JSON.stringify({ cwd, ...payload }), cwd, env: { TMPDIR: tmpdir, TEMP: tmpdir, TMP: tmpdir },
   });
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, '');
@@ -338,7 +339,7 @@ test('AC2.7: only a dispatch first line loads build-authority.js, typed-command.
       ba: has('build-authority.js'), tc: has('typed-command.js'), gr: has('grouping.js') }));
   `;
   const probe = (prompt) => JSON.parse(execFileSync('node', ['-e', script], {
-    input: prompt, encoding: 'utf8', env: { ...process.env, TMPDIR: tmpdir }, windowsHide: true,
+    input: prompt, encoding: 'utf8', env: { ...process.env, TMPDIR: tmpdir, TEMP: tmpdir, TMP: tmpdir }, windowsHide: true,
   }));
   const huge = `${'x'.repeat(2 * 1024 * 1024)}\n/claude-tweaks:dispatch #12`;
   for (const prompt of ['/claude-tweaks:help', '/claude-tweaks:dispatchx #12', huge]) {
