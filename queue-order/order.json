@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-16T16:26:46.334Z",
+  "computedAt": "2026-11-16T16:40:18.612Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -20,7 +20,7 @@
       },
       {
         "number": 5770,
-        "updatedAt": "2026-11-16T15:59:48Z",
+        "updatedAt": "2026-11-16T16:30:50Z",
         "state": "OPEN"
       },
       {
@@ -301,11 +301,6 @@
       {
         "number": 4616,
         "updatedAt": "2026-10-30T16:09:02Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4615,
-        "updatedAt": "2026-11-16T14:43:01Z",
         "state": "OPEN"
       },
       {
@@ -1137,90 +1132,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes. The test files under `tests/bin-lib/learned-skills/` start 10,629 of them (18%):\n\n| File | Git processes | Notes |\n|---|---|---|\n| `land.test.js` | 3,460 | 57 tests; 2,414 from the test process, 1,046 children of another git; diff 367, rev-parse 295, status 250, apply 220. 161 s of git time, the most of any file in the suite |\n| `capture-matrix-joined-crlf.test.js` | 1,009 | diff 343, hash-object 194, apply 190, status 136 |\n| `capture.test.js` | 961 | diff 241, status 149, checkout 85, apply 82 |\n| `capture-matrix-joined.test.js` | 937 | diff 343, apply 190, status 136, hash-object 122 |\n| the other seven `capture-matrix-*` files | the remaining 4,262 | not broken down in the profile |\n\n- `land.test.js`: `fixture(t, { capturedTargets, autocrlf })` runs for every test. It inits a bare origin, inits a clone, commits two skill files, pushes `main`, makes a run directory and captures one patch per target (each capture is several git calls). Five tests then clone a second checkout and push from it, or force-push a foreign commit onto the run's branch, to arrange a state.\n- `tests/helpers/learned-skills-capture.js`: `fixture(t, extraFiles, { autocrlf })` inits and commits per call for `capture.test.js`. The matrix files already reuse per-process scenario templates (`scenario()` over the `templates` map).\n- In the matrix files most of what remains is `capture()` itself plus the helper's own read-only checks around each fault combination (`breaches`, `status`, `diffOf`, `headOf`).\n\n`capture()` and `land()` in `plugin/bin/lib/learned-skills/` re-read tree and index state after each step that changes it. Those reads are part of their failure handling and are not repeats to remove.\n\n`tests/helpers/git-template.js` (`fromTemplate`, `fromTemplateSet`) builds a fixture once per process and gives each caller a copy that starts no git process.\n\n## Deliverables\n\n1. `land.test.js`: the state `fixture()` returns (bare origin, clone, run directory with its captured patches and manifest) is built once per distinct option set through `fromTemplateSet` and copied per test. Any absolute path stored outside git's own files (manifest, patch files, `decisions.md`) is rewritten for the copy or shown not to exist.\n2. `land.test.js`: a clone, push or force-push that only arranges state is folded into a template variant or replaced by a local ref update in the bare origin. Pushes, fetches and `ls-remote` calls made by `land()` itself stay real, as does `gitCalls` recording them.\n3. `tests/helpers/learned-skills-capture.js`: `fixture()` comes from a template keyed by its arguments.\n4. In the matrix path, a read-only git call the helper makes twice for one fault combination with nothing changed in between is made once. Product code under `plugin/bin/lib/learned-skills/` is not changed by this record.\n5. If the traces show a same-question repeat inside one `capture()` or `land()` call with no state change between the two reads, the PR body lists it and it is filed with `/claude-tweaks:capture`.\n6. The PR body reports git processes for every file in `tests/bin-lib/learned-skills/`, before and after.\n\n## Acceptance Criteria\n\n- [ ] `land.test.js` starts at most 1,730 git processes (50% of the 3,460 measured at 8646f7c). Otherwise the PR body names the remaining shortfall and attributes it to fixture setup or to git run by `capture()` and `land()`.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count re-taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] After a warm-up call, `fixture()` in `land.test.js` and `fixture()` in the capture helper start no git process, shown by a trace2 spawn test in the style of `tests/helpers-git-template.test.js`.\n- [ ] Every file in the directory reports the same test names and the same number of tests as before, all passing, including the `core.autocrlf=true` variants. No assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] The full suite and the Windows regression job pass.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/learned-skills/land.test.js` — template the origin, clone and captured run directory\n- `tests/helpers/learned-skills-capture.js` — template the capture fixture and drop repeated helper reads\n- `tests/bin-lib/learned-skills/capture.test.js` — use the templated fixture\n- `tests/helpers-git-template.test.js` — spawn tests for the new templates\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-16T15:52:19Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 5770,
-        "state": "OPEN",
-        "title": "Build the learned-skills test fixtures once per process instead of once per test",
-        "updatedAt": "2026-11-16T15:59:48Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -3159,6 +3070,240 @@
           "grants": {
             "build": true,
             "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Overview\n\n**Diff tripwire.** The intent-time risk declaration is cross-checked against what the code actually touched. Policy declares sensitive path globs per category (`risk-path-globs`, for example `migrations/**`, `src/auth/**`); the agent also classifies the diff. If the change crosses a category nobody flagged, the run **switches itself to local acceptance** and says why in the acceptance packet.\n\nThe tripwire is **monotonic**: it can add a flag, never remove one. Only the human removes a flag, and the removal is logged to the decision log (`decisions.md`). This is the design's \"machinery that can loosen control\" anti-goal made concrete: an automatic mechanism may only add caution.\n\n**Contract decisions this record pins:**\n\n- **Scope.** Runs only under `control-mode: on`; with it off nothing here is consulted.\n- **Return shape.** `evaluateTripwire({ changedPaths, declaredFlags, removedFlags, globs, agentClassification })` returns `{ status: 'ok' | 'could-not-run', reason?, crossed: [{ category, via: 'glob' | 'agent', evidence }], newFlags: string[], flags: string[] }` with `flags = declaredFlags ∪ newFlags` (always a superset of `declaredFlags`). `could-not-run` adds no flag; it forces target `local` with the reason stated in the packet.\n- **Inputs.** `globs` is the resolved `risk-path-globs` map. **Absent key or `{}`: the glob signal is off, only the agent classification applies, and nothing is forced** (no built-in default globs ship; they are project-specific). **Present but not a map of slug to string list: `could-not-run`.** `changedPaths` is produced by the caller from `git diff --name-status -M --no-color $(git merge-base {integration-branch} HEAD)..HEAD`, evaluated on the final tip immediately before the merge decision (after review and polish fix waves) and re-evaluated if the tip moves; renames contribute both old and new path, deletions count as touched. An empty diff yields `ok` with no crossings. A git failure yields `could-not-run`.\n- **Agent classification** is `[{ category, evidence }]` with `category` in the slug set (built-ins plus policy `risk-categories`); an unknown category is ignored and logged; `evidence` is capped at 300 characters and rendered inert. It is produced by wrap-up's pre-merge step (the same step that calls `evaluateTripwire`, in `_shared/pr-first-merge.md`'s stop-before-merge branch and in the `local-merge` path); if that step did not run, the packet says \"agent classification not run\" and the glob signal still applies.\n- **Matching.** Globs are repo-root-relative (`migrations/**` does not match `src/migrations/x.sql`; projects write `**/migrations/**` for nested). `tripwire.js` wraps the shared `merge-sensitive-paths` matcher with a normalizer (strip `./`, resolve dot segments, drop trailing slash, convert backslashes, compare case-insensitively); the shared matcher and its other consumers (`blast-radius.js`, `grant-gate.js`, express-lane) are not modified. Probe the shared matcher against the cases in AC 8 at build; if it lacks `**` semantics, the wrapper implements its own anchored glob as a pure function.\n- **Flags added by the tripwire** are appended through the risk-flag record's `addRiskFlags` and also listed on a second line `Risk-flags-added-by-tripwire: {slugs}`, so a human can tell them from declared ones. The human can remove a tripwire flag as a false positive only through the same sanctioned `removeRiskFlag` path with explicit confirmation, which logs it. `plugin/bin/lib/accept/` imports only `addRiskFlags`; a source-scan conformance test fails if any module there imports or implements removal.\n- **Removal history.** `removedFlags` is read by the caller from the intent-time removal log (the record comment or `decisions.md` entry the risk-flag record writes); if the log is unreadable the tripwire still fires and the packet omits the \"you removed this flag\" sentence.\n\n## Non-Goals\n\n- Not intent-time classification (separate record) and not target resolution (separate record; the tripwire feeds it a new kept flag).\n- Not blocking or failing the run: crossing an unflagged category changes the acceptance target to `local`, it does not stop the build.\n- Not removing flags by any path.\n- Not a replacement for `merge-sensitive-paths` (an existing, separate merge-safety guard); this record reuses its matching approach for a different decision.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4618 | Risk flags at intent time | open (Blocked by) |\n| #4615 | Acceptance target resolution and the local pre-merge park | open (Blocked by) |\n\n## Current State\n\n- Precedent matcher: `merge-sensitive-paths` (a policy list of path patterns that always require a human to sign off on a merge) is consumed by `plugin/bin/blast-radius.js` (CLI over `plugin/bin/lib/blast-radius-cli.js`), `plugin/bin/lib/issues/grant-gate.js` and the express-lane modules. Reuse its glob matcher rather than writing a second one.\n- Target resolution function (`resolveAcceptanceTarget`) and the kept-flag record lines are created by the two Blocked-by records; this record adds a `tripwire` input to the former and appends to the latter.\n- `plugin/bin/lib/accept/tripwire.js` does not exist; it is new.\n- Decision log: `.claude-tweaks/pipelines/{run-id}/decisions.md` per `_shared/auto-decision-log.md` (status vocabulary; STAGED needs an artifact).\n\n## Deliverables\n\n- [ ] `plugin/bin/lib/accept/tripwire.js` (new): `evaluateTripwire(...)` with the return shape and input rules in the contract decisions; `newFlags` contains only categories not already declared.\n- [ ] Glob matching for built-in and extra categories from policy `risk-path-globs`, reusing the existing matcher.\n- [ ] Agent classification step: the review/wrap-up agent classifies the diff against the category list and passes the result in; absence of an agent classification does not suppress glob hits.\n- [ ] Wiring before the merge decision: a crossed category adds the flag to the record (append-only), re-runs `resolveAcceptanceTarget` (which now returns `local` by `risk-flag`), and records the reason for the packet's Risk proofs / Deploy-status text.\n- [ ] Monotonicity enforcement: `accept/` imports only `addRiskFlags` (source-scan conformance test); flag removal exists only in the human-interactive path of the intent-time record via `removeRiskFlag` and is logged.\n- [ ] Wiring: a failed flag append fails toward `local` (the run switches to local acceptance and reports the failed write); the packet states the reason, including the earlier human removal when `removedFlags` shows one.\n- [ ] Tests, including the negative that no code path removes a flag.\n\n## Acceptance Criteria\n\n1. A diff touching `migrations/001_add_users.sql` on a record with no declared flags, with policy glob `migrations/**` for the migrations category, yields `crossed: [{ category: 'migrations', via: 'glob' }]`, adds the flag, and the resolved target becomes `local`.\n2. A diff crossing a category already declared yields no new flag and no change.\n3. An agent classification naming `auth` with no glob match adds the `auth` flag (`via: 'agent'`) and forces `local`.\n4. Given declared flags `[migrations]` and a diff touching nothing sensitive, `evaluateTripwire` returns `newFlags: []` and `flags` equal to the declared list (it is never reduced by the tripwire).\n5. A property-style test feeds random declared-flag lists and diffs and asserts `result.flags` is a superset of `declaredFlags` every time, and that `could-not-run` leaves `flags` equal to `declaredFlags`.\n6. The packet states the reason when the tripwire fired (category, path or classification evidence), and the evidence is rendered as inert text.\n7. `risk-path-globs` present but malformed (a string, a map holding a non-list, a non-string glob), or a git failure producing `changedPaths`, returns `status: 'could-not-run'`, forces `local` and the packet states \"tripwire could not run: {reason}\". `risk-path-globs` absent or `{}` returns `ok` with the glob signal off (no forcing, no message beyond \"path globs not configured\"); an empty diff returns `ok` with no crossings; a rename from `migrations/a.sql` to `docs/a.sql` crosses `migrations`; a deletion of `migrations/a.sql` crosses `migrations`. A failed flag append forces `local`.\n8. Path matching normalizes before comparing: a leading `./` is stripped, dot segments and a trailing slash are resolved, and the comparison is case-insensitive. With glob `migrations/**`: `./migrations/x.sql`, `app/../migrations/x.sql` and `Migrations/x.sql` are crossed; `docs/migrations-notes.md` and `src/migrations-readme.md` are not (the word in the wrong component). With glob `src/auth/**`: `src/auth/login.js` is crossed and `src/auth-utils-readme.md` is not. Scheme and percent-encoding variants do not apply to repo-relative git paths and are not tested.\n9. A record whose migrations flag was removed by the human at intent time (a logged removal) and whose diff touches `migrations/**` still triggers the tripwire (target `local`), and the packet text names the earlier removal.\n10. `npm test` passes.\n\n## Release Note\n\nAdded a diff tripwire that switches a run to local acceptance when the code touches migrations, auth, public contracts or irreversible actions nobody flagged.\n\n## Technical Approach\n\nPure function plus thin wiring. Inputs are paths and strings; outputs are additions only. Matching is the existing glob matcher; the agent's classification is an additional signal, never a veto. The \"cannot run\" case is a visible state, not a silent pass (the repo's parse-signal discipline: a could-not-parse case must be distinguishable from \"nothing crossed\").\n\n### Data / API Surface\n\n- `evaluateTripwire` as above.\n- Record update: append categories to the existing flag line; never rewrite.\n\n### Key Files\n\n- `plugin/bin/lib/accept/tripwire.js` — new\n- `plugin/bin/lib/accept/target.js` — created by #4615; accept the tripwire's added flags as a risk-flag input\n- `plugin/bin/blast-radius.js` — precedent for path-sensitive globbing (read only)\n- `plugin/skills/_shared/pr-first-merge.md` — where the pre-merge target is decided\n- `plugin/skills/_shared/acceptance-packet.md` — states the tripwire reason (created by #4611)\n- `tests/bin-lib/accept/tripwire.test.js` — new; the tripwire suite\n\n## Gotchas\n\n- Fail toward caution: any inability to evaluate (malformed globs, a failed diff, a failed flag write) forces `local` and says so, and is never reported as \"no crossing found\". An unset `risk-path-globs` is not an inability: it means the glob signal is off.\n- The tripwire may only add. A reviewer should be able to verify monotonicity by grep: no assignment that shortens the flag list inside `plugin/bin/lib/accept/`.\n- A human removing a flag at intent time is logged to `decisions.md`. Decision for this record: the tripwire still fires when the actual diff crosses that category (the removal judged the planned work; the diff is new evidence of what was built), and the packet says so in plain words (\"you removed the migrations flag at intent; the diff touches migrations/001.sql, so this run is local\"). Pin it with a test (AC 9) rather than leaving the choice open.\n- Diff paths come from git; treat renames as touching both old and new path.\n\n\n<!-- work-fingerprint: human-in-control-acceptance:diff-tripwire -->\nwork-fingerprint: human-in-control-acceptance:diff-tripwire",
+        "createdAt": "2026-10-30T11:46:39Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4619,
+        "state": "OPEN",
+        "title": "Diff tripwire",
+        "updatedAt": "2026-10-30T16:09:18Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Overview\n\n**Acceptance granularity is the unit the human brainstormed.** For decomposed work, the acceptance packet and the verdict live on the **parent** (the feature), extending today's parent-gate. Sub-issues get the agent's own checks only and merge normally. A sub-issue that carries a **kept risk flag** stops for its own local verdict. Otherwise the parent's acceptance runs **once its last sub-issue has merged**: on dev, or on local `main` when the target is `local`.\n\nThis is the \"extends today's parent-gate\" half of the design: the parent-gate already makes a decomposed sub-issue never carry its own pending acceptance label (the parent carries one gate for all of them). This record changes what the gate waits for and where it points, not whether it exists.\n\n**Contract decisions this record pins:**\n\n- **Scope.** The new gate timing, the flagged-sub-issue exception and the `local`-main behavior apply only under `control-mode: on`; with it off, the existing parent-gate runs exactly as today.\n- **One predicate, one home.** `parentGateOpen(parent, subs)` lives in `plugin/bin/lib/accept/parent-gate.js`. `engine-verify.js` requires it directly; the backstop scan prose (a markdown file an agent drives) reaches it through the CLI `plugin/bin/accept-parent-gate.js`, which reads a JSON file of the fetched sub-issue set and prints the verdict, so a gh-absent firing can fetch through MCP and compute in Node (see the `mcp-agent-fetch-node-compute` skill). A prose-code twin test pins the scan prose to the predicate's rule list.\n- **Input shape.** Each sub is `{ number, state: 'open'|'closed', closeReason: 'completed'|'not_planned'|'duplicate'|null, mergedPr: boolean, keptFlags: string[]|null, acceptance: 'pending'|'approved'|'changes-requested'|null }`. Under `github-issues`, `mergedPr` is true only when a merged PR closes the issue (`closingIssuesReferences`), never from the issue state alone; under `local-files` it is `closed` with a completed disposition, with `keptFlags` and `acceptance` from `facets` (`facets.parent` links the sub to its parent). An unrecognized `state`, `closeReason` or `acceptance` value is a malformed entry.\n- **Delivered means merged.** `closeReason` of `not_planned` or `duplicate` is excluded from the set and listed in the packet as `not delivered: #n`. The gate opens only when at least one sub-issue is delivered and every non-excluded sub-issue is delivered. All-excluded keeps the gate shut and reports \"no delivered sub-issues\".\n- **Flagged sub-issue lifecycle.** keptFlags absent (a legacy record never classified) reads as no flags; a present non-empty list means flagged; a malformed or unknown list means flagged (the risk-flag record's rule). A flagged sub-issue is built and tested, then parks awaiting local acceptance carrying its own `accept:pending` (and its own packet), then `accept:approved`, then merges. It counts as delivered only once merged. While it is parked, rejected (`accept:changes-requested`) or abandoned, the parent gate stays shut by design; the sub-issue's pending label already shows in the needs-you lists, so the block is visible there and a stuck gate is not silent. Flags are read at the sub-issue's pre-merge target decision and have no retroactive effect on siblings that already merged.\n- **Late changes.** The gate is evaluated at each sub-issue merge. A sub-issue added or reopened after the parent packet exists does not reopen or duplicate the packet (packet creation is keyed on the parent through the packet reader's marker lookup); the parent's pending listing notes the change and `/accept` refreshes. Two sub-issues merging at nearly the same time still produce one packet.\n- **Target.** For `local`, unflagged sub-issues have already merged to `main` before any human verdict (by design: only the feature is accepted); a rejection files a fix-forward through the verdict handler. For `dev`, the gate opens after the last merge and the deploy wait; while the wait is unresolved the packet states \"waiting for deploy\".\n- **Oversight-floor exemption** (`engine-verify.js`'s exempt set) is unchanged and still skips the parent.\n\n## Non-Goals\n\n- Not the packet schema or deploy-wait (other records); this record decides *which record* carries the packet and *when* acceptance starts.\n- Not changing how sub-issues are built, tested, reviewed or merged.\n- Not risk-flag detection (the risk-flag and tripwire records); a sub-issue's kept flag is an input.\n- Not changing the unit of acceptance for non-decomposed records (one packet on the record itself).\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4615 | Acceptance target resolution and the local pre-merge park | open (Blocked by) |\n| #4466 | record that touched `verification-brief-parent-gate.md` and `github-pr-scan-acceptance.md` | closed (completed); build from current `main` |\n| #4469 | record that touched `github-pr-scan-acceptance.md` (parent-gate scan filters closed records server-side) | closed (completed); build from current `main` |\n\n## Current State\n\n- Parent-gate procedure: `plugin/skills/wrap-up/verification-brief-parent-gate.md`; the Routing section of `plugin/skills/wrap-up/verification-brief.md` states that a sub-issue with a resolvable parent never carries its own pending label and runs the Parent-Gate Procedure instead. The parent is marked by the `parent-issue` label (`isParentIssue` under `local-files`).\n- Engine: `plugin/bin/lib/wrap-up/engine-verify.js` already special-cases parent-linked sub-issues (comments near lines 667, 807-823: a sub-issue never carries its own pending label; oversight-floor-exempt records are skipped).\n- Backstop scan: `plugin/skills/_shared/github-pr-scan-acceptance.md` has a `parent-gate` scope that catches an `auto:merge`'d sub-issue whose parent gate was never applied.\n- A kept risk flag per sub-issue is recorded by the risk-flag record; target resolution (including flag-forces-local) by the target-resolution record.\n\n## Deliverables\n\n- [ ] `plugin/bin/lib/accept/parent-gate.js` with `parentGateOpen(parent, subs)` returning `{ open, reason, excluded: [...] }` per the contract decisions, plus the CLI `plugin/bin/accept-parent-gate.js` for the scan prose; the packet and verdict for a decomposed feature live on the parent.\n- [ ] Sub-issue rule: a sub-issue with no kept risk flag gets agent checks only and merges normally; a sub-issue with a kept risk flag stops for its own local verdict (it carries its own packet and acceptance label despite having a parent), resolved through the target-resolution function.\n- [ ] Parent target: when the resolved target is `dev`, parent acceptance starts after the last merge and the deploy-status record's wait; when `local`, it runs on local `main` (the user pulls and starts the app; `/claude-tweaks:accept` on the parent says so).\n- [ ] `engine-verify.js` updated so its parent-gate checks require the parent's pending label only after the last sub-issue merged, and require a sub-issue's own label only when it carries a kept flag.\n- [ ] `github-pr-scan-acceptance.md` `parent-gate` scope updated to the same \"last sub-issue merged\" and \"flagged sub-issue exception\" rules.\n- [ ] Tests for: all sub-issues merged opens the gate; one still open keeps it closed; a flagged sub-issue carries its own gate; `local-files` parity via `facets.parent`.\n\n## Acceptance Criteria\n\n1. With a parent whose sub-issues are #a (merged), #b (merged), #c (open), the parent gate is not opened and the parent carries no pending acceptance label; when #c merges the gate opens and the parent gets exactly one packet.\n2. A parent whose sub-issue list is empty, unreadable, or contains an entry with a missing or unrecognized state value does not open the gate (fails closed: an empty set is not \"all merged\", and a malformed entry is not \"merged\").\n3. A flagged sub-issue under a parent stops for its own local verdict (parks as awaiting local acceptance, carries its own `accept:pending`) while its unflagged siblings merge; the parent's gate does not open until that sub-issue is accepted and merged. Truth-table tests for the flagged sub-issue: parked (gate shut), `accept:changes-requested` (gate shut), accepted but not yet merged (gate shut), merged (gate open if the rest are delivered). A legacy sub-issue with no flag line reads as unflagged; a malformed flag line reads as flagged.\n3a. Not-planned and duplicate closures are excluded and listed in the packet; two merged plus one `not_planned` opens the gate; all `not_planned` keeps it shut with \"no delivered sub-issues\"; an issue closed as completed with no merged PR is not delivered.\n3b. A sub-issue added after the parent packet exists, and two sub-issues merging concurrently, each leave exactly one packet (idempotent through the marker lookup).\n3c. The scan prose and the predicate agree: a fixture fed to `engine-verify.js` and to `plugin/bin/accept-parent-gate.js` yields the same verdict, and the prose-code twin test fails if the scan prose's rule list drifts.\n4. A sub-issue without a kept flag never carries its own pending label (existing behavior pinned).\n5. For target `local`, the parent's packet Deploy-status section states acceptance runs on local `main`; for `dev` it follows the deploy wait.\n6. `local-files`: the same rules hold using `facets.parent` and `facets.acceptance`; the packet is written on the parent record.\n7. Existing engine-verify tests and the `parent-gate` scan tests pass, updated only where the rule changed.\n8. `npm test` passes.\n\n## Release Note\n\nMoved acceptance for decomposed work to the whole feature, so you accept once after the last piece merges, except for risky pieces that stop for their own check first.\n\n## Technical Approach\n\nSingle predicate `parentGateOpen(parent, subIssues)` used by `engine-verify.js`, the backstop scan, and `/accept`, so the three cannot disagree. The predicate fails closed on an unreadable or empty sub-issue set. Flag exception is read from the sub-issue's recorded flag, not recomputed.\n\n### Data / API Surface\n\n- Input: parent record, its sub-issue records (state, merged flag, kept risk flags).\n- Output: `{ open: boolean, reason }`.\n\n### Key Files\n\n- `plugin/skills/wrap-up/verification-brief-parent-gate.md` — gate rule prose\n- `plugin/bin/lib/wrap-up/engine-verify.js` — parent-gate verification\n- `plugin/skills/_shared/github-pr-scan-acceptance.md` — `parent-gate` backstop scope\n- `plugin/skills/wrap-up/verification-brief.md` — Routing section\n- `plugin/bin/lib/accept/target.js` — created by #4615; consumed for the parent's target; read its exported `resolveAcceptanceTarget` signature from #4615's merged code first\n- `plugin/bin/lib/accept/parent-gate.js` — new predicate\n- `plugin/bin/accept-parent-gate.js` — new CLI for the scan prose\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — extend\n\n## Gotchas\n\n- Records #4466 and #4469 changed these same files and closed (completed) on 2026-10-30 while this decomposition ran; they no longer block, but build from current `main` so their edits are in your base. Open records #4505, #4431 and #3878 also touch adjacent files and are Related.\n- An `auto:merge`'d sub-issue is exactly the population the backstop scan exists to catch; do not give a sub-issue its own gate to \"fix\" a missed parent gate.\n- The 'last sub-issue merged' check counts merges, not closures (decided above); the scan filters closed records server-side (#4469), so verify the scan fetches the full sub-issue set including closed ones, and test the scan and the engine on the same fixture.\n- Fail closed: an empty, unreadable or malformed sub-issue list never opens the gate.\n- Soft inputs, not hard edges: the packet record (#4611), the risk-flag record (#4618) and the deploy-wait record (#4616) supply the packet, the flags and the deploy wait this record consumes; until they ship the inputs are empty (no flags, no wait), and this record's tests use fixtures for them.\n\n**Related:** #4505\n**Related:** #4431\n**Related:** #3878\n\n\n<!-- work-fingerprint: human-in-control-acceptance:feature-level-acceptance-for-decomposed-work -->\nwork-fingerprint: human-in-control-acceptance:feature-level-acceptance-for-decomposed-work",
+        "createdAt": "2026-10-30T11:46:30Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4617,
+        "state": "OPEN",
+        "title": "Feature-level acceptance for decomposed work",
+        "updatedAt": "2026-10-30T16:09:07Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Overview\n\nThe **`dev` acceptance target's finish**: after the PR merges, wait (bounded) for the project's declared live signal, run a dev smoke check, and post the packet with dev links and `accept:pending`. When there is no signal or the wait expires, the packet posts as **\"waiting for deploy\"** and a freshness check runs whenever the packet is opened.\n\nFlow (design section 4, `dev` target):\n\n1. The pipeline merges.\n2. If the project declares a live signal, the session waits a **bounded** time for it (same shape as waiting for CI today).\n3. Once dev reports the change is live, a **dev smoke check** runs: **happy-path only, read-only, dedicated test account, never negative stories** (the Target Environment Guard already disables negative stories off localhost; this record builds on it, it does not relax it).\n4. The packet is posted with dev links (every link targets `dev-base-url`, not localhost) and the record is marked `accept:pending`.\n\n**Fallback:** no declared signal, or the bounded wait expires, the packet posts as **\"waiting for deploy\"**. Whenever it is opened (`/claude-tweaks:accept` or a Dispatch read), a status check reads which version dev is running and states plainly whether the feature is there yet. **No background waiter outlives the session.** A project declaring no usable live signal gets the honest **\"can't confirm it's deployed\"**, never a guess. Anti-goal: a packet whose links point at a build that does not contain the feature, since a false \"it's broken\" erodes the trust the model rests on.\n\nDeploy declaration fields (from the policy-keys record): how code reaches dev (`deploy-reach`: `on-merge` | `command` | `none`), the live signal (`deploy-live-workflow` CI workflow name or `deploy-version-url` returning the deployed version/sha), and `dev-base-url`. Absent declaration: the packet falls back to local \"try it\" instructions (today's behavior); nothing breaks for existing projects.\n\n**Contract decisions this record pins:**\n\n- **Scope.** The dev target, the deploy wait and the smoke check run only when `control-mode` is `on` and the resolved acceptance target is `dev`; otherwise today's behavior.\n- **What `live` means.** `mergedSha` is the merge commit on the integration branch (`gh pr view {pr} --json mergeCommit`), not the branch tip. `live` requires an affirmative signal tied to it: (a) `deploy-live-workflow` names the **deploy-completion workflow** (the key's summary string says so; a green build or test workflow does not qualify) and its latest run for `mergedSha` on the integration branch concluded `success`; or (b) `deploy-version-url` returns a sha equal to `mergedSha` or a descendant of it (ancestry via an injected `isAncestor(mergedSha, deployedSha)` over a fetched clone, `git merge-base --is-ancestor`). `not-live` requires an affirmative signal that the deployed sha is a strict ancestor of `mergedSha` or the declared workflow's latest run for it is queued, in progress or failed. Every other outcome is `unknown`: an unfetched, unrelated or sibling sha, a semver or opaque build id, an unparseable or oversized response, an error or timeout. If both signal keys are set, (a) triggers the wait and (b) is the arbiter of `live`; when they disagree the state is `unknown`.\n- **Version-URL grammar.** The trimmed body is a 40-hex sha, or JSON with a `sha`, `commit` or `version` field holding a 40-hex sha; anything else is unparseable. Responses are capped at 4096 bytes. The URL's origin must equal `dev-base-url`'s origin, else `unknown` with reason `origin-mismatch` (the signal must describe the environment the packet links to). `evidence` is truncated to 200 characters, newlines collapsed and markdown/link brackets escaped by the same helper the packet record uses (`/activity`'s `inline()` approach); the PR cites it.\n- **Wait.** Bound and interval come from `deploy-wait-seconds` (default 900) and `deploy-poll-seconds` (default 30), separate from the CI wait. `unknown` keeps polling until the bound; a bound of 0 skips the wait and goes straight to the fallback. At the bound the packet posts \"waiting for deploy\". If the session ends mid-wait, nothing continues; the next open of the packet performs the check.\n- **Declaration combinations.** `deploy-reach: none` or no live signal: no wait, packet says \"can't confirm it's deployed\", links use `dev-base-url` when set. `on-merge` or `command` with a signal and `dev-base-url`: wait, then smoke, then packet. A signal without `dev-base-url`: wait runs, but links and the smoke check are unavailable, so the packet falls back to local try-it text and states why. `command`: the plugin runs `deploy-command` once after merge (read from the trusted base branch's policy, never the PR head) and then waits; without a signal it runs and reports \"can't confirm\". Each row is a test.\n- **Dev smoke check.** Module `plugin/bin/lib/accept/dev-smoke.js`. It runs only stories that carry an explicit `safety: read-only` marker in their story frontmatter (a new marker documented in `stories/` story format); a story without it is refused (fail closed), and negative stories are refused regardless. The account is the vault entry in `dev-test-account`; absent means the check is `skipped` with reason `no-test-account`. Runtime enforcement: where the Playwright CLI offers request interception, non-GET/HEAD requests are blocked and counted; if it does not (verify at build), the marker is the only control and the packet says so. Outcomes `passed`, `failed` (reason shown) or `skipped` (reason shown) appear in the Deploy-status section; none of them reverts or blocks, the packet still posts with `accept:pending` and the human decides.\n- **Packet refresh.** The Deploy-status line is `Deploy status: {state} (checked {ISO time}) {evidence}`; `/accept` finds the packet by marker and edits that line in place (the packet record's reader and writer). State may move in either direction; after `live` a later `unknown` check shows `live (as of {time}); latest check unknown`. Dispatch reads the stored line and its timestamp from GitHub; it does not run the check (neither project calls the other), so staleness is visible from the timestamp.\n\n## Non-Goals\n\n- Not a deploy tool. The plugin learns how to tell a change is in dev; it does not deploy (running a project-declared deploy command, as `dispatch/close-out.md` already can, stays as is).\n- Not the local target (separate record).\n- Not any background process, timer, or scheduled job that outlives the session.\n- Not negative or write-capable testing on dev.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4609 | Add control-mode policy keys | open (Blocked by) |\n| #4615 | Acceptance target resolution and the local pre-merge park | open (Blocked by) |\n| #4466 | record that touched `dispatch/close-out.md` | closed (completed); build from current `main` |\n\n## Current State\n\n- Post-merge contract: `plugin/skills/_shared/pr-first-merge-post-merge.md`; dispatch close-out (which can run a project-declared deploy command): `plugin/skills/dispatch/close-out.md`; dev URL probe: `plugin/skills/_shared/dev-url-detection.md`.\n- Waiting for CI is the existing bounded-wait shape this reuses (read how `pr-first-merge.md` bounds its CI wait before writing the deploy wait).\n- Policy keys for the deploy declaration are added by the policy-keys record.\n- `plugin/bin/lib/accept/deploy-status.js` does not exist; it is new.\n\n## Deliverables\n\n- [ ] `plugin/bin/lib/accept/deploy-status.js` (new): `checkDeployStatus({ declaration, mergedSha, fetchers })` returning `{ state: 'live' | 'not-live' | 'unknown', evidence, checkedAt }` per the contract decisions above (`isAncestor`, workflow-run lookup and version-URL GET are injected fetchers).\n- [ ] A bounded wait in the post-merge step using `deploy-wait-seconds` and `deploy-poll-seconds`, then the dev smoke check or the fallback; plus the one-time `deploy-command` run for `deploy-reach: command`.\n- [ ] `plugin/bin/lib/accept/dev-smoke.js` and the `safety: read-only` story marker, per the contract decisions; it refuses unmarked stories, negative stories and any base URL that is not the declared `dev-base-url`.\n- [ ] Packet Deploy-status section populated: `live`, `not live yet`, or `can't confirm it's deployed`, plus the smoke outcome; all packet links built from `dev-base-url`. This edits `plugin/skills/_shared/acceptance-packet.md`'s Deploy-status contract (the section the packet record defines) in this record.\n- [ ] Freshness on open: `/claude-tweaks:accept` calls `checkDeployStatus` and edits the packet's deploy line in place, stating plainly whether the feature is live. Dispatch's read of the stored line needs no code here.\n- [ ] Prose updates in `pr-first-merge-post-merge.md` and `dispatch/close-out.md`; tests for the three states and the bounded wait.\n\n## Acceptance Criteria\n\n1. No declared live signal: `checkDeployStatus` returns `unknown` and the packet reads \"can't confirm it's deployed\" (never `live`, never an implied \"probably\").\n2. A declared deploy workflow whose latest run for the merged sha concluded `success` returns `live`; a version URL returning `mergedSha` or a descendant returns `live`; one returning a strict ancestor returns `not-live`; a sibling sha, a semver, an opaque build id, a version URL on a different origin than `dev-base-url`, a response over 4096 bytes, an error, a timeout and unparseable output each return `unknown`; both signals set and disagreeing returns `unknown`. A markup-bearing `evidence` string (backticks, `[x](y)`, `#123`) is rendered inert and capped at 200 characters. Each is a test.\n3. The bounded wait polls every `deploy-poll-seconds` and ends at `deploy-wait-seconds` with state `unknown` or `not-live`, posting \"waiting for deploy\"; `deploy-wait-seconds: 0` skips the wait; it leaves no process running after the session (assert there is no timer, daemon, or scheduled job created). The declaration-combination table in the contract decisions has one test per row.\n3a. The smoke check refuses an unmarked story (no `safety: read-only`), refuses a negative story, skips with reason `no-test-account` when `dev-test-account` is unset, and reports `failed` without blocking the packet.\n4. The smoke check refuses a story with a negative marker and refuses a base URL that is not the declared `dev-base-url`. The comparison normalizes scheme and host to lowercase, ignores a trailing slash and a default port, and resolves dot segments and percent-encoding before comparing scheme, host and port. Tests: for declared `https://dev.example.test`, accepted are `HTTPS://DEV.example.test/`, `https://dev.example.test:443/` and `https://dev.example.test/a/../b` (dot segments stay within the same origin); refused are `https://dev.example.test.evil.example`, `https://evil.example/?next=https://dev.example.test` (substring in the wrong component), `https://dev%2eexample.test` and `http://dev.example.test` (scheme mismatch).\n5. Opening a \"waiting for deploy\" packet after the feature went live edits the deploy line to `live` (with the check time) in place without posting a second packet comment; a later `unknown` after `live` renders `live (as of {time}); latest check unknown`; the packet reader's missing, duplicate and untrusted-author cases apply.\n6. All dev links in a rendered packet start with `dev-base-url`; with `dev-base-url` unset the packet uses local try-it instructions and states the target is not dev.\n7. A project with no deploy declaration at all behaves exactly as before (existing tests pass untouched).\n8. `npm test` passes.\n\n## Release Note\n\nAdded a dev acceptance path that waits for the declared deploy signal, runs a read-only smoke check, and tells you plainly whether your feature is live before you test it.\n\n## Technical Approach\n\nThree-valued status with an explicit `unknown`: the only way to assert `live` is an affirmative signal tied to the merged commit. The bounded wait is an in-session poll, structurally the same as the CI wait; nothing persists past it. Freshness-on-open makes the packet self-correcting without a background job. Fetchers (workflow-run lookup, version-URL GET) are injected so tests need no network.\n\n### Data / API Surface\n\n- Declaration (policy): `deploy-reach`, `deploy-command`, `deploy-live-workflow`, `deploy-version-url`, `dev-base-url`.\n- Status: `{ state: 'live' | 'not-live' | 'unknown', evidence: string, checkedAt }`; `evidence` is an untrusted fetched value, neutralized before rendering.\n\n### Key Files\n\n- `plugin/bin/lib/accept/deploy-status.js` — new\n- `plugin/bin/lib/accept/dev-smoke.js` — new\n- `plugin/skills/stories/SKILL.md` — story format documents the `safety: read-only` marker\n- `plugin/skills/stories/negative-stories.md` — the existing negative-story marker the smoke check must refuse\n- `plugin/skills/_shared/pr-first-merge-post-merge.md` — bounded wait and fallback\n- `plugin/skills/dispatch/close-out.md` — existing declared deploy command; cite, do not duplicate\n- `plugin/skills/_shared/dev-url-detection.md` — dev vs local URL handling\n- `plugin/skills/_shared/acceptance-packet.md` — Deploy-status section contract (created by #4611)\n- `plugin/skills/accept/SKILL.md` — freshness check on open (created by #4613)\n- `tests/bin-lib/accept/deploy-status.test.js` — new; the status function suite\n\n## Gotchas\n\n- The version URL's response is attacker-influenceable data (it is whatever the deployed app prints): parse strictly, cap its length, and render it as inert text.\n- Never infer `live` from the merge alone, from elapsed time, or from `deploy-reach: on-merge` alone: `on-merge` says how code gets there, not that it arrived.\n- The dev smoke check runs against a shared environment: read-only means no POST/PUT/DELETE and no state-changing click; a test account is referenced by vault entry name, never embedded.\n- Record #4466 also edited `dispatch/close-out.md` and closed (completed) on 2026-10-30 while this decomposition ran; build from current `main` so its edits are in your base. Open records #4251 (armed merge never runs the post-merge reopen), #3878 and #3731 touch adjacent files and are Related.\n- No background waiter: do not use `ScheduleWakeup`, cron, or a detached process to \"keep waiting\".\n\n**Related:** #4251\n**Related:** #3878\n**Related:** #3731\n\n\n<!-- work-fingerprint: human-in-control-acceptance:dev-target-wait-for-deploy-smoke-check-waiting-for-deploy-fa -->\nwork-fingerprint: human-in-control-acceptance:dev-target-wait-for-deploy-smoke-check-waiting-for-deploy-fa",
+        "createdAt": "2026-10-30T11:46:26Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4616,
+        "state": "OPEN",
+        "title": "Dev target: wait for deploy, smoke check, waiting-for-deploy fallback",
+        "updatedAt": "2026-10-30T16:09:02Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "high",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
           },
           "bot": {
             "inProgress": false,
@@ -11867,7 +12012,6 @@
       "number": 4624,
       "blockedBy": [
         4616,
-        4615,
         4623
       ]
     },
@@ -11876,24 +12020,6 @@
       "blockedBy": [
         4614,
         4622
-      ]
-    },
-    {
-      "number": 4619,
-      "blockedBy": [
-        4615
-      ]
-    },
-    {
-      "number": 4617,
-      "blockedBy": [
-        4615
-      ]
-    },
-    {
-      "number": 4616,
-      "blockedBy": [
-        4615
       ]
     },
     {
