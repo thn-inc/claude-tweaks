@@ -345,8 +345,10 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
   if (!verdict || verdict.admitted !== true) {
     const reasons = (verdict && verdict.reasons) || [];
     let detail = reasons.join('; ') || 'not admitted';
-    if (auth.authority === 'none' && reasons.includes(ADMISSION_REASONS.noBuildGrant)) {
-      detail += `; typed command not accepted: ${auth.reasons.join(',')}`;
+    // Joined as formatAuthorityLine joins them; an answer with no reason words adds nothing.
+    const words = Array.isArray(auth.reasons) ? auth.reasons : [];
+    if (auth.authority === 'none' && words.length > 0 && reasons.includes(ADMISSION_REASONS.noBuildGrant)) {
+      detail += `; typed command not accepted: ${words.join(', ')}`;
     }
     return { status: 'stop', detail, extra };
   }

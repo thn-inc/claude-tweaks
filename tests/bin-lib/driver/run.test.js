@@ -6381,28 +6381,54 @@ test('AC12 (#5584): a typed record without auto:merge stops the merge step not-a
   assert.deepStrictEqual(labelWrites(h), []);
 });
 
-test('AC15 (#5584): bot:blocked, bot:parked and parked are refused at admission with an accepted typed command', async () => {
+// AC15: one test per held label. The rule answers none with `held` before the transcript is read,
+// and admission's own held gate still refuses, at a terminal and in a session with an accepted check.
+async function assertHeldRefused(held, reason) {
   const accepted = () => ({ answer: 'typed' });
-  for (const [held, reason] of [['bot:blocked', ADMISSION_REASONS.blocked], ['bot:parked', ADMISSION_REASONS.parked], ['parked', ADMISSION_REASONS.parked]]) {
-    for (const opts of [{ tty: true }, { tty: true, env: SESSION_ENV, readTypedCommand: accepted }]) {
-      const { h, typedCalls, final } = await typedDrive({ labels: [...TYPED_LABELS, held], ...opts });
-      assert.deepStrictEqual([final.stop.step, final.outcome], ['admission', 'refused'], held);
-      assert.equal(final.stop.detail, `${ADMISSION_REASONS.noBuildGrant}; ${reason}; typed command not accepted: held`, held);
-      assert.equal(admissionLine(h).authority, 'none');
-      assert.equal(typedCalls.length, 0, `${held}: the transcript is never read`);
-      assert.deepStrictEqual(labelWrites(h), []);
-    }
+  for (const opts of [{ tty: true }, { tty: true, env: SESSION_ENV, readTypedCommand: accepted }]) {
+    const { h, typedCalls, final } = await typedDrive({ labels: [...TYPED_LABELS, held], ...opts });
+    assert.deepStrictEqual([final.stop.step, final.outcome], ['admission', 'refused'], held);
+    assert.equal(final.stop.detail, `${ADMISSION_REASONS.noBuildGrant}; ${reason}; typed command not accepted: held`, held);
+    assert.equal(admissionLine(h).authority, 'none');
+    assert.equal(typedCalls.length, 0, `${held}: the transcript is never read`);
+    assert.deepStrictEqual(labelWrites(h), []);
   }
+}
+
+test('AC15 (#5584): bot:blocked is refused at admission with an accepted typed command', async () => {
+  await assertHeldRefused('bot:blocked', ADMISSION_REASONS.blocked);
+});
+
+test('AC15 (#5584): bot:parked is refused at admission with an accepted typed command', async () => {
+  await assertHeldRefused('bot:parked', ADMISSION_REASONS.parked);
+});
+
+test('AC15 (#5584): parked is refused at admission with an accepted typed command', async () => {
+  await assertHeldRefused('parked', ADMISSION_REASONS.parked);
+});
+
+test('AC15 (#5584): a record without ready is refused for the grant with not-ready', async () => {
   const unready = await typedDrive({ labels: ['risk:low', 'size:low'], tty: true });
   assert.equal(unready.final.stop.detail, GRANT_STOP('not-ready'));
 });
 
-test('(#5584) the reason words are comma-joined, and a refusal without the grant reason gets no suffix', async () => {
+test('(#5584) the reason words are joined with ", ", and a refusal without the grant reason gets no suffix', async () => {
   const two = await typedDrive({ tty: false, env: { CI: '1', CC_HUB_RUN: '1' } });
-  assert.equal(two.final.stop.detail, GRANT_STOP('not-a-terminal,ci,hub-run'));
+  // Joined as formatAuthorityLine joins them, so one reason list prints one way on every surface.
+  assert.equal(two.final.stop.detail, GRANT_STOP('not-a-terminal, ci, hub-run'));
   const labelled = await typedDrive({ labels: [...TYPED_LABELS, 'auto:build', 'bot:blocked'], tty: false });
   assert.equal(labelled.final.stop.detail, ADMISSION_REASONS.blocked);
   assert.equal(admissionLine(labelled.h).authority, 'label');
+});
+
+test('(#5584) an injected rule answering none without reasons refuses for the grant and does not throw', async () => {
+  for (const answer of [{ authority: 'none' }, { authority: 'none', reasons: null }]) {
+    const { h, final } = await typedDrive({ tty: true, deps: { resolveBuildAuthority: () => answer } });
+    assert.deepStrictEqual([final.stop.step, final.stop.class, final.outcome], ['admission', 'refused', 'refused'], JSON.stringify(answer));
+    // No reason words, no suffix: formatAuthorityLine likewise never prints an empty list.
+    assert.equal(final.stop.detail, ADMISSION_REASONS.noBuildGrant, JSON.stringify(answer));
+    assert.equal(admissionLine(h).authority, 'none');
+  }
 });
 
 test('(#5584) driveRecord defaults to an unnamed record; run() names each argument record', async () => {
