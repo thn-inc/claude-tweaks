@@ -89,8 +89,16 @@ function resolveParkHead(git, repoRoot, parkHead) {
 // holds the full head `reenter` printed.
 function reenterCheck({ worktree, expectHead, git } = {}) {
   const head = git(['-C', worktree, 'rev-parse', 'HEAD']).trim();
-  const porcelain = git(['-C', worktree, '--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']);
-  const dirty = porcelain.split('\n').filter((line) => line.trim() !== '').map((line) => line.slice(3));
+  const porcelain = git(['-C', worktree, '--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=no']);
+  const dirty = [];
+  const entries = porcelain.split('\0');
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i];
+    if (entry === '') continue;
+    dirty.push(entry.slice(3));
+    // A rename or copy entry carries its original path as one extra NUL-separated entry.
+    if (/[RC]/.test(entry.slice(0, 2))) i += 1;
+  }
   const same = typeof expectHead === 'string' && head.toLowerCase() === expectHead.trim().toLowerCase();
   return { ok: same && dirty.length === 0, head, dirty };
 }

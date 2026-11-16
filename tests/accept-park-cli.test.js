@@ -648,7 +648,7 @@ test('reenter-check: exit 0 when HEAD matches and the tree is clean, 8 when modi
   assert.deepEqual(JSON.parse(ok.stdout), { ok: true, head: TIP, dirty: [] });
   assert.deepEqual(clean.gitCalls[0].args.slice(0, 2), ['-C', wt]);
 
-  const dirty = reentryWorld({ porcelain: ' M a.txt\n' });
+  const dirty = reentryWorld({ porcelain: ' M a.txt\0' });
   const bad = await call(dirty.w, ['reenter-check', '--worktree', wt, '--expect-head', TIP]);
   assert.equal(bad.code, 8);
   assert.deepEqual(JSON.parse(bad.stdout), { ok: false, head: TIP, dirty: ['a.txt'] });

@@ -22,7 +22,7 @@ function hermeticEnv(home) {
   const env = { ...process.env };
   for (const name of Object.keys(env)) if (name.startsWith('GIT_')) delete env[name];
   return {
-    ...env, HOME: home, XDG_CONFIG_HOME: path.join(home, 'xdg'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull,
+    ...env, HOME: home, XDG_CONFIG_HOME: path.join(home, 'xdg'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com',
     GIT_AUTHOR_DATE: '2026-11-16T10:00:00Z', GIT_COMMITTER_DATE: '2026-11-16T10:00:00Z',
   };
@@ -101,6 +101,19 @@ test('AC4.2: before the verdict HEAD is unchanged and no tracked file changed', 
   const dirty = reenterCheck({ worktree, expectHead: head, git: f.git });
   assert.equal(dirty.ok, false);
   assert.deepEqual(dirty.dirty, ['a.txt']);
+});
+
+test('AC4.2: reenterCheck reads the NUL-delimited status: spaces, newlines and a rename origin', () => {
+  const head = 'a'.repeat(40);
+  let statusArgs;
+  const git = (args) => {
+    if (args.includes('rev-parse')) return `${head}\n`;
+    statusArgs = args;
+    return ' M my file.txt\0A  line\nbreak.txt\0R  new name.txt\0old name.txt\0M  after.txt\0';
+  };
+  const res = reenterCheck({ worktree: '/wt', expectHead: head, git });
+  assert.ok(statusArgs.includes('-z'));
+  assert.deepEqual(res.dirty, ['my file.txt', 'line\nbreak.txt', 'new name.txt', 'after.txt']);
 });
 
 test('AC4.2: reenterCheck matches the full oid only, not a prefix', () => {
