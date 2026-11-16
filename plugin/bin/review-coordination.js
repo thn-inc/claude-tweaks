@@ -369,7 +369,8 @@ function holdsReproducedLine(text, file, line) {
   return false;
 }
 
-// log-reproduction-judgment <judgment.json> --lens <lens> --run <dir> (#5595); every refusal precedes the anchoring and any write.
+// log-reproduction-judgment <judgment.json> --lens <lens> --run <dir> (#5595); every refusal precedes any write, and all
+// but vacuity-downgraded's two decisions.md refusals (no earlier reproduced line; an unreadable decisions.md) precede the anchoring.
 function logReproductionJudgment(rest, deps) {
   const parsed = parseValueFlags(rest, ['--lens', '--run'], deps);
   if (parsed.exitCode !== undefined) return parsed.exitCode;

@@ -4,6 +4,12 @@ const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const c = require('../plugin/bin/lib/coordination');
+const { pairEntries } = require('../plugin/bin/lib/reproduction-log');
+const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
+
+// The reproduction pair lines' only home is plugin/bin/lib/reproduction-log.js (#5595): the decision-log
+// entries below come from its pairEntries over categoriseReproduction's own result, as the CLI writes them.
+const composedLines = (result, lens, only, at) => pairEntries(result, { lens, only }).entries.map((e) => formatEntry({ ...e, now: at }));
 
 // Reads one live skill file under plugin/skills/. These tests assert against the real
 // shipped prose, so every read below goes through here rather than re-spelling the path.
@@ -13,8 +19,9 @@ function readSkillFile(...segments) {
 
 const PRIMITIVE_DOC = readSkillFile('_shared', 'multi-agent-coordination.md');
 // Several of /review's decision-log templates live in sub-files lazy-loaded from SKILL.md rather
-// than inlined in it: reproduction's in step3-lens-dispatch.md, Cross-Lens Debate's and
-// Per-Candidate Refutation's in step3-debate-and-refutation.md. Concatenate all three so this
+// than inlined in it: the fan-out sweep's in step3-lens-dispatch.md, Cross-Lens Debate's and
+// Per-Candidate Refutation's in step3-debate-and-refutation.md (the reproduction pair lines have
+// no template since #5595: reproduction-log.js composes them). Concatenate all three so this
 // still asserts against the real documented format wherever it currently lives.
 const REVIEW_SKILL = ['SKILL.md', 'step3-lens-dispatch.md', 'step3-debate-and-refutation.md']
   .map((f) => readSkillFile('review', f))
@@ -162,7 +169,8 @@ test('reproduction: location+substance agreement with a straddled severity bucke
   // `unconfirmed` despite the location+substance agreement.
   const a = [{ path: 'step-6-auto.md', line: 154, severity: 'medium', text: 'digest-vs-Approve finding' }];
   const b = [{ path: 'step-6-auto.md', line: 154, severity: 'high', text: 'digest-vs-Approve finding' }];
-  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  const result = c.categoriseReproduction(a, b);
+  const { confirmed, unconfirmed } = result;
   assert.strictEqual(confirmed.length, 1, 'straddled-bucket pair must be reproduced, not unconfirmed');
   assert.strictEqual(unconfirmed.length, 0);
   assert.strictEqual(confirmed[0].path, 'step-6-auto.md');
@@ -173,10 +181,7 @@ test('reproduction: location+substance agreement with a straddled severity bucke
   const entry =
     `- AUTO 09:14:02 — Reproduction: lens "3c" finding ${confirmed[0].path}:${confirmed[0].line} ` +
     `reproduced, severity contested (took the lower of the two). Confirmed. Reversibility: high.`;
-  assert.match(
-    entry,
-    decisionLogPattern(REVIEW_SKILL, ['reproduced, severity contested', 'took the lower of the two']),
-  );
+  assert.deepStrictEqual(composedLines(result, '3c', 'confirmed', new Date(2026, 0, 1, 9, 14, 2)), [entry]);
 });
 
 test('reproduction: a straddled pair where the lower side is missing severity normalizes to "info", never undefined', () => {
@@ -216,7 +221,8 @@ test('reproduction: genuine location disagreement (not merely a severity straddl
 test('reproduction: same location, substantively different findings → NOT confirmed; both unconfirmed with nearLocation', () => {
   const a = [{ path: 'file.md', line: 100, severity: 'low', text: 'trailing comma' }];
   const b = [{ path: 'file.md', line: 101, severity: 'critical', text: 'null deref on empty list' }];
-  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  const result = c.categoriseReproduction(a, b);
+  const { confirmed, unconfirmed } = result;
   assert.strictEqual(confirmed.length, 0);
   assert.strictEqual(unconfirmed.length, 2);
 
@@ -229,10 +235,7 @@ test('reproduction: same location, substantively different findings → NOT conf
   const entry =
     `- STAGED 11:02:44 — Reproduction: lens "3c" findings ${fromA.path}:${fromA.line} / ` +
     `${fromB.path}:${fromB.line} share a location but not substance; both staged unconfirmed. Reversibility: high.`;
-  assert.match(
-    entry,
-    decisionLogPattern(REVIEW_SKILL, ['share a location but not substance', 'both staged']),
-  );
+  assert.deepStrictEqual(composedLines(result, '3c', 'unconfirmed', new Date(2026, 0, 1, 11, 2, 44)), [entry]);
 });
 
 test('step3-lens-dispatch.md documents the nearLocation routing-table clause for a same-location, different-substance pair', () => {
@@ -1231,7 +1234,8 @@ test('/review reproduction integration: per-lens reproduction → confirmed/unco
     { path: 'src/api.ts', line: 100, severity: 'medium', text: 'unhandled rejection' },
   ];
   const agentB = [{ path: 'src/auth.ts', line: 43, severity: 'critical', text: 'missing expiry check' }];
-  const { confirmed, unconfirmed } = c.categoriseReproduction(agentA, agentB);
+  const result = c.categoriseReproduction(agentA, agentB);
+  const { confirmed, unconfirmed } = result;
 
   // Reproduction match: src/auth.ts:42 (A) and src/auth.ts:43 (B) — line ±2, critical+high share bucket
   assert.strictEqual(confirmed.length, 1);
@@ -1246,10 +1250,10 @@ test('/review reproduction integration: per-lens reproduction → confirmed/unco
   const lensName = 'security';
   const confirmedEntry =
     `- AUTO 14:32:08 — Reproduction: lens "${lensName}" finding ${confirmed[0].path}:${confirmed[0].line} reproduced. Confirmed. Reversibility: high.`;
-  assert.match(confirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Findings present in both agents', 'same severity bucket']));
+  assert.deepStrictEqual(composedLines(result, lensName, 'confirmed', new Date(2026, 0, 1, 14, 32, 8)), [confirmedEntry]);
   const unconfirmedEntry =
     `- STAGED 14:32:11 — Reproduction: lens "${lensName}" finding ${unconfirmed[0].path}:${unconfirmed[0].line} not reproduced. Staged to Review Console as low-confidence. Reversibility: high.`;
-  assert.match(unconfirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Findings present in only one']));
+  assert.deepStrictEqual(composedLines(result, lensName, 'unconfirmed', new Date(2026, 0, 1, 14, 32, 11)), [unconfirmedEntry]);
 });
 
 test('/review debate integration: cross-lens overlap with contradicting verdicts → debate dispatched → confirmed/unconfirmed/contested resolution per verdict combination', () => {
@@ -1616,28 +1620,10 @@ test('prose twins state the two-tier line rule with the code\'s own values (#295
     [near, wide, floor],
   );
 
+  // step3-lens-dispatch.md no longer restates the rule (#5595): its reproduction bullets cite Mode 1's
+  // pairing rule, which the code applies, so the doc's item 2 above is the one prose twin.
   const dispatch = readSkillFile('review', 'step3-lens-dispatch.md');
-  assertBulletStatesValues(
-    dispatch,
-    "> - Findings present in both agents' outputs, same severity bucket",
-    'step3-lens-dispatch.md',
-    'confirmed-finding bullet',
-    [near, wide, floor],
-  );
-  assertBulletStatesValues(
-    dispatch,
-    "> - Findings present in both agents' outputs but straddling a severity-bucket boundary",
-    'step3-lens-dispatch.md',
-    'severity-straddle bullet',
-    [near, wide],
-  );
-  assertBulletStatesValues(
-    dispatch,
-    '> - Findings at the same location (path exact, line ±2) but from different substance',
-    'step3-lens-dispatch.md',
-    '#1980 coincidence bullet',
-    [near, wide, floor],
-  );
+  assert.ok(dispatch.includes("(Mode 1's pairing rule, applied in code)"), 'step3-lens-dispatch.md must cite Mode 1\'s pairing rule');
 });
 
 test('multi-agent: the paragraph search still finds its break under CRLF line endings (#3574)', () => {

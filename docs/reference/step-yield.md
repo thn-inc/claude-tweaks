@@ -153,7 +153,7 @@ Each `ask-user-question` event (the answer, written by the PostToolUse hook) bec
 
 ### Pair lines
 
-A review-marked decision line is a `Reproduction:` pair line, written by the agent from the templates in `plugin/skills/review/step3-lens-dispatch.md` (seven forms) and `plugin/skills/review/step3-tier-variants.md` (one form). `plugin/bin/lib/timing/pair-lines.js`'s `PAIR_FORMS` is the code twin and the source for this table; `tests/bin-lib/timing/pair-lines.test.js` pins every form to its prose template.
+A review-marked decision line is a `Reproduction:` pair line. Seven forms are composed by `plugin/bin/lib/reproduction-log.js` and written by `review-coordination.js categorise-reproduction --run` and `log-reproduction-judgment` (#5595); the agent writes one form from the template in `plugin/skills/review/step3-tier-variants.md`. `plugin/bin/lib/timing/pair-lines.js`'s `PAIR_FORMS` is the reader and the source for this table; `tests/bin-lib/timing/pair-lines.test.js` pins the seven composed forms to the composer and the eighth to its prose template.
 
 | Form (`PAIR_FORMS` id) | Template head | both | one | relabel |
 |---|---|---|---|---|

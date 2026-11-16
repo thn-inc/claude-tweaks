@@ -1400,19 +1400,22 @@ test('AC9.2: an unknown kind exits 2 with the one stderr line; a missing field a
   assert.strictEqual(unknown.err, 'review-coordination.js: unknown judgment kind "made-up" — expected one of absence-refuted, vacuity-downgraded, vacuity-reconfirmed\n');
   assert.strictEqual(unknown.out, '');
   const { symbol, ...noSymbol } = ABSENCE;
+  // Each case's stderr line names the field it refuses.
+  const field = (k) => `review-coordination.js: absence-refuted: ${k} must be a non-empty single-line string, got `;
   const cases = {
-    'a missing field': noSymbol,
-    'a blank field': { ...ABSENCE, command: '  ' },
-    'a non-string field': { ...ABSENCE, path: 7 },
-    'a field with \\n': { ...ABSENCE, command: 'grep\nfoo' },
-    'a field with \\r': { ...ABSENCE, symbol: 'a\rb' },
-    'no kind': { path: 'x.js' },
+    'a missing field': [noSymbol, field('symbol')],
+    'a blank field': [{ ...ABSENCE, command: '  ' }, field('command')],
+    'a non-string field': [{ ...ABSENCE, path: 7 }, field('path')],
+    'a field with \\n': [{ ...ABSENCE, command: 'grep\nfoo' }, field('command')],
+    'a field with \\r': [{ ...ABSENCE, symbol: 'a\rb' }, field('symbol')],
+    'no kind': [{ path: 'x.js' }, 'review-coordination.js: unknown judgment kind "undefined" — expected one of '],
   };
-  for (const [name, judgment] of Object.entries(cases)) {
+  for (const [name, [judgment, named]] of Object.entries(cases)) {
     const res = judgeRun(inp, judgment, base);
     assert.strictEqual(res.code, 2, name);
     assert.strictEqual(res.out, '', name);
-    assert.ok(res.err.startsWith('review-coordination.js: '), name);
+    assert.ok(res.err.startsWith(named), `${name}: ${res.err}`);
+    assert.strictEqual(res.err.split('\n').length, 2, `${name}: one stderr line`);
   }
   for (const [name, text] of Object.entries({ 'an array': '[]', 'null': 'null', 'not JSON': '{nope' })) {
     assert.strictEqual(judgeRun(inp, text, base).code, 2, name);

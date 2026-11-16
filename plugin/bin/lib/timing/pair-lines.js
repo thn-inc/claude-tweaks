@@ -1,11 +1,12 @@
 // bin/lib/timing/pair-lines.js — reader for the review reproduction-pair lines (#5556).
 //
-// The eight pair-line templates are typed by the agent from two producer files:
-// plugin/skills/review/step3-lens-dispatch.md (seven forms) and
-// plugin/skills/review/step3-tier-variants.md (the single-read-coverage notice).
-// The tiebreak forms are written by tiebreak.js and owned by console/resolve.js's
-// parseTiebreakLine. This module is their code twin: one pattern set per
-// template, pinned to the prose by tests/bin-lib/timing/pair-lines.test.js.
+// Eight pair-line templates: seven forms composed by plugin/bin/lib/reproduction-log.js
+// (#5595, written by review-coordination.js categorise-reproduction --run and
+// log-reproduction-judgment), and the single-read-coverage notice the agent types from
+// plugin/skills/review/step3-tier-variants.md. The tiebreak forms are written by
+// tiebreak.js and owned by console/resolve.js's parseTiebreakLine. This module reads
+// them: one pattern set per template, each PAIR_FORMS template pinned to the composer
+// (or, for the notice, to the prose) by tests/bin-lib/timing/pair-lines.test.js.
 //
 // Pair-line patterns are additive: a reworded template adds a pattern to its
 // form, never replaces one, so archived runs keep parsing. Two kinds of legacy
