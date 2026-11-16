@@ -35,8 +35,8 @@ function tryGit(execImpl, args) {
 }
 
 // usableAnchor({ stamp, execImpl }): the canonical sha of the stamp's own
-// anchor (stamp.js's anchorOf: fullSha, or sha for a stamp with no fullSha) when — and
-// only when — it is a real ancestor of HEAD, else null. Shared by
+// anchor (stamp.js's anchorOf: fullSha, or sha for a stamp with no fullSha)
+// when — and only when — it is a real ancestor of HEAD, else null. Shared by
 // resolveBase's own anchor-first path below and bin/verify.js's
 // --base-vs-anchor conflict check, so "is this anchor still usable" (a
 // rewritten/rebased history can strand the old anchor even though it still

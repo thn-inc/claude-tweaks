@@ -228,7 +228,7 @@ test('resolveBase verifies an explicit base as a commit and never consults the s
   assert.throws(() => resolveBase({ stamp: null, base: 'nope', execImpl: bad }), ChangedFilesError);
 });
 
-test('resolveBase uses stamp.sha as the anchor for a legacy stamp that carries no fullSha, canonicalized via rev-parse (finding 11)', () => {
+test('resolveBase uses stamp.sha as the anchor for a stamp that carries no fullSha, canonicalized via rev-parse (finding 11)', () => {
   const exec = fakeExec({
     [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
     [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${CANON}\n`,
@@ -259,7 +259,7 @@ test('usableAnchor returns null when there is no stamp at all', () => {
   assert.strictEqual(usableAnchor({ stamp: null, execImpl: fakeExec({}) }), null);
 });
 
-test('usableAnchor falls back to stamp.sha for a legacy stamp with no fullSha', () => {
+test('usableAnchor falls back to stamp.sha for a stamp with no fullSha', () => {
   const exec = fakeExec({
     [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
     [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${CANON}\n`,
