@@ -50,7 +50,7 @@ In every case the recreated `accept-{N}` worktree has been removed, and the reco
 - **URL:** `/claude-tweaks:tidy`, `/claude-tweaks:dispatch close-out`, `/claude-tweaks:help`'s PR scan
 - **Action:** Run the usual hygiene. Each of these checks `accept-park.js parked --record {n}` before it arms, merges or recommends closing. Exit 0 (parked) and exit 6 (unknown) both count as parked.
 - **Should feel:** Safe to leave. A parked PR older than four weeks is listed as yours with `/claude-tweaks:accept #{n}`, never as "Close".
-- **Should understand:** Tidy's record-linked arm also runs `decide` without `--run`. A record whose target is local but was never parked is therefore held: `Held (not armed): PR #{n} — local acceptance target, never parked; recommend /claude-tweaks:accept #{record}`.
+- **Should understand:** Tidy's record-linked arm also runs `decide` without `--run`. A record whose target is local but was never parked is therefore held: `Held (not armed): PR #{n} — local acceptance target, never parked; recommend /claude-tweaks:accept #{record}`, followed by the decision's `tripwire…` lines when the tripwire made the target local (tidy posts no packet, so the report is where those lines are read).
 - **Red flags:**
   - Auto-merge armed on a parked PR.
   - A "Close (GitHub)" recommendation for it.
