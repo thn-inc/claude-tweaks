@@ -36,6 +36,8 @@
 - **`listHeaderDirs` entry shape carries both `specDir` and `specN`.** The spec's shape is `{ dir, location, specN: number | null }`. `pack.js`'s `manifestRecords` scans every `/^spec-/` subdirectory today, numeric or not, while `context-gauge.js` counts only `/^spec-([1-9]\d*)$/` directories; a `specN`-only shape would narrow the pack's scan (AC6). Each entry is `{ dir, location, specDir: string|null, specN: number|null }` — `specDir` the subdirectory name (`null` for flat `work/`), `specN` its parsed number when it matches `/^spec-([1-9]\d*)$/`, else `null`.
 - **Per-spec child run dirs.** Two readers already special-case a `spec-{N}` run dir whose parent is run-id-shaped (`perSpecPathspec`, `specCandidatePaths`). The resolver's git functions take `{ specDir }` for that case; callers keep deriving `runId`/`specDir` exactly as today. `specOnBranch` derives its archived rel from `archivedRunDir(runDirReal)`, never from `runRelDirs(path.basename(runDirReal))`, so a per-spec `runDirReal` (`.../pipelines/{id}/spec-{N}`) gets `.../pipelines/archive/{id}/spec-{N}` (plan-review row: cross-task contract, Task 3 per-spec run id).
 - **Message rewording (Decision, AC8).** `verify-run-bookends.js:191` remedy ends `then commit the spec file it writes (its JSON \`file\` field)`; `context-gauge.js:242` reads `handoff.json not written: no target records (no spec-{N}/ dir and no spec header for ${runDir}${worktree ? ' or its worktree copy' : ''})`. Neither text holds both `work` and `-spec.md`. Pre-change grep: no test pins either message (`git grep -n -e "then commit work/" -e "no work/{n}-spec.md" -- tests` prints nothing).
+- **Enumerating readers merge by record, within a root (spec Plan Review Clarifications, settled row 1).** `listHeaderDirs` returns directories, not records, so the record-level "earlier in precedence wins" rule is applied by each enumerating reader as it reads names: within one run dir (root), the live and archived headers are merged by record, the live copy winning a duplicate; across roots the reader keeps its existing first-non-empty order. Tasks 3, 4, 5 and 7 each say how. (Plan-review row 6, low: the dedup lives in the readers because only they list file names; logged, not amended further.)
+- **Header only (spec Plan Review Clarifications, settled row 2).** `manifest.yml` and `config.yml` stay read at the live run dir; every archived-only fixture keeps them live. PR body states this.
 - **`preflight.js` `spec` probe return shape.** For a header found at the archived flat location the probe returns the same `{ path: 'work/{name}', present: true, record, records: [record] }` it returns for live: `path` stays relative to the header's own run dir (no consumer reads `spec.path` — `git grep -n "spec\.path" -- plugin` prints nothing), so AC1's "same answer" holds.
 
 Waived AC8.3: a PR-body content requirement, not testable code — Task 8 Step 1 runs the grep and the build's PR-body update carries its output.
@@ -55,6 +57,7 @@ Waived _shared/pipeline-run-dir.md: read only for the IL-127 anchoring rule the 
 ### Task 1: The resolver module
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/run-header.js`
@@ -116,6 +119,7 @@ Waived _shared/pipeline-run-dir.md: read only for the IL-127 anchoring rule the 
 ### Task 3: `lib/flow/preflight.js` — `specOnBranch` and the `spec` probe
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/flow/preflight.js` (`specOnBranch`, lines 118-143; `buildProbes`' `spec` probe, lines 273-291)
@@ -125,7 +129,7 @@ Waived _shared/pipeline-run-dir.md: read only for the IL-127 anchoring rule the 
 - Consumes: `archivedRunDir(runDir)`, `listHeaderDirs(runDirs, { readdir })` from Task 1.
 - Produces:
   - `specOnBranch` keeps its signature and `true | false | null` return. `rels` = `[toPosix(path.relative(mainRoot, runDirReal))]`, plus `toPosix(path.relative(mainRoot, archivedRunDir(runDirReal)))` when that is non-null. For each `rel` in order: the existing non-recursive `${rel}/work/` listing, then the existing recursive `${rel}/` listing, each with the same regexes; any listing returning `null` returns `null`; first match returns `true`; otherwise `false`. The live rel is byte-identical to today's, so the existing argv pins (`preflight.test.js` lines 301-326) keep passing.
-  - `spec` probe keeps its return shape. `dirs = listHeaderDirs([runDirReal], { readdir: deps.readdir })`. First pass over the `specDir === null` dirs in order: the first with a `/^\d+-spec\.md$/` name returns `{ path: 'work/{first sorted name}', present: true, record, records: [record] }`. Otherwise collect `/^\d+-spec\.md$/` record numbers from the dirs whose `specDir` matches `/^spec-\d+$/` (today's filter), de-duplicated (live wins), sorted -> `{ path: null, present: true, record: null, records }`; none -> `{ path: null, present: false, record: null, records: [] }`.
+  - `spec` probe keeps its return shape. `dirs = listHeaderDirs([runDirReal], { readdir: deps.readdir })`. First pass: merge the `/^\d+-spec\.md$/` names of every `specDir === null` dir (live and archived of the one root), de-duplicated by record, live winning; when any, the lowest-sorted name returns `{ path: 'work/{that name}', present: true, record, records: [record] }` (today's "first sorted name" rule, over the merged set). Otherwise collect `/^\d+-spec\.md$/` record numbers from the dirs whose `specDir` matches `/^spec-\d+$/` (today's filter), de-duplicated (live wins), sorted -> `{ path: null, present: true, record: null, records }`; none -> `{ path: null, present: false, record: null, records: [] }`.
 
 - [ ] **Step 1: Write the failing tests**:
   - `AC1.1 specOnBranch finds an archived-only flat header` — fake `git` returns `''` for both live listings and `.claude-tweaks/pipelines/archive/{id}/work/7-spec.md\0` for the archived `work/` listing; `computeAdoption(...).specMaterialized === true`, and the third ls-tree call's last arg is `.claude-tweaks/pipelines/archive/{id}/work/`.
@@ -135,7 +139,7 @@ Waived _shared/pipeline-run-dir.md: read only for the IL-127 anchoring rule the 
   - `AC9.1/AC9.5 specOnBranch returns null when the archived listing throws` — live listings `''`, archived listing throws; asserts `specMaterialized === null`.
   - `AC1.1 spec probe: archived-only flat header gives the live answer` — fake `readdir` serving `7-spec.md` only under `{main}/.claude-tweaks/pipelines/archive/{id}/work`; probe value deep-equals the value for the same header served under the live `work` (`{ path: 'work/7-spec.md', present: true, record: 7, records: [7] }`).
   - `AC2.1 spec probe: archived-only spec-{N} headers give the live answer` — headers only under `archive/{id}/spec-9/work/` and `archive/{id}/spec-12/work/`; `{ path: null, present: true, record: null, records: [9, 12] }`, equal to the live-layout value.
-  - `AC7.1 spec probe: live flat header wins over an archived one` — live `work/` holds `7-spec.md`, archived `work/` holds `8-spec.md`; `record === 7`.
+  - `AC7.1 spec probe: the merged set's lowest name answers` — live `work/` holds `8-spec.md`, archived `work/` holds `7-spec.md`; `record === 7` (merge, not live-hides-archived); and with `7-spec.md` at both, `record === 7` once.
   - `AC9.4 spec probe: an unreadable archived dir is absent` — `readdir` returns `[]` for the archived base (today's `deps.readdir` posture); `present: false`.
 - [ ] **Step 2: Run test to verify it fails**
   Run: `node --test tests/bin-lib/flow/preflight.test.js`
@@ -191,7 +195,8 @@ Waived _shared/pipeline-run-dir.md: read only for the IL-127 anchoring rule the 
 
 - [ ] **Step 1: Write the failing tests**:
   - `AC1.1 resolveRecords: archived-only flat header resolves the same record and source as live` — two fixtures under a real `.claude-tweaks/pipelines/{id}` layout in a tmpdir (header live vs. only at `.../archive/{id}/work/7-spec.md`); assert identical `records`, `source: 'headers'`, and `closingRecords(...)` deep-equal `[7]`. Repeat for the worktree mirror (`source: 'worktree-headers'`).
-  - `AC2.1 resolveRecords: archived-only spec-{N} headers resolve through rung (c) like live` — two variants: with `manifest.yml` listing 9 plus headers only at `archive/{id}/spec-9/work/9-spec.md`, and manifest-free (no `manifest.yml`, headers only at `archive/{id}/spec-9/work/9-spec.md` and `archive/{id}/spec-11/work/11-spec.md`); each asserts the same `records`/`source` as its live-layout twin (`[9]` / `[9, 11]`, `source: 'manifest'`).
+  - `enumerating merge: live work/8 and archived work/7 resolve [7, 8]` — rung (a) returns both records, `source: 'headers'` (settled row 1).
+  - `AC2.1 resolveRecords: archived-only spec-{N} headers resolve through rung (c) like live` — two variants: with `manifest.yml` (kept at the live run dir, settled row 2) listing 9 plus headers only at `archive/{id}/spec-9/work/9-spec.md`, and manifest-free (no `manifest.yml`, headers only at `archive/{id}/spec-9/work/9-spec.md` and `archive/{id}/spec-11/work/11-spec.md`); each asserts the same `records`/`source` as its live-layout twin (`[9]` / `[9, 11]`, `source: 'manifest'`).
   - `AC7.1 a record present at both locations is counted once, the live copy's parked flag wins`.
   - `AC9.4 an unreadable archived header is skipped as absent` (fake `readFile` throws for it; the record does not resolve from it).
 - [ ] **Step 2: Run test to verify it fails**
@@ -233,6 +238,7 @@ Waived _shared/pipeline-run-dir.md: read only for the IL-127 anchoring rule the 
 ### Task 7: `lib/timing/context-gauge.js` `resolveTargetRecords` and the CLI message
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/timing/context-gauge.js` (`resolveTargetRecords`, lines 294-315)
@@ -241,12 +247,13 @@ Waived _shared/pipeline-run-dir.md: read only for the IL-127 anchoring rule the 
 
 **Interfaces:**
 - Consumes: `listHeaderDirs(runDirs, { readdir })` from Task 1.
-- Produces: `resolveTargetRecords` keeps its signature, return shape and ordering rules. `roots` is built exactly as today (worktree copy first when contained, then `runDir`). `dirs = listHeaderDirs(roots, { readdir: (d) => fsImpl.readdirSync(d) wrapped to return [] on error })`. Multi-spec branch: spec records = `specN` of every entry with `specN !== null` whose `path.dirname(entry.dir)` has `lstatType(...).type === 'directory'` (today's `numberedEntries` test); manifest ordering unchanged. Single-record branch: for each `specDir === null` entry in order, `numberedEntries(entry.dir, /^([1-9]\d*)-spec\.md$/, 'file', fsImpl)`; first non-empty returns `format(specs)`. The CLI message reads `handoff.json not written: no target records (no spec-{N}/ dir and no spec header for ${runDir}${worktree ? ' or its worktree copy' : ''})`.
+- Produces: `resolveTargetRecords` keeps its signature, return shape and ordering rules. `roots` is built exactly as today (worktree copy first when contained, then `runDir`). `dirs = listHeaderDirs(roots, { readdir: (d) => fsImpl.readdirSync(d) wrapped to return [] on error })`. Multi-spec branch: spec records = `specN` of every entry with `specN !== null` whose `path.dirname(entry.dir)` has `lstatType(...).type === 'directory'` (today's `numberedEntries` test); manifest ordering unchanged. Single-record branch: root by root (today's order), the union of `numberedEntries(entry.dir, /^([1-9]\d*)-spec\.md$/, 'file', fsImpl)` over that root's `specDir === null` entries (live and archived); the first root with a non-empty union returns `format(union)` (settled row 1: merge within a root, first-non-empty across roots). `manifest.yml` is still read from `runDir` (settled row 2). The CLI message reads `handoff.json not written: no target records (no spec-{N}/ dir and no spec header for ${runDir}${worktree ? ' or its worktree copy' : ''})`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/timing/context-gauge.test.js`:
   - `AC1.1 resolveTargetRecords: archived-only work/ header gives the live answer` — tmp layout `{root}/.claude-tweaks/pipelines/{id}` with no `work/`, header only at `{root}/.claude-tweaks/pipelines/archive/{id}/work/4027-spec.md`; result deep-equals the live-layout result `['#4027']`; repeat with the header archived only under the worktree copy (`worktree`, `gitRoot` set).
   - `AC2.1 resolveTargetRecords: archived-only spec-{N} dirs give the live answer` — only `archive/{id}/spec-945/work/945-spec.md` and `archive/{id}/spec-3817/work/3817-spec.md`; result `['#945', '#3817']` with no manifest, equal to the live-layout twin.
   - `AC7.1 resolveTargetRecords: a record live and archived is listed once` — `#7` at both; result `['#7']`.
+  - `enumerating merge: live work/8 and archived work/7 in one root give ['#7', '#8']`; a worktree-copy root with `#5` beside a run-dir root with `#6` still gives `['#5']` (first-non-empty across roots unchanged).
   - `AC9.4 resolveTargetRecords: an unreadable archived base is absent` — fake `fsImpl.readdirSync` throws for the archived base; result equals the no-archive result (`null` with nothing live).
   - `AC8 context-gauge no-target message names no header path` — the CLI's no-targets reason contains `no spec header for` and does not match `/work\/\{?n\}?-spec\.md/`.
 - [ ] **Step 2: Run test to verify it fails**
