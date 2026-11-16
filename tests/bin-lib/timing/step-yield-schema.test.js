@@ -14,9 +14,10 @@ const { KEY_PATHS, SCHEMA_VERSION, deriveStepYield } = require('../../../plugin/
 const { PAIR_FORMS } = require('../../../plugin/bin/lib/timing/pair-lines');
 const { DECISION_STATUSES, formatEntry, hms } = require('../../../plugin/bin/lib/log-decision/append');
 const { appendEvent } = require('../../../plugin/bin/lib/hooks/context');
+const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
-const DOC = fs.readFileSync(path.join(ROOT, 'docs', 'reference', 'step-yield.md'), 'utf8');
+const DOC = readText(path.join(ROOT, 'docs', 'reference', 'step-yield.md'));
 const FIX = path.join(ROOT, 'tests', 'fixtures', 'step-yield');
 const GOLDEN = JSON.parse(fs.readFileSync(path.join(FIX, 'key-paths.golden.json'), 'utf8'));
 

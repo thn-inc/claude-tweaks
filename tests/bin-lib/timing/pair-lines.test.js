@@ -257,9 +257,9 @@ test('status head: a time without seconds, a hyphen separator and a bare date ar
 
 test('legacy wording: the 2000-character cap does not skip the strict templates', () => {
   const longPath = `plugin/${'d/'.repeat(1000)}x.js`;
-  const line = `- AUTO 10:00:00 — Reproduction: lens "3a" finding ${longPath}:12 reproduced. Confirmed. Reversibility: high.`;
-  assert.ok(line.length > 2000);
-  const got = classifyPairLine(line);
+  const longLine = `- AUTO 10:00:00 — Reproduction: lens "3a" finding ${longPath}:12 reproduced. Confirmed. Reversibility: high.`;
+  assert.ok(longLine.length > 2000);
+  const got = classifyPairLine(longLine);
   assert.equal(got && got.form, 'reproduced', 'a >2000-char line is still read by the strict template');
   assert.equal(got && got.line, 12);
 });
