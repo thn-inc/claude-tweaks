@@ -537,7 +537,7 @@ const TIEBREAK_COVERAGE_HINT = "re-run the review step's findings writer for thi
 // #4171: an auto-merge path renders no console, so a can't-tell finding the run held is
 // lost at archive time unless it was filed. `coverage.unfiledCantTell` names the unfiled ones.
 // `{run-dir}` is a placeholder; archive-run substitutes the real run dir before printing.
-const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or write a resolved console.json";
+const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or, for a drop-recommended one, '{item} digested (work-fingerprint {fp})' once its digest entry is posted, or write a resolved console.json";
 
 // `{ action: 'archive' }` unless the run's findings artifact is present and
 // either unreadable/malformed or lists a finding with no verdict line, or (#4171)
@@ -669,7 +669,8 @@ function digestRerunRemedy(runDir) {
     c.items.some((i) => i.resolution === DIGEST_PENDING_RESOLUTION) ? [{ consoleDir: path.dirname(c.path) }] : []
   ));
   if (commands.length === 0) return '';
-  return `re-run the planned digest entries: ${commands.map((c) => digestRerunCommand(c)).join('; ')}, then ${commands.map((c) => digestLogRemedy(c)).join('; ')}`;
+  const perConsole = commands.length > 1 ? " (each console's own dir as --run)" : '';
+  return `re-run the planned digest entries: ${commands.map((c) => digestRerunCommand(c)).join('; ')}, then ${digestLogRemedy(commands[0])}${perConsole}`;
 }
 
 // The recovery line for a console-residue skip: name the open items, the

@@ -33,7 +33,7 @@ files:
 
 ### 2. At unattended, the findings are filed
 - **URL:** `wrap-up/review-console.md`'s "Can't-tell filings" procedure (`console-filings.js --run {item-run-dir} --existing {issues.json} --out-dir {dir}`), then one `gh issue create` per proposal
-- **Action:** when `consoleAutoResolve` is granted, every can't-tell finding is filed, whatever the tiebreak recommended. Each created record logs `AUTO … Queue write: {item} filed as #{n} (work-fingerprint {fp})`, and a finding that already has a record logs `… already filed as #{n} …` instead.
+- **Action:** when `consoleAutoResolve` is granted, every can't-tell finding is settled by its recommendation: a `drop` is digested, every other one is filed as a `needs-verification` task. Each created record logs `AUTO … Queue write: {item} filed as #{n} (work-fingerprint {fp})`, and a finding that already has a record logs `… already filed as #{n} …` instead; each digest entry logs `… digested (work-fingerprint {fp})` (`… already digested …` when the digest already holds it).
 - **Should feel:** hands-off. The maintainer later finds `needs:definition` records titled `Review finding (can't-tell): {path} — {claim}`.
 - **Should understand:**
   - Dedup is by `work-fingerprint` over every record, closed ones included, so a re-run never files twins.

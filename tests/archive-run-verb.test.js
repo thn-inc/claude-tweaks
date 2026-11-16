@@ -293,7 +293,7 @@ test('AC2.1: archive-run archives an executed PR console with only executed/drop
 });
 
 // #4170: a planned can't-tell filing with no filed line in decisions.md is `filing-pending` residue;
-// the refusal names the `console-filings.js --only` re-run, and logging the filed line clears it.
+// the refusal names the default-selection `console-filings.js` re-run, and logging the filed line clears it.
 function plannedFilingConsole(runDir, { filed = false } = {}) {
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     resolved: true,

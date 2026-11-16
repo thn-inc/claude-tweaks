@@ -454,7 +454,7 @@ test('a planned filing with no matching console item is still listed by its id (
   assert.deepStrictEqual(c.items.map((i) => ({ id: i.id, resolution: i.resolution })), [{ id: 'tiebreak:aaaaaaaaaaaa', resolution: 'filing-pending' }]);
 });
 
-test('AC3.1: formatResidueLines names the console-filings.js --only re-run for a filing-pending item (#4170)', () => {
+test('AC3.1: formatResidueLines names the default-selection console-filings.js re-run for a filing-pending item (#4170)', () => {
   const dir = tmpRun();
   plannedFilingConsole(dir, '');
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });

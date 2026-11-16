@@ -238,7 +238,7 @@ test('consoleResidueHint: names only the unreadable console.json when no item is
 });
 
 // #4170: a planned can't-tell filing (`console.json#filings`) with no filed line in decisions.md is
-// `filing-pending` residue; the refusal names the `console-filings.js --only` re-run beside the ack.
+// `filing-pending` residue; the refusal names the default-selection `console-filings.js` re-run beside the ack.
 const PLANNED_FILED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa filed as #501 (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.\n';
 function plannedFilingRunDir() {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filing-'));
@@ -251,7 +251,7 @@ function plannedFilingRunDir() {
   fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
   return runDir;
 }
-test('AC3.1: a console holding a planned filing with no record reads residue and the hint names the console-filings.js --only re-run (#4170)', () => {
+test('AC3.1: a console holding a planned filing with no record reads residue and the hint names the default-selection console-filings.js re-run (#4170)', () => {
   const runDir = plannedFilingRunDir();
   assert.strictEqual(readConsoleState(runDir), 'residue');
   assert.deepStrictEqual(consoleResidue(runDir), { items: 1, unreadable: [], names: ['tiebreak:aaaaaaaaaaaa (filing-pending)'] });

@@ -66,9 +66,9 @@ needs-verification — the finding is unverified; the filed task is the bounded 
 | `needs-human-decision` | yes |
 | `blocked-dependency` | yes |
 | `genuinely-larger` | yes |
+| `needs-verification` | yes |
 | `tangential` | no |
 | `pre-existing-outside-diff` | no |
-| `needs-verification` | yes |
 
 ### Deriving the value from the criteria
 

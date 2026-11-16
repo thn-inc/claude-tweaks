@@ -30,7 +30,7 @@ files:
 **Entry point:** the Wrap-Up Review Console, reached by `/claude-tweaks:wrap-up` (or `/claude-tweaks:flow`'s consolidated multi-spec console) after `/claude-tweaks:review`'s tiebreak (Step 3.7) has logged a verdict line for every open finding.
 **Success state:**
 - The console shows no `pending` or `keep-staged` finding from this run.
-- Each can't-tell finding is either a `needs:definition` backlog record (deduplicated by its `work-fingerprint`) or dropped by a human.
+- Each can't-tell finding is either a backlog record (deduplicated by its `work-fingerprint`), dropped by a human, or, at `unattended`, digested when the tiebreak recommended `drop` (deduplicated by its `console-finding` marker).
 - High and critical refuted findings are listed read-only, so nothing dropped on evidence is invisible.
 - The run archives, or it is refused with a named reason.
 
@@ -88,7 +88,7 @@ files:
 
 ### 4. An unattended run settles itself
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run {run-dir} --policy console-auto`, then `console-filings.js` (review-console.md's Auto-resolution short-circuit)
-- **Action:** at `autonomy: unattended` the console renders in full with every row stamped `AUTO-RESOLVED` and asks nothing. Every can't-tell finding resolves `filed`, whatever its recommendation. `console-filings.js` dedups them against `gh issue list --state all` and writes the proposals, and each is filed as a `needs:definition` task with `Defer-reason: needs-human-decision`.
+- **Action:** at `autonomy: unattended` the console renders in full with every row stamped `AUTO-RESOLVED` and asks nothing. A can't-tell finding the tiebreak recommended `drop` for resolves `digested`; every other one resolves `filed`. `console-filings.js` dedups the filings against `gh issue list --state all` and the digest entries against the digest's comments, writes the proposals, and each is filed as a `needs-verification` task (no `needs:definition` label) asking for quoted evidence at the integration-branch tip; the skill posts the digest entries as one comment on the open `digest` issue.
 - **Should feel:** finished. The operator comes back to records in `/claude-tweaks:backlog attention`, not a console waiting on them.
 - **Should understand:**
   - `console.json` records `filings` and `droppedByTiebreak` next to the items.

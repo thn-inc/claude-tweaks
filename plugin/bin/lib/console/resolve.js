@@ -958,8 +958,8 @@ function renderStoredTable(consoleJson) {
 
 // resolveAll is always unattended (console-auto): a can't-tell item routes by the tiebreak's
 // recommendation (#4679). `drop` digests (a line in the materiality digest, nothing filed); every other
-// recommendation (`file`, or none) files a verification task — an agent that could not tell and gave
-// no recommendation is still not licensed to drop. Approve-all (findingItems) keeps its own
+// recommendation (`file`, or none) files a verification task — an item with no recommendation
+// is never digested. Approve-all (findingItems) keeps its own
 // recommendation-driven default (approveAllDefault) for a present human, and files `needs:definition` records.
 const UNATTENDED_FILED_REASON = 'unattended: can\'t-tell finding filed as a verification task (needs-verification)';
 const UNATTENDED_DIGESTED_REASON = 'unattended: can\'t-tell finding the tiebreak recommended dropping — logged to the materiality digest (tiebreak-cant-tell), nothing filed';
