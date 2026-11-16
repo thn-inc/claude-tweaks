@@ -64,7 +64,7 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { findingItems, runIdOf } = require('./lib/console/resolve');
 const {
-  planFilings, planDigests, heldConsoleFindings, fingerprintMap,
+  planFilings, planDigestsBesideFilings, isDropRecommended, heldConsoleFindings, fingerprintMap,
 } = require('./lib/console/finding-filing');
 const { checkFingerprint } = require('./lib/issues/record');
 const { cantTellOutcomes, renderFindingFyi } = require('./lib/console/finding-outcomes');
@@ -184,13 +184,12 @@ function run(argv, overrides = {}) {
   const runId = runIdOf(target.dir);
   const routed = only
     ? items.map((i) => ({ ...i, resolution: 'filed' }))
-    : items.map((i) => ({ ...i, resolution: i.tiebreak.recommendation === 'drop' ? 'digested' : 'filed' }));
+    : items.map((i) => ({ ...i, resolution: isDropRecommended(i.tiebreak) ? 'digested' : 'filed' }));
   const planned = planFilings({
     items: routed, findings, runId, ...(only ? {} : { unattended: true }),
   });
   // A finding filed and digested in one batch (two items sharing a fingerprint, `file` and `drop`): the record wins.
-  const plannedFingerprints = new Set(planned.map((p) => p.fingerprint));
-  const digestPlanned = only ? [] : planDigests({ items: routed, findings, runId }).filter((d) => !plannedFingerprints.has(d.fingerprint));
+  const digestPlanned = only ? [] : planDigestsBesideFilings({ items: routed, findings, runId, filings: planned }).digests;
 
   const known = fingerprintMap(rows);
   const result = {
@@ -213,6 +212,8 @@ function run(argv, overrides = {}) {
     else if (held.has(d.fingerprint)) result.digestDeduped.push({ item: d.item, fingerprint: d.fingerprint });
     else { result.digest.push({ item: d.item, fingerprint: d.fingerprint }); digestLines.push(d.line); }
   }
+
+  if (!o.digestComments && digestLines.length) deps.stderr('console-filings.js: warning: --digest-comments not given — digest dedup ran against an empty digest, so an entry the open digest issue already holds is planned again (pass the issue comments, or [] when none is open)\n');
 
   const outDir = path.resolve(deps.cwd(), o.outDir);
   try {

@@ -15,7 +15,7 @@ const {
   SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
 } = require('./sdd-ruling');
 const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
-const { planFilings, planDigests } = require('./finding-filing');
+const { planFilings, planDigestsBesideFilings, isDropRecommended } = require('./finding-filing');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
@@ -979,7 +979,7 @@ function resolveAll({ runDir, policy, deps }) {
   let items = [...stagedItems(snapshot), ...engineItems(snapshot, stagedIds), ...coordinationItems(snapshot, stagedIds)]
     .map((it) => {
       if (!it.tiebreak) return it;
-      return it.tiebreak.recommendation === 'drop'
+      return isDropRecommended(it.tiebreak)
         ? { ...it, resolution: 'digested', reason: UNATTENDED_DIGESTED_REASON }
         : { ...it, resolution: 'filed', reason: UNATTENDED_FILED_REASON };
     });
@@ -989,10 +989,7 @@ function resolveAll({ runDir, policy, deps }) {
   const filings = planFilings({ items, findings: snapshot.findings, runId, unattended: true });
   // A finding filed and digested in one batch (two items sharing a fingerprint, `file` and `drop`): the record
   // wins, as an existing record wins over a digest line — the digested twin resolves `filed` and plans no digest.
-  const filedFingerprints = new Set(filings.map((p) => p.fingerprint));
-  const planned = planDigests({ items, findings: snapshot.findings, runId });
-  const shadowed = new Set(planned.filter((d) => filedFingerprints.has(d.fingerprint)).map((d) => d.item));
-  const digests = planned.filter((d) => !shadowed.has(d.item));
+  const { digests, shadowed } = planDigestsBesideFilings({ items, findings: snapshot.findings, runId, filings });
   if (shadowed.size > 0) {
     items = items.map((it) => (shadowed.has(it.id) ? { ...it, resolution: 'filed', reason: UNATTENDED_SHADOWED_DROP_REASON } : it));
   }

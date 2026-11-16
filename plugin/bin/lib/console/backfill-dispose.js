@@ -16,6 +16,7 @@ const path = require('path');
 const { SHADOW_DUP_RE, SECTIONS, runIdOf } = require('./resolve');
 const {
   composeFindingProposal, findingFingerprint, fingerprintMap, areaOfPath, consoleFindingMarker, DIGEST_FINDING_MAX,
+  DIGEST_DEFER_REASON, isDropRecommended,
 } = require('./finding-filing');
 const { composeShadowDupProposal } = require('./shadow-dup-proposal');
 const { digestTextOf, targetOf } = require('./staged-digest-text');
@@ -33,7 +34,7 @@ const DIGEST_REASONS = Object.freeze({
   UNMAPPED_KIND: 'console-backfill-unmapped-kind',
   REFLECT_NO_DESTINATION,
   CONFIRMED_LOW: 'console-backfill-confirmed-low',
-  CANT_TELL: 'tiebreak-cant-tell',
+  CANT_TELL: DIGEST_DEFER_REASON,
 });
 
 const OUTCOME_OF_ACTION = Object.freeze({ file: 'filed', digest: 'digested', drop: 'dropped', dismiss: 'dismissed' });
@@ -181,7 +182,7 @@ function disposeFinding({ item, verdict, runId, mainSha }) {
     case 'console':
       // A can't-tell item the tiebreak recommends dropping is digested, never filed (#4679); any other
       // recommendation files the verification task (findingProposal).
-      if (verdict.recommendation === 'drop') return digestFor(DIGEST_REASONS.CANT_TELL);
+      if (isDropRecommended(verdict)) return digestFor(DIGEST_REASONS.CANT_TELL);
       return result(item, 'file', 'tiebreak', { proposal: findingProposal(item, verdict, runId, null) });
     case 'digest':
       return digestFor(DIGEST_REASONS.CANT_TELL);

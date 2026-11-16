@@ -61,6 +61,12 @@ function seed(f, { n = 3, lineShift = 0, dir = f.runDir } = {}) {
 
 const argvOf = (f, extra = []) => ['--run', f.runDir, '--existing', f.existing, '--out-dir', f.outDir, ...extra];
 const noRecords = (f) => fs.writeFileSync(f.existing, '[]');
+// The documented caller shape: the open digest issue's comments, [] when none is open.
+const withDigestComments = (f) => {
+  const comments = path.join(f.root, 'digest-comments-empty.json');
+  fs.writeFileSync(comments, '[]');
+  return ['--digest-comments', comments];
+};
 
 test('AC5: N can\'t-tell items with an empty record map write a proposal per file item and digest the drop item', () => {
   const f = fixture();
@@ -363,7 +369,7 @@ test('characterization: a mixed run prints file and deduped with exactly these f
   const f = fixture();
   const { ids, made } = oneFiledOneDeduped(f);
   const { deps, out, err } = fakeDeps(f.main);
-  assert.equal(run(argvOf(f), deps), 0);
+  assert.equal(run(argvOf(f, withDigestComments(f)), deps), 0);
   const { logFailures, ...rest } = JSON.parse(out.join(''));
   assert.deepEqual(Object.keys(rest), ['file', 'deduped', 'digest', 'digestDeduped', 'digestFile']);
   assert.deepEqual(rest.deduped, [{ item: `tiebreak:${ids[0]}`, fingerprint: made.fingerprint, number: 41 }]);
@@ -414,7 +420,7 @@ test('AC3.1: console-filings logs one Queue write line per deduped entry', () =>
   const decisions = path.join(f.runDir, 'decisions.md');
   const before = fs.readFileSync(decisions, 'utf8');
   const { deps, out, err } = fakeDeps(f.main, { now: () => NOW });
-  assert.equal(run(argvOf(f), deps), 0);
+  assert.equal(run(argvOf(f, withDigestComments(f)), deps), 0);
   const result = JSON.parse(out.join(''));
   assert.equal(result.deduped.length, 2);
   assert.deepEqual(result.logFailures, []);
@@ -453,7 +459,7 @@ test('a failed Queue-write append is listed in logFailures with one stderr line;
   const failing = `tiebreak:${ids[2]}`;
   const appendDecision = (a) => { if (a.entry.includes(`${failing} already filed`)) throw new Error('disk full'); return appendEntry(a); };
   const { deps, out, err } = fakeDeps(f.main, { now: () => NOW, appendDecision });
-  assert.equal(run(argvOf(f), deps), 0);
+  assert.equal(run(argvOf(f, withDigestComments(f)), deps), 0);
   const result = JSON.parse(out.join(''));
   assert.equal(result.deduped.length, 2);
   assert.deepEqual(result.logFailures, [{ item: failing, error: 'disk full' }]);
@@ -488,6 +494,20 @@ test('default selection digests a drop item and files a file item (#4679)', () =
   assert.doesNotMatch(proposal, /needs:definition/);
   assert.doesNotMatch(proposal, /## Open Question/);
   assert.match(proposal, /## Acceptance Criteria/);
+});
+
+test('default selection warns when --digest-comments is omitted and a digest line is planned (#4679)', () => {
+  const f = fixture();
+  seed(f, { n: 2 });
+  noRecords(f);
+  const a = fakeDeps(f.main);
+  assert.equal(run(argvOf(f), a.deps), 0);
+  assert.match(a.err.join(''), /--digest-comments not given/);
+  const comments = path.join(f.root, 'digest-comments.json');
+  fs.writeFileSync(comments, '[]');
+  const b = fakeDeps(f.main);
+  assert.equal(run(argvOf(f, ['--digest-comments', comments]), b.deps), 0);
+  assert.doesNotMatch(b.err.join(''), /--digest-comments not given/);
 });
 
 test('default selection: two items sharing a fingerprint, one file and one drop, plan a filing and no digest line (#4679)', () => {

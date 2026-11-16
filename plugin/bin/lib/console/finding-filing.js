@@ -15,7 +15,7 @@
 'use strict';
 
 const { fingerprintFromBasis, normalizeText } = require('../health-core/fingerprint');
-const { materialityEntryLine } = require('../health-core/materiality-digest');
+const { materialityEntryLine, CONSOLE_FINDING_PREFIX } = require('../health-core/materiality-digest');
 const { isTrustedComment } = require('../issues/comment-trust');
 const { CONSOLE_FINDING_FP } = require('./residue');
 const {
@@ -27,7 +27,6 @@ const DEFER_REASON = 'needs-human-decision';
 const CANT_TELL_DEFER_REASON = 'needs-verification';
 // The digest line's Defer-reason for a can't-tell `drop`: an entry-format value, not a DEFER_REASONS member.
 const DIGEST_DEFER_REASON = 'tiebreak-cant-tell';
-const CONSOLE_FINDING_PREFIX = 'console-finding';
 const DIGEST_FINDING_MAX = 200;
 const TITLE_CLAIM_MAX = 80;
 const TITLE_MAX = 256;
@@ -75,7 +74,9 @@ function areaOfPath(p) {
   let area = segs[0] || 'console';
   if (segs[0] === 'plugin' && segs[1] === 'skills') area = segs.length > 3 ? segs[2] : 'skills';
   else if (segs[0] === 'plugin' && segs[1] === 'bin') area = segs[2] === 'lib' && segs.length > 4 ? segs[3] : 'bin';
-  return area.toLowerCase();
+  // The area lands in a digest line the dedup readers scan for markers: the path's first segment is
+  // producer-supplied text (a decisions.md verdict line), so it is defused and one line like every other field.
+  return oneLine(area.toLowerCase());
 }
 
 // The Deliverables text and the Acceptance Criteria / Open Question field for one proposal shape.
@@ -240,6 +241,25 @@ function planDigests({ items, findings, runId }) {
   return out;
 }
 
+// The unattended can't-tell rule (#4679), stated once for every consumer (resolveAll, console-filings.js's
+// default selection, the backfill's disposeFinding): a tiebreak recommending `drop` digests, any other
+// recommendation (`file`, or none) files a verification task.
+function isDropRecommended(tiebreak) {
+  return Boolean(tiebreak) && tiebreak.recommendation === 'drop';
+}
+
+// planDigests for items resolved `digested`, minus any finding a filing in the same batch already covers (the
+// record wins, as an existing record wins over a digest line). `shadowed` names the digested items that
+// rode on a filing, so a caller that stores resolutions can rewrite them to `filed`.
+function planDigestsBesideFilings({ items, findings, runId, filings }) {
+  const filed = new Set(filings.map((p) => p.fingerprint));
+  const planned = planDigests({ items, findings, runId });
+  return {
+    digests: planned.filter((d) => !filed.has(d.fingerprint)),
+    shadowed: new Set(planned.filter((d) => filed.has(d.fingerprint)).map((d) => d.item)),
+  };
+}
+
 // The `consolefinding-*` fingerprints a digest already holds: the markers in a trusted comment (an array of
 // comment objects, either association spelling), or in the whole string when it is a local-files body.
 // Anything else holds none.
@@ -269,4 +289,5 @@ function fingerprintMap(rows) {
 module.exports = {
   findingFingerprint, composeFindingProposal, planFilings, fingerprintMap,
   CANT_TELL_DEFER_REASON, DIGEST_DEFER_REASON, DIGEST_FINDING_MAX, areaOfPath, consoleFindingMarker, composeFindingDigest, planDigests, heldConsoleFindings,
+  isDropRecommended, planDigestsBesideFilings,
 };

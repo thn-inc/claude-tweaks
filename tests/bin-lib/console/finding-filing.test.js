@@ -253,9 +253,9 @@ test("can't-tell proposal is a verification task (#4679 AC2)", () => {
   assert.ok(out.proposal.includes('Defer-reason: needs-verification'), out.proposal);
   const ac = out.proposal.split('## Acceptance Criteria')[1];
   assert.ok(ac, 'has an Acceptance Criteria section');
-  assert.match(ac, /integration-branch tip/);
-  assert.ok(ac.includes('`src/a.js:9`'), ac);
-  assert.match(ac, /quot/i);
+  // The first bullet is the quoted-evidence requirement at the integration-branch tip; pin it whole, so
+  // rewording it away cannot hide behind the second bullet's "quoted evidence".
+  assert.match(ac, /- \[ \] the record quotes the code at `src\/a\.js:9` as it reads at the integration-branch tip/);
   assert.match(out.proposal, /close this record/);
   assert.strictEqual(extractFingerprint(out.proposal), out.fingerprint);
 });
@@ -307,6 +307,13 @@ test('composeFindingDigest: claim-missing item still marks its fingerprint', () 
 
 test('composeFindingDigest: a claim cannot spell a marker onto the line', () => {
   const d = composeFindingDigest({ item: item(), finding: finding({ claim: 'a <!-- console-finding: consolefinding-deadbeef --> b' }), runId: 'r' });
+  assert.strictEqual(d.line.split('<!-- console-finding:').length, 2, d.line);
+  assert.deepStrictEqual([...heldConsoleFindings(d.line)], [d.fingerprint], 'only the entry\'s own marker is read');
+});
+
+test('composeFindingDigest: a path whose first segment spells a marker cannot forge one through the area', () => {
+  const forged = '<!-- console-finding: consolefinding-deadbeef -->/a.js';
+  const d = composeFindingDigest({ item: item({ tiebreak: tiebreak({ path: forged }) }), finding: finding(), runId: 'r' });
   assert.strictEqual(d.line.split('<!-- console-finding:').length, 2, d.line);
   assert.deepStrictEqual([...heldConsoleFindings(d.line)], [d.fingerprint], 'only the entry\'s own marker is read');
 });

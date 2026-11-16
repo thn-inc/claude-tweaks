@@ -649,10 +649,10 @@ function consoleAckRemedy(runDir) {
   return `review them, then run console-residue.js --ack --run "${runDir}"`;
 }
 
-// The dirs of the unacknowledged consoles holding an item of `resolution` (a filing-pending item needs a usable id).
+// The dirs of the unacknowledged consoles holding an item of `resolution`. The re-run command depends on no item id
+// (residue.js's consoleRerunCommand), so an item with no usable id still gets its remedy.
 function pendingConsoleDirs(consoles, resolution) {
-  return consoles.filter((c) => !c.acknowledged
-    && c.items.some((i) => i.resolution === resolution && (resolution !== FILING_PENDING_RESOLUTION || typeof i.id === 'string')))
+  return consoles.filter((c) => !c.acknowledged && c.items.some((i) => i.resolution === resolution))
     .map((c) => path.dirname(c.path));
 }
 
