@@ -6,17 +6,17 @@
 // isolation at HEAD. A file failing at base is baseline; one passing in
 // isolation at HEAD is flaky (a file whose full-run failure is wholly
 // file-level — killed or timed out — included); the rest, including every
-// file absent at base, are attributable. Fails closed: anything not classified with evidence (no
-// extractable file, a failing entry naming no test file, a fail-fast skip, a
-// spawn error, a base run with no numeric exit) is never "fails at base" — a
-// base run counts only when its own log names the file as failing with every
-// test that fails in it at HEAD, and a file is flaky only when its isolated
-// log shows tests ran and passed. An isolated run that fails a test base does
-// not cover gets one retry (#3111) before being called attributable — when
-// the retry's own failures are covered by base (or it passes cleanly), the
-// extra failure did not reproduce and is reported flaky instead. git and
-// runOne are injected so the tests never touch a real repo; realGit is the
-// CLI's seam.
+// file absent at base, are attributable. Fails closed: anything not classified
+// with evidence (no extractable file, a failing entry naming no test file, a
+// fail-fast skip, a spawn error, a base run with no numeric exit) is never
+// "fails at base" — a base run counts only when its own log names the file as
+// failing with every test that fails in it at HEAD, and a file is flaky only
+// when its isolated log shows tests ran and passed. An isolated run that fails
+// a test base does not cover gets one retry (#3111) before being called
+// attributable — when the retry's own failures are covered by base (or it
+// passes cleanly), the extra failure did not reproduce and is reported flaky
+// instead. git and runOne are injected so the tests never touch a real repo;
+// realGit is the CLI's seam.
 'use strict';
 
 const crypto = require('crypto');
