@@ -13,6 +13,9 @@
 //   counted. The raw-spawn pattern is wider: `\b(HOOKS|hooks)\b` matches anywhere in the argv array,
 //   so `execFileSync('node', [paths.hooks, 'x'])` and `spawnSync(process.execPath, [script, '--dir',
 //   'hooks'])` are both flagged, and the raw-spawn scan can over-match.
+// - The loop check sees a `for`/`while` body and a `.forEach(`/`.map(` call. It does not see a
+//   `do { … } while (…)` body, a `for await (`, another iterating method (`.reduce`, `.filter`,
+//   `.some`, `.flatMap`), a braceless body past its first `;`, or a helper that a loop calls.
 // - A mis-parse by the comment stripper, or a file that does not compile as CommonJS, is reported as
 //   an offender (a `stripperVerdict` other than `ok`) rather than scanned over blanked text.
 const { test } = require('node:test');
