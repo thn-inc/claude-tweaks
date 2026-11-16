@@ -221,16 +221,31 @@ test('refresh with no --deploy-json writes the packet unchanged and reports ever
   assert.equal(fs.readFileSync(out, 'utf8'), body);
 });
 
-test('refresh with an invalid --deploy-json or unreadable --packet-file exits 1', (t) => {
+test('refresh with an invalid --deploy-json or unreadable --packet-file exits 1 and removes an earlier --out', (t) => {
   const dir = tempDir(t);
   const packet = write(path.join(dir, 'packet.md'), packetBody(['target: local', 'ref: aaa']));
   const out = path.join(dir, 'fresh.md');
   const noRef = writeJson(path.join(dir, 'noref.json'), { text: 'target: dev' });
   const badUrl = writeJson(path.join(dir, 'badurl.json'), { ref: 'b', text: 'target: dev', devBaseUrl: 'not a url' });
-  assert.equal(cli(['refresh', '--packet-file', packet, '--out', out, '--deploy-json', noRef]).code, 1);
-  assert.equal(cli(['refresh', '--packet-file', packet, '--out', out, '--deploy-json', badUrl]).code, 1);
-  assert.equal(cli(['refresh', '--packet-file', path.join(dir, 'missing.md'), '--out', out]).code, 1);
-  assert.equal(fs.existsSync(out), false);
+  const cases = [
+    ['refresh', '--packet-file', packet, '--out', out, '--deploy-json', noRef],
+    ['refresh', '--packet-file', packet, '--out', out, '--deploy-json', badUrl],
+    ['refresh', '--packet-file', path.join(dir, 'missing.md'), '--out', out],
+  ];
+  for (const argv of cases) {
+    write(out, 'an earlier refresh\'s packet');
+    assert.equal(cli(argv).code, 1, argv.join(' '));
+    assert.equal(fs.existsSync(out), false, `stale --out left behind: ${argv.join(' ')}`);
+  }
+});
+
+test('refresh with an unwritable --out exits 1', (t) => {
+  const dir = tempDir(t);
+  const packet = write(path.join(dir, 'packet.md'), packetBody(['target: local', 'ref: aaa']));
+  const result = cli(['refresh', '--packet-file', packet, '--out', path.join(dir, 'no', 'such', 'dir', 'fresh.md')]);
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /could not write --out/);
 });
 
 test('refresh refuses an --out that is the --packet-file with exit 2 and leaves the input', (t) => {
