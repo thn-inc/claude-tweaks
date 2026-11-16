@@ -97,6 +97,8 @@ In each of these, replace the text `evals/NOTES.md` with `docs/reference/agent-s
 
 - [ ] **Step 5: Verify the reference file and its citers (AC4.1, AC4.2)**
 
+First stage the new file, since `git grep` reads tracked files only: `git add docs/reference/agent-sdk-payload-notes.md`.
+
 Run: `git grep -n -F -e "this is the SDK's typed API-level output" -e "Agents run in the background by default" -e "still defaults to" -- docs/reference/agent-sdk-payload-notes.md`
 Expected: three or more lines, at least one per pattern (AC4.1: the Correction, the `run_in_background` default and the `autoAllowBashIfSandboxed` note are present).
 
