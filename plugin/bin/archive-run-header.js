@@ -37,6 +37,8 @@
 // 3 run dir missing or not anchored under the main checkout (a worktree-local shadow --
 //   _shared/pipeline-run-dir.md, [IL-127]); an archive/{run-id} dir in the main checkout is anchored.
 //   Checked before any git call. Same vocabulary as post-merge-run.js (the Sanctioned-writer family).
+// An unexpected exception from the move or the push propagates as exit 1 with nothing logged; the
+// caller's other-exit branch logs the SKIP.
 'use strict';
 
 const path = require('path');
