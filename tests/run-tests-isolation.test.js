@@ -1848,9 +1848,9 @@ test('writeGitTemplateDir does not append its keys twice to a nested runner\'s t
     assert.strictEqual(writeGitTemplateDir(outer, envWithoutGitConfig()), outer);
     const dir = path.join(tmp, 'tpl');
     assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: outer }), dir);
-    for (const key of ['maintenance.auto', 'gc.auto', 'receive.autogc']) {
+    for (const [key, value] of [['maintenance.auto', 'false'], ['gc.auto', '0'], ['receive.autogc', 'false']]) {
       const r = gitOut(['config', '--file', path.join(dir, 'config'), '--get-all', key], envWithoutGitConfig());
-      assert.strictEqual(r.stdout.trim().split('\n').length, 1, `${key} appears once: ${r.stdout}`);
+      assert.strictEqual(r.stdout.trim(), value, `${key} is set exactly once to ${value}: ${r.stdout}`);
     }
     const repo = path.join(tmp, 'repo');
     const env = { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) };

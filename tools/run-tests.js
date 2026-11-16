@@ -623,8 +623,9 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
     try {
       git(['init', '-q', src], { env: initEnv });
     } catch (err) {
-      // git refuses a template it cannot copy (e.g. an unreadable `config`): fall back to its built-in
-      // default and lay the inherited template's files over it ourselves, so the template is not dropped.
+      // git refuses a template it cannot copy (e.g. an unreadable `config`): retry with its built-in
+      // default. Nothing from `src` is used once a template is inherited (its entries are copied from the
+      // inherited directory below); the retry only confirms that git itself runs.
       if (!inherited) throw err;
       fs.rmSync(src, { recursive: true, force: true });
       delete initEnv.GIT_TEMPLATE_DIR;
