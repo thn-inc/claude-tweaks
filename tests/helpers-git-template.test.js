@@ -248,7 +248,11 @@ test('disableReceiveAutoGc stops receive-pack maintenance', () => {
   function pushArgvs(disable) {
     const origin = mk('ct-gtg-o-');
     const work = mk('ct-gtg-w-');
-    git(origin, ['init', '-q', '--bare', '-b', 'main']);
+    // The runner's GIT_TEMPLATE_DIR (#5768) would write the maintenance-off keys into this origin and
+    // defeat the control below; this test is about disableReceiveAutoGc alone, so init without it.
+    const bareEnv = gitEnv();
+    delete bareEnv.GIT_TEMPLATE_DIR;
+    git(origin, ['init', '-q', '--bare', '-b', 'main'], bareEnv);
     if (disable) disableReceiveAutoGc(origin);
     // Keep receive-pack's maintenance in the foreground (git >= 2.47 detaches
     // by default), so its trace file is complete before we read and remove it.

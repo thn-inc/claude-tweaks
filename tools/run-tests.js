@@ -590,8 +590,70 @@ function gitFixtureConfigEnv(env) {
   return out;
 }
 
+// #5768: the repository-level half of the maintenance switch-off. Env-carried config
+// (gitFixtureConfigEnv) does not reach receive-pack on a local push, product code that scrubs env
+// config, or a test that overwrites the count; a template's `config` is copied into every repository
+// `git init`/`git clone` creates, so those repositories carry the keys themselves.
+const GIT_TEMPLATE_CONFIG = '[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n[receive]\n\tautogc = false\n';
+
+// Writes a git template directory at `dir` (git's built-in default template, or a usable inherited
+// GIT_TEMPLATE_DIR, plus GIT_TEMPLATE_CONFIG) and returns `dir`; null when any step throws.
+function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git', args, { ...opts, stdio: 'ignore', windowsHide: true }) } = {}) {
+  const src = `${dir}-src`;
+  const emptyConfig = `${dir}-empty-gitconfig`;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    let inherited = null;
+    try {
+      if (env.GIT_TEMPLATE_DIR && fs.statSync(env.GIT_TEMPLATE_DIR).isDirectory()) inherited = env.GIT_TEMPLATE_DIR;
+    } catch (_) { /* missing or unreadable: git's built-in default stands */ }
+    const initEnv = {};
+    for (const [k, v] of Object.entries(env)) if (!k.startsWith('GIT_')) initEnv[k] = v;
+    fs.writeFileSync(emptyConfig, '');
+    if (inherited) initEnv.GIT_TEMPLATE_DIR = inherited;
+    initEnv.GIT_CONFIG_NOSYSTEM = '1';
+    initEnv.GIT_CONFIG_GLOBAL = emptyConfig;
+    let overlay = false;
+    try {
+      git(['init', '-q', src], { env: initEnv });
+    } catch (err) {
+      // git refuses a template it cannot copy (e.g. an unreadable `config`): fall back to its built-in
+      // default and lay the inherited template's files over it ourselves, so the template is not dropped.
+      if (!inherited) throw err;
+      fs.rmSync(src, { recursive: true, force: true });
+      delete initEnv.GIT_TEMPLATE_DIR;
+      git(['init', '-q', src], { env: initEnv });
+      overlay = true;
+    }
+    for (const name of ['hooks', 'info', 'description']) {
+      const from = path.join(src, '.git', name);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, name), { recursive: true });
+    }
+    if (overlay) {
+      for (const name of fs.readdirSync(inherited)) {
+        if (name !== 'config') fs.cpSync(path.join(inherited, name), path.join(dir, name), { recursive: true });
+      }
+    }
+    let base = '';
+    if (inherited) {
+      try {
+        base = fs.readFileSync(path.join(inherited, 'config'), 'utf8');
+        if (base && !base.endsWith('\n')) base += '\n';
+      } catch (_) { base = ''; }
+    }
+    fs.writeFileSync(path.join(dir, 'config'), base + GIT_TEMPLATE_CONFIG);
+    return dir;
+  } catch (_) {
+    return null;
+  } finally {
+    for (const p of [src, emptyConfig]) {
+      try { fs.rmSync(p, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+    }
+  }
+}
+
 module.exports = {
-  gitFixtureConfigEnv,
+  gitFixtureConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG,
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
@@ -833,12 +895,22 @@ if (require.main === module) {
 
   try {
     runRoot = createRunRoot(runsDir, process.pid);
+    let templateDir = null;
+    let templateWhy = 'git did not produce a template';
+    try {
+      templateDir = writeGitTemplateDir(path.join(runRoot, 'git-template'), process.env);
+    } catch (err) {
+      templateWhy = err.message;
+    }
+    if (!templateDir) console.error(`run-tests.js: could not build the git template (${oneLine(templateWhy)}) — repositories tests create keep git's own defaults`);
     child = spawn(process.execPath, testArgs, {
       cwd: REPO_ROOT,
       stdio: 'inherit',
       // Every fixture git commit/push started `git maintenance run --auto` (391 processes across six
-      // heavy test files, #5297); the env-carried config turns that off for the whole child tree.
-      env: { ...gitFixtureConfigEnv(process.env), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json') },
+      // heavy test files, #5297). Two layers switch it off: env-carried config reaches every git process
+      // that keeps its environment; the template's config lands in each repository a test creates, which
+      // reaches the processes that scrub or never inherit it (receive-pack, product code, #5768).
+      env: { ...gitFixtureConfigEnv(process.env), ...(templateDir ? { GIT_TEMPLATE_DIR: templateDir } : {}), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json') },
     });
   } catch (err) {
     cleanup();
