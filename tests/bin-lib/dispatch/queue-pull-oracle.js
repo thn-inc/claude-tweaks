@@ -155,7 +155,7 @@ function filesOracleScript(fence, mcpText) {
   // The one gh call left as written: the shipped pass's `gh pr view` probe loop, which mcp-transport.md
   // does not replace. It iterates the probe list, which is empty on files: the linked-PR query fails
   // with no gh, so dispatch-linked-prs.json is {} and no candidate has a mention to probe.
-  const kept = new Set(['  FILES_JSON=$(gh pr view "$PR" --json files -q \'[.files[].path]\' 2>/dev/null || echo \'[]\')']);
+  const kept = new Set(['  FILES_JSON=$(gh pr view "$PR" --json files -q \'[.files[].path]\' 2>/dev/null) || FILES_JSON=null']);
   const leftover = lines.find((l) => !kept.has(l) && /(^|[\s(!|;&])gh\s/.test(l.replace(/'[^']*'|"[^"$]*"/g, '')) && !/^\s*#/.test(l));
   if (leftover) throw new Error(`filesOracleScript: a gh call survives the substitutions: ${leftover}`);
   return lines.join('\n') + '\n';

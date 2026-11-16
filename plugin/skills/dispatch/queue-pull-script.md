@@ -463,12 +463,11 @@ flush_shipped_claims() {
   node -e "const s = (() => { try { const v = JSON.parse(process.argv[1]); return Array.isArray(v) ? v : []; } catch (e) { return []; } })(); if (s.length) console.error('AUTO — dispatch: shipped-candidate claim read failed for ' + s.join(', ') + '; release time unknown, no downgrade')" -- "${SHIPPED_UNREADABLE:-[]}"
 }
 
-# #1984: shipped-candidate classification, unconditional, after the #1224 and #1983 exclusions above.
-# #4314: a mention whose PR predates the record never counts. #4432: a mention merged before the latest
-# claim release rates weak at most; an unreadable claim never downgrades.
-# Reuses $DISPATCH_LINKED_PRS's mentions: no second network round trip.
+# #1984: shipped-candidate classification after the #1224/#1983 exclusions.
+# #4314: a mention whose PR predates the record never counts. #4432: one merged before
+# the latest claim release rates weak at most (unreadable claim: no downgrade).
 #
-# First pass: title-only. Only a `weak` result not predating the claim release is probed (5 live `gh pr view` calls per pull at most).
+# First pass: title-only; only a non-predating `weak` is probed (5 `gh pr view` max).
 SHIPPED_UNREADABLE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED_RELEASES" <<NODE_EVAL_EOF
   const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const groups = require(process.argv[1]);
@@ -490,12 +489,12 @@ NODE_EVAL_EOF
 
 : > "$DISPATCH_SHIPPED_PR_FILES"
 for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_SHIPPED_PROBE_PRS"); do
-  FILES_JSON=$(gh pr view "$PR" --json files -q '[.files[].path]' 2>/dev/null || echo '[]')
+  FILES_JSON=$(gh pr view "$PR" --json files -q '[.files[].path]' 2>/dev/null) || FILES_JSON=null
   node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" -- "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
 done
 
-# Second pass: final tier, with the probed files. `strong` is excluded and logged for a staged Close
-# proposal (dispatch never closes on GitHub itself); `weak` stays eligible; `none` is silent.
+# Second pass: `strong` is excluded, logged for a staged Close;
+# `weak` stays eligible (warns on a failed probe); `none` is silent.
 if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" "$DISPATCH_SHIPPED_RELEASES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
@@ -522,6 +521,7 @@ if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPA
         console.error('AUTO — dispatch: #' + c.number + (predatesClaimRelease(result)
           ? ' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'
           : ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway'));
+        if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');
       }
       return true;
     }))

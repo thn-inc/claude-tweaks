@@ -46,8 +46,8 @@
 //   - Fixed by #5311: a missing or malformed file fails closed (every unresolved dependency open, one
 //     Warning) — files-verifiedOpenDeps-missing and files-verifiedOpenDeps-malformed keep blocked:9002.
 //     F-depview fails closed too, with one Warning naming the view, since #5311.
-//   - The silent fail-open (ledger row 6) is F-prview; F-openprs warns since #5312. F-depfresh, F-depfresh-writeback
-//     and F-depfresh-both print one Warning per failed search since #5310.
+//   - No silent fail-open remains in this list: F-prview warns since #5313 and F-openprs since #5312. F-depfresh,
+//     F-depfresh-writeback and F-depfresh-both print one Warning per failed search since #5310.
 // One module divergence the matrix found and the module fixed (Task 3 carry): on `files` the
 // agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so
 // it is read only when there are dependency numbers to search; otherwise the fence's `echo '[]'`
@@ -1560,6 +1560,7 @@ function pull4(scenario, o = {}) {
 const reasonsOf = (r, number) => r.json('dispatch-exclusions.json').filter((e) => e.records.includes(number)).map((e) => e.reason);
 const PR_VIEW = (pr) => ['pr', 'view', String(pr), '--json', 'files', '-q', '[.files[].path]'];
 const prViews = (r) => r.ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'view');
+const PR_VIEW_FAILED = (pr, n) => `Warning: gh pr view ${pr} failed — #${n} kept as a weak shipped candidate (files unprobed) this run\n`;
 const LINKED_WARNING = fenceText(/echo "(Warning: linked-PR query failed[^$]*)\$\(cat /);
 const OPEN_FILTER_WARNING = fenceText(/echo "(Warning: open-linked-PR filtering failed[^$]*)\$\(cat /);
 const SHAPE_WARNING = fenceText(/echo "(Warning: not-spec-shaped pass skipped[^$]*)\$\(cat /);
@@ -1812,30 +1813,77 @@ test('AC2.1 shipped: a probed PR whose files cover the Key Files upgrades a weak
   assert.ok(!groupNumbers(r).flat().includes(9016));
 });
 
-test('#5227 shipped: a failing gh pr view prints nothing, reads as [] and the candidate stays weak', () => {
+test('#5313 shipped: a failed gh pr view writes files:null and prints one Warning naming the view and the record, after the weak AUTO line; the candidate stays weak and eligible', () => {
+  const weakAuto = 'AUTO — dispatch: #9016 mentioned by merged PR #5016 without a closing keyword; dispatching anyway\n';
   const scenario = FULL();
   scenario.gh = scenario.gh.map((e) => (e.argv && e.argv[1] === 'view' ? { ...e, stdout: '', stderr: 'boom\n', status: 1 } : e));
   const r = pull4(scenario);
   assert.deepEqual(prViews(r), [PR_VIEW(5016)]);
-  assert.equal(r.text['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":[]}\n', 'the fence reads the failed call as [] (`|| echo [])');
-  assert.ok(groupNumbers(r).flat().includes(9016));
-  assert.deepEqual(r.errs.filter((e) => e.startsWith('Warning:')), [], 'the silent fail-open prints no Warning');
-  assert.ok(r.errs.includes('AUTO — dispatch: #9016 mentioned by merged PR #5016 without a closing keyword; dispatching anyway\n'));
+  assert.equal(r.text['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":null}\n', 'the fence reads the failed call as null (`|| FILES_JSON=null`)');
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('Warning:')), [PR_VIEW_FAILED(5016, 9016)]);
+  assert.equal(r.errs.indexOf(weakAuto) + 1, r.errs.indexOf(PR_VIEW_FAILED(5016, 9016)), 'the Warning prints right after the weak AUTO line');
+  assert.ok(r.errs.includes(weakAuto));
+  assert.ok(groupNumbers(r).flat().includes(9016), 'a failed view never excludes');
   assert.ok(!r.stderr.includes('boom'), 'the failed call stderr is dropped (2>/dev/null)');
+  assert.ok(FENCE.includes("'Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run'"));
 
-  // Whatever a failed call printed before it failed is kept, with the echoed [] after it.
+  // A failed call that printed something first still reads as null: the fence assigns null, not the partial output.
   const partial = FULL();
   partial.gh = partial.gh.map((e) => (e.argv && e.argv[1] === 'view' ? { ...e, stdout: '["a"]', status: 1 } : e));
   const p = pull4(partial);
-  assert.equal(p.text['dispatch-shipped-pr-files.jsonl'], '', '["a"][] is not JSON: the node line fails and nothing is appended');
-  assert.ok(p.errs.some((e) => e.startsWith('queue-pull: shipped-pr-files: ')), p.stderr);
+  assert.equal(p.text['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":null}\n');
+  assert.deepEqual(p.errs.filter((e) => e.startsWith('Warning:')), [PR_VIEW_FAILED(5016, 9016)]);
+  assert.ok(!p.errs.some((e) => e.startsWith('queue-pull: shipped-pr-files: ')), p.stderr);
+});
+
+test('#5313 shipped: with every probe failing, each probed weak record warns (two records sharing PR 6201 both warn); a record beyond the 5-probe cap does not', () => {
+  const labels = ['auto:build', 'ready'];
+  const numbers = [9201, 9202, 9203, 9204, 9205, 9206, 9207, 9208];
+  const linked = Object.fromEntries(numbers.map((n) => [n, { mentions: [mention(n === 9208 ? 6201 : n - 3000, 'Unrelated cleanup of the build output')] }]));
+  const scenario = {
+    policy: { 'work-links': 'body-text' },
+    origin: { branches: { main: {} } },
+    linked,
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(numbers.map((n) => ghRecord(n, { body: withBody(n), labels }))) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: `${JSON.stringify(numbers.map((number) => ({ number })))}\n` },
+      ...numbers.slice(0, 7).map((n) => ({ argv: PR_VIEW(n - 3000), stdout: '', status: 1 })),
+    ],
+  };
+  const r = pull4(scenario);
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('Warning:')), [
+    PR_VIEW_FAILED(6201, 9201), PR_VIEW_FAILED(6202, 9202), PR_VIEW_FAILED(6203, 9203),
+    PR_VIEW_FAILED(6204, 9204), PR_VIEW_FAILED(6205, 9205), PR_VIEW_FAILED(6201, 9208),
+  ]);
+  assert.ok(!r.errs.some((e) => e.startsWith('Warning:') && (e.includes('#9206') || e.includes('#9207'))), 'a record beyond the probe cap is unprobed, not failed');
+});
+
+test('#5313 shipped: a weak mention predating the claim release that shares a failed probed PR prints no Warning', () => {
+  const labels = ['auto:build', 'ready'];
+  const numbers = [9301, 9302];
+  const linked = Object.fromEntries(numbers.map((n) => [n, { mentions: [mention(6301, 'Unrelated cleanup of the build output')] }]));
+  const scenario = {
+    policy: { 'work-links': 'body-text' },
+    origin: { branches: { main: {} } },
+    linked,
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(numbers.map((n) => ghRecord(n, { body: withBody(n), labels }))) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: `${JSON.stringify(numbers.map((number) => ({ number })))}\n` },
+      { argv: PR_VIEW(6301), stdout: '', status: 1 },
+    ],
+  };
+  const claims = { 9301: JSON.stringify({ released: true, releasedAt: '2026-11-07T10:00:00Z' }) };
+  const r = pull4(scenario, { claims });
+  assert.deepEqual(prViews(r), [PR_VIEW(6301)], 'the non-predating record makes the PR a probe candidate');
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('Warning:')), [PR_VIEW_FAILED(6301, 9302)], 'the predating record 9301 stays silent');
+  assert.ok(r.errs.some((e) => e.startsWith('AUTO — dispatch: #9301 kept: merged PR #6301 predates')), r.stderr);
 });
 
 test('#5227 shipped: a missing shipped-pr-files file reads as no probed files (ENOENT is caught), and the pass still classifies', () => {
   const scenario = FULL();
-  // The probe call deletes the file and answers invalid JSON, so nothing recreates it.
+  // The probe call deletes the file and answers invalid JSON, so the append throws and nothing recreates it.
   scenario.gh = scenario.gh.map((e) => (e.argv && e.argv[1] === 'view'
-    ? { ...e, stdout: '["a"]', status: 1, effect: 'delete-session-file:dispatch-shipped-pr-files.jsonl' } : e));
+    ? { ...e, stdout: '["a"', status: 0, effect: 'delete-session-file:dispatch-shipped-pr-files.jsonl' } : e));
   const r = pull4(scenario);
   assert.equal(r.text['dispatch-shipped-pr-files.jsonl'], undefined);
   assertShipped(r);
@@ -3525,7 +3573,7 @@ const FAULT_EXPECT = {
     stdout: [],
     drops: ['target-missing:9006', 'target-missing:9009', 'unlanded-blocker:9011'], adds: ['shipped:9006'],
   },
-  'F-prview': { status: 0, stderr: [], drops: [] },
+  'F-prview': { status: 0, stderr: [PR_VIEW_FAILED(5016, 9016).trimEnd()], drops: [] },
   'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
   'F-inflight': { status: 0, stderr: [IN_FLIGHT_POOL_AUTO], drops: ['neighbour-in-flight:9013'] },
   'F-claim': { status: 0, stderr: [CLAIM_READ_COMBINED], drops: ['neighbour-in-flight:9013'] },
@@ -3712,7 +3760,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
       const proposals = Object.entries(r.staged).filter(([n]) => n.startsWith('dispatch-target-missing-')).map(([, body]) => body);
       assert.equal(proposals.length, 0, `F-intbranch ${side}: no target-missing Close proposal is staged`);
     }
-    for (const [side, r] of sides(R['F-prview'])) assert.equal(r.files['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":[]}\n', `F-prview ${side}: a failed probe reads as no files`);
+    for (const [side, r] of sides(R['F-prview'])) assert.equal(r.files['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":null}\n', `F-prview ${side}: a failed probe reads as files:null`);
     assert.equal(R['S1-gh-miss'].oracle.files['dispatch-shipped-pr-files.jsonl'], `{"pr":5016,"files":${JSON.stringify(WEAK_PR_FILES)}}\n`, 'the base probes the files (control)');
     for (const [side, r] of sides(R['F-openprs'])) assert.deepEqual(JSON.parse(r.files['dispatch-crosspr-overlap.json']), [], `F-openprs ${side}`);
     assert.notDeepEqual(JSON.parse(R['S1-gh-miss'].oracle.files['dispatch-crosspr-overlap.json']), [], 'the base reports #9001 against PR #41 (control)');

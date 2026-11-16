@@ -1072,9 +1072,9 @@ function runShipped(ctx) {
   put(ctx, prFilesFile, '');
   const probePrs = step(ctx, 'shipped-probe-list', () => readJson(probeFile).join(' ').split(/\s+/).filter(Boolean)).value || [];
   for (const pr of probePrs) {
-    // `2>/dev/null || echo '[]'`: a failed fetch prints nothing and reads as [].
+    // `2>/dev/null || FILES_JSON=null`: a failed fetch prints nothing (stderr ignored) and reads as null.
     const r = ghRun(ctx, ['pr', 'view', pr, '--json', 'files', '-q', '[.files[].path]'], { quiet: true });
-    const filesJson = trimNl(r.ok ? r.stdout : `${r.stdout}[]\n`);
+    const filesJson = r.ok ? trimNl(r.stdout) : 'null';
     step(ctx, 'shipped-pr-files', () => fs.appendFileSync(prFilesFile, `${JSON.stringify({ pr: Number(pr), files: JSON.parse(filesJson) })}\n`));
   }
 
@@ -1104,6 +1104,7 @@ function runShipped(ctx) {
         deps.stderr(`AUTO — dispatch: #${c.number}${predatesClaimRelease(result)
           ? ` kept: merged PR #${result.pr} predates claim release at ${releases[c.number]} — remaining work assumed`
           : ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`}\n`);
+        if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) deps.stderr(`Warning: gh pr view ${result.pr} failed — #${c.number} kept as a weak shipped candidate (files unprobed) this run\n`);
       }
       return true;
     };
