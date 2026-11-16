@@ -23,9 +23,9 @@ Scope keywords: — pass --repo owner/name
 
 - `plugin/bin/lib/number-list-cli.js:117` is a template literal: the new text must keep `${name}` and the backticks, since several CLIs print through it.
 - `plugin/bin/preflight-records.js` carries two hints, line 278 and line 412 (the `--blocker-landing` one); changing only one leaves the acceptance grep non-empty.
-- `materialize.js`'s hint (line 399) has no test pinning its text, so only the acceptance grep proves it changed.
+- `materialize.js`'s hint (line 399) has no test reaching its path, so the acceptance grep and the Step 4b scratch check are its only proof.
 - A mechanical replace must not widen to `stale-claim-pr.js`, whose `host/owner/name` text is pinned by `tests/stale-claim-pr-cli.test.js:479`.
-- Tests that match only `/could not resolve owner\/repo/` stay green untouched; the two that match the tail of the hint (`preflight-records.test.js:1273`, `link.test.js:270`) are the only pins to move.
+- Tests that match only `/could not resolve owner\/repo/` stay green untouched, but Step 1 extends them to the full hint so AC2 is asserted; the two that already match the tail of the hint (`preflight-records.test.js:1273`, `link.test.js:270`) must move or go red.
 
 ---
 
@@ -46,16 +46,25 @@ Scope keywords: — pass --repo owner/name
 - Modify: `plugin/bin/resolved-refusal.js:78`
 - Modify: `plugin/bin/lib/compose-subject.js:333`
 - Modify: `plugin/bin/lib/number-list-cli.js:117`
-- Test: `tests/bin-lib/preflight-records/preflight-records.test.js:1273`
+- Test: `tests/bin-lib/preflight-records/preflight-records.test.js:519` and `:1273`
 - Test: `tests/bin-lib/issues/link.test.js:270`
+- Test: `tests/apply-refine-labels.test.js:224`
+- Test: `tests/backlog-grant-gate-cli.test.js:204`
+- Test: `tests/bin-lib/feedback/file-feedback.test.js:379`
+- Test: `tests/bin-lib/issues/resolved-refusal-cli.test.js:150`
+- Test: `tests/bin-lib/number-list-cli.test.js:108`
+- Test: `tests/bin-lib/release-claim/cli.test.js:213`
+- Test: `tests/bin-lib/repair-claim/cli.test.js:149`
+- Test: `tests/fetch-sub-issues-cli.test.js:275`
+- Test: `tests/list-claims-cli.test.js:66`
 
 **Interfaces:**
 - Consumes: nothing.
 - Produces: nothing; stderr text only.
 
-- [ ] **Step 1: Re-pin the two tests that match the hint's tail**
+- [ ] **Step 1: Re-pin the tests that assert the hint**
 
-  In `tests/bin-lib/preflight-records/preflight-records.test.js:1273` change the regex tail `pass --repo owner\/name` to `pass --repo \[host\/\]owner\/name`. In `tests/bin-lib/issues/link.test.js:270` change `/could not resolve owner\/repo — pass --repo/` to `/could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/`.
+  In `tests/bin-lib/preflight-records/preflight-records.test.js:1273` change the regex tail `pass --repo owner\/name` to `pass --repo \[host\/\]owner\/name`. In `tests/bin-lib/issues/link.test.js:270` change `/could not resolve owner\/repo — pass --repo/` to `/could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/`. In each other listed test line (they assert `/could not resolve owner\/repo/` with `assert.match`) extend the same regex to `/could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/` so AC2's "prints a hint containing `[host/]owner/name`, exits 2" is asserted at runtime for every CLI that has a test reaching the unresolved-origin path. This edits existing assertions only — no new test file or case. (This is the spec's "about fourteen test files": the earlier two-pin count was the tail-matchers only.)
 
 - [ ] **Step 2: Confirm no source carries the new text yet**
 
@@ -74,6 +83,10 @@ Scope keywords: — pass --repo owner/name
   Run: `git grep -c -F -e "pass --repo [host/]owner/name" -- plugin/bin`
   Expected: 13 lines of `path:count`, `preflight-records.js` with count 2, every other file 1 (14 hits in 13 files).
 
+- [ ] **Step 4b: Scratch-check `materialize.js` (no committed test reaches its hint)**
+
+  In a throwaway `git init` directory under the scratchpad with no `origin` remote, run `node <worktree>/plugin/bin/materialize.js 1`; expect exit 2 and stderr containing `pass --repo [host/]owner/name`. Scratch only — commit nothing from it. If the CLI refuses earlier for an unrelated reason (a different usage error), note the reason in the report and rely on the Step 4 grep for this one file.
+
 - [ ] **Step 5: Run the affected suites**
 
   Run each as its own command, expected PASS: `node --test tests/apply-refine-labels.test.js`, `node --test tests/backlog-grant-gate-cli.test.js`, `node --test tests/fetch-sub-issues-cli.test.js`, `node --test tests/bin-lib/feedback/file-feedback.test.js`, `node --test tests/bin-lib/compose-subject.test.js`, `node --test tests/bin-lib/number-list-cli.test.js`, `node --test tests/bin-lib/issues/link.test.js`, `node --test tests/list-claims-cli.test.js`, `node --test tests/bin-lib/preflight-records/preflight-records.test.js`, `node --test tests/bin-lib/release-claim/cli.test.js`, `node --test tests/bin-lib/repair-claim/cli.test.js`, `node --test tests/bin-lib/issues/resolved-refusal-cli.test.js`, `node --test tests/stale-claim-pr-cli.test.js`.
@@ -81,6 +94,6 @@ Scope keywords: — pass --repo owner/name
 - [ ] **Step 6: Commit**
 
   ```bash
-  git add plugin/bin/apply-refine-labels.js plugin/bin/backlog-grant-gate.js plugin/bin/fetch-sub-issues.js plugin/bin/file-feedback.js plugin/bin/link-records.js plugin/bin/list-claims.js plugin/bin/materialize.js plugin/bin/preflight-records.js plugin/bin/release-claim.js plugin/bin/repair-claim.js plugin/bin/resolved-refusal.js plugin/bin/lib/compose-subject.js plugin/bin/lib/number-list-cli.js tests/bin-lib/preflight-records/preflight-records.test.js tests/bin-lib/issues/link.test.js
+  git add plugin/bin/apply-refine-labels.js plugin/bin/backlog-grant-gate.js plugin/bin/fetch-sub-issues.js plugin/bin/file-feedback.js plugin/bin/link-records.js plugin/bin/list-claims.js plugin/bin/materialize.js plugin/bin/preflight-records.js plugin/bin/release-claim.js plugin/bin/repair-claim.js plugin/bin/resolved-refusal.js plugin/bin/lib/compose-subject.js plugin/bin/lib/number-list-cli.js tests/bin-lib/preflight-records/preflight-records.test.js tests/bin-lib/issues/link.test.js tests/apply-refine-labels.test.js tests/backlog-grant-gate-cli.test.js tests/bin-lib/feedback/file-feedback.test.js tests/bin-lib/issues/resolved-refusal-cli.test.js tests/bin-lib/number-list-cli.test.js tests/bin-lib/release-claim/cli.test.js tests/bin-lib/repair-claim/cli.test.js tests/fetch-sub-issues-cli.test.js tests/list-claims-cli.test.js
   git commit -m "Say --repo [host/]owner/name in the unresolved-origin hint — 13 gated CLIs (#5103)"
   ```
