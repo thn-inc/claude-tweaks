@@ -23,6 +23,7 @@ files:
 - **Should feel:** Like before, just slower to saturate the machine. No new prompts and no new output on the happy path.
 - **Should understand:**
   - A plain `npm test` with no arguments prints its one impact-selection line first and runs only the selected files. The slot, the per-run temp directory and the concurrency below are unchanged. Only the lane differs: a subset takes the subset lane (`CT_TEST_SUBSET_SLOTS`), so it does not queue behind a sibling's whole-suite run, and a run with nothing selected takes no slot.
+  - Test files named on the command line (`node tools/run-tests.js tests/a.test.js tests/b.test.js`) run as an explicit subset from the subset lane too, with the same temp directory, git settings and concurrency (`run-several-test-files-through-the-runner-5547.md`).
   - The run holds a lock in `<tmpdir>/ct-test-suite-slots/` for its duration.
   - Its tests see `TMPDIR` pointing at `<tmpdir>/ct-test-runs/ct-testrun-<pid>-XXXXXX/`.
   - `node --test` runs with `--test-concurrency` set to half the cores, or cores minus 1 when `CI` is set.
@@ -94,4 +95,5 @@ files:
 - Updated during build of #5297: step 1 now covers git auto-maintenance turned off for the suite and template-copied fixture repos. Step 5 covers the spawn-free git check and its macOS shim rule. The trigger was one run spawning 1,300–2,100 processes per second.
 - Updated during build of #5319: a plain top-level `npm test` now runs the impact-selected subset from the subset lane. The entry point and steps 1 and 2 name `npm test -- --full` for the whole-suite run these steps describe, and step 4 says a bare child of `verify.js` or of another run also runs the whole set.
 - Updated during build of #5294: step 1 now covers the hooks' repoInfo store pointed into the run root, so a suite run never writes fixture answers into the user's real store.
+- Updated during build of #5547: step 1 now covers test files named on the runner's command line, which a repo-local guard steers multi-file direct runs to.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).
