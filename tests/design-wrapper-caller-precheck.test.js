@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { sectionOf } = require('./helpers/conformance-asserts');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS = path.join(ROOT, 'plugin', 'skills');
@@ -25,11 +26,11 @@ const DESIGN_GATE = read('test', 'design-gate.md');
 const REVIEW_STEPS = read('review', 'code-mode-steps.md');
 const DESIGN_DETECT_CLI = path.join(ROOT, 'plugin', 'bin', 'design-detect.js');
 
-test('design-wrapper-handling.md defines the Caller-side pre-check section, citing the real CLI path', () => {
-  assert.match(HANDLING, /^## Caller-side pre-check/m);
-  assert.match(HANDLING, /bin\/design-detect\.js.*--mode <mode>/);
-  assert.match(HANDLING, /"decision":\s*"skip"/);
-  assert.match(HANDLING, /"decision":\s*"proceed"/);
+test('design-wrapper-handling.md keeps the Caller-side pre-check section as a pointer to _shared/skill-load-gate.md', () => {
+  const section = sectionOf(HANDLING, '## Caller-side pre-check (skip the `Skill()` load when the wrapper would no-op)');
+  assert.ok(section.includes('_shared/skill-load-gate.md'));
+  assert.ok(section.includes('- `--surface` — the record'), 'the --surface bullet stays in this section');
+  assert.doesNotMatch(section, /"decision":\s*"skip"/, 'the result handling lives in skill-load-gate.md now');
 });
 
 test("test/design-gate.md's Invocation cites the shared pre-check instead of restating it, with --mode test", () => {
