@@ -24,7 +24,7 @@
 
 - A `Refs` record a human closed hours after the merge (outside `CLOSE_WINDOW_MS`) must stay closed. The CLI already pins this in `tests/bin-lib/flow/closing-links-cli.test.js`; Task 1 covers only the reconcile-driven reopen and adds no new code.
 - A second reconcile pass after a reopen must make no `gh` call. Task 1's AC1.1 test also asserts this (the marker is written).
-- Step 4.0b must still see the reopened record as unsettled, so the parent stays open: AC1.1's test asserts `parentsClosed: 0`.
+- `parentsClosed: 0` in AC1.1 is an envelope fact only (the world has no parent); the core pins that a reopened record leaves `closingSet` in `tests/bin-lib/flow/closing-links-cli.test.js`.
 
 ---
 
@@ -161,7 +161,8 @@ git commit -m "Drop Step 4.0's sidebar-link gap caveat — the reconciler's late
 
 | Spec item | Covered by |
 |---|---|
-| Deliverable 1 (reconcile convergence check running closing-links post-merge) | Already shipped by #4599 (`plugin/bin/lib/reconcile/post-merge.js`); Task 1 pins it end to end |
-| Deliverable 2 (drop the caveat) | Task 2 |
-| AC1.1 (fake gh, merged PR, Refs record closed after mergedAt, reopened + decisions line) | Task 1 Step 2 |
+| Deliverable 1 (end-to-end tests pinning the shipped `post-merge` reopen) | Task 1 |
+| Deliverable 2 (remove the caveat) | Task 2 |
+| Deliverable 3 (docs sentence) | Task 2 Step 3 |
+| AC1.1 (fake gh, merged PR, Refs record closed after mergedAt, reopened + decisions line); AC1.2 (same with no sidebar link) | Task 1 Step 2 |
 | AC2.1 (no Refs record → no `gh issue` call) | Task 1 Step 3 |
