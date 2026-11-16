@@ -24,10 +24,10 @@
 // lists what could not be undone) or this CLI's no-worktree / not-a-linked-worktree.
 //
 // Self-logging (_shared/auto-decision-log.md's roster): moved -> one AUTO line, a refusal -> one SKIP
-// naming the fallback, noop -> nothing. `logged` means every line the
-// outcome owes is in decisions.md, so a noop (which owes none) reports `logged: true`; it is `false` only
-// when the append failed. That never changes the exit code: `logged: false`, `logError` and one stderr
-// line `could not append the decisions.md entry`; the caller hand-logs only then.
+// naming the fallback, noop -> nothing. `logged` means every line the outcome owes is in decisions.md,
+// so a noop (which owes none) reports `logged: true`; it is `false` only when the append failed. That
+// never changes the exit code: `logged: false`, `logError` and one stderr line
+// `could not append the decisions.md entry`; the caller hand-logs only then.
 //
 // Status is data: exit 0 whenever an envelope was printed, whatever its outcome or reason.
 // 2 malformed invocation (a missing or option-shaped value, an unknown flag, a --run that is not under
@@ -36,8 +36,8 @@
 // 3 run dir missing or not anchored under the main checkout (a worktree-local shadow --
 //   _shared/pipeline-run-dir.md, [IL-127]); an archive/{run-id} dir in the main checkout is anchored.
 //   Checked before any git call. Same vocabulary as post-merge-run.js (the Sanctioned-writer family).
-// An unexpected exception from the move propagates as exit 1 with nothing logged; the
-// caller's other-exit branch logs the SKIP.
+// An unexpected exception from the move propagates as exit 1 with nothing logged; the caller's
+// other-exit branch logs the SKIP.
 'use strict';
 
 const path = require('path');
@@ -137,8 +137,9 @@ function refusedText(reason, detail) {
 
 // The decisions.md entries one result owes: moved -> AUTO, refused -> SKIP, noop -> none.
 function entriesFor({ result, runId, now }) {
-  const skip = (text) => formatEntry({ status: 'SKIP', now, step: STEP, text });
-  if (result.outcome === 'refused') return [skip(refusedText(result.reason, result.detail))];
+  if (result.outcome === 'refused') {
+    return [formatEntry({ status: 'SKIP', now, step: STEP, text: refusedText(result.reason, result.detail) })];
+  }
   if (result.outcome !== 'moved') return [];
   const sha = result.commit ? result.commit.slice(0, 7) : 'an unreadable HEAD';
   return [formatEntry({
