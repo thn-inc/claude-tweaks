@@ -182,7 +182,7 @@ function classifyToolCall({ name, input, isError, resultText, worktree } = {}) {
     case 'Read': return isProcedurePath(inp.file_path, worktree) ? 'procedure' : 'read';
     case 'Skill': return 'procedure';
     case 'Grep': case 'Glob': case 'LS': return 'explore';
-    case 'Agent': case 'Task': return 'dispatch';
+    case 'Agent': case 'Task': case 'Workflow': return 'dispatch';
     case 'ToolSearch': return 'orientation';
     case 'TodoWrite': return 'bookkeeping';
     case 'Bash': return classifyBash(inp.command);
