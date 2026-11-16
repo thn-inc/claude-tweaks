@@ -650,28 +650,20 @@ function consoleAckRemedy(runDir) {
 }
 
 // The dirs of the unacknowledged consoles holding an item of `resolution` (a filing-pending item needs a usable id).
-function pendingConsoleDirs(runDir, resolution) {
-  const { consoles } = readRunResidue(runDir);
+function pendingConsoleDirs(consoles, resolution) {
   return consoles.filter((c) => !c.acknowledged
     && c.items.some((i) => i.resolution === resolution && (resolution !== FILING_PENDING_RESOLUTION || typeof i.id === 'string')))
     .map((c) => path.dirname(c.path));
 }
 
-// #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
-// `console-filings.js` re-run (default selection, no `--only`), one per unacknowledged console holding a
-// `filing-pending` item. '' when no such item is open.
-function filingRerunRemedy(runDir) {
-  const commands = pendingConsoleDirs(runDir, FILING_PENDING_RESOLUTION).map((consoleDir) => consoleRerunCommand({ consoleDir }));
+function filingRemedyOf(consoles) {
+  const commands = pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION).map((consoleDir) => consoleRerunCommand({ consoleDir }));
   if (commands.length === 0) return '';
   return `re-run the planned filing(s): ${commands.join('; ')}, then ${FILING_LOG_REMEDY}`;
 }
 
-// #4679: the digest twin — the same paste-ready `console-filings.js` re-run (it plans digest entries too), one per
-// unacknowledged console holding a `digest-pending` item, then the digest log remedy. '' when no such item is open.
-// `alsoRerun` is the dirs whose re-run the caller already names (a console holding both kinds): they are
-// pointed at, not repeated.
-function digestRerunRemedy(runDir, alsoRerun = []) {
-  const dirs = pendingConsoleDirs(runDir, DIGEST_PENDING_RESOLUTION);
+function digestRemedyOf(consoles, alsoRerun) {
+  const dirs = pendingConsoleDirs(consoles, DIGEST_PENDING_RESOLUTION);
   if (dirs.length === 0) return '';
   const commands = dirs.filter((d) => !alsoRerun.includes(d)).map((consoleDir) => consoleRerunCommand({ consoleDir }));
   const logRemedy = digestLogRemedy({ consoleDir: dirs.length > 1 ? "{that console's dir}" : dirs[0] });
@@ -679,19 +671,37 @@ function digestRerunRemedy(runDir, alsoRerun = []) {
   return `re-run the planned digest entries: ${commands.join('; ')}${commands.length < dirs.length ? ' (the re-run above also settles the others)' : ''}, then ${logRemedy}`;
 }
 
+// #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
+// `console-filings.js` re-run (default selection, no `--only`), one per unacknowledged console holding a
+// `filing-pending` item. '' when no such item is open.
+function filingRerunRemedy(runDir) {
+  return filingRemedyOf(readRunResidue(runDir).consoles);
+}
+
+// #4679: the digest twin — the same paste-ready `console-filings.js` re-run (it plans digest entries too), one per
+// unacknowledged console holding a `digest-pending` item, then the digest log remedy. '' when no such item is open.
+// `alsoRerun` is the dirs whose re-run the caller already names (a console holding both kinds): they are
+// pointed at, not repeated.
+function digestRerunRemedy(runDir, alsoRerun = []) {
+  return digestRemedyOf(readRunResidue(runDir).consoles, alsoRerun);
+}
+
 // The re-run remedies for a run's open console items, each console's one command named once: the digest remedy
-// leaves out the re-run of a console the filing remedy already names.
+// leaves out the re-run of a console the filing remedy already names. One read of the run's consoles.
 function rerunRemedies(runDir) {
-  return [filingRerunRemedy(runDir), digestRerunRemedy(runDir, pendingConsoleDirs(runDir, FILING_PENDING_RESOLUTION))].filter(Boolean);
+  const { consoles } = readRunResidue(runDir);
+  return [filingRemedyOf(consoles), digestRemedyOf(consoles, pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION))].filter(Boolean);
 }
 
 // The recovery line for a console-residue skip: name the open items, the
-// unreadable console.json files to repair, or both when both block.
+// unreadable console.json files to repair, or both when both block. The re-run remedies are additions to each
+// other (a console can hold both kinds); only the ack is the alternative.
 function consoleResidueHint(runDir) {
   const { names, unreadable } = consoleResidue(runDir);
   const parts = [];
   if (names.length > 0) {
-    parts.push(`unresolved: ${names.join(', ')} — ${rerunRemedies(runDir).map((r) => `${r}; or `).join('')}${consoleAckRemedy(runDir)}`);
+    const reruns = rerunRemedies(runDir);
+    parts.push(`unresolved: ${names.join(', ')} — ${reruns.length ? `${reruns.join('; ')}; or ` : ''}${consoleAckRemedy(runDir)}`);
   }
   if (unreadable.length > 0) parts.push(`repair or remove ${unreadable.join(', ')}`);
   return parts.join('; ');

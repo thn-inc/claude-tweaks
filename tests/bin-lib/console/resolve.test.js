@@ -8,7 +8,7 @@ const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
 const { FINDING_PATH } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'finding-path'));
-const { classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption, RATIFY_FILES_RECORD_REASON } = require(MOD);
+const { UNATTENDED_SHADOWED_DROP_REASON, classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption, RATIFY_FILES_RECORD_REASON } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems, readRunResidue, formatResidueLines } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
@@ -1368,6 +1368,8 @@ test('two can\'t-tell items sharing a fingerprint, one file and one drop, resolv
   const result = resolveAll({ runDir, policy: 'console-auto', deps: deps() });
   const tb = result.items.filter((i) => i.tiebreak);
   assert.deepStrictEqual(tb.map((i) => i.resolution), ['filed', 'filed'], 'the record wins over the digest line');
+  assert.strictEqual(tb[1].reason, UNATTENDED_SHADOWED_DROP_REASON);
+  assert.match(UNATTENDED_SHADOWED_DROP_REASON, /recommended dropping.*covered by another item/);
   assert.strictEqual(result.filings.length, 1);
   assert.deepStrictEqual(result.digests, []);
 });

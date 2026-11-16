@@ -309,6 +309,8 @@ test('a console holding both a filing-pending and a digest-pending item names th
   assert.strictEqual(hint.split(cmd).length, 2, `the command prints once: ${hint}`);
   assert.ok(hint.includes(digestLogRemedy({ consoleDir: runDir })), 'the digest log remedy is still named');
   assert.ok(hint.includes('the same re-run also settles the planned digest entries'), hint);
+  assert.ok(!hint.includes('; or the same re-run'), `the digest continuation is an addition, not an alternative: ${hint}`);
+  assert.ok(hint.includes(`; the same re-run also settles`) && hint.includes(`; or review them, then run console-residue.js --ack`), hint);
 });
 test('digestRerunRemedy is empty for a residue console with no planned digest (#4679)', () => {
   assert.strictEqual(digestRerunRemedy(prConsoleRunDir([['f1', 'filing-failed']])), '');

@@ -962,6 +962,8 @@ function renderStoredTable(consoleJson) {
 // is never digested. Approve-all (findingItems) keeps its own
 // recommendation-driven default (approveAllDefault) for a present human, and files `needs:definition` records.
 const UNATTENDED_FILED_REASON = 'unattended: can\'t-tell finding filed as a verification task (needs-verification)';
+// A `drop` item whose fingerprint another item's filing already covers: it rides on that filing, nothing digested.
+const UNATTENDED_SHADOWED_DROP_REASON = 'unattended: can\'t-tell finding the tiebreak recommended dropping — its fingerprint is covered by another item\'s verification-task filing in this batch, so nothing is digested';
 const UNATTENDED_DIGESTED_REASON = 'unattended: can\'t-tell finding the tiebreak recommended dropping — logged to the materiality digest (tiebreak-cant-tell), nothing filed';
 
 // A multi-spec per-spec run dir is {pipelines}/{parent-run-id}/spec-{N}: name the parent run too.
@@ -992,11 +994,11 @@ function resolveAll({ runDir, policy, deps }) {
   const shadowed = new Set(planned.filter((d) => filedFingerprints.has(d.fingerprint)).map((d) => d.item));
   const digests = planned.filter((d) => !shadowed.has(d.item));
   if (shadowed.size > 0) {
-    items = items.map((it) => (shadowed.has(it.id) ? { ...it, resolution: 'filed', reason: UNATTENDED_FILED_REASON } : it));
+    items = items.map((it) => (shadowed.has(it.id) ? { ...it, resolution: 'filed', reason: UNATTENDED_SHADOWED_DROP_REASON } : it));
   }
   const result = { ceiling: 'unattended', items, sections, merge, droppedByTiebreak: droppedByTiebreak(snapshot.decisions), filings, digests, snapshot };
   result.table = renderTable(result);
   return result;
 }
 
-module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
