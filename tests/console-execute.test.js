@@ -343,7 +343,7 @@ test('AC5.2, AC5.3: a solo record with auto:merge and no auto:build -> mergeGran
     prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge'], pendingSince: null } },
   });
   assert.strictEqual(result.mergeGrantGap.member, 7);
-  assert.match(result.mergeGrantGap.reason, /auto:build/);
+  assert.strictEqual(result.mergeGrantGap.reason, 'no auto:build label present — a merge grant counts only together with a live auto:build');
 });
 
 test('decideConsoleExecute: a solo record with auto:build only, no auto:merge -> mergeGrantGap names it (#1966\'s reported bug)', () => {

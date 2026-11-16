@@ -460,7 +460,9 @@ function mergeResolution(snapshot, deps) {
       // #3358: name the untrusted marker comments ghReadGrants passed over, so an
       // unknown-age grant is not mistaken for "never granted".
       const passedOver = Array.isArray(g.skippedUntrusted) && g.skippedUntrusted.length ? ` — ${g.skippedUntrusted.join('; ')}` : '';
-      if (mat.state === 'no-build-grant') {
+      // A member with no merge grant at all keeps the grant-missing reason: naming
+      // auto:build first would send the operator to a second withhold.
+      if (mat.state === 'no-build-grant' && (labels.includes('auto:merge') || labels.includes('auto:merge-pending'))) {
         return { resolution: 'leave-open', reason: `#${n} lacks auto:build — a merge grant counts only together with a live auto:build (${mat.reason})${passedOver}` };
       }
       return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${mat.reason})${passedOver}` };

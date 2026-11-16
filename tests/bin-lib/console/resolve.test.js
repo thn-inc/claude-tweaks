@@ -757,11 +757,28 @@ test('a matured auto:merge-pending counts as granted (#1932 AC3)', () => {
   assert.strictEqual(r.merge.resolution, 'merge');
 });
 
+const NO_BUILD_REASON = 'no auto:build label present — a merge grant counts only together with a live auto:build';
+
 test('AC5.1, AC5.3: a member carrying auto:merge without auto:build resolves the merge half to leave-open naming the member', () => {
   const grants = { 7: { labels: ['auto:build', 'auto:merge'], pendingSince: null }, 8: { labels: ['auto:merge'], pendingSince: null } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7, 8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'leave-open');
-  assert.match(r.merge.reason, /^#8 lacks auto:build/);
+  assert.strictEqual(r.merge.reason, `#8 lacks auto:build — a merge grant counts only together with a live auto:build (${NO_BUILD_REASON})`);
+});
+
+test('AC5.1: a no-build member with passed-over untrusted notes carries the passedOver suffix in the no-build-grant reason', () => {
+  const note = 'skipped marker comment https://x/issues/8#c1 by eve (NONE) — not an owner, member, or collaborator';
+  const grants = { 8: { labels: ['auto:merge'], pendingSince: null, skippedUntrusted: [note] } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.reason, `#8 lacks auto:build — a merge grant counts only together with a live auto:build (${NO_BUILD_REASON}) — ${note}`);
+});
+
+test('AC5.1: a member with no grant labels at all keeps the lacks auto:merge reason, not the build one', () => {
+  const grants = { 8: { labels: [], pendingSince: null } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.match(r.merge.reason, /^#8 lacks auto:merge and a matured auto:merge-pending/);
+  assert.doesNotMatch(r.merge.reason, /lacks auto:build/);
 });
 
 test('readGrants throwing resolves the merge half to leave-open with reason grants-unreadable (#1932 AC3)', () => {
