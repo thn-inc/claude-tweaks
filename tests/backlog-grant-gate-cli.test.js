@@ -32,6 +32,25 @@ function deps(overrides = {}) {
   return d;
 }
 
+test('#4577: the CLI forwards the enrichment warning to its injected stderr, once', () => {
+  const saved = process.env.CLAUDE_CODE_SESSION_ID;
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+  try {
+    const d = deps({
+      runner: (args) => {
+        if (args[3] === 'all') return JSON.stringify([{ number: 7, title: 't', body: 'Origin: by:code-health', labels: [], state: 'OPEN', createdAt: '2026-01-01T00:00:00Z' }]);
+        if (args[0] === 'api' && args[1] === 'graphql') throw new Error('boom');
+        return stubGh(args);
+      },
+    });
+    assert.strictEqual(run([], d), 0, d.err.join(''));
+    assert.strictEqual(d.err.filter((l) => l.includes('author-association enrichment incomplete')).length, 1, JSON.stringify(d.err));
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = saved;
+  }
+});
+
 test('--help prints usage and exits 0, no gh check', () => {
   const d = deps({ ghAvailable: () => { throw new Error('should not be called'); } });
   assert.strictEqual(run(['--help'], d), 0);

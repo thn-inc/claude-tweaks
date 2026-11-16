@@ -168,4 +168,5 @@ module.exports = {
   enrichRecords,
   enrichRecordsFile,
   defaultRunner,
+  warningLine,
 };

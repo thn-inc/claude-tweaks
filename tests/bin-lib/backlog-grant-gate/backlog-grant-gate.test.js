@@ -400,7 +400,7 @@ test('#4577: a failed association batch still returns and caches the records, wi
     assert.strictEqual('authorAssociation' in records[0], false);
     assert.strictEqual('authorAssociation' in recordSnapshot.readSnapshot(snapPath)[0], false);
     assert.strictEqual(lines.length, 1);
-    assert.match(lines[0], /^backlog-grant-gate: author-association enrichment incomplete \(1 batch\(es\) failed\)/);
+    assert.match(lines[0], /^author-association enrichment incomplete \(1 batch\(es\) failed\)/);
   });
 });
 

@@ -24,7 +24,7 @@ const { machineGrantOutlook } = require('../issues/backlog');
 const { fetchNativeSubIssues } = require('../issues/native-dependencies');
 const { probeSchemaStrict } = require('../issues/capabilities-probe');
 const recordSnapshot = require('../issues/record-snapshot');
-const { enrichRecords } = require('../issues/author-association');
+const { enrichRecords, warningLine } = require('../issues/author-association');
 const sharedPrimitives = require('../shared-primitives');
 const { foreignBlockerBlocks } = require('../issues/record-dependencies');
 const { bodyForeignBlockers } = require('../issues/cross-repo-states');
@@ -96,10 +96,7 @@ function fetchAllRecords({
   const listed = jsonOut(runner, ['issue', 'list', '--state', 'all', '--json', recordSnapshot.UNION_FIELDS, '--limit', String(limit)]);
   const bounded = (args) => runner(args, { timeout: args[0] === 'api' && args[1] === 'graphql' ? sharedPrimitives.GH_BATCH_TIMEOUT_MS : sharedPrimitives.GH_TIMEOUT_MS });
   const { records, failedBatches, skipped } = enrichRecords(listed, { runner: bounded });
-  if (failedBatches > 0 || skipped) {
-    const why = [failedBatches > 0 ? `${failedBatches} batch(es) failed` : null, skipped ? `skipped: ${skipped}` : null].filter(Boolean).join('; ');
-    stderr(`backlog-grant-gate: author-association enrichment incomplete (${why}) — records without an association keep the pre-#4577 Origin-line behaviour\n`);
-  }
+  if (failedBatches > 0 || skipped) stderr(warningLine({ failedBatches, skipped }));
   if (snapPath) recordSnapshot.writeSnapshot(snapPath, records);
   return records;
 }
