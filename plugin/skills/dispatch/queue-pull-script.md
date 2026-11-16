@@ -42,7 +42,7 @@ DISPATCH_SHIPPED_PR_FILES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve
 DISPATCH_SHIPPED_RELEASES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-releases.json)"
 DISPATCH_SHAPE_GATE_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shape-gate.err)"
 
-# #1752: truncate dispatch-exclusions.json, keeping only 'firing' entries (SKILL.md's Loop appends them between re-runs, firing-exclusion.md); other reasons are recomputed.
+# #1752: truncate dispatch-exclusions.json, keeping only 'firing' entries (the Loop's, firing-exclusion.md); other reasons are recomputed.
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { readExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const fs = require('fs');
@@ -50,8 +50,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" <<NODE
   fs.writeFileSync(process.argv[1], JSON.stringify(kept));
 NODE_EVAL_EOF
 
-# #3691: MCP tools return snake_case created_at/updated_at; readers want camelCase. Adds the camelCase
-# keys in place after each fetch -- a no-op on gh-shaped input, so both transports run the same line.
+# #3691: MCP returns snake_case created_at/updated_at; this adds camelCase keys in place after each
+# fetch (a no-op on gh input), so both transports run the same line.
 # #5307: a non-array file is a Warning, left as written; the reads after it fail their own array checks.
 alias_mcp_timestamps() {
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$@" <<NODE_EVAL_EOF
@@ -154,7 +154,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   const eligiblePreDep = issues
     .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
     .filter((i) => i.facets.grants.build && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
-  // A dependency outside the --limit 200 open pull is unresolved, not closed: checked live below.
+  // Outside the --limit 200 pull = unresolved, not closed: checked live below. #0/>GRAPHQL_INT_MAX: malformed-blocker's, unchecked.
   const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => dep > 0 && dep <= 2147483647 && !openNumbers.has(dep)))];
   require('fs').writeFileSync(process.argv[3], JSON.stringify(eligiblePreDep));
   require('fs').writeFileSync(process.argv[4], JSON.stringify(unresolved));
@@ -171,7 +171,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" 
   const { bodyForeignBlockers } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-states.js');
   const eligiblePreDep = require(process.argv[1]);
   const openNumbers = new Set(require(process.argv[2]).map((i) => i.number));
-  // #5311: missing or malformed: all unresolved count as open.
+  // #5311: missing/malformed: all unresolved count as open; exit 3 sets shell DEP_UNREADABLE.
   const lines = fs.existsSync(process.argv[3]) ? fs.readFileSync(process.argv[3], 'utf8').trim().split('\n').filter(Boolean) : null;
   const bad = lines === null || lines.some((l) => !/^\d+$/.test(l.trim()));
   const unresolved = require(process.argv[6]);

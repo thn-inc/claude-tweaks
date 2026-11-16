@@ -1274,6 +1274,9 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   assert.deepEqual(groupNumbers(malformed), [[9001]], 'AC2.1 (#5311): a malformed file fails closed');
   assert.deepEqual(warningsOf(malformed), [VERIFIED_UNREADABLE]);
   assert.equal(malformed.store.written.length, 0, 'a fail-closed verdict is never persisted to the queue-order cache');
+  const mixed = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '8001\nnot-a-number\n' }) });
+  assert.deepEqual(groupNumbers(mixed), [[9001]], 'one malformed line among numbers fails the whole file closed');
+  assert.deepEqual(warningsOf(mixed), [VERIFIED_UNREADABLE]);
   const crlf = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '8000\r\n\n' }) });
   assert.deepEqual(groupNumbers(crlf), [[9001]]);
   assert.deepEqual(warningsOf(crlf), [], 'CRLF and a blank line are well-formed');
@@ -1319,12 +1322,22 @@ test('AC1.1 (#5311) multi: one Warning names only the failed view, and the file 
   s.gh = s.gh.map((e) => (JSON.stringify(e.argv) === JSON.stringify(QUEUE_ARGV)
     ? { ...e, stdout: JSON.stringify(JSON.parse(e.stdout).map((rec) => (rec.number === 9002
       ? { ...rec, body: `Blocked by #8000\nBlocked by #8001\nBlocked by #8002\n\n${withBody(9002)}` } : rec))) + '\n' } : e));
-  s.gh.push({ argv: ['issue', 'view', '8001', '--json', 'state', '-q', '.state'], stdout: 'CLOSED\n' });
   s.gh.push({ argv: ['issue', 'view', '8002', '--json', 'state', '-q', '.state'], stdout: 'OPEN\n' });
   const r = pull(s);
   assert.deepEqual(warningsOf(r), [DEP_VIEW_FAILED(8000)]);
   assert.equal(r.text['dispatch-verified-open-deps.txt'], '8000\n8002\n');
   assert.ok(entriesOf(r, 'blocked').some((e) => e.records.includes(9002)));
+});
+
+test('AC1.1 (#5311) multi: every failed view prints its own Warning', () => {
+  const s = S1LiveDep({ viewFails: true });
+  s.gh = s.gh.map((e) => (JSON.stringify(e.argv) === JSON.stringify(QUEUE_ARGV)
+    ? { ...e, stdout: JSON.stringify(JSON.parse(e.stdout).map((rec) => (rec.number === 9002
+      ? { ...rec, body: `Blocked by #8000\nBlocked by #8002\n\n${withBody(9002)}` } : rec))) + '\n' } : e));
+  s.gh.push({ argv: ['issue', 'view', '8002', '--json', 'state', '-q', '.state'], stdout: '', stderr: 'gh-fault: injected failure\n', status: 1 });
+  const r = pull(s);
+  assert.deepEqual(warningsOf(r), [DEP_VIEW_FAILED(8000), DEP_VIEW_FAILED(8002)]);
+  assert.equal(r.text['dispatch-verified-open-deps.txt'], '8000\n8002\n');
 });
 
 test('AC2.1 (#5311) control: with no unresolved dependency and no verified-open-deps file, no Warning and both records are grouped', () => {
@@ -3525,6 +3538,7 @@ const FILES_EXPECT = {
   // #5311: #8001 (the unresolved dependency of #9011) counts as open too, so #9011 is held as blocked.
   'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'], blob: null },
   'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'], blob: null },
+  'files-verifiedOpenDeps-missing-none': { status: 0, base: 'S2-files-miss', stderr: [], drops: [] },
   'files-inFlightRaw-missing': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightRaw-malformed': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightClaims-missing': FILES_STOPPED_NEIGHBOUR,

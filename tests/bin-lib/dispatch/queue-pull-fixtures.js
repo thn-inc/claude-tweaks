@@ -611,9 +611,8 @@ const OPEN_LANDING = (number) => ({
 });
 
 // S1({ parity: true }) with #8000 outside the open-numbers pull, so the fence checks it live with
-// `gh issue view 8000` (answered OPEN, so #9002 is held). `viewFails` makes that view fail: #9002
-// then passes the blocked pass, so it is also given its linked-PR alias and #8000 its landing node.
-// (The brief's `issue view 8100` is S2's native blocker, which S2's open-numbers pull answers and
+// `gh issue view 8000` (answered OPEN, so #9002 is held). `viewFails` is described at its branch
+// below. (The brief's `issue view 8100` is S2's native blocker, which S2's open-numbers pull answers and
 // whose body-text dependency no record declares; #8000 is the body-text dependency that reaches
 // this loop.)
 function S1LiveDep({ viewFails = false } = {}) {
@@ -752,6 +751,9 @@ FILES_FAULTS.push(
   // string is written as is.
   { id: 'files-foreignStates-missing', input: 'foreignStates', mode: 'missing', pass: 'blocked', scenario: () => Object.assign(S2(), { foreign: null }), agent: (f) => f },
   { id: 'files-foreignStates-malformed', input: 'foreignStates', mode: 'malformed', pass: 'blocked', scenario: () => Object.assign(S2(), { foreign: NOT_JSON }), agent: (f) => f },
+  // #5311: a missing verified-open-deps file with no unresolved dependency is no failure: no Warning,
+  // nothing held (the fence's `bad && unresolved.length` gate).
+  { id: 'files-verifiedOpenDeps-missing-none', input: 'verifiedOpenDeps', mode: 'missing (nothing unresolved)', pass: 'blocked', scenario: () => S2(), agent: withAgent('dispatch-verified-open-deps.txt', undefined) },
   // #5309: the files transport with gh present (the GraphQL-blocked route): resolve-blockers.js
   // answers --version, then its native query throws (exit 3). Every other gh call misses.
   { id: 'F-native-files', input: 'gh', mode: 'GraphQL-blocked (exit 3)', pass: 'blocked', scenario: () => nativeFaultOnFiles(S2()), agent: (f) => f },

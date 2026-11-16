@@ -581,7 +581,10 @@ function runBlocked(ctx) {
       .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
       .filter((i) => (i.facets.grants.build || state.typedNumbers.has(i.number)) && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
     // '--limit 200' can truncate the open-issues pull: a dependency absent from it is
-    // unresolved, not closed, and is checked live below.
+    // unresolved, not closed, and is checked live below. #5311: a number outside 1..GRAPHQL_INT_MAX
+    // is never live-checked: it belongs to the blocker-landing pass's malformed-blocker exclusion
+    // (unlanded-blockers.js malformedRecords, the exact complement of this filter, hence the shared
+    // constant); live-checking it would fail closed as a spurious `blocked` with a Warning every pull.
     const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => dep > 0 && dep <= GRAPHQL_INT_MAX && !openNumbers.has(dep)))];
     fs.writeFileSync(paths['dispatch-eligible-pre-dep.json'], JSON.stringify(eligiblePreDep));
     fs.writeFileSync(paths['dispatch-unresolved-deps.json'], JSON.stringify(unresolved));
@@ -590,6 +593,7 @@ function runBlocked(ctx) {
   if (!skip && ctx.options.transport !== 'files') {
     step(ctx, 'verified-open-deps', () => {
       fs.writeFileSync(f.verifiedOpenDeps, '');
+      const open = [];
       const unresolved = readJson(paths['dispatch-unresolved-deps.json']).join(' ').split(/\s+/).filter(Boolean);
       for (const dep of unresolved) {
         const r = ghRun(ctx, ['issue', 'view', dep, '--json', 'state', '-q', '.state'], { quiet: true });
@@ -598,7 +602,15 @@ function runBlocked(ctx) {
           deps.stderr(`Warning: gh issue view ${dep} failed — dependency #${dep} treated as open (fail closed) this run\n`);
           state.depUnreadable = true;
         }
-        if (!r.ok || trimNl(r.stdout) === 'OPEN') fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
+        if (!r.ok || trimNl(r.stdout) === 'OPEN') open.push(`${dep}\n`);
+      }
+      // #5311: one write after the loop; a failed write removes the file, so the blocked pass below
+      // fails closed on a missing file rather than reading a partial or empty one as "none open".
+      try {
+        fs.writeFileSync(f.verifiedOpenDeps, open.join(''));
+      } catch (err) {
+        try { fs.rmSync(f.verifiedOpenDeps, { force: true }); } catch { /* the step's error stands */ }
+        throw err;
       }
     });
   }
