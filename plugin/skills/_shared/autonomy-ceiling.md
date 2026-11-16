@@ -358,11 +358,10 @@ one flag-back.
 invariant in `_shared/work-record.md`'s Grant semantics — that `auto:*` labels are only ever added
 by an interactive human session — and that invariant is not theoretical: it was written after a
 real run treated a low-risk, well-scoped, `ready` record as license to run a full build-to-close
-lifecycle on its own judgment. `evals/scenarios/backlog-refine-permission-matrix-compliance.yaml`
-exists because of that incident, though what it can actually assert is narrower — its own
-description states the grant path is untestable in the sandbox (no live `gh`, network blocked), so
-it pins the `local-files` boundary rather than the grant invariant itself. The incident is the
-evidence; the eval is a partial guard on it.
+lifecycle on its own judgment. An eval scenario was written because of that incident, though what
+it could actually assert was narrower — the grant path was untestable in its sandbox (no live
+`gh`, network blocked), so it pinned the `local-files` boundary rather than the grant invariant
+itself. It was deleted with the eval harness. The incident is the evidence.
 
 So reaching the top tier is **not by itself** an amendment of that invariant. Machine-originated
 grants need a second, explicit opt-in beyond setting `autonomy: unattended`
