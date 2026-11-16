@@ -114,7 +114,7 @@ limits the kinds it may cite:
 A `risk-proofs` claim also needs at least one `flag` and at least one proof fact among its refs. Later
 records extend the schema only by adding rows to the table.
 
-### Decision facts
+## Decision facts
 
 A control-mode run's Review Console writes one entry per item it could not resolve to `{run-dir}/packet-facts/decisions.json` (a JSON array, deduplicated by `id`), and `gather` reads that file when no `--decision-items` is passed. Each entry renders one line under Decisions left for you, from its `text`. Code twin: `bin/lib/console/decision-facts.js`.
 

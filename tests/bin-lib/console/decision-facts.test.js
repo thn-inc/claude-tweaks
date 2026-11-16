@@ -12,9 +12,9 @@ const PACKET = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', '_shared', 'a
 
 function factTable(text) {
   const lines = text.split('\n');
-  const start = lines.indexOf('### Decision facts');
+  const start = lines.indexOf('## Decision facts');
   assert.notStrictEqual(start, -1, 'Decision facts heading is missing');
-  const next = lines.findIndex((line, i) => i > start && /^##+ /.test(line));
+  const next = lines.findIndex((line, i) => i > start && /^## /.test(line));
   const rows = new Map();
   for (const line of lines.slice(start + 1, next === -1 ? lines.length : next)) {
     const m = /^\| `([A-Za-z]+)` \| (.*) \|$/.exec(line);
@@ -64,7 +64,7 @@ test('go-red: a changed id shape fails the id assertion', () => {
 });
 
 test('go-red: a removed heading fails loudly', () => {
-  const m = PACKET.replace('### Decision facts', '### Decision notes');
+  const m = PACKET.replace('## Decision facts', '## Decision notes');
   assert.throws(() => assertTableMatchesCode(m), { message: /heading is missing/ });
 });
 

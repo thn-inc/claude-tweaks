@@ -1,6 +1,6 @@
 'use strict';
 // Decision facts (#4620): the packet entries a control-mode Review Console
-// writes for items it could not resolve. Prose twin: the `### Decision facts`
+// writes for items it could not resolve. Prose twin: the `## Decision facts`
 // table in skills/_shared/acceptance-packet.md, which owns the schema.
 //
 // A leaf module: resolve.js requires it, so resolve.js is required lazily
