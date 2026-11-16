@@ -1121,7 +1121,7 @@ test('a call that has nothing to do with node loads neither the runner nor the c
   // The child requires the guard, judges one payload, and prints the module paths it loaded.
   const loaded = (command) => {
     const code = "const g = require(process.argv[1]); g.judge(JSON.parse(process.argv[2]), g.realDeps()); console.log(JSON.stringify(Object.keys(require.cache)));";
-    const res = spawnSync(process.execPath, ['-e', code, GUARD, JSON.stringify(bash(command))], { encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
+    const res = spawnSync(process.execPath, ['-e', code, GUARD, JSON.stringify(bash(command))], { encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL', windowsHide: true });
     assert.equal(res.status, 0, res.stderr);
     return JSON.parse(res.stdout).map((p) => p.split(path.sep).join('/'));
   };
@@ -1145,7 +1145,7 @@ test('C: a load-time failure leaves stdout empty and the status 0', () => {
   withTempDir((dir) => {
     const copy = path.join(dir, 'direct-test-run-guard.js');
     fs.copyFileSync(GUARD, copy);
-    const res = spawnSync(process.execPath, [copy], { input: JSON.stringify(bash('node --test tests/a.test.js tests/b.test.js')), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
+    const res = spawnSync(process.execPath, [copy], { input: JSON.stringify(bash('node --test tests/a.test.js tests/b.test.js')), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL', windowsHide: true });
     assert.equal(res.status, 0);
     assert.equal(res.stdout, '');
   });
@@ -1259,7 +1259,7 @@ test('scanScript discriminates each condition', () => {
 });
 
 test('AC10.1 AC10.2 AC10.3: the guard as a real process denies, allows and tolerates garbage', () => {
-  const run = (input) => spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
+  const run = (input) => spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL', windowsHide: true });
   // Two files that exist: the replacement is checked against the real checkout before it is printed.
   const denied = run(JSON.stringify(bash('node --test tests/direct-test-run-guard.test.js tests/run-tests-isolation.test.js')));
   assert.equal(denied.status, 0);
@@ -1281,7 +1281,7 @@ test('the guard as a real process denies a scratch script that spawns node --tes
   withTempDir((dir) => {
     const file = path.join(dir, 'mutant-run.js');
     fs.writeFileSync(file, OFFENDING_JS);
-    const res = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(bash(`node ${shellQuote(file)}`)), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
+    const res = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(bash(`node ${shellQuote(file)}`)), encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL', windowsHide: true });
     assert.equal(res.status, 0);
     assert.equal(JSON.parse(res.stdout).hookSpecificOutput.permissionDecisionReason, scriptReasonFor(file, { ref: 'process.execPath' }));
   });
@@ -1472,7 +1472,8 @@ function assertVerdicts(sh, rows, expected, options) {
 test('#5794 AC6.1: the sh word list is the guard\'s PROGRAM_WORDS', () => {
   const lines = readText(PREFILTER).split('\n');
   const at = lines.findIndex((l) => l.trimStart().startsWith('# program-words:'));
-  assert.ok(at >= 0, 'no program-words comment line');
+  assert.ok(at >= 0, 'the "# program-words:" marker is missing from tools/direct-test-run-guard.sh');
+  assert.match(lines[at + 1] || '', /\) return 0 ;;$/, 'the word list must stay on the single line after the "# program-words:" marker, ending in ") return 0 ;;"');
   const list = lines[at + 1].replace(/^\s+/, '').replace(/\) return 0 ;;$/, '').split('|');
   const sameWords = (words) => assert.deepEqual([...words].sort(), [...PROGRAM_WORDS].sort());
   sameWords(list);
@@ -1481,6 +1482,19 @@ test('#5794 AC6.1: the sh word list is the guard\'s PROGRAM_WORDS', () => {
   assert.ok(Object.isFrozen(PROGRAM_WORDS));
   assert.throws(() => sameWords(list.filter((w) => w !== 'find')));
   assert.throws(() => sameWords([...list, 'coproc']));
+});
+
+test('#5794 AC6.1: every program word the guard compares inline is in PROGRAM_WORDS', () => {
+  const source = readText(GUARD).split('\n').map((l) => l.replace(/^\s*\/\/.*$/, '')).join('\n');
+  const re = /(?:seg\.name\([^)]*\)|leadName|program|t\[prog\.at\])\s*===\s*'([^']*)'/g;
+  const found = new Set();
+  for (const m of source.matchAll(re)) found.add(m[1]);
+  // `cd` only records the directory later fragments resolve against; a later fragment still needs
+  // a program word to be denied, so the prefilter may skip a call whose only command is `cd`.
+  const STATE_ONLY = new Set(['cd']);
+  const missing = [...found].filter((w) => !PROGRAM_WORDS.includes(w) && !STATE_ONLY.has(w));
+  assert.deepEqual(missing, [], `program words compared inline in tools/direct-test-run-guard.js but missing from PROGRAM_WORDS: ${missing.join(', ')}`);
+  for (const w of ['npx', 'find', 'source', '.', 'eval']) assert.ok(found.has(w), `the inline-comparison matcher did not find "${w}"`);
 });
 
 const ALLOWED_BY_PREFILTER = [

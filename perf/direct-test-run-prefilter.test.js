@@ -109,10 +109,12 @@ function measure(shell) {
 
 const fmt = (best) => Object.entries(best).map(([k, v]) => `${k} ${(v / CALLS).toFixed(3)}ms/call`).join(', ');
 
+const WIN32_DASH_SKIP = 'win32: dash cannot exec a Windows-form path (C:\\...\\node.exe), measured in windows-regression run 43647466952; Claude Code runs Windows hooks under Git Bash sh, covered by [sh]';
+
 const SHELLS = [['sh', findOnPath('sh')], ['dash', findOnPath('dash')]];
 
 for (const [name, shell] of SHELLS) {
-  const skip = shell ? false : `${name} not on PATH`;
+  const skip = name === 'dash' && process.platform === 'win32' ? WIN32_DASH_SKIP : (shell ? false : `${name} not on PATH`);
   let cached;
   const best = () => { cached = cached || measure(shell); return cached; };
 
