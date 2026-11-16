@@ -412,13 +412,13 @@ The guess rides in the existing "Added: '{title}' (Type: {t})" presentation (see
 
 ### Judging Definition
 
-When `--needs-definition` or `--no-needs-definition` is supplied, skip this entirely and use it
-as `$NEEDS_DEFINITION` — no judgment, and the presentation line below renders with no rationale
-clause (the human already decided). Otherwise, read `_shared/needs-definition-judgment.md` and judge
-the idea's content by it in this same turn: `needed` sets `$NEEDS_DEFINITION` to `true`, `clear`
-to `false`. When `true`, form
-a one-line rationale naming the open choice — this becomes `$DEFINITION_RATIONALE`, surfaced in
-the presentation line below and, later, bootstrapped/labeled per Backend Selection above.
+When `--needs-definition` or `--no-needs-definition` is supplied, skip this entirely and use it as
+`$NEEDS_DEFINITION` — no judgment, and the presentation line below renders with no rationale clause
+(the human already decided). Otherwise, read `_shared/needs-definition-judgment.md` and judge the
+idea's content by it in this same turn: `needed` sets `$NEEDS_DEFINITION` to `true`, `clear` to
+`false`. When `true`, form a one-line rationale naming the open choice — this becomes
+`$DEFINITION_RATIONALE`, surfaced in the presentation line below and, later, bootstrapped/labeled
+per Backend Selection above.
 
 The judgment rides in the same "Added: '{title}' (Type: {t}, Definition: {needed|clear})"
 presentation the Type guess uses (see Immediate Routing below) — no new question is added.
