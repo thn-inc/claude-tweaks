@@ -224,7 +224,7 @@ Every edit below is a replacement of the quoted clause only; the rest of each (l
 Run: `node -e "const {execFileSync}=require('child_process');let out='';try{out=execFileSync('git',['grep','-n','-F','-e','only written under','-e','preserved on rewrite','-e','keeps it on rewrite','-e','keeps it untouched on rewrite','-e','merge-base equals','--','plugin/skills/flow','docs/hooks.md','docs/journeys/respond-to-multispec-boundary-drift.md'],{encoding:'utf8'})}catch(e){out=e.stdout||''}process.stdout.write(out);process.exit(out.trim()?1:0)"`
 Expected: FAIL (exit 1 — it prints the five stale sentences)
 
-- [ ] **Step 2: Make the six replacements**
+- [ ] **Step 2: Make the seven replacements**
 
 `docs/hooks.md:59` — replace `so nothing writes it; it is parsed and preserved on rewrite for older manifests.` with `so nothing writes it; an older manifest that still carries one parses, and the line is dropped on the next rewrite.`
 
