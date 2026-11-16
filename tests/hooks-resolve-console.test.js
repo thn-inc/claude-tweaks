@@ -70,6 +70,55 @@ test('resolve-console --filing-failed on a non-finding item is refused by the CL
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
 });
 
+// #4679: --digested refusals name --digested, never --filing-failed.
+function runRefusal(slug, items, flags) {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `ct-resolve-console-${slug}-`)));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', `2026-11-16T000000-${slug}`);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ commentIds: ['IC_primary'], prNumber: 42, items }));
+  const binDir = path.join(repo, 'stub-bin');
+  fs.mkdirSync(binDir);
+  const rows = items.map((i) => `<!-- console-item: ${i.id} -->\n- [ ] item ${i.id}`).join('\n');
+  const comment = { id: 'IC_primary', body: `<!-- console-item: resolve -->\n- [ ] **Resolve console**\n${rows}` };
+  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
+  let result;
+  try {
+    const stdout = execFileSync('node', [HOOKS, 'resolve-console', '--run', runDir, ...flags], {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+    });
+    result = { code: 0, stdout };
+  } catch (e) {
+    result = { code: e.status, stdout: e.stdout || '' };
+  }
+  result.executedAt = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt;
+  return result;
+}
+
+test('resolve-console --digested on a non-finding item is refused naming --digested (#4679)', { skip: process.platform === 'win32' }, () => {
+  const result = runRefusal('dg1', [{ id: '1', kind: 'batch', summary: 'fix A' }], ['--digested', '1']);
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /--digested id\(s\) 1 are not finding rows \(no findingItem\), console not resolved/);
+  assert.doesNotMatch(result.stdout, /--filing-failed/);
+  assert.equal(result.executedAt, undefined, 'a refused call writes nothing');
+});
+
+test('resolve-console naming a ruling in both --digested and --filing-failed is refused naming --digested (#4679)', { skip: process.platform === 'win32' }, () => {
+  const result = runRefusal('dg2', [{ id: 'r1', kind: 'batch', summary: 'ruling', isRulingRow: true }], ['--digested', 'r1', '--filing-failed', 'r1']);
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /--digested id\(s\) r1 are not finding rows/);
+  assert.doesNotMatch(result.stdout, /--filing-failed/);
+  assert.equal(result.executedAt, undefined, 'a refused call writes nothing');
+});
+
+test('resolve-console naming a finding row in both --digested and --filing-failed is refused as a conflict (#4679)', { skip: process.platform === 'win32' }, () => {
+  const result = runRefusal('dg3', [{ id: 'f1', kind: 'staged', summary: 'finding', findingItem: 'tiebreak:3f2a9c1b7d04' }], ['--digested', 'f1', '--filing-failed', 'f1']);
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /id\(s\) f1 named in both --digested and --filing-failed, console not resolved/);
+  assert.equal(result.executedAt, undefined, 'a refused call writes nothing');
+});
+
 // #3942: a ruling id named in both --reverse-failed and --filing-failed; the CLI renders the refusal.
 test('resolve-console naming one ruling in both --reverse-failed and --filing-failed is refused by the CLI with the conflicting-failure-ids message', { skip: process.platform === 'win32' }, () => {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-cf-')));

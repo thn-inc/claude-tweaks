@@ -579,18 +579,18 @@ async function resolveConsoleExecution(runDir, {
   // ruling whose ratify filed a deferral record that failed to land.
   const findingIds = new Set(items.filter(isFindingRow).map((item) => item.id));
   const notFindingIds = [...new Set(filingFailed)].filter((id) => !findingIds.has(id) && !rulingIds.has(id));
-  if (notFindingIds.length) return { status: 'error', reason: 'not-finding-items', ids: notFindingIds };
+  if (notFindingIds.length) return { status: 'error', reason: 'not-finding-items', ids: notFindingIds, flag: '--filing-failed' };
   // --digested (#4679) names only a finding row.
   const notDigestibleIds = [...new Set(digested)].filter((id) => !findingIds.has(id));
-  if (notDigestibleIds.length) return { status: 'error', reason: 'not-finding-items', ids: notDigestibleIds };
+  if (notDigestibleIds.length) return { status: 'error', reason: 'not-finding-items', ids: notDigestibleIds, flag: '--digested' };
   // A ruling cannot have both failed to reverse and failed to ratify: the caller
   // contradicts itself, so nothing is written. Likewise a finding row cannot be
   // both digested and failed to file.
-  const conflictingIds = [...new Set([
-    ...reverseFailed.filter((id) => filingFailed.includes(id)),
-    ...digested.filter((id) => filingFailed.includes(id)),
-  ])];
-  if (conflictingIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: conflictingIds };
+  // `flag` names the flag paired with --filing-failed in the contradiction.
+  const conflictingIds = [...new Set(reverseFailed)].filter((id) => filingFailed.includes(id));
+  if (conflictingIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: conflictingIds, flag: '--reverse-failed' };
+  const digestedConflictIds = [...new Set(digested)].filter((id) => filingFailed.includes(id));
+  if (digestedConflictIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: digestedConflictIds, flag: '--digested' };
   const approveSet = new Set(approve);
   const declineSet = new Set(decline);
   const reverseFailedSet = new Set(reverseFailed);
@@ -661,7 +661,8 @@ async function resolveConsoleExecution(runDir, {
   // that item and Resolve unticked). A reversed ruling counts as cleared: a
   // reversal is a decided outcome, not an unanswered item. A reverse-failed
   // ruling does not: no reversal record exists. A dropped finding counts as
-  // cleared and a filing-failed one does not, the same way.
+  // cleared and a filing-failed one does not, the same way; a digested finding (#4679)
+  // is cleared too.
   const allCleared = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed' || o.outcome === 'reversed' || o.outcome === 'dropped' || o.outcome === 'digested');
 
   // 1. Reply comment first — the source of truth a foreign detection pass
@@ -774,7 +775,7 @@ function buildExecutedReplyBody(outcomes) {
 }
 
 // Ticks the Resolve checkbox row (isResolveTicked's own row shape, in
-// reverse) only when every item cleared (executed, reversed or dropped) — a partial
+// reverse) only when every item cleared (executed, reversed, dropped or digested) — a partial
 // resolution, with a declined, reverse-failed or filing-failed item, must never silently tick
 // Resolve, since that would tell a later detection pass "a human confirmed
 // everything," which isn't true.

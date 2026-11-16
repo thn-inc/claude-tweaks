@@ -1626,12 +1626,12 @@ async function runResolveConsole(argv, deps) {
     return 1;
   }
   if (result.reason === 'not-finding-items') {
-    const flag = digested.some((id) => result.ids.includes(id)) && !filingFailed.some((id) => result.ids.includes(id)) ? '--digested' : '--filing-failed';
+    const flag = result.flag || '--filing-failed';
     deps.stdout(`claude-tweaks: ${flag} id(s) ${result.ids.join(', ')} are ${flag === '--digested' ? 'not finding rows (no findingItem)' : 'neither finding rows nor sdd-ruling rows (no findingItem, no isRulingRow flag)'}, console not resolved\n`);
     return 1;
   }
   if (result.reason === 'conflicting-failure-ids') {
-    deps.stdout(`claude-tweaks: id(s) ${result.ids.join(', ')} named in both ${digested.some((id) => result.ids.includes(id)) ? '--digested' : '--reverse-failed'} and --filing-failed, console not resolved\n`);
+    deps.stdout(`claude-tweaks: id(s) ${result.ids.join(', ')} named in both ${result.flag || '--reverse-failed'} and --filing-failed, console not resolved\n`);
     return 1;
   }
   deps.stdout(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);
