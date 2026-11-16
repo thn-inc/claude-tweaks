@@ -31,7 +31,7 @@ const { conventionalHistory } = require('./lib/release-local/commits.js');
 const { bumpPart } = require('./lib/release-local/bump.js');
 const manifest = require('./lib/release-local/manifest.js');
 const { renderSection, prependSection, parseGitHubRemote } = require('./lib/release-local/changelog.js');
-const { prepareTrim } = require('./lib/changelog-release-trim.js');
+const { prepareTrim, firstLine } = require('./lib/changelog-release-trim.js');
 const { precheck } = require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
@@ -166,7 +166,7 @@ function trimAfterRelease(deps, { policyRaw, branch, hasOrigin }) {
     } catch {
       restored = false;
     }
-    const reason = String((err && err.message) || err).split(/\r?\n/)[0];
+    const reason = firstLine((err && err.message) || err);
     deps.stderr(`changelog trim: failed (${reason}); ${restored ? 'file left untrimmed' : 'the restore also failed, CHANGELOG.md and the index may still hold the trimmed file'}\n`);
   }
 }

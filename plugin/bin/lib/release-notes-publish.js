@@ -28,7 +28,7 @@ const { renderReleaseNotes, extractReleaseNotes } = require('./release-notes');
 const { readChangelogMaxReleases } = require('./policy');
 const { resolvePolicyKeys } = require('./policy-schema');
 const { parseChangelogFooter, parseChangelogVersions } = require('./changelog');
-const { prepareTrim } = require('./changelog-release-trim');
+const { prepareTrim, firstLine } = require('./changelog-release-trim');
 
 const HIGHLIGHTS_HEADING = '### Highlights';
 const FIELD = '\x1f';
@@ -108,8 +108,6 @@ function applyToChangelogEntry(changelog, block) {
   const newEntry = `${trimmedEntry}\n\n${HIGHLIGHTS_HEADING}\n${block}\n\n`;
   return `${changelog.slice(0, firstAt)}${newEntry}${changelog.slice(entryEnd)}`;
 }
-
-const firstLine = (message) => String(message).split(/\r?\n/)[0];
 
 // The branch the trimmed commit must be reachable from: `integration-branch`, else the
 // target of origin/HEAD, else the checked-out branch, else `main`. Called only when a trim

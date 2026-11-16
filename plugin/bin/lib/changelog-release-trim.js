@@ -64,4 +64,4 @@ function prepareTrim({ text, readPolicy, git, ancestorRefs, stderr, trim = trimC
   }
 }
 
-module.exports = { prepareTrim };
+module.exports = { prepareTrim, firstLine };
