@@ -33,8 +33,9 @@ function sh(cwd, ...args) {
 // isolated, non-git sandbox instead.
 const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-teardown-sandbox-'));
 
-// #5377: runs hooks.js in-process through runHookCli; hookEnv carries what the old spawn spread over
-// process.env (`PIPELINE_RUN_DIR: ''` and #1337's CT_HOOKS_TEST_MODE, both overridable through `env`).
+// #5377: runs hooks.js in-process through runHookCli; hookEnv carries `PIPELINE_RUN_DIR: ''` (what the
+// old spawn spread over process.env) and adds #1337's CT_HOOKS_TEST_MODE, which the old spawn never
+// set; both are overridable through `env`.
 async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
   const { code, stdout } = await runHookCli(args, { input, cwd, env: hookEnv(env) });
   return { code, stdout };

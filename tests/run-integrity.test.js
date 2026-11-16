@@ -689,6 +689,7 @@ test('#5377 checkRunIntegrity opts.env: the remote-tracking integration ref is p
   const r = withBrokenGitDir(() => checkRunIntegrity(runDir, { env }));
   assert.strictEqual(r.state, 'shipped-unclosed');
   assert.strictEqual(r.evidence.merged, 'ancestor');
+  assert.strictEqual(withBrokenGitDir(() => checkRunIntegrity(runDir)).state, 'in-progress', 'control: without env the broken GIT_DIR is seen');
 });
 
 test('#5377 checkRunIntegrity opts.env: a squash merge is proven through git cherry in the passed env', () => {

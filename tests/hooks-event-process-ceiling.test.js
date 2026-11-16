@@ -8,9 +8,11 @@
 // - It counts call sites, not calls. A local wrapper that holds one `spawnCli(HOOKS` and is called
 //   from many tests counts once, so the ceiling bounds the places a real process is started, not
 //   how many real processes a run starts. (tools/count-node-procs.js measures the latter.)
-// - It counts only a first argument that is the bare `HOOKS` or `hooks` identifier. A script path
-//   held under another name, a member access (`paths.hooks`) or a computed path is not matched, by
-//   the raw-spawn pattern or by the spawnCli count.
+// - The spawnCli count takes only a first argument that is the bare `HOOKS` or `hooks` identifier. A
+//   script path held under another name, a member access (`paths.hooks`) or a computed path is not
+//   counted. The raw-spawn pattern is wider: `\b(HOOKS|hooks)\b` matches anywhere in the argv array,
+//   so `execFileSync('node', [paths.hooks, 'x'])` and `spawnSync(process.execPath, [script, '--dir',
+//   'hooks'])` are both flagged, and the raw-spawn scan can over-match.
 // - A mis-parse by the comment stripper, or a file that does not compile as CommonJS, is reported as
 //   an offender (a `stripperVerdict` other than `ok`) rather than scanned over blanked text.
 const { test } = require('node:test');

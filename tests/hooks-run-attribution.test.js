@@ -590,7 +590,8 @@ test('#2783 e2e: a commit from the main checkout is not E1-denied because some s
   const wt = linkedWorktreeOf(main);
   mkRun(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', sessionId: 'sess-e1', worktree: wt });
   const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: main, session_id: 'sess-e1' });
-  const { stdout: out } = await runHookCli(['pre-tool-use'], { input, cwd: main, env: hookEnv() });
+  const { code, stdout: out } = await runHookCli(['pre-tool-use'], { input, cwd: main, env: hookEnv() });
+  assert.strictEqual(code, 0);
   assert.doesNotMatch(out, /"permissionDecision":"deny"/, out);
   assert.doesNotMatch(out, /adhoc-standalone/, out);
 });

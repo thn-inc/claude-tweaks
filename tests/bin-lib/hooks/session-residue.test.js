@@ -473,8 +473,8 @@ test('#5377 collectStaleRuns env: the shipped-unclosed verdict is reached throug
   assert.doesNotMatch(control[0].line, /appears shipped/, 'control: without env the broken GIT_DIR is seen');
 });
 
-// checkPassReentry's liveness probes start git children of their own (not threaded here), so the landed
-// check's options are read through an injected spy, with the caller's own session id skipping liveness.
+// checkPassReentry's liveness probes take the passed env too, but this test reads only the landed
+// check's options, through an injected spy, with the caller's own session id skipping liveness.
 test('#5377 checkPassReentry env: checkBranchLanded gets the passed env, and exactly { cache } when none is passed', () => {
   const { runDir } = reentryFixture();
   const stateFile = path.join(runDir, 'run-state.json');
