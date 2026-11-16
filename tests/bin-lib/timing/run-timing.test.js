@@ -378,3 +378,57 @@ test('deriveTiming clipToRunWindow: a dispatch inside the run window but before 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// #5556: timing.questions from the kept rows.
+function questionsFixture(lines) {
+  const base = lifetimeFixture();
+  fs.writeFileSync(base.transcript, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return base;
+}
+const qAsk = (id, ts, questions) => ({ timestamp: ts, message: { role: 'assistant', id: 'm-' + id, model: 'claude-test', content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions: questions.map((question) => ({ question })) } }], usage: {} } });
+const qRes = (id, ts) => ({ timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } });
+
+test('#5556: deriveTiming sets timing.questions with ask and answer times, ordered by ask time', async () => {
+  const { root, dir, transcript } = questionsFixture([
+    qAsk('toolu_b', '2020-01-06T10:06:00.000Z', ['Second?']),
+    qAsk('toolu_q1', '2020-01-06T10:05:00.000Z', ['Pick?']),
+    qRes('toolu_q1', '2020-01-06T10:08:30.000Z'),
+  ]);
+  try {
+    const r = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir });
+    assert.deepEqual(r.timing.questions, [
+      { id: 'toolu_q1', askTs: '2020-01-06T10:05:00.000Z', answerTs: '2020-01-06T10:08:30.000Z', questions: ['Pick?'] },
+      { id: 'toolu_b', askTs: '2020-01-06T10:06:00.000Z', answerTs: null, questions: ['Second?'] },
+    ]);
+    const keys = Object.keys(r.timing);
+    assert.ok(keys.indexOf('questions') > keys.indexOf('dispatches'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#5556: timing.questions is [] with no ask, absent without tokens, and clipped like the usage rows', async () => {
+  const none = lifetimeFixture();
+  try {
+    const r = await deriveTiming(none.dir, { transcriptPaths: [none.transcript], cwd: none.dir });
+    assert.deepEqual(r.timing.questions, []);
+    const bare = await deriveTiming(none.dir, { wantTokens: false });
+    assert.equal('questions' in bare.timing, false);
+  } finally {
+    fs.rmSync(none.root, { recursive: true, force: true });
+  }
+  const { root, dir, transcript } = questionsFixture([
+    qAsk('toolu_old', '2020-01-06T09:50:00.000Z', ['Before?']),
+    qRes('toolu_old', '2020-01-06T09:51:00.000Z'),
+    qRes('toolu_clipped', '2020-01-06T10:01:00.000Z'),
+    qAsk('toolu_in', '2020-01-06T10:02:00.000Z', ['In?']),
+    qAsk('toolu_in', '2020-01-06T10:03:00.000Z', ['Dup?']),
+    qRes('toolu_in', '2020-01-06T12:00:00.000Z'),
+  ]);
+  try {
+    const r = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, clipToRunWindow: true });
+    assert.deepEqual(r.timing.questions, [{ id: 'toolu_in', askTs: '2020-01-06T10:02:00.000Z', answerTs: null, questions: ['In?'] }]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

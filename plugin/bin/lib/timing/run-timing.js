@@ -262,7 +262,31 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   timing.transcripts = transcripts;
   if (outNotes.length) timing.notes = outNotes;
   timing.dispatches = stripInternalFields(dispatches);
+  timing.questions = deriveQuestions(rows);
   return { ok: true, timing, out, tokens, guard, notes: outNotes, deadlineHit: false };
+}
+
+// kept usage rows -> [{ id, askTs, answerTs, questions }], one per AskUserQuestion
+// tool_use id, ordered by ask time (ties by id). answerTs is null when no kept row
+// answers it; an answer with no kept ask is ignored; a repeated ask id keeps the
+// first (#5556).
+function deriveQuestions(rows) {
+  const byId = new Map();
+  for (const r of rows) {
+    for (const a of r.asks || []) if (!byId.has(a.id)) byId.set(a.id, { id: a.id, askTs: a.ts, answerTs: null, questions: a.questions });
+  }
+  for (const r of rows) {
+    for (const a of r.answers || []) {
+      const q = byId.get(a.id);
+      if (q && q.answerTs === null) q.answerTs = a.ts;
+    }
+  }
+  const askMs = (q) => { const v = Date.parse(q.askTs); return Number.isFinite(v) ? v : Infinity; };
+  const byIdOrder = (a, b) => {
+    if (a.id === b.id) return 0;
+    return a.id < b.id ? -1 : 1;
+  };
+  return [...byId.values()].sort((a, b) => (askMs(a) - askMs(b)) || byIdOrder(a, b));
 }
 
 // "Has token totals": totals.tokens is present and input + output + cacheRead +

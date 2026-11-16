@@ -583,7 +583,9 @@ function logAskUserQuestion(ctx) {
         : [],
     }));
     const response = extractToolResponseText(ctx.input.tool_response);
-    ctxLib.appendEvent(ownedRun.dir, 'ask-user-question', { questions, response }, ownedRun.attribution);
+    // tool_use_id is a hook-envelope field the transcript cannot confirm: null when absent (#5556).
+    const toolUseId = typeof ctx.input.tool_use_id === 'string' ? ctx.input.tool_use_id : null;
+    ctxLib.appendEvent(ownedRun.dir, 'ask-user-question', { questions, response, toolUseId }, ownedRun.attribution);
   } catch {
     /* best-effort — never break the session over a log-tier event */
   }
