@@ -189,7 +189,7 @@ const SECTION_E_CLAUSE = `**Skip it too when the invocation names \`${SKIP}\` (#
 // The exclusion both sections state: a continuation, and an escalated express run's first call
 // (_shared/express-lane.md's Escalation keeps the express claim), already hold a claim.
 const SEC2_EXCLUSION = 'not its continuation, and not an escalated express run\'s first call, both of which hold a claim';
-const SEC5_EXCLUSION = 'not its continuation, not an escalated express run\'s first call, whose claim the express lane took, not a second call';
+const SEC5_EXCLUSION = 'not its continuation, not an escalated express run\'s first call, whose claim the express lane or the driver took, not a second call';
 
 function assertSkipPhrase(gate, sectionE, flags) {
   const sec2 = region(gate, '## 2.', '## 5.');

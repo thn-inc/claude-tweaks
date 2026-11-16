@@ -2,9 +2,9 @@
 // lets `/claude-tweaks:test` and `/claude-tweaks:review` decide, via `bin/design-detect.js`
 // (the wrapper's own deterministic Layers 1-3 twin), whether `/claude-tweaks:design-wrapper`
 // would no-op — before ever invoking Skill(claude-tweaks:design-wrapper) and paying for its
-// SKILL.md load. Two things pinned: (1) the shared contract lives once in
-// `_shared/design-wrapper-handling.md` and both callers cite it rather than restating the
-// bash invocation; (2) a live run of the actual CLI against this repo's own CLAUDE.md (which
+// SKILL.md load. Two things pinned: (1) the shared contract lives once (since #5605 in
+// `_shared/skill-load-gate.md`, which `_shared/design-wrapper-handling.md` points to) and both
+// callers cite it rather than restating the bash invocation; (2) a live run of the actual CLI against this repo's own CLAUDE.md (which
 // carries no `design-integration:` field) reproduces the exact synthetic backend-only scenario
 // the record's Acceptance Criteria names, proving the pre-check would really skip the
 // Skill() call rather than merely asserting prose intent.
@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { sectionOf } = require('./helpers/conformance-asserts');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS = path.join(ROOT, 'plugin', 'skills');
@@ -25,26 +26,29 @@ const DESIGN_GATE = read('test', 'design-gate.md');
 const REVIEW_STEPS = read('review', 'code-mode-steps.md');
 const DESIGN_DETECT_CLI = path.join(ROOT, 'plugin', 'bin', 'design-detect.js');
 
-test('design-wrapper-handling.md defines the Caller-side pre-check section, citing the real CLI path', () => {
-  assert.match(HANDLING, /^## Caller-side pre-check/m);
-  assert.match(HANDLING, /bin\/design-detect\.js.*--mode <mode>/);
-  assert.match(HANDLING, /"decision":\s*"skip"/);
-  assert.match(HANDLING, /"decision":\s*"proceed"/);
+test('design-wrapper-handling.md keeps the Caller-side pre-check section as a pointer to _shared/skill-load-gate.md', () => {
+  const section = sectionOf(HANDLING, '## Caller-side pre-check (skip the `Skill()` load when the wrapper would no-op)');
+  assert.ok(section.includes('_shared/skill-load-gate.md'));
+  assert.ok(section.includes('- `--surface` — the record'), 'the --surface bullet stays in this section');
+  assert.doesNotMatch(section, /"decision":\s*"skip"/, 'the result handling lives in skill-load-gate.md now');
 });
 
-test("test/design-gate.md's Invocation cites the shared pre-check instead of restating it, with --mode test", () => {
-  assert.match(DESIGN_GATE, /Caller-side pre-check/);
-  assert.match(DESIGN_GATE, /--mode test/);
+test("test/design-gate.md's Invocation cites _shared/skill-load-gate.md instead of restating it, with --mode test", () => {
+  const invocation = sectionOf(DESIGN_GATE, '## Invocation');
+  assert.ok(invocation.includes('_shared/skill-load-gate.md'));
+  assert.match(invocation, /--skill design-wrapper --mode test/);
   assert.doesNotMatch(
     DESIGN_GATE,
-    /node\s+"\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/design-detect\.js"/,
-    'the bash invocation itself lives once in design-wrapper-handling.md — design-gate.md should cite it, not restate the command',
+    /node\s+"\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/(design-detect|skill-gate)\.js"/,
+    'the bash invocation itself lives once in skill-load-gate.md — design-gate.md should cite it, not restate the command',
   );
 });
 
-test("review/code-mode-steps.md's Step 6.5 Invocation cites the shared pre-check, with --mode review", () => {
-  assert.match(REVIEW_STEPS, /Caller-side pre-check/);
-  assert.match(REVIEW_STEPS, /--mode review/);
+test("review/code-mode-steps.md's Step 6.5 cites _shared/skill-load-gate.md, with --mode review", () => {
+  const step = sectionOf(REVIEW_STEPS, '## Step 6.5: Design Quality Pass (Impeccable)');
+  assert.ok(step.includes('_shared/skill-load-gate.md'));
+  assert.match(step, /--skill design-wrapper --mode review/);
+  assert.doesNotMatch(step, /node\s+"\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/(design-detect|skill-gate)\.js"/);
 });
 
 test('live: the CLI skips on this project\'s own synthetic backend-only scenario (AC1)', () => {
