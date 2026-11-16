@@ -11,7 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
-const { PAIR_FORMS, LEGACY_FORMS, ALL_FORMS, JUDGE_NONE, classifyPairLine, isReviewMarkedLine } = require('../../../plugin/bin/lib/timing/pair-lines');
+const { PAIR_FORMS, LEGACY_FORMS, ALL_FORMS, JUDGE_NONE, classifyPairLine, isReviewMarkedLine, entryLine, isJudgeNone } = require('../../../plugin/bin/lib/timing/pair-lines');
 
 const SKILL_DIR = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'review');
 const SKILL = path.join(SKILL_DIR, 'step3-lens-dispatch.md');
@@ -67,7 +67,7 @@ test('AC3.2: a reproduced line with trailing junk returns null (whole-input anch
   assert.equal(classifyPairLine(L('AUTO', `Reproduction: lens "3a" finding plugin/x.js:12 reproduced. Confirmed. ${R} extra`)), null);
 });
 
-test('AC3.2: counters match Decision 3', () => {
+test('AC3.2: each pair form counts the both / one / relabel totals the docs table names', () => {
   const got = Object.fromEntries(PAIR_FORMS.map((f) => [f.id, [f.counts.both, f.counts.one, f.counts.relabel]]));
   assert.deepEqual(got, {
     reproduced: [1, 0, 0],
@@ -87,6 +87,43 @@ test('isReviewMarkedLine and JUDGE_NONE', () => {
   assert.equal(isReviewMarkedLine('- AUTO 10:00:00 — Tiebreak tiebreak:0123456789ab: lens "3a"'), true);
   assert.equal(isReviewMarkedLine('- AUTO 10:00:00 — build: wrote the file'), false);
   assert.equal(JUDGE_NONE, 'judge: none');
+});
+
+test('entryLine: a line that starts with the dash is returned as is, a dash-less status line gains one', () => {
+  assert.equal(entryLine('- AUTO 10:00:00 — x'), '- AUTO 10:00:00 — x');
+  assert.equal(entryLine('AUTO 10:00:00 — x'), '- AUTO 10:00:00 — x');
+  assert.equal(entryLine('-AUTO 10:00:00 — x'), '- -AUTO 10:00:00 — x');
+});
+
+test('isJudgeNone: the marker counts before the first Evidence clause, never inside the quoted evidence', () => {
+  assert.equal(isJudgeNone(`- AUTO 10:00:00 — Tiebreak tiebreak:0123456789ab: lens "3b" finding a.js:3 dropped: ${JUDGE_NONE}. Severity: low.`), true);
+  assert.equal(isJudgeNone(`- AUTO 10:00:00 — x ${JUDGE_NONE} y Evidence: a.js:3 "${JUDGE_NONE}"`), true, 'before the delimiter');
+  assert.equal(isJudgeNone(`- AUTO 10:00:00 — x dropped. Evidence: a.js:3 "${JUDGE_NONE}". Severity: low.`), false, 'only inside the quoted evidence');
+  assert.equal(isJudgeNone('- AUTO 10:00:00 — x dropped. Evidence: a.js:3 "y".'), false);
+});
+
+// A line that repeats a delimiter must be read in time linear in its length: three unanchored groups
+// in a strict pattern made a 22 KB line take seconds (a strict pattern is also tried on a line past
+// the loose-pattern cap).
+test('repeated-delimiter lines of a strict pattern classify in well under a second (absence-refuted, coincidence)', () => {
+  const lines = [
+    `Reproduction: lens "3a" absence claim ${'a:b refuted by ground-truth check (x found it at y:1). '.repeat(400)}`,
+    `Reproduction: lens "3a" absence claim a:b refuted by ground-truth check (${'x found it at y:1). '.repeat(400)}`,
+    `Reproduction: lens "3a" findings ${'a:1 / a:1 '.repeat(400)}`,
+    `Reproduction: lens "3a" findings ${'a:1 / '.repeat(400)}share a location but not substance; both staged unconfirmed.`,
+    `Reproduction: lens "3f" vacuity finding ${'a:1 re-confirmed by executed run: x → y. Confirmed. '.repeat(400)}`,
+  ];
+  for (const line of lines) {
+    const started = Date.now();
+    assert.equal(classifyPairLine(line), null);
+    const took = Date.now() - started;
+    assert.ok(took < 250, `${line.slice(0, 60)}… (${line.length} chars) took ${took} ms`);
+  }
+  // The tightened groups still read the real line.
+  assert.deepEqual(classifyPairLine('- AUTO 10:00:00 — Reproduction: lens "3d" absence claim a b/x.js:foo refuted by ground-truth check (grep -n foo "a b/x.js" found it at a b/x.js:40). Not staged. Reversibility: high.'),
+    { form: 'absence-refuted', lens: '3d', path: 'a b/x.js', line: null });
+  assert.deepEqual(classifyPairLine('- AUTO 10:00:00 — Reproduction: lens "3f" vacuity finding plugin/x.js:12 re-confirmed by executed run: node a → b → 1 failing. Confirmed. Reversibility: high.'),
+    { form: 'vacuity-reconfirmed', lens: '3f', path: 'plugin/x.js', line: 12 });
 });
 
 // --- Legacy wording (additive): every line below is a real line from an archived decisions.md. ---
@@ -283,7 +320,7 @@ test('legacy wording: the free-commentary patterns still refuse a bare truncatio
   assert.equal(classifyPairLine('- STAGED 10:00:00 — Reproduction: lens "3a" finding plugin/x.js:12 not reproduced.'), null);
 });
 
-test('legacy forms: ids are distinct from the prose-pinned forms, counts follow Decision 3', () => {
+test('legacy forms: ids are distinct from the prose-pinned forms, and an elevation or a notice adds to no finding count', () => {
   assert.deepEqual(ALL_FORMS.map((f) => f.id), [...PAIR_FORMS, ...LEGACY_FORMS].map((f) => f.id));
   assert.equal(new Set(ALL_FORMS.map((f) => f.id)).size, ALL_FORMS.length);
   assert.deepEqual(Object.fromEntries(LEGACY_FORMS.map((f) => [f.id, [f.counts.both, f.counts.one, f.counts.relabel]])), {

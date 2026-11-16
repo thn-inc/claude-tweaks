@@ -67,7 +67,9 @@ function liveYield() {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
-const OUTPUT = liveYield();
+// Derived on first use, inside the tests that need it: a throw fails those tests by name, not the whole file at load.
+let liveOutput;
+const output = () => (liveOutput === undefined ? (liveOutput = liveYield()) : liveOutput);
 
 // Concrete output -> the set of KEY_PATHS-style leaf paths: the keys under a map-valued
 // field (commits, events, decisions, byVerdict, byOutcome, byLens) become their pattern.
@@ -88,9 +90,38 @@ function paths(y) {
 }
 
 // A walked leaf path is documented when it is a KEY_PATHS entry.
-function undocumentedPaths(output, keyPaths) {
+function undocumentedPaths(out, keyPaths) {
   const known = new Set(keyPaths.map((k) => k.path));
-  return [...paths(output)].filter((p) => !known.has(p));
+  return [...paths(out)].filter((p) => !known.has(p));
+}
+
+// Concrete output -> [{ path, value }] for every leaf and every object value, named as paths() names them.
+function nodes(y) {
+  const out = [];
+  const go = (v, p, label) => {
+    if (Array.isArray(v)) { for (const x of v) go(x, `${p}[]`, label); return; }
+    out.push({ path: p, value: v });
+    if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v)) go(x, `${p}${p ? '.' : ''}${label || k}`, label ? null : (MAPS[k] || null));
+    }
+  };
+  go(y, '', null);
+  return out;
+}
+
+// Every declared path's emitted value has the declared type, and null only where it is nullable. A
+// node with no KEY_PATHS entry (a map or a container object) has nothing declared to check here: an
+// undeclared leaf is undocumentedPaths' finding.
+function typeProblems(out, keyPaths) {
+  const declared = new Map(keyPaths.map((k) => [k.path, k]));
+  const problems = [];
+  for (const { path: p, value } of nodes(out)) {
+    const k = declared.get(p);
+    if (!k) continue;
+    if (value === null) { if (!k.nullable) problems.push(`${p}: null but not nullable`); continue; }
+    if (typeof value !== k.type) problems.push(`${p}: ${typeof value} but declared ${k.type}`);
+  }
+  return problems;
 }
 
 // The golden is always diffed: a SCHEMA_VERSION bump does not switch the comparison off, it
@@ -121,9 +152,14 @@ test('AC8.1: the doc names every status, every pair form and the compatibility r
 });
 
 test('AC8.2: a key the function emits that the doc does not name fails', () => {
-  assert.deepEqual(undocumentedPaths(OUTPUT, KEY_PATHS), []);
+  assert.deepEqual(undocumentedPaths(output(), KEY_PATHS), []);
+  // Every emitted value has its declared type, and null appears only where the path is nullable.
+  assert.deepEqual(typeProblems(output(), KEY_PATHS), []);
+  const emitted = nodes(output());
+  assert.ok(emitted.some((n) => n.path === 'steps[].findings' && n.value === null), 'the live run reaches a null nullable path');
+  assert.ok(emitted.some((n) => n.path === 'steps[].findings' && n.value !== null && typeof n.value === 'object'), 'and an object-typed one');
   // The walk really maps concrete keys to patterns.
-  const walked = paths(OUTPUT);
+  const walked = paths(output());
   assert.ok(walked.has('steps[].decisions.<status>'));
   assert.ok(walked.has('steps[].commits.<action>'));
   assert.ok(walked.has('steps[].findings.byLens.<lens>.tiebreak.byOutcome.<outcome>'));
@@ -134,16 +170,28 @@ test('AC8.2: a key the function emits that the doc does not name fails', () => {
     assert.ok(walked.has(p), `the live fixture run does not reach ${p}`);
   }
   // Every status key the output carries is a DECISION_STATUSES entry, and all of them are present.
-  const statusKeys = Object.keys(OUTPUT.steps[0].decisions).sort();
+  const statusKeys = Object.keys(output().steps[0].decisions).sort();
   assert.deepEqual(statusKeys, [...DECISION_STATUSES].sort());
 });
 
 test('AC8.2 go-red: an output with one extra key is reported', () => {
-  const extra = JSON.parse(JSON.stringify(OUTPUT));
+  const extra = JSON.parse(JSON.stringify(output()));
   extra.steps[0].newCounter = 3;
   assert.deepEqual(undocumentedPaths(extra, KEY_PATHS), ['steps[].newCounter']);
-  const extraTop = { ...JSON.parse(JSON.stringify(OUTPUT)), surprise: { nested: 1 } };
+  const extraTop = { ...JSON.parse(JSON.stringify(output())), surprise: { nested: 1 } };
   assert.deepEqual(undocumentedPaths(extraTop, KEY_PATHS), ['surprise.nested']);
+});
+
+test('AC8.2 go-red: a value of the wrong type, or a null on a non-nullable path, is reported', () => {
+  const bad = JSON.parse(JSON.stringify(output()));
+  bad.steps[0].minutes = '10';
+  bad.steps[0].phase = null;
+  bad.steps[0].decisions.AUTO = null;
+  assert.deepEqual(typeProblems(bad, KEY_PATHS), [
+    'steps[].phase: null but not nullable',
+    'steps[].minutes: string but declared number',
+    'steps[].decisions.<status>: null but not nullable',
+  ]);
 });
 
 test('AC8.3: golden key paths and nullability', () => {

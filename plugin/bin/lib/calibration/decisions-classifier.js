@@ -7,7 +7,13 @@ const TERMINAL_DECISION_VALUES = ['approve-all', 'approve-all-merge', 'leave-pr-
 
 const { DECISION_STATUSES } = require('../log-decision/append.js');
 
-// The leading dash is optional: archived logs carry status-led lines without it.
+// The calibration reader's entry shape (a dashed status line), unchanged since before the
+// step yield existed: classifyDecisionLine keeps it, so calibration counts over archived
+// runs never move.
+const KIND_RE_STRICT = /^-\s+(AUTO|STAGED|KEPT-PROMPT|REFUSED|SCANNED|SKIP|FAILED)\b/;
+// The lenient reading, opt-in (classifyDecisionLineLenient, isStructuralLine; the step
+// yield only): the leading dash is optional, because archived logs carry status-led lines
+// without it.
 const STATUS_ALT = DECISION_STATUSES.join('|');
 // Whitespace must follow the status: `AUTO-merge was declined` is prose, not an entry.
 const KIND_RE = new RegExp(`^(?:-\\s+)?(${STATUS_ALT})(?=\\s)`);
@@ -20,8 +26,8 @@ const TERMINAL_RE = new RegExp(
 );
 const REVERSIBILITY_RE = /Reversibility:\s*(high|med|low|n\/a)/;
 
-function classifyDecisionLine(line) {
-  const kindMatch = KIND_RE.exec(line);
+function classifyWith(kindRe, line) {
+  const kindMatch = kindRe.exec(line);
   if (!kindMatch) return { kind: 'other' };
   const result = { kind: kindMatch[1] };
   const terminalMatch = TERMINAL_RE.exec(line);
@@ -31,6 +37,13 @@ function classifyDecisionLine(line) {
   if (/auto-resolved/.test(line)) result.autoResolved = true;
   return result;
 }
+
+// The calibration reader's classification: a dashed status line only.
+function classifyDecisionLine(line) { return classifyWith(KIND_RE_STRICT, line); }
+
+// Opt-in lenient reading for the step yield: the dash after the status is optional and
+// `AUTO-merge` prose is not an entry. Calibration never calls it.
+function classifyDecisionLineLenient(line) { return classifyWith(KIND_RE, line); }
 
 // The time token after the status: { h, m, s } for HH:MM[:SS], { iso } for an ISO
 // timestamp, null when the line carries no readable time.
@@ -52,4 +65,4 @@ function isStructuralLine(line) {
   return CONFIG_KEY_RE.test(line);
 }
 
-module.exports = { classifyDecisionLine, entryClock, isStructuralLine, DECISION_STATUSES, TERMINAL_DECISION_VALUES };
+module.exports = { classifyDecisionLine, classifyDecisionLineLenient, entryClock, isStructuralLine, DECISION_STATUSES, TERMINAL_DECISION_VALUES };

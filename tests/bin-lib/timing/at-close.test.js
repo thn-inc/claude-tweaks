@@ -1080,7 +1080,9 @@ test('rename-after-archive: run-state.json moved to the twin while the yield der
   }
 });
 
-test('lockHeld: a timing lock held by a live writer → no yield, silently (no SKIP), the file untouched', async () => {
+const LOCK_MISS = /condition: step-yield\.json lock not acquired within \d+ ms → fallback: no step-yield\.json written/;
+
+test('lockHeld: a timing lock held by a live writer → no yield, one SKIP naming the lock miss, the file untouched', async () => {
   const root = tmpRoot();
   const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
   try {
@@ -1093,11 +1095,79 @@ test('lockHeld: a timing lock held by a live writer → no yield, silently (no S
     } finally {
       releaseLock(held);
     }
-    assert.deepStrictEqual(r, { status: 'skipped', skip: null });
+    assert.equal(r.status, 'skipped');
+    assert.equal(r.fold, true);
+    assert.equal(Object.hasOwn(r, 'bound'), false, 'inside the bound');
+    assert.match(r.skip, LOCK_MISS);
     assert.equal(fs.existsSync(path.join(runDir, YIELD)), false);
-    assert.deepStrictEqual(skipLines(runDir), [], 'a lock not acquired is not a SKIP');
+    assert.equal(skipLines(runDir).length, 1);
+    assert.match(skipLines(runDir)[0], LOCK_MISS);
     // Released, the same call writes.
     assert.equal(atClose.writeStepYieldSafe(runDir).status, 'written');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lock miss inside the bound, through a close: exactly one SKIP line, on the synchronous archive path too, and a timing SKIP absorbs it', async () => {
+  const root = tmpRoot();
+  const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
+  try {
+    // A kept timing.json (token totals) takes no lock, so only the yield misses it.
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    fs.writeFileSync(path.join(runDir, 'timing.json'), JSON.stringify({ phases: [], totals: { tokens: { input: 5, output: 0, cacheRead: 0, cacheCreate: 0 } } }));
+    const held = acquireLock(path.join(runDir, '.timing.lock'), { waitMs: 0, env: {} });
+    assert.ok(held);
+    try {
+      const r = await withStub(atClose, 'PHASE_LOCK_WAIT_MS', 50, () => writePhaseTimingSync(runDir));
+      assert.equal(r.status, 'kept');
+    } finally {
+      releaseLock(held);
+    }
+    assert.equal(fs.existsSync(path.join(runDir, YIELD)), false);
+    assert.equal(skipLines(runDir).length, 1, JSON.stringify(skipLines(runDir)));
+    assert.match(skipLines(runDir)[0], LOCK_MISS);
+
+    // The timing write misses the same held lock: its SKIP and the yield's are one line.
+    const both = closedRun(root, 'run-both', path.join(root, 'wt'));
+    const heldBoth = acquireLock(path.join(both, '.timing.lock'), { waitMs: 0, env: {} });
+    assert.ok(heldBoth);
+    try {
+      const r = await withStub(atClose, 'PHASE_LOCK_WAIT_MS', 50, () => writePhaseTimingSync(both));
+      assert.equal(r.status, 'failed');
+    } finally {
+      releaseLock(heldBoth);
+    }
+    assert.equal(skipLines(both).length, 1, JSON.stringify(skipLines(both)));
+    assert.match(skipLines(both)[0], /timing\.json lock not acquired within \d+ ms → fallback: no timing\.json written; condition: step-yield\.json lock not acquired within \d+ ms → fallback: no step-yield\.json written/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a yield that throws while the timing write also logged a SKIP: exactly one timing-family SKIP line carries both', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    // No transcript under cfg: the timing write is phase rows only, with its own SKIP.
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    await withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom yield'); }, () => writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } }));
+    const skips = skipLines(runDir);
+    assert.equal(skips.length, 1, JSON.stringify(skips));
+    assert.match(skips[0], /→ fallback: timing\.json phase rows written without token totals; condition: step yield could not be written \(boom yield\) → fallback: no step-yield\.json written/);
+    assert.equal(fs.existsSync(path.join(runDir, YIELD)), false);
+    assert.equal(fs.existsSync(path.join(runDir, 'timing.json')), true, 'the timing write is unaffected');
+    // Called on its own (logBound true) the yield logs its one line itself.
+    const alone = closedRun(root, 'run-alone', path.join(root, 'wt'));
+    const r = await withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom alone'); }, () => atClose.writeStepYieldSafe(alone));
+    assert.equal(r.fold, true);
+    assert.equal(skipLines(alone).length, 1);
+    // logBound false returns it for the caller to fold and logs nothing.
+    const folded = closedRun(root, 'run-folded', path.join(root, 'wt'));
+    const f = await withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom folded'); }, () => atClose.writeStepYieldSafe(folded, { logBound: false }));
+    assert.equal(f.fold, true);
+    assert.match(f.skip, /step yield could not be written \(boom folded\)/);
+    assert.deepStrictEqual(skipLines(folded), []);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

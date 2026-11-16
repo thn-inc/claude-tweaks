@@ -6,7 +6,7 @@
 // step-yield.json whose numbers differ from what deriving its directory would give. The archive on the
 // maintainer's machine is not an automated test; the AC7 comparison is a measurement.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -40,7 +40,7 @@ const verdictLine = (lens, file, line, reply, sec) => `- ${resolveTiebreak(
 
 // A derived run: review lasts 1200..2400s; two pair lines (one both, one one), one confirmed and one
 // refuted tiebreak, and one review-marked line no reader recognises.
-function buildDerivedRun(dir) {
+function buildDerivedRun(dir, extraLines = []) {
   fs.mkdirSync(dir, { recursive: true });
   for (const [sec, type, data] of [
     [0, 'skill_invoked', { skill: 'claude-tweaks:build' }],
@@ -56,6 +56,7 @@ function buildDerivedRun(dir) {
     entry(1240, 'STAGED', 'Reproduction', 'lens "3b" finding plugin/b.js:30 not reproduced. Staged to Review Console as low-confidence.'),
     verdictLine('3b', 'plugin/b.js', 30, 'Verdict: refuted\nEvidence: plugin/b.js:30 `quoteTextHere`\nSeverity: low\nSTATUS: DONE', 1250),
     `- AUTO ${hms(at(1280))} — Reproduction: lens "3a" mystery shape.`,
+    ...extraLines,
     '',
   ].join('\n'));
 }
@@ -89,9 +90,14 @@ function treeSnapshot(root) {
   return out.sort();
 }
 
-function setup() {
+// Every temp root this file makes, removed once the file's tests are done.
+const CREATED = [];
+after(() => { for (const dir of CREATED) fs.rmSync(dir, { recursive: true, force: true }); });
+
+function setup(extraLines = []) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-step-yield-report-'));
-  buildDerivedRun(path.join(root, '2026-11-12T090000-record-1'));
+  CREATED.push(root);
+  buildDerivedRun(path.join(root, '2026-11-12T090000-record-1'), extraLines);
   precomputed(path.join(root, 'archive', '2026-11-10T090000-record-2'));
   return root;
 }
@@ -119,6 +125,28 @@ test('totals add a derived run and a precomputed yield, the precomputed file win
   assert.deepEqual(Object.keys(s.byLens).sort(), ['3a', '3b', '3f']);
   assert.equal(s.byLens['3f'].raised, 10);
   assert.equal(s.byLens['3b'].byVerdict.confirmed, 1);
+});
+
+test('a lens named like an Object.prototype member keeps its counts and does not abort the report', () => {
+  const root = setup([
+    entry(1290, 'AUTO', 'Reproduction', 'lens "constructor" finding plugin/a.js:11 reproduced. Confirmed.'),
+    entry(1295, 'STAGED', 'Reproduction', 'lens "__proto__" finding plugin/b.js:21 not reproduced. Staged to Review Console as low-confidence.'),
+    entry(1296, 'STAGED', 'Reproduction', 'lens "toString" finding plugin/b.js:22 not reproduced. Staged to Review Console as low-confidence.'),
+  ]);
+  const json = runCli([root, '--json']);
+  assert.equal(json.code, 0);
+  assert.equal(json.errs, '');
+  const s = JSON.parse(json.out);
+  assert.equal(s.runsFailed, 0);
+  const own = (k) => Object.getOwnPropertyDescriptor(s.byLens, k).value;
+  assert.deepEqual(Object.keys(s.byLens).sort(), ['3a', '3b', '3f', '__proto__', 'constructor', 'toString']);
+  assert.deepEqual({ raised: own('constructor').raised, both: own('constructor').both }, { raised: 1, both: 1 });
+  assert.deepEqual({ raised: own('__proto__').raised, one: own('__proto__').one }, { raised: 1, one: 1 });
+  assert.deepEqual({ raised: own('toString').raised, one: own('toString').one }, { raised: 1, one: 1 });
+  assert.equal(s.findings.raised, 13 + 3, 'no count lost');
+  const text = runCli([root]);
+  assert.equal(text.code, 0);
+  assert.match(text.out, /^constructor\s+1\s+1\s+0/m);
 });
 
 test('the unparsed share counts the review step only, then adds the unattributed bucket', () => {
@@ -191,9 +219,17 @@ test('no root exits 2; a root that does not exist scans nothing', () => {
   const none = runCli([]);
   assert.equal(none.code, 2);
   assert.match(none.errs, /usage/);
-  const missing = JSON.parse(runCli([path.join(os.tmpdir(), 'ct-no-such-root-xyz'), '--json']).out);
+  // A root that cannot be read is named on stderr and exits 2, never read as an empty archive.
+  const noRoot = path.join(os.tmpdir(), 'ct-no-such-root-xyz');
+  const bad = runCli([noRoot, '--json']);
+  assert.equal(bad.code, 2);
+  assert.match(bad.errs, /cannot read .*ct-no-such-root-xyz/);
+  const missing = JSON.parse(bad.out);
   assert.equal(missing.runDirsScanned, 0);
   assert.equal(missing.reviewLines.unparsedShare, null);
+  assert.equal(missing.rootsUnreadable.length, 1);
+  // A readable root beside it still reports, and a root without archive/ is not an error.
+  assert.equal(runCli([setup()]).code, 0);
 });
 
 test('listRunDirs reads a root and its archive, skipping a directory named archive', () => {

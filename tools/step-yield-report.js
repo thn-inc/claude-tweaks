@@ -26,7 +26,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { deriveStepYield, STEP_YIELD_FILE, SCHEMA_VERSION } = require('../plugin/bin/lib/timing/step-yield');
+const { deriveStepYield, STEP_YIELD_FILE, SCHEMA_VERSION, ownGet, ownSet } = require('../plugin/bin/lib/timing/step-yield');
 
 const VERDICTS = ['confirmed', 'refuted', 'cant-tell', 'unsettled'];
 const OUTCOMES = ['confirmed', 'drop', 'digest', 'console', 'none'];
@@ -34,12 +34,17 @@ const OUTCOMES = ['confirmed', 'drop', 'digest', 'console', 'none'];
 function errText(e) { return (e && e.message) || String(e); }
 
 // roots -> run directory paths (a root's own children and its archive/'s children).
-function listRunDirs(roots, fsImpl) {
+// A root that cannot be read is pushed onto `unreadable` as { root, error } (when given), never
+// skipped silently: a mistyped path must not read as an empty archive. A missing archive/ is normal.
+function listRunDirs(roots, fsImpl, unreadable = []) {
   const dirs = [];
   for (const root of roots) {
     for (const base of [root, path.join(root, 'archive')]) {
       let ents;
-      try { ents = fsImpl.readdirSync(base, { withFileTypes: true }); } catch { continue; }
+      try { ents = fsImpl.readdirSync(base, { withFileTypes: true }); } catch (e) {
+        if (base === root) unreadable.push({ root, error: errText(e) });
+        continue;
+      }
       for (const e of ents) if (e.isDirectory() && e.name !== 'archive') dirs.push(path.join(base, e.name));
     }
   }
@@ -81,7 +86,8 @@ function addFindings(into, f) {
 const decisionLines = (b) => Object.values(b.decisions || {}).reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
 
 function collect(roots, deps) {
-  const dirs = listRunDirs(roots, deps.fs);
+  const rootsUnreadable = [];
+  const dirs = listRunDirs(roots, deps.fs, rootsUnreadable);
   const totals = emptyCounters();
   const inReview = emptyCounters();
   const byLens = {};
@@ -107,13 +113,17 @@ function collect(roots, deps) {
       any = true;
       addFindings(totals, f);
       if (phase === 'review') addFindings(inReview, f);
-      for (const [lens, lf] of Object.entries(f.byLens || {})) addFindings(byLens[lens] || (byLens[lens] = emptyCounters()), lf);
+      // A lens is text from a log line: read and stored as an own key (`constructor`, `__proto__`).
+      for (const [lens, lf] of Object.entries(f.byLens || {})) {
+        if (!Object.hasOwn(byLens, lens)) ownSet(byLens, lens, emptyCounters());
+        addFindings(ownGet(byLens, lens), lf);
+      }
     }
     if (any) runsWithFindings++;
   }
   const share = (n, d) => (d ? n / d : null);
   return {
-    roots, runDirsScanned: dirs.length, runsWithReviewFindings: runsWithFindings, runsReadFromFile: fromFile, runsFileUnreadable: fileUnreadable, runsFileStale: fileStale, runsFailed: failed,
+    roots, rootsUnreadable, runDirsScanned: dirs.length, runsWithReviewFindings: runsWithFindings, runsReadFromFile: fromFile, runsFileUnreadable: fileUnreadable, runsFileStale: fileStale, runsFailed: failed,
     findings: totals, findingsInReviewStep: inReview, byLens,
     reviewLines: {
       total: lines.review, unparsed: lines.reviewUnparsed, unparsedShare: share(lines.reviewUnparsed, lines.review),
@@ -157,7 +167,8 @@ function run(argv, deps = {}) {
   }
   const summary = collect(roots, d);
   d.log(json ? JSON.stringify(summary, null, 2) : render(summary));
-  return 0;
+  for (const u of summary.rootsUnreadable) d.err(`step-yield-report: cannot read ${u.root}: ${u.error}`);
+  return summary.rootsUnreadable.length ? 2 : 0;
 }
 
 module.exports = { run, collect, listRunDirs };

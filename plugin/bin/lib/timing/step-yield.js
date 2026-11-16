@@ -22,9 +22,10 @@ const { derivePhases, phaseAt } = require('./derive');
 const { runWindow, hasTokenTotals } = require('./run-timing');
 const { readManifest } = require('../flow/manifest');
 const { parseEntry, DECISION_STATUSES } = require('../log-decision/append');
-const { classifyDecisionLine, entryClock, isStructuralLine } = require('../calibration/decisions-classifier');
+// The lenient reading of a status line is this module's opt-in; calibration keeps classifyDecisionLine.
+const { classifyDecisionLineLenient, entryClock, isStructuralLine } = require('../calibration/decisions-classifier');
 const { parseTiebreakLine } = require('../console/resolve');
-const { ALL_FORMS, JUDGE_NONE, classifyPairLine, isReviewMarkedLine } = require('./pair-lines');
+const { ALL_FORMS, classifyPairLine, isReviewMarkedLine, entryLine, isJudgeNone } = require('./pair-lines');
 const { writeFileAtomic } = require('../atomic-write');
 
 const STEP_YIELD_FILE = 'step-yield.json';
@@ -92,18 +93,23 @@ function newBucket() {
     events: {}, questions: [], findings: null, unparsed: newUnparsed(),
   };
 }
-function bump(map, k) { map[k] = (map[k] || 0) + 1; }
-function sortedKeys(obj) { return Object.fromEntries(Object.keys(obj).sort().map((k) => [k, obj[k]])); }
+// A map keyed by text read from a log line or an event (a lens, an event type, a commit action)
+// stores and reads every key as an OWN property of an ordinary object: `__proto__` would otherwise
+// set the prototype and `constructor` / `toString` would read an inherited value.
+function ownGet(obj, k, fallback) { return Object.hasOwn(obj, k) ? obj[k] : fallback; }
+function ownSet(obj, k, value) { Object.defineProperty(obj, k, { value, enumerable: true, writable: true, configurable: true }); }
+function bump(map, k) { ownSet(map, k, ownGet(map, k, 0) + 1); }
+function sortedKeys(obj) { return Object.fromEntries(Object.keys(obj).sort().map((k) => [k, ownGet(obj, k)])); }
 
 // bucket, lens, fn(findingsLikeObject): applies fn to the step-level counters and the lens's.
 function eachFindingScope(bucket, lens, fn) {
   if (!bucket.findings) bucket.findings = newFindings();
   const f = bucket.findings;
   if (!Object.hasOwn(f.byLens, lens)) {
-    f.byLens[lens] = { raised: 0, both: 0, one: 0, relabeled: 0, tiebreak: newTiebreak() };
+    ownSet(f.byLens, lens, { raised: 0, both: 0, one: 0, relabeled: 0, tiebreak: newTiebreak() });
   }
   fn(f);
-  fn(f.byLens[lens]);
+  fn(ownGet(f.byLens, lens));
 }
 
 function countPair(bucket, pair) {
@@ -123,7 +129,7 @@ function countTiebreak(bucket, lens, verdict, outcome) {
   });
 }
 
-// parseTiebreakLine's result -> { verdict, outcome } (Decision 4 of the step-yield plan).
+// parseTiebreakLine's result -> { verdict, outcome } (docs/reference/step-yield.md, "Tiebreak lines").
 function tiebreakMeaning(t) {
   if (t.kind === 'confirmed') return { verdict: 'confirmed', outcome: 'confirmed' };
   if (t.kind === 'dropped') return { verdict: 'refuted', outcome: 'drop' };
@@ -132,16 +138,14 @@ function tiebreakMeaning(t) {
 
 // One decisions.md entry line -> the counters it feeds, in the brief's classification order.
 function classifyLine(rawLine, bucket) {
-  const status = classifyDecisionLine(rawLine);
+  const status = classifyDecisionLineLenient(rawLine);
   if (status.kind === 'other') { addUnparsed(bucket.unparsed, rawLine); return; }
   bucket.decisions[status.kind] += 1;
   if (!isReviewMarkedLine(rawLine)) return;
-  const line = rawLine.startsWith('- ') ? rawLine : `- ${rawLine}`;
+  const line = entryLine(rawLine);
   const tiebreak = parseTiebreakLine(line);
   const pair = classifyPairLine(line);
-  // `judge: none` is the line's own marker, never text inside a quoted `Evidence:`.
-  const evidenceAt = rawLine.indexOf(' Evidence: ');
-  if ((evidenceAt === -1 ? rawLine : rawLine.slice(0, evidenceAt)).includes(JUDGE_NONE)) {
+  if (isJudgeNone(rawLine)) {
     const lens = (tiebreak && tiebreak.lens) || (pair && pair.lens) || UNKNOWN_LENS;
     countTiebreak(bucket, lens, tiebreak ? tiebreakMeaning(tiebreak).verdict : 'unsettled', 'none');
     return;
@@ -425,4 +429,4 @@ function writeStepYield(runDir, yieldObj) {
   return file;
 }
 
-module.exports = { STEP_YIELD_FILE, SCHEMA_VERSION, KEY_PATHS, deriveStepYield, writeStepYield };
+module.exports = { STEP_YIELD_FILE, SCHEMA_VERSION, KEY_PATHS, deriveStepYield, writeStepYield, ownGet, ownSet };

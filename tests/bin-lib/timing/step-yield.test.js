@@ -7,7 +7,7 @@
 // lines carry the writer's LOCAL clock, so the run is generated at setup from one
 // fixed UTC base (BASE) — in any timezone the lines and events describe the same
 // instants — and the expected file holds instants relative to BASE ("T+600s").
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -23,8 +23,14 @@ const BASE = Date.UTC(2026, 10, 12, 9, 0, 0);
 const at = (sec) => new Date(BASE + sec * 1000);
 const NOW = at(3000);
 
+// Every temp run dir this file makes, removed once the file's tests are done.
+const CREATED = [];
+after(() => { for (const dir of CREATED) fs.rmSync(dir, { recursive: true, force: true }); });
+
 function tmpRun(label = 'run') {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `ct-step-yield-${label}-`));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `ct-step-yield-${label}-`));
+  CREATED.push(dir);
+  return dir;
 }
 
 // Runs fn with `new Date()` frozen at `when`, so appendEvent (which stamps `new Date()`) writes it.
@@ -516,6 +522,51 @@ test('single-read-coverage and relabel lines count in no finding total; a relabe
   const f = step(derive(buildRun({ lines })), 'review').findings;
   assert.deepEqual({ raised: f.raised, both: f.both, one: f.one, relabeled: f.relabeled }, { raised: 2, both: 0, one: 2, relabeled: 1 });
   assert.deepEqual(f.byLens['3f'], { raised: 0, both: 0, one: 0, relabeled: 1, tiebreak: f.byLens['3f'].tiebreak });
+});
+
+test('a lens or an event key that names an Object.prototype member is stored as its own key: nothing is lost', () => {
+  const lines = [
+    entry(1210, 'AUTO', 'Reproduction', 'lens "__proto__" finding plugin/a.js:10 reproduced. Confirmed.'),
+    entry(1220, 'AUTO', 'Reproduction', 'lens "constructor" finding plugin/a.js:11 reproduced. Confirmed.'),
+    entry(1225, 'STAGED', 'Reproduction', 'lens "toString" finding plugin/b.js:20 not reproduced. Staged to Review Console as low-confidence.'),
+    verdict(F('constructor', 'plugin/c.js', 40), `Verdict: refuted\n${EVIDENCE('plugin/c.js', 40)}\nSeverity: low\nSTATUS: DONE`, 1230),
+  ];
+  const dir = buildRun({ lines });
+  const ts = at(1300).toISOString();
+  fs.appendFileSync(path.join(dir, 'events.jsonl'), [
+    { type: 'constructor', ts }, { type: '__proto__', ts }, { type: 'commit', action: '__proto__', ts }, { type: 'commit', action: 'toString', ts },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const review = step(derive(dir), 'review');
+  const own = (obj, k) => Object.getOwnPropertyDescriptor(obj, k) && Object.getOwnPropertyDescriptor(obj, k).value;
+  const f = review.findings;
+  assert.equal(Object.getPrototypeOf(f.byLens), Object.prototype, 'an ordinary object, its prototype untouched');
+  assert.deepEqual(Object.keys(f.byLens), ['__proto__', 'constructor', 'toString']);
+  assert.deepEqual({ raised: f.raised, both: f.both, one: f.one }, { raised: 3, both: 2, one: 1 });
+  assert.deepEqual({ raised: own(f.byLens, '__proto__').raised, both: own(f.byLens, '__proto__').both }, { raised: 1, both: 1 });
+  const ctor = own(f.byLens, 'constructor');
+  assert.deepEqual({ raised: ctor.raised, both: ctor.both, refuted: ctor.tiebreak.byVerdict.refuted, drop: ctor.tiebreak.byOutcome.drop }, { raised: 1, both: 1, refuted: 1, drop: 1 });
+  assert.deepEqual({ raised: own(f.byLens, 'toString').raised, one: own(f.byLens, 'toString').one }, { raised: 1, one: 1 });
+  assert.equal(review.unparsed.count, 0);
+  assert.equal(Object.getPrototypeOf(review.events), Object.prototype);
+  assert.equal(own(review.events, 'constructor'), 1);
+  assert.equal(own(review.events, '__proto__'), 1);
+  assert.equal(own(review.commits, '__proto__'), 1);
+  assert.equal(own(review.commits, 'toString'), 1);
+});
+
+test('unparsed caps: the count keeps counting past 5 samples, which are the first five, and a sample is cut to 200 characters', () => {
+  const unrecognised = (i) => `- AUTO ${hms(at(1210 + i))} — Reproduction: lens "3a" unrecognised shape ${i}.`;
+  const seven = Array.from({ length: 7 }, (_, i) => unrecognised(i));
+  const { unparsed } = step(derive(buildRun({ lines: seven })), 'review');
+  assert.equal(unparsed.count, 7);
+  assert.deepEqual(unparsed.samples, seven.slice(0, 5));
+  const long = `- AUTO ${hms(at(1210))} — Reproduction: lens "3a" ${'x'.repeat(500)}`;
+  assert.ok(long.length > 500);
+  const cut = step(derive(buildRun({ lines: [long] })), 'review').unparsed;
+  assert.equal(cut.count, 1);
+  assert.equal(cut.samples.length, 1);
+  assert.equal(cut.samples[0].length, 200);
+  assert.equal(cut.samples[0], long.slice(0, 200));
 });
 
 test('a call-N row is a step; a nested phase wins over its call', () => {

@@ -23,10 +23,10 @@
 // moves the pair-line write into `categorise-reproduction`; this reader and its
 // test then follow that writer.
 //
-// Counters per form (Decision 3 of the step-yield plan, mirrored in
-// docs/reference/step-yield.md): `both` = findings both reviewers reported,
-// `one` = findings one reviewer reported, `relabel` = a finding already counted
-// that changed label (adds to no finding count).
+// Counters per form (the "Pair lines" section of docs/reference/step-yield.md):
+// `both` = findings both reviewers reported, `one` = findings one reviewer
+// reported, `relabel` = a finding already counted that changed label (adds to
+// no finding count).
 'use strict';
 
 const { DECISION_STATUSES } = require('../log-decision/append');
@@ -129,13 +129,16 @@ const PAIR_FORMS = Object.freeze([
       `Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} not reproduced\\. Staged to Review Console as low-confidence\\.$`]),
   form('absence-refuted', { both: 0, one: 1, relabel: 0 },
     'Reproduction: lens "{lens}" absence claim {path}:{symbol} refuted by ground-truth check ({command} found it at {path}:{line}). Not staged. Reversibility: high.',
-    [`Reproduction: ${LENS} absence claim (.+):([^\\s:]+) refuted by ground-truth check \\(.+ found it at .+:\\d+\\)\\. Not staged\\.`], { lens: 1, path: 2, line: null }),
+    // Each group stops at its own delimiter (path before ` refuted by ground-truth check`, command before
+    // ` found it at `), so a line that repeats a delimiter is read in time linear in its length.
+    [`Reproduction: ${LENS} absence claim ((?:(?! refuted by ground-truth check)[^\\n])+):([^\\s:]+) refuted by ground-truth check \\((?:(?! found it at )[^\\n])+ found it at [^\\n]+:\\d+\\)\\. Not staged\\.`], { lens: 1, path: 2, line: null }),
   form('vacuity-downgraded', { both: 0, one: 0, relabel: 1 },
     'Reproduction: lens "3f" vacuity finding {path}:{line} downgraded to unconfirmed — reproduction agreement overridden, no execution evidence. Staged to Review Console as low-confidence. Reversibility: high.',
     ['Reproduction: lens "(3f)" vacuity finding (.+):(\\d+) downgraded to unconfirmed — reproduction agreement overridden, no execution evidence\\. Staged to Review Console as low-confidence\\.'], { lens: 1, path: 2, line: 3 }),
   form('vacuity-reconfirmed', { both: 0, one: 1, relabel: 0 },
     'Reproduction: lens "3f" vacuity finding {path}:{line} re-confirmed by executed run: {command} → {observed output}. Confirmed. Reversibility: high.',
-    ['Reproduction: lens "(3f)" vacuity finding (.+):(\\d+) re-confirmed by executed run: .+ → .+\\. Confirmed\\.'], { lens: 1, path: 2, line: 3 }),
+    // Path and command stop at their own delimiters (as in absence-refuted): linear in the line's length.
+    ['Reproduction: lens "(3f)" vacuity finding ((?:(?! re-confirmed by executed run: )[^\\n])+):(\\d+) re-confirmed by executed run: (?:(?! → )[^\\n])+ → [^\\n]+\\. Confirmed\\.'], { lens: 1, path: 2, line: 3 }),
   form('single-read-coverage', { both: 0, one: 0, relabel: 0 },
     'Reproduction: lens "{lens}" {session limit twice | unavailable | timed out}; single-read coverage. Reversibility: high.',
     [`Reproduction: ${LENS} (?:session limit twice|unavailable|timed out); single-read coverage\\.`], { lens: 1, path: null, line: null }),
@@ -148,8 +151,8 @@ const PAIR_FORMS = Object.freeze([
 // share stay honest. Each is additive and pinned by a real archived line in pair-lines.test.js
 // (not to prose: nothing live produces them).
 //   direct-verification-elevated — a finding the controller confirmed by reading the source.
-//     Under Decision 3 it changes the confidence of a finding a pair line already counted, so
-//     it is a relabel: it adds to no finding count. One location, one verdict.
+//     It changes the confidence of a finding a pair line already counted, so it is a
+//     relabel: it adds to no finding count. One location, one verdict.
 //   no-findings — a lens whose both agents returned nothing; counts no finding.
 //   console-disposition — the Review Console's keep-staged restatement of an already-staged
 //     finding; counts no finding (the finding's own not-reproduced line did).
@@ -182,6 +185,19 @@ const ALL_FORMS = Object.freeze([...PAIR_FORMS, ...LEGACY_FORMS]);
 // The literal #5541 writes when no judge ran for a review-marked line.
 const JUDGE_NONE = 'judge: none';
 
+// The decisions.md entry line a reader hands to the line parsers: a dash-less status
+// line (archived logs carry them) gains the `- ` the parsers' heads expect.
+function entryLine(rawLine) {
+  return rawLine.startsWith('- ') ? rawLine : `- ${rawLine}`;
+}
+
+// `judge: none` is the line's own marker, never text inside a quoted ` Evidence: `
+// clause, so only the part before that delimiter counts.
+function isJudgeNone(rawLine) {
+  const evidenceAt = rawLine.indexOf(' Evidence: ');
+  return (evidenceAt === -1 ? rawLine : rawLine.slice(0, evidenceAt)).includes(JUDGE_NONE);
+}
+
 // A line is review-marked when it belongs to the reproduction/tiebreak family,
 // whether or not any reader recognises its wording.
 function isReviewMarkedLine(line) {
@@ -213,4 +229,4 @@ function classifyPairLine(line) {
   return null;
 }
 
-module.exports = { PAIR_FORMS, LEGACY_FORMS, ALL_FORMS, JUDGE_NONE, classifyPairLine, isReviewMarkedLine };
+module.exports = { PAIR_FORMS, LEGACY_FORMS, ALL_FORMS, JUDGE_NONE, classifyPairLine, isReviewMarkedLine, entryLine, isJudgeNone };
