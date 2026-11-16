@@ -5,7 +5,9 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 const { readText } = require('../../helpers/read-skill');
-const { CLI, tmpDir, runCli, tmpGitRepo, nodeCmd, scopedRepo, stampOf, commitFile, flakyRepo, anchoredRunDir } = require('./cli-helpers');
+const { CLI, tmpDir, runCli, tmpGitRepo, nodeCmd, scopedRepo, stampOf, passStampFiles, commitFile, flakyRepo, anchoredRunDir } = require('./cli-helpers');
+
+const STAMP = 'claude-tweaks-verify-pass.json';
 
 test('recorded exitCode is the check command own exit code (AC4)', async () => {
   const logDir = tmpDir();
@@ -229,7 +231,7 @@ test('outside a checkout, --log-dir defaults to a fresh tmpdir and --json defaul
   assert.ok(m[1].includes('claude-tweaks-verify-'), 'mkdtemp fallback dir');
 });
 
-test('a passing full-set run writes the JSON stamp and the legacy bare-SHA twin (#1921 AC1)', async () => {
+test('a passing full-set run writes the JSON stamp and no other stamp file (#1921 AC1)', async () => {
   const { repo, git, gitDir } = tmpGitRepo();
   const { code, stdout } = await runCli(['--cmd', 'tests=node -e 0'], { cwd: repo });
   assert.strictEqual(code, 0);
@@ -244,11 +246,11 @@ test('a passing full-set run writes the JSON stamp and the legacy bare-SHA twin 
   assert.deepStrictEqual(stamp.suitesRun, ['tests']);
   assert.deepStrictEqual(stamp.flakyRetried, []);
   assert.ok(fs.existsSync(stamp.reportPath), 'reportPath must exist');
-  assert.strictEqual(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify-pass'), 'utf8'), `${head}\n`);
+  assert.deepStrictEqual(passStampFiles(gitDir), [STAMP]);
   assert.ok(stdout.includes('report:'));
 });
 
-test('a failing run, a fail-fast skip, and --no-stamp write neither stamp file (#1921 AC2, #1784)', async () => {
+test('a failing run, a fail-fast skip, and --no-stamp write no stamp file (#1921 AC2, #1784)', async () => {
   for (const args of [
     ['--cmd', 'tests=node -e "process.exit(1)"'],
     ['--cmd', 'types=node -e "process.exit(1)"', '--cmd', 'tests=node -e 0'],
@@ -256,8 +258,7 @@ test('a failing run, a fail-fast skip, and --no-stamp write neither stamp file (
   ]) {
     const { repo, gitDir } = tmpGitRepo();
     await runCli(args, { cwd: repo });
-    assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), `json stamp written for ${JSON.stringify(args)}`);
-    assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), `bare stamp written for ${JSON.stringify(args)}`);
+    assert.deepStrictEqual(passStampFiles(gitDir), [], `stamp file written for ${JSON.stringify(args)}`);
   }
 });
 
@@ -272,8 +273,7 @@ test('#3063 AC1: a check that sleeps past its --cmd-timeout ends the run with ex
   assert.strictEqual(report.checks.tests.exitCode, null);
   assert.strictEqual(report.checks.tests.timedOut, true);
   assert.match(stdout, /\| tests \| fail \| .* \| timed out after [\d.]+s \|/);
-  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for a timed-out run');
-  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), 'no legacy stamp either');
+  assert.deepStrictEqual(passStampFiles(gitDir), [], 'no stamp for a timed-out run');
 });
 
 test('#3063: a check that finishes well inside its --cmd-timeout is unaffected', async () => {
@@ -348,8 +348,7 @@ test('#3757: a commit landing mid-run writes no pass stamp, --stamp-status stays
   assert.strictEqual(code, 0, 'the verdict is unchanged: every check passed');
   const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
   assert.strictEqual(report.sha, startHead, 'report.json names the HEAD the checks started on, not the one they finished on');
-  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no JSON stamp for a moved tree');
-  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), 'no legacy twin for a moved tree');
+  assert.deepStrictEqual(passStampFiles(gitDir), [], 'no stamp for a moved tree');
   assert.match(stdout, new RegExp(`tree moved during the run \\(HEAD ${startHead.slice(0, 9)} -> ${endHead.slice(0, 9)}\\); no pass stamp written`));
   const s = JSON.parse((await runCli(['--stamp-status'], { cwd: repo })).stdout);
   assert.strictEqual(s.present, false);
@@ -502,21 +501,37 @@ test('--stamp-status recomputes dirty from the live tree — a dirty edit with n
   assert.strictEqual(s.verifiedHead, false, '#1923: a dirty tree is never verified');
 });
 
-test('--stamp-status honors --git-dir and reads a legacy bare-SHA stamp as scope full but never matches (#1921)', async () => {
+test('--stamp-status honors --git-dir naming the checkout\'s own git dir: a JSON stamp there is read and matches (#1921)', async () => {
   const { repo, git, gitDir } = tmpGitRepo();
-  fs.writeFileSync(path.join(gitDir, 'claude-tweaks-verify-pass'), `${git('rev-parse', 'HEAD').trim()}\n`);
+  const head = git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(gitDir, 'claude-tweaks-verify-pass.json'), JSON.stringify({
+    sha: head, dirty: false, scope: 'full', fullSha: head, base: null, changedFiles: [], suitesRun: ['tests'],
+    flakyRetried: [], reportPath: path.join(gitDir, 'report.json'), at: new Date().toISOString(),
+  }));
   const { code, stdout } = await runCli(['--stamp-status', '--git-dir', gitDir], { cwd: repo });
   assert.strictEqual(code, 0);
   const s = JSON.parse(stdout);
   assert.strictEqual(s.present, true);
-  assert.strictEqual(s.legacy, true);
+  assert.strictEqual(s.sha, head);
   assert.strictEqual(s.scope, 'full');
-  // A legacy bare-SHA stamp carries no `dirty` field, so it can never prove
-  // the tree was clean when it was recorded -- match/verifiedHead are false
-  // even though sha/head/scope all otherwise line up (#1921 review fix).
-  assert.strictEqual(s.match, false);
-  assert.strictEqual(s.verifiedHead, false);
-  assert.strictEqual(s.reportPath, null);
+  assert.strictEqual(s.match, true, 'the checkout\'s own git dir is not a foreign --git-dir');
+  assert.strictEqual(s.verifiedHead, true);
+  assert.strictEqual(s.reportPath, path.join(gitDir, 'report.json'));
+});
+
+test('AC3.1: a git dir holding only a bare-SHA file has no stamp — --stamp-status reads present:false and a --scope run starts as full', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const head = r.git('rev-parse', 'HEAD').trim();
+  const bare = path.join(r.gitDir, 'claude-tweaks-verify-pass');
+  fs.writeFileSync(bare, `${head}\n`);
+  const status = await runCli(['--stamp-status', '--git-dir', r.gitDir], { cwd: r.repo });
+  assert.strictEqual(status.code, 0);
+  assert.match(status.stdout, /"present":false/);
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: full/m);
+  assert.strictEqual(fs.readFileSync(bare, 'utf8'), `${head}\n`, 'the leftover bare file is neither rewritten nor deleted');
+  assert.deepStrictEqual(passStampFiles(r.gitDir), ['claude-tweaks-verify-pass', 'claude-tweaks-verify-pass.json']);
 });
 
 // Review finding, refs #1921: a stamp written against a dirty tree
@@ -607,7 +622,7 @@ test('an explicit --log-dir still wins inside a checkout (#1921)', async () => {
 // explicit "dirty never gates the write" invariant, so a regression that
 // reintroduced a `git.dirty === false` term into the write gate would pass
 // the whole suite undetected.
-test('a passing full-set run on a DIRTY tree still writes both stamp files, and --stamp-status reflects dirty:true, match:false (#1921 Gotchas)', async () => {
+test('a passing full-set run on a DIRTY tree still writes the stamp, and --stamp-status reflects dirty:true, match:false (#1921 Gotchas)', async () => {
   const { repo, git, gitDir } = tmpGitRepo();
   fs.writeFileSync(path.join(repo, 'untracked.txt'), 'dirty');
   const { code } = await runCli(['--cmd', 'tests=node -e 0'], { cwd: repo });
@@ -617,7 +632,7 @@ test('a passing full-set run on a DIRTY tree still writes both stamp files, and 
   assert.strictEqual(stamp.dirty, true);
   assert.strictEqual(stamp.scope, 'full');
   assert.strictEqual(stamp.sha, head);
-  assert.ok(fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), 'legacy bare-SHA stamp must also be written on a dirty tree');
+  assert.deepStrictEqual(passStampFiles(gitDir), [STAMP]);
 
   const status = await runCli(['--stamp-status'], { cwd: repo });
   assert.strictEqual(status.code, 0);
@@ -651,16 +666,7 @@ test('--git-dir on a normal run redirects report/count paths to that git dir and
     'report.json must land under the --git-dir-routed default log dir',
   );
   assert.ok(fs.existsSync(path.join(otherGitDir, 'claude-tweaks-verify', 'report.json')));
-  assert.ok(
-    !fs.existsSync(path.join(otherGitDir, 'claude-tweaks-verify-pass.json')),
-    'an explicit --git-dir must never write the pass stamp into the redirected repo',
-  );
-  assert.ok(!fs.existsSync(path.join(otherGitDir, 'claude-tweaks-verify-pass')));
-  assert.ok(
-    !fs.existsSync(path.join(cwdGitDir, 'claude-tweaks-verify-pass.json')),
-    'nor into the invoking cwd\'s own repo — a --git-dir run never stamps at all',
-  );
-  assert.ok(!fs.existsSync(path.join(cwdGitDir, 'claude-tweaks-verify-pass')));
+  assert.deepStrictEqual([passStampFiles(otherGitDir), passStampFiles(cwdGitDir)], [[], []], 'an explicit --git-dir run never stamps: not the redirected repo, not the invoking cwd\'s own');
 });
 
 test('--scope: a none run anchored on a baseline-adjudicated full stamp carries its baseline marker forward (#3043)', async () => {
@@ -701,10 +707,9 @@ test('--scope: full → none → scoped across three commits, anchored to the fi
   assert.strictEqual(run1.code, 0, run1.stderr);
   assert.match(run1.stdout, /^Scope: full/m);
   const s1 = stampOf(r.gitDir);
-  const bareSha1 = fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify-pass'), 'utf8');
   assert.strictEqual(s1.scope, 'full');
   assert.strictEqual(s1.fullSha, r.git('rev-parse', 'HEAD').trim());
-  assert.strictEqual(bareSha1, `${s1.fullSha}\n`, 'a full run writes the legacy bare-SHA twin (#1922 review H1)');
+  assert.deepStrictEqual(passStampFiles(r.gitDir), [STAMP]);
   assert.ok(fs.existsSync(r.marker), 'run 1 must spawn unit');
   fs.unlinkSync(r.marker);
 
@@ -723,10 +728,7 @@ test('--scope: full → none → scoped across three commits, anchored to the fi
   const report2 = JSON.parse(fs.readFileSync(s2.reportPath, 'utf8'));
   assert.strictEqual(report2.scope.mode, 'none');
   assert.strictEqual(report2.pass, true);
-  assert.strictEqual(
-    fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify-pass'), 'utf8'), bareSha1,
-    'a non-full run must never rewrite the legacy bare-SHA twin (#1922 review H1)',
-  );
+  assert.deepStrictEqual(passStampFiles(r.gitDir), [STAMP], 'a none run writes no second stamp file');
 
   commitFile(r, 'src/a.js', 'module.exports = 1;');
   const run3 = await runCli(args, { cwd: r.repo });
@@ -744,10 +746,7 @@ test('--scope: full → none → scoped across three commits, anchored to the fi
     'report.json.scope.matched threads each changed file to the declaration rule index that matched it (F1)',
   );
   assert.ok(fs.existsSync(r.marker), 'run 3 must spawn unit');
-  assert.strictEqual(
-    fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify-pass'), 'utf8'), bareSha1,
-    'a scoped run must also never rewrite the legacy bare-SHA twin (#1922 review H1)',
-  );
+  assert.deepStrictEqual(passStampFiles(r.gitDir), [STAMP], 'a scoped run writes no second stamp file');
 });
 
 test('--scope: an unmatched path fails closed to a full run and is listed as unmatched (#1922)', async () => {
@@ -1119,7 +1118,7 @@ test('a --scope run at an unchanged HEAD never downgrades the prior full stamp (
 // Review finding (pre-v6.119.0 whole-branch review): --stamp-status must
 // derive `fullSha` via stamp.js's shared anchorOf(), not a narrower inline
 // `undefined`-only check — a stamp with `fullSha: null` (a value readStamp
-// treats as valid, distinct from absent) must still report the legacy `sha`
+// treats as valid, distinct from absent) must still report the stamp's own `sha`
 // as the anchor, matching changed-files.js/scope.js's own anchor resolution
 // for the identical stamp file.
 test('--stamp-status: fullSha falls back to sha when the stamp has fullSha: null, matching anchorOf', async () => {
