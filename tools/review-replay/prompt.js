@@ -21,21 +21,12 @@ function loadTemplate(tiebreakMdText) {
   const lines = splitLines(tiebreakMdText);
   const heading = lines.findIndex((l) => l.trim() === '## Dispatch');
   if (heading === -1) throw new Error('step3-tiebreak.md: no "## Dispatch" heading');
-  let open = -1;
-  for (let i = heading + 1; i < lines.length; i++) {
-    if (lines[i].startsWith('```')) { open = i; break; }
-  }
+  const open = lines.findIndex((l, i) => i > heading && l.startsWith('```'));
   if (open === -1) throw new Error('step3-tiebreak.md: no fenced template after "## Dispatch"');
-  let close = -1;
-  for (let i = open + 1; i < lines.length; i++) {
-    if (lines[i].startsWith('```')) { close = i; break; }
-  }
+  const close = lines.findIndex((l, i) => i > open && l.startsWith('```'));
   if (close === -1) throw new Error('step3-tiebreak.md: the template fence under "## Dispatch" is not closed');
   const body = lines.slice(open + 1, close);
-  let split = -1;
-  for (let i = 0; i + 1 < body.length; i++) {
-    if (body[i] === '' && body[i + 1].startsWith(REPLY_MARKER)) { split = i; break; }
-  }
+  const split = body.findIndex((l, i) => l === '' && i + 1 < body.length && body[i + 1].startsWith(REPLY_MARKER));
   if (split === -1) throw new Error('step3-tiebreak.md: no blank line before "' + REPLY_MARKER + '" in the template');
   return { block: body.slice(0, split), rest: body.slice(split + 1) };
 }

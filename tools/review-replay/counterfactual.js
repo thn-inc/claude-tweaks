@@ -23,8 +23,9 @@ function parseFindings(text) {
   let skipped = 0;
   for (const line of String(text).split(SPLIT)) {
     const c = line.split('|').map((s) => s.trim());
-    if (c.length < 2 || !SEVERITIES.test(c[1].toLowerCase().replace(/[*`]/g, ''))) continue;
+    if (c.length < 2) continue;
     const sev = c[1].toLowerCase().replace(/[*`]/g, '');
+    if (!SEVERITIES.test(sev)) continue;
     const m = c.length >= 5 ? (c[2] || '').replace(/[`*]/g, '').match(/^(.+?):(\d+)/) : null;
     if (!m) {
       skipped += 1;
