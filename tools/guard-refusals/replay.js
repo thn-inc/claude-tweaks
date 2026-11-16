@@ -101,7 +101,13 @@ function gitCOwn(text, cwd) {
     const c = escapeRe(cwd.replace(/\/+$/, '') || cwd);
     alts.push(`${c}\\/?${END}`, `'${c}\\/?'`, `"${c}\\/?"`);
   }
-  return new RegExp(`\\bgit\\s+-C\\s+(?:${alts.join('|')})`).test(text);
+  // `git` must be an unquoted word of its own: not inside quotes, not the tail of `my-git`, `./git` or `x.git`.
+  const re = new RegExp(`(?<![\\w./-])git\\s+-C\\s+(?:${alts.join('|')})`, 'g');
+  const kinds = lexShell(text);
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (kinds[m.index] === 'plain') return true;
+  }
+  return false;
 }
 
 function plainContains(text, needle) {
@@ -152,20 +158,27 @@ function replay(rows, given = {}) {
   let writeTargetsMoved = 0;
   let writeTargetsChecked = 0;
 
+  // A row without a file is its own session, never pooled with other file-less rows.
+  const sessionKey = (r) => (typeof r.file === 'string' && r.file ? r.file : r);
   const sessionVersion = new Map();
   for (const r of rows) {
     const v = pluginVersion(r.command || '');
-    if (v !== 'unknown' && !sessionVersion.has(r.file)) sessionVersion.set(r.file, v);
+    if (v !== 'unknown' && !sessionVersion.has(sessionKey(r))) sessionVersion.set(sessionKey(r), v);
   }
   const countClass = (id, r) => {
-    const v = sessionVersion.get(r.file);
+    const v = sessionVersion.get(sessionKey(r));
     byClass[id].total++;
     if (v) bump(byClass[id].byVersion, v); else byClass[id].unknownVersion++;
   };
-  const compiled = patterns
-    ? patterns.map(({ id, pattern }) => ({ id, re: new RegExp(pattern) }))
-    : null;
-  const byPattern = patterns ? Object.fromEntries(patterns.map(({ id }) => [id, { count: 0, rewritten: 0 }])) : null;
+  // An invalid pattern is reported under its id, never thrown.
+  const byPattern = patterns ? {} : null;
+  const compiled = [];
+  for (const { id, pattern } of patterns || []) {
+    try {
+      compiled.push({ id, re: new RegExp(pattern) });
+      byPattern[id] = { count: 0, rewritten: 0 };
+    } catch { byPattern[id] = { error: 'invalid pattern' }; }
+  }
 
   for (const r of rows) {
     const command = typeof r.command === 'string' ? r.command : '';
@@ -174,7 +187,7 @@ function replay(rows, given = {}) {
     // One rewrite per row; `failed` marks a throw, `rw` the applied result (null: no rule changes it).
     let rw = null;
     let failed = false;
-    if (isBash && !r.truncated) {
+    if (isBash && !r.truncated && absCwd) {
       try {
         const res = rewrite(command, r.cwd);
         rw = res && res.command !== command ? res : null;
@@ -184,7 +197,9 @@ function replay(rows, given = {}) {
     if (r.effect === 'read' && /^plugin:/.test(r.guard || '')) {
       let d;
       try {
-        const cwd = r.cwd || '/';
+        // A truncated command is cut text: the scanner cannot judge it.
+        if (r.truncated) throw new Error('truncated');
+        const cwd = absCwd ? r.cwd : '/';
         const [git, writes, mkdirs] = scanAll(scanner, command, cwd);
         const denied = git.some((t) => GATE_COVERAGE.gitActions.includes(t.action)) || writes.length > 0 || mkdirs.length > 0;
         d = denied ? 'still-denied' : 'no-longer-denied';
@@ -239,7 +254,7 @@ function replay(rows, given = {}) {
     }
     if (command.includes('node-eval-file.js') && command.includes('remote-branch-collision')) countClass('collision-fence', r);
 
-    if (compiled) {
+    if (compiled.length) {
       for (const { id, re } of compiled) {
         if (re.test(command)) {
           byPattern[id].count++;

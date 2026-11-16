@@ -66,7 +66,50 @@ test('AC4: ruleNotApplied counts a released rule after its release day, by versi
   assert.equal(unreleased.ruleNotApplied.total, 0);
 });
 
-test('Review Focus 3: a throwing scanner on a plugin row is scanner-failed, a throwing rewrite on a harness row unexplained', () => {
+test('rows without cwd or truncated are never rewritten', () => {
+  const always = { rewrite: () => ({ command: 'cat f', applied: ['quote-escaped-space'] }) };
+  const rows = [
+    row({ command: 'ls /a\\ b', cwd: undefined }),
+    row({ command: 'ls /a\\ b', cwd: 'rel/dir' }),
+    row({ command: 'ls /a\\ b', truncated: true, effect: 'unknown' }),
+    row({ guard: 'plugin:worktree', command: 'git log', truncated: true }),
+    row({ guard: 'plugin:worktree', command: 'git log', cwd: 'rel' }),
+  ];
+  const res = replay(rows, { ...always, scanner: emptyScan });
+  assert.equal(res.dispositions.harness.rewritten, 0);
+  assert.equal(res.writeTargetsChecked, 0);
+  assert.equal(res.writeTargetsMoved, 0);
+  assert.equal(res.ruleNotApplied.total, 0);
+  assert.equal(dispOf(res, rows[3]).disposition, 'scanner-failed');
+  assert.equal(dispOf(res, rows[4]).disposition, 'no-longer-denied');
+});
+
+test('ruleNotApplied splits main and subagent', () => {
+  const cmd = `ls /a\\ b/c ${CACHE}`;
+  const main = row({ command: cmd });
+  const sub = row({ command: cmd, file: '/p/s1/subagents/agent-1.jsonl' });
+  const res = replay([main, sub]);
+  assert.deepEqual(res.ruleNotApplied.byRule['quote-escaped-space'].byVersion['6.160.0'], { main: 1, subagent: 1 });
+  assert.equal(res.ruleNotApplied.total, 2);
+  assert.equal(dispOf(res, main).disposition, 'rewritten');
+  assert.equal(dispOf(res, sub).disposition, 'rewritten');
+});
+
+test('git-C-own needs an unquoted git word; file-less rows are separate sessions; a bad pattern is reported', () => {
+  const res = replay([
+    row({ command: 'echo "git -C . log"' }),
+    row({ command: 'my-git -C . log' }),
+    row({ command: './git -C . log' }),
+    row({ command: 'git -C . log', file: undefined }),
+    row({ command: `node ${CACHE}`, file: undefined }),
+  ]);
+  assert.equal(res.byClass['git-C-own'].total, 1);
+  assert.equal(res.byClass['git-C-own'].unknownVersion, 1);
+  const bad = replay([row({ command: 'cat f' })], { patterns: [{ id: 'bad', pattern: '(' }, { id: 'ok', pattern: 'cat' }] });
+  assert.deepEqual(bad.byPattern, { bad: { error: 'invalid pattern' }, ok: { count: 1, rewritten: 0 } });
+});
+
+test('a throwing scanner does not abort the replay', () => {
   const p = row({ guard: 'plugin:worktree', command: 'git log' });
   const h = row({ command: 'ls /a\\ b' });
   const res = replay([p, h], {
