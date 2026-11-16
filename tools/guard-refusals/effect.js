@@ -239,16 +239,17 @@ function tokenize(text) {
   let words = [];
   let cur = null;
   let dyn = false;
+  let unq = false; // holds an expansion outside quotes: word splitting can make it several words
   let glob = false;
   let redirWrite = null;
   let pending = null; // 'write' | 'skip': what the next word is
   let dbl = false; // inside [[ … ]]
 
-  const resetWord = () => { cur = null; dyn = false; glob = false; };
+  const resetWord = () => { cur = null; dyn = false; unq = false; glob = false; };
   const onlyKeywords = () => words.every((w) => KEYWORDS.has(w.t));
   const flushWord = () => {
     if (cur === null) return;
-    const w = { t: cur, dyn, glob };
+    const w = { t: cur, dyn, unq, glob };
     resetWord();
     if (pending) {
       if (pending === 'write' && w.t !== '/dev/null') redirWrite = redirWrite || 'redirect';
@@ -355,7 +356,7 @@ function tokenize(text) {
       }
     }
     cur = (cur === null ? '' : cur) + c;
-    if (c === '$' || c === SENT) dyn = true;
+    if (c === '$' || c === SENT) { dyn = true; unq = true; }
     if (c === '*' || c === '?' || c === '[' || c === '{') glob = true;
   }
   endCommand('');
@@ -417,7 +418,7 @@ const WRAPPERS = {
 };
 
 // Single-dash curl options that take a value (the rest of the cluster, or the next word).
-const CURL_VALUE_SHORT = 'AbcCdDeEFHKmoPQrRtTuUwxyYz';
+const CURL_VALUE_SHORT = 'AbcCdDeEFHKmoPQrtTuUwxyYz';
 
 // curl with a request method other than GET/HEAD (-X, --request, --request=,
 // -XPOST, a cluster ending in X) mutates the remote: a write, as `gh api` is.
@@ -445,12 +446,13 @@ function curlMutates(words, from) {
   return false;
 }
 
-// A computed argument that starts with an expansion could itself be the write
-// flag (`sed "$OPTS" …`, `rg $FLAGS x`): the never-read rule wins over precision.
+// A computed argument could itself be a write flag (`sed "$OPTS" …`, `rg $FLAGS x`):
+// a word that starts with an expansion, or holds an unquoted one anywhere (word
+// splitting makes new words), is computed. The never-read rule wins over precision.
 function computedArg(words, from) {
   for (let k = from; k < words.length; k++) {
     const w = words[k];
-    if (w.dyn && (w.t[0] === '$' || w.t[0] === SENT)) return true;
+    if (w.dyn && (w.unq || w.t[0] === '$' || w.t[0] === SENT)) return true;
   }
   return false;
 }
@@ -513,6 +515,33 @@ function branchOrTag(sub, words, from) {
 }
 
 function judgeGit(words, from) {
+  const verdict = judgeGitWords(words, from);
+  if (verdict.effect !== 'read') return verdict;
+  // A computed argument could be `--output=f`; words after a literal `--` are paths only.
+  const sub = gitSubIndex(words, from);
+  if (sub !== -1) {
+    const end = words.findIndex((w, k) => k > sub && w.t === '--');
+    if (computedArg(end === -1 ? words : words.slice(0, end), sub + 1)) return unknown('computed argument');
+  }
+  return verdict;
+}
+
+// Index of the git subcommand word (after the global options judgeGitWords skips), or -1.
+function gitSubIndex(words, from) {
+  for (let k = from; k < words.length; k++) {
+    const a = words[k].t;
+    if (a === '-C' || a === '-c') { k++; continue; }
+    if (GIT_BARE_FLAGS.has(a)) continue;
+    const eq = a.indexOf('=');
+    const name = eq === -1 ? a : a.slice(0, eq);
+    if (GIT_VALUE_FLAGS.has(name)) { if (eq === -1) k++; continue; }
+    if (a[0] === '-') return -1;
+    return k;
+  }
+  return -1;
+}
+
+function judgeGitWords(words, from) {
   let k = from;
   for (; k < words.length; k++) {
     const a = words[k].t;

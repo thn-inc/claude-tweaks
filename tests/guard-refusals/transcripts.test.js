@@ -309,6 +309,17 @@ test('a command longer than COMMAND_CAP is stored cut and marked truncated', () 
   assert.equal(scan.refusals.find((r) => r.toolUseId === 't_long').command.length, 20000);
 });
 
+test('a non-string cwd or timestamp on the call entry is stored as null', () => {
+  const entry = use('t_odd', 'Bash', { command: 'ls' });
+  entry.cwd = 5;
+  entry.timestamp = { at: 1 };
+  const scan = scanStore({ projectsDir: writeStore([entry, result('t_odd', HARNESS_BASH)]), ...WINDOW });
+  const row = scan.rows.find((r) => r.toolUseId === 't_odd');
+  assert.equal(row.cwd, null);
+  assert.equal(row.ts, null);
+  assert.equal(scan.refusals.find((r) => r.toolUseId === 't_odd').cwd, null);
+});
+
 test('the first guarded result per tool_use id is the row, and an earlier unguarded one does not block it', () => {
   const dir = writeStore([
     use('t_f', 'Bash', { command: 'x' }), result('t_f', 'Exit code 2\nboom'), result('t_f', WORKTREE_ALWAYS), result('t_f', HARNESS_BASH),

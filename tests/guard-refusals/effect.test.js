@@ -134,6 +134,8 @@ const TABLE = [
   ["git -c core.pager='rm x' log", 'unknown'],
   ["git -c alias.x='!rm x' x", 'unknown'],
   ['git -c color.ui=never log', 'read'],
+  // Only the write gate (git-command.js) catches this: the scan alone says unknown.
+  ['git -c core.x=y commit', 'write'],
 ];
 
 test('AC4: verdict table pins at least 60 commands', () => {
@@ -244,6 +246,28 @@ const NEVER_READ = [
   ['curl -X get https://x', 'write'],
   ['curl --request=head https://x', 'write'],
   ['curl -X GET https://x', 'read'],
+  // -R takes no value, so it must not end the cluster scan.
+  ['curl -RX POST https://x', 'write'],
+  ['curl -sRX PUT https://x', 'write'],
+  // An unquoted expansion mid-word can split into a write flag; a quoted one cannot.
+  ['sed s/a/b/$O f', 'unknown'],
+  ['curl https://x$O', 'unknown'],
+  ['sort f$O', 'unknown'],
+  ['rg x$F y', 'unknown'],
+  ['less f$L', 'unknown'],
+  ['sed s/a/b/`echo x` f', 'unknown'],
+  ['sed -n "x${a}p" f', 'read'],
+  ['sort "f$O"', 'read'],
+  // git read verdicts: a word that starts with an expansion (quoted or not) or holds an unquoted one is computed.
+  ['git diff $X', 'unknown'],
+  ['git log $X', 'unknown'],
+  ['git log "$X"', 'unknown'],
+  ['git log a$X', 'unknown'],
+  ['git log "a$X"', 'read'],
+  ['git log --oneline', 'read'],
+  ['git -C "$W" status', 'read'],
+  ['git log -- "$f"', 'read'],
+  ['git diff --output=f $X', 'write'],
 ];
 
 test('shapes that could write are never read', () => {
