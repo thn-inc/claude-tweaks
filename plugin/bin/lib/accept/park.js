@@ -109,4 +109,4 @@ async function runPark(steps = {}) {
   return { outcome: 'parked', reason: PARK_REASON, steps: results };
 }
 
-module.exports = { PARK_REASON, runPark, decideAcceptanceRoute, decideSeries, writeParkDeployStatus, parkStateOf, isParkedForLocalAcceptance };
+module.exports = { PARK_REASON, HEAD_SHA_RE, runPark, decideAcceptanceRoute, decideSeries, writeParkDeployStatus, parkStateOf, isParkedForLocalAcceptance };

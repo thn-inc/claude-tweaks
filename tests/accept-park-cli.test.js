@@ -17,6 +17,7 @@ const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'accept-park.js');
 const RUN_ID = '2026-11-16T10-00-00Z-accept-park';
 const HEAD = 'abc1234def5678';
+const ON = 'control-mode: on\n';
 
 const PACKET = renderPacket(
   { schemaVersion: 1, record: 7, partial: [], surface: null, allowedHosts: ['http://localhost:3000'], refused: [], facts: [
@@ -291,6 +292,26 @@ test('AC3.4: after a park no worktree and no claim remain', async () => {
   assert.deepEqual(w.state.claims, { 7: 'released' });
 });
 
+test('a failed close-run is a step-3 failure: archive-run never runs, steps 4-5 still do', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const spawn = (script, args) => {
+    if (args[0] === 'close-run') {
+      w.state.spawn.push([path.basename(script), ...args]);
+      return { code: 1, stdout: '', stderr: 'claude-tweaks: --run path rejected: not terminal\n' };
+    }
+    return w.deps.spawn(script, args);
+  };
+  const res = await call(w, parkArgv(w), { spawn });
+  assert.equal(res.code, 0, res.stderr);
+  const result = JSON.parse(res.stdout);
+  assert.equal(result.outcome, 'parked');
+  assert.equal(result.steps[2].ok, false);
+  assert.match(result.steps[2].detail, /close-run exited 1/);
+  assert.equal(w.state.spawn.some(([, verb]) => verb === 'archive-run'), false);
+  assert.deepEqual(result.steps.slice(3).map((s) => s.ok), [true, true]);
+  assert.equal(w.state.release.length, 1);
+});
+
 test("archive-run's exit-0 refusal is a step-3 failure", async () => {
   const w = world({ records: { 7: { comments: [packetComment(7)] } }, fail: { archive: 'console-unresolved' } });
   const res = await call(w, parkArgv(w));
@@ -459,7 +480,7 @@ test('parked exit codes', async () => {
     { records: {}, code: 6, out: 'unknown' },
   ];
   for (const { records, code, out } of cases) {
-    const w = world({ records });
+    const w = world({ policy: ON, records });
     const res = await call(w, ['parked', '--record', '7']);
     assert.equal(res.code, code, out);
     assert.equal(res.stdout, `${out}\n`);
@@ -467,14 +488,60 @@ test('parked exit codes', async () => {
 });
 
 test('parked maps an unreadable packet to unknown', async () => {
-  const w = world({ records: { 7: { labels: ['accept:pending'], comments: [packetComment(7)] } }, fail: { 'view:labels,comments': 'HTTP 502' } });
+  const w = world({ policy: ON, records: { 7: { labels: ['accept:pending'], comments: [packetComment(7)] } }, fail: { 'view:labels,comments': 'HTTP 502' } });
   const res = await call(w, ['parked', '--record', '7']);
   assert.equal(res.code, 6);
   assert.equal(res.stdout, 'unknown\n');
 });
 
-test('parked: gh absent is unknown', async () => {
+// AC2a: control mode off is today's merge path — no gh call, never a no-merge exit.
+const throwingGh = { gh: () => { throw new Error('HTTP 502'); }, ghAvailable: () => { throw new Error('probed gh'); } };
+
+test('AC2a: parked with control mode off is not-parked with zero gh calls, with and without --run', async () => {
+  for (const policy of [undefined, 'acceptance-target: local\n', 'control-mode: off\n']) {
+    const w = world({ policy, records: {} });
+    let ghCalls = 0;
+    const count = { gh: (args) => { ghCalls += 1; return throwingGh.gh(args); }, ghAvailable: () => { ghCalls += 1; return throwingGh.ghAvailable(); } };
+    for (const argv of [['parked', '--record', '7'], ['parked', '--record', '7', '--run', w.state.runDir]]) {
+      const res = await call(w, argv, count);
+      assert.equal(res.code, 5, `${policy} ${argv.join(' ')}: ${res.stderr}`);
+      assert.equal(res.stdout, 'not-parked\n');
+    }
+    assert.equal(ghCalls, 0);
+  }
+});
+
+test('parked with control mode on and a failing gh is unknown, with and without --run', async () => {
+  const w = world({ policy: ON, records: {} });
+  for (const argv of [['parked', '--record', '7'], ['parked', '--record', '7', '--run', w.state.runDir]]) {
+    const res = await call(w, argv, { gh: throwingGh.gh });
+    assert.equal(res.code, 6, argv.join(' '));
+    assert.equal(res.stdout, 'unknown\n');
+  }
+});
+
+test("parked --run: the run's config.yml outranks policy.yml for control-mode", async () => {
+  const w = world({ policy: 'control-mode: off\n', records: {} });
+  fs.writeFileSync(path.join(w.state.runDir, 'config.yml'), 'control-mode: on\n');
+  const withRun = await call(w, ['parked', '--record', '7', '--run', w.state.runDir], { gh: throwingGh.gh });
+  assert.equal(withRun.code, 6);
+  const withoutRun = await call(w, ['parked', '--record', '7'], throwingGh);
+  assert.equal(withoutRun.code, 5);
+});
+
+test('parked: an unreadable policy file is unknown; a refused --run exits 3', async () => {
   const w = world({ records: {} });
+  fs.mkdirSync(path.join(w.state.root, '.claude-tweaks', 'policy.yml'));
+  const res = await call(w, ['parked', '--record', '7'], throwingGh);
+  assert.equal(res.code, 6);
+  assert.equal(res.stdout, 'unknown\n');
+  const refused = await call(world({ policy: ON }), ['parked', '--record', '7', '--run', path.join(w.state.root, 'nope')], throwingGh);
+  assert.equal(refused.code, 3);
+  assert.equal(refused.stdout, '');
+});
+
+test('parked: gh absent is unknown', async () => {
+  const w = world({ policy: ON, records: {} });
   const res = await call(w, ['parked', '--record', '7'], { ghAvailable: () => false });
   assert.equal(res.code, 6);
   assert.equal(res.stdout, 'unknown\n');
@@ -513,7 +580,8 @@ test('malformed invocations exit 2', async () => {
     ['park', '--run', run, '--record', '7', '--pr', '12', '--head', HEAD, '--worktree', '/w', '--worktree-mode', 'keep'],
     ['park', '--run', run, '--record', '7', '--pr', '12', '--head', HEAD],
     ['parked', '--record', '7,8'],
-    ['parked', '--record', '7', '--run', run],
+    ['parked', '--record', '7', '--run'],
+    ['parked', '--record', '7', '--head', HEAD],
     ['decide', '--run', run, '--record', '7', 'constructor', 'x'],
   ];
   for (const argv of argvs) {

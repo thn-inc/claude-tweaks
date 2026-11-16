@@ -34,10 +34,14 @@
 //     failed (hand-log it). Exit 0 parked (a step 3-5 failure included, reported in `steps`);
 //     1 park-failed (step 1 or 2, nothing archived); 2 malformed invocation or an unresolvable
 //     repository; 3 --run refused; 4 gh absent, before any write.
-//   parked --record <n> [--repo owner/name]
-//     Prints parked / not-parked / unknown (isParkedForLocalAcceptance over the record's labels
-//     and packet comment). Exit 0 parked, 5 not-parked, 6 unknown (a read failure or gh absent),
-//     2 malformed invocation. A caller treats 0 and 6 alike: do not merge, close or reap.
+//   parked --record <n> [--run <dir>] [--repo owner/name]
+//     Prints parked / not-parked / unknown. control-mode resolves as decide resolves it (the
+//     run's config.yml over policy.yml with --run; the main checkout's policy.yml without): off
+//     prints not-parked with no gh call, so a record parked under control mode is mergeable
+//     once control mode is off (the accepted tradeoff, spec AC2a). On: isParkedForLocalAcceptance
+//     over the record's labels and packet comment. Exit 0 parked, 5 not-parked, 6 unknown (a
+//     record or policy read failure, or gh absent), 2 malformed invocation, 3 --run refused (as
+//     decide). A caller treats 0 and 6 alike: do not merge, close or reap.
 'use strict';
 
 const path = require('path');
@@ -50,21 +54,20 @@ const USAGE = [
   'usage: accept-park.js decide --run <dir> --record <n>[,<m>...] [--repo owner/name]',
   '       accept-park.js park --run <dir> --record <n>[,<m>...] --pr <n> --head <sha> --worktree <path>',
   '         [--claimed <n>[,<m>...]] [--worktree-mode remove|caller] [--repo owner/name]',
-  '       accept-park.js parked --record <n> [--repo owner/name]',
+  '       accept-park.js parked --record <n> [--run <dir>] [--repo owner/name]',
   '  decide: exit 0 printed; 1 policy or record read failure; 2 malformed; 3 --run refused',
   '  park:   exit 0 parked; 1 park-failed; 2 malformed or unresolvable repo; 3 --run refused; 4 gh absent',
-  '  parked: exit 0 parked; 5 not-parked; 6 unknown; 2 malformed',
+  '  parked: exit 0 parked; 5 not-parked (control mode off included); 6 unknown; 2 malformed; 3 --run refused',
   '',
 ].join('\n');
 
 const VERBS = Object.freeze({
   decide: { required: ['--run', '--record'], optional: ['--repo'] },
   park: { required: ['--run', '--record', '--pr', '--head', '--worktree'], optional: ['--claimed', '--worktree-mode', '--repo'] },
-  parked: { required: ['--record'], optional: ['--repo'] },
+  parked: { required: ['--record'], optional: ['--run', '--repo'] },
 });
 const RECORD_LIST_RE = /^[1-9][0-9]*(?:,[1-9][0-9]*)*$/;
 const POSITIVE_RE = /^[1-9][0-9]*$/;
-const HEAD_RE = /^[0-9a-f]{7,64}$/;
 const WORKTREE_MODES = Object.freeze(['remove', 'caller']);
 const PARKED_EXIT = Object.freeze({ parked: 0, 'not-parked': 5, unknown: 6 });
 const ARCHIVED = 'claude-tweaks: archived';
@@ -107,7 +110,7 @@ function parseArgs(argv) {
       if (!POSITIVE_RE.test(value)) return { error: `--pr must be a positive integer, got: ${value}` };
       opts.pr = Number(value);
     } else if (flag === '--head') {
-      if (!HEAD_RE.test(value)) return { error: `--head must be 7-64 lowercase hex, got: ${value}` };
+      if (!require('./lib/accept/park').HEAD_SHA_RE.test(value)) return { error: `--head must be 7-64 lowercase hex, got: ${value}` };
       opts.head = value;
     } else if (flag === '--worktree-mode') {
       if (!WORKTREE_MODES.includes(value)) return { error: `--worktree-mode must be one of ${WORKTREE_MODES.join('|')}, got: ${value}` };
@@ -223,6 +226,28 @@ function printJson(deps, value) {
   deps.stdout(`${JSON.stringify(value)}\n`);
 }
 
+// The main checkout's policy.yml and, given a run dir, its config.yml (absent -> null), or null
+// with stderr saying which file would not read.
+function readPolicySources(deps, ctx, runDir) {
+  const root = ctx.mainRoot();
+  if (!root) {
+    deps.stderr('accept-park.js: could not find the main checkout to read its policy.yml\n');
+    return null;
+  }
+  const sources = { policyRaw: null, runConfigRaw: null };
+  const files = [['policyRaw', path.join(root, '.claude-tweaks', 'policy.yml')]];
+  if (runDir !== null) files.push(['runConfigRaw', path.join(runDir, 'config.yml')]);
+  for (const [key, file] of files) {
+    try {
+      sources[key] = readOptional(deps, file);
+    } catch (err) {
+      deps.stderr(`accept-park.js: could not read ${file} (${messageOf(err)})\n`);
+      return null;
+    }
+  }
+  return sources;
+}
+
 // ---- decide ----
 
 function keptRiskFlags(parsed) {
@@ -238,19 +263,9 @@ function runDecide(opts, deps, ctx) {
   const runDir = ctx.absolute(opts.run);
   if (!anchoredRun(runDir, deps)) return 3;
 
-  let policyRaw;
-  let runConfigRaw;
-  for (const [file, set] of [
-    [path.join(ctx.mainRoot(), '.claude-tweaks', 'policy.yml'), (text) => { policyRaw = text; }],
-    [path.join(runDir, 'config.yml'), (text) => { runConfigRaw = text; }],
-  ]) {
-    try {
-      set(readOptional(deps, file));
-    } catch (err) {
-      deps.stderr(`accept-park.js: could not read ${file} (${messageOf(err)})\n`);
-      return 1;
-    }
-  }
+  const sources = readPolicySources(deps, ctx, runDir);
+  if (sources === null) return 1;
+  const { policyRaw, runConfigRaw } = sources;
   const resolved = resolvePolicyKeys(['control-mode', 'acceptance-target'], { policyRaw, runConfigRaw });
   if (!isControlModeOn(resolved['control-mode'].value)) {
     printJson(deps, decideSeries(opts.record.map((record) => ({ record, input: { controlMode: false } }))));
@@ -294,10 +309,29 @@ function runDecide(opts, deps, ctx) {
 
 // ---- parked ----
 
+// Control mode off: nothing is parked, and no record is read — the merge path is today's. A
+// record parked while control mode was on therefore reads not-parked, and is mergeable, once
+// control mode is turned off: the accepted tradeoff (spec AC2a). An unreadable policy is unknown.
 function runParked(opts, deps, ctx) {
+  const { resolvePolicyKeys } = require('./lib/policy-schema');
+  const { isControlModeOn } = require('./lib/policy');
   const { readPacket } = require('./lib/wrap-up/packet-gather');
   const { isParkedForLocalAcceptance } = require('./lib/accept/park');
   const [record] = opts.record;
+  let runDir = null;
+  if (opts.run !== undefined) {
+    runDir = ctx.absolute(opts.run);
+    if (!anchoredRun(runDir, deps)) return 3;
+  }
+  const sources = readPolicySources(deps, ctx, runDir);
+  if (sources === null) {
+    deps.stdout('unknown\n');
+    return PARKED_EXIT.unknown;
+  }
+  if (!isControlModeOn(resolvePolicyKeys(['control-mode'], sources)['control-mode'].value)) {
+    deps.stdout('not-parked\n');
+    return PARKED_EXIT['not-parked'];
+  }
   let labels = [];
   let packet = { status: 'unreadable' };
   if (ctx.ghAvailable()) {
