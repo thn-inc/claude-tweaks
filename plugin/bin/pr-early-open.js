@@ -228,7 +228,7 @@ async function run(argv, overrides = {}) {
     const base = o.base || configured || (view && view.defaultBranchRef && view.defaultBranchRef.name) || null;
     if (!base) return internal('could not resolve the integration branch (no --base, no integration-branch key, no GitHub default branch)');
     if (!o.base && !configured && policyRoot && deps.isLinkedWorktreeRoot(policyRoot)) {
-      deps.stderr(`pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — opening the draft PR against the GitHub default branch "${base}" from linked worktree ${policyRoot}\n`);
+      deps.stderr(`pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — the draft PR targets the GitHub default branch "${base}" from linked worktree ${policyRoot}\n`);
     }
 
     const res = await openPrEarly({

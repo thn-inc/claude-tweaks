@@ -193,7 +193,7 @@ git commit -m "Note the main-checkout policy fallback on resolve-policy stderr (
 **Interfaces:**
 - Consumes: `isLinkedWorktreeRoot` (Task 1); `resolvePolicyConfig`'s `root` (already returned).
 - Produces: `realDeps.isLinkedWorktreeRoot` (default the Task 1 export). When no `--base` and no configured `integration-branch`, and `deps.isLinkedWorktreeRoot(root)` is true, stderr gets exactly:
-  `pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — opening the draft PR against the GitHub default branch "{base}" from linked worktree {root}\n`
+  `pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — the draft PR targets the GitHub default branch "{base}" from linked worktree {root}\n`
   emitted after `base` is resolved and before `openPrEarly`; exit code and stdout unchanged.
 
 - [ ] **Step 1: Write the failing tests** (reuse `cliFixture`/`cliDeps`; for the worktree cases make `fx.wt` a real `linkedWorktreeOf(fx.root)` and have the fake `git` answer `rev-parse --show-toplevel` with `fx.wt`):

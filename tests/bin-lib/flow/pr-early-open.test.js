@@ -810,7 +810,7 @@ test('AC4.1: CLI from a linked worktree with no integration-branch anywhere warn
   assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
   const createCall = h.calls.find(isCreate);
   assert.equal(createCall[createCall.indexOf('--base') + 1], 'trunk');
-  assert.equal(h.err.join(''), `pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — opening the draft PR against the GitHub default branch "trunk" from linked worktree ${fx.wt}\n`);
+  assert.equal(h.err.join(''), `pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — the draft PR targets the GitHub default branch "trunk" from linked worktree ${fx.wt}\n`);
   assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
 });
 
