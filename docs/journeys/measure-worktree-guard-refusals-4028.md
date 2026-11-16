@@ -3,6 +3,7 @@ files:
   - tools/guard-refusals.js
   - tools/guard-refusals/transcripts.js
   - tools/guard-refusals/trace.js
+  - tools/guard-refusals/effect.js
   - tools/guard-refusals/shapes.js
   - tools/guard-refusals/fences.js
   - plugin/skills/_shared/scratch-worktree.md
@@ -65,4 +66,4 @@ files:
 
 "How often does the worktree guard refuse our own skill prose" becomes one command with a number, a ranked list of fences, and a test that stops a refused shape from re-entering `plugin/skills`. Fixing a fence, recording a shape and re-measuring are each one step from the report.
 
-_Origin: record #4028 (`tools/guard-refusals.js` and its `guard-refusals/` modules, §7 rows and detectors, `tests/skill-fence-guard-shapes.test.js`), built 2026-10-25. Follow-ups: #4216 (the per-pipeline measurement over later plugin versions), #4217 (migration of the ratchet-allowlisted fences). Related: `work-around-a-refused-worktree-bash-command-2776.md` is the agent-side counterpart that looks one refused command up in §7._
+_Origin: record #4028 (`tools/guard-refusals.js` and its `guard-refusals/` modules, §7 rows and detectors, `tests/skill-fence-guard-shapes.test.js`), built 2026-10-25; extended by record #5587 (step 6: guard, effect, read class and rewrite verdict per row, `tools/guard-refusals/effect.js`), built 2026-11-16. Follow-ups: #4216 (the per-pipeline measurement over later plugin versions), #4217 (migration of the ratchet-allowlisted fences). Related: `work-around-a-refused-worktree-bash-command-2776.md` is the agent-side counterpart that looks one refused command up in §7._
