@@ -556,3 +556,11 @@ test('the trim gap cut matches the pre-CR regex cut on every short LF-only tail'
   }
   assert.strictEqual(checked, 3 + 9 + 27 + 81 + 243 + 729);
 });
+
+test('AC6.3: version-check.md prints the partial flag and tells the reader the summary is partial', () => {
+  const { readText } = require('./helpers/read-skill');
+  const text = readText(require('node:path').join(__dirname, '..', 'plugin/skills/init/bootstrap/version-check.md'));
+  assert.match(text, /partial: r\.partial/);
+  assert.match(text, /summary is partial/);
+  assert.match(text, /entries: \[\], partial: false/); // the missing-file branch prints the same shape
+});

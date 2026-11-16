@@ -14,6 +14,14 @@ This repo dogfoods the same release engine every consumer project uses: `/claude
 
 **Post-publish release notes.** The same `mirror-marketplace.yml` job runs a second step, `plugin/bin/release-notes-publish.js` (#2582), after the mirror write: release-please has no knowledge of this repo's `Release-Note:` commit trailer, so it never renders a Highlights block. This step walks the just-published commit range, extracts every `Release-Note:` line (a bundled merge commit carries one per bundled record), renders them via `plugin/bin/lib/release-notes.js` — which drops `No user-visible change` notes and exact duplicates — and idempotently appends a `### Highlights` block to both the just-published GitHub Release body and CHANGELOG.md's matching entry (a follow-up commit, pushed with the workflow's own `GITHUB_TOKEN` — the `contents: write` permission this step needs is declared at the workflow level, but `mirror-marketplace.yml` has only the one `mirror` job and only fires on `release: published`, so it cannot reach any other trigger or job).
 
+## Bounding CHANGELOG.md (`changelog-max-releases`)
+
+Off by default (`0` = never trim). Set to `n` and both engines keep the newest `n` release sections after a release: pr-first trims in `release-notes-publish.js`, in the Highlights commit when there is one, else in a `chore: trim CHANGELOG.md to the newest {n} releases` commit; local-merge trims in a separate commit after the release has landed (commit, tag, push, hook), so the tag keeps the full file and a failed hook means no trim. A trim never fails a release: a failure prints `changelog trim: failed ({reason}); file left untrimmed` and the release still reports released.
+
+The trimmed file ends in an `## Older releases` footer with two routes to removed notes: the recorded commit (`git show {sha}:CHANGELOG.md`, the full file up to the first trim) and the release's own tag (`git show v<version>:CHANGELOG.md`, which has no Highlights block).
+
+Opt in only once every session runs this release or newer: an older build reports trimmed versions as missing, and its `/claude-tweaks:tidy` would add them back. After opting in, check that the first release-please PR leaves the footer last. Do not trim inside release-please's own PR.
+
 ## Manual Steps
 
 Two PATs, both required — their failure modes differ. Without `RELEASE_PLEASE_TOKEN` the mirror silently never runs at all (no workflow run, no error — the release still ships, its catalog entry just doesn't update). Without `MARKETPLACE_TOKEN` it runs and fails loudly, with the explicit error named below.
