@@ -115,6 +115,7 @@ test('read passes --repo to gh', (t) => {
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(calls[0].slice(-2), ['--repo', 'o/r']);
   assert.equal(pinned.length, 1);
+  assert.deepEqual(pinned[0], { host: 'github.com', owner: 'o', repo: 'r' });
 });
 
 test('read with no packet reports none and leaves no packet file, an earlier one included', (t) => {
@@ -230,6 +231,18 @@ test('refresh with an invalid --deploy-json or unreadable --packet-file exits 1'
   assert.equal(cli(['refresh', '--packet-file', packet, '--out', out, '--deploy-json', badUrl]).code, 1);
   assert.equal(cli(['refresh', '--packet-file', path.join(dir, 'missing.md'), '--out', out]).code, 1);
   assert.equal(fs.existsSync(out), false);
+});
+
+test('refresh refuses an --out that is the --packet-file with exit 2 and leaves the input', (t) => {
+  const dir = tempDir(t);
+  const body = packetBody(['target: local', 'ref: aaa']);
+  const packet = write(path.join(dir, 'packet.md'), body);
+  const badDeploy = writeJson(path.join(dir, 'deploy.json'), { text: 'no ref' });
+  const same = cli(['refresh', '--packet-file', packet, '--out', packet, '--deploy-json', badDeploy]);
+  assert.equal(same.code, 2);
+  const relative = cli(['refresh', '--packet-file', 'packet.md', '--out', path.join(dir, '.', 'packet.md'), '--deploy-json', badDeploy], { cwd: dir });
+  assert.equal(relative.code, 2);
+  assert.equal(fs.readFileSync(packet, 'utf8'), body);
 });
 
 // --- labels ---

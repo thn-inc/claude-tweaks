@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { PACKET_MARKER } = require('../../../plugin/bin/lib/wrap-up/packet-contract');
+const { PACKET_MARKER, WITHHELD_TEXT } = require('../../../plugin/bin/lib/wrap-up/packet-contract');
 const {
   automaticLabelAction,
   PACKET_STATES,
@@ -152,6 +152,15 @@ test('AC4b.2: unhandled state prints one line and stops', () => {
   }
 });
 
+test('a withheld Deploy status body is unhandled, not awaiting-local', () => {
+  for (const deploy of [[WITHHELD_TEXT], [WITHHELD_TEXT, 'ref: aaa']]) {
+    const result = stateOf(packet({ deploy }));
+    assert.equal(result.state, 'unhandled', deploy.join(' / '));
+    assert.match(result.message, /^accept: unhandled packet state \(.+\) — stopping$/);
+    assert.ok(!result.message.includes('\n'));
+  }
+});
+
 test('an unknown packet status is unhandled, never no-packet', () => {
   const result = packetStateOf({ packet: { status: 'weird' }, labels: [] });
   assert.equal(result.state, 'unhandled');
@@ -225,6 +234,28 @@ test('a source line spelling its own ref is replaced by the one ref line', () =>
   assert.match(deploy, /^ref: bbb$/m);
 });
 
+const waitingPacket = () => packet({
+  whatChanged: [`- Kept as written: <http://localhost:3000/a>${UNVERIFIED_SUFFIX}`],
+  testGuide: [`- Open: <https://dev.example.com/x>${UNVERIFIED_SUFFIX}`, `- Then: <https://dev.example.com/y>${UNVERIFIED_SUFFIX}`],
+  deploy: ['target: dev, not confirmed live', 'ref: aaa'],
+});
+
+test('a refresh to a confirmed-live deploy drops the unverified suffix and round-trips to live-on-dev', () => {
+  const before = waitingPacket();
+  assert.equal(stateOf(before).state, 'waiting-for-deploy');
+  const { body } = refreshPacket(before, { ref: 'bbb', text: 'target: dev, confirmed live' });
+  assert.doesNotMatch(sectionOf(body, 'Test guide'), /link unverified/);
+  assert.match(sectionOf(body, 'Test guide'), /^- Open: <https:\/\/dev\.example\.com\/x>$/m);
+  assert.equal(sectionOf(body, 'What changed'), sectionOf(before, 'What changed'));
+  assert.equal(stateOf(body).state, 'live-on-dev');
+});
+
+test('a refresh to a deploy still not confirmed live keeps the unverified suffix', () => {
+  const { body } = refreshPacket(waitingPacket(), { ref: 'bbb', text: 'target: dev, not confirmed live' });
+  assert.equal(sectionOf(body, 'Test guide').split('link unverified').length - 1, 2);
+  assert.equal(stateOf(body).state, 'waiting-for-deploy');
+});
+
 test('equal refs → unchanged, both lists empty', () => {
   const before = stalePacket();
   const result = refreshPacket(before, { ...SOURCE, ref: 'aaa' });
@@ -263,9 +294,17 @@ test('AC4a.1: demo:pending only, approve → accept:approved added, demo:pending
 test('absent labels are never removed', () => {
   assert.deepEqual(verdictLabelEdits([], 'changes-requested'), { add: ['accept:changes-requested'], remove: [] });
   assert.deepEqual(
-    verdictLabelEdits(['accept:pending', 'accept:approved-batch', 'demo:approved-batch'], 'approved', { batch: true }),
+    verdictLabelEdits(['accept:pending', 'accept:approved-batch'], 'approved', { batch: true }),
     { add: ['accept:approved', 'accept:approved-batch'], remove: ['accept:pending'] },
   );
+});
+
+test('a batch approve removes the demo:approved-batch twin and keeps accept:approved-batch', () => {
+  assert.deepEqual(
+    verdictLabelEdits(['accept:pending', 'accept:approved-batch', 'demo:approved-batch'], 'approved', { batch: true }),
+    { add: ['accept:approved', 'accept:approved-batch'], remove: ['accept:pending', 'demo:approved-batch'] },
+  );
+  assert.deepEqual(verdictLabelEdits(['demo:approved-batch'], 'approved', { batch: true }).remove, ['demo:approved-batch']);
 });
 
 test('approve removes every prior pending, changes-requested, demo:approved twin and (single) batch marker present', () => {

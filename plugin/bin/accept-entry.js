@@ -13,8 +13,8 @@
 //     stale packet file is not there to read.
 //   2 a malformed invocation: an unknown subcommand or flag, a missing value, both or neither
 //     of --labels-json / --acceptance-facet, an unknown --acceptance-facet, --verdict or
-//     --packet-status value, a --packet-status that contradicts --packet-file, or a malformed
-//     --record or --repo.
+//     --packet-status value, a --packet-status that contradicts --packet-file, a refresh --out
+//     naming the --packet-file, or a malformed --record or --repo.
 //
 // `read` wraps packet-gather.js's readPacket: the earliest trusted packet comment wins,
 // untrusted copies are skipped, and a non-current schema is `unreadable`. It writes the found
@@ -244,7 +244,13 @@ function deploySource(deps, file) {
   return value;
 }
 
+const resolvedPath = (deps, p) => (path.isAbsolute(p) ? path.resolve(p) : path.resolve(deps.cwd(), p));
+
 function runRefresh(opts, deps) {
+  // A failed refresh removes --out, which would then be the input itself.
+  if (resolvedPath(deps, opts.out) === resolvedPath(deps, opts.packetFile)) {
+    throw new UsageError('--out must not be the --packet-file');
+  }
   let result;
   try {
     const body = readInput(deps, '--packet-file', opts.packetFile);

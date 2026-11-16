@@ -4,8 +4,9 @@
 // bin/accept-entry.js is the CLI the skill prose calls.
 //
 // Refresh rewrites a closed list of fields, REFRESHABLE_FIELDS, and nothing else in a
-// packet body: the Deploy status section, the origin of every http(s) URL in the Test
-// guide section, and the Recording section's link. A packet is stale only when its Deploy
+// packet body: the Deploy status section, the Test guide section's links (the origin of
+// every http(s) URL, and the `(link unverified: …)` suffix, dropped when the new deploy
+// text reads confirmed live), and the Recording section's link. A packet is stale only when its Deploy
 // status section carries a `ref: {sha}` line and the deploy source names another ref. No
 // deploy-status source exists yet (a later record supplies one), so today every refresh
 // reports its fields `unverified`; a packet written before the `ref:` line existed is
@@ -18,7 +19,7 @@
 // Pure: no fs, git or gh.
 'use strict';
 
-const { SECTIONS } = require('../wrap-up/packet-contract');
+const { SECTIONS, WITHHELD_TEXT } = require('../wrap-up/packet-contract');
 const { dispositionState, APPROVAL_PROVENANCE_LABEL, APPROVAL_PROVENANCE_LABELS } = require('./acceptance');
 const { LABELS } = require('./record-vocabulary');
 
@@ -43,7 +44,12 @@ const REF_LINE_RE = /^ref:[ \t]*(\S+)$/;
 const ORIGIN_RE = /\bhttps?:\/\/[^\s/?#<>()[\]`'"]+/gi;
 const AUTOLINK_RE = /<https?:\/\/[^\s<>]+>/gi;
 
-const ACCEPT_APPROVED_BATCH = APPROVAL_PROVENANCE_LABELS.find((label) => label !== APPROVAL_PROVENANCE_LABEL);
+// record-vocabulary.js has no LABELS entry for the accept:* batch marker, so it is named here
+// and held to acceptance.js's list of the marker's spellings.
+const ACCEPT_APPROVED_BATCH = 'accept:approved-batch';
+if (!APPROVAL_PROVENANCE_LABELS.includes(ACCEPT_APPROVED_BATCH)) {
+  throw new Error(`accept-entry: ${ACCEPT_APPROVED_BATCH} is not among acceptance.js's APPROVAL_PROVENANCE_LABELS`);
+}
 const PENDING = Object.freeze([LABELS.DEMO_PENDING, LABELS.ACCEPT_PENDING]);
 const BATCH_MARKERS = Object.freeze([APPROVAL_PROVENANCE_LABEL, ACCEPT_APPROVED_BATCH]);
 
@@ -105,6 +111,11 @@ function packetStateOf({ packet, labels } = {}) {
   if (status !== 'found') return unhandled('unknown packet status');
 
   const deployText = sectionText(lines, DEPLOY) ?? '';
+  // The renderer writes the placeholder in place of deploy text the credential screen refused.
+  const deployContent = deployText.split('\n').map((line) => line.trim()).filter((line) => line !== '' && !REF_LINE_RE.test(line));
+  if (deployContent.length > 0 && deployContent.every((line) => line === WITHHELD_TEXT)) {
+    return unhandled('deploy status withheld', recording);
+  }
   const target = TARGET_RE.exec(deployText)?.[1] ?? null;
   let state;
   if (target === null || target === 'local') state = 'awaiting-local';
@@ -151,6 +162,11 @@ function refreshPacket(body, source) {
 
   const refreshed = ['deploy-status'];
   lines = replaceDeploy(lines, deployRange, source);
+  // The unverified-link suffix belongs to the Test guide field and follows the deploy text: a
+  // source confirmed live drops it, one still not confirmed live keeps it.
+  if (CONFIRMED_RE.test(source.text) && !NOT_CONFIRMED_RE.test(source.text)) {
+    lines = mapSection(lines, TEST_GUIDE, (text) => text.split(` ${UNVERIFIED_LINK}`).join(''));
+  }
   if (typeof source.devBaseUrl === 'string' && source.devBaseUrl !== '') {
     const origin = new URL(source.devBaseUrl).origin;
     lines = mapSection(lines, TEST_GUIDE, (text) => text.replace(ORIGIN_RE, origin));
@@ -177,7 +193,8 @@ function removalCandidates(verdict, batch) {
   if (verdict === 'approved') {
     return [
       ...PENDING, LABELS.DEMO_CHANGES_REQUESTED, LABELS.ACCEPT_CHANGES_REQUESTED, LABELS.DEMO_APPROVED,
-      ...(batch ? [] : BATCH_MARKERS),
+      // A batch approve keeps (and adds) the accept:* marker; its demo:* twin goes either way.
+      ...(batch ? [APPROVAL_PROVENANCE_LABEL] : BATCH_MARKERS),
     ];
   }
   return [
