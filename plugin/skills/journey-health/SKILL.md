@@ -7,7 +7,7 @@ allowed-tools: Read, Grep, Glob, Bash, Skill, Write, AskUserQuestion
 
 # Journey Health — Keep Journeys Honest for Agent E2E Testing
 
-A recurring health check for `docs/journeys/*.md`: picks one journey to audit against the codebase, judges it, and always files a `by:journey-health`-labelled, born-`ready` GitHub issue. Records enter the same gate worklist as the other health-skill producers (`/code-health`, `/harness-health`, `/docs-health`) — journey-health issues are not a separate lane. Never edits journey files, stories, or code — every fix routes through `/claude-tweaks:journeys` or `/claude-tweaks:stories`, invoked by a human directly, or by `/claude-tweaks:dispatch` → `/claude-tweaks:flow` once `/claude-tweaks:backlog refine` has granted `auto:build`.
+A recurring health check for `docs/journeys/*.md`: picks one journey to audit against the codebase, judges it, and always files a `by:journey-health`-labelled, born-`ready` GitHub issue. Records enter the same gate worklist as the other health-skill producers (`/code-health`, `/harness-health`, `/docs-health`, `/ci-health`) — journey-health issues are not a separate lane. Never edits journey files, stories, or code — every fix routes through `/claude-tweaks:journeys` or `/claude-tweaks:stories`, invoked by a human directly, or by `/claude-tweaks:dispatch` → `/claude-tweaks:flow` once `/claude-tweaks:backlog refine` has granted `auto:build`.
 
 ```
               [ /claude-tweaks:journey-health ] <- utility (no fixed lifecycle position)

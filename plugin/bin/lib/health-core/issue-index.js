@@ -7,8 +7,8 @@ const { DEFAULT_IO, resolveAgainst } = require('./io');
 // decide() expects a map { "<fingerprint>": { number, state, labels } }, with
 // state lowercased and labels reduced to label names (gh's raw OPEN/CLOSED
 // state and { name } label objects are accepted as input).
-// Shared by all four health-suite CLIs' validate-findings — previously
-// duplicated near-verbatim in each (code-health.js, harness-health.js,
+// Shared by every health-suite CLI's validate-findings (ci-audit.js's too) — previously
+// duplicated near-verbatim in each of the first four (code-health.js, harness-health.js,
 // journey-health.js, docs-health.js), differing only in the bracketed
 // [toolName] prefix on its stderr diagnostics.
 // cwd (optional, () => string): a relative file is read against it while the

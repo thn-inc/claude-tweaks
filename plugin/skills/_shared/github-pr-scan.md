@@ -423,7 +423,7 @@ Findings and recommendations (tidy Action Vocabulary):
 | Unresolved review thread addressed by a later commit (evidence: commit touching the flagged lines) | Resolve thread |
 | Unresolved review thread not addressed | Capture to backlog or run `/claude-tweaks:review` — local action |
 | `by:{skill}` issue stale (>4 weeks, the flagged code/target/journey/doc has since changed or been removed) — `{skill}` is any of `code-health`/`harness-health`/`journey-health`/`docs-health`/`ci-health` | Close (GitHub) — superseded |
-| `by:{skill}` issue still valid | Suggest `/claude-tweaks:backlog refine` or Capture to backlog — every health skill is report-only and never apply patches directly (see each skill's own SKILL.md Anti-Patterns table), so a still-valid issue always needs a human-routed fix regardless of which skill filed it |
+| `by:{skill}` issue still valid | Suggest `/claude-tweaks:backlog refine` or Capture to backlog — every health skill is report-only and never applies patches directly (see each skill's own SKILL.md Anti-Patterns table), so a still-valid issue always needs a human-routed fix regardless of which skill filed it |
 | Unarmed ready PR, granted (item 9) | Arm `--auto` per `_shared/pr-first-merge.md` — local action, no new merge mechanics |
 | Unarmed ready PR, ungranted (item 9) | Grant `auto:merge` on every linked record, or set `housekeeping-auto-merge` for a tidy PR — judgment call, never auto-granted by this sweep |
 | Unsettled run (item 10) | Resume via the reported command, or release the claim and let a fresh dispatch pick the record back up — judgment call |

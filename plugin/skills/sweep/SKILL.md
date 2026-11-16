@@ -14,7 +14,7 @@ Lifecycle: utility — the on-demand, single-session sibling of the cloud fleet'
 
 - The queue has accumulated hygiene debt — stale records, unshaped-but-eligible records, shaped-but-ungranted records — and you want one command to work through all of it without answering questions
 - Before a dispatch session: run sweep first so `/claude-tweaks:dispatch` sees a tidied, shaped, granted queue
-- NOT for audits — the four health sweeps (code/docs/journey/harness) are deliberate human-triggered audits, not hygiene, and sweep never runs them
+- NOT for audits — the five health sweeps (code/docs/journey/harness/ci) are deliberate human-triggered audits, not hygiene, and sweep never runs them
 - NOT for building — sweep never invokes `/claude-tweaks:flow`, `/claude-tweaks:build`, or `/claude-tweaks:dispatch`; its close-out only recommends the dispatch command
 
 ## Input

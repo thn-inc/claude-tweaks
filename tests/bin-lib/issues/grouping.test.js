@@ -533,7 +533,7 @@ test('accepts label objects ({name}) as well as plain strings', () => {
 
 // ── extractKeyFiles: the `### Key Files` fallthrough (#154) ──────────────────
 // /specify-produced sub-issues and /capture records carry no by:* origin label, so
-// they reach the fallthrough below the four health-sweep branches. Before #154
+// they reach the fallthrough below the five health-sweep branches. Before #154
 // that fallthrough was a bare `return []`, and every such record reported zero
 // key files — making groupByFileOverlap emit singletons regardless of real
 // overlap, which is exactly the collision guard /dispatch relies on.

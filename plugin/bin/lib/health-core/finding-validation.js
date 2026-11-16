@@ -1,7 +1,7 @@
 'use strict';
 
 // Shared building blocks for every health producer's validate-finding.js
-// (harness-health, journey-health, docs-health) — the required-non-empty-
+// (harness-health, journey-health, docs-health; ci-health's uses requireNonEmptyStrings) — the required-non-empty-
 // string-field loop and the optional relatedSections array-of-non-empty-
 // strings shape check were byte-identical across all three files, down to
 // the error-message template string, with zero require() calls tying them

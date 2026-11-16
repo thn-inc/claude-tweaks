@@ -126,7 +126,7 @@ const POLICY_KEYS = [
   { key: 'harness-health-always-loaded-budget', type: 'integer', default: 150, summary: "Caps how many lines the project's always-loaded instructions may hold before a health sweep flags them as too long.", category: 'health-sweeps', tier: 'advanced' },
   // #5757: /claude-tweaks:ci-health hands the text to `ci-audit.js gather --thresholds`, whose parseThresholds owns validation. No default (unset is empty); neither policyOnly nor policySourceExcluded — a thresholds text is data, never executed, so a run config may override it for one run. Not a Manifesto lever.
   { key: 'ci-health-thresholds', type: 'string', summary: "Overrides the numeric thresholds the CI health checklist applies, as comma-separated id=value pairs such as queue-wait=0.5.", category: 'health-sweeps', tier: 'advanced' },
-  // Per-origin open-singleton cap for the four health sweeps' digest filing
+  // Per-origin open-singleton cap for the five health sweeps' digest filing
   // (_shared/health-filing-digest.md). Documented in _shared/policy-schema.md
   // since #235 but never registered here until #330's migration hit the gap.
   { key: 'health-open-cap', type: 'integer', default: 10, summary: "Sets how many open findings a health sweep will file as separate issues before folding new ones into a shared digest instead.", category: 'health-sweeps', tier: 'advanced' },

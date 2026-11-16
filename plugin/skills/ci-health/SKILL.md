@@ -144,7 +144,7 @@ For a payload whose `action` is `"reopen"`, reopen issue `reopens` and comment `
 
 Before the first write (never under `--dry-run`), bootstrap only the label families this run applies, per `_shared/label-bootstrap.md` (canonical pairs from its `LABELS_JSON`: `by:ci-health`, `risk:low`, `size:low`, `ready`, `upstream-candidate`, `digest`; plus `ci-health:digest` with the description `_shared/health-filing-digest.md` gives, and `type:task` under `work-types: labels`).
 
-**Interactive mode only — the ask-before-file gate.** Before filing this firing's own new findings (not the regressed reopens above, which run unconditionally), read `_shared/health-filing-gate.md` and follow its two-tier decision. Its per-consumer table has no `ci-health` row yet: render `| # | Title | Check | Workflow | Subject | Recommended |`, every row pre-filled `"File issue"` (a validated finding carries no confidence tier). This sweep keeps no decline cache, so "Dismiss" drops the finding, as `code-health`'s does.
+**Interactive mode only — the ask-before-file gate.** Before filing this firing's own new findings (not the regressed reopens above, which run unconditionally), read `_shared/health-filing-gate.md` and follow its two-tier decision with its `ci-health` row: every finding pre-filled `"File issue"` (a validated finding carries no confidence tier). This sweep keeps no decline cache, so "Dismiss" drops the finding, as `code-health`'s does.
 
 **Headless (Routine) runs skip this gate entirely** — do not read that file — per `_shared/health-filing-gate.md`'s applicability rule; every surviving payload files automatically.
 

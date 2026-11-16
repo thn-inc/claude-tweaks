@@ -249,7 +249,7 @@ test('multi-branch adopter files cite materiality-floor.md at each of their fili
 
 // --- #1279: Defer-reason vocabulary for direct-filing producers ---
 
-test('materiality-floor.md documents a Defer-reason value for direct-filing producers (the four health sweeps)', () => {
+test('materiality-floor.md documents a Defer-reason value for direct-filing producers (the five health sweeps)', () => {
   assert.ok(FLOOR.includes('direct-filing-sweep'));
   assert.match(FLOOR, /### Direct-filing producers' `Defer-reason:` value/);
 });

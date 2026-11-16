@@ -63,7 +63,7 @@ This gate is the record-level replacement for `/flow`'s pre-flight design-doc re
 ```markdown
 ---
 record: {n}
-origin: {code-health|harness-health|journey-health|docs-health|capture|human}
+origin: {code-health|harness-health|journey-health|docs-health|ci-health|capture|human}
 risk: {low|medium|high}            # omitted when unscored
 size: {low|medium|high}            # omitted when unscored
 ceremony: {fast-lane|standard}      # always present — see ceremony-check mode below
