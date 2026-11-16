@@ -24,7 +24,7 @@
 //     block (record-vocabulary.js's normalizeLabelNames calls .map on it), so the eligible list is
 //     never written and the pull stops at the group-building check: one malformed record stops
 //     every candidate, the clean #9001 included (a cross-candidate effect, on the run ledger).
-// Script behavior the fault rows (Task 9) show, reproduced by the module, never fixed:
+// Script behavior the fault rows (Task 9) show, reproduced by the module (some since fixed, noted per bullet):
 //   - D1 reaches past the session files: the second pull's write-back persists the first pull's
 //     stale groups under the second pull's freshness signal, so a third pull over the same queue
 //     would hit the cache on them (NEW: beyond ledger row 1, which names the session files only).
