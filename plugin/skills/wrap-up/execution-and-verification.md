@@ -8,7 +8,7 @@ Execute the cleanup planned in Phase 4's cleanup-planning step (canonical list i
 
 **MULTISPEC_REVIEW_DEFER branch:** When `$MULTISPEC_REVIEW_DEFER=1` is set, this step SKIPS the state-changing cleanups marked deferred in `cleanup-procedures.md` (items 2 Open items ledger, 3 Design caches, 4 Git worktree, 6 Ephemeral dev server, 7 Issue claim release, 8 Pipeline run dir archival). Those defer to `/flow`'s consolidated multi-spec Review Console at end-of-run, which has authority to apply or override them across all specs in the run. This step still executes the idempotent cleanups (items 1 Execution plans, 5 Record/spec lifecycle) — those do not interact with parent-orchestrated cleanup. The skip list covers those six cleanup items only; nothing else in this step is deferred by it. In particular, the **Acceptance labeling** bullet below still runs for every spec (its Try it block, the oversight-floor gate, `--oversight-exempt`); `_shared/pr-run-comments.md`'s "Multi-spec brief and timing comments (#2970)" section keys each spec's `timing` comment to its own marker on the shared PR, and each spec's packet lands on its own record. **Verify execution** still runs too: its `worktree-removed` and `run-dir-archived` rows read `skip (deferred to parent console)`, because the defer protocol (`review-console-appendix.md`) recorded those items in `verify-expectations.json`'s `deferred` list.
 
-**`integration-model: pr-first` in `worktree` mode — one finish point after the last tree writer (#3813).** The cleanup pass above splits around the run's one branch finish, so every tree-changing wrap-up action reaches the PR head before `gh pr merge`: run items 1, 3 and 5 now (item 2 already ran at `review-console.md`'s "On approval" step 13 and reports `not found` here), then the apply list below, its commit and the phase-exit push, then the Branch finish paragraph below — the merge or leave-open — and only then items 4, 6, 7 and 8, item 8 still last. Under `local-merge`, and in `current-branch` mode, the cleanup pass runs whole, here, before the apply list, as before.
+**`integration-model: pr-first` in `worktree` mode — one finish point after the last tree writer (#3813).** The cleanup pass above splits around the run's one branch finish, so every tree-changing wrap-up action reaches the PR head before `gh pr merge`: run items 1, 2, 3 and 5 now (item 2 reports `not found` when `review-console.md`'s "On approval" step 13 already deleted the ledger; an Override console never reaches step 13, so item 2 deletes and commits here), then the apply list below, its commit and the phase-exit push, then the Branch finish paragraph below — the merge or leave-open — and only then items 4, 6, 7 and 8, item 8 still last. Under `local-merge`, and in `current-branch` mode, the cleanup pass runs whole, here, before the apply list, as before.
 
 After the cleanup, also apply:
 
@@ -62,10 +62,13 @@ the PR head holds every wrap-up change, and before cleanup item 4 removes the wo
 under `MULTISPEC_REVIEW_DEFER=1` — `/claude-tweaks:flow`'s Shared teardown finishes the shared
 branch — and it is never reached after the auto-merge short-circuit, which merges on its own path
 and bypasses this step. Merge only when the `phase-exit.js` call above printed `push.state`
-`pushed`: any other state skips the merge, landing on `pending-review` as leave-open does, with
-one `SKIP` line via `log-decision.js` naming the state and its reason — never merge a remote head
-that lacks this step's commit. Otherwise route on the Review Console's merge half: "Approve all +
-merge", or `console.json`'s `merge.resolution` `merge`, runs `_shared/pr-first-merge.md`'s
+`pushed` and `commit.clean` `true` (it still pushes when `commit.dirty` lists uncommitted paths):
+any other state skips the merge, landing on `pending-review` as leave-open does, with one `SKIP`
+line via `log-decision.js` naming the state or the `commit.dirty` paths and its reason — never
+merge a remote head that lacks this step's commit. Otherwise route on the Review Console's merge half: "Approve all +
+merge", or `console.json`'s `merge.resolution` `merge` (an attended "Approve all + merge" writes no `merge`
+object — once the session no longer holds the choice, `decisions.md`'s `Review Console: terminal
+decision approve-all-merge` line is the record), runs `_shared/pr-first-merge.md`'s
 procedure — read as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`,
 then read `$PIPELINE_RUN_DIR/context/merge.md` (source files directly if compose is unavailable).
 "Approve all, leave PR open", Override, and a console the empty-console fast path skipped carry

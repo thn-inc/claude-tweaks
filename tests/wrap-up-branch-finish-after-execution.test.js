@@ -37,10 +37,10 @@ function paragraph(text, heading) {
 }
 
 // The order the AC pins: no tree-changing action of execution-and-verification.md, nor
-// cleanup items 1, 3 and 5, is ordered after the branch-finish merge.
+// cleanup items 1, 2, 3 and 5, is ordered after the branch-finish merge.
 function assertFinishAfterLastWriter(execText, consoleText) {
   const order = paragraph(execText, ORDER_H);
-  assertMarksInOrder(order, ['items 1, 3 and 5', 'apply list', 'commit', 'phase-exit push', 'Branch finish', 'items 4, 6, 7 and 8'], 'ordering paragraph');
+  assertMarksInOrder(order, ['items 1, 2, 3 and 5', 'apply list', 'commit', 'phase-exit push', 'Branch finish', 'items 4, 6, 7 and 8'], 'ordering paragraph');
 
   assertMarksInOrder(execText, [
     ORDER_H,
@@ -54,7 +54,7 @@ function assertFinishAfterLastWriter(execText, consoleText) {
   ], 'execution-and-verification.md');
 
   const finish = paragraph(execText, FINISH_H);
-  for (const needle of [MERGE, 'push.state', 'never merge a remote head that lacks', 'MULTISPEC_REVIEW_DEFER=1', 'auto-merge short-circuit', 'Override', 'empty-console fast path', 'items 4, 6, 7 and 8']) {
+  for (const needle of [MERGE, 'push.state', 'never merge a remote head that lacks', 'MULTISPEC_REVIEW_DEFER=1', 'auto-merge short-circuit', 'Override', 'empty-console fast path', 'items 4, 6, 7 and 8', 'commit.clean', 'terminal decision approve-all-merge']) {
     assert.ok(finish.includes(needle), `Branch finish must carry ${JSON.stringify(needle)}`);
   }
   assert.ok(finish.indexOf(MERGE) < finish.indexOf('items 4, 6, 7 and 8'), 'items 4, 6, 7 and 8 run after the merge');
@@ -99,11 +99,33 @@ test('go-red: a Branch finish that merges whatever the push did fails the pin', 
   assert.throws(() => assertFinishAfterLastWriter(mutated, read('wrap-up/review-console.md')), /push\.state/);
 });
 
+test('go-red: an ordering paragraph that drops item 2 (Override console never deletes the ledger) fails the pin', () => {
+  const exec = read('wrap-up/execution-and-verification.md');
+  const mutated = exec.replace('items 1, 2, 3 and 5', 'items 1, 3 and 5');
+  assert.notStrictEqual(mutated, exec);
+  assert.throws(() => assertFinishAfterLastWriter(mutated, read('wrap-up/review-console.md')), /ordering paragraph/);
+});
+
+test('go-red: a Branch finish that merges over a dirty tree fails the pin', () => {
+  const exec = read('wrap-up/execution-and-verification.md');
+  const mutated = exec.split('commit.clean').join('commit state');
+  assert.notStrictEqual(mutated, exec);
+  assert.throws(() => assertFinishAfterLastWriter(mutated, read('wrap-up/review-console.md')), /commit\.clean/);
+});
+
+test('go-red: a Branch finish that cannot recover an attended merge choice fails the pin', () => {
+  const exec = read('wrap-up/execution-and-verification.md');
+  const mutated = exec.split('approve-all-merge').join('approve-all');
+  assert.notStrictEqual(mutated, exec);
+  assert.throws(() => assertFinishAfterLastWriter(mutated, read('wrap-up/review-console.md')), /approve-all-merge/);
+});
+
 test('the finish is reached when the execution step has nothing else to do', () => {
   const skill = read('wrap-up/SKILL.md');
   const at = skill.indexOf('### Execute approved actions');
   const section = skill.slice(at, skill.indexOf('### The phase-trace report', at));
   assert.ok(section.includes('still read the file for its Branch finish'), 'the No-actions skip must still run the pr-first Branch finish');
+  assert.ok(section.includes('first runs the Phase exit call'), 'the No-actions path runs the Phase exit push before the Branch finish');
   const fastPath = read('wrap-up/review-console.md');
   const fp = fastPath.slice(fastPath.indexOf('## Empty-console fast path'));
   assert.ok(fp.includes('Branch finish'), 'the empty-console fast path names the Branch finish it still reaches');
@@ -200,8 +222,8 @@ function assertShortCircuitItem2Placement(text) {
   const para = paragraph(text, SHORT_CIRCUIT_H);
   assert.ok(!para.includes(OLD_NORMALLY_RUNS), 'the note no longer says item 2 normally runs only in the execution step');
   assert.ok(para.includes('`review-console.md`\'s "On approval" step 13 (Ledger close-out)'), 'names step 13 (Ledger close-out) as the pr-first worktree placement');
-  assert.ok(para.includes('`pr-first` in `worktree` mode'), 'scopes step 13 to pr-first in worktree mode');
-  assert.ok(para.includes("Phase 4's execution step otherwise") && para.includes('`local-merge`') && para.includes('`current-branch`'), "names Phase 4's execution step for local-merge and current-branch mode");
+  assert.ok(para.includes('(Ledger close-out) under `pr-first`, '), 'names step 13 under every pr-first run');
+  assert.ok(para.includes("Phase 4's execution step under `local-merge`"), "names Phase 4's execution step under local-merge");
 }
 
 function assertItem2RowPush(text) {
@@ -225,9 +247,12 @@ test('#3813 Q2 go-red: the old "normally runs" wording, or a dropped placement, 
   const noStep = text.replace('(Ledger close-out)', '(Ledger)');
   assert.notStrictEqual(noStep, text);
   assert.throws(() => assertShortCircuitItem2Placement(noStep), /Ledger close-out/);
-  const noElse = text.replace("Phase 4's execution step otherwise", "Phase 4's execution step");
+  const noElse = text.replace("Phase 4's execution step under `local-merge`", "Phase 4's execution step");
   assert.notStrictEqual(noElse, text);
-  assert.throws(() => assertShortCircuitItem2Placement(noElse), /execution step for local-merge/);
+  assert.throws(() => assertShortCircuitItem2Placement(noElse), /under local-merge/);
+  const worktreeOnly = text.replace('(Ledger close-out) under `pr-first`, ', '(Ledger close-out) under `pr-first` in `worktree` mode, ');
+  assert.notStrictEqual(worktreeOnly, text);
+  assert.throws(() => assertShortCircuitItem2Placement(worktreeOnly), /under every pr-first run/);
 });
 
 test('#3813 Q2: cleanup-procedures row 2 names the phase-exit push, not a step-13 push', () => {

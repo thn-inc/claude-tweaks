@@ -18,7 +18,7 @@ const read = (rel) => readRaw(rel).replace(/\s+/g, ' ');
 const ITEM2_PARA = "**Item 2 lands before item 4's merge (#3595).**";
 const STEP11 = '11. Write `verify-expectations.json`';
 const STEP12 = '12. Commit with a wrap-up message';
-const STEP13 = '13. **Ledger close-out (`pr-first`, #3595).**';
+const STEP13 = '13. **Ledger close-out (`pr-first`, #3595, #3813).**';
 const MERGE = "runs `_shared/pr-first-merge.md`'s procedure";
 const FINISH = '**Branch finish (`worktree` mode, `integration-model: pr-first`, #3813).**';
 const EXEC_COMMIT = 'Commit with a message summarizing the wrap-up actions';
