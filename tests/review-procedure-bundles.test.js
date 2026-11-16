@@ -45,9 +45,9 @@ for (const site of SITES) {
     for (const needle of [`context/${site.step}.md`, 'once, whole', 'compacted since', FALLBACK, site.source]) {
       assert.ok(line.includes(needle), `${path.basename(site.file)}'s ${site.step} line is missing: ${needle}`);
     }
-    // The standalone path still names the raw source after the call line's own source argument.
-    const withoutCall = line.replace(site.callLine, '');
-    assert.ok(withoutCall.includes(`\`${site.source}\``), `${site.step} line names no standalone read of ${site.source}`);
+    // The standalone path (no run directory) still reads the raw source by name.
+    const standalone = `Standalone, with no \`$PIPELINE_RUN_DIR\`, read \`${site.source}\``;
+    assert.ok(line.includes(standalone), `${site.step} line is missing the standalone read: ${standalone}`);
   });
 }
 
