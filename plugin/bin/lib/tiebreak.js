@@ -10,14 +10,23 @@
 // different claims get different ids. A non-object finding, or a lens, path or
 // claim that is not a string, throws a TypeError rather than hashing `undefined`.
 //
-// A finding is { lens, path, line, claim, reporterSeverity, kind, positions?, vacuity? }:
+// A finding is { lens, path, line, claim, reporterSeverity, kind, positions?, vacuity?, severityFloor? }:
 // kind is 'unconfirmed' | 'contested'; positions ([{ severity }], optional,
 // contested only) are the two sides' severities. A contested finding's reporter
 // severity is the higher known position severity; buildFindingsArtifact stores
 // it as reporterSeverity, since the artifact does not keep positions. vacuity
 // (boolean, optional) marks a lens 3f "this test cannot fail" finding: only
 // resolveTiebreakChunk reads it (see its comment), the artifact does not keep it,
-// and a non-boolean value is refused rather than silently ignored.
+// and a non-boolean value is refused rather than silently ignored. severityFloor
+// (a severity, optional) is the severity a Standard judge raised the finding to
+// (#5541): only resolveTiebreak reads it, and only where the Capable judge
+// settled no verdict (a finding field refused as bad-finding-field, could-not-parse,
+// a non-DONE status, can't-tell, no verified evidence, a finding with no line):
+// there it settles at the higher of what it computes and the floor, so a failed
+// re-judge still reaches the console at the raised severity. A confirm or refute
+// settles on its own verdict and ignores it. It is not part of the finding's id,
+// the artifact does not keep it, and an absent, null or unknown value changes
+// nothing.
 //
 // Reply grammar (parseTiebreakReply). Lines are trimmed; each field line is
 // `Field: value`, the field name matched case-insensitively:
@@ -322,11 +331,14 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   else reason = evidenceProblem(parsed.evidence, finding, line, readFile);
 
   if (reason) {
-    const outcome = severityRank(higherSev) >= severityRank('medium') ? 'console' : 'digest';
+    // An escalation re-judge carries the severity the Standard judge raised the finding to (#5541).
+    // The floor applies only here, where the Capable judge settled no verdict; a confirm or refute settles on its own.
+    const unsettledSev = higher(higherSev, knownSeverity(finding.severityFloor));
+    const outcome = severityRank(unsettledSev) >= severityRank('medium') ? 'console' : 'digest';
     const log = outcome === 'console'
-      ? entry('STAGED', tiebreakStep, neutralize(`${where} console: ${reason}. Severity: ${higherSev}. Recommendation: ${parsed.recommendation ?? 'none'}.`))
-      : entry('AUTO', tiebreakStep, neutralize(`${where} digested: ${reason}. Severity: ${higherSev}.`));
-    return result({ outcome, severity: higherSev, reason, ...log });
+      ? entry('STAGED', tiebreakStep, neutralize(`${where} console: ${reason}. Severity: ${unsettledSev}. Recommendation: ${parsed.recommendation ?? 'none'}.`))
+      : entry('AUTO', tiebreakStep, neutralize(`${where} digested: ${reason}. Severity: ${unsettledSev}.`));
+    return result({ outcome, severity: unsettledSev, reason, ...log });
   }
 
   const ev = parsed.evidence;
@@ -363,6 +375,25 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // through resolveTiebreak, so its verdict line is the one-finding call's line
 // for the same entry and block; every other finding is reported unsettled with
 // nothing resolved for it, and the caller re-dispatches it alone.
+//
+// Judge tiers (#5541): a finding's tier follows its severity. `info` is judged at
+// Standard, everything else — low, medium, high, critical, and a null, missing
+// or unknown severity — at Capable, because a cheaper judge is only trusted
+// where a wrong verdict costs least. A contested finding's unknown-position check
+// reads its raw `positions`, because positionSeverity (and the artifact's
+// reporterSeverity built from it) drops an unknown position: a contested finding
+// with any null or unknown position severity is Capable even when every known
+// position is info. The tier never reads severityFloor.
+// planChunks groups entries by tier (TIERS order, entry order within a tier,
+// CHUNK_MAX per chunk, a repeated finding id kept once at its first index), so
+// a chunk never mixes tiers. escalation is the guard on the cheap tier: a
+// Standard judge that raises a finding to medium or higher has not settled it,
+// and resolveTiebreakChunk reports it in `escalated` with no result so the
+// caller judges it again at Capable. Only a reply that parses ok with STATUS
+// DONE can escalate; an unparsed or non-DONE block resolves as can't-tell, as
+// at any tier. At 'capable' (the default) nothing escalates.
+// resolveTiebreakChunk returns { results, unsettled, escalated }; `escalated` is
+// the entries a Standard judge raised, always [] at Capable.
 
 const CHUNK_MAX = 8;
 const CHUNK_HEADER_RE = /^id\s*:\s*`?([0-9a-f]{12})`?$/i;
@@ -408,13 +439,52 @@ function splitChunkReply(replyText, ids) {
   return { status, blocks };
 }
 
+const TIERS = ['capable', 'standard'];
+
+function judgeTier(finding) {
+  if (finding && finding.kind === 'contested' && Array.isArray(finding.positions) && finding.positions.length > 0) {
+    if (finding.positions.some((p) => knownSeverity(p && p.severity) === null)) return 'capable';
+  }
+  return reporterSeverityOf(finding) === 'info' ? 'standard' : 'capable';
+}
+
+function planChunks(findings) {
+  const ids = buildFindingsArtifact(findings).map((a) => a.id);
+  const seen = new Set();
+  const byTier = new Map(TIERS.map((tier) => [tier, []]));
+  findings.forEach((finding, index) => {
+    if (seen.has(ids[index])) return;
+    seen.add(ids[index]);
+    byTier.get(judgeTier(finding)).push(index);
+  });
+  const chunks = [];
+  for (const tier of TIERS) {
+    const indexes = byTier.get(tier);
+    for (let i = 0; i < indexes.length; i += CHUNK_MAX) chunks.push({ tier, indexes: indexes.slice(i, i + CHUNK_MAX) });
+  }
+  return chunks;
+}
+
+function escalation(finding, replyText, tier) {
+  if (tier !== 'standard') return null;
+  const parsed = parseTiebreakReply(replyText, { findingPath: finding.path });
+  if (parsed.parse !== 'ok' || parsed.status !== 'DONE' || parsed.severity === null) return null;
+  return severityRank(parsed.severity) >= severityRank('medium') ? { reason: 'raised', severity: parsed.severity } : null;
+}
+
 function resolveTiebreakChunk(findings, replyText, opts) {
   if (!Array.isArray(findings)) throw new TypeError('resolveTiebreakChunk: findings must be an array');
   const ids = findings.map((f) => findingId(f));
   if (new Set(ids).size !== ids.length) throw new TypeError('resolveTiebreakChunk: two entries share a finding id');
+  const tier = opts && opts.tier !== undefined ? opts.tier : 'capable';
+  if (!TIERS.includes(tier)) throw new TypeError(`resolveTiebreakChunk: tier must be one of ${TIERS.join(', ')}`);
+  if (tier === 'standard' && findings.some((f) => judgeTier(f) === 'capable')) {
+    throw new TypeError('resolveTiebreakChunk: a Capable-tier finding cannot be judged at standard');
+  }
   const { blocks } = splitChunkReply(replyText, ids);
   const results = [];
   const unsettled = [];
+  const escalated = [];
   findings.forEach((finding, index) => {
     const id = ids[index];
     const block = blocks.get(id);
@@ -429,9 +499,14 @@ function resolveTiebreakChunk(findings, replyText, opts) {
     const text = finding.vacuity === true
       ? block.text.split('\n').map((l) => (CONFIRMED_VERDICT_RE.test(l) ? 'Verdict: cant-tell' : l)).join('\n')
       : block.text;
+    const raised = escalation(finding, text, tier);
+    if (raised) {
+      escalated.push({ id, index, ...raised });
+      return;
+    }
     results.push({ ...resolveTiebreak(finding, text, opts), id, index });
   });
-  return { results, unsettled };
+  return { results, unsettled, escalated };
 }
 
 // ---- findings artifact and verdict coverage (#3945 Task 3) ----
@@ -553,4 +628,5 @@ module.exports = {
   findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES,
   FINDINGS_ARTIFACT, buildFindingsArtifact, readFindingsArtifact, checkTiebreakCoverage, checkRunTiebreakCoverage,
   VERDICT_LINE_END, CHUNK_MAX, splitChunkReply, resolveTiebreakChunk,
+  TIERS, judgeTier, planChunks, escalation,
 };

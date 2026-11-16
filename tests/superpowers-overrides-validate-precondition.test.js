@@ -37,7 +37,7 @@ for (const segments of TARGETS) {
     assert.match(line, /a check that silently self-skipped \(no browser backend, no dev server\) is not a satisfied precondition/, 'a self-degraded check must not count as run or declined');
     assert.match(line, /Backend\/infra work with no UI surface is not blocked/, 'must state the AC3 exemption explicitly');
     assert.match(line, /a non-web frontend surface \(mobile\/desktop\) with no automated rendered-check channel is satisfied by an explicit decline/, 'must not trigger a precondition no available channel can satisfy');
-    assert.match(line, /`\/claude-tweaks:review \{N\} full`|`\/claude-tweaks:demo`/, 'must name at least one real channel for the check');
+    assert.match(line, /`\/claude-tweaks:review \{N\} full`|`\/claude-tweaks:accept`/, 'must name at least one real channel for the check');
   });
 
   test(`${file}: Validate-precondition clause reuses the existing surface-detection signal, not a new one`, () => {

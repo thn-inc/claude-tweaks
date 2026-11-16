@@ -112,7 +112,7 @@ node -e "
 "
 ```
 
-Each result flags in the Needs Attention table: `{ref} — sampling floor: the {ordinal}th machine-granted merge on record, still awaiting a verdict — /claude-tweaks:demo {ref}`. `{ordinal}` is the record's position in the full, unbounded machine-granted-merge history — there is no reset; ordinal 40 always means the 40th one ever, not "40 since some earlier checkpoint." An empty result means nothing sampled this run — omit the flag entirely rather than rendering a zero row, same convention as the Justification/Definition flags above. A record already resolved (`facets.acceptance` is `approved` or `changes-requested`) never appears here even if its ordinal lands on a boundary — sampling only ever asks for a verdict that hasn't been given yet, it never re-flags a settled one.
+Each result flags in the Needs Attention table: `{ref} — sampling floor: the {ordinal}th machine-granted merge on record, still awaiting a verdict — /claude-tweaks:accept {ref}`. `{ordinal}` is the record's position in the full, unbounded machine-granted-merge history — there is no reset; ordinal 40 always means the 40th one ever, not "40 since some earlier checkpoint." An empty result means nothing sampled this run — omit the flag entirely rather than rendering a zero row, same convention as the Justification/Definition flags above. A record already resolved (`facets.acceptance` is `approved` or `changes-requested`) never appears here even if its ordinal lands on a boundary — sampling only ever asks for a verdict that hasn't been given yet, it never re-flags a settled one.
 
 ### PR-state join (in-flight runs and tombstones)
 
@@ -281,7 +281,7 @@ Scan per `_shared/github-pr-scan-triage.md`, **`triage-queue`** scope (split fro
 
 ## Stage 4.7: Acceptance Queue
 
-Cheap list only — the walkthrough stays `/claude-tweaks:demo`'s job, not `/help`'s. `/demo` no
+Cheap list only — the walkthrough stays `/claude-tweaks:accept`'s job, not `/help`'s. `/demo` no
 longer sweeps the pending acceptance backlog itself (it resolves only the items you name — this
 session's own recall-detected work, one explicit `#N`, or an explicit `#N,#M` list taken one at
 a time — never a scan), so this stage is the sole discovery surface for which records are
@@ -315,8 +315,8 @@ node -e "
 ```
 
 Render as the same one-line format as the `github-issues` scope: `Awaiting sign-off: **{N}
-records** — #{id1} ({title1}), #{id2} ({title2}), ... — run /demo #{id1},#{id2},... to review them
-all` (a single ref when `{N}` is 1: `run /demo #{id1}`) — omit entirely when the count is 0.
+records** — #{id1} ({title1}), #{id2} ({title2}), ... — run /claude-tweaks:accept #{id1},#{id2},... to review them
+all` (a single ref when `{N}` is 1: `run /claude-tweaks:accept #{id1}`) — omit entirely when the count is 0.
 
 ## Stage 4.8: Trust Table (GitHub)
 
@@ -419,7 +419,7 @@ claude-tweaks v{version} (Stage 0 — see its own section for the missing/unread
 
 *(Omit this section entirely when the GitHub scan was skipped, or the count is 0.)*
 
-- Awaiting sign-off: **{N} records** — #{n1} ({title1}), #{n2} ({title2}), ... — run `/claude-tweaks:demo #N` on any of these
+- Awaiting sign-off: **{N} records** — #{n1} ({title1}), #{n2} ({title2}), ... — run `/claude-tweaks:accept #N` on any of these
 
 ### Trust Table
 
