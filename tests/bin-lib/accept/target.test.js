@@ -69,6 +69,12 @@ test('no argument at all fails closed to local', () => {
   assert.deepStrictEqual(resolveAcceptanceTarget(), LOCAL_INVALID);
 });
 
+test('a null or non-object input fails closed instead of throwing', () => {
+  for (const input of [null, 'dev', 42, true]) {
+    assert.deepStrictEqual(resolveAcceptanceTarget(input), LOCAL_INVALID, String(input));
+  }
+});
+
 test('never dev without an affirmative dev default', () => {
   const flags = [[], ['auth'], null, undefined, 'auth', ['auth', 3]];
   const overrides = [undefined, 'local', 'dev', 'staging', '', null];

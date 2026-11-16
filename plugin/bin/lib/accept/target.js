@@ -12,7 +12,9 @@ const REASONS = ['risk-flag', 'item-override', 'policy', 'default', 'invalid-inp
 
 const INVALID = () => ({ target: 'local', reason: 'invalid-input' });
 
-function resolveAcceptanceTarget({ keptRiskFlags, itemOverride, policyDefault } = {}) {
+function resolveAcceptanceTarget(input = {}) {
+  if (input === null || typeof input !== 'object') return INVALID();
+  const { keptRiskFlags, itemOverride, policyDefault } = input;
   if (!Array.isArray(keptRiskFlags) || keptRiskFlags.some((f) => typeof f !== 'string')) return INVALID();
   if (keptRiskFlags.length > 0) return { target: 'local', reason: 'risk-flag' };
   if (itemOverride !== undefined) {
