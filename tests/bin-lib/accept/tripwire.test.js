@@ -7,6 +7,7 @@ const {
 } = require('../../../plugin/bin/lib/accept/tripwire');
 const { inertEvidence } = require('../../../plugin/bin/lib/issues/risk-flag-classify');
 const { TARGET_RE } = require('../../../plugin/bin/lib/accept/park-grammar');
+const { readText } = require('../../helpers/read-skill');
 
 const MIGRATIONS_GLOBS = { migrations: ['migrations/**'] };
 const MALFORMED_GLOBS_REASON = 'risk-path-globs is not a map of category to glob list';
@@ -306,7 +307,7 @@ test('removalLogSlugs reads only whole removal lines', () => {
 });
 
 test('the removal comment text is exactly what removalLogSlugs reads', () => {
-  const stamping = require('fs').readFileSync(require('path').join(__dirname, '..', '..', '..', 'plugin', 'skills', 'specify', 'shaping-mode-stamping.md'), 'utf8');
+  const stamping = readText(require('path').join(__dirname, '..', '..', '..', 'plugin', 'skills', 'specify', 'shaping-mode-stamping.md'));
   const start = stamping.indexOf('\n5. **Removal logging,**');
   assert.notStrictEqual(start, -1, 'Risk flags step 5 exists');
   const step = stamping.slice(start, stamping.indexOf('\n6. **Writer rule', start));
