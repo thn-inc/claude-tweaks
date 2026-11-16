@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { findComposeCallSites, measureComposed } = require('../plugin/bin/lib/skill-audit/context-cost.js');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets.js');
+const { readText } = require('./helpers/read-skill.js');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const REVIEW = path.join(PLUGIN, 'skills', 'review');
@@ -38,7 +39,7 @@ const SITES = [
 
 for (const site of SITES) {
   test(site.name, () => {
-    const text = fs.readFileSync(site.file, 'utf8').replace(/\r\n/g, '\n');
+    const text = readText(site.file);
     const line = text.split('\n').find((l) => l.includes(site.callLine));
     assert.ok(line, `${path.basename(site.file)} is missing the call line: ${site.callLine}`);
     // Every clause sits on the call line's own paragraph line, so a reader of the call sees them all.
@@ -74,7 +75,7 @@ test('discrimination: a SKILL.md without the call line yields no review-code-mod
     const dir = path.join(tmp, 'skills', 'review');
     fs.mkdirSync(dir, { recursive: true });
     fs.copyFileSync(path.join(REVIEW, 'code-mode-steps.md'), path.join(dir, 'code-mode-steps.md'));
-    const original = fs.readFileSync(path.join(REVIEW, 'SKILL.md'), 'utf8');
+    const original = readText(path.join(REVIEW, 'SKILL.md'));
     const stripped = original.split('\n').filter((l) => !l.includes('--step review-code-mode')).join('\n');
     assert.notEqual(stripped, original, 'fixture removed nothing — the call line moved');
 
