@@ -1109,3 +1109,134 @@ test('Review Focus 6: a vacuity entry\'s confirmed block resolves can\'t-tell', 
   assert.equal(findingId(vacuous), ID1);
   assert.equal(resolve(vacuous, `${CONFIRMED_BODY}\nSTATUS: DONE`).outcome, 'confirmed');
 });
+
+// ---- judge tiers by severity (#5541) ----
+
+const { TIERS, judgeTier, planChunks, escalation } = require('../../plugin/bin/lib/tiebreak');
+
+const withSeverity = (reporterSeverity, claim = 'tier claim') => ({ ...FINDING, claim, reporterSeverity });
+const contested = (...severities) => ({ ...FINDING, kind: 'contested', positions: severities.map((severity) => ({ severity })) });
+
+test('TIERS lists capable first, then standard', () => {
+  assert.deepEqual(TIERS, ['capable', 'standard']);
+});
+
+test('judgeTier: info is standard, every other severity capable', () => {
+  assert.equal(judgeTier(withSeverity('info')), 'standard');
+  for (const sev of ['low', 'medium', 'high', 'critical', null, undefined, 'bogus']) {
+    assert.equal(judgeTier(withSeverity(sev)), 'capable', String(sev));
+  }
+  assert.equal(judgeTier(contested('info', 'medium')), 'capable');
+  assert.equal(judgeTier(contested('info', 'info')), 'standard');
+  assert.equal(judgeTier(contested('info', null)), 'capable');
+  assert.equal(judgeTier(contested('info', 'bogus')), 'capable');
+  assert.equal(judgeTier(contested('info', undefined)), 'capable');
+  assert.equal(judgeTier({ ...FINDING, kind: 'contested', positions: [{ severity: 'info' }, null] }), 'capable');
+});
+
+test('planChunks: a chunk never mixes tiers', () => {
+  const entries = [];
+  for (let i = 0; i < 10; i += 1) {
+    entries.push(withSeverity('low', `low ${i}`));
+    if (i % 3 === 0) entries.push(withSeverity('info', `info ${i}`));
+  }
+  const lowIdx = entries.map((f, i) => (f.reporterSeverity === 'low' ? i : -1)).filter((i) => i >= 0);
+  const infoIdx = entries.map((f, i) => (f.reporterSeverity === 'info' ? i : -1)).filter((i) => i >= 0);
+  assert.equal(lowIdx.length, 10);
+  assert.equal(infoIdx.length, 4);
+  const chunks = planChunks(entries);
+  assert.deepEqual(chunks, [
+    { tier: 'capable', indexes: lowIdx.slice(0, 8) },
+    { tier: 'capable', indexes: lowIdx.slice(8) },
+    { tier: 'standard', indexes: infoIdx },
+  ]);
+  for (const chunk of chunks) {
+    assert.ok(chunk.indexes.length <= CHUNK_MAX);
+    assert.ok(chunk.indexes.every((i) => judgeTier(entries[i]) === chunk.tier));
+  }
+});
+
+test('planChunks: a repeated entry goes in once', () => {
+  const A = withSeverity('low', 'A');
+  const B = withSeverity('info', 'B');
+  const chunks = planChunks([A, B, A]);
+  assert.deepEqual(chunks, [{ tier: 'capable', indexes: [0] }, { tier: 'standard', indexes: [1] }]);
+  assert.ok(chunks.every((c) => !c.indexes.includes(2)));
+});
+
+test('planChunks: [] gives []; a malformed entry throws TypeError', () => {
+  assert.deepEqual(planChunks([]), []);
+  assert.throws(() => planChunks('nope'), TypeError);
+  assert.throws(() => planChunks([null]), TypeError);
+  assert.throws(() => planChunks([withSeverity('low'), { ...FINDING, kind: 'single-read' }]), TypeError);
+  assert.throws(() => planChunks([{ ...FINDING, claim: '' }]), TypeError);
+});
+
+const INFO1 = withSeverity('info', 'first info');
+const INFO2 = withSeverity('info', 'second info');
+const [INFO_ID1, INFO_ID2] = [INFO1, INFO2].map(findingId);
+const tierResolve = (findings, text, tier) => resolveTiebreakChunk(findings, text, { readFile: reader, now: NOW, ...(tier ? { tier } : {}) });
+
+test('resolveTiebreakChunk at standard: a raised finding is escalated, not settled', () => {
+  const infoBody = ['Verdict: confirmed', 'Evidence: plugin/bin/foo.js:20 `const x = readSync(fd);`', 'Severity: info'].join('\n');
+  const text = [block(INFO_ID1, CONFIRMED_BODY), block(INFO_ID2, infoBody), 'STATUS: DONE'].join('\n');
+  const chunk = tierResolve([INFO1, INFO2], text, 'standard');
+  assert.deepEqual(chunk.escalated, [{ id: INFO_ID1, index: 0, reason: 'raised', severity: 'medium' }]);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].index, 1);
+  assert.equal(chunk.results[0].id, INFO_ID2);
+  assert.ok(chunk.results.every((r) => !r.logLine.includes(INFO_ID1)));
+});
+
+test('resolveTiebreakChunk at standard: an unparsed or non-DONE block is not escalated', () => {
+  const noVerdict = ['Evidence: plugin/bin/foo.js:20 `const x = readSync(fd);`', 'Severity: high'].join('\n');
+  const unparsed = tierResolve([INFO1], `${block(INFO_ID1, noVerdict)}\nSTATUS: DONE`, 'standard');
+  assert.deepEqual(unparsed.escalated, []);
+  assert.equal(unparsed.results.length, 1);
+  const blocked = tierResolve([INFO1], `${block(INFO_ID1, CONFIRMED_BODY.replace('medium', 'high'))}\nSTATUS: BLOCKED`, 'standard');
+  assert.deepEqual(blocked.escalated, []);
+  assert.equal(blocked.results.length, 1);
+  const noStatus = tierResolve([INFO1], block(INFO_ID1, CONFIRMED_BODY.replace('medium', 'high')), 'standard');
+  assert.deepEqual(noStatus.escalated, []);
+});
+
+test('resolveTiebreakChunk at standard: a vacuity entry raised to medium still escalates', () => {
+  const vacuous = { ...INFO1, vacuity: true };
+  const chunk = tierResolve([vacuous], `${block(INFO_ID1, CONFIRMED_BODY)}\nSTATUS: DONE`, 'standard');
+  assert.deepEqual(chunk.escalated, [{ id: INFO_ID1, index: 0, reason: 'raised', severity: 'medium' }]);
+  assert.deepEqual(chunk.results, []);
+});
+
+test('resolveTiebreakChunk: capable never escalates; default tier is capable', () => {
+  const lowFinding = withSeverity('low', 'low claim');
+  const lowId = findingId(lowFinding);
+  const text = `${block(lowId, CONFIRMED_BODY.replace('medium', 'high'))}\nSTATUS: DONE`;
+  for (const chunk of [tierResolve([lowFinding], text, 'capable'), tierResolve([lowFinding], text)]) {
+    assert.deepEqual(chunk.escalated, []);
+    assert.deepEqual(chunk.unsettled, []);
+    assert.equal(chunk.results.length, 1);
+    assert.equal(chunk.results[0].outcome, 'confirmed');
+  }
+});
+
+test('resolveTiebreakChunk at standard refuses a capable-tier finding; an unknown tier throws', () => {
+  const lowFinding = withSeverity('low', 'low claim');
+  const text = `${block(findingId(lowFinding), CONFIRMED_BODY)}\nSTATUS: DONE`;
+  assert.throws(() => tierResolve([lowFinding], text, 'standard'), TypeError);
+  assert.throws(() => tierResolve([INFO1, lowFinding], text, 'standard'), TypeError);
+  assert.throws(() => tierResolve([lowFinding], text, 'fast'), TypeError);
+  assert.throws(() => resolveTiebreakChunk([lowFinding], text, { readFile: reader, now: NOW, tier: null }), TypeError);
+});
+
+test('escalation: one-finding check', () => {
+  const high = reply({ severity: 'high' });
+  assert.deepEqual(escalation(INFO1, high, 'standard'), { reason: 'raised', severity: 'high' });
+  assert.deepEqual(escalation(INFO1, reply({ severity: 'medium' }), 'standard'), { reason: 'raised', severity: 'medium' });
+  assert.equal(escalation(INFO1, high, 'capable'), null);
+  assert.equal(escalation(INFO1, reply({ severity: 'low' }), 'standard'), null);
+  assert.equal(escalation(INFO1, reply({ severity: 'info' }), 'standard'), null);
+  assert.equal(escalation(INFO1, reply({}), 'standard'), null);
+  assert.equal(escalation(INFO1, reply({ severity: 'high', status: 'BLOCKED' }), 'standard'), null);
+  assert.equal(escalation(INFO1, 'Severity: high\nSTATUS: DONE', 'standard'), null);
+});
