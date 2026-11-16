@@ -1006,19 +1006,25 @@ function followParkedRunDir(s) {
 
 // Ports `_shared/pr-first-merge.md` Step 2.9, the local acceptance park (control mode, #4615), as
 // `_shared/local-acceptance-park.md` lays it out: past the gate (Step 2.5), before Step 3's merge
-// call. `parked` exit 0 (parked) or 6 (unknown) refuses the merge; any exit but 5 fails closed.
-// Then `decide`: no park merges as before (control mode off prints `consulted: false` and reads
-// nothing), a park runs `park` for this run's one record, which owns the archive, the claim release
-// and the worktree removal, so no teardown runs here and no decision line follows it.
+// call. `parked` exit 0 (already parked: `already-parked`) or 6 (unknown: `park-state-unknown`)
+// refuses the merge with no park call, so nothing is archived or released this run; any exit but 5
+// fails closed. Then `decide`: no park merges as before (control mode off prints `consulted: false`
+// and reads nothing), a park runs `park` for this run's one record, which owns the archive, the
+// claim release and the worktree removal, so no teardown runs here and no decision line follows it.
+// `awaiting-local-acceptance` is reported only when this run's `park` succeeded.
 function acceptPark(s) {
   const { ctx } = s;
   s.stage = 'merge-accept-park';
   const record = String(ctx.record);
   const repo = ['--repo', ctx.repo];
   const parked = acceptParkCli(s, ['parked', '--record', record, '--run', s.runDir, ...repo]);
-  if (parked.code === 0 || parked.code === 6) {
-    const state = parked.code === 0 ? 'parked' : 'in an unknown park state';
-    return stop(s, 'merge-accept-park', 'awaiting-local-acceptance', `record #${record} is ${state} for local acceptance; not merged`);
+  if (parked.code === 0) {
+    return stop(s, 'merge-accept-park', 'already-parked',
+      `record #${record} was already parked for local acceptance; no park this run; not merged`);
+  }
+  if (parked.code === 6) {
+    return stop(s, 'merge-accept-park', 'park-state-unknown',
+      `record #${record} park state unreadable (accept-park.js parked exit 6); no park this run; not merged`);
   }
   if (parked.code !== 5) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js parked ${exitWords(parked)}; not merged`);
   const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, ...repo]);
@@ -1569,7 +1575,8 @@ const REASONS = Object.freeze([
   'supplier-failed', 'verdict-not-confirmed', 'acceptance-not-completed', 'compose-refused', 'ready-failed',
   'state-read-failed', 'pr-not-open', 'moving-target', 'checks-read-failed', 'check-failed', 'checks-pending-timeout',
   'draft-skip-without-ready-trigger', 'conflict', 'merge-refused', 'drain-overlap', 'near-duplicate',
-  'in-flight-unreadable', 'in-flight-read-failed', 'awaiting-local-acceptance', 'park-failed', 'unclassified',
+  'in-flight-unreadable', 'in-flight-read-failed', 'awaiting-local-acceptance', 'park-failed', 'already-parked', 'park-state-unknown',
+  'unclassified',
 ]);
 const PREFIXED_REASONS = Object.freeze(['check-failed', 'draft-skip-without-ready-trigger']);
 

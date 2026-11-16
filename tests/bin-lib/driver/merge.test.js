@@ -2774,10 +2774,10 @@ test('REASONS: the frozen closed set is the spec\'s 26 reasons plus unclassified
     'draft-skip-without-ready-trigger:{files}', 'conflict', 'merge-refused',
     // #5232: the drain-overlap hold's four words.
     'drain-overlap', 'near-duplicate', 'in-flight-unreadable', 'in-flight-read-failed',
-    // #4615: the local acceptance park's two words (pr-first-merge.md Step 2.9).
-    'awaiting-local-acceptance', 'park-failed',
+    // #4615: the local acceptance park's four words (pr-first-merge.md Step 2.9).
+    'awaiting-local-acceptance', 'park-failed', 'already-parked', 'park-state-unknown',
   ];
-  assert.equal(SPEC_REASONS.length, 26);
+  assert.equal(SPEC_REASONS.length, 28);
   const stem = (w) => w.replace(/:\{[a-z]+\}$/, '');
   assert.deepEqual([...REASONS], [...SPEC_REASONS.map(stem), 'unclassified']);
   assert.deepEqual([...PREFIXED_REASONS], SPEC_REASONS.filter((w) => w.includes(':')).map(stem));
@@ -3329,7 +3329,9 @@ test('AC3b.1: the auto-merge path never merges a parked PR', async () => {
   for (const verification of [undefined, WAIT]) {
     const h = mergeHarness({ parked: parkedReply(0), verification });
     const r = await merge(CTX, h.deps);
-    assert.deepEqual([r.outcome, r.reason], ['pending-review', 'awaiting-local-acceptance']);
+    // Already parked by an earlier run: this run parks nothing, so it reports already-parked, never
+    // awaiting-local-acceptance (which says this run's park archived the run and released the claim).
+    assert.deepEqual([r.outcome, r.reason], ['pending-review', 'already-parked']);
     assert.equal(h.calls.filter(isMergeCall).length, 0, 'no pr merge call');
     assert.deepEqual(parkCalls(h, 'parked')[0].args.slice(1), ['parked', '--record', '7', '--run', CTX.runDir, '--repo', 'o/r']);
     assert.equal(parkCalls(h, 'decide').length + parkCalls(h, 'park').length, 0, 'a parked record is neither decided nor parked again');
@@ -3341,9 +3343,11 @@ test('AC3b.1: the auto-merge path never merges a parked PR', async () => {
 test('AC3b.1: an unknown parked state also refuses', async () => {
   const h = mergeHarness({ parked: parkedReply(6) });
   const r = await merge(CTX, h.deps);
-  assert.deepEqual([r.outcome, r.reason], ['pending-review', 'awaiting-local-acceptance']);
+  assert.deepEqual([r.outcome, r.reason], ['pending-review', 'park-state-unknown']);
   assert.equal(h.calls.filter(isMergeCall).length, 0);
-  assert.match(r.detail, /unknown/);
+  assert.equal(parkCalls(h, 'decide').length + parkCalls(h, 'park').length, 0, 'an unknown state is neither decided nor parked');
+  assert.match(r.detail, /unreadable/);
+  assertNoTeardown(h);
 });
 
 test('a parked check that fails another way never merges (fail closed)', async () => {
