@@ -188,3 +188,58 @@ test('every other step-13 citation now names the execution step\'s Branch finish
   const consoleText = read('wrap-up/review-console.md');
   assert.ok(!consoleText.includes('at "On approval" step 13 after step 12'), 'the auto-resolution merge-half sentence no longer names step 13');
 });
+
+// Decision Q2 (Reading B): item 2 runs in two places, so the short-circuit's note names both
+// and cleanup-procedures row 2 no longer claims step 13 pushes.
+const SHORT_CIRCUIT_H = '**Ledger deletion (`cleanup-procedures.md` item 2) — before the merge (#939).**';
+const OLD_NORMALLY_RUNS = 'which is where item 2 (Open items ledger) normally runs';
+const ROW_PUSH_NEW = "let the execution step's phase-exit push carry it before the Branch finish";
+const ROW_PUSH_OLD = 'push before the merge';
+
+function assertShortCircuitItem2Placement(text) {
+  const para = paragraph(text, SHORT_CIRCUIT_H);
+  assert.ok(!para.includes(OLD_NORMALLY_RUNS), 'the note no longer says item 2 normally runs only in the execution step');
+  assert.ok(para.includes('`review-console.md`\'s "On approval" step 13 (Ledger close-out)'), 'names step 13 (Ledger close-out) as the pr-first worktree placement');
+  assert.ok(para.includes('`pr-first` in `worktree` mode'), 'scopes step 13 to pr-first in worktree mode');
+  assert.ok(para.includes("Phase 4's execution step otherwise") && para.includes('`local-merge`') && para.includes('`current-branch`'), "names Phase 4's execution step for local-merge and current-branch mode");
+}
+
+function assertItem2RowPush(text) {
+  const start = text.indexOf('| 2 | Open items ledger |');
+  assert.ok(start !== -1, 'row 2 not found');
+  const end = text.indexOf(' | 3 |', start);
+  const row = text.slice(start, end === -1 ? undefined : end);
+  assert.ok(!row.includes(`under \`pr-first\`, ${ROW_PUSH_OLD}`), 'row 2 no longer says step 13 pushes before the merge');
+  assert.ok(row.includes(ROW_PUSH_NEW), "row 2 names the execution step's phase-exit push");
+}
+
+test('#3813 Q2: the auto-merge short-circuit names both item-2 placements', () => {
+  assertShortCircuitItem2Placement(read('wrap-up/auto-merge-short-circuit.md'));
+});
+
+test('#3813 Q2 go-red: the old "normally runs" wording, or a dropped placement, fails the pin', () => {
+  const text = read('wrap-up/auto-merge-short-circuit.md');
+  const withOld = text.replace('re-implement it here', `${OLD_NORMALLY_RUNS} — re-implement it here`);
+  assert.notStrictEqual(withOld, text);
+  assert.throws(() => assertShortCircuitItem2Placement(withOld), /no longer says/);
+  const noStep = text.replace('(Ledger close-out)', '(Ledger)');
+  assert.notStrictEqual(noStep, text);
+  assert.throws(() => assertShortCircuitItem2Placement(noStep), /Ledger close-out/);
+  const noElse = text.replace("Phase 4's execution step otherwise", "Phase 4's execution step");
+  assert.notStrictEqual(noElse, text);
+  assert.throws(() => assertShortCircuitItem2Placement(noElse), /execution step for local-merge/);
+});
+
+test('#3813 Q2: cleanup-procedures row 2 names the phase-exit push, not a step-13 push', () => {
+  assertItem2RowPush(read('wrap-up/cleanup-procedures.md'));
+});
+
+test('#3813 Q2 go-red: the old row-2 push wording, or a dropped phase-exit push, fails the pin', () => {
+  const text = read('wrap-up/cleanup-procedures.md');
+  const withOld = text.replace(`and, under \`pr-first\`, ${ROW_PUSH_NEW}`, `and, under \`pr-first\`, ${ROW_PUSH_OLD}`);
+  assert.notStrictEqual(withOld, text);
+  assert.throws(() => assertItem2RowPush(withOld), /no longer says/);
+  const dropped = text.replace(ROW_PUSH_NEW, 'do nothing');
+  assert.notStrictEqual(dropped, text);
+  assert.throws(() => assertItem2RowPush(dropped), /phase-exit push/);
+});
