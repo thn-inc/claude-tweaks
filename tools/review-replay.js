@@ -60,7 +60,8 @@ function defaultDeps() {
     writeTree: (head, destDir) => {
       fs.mkdirSync(destDir, { recursive: true });
       const archive = execFileSync('git', ['archive', head, '--', '.', `:(exclude)${RUN_RECORDS_DIR}`], { cwd, maxBuffer: 1 << 30, windowsHide: true });
-      execFileSync('tar', ['-x', '-C', destDir], { input: archive, windowsHide: true });
+      // cwd, not -C: Git's GNU tar reads a drive-letter path ("D:\...") as host:path and fails to open it on Windows.
+      execFileSync('tar', ['-x', '-f', '-'], { cwd: destDir, input: archive, windowsHide: true });
     },
     log: (s) => process.stdout.write(`${s}\n`),
     err: (s) => process.stderr.write(`${s}\n`),
