@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { runCli, spawnCli } = require('../../helpers/run-cli');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
+const { readTiming, pickTokens } = require('../../helpers/close-timing');
 const transcript = require('../../../plugin/bin/lib/timing/transcript');
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
@@ -43,9 +44,8 @@ function writeTranscript(cfg, worktree) {
   ].join('\n') + '\n');
 }
 
-const readTiming = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8'));
 const TOKENS = { input: 11, output: 22, cacheRead: 33, cacheCreate: 44 };
-const pick = (t) => ({ input: t.input, output: t.output, cacheRead: t.cacheRead, cacheCreate: t.cacheCreate });
+const pick = pickTokens;
 
 test('--run missing, a missing value, and an unknown flag exit 2 with usage on stderr', async () => {
   for (const argv of [[], ['--run'], ['--bogus'], ['--run', 'x', '--bogus']]) {
