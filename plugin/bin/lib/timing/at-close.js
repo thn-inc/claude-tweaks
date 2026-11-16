@@ -10,11 +10,11 @@
 // A timing.json that already has token totals is kept byte-identical; a
 // spec-N child of a multi-record run is never written (the parent's file
 // covers the whole run). Token rows are clipped to the run's own lifetime
-// (creation through close), so two runs of one session transcript never share them. The read-check-write runs
-// under the run dir's .timing.lock; a run dir a concurrent archive moved away is
-// followed to its archive twin, never recreated. Nothing here throws: a failure
-// is one SKIP line in the run's decisions.md (_shared/auto-decision-log.md's
-// Degrade-trace rule).
+// (creation through close), so two runs of one session transcript never share
+// them. The read-check-write runs under the run dir's .timing.lock; a run dir a
+// concurrent archive moved away is followed to its archive twin, never
+// recreated. Nothing here throws: a failure is one SKIP line in the run's
+// decisions.md (_shared/auto-decision-log.md's Degrade-trace rule).
 'use strict';
 const fs = require('fs');
 const os = require('os');
