@@ -1172,3 +1172,66 @@ test('script entry: --help exits 0 and a malformed call exits 2', () => {
 test('the acceptance-target key is wired', () => {
   assert.doesNotMatch(POLICY_KEYS.find((k) => k.key === 'acceptance-target').summary, /^Not yet used/);
 });
+
+// ---- park: tripwire lines (#4619) ----
+
+const TRIPWIRE_LINE = 'tripwire: the diff crosses migrations (migrations/\\*\\*: migrations/001.sql), which nobody flagged, so this run is local';
+const writeTripwireFile = (w, content, n = 7) => {
+  const dir = path.join(w.state.runDir, 'packet-facts');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `tripwire-${n}.json`), content);
+};
+
+test('park writes the run\'s tripwire lines into the packet', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  writeTripwireFile(w, JSON.stringify({ record: 7, lines: [TRIPWIRE_LINE, 'tripwire: second'] }));
+  const res = await call(w, parkArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  const body = w.state.records[7].comments[0].body;
+  assert.ok(body.split('\n').includes(TRIPWIRE_LINE));
+  assert.ok(body.split('\n').includes('tripwire: second'));
+  assert.deepEqual(parkStateOf(body), { parked: true, target: 'local', reason: 'awaiting-local-acceptance', headSha: HEAD, baseSha: BASE });
+});
+
+test('park with an empty tripwire lines list removes an earlier tip\'s lines', async () => {
+  const stale = require('../plugin/bin/lib/accept/park').writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: ['tripwire: stale'] }).body;
+  const w = world({ records: { 7: { comments: [{ ...packetComment(7), body: stale }] } } });
+  writeTripwireFile(w, JSON.stringify({ record: 7, lines: [] }));
+  const res = await call(w, parkArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.doesNotMatch(w.state.records[7].comments[0].body, /tripwire/);
+});
+
+test('an unparseable tripwire file fails step 2', async () => {
+  for (const content of ['{not json', JSON.stringify({ record: 7, lines: 'tripwire: x' }), JSON.stringify({ record: 7, lines: [4] }), JSON.stringify({ record: 7 }), 'null']) {
+    const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+    writeTripwireFile(w, content);
+    const res = await call(w, parkArgv(w));
+    assert.equal(res.code, 1, content);
+    const result = JSON.parse(res.stdout);
+    assert.equal(result.outcome, 'park-failed');
+    assert.deepEqual(result.steps.map((s) => s.ok), [true, false]);
+    assert.match(result.steps[1].detail, /tripwire lines unreadable: /);
+    assert.equal(w.state.spawn.length, 0, 'nothing archived');
+    assert.equal(w.state.gh.filter((a) => a[0] === 'api' && a[1] === 'graphql').length, 0, 'no edit');
+  }
+});
+
+test('a tripwire file the park cannot read for another reason fails step 2 with the reason', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  writeTripwireFile(w, '{}');
+  const res = await call(w, parkArgv(w), { readFile: (file) => {
+    if (file.endsWith('tripwire-7.json')) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    return fs.readFileSync(file, 'utf8');
+  } });
+  assert.equal(res.code, 1);
+  assert.match(JSON.parse(res.stdout).steps[1].detail, /tripwire lines unreadable: EACCES/);
+});
+
+test('no tripwire file parks as before', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const res = await call(w, parkArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.doesNotMatch(w.state.records[7].comments[0].body, /tripwire/);
+  assert.deepEqual(JSON.parse(res.stdout).steps.map((s) => s.ok), [true, true, true, true, true]);
+});

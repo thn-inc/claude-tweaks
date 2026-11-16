@@ -262,3 +262,75 @@ test('decideSeries spreads each record\'s tripwire input', () => {
   assert.equal(series.park, true);
   assert.deepEqual(series.decisions.map((d) => [d.record, d.park, d.reason]), [[1, false, 'policy'], [2, true, 'risk-flag']]);
 });
+
+// ---- tripwire notes (#4619) ----
+
+const NOTE = 'tripwire: the diff crosses migrations (migrations/\\*\\*: migrations/001.sql), which nobody flagged, so this run is local';
+const deploySection = (body) => body.split('\n').slice(body.split('\n').indexOf('### Deploy status') + 1);
+
+test('AC6.1: notes render after the park group', () => {
+  const { body } = writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: [NOTE] });
+  const section = deploySection(body);
+  assert.deepEqual(section.slice(0, 5), ['target: local', `reason: ${PARK_REASON}`, `park-head: ${HEAD}`, `park-base: ${BASE}`, NOTE]);
+  const bare = '### Deploy status\nsome deploy note\n\n### Next\nx\n';
+  const after = deploySection(writeParkDeployStatus(bare, { headSha: HEAD, baseSha: BASE, notes: [NOTE] }).body);
+  assert.deepEqual(after.slice(4, 7), [NOTE, '', 'some deploy note'], 'a blank line separates the group and its notes from what follows');
+  assert.deepEqual(parkStateOf(body), { parked: true, target: 'local', reason: PARK_REASON, headSha: HEAD, baseSha: BASE });
+});
+
+test('a neutralized target\\: note keeps the park state', () => {
+  const note = 'tripwire: classification said target\\: dev, confirmed live';
+  const { body } = writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: [note] });
+  assert.equal(parkStateOf(body).target, 'local');
+  assert.equal(readersOf(body).state, 'awaiting-local');
+});
+
+test('a rewrite replaces old tripwire lines and is idempotent', () => {
+  const first = writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: ['tripwire: old reason', 'tripwire: second'] }).body;
+  const next = writeParkDeployStatus(first, { headSha: HEAD, baseSha: BASE, notes: [NOTE] });
+  assert.equal(next.changed, true);
+  assert.equal(next.body.match(/^tripwire/gm).length, 1);
+  assert.match(next.body, /^tripwire: the diff crosses/m);
+  assert.equal(writeParkDeployStatus(next.body, { headSha: HEAD, baseSha: BASE, notes: [NOTE] }).changed, false);
+  const cleared = writeParkDeployStatus(next.body, { headSha: HEAD, baseSha: BASE, notes: [] }).body;
+  assert.doesNotMatch(cleared, /^tripwire/m);
+  assert.equal(cleared, parked());
+});
+
+test('a tripwire line outside Deploy status is kept; only the section is rewritten', () => {
+  const lines = ['### What changed', 'tripwire: elsewhere', '', '### Deploy status', 'tripwire: old', 'tripwires are fine', ''];
+  const out = writeParkDeployStatus(lines.join('\n'), { headSha: HEAD, baseSha: BASE, notes: ['tripwire: new'] }).body;
+  assert.match(out, /^tripwire: elsewhere$/m);
+  assert.doesNotMatch(out, /tripwire: old/);
+  assert.match(out, /^tripwire: new$/m);
+});
+
+test('a note containing target: is refused', () => {
+  for (const note of ['tripwire: target: dev', 'tripwire:\ttarget: dev']) {
+    assert.throws(() => writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: [note] }), TypeError, note);
+  }
+});
+
+test('a note with a newline, an empty note, a non-tripwire note or a non-array is refused', () => {
+  for (const note of ['tripwire: a\nb', 'tripwire: a\rb', '', 'other: x', 7, null]) {
+    assert.throws(() => writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: [note] }), TypeError, String(note));
+  }
+  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: 'tripwire: x' }), TypeError);
+  assert.throws(() => writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: new Set(['tripwire: x']) }), TypeError, 'an iterable that is not an array');
+});
+
+test('no notes is byte-identical to today', () => {
+  const plain = writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE });
+  assert.equal(writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: [] }).body, plain.body);
+  const ref = rendered([deployFact('dev', 'target: dev, not confirmed live', { ref: 'deadbeef' })]);
+  assert.equal(writeParkDeployStatus(ref, { headSha: HEAD, baseSha: BASE, notes: [] }).body, writeParkDeployStatus(ref, { headSha: HEAD, baseSha: BASE }).body);
+  const bare = '### Deploy status\nsome deploy note\n\n### Next\nx\n';
+  assert.equal(writeParkDeployStatus(bare, { headSha: HEAD, baseSha: BASE, notes: [] }).body,
+    `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\npark-base: ${BASE}\n\nsome deploy note\n\n### Next\nx\n`);
+});
+
+test('notes keep CRLF line endings', () => {
+  const out = writeParkDeployStatus(PACKET.replace(/\n/g, '\r\n'), { headSha: HEAD, baseSha: BASE, notes: [NOTE] }).body;
+  assert.equal(out.replace(/\r\n/g, '').includes('\n'), false);
+  assert.ok(out.includes(`park-base: ${BASE}\r\n${NOTE}`));
+});

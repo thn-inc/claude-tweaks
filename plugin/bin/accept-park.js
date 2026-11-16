@@ -641,6 +641,26 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
     return baseOid;
   };
 
+  // The tripwire lines `decide` wrote for this record (packet-facts/tripwire-{n}.json): absent is no
+  // lines; anything unreadable fails step 2, so a stated reason is never silently lost.
+  const tripwireNotes = (n) => {
+    let text;
+    try {
+      text = deps.readFile(path.join(runDir, 'packet-facts', `tripwire-${n}.json`));
+    } catch (err) {
+      if (isAbsentError(err)) return [];
+      throw new Error(`tripwire lines unreadable: ${messageOf(err)}`);
+    }
+    let lines;
+    try {
+      lines = JSON.parse(text)?.lines;
+    } catch (err) {
+      throw new Error(`tripwire lines unreadable: ${messageOf(err)}`);
+    }
+    if (!Array.isArray(lines) || !lines.every((line) => typeof line === 'string')) throw new Error('tripwire lines unreadable: lines is not a list of strings');
+    return lines;
+  };
+
   const claimed = opts.claimed ?? opts.record;
   const prUrl = `https://${repoSpec.host || 'github.com'}/${repoSpec.owner}/${repoSpec.repo}/pull/${opts.pr}`;
   const worktree = ctx.absolute(opts.worktree);
@@ -658,7 +678,7 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
     writeDeployStatus: () => perRecord(opts.record, (n) => {
       const packet = readFoundPacket(n);
       if (packet.status !== 'found') throw new Error('no packet comment to write the park state into');
-      const { body, changed } = writeParkDeployStatus(packet.comment.body, { headSha: opts.head, baseSha: prBase() });
+      const { body, changed } = writeParkDeployStatus(packet.comment.body, { headSha: opts.head, baseSha: prBase(), notes: tripwireNotes(n) });
       if (!changed) return 'park state already written';
       const file = tmp(n, 'parked.md');
       try {
