@@ -1237,9 +1237,9 @@ test('consoleReplacedByAutoMerge: detects every dispatch bundle-gate log templat
   assert.strictEqual(detectsDispatchTemplate(group.replace('verdict auto-merge', 'verdict merge')), false);
 });
 
-// Re-pin the existing exports still resolve after the refactor above touched
+// Re-pin that readConsoleState still resolves after the refactor above touched
 // the same module — a regression here would mean the export list drifted.
-test('archive-merged module still exports its pre-existing surface', () => {
+test('archive-merged module still exports readConsoleState', () => {
   assert.equal(typeof readConsoleState, 'function');
 });
 
