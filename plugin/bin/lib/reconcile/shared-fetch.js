@@ -45,10 +45,11 @@ const { FETCH_TIMEOUT_MS } = require('./classify');
 // opts: { integration: string, mirror?: boolean, remotePrune?: boolean, env?: object }
 // `env` (a hook event's context, #5377) is the environment the fetch runs in; absent, the inherited one.
 function sharedFetch(root, opts = {}) {
+  const envOpts = opts.env ? { env: opts.env } : undefined;
   if (opts.mirror && !opts.remotePrune) {
-    return runGit(['fetch', 'origin', opts.integration], root, { timeoutMs: FETCH_TIMEOUT_MS, ...(opts.env ? { env: opts.env } : {}) });
+    return runGit(['fetch', 'origin', opts.integration], root, { timeoutMs: FETCH_TIMEOUT_MS, ...envOpts });
   }
-  return runGit(['fetch', '--prune', 'origin'], root, opts.env ? { env: opts.env } : undefined);
+  return runGit(['fetch', '--prune', 'origin'], root, envOpts);
 }
 
 // Async, mirror-only twin of sharedFetch — used by reconcile/index.js's

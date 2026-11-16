@@ -275,7 +275,7 @@ function branchMergeEvidence(runDir, state, cache, env) {
   // kept un-bare-ified here so a genuine cross-branch check still benefits
   // from resolveIntegrationBranch's origin/-prefixed freshness upgrade
   // (#1688), same as before #1861.
-  const integration = resolveIntegrationBranch(root, cache, env ? { env } : undefined);
+  const integration = resolveIntegrationBranch(root, cache, gitOpts(env));
   if (!integration) return out;
   out.merged = mergedEvidence(root, out.branch, integration, env);
   if (out.merged === 'ancestor') out.hasCommit = hasCommitSinceRunStart(root, out.branch, runDir, env);
