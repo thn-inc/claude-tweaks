@@ -545,9 +545,13 @@ function settleLensReplies(rest, deps) {
       if (!isPlainObject(entry)) return refuse(`${flags.hold} entry ${i} is not a finding object`);
       const target = settled.find((s) => s.lens === entry.lens);
       if (!target) return refuse(`${flags.hold} entry ${i} names lens ${JSON.stringify(entry.lens)}, which is not a settled lens`);
-      const matches = target.result.unconfirmed.filter((f) => holdKey(f) === holdKey(entry)).length;
-      if (matches !== 1) return refuse(`${flags.hold} entry ${i} matches ${matches} unconfirmed findings of lens ${entry.lens}, it must match exactly 1`);
       (hold[entry.lens] = hold[entry.lens] || []).push(entry);
+    }
+    // The match-exactly-once rule is categorise-reproduction's own (holdProblem), applied to each
+    // lens's entries over that lens's unconfirmed set; its entry index counts within the lens.
+    for (const [lens, entries] of Object.entries(hold)) {
+      const problem = holdProblem(entries, flags.hold, settled.find((s) => s.lens === lens).result.unconfirmed);
+      if (problem) return refuse(`${problem} (lens ${JSON.stringify(lens)})`);
     }
   }
 

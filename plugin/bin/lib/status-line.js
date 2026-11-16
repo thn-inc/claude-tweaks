@@ -21,6 +21,4 @@ const CANONICAL_RE = /^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$/
 // tier 1 does.
 const LENIENT_RE = /^(?:-\s+)?(?:\*\*Status:\*\*\s+)?(?:STATUS:\s+)?(DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)\b/;
 
-const STATUS_WORDS = Object.freeze(['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED']);
-
-module.exports = { CANONICAL_RE, LENIENT_RE, STATUS_WORDS };
+module.exports = { CANONICAL_RE, LENIENT_RE };

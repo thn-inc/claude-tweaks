@@ -54,11 +54,10 @@ test('AC9.1: the hook and the parser share one status-line module (subagent-stop
   assert.ok(sl.CANONICAL_RE.test('STATUS: DONE'));
   assert.ok(!sl.CANONICAL_RE.test('STATUS: DONE.'));
   assert.ok(sl.LENIENT_RE.test('- **Status:** BLOCKED'));
-  assert.deepStrictEqual([...sl.STATUS_WORDS], ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED']);
   const raw = readText(path.join(ROOT, 'plugin/bin/lib/hooks/subagent-stop.js'));
   const src = stripComments(raw);
   assert.equal(stripperVerdict(raw, src), 'ok');
-  assert.match(src, /const \{ CANONICAL_RE, LENIENT_RE \} = require\(['"]\.\.\/status-line['"]\);/);
+  assert.match(src, /require\(['"]\.\.\/status-line['"]\)/);
   assert.deepStrictEqual(inlineStatusPatterns(raw), []);
 });
 
@@ -195,6 +194,20 @@ test('an unescaped pipe outside backticks joins the surplus cells onto Evidence'
 
 test('a lenient status line that is last reads as misplaced', () => {
   const reply = `${HEADER}| high | src/a.ts:10 | Null deref | \`x.y\` unguarded |\n\n- **Status:** BLOCKED`;
+  assert.deepStrictEqual(parseLensReply(reply), result({
+    findings: [PLAIN_FINDINGS[0]], status: 'misplaced', statusWord: 'BLOCKED',
+  }));
+});
+
+test('an unclosed backtick span runs to the end of the row, so a later pipe does not split the cell', () => {
+  const reply = `${HEADER}| low | src/u.ts:1 | Stray \` tick | and more |\n\nSTATUS: DONE`;
+  assert.deepStrictEqual(parseLensReply(reply), result({
+    findings: [{ severity: 'low', path: 'src/u.ts', line: 1, text: 'Stray ` tick | and more', evidence: '' }],
+  }));
+});
+
+test('with two status lines in the window the latest supplies the word', () => {
+  const reply = `STATUS: DONE\n${HEADER}| high | src/a.ts:10 | Null deref | \`x.y\` unguarded |\n- **Status:** BLOCKED`;
   assert.deepStrictEqual(parseLensReply(reply), result({
     findings: [PLAIN_FINDINGS[0]], status: 'misplaced', statusWord: 'BLOCKED',
   }));
