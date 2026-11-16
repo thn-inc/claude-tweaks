@@ -1572,6 +1572,12 @@ function hasPrEarlyStep1LineFor(body, branch) {
   });
 }
 
+function listSubdirNames(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch { return []; }
+}
+
 // #2526: this run's own materialized record numbers, read straight off the
 // live worktree filesystem (work/{n}-spec.md, or its multi-record
 // spec-{slug}/work/{n}-spec.md form — the same two shapes
@@ -1588,12 +1594,6 @@ function hasPrEarlyStep1LineFor(body, branch) {
 // record whose header sits at both (a stale live copy, a mid-move state) counts
 // once. Only real directories are walked into, as before: a `spec-*` symlink or
 // file is skipped.
-function listSubdirNames(dir) {
-  try {
-    return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
-  } catch { return []; }
-}
-
 function getMaterializedRecordNumbers(worktreeRoot, runDir) {
   const numbers = new Set();
   const runId = path.basename(runDir);
