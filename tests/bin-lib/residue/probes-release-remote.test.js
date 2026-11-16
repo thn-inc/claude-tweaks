@@ -1,7 +1,7 @@
 // #3023: the release probe must read CHANGELOG.md from the integration
 // branch's remote-tracking ref, not a stale local HEAD — real git fixtures.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -156,8 +156,11 @@ test('#3023: an unreadable remote CHANGELOG with HEAD not behind the remote fall
 
 // #5563 AC5: a trimmed CHANGELOG.md (the `## Older releases` footer) keeps its
 // floor — tags below the oldest retained section are not reported as missing.
+const floorRoots = [];
+after(() => { for (const r of floorRoots) fs.rmSync(r, { recursive: true, force: true }); });
 function trimmedFixture({ withFooter }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rel-floor-')));
+  floorRoots.push(root);
   git(root, 'init', '-q', '-b', 'main');
   git(root, 'config', 'user.email', 't@example.com');
   git(root, 'config', 'user.name', 'T');

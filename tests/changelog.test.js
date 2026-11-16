@@ -538,8 +538,8 @@ test('a CRLF changelog keeps its one-blank-line gap before the footer, and a CR 
   assert.ok(trimChangelog(hardBreak, 2, { sha: SHA_A }).text.includes('body b  \n\n## Older releases'));
 });
 
-test('the trim gap cut matches the pre-CR regex cut on every short LF-only tail', () => {
-  // Differential against round 1's `(?:\n[ \t]*)+$` over every tail of length 1-7 drawn from
+test('the trim cuts exactly the trailing blank-and-whitespace lines before the footer, on every short LF-only tail', () => {
+  // Differential against the plain regex `(?:\n[ \t]*)+$` over every tail of length 1-6 drawn from
   // the gap alphabet (the tail must end in \n so the next heading starts a line).
   const oldCut = (s) => s.replace(/(?:\n[ \t]*)+$/, '');
   const alphabet = [' ', '\t', '\n'];

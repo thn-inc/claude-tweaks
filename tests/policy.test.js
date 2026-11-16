@@ -268,6 +268,13 @@ test('changelog-max-releases: absent file and absent key are 0; 50 is 50', () =>
   assert.deepStrictEqual(readChangelogMaxReleases(() => 'git-strategy: worktree\n'), { count: 0, error: null });
   assert.deepStrictEqual(readChangelogMaxReleases(() => 'changelog-max-releases: 50\n'), { count: 50, error: null });
 });
+test('changelog-max-releases: the schema row is an integer >= 0, default 0, read from policy.yml alone', () => {
+  const row = require('../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === 'changelog-max-releases');
+  assert.strictEqual(row.type, 'integer');
+  assert.strictEqual(row.min, 0);
+  assert.strictEqual(row.default, 0);
+  assert.strictEqual(row.policyOnly, true, 'both engines read policy.yml directly, so a run config must never carry a value for it');
+});
 test('changelog-max-releases: an unreadable policy file is reported, not read as 0 silently', () => {
   const r = readChangelogMaxReleases(() => { throw new Error('EISDIR: illegal operation on a directory'); });
   assert.strictEqual(r.count, 0);

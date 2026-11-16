@@ -554,6 +554,19 @@ test('a write that throws on the trim-only path: exit 0, one failure line', () =
   assert.strictEqual(state.err, 'changelog trim: failed (EROFS: read-only file system); file left untrimmed\n');
 });
 
+test('a trim-only push that throws and a restore that also throws: the line says the restore failed, not "untrimmed"', () => {
+  const { deps, state } = trimDeps({ policy: 'changelog-max-releases: 2\n', commitBodies: ['fix: a\n\nno footer'] });
+  const base = deps.git;
+  deps.git = (args) => {
+    const key = args.join(' ');
+    if (key === 'push') throw new Error('rejected: non-fast-forward');
+    if (key === 'reset --soft HEAD~1') throw new Error('index.lock exists');
+    return base(args);
+  };
+  assert.strictEqual(run([], deps), 0);
+  assert.strictEqual(state.err, 'changelog trim: failed (rejected: non-fast-forward); the restore also failed, CHANGELOG.md and the index may still hold the trimmed file\n');
+});
+
 test('an unreadable policy with a Highlights block: Highlights committed, unreadable line printed, exit 0', () => {
   const { deps, state } = trimDeps({ readPolicy: () => { throw new Error('EACCES: permission denied'); } });
   assert.strictEqual(run([], deps), 0);
@@ -662,5 +675,28 @@ test('CLI: readPolicy defaults to {root}/.claude-tweaks/policy.yml and a missing
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(bare, { recursive: true, force: true });
+  }
+});
+
+test('CLI: a policy.yml that exists but cannot be read prints the unreadable line and does not trim (the default reader rethrows non-ENOENT)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rnp-unreadable-'));
+  try {
+    // a directory where the file should be: readFileSync fails with EISDIR, which is not ENOENT
+    fs.mkdirSync(path.join(tmp, '.claude-tweaks', 'policy.yml'), { recursive: true });
+    const git = (args) => {
+      if (args[0] === 'log') return logOf(['fix: a\n\nno footer']);
+      return TRIM_GIT[args.join(' ')] || '';
+    };
+    const gh = (args) => {
+      if (args.join(' ').startsWith('release list')) return JSON.stringify([{ tagName: 'v1.3.0', publishedAt: '2026-10-02T00:00:00Z' }, { tagName: 'v1.2.0', publishedAt: '2026-09-01T00:00:00Z' }]);
+      throw new Error('unexpected gh');
+    };
+    const writes = {};
+    const res = runCliSync(CLI, ['--root', tmp], { env: { PATH: process.env.PATH }, deps: { gh, git, readFile: () => FOUR_SECTIONS, writeFile: (abs, text) => { writes[abs] = text; } } });
+    assert.strictEqual(res.code, 0, res.stderr);
+    assert.match(res.stderr, /^changelog trim: policy unreadable \(EISDIR[^)]*\); not trimmed\n$/);
+    assert.deepStrictEqual(writes, {});
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });

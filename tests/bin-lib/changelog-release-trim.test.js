@@ -154,7 +154,7 @@ test('a multi-line unreadable-policy reason prints one line', () => {
   assert.strictEqual(err.out, 'changelog trim: policy unreadable (EACCES: denied); not trimmed\n');
 });
 
-test('merge-base status 1 is "not an ancestor"; any other failure keeps its own message', () => {
+test('a merge-base failure other than status 1 keeps its own message and is not reported as "not an ancestor"', () => {
   const err = sink();
   const e = Object.assign(new Error('Command failed: git merge-base\nfatal: Not a valid commit name'), { status: 128 });
   prepareTrim({ text: file(['1.0.2', '1.0.1', '1.0.0']), readPolicy: policy(1), git: fakeGit({ 'merge-base': e }), ancestorRefs: REFS, stderr: err.write });

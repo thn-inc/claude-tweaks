@@ -134,6 +134,7 @@ function defaultBranch(deps, readPolicy) {
 
 function commitAndPush(deps, text, subject, progress = {}) {
   deps.writeFile('CHANGELOG.md', text);
+  progress.written = true;
   deps.git(['add', 'CHANGELOG.md']);
   deps.git(['commit', '-m', subject]);
   progress.committed = true;
@@ -143,19 +144,24 @@ function commitAndPush(deps, text, subject, progress = {}) {
 // The trim-only commit never fails the run: on any error it undoes what it did (the commit when
 // one landed, then the file and the index), prints one line and reports false.
 function commitTrimOnly(deps, text, original, subject) {
-  const progress = { committed: false };
+  const progress = { written: false, committed: false };
   try {
     commitAndPush(deps, text, subject, progress);
     return true;
   } catch (err) {
+    // Same wording as release-local's restore: a restore that itself failed must not claim the
+    // file was left untrimmed. A failure before the write has nothing to restore.
+    let restored = true;
     try {
       if (progress.committed) deps.git(['reset', '--soft', 'HEAD~1']);
-      deps.writeFile('CHANGELOG.md', original);
-      deps.git(['add', 'CHANGELOG.md']);
+      if (progress.written) {
+        deps.writeFile('CHANGELOG.md', original);
+        deps.git(['add', 'CHANGELOG.md']);
+      }
     } catch {
-      // best effort: the failure line below is what the caller needs
+      restored = false;
     }
-    deps.stderr(`changelog trim: failed (${firstLine((err && err.message) || err)}); file left untrimmed\n`);
+    deps.stderr(`changelog trim: failed (${firstLine((err && err.message) || err)}); ${restored ? 'file left untrimmed' : 'the restore also failed, CHANGELOG.md and the index may still hold the trimmed file'}\n`);
     return false;
   }
 }
