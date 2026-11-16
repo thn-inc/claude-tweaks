@@ -43,6 +43,8 @@ Scope keywords: guard-rewrite, RULE_IDS, five shapes, drop-redundant-cd
 **Files:**
 - Modify: `plugin/bin/lib/hooks/guard-rewrite.js` (header comment lines 1-46; `dropRedundantCd` 671-691; `RULES` 693-705)
 - Test: `tests/bin-lib/hooks/guard-rewrite.test.js`
+- Test: `tests/guard-refusals/probe-doc.test.js` (lines 72-74: count 5 → 6, message names six)
+- Modify: `docs/hooks.md` (line 24: add `drop-git-C-cwd` to the Rule ids list), `docs/reference/pretooluse-updatedinput-worktree-guard.md` (line 79: add the id to "Rule ids:") — so `probe-doc.test.js` stays green at this task's commit (plan review); the "five"→"seven" wording waits for Task 6
 
 **Interfaces:**
 - Produces: `spellsCwd(target: string, { cwd, pathImpl, realpath }): boolean` (module-private) — true iff `pathImpl.isAbsolute(target)`, target holds no `~` or `$`, `trimSlashes(target) === trimSlashes(cwd)`, and `realpath(target)` is non-null and equals `realpath(cwd)`. `dropRedundantCd` calls it in place of its own lines 686-689 (behavior unchanged; its existing tests stay green).
@@ -55,7 +57,7 @@ Rule semantics (Deliverable 1 and its Decided notes, all must hold, else return 
 - Candidates: every `git` at index `i` with `sc.kind[i] === TOP`, `atWordStart`, `atCommandStart(s, sc.kind, i)`, and followed by a word break. A `git` not at command start (`env git`, `command git`, `xargs git`, `X=1 git`, inside `$( … )`) is not a candidate and is left alone.
 - For a candidate whose next word is `-C`: operand must match one of the three `CD_OPERAND` forms followed by blanks (a glued `-C<dir>` is not a `-C` word → not a candidate, command unchanged). Operand text (unquoted value) holding `$`, a backtick, `*`, `?`, `[`, or `~` → decline. A second `-C` word in the same simple command (up to the next unquoted `;`, `&`, `|`, newline or `)`) → decline. The word after the operand must be in the read allowlist (Global Constraints) and end at a word break or end of text; otherwise decline.
 - A candidate `git` whose first option is not `-C` but whose simple command has a `-C` word later (`git --no-pager -C /w/wt log`) → decline.
-- Operand `.` (bare or quoted `'.'`/`"."`) → drop. Any other operand → drop only if `spellsCwd(value, ctx)` AND the text holds no whole word `cd`, `pushd` or `popd` anywhere (regex `/(?<![A-Za-z0-9_-])(?:cd|pushd|popd)(?![A-Za-z0-9_-])/`, quoted or not). Not spelling the cwd → decline.
+- Operand `.` (bare or quoted `'.'`/`"."`) → drop. Any other operand → drop only if `spellsCwd(value, ctx)` AND the text holds no whole word `cd`, `pushd` or `popd` anywhere (regex `/(?<![A-Za-z0-9_-])(?:cd|pushd|popd)(?![A-Za-z0-9_-])/`, quoted or not) AND (plan-review clarification, spec `## Plan Review Clarifications`) this `git` is the first command of the text, preceded only by leading literal assignments (its index equals `leadingAssignments(s).bodyStart`) — a snapshot function, alias, zsh `AUTO_CD` or an earlier function could otherwise move the directory first. Not spelling the cwd, or a literal operand on a later command → decline.
 - Edit: replace `git<blanks>-C<blanks><operand><blanks>` with `git ` (exactly one blank before the subcommand). Apply all edits with `replaceSpans`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -87,6 +89,8 @@ test('AC2.1: /w/wt/ is rewritten', () => {
 //   a symlink spelling: cwd /w/wt, command git -C "/w/link" log, realpath stub mapping /w/link → /w/wt (spelling compare is the only decline)
 //   the glued form git -C/w/wt log
 // AC2.4 — one test each, null:  git -C "/w/wt" commit -m x   ;   GIT_DIR=x git -C "/w/wt" log
+// Plan-review clarification — one test each, null: z foo && git -C "/w/wt" log ; sub && git -C "/w/wt" log ;
+//   f() { :; }; f; git -C "/w/wt" log ;  and positive: ls && git -C . log → 'ls && git log' (the . form needs no first-command test)
 test('drop-git-C-cwd declines on a glob, ~ or backtick operand and on doubt', () => { /* git -C "/w/w*" log; git -C ~ log (cwd os.homedir()); git -C . log `id`; git -C . log <<EOF\nx\nEOF — each null */ });
 test('drop-git-C-cwd declines when one of two git -C calls does not qualify', () => {
   assert.strictEqual(rw('git -C . log; git -C "$W" log'), null); // Review Focus 2
@@ -129,7 +133,7 @@ For each bail condition (GIT_ test, cd/pushd/popd test, second-`-C`, first-optio
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/lib/hooks/guard-rewrite.js tests/bin-lib/hooks/guard-rewrite.test.js
+git add plugin/bin/lib/hooks/guard-rewrite.js tests/bin-lib/hooks/guard-rewrite.test.js tests/guard-refusals/probe-doc.test.js docs/hooks.md docs/reference/pretooluse-updatedinput-worktree-guard.md
 git commit -m "Add drop-git-C-cwd guard rewrite rule — drops git -C . and git -C <own worktree> on read subcommands, refs #5588"
 ```
 
@@ -143,12 +147,14 @@ git commit -m "Add drop-git-C-cwd guard rewrite rule — drops git -C . and git 
 **Files:**
 - Modify: `plugin/bin/lib/hooks/guard-rewrite.js` (header, `RULES`)
 - Test: `tests/bin-lib/hooks/guard-rewrite.test.js`
+- Test: `tests/guard-refusals/probe-doc.test.js` (count 6 → 7, message names seven)
+- Modify: `docs/hooks.md`, `docs/reference/pretooluse-updatedinput-worktree-guard.md` (add `quote-exit-status` to each Rule ids list, as Task 1 did)
 
 **Interfaces:**
 - Consumes: `scan`, `inDoubt`, `atWordStart`, `atCommandStart`, `replaceSpans`, `WORD_BREAK` (existing).
 - Produces: `quoteExitStatus(s): string | null`, registered last as `['quote-exit-status', quoteExitStatus]`.
 
-Rule semantics (Deliverable 2): quick exits — no `$?`; text contains `IFS`; text does not name `git` or `gh` as a whole word (`/(?<![A-Za-z0-9_.\/-])(?:git|gh)(?![A-Za-z0-9_.\/-])/`). `sc = scan(s)`; `inDoubt` → null. Scan words with a sticky/global regex anchored by a left-boundary lookbehind of its own class (`/(?<![A-Za-z0-9_.:=\/-])[A-Za-z0-9_.:=\/-]+\$\?/g`, regex-scan-linearity shape 1). Keep a match only when: `sc.kind[start] === TOP` and the `$` at `end-2` is `TOP`; `atWordStart`; the char after it is a word break or end of text; the word does not start with `=`; the word is not in command/assignment position (walk back over the words of its own simple command from the segment start: skip if every earlier word in that command matches `/^[A-Za-z_][A-Za-z0-9_]*\+?=/`, i.e. the word is the command word or an assignment prefix); and the command word of its simple command is not one of `export`, `declare`, `local`, `readonly`, `typeset`, `env`. Edit: wrap the word in `"…"`. No kept match → null. A bare `$?` never matches (one or more class chars required).
+Rule semantics (Deliverable 2): quick exits — no `$?`; text contains `IFS`; text does not name `git` or `gh` as a whole word (`/(?<![A-Za-z0-9_.\/-])(?:git|gh)(?![A-Za-z0-9_.\/-])/`). `sc = scan(s)`; `inDoubt` → null. Scan words with a sticky/global regex anchored by a left-boundary lookbehind of its own class (`/(?<![A-Za-z0-9_.:=\/-])[A-Za-z0-9_.:=\/-]+\$\?/g`, regex-scan-linearity shape 1). Keep a match only when: `sc.kind[start] === TOP` and the `$` at `end-2` is `TOP`; `atWordStart`; the char after it is a word break or end of text; the word does not start with `=`; and the word's own simple command (the text from the previous unquoted `;`, `&`, `|`, newline or `(` at TOP up to the word) has a first word that is a `PLAIN_COMMAND_WORD`, is not an assignment (`/^[A-Za-z_][A-Za-z0-9_]*\+?=/`), is not in `RESERVED_WORDS` or `KEYWORD_PREFIXES` (`if`/`then`/`else`/`elif`, `{`, `do`, `time`, `!`, …), is not one of `export`, `declare`, `local`, `readonly`, `typeset`, `env`, and is not the word itself; and no redirection operator (`<`, `>`) appears between that segment start and the word. Any other position (plan review: `if git log; then rc=$?; fi` would become `then "rc=$?"`, a command) leaves that word unquoted. Edit: wrap the word in `"…"`. No kept match → null. A bare `$?` never matches (one or more class chars required).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -170,6 +176,9 @@ test('AC3.1: quote-exit-status double-quotes exit=$? after a git command', () =>
 //   git log -1; echo =$?            (leading =, Review Focus 4)
 //   x=$(git log -1; echo r=$?)      (inside $( … ), Review Focus 3)
 //   git log -1; echo exit=$? `id`   (inDoubt)
+//   if git log; then rc=$?; fi      (after a keyword prefix — plan review)
+//   git log; { rc=$?; }             (after a reserved word)
+//   git log; 2>/dev/null rc=$?      (after a redirection)
 test('quote-exit-status leaves digit and .github text alone (whole-word git/gh only)', () => { /* echo digit; echo exit=$? → null; ls .github; echo exit=$? → null */ });
 ```
 
@@ -190,7 +199,7 @@ Expected: PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/lib/hooks/guard-rewrite.js tests/bin-lib/hooks/guard-rewrite.test.js
+git add plugin/bin/lib/hooks/guard-rewrite.js tests/bin-lib/hooks/guard-rewrite.test.js tests/guard-refusals/probe-doc.test.js docs/hooks.md docs/reference/pretooluse-updatedinput-worktree-guard.md
 git commit -m "Add quote-exit-status guard rewrite rule — double-quotes word=\$? after a git or gh call, refs #5588"
 ```
 
@@ -217,7 +226,7 @@ A test over cases whose naive drop differs under both shells: `git -C sub log` (
 
 - [ ] **Step 3: Extend the property grammar (Deliverable 4)**
 
-Add to `GRAMMAR.safe`: `'git -C . log'`, `'git -C . status; echo st=$?'`, `\`git -C "${CWD}" log\``, `'git log; echo exit=$?'`. Add to `GRAMMAR.risky`: `'git -C . -C sub log'`, `'cd sub && git -C . log'`, `'git -C "$P" log'`, `'export rc=$?'`, `'echo =$?'`. Prepend `STUB` to the property test's `PATH` (it only stubs `ls`, `node`, `git`, none of which the old grammar runs). Keep the `rewritten >= 50` / `declined >= 50` floors; run and report the new diagnostic counts.
+Add to `GRAMMAR.safe`: `'git -C . log'`, `'git -C . status; echo st=$?'`, `\`git -C "${CWD}" log\``, `'git log; echo exit=$?'`. Add to `GRAMMAR.risky`: `'git -C . -C sub log'`, `'cd sub && git -C . log'`, `'git -C "$P" log'`, `'export rc=$?'`, `'echo =$?'`, `'if true; then rc=$?; fi'`, `'{ rc=$?; }'`. Prepend `STUB` to the property test's `PATH` (it only stubs `ls`, `node`, `git`, none of which the old grammar runs). Keep the `rewritten >= 50` / `declined >= 50` floors; run and report the new diagnostic counts.
 
 - [ ] **Step 4: Write the write-target invariance test (Deliverable 5, AC5)**
 
@@ -338,7 +347,7 @@ git commit -m "Record git -C cwd and chained \$? refusals in section 7 with dete
 
 ### Task 6: Every site that names the rules
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `docs/hooks.md` (line 24 bullet)
@@ -350,7 +359,7 @@ git commit -m "Record git -C cwd and chained \$? refusals in section 7 with dete
 - Modify: `.claude/skills/pretooluse-updatedinput-normalizer/SKILL.md`
 - Test: `tests/guard-refusals/probe-doc.test.js` (lines 72-74)
 
-- [ ] **Step 1: Update `probe-doc.test.js`**: `assert.strictEqual(RULE_IDS.length, 7, 'docs/hooks.md, the probe reference doc and scratch-worktree.md section 7 say "seven shapes" — update them with the rule count')`. Run `node --test tests/guard-refusals/probe-doc.test.js` — expect FAIL until hooks.md and the reference doc name both new ids.
+- [ ] **Step 1: Confirm `probe-doc.test.js`** reads `assert.strictEqual(RULE_IDS.length, 7, 'docs/hooks.md, the probe reference doc and scratch-worktree.md section 7 say "seven shapes" — update them with the rule count')` (Tasks 1-2 set the count and the two ids); fix the message wording if it still says another number.
 
 - [ ] **Step 2: Reword each site** to "seven" and name `drop-git-C-cwd` and `quote-exit-status` with a one-clause description (hooks.md: same parenthetical style as the others; reference doc: add both ids to the "Rule ids:" list, and a "Not measured" bullet: "how a permission rule written for the `git -C` spelling treats the plain spelling `drop-git-C-cwd` leaves, which is why the rule is restricted to read subcommands"). Do not touch any line pinned in `probe-doc.test.js`'s `PINNED`. In the normalizer skill: add Key-Patterns decline bullets for both rules (the shared `spellsCwd` test and cd/pushd/popd/`GIT_`/read-allowlist bails; the `IFS`/whole-word git-gh/declaring-word/`=`-lead bails), and change the Project Conventions "its "five shapes" count" to "its shape count".
 
@@ -371,6 +380,7 @@ git commit -m "Name the seven guard rewrite rules at every site that lists them 
 ### Task 7: Live probe 3 with the built plugin
 
 **Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Modify: `docs/reference/pretooluse-updatedinput-worktree-guard.md` (new `## Probe 3` section after Probe 2)
@@ -384,7 +394,7 @@ claude -p -w probe-5588-plugin --plugin-dir "<this worktree>/plugin" --model hai
 claude -p -w probe-5588-ctl --model haiku --dangerously-skip-permissions --setting-sources local --output-format stream-json --verbose --include-hook-events --max-budget-usd 1 < "<prompt file>" > "$PIPELINE_RUN_DIR/evidence/guard-rewrite-probe3-control.jsonl"
 ```
 
-(`$PIPELINE_RUN_DIR` written as its literal absolute path; `mkdir -p` the evidence dir first.) Extract each TOOL_USE command, the hook's `updatedInput`, and each TOOL_RESULT's `is_error` and text. Afterwards remove only the two probe worktrees this step created (`git worktree remove` on each path, then `git branch -D` of their branches) and confirm with `git worktree list`.
+(`$PIPELINE_RUN_DIR` written as its literal absolute path; `mkdir -p` the evidence dir first.) Extract each TOOL_USE command, the hook's `updatedInput`, and each TOOL_RESULT's `is_error` and text. Before running, record `git worktree list` output; after, remove only the two probe worktrees this step created — confirm each path and branch name is new in `git worktree list` versus that record and ends in `probe-5588-plugin`/`probe-5588-ctl` — (`git worktree remove` on each path, then `git branch -D` of their branches) and confirm with `git worktree list`. Touch no other worktree or branch.
 
 - [ ] **Step 3: Write `## Probe 3`** with: Claude Code version (`claude --version`, 2.1.325 at authoring), the date, the two command lines, per form the control's refusal text and the plugin run's result plus the `updatedInput` command, and a line naming the evidence files. If the probe cannot run (no `claude`, no `-w`), STOP: write nothing, report AC9 unmet.
 
