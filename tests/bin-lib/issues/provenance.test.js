@@ -400,3 +400,34 @@ test('issueAuthorTrust classifies a record by its author', () => {
     assert.equal(issueAuthorTrust(record), expected, JSON.stringify(record));
   }
 });
+
+test('AC1.1: an Origin line under an ## Absorbed: section is not the record\'s own (#4502)', () => {
+  const body = ['## Current State', 'x', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body }), { kind: 'human', source: 'human' });
+});
+test('AC2.1: a body whose only Origin line is fenced resolves human (backtick and tilde)', () => {
+  for (const f of ['```', '~~~']) {
+    assert.deepStrictEqual(resolveProvenance({ labels: [], body: ['## Current State', f, 'Origin: ledger resolve gate', f].join('\n') }), { kind: 'human', source: 'human' }, f);
+  }
+});
+test('AC3.1: an Origin line under ## Original request still resolves its class', () => {
+  const body = ['## Current State', 'x', '## Original request', 'Origin: ledger resolve gate (#4368 review)'].join('\n');
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body }), { kind: 'side-effect', source: 'ledger resolve gate (#4368 review)' });
+});
+test('AC4.1: an own top line beats an absorbed one', () => {
+  const body = ['Origin: wrap-up leftover from #3', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body }), { kind: 'side-effect', source: 'wrap-up leftover' });
+});
+test('AC5.1: a line after the absorbed section\'s next ## heading counts again', () => {
+  const body = ['## Absorbed: 2026-10-30 — x', 'Origin: demo scope-fork', '## Original request', 'Origin: ledger resolve gate'].join('\n');
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body }), { kind: 'side-effect', source: 'ledger resolve gate' });
+});
+test('AC6.1: a bare Origin: line still yields unstructured:empty-origin', () => {
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body: 'Origin:\n\n## Current State' }), { kind: 'unstructured', source: 'empty-origin' });
+});
+test('AC7.1: CRLF bodies resolve the same as LF', () => {
+  const lines = ['## Absorbed: 2026-10-30 — x', 'Origin: demo scope-fork', '## Original request', 'Origin: ledger resolve gate'];
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body: lines.join('\r\n') }), resolveProvenance({ labels: [], body: lines.join('\n') }));
+  const fencedOnly = ['```', 'Origin: ledger resolve gate', '```'];
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body: fencedOnly.join('\r\n') }), { kind: 'human', source: 'human' });
+});

@@ -68,6 +68,9 @@ const TEMPLATE_STAMP_VALUE_RE = /^\S+ @ \S+$/;
 // trimmed; single-line only (materialize.js runs it as-is via the shell).
 const PREMISE_CHECK_RE = /^Premise-check: (.+)$/m;
 
+// #4502: one body line's `Origin:` marker; the capture is `.*?` so a bare `Origin:` yields ''.
+const ORIGIN_LINE_RE = /^Origin:[ \t]*(.*?)[ \t]*$/;
+
 function oneOf(name, value, allowed) {
   if (!allowed.includes(value)) {
     throw new Error(`${name} must be one of ${allowed.join('|')} (got "${value}")`);
@@ -206,7 +209,7 @@ function ownOriginLine(body) {
       continue;
     }
     if (inAbsorbed) continue;
-    const m = /^Origin:[ \t]*(.*?)[ \t]*$/.exec(line);
+    const m = ORIGIN_LINE_RE.exec(line);
     if (m) return m[1];
   }
   return null;

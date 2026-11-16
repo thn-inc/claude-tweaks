@@ -6,6 +6,7 @@
 // module acts on nothing — it computes and returns rows for display only.
 // Was docs/superpowers/plans/2026-08-07-supervised-trust-table.md — deleted (d83f0720).
 const { resolveProvenance, issueAuthorTrust } = require('./provenance.js');
+const { ownOriginLine } = require('./record.js');
 const { dispositionState, approvalProvenance } = require('./acceptance.js');
 const { resolveValue } = require('../policy-schema.js');
 const { hasNegativeEvidenceMarker } = require('./retry.js');
@@ -66,11 +67,15 @@ function riskBand(labels) {
 // as follow-ups is decided below). Parsed BEFORE resolveProvenance normalizes
 // the body — the normalizer strips exactly this trailing clause.
 //
-// Capture-then-normalize, same strategy as provenance.js's own ORIGIN_LINE +
-// TRAILING_SOURCE pair: match the whole line first, then extract '#N' from
-// the captured text, rather than hard-anchoring '#(\d+)' straight to the
-// line's end. A single hard-anchored pattern breaks on any trailing
-// punctuation after the digits (e.g. "from #7." never matches "from #7$"),
+// The line is the record's own one, read by record-payload.js's ownOriginLine
+// (#4502) — the same reader provenance.js classifies from, so class and
+// follow-up always come from one line: a fenced or `## Absorbed:` Origin line
+// forms neither, and a bare own `Origin:` ('') hides any later one.
+//
+// Capture-then-normalize, same strategy as provenance.js's own TRAILING_SOURCE:
+// take the whole line first, then extract '#N' from the captured text, rather
+// than hard-anchoring '#(\d+)' straight to the line's end. A single
+// hard-anchored pattern breaks on any trailing punctuation after the digits (e.g. "from #7." never matches "from #7$"),
 // which silently drops a real Origin-line variant and undercounts followUps
 // — a negative signal, so undercounting it can falsely flip a cell's verdict
 // from 'mixed' to 'clean'. Trailing punctuation is stripped before the '#N'
@@ -79,7 +84,6 @@ function riskBand(labels) {
 //
 // The line is honoured only from a trusted or unknown author (provenance.js's
 // issueAuthorTrust): an untrusted author's line forms no class and no follow-up.
-const ORIGIN_LINE_RE = /^Origin:[ \t]*(.+?)[ \t]*$/m;
 const TRAILING_PUNCTUATION_RE = /[.,;:)\]]+$/;
 const FOLLOWUP_TAIL_RE = /\bfrom[ \t]+#(\d+)$/i;
 
@@ -108,9 +112,9 @@ const FOLLOWUP_TAIL_RE = /\bfrom[ \t]+#(\d+)$/i;
 const NON_CORRECTIVE_ORIGINS = new Set(['demo scope-fork', 'wrap-up leftover']);
 
 function correctiveFollowUpTarget(body) {
-  const line = ORIGIN_LINE_RE.exec(typeof body === 'string' ? body : '');
+  const line = ownOriginLine(body);
   if (!line) return null;
-  const trimmed = line[1].replace(TRAILING_PUNCTUATION_RE, '');
+  const trimmed = line.replace(TRAILING_PUNCTUATION_RE, '');
   const match = FOLLOWUP_TAIL_RE.exec(trimmed);
   if (!match) return null;
   const context = trimmed.slice(0, match.index).trim().toLowerCase();
