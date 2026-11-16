@@ -598,7 +598,8 @@ const GIT_TEMPLATE_CONFIG = '[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n[r
 
 // Writes a git template directory at `dir` (git's built-in default template, or a usable inherited
 // GIT_TEMPLATE_DIR, plus GIT_TEMPLATE_CONFIG) and returns `dir`; null when any step throws.
-function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git', args, { ...opts, stdio: 'ignore', windowsHide: true }) } = {}) {
+// `onError` is called with the caught error before null is returned.
+function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git', args, { ...opts, stdio: 'ignore', windowsHide: true }), onError = () => {} } = {}) {
   const src = `${dir}-src`;
   const emptyConfig = `${dir}-empty-gitconfig`;
   try {
@@ -625,14 +626,12 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
       git(['init', '-q', src], { env: initEnv });
       overlay = true;
     }
+    // The same three entries on both paths: `config` is never copied (it holds per-repository core.* keys).
     for (const name of ['hooks', 'info', 'description']) {
       const from = path.join(src, '.git', name);
       if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, name), { recursive: true });
-    }
-    if (overlay) {
-      for (const name of fs.readdirSync(inherited)) {
-        if (name !== 'config') fs.cpSync(path.join(inherited, name), path.join(dir, name), { recursive: true });
-      }
+      const own = overlay ? path.join(inherited, name) : null;
+      if (own && fs.existsSync(own)) fs.cpSync(own, path.join(dir, name), { recursive: true });
     }
     let base = '';
     if (inherited) {
@@ -643,7 +642,8 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
     }
     fs.writeFileSync(path.join(dir, 'config'), base + GIT_TEMPLATE_CONFIG);
     return dir;
-  } catch (_) {
+  } catch (err) {
+    onError(err);
     return null;
   } finally {
     for (const p of [src, emptyConfig]) {
@@ -895,13 +895,8 @@ if (require.main === module) {
 
   try {
     runRoot = createRunRoot(runsDir, process.pid);
-    let templateDir = null;
-    let templateWhy = 'git did not produce a template';
-    try {
-      templateDir = writeGitTemplateDir(path.join(runRoot, 'git-template'), process.env);
-    } catch (err) {
-      templateWhy = err.message;
-    }
+    let templateWhy = 'unknown error';
+    const templateDir = writeGitTemplateDir(path.join(runRoot, 'git-template'), process.env, { onError: (err) => { templateWhy = err.message; } });
     if (!templateDir) console.error(`run-tests.js: could not build the git template (${oneLine(templateWhy)}) — repositories tests create keep git's own defaults`);
     child = spawn(process.execPath, testArgs, {
       cwd: REPO_ROOT,

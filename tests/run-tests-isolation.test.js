@@ -1750,6 +1750,9 @@ test('writeGitTemplateDir ignores an inherited GIT_DIR and object-store variable
     assert.ok(fs.readFileSync(path.join(gitDir, 'config')).equals(configBefore), 'the other repo\'s config is untouched');
     assert.deepStrictEqual(listing(), listingBefore);
     assert.deepStrictEqual(fs.readdirSync(third), []);
+    // With the GIT_* drop reverted, git reinitializes the other repo and dir keeps only `config`.
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')));
+    assert.ok(fs.statSync(path.join(dir, 'hooks')).isDirectory());
   });
 });
 
@@ -1765,9 +1768,11 @@ test('writeGitTemplateDir falls back to git\'s default when the inherited GIT_TE
     fs.mkdirSync(path.join(inherited, 'config'), { recursive: true });
     fs.mkdirSync(path.join(inherited, 'info'));
     fs.writeFileSync(path.join(inherited, 'info', 'marker'), 'm');
+    fs.writeFileSync(path.join(inherited, 'stray'), 's'); // not one of the copied entries on either path
     const dir = path.join(tmp, 'tpl-unreadable');
     assert.strictEqual(writeGitTemplateDir(dir, { ...cleanGitEnv(), GIT_TEMPLATE_DIR: inherited }), dir);
     assert.ok(fs.existsSync(path.join(dir, 'info', 'marker')));
+    assert.ok(!fs.existsSync(path.join(dir, 'stray')));
     assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
   });
 });
@@ -1802,6 +1807,9 @@ test('writeGitTemplateDir returns null when git fails', () => {
   withGitTemp((tmp) => {
     const git = () => { throw new Error('git is gone'); };
     assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl'), cleanGitEnv(), { git }), null);
+    const seen = [];
+    assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl2'), cleanGitEnv(), { git, onError: (err) => seen.push(err.message) }), null);
+    assert.deepStrictEqual(seen, ['git is gone']);
   });
 });
 
