@@ -16,7 +16,7 @@ Scope keywords: tools/test-durations.json, queue-pull.test, run-tests-shard
 
 - Test names in the split files stay byte-identical to the originals (the test-impact map and `#5227` references key on them).
 - Do not change `assignShards`, `PER_FILE_OVERHEAD_MS` or the `--shard` partition rules.
-- Guard constants: size floor 100 KB (102,400 bytes), duration ceiling 40,000 ms.
+- Guard constants: size floor 100 KB (102,400 bytes), duration ceiling 100,000 ms. Amended during the build (user decision, spec `## Plan Review Clarifications`): the ceiling was 40,000 ms until the CI recording showed `queue-pull` files at 180 s / 121 s / 104 s; wherever a task below says 40,000 or 40 s, read 100,000 ms. Task 5b (below) carries the follow-up split.
 - Commits name files explicitly with `git add <paths>` and end with `Claude-Session: https://claude.ai/code/session_016yg3zo6eTU9wd41H4Npjd5`.
 - The refresh (`node tools/run-tests.js --record-durations <out>`) runs the whole suite once and is recorded on the CI runner (a temporary `.github/workflows/record-durations.yml` on this PR branch, removed in the same change that commits the map), not on this machine: it runs under a load average above 90 on 12 cores from sibling sessions, which inflated one queue-pull run from about 125 s in CI to 905 s here. The map exists to balance CI's shards, so CI hardware is the right place to measure it. Ruling taken during execution; the controller runs it, and waits for the completion notice, never polls.
 - No scratch file under the repo root is committed; scratch output goes under the session scratchpad.
@@ -180,6 +180,21 @@ Refs #5756
 
 Claude-Session: https://claude.ai/code/session_016yg3zo6eTU9wd41H4Npjd5"
 ```
+
+### Task 5b: Bring every queue-pull file under the 100 s ceiling (added during the build)
+
+**Review risk:** high — it restructures the shared oracle pool across files, as Task 3 did.
+
+**Files:**
+- Modify: `tools/run-tests.js` (`DURATIONS_CEILING_MS` to `100000`), `tests/run-tests-shard.test.js` (the ceiling fixtures: 100,001 and 100,000), `docs/journeys/ci-test-gate.md` (its two "40,000 ms" mentions)
+- Modify/Create: the `tests/bin-lib/dispatch/queue-pull*.test.js` files and `queue-pull-helpers.js` as the split needs
+
+**Facts (CI recording run 43912061736, Node 24, four files at a time):** `queue-pull-parity-ac4.test.js` 180,032 ms; `queue-pull.test.js` 121,230 ms (the oracle cross-check tests: 29.5 s `#5227 oracle cross-check: the S1 and SFast fixtures…`, 16.3 s `…S1 full gives the oracle the same groups…`, 14.7 s `#5227 oracle: queue-pull-script.md runs whole…`, 6.9 s, 6.8 s, 2.8 s, 2.7 s…); `queue-pull-parity-ac7.test.js` 104,471 ms; `queue-pull-parity-ac1.test.js` 37,896 ms; `queue-pull-parity-ac5.test.js` 35,190 ms. All other files are under 24 s.
+
+- [ ] **Step 1:** Set the ceiling constant and its fixtures and docs to 100,000 ms.
+- [ ] **Step 2:** Split `parity-ac4` by fault family (`FAULTS` rows in one file, `FILES_FAULTS` rows in another), AC4.2 and AC4.3 becoming one test per family with identical assertions (the user's clarification); move the oracle-heavy tests out of `queue-pull.test.js` into a new file so it falls under the ceiling; split `parity-ac7` or merge its pool with the files family so no file reruns a pool another file already pays for. Estimate each resulting file's time from the CI log and keep each at or under about 90 s.
+- [ ] **Step 3:** Verify every moved test's name and body, and that the summed test count equals Task 1's `N` plus exactly the added per-family tests.
+- [ ] **Step 4:** Commit by explicit paths. The controller then re-records on CI and repeats Step 2 for any file still over the ceiling.
 
 ### Task 6: Whole-suite verification and the PR before/after
 
