@@ -13,8 +13,8 @@
 // dependency direction for every future vertical that would have had to
 // require a sibling vertical's file just to reach the shared registry. Each
 // vertical (`candidates-{vertical}.js`) registers its own generator here
-// instead — all nine register today (see the require list at the bottom of
-// this file) — and a new vertical adds its own key via `registerGenerator`
+// instead — every registered vertical is in the require list at the bottom of
+// this file — and a new vertical adds its own key via `registerGenerator`
 // rather than inventing a second registry.
 
 const FOCUS_GENERATORS = {};

@@ -6,9 +6,10 @@
 // prose convention alone. No network.
 'use strict';
 
-// Dual-write fingerprint markers: FP_RE_WORK is the current marker written by
+// Fingerprint markers: FP_RE_WORK is the current marker written by
 // recordPayload() (record-payload.js); FP_RE_LEGACY is the pre-work-record
-// marker, read from all three health producers (skills/_shared/work-record.md).
+// marker of all three health producers, read only — nothing writes it any more
+// (skills/_shared/work-record.md).
 // Removal condition: remove FP_RE_LEGACY and its branch in extractFingerprint
 // once no issue, open or closed, carries a code-health-fingerprint,
 // harness-health-fingerprint or journey-health-fingerprint marker. The check is
@@ -17,7 +18,9 @@
 // repository it runs in; a 0 is necessary but not sufficient, because the reader
 // also serves consumer repos this check cannot see, so removal also needs a
 // release note plus a sunset window (or a sweep step that rewrites old markers
-// to `work-fingerprint`).
+// to `work-fingerprint`). The removal reaches past this file: grep FP_RE_LEGACY
+// and `-health-fingerprint` repo-wide first, since re-exports, skill prose and
+// tests pinning that prose name them too.
 const FP_RE_WORK = /<!--\s*work-fingerprint:\s*([^\s>]+)\s*-->/;
 const FP_RE_LEGACY = /<!--\s*(?:code-health|harness-health|journey-health)-fingerprint:\s*([^\s>]+)\s*-->/;
 
