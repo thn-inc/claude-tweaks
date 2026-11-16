@@ -16,6 +16,11 @@
 // verdicts and the cost per arm as one JSON object (tools/review-replay/score.js); --transcripts is the workflow's
 // directory holding journal.jsonl and agent-{id}.jsonl.
 //
+// counterfactual: had each lens run one reviewer instead of a pair, how many confirmed findings would still have been
+// raised; reads each lens agent's own findings table from --transcripts (a directory searched recursively for
+// agent-{id}.jsonl). A transcript with no table is unreadable, reported and kept out of the shares
+// (tools/review-replay/counterfactual.js).
+//
 // Exit codes (as tools/driver-merge-check-eval.js): 0 ok; 1 a runtime failure; 2 a malformed invocation; 3 not a clean
 // result (extract shortfall, or score with any notJudged).
 //
@@ -28,6 +33,7 @@ const { execFileSync } = require('child_process');
 const { readRun, selectRuns, matchVerdicts } = require('./review-replay/archive.js');
 const { extract } = require('./review-replay/extract.js');
 const { score } = require('./review-replay/score.js');
+const { counterfactual } = require('./review-replay/counterfactual.js');
 const { VERDICT_CLASSES } = require('./review-replay/schema.js');
 
 const USAGE = [
@@ -35,11 +41,13 @@ const USAGE = [
   '       node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>,repeat=<n> [--arm ...]',
   '               [--select <name,...>] [--min-runs <n>] [--min-findings <n>] [--quota <sev>=<n>,...] [--template <path>] [--dispatch-core <path>]',
   '       node tools/review-replay.js score --out <extract dir> --transcripts <workflow dir> [--reference <arm>]',
+  '       node tools/review-replay.js counterfactual --runs <root> --transcripts <dir> [--select <name,...>]',
 ].join('\n');
 const COMMAND_FLAGS = {
   baseline: new Set(['--runs', '--select']),
   extract: new Set(['--runs', '--select', '--out', '--min-runs', '--min-findings', '--quota', '--arm', '--template', '--dispatch-core']),
   score: new Set(['--out', '--transcripts', '--reference']),
+  counterfactual: new Set(['--runs', '--select', '--transcripts']),
 };
 
 function defaultDeps() {
@@ -73,7 +81,7 @@ function parseArgs(argv) {
     if (arg === '--arm') opts.arms = [...(opts.arms || []), value];
     else opts[arg.slice(2)] = value;
   }
-  const required = command === 'score' ? ['out', 'transcripts'] : ['runs'];
+  const required = { score: ['out', 'transcripts'], counterfactual: ['runs', 'transcripts'] }[command] || ['runs'];
   for (const key of required) if (!opts[key]) return { error: `${command} requires --${key}` };
   if (opts.select !== undefined) {
     opts.select = opts.select.split(',').map((s) => s.trim()).filter(Boolean);
@@ -129,6 +137,7 @@ async function run({ argv, deps } = {}) {
   try {
     const { command } = parsed.opts;
     if (command === 'extract') return extract(parsed.opts, d);
+    if (command === 'counterfactual') return counterfactual(parsed.opts, d);
     return command === 'score' ? score(parsed.opts, d) : baseline(parsed.opts, d);
   } catch (e) {
     d.err(`review-replay.js: ${errText(e)}`);

@@ -29,8 +29,8 @@ test('AC1.1: baseline reports both reviewed runs with verdicts, head, base and c
   const tiebreakItems = timing.dispatches.items.filter((i) => /^Tiebreak/i.test(i.description)).length;
   assert.equal(tiebreakItems, 3);
   assert.equal(a.cost.tiebreakAgents, tiebreakItems);
-  assert.deepEqual(a.cost, { lensAgents: 2, tiebreakAgents: 3, lensOut: 300, lensCc: 30, tbOut: 36, tbCc: 3006, tbCr: 306, tbSeconds: 5 });
-  assert.deepEqual(a.lensAgents.map((l) => [l.lens, l.side]), [['3a', 'A'], ['3a', 'B']]);
+  assert.deepEqual(a.cost, { lensAgents: 4, tiebreakAgents: 3, lensOut: 370, lensCc: 37, tbOut: 36, tbCc: 3006, tbCr: 306, tbSeconds: 5 });
+  assert.deepEqual(a.lensAgents.map((l) => [l.lens, l.side]), [['3a', 'A'], ['3a', 'B'], ['3b', 'A'], ['3b', 'B']]);
   assert.equal(a.findings, undefined, 'finding claims stay out of the baseline output');
   assert.equal(out.runs[1].head, HEAD_C);
   assert.equal(out.runs[1].base, 'c'.repeat(40));
