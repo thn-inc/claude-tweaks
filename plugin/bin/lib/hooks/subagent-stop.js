@@ -577,9 +577,8 @@ function recordStop(ctx, out, memo) {
     const marker = require('../wait-for/marker');
     memo.last ??= lastAssistantText(transcriptPath);
     if (!('pending' in memo)) memo.pending = typeof memo.last.text === 'string' ? countPendingDispatches(memo.last.lines, memo.last.replyIndex) : null;
-    const pending = memo.pending;
     const blocked = Boolean(out && out.json && out.json.decision === 'block');
-    marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending });
+    marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending: memo.pending });
   } catch { /* the marker never changes the hook's answer */ }
 }
 
