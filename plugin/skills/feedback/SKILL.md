@@ -68,12 +68,9 @@ the symptom. For a defect, also gather repro steps and expected-vs-actual. For a
 gap, gather the use case — what the user was trying to do and why the plugin's
 current behavior does not support it.
 
-Also judge Definition: does this learning name a genuine open choice with no
-tradeoff made yet — two or more viable directions, no stated preference — or a
-single clear ask? This is a content call made in this same turn, not a
-structural heuristic (the same posture `solution:unjustified`'s judgment takes).
-`Needed` only when the learning genuinely names an undecided choice; default
-`Clear` otherwise. When `Needed`, form a one-line rationale naming the open
+Also judge Definition: read `_shared/needs-definition-judgment.md` and judge
+the learning by it in this same turn: `needed` renders `Needed`, `clear`
+renders `Clear`. When `Needed`, form a one-line rationale naming the open
 choice — this and the verdict feed Step 5's draft.
 
 **Bash-refusal attribution (#3338).** When the learning's evidence quotes a refused Bash call and the candidate affected component is `bin/lib/hooks/pre-tool-use.js` or any other plugin hook, first grep the quoted text under the plugin's own `bin/`: `"${CLAUDE_PLUGIN_ROOT}/bin/"` (this repo's `plugin/bin/`; the installed build's in a consumer project), e.g. `grep -rnF -- '{fragment}' "${CLAUDE_PLUGIN_ROOT}/bin/"`.

@@ -255,7 +255,7 @@ finding the run held would otherwise be lost at archive. `unfiledCantTellFinding
 `archive-merged.js`) returns `[]` unless `readTopLevelConsoleState` is `none` and
 `consoleReplacedByAutoMerge` is true; otherwise it names, via `console/finding-outcomes.js`'s
 `unfiledCantTell`, each finding of the run dir and of every `spec-*/` dir (prefixed `spec-N/`)
-with no `AUTO … filed as #{n} (work-fingerprint {fp})` line in that dir's `decisions.md`. A read
+with no `AUTO … filed as #{n} (work-fingerprint {fp})` line, and since #4679 no `AUTO … Queue write: {item} digested (work-fingerprint {fp})` line, in that dir's `decisions.md`. A read
 failure fails closed. `runTiebreakCoverage` carries the list as `unfiledCantTell`, and
 `archiveUnlessTiebreakGap`, the single choke point every archive decision that carries a run dir passes (`decideArchive`'s thin wrapper holds none, so it never evaluates the guard), evaluates it
 last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`**, carrying
@@ -263,7 +263,7 @@ last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`*
 sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
 terminal decision` line) turns the guard off. `hooks.js archive-run` refuses the same condition, inside its
 `console-never-rendered-staged-pending` block and after that refusal, printing the hint with the
-real run dir in place of `{run-dir}`. The remedy is to file each finding through
+real run dir in place of `{run-dir}`. The remedy is to settle each finding (filed, or for a `drop` recommendation digested) through
 `wrap-up/review-console.md`'s Can't-tell filings: a `spec-N/`-prefixed id is filed and logged with
 `--run {run-dir}/spec-N` (its own `decisions.md`). Every other run archives exactly as before.
 
@@ -275,7 +275,7 @@ Every site that skips `console-unresolved` — `decideArchiveCore`, the `status:
 sweep, `hooks.js archive-run` — skips or refuses `console-residue` too, which a human clears with
 `console-residue.js --ack` (an unreadable `console.json` must be repaired or removed instead). The
 skip carries a `hint` naming the open items and any unreadable
-`console.json`, which `reconcile/index.js` passes through to `result.runs` (#4172). Since #4170, when a planned can't-tell filing has no record (`filing-pending`), the hint also names the paste-ready `console-filings.js --only` re-run (`filingRerunRemedy`); the `hooks.js archive-run` refusal prints the same remedy. `console-residue` is
+`console.json`, which `reconcile/index.js` passes through to `result.runs` (#4172). Since #4170, when a planned can't-tell filing has no record (`filing-pending`), the hint also names the paste-ready default-selection `console-filings.js` re-run (`consoleRerunCommand`, no `--only`; `rerunRemedies`), and for a `digest-pending` entry the digest log remedy; the `hooks.js archive-run` refusal prints the same remedies. `console-residue` is
 deliberately not in `STRUCTURALLY_STUCK_REASONS`: an acknowledgement (or, for a `filing-pending` item, logging its filed line), not a reconcile re-run, converges it. A run whose archival attempt committed carries `commit: { sha, branch }` on its `result.runs` entry, archived or skipped, from `archiveMerged`'s `archiveCommits` (#3721).
 
 **Residue pruning.** After every `archive` pass, `cache.js`'s `pruneResidueFailures` drops any

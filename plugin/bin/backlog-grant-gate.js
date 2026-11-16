@@ -209,6 +209,7 @@ function run(argv, deps = realDeps) {
       gitRunner: deps.gitRunner,
       sessionId: process.env.CLAUDE_CODE_SESSION_ID,
       ttlSeconds: resolved['record-snapshot-ttl-seconds'].value,
+      stderr: (s) => deps.stderr(s),
     });
   } catch (err) {
     deps.stderr(`backlog-grant-gate.js: ${errorText(err)}\n`);

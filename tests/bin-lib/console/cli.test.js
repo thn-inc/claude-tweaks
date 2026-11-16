@@ -128,7 +128,7 @@ test('console.json and --json carry filings as {item, fingerprint, title} with n
   const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
   const tbNow = new Date(2026, 9, 24, 10, 0, 0);
   const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
-  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: file\nSTATUS: DONE', { readFile: () => '', now: tbNow });
   const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
   const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
   const json = baseDeps(fx, []);
@@ -142,9 +142,35 @@ test('console.json and --json carry filings as {item, fingerprint, title} with n
   assert.ok(!json.out().includes('work-fingerprint'), 'no proposal text in --json');
   assert.ok(!JSON.stringify(cj).includes('work-fingerprint'), 'no proposal text in console.json');
   assert.deepStrictEqual(cj.items.map((i) => i.resolution), ['filed']);
+  assert.deepStrictEqual(cj.digests, [], 'a file recommendation plans no digest entry');
   const none = mainCheckoutWithRun({ staged: THREE });
   assert.strictEqual(await run(['--run', none.runDir, '--policy', 'console-auto'], baseDeps(none, []).d), 0);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).filings, [], 'always written');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).digests, [], 'always written');
+});
+
+test('a drop-recommended can\'t-tell item digests: console.json and --json carry digests as {item, fingerprint}, no filing, reversibility n/a (#4679)', async () => {
+  const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
+  const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const tbNow = new Date(2026, 9, 24, 10, 0, 0);
+  const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
+  const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
+  const json = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto', '--json'], json.d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.deepStrictEqual(cj.items.map((i) => i.resolution), ['digested']);
+  assert.deepStrictEqual(cj.filings, []);
+  assert.strictEqual(cj.digests.length, 1);
+  assert.deepStrictEqual(Object.keys(cj.digests[0]).sort(), ['fingerprint', 'item']);
+  assert.strictEqual(cj.digests[0].item, `tiebreak:${r.id}`);
+  assert.match(cj.digests[0].fingerprint, /^consolefinding-[0-9a-f]{8}$/);
+  assert.deepStrictEqual(JSON.parse(json.out()).digests, cj.digests, '--json prints the same');
+  assert.ok(!json.out().includes('<!-- console-finding'), 'no digest line text in --json');
+  assert.ok(!JSON.stringify(cj).includes('<!-- console-finding'), 'no digest line text in console.json');
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /Console item tiebreak:[0-9a-f]+ \(Low-confidence findings\): digested — .*Reversibility: n\/a\.$/m);
 });
 
 // grant-veto-window-hours only reaches evaluateMaturation if the CLI resolves
@@ -653,12 +679,12 @@ test('AC4.1: a successful Queue write keeps apply and leaves no residue (#4170)'
   assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
 });
 
-test('AC3.1: a console whose can\'t-tell filings never ran reports the planned filing, and the re-render names the --only re-run (#4170)', async () => {
+test('AC3.1: a console whose can\'t-tell filings never ran reports the planned filing, and the re-render names the default-selection re-run (#4170)', async () => {
   const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
   const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
   const tbNow = new Date(2026, 9, 24, 10, 0, 0);
   const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
-  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: file\nSTATUS: DONE', { readFile: () => '', now: tbNow });
   const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
   const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
   const first = baseDeps(fx, []);
@@ -672,8 +698,22 @@ test('AC3.1: a console whose can\'t-tell filings never ran reports the planned f
   const second = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], second.d), 0);
   assert.match(second.out(), /Needs a human — 1 item\(s\)/);
-  assert.ok(second.out().includes(`--only 'tiebreak:${r.id}'`), second.out());
+  assert.ok(second.out().includes('--out-dir <dir> --digest-comments <comments.json>') && !second.out().includes('--only'), second.out());
   appendEntry({ runDir: fx.runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: tbNow, step: 'Review Console', text: `tiebreak:${r.id} filed as #501 (work-fingerprint ${cj.filings[0].fingerprint})`, reversibility: 'high' }) });
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
+});
+
+test('AC3.1 (old shape): a previous-release console with a drop item in `filings` stays filing-pending, then clears on the digested line (#4679)', () => {
+  const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const consoleJson = `${JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:a1', section: 'Low-confidence findings', resolution: 'filed', reason: 'r', tiebreak: { recommendation: 'drop' } }],
+    filings: [{ item: 'tiebreak:a1', fingerprint: 'consolefinding-0123abcd', title: 't' }],
+  })}\n`;
+  const fx = mainCheckoutWithRun({ consoleJson });
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles[0].items.map((i) => i.resolution), ['filing-pending']);
+  appendEntry({ runDir: fx.runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: new Date(2026, 9, 24, 10, 0, 0), step: 'Queue write', text: 'tiebreak:a1 digested (work-fingerprint consolefinding-0123abcd)', reversibility: 'n/a' }) });
   assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
 });
 
