@@ -47,6 +47,7 @@
 ### Task 1: `issueAuthorTrust` and the `authorTrust` gate in `resolveProvenance`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/provenance.js`
@@ -86,7 +87,8 @@
 
 ### Task 2: `trustRows` honours author trust for classes and follow-ups
 
-**Role:** integration · **Review risk:** high
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/trust.js` (`correctiveFollowUpTarget` ~line 107, `trustRows` ~lines 346 and 429-437)
@@ -101,13 +103,13 @@
   - `AC1.1: an untrusted closed record joins no side-effect class`. A closed record with `Origin: demo changes-requested from #7` and `authorAssociation: 'NONE'` forms no `side-effect:demo changes-requested|…` row; it counts in the `human:human|elevated` row (`total` 1).
   - `AC2.1: a trusted or bot author's follow-up still counts`. The same pair with #8 as `OWNER`, `MEMBER`, `COLLABORATOR`, and `{ authorAssociation: 'CONTRIBUTOR', author: { is_bot: true } }` each gives `followUps === 1`.
   - `AC3.1: a follow-up with no author data still counts`. #8 carries no association fields, giving `followUps === 1`.
-  - Guard discrimination: the untrusted-follow-up test must go red when the follow-up gate alone is deleted. Make #8 an open record, which forms no cell, so that only the follow-up loop decides it. State this in the test comment.
+  - Guard discrimination: the untrusted-follow-up test must go red when the follow-up gate is deleted. Make #8 an open record, which forms no cell, so that only the follow-up loop decides it. State this in the test comment. There is exactly one follow-up gate (Step 3), so the deletion is unambiguous.
 
 - [ ] **Step 2: Run to verify failure**
   Run: `node --test tests/bin-lib/issues/trust.test.js`
   Expected: FAIL (untrusted follow-up counts 1; untrusted class forms a side-effect row)
 
-- [ ] **Step 3: Implement.** In `trustRows`, compute `issueAuthorTrust(record)` once per record. Pass it to `resolveProvenance` in the cell loop. Skip the record in the follow-up loop when it is `'untrusted'`. Give `correctiveFollowUpTarget` a second parameter `authorTrust` that returns `null` when `'untrusted'`, and have the follow-up loop call it that way. Add one sentence to the comment above `ORIGIN_LINE_RE` saying the line is honoured only from a trusted or unknown author (provenance.js).
+- [ ] **Step 3: Implement.** In `trustRows`, compute `issueAuthorTrust(record)` once per record. Pass it to `resolveProvenance` in the cell loop. Skip the record in the follow-up loop when it is `'untrusted'`. That skip is the one follow-up gate, and `correctiveFollowUpTarget` stays unchanged. Add one sentence to the comment above `ORIGIN_LINE_RE` saying the line is honoured only from a trusted or unknown author (provenance.js).
 
 - [ ] **Step 4: Run to verify pass**
   Run: `node --test tests/bin-lib/issues/trust.test.js tests/bin-lib/issues/provenance.test.js tests/trust-policy-keys-conformance.test.js tests/accept-label-reader-conformance.test.js tests/bin-lib/issues/grant-sampling.test.js`
@@ -118,7 +120,8 @@
 
 ### Task 3: `author-association.js`, the snapshot enrichment
 
-**Role:** judgment · **Review risk:** high
+**Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/issues/author-association.js`
@@ -145,6 +148,7 @@
   - `enrichRecords` only queries records with an `Origin:` line and no bot flag (`author: { is_bot: true }` is excluded), and attaches `authorAssociation`. A record with no `Origin:` line is returned byte-identical (deepStrictEqual to input).
   - `enrichRecords` resolves owner/repo from `repo view` when neither is passed. A `repo view` that throws returns `{ skipped: 'repo-unresolved' }` and the records unchanged.
   - `enrichRecordsFile` on a temp file round-trips, and on `'not json'` returns `skipped`, leaves the file untouched, and does not throw.
+  - `enrichRecordsFile` writes exactly one stderr line containing `author-association enrichment incomplete` when a batch fails. It writes nothing on a clean run.
   - `UNION_FIELDS` pin in `record-snapshot.test.js` becomes `'number,title,labels,body,state,stateReason,createdAt,closedAt,comments,updatedAt,milestone,author'`.
 
 - [ ] **Step 2: Run to verify failure**
@@ -168,9 +172,12 @@
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js` (`fetchAllRecords`, lines 82-90: enrich the live fetch before `writeSnapshot`, through the injected `runner`, with `owner`/`repo` threaded from `computeOutlook`'s `fetch` when present)
+- Modify: `plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js` (`fetchAllRecords`, lines 82-90): enrich the live fetch before `writeSnapshot`.
+  - Use a wrapper of the injected `runner`: `(args) => runner(args, { timeout: args[0] === 'api' && args[1] === 'graphql' ? GH_BATCH_TIMEOUT_MS : GH_TIMEOUT_MS })`. The CLI's real runner takes an options second argument (`plugin/bin/backlog-grant-gate.js:105`) and is otherwise unbounded on purpose. Fakes ignore the argument.
+  - **Never** thread `fetch.owner`/`fetch.repo`. Those come from `--repo` for the native calls, while the issue list reads cwd's repo (`backlog-grant-gate.js:106-110`). So `enrichRecords` resolves owner/repo with `repo view` on the same runner that listed the issues.
+  - When the envelope has `failedBatches > 0` or `skipped` set, write one stderr warning: `backlog-grant-gate: author-association enrichment incomplete ({failedBatches} batch(es) failed | skipped: {reason}) — records without an association keep the pre-#4577 Origin-line behaviour`. `fetchAllRecords` takes an optional `stderr` (default `(s) => process.stderr.write(s)`).
 - Modify: `plugin/skills/_shared/record-queue-fetch.md`:
-  - In the read-fresh-or-fetch block, add one `node -e` line before `[ -n "$SNAPSHOT" ] && cp …` that calls `enrichRecordsFile('{tmp-records-file}')`. Then add one paragraph naming the enrichment and its fail-open posture.
+  - In the read-fresh-or-fetch block, add one `node -e` line before `[ -n "$SNAPSHOT" ] && cp …` that calls `enrichRecordsFile('{tmp-records-file}')`. `enrichRecordsFile` itself writes the same one-line stderr warning on `failedBatches > 0` or `skipped` (an injectable `stderr` dep, default `process.stderr.write`). Then add one paragraph naming the enrichment, its fail-open posture, and the warning.
   - The Field set line (line 44) gains `,author`.
 - Modify: `plugin/skills/backlog/trust-signal.md` line 60: pass `authorTrust: issueAuthorTrust(issue)`, imported from provenance.js.
 - Modify: `plugin/skills/_shared/work-record.md` "Origin axis" paragraph (line 57): add one sentence saying an `Origin:` line counts only from a trusted or bot author (`provenance.js`'s `issueAuthorTrust`).
@@ -181,7 +188,7 @@
 **Interfaces:**
 - Consumes: Task 3 `enrichRecords`, `enrichRecordsFile`; Task 1 `issueAuthorTrust`.
 
-- [ ] **Step 1: Write the failing test** in `backlog-grant-gate.test.js`: `fetchAllRecords enriches a live fetch before caching`. A fake runner answers `issue list` with one `Origin:` record and `api graphql` with `NONE`. The returned record and the written snapshot both carry `authorAssociation: 'NONE'`. A second case answers `api graphql` by throwing: the records still return and are cached, without association. Then update every existing fake runner in both test files that throws on unexpected args, so it answers `api graphql` and `repo view`. Grep first: `git grep -n "unexpected" -- tests/bin-lib/backlog-grant-gate tests/backlog-grant-gate-cli.test.js`.
+- [ ] **Step 1: Write the failing test** in `backlog-grant-gate.test.js`: `fetchAllRecords enriches a live fetch before caching`. A fake runner answers `issue list` with one `Origin:` record and `api graphql` with `NONE`. The returned record and the written snapshot both carry `authorAssociation: 'NONE'`. A second case answers `api graphql` by throwing: the records still return and are cached without association, and the injected `stderr` receives one `author-association enrichment incomplete` line. A third case passes `owner: 'other'` through `computeOutlook`'s `fetch` and asserts the recorded GraphQL argv carries `owner=` from the fake `repo view` answer, never `owner=other`. A fourth case asserts the wrapper passes `{ timeout: GH_BATCH_TIMEOUT_MS }` as the runner's second argument on the `api graphql` call. Then update every existing fake runner in both test files that throws on unexpected args, so it answers `api graphql` and `repo view`. Grep first: `git grep -n "unexpected" -- tests/bin-lib/backlog-grant-gate tests/backlog-grant-gate-cli.test.js`.
 
 - [ ] **Step 2: Run to verify failure**
   Run: `node --test tests/bin-lib/backlog-grant-gate/backlog-grant-gate.test.js`
@@ -190,7 +197,7 @@
 - [ ] **Step 3: Implement** the wiring and the five prose edits. Byte check: `wc -c` each edited `plugin/skills/**/*.md` against `RAIL_BYTES` (52,500). Each grows by at most a few hundred bytes.
 
 - [ ] **Step 4: Run to verify pass**
-  Run: `node --test tests/bin-lib/backlog-grant-gate/backlog-grant-gate.test.js tests/backlog-grant-gate-cli.test.js tests/session-tmp-placeholder-quoting-conformance.test.js`, then `git grep -n -F "comments,updatedAt,milestone" -- tests plugin docs` and confirm every hit carries `,author`.
+  Run: `node --test tests/bin-lib/backlog-grant-gate/backlog-grant-gate.test.js tests/backlog-grant-gate-cli.test.js tests/session-tmp-placeholder-quoting-conformance.test.js tests/record-queue-fetch-conformance.test.js tests/skill-fence-guard-shapes.test.js`, then `git grep -n -F "comments,updatedAt,milestone" -- tests plugin docs` and confirm every hit carries `,author`.
   Expected: PASS; no stale field-list copy
 
 - [ ] **Step 5: Commit**
@@ -206,4 +213,4 @@
 | AC1.1 | Task 1, Task 2 |
 | AC2.1 | Task 1, Task 2 |
 | AC3.1 | Task 1, Task 2; fail-open stated in Decision and PR |
-| AC4.1 (`npm test` passes) | Common Step 5 verification |
+| AC4.1 (`npm test` passes) | `/claude-tweaks:build` Common Step 5 (`verify.js`, run by the controller after the last task, not a plan task) and the `/claude-tweaks:test` gate |
