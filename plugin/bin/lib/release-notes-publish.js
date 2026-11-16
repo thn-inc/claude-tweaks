@@ -19,9 +19,16 @@
 // fewer than 2 published releases, no Release-Note: trailer left to render in
 // range — none at all, or only "No user-visible change" ones — or both
 // targets already carry the exact rendered block); 1 a gh/git call
-// failed.
+// failed. A CHANGELOG trim (`changelog-max-releases`, #5563) never changes the
+// exit code: any trim failure prints one line to stderr, the file is left
+// untrimmed, and the run finishes as it would without the key. The trim rides
+// the Highlights commit, or makes its own when there is no Highlights to write.
 
 const { renderReleaseNotes, extractReleaseNotes } = require('./release-notes');
+const { readChangelogMaxReleases } = require('./policy');
+const { resolvePolicyKeys } = require('./policy-schema');
+const { parseChangelogFooter } = require('./changelog');
+const { prepareTrim } = require('./changelog-release-trim');
 
 const HIGHLIGHTS_HEADING = '### Highlights';
 const FIELD = '\x1f';
@@ -84,9 +91,14 @@ function applyToChangelogEntry(changelog, block) {
   if (block === null || typeof changelog !== 'string') return null;
   const firstAt = changelog.search(HEADING_RE);
   if (firstAt === -1) return null;
+  // A trimmed file ends in the "Older releases" footer: the newest entry stops at it, and the
+  // footer is never an entry of its own (the shared footer helper, not a heading pattern here).
+  const footer = parseChangelogFooter(changelog);
+  if (footer && firstAt >= footer.index) return null;
   const rest = changelog.slice(firstAt + 1);
   const nextRel = rest.search(HEADING_RE);
-  const entryEnd = nextRel === -1 ? changelog.length : firstAt + 1 + nextRel;
+  const headingEnd = nextRel === -1 ? changelog.length : firstAt + 1 + nextRel;
+  const entryEnd = footer ? Math.min(headingEnd, footer.index) : headingEnd;
   const entry = changelog.slice(firstAt, entryEnd);
   if (containsBlock(entry, block)) return null;
   const trimmedEntry = entry.replace(/\s*$/, '');
@@ -97,12 +109,82 @@ function applyToChangelogEntry(changelog, block) {
   return `${changelog.slice(0, firstAt)}${newEntry}${changelog.slice(entryEnd)}`;
 }
 
+const firstLine = (message) => String(message).split(/\r?\n/)[0];
+
+// The branch the trimmed commit must be reachable from: `integration-branch`, else the
+// target of origin/HEAD, else `main`. Called only when `changelog-max-releases` is above 0.
+function defaultBranch(deps, readPolicy) {
+  const policyRaw = readPolicy();
+  const resolved = resolvePolicyKeys(['integration-branch'], { policyRaw: typeof policyRaw === 'string' ? policyRaw : null })['integration-branch'];
+  const named = resolved && typeof resolved.value === 'string' ? resolved.value.trim() : '';
+  if (named) return named;
+  try {
+    const head = deps.git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).trim().replace(/^origin\//, '');
+    if (head) return head;
+  } catch {
+    // no origin/HEAD: fall through to main
+  }
+  return 'main';
+}
+
+// The CHANGELOG half of the run: the Highlights entry (when there is a block) and the bounded
+// trim (when `changelog-max-releases` is set), written, committed and pushed as one commit.
+// With the key at 0 or absent this is the Highlights-only behavior, byte for byte. A trim
+// failure prints one line and leaves the file as the Highlights step wrote it.
+function publishChangelog(deps, { pair, block, key, readPolicy }) {
+  let changelog = null;
+  let highlighted = null;
+  if (block !== null) {
+    changelog = deps.readFile('CHANGELOG.md');
+    highlighted = applyToChangelogEntry(changelog, block);
+  }
+  let trimmed = null;
+  if (key.count > 0 || key.error != null) {
+    try {
+      // An unreadable policy is reported by prepareTrim before it touches the text.
+      if (block === null && key.error == null) changelog = deps.readFile('CHANGELOG.md');
+      if (typeof changelog === 'string' || key.error != null) {
+        const branch = key.count > 0 ? defaultBranch(deps, readPolicy) : null;
+        trimmed = prepareTrim({
+          text: highlighted !== null ? highlighted : changelog,
+          readPolicy,
+          git: deps.git,
+          ancestorRefs: branch === null ? [] : [`refs/remotes/origin/${branch}`, `refs/heads/${branch}`],
+          stderr: deps.stderr,
+          trim: deps.trimChangelog,
+        });
+      }
+    } catch (err) {
+      deps.stderr(`changelog trim: failed (${firstLine((err && err.message) || err)}); file left untrimmed\n`);
+    }
+  }
+
+  const finalText = trimmed ? trimmed.text : highlighted;
+  if (finalText === null) {
+    if (block !== null) deps.stdout('release-notes-publish: CHANGELOG.md already carries the rendered block (or no entry found) — skipped\n');
+    return;
+  }
+  deps.writeFile('CHANGELOG.md', finalText);
+  deps.git(['add', 'CHANGELOG.md']);
+  deps.git(['commit', '-m', highlighted !== null ? `docs(changelog): append Highlights for ${pair.current}` : `chore: trim CHANGELOG.md to the newest ${trimmed.count} releases`]);
+  deps.git(['push']);
+  const trimNote = trimmed ? `trimmed to the newest ${trimmed.count} releases` : null;
+  if (highlighted !== null) {
+    deps.stdout(`release-notes-publish: committed Highlights into CHANGELOG.md for ${pair.current}${trimNote ? ` and ${trimNote}` : ''}\n`);
+  } else {
+    deps.stdout(`release-notes-publish: committed CHANGELOG.md ${trimNote}\n`);
+  }
+}
+
 function run(argv, deps) {
   try {
+    const readPolicy = deps.readPolicy || (() => null);
+    const key = readChangelogMaxReleases(readPolicy);
     const releases = JSON.parse(deps.gh(['release', 'list', '--json', 'tagName,publishedAt', '--limit', '2']));
     const pair = resolveTagPair(releases);
     if (!pair) {
       deps.stdout('release-notes-publish: fewer than 2 published releases — no-op\n');
+      publishChangelog(deps, { pair, block: null, key, readPolicy });
       return 0;
     }
 
@@ -111,6 +193,7 @@ function run(argv, deps) {
     const block = renderReleaseNotes(commits);
     if (block === null) {
       deps.stdout(`release-notes-publish: no Release-Note: trailers to render between ${pair.previous} and ${pair.current} — no-op\n`);
+      publishChangelog(deps, { pair, block: null, key, readPolicy });
       return 0;
     }
 
@@ -123,18 +206,7 @@ function run(argv, deps) {
       deps.stdout(`release-notes-publish: ${pair.current} release body already carries the rendered block — skipped\n`);
     }
 
-    const changelog = deps.readFile('CHANGELOG.md');
-    const newChangelog = applyToChangelogEntry(changelog, block);
-    if (newChangelog !== null) {
-      deps.writeFile('CHANGELOG.md', newChangelog);
-      deps.git(['add', 'CHANGELOG.md']);
-      deps.git(['commit', '-m', `docs(changelog): append Highlights for ${pair.current}`]);
-      deps.git(['push']);
-      deps.stdout(`release-notes-publish: committed Highlights into CHANGELOG.md for ${pair.current}\n`);
-    } else {
-      deps.stdout('release-notes-publish: CHANGELOG.md already carries the rendered block (or no entry found) — skipped\n');
-    }
-
+    publishChangelog(deps, { pair, block, key, readPolicy });
     return 0;
   } catch (err) {
     deps.stderr(`release-notes-publish: ${String((err && err.message) || err)}\n`);
