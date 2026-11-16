@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
-const { runClassified, runClassifiedAsync, isPathContained, toPosix, relativeDisplayId } = require('../../plugin/bin/lib/shared-primitives');
+const { runClassified, runClassifiedAsync, isPathContained, toPosix, relativeDisplayId, ghTimeoutMsAt } = require('../../plugin/bin/lib/shared-primitives');
 const path = require('path');
 
 // A synthetic execFileSync/execFile timeout-kill error — the exact shape
@@ -362,6 +362,85 @@ test('GH_TIMEOUT_MS: an out-of-range env override with no policy set falls throu
       else process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
     }
   });
+});
+
+// ghTimeoutMsAt (#4856): the same ladder as the getter above, but root- and
+// env-parameterised and never memoized.
+test('ghTimeoutMsAt: policy 7000 with an empty env -> 7000; env override wins -> 12000', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 7000\n');
+    assert.strictEqual(ghTimeoutMsAt(dir, { env: {} }), 7000);
+    assert.strictEqual(ghTimeoutMsAt(dir, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '12000' } }), 12000);
+  });
+});
+
+test('ghTimeoutMsAt: a policy-less root accepts scientific and padded env integers', () => {
+  withTempCwd((dir) => {
+    assert.strictEqual(ghTimeoutMsAt(dir, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '9e3' } }), 9000);
+    assert.strictEqual(ghTimeoutMsAt(dir, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: ' 9000' } }), 9000);
+  });
+});
+
+test('ghTimeoutMsAt: invalid env values fall through to the policy value', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 7000\n');
+    for (const bad of ['abc', '0', '90000']) {
+      assert.strictEqual(ghTimeoutMsAt(dir, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: bad } }), 7000, bad);
+    }
+  });
+});
+
+test('ghTimeoutMsAt: a non-string repoRoot has no policy file and resolves env, then 5000', () => {
+  withTempCwd(() => {
+    for (const root of [undefined, null, 42]) {
+      assert.strictEqual(ghTimeoutMsAt(root, { env: {} }), 5000, String(root));
+      assert.strictEqual(ghTimeoutMsAt(root, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '9000' } }), 9000, String(root));
+    }
+  });
+});
+
+test('ghTimeoutMsAt: does not memoize across alternating roots', () => {
+  withTempCwd((a) => {
+    withTempCwd((b) => {
+      writePolicyFile(a, 'gh-timeout-ms: 7000\n');
+      writePolicyFile(b, 'gh-timeout-ms: 8000\n');
+      assert.strictEqual(ghTimeoutMsAt(a, { env: {} }), 7000);
+      assert.strictEqual(ghTimeoutMsAt(b, { env: {} }), 8000);
+      assert.strictEqual(ghTimeoutMsAt(a, { env: {} }), 7000);
+    });
+  });
+});
+
+test('ghTimeoutMsAt: no opts argument reads process.env, and a null opts.env does too', () => {
+  const key = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const prior = process.env[key];
+  process.env[key] = '15000';
+  try {
+    withTempCwd(() => {
+      assert.strictEqual(ghTimeoutMsAt(process.cwd()), 15000);
+      assert.strictEqual(ghTimeoutMsAt(process.cwd(), { env: null }), 15000);
+    });
+  } finally {
+    if (prior === undefined) delete process.env[key];
+    else process.env[key] = prior;
+  }
+});
+
+test('GH_TIMEOUT_MS getter: a throwing process.cwd still resolves env, then 5000, and never throws', () => {
+  const realCwd = process.cwd;
+  const key = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const prior = process.env[key];
+  process.cwd = () => { throw new Error('ENOENT: deleted cwd'); };
+  try {
+    process.env[key] = '12000';
+    assert.strictEqual(freshGhTimeoutMs(), 12000);
+    delete process.env[key];
+    assert.strictEqual(freshGhTimeoutMs(), 5000);
+  } finally {
+    process.cwd = realCwd;
+    if (prior === undefined) delete process.env[key];
+    else process.env[key] = prior;
+  }
 });
 
 // GH_BATCH_TIMEOUT_MS (#4815): max(30000, GH_TIMEOUT_MS) — the bound for one

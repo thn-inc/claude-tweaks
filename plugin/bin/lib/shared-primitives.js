@@ -135,8 +135,8 @@ let resolvedGitPushTimeoutMs;
 // not silently hang every `gh` call for minutes.
 // `boundsOf()` returns the {min, max} to clamp against, or nothing; it runs only once a
 // positive integer is set, so an unset variable never loads policy-schema.
-function timeoutFromEnv(envVar, boundsOf) {
-  const raw = process.env[envVar];
+function timeoutFromEnv(envVar, boundsOf, env = process.env) {
+  const raw = env[envVar];
   if (raw === undefined || raw === '') return undefined;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
@@ -158,8 +158,8 @@ function policyKeyBounds(key) {
   }
 }
 
-function ghTimeoutFromEnv() {
-  return timeoutFromEnv(GH_TIMEOUT_ENV_VAR, () => policyKeyBounds('gh-timeout-ms'));
+function ghTimeoutFromEnv(env) {
+  return timeoutFromEnv(GH_TIMEOUT_ENV_VAR, () => policyKeyBounds('gh-timeout-ms'), env);
 }
 
 // Policy read is required lazily, inside the function body — never hoisted
@@ -169,11 +169,11 @@ function ghTimeoutFromEnv() {
 // the header), and a top-level require here would pull policy.js's own
 // require graph into every consumer whether or not it ever reads
 // GH_TIMEOUT_MS.
-function ghTimeoutFromPolicy() {
+function ghTimeoutFromPolicy(repoRoot) {
   try {
     // eslint-disable-next-line global-require
     const { readGhTimeoutMs } = require('./policy');
-    return readGhTimeoutMs(process.cwd());
+    return typeof repoRoot === 'string' ? readGhTimeoutMs(repoRoot) : undefined;
   } catch {
     // No repo root resolvable at cwd, a malformed policy.yml, or any other
     // read failure — fall through to the hard-coded default below.
@@ -181,8 +181,27 @@ function ghTimeoutFromPolicy() {
   }
 }
 
+// #4856: the one ladder every gh call's timeout routes through — env var (within
+// gh-timeout-ms's bounds) > `gh-timeout-ms` in the root's policy.yml > 5000.
+// Root- and env-parameterised and deliberately NOT memoized: the GH_TIMEOUT_MS
+// getter below memoizes its own result, and a caller holding a different root
+// (or a test's env) must get that root's answer. A non-object `opts.env` reads
+// process.env; a non-string `repoRoot` has no policy file.
+function ghTimeoutMsAt(repoRoot, opts) {
+  const env = opts && typeof opts.env === 'object' && opts.env !== null ? opts.env : process.env;
+  return ghTimeoutFromEnv(env) ?? ghTimeoutFromPolicy(repoRoot) ?? DEFAULT_GH_TIMEOUT_MS;
+}
+
 function resolveGhTimeoutMs() {
-  return ghTimeoutFromEnv() ?? ghTimeoutFromPolicy() ?? DEFAULT_GH_TIMEOUT_MS;
+  // process.cwd() throws when the cwd was deleted (a reaped worktree): the
+  // policy rung then yields nothing, so env or the default still resolves.
+  let root;
+  try {
+    root = process.cwd();
+  } catch {
+    root = undefined;
+  }
+  return ghTimeoutMsAt(root);
 }
 
 function getGhTimeoutMs() {
@@ -293,7 +312,7 @@ async function runClassifiedAsync(fn, mapError, { retryOnTimeout = false } = {})
 
 module.exports = {
   LARGE_MAX_BUFFER_BYTES, escapeRegExp, isPathContained, isTimeoutError, runClassified, runClassifiedAsync, toPosix,
-  relativeDisplayId,
+  relativeDisplayId, ghTimeoutMsAt,
 };
 Object.defineProperty(module.exports, 'GH_TIMEOUT_MS', { enumerable: true, get: getGhTimeoutMs });
 Object.defineProperty(module.exports, 'GH_BATCH_TIMEOUT_MS', {
