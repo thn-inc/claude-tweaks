@@ -994,15 +994,18 @@ function routeUpstreamItems(items, { snapshot, deps, runDir, facts }) {
   let ownership = null;
   const readOwnership = () => {
     if (ownership !== null) return ownership;
-    try { ownership = (typeof deps.upstreamOwnership === 'function' && deps.upstreamOwnership()) || UPSTREAM_OWNERSHIP_NONE; } catch { ownership = UPSTREAM_OWNERSHIP_NONE; }
+    try {
+      ownership = (typeof deps.upstreamOwnership === 'function' && deps.upstreamOwnership()) || UPSTREAM_OWNERSHIP_NONE;
+    } catch {
+      ownership = UPSTREAM_OWNERSHIP_NONE;
+    }
     return ownership;
   };
   return items.map((it) => {
     if (it.section !== SECTIONS.UPSTREAM || it.resolution !== 'filed' || !it.id.startsWith('wrap-up-upstream-')) return it;
     const { ownerContext, ownedOwners } = readOwnership();
-    // An unreadable file reads as '' — no target line, so it holds as external.
-    const text = textByName.get(it.id);
-    const staged = parseStagedUpstream(typeof text === 'string' ? text : '');
+    // An unreadable file has no text, which parseStagedUpstream reads as '' — no target line, so it holds as external.
+    const staged = parseStagedUpstream(textByName.get(it.id));
     const verdict = upstreamFilingRoute({ permissions, targetRepo: staged.targetRepo, ownerContext, ownedOwners });
     if (verdict.route === 'file') return { ...it, reason: `control mode: owned target ${verdict.targetRepo} — filed with no prompt` };
     // Only `file` files: any other verdict holds (reason `external` when it names none), so an unexpected one fails closed.
