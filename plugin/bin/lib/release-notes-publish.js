@@ -211,7 +211,8 @@ function publishChangelog(deps, { pair, block, key, readPolicy }) {
   if (highlighted !== null) {
     deps.stdout(`release-notes-publish: committed Highlights into CHANGELOG.md for ${pair.current}${trimNote ? ` and ${trimNote}` : ''}\n`);
   } else {
-    deps.stdout(`release-notes-publish: committed CHANGELOG.md ${trimNote}\n`);
+    // The early-exit "no-op" line above already printed for a Highlights-free run: say the trim was committed.
+    deps.stdout(`release-notes-publish: no Highlights to write; committed a trim of CHANGELOG.md to the newest ${trimmed.count} releases\n`);
   }
 }
 

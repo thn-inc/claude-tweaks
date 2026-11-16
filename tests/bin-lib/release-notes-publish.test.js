@@ -459,6 +459,7 @@ test('AC13.1: key 2 with no Release-Note: trailers still trims and commits with 
   const { deps, state } = trimDeps({ policy: 'changelog-max-releases: 2\n', commitBodies: ['fix: a\n\nno footer'] });
   assert.strictEqual(run([], deps), 0, state.err);
   assert.match(state.out, /no Release-Note: trailers/);
+  assert.match(state.out, /no Highlights to write; committed a trim of CHANGELOG\.md to the newest 2 releases\n$/);
   assert.deepStrictEqual(parseChangelogVersions(state.files['CHANGELOG.md']).map((s) => s.version), ['1.3.0', '1.2.0']);
   assert.ok(!state.files['CHANGELOG.md'].includes('### Highlights'));
   assert.ok(state.git.includes('commit -m chore: trim CHANGELOG.md to the newest 2 releases'), state.git.join('\n'));
