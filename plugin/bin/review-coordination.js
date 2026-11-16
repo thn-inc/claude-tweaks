@@ -125,10 +125,20 @@ const realDeps = {
   appendDecision: appendEntry,
 };
 
-// The chunk form of resolve-tiebreak (#5540): the entries file is a JSON array of
-// 1..CHUNK_MAX findings and the reply file holds one block per finding. Every exit-2
-// check runs before the reply is read, the run dir is anchored, or anything is
-// appended, so a refused chunk writes nothing.
+// Appends one resolved verdict's decisions.md line under --run and sets `result.logged`;
+// a failed append sets `logged: false` and writes one stderr line, never throwing.
+// Shared by resolve-tiebreak's one-finding and chunk forms.
+function appendVerdict(result, anchoredDir, now, deps) {
+  try {
+    const entry = formatEntry({ status: result.logStatus, now, step: result.logStep, text: result.logText, reversibility: 'high' });
+    deps.appendDecision({ runDir: anchoredDir, section: '/review', entry });
+    result.logged = true;
+  } catch (err) {
+    result.logged = false;
+    deps.stderr(`review-coordination.js: could not append the decisions.md entry (- ${result.logLine}): ${(err && err.message) || err}\n`);
+  }
+}
+
 // The chunk form's input checks, shared by resolve-tiebreak's chunk form and finding-ids:
 // returns { ids } (one finding id per entry, in entry order) or { exitCode: 2 } after one stderr line.
 function validateChunk(findings, file, deps) {
@@ -150,6 +160,10 @@ function validateChunk(findings, file, deps) {
   return { ids };
 }
 
+// The chunk form of resolve-tiebreak (#5540): the entries file is a JSON array of
+// 1..CHUNK_MAX findings and the reply file holds one block per finding. Every exit-2
+// check runs before the reply is read, the run dir is anchored, or anything is
+// appended, so a refused chunk writes nothing.
 function resolveTiebreakChunkCommand(findings, positional, root, runDir, deps) {
   const checked = validateChunk(findings, positional[0], deps);
   if (checked.exitCode !== undefined) return checked.exitCode;
@@ -174,16 +188,7 @@ function resolveTiebreakChunkCommand(findings, positional, root, runDir, deps) {
   const now = deps.now();
   const { results, unsettled } = resolveTiebreakChunk(findings, reply, { readFile, now });
   if (anchored) {
-    for (const result of results) {
-      try {
-        const entry = formatEntry({ status: result.logStatus, now, step: result.logStep, text: result.logText, reversibility: 'high' });
-        deps.appendDecision({ runDir: anchored.dir, section: '/review', entry });
-        result.logged = true;
-      } catch (err) {
-        result.logged = false;
-        deps.stderr(`review-coordination.js: could not append the decisions.md entry (- ${result.logLine}): ${(err && err.message) || err}\n`);
-      }
-    }
+    for (const result of results) appendVerdict(result, anchored.dir, now, deps);
   }
   deps.stdout(JSON.stringify({ chunk: true, results, unsettled }) + '\n');
   return 0;
@@ -312,16 +317,7 @@ function run(argv, overrides = {}) {
     };
     const now = deps.now();
     const result = resolveTiebreak(input.value, reply, { readFile, now });
-    if (anchored) {
-      try {
-        const entry = formatEntry({ status: result.logStatus, now, step: result.logStep, text: result.logText, reversibility: 'high' });
-        deps.appendDecision({ runDir: anchored.dir, section: '/review', entry });
-        result.logged = true;
-      } catch (err) {
-        result.logged = false;
-        deps.stderr(`review-coordination.js: could not append the decisions.md entry (- ${result.logLine}): ${(err && err.message) || err}\n`);
-      }
-    }
+    if (anchored) appendVerdict(result, anchored.dir, now, deps);
     deps.stdout(JSON.stringify(result) + '\n');
     return 0;
   }

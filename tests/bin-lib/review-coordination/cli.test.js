@@ -369,7 +369,7 @@ test('check-coverage exits 2 for a run dir that does not exist (#3945 F8)', (t) 
   assert.strictEqual(cli(['check-coverage', file]).code, 2);
 });
 
-test('--help lists the three tiebreak forms', () => {
+test('--help lists the tiebreak forms it has always listed', () => {
   const { deps, out } = fakeDeps(process.cwd());
   assert.strictEqual(run(['--help'], deps), 0);
   const text = out.join('');
