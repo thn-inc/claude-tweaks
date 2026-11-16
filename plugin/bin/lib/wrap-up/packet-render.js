@@ -373,9 +373,13 @@ const SECTION_BODIES = Object.freeze({
   'risk-proofs': riskProofsBody,
   // No decisions omits the section, heading included.
   decisions: ({ ofKind }) => ofKind('decision').map((fact) => item(`- ${factText(fact)}${decideSuffix(fact)}`)),
-  deploy: ({ deploy }) => [note(
-    screenedInline(deploy?.text ?? '', WITHHELD_TEXT) || `target: ${screenedInline(deploy?.target ?? 'local', WITHHELD_TEXT)}`,
-  )],
+  // The bare `ref: {sha}` line is what accept-entry.js's refreshPacket reads as the stored
+  // ref (REF_LINE_RE), so it carries no list marker or code span. The blank line above it
+  // makes it its own paragraph; refreshPacket writes the same layout.
+  deploy: ({ deploy }) => [
+    note(screenedInline(deploy?.text ?? '', WITHHELD_TEXT) || `target: ${screenedInline(deploy?.target ?? 'local', WITHHELD_TEXT)}`),
+    ...(typeof deploy?.ref === 'string' && deploy.ref !== '' ? [note(''), note(`ref: ${screenedInline(deploy.ref, WITHHELD_TEXT)}`)] : []),
+  ],
 });
 
 const droppedLine = (n) => (n === 1
@@ -393,7 +397,7 @@ function screenedLines(screened) {
   return [`${screened.length} ${noun} omitted for credential-shaped content: ${entries}`];
 }
 
-// `_shared/observation-plan.md`'s grammar has to survive the trip to `/claude-tweaks:demo`,
+// `_shared/observation-plan.md`'s grammar has to survive the trip to `/claude-tweaks:accept`,
 // which reads the comment's raw text: a list marker stays a marker, a whole backtick
 // span stays a span, and a sub-bullet stays under its parent. Whatever follows the
 // marker gets inline()'s escapes, so `- ## Couldn't test` forges nothing.
@@ -569,7 +573,7 @@ function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
 
   const bottom = [];
   if (typeof poster === 'string' && poster.trim() !== '') {
-    bottom.push('', '---', `_Posted by ${inline(poster)}. Resolve with \`/claude-tweaks:demo\`._`);
+    bottom.push('', '---', `_Posted by ${inline(poster)}. Resolve with \`/claude-tweaks:accept\`._`);
   }
 
   const { doc, omitted: truncated } = truncate({ top, sections, bottom });

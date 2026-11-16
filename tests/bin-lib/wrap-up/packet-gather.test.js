@@ -1020,6 +1020,28 @@ test('deploy defaults to local and states the dev confirmation', () => {
   assert.equal(factOf(gather({ deploy: { target: 'dev', live: null } }), 'deploy:status').text, 'target: dev, not confirmed live');
 });
 
+test('AC2.4: deploy fact carries the ref', () => {
+  const withRef = factOf(gather({ deploy: { target: 'dev', live: true, ref: '0123abc' } }), 'deploy:status');
+  assert.deepEqual(withRef, {
+    id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy',
+    text: 'target: dev, confirmed live', target: 'dev', live: true, ref: '0123abc',
+  });
+  const withoutRef = factOf(gather({ deploy: { target: 'dev', live: true } }), 'deploy:status');
+  assert.deepEqual(withoutRef, {
+    id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy',
+    text: 'target: dev, confirmed live', target: 'dev', live: true,
+  });
+  assert.ok(!Object.hasOwn(withoutRef, 'ref'));
+});
+
+test('a deploy ref outside the hex grammar is left off the fact', () => {
+  for (const ref of [123, null, true, ['0123abc'], 'not a sha', '0123ABC', '0123ab', `${'a'.repeat(65)}`, '']) {
+    const fact = factOf(gather({ deploy: { target: 'dev', live: true, ref } }), 'deploy:status');
+    assert.ok(!Object.hasOwn(fact, 'ref'), JSON.stringify(ref));
+    assert.equal(fact.text, 'target: dev, confirmed live');
+  }
+});
+
 test('pass-through kinds keep their text, status passed, and carry no url the renderer would never show', () => {
   const result = gather({
     flags: [{ id: 'auth', text: 'Touches auth', url: 'https://x.example/a?token=abc' }],

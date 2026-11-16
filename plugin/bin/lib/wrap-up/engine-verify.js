@@ -1085,7 +1085,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // label a verdict outranks does not gate the record, and says so on its own line.
     if (dispositionState(labelNames) !== 'pending') {
       failing.push(carriesPending
-        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:demo #${target}`
+        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:accept #${target}`
         : `#${target}: missing ${LABELS.DEMO_PENDING} or ${LABELS.ACCEPT_PENDING} label`);
       continue;
     }
