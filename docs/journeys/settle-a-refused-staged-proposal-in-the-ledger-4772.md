@@ -54,7 +54,7 @@ files:
 - **Action:** The next ledger resolve that reads this ledger finds the `open` row and drills it in Phase 2 per item: fix, Defer/Keep with a valid reason, or Accept/Drop.
 - **Should feel:** The finding gets a second, honest decision instead of disappearing.
 - **Should understand:** The refusal runs after the current run's resolve gate. So within the run, `review-console.md` step 13 only keeps the ledger file in place, with a `SKIP` naming the `open` row. The reopened row does not block the current run.
-- **Red flags:** The ledger file deleted at branch finish while an `open` row remains.
+- **Red flags:** The ledger file deleted at step 13's Ledger close-out (or the execution step's item 2) while an `open` row remains.
 
 ## Origin
 - Created during the build of #4772 (settle refused review-followup- proposals in the open-items ledger), run `2026-11-01T182343-record-4772`.
