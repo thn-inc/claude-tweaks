@@ -20,6 +20,7 @@ const SCREEN_FAIL_REPORT = 'PR NOT opened — closing-keyword screen failed';
 const ARM_ANCHOR = '**Arm before `ExitWorktree`**';
 const CREATION_CALLER = '**Creation-time caller:**';
 const BODY_FILE = 'pr-early-body-{run-id}.md';
+const BODY_PLACEHOLDER = '{pr-early-body-path}';
 const ARM_CONFLICT = "Step 2.5's Conflict path";
 const ARM_VERBATIM = 'any Step 2.5 or Step 3 stop reason, verbatim';
 const ARM_NO_POST_MERGE = 'runs no Step 4 or Step 5 post-merge step';
@@ -46,7 +47,9 @@ function assertScreenNamesBodyFile(text) {
   const e = text.indexOf('. ', at);
   const sentence = text.slice(s === -1 ? 0 : s, e === -1 ? text.length : e);
   assert.ok(sentence.includes(BODY_FILE), `the screen sentence must name the body file ${BODY_FILE}`);
+  assert.ok(sentence.includes(`as \`${BODY_PLACEHOLDER}\``), `the resolved path must be pasted as ${BODY_PLACEHOLDER}`);
   assert.ok(sentence.includes('gh pr create --body-file'), 'the screen sentence must say gh pr create reads the same path');
+  assert.ok(text.startsWith(`${SCREEN_CALL} "${BODY_PLACEHOLDER}"`, at), `the screen call's --body-file must be ${BODY_PLACEHOLDER}`);
 }
 
 function assertScreenFailureStops(text) {
@@ -120,6 +123,9 @@ test('go-red controls: each assert fails with its block removed', () => {
   assert.throws(() => assertArmCitesStep25(STEP75.replace('`_shared/pr-first-merge.md` Step 2.5', 'Step 3')));
   assert.throws(() => assertArmCitesStep25(STEP75.replace(ARM_ANCHOR, `${ARM_ANCHOR} never an immediate merge (checks pending)`)));
   assert.throws(() => assertScreenNamesBodyFile(STEP75.replace(BODY_FILE, 'body.md')));
+  assert.throws(() => assertScreenNamesBodyFile(STEP75.replace('gh pr create --body-file', 'gh pr create')));
+  assert.throws(() => assertScreenNamesBodyFile(STEP75.replace(`${SCREEN_CALL} "${BODY_PLACEHOLDER}"`, `${SCREEN_CALL} "{body-path}"`)));
+  assert.throws(() => assertScreenNamesBodyFile(STEP75.replace(`as \`${BODY_PLACEHOLDER}\``, 'as `{body-path}`')));
   const arm = armParagraph(STEP75);
   for (const lit of [ARM_CONFLICT, ARM_VERBATIM, ARM_NO_POST_MERGE, ARM_CI_GATE]) {
     assert.throws(() => assertArmPlanReviewGaps(STEP75.replace(arm, arm.split(lit).join('X'))), lit);
