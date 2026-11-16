@@ -3947,6 +3947,53 @@ test('AC4.2 reconciler: writePhaseTimingSync stubbed to throw → archiveMerged 
   assert.match(thrown.skips[0], /boom 4\.2/);
 });
 
+const stepYield = require('../../../plugin/bin/lib/timing/step-yield');
+const readYieldAt = (dir) => JSON.parse(fs.readFileSync(path.join(dir, stepYield.STEP_YIELD_FILE), 'utf8'));
+
+test('AC6.1: archive leaves step-yield.json in the archive twin, and the background token pass rewrites it', async () => {
+  spawnCalls.length = 0;
+  const fx = timingFixture('2026-08-01T090000-spec-5556-archive');
+  const cfg = path.join(fx.root, 'cfg');
+  T.writeTranscript(cfg, fx.wt, [T.A, T.B], T.SID, ['2020-01-01T09:06:00.000Z', '2020-01-01T09:14:00.000Z']);
+
+  const result = archiveAbandoned(fx);
+
+  assert.ok(result.archived.includes(fx.runDir), JSON.stringify(result));
+  const first = readYieldAt(fx.archiveDir);
+  assert.equal(first.schemaVersion, stepYield.SCHEMA_VERSION);
+  assert.ok(first.steps.length > 0);
+  assert.equal(first.steps.every((s) => s.tokens === null), true, 'phase rows only at the archive close: no token cost yet');
+  assert.equal(fs.existsSync(fx.runDir), false, 'the run dir is not recreated');
+
+  // AC6.1 (token pass): the detached pass derives tokens, and the yield it leaves carries them.
+  fs.writeFileSync(path.join(fx.archiveDir, stepYield.STEP_YIELD_FILE), '{"stale":true}');
+  const r = await runCli(TIMING_CLI, ['--run', spawnCalls[0]], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: fx.root });
+  assert.equal(r.code, 0);
+  const after = readYieldAt(fx.archiveDir);
+  assert.equal(Object.hasOwn(after, 'stale'), false);
+  assert.equal(after.steps.some((s) => s.tokens !== null), true, 'the token pass rewrote the yield with token cost');
+});
+
+test('AC6.2 reconciler: the yield function stubbed to throw → the same archived/skipped lists, one SKIP line in the archived decisions.md', async () => {
+  const run = async (stub) => {
+    spawnCalls.length = 0;
+    const fx = timingFixture('2026-08-01T090000-spec-5556-ac62');
+    const result = await T.withStub(stepYield, 'deriveStepYield', stub, () => archiveAbandoned(fx));
+    const rel = (list) => list.map((e) => (typeof e === 'string' ? path.relative(fx.root, e) : JSON.parse(JSON.stringify(e).split(fx.root).join('<root>'))));
+    return { archived: rel(result.archived), skipped: rel(result.skipped), skips: T.skipLines(fx.archiveDir) };
+  };
+  const real = stepYield.deriveStepYield;
+  const ok = await run(real);
+  const thrown = await run(() => { throw new Error('boom yield'); });
+
+  assert.ok(thrown.archived.length > 0);
+  assert.deepEqual(thrown.archived, ok.archived);
+  assert.deepEqual(thrown.skipped, ok.skipped);
+  assert.deepEqual(ok.skips, []);
+  assert.equal(thrown.skips.length, 1, JSON.stringify(thrown.skips));
+  assert.match(thrown.skips[0], /step yield could not be written \(boom yield\)/);
+});
+
 test('AC11.1: the token pass cannot start (spawn throws) → phase rows kept, no token totals, one SKIP line', async () => {
   const fx = timingFixture('2026-08-01T090000-spec-5555-ac11');
   // The real spawnTokenPass, over a child_process.spawn that throws.
