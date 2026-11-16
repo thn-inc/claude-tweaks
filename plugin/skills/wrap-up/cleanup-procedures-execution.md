@@ -126,7 +126,14 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    **`integration-model: local-merge`:** verify the feature branch reached an outcome (merged, PR
    created, discarded, or explicitly kept as-is) via `/superpowers:finishing-a-development-branch`:
    - **Already completed (merged, PR created, or discarded)** → proceed to step 4.
-   - **Not yet decided** → check `_shared/local-merge-auto-finish.md`'s Precondition
+   - **Not yet decided** → **Archive the spec header (#3976).** Before either finish path below, from
+     inside the worktree, as its own Bash call:
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-run-header.js" --run "{run-dir}"`. It `git mv`s the run's
+     tracked `work/` and `spec-{N}/work/` files to `archive/{run-id}/` in one commit on the run branch,
+     so the merge lands the header already archived. It never stops wrap-up: it logs its own line
+     (`_shared/auto-decision-log.md`'s **CLIs that log their own entries**); on any exit other than 0,
+     log one `SKIP` and continue — reconcile's `archiveRunDir` archives the header after the merge. Then check
+     `_shared/local-merge-auto-finish.md`'s Precondition
      (`integration-model` resolves `local-merge` AND `{run-dir}/config.yml` exists — see
      `_shared/integration-model.md` for the resolution and `flow/manifesto.md` for why
      `config.yml`'s presence is the "not interactive" proxy). When it holds, read and follow that
