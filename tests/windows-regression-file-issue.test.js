@@ -1077,11 +1077,11 @@ test('no ${{ }} is interpolated into any run: script body — inline or block sc
   for (const body of scripts) assert.ok(!body.includes('${{'), `interpolation in a run script: ${body}`);
 });
 
-test('R7: verify bounds each tests run with a 20-minute --cmd-timeout inside the 150-minute job limit — two hung files under serial reruns (#5150)', () => {
+test('R7: verify bounds each tests run with a 40-minute --cmd-timeout inside the 300-minute job limit — two hung files under serial reruns (#5150, #5490)', () => {
   const windows = jobBlock('windows');
-  assert.match(windows, /--cmd-timeout tests=1200000/);
+  assert.match(windows, /--cmd-timeout tests=2400000/);
   assert.doesNotMatch(windows, /2700000/);
-  assert.match(windows, /^    timeout-minutes:\s*150\s*$/m);
+  assert.match(windows, /^    timeout-minutes:\s*300\s*$/m);
 });
 
 test('the workflow no longer claims linear history', () => {

@@ -40,5 +40,15 @@
         "repo": "pbakaus/impeccable"
       }
     }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard.js\"", "timeout": 10 }
+        ]
+      }
+    ]
   }
 }

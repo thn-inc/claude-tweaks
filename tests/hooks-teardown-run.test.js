@@ -849,6 +849,33 @@ test('AC4.1 teardown-run: writeTimingAtClose stubbed to throw → stdout and exi
   assert.match(skips[0], /timing at close failed \(boom\)/);
 });
 
+const stepYield = require('../plugin/bin/lib/timing/step-yield');
+
+test('AC6.1: teardown-run leaves step-yield.json', async () => {
+  const fx = timingFixture();
+  T.writeTranscript(fx.cfg, fx.wt);
+  const r = await teardown(fx);
+  assert.strictEqual(r.code, 0);
+  const y = JSON.parse(fs.readFileSync(path.join(fx.runDir, stepYield.STEP_YIELD_FILE), 'utf8'));
+  assert.strictEqual(y.schemaVersion, stepYield.SCHEMA_VERSION);
+  assert.ok(y.steps.some((s) => s.phase === 'build'));
+  assert.deepStrictEqual(T.skipLines(fx.runDir), []);
+});
+
+test('AC6.2: teardown-run with the yield function stubbed to throw → stdout and exit code unchanged, one SKIP line', async () => {
+  const base = timingFixture();
+  const thrown = timingFixture();
+  T.writeTranscript(base.cfg, base.wt);
+  T.writeTranscript(thrown.cfg, thrown.wt);
+  const expected = await teardown(base);
+  const actual = await T.withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom yield'); }, () => teardown(thrown));
+  assert.deepStrictEqual(masked(thrown, actual), masked(base, expected));
+  const skips = T.skipLines(thrown.runDir);
+  assert.strictEqual(skips.length, 1);
+  assert.match(skips[0], /step yield could not be written \(boom yield\)/);
+  assert.strictEqual(fs.existsSync(path.join(thrown.runDir, stepYield.STEP_YIELD_FILE)), false);
+});
+
 test('AC4.2 teardown-run: at-close.js failing at load → stdout and exit code equal the no-op stub\'s (exit 0), one SKIP line', async () => {
   const base = timingFixture();
   const faulty = timingFixture();

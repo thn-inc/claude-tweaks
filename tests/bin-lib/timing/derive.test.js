@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents } = require('../../../plugin/bin/lib/timing/derive');
+const { derivePhases, PHASES, NESTED_PARENT, joinTokens, phaseAt, countGuardEvents } = require('../../../plugin/bin/lib/timing/derive');
 const { parseManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { readText } = require('../../helpers/read-skill');
 
@@ -475,6 +475,8 @@ test('#1929: countGuardEvents counts the three guard event types and ignores the
   ];
   assert.deepEqual(countGuardEvents(events), { gateDenial: 2, wdAmbiguous: 1, wdDeny: 3 });
   assert.deepEqual(countGuardEvents([]), { gateDenial: 0, wdAmbiguous: 0, wdDeny: 0 });
+  // Inherited property names are not guard types.
+  assert.deepEqual(countGuardEvents([{ type: 'constructor' }, { type: 'toString' }, { type: '__proto__' }]), { gateDenial: 0, wdAmbiguous: 0, wdDeny: 0 });
 });
 
 // --- #3375 dispatch aggregation ---
@@ -672,4 +674,51 @@ test('#5597: the internal counters never reach the output', () => {
     assert.equal(Object.keys(b).includes('agentCalls'), false);
     assert.equal(Object.keys(b).includes('workflowAgents'), false);
   }
+});
+
+test('#5556: phaseAt returns the innermost [start, end) span, the later start on a tie, and null outside every span', () => {
+  const at = (m) => Date.parse('2026-01-01T00:00:00.000Z') + m * 60000;
+  const iso = (m) => new Date(at(m)).toISOString();
+  const row = (phase, s, e, source = 'skill_invoked') => ({ phase, start: iso(s), end: iso(e), source });
+  const phases = [
+    row('call-1', 0, 60), row('build', 0, 30), row('plan', 10, 20), row('review', 30, 50),
+    row('twin-a', 50, 55), row('twin-b', 50, 55), row('polish', 55, 59, 'unattributed'),
+    { phase: 'dangling', start: null, end: null, source: 'unattributed' },
+  ];
+  assert.equal(phaseAt(phases, at(15)), 'plan');
+  assert.equal(phaseAt(phases, at(5)), 'build');
+  assert.equal(phaseAt(phases, at(30)), 'review', 'the end bound is exclusive: 30 is review, not build');
+  assert.equal(phaseAt(phases, at(52)), 'twin-a', 'equal span and equal start keep the first');
+  assert.equal(phaseAt(phases, at(57)), 'call-1', 'an unattributed row never holds an instant');
+  assert.equal(phaseAt(phases, at(60)), null);
+  assert.equal(phaseAt(phases, at(-1)), null);
+  assert.equal(phaseAt(null, at(5)), null);
+});
+
+// build@0 test@10 review@20 test@40 review@45 close@60 (minutes)
+function interleavedEvents() {
+  const base = Date.parse('2026-01-01T00:00:00.000Z');
+  const ev = (m, type, skill) => ({ type, ts: new Date(base + m * 60000).toISOString(), ...(skill ? { skill: `claude-tweaks:${skill}` } : {}) });
+  return { base, events: [ev(0, 'skill_invoked', 'build'), ev(10, 'skill_invoked', 'test'), ev(20, 'skill_invoked', 'review'), ev(40, 'skill_invoked', 'test'), ev(45, 'skill_invoked', 'review'), ev(60, 'close-run')] };
+}
+
+test('#5556: a phase that ran twice does not swallow the step between its occurrences (per-occurrence spans)', () => {
+  const { base, events } = interleavedEvents();
+  const phases = derivePhases({ events }).phases;
+  const m = (min) => base + min * 60000;
+  const byPhase = Object.fromEntries(phases.map((p) => [p.phase, p]));
+  assert.deepEqual(byPhase.review.spans.map((s) => [Date.parse(s.start) - base, Date.parse(s.end) - base]), [[20 * 60000, 40 * 60000], [45 * 60000, 60 * 60000]]);
+  assert.deepEqual(byPhase.polish.spans, [], 'an unattributed row has no spans');
+  assert.equal(phaseAt(phases, m(25)), 'review', 'inside the first review, though test runs first-start..last-end');
+  assert.equal(phaseAt(phases, m(42)), 'test');
+  assert.equal(phaseAt(phases, m(50)), 'review');
+  assert.equal(phaseAt(phases, m(15)), 'test');
+  // A row without `spans` (a timing.json written before the key) falls back to start/end.
+  const legacy = phases.map(({ spans: _spans, ...p }) => p);
+  assert.equal(phaseAt(legacy, m(25)), 'test', 'the old first-start..last-end rule, kept only for rows without spans');
+  // joinTokens places by the same rule.
+  const rows = [{ ts: new Date(m(25)).toISOString(), role: 'assistant', inputTokens: 7 }];
+  const joined = joinTokens(phases, rows);
+  assert.equal(joined.phases.find((p) => p.phase === 'review').tokens.input, 7);
+  assert.equal(joined.phases.find((p) => p.phase === 'test').tokens.input, 0);
 });
