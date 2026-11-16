@@ -13,7 +13,7 @@ const { runCliSync } = require('./helpers/run-cli');
 const { compareWorkTwin } = require('../plugin/bin/lib/reconcile/archive-merged');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'archive-tracked-shells.js');
-const { findShells, realDeps, BRANCH } = require(CLI);
+const { findShells, realDeps, prBody, BRANCH } = require(CLI);
 const REPO_GITIGNORE = path.join(__dirname, '..', '.gitignore');
 const IDENTITY = {
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
@@ -399,24 +399,67 @@ test('a merged PR whose head branch still exists on the remote has that branch d
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   fake.prs[0].state = 'MERGED';
   const b = addShell(root, '2026-11-14T100001-record-2', { twin: 'absent' });
-  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  const seen = [];
+  const recording = (args, o) => { seen.push(args); return realDeps.git(args, o); };
+  const r = call(root, ['--root', root], { ghFake: fake.gh, extra: { git: recording } });
   assert.equal(r.code, 0, r.stderr);
+  assert.ok(seen.some((a) => a.join(' ') === `push origin :refs/heads/${BRANCH}`), 'the lingering remote branch was deleted');
   git(root, 'fetch', '-q', 'origin');
   const subjects = git(root, 'log', `origin/main..origin/${BRANCH}`, '--format=%s').split('\n');
   assert.ok(subjects.includes(`[reconcile] archive run ${b.id}`));
   assert.equal(fake.creates, 2);
 });
 
-test('only a CLOSED PR for the branch exits 2 naming the PR and touches nothing', () => {
+test('a merged PR with the integration fetch failing refuses with exit 2 instead of building on a stale ref', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-14T150000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  fake.prs[0].state = 'MERGED';
+  addShell(root, '2026-11-14T150001-record-2', { twin: 'absent' });
+  const seen = [];
+  const failingFetch = (args, o) => {
+    seen.push(args);
+    if (args[0] === 'fetch' && args[2].startsWith('+refs/heads/main:')) return { stdout: '', stderr: 'network down', failure: 'git-error' };
+    return realDeps.git(args, o);
+  };
+  const r = call(root, ['--root', root], { ghFake: fake.gh, extra: { git: failingFetch } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /could not be fetched/);
+  assert.equal(seen.some((a) => a[0] === 'push' && a[2] === `:refs/heads/${BRANCH}`), false);
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+  assert.equal(fake.creates, 1);
+});
+
+test('a CLOSED PR whose remote branch is gone starts over like no PR ever: the local branch is kept and a new PR opens', () => {
   const { root } = makeFixture();
   addShell(root, '2026-11-14T200000-record-1', { twin: 'absent' });
   const fake = fakeGh();
-  fake.prs.push({ number: 7, url: 'https://example.test/pull/7', state: 'CLOSED', head: BRANCH });
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  fake.prs[0].state = 'CLOSED';
+  git(root, 'push', '-q', 'origin', `:refs/heads/${BRANCH}`);
+  const b = addShell(root, '2026-11-14T200001-record-2', { twin: 'absent' });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(fake.creates, 2);
+  assert.equal(r.envelope.pr.number, 2);
+  assert.deepEqual(r.envelope.moved.map((m) => m.runId), [b.id]);
+});
+
+test('a CLOSED PR whose remote branch still exists exits 2 naming both remedies and touches nothing', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-14T210000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  fake.prs[0].state = 'CLOSED';
+  const tip = git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`);
+  addShell(root, '2026-11-14T210001-record-2', { twin: 'absent' });
   const r = call(root, ['--root', root], { ghFake: fake.gh });
   assert.equal(r.code, 2);
-  assert.match(r.stderr, /#7/);
-  assert.equal(fake.creates, 0);
-  assert.equal(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
+  assert.match(r.stderr, /reopen PR #1/);
+  assert.ok(r.stderr.includes(`git push origin --delete ${BRANCH}`));
+  assert.equal(fake.creates, 1);
+  assert.equal(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), tip);
   assert.equal(fs.existsSync(worktreeDir(root)), false);
 });
 
@@ -509,11 +552,90 @@ test('the PR body lists untwinned dirs under their own heading', () => {
 test('AC7.5: a failure after the scratch worktree exists removes it and leaves no branch on the remote', () => {
   const { root } = makeFixture();
   addShell(root, '2026-11-19T000000-record-1', { twin: 'absent' });
-  const fake = fakeGh({ failCreate: true, failOpenList: true });
+  const fake = fakeGh({ failCreate: true });
   const r = call(root, ['--root', root], { ghFake: fake.gh });
   assert.equal(r.code, 1);
   assert.equal(fs.existsSync(worktreeDir(root)), false);
   assert.equal(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
+});
+
+test('a create that succeeded keeps its branch and takes the PR from the create output when the read-back fails', () => {
+  const { root, origin } = makeFixture();
+  const s = addShell(root, '2026-11-19T200000-record-1', { twin: 'absent' });
+  const fake = fakeGh({ failOpenList: true });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.envelope.pr.number, 1);
+  assert.equal(r.envelope.pr.url, 'https://example.test/pull/1');
+  assert.notEqual(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
+  assert.ok(archivedOnRemote(origin, s));
+});
+
+test('a failed create whose read-back also fails keeps the branch: the PR is unconfirmed, not absent', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-19T300000-record-1', { twin: 'absent' });
+  const fake = fakeGh({ failCreate: true, failOpenList: true });
+  const r = call(root, ['--root', root], { ghFake: fake.gh });
+  assert.equal(r.code, 1);
+  assert.notEqual(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
+  assert.ok(r.envelope.notes.some((n) => /unconfirmed/.test(n)));
+});
+
+test('a re-run that archives nothing new does not push a merge-only commit', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-19T400000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
+  const tip = git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`);
+  addShell(root, '2026-11-19T400001-record-2', { twin: 'differs' }); // advances main, archives nothing
+  const seen = [];
+  const recording = (args, o) => { seen.push(args); return realDeps.git(args, o); };
+  const r = call(root, ['--root', root], { ghFake: fake.gh, extra: { git: recording } });
+  assert.equal(r.code, 1);
+  assert.equal(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), tip);
+  assert.equal(seen.some((a) => a[0] === 'push' && a.includes(BRANCH)), false);
+  assert.equal(r.envelope.pr.number, 1);
+});
+
+test('a push-then-create recovery titles the PR by the archived headers on the branch, never "Archive 0"', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-19T500000-record-1', { twin: 'absent' });
+  const fake = fakeGh({ failCreate: true });
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 1);
+  // The crash left the branch on the remote with no PR; run again with nothing new to archive.
+  git(root, 'push', '-q', 'origin', `refs/heads/${BRANCH}:refs/heads/${BRANCH}`);
+  const again = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: again.gh });
+  assert.equal(r.code, 0, r.stderr);
+  const create = again.calls.find((c) => c.args[1] === 'create');
+  assert.ok(create, 'a PR was created');
+  assert.doesNotMatch(create.args[create.args.indexOf('--title') + 1], /Archive 0 /);
+  assert.equal(create.args[create.args.indexOf('--title') + 1], 'Archive 1 stranded run spec headers');
+});
+
+test('prBody neutralizes closing phrases, HTML-comment markers and @-mentions in what it prints', () => {
+  const body = prBody({
+    moved: [{ runId: 'closes #5 <!-- x --> @octo' }],
+    deleted: [],
+    conflicts: [{ runId: 'r', reason: 'work-twin-conflict', differing: ['@scope/a.md', 'fixes #9'] }],
+    untwinned: ['resolves #11'],
+  }, ['already @me']);
+  assert.doesNotMatch(body, /<!--/);
+  assert.doesNotMatch(body, /@(?!​)/);
+  assert.doesNotMatch(body, /\b(?:closes|fixes|resolves) #\d+/i);
+  assert.match(body, /closes issue #5/);
+  assert.match(body, /Untwinned \(classify by hand\)/);
+});
+
+test('the arming note says "is false" only for the literal false', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-19T600000-record-1', { twin: 'absent' });
+  const fake = fakeGh();
+  const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'maybe' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(fake.merges, []);
+  assert.ok(r.envelope.notes.includes("housekeeping-auto-merge is 'maybe', not 'true' — PR left unarmed"));
+  assert.ok(!r.envelope.notes.some((n) => n.includes('is false')));
 });
 
 test('a create failure on a branch the call did not create leaves the remote branch alone', () => {

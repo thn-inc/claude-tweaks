@@ -36,6 +36,8 @@ const { archiveRunDir, listSpecDirs, compareWorkTwin } = require('./lib/reconcil
 const { lstatType } = require('./lib/path-guard');
 const { ghAvailable: probeGh, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS } = require('./lib/shared-primitives');
+const { neutralizeClosingPhrases } = require('./lib/flow/closing-links');
+const { defang, unmention } = require('./lib/learned-skills/land');
 const { resolvePolicy, callerDeps, scalarValue, EXIT_OK } = require('./resolve-policy');
 
 const BRANCH = 'housekeeping/archive-tracked-shells';
@@ -154,11 +156,11 @@ const firstLine = (text) => String(text || '').split('\n')[0].trim();
 // real run without --no-pr). -> { base, merge, remoteExisted, openPr } | { error }
 //   open PR              -> origin/BRANCH, reuse the PR
 //   a merged PR          -> origin/{integration}; a lingering remote branch is deleted first
-//   closed PR only       -> error: nothing here can say what to do with it
+//   closed PR only       -> error when the branch is still on the remote; else as "no PR ever"
 //   no PR ever           -> origin/BRANCH if on the remote (crash between push and create), else the
 //                           local BRANCH (crash before push), else origin/{integration}
 // `merge` says the base predates the integration branch's tip, so origin/{integration} is merged in.
-function planPrBase(root, integration, hasLocal, deps, g, gh) {
+function planPrBase(root, integration, hasLocal, fetchedOk, g, gh) {
   const originRef = `refs/remotes/origin/${integration}`;
   const branchRef = `refs/remotes/origin/${BRANCH}`;
   const ls = g(['ls-remote', '--heads', 'origin', `refs/heads/${BRANCH}`], root);
@@ -177,7 +179,9 @@ function planPrBase(root, integration, hasLocal, deps, g, gh) {
     return { base: branchRef, merge: true, remoteExisted, openPr: { number: open.number, url: open.url } };
   }
   if (prs.some((p) => p.state === 'MERGED')) {
-    // Its commits already landed, so the local branch is reset to the integration branch (-B).
+    // Its commits already landed, so the local branch is reset to the integration branch (-B) —
+    // which must be current, or the new branch would be built on a stale tip.
+    if (!fetchedOk) return { error: `a merged PR exists for ${BRANCH} but origin/${integration} could not be fetched, so a fresh branch cannot start from it` };
     if (remoteExisted) {
       const gone = g(['push', 'origin', `:refs/heads/${BRANCH}`], root);
       if (gone.failure) return { error: `deleting the merged remote branch ${BRANCH} failed: ${firstLine(gone.stderr) || gone.failure}` };
@@ -185,7 +189,11 @@ function planPrBase(root, integration, hasLocal, deps, g, gh) {
     }
     return { base: originRef, merge: false, remoteExisted, openPr: null };
   }
-  if (closed) return { error: `PR #${closed.number} (${closed.url}) for ${BRANCH} was closed without merging — reopen it or delete the branch, then re-run` };
+  // A closed PR whose remote branch is gone has nothing left to resume: same as no PR ever. With the
+  // branch still on the remote, only a human can say whether it is to be reopened or discarded.
+  if (closed && remoteExisted) {
+    return { error: `PR #${closed.number} (${closed.url}) for ${BRANCH} was closed without merging and the branch is still on origin — reopen PR #${closed.number}, or delete the remote branch (git push origin --delete ${BRANCH}), then re-run` };
+  }
   if (remoteExisted) {
     if (!fetchBranch()) return { error: `${BRANCH} exists on origin but could not be fetched` };
     return { base: branchRef, merge: true, remoteExisted, openPr: null };
@@ -194,17 +202,23 @@ function planPrBase(root, integration, hasLocal, deps, g, gh) {
   return { base: originRef, merge: false, remoteExisted, openPr: null };
 }
 
-function prBody(envelope) {
+// Run ids and paths come from the checkout, so the body is made inert the way land.js's is: no
+// HTML-comment marker, no @-mention, no closing phrase that would close a record on merge.
+// `already` lists the run ids found archived on the branch from an earlier run.
+function prBody(envelope, already = []) {
+  const safe = (text) => unmention(defang(text));
   const lines = ['Archives stranded tracked run spec headers.', ''];
-  for (const m of envelope.moved) lines.push(`- moved ${m.runId}`);
-  for (const d of envelope.deleted) lines.push(`- deleted the live copy of ${d.runId} (archive twin identical)`);
-  for (const n of envelope.notes) if (/: already archived on /.test(n)) lines.push(`- ${n}`);
-  for (const c of envelope.conflicts) lines.push(`- left ${c.runId} (${c.reason}): ${c.differing.length ? c.differing.join(', ') : 'no differing paths'}`);
+  for (const m of envelope.moved) lines.push(`- moved ${safe(m.runId)}`);
+  for (const d of envelope.deleted) lines.push(`- deleted the live copy of ${safe(d.runId)} (archive twin identical)`);
+  for (const id of already) lines.push(`- ${safe(id)}: already archived on ${BRANCH}`);
+  for (const c of envelope.conflicts) {
+    lines.push(`- left ${safe(c.runId)} (${safe(c.reason)}): ${c.differing.length ? c.differing.map(safe).join(', ') : 'no differing paths'}`);
+  }
   if (envelope.untwinned.length > 0) {
     lines.push('', 'Untwinned (classify by hand)', '');
-    for (const u of envelope.untwinned) lines.push(`- ${u}`);
+    for (const u of envelope.untwinned) lines.push(`- ${safe(u)}`);
   }
-  return `${lines.join('\n')}\n`;
+  return neutralizeClosingPhrases(`${lines.join('\n')}\n`).text;
 }
 
 // The real run: archive every shell in a scratch worktree on the local branch, and (unless
@@ -226,7 +240,7 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
   const hasLocal = !g(['rev-parse', '--verify', '--quiet', `refs/heads/${BRANCH}`], root).failure;
   let plan = { base: hasLocal ? `refs/heads/${BRANCH}` : originRef, merge: hasLocal, remoteExisted: false, openPr: null };
   if (!opts.noPr) {
-    plan = planPrBase(root, integration, hasLocal, deps, g, gh);
+    plan = planPrBase(root, integration, hasLocal, !fetched.failure, g, gh);
     if (plan.error) return refuse(plan.error);
   }
   const { base } = plan;
@@ -252,12 +266,14 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
       return { code: 2, branch: BRANCH };
     }
     let left = 0;
+    const already = [];
     for (const shell of shells) {
       const wtRunDir = path.join(pipelinesDir(wt), shell.runId);
       if (!isTrackedShellDir(wtRunDir)) {
         // Done on this branch only when its archived work is here; otherwise the shell is not on
         // the branch at all (landed after, or never pushed) and is left behind.
         if (hasArchivedWork(wt, shell.runId)) {
+          already.push(shell.runId);
           envelope.notes.push(`${shell.runId}: already archived on ${BRANCH}`);
         } else {
           left += 1;
@@ -281,8 +297,11 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
     const leftCode = left > 0 ? 1 : 0;
     if (opts.noPr) return { code: leftCode, branch: BRANCH };
 
+    // Only this branch's own archive commits count: the catch-up merge of the integration branch,
+    // and the integration commits it brought in (^originRef), are not new work, so a run that
+    // archived nothing pushes nothing.
     const countAhead = (ref) => {
-      const res = g(['rev-list', '--count', `${ref}..HEAD`], wt);
+      const res = g(['rev-list', '--count', '--no-merges', `${ref}..HEAD`, `^${originRef}`], wt);
       const n = Number((res.stdout || '').trim());
       if (res.failure || !Number.isInteger(n)) throw new Error(`git rev-list --count ${ref}..HEAD failed: ${res.stderr || res.failure}`);
       return n;
@@ -299,18 +318,27 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
     }
     let pr = plan.openPr;
     if (!pr && aheadOfIntegration > 0) {
-      const title = `Archive ${envelope.moved.length + envelope.deleted.length} stranded run spec headers`;
-      const created = gh(['pr', 'create', '--base', integration, '--head', BRANCH, '--title', title, '--body-file', '-'], prBody(envelope));
-      // The read-back is the truth: a create that errored after it landed still has its PR.
+      const total = envelope.moved.length + envelope.deleted.length + already.length;
+      const title = total > 0 ? `Archive ${total} stranded run spec headers` : 'Archive stranded run spec headers';
+      const created = gh(['pr', 'create', '--base', integration, '--head', BRANCH, '--title', title, '--body-file', '-'], prBody(envelope, already));
+      // A successful create prints the new PR's URL: that is the PR, whatever the read-back says. The
+      // read-back settles the other cases: a create that errored after it landed still has its PR.
+      const printed = created.failure ? null : /\/pull\/(\d+)\s*$/.exec(String(created.stdout || '').trim());
       const back = gh(['pr', 'list', '--head', BRANCH, '--state', 'open', '--json', 'number,url']);
-      let rows = [];
-      if (!back.failure) { try { rows = JSON.parse(back.stdout || '[]'); } catch { rows = []; } }
-      pr = Array.isArray(rows) && rows.length > 0 ? { number: rows[0].number, url: rows[0].url } : null;
+      let rows = null;
+      if (!back.failure) { try { rows = JSON.parse(back.stdout || '[]'); } catch { rows = null; } }
+      if (Array.isArray(rows) && rows.length > 0) pr = { number: rows[0].number, url: rows[0].url };
+      else if (printed) pr = { number: Number(printed[1]), url: String(created.stdout).trim() };
       if (!pr) {
+        const confirmedNone = created.failure && Array.isArray(rows) && rows.length === 0;
         deps.stderr(`archive-tracked-shells: no pull request for ${BRANCH}: ${firstLine(created.failure ? created.stderr : back.stderr) || 'the open-PR read-back was empty'}\n`);
-        if (createdRemote) {
+        // The branch goes only when this run pushed it and the create failed with no open PR to show for
+        // it: after a successful or unconfirmed create the PR may exist, and deleting its head closes it.
+        if (createdRemote && confirmedNone) {
           const gone = g(['push', 'origin', `:refs/heads/${BRANCH}`], wt);
           envelope.notes.push(gone.failure ? `could not delete the remote branch ${BRANCH} after the failure` : `deleted the remote branch ${BRANCH} this run pushed`);
+        } else if (createdRemote) {
+          envelope.notes.push(`kept the remote branch ${BRANCH}: whether its PR exists is unconfirmed`);
         }
         return { code: 1, branch: BRANCH };
       }
@@ -321,8 +349,10 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
         const armed = gh(['pr', 'merge', String(pr.number), '--auto', '--squash']);
         if (armed.failure) envelope.pr.armError = firstLine(armed.stderr) || String(armed.failure);
         else envelope.pr.armed = true;
-      } else {
+      } else if (opts.autoMerge === 'false') {
         envelope.notes.push('housekeeping-auto-merge is false — PR left unarmed');
+      } else {
+        envelope.notes.push(`housekeeping-auto-merge is ${opts.autoMerge ? `'${opts.autoMerge}'` : 'unresolved'}, not 'true' — PR left unarmed`);
       }
     }
     return { code: leftCode, branch: BRANCH };
@@ -451,6 +481,6 @@ const realDeps = {
   worktreePath: (root) => path.join(root, '.worktrees', 'archive-tracked-shells'),
 };
 
-module.exports = { run, realDeps, findShells, BRANCH };
+module.exports = { run, realDeps, findShells, prBody, BRANCH };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
