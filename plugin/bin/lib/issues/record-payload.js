@@ -22,6 +22,7 @@ const DEFER_REASONS = Object.freeze([
   'genuinely-larger',
   'blocked-external',
   'blocked-dependency',
+  'needs-verification',
 ]);
 
 // Matches a Defer-reason: line on ANY line of the body (the /m flag) — the

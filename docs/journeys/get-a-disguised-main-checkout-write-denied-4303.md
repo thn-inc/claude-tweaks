@@ -37,12 +37,17 @@ files:
   - `cd ../main; case a in a) cd ../wt;; esac > f`
   - `cd ../main; a=() case x | cd ../wt; echo hi > f.js`
   - `cd ../main; case $x in a) cd ../wt;; esac; echo x > f`
+  - `X=1 cp a ../main/f`, `sudo cp a ../main/f`, `env X=1 tee ../main/f`, `! cp a ../main/f`, `time cp a ../main/f`, `command cp a ../main/f`, `doas -a passwd cp a ../main/f`
+  - `x+=1 git -C ../main commit -m x`
+  - `cd ../main; "x"=1 cd ../wt; cp a f.js` and `cd ../main; time time cd ../wt; cp a f.js`
 - **Action:** The session runs each.
 - **Should feel:** Refused, with the same denial and "use a worktree" remediation a plain `echo x > ../main/f` gets. No shape slips through because of how the cd or flag was written.
 - **Should understand:** The walk follows bash's semantics, each checked against bash 3.2 and 5:
   - A cd behind `&&`/`||` may or may not run, so the walk keeps every cwd bash could be in and fails closed.
   - A cd in a pipeline element runs in a subshell and does not carry over.
-  - An assignment-prefixed cd still runs.
+  - An assignment-prefixed cd still runs. A quoted or escaped name (`"x"=1`, `x\=1`) is no assignment: bash runs it as a command that is not found, and the cd after it never runs.
+  - The walk reads past assignment words and the stripped prefixes (`env`, `sudo`, `doas`, `command`, `builtin`, `exec`, `nice`, `nohup`, `time`, `!`), with their options, to the command word. `command -v`/`-V` is a lookup and writes nothing. `env -S word` with one plain word runs that word as the command (`env -S git commit -m x`). Under `sudo -i` the command runs from the target user's home, so only an absolute target resolves.
+  - Where bash 3.2 and 5 disagree on whether a cd runs (`! time cd`, `! ! cd`, `time -- cd`, `time time cd`), the write is checked under both cwds.
   - `-t` inside a flag cluster, and a glued `-tDIR`, name the target dir.
   - A cp or mv value option after the operands (`-S .bak`, `--suffix .bak`) takes the word after it. GNU coreutils writes the last real operand. macOS's BSD cp and mv stop option parsing at the first operand and write into that last word, a dash word and a `-t` after the first operand included (`cp a b -t d ../main` writes `../main/a` and `../main/b` under BSD). The walk reports both destinations when they differ, and drops the BSD one when an option BSD lacks (`-t`, `-S`, a long option) comes before the first operand.
   - A digit in a perl cluster (`-0pi`) does not hide `-i`.
@@ -87,10 +92,10 @@ files:
   | Shape | Record |
   |---|---|
   | The command inside `$( … )` or backticks | #4446 |
-  | A NAME=value, `env` or `sudo` prefix | #4448 |
   | `cd -`, `$OLDPWD`, a symlinked dir or a failing cd | #4450 |
-  | Compound-command bodies (including a case or `cd` inside an `if`/`while`/`for` body), `pushd` and `builtin cd` | #4244 |
-  | zsh-only forms (redirects, a pipeline's last element) | #4455 |
+  | Compound-command bodies (including a case or `cd` inside an `if`/`while`/`for` body) and `pushd` | #4244 |
+  | A command behind an `env -S` string that is not one plain word, `env -P`, `sudo -e` or `doas -s`, and the output file of the external `time -o` | #4572 |
+  | zsh-only forms (redirects, a pipeline's last element, `command cd`, `time -p cd`) | #4455 |
   | A function called after a later cd | #4487 |
 - **Red flags:** A skill or procedure that tells agents to use one of these shapes because the gate misses it.
 
@@ -99,6 +104,7 @@ files:
 - Updated during the build of #4481: a `case` compound that starts a pipeline, a redirect on a case compound, nested cases, and `x=()` no longer leak a main-checkout write.
 - Updated during the build of #4449: a cp or mv backup-suffix value after the operands (`-S`, `--suffix`) no longer hides the real destination.
 - Updated during the build of #4486: a `case` whose cd arm may not match no longer hides a write made from where the case began.
+- Updated during the build of #4448: a write, `git` call or `mkdir` behind an assignment word, `env`, `sudo`, `time`, `command` or another stripped prefix no longer leaks a main-checkout write; a quoted-name assignment no longer hides a write in the main checkout, and a cd that bash 3.2 and 5 split on (`time time cd` included) is checked under both cwds.
 - Related journeys:
   - `write-a-glued-redirect-from-the-main-checkout-4015.md`, the redirect scan the same walk feeds.
   - `run-a-heredoc-node-script-from-the-main-checkout-3989.md`, the heredoc carve-out.

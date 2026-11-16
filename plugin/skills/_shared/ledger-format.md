@@ -179,7 +179,7 @@ entry above, since no run-dir log exists to write it to.
 
 Remove the item from this phase's remaining set — it does not appear in the table below and does
 not get an `AskUserQuestion` drill. Items whose blocker reason returns `false` (ambiguous, or
-outside the four categories) fall through to the unchanged per-item drill below — the floor check
+outside the five categories) fall through to the unchanged per-item drill below — the floor check
 fails closed, exactly as if the capability were locked for that one item.
 
 **`ledgerRouteRemainder` (`unattended` only) — the items the floor check above leaves behind.**

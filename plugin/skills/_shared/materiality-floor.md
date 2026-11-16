@@ -37,13 +37,13 @@ fails toward filing an ordinary issue, never toward the digest.
 - [{area}] {one-line finding} — {file refs} — Defer-reason: {value} — {provenance} <!-- materiality-fingerprint: {fp} -->
 ```
 
-A line console backfill writes for a finding (`tidy/console-backfill.md`) carries one more marker after the materiality marker, `<!-- consolebackfill-item: {fp} -->`, so its next pass finds the line after a claim-heuristic change; `{provenance}` stays the bare run id.
+A line console backfill writes for a finding (`tidy/console-backfill.md`) carries one more marker after the materiality marker, `<!-- consolebackfill-item: {fp} -->`, so its next pass finds the line after a claim-heuristic change; `{provenance}` stays the bare run id. A line the live console's unattended resolution writes for a can't-tell `drop` (`bin/console-filings.js`'s `digestFile`) carries `<!-- console-finding: {fp} -->` in the same position, which Dedup also matches.
 
 A line a rollover carried (`tidy/digest-sweep.md`, `github-issues` only) carries one more trailing
 marker, `<!-- materiality-first-seen: {ISO} -->`, holding the timestamp of the comment it came
 from; its fields and fingerprint are unchanged, so Dedup still matches it in the new container. A
-promoted or expired entry moves as a fingerprint-only tombstone, its `materiality-fingerprint` and
-`consolebackfill-item` markers alone on a line: Dedup and console backfill's held check match it,
+promoted or expired entry moves as a fingerprint-only tombstone, its `materiality-fingerprint`,
+`consolebackfill-item` and `console-finding` markers alone on a line: Dedup and console backfill's held check match it,
 and with no entry line it is never in the active set.
 
 `{area}` is the subsystem the finding belongs to, written as a stable, low-cardinality, lowercase
@@ -103,19 +103,28 @@ this pipeline was already doing. Deliberately **not** added to `bin/lib/issues/r
 `tests/deferral-gate-conformance.test.js` pins): it is not a fix-now-failure reason at all, it is
 a producer-class marker specific to this Entry format field, so widening the gate's own closed
 vocabulary for it would blur a distinction the gate exists to keep — every other value in that
-vocabulary answers "why did fix-now fail for an item this pipeline was already working on,"
-which is not the question a proactive sweep's own fresh finding is answering. A future
+vocabulary except `needs-verification` (the filed verification task's reason, below) answers "why
+did fix-now fail for an item this pipeline was already working on," which is not the question a
+proactive sweep's own fresh finding is answering. A future
 non-gate-routed adopter of this floor uses the same value.
 
 ### Tiebreak can't-tell value
 
-A review finding that the independent tiebreak could neither confirm nor refute, at severity `low`
-or `info`, is the resolver's `digest` outcome. `/claude-tweaks:review`'s Step 3.7
-(`review/step3-tiebreak.md`) routes it here with `Defer-reason: tiebreak-cant-tell`. Like
-`direct-filing-sweep`, it is an Entry-format value only. Deliberately **not** in `DEFER_REASONS` — an unverified
-finding never failed fix-now, so no gate reason describes it. Its routing comes from the
-resolver's severity split, not from the three-axis floor above. Dedup and Digest URL and count
-surfacing apply unchanged.
+A review finding that the independent tiebreak could neither confirm nor refute is the resolver's
+`digest` outcome at severity `low` or `info`, and — at `unattended` (#4679) — at medium or higher
+when the tiebreak recommended `drop`. `/claude-tweaks:review`'s Step 3.7
+(`review/step3-tiebreak.md`) routes it here with `Defer-reason: tiebreak-cant-tell`, and the
+console's entry line carries a `<!-- console-finding: {fp} -->` marker, so a re-appearance in a
+later run dedupes to the existing entry by fingerprint. Like `direct-filing-sweep`, the digest
+entry's value is an Entry-format value only. Deliberately **not** in `DEFER_REASONS` — an unverified
+finding never failed fix-now, so no gate reason describes the digest entry. Its routing comes from
+the resolver's severity and recommendation split, not from the three-axis floor above. Every other
+unattended can't-tell item files as a task instead, with `Defer-reason: needs-verification`: that
+value is in `DEFER_REASONS` because it is the filed verification task's reason (the bounded check
+that settles the finding), not a fix-now failure. #4679 reverses #3949's ruling that every
+can't-tell item files regardless of its recommendation: of 53 `needs:definition` records, 50 were these filings, 41
+carried `Recommendation: drop`, and the other 9 each settled in under a minute by an agent with
+quoted evidence (measured 2026-10-31). Dedup and Digest URL and count surfacing apply unchanged.
 
 ### Console backfill values
 

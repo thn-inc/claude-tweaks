@@ -8,7 +8,7 @@ const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
 const { FINDING_PATH } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'finding-path'));
-const { classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption, RATIFY_FILES_RECORD_REASON } = require(MOD);
+const { UNATTENDED_SHADOWED_DROP_REASON, classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption, RATIFY_FILES_RECORD_REASON } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems, readRunResidue, formatResidueLines } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
@@ -1154,7 +1154,7 @@ test('approve-all: a console verdict with Recommendation file resolves filed, dr
   assert.deepStrictEqual(items[0].tiebreak, { id: v1.r.id, key: '3a|src/a.js:9', lens: '3a', path: 'src/a.js', line: 9, severity: 'medium', recommendation: 'file', reason: 'verdict:cant-tell' });
   assert.strictEqual(items[1].tiebreak.recommendation, 'drop');
   const viaResolveAll = resolveAll({ runDir: fixture({ decisions: `${decisions}\n`, headers: [7] }), policy: 'console-auto', deps: deps() }).items;
-  assert.deepStrictEqual(viaResolveAll.map((i) => [i.id, i.resolution]), [[`tiebreak:${v1.r.id}`, 'filed'], [`tiebreak:${v2.r.id}`, 'filed']], 'resolveAll (always unattended) files both, the drop recommendation included');
+  assert.deepStrictEqual(viaResolveAll.map((i) => [i.id, i.resolution]), [[`tiebreak:${v1.r.id}`, 'filed'], [`tiebreak:${v2.r.id}`, 'digested']], 'resolveAll (always unattended) routes by recommendation: file files, drop digests (#4679)');
 });
 
 test('a console verdict with Recommendation none resolves filed, never dropped (#3949)', () => {
@@ -1343,18 +1343,61 @@ test('AC5: at unattended N can\'t-tell items including a drop recommendation pla
   const result = resolveAll({ runDir, policy: 'console-auto', deps: deps() });
   const tb = result.items.filter((i) => i.tiebreak);
   assert.strictEqual(tb.length, 4);
-  assert.deepStrictEqual(tb.map((i) => i.resolution), ['filed', 'filed', 'filed', 'filed']);
-  assert.ok(tb.every((i) => /an agent that could not tell is not licensed to drop/.test(i.reason)));
-  assert.strictEqual(result.filings.length, 4);
-  assert.deepStrictEqual(result.filings.map((p) => p.item), tb.map((i) => i.id));
-  assert.strictEqual(new Set(result.filings.map((p) => p.fingerprint)).size, 4);
-  assert.ok(result.filings.every((p) => p.proposal.includes('Labels: needs:definition') && /claim \d/.test(p.proposal)));
+  assert.deepStrictEqual(tb.map((i) => i.resolution), ['filed', 'digested', 'filed', 'digested']);
+  assert.ok(tb.filter((i) => i.resolution === 'filed').every((i) => /filed as a verification task \(needs-verification\)/.test(i.reason)));
+  assert.ok(tb.filter((i) => i.resolution === 'digested').every((i) => /logged to the materiality digest \(tiebreak-cant-tell\), nothing filed/.test(i.reason)));
+  assert.strictEqual(result.filings.length, 2);
+  assert.deepStrictEqual(result.filings.map((p) => p.item), [tb[0].id, tb[2].id]);
+  assert.strictEqual(new Set(result.filings.map((p) => p.fingerprint)).size, 2);
+  assert.ok(result.filings.every((p) => !p.proposal.includes('needs:definition') && /claim \d/.test(p.proposal)));
   assert.ok(result.filings.some((p) => p.proposal.includes(path.basename(runDir))), 'the run id is in the body');
+  assert.strictEqual(result.digests.length, 2);
+  assert.deepStrictEqual(result.digests.map((d) => d.item), [tb[1].id, tb[3].id]);
+  assert.ok(result.digests.every((d) => d.line.includes('tiebreak-cant-tell') && /^consolefinding-[0-9a-f]{8}$/.test(d.fingerprint)));
+});
+
+test('two can\'t-tell items sharing a fingerprint, one file and one drop, resolve both filed with no digest entry (#4679)', () => {
+  const same = { path: 'src/same.js', claim: 'same claim' };
+  const fFile = tbFinding({ ...same, line: 4 });
+  const fDrop = tbFinding({ ...same, line: 40 });
+  const vFile = tbVerdict(fFile, { recommendation: 'file' });
+  const vDrop = tbVerdict(fDrop, { recommendation: 'drop' });
+  const decisions = [tbStaged(fFile), tbStaged(fDrop), vFile.entry, vDrop.entry].join('\n');
+  const runDir = fixture({ decisions: `${decisions}\n`, headers: [7] });
+  fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify([[fFile, vFile], [fDrop, vDrop]].map(([f, v]) => ({ id: v.r.id, lens: f.lens, path: f.path, line: f.line, claim: f.claim, reporterSeverity: f.reporterSeverity, kind: f.kind }))));
+  const result = resolveAll({ runDir, policy: 'console-auto', deps: deps() });
+  const tb = result.items.filter((i) => i.tiebreak);
+  assert.deepStrictEqual(tb.map((i) => i.resolution), ['filed', 'filed'], 'the record wins over the digest line');
+  assert.strictEqual(tb[1].reason, UNATTENDED_SHADOWED_DROP_REASON);
+  assert.match(UNATTENDED_SHADOWED_DROP_REASON, /recommended dropping.*covered by another item/);
+  assert.strictEqual(result.filings.length, 1);
+  assert.deepStrictEqual(result.digests, []);
+});
+
+test('AC1 (#4679): one medium can\'t-tell drop and one medium can\'t-tell file item → a digest entry and a filing', () => {
+  const fDrop = tbFinding({ path: 'src/drop.js', claim: 'drop claim' });
+  const fFile = tbFinding({ path: 'src/file.js', claim: 'file claim' });
+  const vDrop = tbVerdict(fDrop, { recommendation: 'drop' });
+  const vFile = tbVerdict(fFile, { recommendation: 'file' });
+  const decisions = [tbStaged(fDrop), tbStaged(fFile), vDrop.entry, vFile.entry].join('\n');
+  const result = resolveWith(decisions);
+  assert.deepStrictEqual(result.digests.map((d) => d.item), [`tiebreak:${vDrop.r.id}`]);
+  assert.deepStrictEqual(result.filings.map((p) => p.item), [`tiebreak:${vFile.r.id}`]);
+  assert.ok(!result.filings[0].proposal.includes('## Open Question'));
+});
+
+test('Approve-all (findingItems) is unchanged (#4679 AC5)', () => {
+  const fDrop = tbFinding({ path: 'src/drop.js', claim: 'drop claim' });
+  const fFile = tbFinding({ path: 'src/file.js', claim: 'file claim' });
+  const vDrop = tbVerdict(fDrop, { recommendation: 'drop' });
+  const vFile = tbVerdict(fFile, { recommendation: 'file' });
+  const items = findings([tbStaged(fDrop), tbStaged(fFile), vDrop.entry, vFile.entry].join('\n'));
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]), [[`tiebreak:${vDrop.r.id}`, 'dropped'], [`tiebreak:${vFile.r.id}`, 'filed']]);
 });
 
 test('AC5: a run without review-findings.json still plans a filing per can\'t-tell item, keyed on the tiebreak id', () => {
   const f = tbFinding();
-  const v = tbVerdict(f, { recommendation: 'drop' });
+  const v = tbVerdict(f, { recommendation: 'file' });
   const result = resolveWith([tbStaged(f), v.entry].join('\n'));
   assert.strictEqual(result.filings.length, 1);
   assert.ok(result.filings[0].title.endsWith(`tiebreak:${v.r.id}`));
@@ -1384,8 +1427,9 @@ test('AC1 at unattended: every outcome fixture resolves with zero pending and ze
   const decisions = [...all.map(({ f }) => tbStaged(f)), ...all.map(({ v }) => v.entry)].join('\n');
   const result = resolveWith(decisions);
   assert.deepStrictEqual(result.items.filter((i) => OPEN.includes(i.resolution)), []);
-  assert.deepStrictEqual(result.items.filter((i) => /Low-confidence|Contested/.test(i.section)).map((i) => i.resolution), ['filed', 'filed']);
-  assert.strictEqual(result.filings.length, 2, 'only the two can\'t-tell console items are filed; the refuted drop and the digest are not');
+  assert.deepStrictEqual(result.items.filter((i) => /Low-confidence|Contested/.test(i.section)).map((i) => i.resolution), ['filed', 'digested']);
+  assert.strictEqual(result.filings.length, 1, 'only the file-recommended can\'t-tell item is filed; the refuted drop, the digest and the drop-recommended item are not');
+  assert.strictEqual(result.digests.length, 1);
 });
 
 test('a staged file settled by a dropped verdict (no tiebreak field) stays dropped and plans no filing', () => {

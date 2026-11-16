@@ -1,0 +1,6 @@
+[
+  { "id": "aaaaaaaaaaa1", "lens": "3a", "path": "src/alpha.js", "line": 10, "claim": "alpha claim", "reporterSeverity": "medium", "kind": "unconfirmed" },
+  { "id": "aaaaaaaaaaa2", "lens": "3b", "path": "src/beta.js", "line": 20, "claim": "beta claim", "reporterSeverity": "low", "kind": "unconfirmed" },
+  { "id": "aaaaaaaaaaa3", "lens": "3c", "path": "src/gamma.js", "line": 30, "claim": "gamma claim", "reporterSeverity": "info", "kind": "unconfirmed" },
+  { "id": "aaaaaaaaaaa4", "lens": "3d", "path": "src/delta.js", "line": 40, "claim": "delta claim", "reporterSeverity": "low", "kind": "unconfirmed" }
+]
