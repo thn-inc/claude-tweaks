@@ -27,7 +27,9 @@
   - `gh-api-module-pattern/cli-wrapper-contract.md`: "**A guard added to an existing `run(argv, deps)` reaches the environment through `deps` too.**" — `pr-early-open.js`'s linked-worktree probe goes through a `deps.isLinkedWorktreeRoot` seam (default the real one), so CLI tests can fake it.
   - `policy-key-addition`: not applicable — no key is added or reshaped.
 
-Premise departures from the spec (logged to `decisions.md` before dispatch): Deliverable 1's "parent of `git rev-parse --git-common-dir`" is implemented as `mainCheckoutRoot()`, the fs walk `$RUN_ROOT` already uses, per the spec's own Technical Approach ("Reuse the existing `$RUN_ROOT` resolution … rather than writing a second `--git-common-dir` parser"); it costs zero git spawns, not one. AC5.1's "fake `git` runner" becomes fake `fsImpl` + `mainCheckoutRoot` seams, since the locator spawns no git.
+Mechanism (logged to `decisions.md` before dispatch): Deliverable 1's "resolved the same way as `$RUN_ROOT`" is `mainCheckoutRoot()` — `_shared/pipeline-run-dir.md`'s Anchoring section names it as what `resolve-run-dir --root-only` follows — and the spec's Technical Approach says to "Reuse the existing `$RUN_ROOT` resolution … rather than writing a second `--git-common-dir` parser"; it costs zero git spawns, not one. Accepted divergence, shared with `$RUN_ROOT`: a layout whose worktree admin dir is not under `.git/worktrees/` (a `--separate-git-dir` main repo) resolves no main checkout, so it gets no fallback (today's behavior) — say so in the module header. AC5.1 is kept as written: its three locator cases are tested through `resolvePolicyConfig` with a fake `git` runner (keyed on argv, as `tests/bin-lib/blast-radius-cli.test.js`'s `fakeGit` is), in Task 2; Task 1's seam tests are additional.
+
+Root contract: `locatePolicyFile(root)` takes a checkout top level. A caller passing a cwd (`resolve-profile.js`, `release-notes-publish.js` without `--root`) keeps today's cwd-as-root reading: from a subdirectory it reads `{subdir}/.claude-tweaks/policy.yml` (absent) in the main checkout and in a worktree alike, so the change adds no divergence there; sessions run with cwd at the checkout top level, where the fallback applies. The locator reads the real filesystem at every caller, including callers whose own read seam (`readFile`, `readPolicy`) a test fakes: existence comes from the disk, contents from the seam. A test that fakes contents for a root with no `.git` on disk gets the own path back (no `.git` → no fallback), so existing fake-read tests are unaffected.
 
 Scope note: the spec's Current State says every policy reader goes through the three named functions; `git grep -n -F "'policy.yml'" -- plugin/bin` (run at plan time) shows 16 sites, so the three are not the one shared place. Its stated goal — "fixes every policy key and every reader at once" — needs every reader: `policy-schema.js`'s `resolveForgeProbeTimeoutMs`/`resolveIntegrationModel` and `policy.js`'s `readRiskPolicy` (Task 2), and the eight direct readers in other modules (Task 5). Left as is on purpose: `hooks/pre-tool-use.js:97`'s `POLICY_FILE` (a write-target exemption path, not a read) and `hooks/worktree-detect.js:196`'s `findPolicyFile` (an ancestor-walk fast-reject that already finds the main checkout's file from a worktree nested under it, and whose false negative only skips a gate that allows in a linked worktree anyway).
 
@@ -94,6 +96,7 @@ git commit -m "Add policy-file locator — main-checkout fallback for a linked w
 ### Task 2: Route the shared readers through the locator
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/policy-schema.js` — `resolvePolicyConfig` (~line 975), `auditPolicy` (~988), `resolveIntegrationModel` (~952), `resolveForgeProbeTimeoutMs` (~830)
@@ -106,7 +109,10 @@ git commit -m "Add policy-file locator — main-checkout fallback for a linked w
 - Produces: `resolvePolicyConfig(...)` returns `{ root, policyRaw, runConfigRaw, result, policyPath, policySource }` — `policyPath` the file read, `policySource` `'checkout' | 'main-checkout'`. `readPolicyFile(repoRoot)` reads `locatePolicyFile(repoRoot).path`. `auditPolicy`, `resolveIntegrationModel`, `resolveForgeProbeTimeoutMs`, `readRiskPolicy` read the located path; `auditPolicy`'s `CLAUDE.md` read stays at `repoRoot`.
 
 - [ ] **Step 1: Write the failing tests.** Real-fs fixture helper in each file: `main/` with a `.git` directory and `main/.git/worktrees/wt/`, `wt/` with `.git` = `gitdir: {main}/.git/worktrees/wt`, `main/.claude-tweaks/policy.yml` = `integration-branch: develop\nworktree-always: true\n`.
-  - `tests/policy-schema.test.js`:
+  - `tests/policy-schema.test.js` — the AC5.1 three-case set through `resolvePolicyConfig`, its `git` a fake runner keyed on argv (`rev-parse --show-toplevel` → `{wt}\n`, anything else throws), as `tests/bin-lib/blast-radius-cli.test.js`'s `fakeGit` is:
+    - `AC5.1: resolvePolicyConfig, fake git runner — worktree file present: reads it, policySource checkout`
+    - `AC5.1: resolvePolicyConfig, fake git runner — worktree absent, main present: reads main's, policySource main-checkout`
+    - `AC5.1: resolvePolicyConfig, fake git runner — both absent: policyRaw null, policySource checkout, every key at its default`
     - `AC1.1: resolvePolicyConfig from a linked worktree without policy.yml reads the main checkout's — integration-branch develop, policySource main-checkout` (fake `git` returning `{wt}\n` for `rev-parse --show-toplevel`, real `readFile`)
     - `AC2.1: resolvePolicyConfig — a worktree policy.yml wins; the main checkout's is not read` (worktree file `integration-branch: release\n`; a `readFile` wrapper records paths; assert the main path is absent from the record)
     - `AC3.1: resolvePolicyConfig from the main checkout — policySource checkout, same result as before` 
@@ -177,6 +183,7 @@ git commit -m "Note the main-checkout policy fallback on resolve-policy stderr (
 ### Task 4: pr-early-open.js default-branch warning, hot-path proof
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/pr-early-open.js` — base resolution (~lines 198-222), `realDeps` (~103), header comment
@@ -215,9 +222,9 @@ git add plugin/bin/pr-early-open.js tests/bin-lib/flow/pr-early-open.test.js
 git commit -m "Warn when pr-early-open falls back to the GitHub default branch from a worktree (refs #4492)"
 ```
 
-### Task 5: Route the remaining direct readers [batch]
+### Task 5: Route the remaining direct readers
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/bin/backlog-grant-gate.js:118`, `plugin/bin/lib/compose-context/resolve-conditions.js:52`, `plugin/bin/lib/reconcile/post-merge.js:218`, `plugin/bin/lib/wrap-up/engine-verify.js:782`, `plugin/bin/parent-gate.js:191`, `plugin/bin/preflight-records.js:193`, `plugin/bin/release-notes-publish.js:78`, `plugin/bin/resolve-profile.js:135`
@@ -226,7 +233,7 @@ git commit -m "Warn when pr-early-open falls back to the GitHub default branch f
 **Interfaces:**
 - Consumes: `locatePolicyFile(root).path` (Task 1).
 
-- [ ] **Step 1: Swap each site's `path.join({root}, '.claude-tweaks', 'policy.yml')` for `locatePolicyFile({root}).path`**, keeping each site's own read and error handling exactly as it is (ENOENT → null stays ENOENT → null). `resolve-profile.js`'s `fs.existsSync(policyPath)` stays (it is on the path-guard allowlist with its current count — do not change the count). A `null` path (non-string root) cannot occur at these sites (each root is a string); no guard needed.
+- [ ] **Step 1: Swap each site's `path.join({root}, '.claude-tweaks', 'policy.yml')` for `locatePolicyFile({root}).path`**, keeping each site's own read and error handling exactly as it is (ENOENT → null stays ENOENT → null). `resolve-profile.js`'s `fs.existsSync(policyPath)` stays (it is on the path-guard allowlist with its current count — do not change the count). A `null` path (non-string root) cannot occur at these sites (each root is a string); no guard needed. Each module adds its own `require` of `plugin/bin/lib/policy-file.js` at the correct relative depth (`./lib/policy-file` from `plugin/bin/`, `../policy-file` from `plugin/bin/lib/{dir}/`). The root each site already passes is kept — `resolve-profile.js`'s `deps.cwd()` and `release-notes-publish.js`'s `root` included — per the plan's Root contract paragraph; no site gains a git call to find its top level.
 
 - [ ] **Step 2: Run the affected suites**
 
