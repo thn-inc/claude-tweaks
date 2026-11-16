@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  listClaimNames, readClaimBlob, writeClaimBlob, defaultGhApi, classifyGhApiError, tombstoneInFlightPr,
+  listClaimEntries, readClaimBlob, writeClaimBlob, defaultGhApi, classifyGhApiError, tombstoneInFlightPr,
   isWellFormedClaimContent, createClaimReader, resolveRepoSlug, resolveRepoSlugOrThrow,
   ensureClaimsBranch, claimsBranchExists,
 } = require('../../../plugin/bin/lib/issues/claim-store');
@@ -162,32 +162,10 @@ test('writeClaimBlob: content that is not even a string (the caller forgot to se
   assert.deepEqual(r, { ok: false, failure: 'invalid-content' });
 });
 
-test('listClaimNames: happy path extracts names from the {name,sha} entries listClaimEntries returns', () => {
-  const ghApi = (args) => {
-    // `recursive=1` is a literal query-string segment on the path, never a
-    // `-f` field -- `gh api` switches its default method to POST the
-    // instant any `-f`/`-F` is present, and this endpoint has no POST
-    // route (confirmed live: a `-f recursive=1` call 404s; the identical
-    // request with the param folded into the path succeeds).
-    assert.equal(args[0], 'repos/acme/w/git/trees/claims-registry?recursive=1');
-    assert.ok(!args.includes('-f'), 'must never pass recursive=1 as a -f field -- it flips gh api to POST');
-    return {
-      stdout: JSON.stringify({
-        truncated: false,
-        entries: [{ name: 'issue-1.json', sha: 'sha1' }, { name: 'issue-2.json', sha: 'sha2' }],
-      }),
-      failure: null,
-      status: null,
-    };
-  };
-  const r = listClaimNames(ghApi, 'acme/w');
-  assert.deepEqual(r, { names: ['issue-1.json', 'issue-2.json'], failure: null });
-});
-
-test('listClaimNames: failure -> empty names, failure propagated', () => {
+test('listClaimEntries: failure -> empty entries, failure propagated', () => {
   const ghApi = () => ({ stdout: null, failure: 'gh-absent', status: null });
-  const r = listClaimNames(ghApi, 'acme/w');
-  assert.deepEqual(r, { names: [], failure: 'gh-absent' });
+  const r = listClaimEntries(ghApi, 'acme/w');
+  assert.deepEqual(r, { entries: [], failure: 'gh-absent' });
 });
 
 test('defaultGhApi is exported (existence only — no real gh call)', () => {
@@ -296,7 +274,7 @@ test('writeClaimBlob: a ghApi that never sets status (release-merged.js\'s own) 
   assert.deepEqual(r, { ok: false, failure: 'network-failure' });
 });
 
-test('listClaimEntries: returns name + sha per entry from the same single Git Trees API call listClaimNames already made', () => {
+test('listClaimEntries: returns name + sha per entry from a single Git Trees API call', () => {
   const { listClaimEntries } = require('../../../plugin/bin/lib/issues/claim-store');
   let seenArgs = null;
   const ghApi = (args) => {
@@ -315,12 +293,6 @@ test('listClaimEntries: returns name + sha per entry from the same single Git Tr
   assert.match(seenArgs[0], /repos\/acme\/w\/git\/trees\/claims-registry\?recursive=1/);
   assert.ok(!seenArgs.includes('-f'), 'must never pass recursive=1 as a -f field -- it flips gh api to POST');
   assert.match(seenArgs.join(' '), /-q .*name.*sha/);
-});
-
-test('listClaimNames: still works, now a thin wrapper over listClaimEntries', () => {
-  const { listClaimNames } = require('../../../plugin/bin/lib/issues/claim-store');
-  const ghApi = () => ({ stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-7.json', sha: 'sha7' }] }), failure: null, status: null });
-  assert.deepEqual(listClaimNames(ghApi, 'acme/w'), { names: ['issue-7.json'], failure: null });
 });
 
 test('listClaimEntries: a tree response reporting more than 1000 blobs under claims/ returns every entry, uncapped (#3098 AC1)', () => {
