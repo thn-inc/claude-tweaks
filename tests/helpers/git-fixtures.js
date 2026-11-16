@@ -120,7 +120,13 @@ function harnessWorktreeOf(main, name) {
 // the bare origin's `receive.autogc` off so a push into it starts no
 // maintenance process. `env`/`run`/`commit`/`gitIn` are rebuilt per call; the
 // copy's remote urls were rewritten to its own `origin.git`.
-function originWithTwoClones(prefix) {
+//
+// `opts.seed(ops)` (with a non-empty `opts.key`, which names its template) runs as the
+// template build's last step with the build's own ops and the template-side paths
+// `{ root, work, other, env, run, commit }`, so a caller's per-test commits, pushes and
+// pulls run once per process too (#5769). Without `opts` nothing changes, key included.
+function originWithTwoClones(prefix, { key, seed } = {}) {
+  if (seed && (typeof key !== 'string' || !key)) throw new TypeError('originWithTwoClones: seed needs a key');
   // Snapshots process.env when called, so the template build (which runs with
   // auto-maintenance switched off in process.env) calls it again inside `build`.
   const makeOps = () => {
@@ -139,7 +145,7 @@ function originWithTwoClones(prefix) {
     };
     return { env, run, commit };
   };
-  const root = fromTemplate('git-fixtures:origin-two-clones', (tplRoot) => {
+  const root = fromTemplate(key ? `git-fixtures:origin-two-clones:${key}` : 'git-fixtures:origin-two-clones', (tplRoot) => {
     const { env, run, commit } = makeOps();
     const origin = path.join(tplRoot, 'origin.git');
     const work = path.join(tplRoot, 'work');
@@ -153,6 +159,7 @@ function originWithTwoClones(prefix) {
     commit(work, 'base');
     run(work, ['push', '-q', 'origin', 'main']);
     run(other, ['pull', '-q', 'origin', 'main']);
+    if (seed) seed({ root: tplRoot, work, other, env, run, commit });
   }, { prefix });
   const { env, run, commit } = makeOps();
   return {
