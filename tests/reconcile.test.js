@@ -326,7 +326,7 @@ test('decideArchiveCore: merged + console UNresolved -> never archived', () => {
 });
 
 test('decideArchiveCore: PR not merged -> never archived regardless of console state', () => {
-  assert.strictEqual(decideArchiveCore({ number: 3, state: 'OPEN' }, 'resolved').action, 'skip');
+  assert.deepStrictEqual(decideArchiveCore({ number: 3, state: 'OPEN' }, 'resolved'), { action: 'skip', reason: 'pr-open' });
 });
 
 test('readConsoleState: absent file reads as none, not unresolved', () => {

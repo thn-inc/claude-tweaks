@@ -2564,7 +2564,7 @@ test('archiveMerged: an abandoned interrupted run whose archive move fails is re
 // (the AC2 integration test above stays green even with this branch deleted,
 // since its fixture tears down the worktree and falls through to the
 // pre-existing no-branch skip either way).
-test('classifyRunDir abandoned-interrupted: false when owner === sessionId, true when they differ (same state, same run dir)', () => {
+test('classifyRunDir abandoned-interrupted: not abandoned when owner === sessionId, abandoned when they differ (same state, same run dir)', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ownereq-'));
   const runDir = path.join(root, 'run');
   fs.mkdirSync(runDir, { recursive: true });
@@ -3825,6 +3825,6 @@ test('archiveMerged: ordinary branch-resolvable path — a PR console holding a 
   assert.equal(fs.existsSync(runDir), true);
 });
 
-test('classifyRunDir abandoned-interrupted: false for a non-interrupted status', () => {
+test('classifyRunDir abandoned-interrupted: not abandoned for a non-interrupted status', () => {
   assert.equal(abandoned('/x', { status: 'active' }, 'sess-1', Date.now(), { runVerdict: DEAD }), false);
 });
