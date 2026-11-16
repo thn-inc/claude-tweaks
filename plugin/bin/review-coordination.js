@@ -11,8 +11,8 @@
 //   node bin/review-coordination.js write-findings <run-dir> <findings.json>
 //   node bin/review-coordination.js check-coverage <run-dir>
 // categorise-reproduction/detect-overlap/corroborate-cross-lens print JSON
-// (corroborate-cross-lens: #3604); resolve-debate prints
-// the bare resolution string. resolve-tiebreak/write-findings/check-coverage
+// (corroborate-cross-lens: #3604); resolve-debate prints the bare
+// resolution string. resolve-tiebreak/write-findings/check-coverage
 // (#3945) print one JSON line: the resolver result (a could-not-parse reply is
 // parse:"could-not-parse" with exit 0 — the signal is in the JSON), {path, count}
 // of the review-findings.json written through the run-dir anchoring guard, and
