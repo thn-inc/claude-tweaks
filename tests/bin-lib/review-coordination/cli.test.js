@@ -622,6 +622,49 @@ test('AC3.1: chunk --run with a missing id and with a repeated id writes no line
   }
 });
 
+test('the chunk form never reads evidence from outside --root: .., absolute, or a symlink out', (t) => {
+  const d = tmpDir(t);
+  const root = path.join(d, 'repo');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  const outside = path.join(d, 'outside.ts');
+  fs.writeFileSync(outside, 'a\nb\nconst ok = token.exp > now;\n');
+  fs.symlinkSync(outside, path.join(root, 'src', 'link.ts'));
+  const findings = ['../outside.ts', outside, 'src/link.ts'].map((findingPath, i) => ({ ...TB_FINDING, path: findingPath, line: 3, claim: `claim ${i}` }));
+  const reply = findings.map((f) => [`Id: ${findingId(f)}`, 'Verdict: refuted', `Evidence: ${f.path}:3 "const ok = token.exp > now;"`, 'Severity: high', 'Recommendation: drop']).flat().concat('STATUS: DONE').join('\n');
+  const res = chunkRun([writeText(d, 'confined.json', JSON.stringify(findings)), writeText(d, 'confined.txt', reply), '--root', root], d);
+  assert.strictEqual(res.code, 0);
+  const { results } = JSON.parse(res.out);
+  assert.strictEqual(results.length, 3);
+  for (const r of results) {
+    assert.strictEqual(r.reason, 'evidence-unverified', r.id);
+    assert.strictEqual(r.outcome, 'console', r.id);
+  }
+});
+
+test('chunk --run refuses an unanchored or missing run dir with exit 3 and no verdict', (t) => {
+  const d = tmpDir(t);
+  const { root, chunkFile, replyFile } = chunkInputs(d);
+  const { main, runDir } = anchoredRunDir(t);
+  const shadow = tmpDir(t);
+  for (const [dir, why] of [[shadow, /not anchored under the main checkout/], [path.join(runDir, 'gone'), /run dir does not exist/]]) {
+    const res = chunkRun([chunkFile, replyFile, '--root', root, '--run', dir], main);
+    assert.strictEqual(res.code, 3, dir);
+    assert.strictEqual(res.out, '', dir);
+    assert.match(res.err, why, dir);
+  }
+  assert.ok(!fs.existsSync(path.join(shadow, 'decisions.md')));
+});
+
+test('the chunk form exits 2 for a non-boolean vacuity entry', (t) => {
+  const d = tmpDir(t);
+  const { root, findings, replyFile } = chunkInputs(d);
+  const file = writeText(d, 'bad-vacuity.json', JSON.stringify([{ ...findings[0], vacuity: 'yes' }, findings[1]]));
+  const res = chunkRun([file, replyFile, '--root', root], d);
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.out, '');
+  assert.match(res.err, /vacuity must be a boolean/);
+});
+
 test('the chunk form exits 2 for an empty array, a 9-entry array, a repeated id, or one malformed entry, and appends nothing', (t) => {
   const d = tmpDir(t);
   const { root, findings, replyFile } = chunkInputs(d);

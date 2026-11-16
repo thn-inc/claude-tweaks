@@ -139,6 +139,16 @@ function appendVerdict(result, anchoredDir, now, deps) {
   }
 }
 
+// The evidence reader both resolve-tiebreak forms pass the resolver: it throws
+// (→ evidence-unverified) for a path that resolves outside --root.
+function evidenceReader(root) {
+  return (p) => {
+    const real = resolveWithin(path.resolve(root, p), root);
+    if (real === null) throw new Error(`evidence path is outside --root or does not resolve: ${p}`);
+    return fs.readFileSync(real, 'utf8');
+  };
+}
+
 // The chunk form's input checks, shared by resolve-tiebreak's chunk form and finding-ids:
 // returns { ids } (one finding id per entry, in entry order) or { exitCode: 2 } after one stderr line.
 function validateChunk(findings, file, deps) {
@@ -179,14 +189,8 @@ function resolveTiebreakChunkCommand(findings, positional, root, runDir, deps) {
     anchored = anchorRunDir(runDir, deps, 3);
     if (anchored.exitCode !== undefined) return anchored.exitCode;
   }
-  // Throws (→ evidence-unverified) for a path that resolves outside --root.
-  const readFile = (p) => {
-    const real = resolveWithin(path.resolve(root, p), root);
-    if (real === null) throw new Error(`evidence path is outside --root or does not resolve: ${p}`);
-    return fs.readFileSync(real, 'utf8');
-  };
   const now = deps.now();
-  const { results, unsettled } = resolveTiebreakChunk(findings, reply, { readFile, now });
+  const { results, unsettled } = resolveTiebreakChunk(findings, reply, { readFile: evidenceReader(root), now });
   if (anchored) {
     for (const result of results) appendVerdict(result, anchored.dir, now, deps);
   }
@@ -309,14 +313,8 @@ function run(argv, overrides = {}) {
       anchored = anchorRunDir(runDir, deps, 3);
       if (anchored.exitCode !== undefined) return anchored.exitCode;
     }
-    // Throws (→ evidence-unverified) for a path that resolves outside --root.
-    const readFile = (p) => {
-      const real = resolveWithin(path.resolve(root, p), root);
-      if (real === null) throw new Error(`evidence path is outside --root or does not resolve: ${p}`);
-      return fs.readFileSync(real, 'utf8');
-    };
     const now = deps.now();
-    const result = resolveTiebreak(input.value, reply, { readFile, now });
+    const result = resolveTiebreak(input.value, reply, { readFile: evidenceReader(root), now });
     if (anchored) appendVerdict(result, anchored.dir, now, deps);
     deps.stdout(JSON.stringify(result) + '\n');
     return 0;

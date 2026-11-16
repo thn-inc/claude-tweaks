@@ -1088,6 +1088,12 @@ test('Review Focus 5: a chunk with two entries of the same id throws', () => {
   assert.throws(() => chunkResolve([CHUNK_F1, CHUNK_F1], `${block(ID1, CONFIRMED_BODY)}\nSTATUS: DONE`), TypeError);
 });
 
+test('buildFindingsArtifact refuses a non-boolean vacuity and does not keep a boolean one', () => {
+  assert.throws(() => buildFindingsArtifact([{ ...CHUNK_F1, kind: 'unconfirmed', vacuity: 'yes' }]), TypeError);
+  assert.throws(() => buildFindingsArtifact([{ ...CHUNK_F1, kind: 'unconfirmed', vacuity: 1 }]), TypeError);
+  assert.equal('vacuity' in buildFindingsArtifact([{ ...CHUNK_F1, kind: 'unconfirmed', vacuity: true }])[0], false);
+});
+
 test('Review Focus 6: a vacuity entry\'s confirmed block resolves can\'t-tell', () => {
   const vacuous = { ...CHUNK_F1, vacuity: true };
   const text = [block(ID1, CONFIRMED_BODY), block(ID2, CONFIRMED_BODY), 'STATUS: DONE'].join('\n');

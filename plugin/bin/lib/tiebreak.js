@@ -10,11 +10,14 @@
 // different claims get different ids. A non-object finding, or a lens, path or
 // claim that is not a string, throws a TypeError rather than hashing `undefined`.
 //
-// A finding is { lens, path, line, claim, reporterSeverity, kind, positions? }:
+// A finding is { lens, path, line, claim, reporterSeverity, kind, positions?, vacuity? }:
 // kind is 'unconfirmed' | 'contested'; positions ([{ severity }], optional,
 // contested only) are the two sides' severities. A contested finding's reporter
 // severity is the higher known position severity; buildFindingsArtifact stores
-// it as reporterSeverity, since the artifact does not keep positions.
+// it as reporterSeverity, since the artifact does not keep positions. vacuity
+// (boolean, optional) marks a lens 3f "this test cannot fail" finding: only
+// resolveTiebreakChunk reads it (see its comment), the artifact does not keep it,
+// and a non-boolean value is refused rather than silently ignored.
 //
 // Reply grammar (parseTiebreakReply). Lines are trimmed; each field line is
 // `Field: value`, the field name matched case-insensitively:
@@ -419,6 +422,10 @@ function resolveTiebreakChunk(findings, replyText, opts) {
       unsettled.push({ id, index, reason: block.state === 'missing' ? 'missing' : 'duplicated' });
       return;
     }
+    // Lens 3f's vacuity rule (step3-lens-dispatch.md): a claim that a test cannot fail needs an
+    // executed run, so reading code never confirms it. The one-finding form leaves that rewrite
+    // to the dispatcher's prose; the chunk form does it here because only code splits a chunk
+    // reply and the dispatcher never edits one (record #5540, Decision Q1).
     const text = finding.vacuity === true
       ? block.text.split('\n').map((l) => (CONFIRMED_VERDICT_RE.test(l) ? 'Verdict: cant-tell' : l)).join('\n')
       : block.text;
@@ -469,6 +476,7 @@ function buildFindingsArtifact(findings) {
       if (typeof f[key] === 'string' && MARKER_RE.test(f[key])) throw new TypeError(`finding ${i} ${key} contains the tiebreak: marker`);
     }
     if (!FINDING_KINDS.includes(f.kind)) throw new TypeError(`finding ${i} kind must be one of ${FINDING_KINDS.join(', ')}`);
+    if (f.vacuity !== undefined && typeof f.vacuity !== 'boolean') throw new TypeError(`finding ${i} vacuity must be a boolean`);
     return {
       id: findingId(f), lens: f.lens, path: f.path, line: f.line, claim: f.claim,
       reporterSeverity: positionSeverity(f) ?? f.reporterSeverity ?? null, kind: f.kind,

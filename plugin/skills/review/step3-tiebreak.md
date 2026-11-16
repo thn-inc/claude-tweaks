@@ -1,6 +1,6 @@
 # Step 3.7 Tiebreak — /claude-tweaks:review
 
-Read from `code-mode-steps.md`'s Step 3.7 and run at every effort tier (`low`, `medium`, `high`, `xhigh`, `max`) and in every mode (`auto`, `confirm`, `hybrid`, `interactive`), standalone or dispatched. Every finding still `unconfirmed` or `contested` after the earlier passes gets one independent agent verdict; `plugin/bin/lib/tiebreak.js` settles that verdict (outcome vocabulary, evidence checks, log line, finding identity) through `review-coordination.js`'s `resolve-tiebreak`, `write-findings`, and `check-coverage` subcommands. This file cites the resolver and never restates it.
+Read from `code-mode-steps.md`'s Step 3.7 and run at every effort tier (`low`, `medium`, `high`, `xhigh`, `max`) and in every mode (`auto`, `confirm`, `hybrid`, `interactive`), standalone or dispatched. Every finding still `unconfirmed` or `contested` after the earlier passes gets one independent agent verdict; `plugin/bin/lib/tiebreak.js` settles that verdict (outcome vocabulary, evidence checks, log line, finding identity) through `review-coordination.js`'s `resolve-tiebreak`, `write-findings`, `check-coverage`, and `finding-ids` subcommands. This file cites the resolver and never restates it.
 
 ## Placement
 
