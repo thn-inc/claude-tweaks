@@ -132,7 +132,16 @@
 //    notification, missing timestamp, `<task-notification>` or
 //    `<fork-boilerplate>` in any other carrier — a quoting tool_result included)
 //    yields null, which run() grades exactly as before — never a blanket
-//    exemption. Bounded by PENDING_DISPATCH_MAX_AGE_MS (60 minutes, mirroring
+//    exemption. The stop marker (below) uses a second count from the same scan,
+//    which skips a `<task-notification>` outside a recognized carrier when the
+//    line is one of three given-or-written shapes — the agent's first user message
+//    (its own prompt), a `toolUseResult` line (a tool result, an error string
+//    included) or an assistant line (a call it wrote) — and keeps counting. Why:
+//    the gate's null decides whether a reply is blocked and nothing measured says
+//    it is wrong, so it stays; the marker only decides when a wait returns, and a
+//    skipped line is never a completion, so the marker can only move from null to
+//    a number, never below the true pending count. Any other shape still yields
+//    null in both counts (#5706). Bounded by PENDING_DISPATCH_MAX_AGE_MS (60 minutes, mirroring
 //    flow/claim-targets.md's liveness default): a launch older than that is
 //    presumed hung and no longer hides a real contract violation. Residual
 //    risk: within those 60 minutes a hung child (one that never reports) still
@@ -143,7 +152,8 @@
 // Stop marker (#5602): independent of grading, every stop whose payload carries
 // an agent_id, a session_id and a distinct agent_transcript_path also appends
 // {agentId, at, blocked, pending} to the session's stop file via
-// ../wait-for/marker.js, after the answer above is settled and on every path —
+// ../wait-for/marker.js — pending is the marker count of source 6, not the
+// gate count (#5706) — after the answer above is settled and on every path —
 // no owned run and third-party agent types included. Any fault in it is
 // swallowed, so it can never change what this hook returns or prints.
 'use strict';
@@ -350,24 +360,31 @@ function nonEmptyString(value) {
   return typeof value === 'string' && value ? value : null;
 }
 
-// #3015: how many of this transcript's async `Agent` launches (before the
+// #3015, #5706: how many of this transcript's async `Agent` launches (before the
 // reply at `replyIndex`) have no completion notification yet? `lines` is the
-// raw transcript split on '\n'. -> number, or `null` when the shape is
-// indeterminate (run() treats null exactly like 0 — grade as before). See the
-// header comment's source 6 for the live-verified shapes and the reasoning.
-function countPendingDispatches(lines, replyIndex) {
+// raw transcript split on '\n'. -> { gate, marker }, each a number or `null` when
+// the shape is indeterminate (run() treats a null gate exactly like 0 — grade as
+// before). One scan yields both: they differ only for a `<task-notification>` in
+// a carrier not recognized, which nulls the gate and, for the three skippable
+// shapes (header comment, source 6), not the marker. The live-verified shapes and
+// the reasoning are in that same source 6.
+function scanPendingDispatches(lines, replyIndex) {
+  const indeterminate = { gate: null, marker: null };
   let replyTs;
-  try { replyTs = Date.parse(JSON.parse(lines[replyIndex]).timestamp); } catch { return null; }
+  try { replyTs = Date.parse(JSON.parse(lines[replyIndex]).timestamp); } catch { return indeterminate; }
   let launches = [];
   let completed = new Set();
+  let firstUserIndex = -1;
+  let gateIndeterminate = false;
   for (let i = 0; i < replyIndex; i++) {
     const line = lines[i];
     if (!line.trim()) continue;
     let entry;
-    try { entry = JSON.parse(line); } catch { return null; }
+    try { entry = JSON.parse(line); } catch { return indeterminate; }
     if (!entry || typeof entry !== 'object') continue;
+    if (firstUserIndex === -1 && entry.type === 'user') firstUserIndex = i;
     if (isForkBoundary(entry)) { launches = []; completed = new Set(); continue; }
-    if (line.includes('<fork-boilerplate>')) return null; // a fork marker in a carrier not recognized above
+    if (line.includes('<fork-boilerplate>')) return indeterminate; // a fork marker in a carrier not recognized above
     // Any `isAsync: true` tool result is treated as a launch; today only Agent launches carry it
     // (a background Bash result uses `backgroundTaskId`, not `isAsync`).
     if (entry.toolUseResult && entry.toolUseResult.isAsync === true) {
@@ -375,28 +392,38 @@ function countPendingDispatches(lines, replyIndex) {
       const first = Array.isArray(content) ? content[0] : null;
       const agentId = nonEmptyString(entry.toolUseResult.agentId);
       const toolUseId = nonEmptyString(first && first.tool_use_id);
-      if (!agentId && !toolUseId) return null;
+      if (!agentId && !toolUseId) return indeterminate;
       launches.push({ agentId, toolUseId, ts: Date.parse(entry.timestamp) });
       continue;
     }
     const body = notificationCarrierBody(entry, line);
     if (body === undefined) {
-      if (line.includes('<task-notification>')) return null; // a notification in a carrier not recognized above
+      if (line.includes('<task-notification>')) {
+        // A notification in a carrier not recognized above: the gate is null from here on. The marker
+        // skips it only when the line is the agent's own prompt, a tool result or an assistant line.
+        if (i === firstUserIndex || entry.toolUseResult != null || entry.type === 'assistant') { gateIndeterminate = true; continue; }
+        return indeterminate;
+      }
       continue;
     }
-    if (typeof body !== 'string') return null;
+    if (typeof body !== 'string') return indeterminate;
     const ids = [...body.matchAll(/<(?:task-id|tool-use-id)>([^<]+)<\/(?:task-id|tool-use-id)>/g)].map((m) => m[1].trim());
-    if (!ids.length) return null;
+    if (!ids.length) return indeterminate;
     for (const id of ids) completed.add(id);
   }
   let pending = 0;
   for (const l of launches) {
     if ((l.agentId && completed.has(l.agentId)) || (l.toolUseId && completed.has(l.toolUseId))) continue;
-    if (Number.isNaN(replyTs) || Number.isNaN(l.ts)) return null;
+    if (Number.isNaN(replyTs) || Number.isNaN(l.ts)) return indeterminate;
     if (replyTs - l.ts > PENDING_DISPATCH_MAX_AGE_MS) continue; // presumed hung
     pending += 1;
   }
-  return pending;
+  return { gate: gateIndeterminate ? null : pending, marker: pending };
+}
+
+// #3015: the gate count — null on any indeterminate shape, a quoted <task-notification> included.
+function countPendingDispatches(lines, replyIndex) {
+  return scanPendingDispatches(lines, replyIndex).gate;
 }
 
 // -> { text: string|null, asyncWaitCheckpoint: boolean, lines?, replyIndex? }.
@@ -527,7 +554,9 @@ function grade(ctx, memo) {
   // still pending is not its final reply. Bounded (PENDING_DISPATCH_MAX_AGE_MS);
   // null (indeterminate transcript shape) grades as today. Computed only here,
   // after every cheaper skip, since it parses the whole transcript.
-  memo.pending = countPendingDispatches(lines, replyIndex); // shared with recordStop so a stop parses once
+  const counts = scanPendingDispatches(lines, replyIndex); // one scan, shared with recordStop so a stop parses once
+  memo.pending = counts.gate;
+  memo.markerPending = counts.marker; // the marker's own count (#5706), never the gate's
   if (memo.pending > 0) return {};
   if (toolUseCount === 0) {
     ctxLib.appendEvent(ownedRun.dir, 'zero-tool-use-verdict', { firstLine }, ownedRun.attribution);
@@ -569,16 +598,22 @@ function grade(ctx, memo) {
 // Runs after grade() has its answer, on every path (no owned run, exempt agent
 // type, unreadable transcript included), and can never change that answer:
 // every fault — a marker.js load error, an fs error — is swallowed. Prints
-// nothing, logs nothing. memo carries the transcript read grade() already made.
+// nothing, logs nothing. memo carries the transcript read and the one scan
+// grade() already made (memo.pending the gate count, memo.markerPending the
+// marker count this writes); a stop grade() never scanned scans once here.
 function recordStop(ctx, out, memo) {
   try {
     const { agent_id: agentId, session_id: sessionId, agent_transcript_path: transcriptPath, transcript_path: mainPath } = ctx.input;
     if (!nonEmptyString(agentId) || !nonEmptyString(sessionId) || !nonEmptyString(transcriptPath) || transcriptPath === mainPath) return;
     const marker = require('../wait-for/marker');
     memo.last ??= lastAssistantText(transcriptPath);
-    if (!('pending' in memo)) memo.pending = typeof memo.last.text === 'string' ? countPendingDispatches(memo.last.lines, memo.last.replyIndex) : null;
+    if (!('markerPending' in memo)) {
+      const counts = typeof memo.last.text === 'string' ? scanPendingDispatches(memo.last.lines, memo.last.replyIndex) : { gate: null, marker: null };
+      memo.pending = counts.gate;
+      memo.markerPending = counts.marker;
+    }
     const blocked = Boolean(out && out.json && out.json.decision === 'block');
-    marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending: memo.pending });
+    marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending: memo.markerPending });
   } catch { /* the marker never changes the hook's answer */ }
 }
 
@@ -589,4 +624,4 @@ function run(ctx) {
   return out;
 }
 
-module.exports = { run, isExemptAgentType, isAsyncWaitSignal, detectStatus, classifyViolationVariant, countToolUseBlocks, isInterimProgressReply, countPendingDispatches, PENDING_DISPATCH_MAX_AGE_MS };
+module.exports = { run, isExemptAgentType, isAsyncWaitSignal, detectStatus, classifyViolationVariant, countToolUseBlocks, isInterimProgressReply, countPendingDispatches, scanPendingDispatches, PENDING_DISPATCH_MAX_AGE_MS };
