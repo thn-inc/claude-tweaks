@@ -116,7 +116,7 @@ records extend the schema only by adding rows to the table.
 
 ## Decision facts
 
-A control-mode run's Review Console writes one entry per item it could not resolve to `{run-dir}/packet-facts/decisions.json` (a JSON array, deduplicated by `id`), and `gather` reads that file when no `--decision-items` is passed. Each entry renders one line under Decisions left for you, from its `text`. Code twin: `bin/lib/console/decision-facts.js`. An `upstream` fact is written by `bin/lib/issues/upstream-ownership.js`'s `upstreamDecisionFact`, its `evidenceRef` the staged draft; its `text` also carries the draft inline, except a `scrub-hit` fact's, which carries it by `evidenceRef` only.
+A control-mode run's Review Console writes one entry per item it could not resolve to `{run-dir}/packet-facts/decisions.json` (a JSON array, deduplicated by `id`), and `gather` reads that file when no `--decision-items` is passed. Each entry renders one line under Decisions left for you, from its `text`. Code twin: `bin/lib/console/decision-facts.js`. An `upstream` fact is built by `bin/lib/console/decision-facts.js`'s `upstreamDecisionFact`, its `evidenceRef` the staged draft; its `text` also carries the draft inline, except a `scrub-hit` fact's, which carries it by `evidenceRef` only.
 
 | Field | Value |
 |---|---|

@@ -723,7 +723,7 @@ const BASE_POLICY_KEY = 'git show origin/main:.claude-tweaks/policy.yml';
 const ownershipAnswers = (over = {}) => ({
   'git remote get-url origin': 'https://github.com/thn-inc/claude-tweaks.git\n',
   'git rev-parse --abbrev-ref origin/HEAD': 'origin/main\n',
-  [BASE_POLICY_KEY]: 'owned-owners: obra\n',
+  [BASE_POLICY_KEY]: 'control-mode: on\n',
   ...over,
 });
 const upstreamFixture = (extra = {}) => controlFixture({ staged: UPSTREAM_ITEMS, ...extra });
@@ -737,12 +737,13 @@ const resolutions = (fx) => Object.fromEntries(cj(fx).items.map((i) => [i.id, i.
 const decisionsOf = (fx) => fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
 const ownershipSkips = (fx) => decisionsOf(fx).split('\n').filter((l) => /^- SKIP .*Upstream ownership/.test(l));
 
-test('#4621 AC4.1 / AC4.2: owned targets file, an external one is carried to the packet as a decision fact', async () => {
+test('#4621 AC4.1 / AC4.2: the owned target files, a target off the filing repo is carried to the packet as a decision fact', async () => {
   const fx = upstreamFixture();
   const r = await resolveWith(fx, ownershipAnswers());
   assert.strictEqual(r.code, 0, r.err);
-  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'filed', 'wrap-up-upstream-3.md': 'carried' });
-  assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), ['decision:upstream:wrap-up-upstream-3.md']);
+  // obra/superpowers is not the repo /claude-tweaks:feedback files into, so a draft header naming it holds as external.
+  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
+  assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), ['decision:upstream:wrap-up-upstream-2.md', 'decision:upstream:wrap-up-upstream-3.md']);
   assert.match(decisionsOf(fx), /Console item wrap-up-upstream-3\.md \(Upstream feedback\): carried — carried to the acceptance packet as decision:upstream:wrap-up-upstream-3\.md — held: external/);
   assert.match(decisionsOf(fx), /Console item wrap-up-upstream-1\.md \(Upstream feedback\): filed — control mode: owned target thn-inc\/claude-tweaks — filed with no prompt/);
   assert.strictEqual(ownershipSkips(fx).length, 0, 'a clean read logs nothing');
@@ -763,40 +764,54 @@ test('#4621 AC5.1: the authenticated gh account changes nothing — byte-identic
   assert.strictEqual(outcomes[0].facts, outcomes[1].facts);
 });
 
+// The filing target's owner is thn-inc; a checkout whose origin is under another owner owns it only through owned-owners.
+const FOREIGN_ORIGIN = { 'git remote get-url origin': 'https://github.com/zeta/app.git\n' };
+const NO_THN = 'control-mode: on\n';
+const OWNS_THN = 'owned-owners: thn-inc\n';
+
 test('#4621: owned-owners counts only from the base branch — the same line in the worktree policy files nothing', async () => {
-  const worktreeOnly = upstreamFixture({ policyExtra: `${CM}owned-owners: obra\n` });
-  const r = await resolveWith(worktreeOnly, ownershipAnswers({ [BASE_POLICY_KEY]: 'control-mode: on\n' }));
+  const worktreeOnly = upstreamFixture({ policyExtra: `${CM}${OWNS_THN}` });
+  const r = await resolveWith(worktreeOnly, ownershipAnswers({ ...FOREIGN_ORIGIN, [BASE_POLICY_KEY]: NO_THN }));
   assert.strictEqual(r.code, 0, r.err);
-  assert.deepStrictEqual(resolutions(worktreeOnly), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
+  assert.deepStrictEqual(resolutions(worktreeOnly), { 'wrap-up-upstream-1.md': 'carried', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
   const onBase = upstreamFixture();
-  assert.strictEqual((await resolveWith(onBase, ownershipAnswers())).code, 0);
-  assert.strictEqual(resolutions(onBase)['wrap-up-upstream-2.md'], 'filed');
+  assert.strictEqual((await resolveWith(onBase, ownershipAnswers({ ...FOREIGN_ORIGIN, [BASE_POLICY_KEY]: OWNS_THN }))).code, 0);
+  assert.strictEqual(resolutions(onBase)['wrap-up-upstream-1.md'], 'filed');
 });
 
-const NO_OBRA = 'control-mode: on\n';
-const OBRA = 'owned-owners: obra\n';
+test('#4621: an owned-owners entry for a draft header\'s owner never files it — the issue lands in the pinned repo, not the header\'s', async () => {
+  const fx = upstreamFixture();
+  const r = await resolveWith(fx, ownershipAnswers({ [BASE_POLICY_KEY]: 'owned-owners: obra, acme\n' }));
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
+});
 
 test('#4621: the base branch is origin/HEAD\'s when it resolves, main when it does not', async () => {
   // origin/HEAD names trunk: only trunk's policy carries obra, main's does not.
   const head = upstreamFixture();
-  const viaHead = await resolveWith(head, ownershipAnswers({ 'git rev-parse --abbrev-ref origin/HEAD': 'origin/trunk\n', 'git show origin/trunk:.claude-tweaks/policy.yml': OBRA, [BASE_POLICY_KEY]: NO_OBRA }));
+  const viaHead = await resolveWith(head, ownershipAnswers({ ...FOREIGN_ORIGIN, 'git rev-parse --abbrev-ref origin/HEAD': 'origin/trunk\n', 'git show origin/trunk:.claude-tweaks/policy.yml': OWNS_THN, [BASE_POLICY_KEY]: NO_THN }));
   assert.strictEqual(viaHead.code, 0, viaHead.err);
-  assert.strictEqual(resolutions(head)['wrap-up-upstream-2.md'], 'filed');
+  assert.strictEqual(resolutions(head)['wrap-up-upstream-1.md'], 'filed');
   assert.ok(viaHead.calls.some((c) => c.join(' ') === 'git show origin/trunk:.claude-tweaks/policy.yml'));
+  assert.strictEqual(ownershipSkips(head).length, 0, 'a resolved origin/HEAD logs nothing');
 
   // origin/HEAD does not resolve: main is read, and only main carries obra.
   const last = upstreamFixture();
-  const viaDefault = await resolveWith(last, ownershipAnswers({ 'git rev-parse --abbrev-ref origin/HEAD': new Error('no origin/HEAD'), [BASE_POLICY_KEY]: OBRA }));
+  const viaDefault = await resolveWith(last, ownershipAnswers({ ...FOREIGN_ORIGIN, 'git rev-parse --abbrev-ref origin/HEAD': new Error('no origin/HEAD'), [BASE_POLICY_KEY]: OWNS_THN }));
   assert.strictEqual(viaDefault.code, 0, viaDefault.err);
-  assert.strictEqual(resolutions(last)['wrap-up-upstream-2.md'], 'filed');
+  assert.strictEqual(resolutions(last)['wrap-up-upstream-1.md'], 'filed');
   assert.ok(viaDefault.calls.some((c) => c.join(' ') === BASE_POLICY_KEY));
+  // The fallback decides which policy is read, so it is logged rather than silent.
+  const skips = ownershipSkips(last);
+  assert.strictEqual(skips.length, 1, decisionsOf(last));
+  assert.match(skips[0], /origin\/HEAD could not be resolved .* → fallback: the base branch read as main/);
 });
 
 test('#4621: a checkout integration-branch (policy or run config) never picks the branch whose policy decides ownership', async () => {
   const fx = upstreamFixture({ policyExtra: `${CM}integration-branch: evil\n`, runConfig: 'integration-branch: evil\n' });
-  const r = await resolveWith(fx, ownershipAnswers({ 'git show origin/evil:.claude-tweaks/policy.yml': OBRA, [BASE_POLICY_KEY]: NO_OBRA }));
+  const r = await resolveWith(fx, ownershipAnswers({ ...FOREIGN_ORIGIN, 'git show origin/evil:.claude-tweaks/policy.yml': OWNS_THN, [BASE_POLICY_KEY]: NO_THN }));
   assert.strictEqual(r.code, 0, r.err);
-  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
+  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'carried', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
   assert.ok(!r.calls.some((c) => c.join(' ').includes('origin/evil')), JSON.stringify(r.calls));
 });
 
@@ -831,12 +846,12 @@ test('#4621 Review Focus 3: an unreadable base-branch policy files owner-owned t
 
 test('#4621 AC7.3: a malformed owned-owners entry is ignored on its own, never the whole list, and is logged once', async () => {
   const fx = upstreamFixture();
-  const r = await resolveWith(fx, ownershipAnswers({ 'git remote get-url origin': 'https://github.com/zeta/app.git\n', [BASE_POLICY_KEY]: 'owned-owners: obra, thn-inc.\n' }));
+  const r = await resolveWith(fx, ownershipAnswers({ ...FOREIGN_ORIGIN, [BASE_POLICY_KEY]: 'owned-owners: thn-inc, acme.\n' }));
   assert.strictEqual(r.code, 0, r.err);
-  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'carried', 'wrap-up-upstream-2.md': 'filed', 'wrap-up-upstream-3.md': 'carried' });
+  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
   const skips = ownershipSkips(fx);
   assert.strictEqual(skips.length, 1, decisionsOf(fx));
-  assert.ok(skips[0].includes('"thn-inc."') && skips[0].includes('→ fallback: the entry ignored'), skips[0]);
+  assert.ok(skips[0].includes('"acme."') && skips[0].includes('→ fallback: the entry ignored'), skips[0]);
 });
 
 test('#4621: an unreadable origin holds every target as owner-unresolved and logs one SKIP', async () => {

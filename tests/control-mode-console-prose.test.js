@@ -394,7 +394,8 @@ test('Minor 1: the flow summary merge row reads the ceiling through console-reso
 const AUTONOMY_CEILING = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'autonomy-ceiling.md'));
 const UPSTREAM_FEEDBACK = readText(path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'upstream-feedback.md'));
 const { bookkeepingPermissions } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'issues', 'autonomy'));
-const { parseStagedUpstream } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'issues', 'upstream-ownership'));
+const { parseStagedUpstream, UPSTREAM_FILING_TARGET } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'issues', 'upstream-ownership'));
+const FEEDBACK_SKILL = readText(path.join(__dirname, '..', 'plugin', 'skills', 'feedback', 'SKILL.md'));
 
 function stepNine(text) {
   const start = text.indexOf('\n9. For `U#` upstream feedback rows');
@@ -604,11 +605,33 @@ function stagedLayoutProblems(text) {
   if (!m) return ['wrap-up/upstream-feedback.md documents no staged layout block'];
   const parsed = parseStagedUpstream(m[1].replace('{title}', 'A title').replace('{scrubbed body}', 'A body'));
   const problems = [];
-  if (parsed.targetRepo !== 'thn-inc/claude-tweaks') problems.push(`the layout's target parses as ${parsed.targetRepo}`);
+  if (parsed.targetRepo !== UPSTREAM_FILING_TARGET) problems.push(`the layout's target parses as ${parsed.targetRepo}`);
   if (parsed.title !== 'A title') problems.push(`the layout's title parses as ${parsed.title}`);
   if (parsed.body !== 'A body') problems.push(`the layout's body parses as ${JSON.stringify(parsed.body)}`);
   return problems;
 }
+
+// Code twin: the route holds a staged header naming any repo but UPSTREAM_FILING_TARGET, so that literal must be the one
+// repo /claude-tweaks:feedback files into — the skill states it once as its only target and passes it as --repo.
+const FEEDBACK_REPO_RE = /file-feedback\.js" --drafts <path> --repo (\S+)/g;
+function filingTargetProblems(feedback) {
+  const problems = [];
+  const repos = [...feedback.matchAll(FEEDBACK_REPO_RE)].map((m) => m[1]);
+  if (repos.length !== 1) problems.push(`feedback/SKILL.md files with ${repos.length} \`--repo\` calls, not one`);
+  else if (repos[0] !== UPSTREAM_FILING_TARGET) problems.push(`feedback/SKILL.md files with --repo ${repos[0]}, not ${UPSTREAM_FILING_TARGET}`);
+  if (!feedback.includes(`This skill **files** against \`${UPSTREAM_FILING_TARGET}\` and nowhere else.`)) problems.push('feedback/SKILL.md no longer names the one filing target');
+  return problems;
+}
+
+test('#4621: UPSTREAM_FILING_TARGET is the repo /claude-tweaks:feedback files into', () => {
+  assert.deepStrictEqual(filingTargetProblems(FEEDBACK_SKILL), []);
+});
+
+test('#4621 go-red: a feedback skill that files elsewhere, twice or into an unstated target is caught', () => {
+  assert.deepStrictEqual(filingTargetProblems(FEEDBACK_SKILL.replace(`--drafts <path> --repo ${UPSTREAM_FILING_TARGET}`, '--drafts <path> --repo acme/widgets')), ['feedback/SKILL.md files with --repo acme/widgets, not thn-inc/claude-tweaks']);
+  assert.deepStrictEqual(filingTargetProblems(`${FEEDBACK_SKILL}\nfile-feedback.js" --drafts <path> --repo ${UPSTREAM_FILING_TARGET}`), ['feedback/SKILL.md files with 2 `--repo` calls, not one']);
+  assert.deepStrictEqual(filingTargetProblems(FEEDBACK_SKILL.replace('and nowhere else.', 'and elsewhere.')), ['feedback/SKILL.md no longer names the one filing target']);
+});
 
 test('#4621: the staged layout in wrap-up/upstream-feedback.md parses through parseStagedUpstream', () => {
   assert.deepStrictEqual(stagedLayoutProblems(UPSTREAM_FEEDBACK), []);

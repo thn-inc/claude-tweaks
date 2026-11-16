@@ -13,16 +13,19 @@
 // trailing newline, a trailing dot, a homoglyph) can manufacture a match.
 //
 // Strings in, verdicts out: no git, no gh, no fs. The origin remote is read
-// through repo-resolve's originSpecOf, never re-parsed here.
-//
-// decision-facts requires console/resolve lazily inside its functions, so the
-// top-level require below is no cycle; SECTIONS is read lazily for the same reason.
+// through repo-resolve's originSpecOf, never re-parsed here. The packet fact a held
+// item becomes is built in console/decision-facts.js (upstreamDecisionFact), so this
+// module reaches nothing under console/.
 
 const { originSpecOf } = require('../repo-resolve');
-const { decisionFactFor } = require('../console/decision-facts');
 
 // A bare `owner/name` target carries no host, so it names a github.com repo.
 const TARGET_HOST = 'github.com';
+// The one repo wrap-up's upstream feedback is filed into: `/claude-tweaks:feedback` files against it and nowhere
+// else (feedback/SKILL.md's `--repo`). The staged draft's `upstream-target` header is an agent-written claim, so the
+// two callers that route a staged draft pass this as `filingTarget` and a header naming any other repo is held;
+// tests/control-mode-console-prose.test.js pins this literal to the skill's `--repo` and to the header layout.
+const UPSTREAM_FILING_TARGET = 'thn-inc/claude-tweaks';
 const HOLD_REASONS = Object.freeze(['external', 'filing-failed', 'scrub-hit', 'owner-unresolved']);
 
 const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -30,10 +33,7 @@ const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
 const TARGET_LINE_RE = /^<!-- upstream-target: (.*) -->$/;
 const TITLE_PREFIX = 'Title: ';
 const LINE_SPLIT_RE = /\r?\n/;
-const WHITESPACE_RUN_RE = /\s+/g;
 const NOT_A_LIST = '(owned-owners is not a list)';
-// The hold reasons whose cause the human fixes before filing by hand.
-const FIX_FIRST_REASONS = new Set(['filing-failed', 'scrub-hit']);
 
 function isValidOwner(value) {
   return typeof value === 'string' && OWNER_RE.test(value);
@@ -111,12 +111,16 @@ function ownerContextFromOrigin(remoteUrl) {
 }
 
 // permissions: a bookkeepingPermissions(...) result; ownerContext: ownerContextFromOrigin's.
+// filingTarget (optional): the one repo the item will actually be filed into. A target that names any other
+// repo is held as `external` — ownership is judged for where the issue lands, never for what a draft claims.
 // The order is the contract: control mode first, then the target, then the owner context.
-function upstreamFilingRoute({ permissions, targetRepo, ownerContext, ownedOwners } = {}) {
+function upstreamFilingRoute({ permissions, targetRepo, ownerContext, ownedOwners, filingTarget } = {}) {
   const echo = typeof targetRepo === 'string' ? targetRepo : null;
   const verdict = (route, reason) => ({ route, reason, targetRepo: echo });
   if (!permissions || permissions.ownedUpstreamFiling !== true) return verdict('unchanged', null);
-  if (!parseTargetRepo(targetRepo)) return verdict('hold', 'external');
+  const target = parseTargetRepo(targetRepo);
+  if (!target) return verdict('hold', 'external');
+  if (filingTarget !== undefined && `${target.owner}/${target.name}`.toLowerCase() !== String(filingTarget).toLowerCase()) return verdict('hold', 'external');
   if (ownerContext == null) return verdict('hold', 'owner-unresolved');
   if (ownerContext.host !== TARGET_HOST) return verdict('hold', 'external');
   if (isOwnedRepo({ targetRepo, currentRepoOwner: ownerContext.owner, ownedOwners })) return verdict('file', null);
@@ -154,7 +158,7 @@ function parseStagedUpstream(text) {
   }
   const rest = lines.slice(end > 0 && end < lines.length && isBlank(lines[end]) ? end + 1 : end);
   let targetRepo = single(targets);
-  // Review Focus 5: a marker in the body naming another repo makes the target ambiguous.
+  // A marker in the body naming another repo makes the target ambiguous.
   if (targetRepo !== null && rest.some((line) => {
     const marker = TARGET_LINE_RE.exec(line);
     return marker !== null && marker[1] !== targetRepo;
@@ -162,39 +166,7 @@ function parseStagedUpstream(text) {
   return { targetRepo, title: single(titles), body: rest.join('\n') };
 }
 
-const collapse = (s) => s.replace(WHITESPACE_RUN_RE, ' ').trim();
-
-// A held item -> one packet decision fact (_shared/acceptance-packet.md's Decision
-// facts table, plus `text`). id, kind, origin and evidenceRef come from decisionFactFor;
-// summary names the target, the draft title and the hold reason; text adds the draft body.
-// `reason` is one of HOLD_REASONS (anything else throws). A target outside the owner/name
-// grammar is never echoed: it reads `unresolved`. A `scrub-hit` draft failed the scrub, so
-// it is carried by evidenceRef only — neither its title nor its body is inline.
-function upstreamDecisionFact({ id, targetRepo, title, body, reason, detail, runDir, staged }) {
-  if (!HOLD_REASONS.includes(reason)) throw new RangeError(`upstreamDecisionFact: reason must be one of ${HOLD_REASONS.join(', ')} (got ${String(reason)})`);
-  const { SECTIONS } = require('../console/resolve');
-  const base = decisionFactFor({ id, section: SECTIONS.UPSTREAM, resolution: 'filed', reason: '' }, { runDir, staged });
-  const repo = parseTargetRepo(targetRepo) === null ? null : targetRepo;
-  const inline = reason !== 'scrub-hit';
-  const summary = collapse(
-    `Upstream feedback ${id} held, not filed (${reason}): target ${repo ?? 'unresolved'}`
-    + (inline && title ? `; draft "${title}"` : '')
-    + (detail ? ` — ${detail}` : ''),
-  );
-  const text = collapse(summary + (inline && body ? ` — draft: ${body}` : ''));
-  const prefix = FIX_FIRST_REASONS.has(reason) ? 'fix the cause, then ' : '';
-  return {
-    id: base.id,
-    kind: base.kind,
-    origin: base.origin,
-    summary,
-    evidenceRef: base.evidenceRef,
-    suggestedResolution: `${prefix}file the draft at ${base.evidenceRef} into ${repo ?? 'its upstream repo'} yourself, or decline`,
-    text,
-  };
-}
-
 module.exports = {
-  TARGET_HOST, HOLD_REASONS, isValidOwner, parseTargetRepo, ownedOwnersList, isOwnedRepo,
-  ownerContextFromOrigin, upstreamFilingRoute, parseStagedUpstream, upstreamDecisionFact,
+  TARGET_HOST, UPSTREAM_FILING_TARGET, HOLD_REASONS, isValidOwner, parseTargetRepo, ownedOwnersList, isOwnedRepo,
+  ownerContextFromOrigin, upstreamFilingRoute, parseStagedUpstream,
 };

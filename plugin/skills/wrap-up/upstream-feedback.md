@@ -27,7 +27,8 @@ prints `control-mode on`; `{ABS_RUN_DIR}` is the anchored run dir, substituted p
 section 4) it opens with a header. A failed call, or any output other than `control-mode on`, writes
 no header: the body alone, as with control mode off. The header layout is the one `bin/lib/issues/upstream-ownership.js`'s
 `parseStagedUpstream` reads (`thn-inc/claude-tweaks` is `/claude-tweaks:feedback`'s fixed filing
-target; the two header lines are never part of the filed body):
+target, and the only value the header may carry: the route holds a header naming any other repo as
+`external`, since the issue would not land there; the two header lines are never part of the filed body):
 
 ```
 <!-- upstream-target: thn-inc/claude-tweaks -->

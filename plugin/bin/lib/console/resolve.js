@@ -17,9 +17,9 @@ const {
 const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
 const { planFilings, planDigestsBesideFilings, isDropRecommended } = require('./finding-filing');
 const { UNRESOLVED_RESOLUTIONS } = require('./residue');
-const { decisionFactFor } = require('./decision-facts');
+const { decisionFactFor, upstreamDecisionFact } = require('./decision-facts');
 const { bookkeepingPermissions } = require('../issues/autonomy');
-const { upstreamFilingRoute, parseStagedUpstream, upstreamDecisionFact } = require('../issues/upstream-ownership');
+const { UPSTREAM_FILING_TARGET, upstreamFilingRoute, parseStagedUpstream } = require('../issues/upstream-ownership');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
@@ -989,6 +989,8 @@ const CARRY_FROM = Object.freeze([...UNRESOLVED_RESOLUTIONS, 'refused']);
 const UPSTREAM_OWNERSHIP_NONE = Object.freeze({ ownerContext: null, ownedOwners: Object.freeze([]) });
 
 function routeUpstreamItems(items, { snapshot, deps, runDir, facts }) {
+  // `unattended` is the ceiling resolveAll runs at; ownedUpstreamFiling comes from controlMode alone, so any
+  // ceiling would give the same permission here.
   const permissions = bookkeepingPermissions('unattended', { controlMode: true });
   const textByName = new Map(snapshot.staged.map((s) => [s.name, s.text]));
   let ownership = null;
@@ -1006,7 +1008,7 @@ function routeUpstreamItems(items, { snapshot, deps, runDir, facts }) {
     const { ownerContext, ownedOwners } = readOwnership();
     // An unreadable file has no text, which parseStagedUpstream reads as '' — no target line, so it holds as external.
     const staged = parseStagedUpstream(textByName.get(it.id));
-    const verdict = upstreamFilingRoute({ permissions, targetRepo: staged.targetRepo, ownerContext, ownedOwners });
+    const verdict = upstreamFilingRoute({ permissions, targetRepo: staged.targetRepo, ownerContext, ownedOwners, filingTarget: UPSTREAM_FILING_TARGET });
     if (verdict.route === 'file') return { ...it, reason: `control mode: owned target ${verdict.targetRepo} — filed with no prompt` };
     // Only `file` files: any other verdict holds (reason `external` when it names none), so an unexpected one fails closed.
     const reason = verdict.reason || 'external';

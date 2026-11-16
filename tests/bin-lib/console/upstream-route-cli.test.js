@@ -119,7 +119,9 @@ for (const [reason, detail, prefix] of [['filing-failed', 'gh: permission denied
     assert.strictEqual(r.out, `console-resolve.js: upstream-route ${OWNED} hold target thn-inc/claude-tweaks reason ${reason} fact ${FACT_ID(OWNED)}\n`);
     const facts = readJson(FACTS(fx));
     assert.strictEqual(facts.length, 1);
-    assert.ok(facts[0].summary.includes(reason) && facts[0].summary.includes(detail), facts[0].summary);
+    assert.ok(facts[0].summary.includes(reason), facts[0].summary);
+    // A scrub hit's detail names what the scanner matched, so it stays out of the packet fact (it is in decisions.md).
+    assert.strictEqual(facts[0].summary.includes(detail), reason !== 'scrub-hit', facts[0].summary);
     assert.match(facts[0].suggestedResolution, /^fix the cause, then file the draft at /);
     const items = Object.fromEntries(readJson(consolePath(fx)).items.map((i) => [i.id, i]));
     assert.strictEqual(items[OWNED].resolution, 'carried');

@@ -152,10 +152,16 @@ test('#4621 Review Focus 1: a staged upstream file with no target line is extern
   assert.deepStrictEqual(r.decisionFacts.map((f) => f.id).sort(), ['decision:upstream:wrap-up-upstream-2.md', 'decision:upstream:wrap-up-upstream-3.md']);
 });
 
-test('#4621: an owned-owners entry makes its owner\'s target file; the case of the target never matters', () => {
-  const dir = fixture({ staged: { 'wrap-up-upstream-1.md': upstreamFile('OBRA/superpowers'), 'wrap-up-upstream-2.md': upstreamFile('mallory/x') } });
-  const r = run(dir, withOwnership(() => ({ ownerContext: { owner: 'thn-inc', host: 'github.com' }, ownedOwners: ['obra'] })));
+test('#4621: an owned-owners entry makes the filing target\'s owner owned from a foreign-owner checkout; the case of the header never matters', () => {
+  const dir = fixture({ staged: { 'wrap-up-upstream-1.md': upstreamFile('THN-inc/Claude-Tweaks'), 'wrap-up-upstream-2.md': upstreamFile('mallory/x') } });
+  const r = run(dir, withOwnership(() => ({ ownerContext: { owner: 'zeta', host: 'github.com' }, ownedOwners: ['thn-inc'] })));
   assert.deepStrictEqual(r.items.map((i) => [i.id, i.resolution]), [['wrap-up-upstream-1.md', 'filed'], ['wrap-up-upstream-2.md', 'carried']]);
+});
+
+test('#4621: a header naming an owned-owners entry\'s repo is held — the issue would land in the pinned filing repo, not that one', () => {
+  const dir = fixture({ staged: { 'wrap-up-upstream-1.md': upstreamFile('obra/superpowers'), 'wrap-up-upstream-2.md': upstreamFile('thn-inc/other') } });
+  const r = run(dir, withOwnership(() => ({ ownerContext: { owner: 'thn-inc', host: 'github.com' }, ownedOwners: ['obra'] })));
+  assert.deepStrictEqual(r.items.map((i) => [i.id, i.resolution, i.reason.endsWith('held: external')]), [['wrap-up-upstream-1.md', 'carried', true], ['wrap-up-upstream-2.md', 'carried', true]]);
 });
 
 test('#4621: no upstreamOwnership dep, or one that throws, holds every target as owner-unresolved, never files', () => {

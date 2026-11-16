@@ -4,10 +4,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { bookkeepingPermissions } = require('../../../plugin/bin/lib/issues/autonomy');
-const { DECISION_FACT_FIELDS } = require('../../../plugin/bin/lib/console/decision-facts');
+const { DECISION_FACT_FIELDS, upstreamDecisionFact } = require('../../../plugin/bin/lib/console/decision-facts');
 const {
-  TARGET_HOST, HOLD_REASONS, isValidOwner, parseTargetRepo, ownedOwnersList, isOwnedRepo,
-  ownerContextFromOrigin, upstreamFilingRoute, parseStagedUpstream, upstreamDecisionFact,
+  TARGET_HOST, UPSTREAM_FILING_TARGET, HOLD_REASONS, isValidOwner, parseTargetRepo, ownedOwnersList, isOwnedRepo,
+  ownerContextFromOrigin, upstreamFilingRoute, parseStagedUpstream,
 } = require('../../../plugin/bin/lib/issues/upstream-ownership');
 
 const ON = bookkeepingPermissions('supervised', { controlMode: true });
@@ -170,6 +170,28 @@ test('route: control mode off leaves the item unchanged; on files an owned targe
   assert.deepStrictEqual(route(42), { route: 'hold', reason: 'external', targetRepo: null });
 });
 
+test('filingTarget: a draft header off the repo /claude-tweaks:feedback files into holds as external, even where its owner is owned', () => {
+  const pinned = (targetRepo, over = {}) => upstreamFilingRoute({
+    permissions: ON, targetRepo, ownerContext: GITHUB_THN, ownedOwners: ['obra'], filingTarget: UPSTREAM_FILING_TARGET, ...over,
+  });
+  // The origin owner (thn-inc) and an owned-owners entry (obra) both own these, but the issue would not land there.
+  assert.deepStrictEqual(pinned('thn-inc/other'), { route: 'hold', reason: 'external', targetRepo: 'thn-inc/other' });
+  assert.deepStrictEqual(pinned('obra/superpowers'), { route: 'hold', reason: 'external', targetRepo: 'obra/superpowers' });
+  // The pinned repo itself files, whatever the case of the header.
+  assert.deepStrictEqual(pinned('thn-inc/claude-tweaks'), { route: 'file', reason: null, targetRepo: 'thn-inc/claude-tweaks' });
+  assert.strictEqual(pinned('THN-INC/Claude-Tweaks').route, 'file');
+  // The pin is judged ahead of the owner context: an unresolved owner does not turn an off-target header into owner-unresolved.
+  assert.strictEqual(pinned('obra/superpowers', { ownerContext: null }).reason, 'external');
+  assert.strictEqual(pinned('thn-inc/claude-tweaks', { ownerContext: null }).reason, 'owner-unresolved');
+  // A pinned target that is owned only through owned-owners files from a foreign-owner checkout.
+  assert.strictEqual(pinned('thn-inc/claude-tweaks', { ownerContext: { owner: 'zeta', host: 'github.com' }, ownedOwners: [] }).reason, 'external');
+  assert.strictEqual(pinned('thn-inc/claude-tweaks', { ownerContext: { owner: 'zeta', host: 'github.com' }, ownedOwners: ['thn-inc'] }).route, 'file');
+  // No pin: a caller that already knows where the issue landed (--filed) is judged on that repo as it stands.
+  assert.strictEqual(route('obra/superpowers', GITHUB_THN, ['obra']).route, 'file');
+  // Control mode off stays unchanged under a pin, ahead of everything else.
+  assert.strictEqual(pinned('obra/superpowers', { permissions: OFF }).route, 'unchanged');
+});
+
 test('parseStagedUpstream: headers, CRLF, ambiguity and the body', () => {
   // Review Focus 4: a CRLF staged file.
   const crlf = '<!-- upstream-target: thn-inc/claude-tweaks -->\r\nTitle: Fix the router\r\n\r\nBody line one\r\nline two\r\n';
@@ -311,7 +333,9 @@ test('a scrub-hit fact carries the draft by evidenceRef only: neither its title 
     assert.ok(!scrub[field].includes('Leaky title'), `${field}: ${scrub[field]}`);
   }
   assert.strictEqual(scrub.text, scrub.summary);
-  assert.strictEqual(scrub.summary, 'Upstream feedback wrap-up-upstream-5.md held, not filed (scrub-hit): target thn-inc/x — internal path');
+  // The scanner's detail names what it matched, so it stays out of the packet with the draft.
+  assert.ok(!scrub.summary.includes('internal path'), scrub.summary);
+  assert.strictEqual(scrub.summary, 'Upstream feedback wrap-up-upstream-5.md held, not filed (scrub-hit): target thn-inc/x');
   assert.ok(scrub.suggestedResolution.includes(scrub.evidenceRef), scrub.suggestedResolution);
   // Every other reason keeps the draft inline, filing-failed included.
   for (const reason of ['external', 'filing-failed', 'owner-unresolved']) {
