@@ -301,8 +301,16 @@ function readPolicy({ execFile, cwd, runDir, strict = false }) {
 // `owned-owners` entry is ignored on its own (ownedOwnersList), never the whole list.
 const NOTE_TEXT_MAX = 160;
 const EMPTY_LIST_RE = /^\[\s*\]$/;
-const oneLineNote = (value) => { const s = String(value).replace(/\s+/g, ' ').trim(); return s.length > NOTE_TEXT_MAX ? `${s.slice(0, NOTE_TEXT_MAX)}…` : s; };
-const failureText = (err) => oneLineNote(err && (err.stderr || err.message) ? (err.stderr || err.message) : err);
+
+function oneLineNote(value) {
+  const text = String(value).replace(/\s+/g, ' ').trim();
+  return text.length > NOTE_TEXT_MAX ? `${text.slice(0, NOTE_TEXT_MAX)}…` : text;
+}
+
+function failureText(err) {
+  const detail = err && (err.stderr || err.message);
+  return oneLineNote(detail || err);
+}
 
 function readUpstreamOwnership({ execFile, cwd }) {
   const notes = [];
@@ -858,7 +866,6 @@ function upstreamRoute(o, runDir, { stdout, stderr, now, execFile, cwd }) {
     let text = '';
     try { text = fs.readFileSync(stagedPath, 'utf8'); } catch (err) {
       // No text parses to no target, so the item holds as external; say why, since the fact alone would read as an untargeted draft.
-      text = '';
       draftNotes.push(`the staged draft could not be read (${failureText(err)}) → fallback: held as external with no target`);
     }
     staged = parseStagedUpstream(text);
