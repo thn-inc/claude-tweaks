@@ -780,7 +780,9 @@ function hasCWord(s, kind, from, end) {
 // Rule 6: `git -C . <read>` and `git -C <the cwd> <read>` → `git <read>`: git runs in the directory
 // it is already in. A `.` is the shell's directory wherever the `git` sits. A literal must spell the
 // cwd (spellsCwd) on the text's first command with no `cd`/`pushd`/`popd` word anywhere, because a
-// snapshot function, alias, zsh AUTO_CD or an earlier function could move the shell before it.
+// snapshot function, alias, zsh AUTO_CD or an earlier function could move the shell before it. The
+// text `GIT_` anywhere declines the rule: GIT_DIR, GIT_WORK_TREE and the like point git elsewhere,
+// and the dropped `-C` would then no longer be the directory git acts on.
 function dropGitCCwd(s, ctx) {
   if (!s.includes('-C') || s.includes('GIT_')) return null;
   const sc = scan(s);

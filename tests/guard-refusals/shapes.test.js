@@ -431,6 +431,25 @@ test('git-chained-status: the separator and $? follow the git word on its own li
   assert.deepStrictEqual(detectShapes('gh pr view 1 --repo github.com/o/r\n&& echo $?'), []);
 });
 
+// #5588: `git -C .` and `git -C <operand>` with an unquoted glob later in the same simple command.
+// The negatives are the rules' own bounds: only the bare or quoted dot, a quoted glob is not a glob,
+// and a glob in the next command is not this command's.
+test('git-C-dot: the bare or quoted dot only', () => {
+  assert.deepStrictEqual(detectShapes('git -C . log'), ['git-C-dot']);
+  assert.deepStrictEqual(detectShapes('git -C "." log'), ['git-C-dot']);
+  assert.deepStrictEqual(detectShapes('git -C .. log'), []);
+  assert.deepStrictEqual(detectShapes('git -C sub log'), []);
+});
+
+test('git-C-glob: an unquoted glob in the same simple command, not a quoted or later-command one', () => {
+  assert.deepStrictEqual(detectShapes('git -C "/w" grep x -- a/*.js'), ['git-C-glob']);
+  assert.deepStrictEqual(detectShapes('git -C /w grep x -- a/*.js'), ['git-C-glob']);
+  assert.deepStrictEqual(detectShapes('git -C "/w" grep x -- "a/*.js"'), []);
+  assert.deepStrictEqual(detectShapes('git -C /w log; ls *.js'), []);
+  assert.deepStrictEqual(detectShapes('git -C /w log\ngit status *.js'), []);
+  assert.deepStrictEqual(detectShapes('git -C /w status'), []);
+});
+
 // The long single-line verdicts behind perf/guard-refusals-chained-status-linearity.test.js, which
 // holds the timing.
 test('chained status on a long line: no $? is not flagged, a trailing chained $? is', () => {

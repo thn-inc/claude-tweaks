@@ -422,9 +422,33 @@ function graphqlMultivarMutation(text) {
 
 // `git -C .`: the operand is the bare or quoted dot.
 const GIT_C_DOT = new RegExp(`${CMD}git\\s+-C\\s+(?:\\.|"\\."|'\\.')(?=\\s|$)`, 'm');
-// `git -C <operand>` with an unquoted glob char in a later word of the same
-// simple command; the operand may be quoted, and quoted text is blanked.
-const GIT_C_GLOB = new RegExp(`${CMD}git\\s+-C\\s+(?:"[^"]*"|'[^']*'|\\S+)[^;&|\\n]*[*?[]`, 'm');
+// `git -C <operand>` with an unquoted glob char after the operand's first character, in the same
+// simple command; the caller blanks quoted text. What `git\s+-C\s+\S+[^;&|\n]*[*?[]` matches,
+// without its backtracking (the overlapping `\S+` and `[^;&|\n]*` rescanned the segment per
+// split: seconds on 40,000 characters, pinned in perf/guard-refusals-chained-status-linearity).
+// Each segment's last glob char is found once, when the first match reaches it (linear).
+const GIT_C_OPERAND = new RegExp(`${CMD}git\\s+-C\\s+(?=\\S)`, 'gm');
+function gitCGlob(text) {
+  GIT_C_OPERAND.lastIndex = 0;
+  let segEnd = -1;
+  let lastGlob = -1;
+  let m;
+  while ((m = GIT_C_OPERAND.exec(text)) !== null) {
+    const from = GIT_C_OPERAND.lastIndex;
+    if (from > segEnd) {
+      segEnd = text.length;
+      for (let p = from; p < text.length; p += 1) {
+        if (';&|\n'.includes(text[p])) { segEnd = p; break; }
+      }
+      lastGlob = -1;
+      for (let p = from + 1; p < segEnd; p += 1) {
+        if ('*?['.includes(text[p])) lastGlob = p;
+      }
+    }
+    if (lastGlob > from) return true;
+  }
+  return false;
+}
 // A git command chained by ; && or || onto `$?` on one line: unquoted, or a
 // double-quoted word that is exactly "$?" ("exit=$?" runs).
 const GIT_CHAINED_STATUS = chainedStatus('git', [';', '&&', '||'], '$?');
@@ -476,7 +500,7 @@ const DETECTORS = [
   {
     id: 'git-C-glob',
     row: '`git -C "<worktree>" grep -c X -- tools/guard-refusals/*.js`',
-    test: (t) => GIT_C_GLOB.test(stripQuoted(t)),
+    test: (t) => gitCGlob(stripQuoted(t)),
   },
   {
     id: 'git-chained-status',
