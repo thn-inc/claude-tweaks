@@ -1297,8 +1297,9 @@ test('AC11.1: .claude/settings.json registers the guard for Bash and the file ex
   const settings = JSON.parse(readText(path.join(ROOT, '.claude', 'settings.json')));
   const entry = settings.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
   assert.ok(entry);
-  assert.ok(entry.hooks.some((h) => h.type === 'command' && h.command === 'node "$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard.js"'));
+  assert.ok(entry.hooks.some((h) => h.type === 'command' && h.command === HOOK_COMMAND_TEXT && h.timeout === 10));
   assert.equal(fs.existsSync(GUARD), true);
+  assert.equal(fs.existsSync(PREFILTER), true);
   for (const key of ['permissions', 'worktree', 'enabledPlugins', 'extraKnownMarketplaces']) assert.ok(settings[key], key);
 });
 
@@ -1499,7 +1500,7 @@ perPrefilterShell('#5794 AC6.2: the prefilter cuts at every separator', (sh) => 
   const T = 'node --test tests/a.test.js tests/b.test.js';
   const rows = [
     `ls; ${T}`, `ls && ${T}`, `ls || ${T}`, `ls | ${T}`, `ls & ${T}`, `(${T})`, `{ ${T}; }`, 'echo `' + T + '`',
-    `echo $(${T})`, `ls\n${T}`, `\t${T}`, `git commit -m "a; ${T}"`, `ls\t&&\t${T.replace(/ /g, '\t')}`,
+    `echo $(${T})`, `ls\n${T}`, `\t${T}`, `git commit -m "a; ${T}"`, 'ls\t&&\tnode\tx',
     ...[';', '&', '|', '(', ')', '{', '}', '`', '\n'].map((sep) => `ls ${sep} node x`),
   ];
   assertVerdicts(sh, rows, 'node');
@@ -1550,6 +1551,160 @@ perPrefilterShell('#5794 AC6.2: the prefilter does not expand a glob', (sh) => {
 
 test('#5794 AC6.2: under a shell that does not split words every call goes to node', { skip: !findOnPath('zsh') && 'zsh not on PATH' }, () => {
   assert.deepEqual(prefilterVerdicts(findOnPath('zsh'), [hookPayload('git status --short && ls')]), ['node']);
+});
+
+// ---- the registered hook command, run the way Claude Code runs it (#5794) ----
+
+const HOOK_COMMAND_TEXT = 'd="$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard"; [ -r "$d.sh" ] && command . "$d.sh"; node "$d.js"; exit 0';
+const HOOK_COMMAND = JSON.parse(readText(path.join(ROOT, '.claude', 'settings.json'))).hooks.PreToolUse.find((e) => e.matcher === 'Bash').hooks[0].command;
+// Runs the registered command the way Claude Code does: `<sh> -c <command>` with the payload on stdin.
+function runHook(shellFile, input, env) {
+  return spawnSync(shellFile, ['-c', HOOK_COMMAND], { input, env, timeout: 30000, killSignal: 'SIGKILL', windowsHide: true });
+}
+
+const ORIGINAL_PATH = process.env[Object.keys(process.env).find((k) => /^path$/i.test(k))] || '';
+function envWithoutPath() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (/^path$/i.test(key)) delete env[key];
+  return env;
+}
+// node in the hook is the node running the test.
+function nodeEnv(projectDir, extra) {
+  return { ...envWithoutPath(), PATH: path.dirname(process.execPath) + path.delimiter + ORIGINAL_PATH, CLAUDE_PROJECT_DIR: projectDir, ...extra };
+}
+// PATH is an empty directory inside the project directory, so withTempDir removes it.
+function emptyPathEnv(projectDir, extra) {
+  const empty = path.join(projectDir, 'empty-path');
+  fs.mkdirSync(empty, { recursive: true });
+  return { ...envWithoutPath(), PATH: empty, CLAUDE_PROJECT_DIR: projectDir, ...extra };
+}
+
+const RECORDER = "const fs = require('fs'); const c = []; process.stdin.on('data', (d) => c.push(d)); process.stdin.on('end', () => fs.writeFileSync(process.env.DTRG_SEEN, Buffer.concat(c)));";
+const REAL_GUARD = "require('child_process').spawnSync(process.execPath, [process.env.DTRG_REAL], { stdio: 'inherit' });";
+// A temp project holding tools/direct-test-run-guard.js (guardSource) and, unless prefilter is null, the .sh with those bytes.
+function withHookProject(prefilter, guardSource, fn) {
+  return withTempDir((dir) => {
+    fs.mkdirSync(path.join(dir, 'tools'));
+    fs.writeFileSync(path.join(dir, 'tools', 'direct-test-run-guard.js'), guardSource);
+    if (prefilter !== null) fs.writeFileSync(path.join(dir, 'tools', 'direct-test-run-guard.sh'), prefilter);
+    return fn({ dir, seen: path.join(dir, 'seen.bin') });
+  });
+}
+
+const GOOD_PREFILTER = fs.readFileSync(PREFILTER);
+const CRLF_PREFILTER = readText(PREFILTER).replace(/\n/g, '\r\n');
+function insertAfterLine(text, startsWith, inserted) {
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => l.startsWith(startsWith));
+  assert.ok(at >= 0, startsWith);
+  lines.splice(at + 1, 0, inserted);
+  return lines.join('\n');
+}
+const FAULTY_PREFILTERS = [
+  ['missing', null],
+  ['CRLF', CRLF_PREFILTER],
+  ['conflict marker inside the scan', insertAfterLine(readText(PREFILTER), 'dtrg_scan() {', '<<<<<<< HEAD')],
+  ['conflict marker after the last call line', insertAfterLine(readText(PREFILTER), '[ -n "${DIRECT_TEST_RUN_GUARD_LIB-}" ]', '<<<<<<< HEAD')],
+];
+
+const D = hookPayload('node --test tests/a.test.js tests/b.test.js');
+const DENIED = hookPayload('node --test tests/direct-test-run-guard.test.js tests/run-tests-isolation.test.js');
+const parsesAsDeny = (stdout) => assert.equal(JSON.parse(stdout.toString()).hookSpecificOutput.permissionDecision, 'deny');
+
+test('#5794 AC10.3: the prefilter is checked out with LF line endings', () => {
+  assert.ok(readText(path.join(ROOT, '.gitattributes')).split('\n').includes('tools/direct-test-run-guard.sh text eol=lf'));
+  assert.equal(fs.readFileSync(PREFILTER).includes(0x0d), false);
+});
+
+perPrefilterShell('#5794 AC1.1 AC1.2 AC1.3 AC1.4: the registered command prints what the node guard prints', (sh) => {
+  const env = nodeEnv(ROOT);
+  for (const input of [DENIED + '\n', hookPayload('for f in tests/*.test.js; do node --test $f; done') + '\n']) {
+    const hook = runHook(sh.file, input, env);
+    const direct = spawnSync(process.execPath, [GUARD], { input, env, timeout: 30000, killSignal: 'SIGKILL', windowsHide: true });
+    assert.equal(hook.status, 0, `[${sh.name}] ${hook.stderr}`);
+    assert.deepEqual(hook.stdout, direct.stdout, `[${sh.name}]`);
+    parsesAsDeny(hook.stdout);
+  }
+  for (const command of ['node --test tests/direct-test-run-guard.test.js', 'node tools/run-tests.js tests/direct-test-run-guard.test.js', 'git status --short && ls']) {
+    const hook = runHook(sh.file, hookPayload(command) + '\n', env);
+    assert.equal(hook.status, 0, `[${sh.name}] ${command}`);
+    assert.equal(hook.stdout.toString(), '', `[${sh.name}] ${command}`);
+  }
+});
+
+perPrefilterShell('#5794 AC3.1 AC3.2: node reads the bytes the hook received', (sh) => {
+  const inputs = [
+    D + '\n', D, JSON.stringify(JSON.parse(D), null, 2) + '\n', JSON.stringify(JSON.parse(D), null, 2),
+    D + '\nextra', D + '\nextra\n', hookPayload('git status') + '\n\n', '', '\n', 'not json\n',
+    hookPayload('node "a b.js" c.js # æøå   \\ $HOME `id`') + '\n',
+  ];
+  withHookProject(GOOD_PREFILTER, RECORDER, ({ dir, seen }) => {
+    const env = nodeEnv(dir, { DTRG_SEEN: seen });
+    for (const input of inputs) {
+      fs.rmSync(seen, { force: true });
+      const res = runHook(sh.file, input, env);
+      const label = `[${sh.name}] ${JSON.stringify(input)}`;
+      assert.equal(res.status, 0, label);
+      assert.equal(res.stdout.toString(), '', label);
+      assert.equal(fs.existsSync(seen), true, `${label}: node did not run`);
+      assert.deepEqual(fs.readFileSync(seen), Buffer.from(input), label);
+    }
+  });
+});
+
+perPrefilterShell('#5794 AC4.1 AC4.2: the skip path starts nothing', (sh) => {
+  const input = hookPayload('git status --short && ls') + '\n';
+  withHookProject(GOOD_PREFILTER, RECORDER, ({ dir, seen }) => {
+    for (const env of [nodeEnv(dir, { DTRG_SEEN: seen }), emptyPathEnv(dir, { DTRG_SEEN: seen })]) {
+      const res = runHook(sh.file, input, env);
+      assert.equal(res.status, 0, `[${sh.name}]`);
+      assert.equal(res.stdout.toString(), '', `[${sh.name}]`);
+      assert.equal(res.stderr.toString(), '', `[${sh.name}]`);
+      assert.equal(fs.existsSync(seen), false, `[${sh.name}]: node ran`);
+    }
+  });
+});
+
+perPrefilterShell('#5794 AC5.1 AC5.2 AC5.3: a missing, CRLF or broken prefilter still reaches the guard', (sh) => {
+  assert.ok(CRLF_PREFILTER.includes('\r\n'));
+  assert.equal(CRLF_PREFILTER.includes('\r\r\n'), false);
+  for (const [state, prefilter] of FAULTY_PREFILTERS) {
+    withHookProject(prefilter, RECORDER, ({ dir, seen }) => {
+      const env = nodeEnv(dir, { DTRG_SEEN: seen });
+      for (const input of [D + '\n', hookPayload('git status --short && ls') + '\n']) {
+        fs.rmSync(seen, { force: true });
+        const res = runHook(sh.file, input, env);
+        const label = `[${sh.name}] ${state} ${JSON.stringify(input)}`;
+        assert.equal(res.status, 0, label);
+        assert.equal(res.stdout.toString(), '', label);
+        assert.equal(fs.existsSync(seen), true, `${label}: node did not run`);
+        assert.deepEqual(fs.readFileSync(seen), Buffer.from(input), label);
+      }
+    });
+    withHookProject(prefilter, REAL_GUARD, ({ dir }) => {
+      const res = runHook(sh.file, DENIED + '\n', nodeEnv(dir, { DTRG_REAL: GUARD }));
+      assert.equal(res.status, 0, `[${sh.name}] ${state}`);
+      parsesAsDeny(res.stdout);
+    });
+  }
+});
+
+perPrefilterShell('#5794 AC5.2: with no node on PATH the hook exits 0 and prints nothing', (sh) => {
+  for (const prefilter of [GOOD_PREFILTER, null]) {
+    withHookProject(prefilter, RECORDER, ({ dir, seen }) => {
+      const res = runHook(sh.file, D + '\n', emptyPathEnv(dir, { DTRG_SEEN: seen }));
+      assert.equal(res.status, 0, `[${sh.name}] prefilter ${prefilter === null ? 'missing' : 'present'}`);
+      assert.equal(res.stdout.toString(), '', `[${sh.name}]`);
+    });
+  }
+});
+
+perPrefilterShell('#5794 AC5.2: garbage and empty stdin print nothing', (sh) => {
+  for (const input of ['not json\n', '', '{"tool_name":"Bash"}\n']) {
+    const res = runHook(sh.file, input, nodeEnv(ROOT));
+    assert.equal(res.status, 0, `[${sh.name}] ${JSON.stringify(input)}`);
+    assert.equal(res.stdout.toString(), '', `[${sh.name}] ${JSON.stringify(input)}`);
+  }
 });
 
 // Must stay the last test in the file: DENIED_COMMANDS holds every deny the earlier tests saw.
