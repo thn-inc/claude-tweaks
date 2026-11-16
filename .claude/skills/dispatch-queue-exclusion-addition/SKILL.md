@@ -34,6 +34,7 @@ Each exclusion pass lives in `plugin/bin/lib/dispatch/queue-pull.js` (#5230: a `
 3. **Cache hit too?** Run the pass on a queue-order cache hit when the state it reads can change without touching the records' `updatedAt` (an open PR, a blocker's commit landing). Skipping it there brings back the bug the pass exists to fix. A pass whose verdict a hit replays instead of re-running needs the cache to miss whenever its inputs carry such state: the `blocked` pass reads foreign blocker states the freshness signal cannot see, so `cacheUsable` in `plugin/bin/lib/dispatch/queue-order.js` refuses a hit while any `auto:build` body declares a `Blocked by owner/name#N` line or a persisted exclusion names a foreign blocker (#4793).
 4. **Fail open or stop?** A pass whose judgment a later gate repeats before any claim (`/flow` Step 2.7b re-checks blocker landing) fails open with one `Warning:` or `AUTO` line. Only a refused `appendExclusion` write or an unreadable `$DISPATCH_GROUPS` stops the pull.
 5. **Can one record turn the pass off?** When the pass batches every candidate into one call that fails as a whole on a single bad input, screen that input out under its own reason first (#4792's `malformed-blocker`). See `gh-api-module-pattern`'s `batching-failure-posture.md`.
+6. **Is the record even in the pool?** The passes only judge the fetched pool. `admitNamed` (#5584, between the pool fetch and the passes) puts a named record that lacks `auto:build` into the pool when the build-authority rule answers `typed`, and records it in `state.typedNumbers`, which the `blocked` pass's grant filter accepts. A refused named record is a printed line, never a pass, a reason word or a registry row, so none of the sites above apply to it; a change to the grant filter or to what a pass assumes about a record's labels must keep `typedNumbers` records judged exactly as granted ones are.
 
 ## Common Operations
 
@@ -46,7 +47,7 @@ git grep -n -l -E "unlanded-blocker|target-missing" -- plugin docs tests
 Then run the derived-list test, the module suite (its parity tests fail when the module and the retained script disagree) and the new reason's conformance test:
 
 ```bash
-node --test tests/dispatch-named-form-exclusion-reasons.test.js tests/bin-lib/dispatch/queue-pull.test.js
+node tools/run-tests.js tests/dispatch-named-form-exclusion-reasons.test.js tests/bin-lib/dispatch/queue-pull.test.js
 ```
 
 ## Anti-Patterns

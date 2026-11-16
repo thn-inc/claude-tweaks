@@ -39,7 +39,7 @@ The twelve flat keys (moved from `_shared/policy-schema.md`'s Control mode table
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
 | `control-mode` | `policy.yml` | `/claude-tweaks:wrap-up` (the Review Console's carry route and residue convergence, #4620); the rest of its implied set, #4624 | `off` | `off`/`on` |
-| `acceptance-target` | `policy.yml` | none yet (#4608) | `local` | `local`/`dev` |
+| `acceptance-target` | `policy.yml` | `bin/accept-park.js decide` (#4615) | `local` | `local`/`dev` |
 | `deploy-reach` | `policy.yml` | none yet (#4608) | `none` | `on-merge`/`command`/`none` |
 | `deploy-command` | `policy.yml`, base branch only | none yet (#4608) | unset | Executed command; spaces allowed |
 | `deploy-live-workflow` | `policy.yml` | none yet (#4608) | unset | CI workflow name; spaces allowed |
@@ -48,5 +48,5 @@ The twelve flat keys (moved from `_shared/policy-schema.md`'s Control mode table
 | `dev-test-account` | `policy.yml` | none yet (#4608) | unset | Vault entry name, never a credential |
 | `deploy-wait-seconds` | `policy.yml` | none yet (#4608) | `900` | Integer >= 0 |
 | `deploy-poll-seconds` | `policy.yml` | none yet (#4608) | `30` | Integer >= 1 |
-| `owned-owners` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
+| `owned-owners` | `policy.yml`, base branch only | `/claude-tweaks:wrap-up` (the Review Console's upstream filing, #4621) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]`; the consumer honors only `[A-Za-z0-9-]` (alphanumeric first, at most 39 characters) and ignores any other entry |
 | `trusted-authors` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, as `owned-owners` |

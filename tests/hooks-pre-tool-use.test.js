@@ -8,6 +8,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { harnessWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
+const { canonicalRealpath } = require('../plugin/bin/lib/path-guard');
 const { shellQuote } = require('./helpers/shell-quote');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
@@ -236,8 +237,9 @@ test('two live runs: commit in the OLDER run\'s own worktree is allowed even whe
   });
   assert.deepStrictEqual(out, {});
   const events = fs.readFileSync(path.join(newer.run, 'events.jsonl'), 'utf8');
-  assert.match(events, /"type":"wd-ambiguous"/);
-  assert.match(events, new RegExp(esc(olderWt)));
+  const matched = events.split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    .filter((e) => e.type === 'wd-ambiguous').map((e) => e.matched);
+  assert.deepStrictEqual(matched, [canonicalRealpath(olderWt)]);
 });
 
 test('three concurrent live runs: a commit in THIS run\'s own assigned worktree never logs wd-ambiguous, even with multiple unrelated sibling worktrees registered as live candidates (#1329)', () => {

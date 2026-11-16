@@ -29,7 +29,7 @@ files:
 - **Should feel:** one answer every later step reuses. The console, the ledger gate, the insights step and the memory writes all branch on the same two words.
 - **Should understand:**
   - Control mode applies when the line reads `control-mode on` and `consoleAutoResolve true`, whatever the `source`. An explicit `autonomy` value wins over control mode and reports `source explicit`; an explicit lower tier turns the carry route off.
-  - Control mode implies the `unattended` capability set and adds no capability of its own.
+  - Control mode implies the `unattended` capability set and adds exactly one capability, `ownedUpstreamFiling` (#4621), which holds at every ceiling.
   - An invalid `autonomy` value resolves `supervised` with `source invalid-autonomy`. An unreadable policy exits 3.
 - **Red flags:**
   - the ledger gate converging while the console renders a human prompt in the same run
@@ -65,10 +65,13 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --memory-write "{file}" --memory-dir "{memory dir}" --content-file "{temp file}" --run "$PIPELINE_RUN_DIR"`
 - **Action:** each `M#` Apply writes the memory file, then `MEMORY.md` with the whole current index plus the new line.
 - **Should feel:** reversible. The `decisions.md` entry logs the path, the prior sha256 and a whole-file diff the maintainer can revert from.
-- **Should understand:** writes outside the memory directory, through a symlinked parent, or to a missing parent outside it are refused with exit 5 naming the path; exit 3 is an unreadable target or a failed write.
+- **Should understand:**
+  - writes outside the memory directory, through a symlinked parent, or to a missing parent outside it are refused with exit 5 naming the path; exit 3 is an unreadable target or a failed write.
+  - the entry tells the maintainer to strip the diff's indent into a patch file and run `git -c core.autocrlf=false apply -R --unidiff-zero {patch}` from the memory directory. The `-c core.autocrlf=false` matters on Windows: `git apply` honours `core.autocrlf` even outside a repository, and Git for Windows defaults it on, so without it the revert would restore CRLF bytes (#5694).
 - **Red flags:**
   - a `MEMORY.md` write holding only the one new line
   - a memory write with no logged prior hash
+  - a reverted memory file whose bytes differ from the prior content (CRLF line endings after a revert on Windows)
 
 ### 5. (Maintainer) Decide the carried items at acceptance
 - **URL:** the acceptance packet comment on the record (`acceptance-packet.js gather` reads `{run}/packet-facts/decisions.json` when no `--decision-items` is passed)
@@ -84,4 +87,5 @@ files:
 
 ## Origin
 - Created during the build of #4620 (run `2026-11-16T000749-record-4620`): `console-resolve.js --ceiling`, `--set-item … carried`, `--converge` and `--memory-write`, `lib/console/decision-facts.js`, `lib/console/residue-convergence.js`, `lib/console/memory-write.js`, and the control-mode branches in `wrap-up/review-console.md` and `_shared/ledger-format.md`.
+- Updated during the build of #5694 (run `2026-11-16T094458-record-5694`): Step 4 names the printed revert command, now read from `MEMORY_REVERT_COMMAND` in `lib/console/memory-write.js`, with `core.autocrlf` off.
 - Related journeys: `recover-a-queue-write-the-unattended-console-could-not-file-4170.md` covers the non-control-mode `keep-staged` rewrite this route replaces. `accept-built-work-via-demo.md` covers the acceptance verdict itself.

@@ -62,7 +62,7 @@ const FIELD = /\.\s*(locked|lockReason)\b/g;
 const BRACKET_FIELD = /(?<=[\w$)\]]|\?\.)\[\s*(['"])(locked|lockReason)\1\s*\]/g;
 
 // Scoped rule: the two liveness tokens may appear in archive-merged.js only inside
-// classifyRunDir, lastOwnEventMs, the import and export lists, and the constant's own
+// classifyRunDir, the import and export lists, and the constant's own
 // declaration. Neither token may appear in the other three scanned files.
 const ARCHIVE = 'plugin/bin/lib/reconcile/archive-merged.js';
 const SCOPED = /\b(ownEventRecency|STALE_INTERRUPTED_TTL_MS)\b/g;
@@ -71,9 +71,14 @@ const REQUIRE_DESTRUCTURE = /^const\s*\{[^}]*\}\s*=\s*require\s*\([^)]*\)/gm;
 const MODULE_EXPORTS = /\bmodule\s*\.\s*exports\s*=\s*\{/g;
 const EXPORT_BEFORE = /[{,]\s*(?:[\w$]+\s*:)?\s*$/;
 const EXPORT_AFTER = /^[ \t]*(?:[,}]|\r?\n|$)/;
-// Allowed scoped-token sites located in archive-merged.js at the commit that landed the
-// scoped rule. Fewer means the matcher stopped matching: never lower this floor.
-const SCOPED_SITE_FLOOR = 8;
+// Allowed scoped-token sites located in archive-merged.js. Fewer means the matcher stopped
+// matching. It went 8 -> 7 in #5544, which deleted the one site inside a removed
+// wrapper's body (its `ownEventRecency(runDir)` call); the exact count below is what
+// proves that drop is a removed site and not lost recall.
+const SCOPED_SITE_FLOOR = 7;
+// The exact number of allowed scoped-token sites in archive-merged.js; change it together
+// with the floor when a site is added or removed.
+const SCOPED_SITE_COUNT = 7;
 const BLANK_LITERALS = { literals: 'blank' };
 
 function readEntries() {
@@ -151,10 +156,8 @@ function functionSpan(blankText, name) {
 // The index ranges [start, end) of archive-merged.js where a scoped token is allowed.
 function allowedRegions(blank) {
   const regions = [];
-  for (const name of ['classifyRunDir', 'lastOwnEventMs']) {
-    const span = functionSpan(blank, name);
-    if (span) regions.push([span.start, span.end + 1]);
-  }
+  const span = functionSpan(blank, 'classifyRunDir');
+  if (span) regions.push([span.start, span.end + 1]);
   for (const m of blank.matchAll(REQUIRE_DESTRUCTURE)) regions.push([m.index, m.index + m[0].length]);
   for (const m of blank.matchAll(SCOPED_DECL)) regions.push([m.index, m.index + m[0].length]);
   // The export list allows a scoped token only as a shorthand property or as the whole
@@ -191,7 +194,7 @@ function scopedSites(rel, raw) {
     } else if (regions.some(([s, e]) => m.index >= s && m.index < e)) {
       allowed += 1;
     } else {
-      hits.push(hitAt(kept, m.index, `${m[1]} outside classifyRunDir/lastOwnEventMs`));
+      hits.push(hitAt(kept, m.index, `${m[1]} outside classifyRunDir`));
     }
   }
   return { allowed, hits };
@@ -202,18 +205,16 @@ function scopedHits(rel, raw) {
   return scopedSites(rel, raw).hits;
 }
 
-// The scoped rule passes vacuously when its allowed regions cannot be found, so both
-// function spans must exist in archive-merged.js and the located sites must meet the floor.
+// The scoped rule passes vacuously when its allowed region cannot be found, so the
+// classifyRunDir span must exist in archive-merged.js and the located sites must meet the floor.
 function assertSiteFloor(entries) {
   const entry = entries.find((e) => e.rel === ARCHIVE);
   assert.ok(entry, `${ARCHIVE} is not among the scanned entries`);
   const blank = stripComments(entry.raw, BLANK_LITERALS);
-  for (const name of ['classifyRunDir', 'lastOwnEventMs']) {
-    assert.ok(
-      functionSpan(blank, name),
-      `function ${name} not found in archive-merged.js: the scoped rule would pass vacuously without its allowed region`,
-    );
-  }
+  assert.ok(
+    functionSpan(blank, 'classifyRunDir'),
+    'function classifyRunDir not found in archive-merged.js: the scoped rule would pass vacuously without its allowed region',
+  );
   const { allowed } = scopedSites(ARCHIVE, entry.raw);
   assert.ok(
     allowed >= SCOPED_SITE_FLOOR,
@@ -381,16 +382,25 @@ test('AC4.1: renaming classifyRunDir in a scratch copy fails the site floor, not
     return { ...e, raw };
   });
   assert.throws(() => assertSiteFloor(renamed('classifyRunDir', 'classifyRunDirRenamed')), /classifyRunDir/);
-  assert.throws(() => assertSiteFloor(renamed('lastOwnEventMs', 'lastOwnEventMsRenamed')), /lastOwnEventMs/);
 });
 
 test('floor: the scoped-token sites are located', () => {
-  assertSiteFloor(readEntries());
+  const entries = readEntries();
+  assertSiteFloor(entries);
+  const { allowed } = scopedSites(ARCHIVE, entries.find((e) => e.rel === ARCHIVE).raw);
+  assert.equal(
+    allowed,
+    SCOPED_SITE_COUNT,
+    `found ${allowed} allowed scoped-token sites in archive-merged.js, expected exactly ${SCOPED_SITE_COUNT}: fewer means a site was removed or the matcher stopped matching, more means a site was added; change SCOPED_SITE_COUNT and SCOPED_SITE_FLOOR together once you know which`,
+  );
 });
 
 test('scoped rule self-test: allowed sites pass, a sibling helper and the other files fail', () => {
-  const archive = "const { ownEventRecency } = require('../run-liveness/probes');\nconst STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;\nfunction lastOwnEventMs(d) {\n  return ownEventRecency(d).lastOwnMs;\n}\nfunction classifyRunDir(ctx) {\n  const s = '}';\n  return ownEventRecency(ctx.dir) && STALE_INTERRUPTED_TTL_MS;\n}\nfunction newHelper(d) {\n  return ownEventRecency(d);\n}\nmodule.exports = {\n  ownEventRecency, STALE_INTERRUPTED_TTL_MS,\n};";
-  assert.deepEqual(formatHits(scopedHits(ARCHIVE, archive)), ['11:ownEventRecency outside classifyRunDir/lastOwnEventMs']);
+  const archive = "const { ownEventRecency } = require('../run-liveness/probes');\nconst STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;\nfunction classifyRunDir(ctx) {\n  const s = '}';\n  return ownEventRecency(ctx.dir) && STALE_INTERRUPTED_TTL_MS;\n}\nfunction newHelper(d) {\n  return ownEventRecency(d);\n}\nfunction ttlReader() {\n  return STALE_INTERRUPTED_TTL_MS;\n}\nmodule.exports = {\n  ownEventRecency, STALE_INTERRUPTED_TTL_MS,\n};";
+  assert.deepEqual(formatHits(scopedHits(ARCHIVE, archive)), [
+    '8:ownEventRecency outside classifyRunDir',
+    '11:STALE_INTERRUPTED_TTL_MS outside classifyRunDir',
+  ]);
   const others = SCANNED.filter((rel) => rel !== ARCHIVE);
   for (const rel of others) {
     assert.deepEqual(
@@ -409,21 +419,25 @@ test('scoped rule self-test: allowed sites pass, a sibling helper and the other 
 test('scoped rule self-test: only a bare token passes in the export list, only top-level declarations count', () => {
   const exportsRow = 'module.exports = {\n  sneaky: (d) => ownEventRecency(d),\n  ownEventRecency,\n  alias: STALE_INTERRUPTED_TTL_MS,\n  wrapped: wrap(ownEventRecency),\n  a, ownEventRecency,\n  pick: c ? x : ownEventRecency };';
   assert.deepEqual(formatHits(scopedHits(ARCHIVE, exportsRow)), [
-    '2:ownEventRecency outside classifyRunDir/lastOwnEventMs',
-    '5:ownEventRecency outside classifyRunDir/lastOwnEventMs',
-    '7:ownEventRecency outside classifyRunDir/lastOwnEventMs',
+    '2:ownEventRecency outside classifyRunDir',
+    '5:ownEventRecency outside classifyRunDir',
+    '7:ownEventRecency outside classifyRunDir',
   ]);
   const nested = "function inner() {\n  const STALE_INTERRUPTED_TTL_MS = 1;\n  const { ownEventRecency } = require('x');\n}";
   assert.deepEqual(formatHits(scopedHits(ARCHIVE, nested)), [
-    '2:STALE_INTERRUPTED_TTL_MS outside classifyRunDir/lastOwnEventMs',
-    '3:ownEventRecency outside classifyRunDir/lastOwnEventMs',
+    '2:STALE_INTERRUPTED_TTL_MS outside classifyRunDir',
+    '3:ownEventRecency outside classifyRunDir',
   ]);
 });
 
 test('AC2.1: scan applies the scoped rule to the real files', () => {
   assert.throws(
     () => assertNoRetiredProbes(inject(ARCHIVE, '\nfunction newHelper(d) {\n  return ownEventRecency(d);\n}\n')),
-    /archive-merged\.js:\d+ ownEventRecency outside classifyRunDir\/lastOwnEventMs/,
+    /archive-merged\.js:\d+ ownEventRecency outside classifyRunDir/,
+  );
+  assert.throws(
+    () => assertNoRetiredProbes(inject(ARCHIVE, '\nfunction ttlReader() {\n  return STALE_INTERRUPTED_TTL_MS;\n}\n')),
+    /archive-merged\.js:\d+ STALE_INTERRUPTED_TTL_MS outside classifyRunDir/,
   );
   assert.throws(
     () => assertNoRetiredProbes(inject(SCANNED[1], '\nconst x = ownEventRecency(d);\n')),

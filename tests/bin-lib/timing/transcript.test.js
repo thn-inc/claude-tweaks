@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { slugForCwd, locateTranscripts, readUsage, isProcedurePath, subagentsDirFor, readDispatches, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
+const { slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
 const { aggregateDispatches } = require('../../../plugin/bin/lib/timing/derive');
 
 // The developer's own CLAUDE_CONFIG_DIR would redirect every homeDir-only
@@ -746,6 +746,101 @@ test('#3375 C1: a lower later line never reduces the id\'s usage (max, not last)
   assert.deepEqual(rows.map((r) => r.outputTokens), [407, 0]);
 });
 
+// #5584 Task 1: readPromptRows. Row shape copied from work/5584-captured-rows.json
+// (capture "a", the typed row), with its fixed test ids.
+const TYPED_CONTENT = '<command-message>claude-tweaks:dispatch</command-message>\n<command-name>/claude-tweaks:dispatch</command-name>\n<command-args>#3</command-args>';
+function promptRow(promptId, content = TYPED_CONTENT) {
+  return {
+    type: 'user', promptId, sessionId: 'test-session-0001', timestamp: '2026-11-16T02:09:19.668Z',
+    turnOrigin: 'human', origin: { kind: 'human' }, isSidechain: false,
+    message: { role: 'user', content },
+  };
+}
+function promptTranscript(lines) {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prompt-rows-')), 's.jsonl');
+  fs.writeFileSync(f, lines.join('\n') + '\n');
+  return f;
+}
+
+test('#5584: readPromptRows returns only rows whose promptId matches', () => {
+  const f = promptTranscript([
+    JSON.stringify(promptRow('test-prompt-0001')),
+    JSON.stringify(promptRow('test-prompt-0002')),
+    JSON.stringify({ ...promptRow('test-prompt-0001'), isMeta: true, message: { role: 'user', content: [{ type: 'text', text: '(skill expansion elided)' }] } }),
+  ]);
+  const rows = readPromptRows(f, 'test-prompt-0001');
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((r) => r.promptId === 'test-prompt-0001'));
+  assert.equal(rows[0].message.content, TYPED_CONTENT);
+  assert.equal(rows[1].isMeta, true);
+});
+
+test('#5584 review: readPromptRows keep drops the rows it rejects before they are returned, and keeps the default of every matching row', () => {
+  const toolResult = { ...promptRow('test-prompt-0001'), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'x'.repeat(2000) }] } };
+  const f = promptTranscript([JSON.stringify(promptRow('test-prompt-0001')), JSON.stringify(toolResult), JSON.stringify(promptRow('test-prompt-0002'))]);
+  const asked = [];
+  const kept = readPromptRows(f, 'test-prompt-0001', { keep: (r) => { asked.push(r.promptId); return typeof r.message.content === 'string'; } });
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].message.content, TYPED_CONTENT);
+  assert.deepEqual(asked, ['test-prompt-0001', 'test-prompt-0001'], 'keep sees only rows of the asked prompt id');
+  assert.equal(readPromptRows(f, 'test-prompt-0001').length, 2);
+});
+
+test('#5584: readPromptRows skips lines that do not parse', () => {
+  const whole = JSON.stringify(promptRow('test-prompt-0001'));
+  const f = promptTranscript([whole.slice(0, Math.floor(whole.length / 2)), whole]);
+  const rows = readPromptRows(f, 'test-prompt-0001');
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0], promptRow('test-prompt-0001'));
+});
+
+test('#5584: readPromptRows reads a 600 KB line', () => {
+  const big = 'x'.repeat(600000);
+  const f = promptTranscript([
+    JSON.stringify(promptRow('test-prompt-0002')),
+    JSON.stringify(promptRow('test-prompt-0001', big)),
+    JSON.stringify(promptRow('test-prompt-0002')),
+  ]);
+  const rows = readPromptRows(f, 'test-prompt-0001', { chunkBytes: 4096 });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].message.content, big);
+});
+
+test('#5584: readPromptRows returns a matching last line that has no trailing newline', () => {
+  const f = promptTranscript([JSON.stringify(promptRow('test-prompt-0002'))]);
+  fs.appendFileSync(f, JSON.stringify(promptRow('test-prompt-0001')));
+  const rows = readPromptRows(f, 'test-prompt-0001', { chunkBytes: 64 });
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0], promptRow('test-prompt-0001'));
+});
+
+test('#5584: readPromptRows returns only the exact promptId, not one that merely contains it', () => {
+  const f = promptTranscript([
+    JSON.stringify(promptRow('test-prompt-00011')),
+    JSON.stringify(promptRow('test-prompt-0001')),
+  ]);
+  const rows = readPromptRows(f, 'test-prompt-0001');
+  assert.deepEqual(rows.map((r) => r.promptId), ['test-prompt-0001']);
+});
+
+test('#5584: readPromptRows stats before opening — a non-regular file throws EISDIR and is never opened', () => {
+  let opened = 0;
+  const fsImpl = {
+    statSync: () => ({ isFile: () => false }),
+    openSync: () => { opened += 1; throw new Error('openSync must not be called'); },
+  };
+  assert.throws(() => readPromptRows('/fake/s.jsonl', 'test-prompt-0001', { fsImpl }), (err) => err.code === 'EISDIR');
+  assert.equal(opened, 0);
+});
+
+test('#5584: readPromptRows throws ENOENT for a missing file', () => {
+  assert.throws(() => readPromptRows(path.join(os.tmpdir(), 'ct-no-such-transcript.jsonl'), 'test-prompt-0001'), (err) => err.code === 'ENOENT');
+});
+
+test('#5584: readPromptRows throws EISDIR for a directory', () => {
+  assert.throws(() => readPromptRows(__dirname, 'test-prompt-0001'), (err) => err.code === 'EISDIR');
+});
+
 // ---- #5597: agents a workflow script starts live in subagents/workflows/{runId}/ ----
 
 // {tmp}/sess-1/subagents — a real session shape, so the run file beside it
@@ -1084,4 +1179,47 @@ test('#5597: a symlinked run file is not read, so its mismatching agentCount add
   const r = await readDispatches(dir);
   assert.deepEqual(r.dirNotes, []);
   assert.equal(r.items.length, 2);
+});
+
+// #5556: AskUserQuestion ask/answer times. Shape observed 2026-10-24 in a real main-session
+// transcript: assistant tool_use { id, name: 'AskUserQuestion', input: { questions: [{ question, header, multiSelect, options }] } },
+// answered by a later user row's tool_result { tool_use_id, content: '<string>' }.
+function askTranscript(lines) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ask-'));
+  const file = path.join(dir, 's.jsonl');
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return { dir, file };
+}
+const askRow = (id, ts, questions) => ({ timestamp: ts, message: { role: 'assistant', id: 'm-' + id, content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions } }], usage: {} } });
+const resultRow = (id, ts) => ({ timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Your questions have been answered.' }] } });
+
+test('#5556: readUsage carries asks on the AskUserQuestion row and answers on its tool_result row, and no key elsewhere', async () => {
+  const { dir, file } = askTranscript([
+    { timestamp: '2026-11-16T07:59:00.000Z', message: { role: 'assistant', id: 'm0', content: [{ type: 'text', text: 'hi' }], usage: {} } },
+    askRow('toolu_q1', '2026-11-16T08:00:00.000Z', [{ question: 'Pick?', header: 'H', multiSelect: false, options: [] }]),
+    resultRow('toolu_q1', '2026-11-16T08:03:30.000Z'),
+    { timestamp: '2026-11-16T08:04:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_other', content: 'x' }] } },
+  ]);
+  try {
+    const rows = await readUsage(file);
+    assert.deepEqual(rows[1].asks, [{ id: 'toolu_q1', ts: '2026-11-16T08:00:00.000Z', questions: ['Pick?'] }]);
+    assert.deepEqual(rows[2].answers, [{ id: 'toolu_q1', ts: '2026-11-16T08:03:30.000Z' }]);
+    for (const i of [0, 3]) { assert.equal('asks' in rows[i], false); assert.equal('answers' in rows[i], false); }
+    assert.equal('answers' in rows[1], false);
+    assert.equal('asks' in rows[2], false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('#5556: an AskUserQuestion block with no input.questions gives questions [] and never throws', async () => {
+  const { dir, file } = askTranscript([
+    { timestamp: '2026-11-16T08:00:00.000Z', message: { role: 'assistant', id: 'm1', content: [{ type: 'tool_use', id: 'toolu_q2', name: 'AskUserQuestion' }], usage: {} } },
+  ]);
+  try {
+    const rows = await readUsage(file);
+    assert.deepEqual(rows[0].asks, [{ id: 'toolu_q2', ts: '2026-11-16T08:00:00.000Z', questions: [] }]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
