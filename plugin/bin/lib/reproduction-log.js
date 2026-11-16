@@ -26,7 +26,9 @@ function location(path, line) {
   return Number.isInteger(line) ? `${path}:${line}` : String(path);
 }
 
-const entry = (status, text) => ({ status, step: STEP, text, reversibility: 'high' });
+function entry(status, text) {
+  return { status, step: STEP, text, reversibility: 'high' };
+}
 
 // Form 1, or form 2 when the pair straddled a severity bucket (`severityContested`).
 function reproduced({ lens, path, line, severityContested }) {
