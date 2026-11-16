@@ -68,8 +68,8 @@ Both branches print one `{entries, partial}` object. An empty `entries` array me
 entries in range or (the common installed-build case) no `CHANGELOG.md` to read — skip the
 notice silently either way; there is nothing to synthesize. `partial` is `true` only when a
 trimmed `CHANGELOG.md` no longer reaches back to the marker's version (see "Changelog notice
-policy"). Read the returned `{version, title, body}` entries in `entries` — in the same newest-first order they
-appear in `CHANGELOG.md` — and synthesize the filtered summary described under "Changelog notice policy"
+policy"). Read the `entries` array's `{version, title, body}` items — newest-first, as in
+`CHANGELOG.md` — and synthesize the filtered summary described under "Changelog notice policy"
 below.
 
 **Write the marker:**

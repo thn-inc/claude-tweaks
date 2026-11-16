@@ -16,11 +16,11 @@ This repo dogfoods the same release engine every consumer project uses: `/claude
 
 ## Bounding CHANGELOG.md (`changelog-max-releases`)
 
-Off by default (`0` = never trim). Set to `n` and both engines keep the newest `n` release sections after a release: pr-first trims in `release-notes-publish.js`, in the Highlights commit when there is one, else in a `chore: trim CHANGELOG.md to the newest {n} releases` commit; local-merge trims in a separate commit after the release has landed (commit, tag, push, hook), so the tag keeps the full file and a failed hook means no trim. A trim never fails a release: a failure prints `changelog trim: failed ({reason}); file left untrimmed` and the release still reports released.
+Off by default (`0` = never trim). Set to `n` and both engines keep the newest `n` release sections after a release: pr-first trims in `release-notes-publish.js`, in the Highlights commit when there is one, else in a `chore: trim CHANGELOG.md to the newest {n} releases` commit; local-merge trims in a separate commit after the release has landed (commit, tag, push, hook), so the tag keeps the full file and a failed hook means no trim. A trim never fails a release: a failure prints `changelog trim: failed ({reason}); file left untrimmed` (when the restore after a failed trim commit also fails, the line says the index may still hold the trimmed file), an unreadable policy prints `changelog trim: policy unreadable ({reason}); not trimmed`, and the release still reports released.
 
 The trimmed file ends in an `## Older releases` footer with two routes to removed notes: the recorded commit (`git show {sha}:CHANGELOG.md`, the full file up to the first trim) and the release's own tag (`git show v<version>:CHANGELOG.md`, which has no Highlights block).
 
-Opt in only once every session runs this release or newer: an older build reports trimmed versions as missing, and its `/claude-tweaks:tidy` would add them back. After opting in, check that the first release-please PR leaves the footer last. Do not trim inside release-please's own PR.
+Opt in only once every session runs this release or newer: an older build reports trimmed versions as missing, and its `/claude-tweaks:tidy` would add them back. After opting in, check that the first release-please PR leaves the footer last. Do not trim inside release-please's own PR: its diff must stay what release-please rendered.
 
 ## Manual Steps
 
