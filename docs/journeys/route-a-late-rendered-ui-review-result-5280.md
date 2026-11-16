@@ -10,7 +10,7 @@ files:
 
 # Route a Late Rendered-UI Review Result
 
-**Persona:** a maintainer whose `/claude-tweaks:review` of a web-facing record runs visual-review (Step 6) or design-wrapper review (Step 6.5) as a nested agent, and that agent is still browsing when the dispatching agent's 60 x `sleep 20` wait bound (20 minutes) expires.
+**Persona:** a maintainer whose `/claude-tweaks:review` of a web-facing record runs visual-review (Step 6) or design-wrapper review (Step 6.5) as a nested agent, and that agent is still browsing when the dispatching agent's 20-minute `wait-for.js` wait bound (20 minutes) expires.
 **Goal:** real rendered-UI findings are never silently dropped. A visual review that is still taking screenshots gets time to finish, one that ran out of time never counts as a passed visual check, and whatever it finds late still reaches a human.
 **Entry point:** a review whose visual-review page or journey agent (or design-wrapper Step 3.7/3.8 critic) is outstanding at the first 20-minute bound.
 **Success state:** a still-progressing visual review finishes within up to 3 windows (60 minutes) and reports normally. A unit that had to be self-judged is shown as an explicit decline of the rendered-UI check, and its late findings appear either as `staged/visual-review-late-{n}.md` under Pending review at the Wrap-Up Review Console, or as `LATE_FINDING:` lines in the agent's reply when the run is no longer active.
@@ -27,8 +27,8 @@ files:
   - a design-wrapper Step 3.7/3.8 critic given an extra window it has no directory to justify.
 
 ### 2. Keep waiting while screenshots keep arriving
-- **URL:** the same turn, when the 60-wait bound expires with the unit still outstanding
-- **Action:** the agent re-probes the directory and compares with the previous probe. A change grants one more 60-wait window, logged like a write-capable child's extension. A window with no change, or the third window's bound, ends the wait, naming which fired.
+- **URL:** the same turn, when the 20-minute bound expires with the unit still outstanding
+- **Action:** the agent re-probes the directory and compares with the previous probe. A change grants one more 20-minute window, logged like a write-capable child's extension. A window with no change, or the third window's bound, ends the wait, naming which fired.
 - **Should feel:** like ordinary progress. The visual review's report arrives a few minutes later instead of the review moving on without it.
 - **Should understand:** a missing directory or a failed probe counts as no change and is never retried in another form. The ceiling is 3 windows (60 minutes) per wave.
 - **Red flags:**
@@ -57,4 +57,4 @@ files:
 
 ## Origin
 - Created during the build of #5280. A review's visual-review or design-wrapper unit that outlived the 20-minute keep-alive bound was self-judged and its late result ignored, so real rendered-UI findings were dropped. The rule lives in `_shared/rendered-ui-units.md`; `_shared/subagent-dispatch-core.md` and its inlined copies (two since #5601: item 7 and the handoff template) carry a one-sentence exception pointing at it.
-- Related journeys: `keep-waiting-on-a-progressing-implementer-4557.md` (the same progress windows for write-capable children), `keep-a-second-reader-in-a-dispatched-review-3078.md` (the 60-wait bound for read-only lens children, unchanged here), `get-a-visual-review-recommendation-only-for-a-ui-surface-2927.md` (when visual review is recommended at all).
+- Related journeys: `keep-waiting-on-a-progressing-implementer-4557.md` (the same progress windows for write-capable children), `keep-a-second-reader-in-a-dispatched-review-3078.md` (the 20-minute bound for read-only lens children, unchanged here), `get-a-visual-review-recommendation-only-for-a-ui-surface-2927.md` (when visual review is recommended at all).
