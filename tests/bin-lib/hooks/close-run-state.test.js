@@ -307,7 +307,7 @@ test('AC4.1 close-run: writeTimingAtClose stubbed to throw → stdout and exit c
     assert.deepStrictEqual(T.skipLines(base.runDir), []);
     const skips = T.skipLines(thrown.runDir);
     assert.strictEqual(skips.length, 1);
-    assert.match(skips[0], /boom/);
+    assert.match(skips[0], /timing at close failed \(boom\)/);
   } finally {
     cleanup(base);
     cleanup(thrown);

@@ -1,7 +1,7 @@
 'use strict';
 // run-timing.js (#5555 Task 1): the timing derivation phase-timing.js used to
 // own, as a library the closing paths call in-process.
-const { test } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -119,21 +119,31 @@ test('writeTimingFile throws and creates nothing when runDir is gone', () => {
 
 test('deriveTiming with a readUsageImpl that never resolves returns deadlineHit within the deadline', { timeout: 5000 }, async () => {
   const dir = fixtureCopy();
+  // Mock timers drive the deadline (no wall-clock budget): pending just before it, settled at it.
+  mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   try {
-    const started = Date.now();
-    const r = await deriveTiming(dir, {
+    let entered = false;
+    let settled = false;
+    const p = deriveTiming(dir, {
       transcriptPaths: ['never.jsonl'],
       cwd: dir,
       deadlineAt: Date.now() + 200,
-      readUsageImpl: () => new Promise(() => {}),
-    });
-    assert.ok(Date.now() - started < 2000);
+      readUsageImpl: () => { entered = true; return new Promise(() => {}); },
+    }).finally(() => { settled = true; });
+    for (let i = 0; i < 5000 && !entered; i++) await new Promise((res) => setImmediate(res));
+    assert.equal(entered, true, 'the hung reader was never reached');
+    mock.timers.tick(199);
+    for (let i = 0; i < 20; i++) await new Promise((res) => setImmediate(res));
+    assert.equal(settled, false, 'deriveTiming returned before its deadline');
+    mock.timers.tick(1);
+    const r = await p;
     assert.equal(r.ok, true);
     assert.equal(r.deadlineHit, true);
     assert.equal(Object.hasOwn(r.timing.totals, 'tokens'), false);
     assert.equal(Object.hasOwn(r.timing, 'dispatches'), false);
     assert.equal(Object.hasOwn(r.timing, 'transcripts'), false);
   } finally {
+    mock.timers.reset();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

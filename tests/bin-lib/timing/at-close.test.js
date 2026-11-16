@@ -1,7 +1,7 @@
 'use strict';
 // at-close.js (#5555 Task 2): timing.json written when a run closes, token
 // totals from the run's own transcript only.
-const { test } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -228,7 +228,7 @@ test('AC12.1: writeTimingAtClose on a spec-N child writes nothing and leaves an 
   }
 });
 
-test('deadline: readUsage never settles → resolves within boundMs + 1000, phase rows written, one SKIP naming the bound', async () => {
+test('deadline: readUsage never settles → resolves at boundMs, phase rows written, one SKIP naming the bound', async () => {
   const root = tmpRoot();
   const real = transcript.readUsage;
   try {
@@ -236,10 +236,24 @@ test('deadline: readUsage never settles → resolves within boundMs + 1000, phas
     const wtA = path.join(root, 'wt-a');
     const runDir = closedRun(root, 'run', wtA);
     writeTranscript(cfg, wtA, [A, B]);
-    transcript.readUsage = () => new Promise(() => {});
-    const t0 = Date.now();
-    const r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg }, boundMs: 200 });
-    assert.ok(Date.now() - t0 < 1200, `took ${Date.now() - t0} ms`);
+    let entered = false;
+    transcript.readUsage = () => { entered = true; return new Promise(() => {}); };
+    // Mock timers drive the bound (no wall-clock budget): pending just before it, settled at it.
+    mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    let r;
+    try {
+      let settled = false;
+      const p = writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg }, boundMs: 200 }).finally(() => { settled = true; });
+      for (let i = 0; i < 5000 && !entered; i++) await new Promise((res) => setImmediate(res));
+      assert.equal(entered, true, 'the hung reader was never reached');
+      mock.timers.tick(199);
+      for (let i = 0; i < 20; i++) await new Promise((res) => setImmediate(res));
+      assert.equal(settled, false, 'writeTimingAtClose returned before its bound');
+      mock.timers.tick(1);
+      r = await p;
+    } finally {
+      mock.timers.reset();
+    }
     assert.equal(r.status, 'written');
     assert.equal(r.tokens, false);
     const timing = readTiming(runDir);

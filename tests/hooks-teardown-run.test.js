@@ -846,7 +846,7 @@ test('AC4.1 teardown-run: writeTimingAtClose stubbed to throw → stdout and exi
   assert.deepStrictEqual(T.skipLines(base.runDir), []);
   const skips = T.skipLines(thrown.runDir);
   assert.strictEqual(skips.length, 1);
-  assert.match(skips[0], /boom/);
+  assert.match(skips[0], /timing at close failed \(boom\)/);
 });
 
 test('AC4.2 teardown-run: at-close.js failing at load → stdout and exit code equal the no-op stub\'s (exit 0), one SKIP line', async () => {
