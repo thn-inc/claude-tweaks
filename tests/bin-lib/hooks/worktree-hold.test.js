@@ -102,9 +102,12 @@ test('clearSessionHolds: a file of another shape (extra segment) is not matched'
   const a = harnessWorktreeOf(main, 'wt-shape');
   const odd = path.join(holdDirOf(a), 's1__x__main__42.json');
   assert.ok(writeHold(a, { key: 's1__main__42', block: BLOCK }));
+  const trailing = path.join(holdDirOf(a), 's1__main__42__extra.json');
   fs.writeFileSync(odd, '{}');
+  fs.writeFileSync(trailing, '{}');
   assert.strictEqual(clearSessionHolds(main, { sessionId: 's1', pid: 42 }), 1);
   assert.ok(fs.existsSync(odd));
+  assert.ok(fs.existsSync(trailing));
 });
 
 test('writeHold: rejects keys carrying a path separator or dot-dot', () => {
@@ -165,7 +168,18 @@ test('readHolds: an unreadable hold dir fails closed as one unverifiable entry',
   }
 });
 
-test('readHolds: a .git file that cannot be read fails closed', chmodDenialSkip('root ignores mode 000'), () => {
+test('readHolds: a worktree whose .git cannot even be stat-ed fails closed', chmodDenialSkip('root ignores mode 000'), () => {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'wt-nosearch');
+  fs.chmodSync(wt, 0o000);
+  try {
+    assert.deepStrictEqual(readHolds(wt), [{ key: null, hold: null }]);
+  } finally {
+    fs.chmodSync(wt, 0o755);
+  }
+});
+
+test('readHolds: a .git file that cannot be read fails closed',chmodDenialSkip('root ignores mode 000'), () => {
   const main = gitRepo();
   const wt = harnessWorktreeOf(main, 'wt-gitdenied');
   const gitFile = path.join(wt, '.git');

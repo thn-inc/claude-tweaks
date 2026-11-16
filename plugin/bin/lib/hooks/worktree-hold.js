@@ -146,10 +146,11 @@ function readHolds(wtPath) {
   }
 }
 
-// Every `{mainRoot}/.git/worktrees/*/claude-tweaks-holds` directory.
+// Every `{mainRoot}/.git/worktrees/*/claude-tweaks-holds` directory. When `.git` is a
+// file (mainRoot is itself a linked worktree), `.git/worktrees` is ENOTDIR: the read
+// throws and the caller removes nothing.
 function allHoldDirs(mainRoot) {
   const worktrees = path.join(mainRoot, '.git', 'worktrees');
-  if (!fs.statSync(path.join(mainRoot, '.git')).isDirectory()) return [];
   return fs.readdirSync(worktrees).map((n) => path.join(worktrees, n, HOLD_DIR_NAME));
 }
 
