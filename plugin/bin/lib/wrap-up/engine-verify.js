@@ -34,6 +34,7 @@ const { dispositionState } = require('../issues/acceptance');
 const { LABELS, parseParent } = require('../issues/record');
 const { GhFailure, ghCaller, gatherGateFacts, evaluateParentGate, onHost } = require('../issues/parent-gate');
 const { resolvePolicyKeys } = require('../policy-schema');
+const { locatePolicyFile } = require('../policy-file');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
 const { readPacket } = require('./packet-gather');
@@ -779,7 +780,7 @@ function resolveCheckRepo(deps, cwd) {
 function readParentGatePolicy(repoRoot, keys) {
   let policyRaw = null;
   try {
-    policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+    policyRaw = fs.readFileSync(locatePolicyFile(repoRoot).path, 'utf8');
   } catch (err) {
     if (!err || (err.code !== 'ENOENT' && err.code !== 'ENOTDIR')) {
       return { ok: false, error: `cannot read .claude-tweaks/policy.yml: ${err && err.message}` };
