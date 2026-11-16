@@ -56,6 +56,9 @@ test('#5595: an unlocated not-reproduced line (no :line) classifies with line nu
 test('#5595: a located not-reproduced line with a note keeps its line (the unlocated pattern never takes it)', () => {
   const noted = '- STAGED 18:13:35 — Reproduction: lens "3c" finding plugin/bin/lib/verify/changed-files.js:78 (exit-1 message says "no usable stamp anchor" under --ignore-stamp) not reproduced. Staged to Review Console as low-confidence. Reversibility: high.';
   assert.deepEqual(classifyPairLine(noted), { form: 'not-reproduced', lens: '3c', path: 'plugin/bin/lib/verify/changed-files.js', line: 78 });
+  // A line range: no strict located pattern reads it, so the loose one must, not the unlocated strict one.
+  assert.deepEqual(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding plugin/x.js:12-14 not reproduced. Staged to Review Console as low-confidence. ${R}`)),
+    { form: 'not-reproduced', lens: '3c', path: 'plugin/x.js', line: 12 });
   // A noted line with no location is no pair line (as before #5595).
   assert.equal(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding tests/x.test.js (no test for the guard) not reproduced. Staged to Review Console as low-confidence. ${R}`)), null);
 });
