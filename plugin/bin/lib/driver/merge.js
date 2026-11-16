@@ -982,10 +982,10 @@ function timeoutSignature(err) {
 }
 
 // One accept-park.js call. A throw reads as a reply with no exit code, so every caller fails closed.
-function acceptParkCli(s, args) {
+function acceptParkCli(s, args, timeout = CLI_TIMEOUT_MS) {
   const { ctx, deps } = s;
   try {
-    return deps.node(bin('accept-park.js'), args, { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+    return deps.node(bin('accept-park.js'), args, { cwd: ctx.mainCheckout, timeout, env: deps.env });
   } catch (err) {
     return { code: null, stdout: '', stderr: errorText(err) };
   }
@@ -1023,20 +1023,18 @@ function acceptPark(s) {
   if (parked.code !== 5) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js parked ${exitWords(parked)}; not merged`);
   const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, ...repo]);
   if (decided.code !== 0) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js decide ${exitWords(decided)}; not merged`);
+  // decide prints exactly one decision per --record: anything else is unusable, never a no-park.
   const d = parseJson(String(decided.stdout).trim());
-  const decisions = isObject(d) && Array.isArray(d.decisions) ? d.decisions : null;
-  const parking = decisions && decisions.filter((x) => isObject(x) && x.park === true);
-  if (!decisions || typeof d.park !== 'boolean' || d.park !== parking.length > 0
-    || !parking.every((x) => x.record === ctx.record)) {
+  const only = isObject(d) && Array.isArray(d.decisions) && d.decisions.length === 1 ? d.decisions[0] : null;
+  if (!isObject(only) || only.record !== ctx.record || typeof only.park !== 'boolean' || d.park !== only.park) {
     return stop(s, 'merge-accept-park', 'supplier-failed', 'accept-park.js decide printed an unusable decision; not merged');
   }
   if (!d.park) {
-    const consulted = decisions.some((x) => isObject(x) && x.consulted === true);
-    emit(s, 'merge-accept-park', 'ok', `not parked; no local park (${consulted ? 'target resolved' : 'control mode off'})`);
+    emit(s, 'merge-accept-park', 'ok', `not parked; no local park (${only.consulted === true ? 'target resolved' : 'control mode off'})`);
     return { ok: true };
   }
   const r = acceptParkCli(s, ['park', '--run', s.runDir, '--record', record, '--claimed', record, '--pr', String(ctx.pr),
-    '--head', ctx.head, '--worktree', ctx.worktree, '--worktree-mode', ctx.adopted ? 'caller' : 'remove', ...repo]);
+    '--head', ctx.head, '--worktree', ctx.worktree, '--worktree-mode', ctx.adopted ? 'caller' : 'remove', ...repo], PARK_TIMEOUT_MS);
   followParkedRunDir(s);
   const out = parseJson(String(r.stdout).trim());
   const failed = (isObject(out) && Array.isArray(out.steps) ? out.steps : [])
@@ -1045,8 +1043,11 @@ function acceptPark(s) {
   const failedNote = failed.length ? `; failed steps: ${failed.join('; ')}` : '';
   if (r.code !== 0) {
     const said = firstLine(r.stderr);
+    // A killed or unstarted call reports no step results: its later steps may have run.
+    const maybe = r.code === null || r.code === undefined
+      ? `; steps 3-5 may have run (the record may be parked): re-check with accept-park.js parked --record ${record}` : '';
     return stop(s, 'merge-accept-park', 'park-failed',
-      `accept-park.js park ${exitWords(r)}${said ? ` (${reduceDetail(said)})` : ''}${failedNote}; not merged`);
+      `accept-park.js park ${exitWords(r)}${said ? ` (${reduceDetail(said)})` : ''}${failedNote}${maybe}; not merged`);
   }
   return stop(s, 'merge-accept-park', 'awaiting-local-acceptance',
     `record #${record} parked for local acceptance at ${ctx.head}; PR #${ctx.pr} left open${failedNote}`);
@@ -1178,6 +1179,15 @@ async function confirm(s, unreadDetail = 'merge call exited 0; state unconfirmed
 
 // The reconcile call mirrors, checks the release and archives the run: it gets a long bound.
 const RECONCILE_TIMEOUT_MS = 150000;
+// The local acceptance park's bound (#4615): `accept-park.js park` runs its five steps in one
+// process, and its node children carry no inner timeout, so the bound is the sum of what each
+// step's calls would get as separate calls from here: the packet's gather, render and post (3 x
+// CLI_TIMEOUT_MS), the deploy-status edit and its decision line (1 x CLI_TIMEOUT_MS), close-run +
+// archive-run (RECONCILE_TIMEOUT_MS, the bound the reconcile that archives a merged run gets), the
+// claim release (1 x CLI_TIMEOUT_MS), and the forced worktree removal (`worktree list` + `worktree
+// remove`, 2 x the 30 s git default: PARK_GIT_BOUND_MS). 5 x 120 s + 150 s + 60 s = 810 s.
+const PARK_GIT_BOUND_MS = 2 * 30000;
+const PARK_TIMEOUT_MS = 5 * CLI_TIMEOUT_MS + RECONCILE_TIMEOUT_MS + PARK_GIT_BOUND_MS;
 const NOT_LOCKED = /not locked/i;
 
 // The ONLY git call site in this module: every git argv is a literal array passed here (the
@@ -1560,5 +1570,5 @@ function isReason(reason) {
 
 module.exports = {
   merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
-  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, PARK_TIMEOUT_MS,
 };

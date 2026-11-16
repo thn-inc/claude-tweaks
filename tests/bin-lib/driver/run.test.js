@@ -6127,7 +6127,9 @@ function mergeHarness(over = {}) {
       [isNode('ready-run.js'), { code: 0, stdout: `${JSON.stringify({ state: 'met', failing: [], draftSkipWithoutReadyTrigger: [] })}\n`, stderr: '' }],
       // The local acceptance park (#4615, pr-first-merge.md Step 2.9): not parked, no park.
       [isNode('accept-park.js', 'parked'), { code: 5, stdout: 'not-parked\n', stderr: '' }],
-      [isNode('accept-park.js', 'decide'), { code: 0, stdout: `${JSON.stringify({ park: false, decisions: [] })}\n`, stderr: '' }],
+      [isNode('accept-park.js', 'decide'), {
+        code: 0, stdout: `${JSON.stringify({ park: false, decisions: [{ record: 7, consulted: false, park: false, target: null, reason: null }] })}\n`, stderr: '',
+      }],
       [on('ghCreate', 'pr', 'merge'), ''],
       [isPrView(CONFIRM_FIELDS), JSON.stringify({
         state: 'MERGED', mergedAt: '2026-11-13T09:30:00Z', autoMergeRequest: null, statusCheckRollup: [GREEN_CHECK], mergeCommit: { oid: MERGE_SHA },

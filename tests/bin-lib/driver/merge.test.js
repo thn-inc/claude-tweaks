@@ -11,7 +11,7 @@ const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
   merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
-  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, PARK_TIMEOUT_MS,
 } = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { createJudgments } = require(path.join(LIB, 'driver', 'judgments'));
@@ -214,7 +214,8 @@ function defaultMergeScript(over, files, logs, applied) {
     [isAcceptPark('decide'), () => {
       const r = knob(over.decide);
       if (r instanceof Error) throw r;
-      return r || { code: 0, stdout: `${JSON.stringify({ park: false, decisions: [] })}\n`, stderr: '' };
+      // decide's real shape: one decision per --record (control mode off: consulted false).
+      return r || { code: 0, stdout: `${JSON.stringify({ park: false, decisions: [{ record: 7, consulted: false, park: false, target: null, reason: null }] })}\n`, stderr: '' };
     }],
     [(c) => isAcceptPark('park')(c) && over.park !== undefined, (c) => {
       const r = typeof over.park === 'function' ? over.park(c) : over.park;
@@ -3363,6 +3364,10 @@ test('AC3.7: a local control-mode target parks instead of merging', async () => 
   assert.deepEqual(parkCalls(h, 'decide')[0].args.slice(1), ['decide', '--run', CTX.runDir, '--record', '7', '--repo', 'o/r']);
   const [p] = parkCalls(h, 'park');
   assert.equal(flagOf(p, '--head'), CTX.head, 'the head the gate read');
+  // The park's own bound: the sum of its steps' bounds (5 CLI calls, the archive's reconcile bound, two git calls).
+  assert.equal(PARK_TIMEOUT_MS, 5 * 120000 + RECONCILE_TIMEOUT_MS + 2 * 30000);
+  assert.equal(p.timeout, PARK_TIMEOUT_MS);
+  assert.equal(parkCalls(h, 'decide')[0].timeout, 120000, 'decide keeps the ordinary CLI bound');
   assert.deepEqual(['--run', '--record', '--claimed', '--pr', '--repo'].map((f) => flagOf(p, f)), [CTX.runDir, '7', '7', '9', 'o/r']);
   // Step 2.9 sits after the gate (Step 2.5) and before Step 3's pre-merge label read.
   const at = (pred) => h.calls.findIndex(pred);
@@ -3399,6 +3404,10 @@ test('a failed park never merges', async () => {
   const r = await merge(CTX, threw.deps);
   assert.deepEqual([r.outcome, r.reason], ['pending-review', 'park-failed']);
   assert.equal(threw.calls.filter(isMergeCall).length, 0);
+  assert.match(r.detail, /steps 3-5 may have run .*re-check with accept-park\.js parked --record 7/);
+  // A park that exited with a code reported its steps: no "may have run" hedge.
+  const exited = mergeHarness({ decide: decideReply([LOCAL]), park: parkReply(1, [{ step: 1, name: 'packet', ok: false, detail: 'x' }]) });
+  assert.doesNotMatch((await merge(CTX, exited.deps)).detail, /may have run/);
 });
 
 test('a park whose later steps failed still parks and names each failed step', async () => {
@@ -3430,10 +3439,14 @@ test('a park that archived the run follows the run directory into the archive', 
 
 test('decide failing closed never merges', async () => {
   for (const reply of [decideReply([{ ...LOCAL, reason: 'invalid-input' }], 1), { code: 0, stdout: 'nope\n', stderr: '' },
-    { code: 0, stdout: '{"park":true,"decisions":[]}\n', stderr: '' }, new Error('spawn failed')]) {
+    { code: 0, stdout: '{"park":true,"decisions":[]}\n', stderr: '' }, new Error('spawn failed'),
+    // Another record's decision, an empty no-park and two decisions for one --record are all unusable.
+    decideReply([{ ...LOCAL, record: 8 }]), decideReply([{ ...LOCAL, record: 8, park: false }]), decideReply([]),
+    decideReply([{ ...LOCAL, park: false }, { ...LOCAL, park: false }])]) {
     const h = mergeHarness({ decide: reply });
     const r = await merge(CTX, h.deps);
     assert.deepEqual([r.outcome, r.reason], ['pending-review', 'supplier-failed'], String(reply.stdout || reply.message));
+    assert.equal(parkCalls(h, 'decide').length, 1);
     assert.equal(h.calls.filter(isMergeCall).length, 0);
     assert.equal(parkCalls(h, 'park').length, 0);
   }
