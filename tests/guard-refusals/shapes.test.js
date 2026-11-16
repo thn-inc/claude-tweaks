@@ -419,3 +419,23 @@ test('git-chained-status: unquoted and bare quoted $? after ; && ||, but not "ex
   assert.deepStrictEqual(detectShapes("git status; echo '$?'"), []);
   assert.deepStrictEqual(detectShapes('digit status; echo "$?"'), []);
 });
+
+// The chain is read on the line the text after `git<blank>` continues, as the regex form read it:
+// a `\n` right after the word starts that line; a `$?` before the separator, or on another line, is
+// not chained.
+test('git-chained-status: the separator and $? follow the git word on its own line', () => {
+  assert.deepStrictEqual(detectShapes('git\n; echo $?'), ['git-chained-status']);
+  assert.deepStrictEqual(detectShapes('git status\n; echo $?'), []);
+  assert.deepStrictEqual(detectShapes('echo $?; git status'), []);
+  assert.deepStrictEqual(detectShapes('echo x\ngit status; echo $?\necho y'), ['git-chained-status']);
+  assert.deepStrictEqual(detectShapes('gh pr view 1 --repo github.com/o/r\n&& echo $?'), []);
+});
+
+// The long single-line verdicts behind perf/guard-refusals-chained-status-linearity.test.js, which
+// holds the timing.
+test('chained status on a long line: no $? is not flagged, a trailing chained $? is', () => {
+  assert.ok(!detectShapes('git x; '.repeat(2000)).includes('git-chained-status'));
+  assert.ok(!detectShapes('gh x --repo github.com/o/r; '.repeat(1000)).includes('gh-jq-pipe-chained'));
+  assert.ok(detectShapes('git x; '.repeat(2000) + 'echo $?').includes('git-chained-status'));
+  assert.ok(detectShapes('gh x --repo github.com/o/r; '.repeat(1000) + 'echo $?').includes('gh-jq-pipe-chained'));
+});

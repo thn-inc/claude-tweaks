@@ -190,7 +190,44 @@ function wholeWord(word) {
 
 const GH_JQ_PIPE = new RegExp(`${CMD}gh\\s[^\\n]*--jq[\\s=]+(?:'[^']*\\|[^']*'|"[^"]*\\|[^"]*")`);
 const GH_REPO_URL = new RegExp(`${CMD}gh\\s[^\\n]*--repo[\\s=]+["']?(?:https?://)?github\\.com/`);
-const GH_CHAINED_STATUS = new RegExp(`${CMD}gh\\s[^\\n]*?(?:;|&&)[^\\n]*\\$\\?`);
+// Start of the latest `seps` separator that ends at or before the last `status` in text[start, end)
+// (one line), or -1.
+function latestSeparator(text, start, end, seps, status) {
+  if (end - start < status.length) return -1;
+  const at = text.lastIndexOf(status, end - status.length);
+  if (at < start) return -1;
+  for (let p = at - 1; p >= start; p -= 1) {
+    if (seps.some((s) => p + s.length <= at && text.startsWith(s, p))) return p;
+  }
+  return -1;
+}
+
+// True when a command-position `<word>\s` is chained by one of `seps` onto `status` on the line the
+// text after it continues: what `<word>\s[^\n]*?(?:seps)[^\n]*status` matches, without its
+// backtracking (seconds on 7,000 characters of `git x; `). The `\s` may be the `\n` itself, so the
+// chain is read from just past it. Each line's latest separator is computed once, when the first
+// match reaches that line (linear).
+function chainedStatus(word, seps, status) {
+  const command = new RegExp(`${CMD}${word}\\s`, 'g');
+  return (text) => {
+    command.lastIndex = 0;
+    let lineEnd = -1;
+    let sepAt = -1;
+    while (command.exec(text) !== null) {
+      const from = command.lastIndex;
+      if (from > lineEnd) {
+        const lineStart = text.lastIndexOf('\n', from - 1) + 1;
+        lineEnd = text.indexOf('\n', from);
+        if (lineEnd < 0) lineEnd = text.length;
+        sepAt = latestSeparator(text, lineStart, lineEnd, seps, status);
+      }
+      if (from <= sepAt) return true;
+    }
+    return false;
+  };
+}
+
+const GH_CHAINED_STATUS = chainedStatus('gh', [';', '&&'], '$?');
 const GIT_COMMAND = new RegExp(String.raw`(?:(?:^|[\s;&|(])|${CMD_POSITION}${PATH_PREFIX})git\s+[a-z]`, 'm');
 const GIT_IN_SUBSTITUTION = new RegExp(String.raw`\$\(\s*(?:${PATH_PREFIX})?git\s`);
 const NODE_EVAL_SCRIPT_VAR = new RegExp(`${CMD}node\\s+(?:-e|-p|--eval|--print)\\s+"[^"]*${VAR}`);
@@ -389,8 +426,8 @@ const GIT_C_DOT = new RegExp(`${CMD}git\\s+-C\\s+(?:\\.|"\\."|'\\.')(?=\\s|$)`, 
 const GIT_C_GLOB = new RegExp(`${CMD}git\\s+-C\\s+(?:"[^"]*"|'[^']*'|\\S+)[^;&|\\n]*[*?[]`, 'm');
 // A git command chained by ; && or || onto `$?` on one line: unquoted, or a
 // double-quoted word that is exactly "$?" ("exit=$?" runs).
-const GIT_CHAINED_STATUS = new RegExp(`${CMD}git\\s[^\\n]*?(?:;|&&|\\|\\|)[^\\n]*\\$\\?`);
-const GIT_CHAINED_QUOTED_STATUS = new RegExp(`${CMD}git\\s[^\\n]*?(?:;|&&|\\|\\|)[^\\n]*"\\$\\?"`);
+const GIT_CHAINED_STATUS = chainedStatus('git', [';', '&&', '||'], '$?');
+const GIT_CHAINED_QUOTED_STATUS = chainedStatus('git', [';', '&&', '||'], '"$?"');
 
 const DETECTORS = [
   {
@@ -413,7 +450,7 @@ const DETECTORS = [
   {
     id: 'gh-jq-pipe-chained',
     row: "`gh pr view 1 --repo o/r --json comments --jq '.comments[] \\| .id'; echo exit=$?`; `gh pr view 1 --repo github.com/o/r --json comments && echo exit=$?`",
-    test: (t) => (GH_JQ_PIPE.test(t) || GH_REPO_URL.test(t)) && GH_CHAINED_STATUS.test(stripQuoted(t)),
+    test: (t) => (GH_JQ_PIPE.test(t) || GH_REPO_URL.test(t)) && GH_CHAINED_STATUS(stripQuoted(t)),
   },
   {
     id: 'git-text-redirect-var',
@@ -443,7 +480,7 @@ const DETECTORS = [
   {
     id: 'git-chained-status',
     row: '`git merge-base --is-ancestor HEAD HEAD; echo exit=$?`',
-    test: (t) => GIT_CHAINED_STATUS.test(stripQuoted(t)) || GIT_CHAINED_QUOTED_STATUS.test(stripSingle(t)),
+    test: (t) => GIT_CHAINED_STATUS(stripQuoted(t)) || GIT_CHAINED_QUOTED_STATUS(stripSingle(t)),
   },
   {
     id: 'node-eval-script-var-with-git',
