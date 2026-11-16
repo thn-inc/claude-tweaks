@@ -1088,34 +1088,36 @@ test('property: a backslash-spelled double-quoted cd drops only when the shell l
 // The write gate reads the command text, so a rewrite must leave gitTargets,
 // fileWriteTargets and mkdirTargets exactly as they were.
 const { gitTargets, fileWriteTargets, mkdirTargets } = require('../../../plugin/bin/lib/hooks/git-command');
-const WRITE_CASES = [ // one writing command per rule that can write
-  { rule: 'drop-redundant-cd', command: `cd "${CWD}" && git commit -m x && mkdir d && echo a > f` },
-  { rule: 'inline-literal-assignment', command: 'P=/x; echo a > $P/f' },
-  { rule: 'plugin-root-placeholder', command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" > out.txt' },
-  { rule: 'node-eval-separator', command: `node -e ${EVAL} "$A" > out.txt` },
-  { rule: 'quote-escaped-space', command: 'echo a > /a/b\\ c' },
-  { rule: 'quote-exit-status', command: 'git commit -m x; echo exit=$? > log.txt' },
+const WRITE_CASES = [ // one writing command per rule that can write; families: the target lists it must fill
+  { rule: 'drop-redundant-cd', families: ['git', 'write', 'mkdir'], command: `cd "${CWD}" && git commit -m x && mkdir d && echo a > f` },
+  { rule: 'inline-literal-assignment', families: ['write'], command: 'P=/x; echo a > $P/f' },
+  { rule: 'plugin-root-placeholder', families: ['write'], command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" > out.txt' },
+  { rule: 'node-eval-separator', families: ['write'], command: `node -e ${EVAL} "$A" > out.txt` },
+  { rule: 'quote-escaped-space', families: ['write'], command: 'echo a > /a/b\\ c' },
+  { rule: 'quote-exit-status', families: ['git', 'write'], command: 'git commit -m x; echo exit=$? > log.txt' },
 ];
 function targetsOf(command) { return { git: gitTargets(command, CWD), write: fileWriteTargets(command, CWD), mkdir: mkdirTargets(command, CWD) }; }
-function assertSameTargets(rewrite) {
-  for (const { command } of [...POSITIVE, ...WRITE_CASES]) {
+function assertSameTargets(rewrite, cases = [...POSITIVE, ...WRITE_CASES]) {
+  for (const { command } of cases) {
     const out = rewrite(command);
     assert.ok(out, command);
     assert.deepStrictEqual(targetsOf(out.command), targetsOf(command), command);
   }
 }
 test('AC5.1, AC5.2: every rewrite keeps gitTargets, fileWriteTargets and mkdirTargets equal', () => {
-  for (const { rule, command } of WRITE_CASES) {
+  for (const { rule, command, families } of WRITE_CASES) {
     assert.deepStrictEqual(rw(command).applied, [rule], command);
     const t = targetsOf(command);
-    assert.ok(t.git.length + t.write.length + t.mkdir.length > 0, `vacuous: no targets for ${command}`);
+    for (const family of families) assert.ok(t[family].length > 0, `vacuous: no ${family} targets for ${command}`);
   }
   assertSameTargets(rw);
 });
-test('AC5.3: the invariance check goes red for a stub rule that drops a real cd sub &&', () => {
+test('AC5.3: assertSameTargets goes red for a stub rule that drops a real cd sub &&', () => {
   fs.mkdirSync(path.join(CWD, 'sub'), { recursive: true });
-  const dropCdSub = (c) => ({ command: c.replace('cd sub && ', ''), applied: ['stub'] });
-  assert.throws(() => { const c = 'cd sub && git commit -m x'; assert.deepStrictEqual(targetsOf(dropCdSub(c).command), targetsOf(c)); });
+  const dropCase = 'cd sub && git commit -m x';
+  const stub = (c) => (c === dropCase ? { command: c.replace('cd sub && ', ''), applied: ['stub'] } : rw(c));
+  assert.throws(() => assertSameTargets(stub, [{ command: dropCase }, ...WRITE_CASES]),
+    (e) => e instanceof assert.AssertionError && e.message.includes(dropCase));
 });
 
 // ── AC8: a rewrite carries no permission decision ────────────────────────────
