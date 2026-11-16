@@ -651,11 +651,12 @@ test('rowCommandNames reads the whole three-tag form and the record list', () =>
   assert.strictEqual(rowCommandNames(null, 3), false);
 });
 
-test('rowCommandNames stays linear on a huge unterminated argument string', () => {
-  const content = COMMAND('claude-tweaks:dispatch', '#3,'.repeat(200000)).slice(0, -'</command-args>'.length);
-  const start = process.hrtime.bigint();
-  assert.strictEqual(rowCommandNames(aRow({ message: { role: 'user', content } }), 3), false);
-  assert.ok(Number(process.hrtime.bigint() - start) / 1e6 < 2000);
+// The verdicts on huge arguments; their timing is perf/typed-command-linearity.test.js's.
+test('rowCommandNames answers on huge argument strings', () => {
+  const unterminated = COMMAND('claude-tweaks:dispatch', '#3,'.repeat(200000)).slice(0, -'</command-args>'.length);
+  assert.strictEqual(rowCommandNames(aRow({ message: { role: 'user', content: unterminated } }), 3), false);
+  const list = COMMAND('claude-tweaks:dispatch', `${'#4,'.repeat(200000)}#3`);
+  assert.strictEqual(rowCommandNames(aRow({ message: { role: 'user', content: list } }), 3), true);
 });
 
 test('loading typed-command.js loads neither the transcript reader nor the rule', () => {
