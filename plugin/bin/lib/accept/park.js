@@ -42,8 +42,7 @@ function parkStateOf(packetBody) {
 }
 
 // Inside the Deploy status section only: exactly one 'target: local', `reason:` and `park-head:`
-// line, written where the first target line stood (at the section's start when it had none).
-// Every other line, `ref:` included, stays.
+// line, written as a group at the section's start. Every other line, `ref:` included, stays.
 function writeParkDeployStatus(packetBody, { headSha } = {}) {
   if (typeof headSha !== 'string' || !HEAD_SHA_RE.test(headSha)) throw new TypeError(`park: headSha must be 7-64 lowercase hex: ${headSha}`);
   if (typeof packetBody !== 'string') throw new TypeError('park: packet body must be a string');
@@ -52,18 +51,16 @@ function writeParkDeployStatus(packetBody, { headSha } = {}) {
   if (range === null) throw new TypeError('park: packet has no Deploy status section');
   const eol = lines[range.start - 1].eol;
   const isParkLine = ({ text }) => PARK_LINE_RES.some((re) => re.test(text.trim()));
-  const firstTarget = lines.findIndex((line, index) => index >= range.start && index < range.end && ANY_TARGET_LINE_RE.test(line.text.trim()));
-  const at = firstTarget === -1 ? range.start : firstTarget;
+  const inSection = (index) => index >= range.start && index < range.end;
   const fresh = ['target: local', `reason: ${PARK_REASON}`, `park-head: ${headSha}`].map((text) => ({ text, eol }));
-  // No target line to replace: the group goes under the heading, a blank line before any text there.
-  if (firstTarget === -1 && at < range.end && lines[at].text.trim() !== '') fresh.push({ text: '', eol });
-  const out = [];
-  lines.forEach((line, index) => {
-    if (index === at) out.push(...fresh);
-    if (index >= range.start && index < range.end && isParkLine(line)) return;
-    out.push(line);
-  });
-  if (at >= lines.length) out.push(...fresh);
+  // The group leads the section, so the first TARGET_RE match packetStateOf finds is the one
+  // written here. A blank line separates it from whatever follows: text, a `---` rule (which would
+  // otherwise make the group a setext heading) or the next heading.
+  const kept = lines.filter((line, index) => !(inSection(index) && isParkLine(line)));
+  const keptStart = range.start;
+  const next = kept[keptStart] ?? null;
+  if (next !== null && next.text.trim() !== '') fresh.push({ text: '', eol });
+  const out = [...kept.slice(0, keptStart), ...fresh, ...kept.slice(keptStart)];
   const body = joinLines(out);
   return { body, changed: body !== packetBody };
 }

@@ -30,7 +30,7 @@
 const { SECTIONS, WITHHELD_TEXT, DEPLOY_REF_SOURCE, isDeployRef } = require('../wrap-up/packet-contract');
 const { dispositionState, APPROVAL_PROVENANCE_LABEL, APPROVAL_PROVENANCE_LABELS } = require('./acceptance');
 const { LABELS } = require('./record-vocabulary');
-const { parkFieldsOf } = require('../accept/park-grammar');
+const { TARGET_RE, parkFieldsOf } =require('../accept/park-grammar');
 const { findCredentialInText } = require('../wrap-up/packet-links');
 
 const PACKET_STATES = Object.freeze(['awaiting-local', 'waiting-for-deploy', 'live-on-dev', 'already-decided', 'no-packet', 'unhandled']);
@@ -46,7 +46,6 @@ const DEPLOY = headingOf('deploy');
 // Test-guide link whose dev deploy is not confirmed live.
 const NOT_RECORDED = 'not recorded';
 const UNVERIFIED_LINK = '(link unverified: deploy not confirmed live)';
-const TARGET_RE = /(?:^|\s)target:[ \t]*([^\s,]+)/;
 const NOT_CONFIRMED_RE = /\bnot confirmed live\b/;
 const CONFIRMED_RE = /\bconfirmed live\b/;
 // Any `ref:` line, which is never deploy content and never kept from a source's text; only

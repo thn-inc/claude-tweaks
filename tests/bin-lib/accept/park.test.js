@@ -193,6 +193,45 @@ test('with no target line the park group is separated from the text under it by 
   assert.equal(writeParkDeployStatus(out, { headSha: HEAD }).changed, false);
 });
 
+const readersOf = (body) => ({
+  park: parkStateOf(body),
+  state: packetStateOf({ packet: found(body), labels: ['accept:pending'] }).state,
+  predicate: isParkedForLocalAcceptance({ labels: ['accept:pending'], packet: found(body) }),
+});
+
+test('both readers agree when a mid-line `target: dev` precedes the target line', () => {
+  const body = '### Deploy status\nnote from a human: target: dev\ntarget: dev, confirmed live\n\nref: deadbeef\n';
+  const written = writeParkDeployStatus(body, { headSha: HEAD }).body;
+  const read = readersOf(written);
+  assert.equal(read.park.parked, true);
+  assert.equal(read.predicate, 'parked');
+  assert.equal(read.state, 'awaiting-local');
+  assert.equal(refreshPacket(written, { ref: '1234567abc', text: 'target: dev' }).refreshed.length, 0);
+  assert.match(written, /note from a human: target: dev/);
+});
+
+test('both readers agree on a `- target: local` line that parkStateOf once missed', () => {
+  const body = `### Deploy status\n- target: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\n`;
+  const read = readersOf(body);
+  assert.equal(read.state, 'awaiting-local');
+  assert.equal(read.park.target, 'local');
+  assert.equal(read.predicate, 'parked');
+});
+
+test('a mid-line target elsewhere in the section is read by both, never by parkStateOf alone', () => {
+  const body = `### Deploy status\nsee target: dev\nreason: ${PARK_REASON}\n`;
+  assert.equal(parkStateOf(body).target, 'dev');
+  assert.equal(packetStateOf({ packet: found(body), labels: [] }).state !== 'awaiting-local', true);
+});
+
+test('an empty Deploy status section ending at a --- rule keeps a blank line before the rule', () => {
+  const body = '### Deploy status\n---\nfooter\n';
+  const out = writeParkDeployStatus(body, { headSha: HEAD }).body;
+  assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\n\n---\nfooter\n`);
+  assert.equal(writeParkDeployStatus(out, { headSha: HEAD }).changed, false);
+  assert.equal(parkStateOf(out).parked, true);
+});
+
 test('with an empty Deploy status section no stray blank line is added', () => {
   const out = writeParkDeployStatus('### Deploy status\n', { headSha: HEAD }).body;
   assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\n`);
