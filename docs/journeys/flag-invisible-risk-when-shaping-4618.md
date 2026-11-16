@@ -93,7 +93,7 @@ files:
   - A new failure for a record with no flag line.
 
 ### 5. Read the Risk proofs section at acceptance
-- **URL:** the acceptance packet posted by `/claude-tweaks:wrap-up`, as shown by `/claude-tweaks:demo #N`
+- **URL:** the acceptance packet posted by `/claude-tweaks:wrap-up`, as shown by `/claude-tweaks:accept #N`
 - **Action:** Read the packet's Risk proofs section before giving a verdict.
 - **Should feel:** Honest. You can see what the plan promised for each risk and that nothing has yet run it, so you know what to verify yourself.
 - **Should understand:**
