@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { runCli } = require('../../helpers/run-cli');
-const { appendStop, appendWait, stopsPath } = require('../../../plugin/bin/lib/wait-for/marker');
+const { appendStop, appendWait, stopsPath, waitsPath } = require('../../../plugin/bin/lib/wait-for/marker');
 
 const CLI = path.resolve(__dirname, '../../../plugin/bin/wait-for.js');
 const MARKER_JS = path.resolve(__dirname, '../../../plugin/bin/lib/wait-for/marker.js');
@@ -246,6 +246,27 @@ test('two undelivered finals deliver once', async (t) => {
   assert.equal(r2.code, 3, r2.stderr);
 });
 
+test('two overlapping agents calls: the call whose delivered line lands second keeps waiting', async (t) => {
+  const dir = tmp(t);
+  appendStop(SID, final('x'), { tmpDir: dir });
+  const wp = waitsPath(SID, { tmpDir: dir });
+  const realWrite = fs.writeSync;
+  let raced = false;
+  t.mock.method(fs, 'writeSync', (fd, data, ...rest) => {
+    if (!raced && typeof data === 'string' && data.includes('"kind":"delivered"')) {
+      raced = true;
+      fs.appendFileSync(wp, JSON.stringify({ kind: 'delivered', agentId: 'x', stop: 0, claim: 'the-other-call' }) + '\n');
+    }
+    return realWrite(fd, data, ...rest);
+  });
+  const r = await call(['agents', '--ids', 'x', '--max-seconds', '3'], { c: clock(T), dir });
+  assert.equal(raced, true, 'the other call appended first');
+  assert.equal(r.code, 3, r.stderr);
+  assert.equal(r.out.bound, 'call');
+  assert.deepEqual(r.out.reported, []);
+  assert.deepEqual(r.out.pending, ['x']);
+});
+
 test('the done close: a call that reports every listed id closes its window', async (t) => {
   const dir = tmp(t);
   const c = clock(T);
@@ -269,7 +290,7 @@ test('AC10.2: a missing marker file runs to the bound with stops 0', async (t) =
   assert.equal(r.out.stops, 0);
 });
 
-test('AC10.3: a symlink or a directory at the marker path exits 2 and is not read', async (t) => {
+test('AC10.3: a symlink or a directory at the marker path exits 2 and is not read', { skip: process.platform === 'win32' && 'creating a symlink needs a privilege on win32' }, async (t) => {
   const dir = tmp(t);
   const p = stopsPath(SID, { tmpDir: dir });
   const argv = ['agents', '--ids', 'a', '--max-seconds', '3'];

@@ -35,6 +35,7 @@
 // Targets are a seam: TARGETS maps a target name to { key(opts), poll(ctx) }, and
 // poll returns { changed, state, extra } where `extra` is merged into the output.
 
+const { randomBytes } = require('crypto');
 const { readStops, readWaits, appendWait, isFinalStop, SESSION_ID_RE } = require('./marker');
 
 const DEFAULT_MAX_SECONDS = 100;
@@ -142,10 +143,20 @@ const agents = {
     for (const s of stops) {
       if (isFinalStop(s) && s.index > (delivered[s.agentId] ?? -1)) newest[s.agentId] = Math.max(newest[s.agentId] ?? -1, s.index);
     }
-    const reported = opts.ids.filter((id) => Object.hasOwn(newest, id));
-    const pending = opts.ids.filter((id) => !Object.hasOwn(newest, id));
+    const candidates = opts.ids.filter((id) => Object.hasOwn(newest, id));
+    if (candidates.length === 0) return { changed: false, state: 'pending', extra: { reported: [], pending: [...opts.ids], stops: count } };
+    // Two overlapping calls can both read a stop as undelivered. Each appends its own
+    // `delivered` line carrying a random claim; appends are atomic and ordered, so the
+    // first line for a stop decides which call returns it and the other keeps waiting.
+    const claim = randomBytes(8).toString('hex');
+    for (const id of candidates) appendWait(sessionId, { kind: 'delivered', agentId: id, stop: newest[id], claim }, { tmpDir });
+    const firstClaim = {};
+    for (const w of readWaits(sessionId, { tmpDir })) {
+      if (w.kind === 'delivered' && w.stop === newest[w.agentId] && !Object.hasOwn(firstClaim, w.agentId)) firstClaim[w.agentId] = w.claim;
+    }
+    const reported = candidates.filter((id) => firstClaim[id] === claim);
+    const pending = opts.ids.filter((id) => !reported.includes(id));
     if (reported.length === 0) return { changed: false, state: 'pending', extra: { reported, pending, stops: count } };
-    for (const id of reported) appendWait(sessionId, { kind: 'delivered', agentId: id, stop: newest[id] }, { tmpDir });
     if (pending.length === 0) appendWait(sessionId, { kind: 'close', window, reason: 'done', at: Math.floor(deps.now() / 1000) }, { tmpDir });
     return { changed: true, state: 'reported', extra: { reported, pending, stops: count } };
   },

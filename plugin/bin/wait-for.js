@@ -19,7 +19,7 @@ const { execFileSync } = require('child_process');
 const { performance } = require('perf_hooks');
 const lib = require('./lib/wait-for');
 const { isPidAlive } = require('./lib/suite-slot');
-const { ghOptions } = require('./lib/repo-resolve');
+const { ghOptions, injectedGhDeps } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 // One CI read. { pr } -> the `pr-checks.js --pr` envelope; { run } -> `gh run view`'s
@@ -34,7 +34,7 @@ function runner(query, { cwd, env, timeoutMs }) {
     return JSON.parse(execFileSync(process.execPath, [path.join(__dirname, 'pr-checks.js'), '--pr', String(query.pr)], { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs, windowsHide: true }));
   }
   const args = ['run', 'view', String(query.run), '--json', 'status,conclusion'];
-  return JSON.parse(execFileSync('gh', args, ghOptions(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: Math.min(timeoutMs, GH_TIMEOUT_MS), windowsHide: true })));
+  return JSON.parse(execFileSync('gh', args, ghOptions(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: Math.min(timeoutMs, GH_TIMEOUT_MS), windowsHide: true }, injectedGhDeps({ env }))));
 }
 
 const realDeps = {

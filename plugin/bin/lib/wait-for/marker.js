@@ -7,7 +7,7 @@
 //   ct-agent-waits-{sessionId}.jsonl   one line per wait-record event:
 //       {"kind":"open","window","target","key","openedAt","deadline","n"[,"ids"]}
 //       {"kind":"close","window","reason":"deadline"|"done"}
-//       {"kind":"delivered","agentId","stop"}
+//       {"kind":"delivered","agentId","stop","claim"}   claim: the appending call's random token
 //
 // Lines are appended and never rewritten. Nothing deletes either file — the OS
 // clears its temp directory. The stop line's field meanings are a contract
@@ -51,6 +51,14 @@ function formatStop({ agentId, at, blocked, pending }) {
   return JSON.stringify({ agentId, at, blocked, pending }) + '\n';
 }
 
+// The file names are predictable and live in a temp dir another user may share,
+// so a file that user created first is refused on both sides: the reader would
+// take forged final-stop lines for ours, and the writer would hand ours to them.
+// A platform with no process.getuid (Windows) has per-user temp dirs and skips it.
+function foreignOwner(st) {
+  return typeof process.getuid === 'function' && BigInt(st.uid) !== BigInt(process.getuid());
+}
+
 // One writeSync of one line to an append-only, no-follow fd. A missing
 // O_NOFOLLOW (Windows) contributes 0. O_NONBLOCK makes a FIFO with no reader
 // fail with ENXIO instead of hanging the caller; regular files ignore it.
@@ -59,6 +67,7 @@ function appendLine(p, line, constants) {
     constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0);
   const fd = fs.openSync(p, flags, 0o600);
   try {
+    if (foreignOwner(fs.fstatSync(fd))) throw new MarkerFileError('not-owned', p);
     fs.writeSync(fd, line);
   } finally {
     fs.closeSync(fd);
@@ -107,6 +116,7 @@ function readLines(p, constants) {
     if (!opened.isFile() || opened.dev !== current.dev || opened.ino !== current.ino) {
       throw new MarkerFileError('replaced', p);
     }
+    if (foreignOwner(opened)) throw new MarkerFileError('not-owned', p);
     text = fs.readFileSync(fd, 'utf8');
   } finally {
     fs.closeSync(fd);

@@ -69,7 +69,7 @@ test('readers throw TypeError for an invalid session id', (t) => {
   assert.throws(() => readWaits('a.b', { tmpDir }), TypeError);
 });
 
-test('AC10.3: a symlink, a dangling one included, is refused unread', (t) => {
+test('AC10.3: a symlink, a dangling one included, is refused unread', { skip: process.platform === 'win32' && 'creating a symlink needs a privilege on win32' }, (t) => {
   const tmpDir = tmp(t);
   const real = path.join(tmpDir, 'real.jsonl');
   fs.writeFileSync(real, STOP_X);
@@ -169,8 +169,28 @@ test('the writer refuses a symlink where O_NOFOLLOW exists', { skip: typeof fs.c
   const victim = path.join(tmpDir, 'victim.txt');
   fs.writeFileSync(victim, 'untouched');
   fs.symlinkSync(victim, stopsPath('s1', { tmpDir }), 'file');
-  assert.throws(() => appendStop('s1', { agentId: 'x', at: 1, blocked: false, pending: 0 }, { tmpDir }));
+  assert.throws(() => appendStop('s1', { agentId: 'x', at: 1, blocked: false, pending: 0 }, { tmpDir }), { code: /^(ELOOP|EMLINK)$/ });
   assert.equal(fs.readFileSync(victim, 'utf8'), 'untouched');
+});
+
+test('a marker file another user owns is refused by the reader and the writer', { skip: typeof process.getuid !== 'function' && 'no getuid on this platform' }, (t) => {
+  const tmpDir = tmp(t);
+  const p = stopsPath('s1', { tmpDir });
+  fs.writeFileSync(p, STOP_X);
+  const real = fs.fstatSync;
+  t.mock.method(fs, 'fstatSync', (fd, opts) => {
+    const st = real(fd, opts);
+    return { isFile: () => st.isFile(), dev: st.dev, ino: st.ino, uid: typeof st.uid === 'bigint' ? st.uid + 1n : st.uid + 1 };
+  });
+  assert.throws(
+    () => readStops('s1', { tmpDir }),
+    (e) => e instanceof MarkerFileError && e.reason === 'not-owned' && e.path === p,
+  );
+  assert.throws(
+    () => appendStop('s1', { agentId: 'y', at: 2, blocked: false, pending: 0 }, { tmpDir }),
+    (e) => e instanceof MarkerFileError && e.reason === 'not-owned' && e.path === p,
+  );
+  assert.equal(fs.readFileSync(p, 'utf8'), STOP_X, 'the other user\'s file was not written');
 });
 
 test("the reader's swap check refuses a replaced file", (t) => {
