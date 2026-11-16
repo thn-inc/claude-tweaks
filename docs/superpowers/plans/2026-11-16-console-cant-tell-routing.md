@@ -16,8 +16,9 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
 
 - New closed-vocabulary value, exactly `needs-verification`. It is appended to the end of `DEFER_REASONS`, so no existing value moves or changes meaning, and it clears the floor (`STRUCTURED_FLOOR['needs-verification'] = true`).
 - The digest `Defer-reason` for a can't-tell `drop` stays `tiebreak-cant-tell` (it is an entry-format value, not a `DEFER_REASONS` member).
-- Human-present Approve-all behaviour is unchanged: `findingItems`, `approveAllDefault`, and `console-filings.js --only` plan every named item as `filed`, exactly as today.
-- A confirmed-finding filing (`verdict.kind === 'confirmed'`) and a staged-finding filing keep their current shape, byte for byte. Only the can't-tell shape changes.
+- Human-present Approve-all behaviour is unchanged (AC5, read literally): `findingItems`, `approveAllDefault`, and `console-filings.js --only` plan every named item as `filed`, and the proposal they compose is today's `needs:definition` / Open Question shape, byte for byte. The verification-task shape is opt-in through `composeFindingProposal({ ..., unattended: true })`. Only the unattended callers pass it: `resolveAll`, `console-filings.js`'s default (no `--only`) selection, and the backfill.
+- A confirmed-finding filing (`verdict.kind === 'confirmed'`) and a staged-finding filing keep their current shape, byte for byte. Only the unattended can't-tell shape changes.
+- The unattended verification task files with no `Labels:` header line (Decision-rule choice: it stays inside the Key Files, and `/backlog refine` triages it like any new record). The PR body states this choice.
 - `resolveAll` and `console-filings.js` never call `gh`. The skill posts the digest lines.
 - Commits use the `{Verb} {what} — {detail}` style and end with `refs #4679`. Never write `closes`/`fixes` in a commit.
 - CI runs Node 20. A test that asserts a path must not hard-code `/`-joined absolute paths.
@@ -38,6 +39,8 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
 - Modify: `plugin/bin/lib/issues/record-payload.js` (`DEFER_REASONS`)
 - Modify: `plugin/bin/lib/issues/autonomy.js` (`STRUCTURED_FLOOR` and its comment)
 - Modify: `plugin/skills/_shared/deferral-gate.md` (vocabulary block, "same six values" → "same seven values", floor-mapping table)
+- Modify: `plugin/skills/_shared/autonomy-ceiling.md` (the "Floor rule (ledger narrowing)" text and table around line 231, and the `ledgerRouteRemainder` row's "four-category floor"; now five categories, `needs-verification` included)
+- Modify: `plugin/skills/_shared/ledger-format.md` (line 182, "outside the four categories")
 - Test: `tests/bin-lib/issues/record.test.js`, `tests/bin-lib/issues/autonomy.test.js`, `tests/deferral-gate-conformance.test.js` (must stay green with no edit to its logic)
 
 **Interfaces:**
@@ -54,7 +57,8 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
 **Files:**
 - Modify: `plugin/bin/lib/console/finding-filing.js`
 - Modify: `plugin/bin/lib/console/backfill-dispose.js` (import `areaOfPath` from finding-filing instead of defining it)
-- Test: `tests/bin-lib/console/finding-filing.test.js`
+- Modify: `plugin/bin/lib/health-core/materiality-digest.js` (`DEDUP_MARKER` also matches `console-finding`, so a digest rollover carries and tombstones the marker like the other two)
+- Test: `tests/bin-lib/console/finding-filing.test.js`, `tests/bin-lib/health-core/materiality-digest.test.js`
 
 **Interfaces:**
 - Consumes: Task 1's `needs-verification`.
@@ -63,11 +67,14 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
   - `areaOfPath(p: string) -> string`, moved verbatim from backfill-dispose.js.
   - `consoleFindingMarker(fp: string) -> string`, which returns `<!-- console-finding: ${fp} -->`.
   - `composeFindingDigest({ item, finding, runId }) -> { fingerprint, line, entry, claimMissing }`. `fingerprint` is the same `findingFingerprint` that `composeFindingProposal` computes for the item. `entry` is `{ area: areaOfPath(t.path), finding: <oneLine claim, max 200 chars>, fileRefs: citation(t.path, t.line), deferReason: 'tiebreak-cant-tell', provenance: runId }`. `line` is `${materialityEntryLine(entry)} ${consoleFindingMarker(fingerprint)}`.
+  - `composeFindingProposal({ item, finding, runId, verdict?, staged?, unattended? })` and `planFilings({ items, findings, runId, unattended? })`. `unattended: true` selects the verification-task shape for a can't-tell item (neither `verdict` nor `staged`). When it is absent or false, the output is byte-identical to today's.
   - `planDigests({ items, findings, runId }) -> [{ item, fingerprint, line, claimMissing }]` returns one entry per item with `resolution === 'digested'` that carries `tiebreak`, deduplicated by fingerprint (first wins), in the same way as `planFilings`.
   - `heldConsoleFindings(digestComments) -> Set<string>` returns the `consolefinding-*` fingerprints whose marker appears in a trusted comment (`isTrustedComment`), or in the whole string when `digestComments` is a string (a local-files body). Anything else returns an empty Set.
 
 - [ ] **Step 1: Write the failing tests.** In `finding-filing.test.js`, using the file's existing item and finding builders:
   - `can't-tell proposal is a verification task (#4679 AC2)`. A can't-tell item with recommendation `file` must produce a proposal with no `Labels:` header line, no `needs:definition` anywhere, and no `## Open Question`. It must contain `Defer-reason: needs-verification` and an `## Acceptance Criteria` section that holds the literal phrases `integration-branch tip` and the cited `` `path:line` ``. Also assert `/quot/i` (the criterion requires quoted evidence) and `close this record`.
+  - `without unattended the can't-tell proposal is unchanged (AC5)`. The same item with no `unattended` keeps `Labels: needs:definition`, `## Open Question`, and `Defer-reason: needs-human-decision`.
+  - `materiality-digest: a rollover carries and tombstones the console-finding marker` (in `materiality-digest.test.js`). Model it on that file's existing `consolebackfill-item` rollover test.
   - `confirmed proposal is unchanged`. Pin the existing confirmed-shape snapshot (`Labels: needs:definition` and `Defer-reason: needs-human-decision` are still present on the confirmed shape).
   - `composeFindingDigest: line carries the materiality entry and the consolefinding marker`. Assert `line.includes('Defer-reason: tiebreak-cant-tell')`, assert `line.endsWith(consoleFindingMarker(fingerprint))`, and assert that `fingerprint === composeFindingProposal({...same item}).fingerprint`.
   - `composeFindingDigest: claim-missing item still marks its fingerprint` (finding `null`). Expect `claimMissing: true`, a fingerprint matching `/^consolefinding-[0-9a-f]{8}$/`, and no throw.
@@ -75,13 +82,13 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
   - `heldConsoleFindings ignores an untrusted comment`. A comment `{ body: line, authorAssociation: 'NONE' }` gives an empty set, `'MEMBER'` gives a set containing the fingerprint, and a plain string body is trusted.
 - [ ] **Step 2: Run and see them fail.** Run `node --test tests/bin-lib/console/finding-filing.test.js`. Expected: FAIL (the exports are undefined, and the proposal still carries Open Question).
 - [ ] **Step 3a: Check the header consumer.** Before you drop the `Labels:` line, read `plugin/skills/wrap-up/review-console.md` step 7's check-then-create and `plugin/skills/_shared/github-write-transport.md`'s header parsing. Confirm that a proposal header with no `Labels:` line creates a record with no labels. If a consumer requires the line, keep it as `Labels:` with no value only when that consumer accepts it; otherwise omit the line and note the consumer in your report.
-- [ ] **Step 3: Implement.** In `composeFindingProposal`, give the can't-tell branch only (`!confirmed`):
+- [ ] **Step 3: Implement.** In `composeFindingProposal`, give the can't-tell branch with `unattended: true` only (`!confirmed && !staged && unattended`):
   - Deliverables `- [ ] at the integration-branch tip, quote the code at \`${where}\` and state whether the finding holds; fix it if it does, or close this record with that quoted evidence if it does not`.
   - `acceptanceCriteria` with two lines: `- [ ] the record quotes the code at \`${where}\` as it reads at the integration-branch tip`, then `- [ ] the finding is fixed there, or this record is closed with that quoted evidence showing it does not hold`.
   - `deferReason: CANT_TELL_DEFER_REASON` in both `recordPayload` and the provenance.
   - A header with no `Labels:` line.
 
-  The confirmed and staged branches keep `needs-human-decision` and `Labels: needs:definition`. Update the module header comment, which currently says "not licensed to drop", to describe the new routing. Move `areaOfPath` from backfill-dispose.js into this file and require it back there.
+  The confirmed and staged branches, and every call without `unattended`, keep `needs-human-decision` and `Labels: needs:definition`. Add `console-finding` to `DEDUP_MARKER` (`/<!-- (?:materiality-fingerprint|consolebackfill-item|console-finding): \S+? -->/g`). `heldConsoleFindings` reads the markers with a regex built from the same prefix, never a second hand-written pattern. Update the module header comment, which currently says "not licensed to drop", to describe the new routing. Move `areaOfPath` from backfill-dispose.js into this file and require it back there.
 - [ ] **Step 4: Run.** Run `node --test tests/bin-lib/console/finding-filing.test.js tests/bin-lib/console/backfill-dispose.test.js tests/bin-lib/console/shadow-dup-proposal.test.js`. Expected: PASS.
 - [ ] **Step 5: Revert-proof.** Revert only the `finding-filing.js` change (`git stash` is forbidden, so copy the file aside with `cp -p` and restore it with `git show HEAD:plugin/bin/lib/console/finding-filing.js`), re-run, and confirm the two #4679 tests go red. Then restore the file.
 - [ ] **Step 6: Commit.** `Compose can't-tell filings as verification tasks and add digest lines — refs #4679`
@@ -112,7 +119,7 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
   - `residue.test.js`: `DIGESTED_LINE_RE anchors on - AUTO` (a STAGED line does not match). Also `pendingDigests: console.json without digests yields none`, `pendingDigests: a digests entry with no digested line is digest-pending`, and `a digested or already-digested AUTO line clears it`.
   - `finding-outcomes.test.js`: `unfiledCantTell: a digested drop item is not unfiled`. Build a run whose decisions.md holds the drop verdict plus `- AUTO 10:00:00 — Queue write: {id} digested (work-fingerprint {fp}). Reversibility: n/a.`, and expect `[]`. Without that line the item is still listed.
 - [ ] **Step 2: Run and see them fail.** Run `node --test tests/bin-lib/console/resolve.test.js tests/bin-lib/console/residue.test.js tests/bin-lib/console/finding-outcomes.test.js`. Expected: FAIL.
-- [ ] **Step 3: Implement** the Interfaces above. In `resolveAll`, map tiebreak items by `it.tiebreak.recommendation === 'drop'`, then compute `filings = planFilings(...)` and `digests = planDigests(...)`. In console-resolve.js, strip `line` from `digests` the way it strips `proposal` from filings, and write `digests` into console.json and the `--json` output. `findingItems` and `approveAllDefault` stay untouched (update only the comment text that says "not licensed to drop").
+- [ ] **Step 3: Implement** the Interfaces above. In `resolveAll`, map tiebreak items by `it.tiebreak.recommendation === 'drop'`, then compute `filings = planFilings({ ..., unattended: true })` and `digests = planDigests(...)`. `finding-outcomes.js`'s fingerprint call needs no `unattended`, because the fingerprint does not depend on the shape. In console-resolve.js, strip `line` from `digests` the way it strips `proposal` from filings, and write `digests` into console.json and the `--json` output. `findingItems` and `approveAllDefault` stay untouched (update only the comment text that says "not licensed to drop").
 - [ ] **Step 4: Run.** Run `node --test tests/bin-lib/console/ tests/console-resolve-conformance.test.js tests/reconcile-archive-residue.test.js tests/bin-lib/hooks/session-residue.test.js`. Expected: PASS.
 - [ ] **Step 5: Revert-proof.** Restore resolve.js and residue.js from `HEAD` into a copy, then confirm AC1 and the `unfiledCantTell` test go red. Restore the files.
 - [ ] **Step 6: Commit.** `Route unattended can't-tell drops to the digest and accept digested evidence — refs #4679`
@@ -129,14 +136,14 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
 - Consumes: Task 2's `planDigests`, `heldConsoleFindings`, and `composeFindingDigest`; Task 3's evidence-line wording.
 - Produces:
   - A new optional flag `--digest-comments <file>`. It takes a JSON array of comment objects (`{ body, authorAssociation | author_association, url? }`) or a JSON string (a local-files `specs/digest.md` body). It is refused, with exit 2, alongside `--list`/`--fyi`, and when unreadable or neither an array nor a string.
-  - The default selection (no `--only`) routes each can't-tell item with `tiebreak.recommendation === 'drop'` to the digest and files every other item. `--only` keeps today's behaviour exactly: every named item plans `filed`.
+  - The default selection (no `--only`) routes each can't-tell item with `tiebreak.recommendation === 'drop'` to the digest, and files every other item with `planFilings({ ..., unattended: true })`. `--only` keeps today's behaviour exactly: every named item plans `filed` in today's shape (no `unattended`).
   - The output JSON gains `digest: [{ item, fingerprint }]`, `digestDeduped: [{ item, fingerprint }]`, and `digestFile: <path> | null`. `digestFile` is `<out-dir>/console-digest.md`, which holds every non-deduped digest line, one per line, and is written only when `digest` is non-empty.
   - For each `digestDeduped` entry, the CLI appends `AUTO … Queue write: {item} already digested (work-fingerprint {fp}). Reversibility: n/a.` (the same `appendDecision` path and `logFailures` handling as deduped filings).
 
 - [ ] **Step 1: Write the failing tests.**
   - `default selection digests a drop item and files a file item (#4679)`: `file` has one entry and `digest` has one, the digest file holds a line with `tiebreak-cant-tell`, and the file proposal holds no `needs:definition`.
   - `--digest-comments dedups a drop item already held by a trusted comment (#4679 AC3)`: `digestDeduped` has one entry, `digestFile` is null, and decisions.md gains the `already digested` line. No proposal is written for it.
-  - `--only keeps every named item filed`: a named drop item lands in `file`.
+  - `--only keeps every named item filed in today's shape (AC5)`: a named drop item lands in `file`, and its proposal still carries `Labels: needs:definition`.
   - `--digest-comments with --list is a usage error (exit 2)`.
 - [ ] **Step 2: Run and see them fail.** Run `node --test tests/bin-lib/console/console-filings-cli.test.js`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Update the header comment's "whatever the tiebreak recommended" sentence and the USAGE text.
@@ -145,13 +152,15 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
 
 ### Task 5: backfill routes a can't-tell drop to the digest
 
+**Review risk:** high (decision logic: `disposeFinding` branches on the verdict's recommendation)
+
 **Files:**
 - Modify: `plugin/bin/lib/console/backfill-dispose.js` (`disposeFinding` case `'console'`; `findingDigest` appends `consoleFindingMarker` when the item has a claim; `heldDigestComment` also matches that marker)
 - Test: `tests/bin-lib/console/backfill-dispose.test.js`
 
 **Interfaces:**
 - Consumes: Task 2's `consoleFindingMarker` and `findingFingerprint`.
-- Produces: `disposeFinding` with `verdict.outcome === 'console' && verdict.recommendation === 'drop'` returns a digest result with `DIGEST_REASONS.CANT_TELL`. A `console` verdict with any other recommendation still files, now through the verification-task shape (via Task 2).
+- Produces: `disposeFinding` with `verdict.outcome === 'console' && verdict.recommendation === 'drop'` returns a digest result with `DIGEST_REASONS.CANT_TELL`. A `console` verdict with any other recommendation still files, now through the verification-task shape: `findingProposal` passes `unattended: true` to `composeFindingProposal` on the can't-tell path only. Confirmed and staged keep their shapes.
 
 - [ ] **Step 1: Write the failing tests.** Add `a console verdict recommending drop digests as tiebreak-cant-tell, never files (#4679)`, and `planBatch: a drop item whose consolefinding marker a trusted comment holds settles as a digest duplicate`.
 - [ ] **Step 2: Run and see them fail.** Run `node --test tests/bin-lib/console/backfill-dispose.test.js`. Expected: FAIL.
@@ -194,7 +203,7 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
 - Consumes: Task 3's log-line wording, Task 4's `--digest-comments`/`digestFile`, and Task 6's `--digested`.
 
 - [ ] **Step 1: Find every restatement.** Run `git grep -n -i -e "licensed to drop" -e "recommendation notwithstanding" -e "whatever the tiebreak recommended" -e "whatever it recommended" -- plugin docs tests`. Every hit outside `.claude-tweaks/pipelines/archive/` (historical run artifacts, left as they are) is in scope.
-- [ ] **Step 2: Rewrite each hit** to state the new rule: at unattended, a `drop`-recommended can't-tell item is digested (`tiebreak-cant-tell`, deduplicated by its `consolefinding` marker), and every other item files as a `needs-verification` task. In console-execution.md, the unattended wiring runs `console-filings.js` with no `--only` for the run's finding rows. It ticks the rows that come back under `file`/`deduped` and passes the rows under `digest`/`digestDeduped` to `resolve-console --digested`, once their digested lines are logged. In materiality-floor.md, add one sentence recording that #4679 reverses #3949's "not licensed to drop" ruling, with the evidence: 50 of 53 `needs:definition` records were these filings, 41 carried `Recommendation: drop`, and the other 9 settled in under a minute each by an agent with quoted evidence.
+- [ ] **Step 2: Rewrite each hit** to state the new rule: at unattended, a `drop`-recommended can't-tell item is digested (`tiebreak-cant-tell`, deduplicated by its `consolefinding` marker), and every other item files as a `needs-verification` task. In console-execution.md, the unattended wiring runs `console-filings.js` with no `--only` for the run's finding rows. It ticks the rows that come back under `file`/`deduped` and passes the rows under `digest`/`digestDeduped` to `resolve-console --digested`, once their digested lines are logged. A CLI entry's `item` is a console item id: the row passed is the one whose `findingItem` equals it, named by that row's own `id`. In materiality-floor.md, also rewrite the two rationale sentences that the new vocabulary value makes stale. They are the "Deliberately **not** in `DEFER_REASONS` — an unverified finding never failed fix-now" sentence, and the "every other value in that vocabulary answers why fix-now failed" framing. Say that `needs-verification` is the filed verification task's reason, and that the digest entry keeps `tiebreak-cant-tell`, an entry-format value outside the vocabulary. In materiality-floor.md, add one sentence recording that #4679 reverses #3949's "not licensed to drop" ruling, with the evidence: 50 of 53 `needs:definition` records were these filings, 41 carried `Recommendation: drop`, and the other 9 settled in under a minute each by an agent with quoted evidence.
 - [ ] **Step 3: Run the prose suites.** Run `node --test tests/console-resolve-conformance.test.js tests/materiality-floor-conformance.test.js tests/review-tiebreak-step-conformance.test.js tests/deferral-gate-conformance.test.js tests/console-execute.test.js tests/reconcile-archive-residue.test.js tests/bin-lib/reconcile/escalate-residue.test.js`. Fix any pinned text to the new wording. Expected: PASS.
 - [ ] **Step 4: Run AC4's grep.** Run `git grep -n -i -e "licensed to drop" -e "its recommendation notwithstanding" -- . ":!.claude-tweaks/pipelines/archive"`. Expected: no output.
 - [ ] **Step 5: Commit.** `Describe the unattended can't-tell routing in the console contracts — refs #4679`
