@@ -152,10 +152,25 @@ function trimChangelog(text, count, { sha, repoUrl } = {}) {
     });
   }
 
-  // Strip only trailing newlines and whitespace-only lines: spaces ending the last content
-  // line (a Markdown hard break) are section bytes, not gap.
-  const kept = text.slice(0, sections[count].index).replace(/(?:\n[ \t]*)+$/, '');
+  const kept = cutTrailingGap(text.slice(0, sections[count].index));
   return { text: `${kept}\n\n${footerText}`, removed };
+}
+
+// Drop the trailing gap: the last content line's terminator (LF or CRLF) and every
+// whitespace-only line after it. Spaces and tabs ending the last content line (a Markdown
+// hard break) are section bytes and stay. One backward pass with no regex — a regex for the
+// run restarts at every newline of a run in the middle of the text (quadratic, #5563).
+function cutTrailingGap(s) {
+  let cut = s.length;
+  let i = s.length;
+  while (i > 0) {
+    const c = s[i - 1];
+    if (c === '\n') cut = i - 1;
+    else if (c !== ' ' && c !== '\t' && c !== '\r') break;
+    i -= 1;
+  }
+  if (cut < s.length && s[cut - 1] === '\r') cut -= 1;
+  return s.slice(0, cut);
 }
 
 // Any line that LOOKS like a `## v...` version heading, however malformed —

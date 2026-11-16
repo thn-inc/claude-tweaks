@@ -515,3 +515,44 @@ test('extractChangelogRange with a malformed oldVersion throws no more than befo
   // A valid oldVersion on the footer-only file still computes partial.
   assert.strictEqual(extractChangelogRange(footerOnly, '1.0.1', '9.9.9').partial, true);
 });
+
+test('a hand-edited footer with no Newest release removed line: extractChangelogRange does not throw and partial is false', () => {
+  const once = trimChangelog(sixty().text, 50, { sha: SHA_A }).text;
+  const edited = once.replace(/^Newest release removed: v\d+\.\d+\.\d+\n\n/m, '');
+  assert.strictEqual(parseChangelogFooter(edited).newestRemoved, null);
+  const range = extractChangelogRange(edited, '1.0.5', '1.0.60');
+  assert.strictEqual(range.length, 50);
+  assert.strictEqual(range.partial, false);
+});
+
+test('a CRLF changelog keeps its one-blank-line gap before the footer, and a CR is gap whitespace', () => {
+  const text = '# Changelog\r\n\r\n## v1.0.3 — c\r\n\r\nbody c\r\n\r\n## v1.0.2 — b\r\n\r\nbody b\r\n\r\n## v1.0.1 — a\r\n\r\nbody a\r\n';
+  const r = trimChangelog(text, 2, { sha: SHA_A });
+  assert.deepStrictEqual(r.removed, ['1.0.1']);
+  assert.ok(r.text.includes('body b\n\n## Older releases'), JSON.stringify(r.text.slice(-400, -300)));
+  assert.ok(r.text.startsWith('# Changelog\r\n\r\n## v1.0.3 — c\r\n\r\nbody c\r\n\r\n## v1.0.2 — b\r\n\r\nbody b\n\n'));
+  // Spaces before a CRLF stay with the content line; only the terminator and the blank lines go.
+  const hardBreak = text.replace('body b\r\n', 'body b  \r\n');
+  assert.ok(trimChangelog(hardBreak, 2, { sha: SHA_A }).text.includes('body b  \n\n## Older releases'));
+});
+
+test('the trim gap cut matches the pre-CR regex cut on every short LF-only tail', () => {
+  // Differential against round 1's `(?:\n[ \t]*)+$` over every tail of length 1-7 drawn from
+  // the gap alphabet (the tail must end in \n so the next heading starts a line).
+  const oldCut = (s) => s.replace(/(?:\n[ \t]*)+$/, '');
+  const alphabet = [' ', '\t', '\n'];
+  let tails = [''];
+  let checked = 0;
+  for (let len = 1; len <= 6; len += 1) {
+    tails = tails.flatMap((t) => alphabet.map((c) => t + c));
+    for (const t of tails) {
+      const prefix = `# C\n\n## v1.0.2 — b\n\nX${t}\n`;
+      const text = `${prefix}## v1.0.1 — a\n`;
+      const r = trimChangelog(text, 1, { sha: SHA_A });
+      const idx = parseChangelogFooter(r.text).index;
+      assert.strictEqual(r.text.slice(0, idx), `${oldCut(prefix)}\n\n`, JSON.stringify(t));
+      checked += 1;
+    }
+  }
+  assert.strictEqual(checked, 3 + 9 + 27 + 81 + 243 + 729);
+});
