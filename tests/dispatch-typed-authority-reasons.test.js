@@ -86,6 +86,11 @@ function assertLinesQuoted(notes) {
     assert.ok(section.includes(`\`${line}\``), `the Typed command section does not quote: ${line}`);
   }
   assert.match(section.replace(/\s+/g, ' '), /A typed command writes no label/, 'the section must say a typed command writes no label');
+  // The separator the section states is the one the composer joins two reason words with.
+  const sep = /joined with `([^`]+)`/.exec(section);
+  assert.ok(sep, 'the section must state how the reason words are joined');
+  const two = formatAuthorityLine(1, { authority: 'none', reasons: ['remote', 'hub-run'] });
+  assert.ok(two.includes(`(remote${sep[1]}hub-run)`), `the stated separator \`${sep[1]}\` is not the one in: ${two}`);
 }
 
 test('the section quotes every line the named path prints, the composed ones built through formatAuthorityLine', () => {
@@ -99,6 +104,9 @@ test('the section quotes every line the named path prints, the composed ones bui
   const noLabelClause = NOTES.split('A typed command writes no label').join('A typed command writes the label');
   assert.notEqual(noLabelClause, NOTES);
   assert.throws(() => assertLinesQuoted(noLabelClause), { message: /writes no label/ });
+  const otherSep = NOTES.split('joined with `, `').join('joined with `; `');
+  assert.notEqual(otherSep, NOTES);
+  assert.throws(() => assertLinesQuoted(otherSep), { message: /stated separator/ });
 });
 
 // ---- SKILL.md and headless-self-report.md: the retired claims ----
