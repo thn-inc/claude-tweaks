@@ -636,8 +636,8 @@ function keptPathValues(seg, run, plan) {
 const JS_SCRIPT_RE = /\.(?:js|mjs|cjs)$/;
 
 // The index of the script operand of a `node`, `bash`, `sh` or `zsh` program: its first non-option word
-// (-1 when node runs inline code: no file at all, and its stdin is data), or null (no operand: the program
-// reads its script from stdin).
+// (-1 when node runs inline code or a shell its `-c` text: no file at all, and its stdin is data), or null
+// (no operand: the program reads its script from stdin).
 function scriptOperand(seg, prog) {
   const { t } = seg;
   const isNode = NODE_NAMES.has(seg.name(prog.at));
@@ -648,7 +648,14 @@ function scriptOperand(seg, prog) {
       if (seg.isRedirectOp(i)) i += 1;
       continue;
     }
-    if (w === '--') return i + 1 < prog.end ? i + 1 : null;
+    if (w === '--') {
+      // The first word after it that is no redirection, or none: then the script comes from stdin.
+      for (let j = i + 1; j < prog.end; j += 1) {
+        if (!seg.isRedirect(j)) return j;
+        if (seg.isRedirectOp(j)) j += 1;
+      }
+      return null;
+    }
     if (isNode) {
       if (w.length > 1 && w[0] === '-') {
         if (INLINE_CODE_OPTIONS.has(w.split('=')[0])) return -1;
@@ -656,6 +663,8 @@ function scriptOperand(seg, prog) {
         continue;
       }
     } else if (SHELL_CLUSTER_RE.test(w)) {
+      // A `-c` shell runs its text, so it has no script operand, and its stdin is data.
+      if (w[0] === '-' && w.includes('c')) return -1;
       i += optionValueCount(w);
       continue;
     } else if (w.startsWith('--')) {
@@ -702,24 +711,30 @@ function collectScript(seg, prog, segCwd, ctx) {
     word = program;
     kind = JS_SCRIPT_RE.test(program) ? 'js' : (program.endsWith('.sh') ? 'shell' : 'auto');
   }
-  if (word !== null) ctx.scripts.push({ word, kind, abs: ctx.pathImpl.resolve(segCwd, word) });
+  if (word !== null) ctx.scripts.push({ word, kind, abs: ctx.pathImpl.resolve(segCwd, word), cwd: segCwd });
 }
+
+const ENV_VALUE_OPTIONS = new Set(['-u', '--unset', '-C', '--chdir', '-P']);
 
 // 'js' or 'shell' for a script whose first line is a `#!` naming node or a shell (directly or through
 // `env`), else null: any other interpreter, or no `#!` line, is no script to scan.
 function kindFromShebang(text) {
-  const m = /^#![ \t]*([^\r\n]*)/.exec(text);
+  const m = typeof text === 'string' ? /^#![ \t]*([^\r\n]*)/.exec(text) : null;
   if (!m) return null;
   const words = m[1].split(/[ \t]+/).filter(Boolean);
   let program = path.posix.basename(words[0] || '');
   if (program === 'env') {
-    // env's own options (`-S`, `-i`, `-u NAME`, `--`) and `NAME=value` words come before the interpreter.
+    // env's own options (`-S`, `-i`, `-u NAME`, `-P DIR`, `--`) and `NAME=value` words come before the
+    // interpreter. `-S` starts a split string, glued to it (`-Snode`) or after it, quoted or not.
     let i = 1;
     while (i < words.length && (words[i].startsWith('-') || ASSIGNMENT_RE.test(words[i]))) {
-      const valued = words[i] === '-u' || words[i] === '--unset' || words[i] === '-C' || words[i] === '--chdir';
-      i += valued ? 2 : 1;
+      if (/^-S./.test(words[i])) {
+        words[i] = words[i].slice(2);
+        break;
+      }
+      i += ENV_VALUE_OPTIONS.has(words[i]) ? 2 : 1;
     }
-    program = i < words.length ? path.posix.basename(words[i]) : '';
+    program = i < words.length ? path.posix.basename(words[i].replace(/^["']|["']$/g, '')) : '';
   }
   if (NODE_NAMES.has(program)) return 'js';
   return SHELLS.has(program) ? 'shell' : null;
@@ -821,6 +836,8 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirUnknown: false, typedD
     const run = readRun(seg, prog.at, prog.end, state.loops);
     if (!run) continue;
     if (ctx.mode === 'detect') {
+      // Given the file-system answers (a script's scan), a run outside the runner's reach is no match.
+      if (ctx.hasRunner && segCwd !== null && !placeRun(run.operands.flatMap((i) => seg.wordsOf(i)), segCwd, ctx)) continue;
       state.found = true;
       ctx.hits.push(t.slice(prog.at, run.end).map((_, i) => seg.render(prog.at + i)).join(' '));
       continue;
@@ -853,12 +870,13 @@ function classifyCommand(command, options) {
 }
 
 // The text of the first direct test run among the command segments of `text` (shell wrappers included, a
-// single-file run too), or null. Never throws: an unreadable text is no run.
-function findDirectTestRun(text, { cwd, pathImpl = path } = {}) {
+// single-file run too), or null. Given `hasRunner` and `isDirectory`, a run outside the runner's reach
+// (placeRun) is skipped. Never throws: an unreadable text is no run.
+function findDirectTestRun(text, { cwd, hasRunner, isDirectory, pathImpl = path } = {}) {
   try {
     if (typeof text !== 'string' || text === '') return null;
     const hits = [];
-    walk(text, cwd || '.', { mode: 'detect', depth: 0, repeated: false, callCwd: cwd || '.', pathImpl, hits });
+    walk(text, cwd || '.', { mode: 'detect', depth: 0, repeated: false, callCwd: cwd || '.', hasRunner, isDirectory, pathImpl, hits });
     return hits.length ? hits[0] : null;
   } catch (_) {
     return null;
@@ -874,27 +892,44 @@ const QUOTES = '\'"`';
 const NODE_CODE_RE = /process\s*\.\s*(?:execPath|argv0)\b|process\s*\.\s*argv\s*\[\s*0\s*\]|process\s*\.\s*env\s*\.\s*npm_node_execpath\b/g;
 const CHILD_PROCESS_NAMES = new Set(['child_process', 'node:child_process']);
 
-// Whether a string literal's whole content names a node program.
+// Whether a string literal's whole content names a node program (`node@20`, the npx package, included).
 function isNodeName(body) {
-  return body === 'node' || body === 'node.exe' || body.endsWith('/node') || body.endsWith('/node.exe');
+  return body === 'node' || body === 'node.exe' || body.endsWith('/node') || body.endsWith('/node.exe') || /^node@[^\s/]+$/.test(body);
 }
 
-// The node reference of a JavaScript text that starts node --test itself, as found, or null. Reads the
-// text with comments removed and string literals read as literals: stripComments's `blank` form
-// (plugin/bin/lib/strip-comments.js) blanks comments and literal bodies, keeping delimiters and offsets, so
-// a quote character the same in the text and in that form is a real delimiter, and what is code is what
-// that form leaves. All three must hold: a string literal whose
-// whole content is `--test`, a `child_process` reference (in code, or a module-name literal), and a node
-// program (`process.execPath`, `process.argv[0]`, `process.argv0`, or a literal naming node).
-function matchJs(text) {
-  const { stripComments } = require('../plugin/bin/lib/strip-comments'); // lazy: most calls scan no script
-  const keep = text;
-  const blank = stripComments(text, { literals: 'blank' });
+// The string and template literals of a JavaScript text, `{ at, body, text }`: `text` as typed, `body` its
+// content, a template's `${…}` parts each replaced by `$__` (an unresolved shell expansion). `keep` is the
+// text and `blank` stripComments's blank form of it, where a delimiter and a template's `${…}` code stay
+// as typed and literal text is blanked.
+function jsLiterals(keep, blank) {
   const isDelimiter = (i) => QUOTES.includes(keep[i]) && blank[i] === keep[i];
   const literals = [];
   for (let i = 0; i < keep.length; i += 1) {
     if (!isDelimiter(i)) continue;
     let j = i + 1;
+    if (keep[i] === '`') {
+      let body = '';
+      let depth = 0;
+      for (; j < keep.length; j += 1) {
+        if (depth > 0) {
+          // Code inside `${…}`: only its own braces count (a brace in a nested literal is blanked).
+          if (blank[j] === '{') depth += 1;
+          else if (blank[j] === '}') depth -= 1;
+        } else if (keep[j] === '`' && isDelimiter(j)) {
+          break;
+        } else if (blank[j] === '$' && blank[j + 1] === '{') {
+          depth = 1;
+          j += 1;
+          body += '$__';
+        } else {
+          body += keep[j];
+        }
+      }
+      if (j >= keep.length) break;
+      literals.push({ at: i, body, text: keep.slice(i, j + 1) });
+      i = j;
+      continue;
+    }
     while (j < keep.length && !isDelimiter(j)) j += 1;
     if (j >= keep.length) break;
     if (keep[j] === keep[i]) {
@@ -902,26 +937,52 @@ function matchJs(text) {
       i = j;
     }
   }
-  if (!literals.some((l) => l.body === '--test')) return null;
+  return literals;
+}
+
+// What makes a JavaScript text one that starts node --test itself, or null: `{ ref }` or `{ literal }`.
+// Reads the text with comments removed and string literals read as literals: stripComments's `blank` form
+// (plugin/bin/lib/strip-comments.js) blanks comments and literal bodies, keeping delimiters and offsets, so
+// a quote character the same in the text and in that form is a real delimiter, and what is code is what
+// that form leaves. A `child_process` reference (in code, or a module-name literal) must hold, and then
+// either an argument array (`ref`: a string literal whose whole content is `--test` and a node program,
+// `process.execPath`, `process.argv[0]`, `process.argv0` or a literal naming node, the first one found) or
+// a command string (`literal`: a string or template literal whose content, read as shell text, holds a
+// direct test run, quoted as typed and cut at 120 characters).
+function matchJs(text) {
+  const { stripComments } = require('../plugin/bin/lib/strip-comments'); // lazy: most calls scan no script
+  const keep = text;
+  const blank = stripComments(text, { literals: 'blank' });
+  const literals = jsLiterals(keep, blank);
   if (!/\bchild_process\b/.test(blank) && !literals.some((l) => CHILD_PROCESS_NAMES.has(l.body))) return null;
-  const found = literals.filter((l) => isNodeName(l.body)).map((l) => ({ at: l.at, ref: l.text }));
-  for (const m of blank.matchAll(NODE_CODE_RE)) found.push({ at: m.index, ref: keep.slice(m.index, m.index + m[0].length) });
-  if (!found.length) return null;
-  return found.reduce((a, b) => (b.at < a.at ? b : a)).ref;
+  if (literals.some((l) => l.body === '--test')) {
+    const found = literals.filter((l) => isNodeName(l.body)).map((l) => ({ at: l.at, ref: l.text }));
+    for (const m of blank.matchAll(NODE_CODE_RE)) found.push({ at: m.index, ref: keep.slice(m.index, m.index + m[0].length) });
+    if (found.length) return { ref: found.reduce((a, b) => (b.at < a.at ? b : a)).ref };
+  }
+  for (const l of literals) {
+    if (!l.body.includes('node') || !l.body.includes('test')) continue; // every direct test run names both
+    if (findDirectTestRun(l.body, { cwd: '/', pathImpl: path.posix }) !== null) return { literal: l.text.slice(0, 120) };
+  }
+  return null;
 }
 
 // The line naming what a script text matched, or null when it starts no node --test. `kind` 'js': see
-// matchJs. `kind` 'shell': any direct test run (a script is a repeatable run by nature, so a single-file one
-// is enough), named by its text trimmed to 120 characters. Never throws.
-function matchScript(text, kind, { cwd, pathImpl = path } = {}) {
+// matchJs. `kind` 'shell': any direct test run in the runner's reach (a script is a repeatable run by
+// nature, so a single-file one is enough), its `cd`s read from `cwd`, the directory the script runs from,
+// named by its text trimmed to 120 characters. Never throws.
+function matchScript(text, kind, { cwd, hasRunner, isDirectory, pathImpl = path } = {}) {
   try {
     if (typeof text !== 'string') return null;
     if (kind === 'js') {
-      const ref = matchJs(text);
-      return ref === null ? null : `Matched in the script: the string literal '--test', a child_process reference, and a node program (${ref}).`;
+      const m = matchJs(text);
+      if (m === null) return null;
+      return m.ref !== undefined
+        ? `Matched in the script: the string literal '--test', a child_process reference, and a node program (${m.ref}).`
+        : `Matched in the script: a string literal that runs node --test as a command, and a child_process reference (${m.literal}).`;
     }
     if (kind === 'shell') {
-      const run = findDirectTestRun(text, { cwd, pathImpl });
+      const run = findDirectTestRun(text, { cwd, hasRunner, isDirectory, pathImpl });
       return run === null ? null : `Matched in the script: ${run.slice(0, 120)}`;
     }
     return null;
@@ -948,14 +1009,20 @@ function scriptReason(word, matched) {
     '',
     'In JavaScript: spawnSync(process.execPath, [\'tools/run-tests.js\', ...flags, ...files], { cwd: checkoutRoot }). The exit code and stdout are node\'s own.',
     'In a checkout older than this guard, write the files to a list and use: node tools/run-tests.js --files-from <list>',
+    'If the script does not start a test run, the match is on its text: see the Matched line above.',
   ].join('\n');
 }
 
+// How much of a by-path program of unknown kind is read to find its `#!` line.
+const HEAD_BYTES = 256;
+
 // The hook's verdict for one PreToolUse payload: `{ decision: 'allow' }` or `{ decision: 'deny', reason }`.
-// `deps` is { hasRunner, isDirectory, readScript(absPath) -> string|null, pathImpl }. A non-Bash call, or one
-// outside a checkout holding tools/run-tests.js, is allowed. Lets any error through (judge catches it).
+// `deps` is { hasRunner, isDirectory, isFile, readScript(absPath) -> string|null, readHead(absPath, bytes)
+// -> string|null, pathImpl }; without readHead a by-path program is read whole to find its first line. A
+// non-Bash call, or one outside a checkout holding tools/run-tests.js, is allowed. Lets any error through
+// (judge catches it).
 function judgeOrThrow(payload, deps) {
-  const { hasRunner, readScript, pathImpl = path } = deps;
+  const { hasRunner, isDirectory, readScript, readHead, pathImpl = path } = deps;
   if (!payload || payload.tool_name !== 'Bash') return ALLOW();
   const command = payload.tool_input && payload.tool_input.command;
   const cwd = payload.cwd;
@@ -966,15 +1033,20 @@ function judgeOrThrow(payload, deps) {
 
   const ctx = { mode: 'scripts', depth: 0, repeated: false, callCwd: cwd, pathImpl, scripts: [] };
   walk(command, cwd, ctx);
-  for (const { word, kind, abs } of ctx.scripts) {
+  for (const { word, kind, abs, cwd: scriptCwd } of ctx.scripts) {
     const root = hasRunner(pathImpl.dirname(abs));
     if (root) {
       const first = toSlash(pathImpl.relative(root, abs), pathImpl).split('/')[0];
       if (SKIPPED_SCRIPT_DIRS.has(first)) continue;
     }
+    // A program of unknown kind is read past its first line only when that line names node or a shell.
+    let scanKind = kind;
+    if (kind === 'auto') {
+      scanKind = kindFromShebang(typeof readHead === 'function' ? readHead(abs, HEAD_BYTES) : readScript(abs));
+      if (scanKind === null) continue;
+    }
     const text = readScript(abs);
-    const scanKind = kind === 'auto' ? kindFromShebang(text) : kind;
-    const matched = matchScript(text, scanKind, { cwd: pathImpl.dirname(abs), pathImpl });
+    const matched = matchScript(text, scanKind, { cwd: scriptCwd, hasRunner, isDirectory, pathImpl });
     if (matched !== null) return { decision: 'deny', reason: scriptReason(word, matched) };
   }
   return ALLOW();
@@ -1033,6 +1105,24 @@ function realDeps() {
         return fs.readFileSync(p, 'utf8');
       } catch (_) {
         return null;
+      }
+    },
+    // The first `bytes` bytes of a regular file as text, else null.
+    readHead(p, bytes) {
+      let fd = null;
+      try {
+        if (!fs.statSync(p).isFile()) return null;
+        fd = fs.openSync(p, 'r');
+        const buf = Buffer.alloc(bytes);
+        return buf.toString('utf8', 0, fs.readSync(fd, buf, 0, bytes, 0));
+      } catch (_) {
+        return null;
+      } finally {
+        if (fd !== null) {
+          try {
+            fs.closeSync(fd);
+          } catch (_) { /* nothing to do */ }
+        }
       }
     },
   };
