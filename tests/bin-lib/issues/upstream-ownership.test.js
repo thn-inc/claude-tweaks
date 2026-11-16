@@ -126,6 +126,13 @@ test('AC10.1: an owner outside the grammar never matches, in any input slot', ()
   assert.strictEqual(isValidOwner(''), false);
 });
 
+test('the repo-name bound is 100 characters: 100 parses, 101 never does', () => {
+  assert.deepStrictEqual(parseTargetRepo(`thn-inc/${'n'.repeat(100)}`), { owner: 'thn-inc', name: 'n'.repeat(100) });
+  assert.strictEqual(parseTargetRepo(`thn-inc/${'n'.repeat(101)}`), null);
+  assert.strictEqual(owned(`thn-inc/${'n'.repeat(101)}`), false);
+  assert.strictEqual(owned(`thn-inc/${'n'.repeat(100)}`), true);
+});
+
 test('origin parsing: the AC3 origin shapes, an enterprise host and a fork', () => {
   for (const origin of [
     'git@github.com:thn-inc/claude-tweaks.git',

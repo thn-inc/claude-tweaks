@@ -10,9 +10,8 @@ contract — filed when the staged draft carries a `**Causal:** systemic` tag, d
 the same way, also without a call here — see `review-console.md`'s Auto-resolution
 short-circuit) — none of
 which restates these rules inline (CLAUDE.md's cross-reference rule: every relationship stated
-once). Under control mode ownership replaces only the default: neither the Override drill nor
-Approve all files a held item, checked or not, and an unchecked item is still declined, owned or
-not (`review-console.md`'s step 9 routes each one).
+once). Under control mode ownership decides each item instead of the default, per
+`review-console.md`'s step 9, which states that rule.
 
 ## Rendering
 

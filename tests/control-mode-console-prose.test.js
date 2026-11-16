@@ -642,3 +642,28 @@ test('#4621 go-red: a layout whose marker or Title prefix drifts from the parser
   assert.ok(noPrefix.includes("the layout's title parses as null"), noPrefix.join('; '));
   assert.deepStrictEqual(stagedLayoutProblems(UPSTREAM_FEEDBACK.replace('<!-- upstream-target:', '<!-- target:')), ['wrap-up/upstream-feedback.md documents no staged layout block']);
 });
+
+// Under control mode /claude-tweaks:feedback --pre-confirmed holds an item rather than asking: a scrub stop, and a drift
+// mismatch that would otherwise fall back to AskUserQuestion, each run step 9's --hold scrub-hit call (#4621).
+const PRE_CONFIRMED = readText(path.join(__dirname, '..', 'plugin', 'skills', 'feedback', 'pre-confirmed.md'));
+const PRE_CONFIRMED_CLAIMS = [
+  ["Under control mode this stop also runs the `--hold scrub-hit` call of `wrap-up/review-console.md`'s step 9 for the item against that owning run dir", 'pre-confirmed.md does not hold a scrub stop with --hold scrub-hit'],
+  ['Under control mode a mismatch never falls back to `AskUserQuestion`: file nothing for the item and run the `--hold scrub-hit` call of `wrap-up/review-console.md`\'s step 9 against that owning run dir, with `{why}` `scrub changed the approved draft`', 'pre-confirmed.md does not hold a drift mismatch with --hold scrub-hit instead of asking'],
+];
+
+function preConfirmedProblems(text) {
+  const t = flat(text);
+  return PRE_CONFIRMED_CLAIMS.filter(([needle]) => !t.includes(flat(needle))).map(([, message]) => message);
+}
+
+test('#4621: feedback/pre-confirmed.md holds a scrub stop and a drift mismatch under control mode', () => {
+  assert.deepStrictEqual(preConfirmedProblems(PRE_CONFIRMED), []);
+});
+
+for (const [needle, message] of PRE_CONFIRMED_CLAIMS) {
+  test(`#4621 go-red: ${message}`, () => {
+    const t = flat(PRE_CONFIRMED);
+    assert.ok(t.includes(flat(needle)), 'the claim must exist to be removed');
+    assert.deepStrictEqual(preConfirmedProblems(t.split(flat(needle)).join('[removed]')), [message]);
+  });
+}
