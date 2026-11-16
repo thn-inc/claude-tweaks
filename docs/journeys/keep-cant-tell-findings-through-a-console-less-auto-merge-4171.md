@@ -6,6 +6,8 @@ files:
   - plugin/bin/hooks.js
   - plugin/skills/wrap-up/auto-merge-short-circuit.md
   - plugin/skills/dispatch/settle-and-merge.md
+  - plugin/bin/lib/console/finding-filing.js
+  - plugin/bin/lib/console/residue.js
 ---
 
 # Keep Can't-Tell Findings Through a Console-Less Auto-Merge
@@ -80,4 +82,5 @@ files:
 
 ## Origin
 - Created during the build of #4171: the short-circuit's and bundle gate's Can't-tell findings step, `console-filings.js --fyi`, `finding-outcomes.js`, and the `cant-tell-unfiled` archive guard in reconcile and `archive-run`.
+- Updated during the build of #4679. At `unattended`, a `drop`-recommended can't-tell finding goes to the materiality digest under its `console-finding` marker and is no longer filed. Every other can't-tell finding files as an agent-buildable verification task instead of a `needs:definition` record. A digested line now settles the archive guard just as a filed line does.
 - Related journeys: `settle-every-review-finding-at-the-console-3949.md` covers the same findings when a console renders. `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md` covers the neighbouring `tiebreak-coverage-missing` refusal.
