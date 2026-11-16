@@ -13,6 +13,7 @@ const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches } = requ
 const { subagentsDirFor, readDispatches } = require('./transcript');
 const { readManifest } = require('../flow/manifest');
 const { resolveAgainst } = require('../health-core/io');
+const { canonicalRealpath } = require('../path-guard');
 const { priorWorktree } = require('../run-state-worktree');
 
 function readEvents(file) {
@@ -107,10 +108,12 @@ function runWindow(runDir, events, runState) {
 // window is eventWindow's (no event with a ts -> the whole session), or the given
 // { window } (deriveTiming's run window when it clips). Subagents dirs are deduped by fs.realpathSync (path.resolve when
 // the dir does not resolve) so a transcript passed twice, or reached through a
-// symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
+// symlinked alias, is not double-counted. worktree (the run's, or null) reaches
+// readUsage, so a subagent's reads key as the main rows do. -> the timing.json
+// `dispatches` value, before stripInternalFields.
 // { deadlineAt, signal } (both optional): past the deadline, or once the signal
 // aborts, reading stops and the result is null (not a dispatches value).
-async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given } = {}) {
+async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given, worktree = null } = {}) {
   const window = given === undefined ? eventWindow(events) : given;
   // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
   // link and refuses it instead of reading wherever it points.
@@ -124,7 +127,7 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
   let excludedOutsideWindow = 0;
   let found = 0;
   for (const dir of dirs) {
-    const r = await bounded(deadlineAt, signal, (sig) => readDispatches(dir, sig ? { window, signal: sig } : { window }));
+    const r = await bounded(deadlineAt, signal, (sig) => readDispatches(dir, sig ? { window, worktree, signal: sig } : { window, worktree }));
     if (r.hit) return null;
     reasons.push(...r.value.dirNotes);
     if (r.value.notFound) { reasons.push(r.value.notFound); continue; }
@@ -143,6 +146,30 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
   // A dir that yielded nothing beside one that did is still named, not dropped.
   if (reasons.length) out.notFoundDirs = reasons;
   return out;
+}
+
+// (dispatches, transcript paths, cwd) -> joinTokens' dispatchFileReads (#4359):
+// every item's procedureFileRows, in item order. An item whose transcript is
+// one of the run's own --transcript paths (realpath on both sides, path.resolve
+// when that fails) is skipped: its reads are already main rows.
+function dispatchFileReads(dispatches, paths, cwd) {
+  if (!dispatches || !Array.isArray(dispatches.items)) return [];
+  const real = (p) => { const abs = path.resolve(cwd, p); return canonicalRealpath(abs) || abs; };
+  const own = new Set(paths.map(real));
+  const reads = [];
+  for (const item of dispatches.items) {
+    if (!Array.isArray(item.procedureFileRows)) continue;
+    if (typeof item.transcriptPath === 'string' && own.has(real(item.transcriptPath))) continue;
+    reads.push(...item.procedureFileRows);
+  }
+  return reads;
+}
+
+// The dispatches value as timing.json carries it: each item without
+// procedureFileRows and transcriptPath, which only dispatchFileReads reads.
+function stripInternalFields(dispatches) {
+  if (!dispatches || !Array.isArray(dispatches.items)) return dispatches;
+  return { ...dispatches, items: dispatches.items.map(({ procedureFileRows: _rows, transcriptPath: _path, ...item }) => item) };
 }
 
 // runDir -> { ok: true, timing, out, events, runState } | { ok: false, error }.
@@ -176,7 +203,9 @@ function derivePhaseTiming(runDir) {
 // so a run counts all of its own calls and none of another run sharing its
 // session transcript (#5555); a row with no parseable ts is dropped, and nothing
 // bounding the run means no clipping. phase-timing.js never passes it.
-async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given, clipToRunWindow = false } = {}) {
+// worktree (default: the run-state's, see below) is the root the transcripts'
+// procedure reads key against; phase-timing.js's buildTiming passes its caller's.
+async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given, clipToRunWindow = false, worktree: givenWorktree } = {}) {
   const base = given || derivePhaseTiming(runDir);
   if (!base.ok) return base;
   const { timing, out, events, runState } = base;
@@ -186,7 +215,7 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
 
   const read = readUsageImpl || ((p, o) => require('./transcript').readUsage(p, o));
   // A closed run has worktree null; worktreeAtClose keeps the path (#3023).
-  const worktree = priorWorktree(runState);
+  const worktree = givenWorktree !== undefined ? givenWorktree : priorWorktree(runState);
   const at = cwd === undefined ? process.cwd() : cwd;
   const hit = () => ({ ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: true });
   const transcripts = [];
@@ -214,11 +243,11 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
     }
     rows = rows.concat(kept);
   }
-  // Computed before the join: each workflow agent's start places it in a phase's subagents.
-  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip } : { deadlineAt });
+  // Computed before the join: each workflow agent's start places it in a phase's subagents (#5597).
+  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip, worktree } : { deadlineAt, worktree });
   if (dispatches === null) return hit();
   const workflowStarts = (dispatches.items || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
-  const tokens = joinTokens(out.phases, rows, workflowStarts);
+  const tokens = joinTokens(out.phases, rows, workflowStarts, { dispatchFileReads: dispatchFileReads(dispatches, transcriptPaths, at) });
   tokens.totals.rows = rows.length;
   const guard = countGuardEvents(events);
 
@@ -226,12 +255,13 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   timing.unattributed = tokens.unattributed;
   timing.totals.tokens = tokens.totals.tokens;
   timing.totals.procedureBytes = tokens.totals.procedureBytes;
+  timing.totals.procedureFiles = tokens.totals.procedureFiles;
   timing.totals.toolRoundTrips = tokens.totals.toolRoundTrips;
   for (const k of ['turnClasses', 'context', 'modelMix', 'subagents', 'ceremonyShare']) timing.totals[k] = tokens.totals[k];
   timing.totals.guard = guard;
   timing.transcripts = transcripts;
   if (outNotes.length) timing.notes = outNotes;
-  timing.dispatches = dispatches;
+  timing.dispatches = stripInternalFields(dispatches);
   return { ok: true, timing, out, tokens, guard, notes: outNotes, deadlineHit: false };
 }
 

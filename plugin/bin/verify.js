@@ -341,9 +341,7 @@ function stampStatus(parsed) {
   // cover a verified-clean HEAD, regardless of the live tree's current state:
   // the write gate never consults dirty, so a stamp written mid-edit is
   // otherwise indistinguishable from one written on a pristine HEAD once the
-  // edit is discarded. A legacy bare-SHA stamp carries no dirty field at all
-  // — undefined is "not false", so it can never prove the tree was clean when
-  // it was recorded either (review finding, refs #1921).
+  // edit is discarded (review finding, refs #1921).
   const storedClean = present && stamp.dirty === false;
   const stampCoversCleanHead = !foreignGitDir && storedClean && git.sha !== null && stamp.sha === git.sha && effectiveDirty === false;
   // A baseline-adjudicated pass (#3043) carries a `baseline` marker: HEAD was
@@ -400,7 +398,6 @@ function stampStatus(parsed) {
     baselineAdjudicated,
     preExistingAdjudicated,
     reportPath: present && typeof stamp.reportPath === 'string' ? stamp.reportPath : null,
-    legacy: present ? stamp.legacy === true : false,
     suiteComposed,
     // #2987: the stamp's own recorded exemption (what was dirty-but-exempt
     // when it was written), and this call's own live re-check (null when no
@@ -1466,8 +1463,8 @@ async function main() {
   }
   // An explicit --git-dir redirects logs and the count stamp only; the pass
   // stamp keys on the invoking cwd's HEAD, which may not be that repo's.
-  // #3757: a moved tree (treeMoved above) writes neither the JSON stamp nor the
-  // legacy twin — the checks cannot be credited to either snapshot.
+  // #3757: a moved tree (treeMoved above) writes no pass stamp — the checks
+  // cannot be credited to either snapshot.
   if (
     effectivePass && fullSet && !parsed.noStamp && gitDir && git.sha && !parsed.gitDir
     && !unchangedHeadNoop && !emptyNonNoneRun && !treeMoved
@@ -1505,14 +1502,7 @@ async function main() {
         ? Object.fromEntries(ciResults.map((r) => [r.name, { runId: r.ci.runId, runUrl: r.ci.runUrl }]))
         : null,
     });
-    // H1 (review): the legacy bare-SHA twin only ever names a real FULL
-    // pass — a narrowed run leaves it untouched rather than repointing it
-    // at a sha that a scoped/tool-scoped/none run never fully verified. A
-    // baseline-adjudicated pass is not a clean full pass either (#3043), and
-    // neither is a pre-existing-adjudicated one (#3129) — neither ever
-    // repoints the twin: an older reader of the bare file must not read it
-    // as one.
-    try { writeStamp(gitDir, stamp, { legacy: mode === 'full' && !adjudicatedPass && !preExistingPass }); } catch { /* best-effort; next --stamp-status simply reads absent */ }
+    try { writeStamp(gitDir, stamp); } catch { /* best-effort; next --stamp-status simply reads absent */ }
   }
 
   // Per-suite pass records (#3002): independent of the single full-set

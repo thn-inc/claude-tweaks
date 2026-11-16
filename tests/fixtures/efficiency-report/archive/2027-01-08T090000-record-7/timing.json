@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2027-01-08T09:50:00.000Z",
+  "phases": [
+    {
+      "phase": "review",
+      "start": "2027-01-08T09:20:00.000Z",
+      "end": "2027-01-08T09:45:00.000Z",
+      "source": "skill_invoked",
+      "procedureFiles": { "skills/review/code-mode-steps.md": 2 }
+    }
+  ],
+  "totals": { "minutes": 50, "procedureFiles": { "skills/review/code-mode-steps.md": 2 } }
+}

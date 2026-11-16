@@ -269,6 +269,19 @@ function resolveTranscripts(o, runState, deps) {
   return { paths, notes };
 }
 
+// #4359: a run's timing for an explicit transcript `paths` list, as run()
+// would build it, writing nothing (efficiency-report.js --recount reads
+// archived runs with it). worktree left undefined reads run-state.json's, as
+// run() does. An unreadable events.jsonl throws an error whose code is
+// EVENTS_UNREADABLE.
+const EVENTS_UNREADABLE = 'EVENTS_UNREADABLE';
+async function buildTiming({ runDir, paths, cwd = process.cwd(), worktree }) {
+  const base = derivePhaseTiming(runDir);
+  if (!base.ok) throw Object.assign(new Error(base.error), { code: EVENTS_UNREADABLE });
+  const r = await deriveTiming(runDir, { transcriptPaths: paths, cwd, wantTokens: true, base, worktree });
+  return r.timing;
+}
+
 async function run(argv, deps) {
   const o = parseArgs(argv);
   if (!o) { deps.stderr(USAGE); return 2; }
@@ -322,7 +335,7 @@ const realDeps = {
 // Kept for callers that import it. Removal condition: no file under plugin/, tests/, tools/, perf/ or evals/ calls main.
 async function main(argv) { return run(argv, realDeps); }
 
-module.exports = { run, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
+module.exports = { run, buildTiming, EVENTS_UNREADABLE, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
 if (require.main === module) {
   run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; }).catch((err) => {
     process.stderr.write(`phase-timing.js: ${err && err.message}\n`);

@@ -34,7 +34,7 @@ const path = require('path');
 const readline = require('readline');
 const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
-const { isProcedurePath, classifyToolCall } = require('./turn-class');
+const { isProcedurePath, classifyToolCall, readFileKey, bashProcedureFiles } = require('./turn-class');
 
 const TRANSCRIPT_SLUG_RULE = 'replace every character not in [A-Za-z0-9-] with "-" (observed: "/", " ", and "." all become "-")';
 
@@ -146,7 +146,10 @@ function abortError() {
 // turnStart (true on the first assistant row of each message.id and on any
 // assistant row without a string id), and contextTokens (inputTokens +
 // cacheRead + cacheCreate on turnStart rows, taken after the stream closes so
-// it reflects the per-id max; 0 elsewhere). User rows also carry agentCalls
+// it reflects the per-id max; 0 elsewhere). procedureFiles ({ [skills/… or
+// context/… key]: count }, {} when none) is counted on the assistant row
+// holding the tool_use: a Read adds 1 to readFileKey(file_path), a Bash 1 per
+// bashProcedureFiles entry (#4359). User rows also carry agentCalls
 // (#5597): the tool_result blocks classed dispatch whose call was Agent or
 // Task — so a Workflow call counts in turnClasses.dispatch but not here.
 // Rejects when the file cannot be opened, with the real stat failure's
@@ -190,7 +193,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
       const msg = entry && entry.message;
       if (!entry || typeof entry.timestamp !== 'string' || !msg || typeof msg.role !== 'string') return;
       const content = Array.isArray(msg.content) ? msg.content : [];
-      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: false, contextTokens: 0 };
+      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: false, contextTokens: 0, procedureFiles: {} };
       if (msg.role === 'assistant') {
         row.model = typeof msg.model === 'string' ? msg.model : null;
         const u = msg.usage || {};
@@ -202,6 +205,10 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
           if (!b || b.type !== 'tool_use') continue;
           if (typeof b.id === 'string') toolUses.set(b.id, { name: b.name, input: b.input });
           if (b.name === 'Read' && b.input && isProcedurePath(b.input.file_path, worktree)) procedureReads.add(b.id);
+          let keys = [];
+          if (b.name === 'Read' && b.input) keys = [readFileKey(b.input.file_path, worktree)].filter(Boolean);
+          else if (b.name === 'Bash' && b.input) keys = bashProcedureFiles(b.input.command, worktree);
+          for (const k of keys) row.procedureFiles[k] = (row.procedureFiles[k] || 0) + 1;
         }
         row.turnStart = true;
         if (typeof msg.id === 'string') {
@@ -287,7 +294,8 @@ function transcriptModelOf(rows) {
   return models.find((m) => /^claude-/.test(m)) || models[0] || null;
 }
 
-// subagentsDir, { fsImpl?, window? } -> Promise<{ items, notFound, excludedOutsideWindow, dirNotes }>.
+// subagentsDir, { fsImpl?, window?, worktree? } -> Promise<{ items, notFound, excludedOutsideWindow, dirNotes }>.
+// worktree is passed to readUsage, so a subagent's reads key as a main row's do.
 // One Dispatch per agent-{id}; meta and transcript are paired by id. Token
 // totals come from readUsage, so its message.id dedupe is the one in force.
 // window = { start, end } (epoch ms, inclusive): rows outside it are dropped
@@ -307,7 +315,7 @@ function transcriptModelOf(rows) {
 // workflow directory that is a symlink, cannot be read, or holds no agent
 // files — and a run file whose agentCount disagrees with the agents found — is
 // one dirNotes string (always present, [] when none). Never throws.
-async function readDispatches(subagentsDir, { fsImpl = fs, window = null, signal = null } = {}) {
+async function readDispatches(subagentsDir, { fsImpl = fs, window = null, worktree = null, signal = null } = {}) {
   // Absent or unreadable falls through: readdirSync below names the code.
   if (lstatType(subagentsDir, { fsImpl }).type === 'symlink') {
     return { items: [], notFound: `subagents/ directory is a symlink (not followed) at ${subagentsDir}`, excludedOutsideWindow: 0, dirNotes: [] };
@@ -322,10 +330,10 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null, signal
       : `subagents/ directory not readable (${code}) at ${subagentsDir}`;
     return { items: [], notFound, excludedOutsideWindow: 0, dirNotes: [] };
   }
-  const scans = [await scanAgentDir(subagentsDir, names, { fsImpl, window, signal, workflowRunId: null })];
+  const scans = [await scanAgentDir(subagentsDir, names, { fsImpl, window, worktree, signal, workflowRunId: null })];
   const dirNotes = [];
   // Decided on the listing already taken: no workflows entry, no extra fs call.
-  if (names.includes('workflows')) await scanWorkflows(subagentsDir, { fsImpl, window, signal, scans, dirNotes });
+  if (names.includes('workflows')) await scanWorkflows(subagentsDir, { fsImpl, window, worktree, signal, scans, dirNotes });
   if (!scans.some((s) => s.ids > 0)) return { items: [], notFound: `no agent-* transcripts in ${subagentsDir}`, excludedOutsideWindow: 0, dirNotes };
   const built = [].concat(...scans.map((s) => s.built));
   built.sort((a, b) => {
@@ -342,7 +350,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null, signal
 // Scans subagents/workflows/ (the caller saw it listed): every run directory
 // in it goes through scanAgentDir, pushing onto scans; every problem is a
 // dirNotes string. Nothing symlinked is followed; plain files are ignored.
-async function scanWorkflows(subagentsDir, { fsImpl, window, signal, scans, dirNotes }) {
+async function scanWorkflows(subagentsDir, { fsImpl, window, worktree, signal, scans, dirNotes }) {
   const wfDir = path.join(subagentsDir, 'workflows');
   const wt = lstatType(wfDir, { fsImpl });
   if (wt.type === 'symlink') { dirNotes.push(`workflows/ directory is a symlink (not followed) at ${wfDir}`); return; }
@@ -368,7 +376,7 @@ async function scanWorkflows(subagentsDir, { fsImpl, window, signal, scans, dirN
       dirNotes.push(`workflow run directory not readable (${(err && err.code) || 'EUNKNOWN'}) at ${runPath}`);
       continue;
     }
-    const scan = await scanAgentDir(runPath, runNames, { fsImpl, window, signal, workflowRunId: runId });
+    const scan = await scanAgentDir(runPath, runNames, { fsImpl, window, worktree, signal, workflowRunId: runId });
     if (scan.ids === 0) { dirNotes.push(`no agent-* transcripts in ${runPath}`); continue; }
     scans.push(scan);
     // Cross-check against the run file Claude Code writes beside the session's
@@ -383,9 +391,9 @@ async function scanWorkflows(subagentsDir, { fsImpl, window, signal, scans, dirN
   }
 }
 
-// dir, names (its listing), { fsImpl, window, signal, workflowRunId } ->
+// dir, names (its listing), { fsImpl, window, worktree, signal, workflowRunId } ->
 // Promise<{ built: [{ d, startMs }], ids: number, excluded: number }>.
-async function scanAgentDir(dir, names, { fsImpl, window, signal = null, workflowRunId }) {
+async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = null, workflowRunId }) {
   // A symlinked agent file could point outside the projects root, so it is
   // never followed (the lstat twin of locateTranscripts' realpath containment,
   // IL-150), and an entry lstat cannot prove regular is treated the same way
@@ -418,6 +426,8 @@ async function scanAgentDir(dir, names, { fsImpl, window, signal = null, workflo
       parentAgentId: meta ? strOrNull(meta.parentAgentId) : null,
       spawnDepth: meta ? numOrNull(meta.spawnDepth) : null,
       startTs: null, endTs: null, wallClockMs: null, tokens: null,
+      procedureFiles: null, procedureFileRows: null,
+      transcriptPath: path.join(dir, jsonlName),
       notFound: metaReason,
       workflowRunId: workflowRunId ?? null,
       workflowPhase: workflowRunId && meta && typeof meta.workflowPhase === 'string' ? meta.workflowPhase : null,
@@ -431,7 +441,7 @@ async function scanAgentDir(dir, names, { fsImpl, window, signal = null, workflo
       fail(`transcript not readable (${skipped.get(jsonlName)})`);
     } else {
       try {
-        rows = await readUsage(path.join(dir, jsonlName), { fsImpl, signal });
+        rows = await readUsage(d.transcriptPath, { fsImpl, worktree, signal });
       } catch (err) {
         fail(`transcript not readable (${(err && err.code) || 'EUNKNOWN'})`);
       }
@@ -464,6 +474,17 @@ async function scanAgentDir(dir, names, { fsImpl, window, signal = null, workflo
         d.tokens.output += r.outputTokens;
         d.tokens.cacheRead += r.cacheRead;
         d.tokens.cacheCreate += r.cacheCreate;
+      }
+      // Per-file procedure reads over the same kept rows, plus one entry per
+      // reading row in transcript order (keptRows puts untimed rows last, so
+      // walk `timed` instead); an untimed row books to the dispatch's start.
+      d.procedureFiles = {};
+      d.procedureFileRows = [];
+      const keptSet = new Set(keptRows);
+      for (const { r, ms } of timed) {
+        if (!keptSet.has(r) || Object.keys(r.procedureFiles).length === 0) continue;
+        for (const [k, n] of Object.entries(r.procedureFiles)) d.procedureFiles[k] = (d.procedureFiles[k] || 0) + n;
+        d.procedureFileRows.push({ ts: Number.isFinite(ms) ? r.ts : d.startTs, procedureFiles: { ...r.procedureFiles } });
       }
       d.transcriptModel = transcriptModelOf(keptRows);
     }
