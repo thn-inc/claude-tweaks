@@ -6,7 +6,11 @@
 // Refresh rewrites a closed list of fields, REFRESHABLE_FIELDS, and nothing else in a
 // packet body: the Deploy status section, the Test guide section's links (the origin of
 // every http(s) URL, and the `(link unverified: …)` suffix, dropped when the new deploy
-// text reads confirmed live), and the Recording section's link. A packet is stale only when its Deploy
+// text reads confirmed live), and the Recording section's link. The Test guide is the field,
+// whole: every http(s) URL in it gets the new origin, a third-party link a human added
+// included, while a URL in any other section keeps its own. A section ends at the next `### `
+// heading or a `---` line, so the poster footer and text a human appends below the packet are
+// in no field; the Deploy status field ends at its stored `ref:` line. A packet is stale only when its Deploy
 // status section carries a `ref: {sha}` line and the deploy source names another ref. No
 // deploy-status source exists yet (a later record supplies one), so today every refresh
 // reports its fields `unverified`; a packet written before the `ref:` line existed is
@@ -76,12 +80,14 @@ function splitLines(body) {
 const joinLines = (lines) => lines.map(({ text, eol }) => `${text}${eol}`).join('\n');
 
 // { start, end } line indexes of a `### {heading}` section's body (start inclusive, end
-// exclusive), ending at the next `### ` heading or the end of the body; null when absent.
+// exclusive), ending at the next `### ` heading, a `---` line (the poster footer's rule; the
+// renderer escapes one in any section body) or the end of the body; null when absent.
+const SECTION_END_RE = /^(?:### | {0,3}-{3,}[ \t]*$)/;
 function sectionRange(lines, heading) {
   const at = lines.findIndex(({ text }) => text.trimEnd() === `### ${heading}`);
   if (at === -1) return null;
   let end = at + 1;
-  while (end < lines.length && !lines[end].text.startsWith('### ')) end += 1;
+  while (end < lines.length && !SECTION_END_RE.test(lines[end].text)) end += 1;
   return { start: at + 1, end };
 }
 
@@ -94,9 +100,14 @@ const unhandled = (detail, recording = false) => ({
   state: 'unhandled', recording, verdict: null, message: `accept: unhandled packet state (${detail}) — stopping`,
 });
 
+// A recording exists unless every item line of the section is the not-recorded note, bare or
+// with the renderer's `not recorded: {reason}`; an indented line (failure, caption, redaction
+// count) continues the item above it.
 function recordingOf(lines) {
-  const text = sectionText(lines, RECORDING);
-  return text !== null && text.trim() !== '' && text.trim() !== NOT_RECORDED;
+  const range = sectionRange(lines, RECORDING);
+  if (range === null) return false;
+  const items = lines.slice(range.start, range.end).map(({ text }) => text).filter((text) => text.trim() !== '' && !/^\s/.test(text));
+  return items.some((text) => text.trimEnd() !== NOT_RECORDED && !text.startsWith(`${NOT_RECORDED}:`));
 }
 
 function devState(deployText, guideText) {
@@ -143,10 +154,11 @@ function packetStateOf({ packet, labels } = {}) {
   return { state, recording, verdict: null, message: null };
 }
 
+// The stored ref and its line index, or null.
 function storedRef(lines, range) {
-  for (const { text } of lines.slice(range.start, range.end)) {
-    const match = STORED_REF_RE.exec(text.trim());
-    if (match) return match[1];
+  for (let index = range.start; index < range.end; index += 1) {
+    const match = STORED_REF_RE.exec(lines[index].text.trim());
+    if (match) return { ref: match[1], index };
   }
   return null;
 }
@@ -158,17 +170,17 @@ function sameCommit(stored, ref) {
   return stored.length <= ref.length ? ref.startsWith(stored) : stored.startsWith(ref);
 }
 
-// The Deploy status body replaced by the source's text and one `ref:` line. Blank lines at
-// either edge of the old body stay, so the bytes around the section do not move.
-function replaceDeploy(lines, range, source) {
+// The Deploy status field replaced by the source's text and one `ref:` line. The renderer
+// writes the stored ref line last, so the field runs from the section's first non-blank line
+// through it: whatever follows it (a human's text, the poster footer) and the blank lines
+// before the field stay, so the bytes around it do not move.
+function replaceDeploy(lines, range, refIndex, source) {
   const eol = lines[range.start - 1].eol;
   let first = range.start;
-  while (first < range.end && lines[first].text.trim() === '') first += 1;
-  let last = range.end;
-  while (last > first && lines[last - 1].text.trim() === '') last -= 1;
+  while (first < refIndex && lines[first].text.trim() === '') first += 1;
   const text = source.text.split(/\r?\n/).filter((line) => !REF_LINE_RE.test(line.trim()));
   const fresh = [...text, `ref: ${source.ref}`].map((line) => ({ text: line, eol }));
-  return [...lines.slice(0, first), ...fresh, ...lines.slice(last)];
+  return [...lines.slice(0, first), ...fresh, ...lines.slice(refIndex + 1)];
 }
 
 function mapSection(lines, heading, fn) {
@@ -182,12 +194,12 @@ function refreshPacket(body, source) {
   if (source === null || source === undefined) return unchangedUnverified;
   let lines = splitLines(body);
   const deployRange = sectionRange(lines, DEPLOY);
-  const ref = deployRange === null ? null : storedRef(lines, deployRange);
-  if (ref === null) return unchangedUnverified;
-  if (sameCommit(ref, source.ref)) return { body, refreshed: [], unverified: [] };
+  const stored = deployRange === null ? null : storedRef(lines, deployRange);
+  if (stored === null) return unchangedUnverified;
+  if (sameCommit(stored.ref, source.ref)) return { body, refreshed: [], unverified: [] };
 
   const refreshed = ['deploy-status'];
-  lines = replaceDeploy(lines, deployRange, source);
+  lines = replaceDeploy(lines, deployRange, stored.index, source);
   // The unverified-link suffix belongs to the Test guide field and follows the deploy text: a
   // source confirmed live drops it, one still not confirmed live keeps it.
   if (CONFIRMED_RE.test(source.text) && !NOT_CONFIRMED_RE.test(source.text)) {

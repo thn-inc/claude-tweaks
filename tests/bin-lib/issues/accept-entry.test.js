@@ -1,7 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { PACKET_MARKER, WITHHELD_TEXT } = require('../../../plugin/bin/lib/wrap-up/packet-contract');
+const { PACKET_MARKER, WITHHELD_TEXT, NOT_RUN_REASON } = require('../../../plugin/bin/lib/wrap-up/packet-contract');
+const { renderPacket } = require('../../../plugin/bin/lib/wrap-up/packet-render');
 const {
   automaticLabelAction,
   PACKET_STATES,
@@ -35,6 +36,14 @@ function packet({
   }
   return `${lines.join('\n')}\n`;
 }
+
+// A packet body exactly as packet-render.js writes it, from facts.
+const fact = (id, status, extra = {}) => ({ id, kind: id.split(':', 1)[0], status, source: 'fixture', ...extra });
+const rendered = (facts, options) => renderPacket(
+  { schemaVersion: 1, record: 4613, partial: [], surface: null, allowedHosts: ['http://localhost:3000'], refused: [], facts },
+  { schemaVersion: 1, claims: [] },
+  options,
+).markdown;
 
 const found = (body) => ({ status: 'found', body });
 const stateOf = (body, labels = []) => packetStateOf({ packet: found(body), labels });
@@ -167,6 +176,26 @@ test('AC4b.1 no recording: Recording "not recorded" or absent → recording: fal
   assert.equal(stateOf(packet({ recording: null })).recording, false);
   const recorded = stateOf(packet({ recording: ['- Walkthrough <https://dev.example.com/rec.gif>'] }));
   assert.equal(recorded.recording, true);
+});
+
+test('a rendered not-run recording, for every reason, reads as no recording', () => {
+  for (const reason of Object.values(NOT_RUN_REASON)) {
+    for (const extra of [{}, { failure: 'ffmpeg exited 1', captions: ['sign-in'] }]) {
+      const body = rendered([fact('recording:walkthrough', 'not-run', { reason, ...extra })]);
+      const result = stateOf(body);
+      assert.equal(result.recording, false, `${reason} ${JSON.stringify(extra)}\n${sectionOf(body, 'Recording')}`);
+    }
+  }
+  const recorded = rendered([fact('recording:walkthrough', 'passed', {
+    text: 'Walkthrough', url_or_path: '.claude-tweaks/r/walkthrough.gif', exposure: 'local-only',
+  })]);
+  assert.equal(stateOf(recorded).recording, true);
+  // One made beside one that failed is still a recording.
+  const mixed = rendered([
+    fact('recording:a', 'passed', { text: 'Walkthrough', url_or_path: '.claude-tweaks/r/a.gif', exposure: 'local-only' }),
+    fact('recording:b', 'not-run', { reason: NOT_RUN_REASON.ENCODER_FAILED }),
+  ]);
+  assert.equal(stateOf(mixed).recording, true);
 });
 
 test('AC4b.2: unhandled state prints one line and stops', () => {
@@ -337,6 +366,39 @@ test('refresh preserves CRLF line endings outside and inside the refreshed secti
   const { body } = refreshPacket(before, SOURCE);
   assert.ok(!/[^\r]\n/.test(body), 'a bare LF was introduced');
   assert.match(body, /ref: bbb2222\r\n/);
+});
+
+const devDeploy = (ref) => fact('deploy:status', 'passed', { target: 'dev', live: false, text: 'target: dev, not confirmed live', ref });
+const FRESH = Object.freeze({ ref: 'bbb2222', text: 'target: dev, confirmed live' });
+
+test('a refresh keeps the poster footer and text a human appended below the packet byte-identical', () => {
+  const human = '\n\nA reviewer note added below the packet.\nSecond line.\n';
+  const before = `${rendered([devDeploy('aaa1111')], { poster: 'the bot' })}${human}`;
+  const tail = before.slice(before.indexOf('\n---\n'));
+  assert.match(tail, /_Posted by the bot\. Resolve with `\/claude-tweaks:accept`\._/);
+  const { body, refreshed } = refreshPacket(before, FRESH);
+  assert.deepEqual(refreshed, ['deploy-status']);
+  assert.equal(body.slice(body.indexOf('\n---\n')), tail);
+  assert.equal(body.slice(0, body.indexOf('### Deploy status')), before.slice(0, before.indexOf('### Deploy status')));
+  assert.deepEqual(sectionOf(body, 'Deploy status').split('\n---\n')[0].split('\n').filter(Boolean), ['target: dev, confirmed live', 'ref: bbb2222']);
+});
+
+test('a refresh with no poster keeps text a human appended after the ref line', () => {
+  const human = '\n\nA reviewer note added below the packet.\n';
+  const packetText = rendered([devDeploy('aaa1111')]);
+  const { body } = refreshPacket(`${packetText}${human}`, FRESH);
+  assert.ok(body.endsWith(`ref: bbb2222${human}`), body.slice(-120));
+  assert.ok(!body.includes('aaa1111'));
+});
+
+test('the Deploy status reader stops at the poster footer', () => {
+  const withheld = fact('deploy:status', 'passed', { target: 'dev', text: 'target: dev token=hunter2', ref: 'aaa1111' });
+  const body = rendered([withheld], { poster: 'the bot' });
+  assert.match(sectionOf(body, 'Deploy status'), new RegExp(`^${WITHHELD_TEXT.replace(/[()]/g, '\\$&')}$`, 'm'));
+  assert.equal(stateOf(body).state, 'unhandled');
+  // Text below the footer is not deploy content: "confirmed live" there does not make a bare dev target live.
+  const bare = `${rendered([fact('deploy:status', 'passed', { target: 'dev', ref: 'aaa1111' })], { poster: 'the bot' })}\n\nconfirmed live, per a human\n`;
+  assert.equal(stateOf(bare).state, 'waiting-for-deploy');
 });
 
 // --- verdictLabelEdits ---
