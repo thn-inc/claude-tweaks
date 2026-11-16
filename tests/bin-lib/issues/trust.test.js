@@ -1385,6 +1385,13 @@ test('#4626: under revocationOnly every record lands in exactly one outcome colu
   assert.equal(row.total, 7);
   assert.equal(row.changesRequested + r.operationalGood + r.negativeEvidence + r.undispositioned, row.total);
   assert.equal(r.dispositioned, row.changesRequested + r.operationalGood + r.negativeEvidence);
+  // Exact columns: approved 1, 2 and operational 6 are good; 7 is reverted;
+  // 3 is changes-requested; pending 4 (despite a closing commit) and young 5 are unknown.
+  assert.equal(row.changesRequested, 1);
+  assert.equal(r.operationalGood, 3);
+  assert.equal(r.negativeEvidence, 1);
+  assert.equal(r.undispositioned, 2);
+  assert.equal(r.dispositioned, 5);
 });
 
 test('#4626: an unstructured cell stays insufficient-evidence under revocationOnly', () => {
