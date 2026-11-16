@@ -33,12 +33,14 @@
 ### Task 1: Warn on a failed shipped-PR view, module and fence
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-pull.js:1074-1078` (probe loop; comment at 1075) and `:1103-1107` (weak branch of the second pass)
 - Modify: `plugin/skills/dispatch/queue-pull-script.md:493` (probe line), the weak branch at `:521-525`, and one comment-line trim in `:466-492`
-- Test: `tests/bin-lib/dispatch/queue-pull.test.js` — rewrite the test at 1815-1832; add two tests after it; `FAULT_EXPECT['F-prview']` at 3528; the F-prview assertion at 3715; the header comment at 49
-- No change: `tests/bin-lib/dispatch/queue-pull-fixtures.js` (F-prview at 665 already fails `PR_VIEW_5016_ARGV`), `tests/bin-lib/dispatch/queue-pull-oracle.js`, `plugin/bin/lib/issues/shipped-candidate.js` (already `Array.isArray`-guarded), the `PASSES` registry's `shipped` row (`failOpen: 'open'` stays true)
+- Test: `tests/bin-lib/dispatch/queue-pull.test.js` — rewrite the test at 1815-1832; add two tests after it; keep the ENOENT test at 1834-1843 on its premise (see Step 1e); `FAULT_EXPECT['F-prview']` at 3528; the F-prview assertion at 3715; the header comment at 49
+- Modify: `tests/bin-lib/dispatch/queue-pull-oracle.js:158` — `filesOracleScript`'s `kept` set holds fence line 493 byte for byte and throws (`:160`, "a gh call survives the substitutions") on any other surviving `gh` line; replace that entry with the new line 493 text, byte for byte
+- No change: `tests/bin-lib/dispatch/queue-pull-fixtures.js` (F-prview at 665 already fails `PR_VIEW_5016_ARGV`), `plugin/bin/lib/issues/shipped-candidate.js` (already `Array.isArray`-guarded), the `PASSES` registry's `shipped` row (`failOpen: 'open'` stays true)
 - Readers of `dispatch-shipped-pr-files.jsonl` (consumer enumeration): the fence's and module's second pass only (`git grep -n "shipped-pr-files"` in `plugin/`); both are changed here. Prose describing the old silent behaviour: queue-pull.test.js:49 and the test names at 1815 (changed here); the journey `docs/journeys/select-the-dispatch-queue-with-the-queue-pull-cli-5227.md` line 46 is updated by /build's Common Step 6 (`/claude-tweaks:journeys`), not this task.
 
 **Interfaces:**
@@ -59,6 +61,7 @@
   - partial case (`stdout: '["a"]', status: 1`): jsonl `'{"pr":5016,"files":null}\n'`, the same one Warning, and no `r.errs` entry starting `queue-pull: shipped-pr-files: `
   b. `'#5313 shipped: with every probe failing, each probed weak record warns (two records sharing PR 6201 both warn); a record beyond the 5-probe cap does not'` — the 1863 scenario with each `PR_VIEW` entry `{ stdout: '', status: 1 }`: Warnings deep-equal the `PR_VIEW_FAILED` lines for (6201, 9201), (6202, 9202), (6203, 9203), (6204, 9204), (6205, 9205), (6201, 9208), in the order the run prints them (groups order; read it once and pin it exactly); none names 9206 or 9207.
   c. `'#5313 shipped: a weak mention predating the claim release that shares a failed probed PR prints no Warning'` — from the 1845 predating scenario, add a second, non-predating record mentioning the same PR so that PR is probed, and fail the view: exactly one Warning, for the non-predating record.
+  e. The ENOENT test at 1834-1843 relies on a failed view appending nothing; after this change a failed view writes `{"pr":5016,"files":null}` and recreates the file. Keep its premise by making the deleting probe succeed with stdout that is not valid JSON (`stdout: '["a"', status: 0`), so the append throws on both sides and the file stays missing; update its comment at 1836 to match. Its assertions (file `undefined`, the pass still classifies) stay.
   d. Oracle: `FAULT_EXPECT['F-prview']` → `{ status: 0, stderr: [PR_VIEW_FAILED(5016, 9016).trimEnd()], drops: [] }` (match the form the other rows use: no trailing newline); line 3715's expected jsonl → `'{"pr":5016,"files":null}\n'` with message `a failed probe reads as files:null`; header line 49 → state that F-prview warns since #5313 (no silent fail-open remains in that list).
 
 - [ ] **Step 2: Run the tests on the unchanged code — they must fail**
@@ -84,7 +87,7 @@
 
 - [ ] **Step 5: Commit**
 
-  `git -C "{worktree}" add -- plugin/bin/lib/dispatch/queue-pull.js plugin/skills/dispatch/queue-pull-script.md tests/bin-lib/dispatch/queue-pull.test.js`
+  `git -C "{worktree}" add -- plugin/bin/lib/dispatch/queue-pull.js plugin/skills/dispatch/queue-pull-script.md tests/bin-lib/dispatch/queue-pull.test.js tests/bin-lib/dispatch/queue-pull-oracle.js`
   Commit message: `Warn when the shipped pass's gh pr view fails, in module and fence (refs #5313)`, then a blank line and the session trailer the dispatcher gives.
 
 ---
