@@ -161,5 +161,5 @@ function fingerprintMap(rows) {
 }
 
 module.exports = {
-  findingFingerprint, composeFindingProposal, planFilings, fingerprintMap,
+  findingFingerprint, composeFindingProposal, planFilings, fingerprintMap, capWords, oneLine,
 };

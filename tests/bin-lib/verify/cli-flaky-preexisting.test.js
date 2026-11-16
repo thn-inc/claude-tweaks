@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('path');
 const fs = require('fs');
 const { readText } = require('../../helpers/read-skill');
-const { CLI, tmpDir, runCli, tmpGitRepo, stampOf, commitFile, flakyRepo } = require('./cli-helpers');
+const { CLI, tmpDir, runCli, tmpGitRepo, stampOf, passStampFiles, commitFile, flakyRepo } = require('./cli-helpers');
 
 test('flaky retry: an allowlisted failing file is re-run through the template and the run passes with flakyRetried on row, report, and stamp (#1925 AC3)', async () => {
   const r = flakyRepo();
@@ -331,7 +331,7 @@ function preExistingRepo({ failingFile = 'tests/known-shallow.test.js', preExist
   return { ...r, branch, args };
 }
 
-test('preExisting: a failing file fully covered by the declared allowlist is adjudicated as passing, and the stamp carries the marker with no legacy twin (#3129)', async () => {
+test('preExisting: a failing file fully covered by the declared allowlist is adjudicated as passing, and the stamp carries the marker (#3129)', async () => {
   const r = preExistingRepo();
   const { code, stdout, stderr } = await runCli(r.args, { cwd: r.repo });
   assert.strictEqual(code, 0, stderr);
@@ -344,9 +344,7 @@ test('preExisting: a failing file fully covered by the declared allowlist is adj
   const stamp = stampOf(r.gitDir);
   assert.deepStrictEqual(stamp.preExisting, { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] });
   assert.strictEqual(stamp.scope, 'full');
-  // H1 parity (#3043's own rule): an adjudicated-but-not-clean pass never
-  // rewrites the legacy bare-SHA twin.
-  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass')));
+  assert.deepStrictEqual(passStampFiles(r.gitDir), ['claude-tweaks-verify-pass.json']);
 });
 
 test('preExisting: an uncovered failing file is an ordinary failure — no stamp, the report names the reason (#3129)', async () => {
