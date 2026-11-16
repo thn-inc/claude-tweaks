@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, no dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-16T002758-record-5587/work/5587-spec.md` (record #5587)
+**Spec:** `.claude-tweaks/pipelines/2026-11-16T005753-record-5587/work/5587-spec.md` (record #5587; AC6 read per the body's "Decision (plan review, AC6, 2026-11-16)": Reading B)
 
 Scope keywords: classifyEffect, GATE_FRAGMENTS, classifyGuard
 
@@ -41,7 +41,7 @@ Waived plugin/skills/build/adopted-branch-collision-check.md: a Gotchas example 
 | AC3.1, AC3.2 | Task 1 Step 1, `effect.test.js` AC3 test |
 | AC4.1, AC4.2, AC4.3, AC4.4, AC4.5, AC4.6, AC4.7 | Task 1 Step 1, `effect.test.js` AC4 table |
 | AC5.1, AC5.2, AC5.3 | Task 4 Step 1, `cli.test.js` AC5 test |
-| AC6.1 | Task 2 Step 1, `trace.test.js` AC6 test (three `other` rows renamed — see decisions.md premise reversal) |
+| AC6.1 | Task 2 Step 1, `trace.test.js` AC6 test (three `other` rows renamed per the record's AC6 Decision, Reading B) |
 | AC7.1, AC7.2 | Task 2 Step 4, Task 3 Step 4, Task 4 Step 4: `node --test tests/guard-refusals/` with existing expectations untouched |
 | AC8.1, AC8.2 | Task 5 Steps 1, 2, 5 |
 | AC9.1, AC9.2, AC9.3, AC9.4, AC9.5, AC9.6 | Task 5 Step 3 (stratified seeded sample; wrong rows pinned in Task 1's table) |
@@ -50,6 +50,8 @@ Waived plugin/skills/build/adopted-branch-collision-check.md: a Gotchas example 
 ---
 
 ### Task 1: Effect classifier
+
+**Review risk:** high (decision logic: the read/write/unknown verdict branches on parsed command state)
 
 **Files:**
 - Create: `tools/guard-refusals/effect.js`
@@ -142,6 +144,8 @@ git commit -m "Name nine more harness refusal clauses in guard-refusals — only
 
 ### Task 3: Guard of each row
 
+**Review risk:** high (decision logic: ordered first-match gate classification of free deny text)
+
 **Files:**
 - Modify: `tools/guard-refusals/transcripts.js`
 - Test: `tests/guard-refusals/transcripts.test.js` (append), Create: `tests/guard-refusals/gate-fragments.test.js`
@@ -149,12 +153,13 @@ git commit -m "Name nine more harness refusal clauses in guard-refusals — only
 
 **Interfaces:**
 - Consumes: `ISOLATION_CLAUSE` (already required), `classifyReason` from `./trace`.
-- Produces: `GATE_FRAGMENTS: Array<[gate: string, fragments: string[]]>` (exported, ordered); `classifyGuard(text: string) -> string|null` (exported; `'harness-command'`, `'harness-file'`, `'plugin:<gate>'`, `'plugin:other'`, or `null`); `scanStore(...)` returns, in addition to today's fields, `rows: Array<{ toolUseId, file, line, tool, guard, command, cwd, ts, runId, reason }>`. Each `refusals` entry gains `guard: 'harness-command'`, `cwd`, `ts`. `reason` is `classifyReason(...)` for `harness-command` rows, `null` otherwise.
+- Produces: `GATE_FRAGMENTS: Array<[gate: string, fragments: string[]]>` (exported, ordered); `classifyGuard(text: string) -> string|null` (exported; `'harness-command'`, `'harness-file'`, `'plugin:<gate>'`, `'plugin:other'`, or `null`); `scanStore(...)` returns, in addition to today's fields, `rows: Array<{ toolUseId, file, line, tool, guard, command, truncated, cwd, ts, runId, reason }>`. Each `refusals` entry gains `guard: 'harness-command'`, `cwd`, `ts`. `reason` is `classifyReason(...)` for `harness-command` rows, `null` otherwise.
 
 Rules:
 - `GATE_FRAGMENTS`, first match wins: `teardown` ["teardown gate", "is assigned to run"]; `worktree-always` ["this project requires an isolated worktree for"]; `lost-cwd` ["this command changes directory more ways than"]; `powershell-opaque` ["hands this guard literal (or base64) script text"]; `pipeline-shadow` ["a NEW pipeline run directory inside a", "the command has changed directory more ways than"]; `bookkeeping-stamps` ["resolves integration-model: pr-first and", "a materialize commit already landed in"]; `dispatch-config` ["has not written config.yml"]; `wd-enforcement` ["is active in worktree"]; `review-console-ask` ["which grants consoleAutoResolve"]; `dispatch-prompt` ["this Agent prompt names run"]. (`a materialize commit already landed in` is added beyond the spec's list: it is `checkBookkeepingStampsGate`'s other two deny texts, `pre-tool-use.js` lines 2179 and 2201, and live denials carry it; logged as a decision.)
 - `classifyGuard`: ISOLATION_CLAUSE followed later by `Refusing to run` → `harness-command`; followed by `Edit the worktree copy of this file` → `harness-file`; text matching `/^(?:PreToolUse:[\w-]+ hook error: )?claude-tweaks[: ]/` → the first `GATE_FRAGMENTS` gate whose fragment it contains, else `plugin:other`; else `null`. A Bash result starting `Exit code N` never matches the plugin test.
-- The walk records `{ tool, command, cwd: entry.cwd ?? null, ts: entry.timestamp ?? null, runId, file }` for every tool_use id (first occurrence), where `command` is `input.command` for Bash and Monitor, `input.file_path` (or `notebook_path`) for Write/Edit/NotebookEdit, else `''`. `calls` still counts Bash and Write ids only, and the existing `calls` map keeps its meaning. To bound memory, store `command` capped at `COMMAND_CAP` as today.
+- The walk records `{ tool, command, cwd: entry.cwd ?? null, ts: entry.timestamp ?? null, runId, file }` for every tool_use id (first occurrence), where `command` is `input.command` for Bash and Monitor, `input.file_path` (or `notebook_path`) for Write/Edit/NotebookEdit, else `''`. `calls` still counts Bash and Write ids only, and the existing `calls` map keeps its meaning. To bound memory, store `command` capped at `COMMAND_CAP` as today, and record `truncated: true` on the entry (and on its row) when the original string was longer than `COMMAND_CAP`, else `false`.
+- Result text: a string `content` is used as is; an array `content` is the `text` of its `{ type: 'text' }` blocks joined with `'\n'` (plugin hook denials arrive in this shape, and the JSON-stringified form would put `[{"type":"text","text":"` before `claude-tweaks` and defeat the anchored plugin test); any other shape falls back to `JSON.stringify(content || '')` as today. Today's harness `refusals` detection reads this same text; its clause and tail contain no character JSON escapes, so the existing fixture counts do not move (AC7).
 - The first `is_error` result per tool_use id whose `classifyGuard` is non-null is the row (today's `results` map keyed the same way). A result with no guard is not a row. `refusals` is exactly the `harness-command` rows of a Bash or Write call — today's set, in today's order.
 
 - [ ] **Step 1: Write the failing tests**
@@ -162,6 +167,8 @@ Rules:
   In `transcripts.test.js`, a helper `writeStore(entries)` that writes hand-made JSONL lines into `<tmp>/-Users-me-guards/s1.jsonl`, stamps it with `STORE_MTIME`, and returns the projects dir. Each fixture pair is a tool_use line (`{ type:'assistant', timestamp, cwd:'/wt', message:{ content:[{ type:'tool_use', id, name, input }] } }`) and a tool_result line (`{ type:'user', message:{ content:[{ type:'tool_result', tool_use_id:id, is_error:true, content:text }] } }`).
   - `test('AC1: one refusal of each guard kind yields one guards count each and no row for printed skill text')` — fixtures: harness Bash (`'This session' + ISOLATION_CLAUSE + '/wt, but this command is too complex to verify that it stays inside the worktree. Refusing to run it.'`), harness Monitor (same text, `name:'Monitor'`, `input:{ command:'tail -f x' }`), harness Write (`… /wt. Edit the worktree copy of this file instead of the shared-checkout path.`), worktree-always (`'PreToolUse:Bash hook error: claude-tweaks: this project requires an isolated worktree for …'`), bookkeeping-stamps (`'PreToolUse:Write hook error: claude-tweaks: this project resolves integration-model: pr-first and …'`), teardown (`'claude-tweaks teardown gate: worktree /wt is still assigned …'`, `name:'ExitWorktree'`), and a Bash result `'Exit code 1\ncat: x: claude-tweaks: no such skill'`. Assert the tally of `scan.rows` by guard deep-equals `{ 'harness-command': 2, 'harness-file': 1, 'plugin:worktree-always': 1, 'plugin:bookkeeping-stamps': 1, 'plugin:teardown': 1 }`, that no row has the printed-text tool_use id, that `scan.refusals.length === 1` (the Bash one) and `scan.calls === 5` (Bash and Write ids only: three Bash — harness, worktree-always, printed — and two Write — harness-file, bookkeeping-stamps).
   - `test('classifyGuard: a claude-tweaks denial with no known fragment is plugin:other; a harness clause without a tail is no row')`.
+  - `test('array-shaped tool_result content: a plugin denial and a harness refusal in text blocks are both rows')` — two fixtures whose result `content` is `[{ type:'text', text: <worktree-always denial> }]` and `[{ type:'text', text: <harness Bash refusal> }]`; assert their rows' guards are `plugin:worktree-always` and `harness-command`, and the harness one is in `scan.refusals`.
+  - `test('a command longer than COMMAND_CAP is stored cut and marked truncated')` — a harness Bash refusal whose command is `'ls ' + 'a'.repeat(20000) + '; rm x'`; assert the row's `truncated === true`, its stored command is 20000 chars and holds no `rm x`, and a short command's row has `truncated === false`.
   - `test('scanStore keeps the existing refusals list and adds guard, cwd and ts to each')` on `copyStore()`: `scan.refusals.length === 8`, every refusal has `guard === 'harness-command'`, and `scan.rows.filter(r => r.guard === 'harness-command' && (r.tool === 'Bash' || r.tool === 'Write')).length === 8`.
 
   In `gate-fragments.test.js` (follow `.claude/skills/bin-source-scan-conformance`): read `plugin/bin/lib/hooks/pre-tool-use.js` and `plugin/bin/lib/hooks/dispatch-prompt-gate.js` through `readText` (`tests/helpers/read-skill.js`), strip each with `stripComments` (keep-literals mode), assert `stripperVerdict(raw, stripped) === 'ok'` per file, and:
@@ -203,17 +210,18 @@ git commit -m "Record which guard refused each call in guard-refusals — harnes
 - Produces: JSON keys, in order: `window, files, unreadable, calls, refusals, perPipeline, byReason, byShape, byFence, top, guards, byEffect, byReadClass, byRewrite, rows`.
 
 Rules:
-- Per row: `effect`/`why` — Bash rows `classifyEffect(command)`; Write/Edit/NotebookEdit rows `{ effect:'write', why:'file tool' }`; any other tool `{ effect:'unknown', why:'<tool> tool' }`.
+- Per row: `effect`/`why` — a Bash row with `truncated: true` is `{ effect:'unknown', why:'truncated' }` (its cut tail may hold a writer, so it is never `read`); other Bash rows `classifyEffect(command)`; Write/Edit/NotebookEdit rows `{ effect:'write', why:'file tool' }`; any other tool `{ effect:'unknown', why:'<tool> tool' }`.
 - `readClass` — `harness-command` rows with `effect === 'read'`: `'other-checkout'` when `reason` is `git-redirect-shared`, `cd-shared` or `other-worktree-cwd`, else `'shape'`; every other row `null`.
 - `rewrite` — `harness-command` Bash rows only: `null` when `cwd` is not a string; else `rewriteForGuard({ command, cwd, deps: { isLinkedWorktree: () => true, canonicalRealpath: (p) => p.replace(/\/+$/, '') || p } })`'s `applied`, or `[]` when it returns null. Other rows: `null`. (Probed: `ls /a\ b/c` at cwd `/wt` → `["quote-escaped-space"]`; `ls /a/b` → null → `[]`.)
 - `guards` count per guard; `byEffect` `{ read, write, unknown }` over all rows; `byReadClass` `{ 'other-checkout', shape }`; `byRewrite` over harness-command Bash rows: one count per applied rule id, `unchanged` for `[]`, `no-cwd` for `null`. All via `sortedCounts`.
-- `rows` — every row: `{ toolUseId, file, line, tool, guard, command (cut to 300), reason, effect, why, readClass, rewrite, runId, ts }`. Each `refusals` entry gains `guard, effect, why, readClass, rewrite, ts` (its existing fields unchanged).
+- `rows` — every row: `{ toolUseId, file, line, tool, guard, command, truncated, reason, effect, why, readClass, rewrite, runId, ts }`, `command` being the whole stored command (up to `COMMAND_CAP`), not cut further, so AC9's reader sees every word the classifier saw. `top` keeps its own present cut. Each `refusals` entry gains `guard, effect, why, readClass, rewrite, ts` (its existing fields unchanged).
 - Text table gains, after "by fence (top 10)", a `by guard` block and a `by effect` block in the same `padStart(6)` format.
 
 - [ ] **Step 1: Write the failing tests** in `cli.test.js`:
   - Update only the `Object.keys(out)` assertion to the new key list (not an AC7-protected expectation).
   - `test('AC5: rewrite is the rule ids at HEAD for a row with a cwd, null without one, [] when nothing changes')` — a hand-made store (Task 3's `writeStore` pattern, local to this file) with three harness Bash refusals: `ls /a\ b/c` cwd `/wt`; the same command with no `cwd` field; `ls /a/b` cwd `/wt`. Assert the three rows' `rewrite` deep-equal `['quote-escaped-space']`, `null`, `[]`, and `byRewrite` deep-equals `{ 'no-cwd': 1, 'quote-escaped-space': 1, unchanged: 1 }` (sortedCounts order: ties by key).
   - `test('every row carries a guard and an effect, and the new blocks count them')` on that store plus one Write `harness-file` row and one plugin row: every `out.rows[i]` has a non-empty `guard` and an `effect` in `read|write|unknown`; `out.guards` sums to `out.rows.length`; `out.byEffect` sums to `out.rows.length`; `out.byReadClass` counts only harness-command read rows (`ls` rows are `shape`); the table text matches `/by guard\n/` and `/by effect\n/`.
+  - `test('a truncated Bash row is unknown with why truncated, never read')` — a harness Bash refusal whose command is `'ls ' + 'a'.repeat(20000) + '; rm x'`; assert its row's `effect === 'unknown'`, `why === 'truncated'`, and `readClass === null`.
   - `test('AC7: the fixture store's existing counts are unchanged')` is the existing tests — do not edit them.
 
 - [ ] **Step 2: Run to verify it fails**
@@ -243,6 +251,6 @@ git commit -m "Report effect, read class and rewriter verdict per row in guard-r
 
 - [ ] **Step 1: Run the 30-day window.** `node tools/guard-refusals.js --since-days 30 --json > "<scratchpad>/guard-refusals-30d.json"` with a 20-minute timeout. If it does not finish, run two disjoint 15-day windows (`--until <now-15d> --since-days 15` and `--since-days 15`) and sum `guards`, `byEffect`, `byReadClass`, `byRewrite` and the row counts; say which form ran.
 - [ ] **Step 2: Check AC8.** From the JSON: share of `harness-command` rows with `reason === 'other'` ≤ 5%; share of `plugin:*` rows that are `plugin:other` ≤ 5%; every row has `guard` and `effect`. Record the numbers and the four blocks as printed. A threshold miss is a finding: name the largest uncovered clauses or texts (counts and reason wording only) and stop with it rather than editing patterns to fit.
-- [ ] **Step 3: AC9 sample.** A scratch script (outside the repo) draws up to 100 `effect: 'read'` rows, stratified by first command word with at most 10 per word, using a seeded PRNG (state the seed). Read each command and judge whether it can write. Record count read and count wrong. A wrong one: add it to Task 1's `TABLE` as `write` (or `unknown`), fix `effect.js`, re-run `node --test tests/guard-refusals/`, commit, re-run Step 1 and redraw.
+- [ ] **Step 3: AC9 sample.** A scratch script (outside the repo) draws up to 100 `effect: 'read'` rows, stratified by first command word with at most 10 per word, using a seeded PRNG (state the seed). Read each row's whole `command` field (uncut in `rows`; a `truncated` row is never `read`, so none is sampled) and judge whether it can write. Record count read and count wrong. A wrong one: add it to Task 1's `TABLE` as `write` (or `unknown`), fix `effect.js`, re-run `node --test tests/guard-refusals/`, commit, re-run Step 1 and redraw.
 - [ ] **Step 4: AC10.** Run `git diff --name-only origin/main...HEAD` and confirm no path starts with `plugin/`.
 - [ ] **Step 5: Write the evidence file** with: the run form, built-tool per-row timing (effect and rewrite ms/row, from a scratch timing over 200 rows), the four blocks, the AC8 shares, the AC9 seed / read / wrong counts, and the AC10 result. No commands or paths from transcripts.
