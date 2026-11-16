@@ -118,7 +118,7 @@ const LOG_STEP = 'accept-park.js park';
 const flagKey = (flag) => flag.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 const isAbsentError = (err) => err?.code === 'ENOENT' || err?.code === 'ENOTDIR';
-const firstLine = (text) => String(text || '').trim().split('\n', 1)[0];
+const firstLine = (text) => String(text || '').trim().split(/\r?\n/, 1)[0];
 
 function recordList(flag, value) {
   if (!RECORD_LIST_RE.test(value)) return { error: `${flag} must be positive integers separated by commas, got: ${value}` };
@@ -417,8 +417,15 @@ function appendTripwireFlags({ record, newFlags, extraCategories, deps, ctx }) {
   const { addTripwireRiskFlags } = require('./lib/issues/record');
   const file = deps.tmpPath(`accept-park-${record}-${process.pid}-tripwire.md`, deps.env);
   try {
-    const { body } = JSON.parse(ctx.ghIssue(['issue', 'view', String(record), '--json', 'body']));
-    if (typeof body !== 'string') throw new Error('the issue view has no body');
+    // A re-read that gives no usable body names its own reason, never err.message (it can carry a path).
+    let body;
+    try {
+      body = JSON.parse(ctx.ghIssue(['issue', 'view', String(record), '--json', 'body']))?.body;
+    } catch (err) {
+      if (err instanceof SyntaxError) throw Object.assign(new Error(), { stderr: 'issue view output unparseable' });
+      throw err;
+    }
+    if (typeof body !== 'string') throw Object.assign(new Error(), { stderr: 'issue view returned no body' });
     const next = addTripwireRiskFlags(body, newFlags, { extraCategories });
     if (next === body) return undefined;
     deps.writeFile(file, next);

@@ -392,6 +392,57 @@ test('AC7.6: a failed flag append still parks local and reports it', async () =>
   assert.equal(fs.readdirSync(w.state.root).some((name) => name.includes('tripwire')), false, 'the temp body file is removed');
 });
 
+// Only the tripwire's own re-read asks for the body alone; the first read asks for more fields.
+const rereadAs = (w, reread) => ({
+  gh: (args) => {
+    if (args[0] === 'issue' && args[1] === 'view' && args[4] === 'body') return reread(args);
+    return w.deps.gh(args);
+  },
+});
+
+test('a body re-read that fails names its reason, parks local and edits nothing', async () => {
+  const cases = [
+    ['issue view returned no body', () => '{}'],
+    ['issue view returned no body', () => 'null'],
+    ['issue view output unparseable', () => 'not json'],
+    ['issue view output unparseable', () => ''],
+    ['HTTP 502', () => { throw Object.assign(new Error(`Command failed: gh /secret/path`), { stderr: 'HTTP 502\n', status: 1 }); }],
+  ];
+  for (const [reason, reread] of cases) {
+    const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n' } } });
+    const res = await call(w, decideArgv(w), rereadAs(w, reread));
+    assert.equal(res.code, 0, res.stderr);
+    assert.ok(res.stderr.includes(`could not write the tripwire flags to #7 (${reason})`), res.stderr);
+    const decision = tripwireOf(res);
+    assert.equal(decision.park, true);
+    assert.equal(decision.tripwire.appendFailed, true);
+    assert.ok(decision.tripwire.lines.includes(`tripwire: the flag write failed (${reason}), so this run is local`), decision.tripwire.lines.join('\n'));
+    assert.equal(w.state.gh.some((a) => a[0] === 'issue' && a[1] === 'edit'), false, 'no edit after a failed re-read');
+    assert.equal(res.stdout.includes('unknown error'), false);
+  }
+});
+
+test('a body that gained the flags since the first read makes no gh issue edit call', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n' } } });
+  let rereads = 0;
+  const flagged = 'Risk-flags: migrations\nRisk-flags-added-by-tripwire: migrations\n\n## Current State\n';
+  const res = await call(w, decideArgv(w), rereadAs(w, () => { rereads += 1; return JSON.stringify({ body: flagged }); }));
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(rereads, 1, 'the re-read ran');
+  assert.equal(w.state.gh.some((a) => a[0] === 'issue' && a[1] === 'edit'), false);
+  assert.ok(!tripwireOf(res).tripwire.appendFailed);
+});
+
+test('a CRLF stderr keeps no carriage return in the stderr line or the packet line', async () => {
+  const stderr = 'HTTP 502\r\nhint: more\r\n';
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, fail: { bodyEdit: Object.assign(new Error('x'), { stderr, status: 1 }) }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.ok(res.stderr.includes('(HTTP 502) — this run is local'), JSON.stringify(res.stderr));
+  assert.ok(tripwireOf(res).tripwire.lines.includes('tripwire: the flag write failed (HTTP 502), so this run is local'), tripwireOf(res).tripwire.lines.join('\n'));
+  assert.equal(res.stderr.includes('\r') || res.stdout.includes('\r'), false);
+});
+
 test('AC3.1: --classification auth adds auth via agent', async () => {
   const w = world({ policy: 'control-mode: on\nacceptance-target: dev\n', records: { 7: { body: 'Risk-flags: none\n' } } });
   const file = path.join(w.state.root, 'classification.json');
