@@ -153,28 +153,58 @@ test('AC4.3: --filed logs the owned filing naming repo and URL, at trusted and a
   assert.strictEqual(readJson(consolePath(unattended)).items[0].resolution, 'filed');
 });
 
-test('--filed on a target that routes to hold exits 5 and logs nothing', async () => {
-  const fx = fixture();
-  const before = snapshotFiles(fx);
-  const r = await routeId(fx, EXTERNAL, '--filed', 'https://github.com/acme/widgets/issues/1');
+const skipLinesOf = (fx) => decisionsOf(fx).split('\n').filter((l) => /^- SKIP .*Upstream ownership/.test(l));
+
+test('--filed on a target that routes to hold exits 5 but logs the filing against the hold verdict, writing no fact', async () => {
+  const fx = fixture({ consoleJson: consoleOf([filedItem(EXTERNAL)]) });
+  const consoleBefore = fs.readFileSync(consolePath(fx), 'utf8');
+  const url = 'https://github.com/acme/widgets/issues/1';
+  const r = await routeId(fx, EXTERNAL, '--filed', url);
   assert.strictEqual(r.code, 5, r.err);
   assert.match(r.err, /hold/);
-  assert.deepStrictEqual(snapshotFiles(fx), before);
+  const lines = upstreamLines(fx);
+  assert.strictEqual(lines.length, 1, decisionsOf(fx));
+  assert.match(lines[0], /^- AUTO /);
+  assert.ok(lines[0].includes(`Upstream filing: ${EXTERNAL} filed as ${url} against a hold verdict (external) — route changed after the filing decision`), lines[0]);
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')), 'no fact is written');
+  assert.strictEqual(fs.readFileSync(consolePath(fx), 'utf8'), consoleBefore, 'console.json is untouched');
 });
 
-test('ownership notes are logged as SKIP lines here too, in the same call as the decision line', async () => {
+test('a route that flips between the route call and --filed still logs the real filing, with the ownership notes once', async () => {
+  const fx = fixture();
+  const url = 'https://github.com/thn-inc/claude-tweaks/issues/9';
+  const first = await routeId(fx, OWNED);
+  assert.strictEqual(first.code, 0, first.err);
+  assert.match(first.out, / file target /);
+  assert.strictEqual(upstreamLines(fx).length, 0, 'the route call alone logs no filing');
+  // origin moved to another owner in between: the same item now routes to hold.
+  const flipped = await route(fx, [OWNED, '--filed', url], ownershipAnswers({ 'git remote get-url origin': 'https://github.com/zeta/app.git\n', [BASE_POLICY_KEY]: new Error('fatal: gone') }));
+  assert.strictEqual(flipped.code, 5, flipped.err);
+  const lines = upstreamLines(fx);
+  assert.strictEqual(lines.length, 1, decisionsOf(fx));
+  assert.ok(lines[0].includes(`Upstream filing: ${OWNED} filed as ${url} against a hold verdict (external) — route changed after the filing decision`), lines[0]);
+  assert.strictEqual(skipLinesOf(fx).length, 1, 'the hold-verdict path logs what the ownership read could not do');
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')));
+});
+
+test('ownership notes are logged as SKIP lines here too, once per filing, in the same call as the decision line', async () => {
   const fx = fixture();
   const r = await routeId(fx, OWNED, '--filed', 'https://github.com/thn-inc/claude-tweaks/issues/9');
   assert.strictEqual(r.code, 0, r.err);
-  assert.strictEqual(decisionsOf(fx).split('\n').filter((l) => /Upstream ownership/.test(l)).length, 0, 'a clean read logs nothing');
+  assert.strictEqual(skipLinesOf(fx).length, 0, 'a clean read logs nothing');
 
+  // The route call logs the notes; the --filed call that follows reads ownership again and logs none of them.
   const noisy = fixture();
-  const n = await route(noisy, [OWNED, '--filed', 'https://github.com/thn-inc/claude-tweaks/issues/9'], ownershipAnswers({ [BASE_POLICY_KEY]: new Error('fatal: path does not exist in origin/main') }));
+  const failing = ownershipAnswers({ [BASE_POLICY_KEY]: new Error('fatal: path does not exist in origin/main') });
+  const n = await route(noisy, [OWNED], failing);
   assert.strictEqual(n.code, 0, n.err);
-  const skips = decisionsOf(noisy).split('\n').filter((l) => /^- SKIP .*Upstream ownership/.test(l));
+  const skips = skipLinesOf(noisy);
   assert.strictEqual(skips.length, 1, decisionsOf(noisy));
   assert.match(skips[0], /condition: base-branch policy origin\/main:\.claude-tweaks\/policy\.yml could not be read .* → fallback: owned-owners read as \[\]/);
   assert.match(skips[0], /Reversibility: n\/a\.$/);
+  const f = await route(noisy, [OWNED, '--filed', 'https://github.com/thn-inc/claude-tweaks/issues/9'], failing);
+  assert.strictEqual(f.code, 0, f.err);
+  assert.strictEqual(skipLinesOf(noisy).length, 1, `one filing, one set of notes: ${decisionsOf(noisy)}`);
   assert.strictEqual(upstreamLines(noisy).length, 1);
 
   const unresolved = fixture();
@@ -238,9 +268,19 @@ test('--hold rewrites only a console item held as filed: a pending item, a missi
 
 test('a staged file with no upstream-target line holds as external with target none', async () => {
   const fx = mainCheckoutWithRun({ autonomy: 'trusted', policyExtra: CM, staged: { 'wrap-up-upstream-9.md': 'Title: old\n\nbody\n' } });
-  const r = await routeId(fx, 'wrap-up-upstream-9.md');
+  const r = await route(fx, ['wrap-up-upstream-9.md'], ownershipAnswers({ [BASE_POLICY_KEY]: new Error('unreadable') }));
   assert.strictEqual(r.code, 0, r.err);
   assert.strictEqual(r.out, `console-resolve.js: upstream-route wrap-up-upstream-9.md hold target none reason external fact ${FACT_ID('wrap-up-upstream-9.md')}\n`);
+  // The verdict is `external` from the target alone, so ownership is neither read nor logged about.
+  assert.ok(!r.calls.some((c) => c.includes('get-url') || c[1] === 'show'), JSON.stringify(r.calls));
+  assert.strictEqual(skipLinesOf(fx).length, 0, decisionsOf(fx));
+
+  const malformed = mainCheckoutWithRun({ autonomy: 'trusted', policyExtra: CM, staged: { [OWNED]: '<!-- upstream-target: not a repo -->\nTitle: x\n\nbody\n' } });
+  const m = await route(malformed, [OWNED], ownershipAnswers({ [BASE_POLICY_KEY]: new Error('unreadable') }));
+  assert.strictEqual(m.code, 0, m.err);
+  assert.match(m.out, / hold target not a repo reason external fact /);
+  assert.ok(!m.calls.some((c) => c.includes('get-url') || c[1] === 'show'), JSON.stringify(m.calls));
+  assert.strictEqual(skipLinesOf(malformed).length, 0);
 });
 
 test('a fact that cannot be written exits 6 and leaves console.json and decisions.md untouched', async () => {
@@ -262,7 +302,49 @@ test('a decisions.md entry that cannot be written exits 3 and names what was wri
   const r = await routeId(fx, OWNED, '--hold', 'filing-failed', '--reason', 'x');
   assert.strictEqual(r.code, 3, r.err);
   assert.match(r.err, /decisions\.md entry could not be written/);
+  assert.match(r.err, /console item carried/);
   assert.ok(fs.existsSync(FACTS(fx)));
+  const item = readJson(consolePath(fx)).items[0];
+  assert.strictEqual(item.resolution, 'carried', 'the message claims the console item carried, so it is');
+  assert.strictEqual(item.rewrittenFrom, 'filed');
+});
+
+// A fresh copy of the CLI whose rewriteItemResolution is `fake`: the write that throws or refuses after the
+// pre-read cannot be provoked deterministically from outside (it is a race), so the seam is the module export.
+function runWithRewrite(fake, argv, deps) {
+  const itemResolution = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'item-resolution'));
+  const real = itemResolution.rewriteItemResolution;
+  itemResolution.rewriteItemResolution = fake;
+  delete require.cache[CLI];
+  try {
+    return require(CLI).run(argv, deps);
+  } finally {
+    itemResolution.rewriteItemResolution = real;
+    delete require.cache[CLI];
+  }
+}
+
+test('a console.json rewrite that throws after the fact landed exits 3 and says the fact is in decisions.json', async () => {
+  const fx = fixture({ consoleJson: consoleOf([filedItem(OWNED)]) });
+  const b = baseDeps(fx, []);
+  const code = await runWithRewrite(() => { throw new Error('disk full'); }, ['--run', fx.runDir, '--upstream-route', OWNED, '--hold', 'filing-failed', '--reason', 'x'], b.d);
+  assert.strictEqual(code, 3, b.err());
+  assert.match(b.err(), /disk full/);
+  assert.ok(b.err().includes(`the decision fact ${FACT_ID(OWNED)} is in decisions.json`), b.err());
+  assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), [FACT_ID(OWNED)]);
+  assert.strictEqual(upstreamLines(fx).length, 0, 'no line claims the item held');
+  assert.strictEqual(readJson(consolePath(fx)).items[0].resolution, 'filed');
+});
+
+test('a console.json rewrite that is refused after the fact landed exits 5 and says the fact is in decisions.json', async () => {
+  const fx = fixture({ consoleJson: consoleOf([filedItem(OWNED)]) });
+  const b = baseDeps(fx, []);
+  const code = await runWithRewrite(() => ({ status: 'refused', why: 'item changed under us' }), ['--run', fx.runDir, '--upstream-route', OWNED, '--hold', 'scrub-hit', '--reason', 'x'], b.d);
+  assert.strictEqual(code, 5, b.err());
+  assert.match(b.err(), /item changed under us/);
+  assert.ok(b.err().includes(`the decision fact ${FACT_ID(OWNED)} is in decisions.json`), b.err());
+  assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), [FACT_ID(OWNED)]);
+  assert.strictEqual(upstreamLines(fx).length, 0);
 });
 
 test('--hold without --reason exits 2, as do a --hold value outside filing-failed|scrub-hit, --hold with --filed, and --reason or --filed misuse', async () => {
@@ -314,10 +396,12 @@ test('--upstream-route takes no other shape flag, and --hold / --filed need --up
 test('an id outside wrap-up-upstream-* or naming no staged file exits 5, even with control mode off', async () => {
   const fx = fixture({ staged: { ...STAGED, 'upstream-draft-1.md': 'x', 'ledger-record-1.md': 'x' } });
   fs.mkdirSync(path.join(fx.runDir, 'staged', 'wrap-up-upstream-dir'));
+  // Any whitespace in an id is refused (the hold line collapses every \s), so a real file named so still exits 5.
+  fs.writeFileSync(path.join(fx.runDir, 'staged', 'wrap-up-upstream-sp ace.md'), upstreamDraft('thn-inc/claude-tweaks'));
   fs.writeFileSync(path.join(fx.root, 'outside.md'), 'x');
   fs.symlinkSync(path.join(fx.root, 'outside.md'), path.join(fx.runDir, 'staged', 'wrap-up-upstream-link.md'));
   const before = snapshotFiles(fx);
-  for (const id of ['../x', '../staged/wrap-up-upstream-1.md', 'wrap-up-upstream-../x', 'wrap-up-upstream-a/b', 'wrap-up-upstream-a\\b', 'upstream-draft-1.md', 'ledger-record-1.md', 'wrap-up-upstream-absent.md', 'wrap-up-upstream-dir', 'wrap-up-upstream-link.md', 'wrap-up-upstream-']) {
+  for (const id of ['../x', '../staged/wrap-up-upstream-1.md', 'wrap-up-upstream-../x', 'wrap-up-upstream-a/b', 'wrap-up-upstream-a\\b', 'upstream-draft-1.md', 'ledger-record-1.md', 'wrap-up-upstream-absent.md', 'wrap-up-upstream-dir', 'wrap-up-upstream-link.md', 'wrap-up-upstream-sp ace.md', 'wrap-up-upstream-']) {
     const r = await routeId(fx, id);
     assert.strictEqual(r.code, 5, `${id}: ${r.err}`);
     assert.strictEqual(r.out, '', `${id}: ${r.out}`);
