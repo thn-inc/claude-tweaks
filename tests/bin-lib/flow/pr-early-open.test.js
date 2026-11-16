@@ -814,6 +814,15 @@ test('AC4.1: CLI from a linked worktree with no integration-branch anywhere warn
   assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
 });
 
+test('CLI: an explicit --base from a linked worktree with no integration-branch never warns', async () => {
+  const fx = cliFixture({ linked: true });
+  const h = cliDeps(fx, { defaultBranch: 'trunk' });
+  assert.equal(await run(cliArgv(fx, ['--base', 'release']), h.deps), 0, h.err.join(''));
+  const createCall = h.calls.find(isCreate);
+  assert.equal(createCall[createCall.indexOf('--base') + 1], 'release');
+  assert.equal(h.err.join(''), '');
+});
+
 test('CLI: a run-pinned config.yml integration-branch overrides policy', async () => {
   const fx = cliFixture({ policy: 'integration-branch: dev\n' });
   fs.writeFileSync(path.join(fx.runDir, 'config.yml'), 'integration-branch: staging\n');
