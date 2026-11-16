@@ -1,5 +1,5 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -11,6 +11,7 @@ const {
   attachAuthorAssociations,
   enrichRecords,
   enrichRecordsFile,
+  warningLine,
 } = require('../../../plugin/bin/lib/issues/author-association');
 const { hasOriginLine } = require('../../../plugin/bin/lib/issues/provenance');
 const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
@@ -98,6 +99,7 @@ test('fetchAuthorAssociations reads a partial NOT_FOUND answer from the thrown s
   assert.equal(out.byNumber.get(1), 'MEMBER');
   assert.equal(out.byNumber.has(2), false);
   assert.equal(out.failedBatches, 0);
+  assert.equal(out.unresolved, 1, 'the null alias is counted, not silently dropped');
 });
 
 test('a batch that throws with no parseable stdout counts as failed; the other batch still maps', () => {
@@ -112,6 +114,8 @@ test('a batch that throws with no parseable stdout counts as failed; the other b
   const out = fetchAuthorAssociations({ numbers: [1, 2, 3, 4], owner: 'o', repo: 'r', runner, batchSize: 2 });
   assert.equal(calls.length, 2);
   assert.equal(out.failedBatches, 1);
+  assert.equal(out.unresolved, 0, 'a failed batch is counted once as a batch, not per alias');
+  assert.equal(out.firstCause, 'HTTP 502');
   assert.deepEqual([...out.byNumber.entries()], [[3, 'OWNER'], [4, 'NONE']]);
 });
 
@@ -122,7 +126,27 @@ test('an answer with no data.repository counts as a failed batch', () => {
   };
   const out = fetchAuthorAssociations({ numbers: [1], owner: 'o', repo: 'r', runner });
   assert.equal(out.failedBatches, 1);
+  assert.equal(out.firstCause, 'no data.repository in the answer');
   assert.equal(out.byNumber.size, 0);
+});
+
+test('the first failed batch keeps its cause: stderr first, bounded to 300 characters', () => {
+  const runner = (args) => {
+    if (!isGraphQL(args)) throw new Error('unexpected ' + args.join(' '));
+    throw Object.assign(new Error('Command failed: gh api graphql -f owner=o'), { stderr: `HTTP 403: rate limit\n${'x'.repeat(400)}`, stdout: '' });
+  };
+  const out = fetchAuthorAssociations({ numbers: [1, 2], owner: 'o', repo: 'r', runner, batchSize: 1 });
+  assert.equal(out.failedBatches, 2);
+  assert.match(out.firstCause, /^HTTP 403: rate limit x+$/);
+  assert.equal(out.firstCause.length, 300);
+});
+
+test('warningLine is empty on a clean result and names every gap kind otherwise', () => {
+  assert.equal(warningLine({ failedBatches: 0, unresolved: 0, firstCause: null, skipped: null }), '');
+  assert.equal(warningLine({ failedBatches: 0, skipped: null }), '');
+  const line = warningLine({ failedBatches: 1, unresolved: 2, firstCause: 'HTTP 502', skipped: null });
+  assert.match(line, /\(1 batch\(es\) failed; first cause: HTTP 502; 2 issue\(s\) with no association in the answer\)/);
+  assert.match(warningLine({ failedBatches: 0, unresolved: 1, skipped: null }), /\(1 issue\(s\) with no association in the answer\)/);
 });
 
 test('attachAuthorAssociations returns a new array and leaves unmatched records untouched', () => {
@@ -184,8 +208,14 @@ test('enrichRecords returns the records unchanged as repo-unresolved when repo v
   assert.equal(calls.length, 1);
 });
 
+const tempDirs = [];
+after(() => {
+  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function tempFile(content) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'author-assoc-'));
+  tempDirs.push(dir);
   const file = path.join(dir, 'records.json');
   fs.writeFileSync(file, content);
   return file;
@@ -226,7 +256,7 @@ test('enrichRecordsFile writes exactly one warning line when a batch fails', () 
   const out = enrichRecordsFile(file, { owner: 'o', repo: 'r', runner, stderr: (s) => lines.push(s) });
   assert.equal(out.failedBatches, 1);
   assert.equal(lines.length, 1);
-  assert.match(lines[0], /author-association enrichment incomplete \(1 batch\(es\) failed\)/);
+  assert.match(lines[0], /author-association enrichment incomplete \(1 batch\(es\) failed; first cause: HTTP 502\)/);
   assert.equal(lines[0].split('\n').filter(Boolean).length, 1);
   assert.equal(fs.readFileSync(file, 'utf8'), before, 'nothing attached, nothing written');
 });

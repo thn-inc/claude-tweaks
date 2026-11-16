@@ -393,6 +393,19 @@ test('#4577: fetchAllRecords enriches a live fetch before caching', () => {
   });
 });
 
+test('#4577: a fresh cached snapshot is returned as written, with no list or association call', () => {
+  withSnapshotPath((sessionId, snapPath) => {
+    const calls = [];
+    const runner = enrichmentRunner({ calls, graphql: () => JSON.stringify({ data: { repository: { i7: { authorAssociation: 'NONE' } } } }) });
+    fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60 });
+    const firstCalls = calls.length;
+    assert.ok(firstCalls > 0, 'the first read fetched and enriched');
+    const again = fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60 });
+    assert.strictEqual(calls.length, firstCalls, 'the second read made no gh call');
+    assert.strictEqual(again[0].authorAssociation, 'NONE');
+  });
+});
+
 test('#4577: a failed association batch still returns and caches the records, with one stderr warning', () => {
   withSnapshotPath((sessionId, snapPath) => {
     const runner = enrichmentRunner({ graphql: () => { throw new Error('boom'); } });
@@ -402,7 +415,7 @@ test('#4577: a failed association batch still returns and caches the records, wi
     assert.strictEqual('authorAssociation' in records[0], false);
     assert.strictEqual('authorAssociation' in recordSnapshot.readSnapshot(snapPath)[0], false);
     assert.strictEqual(lines.length, 1);
-    assert.match(lines[0], /^author-association enrichment incomplete \(1 batch\(es\) failed\)/);
+    assert.match(lines[0], /^author-association enrichment incomplete \(1 batch\(es\) failed; first cause: boom\)/);
   });
 });
 

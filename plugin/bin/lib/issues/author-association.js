@@ -11,11 +11,13 @@
 // trusted from `author.is_bot`, and a record that already carries an
 // association needs no second read.
 //
-// Fail open: a failed batch, an unresolvable repo or an unreadable file leaves
-// the affected records without an association, which issueAuthorTrust reads
-// as 'unknown', the pre-#4577 behaviour. Every such gap is counted in
-// `failedBatches` or named in `skipped`, and enrichRecordsFile reports it on
-// one stderr line, so a degraded run is visible rather than silent.
+// Fail open: a failed batch, an issue the answer carries no association for,
+// an unresolvable repo or an unreadable file leaves the affected records
+// without an association, which issueAuthorTrust reads as 'unknown', the
+// pre-#4577 behaviour. Every such gap is counted in `failedBatches` (with the
+// first failure's cause in `firstCause`), counted in `unresolved`, or named in
+// `skipped`, and warningLine reports it on one stderr line, so a degraded run
+// is visible rather than silent.
 //
 // The runner is injectable (never the real `gh` in tests): runner(args) is
 // invoked as if `gh ${args.join(' ')}` and returns stdout; a throw is a failed
@@ -33,8 +35,14 @@ const { buildAuthorAssociationQuery } = require('./record-dependencies');
 const DEFAULT_BATCH_SIZE = 200;
 
 // An aliased GraphQL batch takes the batched bound; `repo view` is a single call.
+// Exported so a caller that wraps its own runner (backlog-grant-gate's
+// fetchAllRecords) applies the same bound rather than restating the rule.
+function ghTimeoutFor(args) {
+  return args[0] === 'api' && args[1] === 'graphql' ? sharedPrimitives.GH_BATCH_TIMEOUT_MS : sharedPrimitives.GH_TIMEOUT_MS;
+}
+
 function defaultRunner(args) {
-  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: args[0] === 'api' && args[1] === 'graphql' ? sharedPrimitives.GH_BATCH_TIMEOUT_MS : sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true }));
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: ghTimeoutFor(args), windowsHide: true }));
 }
 
 function needsAssociation(record) {
@@ -53,24 +61,36 @@ function buildAssociationQuery(numbers) {
   return buildAuthorAssociationQuery(integerNumbers(numbers)) || '';
 }
 
+// The cause of a thrown call: stderr, else the message, on one bounded line.
+// Never stdout (response data) and never the argv a Node message repeats
+// beyond what the message itself holds (gh-api-module-pattern).
+function causeOf(err) {
+  const raw = err && typeof err.stderr === 'string' && err.stderr.trim() !== '' ? err.stderr : (err && err.message) || String(err);
+  return String(raw).trim().replace(/\s+/g, ' ').slice(0, 300);
+}
+
 // A partial NOT_FOUND (a PR number, a transferred issue) makes gh exit 1 while
 // still printing `{data, errors}` on stdout, so a thrown call is parsed from
-// `err.stdout` before it counts as failed. Returns the repository object, or
-// null when the answer carries none.
+// `err.stdout` before it counts as failed. Returns `{repository, cause}`:
+// the repository object, or null with the reason the answer carries none.
 function repositoryOf(runner, args) {
   let stdout;
+  let cause = null;
   try {
     stdout = runner(args);
   } catch (err) {
+    cause = causeOf(err);
     stdout = err && typeof err.stdout === 'string' && err.stdout !== '' ? err.stdout : null;
   }
-  if (stdout === null) return null;
+  if (stdout === null) return { repository: null, cause };
   try {
     const parsed = JSON.parse(stdout);
     const repository = parsed && parsed.data && parsed.data.repository;
-    return repository && typeof repository === 'object' ? repository : null;
+    return repository && typeof repository === 'object'
+      ? { repository, cause: null }
+      : { repository: null, cause: cause || 'no data.repository in the answer' };
   } catch {
-    return null;
+    return { repository: null, cause: cause || 'unparseable answer' };
   }
 }
 
@@ -79,21 +99,25 @@ function fetchAuthorAssociations({ numbers, owner, repo, runner = defaultRunner,
   const size = Number.isInteger(batchSize) && batchSize > 0 ? batchSize : DEFAULT_BATCH_SIZE;
   const byNumber = new Map();
   let failedBatches = 0;
+  let unresolved = 0;
+  let firstCause = null;
   for (let i = 0; i < ns.length; i += size) {
     const chunk = ns.slice(i, i + size);
     const args = ['api', 'graphql', '-f', `query=${buildAssociationQuery(chunk)}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`];
-    const repository = repositoryOf(runner, args);
+    const { repository, cause } = repositoryOf(runner, args);
     if (!repository) {
       failedBatches += 1;
+      if (firstCause === null) firstCause = cause;
       continue;
     }
     for (const n of chunk) {
       const issue = repository[`i${n}`];
       const value = issue && issue.authorAssociation;
       if (typeof value === 'string' && value !== '') byNumber.set(n, value);
+      else unresolved += 1;
     }
   }
-  return { byNumber, failedBatches };
+  return { byNumber, failedBatches, unresolved, firstCause };
 }
 
 function attachAuthorAssociations(records, byNumber) {
@@ -117,14 +141,20 @@ function enrichRecords(records, { runner = defaultRunner, owner, repo } = {}) {
   if (integerNumbers(numbers).length === 0) return { records, failedBatches: 0, skipped: null };
   const target = owner && repo ? { owner, repo } : resolveRepo(runner);
   if (!target) return { records, failedBatches: 0, skipped: 'repo-unresolved' };
-  const { byNumber, failedBatches } = fetchAuthorAssociations({ numbers, owner: target.owner, repo: target.repo, runner });
-  return { records: attachAuthorAssociations(records, byNumber), failedBatches, skipped: null };
+  const { byNumber, failedBatches, unresolved, firstCause } = fetchAuthorAssociations({ numbers, owner: target.owner, repo: target.repo, runner });
+  return { records: attachAuthorAssociations(records, byNumber), failedBatches, unresolved, firstCause, skipped: null };
 }
 
-function warningLine({ failedBatches, skipped }) {
+// One stderr line for a degraded enrichment, or '' when nothing degraded, so a
+// caller prints `warningLine(result)` when it is non-empty and never restates
+// which fields count as a gap.
+function warningLine({ failedBatches, unresolved, firstCause, skipped }) {
   const parts = [];
   if (failedBatches > 0) parts.push(`${failedBatches} batch(es) failed`);
+  if (failedBatches > 0 && firstCause) parts.push(`first cause: ${firstCause}`);
+  if (unresolved > 0) parts.push(`${unresolved} issue(s) with no association in the answer`);
   if (skipped) parts.push(`skipped: ${skipped}`);
+  if (parts.length === 0) return '';
   return `author-association enrichment incomplete (${parts.join('; ')}) — records without an association keep the pre-#4577 Origin-line behaviour\n`;
 }
 
@@ -151,7 +181,8 @@ function enrichRecordsFile(file, deps = {}) {
       }
     }
   }
-  if (result.failedBatches > 0 || result.skipped) stderr(warningLine(result));
+  const warning = warningLine(result);
+  if (warning) stderr(warning);
   return result;
 }
 
@@ -163,5 +194,6 @@ module.exports = {
   enrichRecords,
   enrichRecordsFile,
   defaultRunner,
+  ghTimeoutFor,
   warningLine,
 };
