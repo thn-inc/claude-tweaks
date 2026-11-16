@@ -3,15 +3,18 @@
 // above a pinned count assertion (#5552). Callers: tests/policy-schema.test.js
 // and tests/bin-lib/skill-audit/anti-patterns.test.js. A pinned number cannot
 // change without the same edit rewriting the Last bump line to match.
-const fs = require('fs');
+// Tests: tests/last-bump-helper.test.js.
 const path = require('path');
 const assert = require('node:assert/strict');
+const { readText } = require('./read-skill');
 
 const BUMP_RE = /^\s*\/\/ Last bump: (\d+) -> (\d+), #(\d+)\s*$/;
-const PIN_RE = /assert\.strictEqual\([^,]+,\s*(\d+)\);/;
+// The pinned number is the second argument; an optional third (message)
+// argument is allowed.
+const PIN_RE = /assert\.strictEqual\([^,]+,\s*(\d+)\s*(?:,[^;]*)?\);/;
 
 function assertLastBump(file) {
-  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  const lines = readText(file).split('\n');
   const where = path.basename(file);
   const hits = [];
   lines.forEach((line, i) => {
