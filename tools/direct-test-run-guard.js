@@ -99,6 +99,15 @@ const PREFIX_OPTIONS = new Map([
   ['gtimeout', TIMEOUT_OPTIONS],
   ['sudo', { flags: /^-[EnH]+$/, valued: new Set(['-u']) }],
 ]);
+// Every word the classifier or the script scan reads at a program position: the node names and npx, the
+// shells and `eval` (whose text is walked), `source` and `.`, and the words that move the program further
+// along a segment (LEAD_KEYWORDS, PREFIX_OPTIONS, REPEATING_LEADS, find). tools/direct-test-run-guard.sh
+// sends a call to node when any fragment of the command starts with one of them, and a test pins its list
+// to this one. npx, eval, source, `.` and find are compared inline below: a rule keyed on a new first word
+// adds the word here, and the test that runs every denied command through the prefilter fails until it does.
+const PROGRAM_WORDS = Object.freeze([...new Set([
+  ...NODE_NAMES, 'npx', ...SHELLS, 'eval', 'source', '.', ...LEAD_KEYWORDS, ...PREFIX_OPTIONS.keys(), ...REPEATING_LEADS.keys(), 'find',
+])]);
 
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -1226,5 +1235,5 @@ function main() {
 if (require.main === module) main();
 
 module.exports = {
-  classifyCommand, classifyCommandOrThrow, hasDirectTestRun, scanScript, judge, judgeOrThrow, realDeps, SAFEGUARDS_TEXT,
+  classifyCommand, classifyCommandOrThrow, hasDirectTestRun, scanScript, judge, judgeOrThrow, realDeps, SAFEGUARDS_TEXT, PROGRAM_WORDS,
 };

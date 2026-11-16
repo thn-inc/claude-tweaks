@@ -12,12 +12,21 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { readText } = require('./helpers/read-skill');
 const { shellQuote } = require('./helpers/shell-quote');
+const { findOnPath } = require('./helpers/path-stub');
 
 // Every verdict below is read through classifyCommandOrThrow and judgeOrThrow, which let an internal error
 // through, so a bug can never pass an allow row by landing in the catching wrapper.
-const {
-  classifyCommand, classifyCommandOrThrow, hasDirectTestRun, scanScript, judge, judgeOrThrow, realDeps, SAFEGUARDS_TEXT,
-} = require('../tools/direct-test-run-guard');
+const guard = require('../tools/direct-test-run-guard');
+const { classifyCommand, hasDirectTestRun, scanScript, judge, realDeps, SAFEGUARDS_TEXT, PROGRAM_WORDS } = guard;
+// Every command a test in this file sees denied, by either throwing entry point, under any options: the
+// last test in the file runs each one through the sh prefilter.
+const DENIED_COMMANDS = new Set();
+function recordDeny(command, verdict) {
+  if (typeof command === 'string' && verdict.decision === 'deny') DENIED_COMMANDS.add(command);
+  return verdict;
+}
+const classifyCommandOrThrow = (command, options) => recordDeny(command, guard.classifyCommandOrThrow(command, options));
+const judgeOrThrow = (payload, deps) => recordDeny(payload && payload.tool_input && payload.tool_input.command, guard.judgeOrThrow(payload, deps));
 const { parseRunnerOperands } = require('../tools/run-tests');
 
 // Every deny table in this file registers its commands here, with the options they are judged under, as
@@ -769,6 +778,54 @@ function withTempDir(fn) {
 
 const bash = (command, cwd = ROOT) => ({ tool_name: 'Bash', cwd, tool_input: { command } });
 
+// ---- the sh prefilter (#5794) ----
+
+// win32 skips dash even when one is on PATH: the windows-latest runner has a dash that cannot exec a
+// Windows-form path (C:\...\node.exe), measured in windows-regression run 43647466952 (tests/hooks-launcher.test.js).
+const WIN32_DASH_SKIP = 'win32: dash cannot exec a Windows-form path (C:\\...\\node.exe), measured in windows-regression run 43647466952; Claude Code runs Windows hooks under Git Bash sh, covered by [sh]';
+const PREFILTER_SHELLS = [
+  { name: 'sh', file: findOnPath('sh') },
+  process.platform === 'win32'
+    ? { name: 'dash', file: null, skipReason: WIN32_DASH_SKIP }
+    : { name: 'dash', file: findOnPath('dash') },
+  { name: 'bash', file: findOnPath('bash') },
+];
+// One test per shell; sh is required, dash and bash skip by name when missing.
+function perPrefilterShell(title, fn) {
+  for (const sh of PREFILTER_SHELLS) {
+    const missing = !sh.file;
+    if (missing && sh.name === 'sh') throw new Error('sh not found on PATH');
+    test(`${title} [${sh.name}]`, { skip: missing && (sh.skipReason || `${sh.name} not on PATH`) }, () => fn(sh));
+  }
+}
+
+const PREFILTER = path.join(ROOT, 'tools', 'direct-test-run-guard.sh');
+// One PreToolUse payload as Claude Code 2.1.325 writes it (captured 2026-11-16): one compact JSON line.
+const hookPayload = (command, extra = {}) => JSON.stringify({
+  session_id: '1c62e9ba-c9f3-4896-a17e-e1f7fa768871',
+  transcript_path: '/home/u/.claude/projects/-repo/1c62e9ba-c9f3-4896-a17e-e1f7fa768871.jsonl',
+  cwd: ROOT,
+  prompt_id: '6ee4cc1c-2e11-418f-960f-ba371fab8215',
+  permission_mode: 'default',
+  effort: { level: 'medium' },
+  hook_event_name: 'PreToolUse',
+  tool_name: 'Bash',
+  tool_input: { command, description: 'Run it', ...extra },
+  tool_use_id: 'toolu_014brzUtdmTepXVxeaXhFJAj',
+});
+// Sources the prefilter once (its test seam) and asks it about each line of stdin.
+const PREFILTER_DRIVER = 'DIRECT_TEST_RUN_GUARD_LIB=1; . "$1"; while IFS= read -r l || [ -n "$l" ]; do if direct_test_run_guard_needs_node "$l"; then echo node; else echo skip; fi; done';
+function prefilterVerdicts(shellFile, payloadLines, { env = process.env, cwd } = {}) {
+  const res = spawnSync(shellFile, ['-c', PREFILTER_DRIVER, 'sh', PREFILTER], {
+    input: payloadLines.join('\n') + '\n', encoding: 'utf8', env, cwd, timeout: 30000, killSignal: 'SIGKILL', windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+  });
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(res.stderr, '');
+  const verdicts = res.stdout.split('\n').filter(Boolean);
+  assert.equal(verdicts.length, payloadLines.length);
+  return verdicts;
+}
+
 // Fake deps over a map of absolute path -> script text; `/repo` holds the runner.
 function fakeDeps(files) {
   const has = (p) => Object.prototype.hasOwnProperty.call(files, p);
@@ -1390,4 +1447,111 @@ test('AC13.1: CLAUDE.md is 150 lines or fewer', () => {
   assert.deepEqual([lineCount('a\nb\n'), lineCount('a\nb')], [2, 2]);
   const lines = lineCount(readText(path.join(ROOT, 'CLAUDE.md')));
   assert.ok(lines <= 150, `${lines} lines`);
+});
+
+// ---- the sh prefilter's decisions (#5794) ----
+
+const UTF8_ENV = { ...process.env, LC_ALL: 'en_US.UTF-8' };
+const isPayloadLine = (c) => typeof c === 'object';
+// Each row is a command (wrapped in a hook payload) or { line } (a raw stdin line); every row's verdict is
+// compared with the expected one, naming the row on a mismatch.
+function assertVerdicts(sh, rows, expected, options) {
+  const lines = rows.map((r) => (isPayloadLine(r) ? r.line : hookPayload(r)));
+  const verdicts = prefilterVerdicts(sh.file, lines, options);
+  rows.forEach((r, i) => {
+    assert.equal(verdicts[i], typeof expected === 'function' ? expected(r, i) : expected, `[${sh.name}] ${JSON.stringify(isPayloadLine(r) ? r.line : r)}`);
+  });
+}
+
+test('#5794 AC6.1: the sh word list is the guard\'s PROGRAM_WORDS', () => {
+  const lines = readText(PREFILTER).split('\n');
+  const at = lines.findIndex((l) => l.trimStart().startsWith('# program-words:'));
+  assert.ok(at >= 0, 'no program-words comment line');
+  const list = lines[at + 1].replace(/^\s+/, '').replace(/\) return 0 ;;$/, '').split('|');
+  const sameWords = (words) => assert.deepEqual([...words].sort(), [...PROGRAM_WORDS].sort());
+  sameWords(list);
+  for (const w of ['node', 'find', '.', 'until']) assert.ok(PROGRAM_WORDS.includes(w), w);
+  assert.equal(new Set(PROGRAM_WORDS).size, PROGRAM_WORDS.length);
+  assert.ok(Object.isFrozen(PROGRAM_WORDS));
+  assert.throws(() => sameWords(list.filter((w) => w !== 'find')));
+  assert.throws(() => sameWords([...list, 'coproc']));
+});
+
+const ALLOWED_BY_PREFILTER = [
+  'git status --short && ls', 'ls -la', 'git -C "/a b/c" log --oneline | head -5', 'gh pr view 12 --json title',
+  'cd "/a b" && git status', 'npm test', 'echo "node --test a.test.js b.test.js"', 'git add a.js\ngit status',
+  'git status\t--short', 'loop.sh', 'a-b_c.d+e 1', 'grep -n "x" f.js', 'ls \u00a0node x', '',
+];
+perPrefilterShell('#5794 the prefilter skips a call whose fragments all start with a plain command name', (sh) => {
+  for (const command of ALLOWED_BY_PREFILTER) assert.equal(guard.judgeOrThrow(bash(command), realDeps()).decision, 'allow', `oracle drift: ${command}`);
+  assertVerdicts(sh, ALLOWED_BY_PREFILTER, 'skip');
+});
+
+perPrefilterShell('#5794 the prefilter sends every program word to node', (sh) => {
+  const rows = PROGRAM_WORDS.flatMap((w) => [`${w} x`, `ls && ${w} x`]);
+  assertVerdicts(sh, rows, 'node');
+});
+
+perPrefilterShell('#5794 the prefilter cuts at every separator', (sh) => {
+  const T = 'node --test tests/a.test.js tests/b.test.js';
+  const rows = [
+    `ls; ${T}`, `ls && ${T}`, `ls || ${T}`, `ls | ${T}`, `ls & ${T}`, `(${T})`, `{ ${T}; }`, 'echo `' + T + '`',
+    `echo $(${T})`, `ls\n${T}`, `\t${T}`, `git commit -m "a; ${T}"`,
+    ...[';', '&', '|', '(', ')', '{', '}', '`', '\n'].map((sep) => `ls ${sep} node x`),
+  ];
+  assertVerdicts(sh, rows, 'node');
+});
+
+perPrefilterShell('#5794 the prefilter sends a first word it cannot read plainly to node', (sh) => {
+  const rows = [...'/="\'$<>!~:@%*?[]#,^\\'].map((c) => `x${c}y z`);
+  rows.push('xéy z', 'ls;\u00a0node x', 'env\u00a0node x', './x.sh', '/usr/bin/time ls', 'FOO=1 ls', '"ls"',
+    'X=de; no$X --test a.test.js b.test.js', "'C:\\work\\loop.sh'", 'C:/work/loop.sh');
+  assertVerdicts(sh, rows, 'node', { env: UTF8_ENV });
+});
+
+perPrefilterShell('#5794 the prefilter sends what it cannot read to node', (sh) => {
+  const raw = [
+    'grep "a\\|b" f', 'ls \\', 'ls\rx', 'ls\fx', 'ls\bx', 'ls\u0007x',
+  ].map((c) => hookPayload(c)).concat([
+    '{"tool_name":"Bash","tool_input":{}}',
+    '{"tool_name":"Bash","tool_input":{"command":null}}',
+    '{"tool_name":"Bash","tool_input":{"command": "ls"}}',
+    '{"tool_name":"Bash","tool_input":{"description":"command","other":"ls"}}',
+    'not json',
+    '',
+    hookPayload('ls', { description: 'command' }),
+    hookPayload('ls ' + 'é'.repeat(4000)),
+  ]);
+  assertVerdicts(sh, raw.map((line) => ({ line })), 'node', { env: UTF8_ENV });
+});
+
+perPrefilterShell('#5794 the prefilter reads the size and piece caps exactly', (sh) => {
+  const base = Buffer.byteLength(hookPayload('ls '));
+  const p0 = hookPayload('ls', { description: '' }).split('"').length;
+  const pairs = [
+    [hookPayload('ls ' + 'a'.repeat(8192 - base)), hookPayload('ls ' + 'a'.repeat(8193 - base))],
+    [hookPayload('ls', { description: '"'.repeat(256 - p0) }), hookPayload('ls', { description: '"'.repeat(257 - p0) })],
+    [hookPayload('ls' + '\ta'.repeat(255)), hookPayload('ls' + '\ta'.repeat(256))],
+    [hookPayload('ls;'.repeat(256)), hookPayload('ls;'.repeat(257))],
+  ];
+  const rows = pairs.flat().map((line) => ({ line }));
+  assertVerdicts(sh, rows, (r, i) => (i % 2 === 0 ? 'skip' : 'node'), { env: UTF8_ENV });
+});
+
+perPrefilterShell('#5794 the prefilter does not expand a glob', (sh) => {
+  withTempDir((dir) => {
+    fs.writeFileSync(path.join(dir, 'plainfile'), '');
+    assertVerdicts(sh, ['* x'], 'node', { env: UTF8_ENV, cwd: dir });
+  });
+});
+
+test('#5794 under a shell that does not split words every call goes to node', { skip: !findOnPath('zsh') && 'zsh not on PATH' }, () => {
+  assert.deepEqual(prefilterVerdicts(findOnPath('zsh'), [hookPayload('git status --short && ls')]), ['node']);
+});
+
+// Must stay the last test in the file: DENIED_COMMANDS holds every deny the earlier tests saw.
+perPrefilterShell('#5794 AC2.1 AC2.2 AC2.3: every command a test saw denied reaches node', (sh) => {
+  const commands = [...new Set([...ROUND_TRIP.map(([c]) => c), ...DENIED_COMMANDS])];
+  assert.ok(commands.length >= 50, `only ${commands.length} denied commands`);
+  assertVerdicts(sh, commands, 'node');
 });
