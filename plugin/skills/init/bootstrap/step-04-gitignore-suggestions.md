@@ -12,19 +12,23 @@ Check whether `.gitignore` exists and already covers workflow artifacts. Suggest
 !.claude-tweaks/pipelines/*/
 .claude-tweaks/pipelines/*/*
 !.claude-tweaks/pipelines/*/work/
-!.claude-tweaks/pipelines/*/work/**
+.claude-tweaks/pipelines/*/work/*
+!.claude-tweaks/pipelines/*/work/*-spec.md
 !.claude-tweaks/pipelines/*/spec-*/
 .claude-tweaks/pipelines/*/spec-*/*
 !.claude-tweaks/pipelines/*/spec-*/work/
-!.claude-tweaks/pipelines/*/spec-*/work/**
+.claude-tweaks/pipelines/*/spec-*/work/*
+!.claude-tweaks/pipelines/*/spec-*/work/*-spec.md
 !.claude-tweaks/pipelines/archive/*/
 .claude-tweaks/pipelines/archive/*/*
 !.claude-tweaks/pipelines/archive/*/work/
-!.claude-tweaks/pipelines/archive/*/work/**
+.claude-tweaks/pipelines/archive/*/work/*
+!.claude-tweaks/pipelines/archive/*/work/*-spec.md
 !.claude-tweaks/pipelines/archive/*/spec-*/
 .claude-tweaks/pipelines/archive/*/spec-*/*
 !.claude-tweaks/pipelines/archive/*/spec-*/work/
-!.claude-tweaks/pipelines/archive/*/spec-*/work/**
+.claude-tweaks/pipelines/archive/*/spec-*/work/*
+!.claude-tweaks/pipelines/archive/*/spec-*/work/*-spec.md
 .claude-tweaks/research/
 .claude-tweaks/code-health/
 .claude-tweaks/harness-health/
@@ -47,7 +51,7 @@ These entries ignore claude-tweaks' transient, project-local state — pipeline 
 
 `.env.local` and `.env` carry Step 6.5's managed port-isolation region (`# claude-tweaks:ports begin/end`, written by `bin/ports.js allocate`/`ensure`) — machine-specific leased-port values, never meant to be shared across checkouts, so both join the suggested block the same way `.impeccable/config.local.json` does.
 
-The same structural rule applies one level deeper, inside `.claude-tweaks/pipelines/` itself: `flow/materialize.md` documents that a materialized spec file under `pipelines/{run-id}/work/` (and its multi-record `spec-{n}/work/` variant, plus both variants again under `pipelines/archive/{run-id}/` — the path `/claude-tweaks:wrap-up`'s cleanup step produces) is committed audit trail, never gitignored. A bare `.claude-tweaks/pipelines/` blanket line would stop git from ever traversing into the directory at all, so a nested `!work/` re-inclusion could never take effect (this project's own `.gitignore` Don't in CLAUDE.md names this exact class of bug). The template above instead un-ignores each directory level on the way down to `work/`, at both the single-record and multi-record depths, and repeats that same per-level shape under `pipelines/archive/`. This repo's own root `.gitignore` uses the identical 17-line pattern — mirror it verbatim rather than re-deriving it by hand.
+The same structural rule applies one level deeper, inside `.claude-tweaks/pipelines/` itself: `flow/materialize.md` documents that a materialized spec header (`{n}-spec.md`) under `pipelines/{run-id}/work/` (and its multi-record `spec-{n}/work/` variant, plus both variants again under `pipelines/archive/{run-id}/` — the path `/claude-tweaks:wrap-up`'s cleanup step produces) is committed — every other file under `work/` stays ignored — never a blanket gitignore. A bare `.claude-tweaks/pipelines/` blanket line would stop git from ever traversing into the directory at all, so a nested `!work/` re-inclusion could never take effect (this project's own `.gitignore` Don't in CLAUDE.md names this exact class of bug). The template above instead un-ignores each directory level on the way down to `work/`, at both the single-record and multi-record depths, and repeats that same per-level shape under `pipelines/archive/`. This repo's own root `.gitignore` uses the identical 21-line pattern — mirror it verbatim rather than re-deriving it by hand.
 
 **Re-run behavior (migration check):** don't just check whether `.gitignore` "already covers" `.claude-tweaks/` — a project that adopted claude-tweaks before this split existed may have the old blanket line, which silently reintroduces the routines-uncommittable bug even though something matching `.claude-tweaks` is technically present. Likewise, a project that adopted the split before the per-level `pipelines/` pattern existed may have a naive `.claude-tweaks/pipelines/` blanket sub-line — that silently reintroduces the identical class of bug one level down, permanently pruning the `work/` audit trail `flow/materialize.md` promises is tracked history. And a project that split before `.claude-tweaks/artifacts/` existed as a line (added by #1077) may have the split entries with no `screenshots/` line to trigger the legacy-migration row below either — that combination falls through to no-op unless checked explicitly, silently leaving QA screenshots/traces untracked or committed indefinitely.
 
