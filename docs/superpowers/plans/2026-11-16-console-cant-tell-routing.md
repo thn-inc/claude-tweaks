@@ -74,6 +74,7 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
   - `planDigests plans only digested tiebreak items, deduped by fingerprint`.
   - `heldConsoleFindings ignores an untrusted comment`. A comment `{ body: line, authorAssociation: 'NONE' }` gives an empty set, `'MEMBER'` gives a set containing the fingerprint, and a plain string body is trusted.
 - [ ] **Step 2: Run and see them fail.** Run `node --test tests/bin-lib/console/finding-filing.test.js`. Expected: FAIL (the exports are undefined, and the proposal still carries Open Question).
+- [ ] **Step 3a: Check the header consumer.** Before you drop the `Labels:` line, read `plugin/skills/wrap-up/review-console.md` step 7's check-then-create and `plugin/skills/_shared/github-write-transport.md`'s header parsing. Confirm that a proposal header with no `Labels:` line creates a record with no labels. If a consumer requires the line, keep it as `Labels:` with no value only when that consumer accepts it; otherwise omit the line and note the consumer in your report.
 - [ ] **Step 3: Implement.** In `composeFindingProposal`, give the can't-tell branch only (`!confirmed`):
   - Deliverables `- [ ] at the integration-branch tip, quote the code at \`${where}\` and state whether the finding holds; fix it if it does, or close this record with that quoted evidence if it does not`.
   - `acceptanceCriteria` with two lines: `- [ ] the record quotes the code at \`${where}\` as it reads at the integration-branch tip`, then `- [ ] the finding is fixed there, or this record is closed with that quoted evidence showing it does not hold`.
@@ -86,6 +87,8 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
 - [ ] **Step 6: Commit.** `Compose can't-tell filings as verification tasks and add digest lines — refs #4679`
 
 ### Task 3: resolveAll routes by recommendation; residue and archive accept digested evidence
+
+**Review risk:** high (decision logic: routing by tiebreak recommendation, residue and archive evidence)
 
 **Files:**
 - Modify: `plugin/bin/lib/console/resolve.js` (`resolveAll`, `UNATTENDED_FILED_REASON`, new `UNATTENDED_DIGESTED_REASON`, the comments at `approveAllDefault` and above `resolveAll`)
@@ -115,6 +118,8 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
 - [ ] **Step 6: Commit.** `Route unattended can't-tell drops to the digest and accept digested evidence — refs #4679`
 
 ### Task 4: console-filings.js plans digests in its default selection
+
+**Review risk:** high (decision logic: default versus `--only` routing, trusted-comment dedup)
 
 **Files:**
 - Modify: `plugin/bin/console-filings.js`
@@ -155,6 +160,8 @@ Scope keywords: licensed to drop, recommendation notwithstanding, whatever the t
 - [ ] **Step 5: Commit.** `Digest backfilled can't-tell drops instead of filing them — refs #4679`
 
 ### Task 6: reconciler resolve-console records a `digested` finding row
+
+**Review risk:** high (decision logic: outcome precedence and the cleared predicate)
 
 **Files:**
 - Modify: `plugin/bin/lib/reconcile/console-execute.js` (`resolveConsoleExecution` accepts `digested: string[]`; new `DIGESTED_NOTE = 'digested — logged to the materiality digest, nothing filed'`; outcome `digested` counts as cleared; ids must be finding rows, else `{ status: 'error', reason: 'not-finding-items' }`; an id named in both `--digested` and `--filing-failed` is `conflicting-failure-ids`)
