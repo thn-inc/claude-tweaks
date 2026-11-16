@@ -14,9 +14,11 @@ const { readText } = require('./helpers/read-skill');
 // worse, passes `true` without reading the live labels and lets a leftover
 // `auto:merge` merge a record whose build grant was revoked.
 //
-// A "site" is `evaluateMaturation({`, an object literal as the first argument. The
-// definition (`function evaluateMaturation({ ... } = {})`) and prose are not sites.
-// The call's own text, from its `{` to the matching `}`, must hold a top-level
+// A "site" is any call of evaluateMaturation: `evaluateMaturation(`, with whitespace
+// before the paren or optional chaining (`evaluateMaturation?.(`) also matched. The
+// definition (`function evaluateMaturation(...)`) and prose are not sites. A site whose
+// first argument is not an object literal (a variable) cannot be read, so it is an
+// offender (fail closed). For an object literal, the call's own text, from its `{` to the matching `}`, must hold a top-level
 // `hasBuildLabel:` property whose value text contains `includes('auto:build')`, so
 // the value is a read of a label list, not a literal `true` or a bare variable.
 //   - plugin/bin/**/*.js: judged over `stripComments` text, with `stripperVerdict`
@@ -24,9 +26,8 @@ const { readText } = require('./helpers/read-skill');
 //   - plugin/skills/**/*.md: each fenced block is judged on its own, over raw text
 //     (a shell-wrapped `node -e` snippet is not JS the stripper models); the snippet
 //     is run by a reader who never sees the other fences. The fence regex is anchored
-//     on `\r?\n`.
-// Recall limits: a call whose first argument is not an object literal
-// (`evaluateMaturation(args)`), one reached through an alias, a `hasBuildLabel:` that
+//     on `\r?\n` and reads both ``` and ~~~ fences.
+// Recall limits: a call reached through an alias or a computed property, a `hasBuildLabel:` that
 // only appears in a nested object (the property is read at the call's top level, but
 // a comment inside a markdown fence's object is raw text), and a value that names
 // `includes('auto:build')` without it being the label list the caller fetched. The
@@ -36,8 +37,8 @@ const ROOT = path.join(__dirname, '..');
 const BIN_ROOT = path.join(ROOT, 'plugin', 'bin');
 const SKILLS_ROOT = path.join(ROOT, 'plugin', 'skills');
 // `function evaluateMaturation({` (the definition) is not a site.
-const SITE_RE = /(?<!\bfunction\s+)\bevaluateMaturation\(\s*\{/g;
-const FENCE_RE = /```[^\n]*\r?\n([\s\S]*?)```/g;
+const SITE_RE = /(?<!\bfunction\s+)\bevaluateMaturation\s*(?:\?\.)?\(/g;
+const FENCE_RE = /(```|~~~)[^\n]*\r?\n([\s\S]*?)\1/g;
 const BUILD_VALUE_RE = /includes\(\s*(['"])auto:build\1\s*\)/;
 
 // Manual withFileTypes walk: readdirSync's `recursive` option is ignored before
@@ -96,8 +97,12 @@ function scanText(text, label, lineBase) {
   let sites = 0;
   for (const m of text.matchAll(SITE_RE)) {
     sites += 1;
-    const open = m.index + m[0].length - 1;
     const line = lineBase + text.slice(0, m.index).split('\n').length - 1;
+    const open = m.index + m[0].length + text.slice(m.index + m[0].length).match(/^\s*/)[0].length;
+    if (text[open] !== '{') {
+      offenders.push(`${label}:${line}: evaluateMaturation call whose first argument is not an object literal cannot be checked for hasBuildLabel`);
+      continue;
+    }
     const end = matchBrace(text, open);
     if (end < 0) {
       offenders.push(`${label}:${line}: evaluateMaturation({ call whose braces never balance`);
@@ -126,9 +131,9 @@ function mdScan(raw, label) {
   let sites = 0;
   const offenders = [];
   for (const m of raw.matchAll(FENCE_RE)) {
-    const contentStart = m.index + m[0].length - 3 - m[1].length;
+    const contentStart = m.index + m[0].length - 3 - m[2].length;
     const lineBase = raw.slice(0, contentStart).split('\n').length;
-    const r = scanText(m[1], label, lineBase);
+    const r = scanText(m[2], label, lineBase);
     sites += r.sites;
     offenders.push(...r.offenders);
   }
@@ -266,7 +271,9 @@ test('AC6.1 go-red: the js checker reports a stripper mis-parse as an offender, 
   // The brief's own shape: a regex right after `)` is read as division. Literal-keeping
   // mode leaves this line intact, so the matcher still flags the call.
   const kept = jsScan("if (b) /'/.test(b); evaluateMaturation({ hasMergeLabel: true });\n", 'kept.js');
-  assert.ok(kept.offenders.length >= 1, 'a call after a stripper-hostile regex is reported, not skipped');
+  assert.deepEqual(kept.offenders, [
+    "kept.js:1: evaluateMaturation call does not pass hasBuildLabel: <labels>.includes('auto:build')",
+  ]);
   // The `//` inside the string the misread opens blanks the live call, which the
   // compile oracle catches.
   const planted = 'if (b) /"/.test(b); const c = "//"; evaluateMaturation({ hasMergeLabel: true });\n';
@@ -274,4 +281,32 @@ test('AC6.1 go-red: the js checker reports a stripper mis-parse as an offender, 
   const r = jsScan(planted, 'misparsed.js');
   assert.equal(r.offenders.length, 1);
   assert.ok(r.offenders[0].includes(STRIPPER_VERDICT_MESSAGES.misparsed));
+});
+
+test('AC6.1 go-red: a spaced call, an optional-chaining call and a variable argument are each flagged at their line', () => {
+  const notObject = (line, file) => `${file}:${line}: evaluateMaturation call whose first argument is not an object literal cannot be checked for hasBuildLabel`;
+  assert.deepEqual(jsScan('const a = 1;\nevaluateMaturation ({ hasMergeLabel: true });\n', 'spaced.js').offenders, [
+    "spaced.js:2: evaluateMaturation call does not pass hasBuildLabel: <labels>.includes('auto:build')",
+  ]);
+  assert.deepEqual(jsScan('const a = 1;\nconst b = 2;\nm.evaluateMaturation?.({ hasMergeLabel: true });\n', 'optional.js').offenders, [
+    "optional.js:3: evaluateMaturation call does not pass hasBuildLabel: <labels>.includes('auto:build')",
+  ]);
+  assert.deepEqual(jsScan('const args = {};\nconst r = evaluateMaturation(args);\n', 'variable.js').offenders, [notObject(2, 'variable.js')]);
+  assert.deepEqual(jsScan('evaluateMaturation?.(args);\n', 'optvar.js').offenders, [notObject(1, 'optvar.js')]);
+  // The spellings in a markdown fence, each at its own line.
+  const md = ['```bash', 'evaluateMaturation (args)', 'evaluateMaturation?.({ a: 1 })', '```', ''].join('\n');
+  assert.deepEqual(mdScan(md, 'f.md').offenders, [
+    notObject(2, 'f.md'),
+    "f.md:3: evaluateMaturation call does not pass hasBuildLabel: <labels>.includes('auto:build')",
+  ]);
+  // A compliant spaced call is clean.
+  assert.deepEqual(jsScan("evaluateMaturation ({ hasBuildLabel: labels.includes('auto:build') });\n", 'okspaced.js'), { sites: 1, offenders: [] });
+});
+
+test('AC6.1 go-red: a tilde fence is read, and a CRLF copy gives the same verdict', () => {
+  const md = ['~~~bash', 'evaluateMaturation({ hasMergeLabel: true })', '~~~', ''].join('\n');
+  const lf = mdScan(md, 'tilde.md');
+  assert.equal(lf.sites, 1);
+  assert.match(lf.offenders[0], /^tilde\.md:2: /);
+  assert.equal(mdScan(md.replace(/\n/g, '\r\n'), 'tilde-crlf.md').offenders.length, 1);
 });

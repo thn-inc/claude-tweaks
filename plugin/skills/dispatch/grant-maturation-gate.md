@@ -17,8 +17,9 @@ ordering impossible.
 **Phase 1 — evaluate every member, no side effects.** For each group member, read its live labels
 and comments fresh (`gh issue view {n} --json labels,comments`) and run `evaluateMaturation`;
 collect every member's `result` before acting on any of them. A member already carrying
-`auto:merge` still runs through this — `hasMergeLabel: true` resolves deterministically to
-`already-mature` regardless of any pending label (see the module's own check ordering). A member
+`auto:merge` still runs through this — when its live labels also carry `auto:build`,
+`hasMergeLabel: true` resolves deterministically to `already-mature` regardless of any pending
+label (see the module's own check ordering); without `auto:build` the result is `no-build-grant`. A member
 instead carrying `auto:merge-pending` (never both at once — see `_shared/work-record.md`'s Grant
 semantics) gets its real maturation check. This checkpoint is the "existing merge-consult step"
 `grant-veto-window-hours` binds to, per `docs/donts.md`'s `[IL-94]`; there is no separate
@@ -64,7 +65,10 @@ Phase 2 runs at all:
   member already gets. Do not run Phase 2 at all. For each non-clearing member, log:
   `AUTO {time} — Auto-merge gate: #{n}'s auto:merge-pending has not matured ({result.reason}) —
   group falls back to pending-review. Reversibility: n/a (no label change). [lever:
-  grant-veto-window-hours={result.windowHours ?? GRANT_VETO_WINDOW_HOURS} (source)]`. A
+  grant-veto-window-hours={result.windowHours ?? GRANT_VETO_WINDOW_HOURS} (source)]`; for a
+  `no-build-grant` member, log instead: `AUTO {time} — Auto-merge gate: #{n} carries a merge grant
+  without a live auto:build ({result.reason}) — group falls back to pending-review. Reversibility:
+  n/a (no label change).`. A
   `not-pending` result with no `auto:merge` either is exactly a human veto — permanent, since
   nothing re-adds `auto:merge-pending` (`refine`'s headless posture's own candidate fetch already excludes
   any record carrying an existing `auto:build` grant, so a previously-granted-then-vetoed record
