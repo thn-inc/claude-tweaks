@@ -414,12 +414,9 @@ The guess rides in the existing "Added: '{title}' (Type: {t})" presentation (see
 
 When `--needs-definition` or `--no-needs-definition` is supplied, skip this entirely and use it
 as `$NEEDS_DEFINITION` — no judgment, and the presentation line below renders with no rationale
-clause (the human already decided). Otherwise, judge from the idea's content in this same turn:
-does it name a genuine open choice with no tradeoff made yet — two or more viable directions,
-no stated preference — or does it read as a single clear ask? This is a content call, not a
-structural heuristic: resist scoring it by length or keyword match, the same way `solution:unjustified`'s
-judgment is a content call rather than a mechanical check. `$NEEDS_DEFINITION` is `true` only when
-the idea genuinely names an undecided choice; default `false` (clear) otherwise. When `true`, form
+clause (the human already decided). Otherwise, read `_shared/needs-definition-judgment.md` and judge
+the idea's content by it in this same turn: `needed` sets `$NEEDS_DEFINITION` to `true`, `clear`
+to `false`. When `true`, form
 a one-line rationale naming the open choice — this becomes `$DEFINITION_RATIONALE`, surfaced in
 the presentation line below and, later, bootstrapped/labeled per Backend Selection above.
 
