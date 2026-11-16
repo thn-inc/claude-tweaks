@@ -251,11 +251,10 @@ function archiveRunHeader({ worktree, runId, specDir = null, env, git = runGit }
   if (committed.failure) return refuseAfterMutation('commit-failed', failDetail(committed));
 
   // (8) Report; drop the live dirs the move emptied.
-  const moved = live;
   for (const rel of live) pruneEmptyDirs(worktree, rel, liveDir);
   const sha = g(['rev-parse', 'HEAD']);
-  if (sha.failure) return { outcome: 'moved', detail: `committed, but HEAD unreadable: ${failDetail(sha)}`, moved };
-  return { outcome: 'moved', commit: sha.stdout, moved };
+  if (sha.failure) return { outcome: 'moved', detail: `committed, but HEAD unreadable: ${failDetail(sha)}`, moved: live };
+  return { outcome: 'moved', commit: sha.stdout, moved: live };
 }
 
 function pushRunBranch({ worktree, env, git = runGit } = {}) {
