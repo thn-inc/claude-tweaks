@@ -8,13 +8,15 @@
 
 **Tech Stack:** Node 18+ (`node --test`), git >= 2.29 (`maintenance.auto`), trace2 (`GIT_TRACE2_EVENT=<dir>`).
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-16T171948-record-5768/work/5768-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-16T175307-record-5768/work/5768-spec.md` (re-materialized for the resumed run; its two `**Decision (2026-11-16, record author)**` paragraphs settle AC4's counts and Deliverable 4's "shared builder").
+
+**Record decisions applied:** (a) AC4 — no existing test is deleted, skipped, renamed, merged or loosened; a touched file's count may grow by the tests this record adds. (b) Deliverable 4 — the runner-written template is the central mechanism, so the regression test pushes into a plain `git init --bare` origin and commits in a plain `git init` repo in a runner child; `originWithTwoClones` is not bypassed. The template applies only under `tools/run-tests.js`, so the "bare `node --test`" clause of decision (b) does not apply; the PR body says so.
 
 ## Global Constraints
 
 - Product code keeps its environment scrubbing (spec Deliverable 2): `plugin/bin/lib/staged-patch/stack-check.js` is not edited.
 - Sibling-owned files are not edited (spec Current State): `tests/bin-lib/issues/claims-git-cas.test.js`, `tests/bin-lib/reconcile/prune-remote.test.js`, `tests/bin-lib/pre-review-catchup/cli.test.js`, `tests/bin-lib/learned-skills/`, `tests/bin-lib/staged-patch/stack-check.test.js`.
-- No test is deleted, skipped or loosened, and test concurrency is unchanged (AC4).
+- No existing test is deleted, skipped, renamed, merged or loosened, and test concurrency is unchanged (AC4 with the record's decision (a)); a touched file's count grows only by the tests this plan adds.
 - `git-ground-truth-test-env` skill, verbatim: "`tools/run-tests.js` exports `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` to every test (`gitFixtureConfigEnv`, #5297). A reader that hands the question back to git whenever `GIT_CONFIG*` is set then defers in every test, so each \"defers to git\" test passes whatever the reader does." — the same holds for the new `GIT_TEMPLATE_DIR`: a test whose control case expects maintenance to start must drop `GIT_TEMPLATE_DIR` from the env its git calls use, or the control is masked.
 - `git-ground-truth-test-env` skill, verbatim: "**Prove both under the runner.** Run `node tools/run-tests.js --files-from <list>`, never only a bare `node --test`: the runner's env is part of the test's input."
 - `windows-checkout-test-parity` skill, verbatim: "Isolating a fixture's git from system config (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_SYSTEM=/dev/null`) when the code under test runs git with the host's config | Git for Windows keeps `core.autocrlf=true` in its system config." — this plan changes no system or global config; the template adds repository-level keys only.
@@ -29,12 +31,16 @@
 3. `git` missing or failing during template build: the runner must still run the suite (fail open, one stderr line), never crash before the slot is released.
 4. Bare repositories: the template `config` must not carry `core.bare` or other keys `git init` writes itself, so a non-bare repo made from it is not marked bare and vice versa.
 5. Existing control assertions that expect maintenance to start (`tests/helpers-git-template.test.js`'s `disableReceiveAutoGc` control and "template build runs with auto-maintenance off") must keep discriminating under the runner once `GIT_TEMPLATE_DIR` is exported.
+6. The developer's own git config (`init.templateDir` in `~/.gitconfig`, the system config, or an inherited `GIT_CONFIG_COUNT`/`GIT_CONFIG_PARAMETERS` entry) must not decide what the scratch `git init` harvests: the runner's template is git's built-in default (or an explicitly inherited `GIT_TEMPLATE_DIR`) plus the maintenance-off keys, the same on every machine.
 
-Each line is pinned by a test in Task 1 (1-4) or Task 2 (5).
+Each line is pinned by a test in Task 1 (1-4, 6) or Task 2 (5).
 
 ---
 
 ### Task 1: Runner-written git template directory
+
+**Role:** integration
+**Review risk:** high (branches on inherited env state — `GIT_TEMPLATE_DIR`, `GIT_DIR`, the developer's git config — and changes the env of every test the runner starts)
 
 **Files:**
 - Modify: `tools/run-tests.js` (new `writeGitTemplateDir` beside `gitFixtureConfigEnv` ~line 578; export it; wire into the spawn env ~line 841)
@@ -46,16 +52,17 @@ Each line is pinned by a test in Task 1 (1-4) or Task 2 (5).
 
 Behavior of `writeGitTemplateDir`:
 1. `fs.mkdirSync(dir, { recursive: true })`.
-2. Run `git init -q <dir>-src` with `env` minus `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` (default `git` = `execFileSync('git', args, { ...opts, stdio: 'ignore', windowsHide: true })`), so git's own default template (or an inherited `GIT_TEMPLATE_DIR`) is materialized.
+2. Run `git init -q <dir>-src` with `env` minus `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` and every `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, plus `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=<dir>-empty-gitconfig` (a real empty file written first — never `os.devNull`, which Git for Windows rejects as a config path) (default `git` = `execFileSync('git', args, { ...opts, stdio: 'ignore', windowsHide: true })`), so git's built-in default template (or an inherited `GIT_TEMPLATE_DIR`, which git reads from the environment ahead of any config) is materialized, never a developer's `init.templateDir` (Review Focus 6).
 3. Copy `hooks/`, `info/` and `description` from `<dir>-src/.git` into `dir` when present (`fs.cpSync`, recursive). Never copy `<dir>-src/.git/config`: it holds the `core.*` keys `git init` writes per repository (Review Focus 4).
 4. Write `dir/config` = (text of `env.GIT_TEMPLATE_DIR/config` when that file exists, followed by a newline when it does not end in one) + `GIT_TEMPLATE_CONFIG`.
-5. Remove `<dir>-src` (best effort) and return `dir`.
+5. Remove `<dir>-src` and `<dir>-empty-gitconfig` (best effort) and return `dir`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/run-tests-isolation.test.js` (import `writeGitTemplateDir`, `GIT_TEMPLATE_CONFIG`):
   - `AC1.1: writeGitTemplateDir writes the maintenance-off keys and keeps git's default template files` — into a fresh temp dir with `process.env` minus every `GIT_TEMPLATE_DIR`/`GIT_CONFIG_*` key; assert the return equals the dir, `git config --file <dir>/config --get maintenance.auto` is `false`, `gc.auto` is `0`, `receive.autogc` is `false`, `core.bare` is absent (exit 1), and `<dir>/info` and `<dir>/hooks` exist.
   - `AC1.1: a repo initialized from the template carries the keys, bare and non-bare` — `git init -q` and `git init -q --bare` with `GIT_TEMPLATE_DIR=<dir>`; `git config --local --get maintenance.auto` is `false` in both; `core.bare` is `false` and `true` respectively.
   - `writeGitTemplateDir keeps an inherited GIT_TEMPLATE_DIR's files and config ahead of its own keys` — inherited template holding `config` = `[core]\n\tct-probe = yes` (no trailing newline) and `info/marker`; assert `<dir>/info/marker` exists, `git config --file <dir>/config --get core.ct-probe` is `yes`, and `maintenance.auto` is `false`.
   - `writeGitTemplateDir ignores an inherited GIT_DIR` — env `GIT_DIR` pointing at another temp repo's `.git`; after the call that repo's `.git/config` bytes are unchanged and the return is the dir.
+  - `writeGitTemplateDir ignores the developer's init.templateDir` — env `GIT_CONFIG_GLOBAL` pointing at a temp gitconfig holding `[init]\n\ttemplateDir = <devTpl>`, where `<devTpl>/info/dev-marker` exists, and `GIT_CONFIG_COUNT=1`/`GIT_CONFIG_KEY_0=init.templateDir`/`GIT_CONFIG_VALUE_0=<devTpl>` (both channels); no `GIT_TEMPLATE_DIR`. Assert `<dir>/info/dev-marker` does not exist and `<dir>/info/exclude` does (git's built-in default). Control in the same test: a plain `git init -q` of a scratch repo under that same env does carry `info/dev-marker`, so the fixture really sets a template.
   - `writeGitTemplateDir returns null when git fails` — injected `git` that throws; return is `null`.
   - `run-tests.js gives the suite a GIT_TEMPLATE_DIR inside its run root whose config turns maintenance off` — via `withSandbox(...PROBE)`/`runRunner` with `GIT_TEMPLATE_DIR` removed from `sb.env`; the probe's recorded `gitTemplateDir` sits inside the recorded `tmpdir`, and its recorded `gitTemplateConfig` ends with `GIT_TEMPLATE_CONFIG`.
 
@@ -97,7 +104,7 @@ git commit -m "Write a maintenance-off git template for every test run — refs 
 
 Run: `node tools/run-tests.js tests/helpers-git-template.test.js`
 Expected: PASS, test count = previous count + 1.
-- [ ] **Step 4: Prove the new test discriminates** — temporarily make `GIT_TEMPLATE_CONFIG` an empty string in `tools/run-tests.js`, re-run Step 3's command, expect the AC3.1 test FAIL with the maintenance assertion; restore the constant. Save the red output to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-16T171948-record-5768/evidence/ac3-red.txt` for the PR body.
+- [ ] **Step 4: Prove the new test discriminates** — temporarily make `GIT_TEMPLATE_CONFIG` an empty string in `tools/run-tests.js`, re-run Step 3's command, expect the AC3.1 test FAIL with the maintenance assertion; restore the constant. Save the red output to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-16T175307-record-5768/evidence/ac3-red.txt` (a plain Bash redirect — the run dir is under the main checkout) for the PR body (Task 4 Step 5). Confirm with `git diff --exit-code tools/run-tests.js` that the constant is restored before committing.
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -106,6 +113,8 @@ git commit -m "Test that a template-made origin and repo start no maintenance �
 ```
 
 ### Task 3: Append to the inherited GIT_CONFIG entries in archive-run-verb's AC10.1
+
+**Why this target (from the attribution):** the merge-base trace (`.claude-tweaks/pipelines/archive/2026-11-16T171948-record-5768/maintenance-attribution-baseline.md`) attributes exactly one maintenance process to a test that replaced the runner's `GIT_CONFIG_COUNT` entries: `tests/archive-run-verb.test.js`'s `1× git -C <path> commit`, from the AC10.1 test that builds `GIT_CONFIG_COUNT=2` with its own `branch.main.*` keys. The other file the spec names in that class, `tests/bin-lib/residue/cli.test.js`, has no maintenance process in the trace (it does not appear in the table), so Deliverable 3 ("a test that the attribution shows starting maintenance") does not reach it and it is not edited. AC10.1 does not depend on replacing the entries — it needs `branch.main.remote`/`merge` from env config only — so it appends.
 
 **Files:**
 - Modify: `tools/run-tests.js` (export `appendGitConfigEnv(env, pairs) -> object`; reimplement `gitFixtureConfigEnv(env)` as `appendGitConfigEnv(env, [['maintenance.auto','false'],['gc.auto','0']])` with identical output)
@@ -128,9 +137,131 @@ git commit -m "Append archive-run AC10.1's git config to the runner's entries �
 
 ### Task 4: Measure before and after, and write the attribution
 
-**Files:** none committed (scratch scripts under the session scratchpad; evidence under the run dir).
+**Files:** none committed. Scratch scripts live in the session scratchpad (`$SCRATCH` below); evidence goes under the run dir (`$RUN` = `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-16T175307-record-5768`), written by plain Bash redirects.
 
-- [ ] **Step 1:** With the trace preload (`NODE_OPTIONS=--require <scratchpad>/trace-preload.js`, `CT_TRACE_ROOT=<dir>`, one trace directory per test file), run `node tools/run-tests.js --files-from <all-files list>` back to back: first in a detached worktree at the merge-base (`git merge-base HEAD origin/main`), then at HEAD.
-- [ ] **Step 2:** Run `trace-analyze.js` over both trace roots; write the per-file table (test file, maintenance count, parent git command, reason the config missed it) and the two totals (maintenance processes, git processes) for the files in the table less the sibling-owned files, to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-16T171948-record-5768/evidence/maintenance-attribution.md`.
-- [ ] **Step 3:** Independent count over each root, not computed by the analyzer: `grep -rh '"event":"start"' <root> | grep -c '"maintenance"'` (only a process's own `start` line, never a parent's `child_start` line naming it) agrees with the analyzer's maintenance total.
-- [ ] **Step 4:** Any maintenance process left at HEAD is listed with the reason it cannot be closed; if one is closable, fix it in a further task before proceeding.
+**The "before" measurement is already taken and is reused, not re-run.** The stalled first attempt (run `2026-11-16T171948-record-5768`) traced the whole suite (1291 files) in this worktree at a tree whose code equalled the merge-base `92c2caaf7f` (only the spec and ledger commits on top): 759 maintenance processes, 405 of them in the 35 non-sibling files, 14153 git processes in those files. Its table is `.claude-tweaks/pipelines/archive/2026-11-16T171948-record-5768/maintenance-attribution-baseline.md` and its per-file JSON is `$SCRATCH/trace-before.json`. The "after" run below uses the same machine, scripts and file list, hours rather than minutes later; the PR body says so (AC2 asks for back-to-back runs — the record's decision paragraph allows taking the aim, a same-machine before/after, over re-spending a 12-minute full-suite trace).
+
+**The scripts (re-create them with the Write tool if `$SCRATCH` was cleared):**
+
+`$SCRATCH/trace-preload.js` — points each test-file process's `GIT_TRACE2_EVENT` at its own directory, so every git process it or its children start is attributed to that file:
+
+```js
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const root = process.env.CT_TRACE_ROOT;
+const main = process.argv[1] || '';
+if (root && /\.test\.js$/.test(main)) {
+  const rel = path.relative(process.env.CT_TRACE_REPO || process.cwd(), main).split(path.sep).join('/');
+  const dir = path.join(root, rel.replace(/[\/]/g, '__'));
+  fs.mkdirSync(dir, { recursive: true });
+  process.env.GIT_TRACE2_EVENT = dir;
+}
+```
+
+`$SCRATCH/list-files.js` — writes the runner's own full file list (`listTestFiles` over `tests` and `tools/upstream-drift/tests`) to `argv[3]`:
+
+```js
+'use strict';
+const path = require('path');
+const fs = require('fs');
+const repo = process.argv[2];
+const rt = require(path.join(repo, 'tools', 'run-tests.js'));
+const files = rt.listTestFiles(repo, ['tests', path.join('tools', 'upstream-drift', 'tests')]).map((f) => path.relative(repo, f));
+fs.writeFileSync(process.argv[3], files.join('\n') + '\n');
+console.log(files.length);
+```
+
+`$SCRATCH/trace-analyze.js <trace-root> --json <out>` — per test-file directory: every process's own `start` event (`sid` → `argv`), the ones whose argv contains `maintenance`, and each one's parent and grandparent command (from the `sid` path), grouped; prints one tab-separated line per file with maintenance > 0 and a `TOTAL files= git= maintenance=` line; writes `[{file, git, maintenance, byParent}]` to `<out>`:
+
+```js
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const root = process.argv[2];
+const jsonOut = process.argv.indexOf('--json') > 0 ? process.argv[process.argv.indexOf('--json') + 1] : null;
+const short = (argv) => {
+  const a = argv.slice();
+  a[0] = path.basename(a[0]);
+  return a.map((x) => (x.includes('/') || x.includes('\\') ? '<path>' : x)).slice(0, 4).join(' ');
+};
+const rows = [];
+let total = 0;
+let maint = 0;
+for (const fileDir of fs.readdirSync(root).sort()) {
+  const dir = path.join(root, fileDir);
+  if (!fs.statSync(dir).isDirectory()) continue;
+  const procs = new Map();
+  for (const f of fs.readdirSync(dir)) {
+    let text;
+    try { text = fs.readFileSync(path.join(dir, f), 'utf8'); } catch { continue; }
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.event === 'start') procs.set(ev.sid, ev.argv);
+    }
+  }
+  const m = [];
+  for (const [sid, argv] of procs) {
+    if (!argv.some((a) => a === 'maintenance')) continue;
+    const parentSid = sid.includes('/') ? sid.slice(0, sid.lastIndexOf('/')) : null;
+    const parent = parentSid && procs.get(parentSid);
+    const grand = parentSid && parentSid.includes('/') ? procs.get(parentSid.slice(0, parentSid.lastIndexOf('/'))) : null;
+    m.push({ parent: parent ? short(parent) : '(top-level)', grandparent: grand ? short(grand) : null });
+  }
+  total += procs.size;
+  maint += m.length;
+  const byParent = {};
+  for (const x of m) {
+    const k = x.parent + (x.grandparent ? ` <- ${x.grandparent}` : '');
+    byParent[k] = (byParent[k] || 0) + 1;
+  }
+  rows.push({ file: fileDir.replace(/__/g, '/'), git: procs.size, maintenance: m.length, byParent });
+}
+rows.sort((a, b) => b.maintenance - a.maintenance || a.file.localeCompare(b.file));
+for (const r of rows) if (r.maintenance) console.log(`${r.maintenance}\t${r.git}\t${r.file}\t${JSON.stringify(r.byParent)}`);
+console.log(`TOTAL files=${rows.length} git=${total} maintenance=${maint}`);
+if (jsonOut) fs.writeFileSync(jsonOut, JSON.stringify(rows, null, 1));
+```
+
+`$SCRATCH/trace-table.js <before.json> [<after.json>]` — the markdown table: one row per file with maintenance > 0 in either run, columns test file / maintenance before / after / git processes before / after / parent git command (before) / why the config missed it; the five sibling-owned paths from Global Constraints are flagged and left out of the totals line. Reasons: a `git-receive-pack` parent → receive side of a local push; a `-C <path> commit` parent → the test replaced the runner's `GIT_CONFIG_COUNT` entries; anything else → env config scrubbed before git ran:
+
+```js
+'use strict';
+const fs = require('fs');
+const before = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const after = process.argv[3] ? JSON.parse(fs.readFileSync(process.argv[3], 'utf8')) : null;
+const SIBLING = ['tests/bin-lib/issues/claims-git-cas.test.js', 'tests/bin-lib/reconcile/prune-remote.test.js', 'tests/bin-lib/pre-review-catchup/cli.test.js', 'tests/bin-lib/learned-skills/', 'tests/bin-lib/staged-patch/stack-check.test.js'];
+const sibling = (f) => SIBLING.some((s) => (s.endsWith('/') ? f.startsWith(s) : f === s));
+const idx = (rows) => new Map(rows.map((r) => [r.file, r]));
+const b = idx(before);
+const a = after ? idx(after) : new Map();
+const files = [...new Set([...before, ...(after || [])].filter((r) => r.maintenance > 0).map((r) => r.file))].sort((x, y) => (b.get(y)?.maintenance || 0) - (b.get(x)?.maintenance || 0));
+const reason = (k) => {
+  if (k.startsWith('git-receive-pack')) return 'receive side of a local push: git strips GIT_CONFIG_* from receive-pack, and the bare origin had no receive.autogc=false';
+  if (k.includes('-C <path> commit')) return 'test replaced the runner\'s GIT_CONFIG_COUNT/KEY_0/KEY_1 with its own entries';
+  return 'env config scrubbed before git ran (stack-check gitEnv or a GIT_CONFIG_*-free env); only repo config could reach it';
+};
+const lines = ['| Test file | Maintenance (before) | Maintenance (after) | Git processes (before) | Git processes (after) | Parent git command (before) | Why the config missed it |', '|---|---|---|---|---|---|---|'];
+let tb = 0, ta = 0, gb = 0, ga = 0;
+for (const f of files) {
+  const rb = b.get(f) || { maintenance: 0, git: 0, byParent: {} };
+  const ra = a.get(f) || { maintenance: 0, git: 0, byParent: {} };
+  const parents = Object.entries(rb.byParent).map(([k, n]) => `${n}× \`${k}\``).join('<br>');
+  const reasons = [...new Set(Object.keys(rb.byParent).map(reason))].join('; ');
+  const name = sibling(f) ? `${f} (sibling-owned, excluded from totals)` : f;
+  lines.push(`| ${name} | ${rb.maintenance} | ${after ? ra.maintenance : '—'} | ${rb.git} | ${after ? ra.git : '—'} | ${parents || '—'} | ${reasons || '—'} |`);
+  if (!sibling(f)) { tb += rb.maintenance; ta += ra.maintenance; gb += rb.git; ga += ra.git; }
+}
+lines.push('', `Totals over the ${files.filter((f) => !sibling(f)).length} non-sibling files: maintenance ${tb} before${after ? `, ${ta} after` : ''}; git processes ${gb} before${after ? `, ${ga} after` : ''}.`);
+console.log(lines.join('\n'));
+```
+
+If `trace-analyze.js` or `trace-table.js` is missing, rewrite it from the description above and re-run it over `$SCRATCH/trace-before` first: it must reproduce 759 / 405 / 14153 before it is used on the after root.
+
+- [ ] **Step 1:** At HEAD (after Tasks 1-3 are committed), from the worktree root: `node "$SCRATCH/list-files.js" "$PWD" "$SCRATCH/all-files-after.txt"`, then `CT_TRACE_ROOT="$SCRATCH/trace-after" CT_TRACE_REPO="$PWD" NODE_OPTIONS="--require $SCRATCH/trace-preload.js" node tools/run-tests.js --files-from "$SCRATCH/all-files-after.txt" > "$SCRATCH/trace-after.txt" 2>&1` (foreground, timeout 1200000). The run must pass with the same pass/skip counts as `trace-before.txt` plus the tests Tasks 1-3 add.
+- [ ] **Step 2:** `node "$SCRATCH/trace-analyze.js" "$SCRATCH/trace-after" --json "$SCRATCH/trace-after.json"`, then `node "$SCRATCH/trace-table.js" "$SCRATCH/trace-before.json" "$SCRATCH/trace-after.json" > "$RUN/evidence/maintenance-attribution.md"`.
+- [ ] **Step 3:** Independent count over each root, not computed by the analyzer: `grep -rh '"event":"start"' <root> | grep -c '"maintenance"'` (only a process's own `start` line, never a parent's `child_start` line naming it) agrees with the analyzer's maintenance total (759 for the before root).
+- [ ] **Step 4:** Any maintenance process left at HEAD in a non-sibling file is listed with the reason it cannot be closed; if one is closable, fix it in a further task (and re-run Steps 1-3) before proceeding.
+- [ ] **Step 5: Evidence in the PR body.** Write an `### Evidence (#5768)` section with the Write tool to `$SCRATCH/pr-evidence.md`: the attribution table from Step 2; the before/after totals (maintenance and git processes over the non-sibling files, and over all files); the two independent `grep -c` counts; the AC3 red output from `$RUN/evidence/ac3-red.txt` (the failing assertion lines, fenced); the AC4 per-file test counts before (at `92c2caaf7f`, via `node --test` on each touched file in an archive extract) and after; and the three interpretation notes (reused baseline; the template applies only under the runner, so decision (b)'s bare `node --test` clause does not apply; `residue/cli.test.js` untouched because the attribution shows no maintenance there). Append it to PR #5784's body below the fixes block (`gh pr view 5784 --json body --jq .body > "$SCRATCH/pr-body-now.md"`, add the section after `<!-- fixes-end -->` and before the session link, `gh pr edit 5784 --body-file <file>`), then read the body back and confirm the section is there.
