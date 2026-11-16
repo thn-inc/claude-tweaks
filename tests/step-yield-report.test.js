@@ -17,6 +17,7 @@ const { run, listRunDirs } = require(path.join(ROOT, 'tools', 'step-yield-report
 const { formatEntry, hms } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
 const { appendEvent } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'hooks', 'context'));
+const { SCHEMA_VERSION } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'timing', 'step-yield'));
 
 const BASE = Date.UTC(2026, 10, 12, 9, 0, 0);
 const at = (sec) => new Date(BASE + sec * 1000);
@@ -69,7 +70,7 @@ function precomputed(dir) {
   });
   const f = { ...counters(10, 4, 6, 5, 2), byLens: { '3f': counters(10, 4, 6, 5, 2) } };
   fs.writeFileSync(path.join(dir, 'step-yield.json'), JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: SCHEMA_VERSION,
     steps: [{ phase: 'review', ...bucket({ decisions: { AUTO: 18, STAGED: 2 }, findings: f, unparsed: { count: 1, samples: ['x'] } }) }],
     unattributed: bucket(),
     unparsed: { count: 0, samples: [] },
@@ -163,6 +164,27 @@ test('a present but corrupt step-yield.json derives instead and is counted, neve
   assert.match(runCli([root]).out, /step-yield\.json present but unreadable or not a yield \(derived instead\) 2/);
   // an absent file is not counted
   assert.equal(JSON.parse(runCli([setup(), '--json']).out).runsFileUnreadable, 0);
+});
+
+test('a step-yield.json of another schemaVersion is derived over in memory and counted as stale, printed', () => {
+  const root = setup();
+  const other = path.join(root, 'archive', '2026-11-09T090000-record-5');
+  precomputed(other);
+  const yieldFile = path.join(other, 'step-yield.json');
+  fs.writeFileSync(yieldFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(yieldFile, 'utf8')), schemaVersion: SCHEMA_VERSION + 1 }));
+  const noVersion = path.join(root, 'archive', '2026-11-09T090000-record-6');
+  precomputed(noVersion);
+  const bare = JSON.parse(fs.readFileSync(path.join(noVersion, 'step-yield.json'), 'utf8'));
+  delete bare.schemaVersion;
+  fs.writeFileSync(path.join(noVersion, 'step-yield.json'), JSON.stringify(bare));
+  const s = JSON.parse(runCli([root, '--json']).out);
+  assert.equal(s.runsFileStale, 2);
+  assert.equal(s.runsFileUnreadable, 0, 'stale is its own count');
+  assert.equal(s.runsReadFromFile, 1, 'only the one current-version file is read as written');
+  // the stale files' 10 precomputed findings are not added: the current file contributes 10, the derived run 3 (1 both + 2 one) ... and the two stale dirs derive to nothing
+  assert.equal(s.findings.raised, 10 + 3);
+  assert.match(runCli([root]).out, /step-yield\.json of another schemaVersion than \d+ \(derived instead\) 2/);
+  assert.equal(JSON.parse(runCli([setup(), '--json']).out).runsFileStale, 0);
 });
 
 test('no root exits 2; a root that does not exist scans nothing', () => {

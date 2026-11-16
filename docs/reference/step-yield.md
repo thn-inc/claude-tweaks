@@ -22,9 +22,11 @@ Rules:
 
 - The file is **rewritten whole** on every close (temp file in the run dir, then rename). An existing file never takes precedence, so the last close wins and the background token pass can improve on an earlier phase-only write.
 - A failure while deriving or writing logs exactly one `SKIP` line (via `log-decision/timing-skip.js`) and never fails or stalls the close.
-- The write never creates the run directory: a write racing an archive that moved the directory fails and logs the one `SKIP` rather than resurrecting it.
+- The yield is derived and written **under the run dir's `.timing.lock`**, the lock the `timing.json` write takes, so a yield is never derived from a `timing.json` that a concurrent token pass is about to replace and then written after it. The lock is waited for `PHASE_LOCK_WAIT_MS` at most and never past the close's deadline; a lock not acquired in time skips the yield **silently** (no `SKIP`; a later close rewrites it whole).
+- The yield is written inside the close's own time bound (`TIMING_BOUND_MS`, from the start of the close): a close already past it derives nothing and logs one `SKIP` naming that bound (`close passed the {n} ms time bound before the step yield was derived`), except when the close's own `SKIP` already names it (a transcript read that ran out the bound), which stands as the one line.
+- The write never creates the run directory and never strands a file in a vacated one. A write racing an archive that moved the directory **follows the archive twin once** (`{pipelines}/archive/{run-id}`) and writes there; only when the twin is gone too does it log the one `SKIP`. A run dir whose `run-state.json` has already moved to the twin counts as vacated: `run-state.json` is checked again under the lock right before the write. The twin is followed only for a run dir that had a `run-state.json` when the write began, so an unrelated twin of the same name is never written.
 - A multi-spec `spec-N` child run directory gets **no** `step-yield.json` (the same rule as `timing.json`). The parent's yield reads the parent `decisions.md` and every `spec-*/decisions.md` under it.
-- Sources read: `timing.json` (when present), `decisions.md` and each `spec-*/decisions.md`, `events.jsonl`, `run-state.json`. Nothing else outside the run directory is read; transcript facts reach the yield only through `timing.json`.
+- Sources read: `timing.json` (when present), `decisions.md` and each `spec-*/decisions.md`, `events.jsonl`, `run-state.json`, and `manifest.yml` (`derivePhases` reads its multi-spec phase log to fill spans the events could not). Nothing else outside the run directory is read; transcript facts reach the yield only through `timing.json`.
 
 ## Top-level shape
 
@@ -46,7 +48,7 @@ Rules:
 | `sources.events` | boolean | `events.jsonl` was present. |
 | `sources.runState` | boolean | `run-state.json` was present and an object. |
 | `sources.questions` | string, nullable | `"timing.json"` when `timing.json` carries a `questions` array; `null` otherwise (the wait times then cannot be computed). |
-| `unparsed.count` | number | Source files that could not be read or parsed, and malformed `events.jsonl` lines (invalid JSON, or an event without a string `type` and a parseable `ts`). |
+| `unparsed.count` | number | Source files that could not be read or parsed, and malformed `events.jsonl` lines: invalid JSON, a line that parses but is not an object (an array, a number, `null`), or an event without a string `type` and a parseable `ts`. |
 | `unparsed.samples[]` | string | Up to 5 samples, each truncated to 200 characters. |
 
 ### Step
@@ -78,11 +80,11 @@ Rules:
 | `steps[].verify.unknown` / `unattributed.verify.unknown` | number | Of those, no boolean `pass`. |
 | `steps[].decisions.<status>` / `unattributed.decisions.<status>` | number | Decision-log lines by status. Every status key is present, `0` when none. |
 | `steps[].events.<type>` / `unattributed.events.<type>` | number | Every well-formed event (object with a string `type` and a parseable `ts`) by `type`. Only types seen are keys. |
-| `steps[].questions[].question` / `unattributed.questions[].question` | string | The `ask-user-question` event's question text(s), joined with ` / `. |
+| `steps[].questions[].question` / `unattributed.questions[].question` | string | The question text(s), joined with ` / `: the `ask-user-question` event's, or the transcript ask's for a question no event answered. |
 | `steps[].questions[].askedAt` / `unattributed.questions[].askedAt` | string, nullable | ISO ask time from the transcript; `null` when the event could not be joined to a transcript ask. |
-| `steps[].questions[].answeredAt` / `unattributed.questions[].answeredAt` | string | The event's `ts` (the answer). |
-| `steps[].questions[].waitedMinutes` / `unattributed.questions[].waitedMinutes` | number, nullable | Answer minus ask, in minutes to one decimal; `null` when not joined, or when the answer precedes the ask. |
-| `steps[].questions[].askSource` / `unattributed.questions[].askSource` | string, nullable | `toolUseId` or `questionText` (the join that found the ask); `null` when not joined. |
+| `steps[].questions[].answeredAt` / `unattributed.questions[].answeredAt` | string, nullable | The event's `ts` (the answer); for a transcript ask no event answered, the transcript's own answer time, `null` when it has none. |
+| `steps[].questions[].waitedMinutes` / `unattributed.questions[].waitedMinutes` | number, nullable | Answer minus ask, in minutes to one decimal; `null` when not joined, when the answer precedes the ask, or for an asked question with no recorded answer event. |
+| `steps[].questions[].askSource` / `unattributed.questions[].askSource` | string, nullable | `toolUseId` or `questionText` (the join that found the ask), or `transcript` (an ask no event answered); `null` when an event was not joined. |
 | `steps[].findings` / `unattributed.findings` | object, nullable | The review counters; `null` for a bucket with no pair or tiebreak line. |
 | `steps[].findings.raised` / `unattributed.findings.raised` | number | `both + one`. |
 | `steps[].findings.both` / `unattributed.findings.both` | number | Findings both reviewers reported. |
@@ -112,12 +114,16 @@ Rules:
 
 A decision-file line that is a log entry but that no reader recognises counts under its step's `unparsed` (`{ count, samples }`, samples at most 5, each the raw line truncated to 200 characters). A line whose time cannot be placed goes to the top-level `unattributed` bucket, which has the same shape as a step. The Manifesto's `Pipeline config snapshot:` block and its `- key: value` bullets are structural, never `unparsed`. A line mentioning `Reproduction:` or `Tiebreak tiebreak:` that no reader matches counts as `unparsed` in its step.
 
+**Reading of "an unrecognised line is not counted" (AC2).** A review-marked line no reader matches is still a status line: it keeps its count in `decisions.<status>` (an `AUTO` line is one `AUTO` decision) and is `unparsed` **only as a review line**. No finding, tiebreak or other counter includes it. A line that is not a log entry at all (no status head) is `unparsed` with no `decisions` count.
+
 The yield module holds no regex for a log line. The patterns live in `append.js` (`parseEntry`), `console/resolve.js` (`parseTiebreakLine`), `timing/pair-lines.js` and `calibration/decisions-classifier.js`.
 
 ### Attribution: which step owns a time
 
 A decision line or an event belongs to the step whose span holds its instant, via `phaseAt` over the rows `derivePhases` (`plugin/bin/lib/timing/derive.js`) returns. **The dispatch scoreboard's per-step numbers depend on `derivePhases`**: a change to how phases are derived moves numbers in this file.
 
+- **An instant that ends a span belongs to that span.** `phaseAt`'s rule is half-open, `[start, end)`; when no span holds an instant but it is exactly where a span ends (the merge commit ends the `merge` span, the terminal `close-run` ends the last one), the yield attributes it to the innermost span ending there (shortest span, ties to the later start). `derivePhases` itself, and so the token join, is untouched.
+- **A `verify` event's `events` count follows its `verify` count.** `verify[]` is attributed by `derivePhases`' closed interval (an event on a span's end counts there); the same owner is used for `events.verify`, so `events.verify` equals `verify.runs` in every bucket.
 - Attribution is **per occurrence**. Each phase row carries `spans` (one entry per occurrence of the skill) and `phaseAt` picks the innermost single occurrence span that holds the instant, not the row's overall start and end. A row's overall span can overlap another phase it was interleaved with, so the row span would misattribute.
 - An open-ended re-entry (a wrap-up re-run, whose span has no end yet) can therefore outrank a longer enclosing merge span: the innermost occurrence wins.
 - Pre-flight lines written before the first `skill_invoked` event hold no span and land in `unattributed`.
@@ -138,6 +144,7 @@ Each `ask-user-question` event (the answer, written by the PostToolUse hook) bec
 
 - Join order: the event's `toolUseId` matches a transcript ask's `id` exactly (`askSource: "toolUseId"`); an event with none (older runs) falls back to the first question's text, taking the latest unused ask at or before the answer (`askSource: "questionText"`); otherwise there is no ask time (`askedAt`, `waitedMinutes` and `askSource` are `null`). A transcript ask is joined to at most one event, so two asks with identical question text never share one.
 - The entry sits in the step whose span holds the ask time; **a known ask time that no span holds falls back to the answer time's step**.
+- **An asked question with no recorded answer is still emitted.** Every transcript ask no event joined becomes one `questions[]` entry placed by its ask time (`unattributed` when no span holds it), with `askedAt` set, `answeredAt` the transcript's own answer time when it has one else `null`, `waitedMinutes: null` and `askSource: "transcript"`. A transcript ask is never emitted twice and never dropped.
 - **Limits:** a run whose `timing.json` has no `questions` key (no transcript read yet, the transcript gone, or `timing.json` written before the key existed) has `waitedMinutes: null` and `sources.questions: null`. The archive path's synchronous write has no wait times until the background token pass writes `timing.json` and rewrites the yield. Only the main transcript is read: an ask made inside a subagent transcript has no ask time.
 
 ## Review counters
@@ -161,6 +168,7 @@ A review-marked decision line is a `Reproduction:` pair line, written by the age
 
 **Archived wording.** Runs archived before the templates were pinned carry the same lines in wording no live template produces. `pair-lines.js` reads it, found by measuring the archive with `tools/step-yield-report.js`:
 
+- **The label before `Reproduction:` is one of an allow-list**, the writer labels measured in the archive (a census of the label before every classified `Reproduction:`): none, `log-decision:`, `Step 3` (with or without a colon, `Step 3 reproduction:`, `Step 3 (reproduction):`, `Step 3 lens {id}:`), `Delta`, `Delta-2`, `Delta review`, a doubled `Reproduction:`, each optionally behind `spec #N — ` or `spec #N: `. A label outside the list (`wrap-up: carried forward from review`, `Step 3 Routing:`, a dispatch notice that merely mentions a reproduction pair, a Review Console restatement) marks a quoted or carried line, not a new finding: it is not a pair line and, being review-marked, counts as `unparsed`. The status head is read as the archive spelled it (a bullet or none, a time with or without seconds or a date, an em dash or a hyphen): that is the writer's clock, not a label.
 - Every `PAIR_FORMS` form also carries looser patterns, each built on one `path:line` location (no whitespace) and one verdict: a writer label that does not end in a colon (`Delta Reproduction:`), a `Reproduction: delta:` or `Reproduction: #4169:` tag, an unquoted lens, a lens label after the id (`3b (Security)`, keyed by the leading id `3b`), a parenthetical on the location or after the verdict, a `Stage path:` clause, the writer's own `Reversibility:` tail repeated, a status line with no time, and agent commentary after `reproduced. Confirmed` or `not reproduced`. Commentary is accepted only after a delimiter (`;`, `,`, ` —` or ` (` after `Confirmed`; `;` or a one-level parenthesis after `not reproduced`) with content after it, and only when it holds no second verdict (`reproduced`, `not reproduced`, `elevated via`), no second `Reproduction:` and no `finding(s)` word. **A line naming more than one finding, more than one lens or more than one verdict is not a pair line: it stays `unparsed`** (a count must not be guessed). A bare truncation (`… reproduced. Confirmed.`, `… not reproduced;`) and a bare tail (`… Reversibility: high. extra`) stay `unparsed` too. A review-marked line over 2,000 characters is read only by the pinned templates and counts as `unparsed` (the longest real one is 1,355), which bounds the cost of every legacy pattern.
 - `LEGACY_FORMS`, line shapes no current template produces. They are pinned by real archived lines in `tests/bin-lib/timing/pair-lines.test.js`, not to prose:
 

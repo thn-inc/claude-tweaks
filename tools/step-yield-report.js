@@ -26,7 +26,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { deriveStepYield, STEP_YIELD_FILE } = require('../plugin/bin/lib/timing/step-yield');
+const { deriveStepYield, STEP_YIELD_FILE, SCHEMA_VERSION } = require('../plugin/bin/lib/timing/step-yield');
 
 const VERDICTS = ['confirmed', 'refuted', 'cant-tell', 'unsettled'];
 const OUTCOMES = ['confirmed', 'drop', 'digest', 'console', 'none'];
@@ -46,19 +46,23 @@ function listRunDirs(roots, fsImpl) {
   return dirs;
 }
 
-// A run's yield: the file it carries when it parses to an object with a steps array, else derived.
-// A file that is absent (ENOENT) derives silently; one that is present but unreadable or not a
-// yield derives too, flagged `fileUnreadable` so the report counts it (never read as absent).
+// A run's yield: the file it carries when it parses to an object with a steps array and this build's
+// schemaVersion, else derived. A file that is absent (ENOENT) derives silently; one that is present but
+// unreadable or not a yield derives too, flagged `fileUnreadable`; a yield of another schemaVersion
+// derives too, flagged `fileStale` — its keys may not be the ones this report reads. Both are counted.
 function yieldOf(dir, deps) {
   let text;
   try { text = deps.fs.readFileSync(path.join(dir, STEP_YIELD_FILE), 'utf8'); } catch (e) {
-    return { y: deps.derive(dir, { now: new Date() }), source: 'derived', fileUnreadable: !(e && e.code === 'ENOENT') };
+    return { y: deps.derive(dir, { now: new Date() }), source: 'derived', fileUnreadable: !(e && e.code === 'ENOENT'), fileStale: false };
   }
   try {
     const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.steps)) return { y: parsed, source: 'file', fileUnreadable: false };
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.steps)) {
+      if (parsed.schemaVersion === SCHEMA_VERSION) return { y: parsed, source: 'file', fileUnreadable: false, fileStale: false };
+      return { y: deps.derive(dir, { now: new Date() }), source: 'derived', fileUnreadable: false, fileStale: true };
+    }
   } catch { /* corrupt: derive, flagged */ }
-  return { y: deps.derive(dir, { now: new Date() }), source: 'derived', fileUnreadable: true };
+  return { y: deps.derive(dir, { now: new Date() }), source: 'derived', fileUnreadable: true, fileStale: false };
 }
 
 function emptyCounters() {
@@ -86,11 +90,13 @@ function collect(roots, deps) {
   let fromFile = 0;
   let failed = 0;
   let fileUnreadable = 0;
+  let fileStale = 0;
   for (const dir of dirs) {
     let r;
     try { r = yieldOf(dir, deps); } catch (e) { failed++; deps.err(`step-yield-report.js: ${dir}: ${errText(e)}`); continue; }
     if (r.source === 'file') fromFile++;
     if (r.fileUnreadable) fileUnreadable++;
+    if (r.fileStale) fileStale++;
     const buckets = [...(r.y.steps || []).map((s) => ({ phase: s.phase, b: s })), { phase: null, b: r.y.unattributed || {} }];
     let any = false;
     for (const { phase, b } of buckets) {
@@ -107,7 +113,7 @@ function collect(roots, deps) {
   }
   const share = (n, d) => (d ? n / d : null);
   return {
-    roots, runDirsScanned: dirs.length, runsWithReviewFindings: runsWithFindings, runsReadFromFile: fromFile, runsFileUnreadable: fileUnreadable, runsFailed: failed,
+    roots, runDirsScanned: dirs.length, runsWithReviewFindings: runsWithFindings, runsReadFromFile: fromFile, runsFileUnreadable: fileUnreadable, runsFileStale: fileStale, runsFailed: failed,
     findings: totals, findingsInReviewStep: inReview, byLens,
     reviewLines: {
       total: lines.review, unparsed: lines.reviewUnparsed, unparsedShare: share(lines.reviewUnparsed, lines.review),
@@ -136,6 +142,7 @@ function render(s) {
   out.push(`review-step decision lines ${r.total} | unparsed ${r.unparsed} | unparsed share ${pct(r.unparsedShare)}`);
   out.push(`with the unattributed bucket added (every line kind there, an upper bound): lines ${r.withUnattributed.total} | unparsed ${r.withUnattributed.unparsed} | share ${pct(r.withUnattributed.unparsedShare)}`);
   if (s.runsFileUnreadable) out.push(`step-yield.json present but unreadable or not a yield (derived instead) ${s.runsFileUnreadable}`);
+  if (s.runsFileStale) out.push(`step-yield.json of another schemaVersion than ${SCHEMA_VERSION} (derived instead) ${s.runsFileStale}`);
   if (s.runsFailed) out.push(`runs that failed to derive ${s.runsFailed}`);
   return out.join('\n');
 }
