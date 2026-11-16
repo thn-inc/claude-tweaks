@@ -128,7 +128,10 @@ test('pre-tool-use git helpers run their git child under the passed env', () => 
   const broken = { ...hookEnv(), GIT_DIR: path.join(repo, 'no-such-git-dir') };
   assert.strictEqual(preToolUse.isUntrackedOrIgnored(repo, ignored, { env: hookEnv() }), true, 'control: a clean env answers');
   assert.strictEqual(preToolUse.isUntrackedOrIgnored(repo, ignored, { env: broken }), false);
-  assert.strictEqual(preToolUse.toplevel(repo, { env: hookEnv() }), repo, 'control: a clean env answers');
+  // The expected root is git's own spelling: Git for Windows prints forward slashes, `repo` has backslashes there.
+  const root = fixtureGit(['-C', repo, 'rev-parse', '--show-toplevel'], { env: cleanGitEnv(), encoding: 'utf8' }).trim();
+  assert.ok(root, 'the fixture repository has a top level');
+  assert.strictEqual(preToolUse.toplevel(repo, { env: hookEnv() }), root, 'control: a clean env answers');
   assert.strictEqual(preToolUse.toplevel(repo, { env: broken }), null);
 });
 
