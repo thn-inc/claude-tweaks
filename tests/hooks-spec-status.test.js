@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { readManifest } = require('../plugin/bin/lib/flow/manifest');
 const { runCli, spawnCli } = require('./helpers/run-cli');
-const { cleanGitEnv } = require('./helpers/git-fixtures');
+const { hookEnv } = require('./helpers/git-fixtures');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -22,17 +22,6 @@ const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
 const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-specstatus-sandbox-'));
-
-// #1130: `PIPELINE_RUN_DIR: ''` neutralizes any ambient run-dir env var
-// so a call that doesn't explicitly pass one can't resolve against
-// whatever real run happens to be ambient in this test runner's own
-// process.env (e.g. when npm test itself runs inside a /flow-dispatched
-// shell). A caller that needs a run dir still passes it explicitly via
-// `env`, which wins because it spreads last. The env is the whole environment
-// the verb sees (#5376): the runner's, minus the four git-location variables.
-function hookEnv(env = {}) {
-  return { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', ...env };
-}
 
 // Runs the verb in-process (#5376); the script entry has its own smoke test below.
 async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {

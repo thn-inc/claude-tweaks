@@ -12,15 +12,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runCli, spawnCli } = require('./helpers/run-cli');
-const { cleanGitEnv } = require('./helpers/git-fixtures');
+const { hookEnv } = require('./helpers/git-fixtures');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
-
-// The env is the whole environment the verb sees (#5376): the runner's, minus the four
-// git-location variables, with the ambient run dir neutralized.
-function hookEnv(env = {}) {
-  return { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', ...env };
-}
 
 // The stub `gh` first on PATH: the verb's gh child must find it through the injected env.
 function ghStubEnv(binDir) {
@@ -169,6 +163,39 @@ test('AC6.1: resolve-console resolves a relative --run against the injected cwd 
   const result = await runHook(['resolve-console', '--run', runRel, '--reverse-failed', '1'], { cwd: repo, env: ghStubEnv(binDir) });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /--reverse-failed id\(s\) 1 are not sdd-ruling items/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
+});
+
+// #5376 injected-value proof: fails when the verb's gh call stops handing ghOptions the injected env and
+// stderr (dropping injectedGhDeps(...)). The fixture's origin is a GitHub Enterprise-style host that only the
+// injected GH_CONFIG_DIR's hosts.yml names, and the injected GH_HOST is empty, so the stub gh sees
+// GH_HOST=ghe.fixture.invalid only if the known-host lookup read the injected env; without it the runner's
+// own gh config is read, the host is unknown, and the stub is started with no GH_HOST.
+test('F2: resolve-console starts gh with the GH_HOST inferred from the injected env\'s gh config dir', { skip: process.platform === 'win32' }, async () => {
+  const host = 'ghe.fixture.invalid';
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-ghhost-')));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['remote', 'add', 'origin', `https://${host}/acme/widgets.git`], { cwd: repo });
+  const configDir = path.join(repo, 'gh-config');
+  fs.mkdirSync(configDir);
+  fs.writeFileSync(path.join(configDir, 'hosts.yml'), `${host}:\n  user: fixture\n`);
+  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-11-16T000000-ghhost');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    commentIds: ['IC_primary'], prNumber: 42, items: [{ id: '1', kind: 'batch', summary: 'fix A' }],
+  }));
+  const binDir = path.join(repo, 'stub-bin');
+  fs.mkdirSync(binDir);
+  const hostFile = path.join(repo, 'gh-host-seen.txt');
+  const comment = { id: 'IC_primary', body: '<!-- console-item: resolve -->\n- [ ] **Resolve console**\n<!-- console-item: 1 -->\n- [ ] item 1' };
+  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(hostFile)}, process.env.GH_HOST || '');\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
+  const result = await runHook(['resolve-console', '--run', runDir, '--reverse-failed', '1'], {
+    cwd: repo, env: { ...ghStubEnv(binDir), GH_HOST: '', GH_CONFIG_DIR: configDir },
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /--reverse-failed id\(s\) 1 are not sdd-ruling items/);
+  assert.equal(fs.readFileSync(hostFile, 'utf8'), host, 'the stub gh was started with the host inferred from the injected gh config dir');
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
 });
 

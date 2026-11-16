@@ -21,7 +21,7 @@ const { BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, KNOWN_FLAGS, USAGE, VALUE_FLAGS,
 const { ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
 const { BACKGROUND_BUDGET_MS } = require('../plugin/bin/lib/reconcile/budget');
 const { readText } = require('./helpers/read-skill');
-const { cleanGitEnv, fixtureGit } = require('./helpers/git-fixtures');
+const { hookEnv: baseHookEnv, fixtureGit } = require('./helpers/git-fixtures');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -55,7 +55,7 @@ const OFFLINE_GH = { GH_HOST: 'localhost', GH_TOKEN: 'x', GH_REPO: '' };
 // var (#1130). The four repo-pointing git variables are dropped from the ambient copy, so a git
 // hook's GIT_DIR cannot steer the verb's git children to another repository.
 function hookEnv(env = {}) {
-  return { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env };
+  return baseHookEnv({ ...OFFLINE_GH, ...env });
 }
 
 // In-process (#5375): the call goes through hooks.js's run(argv, deps). Real-process coverage is

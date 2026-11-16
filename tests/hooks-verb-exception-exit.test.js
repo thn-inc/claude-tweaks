@@ -11,7 +11,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { cleanGitEnv, gitRepo } = require('./helpers/git-fixtures');
+const { hookEnv, gitRepo } = require('./helpers/git-fixtures');
 const { runCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -62,7 +62,10 @@ test('AC1.1: a throwing VERBS handler exits 1 with empty stdout and the claude-t
   assert.match(r.stderr, /^claude-tweaks: check-staged-inventory: injected staged-inventory fault$/m);
 });
 
-// #5376 injected-value proof: fails when the verb reads process.cwd() instead of the injected cwd
+// #5376 injected-value proof: fails when the verb reads process.cwd() instead of the injected cwd.
+// `--run` is absolute, yet resolveRunArg still judges it against the cwd it is handed: with process.cwd()
+// the run dir is not anchored there, the verb prints its `--run path rejected` line and returns 0
+// without reaching the throwing stub, so the exit-code assertion fails.
 // In-process: the fault replaces checkStagedInventory on the loaded module object hooks.js calls through.
 test('AC1.1: a non-Error throw value is printed with String()', async () => {
   const { root, runDir } = runDirFixture();
@@ -72,7 +75,7 @@ test('AC1.1: a non-Error throw value is printed with String()', async () => {
   let r;
   try {
     r = await runCli(HOOKS, ['check-staged-inventory', '--run', runDir], {
-      cwd: root, env: { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+      cwd: root, env: hookEnv({ CT_HOOKS_TEST_MODE: '1' }),
     });
   } finally {
     inventory.checkStagedInventory = realCheck;

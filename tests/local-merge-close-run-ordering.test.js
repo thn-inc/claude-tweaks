@@ -21,7 +21,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
-const { fixtureGit, gitRepo, cleanGitEnv, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { fixtureGit, gitRepo, hookEnv, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 const { runCli } = require('./helpers/run-cli');
 const { readText } = require('./helpers/read-skill');
 
@@ -231,7 +231,7 @@ async function ownerAfterReprotect(fence, { vars, worktreeVar }) {
   const { dir, run } = tmpProject();
   const hook = async (env, ...args) => {
     const r = await runCli(HOOKS, args, {
-      cwd: dir, env: { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
+      cwd: dir, env: hookEnv({ CT_HOOKS_TEST_MODE: '1', ...env }),
     });
     assert.strictEqual(r.code, 0, r.stderr);
   };
@@ -259,7 +259,7 @@ async function assertReprotectRestores(fence, vars, worktreeVar) {
   const { dir, run } = tmpProject();
   const hook = async (...args) => {
     const r = await runCli(HOOKS, args, {
-      cwd: dir, env: { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+      cwd: dir, env: hookEnv({ CT_HOOKS_TEST_MODE: '1' }),
     });
     assert.strictEqual(r.code, 0, r.stderr);
   };

@@ -15,13 +15,13 @@ const path = require('path');
 const { reentryFixture, reentryGit } = require('./helpers/reentry-fixture');
 const { checkPassReentry } = require('../plugin/bin/lib/flow/consolidated-pass');
 const { USAGE } = require('../plugin/bin/hooks.js');
-const { cleanGitEnv } = require('./helpers/git-fixtures');
+const { hookEnv: baseHookEnv } = require('./helpers/git-fixtures');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
 // The env is the complete environment the verb sees: the ambient one minus the four repo-pointing git variables.
-const hookEnv = (env = {}) => ({ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: 'cpr-test', ...env });
+const hookEnv = (env = {}) => baseHookEnv({ CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: 'cpr-test', ...env });
 
 function runHook(args, { cwd, env = {} } = {}) {
   return runCli(HOOKS, args, { cwd, env: hookEnv(env) });

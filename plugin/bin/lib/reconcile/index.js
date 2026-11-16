@@ -103,7 +103,9 @@ function expandChecks(checks) {
 // opts: { dryRun?: boolean, checks?: string[], cwd?: string, env?: object, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number }
 // `env` (#5376), when set, is the environment of the git children that resolve the integration
 // branch and probe the origin remote (the no-repo/no-remote gate); absent, they inherit process.env.
-// The checks past that gate still inherit process.env.
+// The checks past that gate still inherit process.env. The gate is as far as #5376's in-process tests
+// reach (tests/reconcile-dispatch.test.js keeps every in-process call on a no-remote fixture, so none
+// gets past it); threading `env` to every check's git and gh children is tracked as #5606.
 // -> { mirror, redTip, worktrees, claims, postMerge, runs, branches, remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }
 // A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
 // tracking would have done (an array on a dry run when archive ran, null otherwise), and

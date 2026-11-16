@@ -11,7 +11,7 @@ const { reconcile, PREREQUISITES } = require('../plugin/bin/lib/reconcile');
 const { readText } = require('./helpers/read-skill');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { requireOption } = require('../tools/test-impact/node-options');
-const { cleanGitEnv } = require('./helpers/git-fixtures');
+const { hookEnv } = require('./helpers/git-fixtures');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 const {
   HOOKS,
@@ -40,6 +40,9 @@ require('../plugin/bin/lib/declined-learning/store').pruneDeclines = pruneDeclin
 // recorded throws too. hooks.js looks reconcile up on the module object at call time, and
 // reconcileWithAsyncMerge (tests/helpers/reconcile-fixtures.js) reloads that module, so the guard is
 // (re)installed on whichever module object is current before every runHook and runReconcileVerbStubbed.
+// The expected cwd is checked by wrapping `reconcile` on its module object, not passed through `deps`:
+// runReconcile builds opts from deps.cwd() and has no deps seam for reconcile itself, so a deps-level
+// stub would replace the very module lookup (`require('./lib/reconcile').reconcile`) this guard exists to check.
 const reconcileGuards = new WeakSet();
 let expectedReconcileCwd = null;
 let reconcileGuardFault = null;
@@ -71,13 +74,10 @@ installReconcileGuard();
 // isolated, non-git sandbox instead.
 const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-sandbox-'));
 
-// #1130: `PIPELINE_RUN_DIR: ''` neutralizes any ambient run-dir env var so a
-// call that doesn't explicitly pass one can't resolve against whatever real
-// run happens to be ambient in this test runner's own process.env (e.g. when
-// npm test itself runs inside a /flow-dispatched shell). A caller that needs
-// a run dir still passes it explicitly via `env`, which wins because it
-// spreads last. The result is the whole environment the verb sees (#5376).
-const hookEnv = (env = {}) => ({ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', ...env });
+// hookEnv (tests/helpers/git-fixtures.js) is the whole environment the verb sees (#5376). Its
+// `PIPELINE_RUN_DIR: ''` (#1130) keeps a call that passes no run dir from resolving against a real
+// run ambient in the test runner's own process.env; a caller that needs a run dir passes it in
+// `env`, which wins.
 
 // In-process through hooks.js's run(argv, deps) (#5376). hooks.js catches a throw from reconcile() and
 // prints reconcile-threw with exit 0, so a guard refusal is re-thrown here rather than left to the caller.

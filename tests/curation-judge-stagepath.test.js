@@ -15,7 +15,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { chmodDenialSkip } = require('./helpers/root');
 const { runCli, spawnCli } = require('./helpers/run-cli');
-const { cleanGitEnv } = require('./helpers/git-fixtures');
+const { hookEnv } = require('./helpers/git-fixtures');
 const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
@@ -165,16 +165,12 @@ function sweepArgs({ runDir, worktree } = {}) {
 // "unset" probe this file's own comment above documents) resolves the
 // verb's own unset-arg fallback rather than silently picking up a real run
 // dir this test never named — same defense-in-depth convention #1130
-// established for every other bin/hooks.js test spawn helper. The env is the
-// whole environment the verb sees (#5376): the runner's minus the four
-// git-location variables.
-function sweepEnv() {
-  return { ...cleanGitEnv(), PIPELINE_RUN_DIR: '' };
-}
+// established for every other bin/hooks.js test spawn helper. The shared
+// hookEnv() supplies it, and is the whole environment the verb sees (#5376).
 
 // Runs the verb in-process (#5376); the script entry has its own two tests below.
 async function sweep(cwd, { runDir, worktree } = {}) {
-  const r = await runCli(HOOKS_JS, sweepArgs({ runDir, worktree }), { cwd, env: sweepEnv() });
+  const r = await runCli(HOOKS_JS, sweepArgs({ runDir, worktree }), { cwd, env: hookEnv() });
   return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
@@ -216,7 +212,7 @@ test('AC5.1: sweep-shadow with an unset worktree arg exits 1 with its diagnostic
   const { wt, runDir, shadow } = buildFixture(t);
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(shadow, 'staged', 'x.md'), 'x\n');
-  const r = spawnCli(HOOKS_JS, sweepArgs({ runDir }), { cwd: wt, env: sweepEnv() });
+  const r = spawnCli(HOOKS_JS, sweepArgs({ runDir }), { cwd: wt, env: hookEnv() });
   assert.equal(r.code, 1, r.stderr);
   assert.match(r.stdout, /not swept/);
   assert.ok(fs.existsSync(path.join(shadow, 'staged', 'x.md')), 'nothing moved when misconfigured');
@@ -314,7 +310,7 @@ test('AC5.1: sweep-shadow relocating a shadow staged file through runCli and spa
   stage(a);
   stage(b);
   const inProcess = await sweep(a.wt, { runDir: a.runDir, worktree: a.wt });
-  const spawned = spawnCli(HOOKS_JS, sweepArgs({ runDir: b.runDir, worktree: b.wt }), { cwd: b.wt, env: sweepEnv() });
+  const spawned = spawnCli(HOOKS_JS, sweepArgs({ runDir: b.runDir, worktree: b.wt }), { cwd: b.wt, env: hookEnv() });
   assert.deepEqual({ code: spawned.code, stdout: spawned.stdout }, { code: inProcess.status, stdout: inProcess.stdout });
   assert.equal(inProcess.status, 0);
   assert.equal(inProcess.stdout, 'relocated: wrap-up-skill-1.md\n');

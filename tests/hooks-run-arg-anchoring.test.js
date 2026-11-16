@@ -15,7 +15,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { gitRepo, linkedWorktreeOf, cleanGitEnv } = require('./helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf, hookEnv } = require('./helpers/git-fixtures');
 const { runCli } = require('./helpers/run-cli');
 
 const HOOKS_JS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -29,7 +29,7 @@ async function runRecordWorktree(args, cwd) {
   // explicitly, but this guard is the same defense-in-depth convention
   // #1130 established for every other bin/hooks.js test helper.
   const r = await runCli(HOOKS_JS, ['record-worktree', ...args], {
-    cwd, env: { ...cleanGitEnv(), PIPELINE_RUN_DIR: '' },
+    cwd, env: hookEnv(),
   });
   return { code: r.code, stdout: r.stdout };
 }
