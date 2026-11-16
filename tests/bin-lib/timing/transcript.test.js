@@ -686,6 +686,25 @@ test('#5584: readPromptRows returns a matching last line that has no trailing ne
   assert.deepEqual(rows[0], promptRow('test-prompt-0001'));
 });
 
+test('#5584: readPromptRows returns only the exact promptId, not one that merely contains it', () => {
+  const f = promptTranscript([
+    JSON.stringify(promptRow('test-prompt-00011')),
+    JSON.stringify(promptRow('test-prompt-0001')),
+  ]);
+  const rows = readPromptRows(f, 'test-prompt-0001');
+  assert.deepEqual(rows.map((r) => r.promptId), ['test-prompt-0001']);
+});
+
+test('#5584: readPromptRows stats before opening — a non-regular file throws EISDIR and is never opened', () => {
+  let opened = 0;
+  const fsImpl = {
+    statSync: () => ({ isFile: () => false }),
+    openSync: () => { opened += 1; throw new Error('openSync must not be called'); },
+  };
+  assert.throws(() => readPromptRows('/fake/s.jsonl', 'test-prompt-0001', { fsImpl }), (err) => err.code === 'EISDIR');
+  assert.equal(opened, 0);
+});
+
 test('#5584: readPromptRows throws ENOENT for a missing file', () => {
   assert.throws(() => readPromptRows(path.join(os.tmpdir(), 'ct-no-such-transcript.jsonl'), 'test-prompt-0001'), (err) => err.code === 'ENOENT');
 });
