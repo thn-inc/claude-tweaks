@@ -24,6 +24,8 @@ const ctxLib = require('../plugin/bin/lib/hooks/context.js');
 const sessionEnd = require('../plugin/bin/lib/hooks/session-end.js');
 const preCompact = require('../plugin/bin/lib/hooks/pre-compact.js');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { spawnCli } = require('./helpers/run-cli');
+const { hookEnv, runHookCli, HOOKS } = require('./helpers/hook-event');
 
 function project() {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-attr-')));
@@ -583,13 +585,12 @@ test('#2783: a known-session caller never guesses into an unowned ad-hoc dir', (
   assert.deepStrictEqual(ctxLib.resolveRun(main, {}, 'me'), { dir: null, attribution: null });
 });
 
-test('#2783 e2e: a commit from the main checkout is not E1-denied because some session holds an ad-hoc dir bound to a live worktree', () => {
+test('#2783 e2e: a commit from the main checkout is not E1-denied because some session holds an ad-hoc dir bound to a live worktree', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   mkRun(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', sessionId: 'sess-e1', worktree: wt });
-  const hooks = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
   const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: main, session_id: 'sess-e1' });
-  const out = require('node:child_process').execFileSync('node', [hooks, 'pre-tool-use'], { input, cwd: main, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '' } });
+  const { stdout: out } = await runHookCli(['pre-tool-use'], { input, cwd: main, env: hookEnv() });
   assert.doesNotMatch(out, /"permissionDecision":"deny"/, out);
   assert.doesNotMatch(out, /adhoc-standalone/, out);
 });
@@ -706,21 +707,47 @@ test('strict + includeWorktreeForeign: guard (b) is disabled', () => {
   );
 });
 
-test('AC2.1 e2e: hooks.js pre-compact from the main checkout leaves a claim-log-only mint untouched and reports the drop on stderr', () => {
+test('AC2.1 e2e: hooks.js pre-compact from the main checkout leaves a claim-log-only mint untouched and reports the drop on stderr', async () => {
   const main = gitRepo();
   const mint = mkRun(main, '2026-07-02T090000-record-7');
   writeDecisions(mint, CLAIM_ONLY);
-  const hooks = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
-  const res = require('node:child_process').spawnSync('node', [hooks, 'pre-compact'], {
+  const { code, stderr } = await runHookCli(['pre-compact'], {
     input: JSON.stringify({ session_id: 's1', trigger: 'auto' }),
     cwd: main,
-    encoding: 'utf8',
-    env: { ...process.env, PIPELINE_RUN_DIR: '' },
+    env: hookEnv(),
   });
+  const res = { status: code, stderr };
   assert.strictEqual(res.status, 0, res.stderr);
   assert.match(res.stderr, /^attribution: no run dir attributed — /m);
   assert.ok(res.stderr.includes(path.basename(mint)), res.stderr);
   assert.ok(!fs.existsSync(path.join(mint, 'events.jsonl')), 'no event was written into the mint');
+});
+
+// #5377: AC9.1 — an event call takes its cwd and env from the injected values, not from the runner's
+// own process. Neither payload carries a `cwd`. The injected cwd is a fixture repo that is not
+// process.cwd(): only it makes the attribution drop line name that repo's claim-log-only mint. The
+// injected PIPELINE_RUN_DIR names the OLDER of two runs: only the injected env can pick it (the cwd
+// scan picks the newer).
+test('AC9.1: hooks-run-attribution — an event call uses the injected cwd or env', async () => {
+  const main = gitRepo();
+  assert.notStrictEqual(fs.realpathSync(main), fs.realpathSync(process.cwd()), 'precondition: the fixture repo is not the runner cwd');
+  const mint = mkRun(main, '2026-07-02T090000-record-7');
+  writeDecisions(mint, CLAIM_ONLY);
+  const dropped = await runHookCli(['pre-compact'], {
+    input: JSON.stringify({ session_id: 's1', trigger: 'auto' }), cwd: main, env: hookEnv(),
+  });
+  assert.strictEqual(dropped.code, 0, dropped.stderr);
+  assert.ok(dropped.stderr.includes(path.basename(mint)), `the drop line names the mint found from the injected cwd: ${dropped.stderr}`);
+
+  const pinnedRepo = gitRepo();
+  const older = mkRun(pinnedRepo, '2026-07-01T090000-older', { status: 'active' });
+  const newer = mkRun(pinnedRepo, '2026-07-02T090000-newer', { status: 'active' });
+  const pinned = await runHookCli(['pre-compact'], {
+    input: JSON.stringify({ session_id: 's1', trigger: 'auto' }), cwd: pinnedRepo, env: hookEnv({ PIPELINE_RUN_DIR: older }),
+  });
+  assert.strictEqual(pinned.code, 0, pinned.stderr);
+  assert.strictEqual(readEvents(older).length, 1, 'the injected env picked the older run');
+  assert.deepStrictEqual(readEvents(newer), [], 'the newer run, which a cwd scan would pick, got no event');
 });
 
 // The #3401 incident's own write path: pre-tool-use's gitignored-target
@@ -734,14 +761,14 @@ test('#3515 incident e2e: a sibling worktree Write to a gitignored path writes n
   const mint = mkRun(main, '2026-07-02T090000-record-7');
   writeDecisions(mint, CLAIM_ONLY);
 
-  const hooks = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
   const target = path.join(wt, '.superpowers', 'x.md');
-  const res = require('node:child_process').spawnSync('node', [hooks, 'pre-tool-use'], {
-    input: JSON.stringify({ session_id: 'sib', tool_name: 'Write', tool_input: { file_path: target }, cwd: wt }),
+  // real process: proves the misattributing gate end to end through the script entry (pre-tool-use-gate-exemptions)
+  const raw = spawnCli(HOOKS, ['pre-tool-use'], {
+    stdin: JSON.stringify({ session_id: 'sib', tool_name: 'Write', tool_input: { file_path: target }, cwd: wt }),
     cwd: wt,
-    encoding: 'utf8',
     env: { ...process.env, PIPELINE_RUN_DIR: '' },
   });
+  const res = { status: raw.code, stderr: raw.stderr };
   assert.strictEqual(res.status, 0, res.stderr);
   assert.ok(!fs.existsSync(path.join(mint, 'events.jsonl')), `no event was written into the mint: ${fs.existsSync(path.join(mint, 'events.jsonl')) ? fs.readFileSync(path.join(mint, 'events.jsonl'), 'utf8') : ''}`);
   assert.strictEqual(ctxLib.resolveRunDir(wt, {}), owned, 'E1 resolution skips the mint');

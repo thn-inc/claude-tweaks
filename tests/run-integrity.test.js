@@ -8,6 +8,9 @@ const os = require('os');
 const path = require('path');
 const { checkRunIntegrity, checkBranchLanded, repoRootOf, worktreePathForBranch } = require('../plugin/bin/lib/hooks/run-integrity');
 const { fixtureGit } = require('./helpers/git-fixtures');
+const { spawnCli } = require('./helpers/run-cli');
+const { hookEnv, runHookCli, HOOKS } = require('./helpers/hook-event');
+const { fixtureHomeEnv } = require('./helpers/fixture-home');
 
 function sh(cwd, ...args) {
   return fixtureGit(['-C', cwd, ...args]).toString();
@@ -471,17 +474,12 @@ test('clean status is a VALID run-state shape but NOT in the non-terminal set ->
   assert.strictEqual(checkRunIntegrity(runDir).state, 'in-progress');
 });
 
-const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
+// real process: run-integrity.js's git calls (reached through session-residue) take no env, which trips the env tripwire in-process under Node 20
 function runSessionStart(cwd) {
-  try {
-    const stdout = execFileSync('node', [HOOKS, 'session-start'], {
-      input: JSON.stringify({ cwd }), cwd, encoding: 'utf8',
-      env: { ...process.env, PIPELINE_RUN_DIR: '' },
-    });
-    return { code: 0, stdout };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
-  }
+  const { code, stdout } = spawnCli(HOOKS, ['session-start'], {
+    stdin: JSON.stringify({ cwd }), cwd, env: { ...process.env, PIPELINE_RUN_DIR: '' },
+  });
+  return { code, stdout };
 }
 
 test('SessionStart: shipped-unclosed run line names both remediations (AC1 message half)', () => {
@@ -519,6 +517,28 @@ test('SessionStart: genuinely in-progress run line is byte-identical to the pre-
   const base = path.basename(runDir);
   assert.ok(ctxOut.includes(`- ${base} (status: active)`), `expected the unchanged line, got: ${ctxOut}`);
   assert.ok(!ctxOut.includes('appears shipped'), 'in-progress run must not carry the new text');
+});
+
+// #5377: AC9.1 — an event call takes its cwd and env from the injected values, not from the runner's
+// own process. The payload carries no `cwd`. The injected cwd is the fixture repo, which is not
+// process.cwd(): only it puts the fixture's run line in the context. The injected HOME is a fresh
+// directory: only the injected env makes session-start save its node path there.
+const fakeSpawn = () => ({ on() {}, unref() {} }); // session-start's detached background child: no real one
+test('AC9.1: run-integrity — an event call uses the injected cwd or env', async () => {
+  const { runDir, root } = fixtureRepo();
+  // A run with no recorded worktree: checkRunIntegrity answers without a git call, so the run-integrity.js
+  // git calls that keep the SessionStart tests on a real process (runSessionStart) are not reached.
+  writeRunState(runDir, { status: 'active' });
+  writeEvents(runDir, [EV_BUILD]);
+  assert.notStrictEqual(fs.realpathSync(root), fs.realpathSync(process.cwd()), 'precondition: the fixture repo is not the runner cwd');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-home9-'));
+  const { code, stdout } = await runHookCli(['session-start'], {
+    input: JSON.stringify({}), cwd: root, env: fixtureHomeEnv(home, hookEnv()), deps: { spawn: fakeSpawn },
+  });
+  assert.strictEqual(code, 0);
+  const ctxOut = JSON.parse(stdout).hookSpecificOutput.additionalContext;
+  assert.ok(ctxOut.includes(`- ${path.basename(runDir)} (status: active)`), `the run line comes from the injected cwd, got: ${ctxOut}`);
+  assert.strictEqual(fs.readFileSync(path.join(home, '.claude-tweaks', 'node-path'), 'utf8'), `${process.execPath}\n`, 'the node path went to the injected HOME');
 });
 
 // #3497: checkBranchLanded answers "has this run's branch landed?" without

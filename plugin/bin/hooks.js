@@ -976,7 +976,7 @@ async function runRecordPr(argv, deps) {
       prBranch = deriveBranch(repoRootOf(runDir), ctxLib.readRunState(runDir)?.worktree || null);
     } catch { prBranch = null; }
     const prField = prBranch ? { number, url: urlArg, branch: prBranch } : { number, url: urlArg };
-    const result = ctxLib.writeRunState(runDir, { pr: prField });
+    const result = ctxLib.writeRunState(runDir, { pr: prField }, { env: deps.env });
     if (result) {
       deps.stdout(`claude-tweaks: PR #${number} recorded for ${path.basename(runDir)}\n`);
     } else {

@@ -1407,6 +1407,24 @@ test('record-pr writes run-state.pr and prints a confirmation line', async () =>
   assert.deepStrictEqual(state.pr, { number: 42, url: 'https://github.com/o/r/pull/42' });
 });
 
+// #5377: the record-pr verb's run-state write takes its lock wait from the env the call carries, on the
+// pattern of the record-worktree test above. A call that records no PR (a non-numeric number) takes no
+// lock and gives the baseline of reads made outside the write; the write must read the knob beyond it.
+test('record-pr reads the run-state lock wait from the passed env', async () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  let knobReads = 0;
+  const env = hookEnv({ CLAUDE_CODE_SESSION_ID: '' });
+  Object.defineProperty(env, 'CLAUDE_TWEAKS_LOCK_WAIT_MS', { enumerable: true, get() { knobReads += 1; return '0'; } });
+  const noWrite = await runHookCli(['record-pr', '--run', run, 'not-a-number', 'https://github.com/o/r/pull/7'], { cwd: project, env: hookEnv(), deps: { env } });
+  assert.match(noWrite.stdout, /PR not recorded/);
+  const baseline = knobReads;
+  const result = await runHookCli(['record-pr', '--run', run, '7', 'https://github.com/o/r/pull/7'], { cwd: project, env: hookEnv(), deps: { env } });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /PR #7 recorded/);
+  assert.ok(knobReads - baseline > baseline, `the run-state lock read its wait from the passed env (baseline ${baseline}, total ${knobReads})`);
+});
+
 test('record-pr --run pins the target run dir, same as record-worktree', async () => {
   const project = gitRepo(); // #790: --run must resolve under a real git checkout
   const staleDir = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-15T090000-record-19');
@@ -2029,6 +2047,14 @@ test('AC9.1: hooks-dispatcher — an event call uses the injected cwd and env', 
   assert.strictEqual(events[0].type, 'gate-denial');
   assert.strictEqual(events[0].path, target);
   assert.strictEqual(fs.existsSync(path.join(newer, 'events.jsonl')), false, 'the newer run, which a cwd scan would pick, got no event');
+  // A Write names its own path, which locates the repo whatever the cwd; a Bash call has only the cwd.
+  const commit = await runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' } }),
+    cwd: project,
+    env: { PIPELINE_RUN_DIR: run },
+  });
+  assert.match(commit.stdout, /"permissionDecision":"deny"/);
+  assert.ok(commit.stdout.includes(`non-isolated checkout (${project})`), 'the deny reason names the injected cwd as the checkout the call ran in');
 });
 
 // #5377: the in-process call and the script entry agree. Each smoke test above stored its own args,
