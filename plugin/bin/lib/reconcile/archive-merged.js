@@ -20,7 +20,7 @@ const { ownEventRecency } = require('../run-liveness/probes');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir,
+  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir, isTrackedShellDir,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
@@ -1122,26 +1122,7 @@ function revertStagedOps(root, ops, env) {
 function isArchivedPendingTrackedMove(root, dir) {
   const runId = path.basename(dir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
-  if (!fs.existsSync(archiveDir)) return false;
-  let entries;
-  try {
-    entries = fs.readdirSync(dir);
-  } catch {
-    return false;
-  }
-  if (entries.length === 0) return false;
-  const specDirs = listSpecDirs(dir);
-  return entries.every((name) => {
-    if (name === 'work') return true;
-    if (!specDirs.includes(name)) return false;
-    let subEntries;
-    try {
-      subEntries = fs.readdirSync(path.join(dir, name));
-    } catch {
-      return false;
-    }
-    return subEntries.length > 0 && subEntries.every((n) => n === 'work');
-  });
+  return fs.existsSync(archiveDir) && isTrackedShellDir(dir);
 }
 
 // The paste-ready command a human (or a worktree/PR-driven follow-up) runs
