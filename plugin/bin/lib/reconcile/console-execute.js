@@ -71,6 +71,9 @@ const REVERSE_FAILED_NOTE = 'reverse not filed — see decisions.md';
 // `--filing-failed`, never defaulted to `dropped` or `executed`, and NOT cleared.
 const DROPPED_NOTE = 'dropped — nothing filed';
 const FILING_FAILED_NOTE = 'filing failed — see decisions.md';
+// #4679: a can't-tell finding row whose drop was logged to the materiality digest
+// instead of filed — named in `--digested`, a settled (cleared) outcome.
+const DIGESTED_NOTE = 'digested — logged to the materiality digest, nothing filed';
 
 const isFindingRow = (item) => typeof item.findingItem === 'string' && item.findingItem.length > 0;
 
@@ -518,7 +521,7 @@ async function consoleExecuteDetect(opts = {}) {
 //       'comment-not-found' | 'unknown-item-ids' | 'not-ruling-items' | 'not-finding-items' | 'conflicting-failure-ids' |
 //       'reply-comment-failed' | 'marker-edit-failed' | 'console-write-failed', ids?, error? }
 async function resolveConsoleExecution(runDir, {
-  approve = [], decline = [], reverseFailed = [], filingFailed = [],
+  approve = [], decline = [], reverseFailed = [], filingFailed = [], digested = [],
 } = {}, deps = {}) {
   const now = typeof deps.now === 'function' ? deps.now() : Date.now();
   const consoleJson = readConsoleJson(runDir);
@@ -565,7 +568,7 @@ async function resolveConsoleExecution(runDir, {
   const ticksByComment = new Map(commentIds.map((id) => [id, byId.has(id) ? parseItemTicks(byId.get(id).body) : {}]));
   const ticksOf = (item) => ticksByComment.get(commentIds.includes(item.commentId) ? item.commentId : commentIds[0]);
   const knownIds = new Set([...ticksByComment.values()].flatMap((t) => Object.keys(t)));
-  const namedIds = [...new Set([...approve, ...decline, ...reverseFailed, ...filingFailed])];
+  const namedIds = [...new Set([...approve, ...decline, ...reverseFailed, ...filingFailed, ...digested])];
   const unknownIds = namedIds.filter((id) => !knownIds.has(id));
   if (unknownIds.length) return { status: 'error', reason: 'unknown-item-ids', ids: unknownIds };
 
@@ -579,15 +582,23 @@ async function resolveConsoleExecution(runDir, {
   // ruling whose ratify filed a deferral record that failed to land.
   const findingIds = new Set(items.filter(isFindingRow).map((item) => item.id));
   const notFindingIds = [...new Set(filingFailed)].filter((id) => !findingIds.has(id) && !rulingIds.has(id));
-  if (notFindingIds.length) return { status: 'error', reason: 'not-finding-items', ids: notFindingIds };
+  if (notFindingIds.length) return { status: 'error', reason: 'not-finding-items', ids: notFindingIds, flag: '--filing-failed' };
+  // --digested (#4679) names only a finding row.
+  const notDigestibleIds = [...new Set(digested)].filter((id) => !findingIds.has(id));
+  if (notDigestibleIds.length) return { status: 'error', reason: 'not-finding-items', ids: notDigestibleIds, flag: '--digested' };
   // A ruling cannot have both failed to reverse and failed to ratify: the caller
-  // contradicts itself, so nothing is written.
+  // contradicts itself, so nothing is written. Likewise a finding row cannot be
+  // both digested and failed to file.
+  // `flag` names the flag paired with --filing-failed in the contradiction.
   const conflictingIds = [...new Set(reverseFailed)].filter((id) => filingFailed.includes(id));
-  if (conflictingIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: conflictingIds };
+  if (conflictingIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: conflictingIds, flag: '--reverse-failed' };
+  const digestedConflictIds = [...new Set(digested)].filter((id) => filingFailed.includes(id));
+  if (digestedConflictIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: digestedConflictIds, flag: '--digested' };
   const approveSet = new Set(approve);
   const declineSet = new Set(decline);
   const reverseFailedSet = new Set(reverseFailed);
   const filingFailedSet = new Set(filingFailed);
+  const digestedSet = new Set(digested);
   // Every item this console names gets an outcome — one explicitly declined
   // via `--decline`, one explicitly (or already-tick) approved, and
   // anything named in neither list defaults to declined ("declined, no
@@ -623,6 +634,12 @@ async function resolveConsoleExecution(runDir, {
         id: item.id, kind: item.kind, outcome: 'filing-failed', note: FILING_FAILED_NOTE, isMergeRow: item.isMergeRow === true, isRulingRow: true,
       };
     }
+    // #4679: a digested finding row outranks a tick — it is never executed.
+    if (isFindingRow(item) && digestedSet.has(item.id)) {
+      return {
+        id: item.id, kind: item.kind, outcome: 'digested', note: DIGESTED_NOTE, isMergeRow: item.isMergeRow === true, findingItem: item.findingItem,
+      };
+    }
     if (!declineSet.has(item.id) && (approveSet.has(item.id) || ticks[item.id] === true)) {
       return { id: item.id, kind: item.kind, outcome: 'executed', isMergeRow: item.isMergeRow === true };
     }
@@ -647,8 +664,9 @@ async function resolveConsoleExecution(runDir, {
   // that item and Resolve unticked). A reversed ruling counts as cleared: a
   // reversal is a decided outcome, not an unanswered item. A reverse-failed
   // ruling does not: no reversal record exists. A dropped finding counts as
-  // cleared and a filing-failed one does not, the same way.
-  const allCleared = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed' || o.outcome === 'reversed' || o.outcome === 'dropped');
+  // cleared and a filing-failed one does not, the same way; a digested finding (#4679)
+  // is cleared too.
+  const allCleared = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed' || o.outcome === 'reversed' || o.outcome === 'dropped' || o.outcome === 'digested');
 
   // 1. Reply comment first — the source of truth a foreign detection pass
   // keys "already executed" off, per the Write order section. Idempotent
@@ -760,7 +778,7 @@ function buildExecutedReplyBody(outcomes) {
 }
 
 // Ticks the Resolve checkbox row (isResolveTicked's own row shape, in
-// reverse) only when every item cleared (executed, reversed or dropped) — a partial
+// reverse) only when every item cleared (executed, reversed, dropped or digested) — a partial
 // resolution, with a declined, reverse-failed or filing-failed item, must never silently tick
 // Resolve, since that would tell a later detection pass "a human confirmed
 // everything," which isn't true.
@@ -798,4 +816,5 @@ module.exports = {
   REVERSE_FAILED_NOTE,
   DROPPED_NOTE,
   FILING_FAILED_NOTE,
+  DIGESTED_NOTE,
 };

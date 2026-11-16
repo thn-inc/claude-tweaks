@@ -4,14 +4,15 @@
 // stderr (main() catches it); a harness-dispatched EVENTS module's exception
 // still exits 0 through the entry catch (never break a session). Both halves
 // are pinned here against real processes, with a Module._load preload standing
-// in for the fault.
+// in for the fault (record-pr's too); the rest run in-process (runCli, #5376).
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { gitRepo } = require('./helpers/git-fixtures');
+const { hookEnv, gitRepo } = require('./helpers/git-fixtures');
+const { runCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 const { main, VERBS } = require(HOOKS);
@@ -50,6 +51,7 @@ function runWithPreload(preload, args, { cwd, input = '' } = {}) {
 
 const STAGED_INVENTORY = '/lib\\/hooks\\/staged-inventory(\\.js)?$/';
 
+// real process: proves the script entry turns a VERBS exception into exit 1
 test('AC1.1: a throwing VERBS handler exits 1 with empty stdout and the claude-tweaks: {verb}: stderr line', () => {
   const { root, runDir } = runDirFixture();
   const preload = preloadFor('inventory-error', STAGED_INVENTORY,
@@ -60,16 +62,30 @@ test('AC1.1: a throwing VERBS handler exits 1 with empty stdout and the claude-t
   assert.match(r.stderr, /^claude-tweaks: check-staged-inventory: injected staged-inventory fault$/m);
 });
 
-test('AC1.1: a non-Error throw value is printed with String()', () => {
+// #5376 injected-value proof: fails when the verb reads process.cwd() instead of the injected cwd.
+// `--run` is absolute, yet resolveRunArg still judges it against the cwd it is handed: with process.cwd()
+// the run dir is not anchored there, the verb prints its `--run path rejected` line and returns 0
+// without reaching the throwing stub, so the exit-code assertion fails.
+// In-process: the fault replaces checkStagedInventory on the loaded module object hooks.js calls through.
+test('AC1.1: a non-Error throw value is printed with String()', async () => {
   const { root, runDir } = runDirFixture();
-  const preload = preloadFor('inventory-string', STAGED_INVENTORY,
-    "{ checkStagedInventory() { throw 'raw string fault'; } }");
-  const r = runWithPreload(preload, ['check-staged-inventory', '--run', runDir], { cwd: root });
-  assert.equal(r.status, 1);
+  const inventory = require('../plugin/bin/lib/hooks/staged-inventory');
+  const realCheck = inventory.checkStagedInventory;
+  inventory.checkStagedInventory = () => { throw 'raw string fault'; }; // eslint-disable-line no-throw-literal
+  let r;
+  try {
+    r = await runCli(HOOKS, ['check-staged-inventory', '--run', runDir], {
+      cwd: root, env: hookEnv({ CT_HOOKS_TEST_MODE: '1' }),
+    });
+  } finally {
+    inventory.checkStagedInventory = realCheck;
+  }
+  assert.equal(r.code, 1);
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /^claude-tweaks: check-staged-inventory: raw string fault$/m);
 });
 
+// real process: proves the entry catch turns an event exception into exit 0
 test('AC2.1: a throwing EVENTS module still exits 0', () => {
   const cwd = fs.realpathSync(fs.mkdtempSync(path.join(SANDBOX, 'plain-')));
   // The marker proves the injected run() actually ran: if the preload regex
@@ -84,6 +100,8 @@ test('AC2.1: a throwing EVENTS module still exits 0', () => {
   assert.doesNotMatch(r.stderr, /claude-tweaks: session-end:/);
 });
 
+// real process: the fault is injected at module load, which only a preload can do
+// (hooks.js destructures deriveBranch from run-integrity at load, so a module-object replacement cannot reach it)
 test('record-pr still records {number, url} when deriving the branch throws', () => {
   const { root, runDir } = runDirFixture();
   // The marker proves the injected deriveBranch ran: with no recorded worktree

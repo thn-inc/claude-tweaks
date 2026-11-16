@@ -100,10 +100,11 @@ function expandChecks(checks) {
   return out;
 }
 
-// opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number, env?: object, homeDir?: function }
-// `env` and `homeDir` (a hook event's context, #5377) reach the declined-store prune, the integration-branch
-// and origin/HEAD git children and the forge probe; absent, each reads the inherited environment as before.
-// They also reach the pr-first checks FAST_CHECKS names: the preflight, the shared fetch, mirror, red-tip and console.
+// opts: { dryRun?: boolean, checks?: string[], cwd?: string, env?: object, homeDir?: function, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number }
+// `env` and `homeDir` (a hook event's context, #5377; `env` alone for #5376's in-process verb tests) reach the
+// declined-store prune, the integration-branch and origin/HEAD git children, the forge probe and the model probe;
+// absent, each reads the inherited environment as before. They also reach the pr-first checks FAST_CHECKS names:
+// the preflight, the shared fetch, mirror, red-tip and console.
 // -> { mirror, redTip, worktrees, claims, postMerge, runs, branches, remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }
 // A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
 // tracking would have done (an array on a dry run when archive ran, null otherwise), and
@@ -165,12 +166,13 @@ async function reconcileInner(opts, state) {
   // `checks`, the integration model, or whether this even resolves to a repo — the store's own
   // path resolves from the cwd given to it to the main checkout (#4360; no root param on this module
   // today, matching every existing caller: /feedback and /reflect never pass one either), so this
-  // passes the pass's own `cwd` and `env` (#5377), not `root`. Best-effort: a prune failure never
-  // blocks the rest of the pass.
+  // passes the pass's own `cwd` and `env` (#5376, #5377), not `root`: an in-process caller never prunes
+  // the store of the process's own checkout. Best-effort: a prune failure never blocks the rest of the pass.
   // #4180: skipped on a dry run — the prune rewrites the store file (and takes its lock directory).
+  const gitEnvOpts = opts.env ? { env: opts.env } : {};
   if (!dryRun) {
     try {
-      require('../declined-learning/store').pruneDeclines({}, { cwd, env: opts.env });
+      require('../declined-learning/store').pruneDeclines({}, { cwd, ...gitEnvOpts });
     } catch {
       /* best-effort — never break reconcile over declined-learning maintenance */
     }
@@ -218,7 +220,7 @@ async function reconcileInner(opts, state) {
   // its own `origin/${integration}` ref or issues `git fetch origin
   // {integration}` on the assumption that `integration` is bare — normalize
   // once here so the whole module keeps that contract.
-  let integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache, { env: opts.env }));
+  let integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache, gitEnvOpts));
   // #3132: a fresh clone can lack refs/remotes/origin/HEAD even with a
   // working `origin` — repair it once here (reconcile already does network
   // work) and re-resolve, rather than adding a network call to the shared
@@ -227,7 +229,7 @@ async function reconcileInner(opts, state) {
   if (!integration) {
     // #4180: on a dry run the repair is reported as skipped, never attempted (it writes a git ref
     // and, on failure, the cache); the pass then falls through to the no-remote skip below.
-    const repair = repairOriginHead(root, { dryRun, env: opts.env });
+    const repair = repairOriginHead(root, { dryRun, ...gitEnvOpts });
     if (repair) {
       // Re-resolve after EVERY attempt, not only 'repaired' — a concurrent
       // session may have written origin/HEAD while this one's set-head lost
@@ -235,7 +237,7 @@ async function reconcileInner(opts, state) {
       // skipped under recent-failure (skipped). The caller's resolver cache
       // may already hold this root's null either way.
       if (opts.cache && opts.cache.integrationBranch) opts.cache.integrationBranch.delete(root);
-      integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache, { env: opts.env }));
+      integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache, gitEnvOpts));
       if (integration) {
         result.originHeadRepair = { ...repair, branch: integration };
       } else {

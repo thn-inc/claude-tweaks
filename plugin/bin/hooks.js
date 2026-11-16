@@ -133,7 +133,7 @@ const VERBS = {
   'ledger-row': { usage: 'ledger-row [--run <dir>] [--ledger <path>] (--phase <phase> (--item <text> | --item-file <path>) | --row <n>) --status <status> [--resolution <text> | --resolution-file <path>]', run: runLedgerRow },
   'teardown-run': { usage: 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]', run: runTeardownRun },
   'archive-run': { usage: 'archive-run [--run <dir>]', run: runArchiveRun },
-  'resolve-console': { usage: 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>]', run: runResolveConsole },
+  'resolve-console': { usage: 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>] [--digested <id,id,...>]', run: runResolveConsole },
   'check-resume-freshness': { usage: 'check-resume-freshness [--run <dir>]', run: runCheckResumeFreshness },
   'check-staged-inventory': { usage: 'check-staged-inventory [--run <dir>]', run: runCheckStagedInventory },
   'check-session-residue': { usage: 'check-session-residue [--run <dir>]', run: runCheckSessionResidue },
@@ -189,7 +189,7 @@ const KNOWN_FLAGS = {
   // it from `KNOWN_FLAGS` and from its `VERBS` usage line here. Until then a session can still hold pre-(1) prose in context
   // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
-  'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed', '--filing-failed'],
+  'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--digested'],
   'check-pass-reentry': ['--run', '--online'],
   'resolve-run-dir': ['--spec-slug', '--mode', '--standalone', '--create', '--root-only', '--archived'],
   'sweep-shadow': ['--run', '--worktree'],
@@ -209,7 +209,7 @@ const KNOWN_FLAGS = {
 // with "--", and the handler would otherwise read the stray flag as the value.
 // One set for every verb: a flag name here takes a value on every verb that
 // declares it, so it must never be a boolean flag on another verb.
-const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks', '--item', '--item-file', '--resolution', '--resolution-file', '--row']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--digested', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks', '--item', '--item-file', '--resolution', '--resolution-file', '--row']);
 
 // Returns the first refused `--*` token in `args`: an undeclared flag, as
 // `{ token, valueFlag: null }`, or any `--*` token sitting in a declared value
@@ -704,7 +704,7 @@ async function runRecordWorktree(argv, deps) {
   const worktreeArg = positional[0];
   // #1124: every real caller already passes --run explicitly (build's
   // worktree-setup.md Step 4.5, the run-resume-freshness re-stamp, the
-  // subagent-output-contract re-stamp) — nothing legitimate depends on the
+  // subagent-dispatch-core re-stamp) — nothing legitimate depends on the
   // implicit fallback below. An invocation that omits --run previously fell
   // through to resolveRunDir's "newest non-terminal run" GUESS and could
   // silently clobber a DIFFERENT live session's run-state.json (reproduced
@@ -1124,6 +1124,13 @@ async function runCloseRun(argv, deps) {
     if (!r.writeOk) {
       deps.stdout(`claude-tweaks: failed to close run ${path.basename(runDir)} — run-state.json could not be written\n`);
     }
+    if (r.status === 'closed' && r.writeOk) {
+      // #5555: timing.json is written in-process, inside at-close's own time bound; lazy so no hook event loads it.
+      try { await require('./lib/timing/at-close').writeTimingAtCloseSafe(runDir, { env: deps.env }); } catch (err) {
+        // The module itself failed to load, so the SKIP line is written without it.
+        try { require('./lib/log-decision/timing-skip').logTimingFailure(runDir, 'timing module failed to load', err); } catch { /* a failed trace line never fails the close */ }
+      }
+    }
   } else {
     // No --run was given (or it resolved to nothing) and resolveRunDir's
     // fallback also found no run dir — the only remaining case in this
@@ -1350,7 +1357,7 @@ async function runLedgerRow(argv, deps) {
       repo = repoResolve.originSpecOf(repoResolve.originUrl(worktree, deps.env));
     } catch { repo = null; }
   }
-  const verdict = checkLedgerStatus(status, resolution.text, { excludeRecords, repo });
+  const verdict = checkLedgerStatus(status, resolution.text, { excludeRecords, repo, runDir });
   if (verdict.refusal) return refuse(verdict.refusal);
   if (settle && status !== 'observation' && isBlank(resolution.text)) {
     return refuse(`settling row #${row} to '${status}' needs --resolution or --resolution-file`);
@@ -1401,6 +1408,11 @@ async function runTeardownRun(argv, deps) {
   } else if (runDir) {
     const result = teardownRun(runDir, { mode, sessionId: deps.env.CLAUDE_CODE_SESSION_ID, cwd: deps.cwd() });
     deps.stdout(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
+    if (result.closed) {
+      try { await require('./lib/timing/at-close').writeTimingAtCloseSafe(runDir, { env: deps.env }); } catch (err) {
+        try { require('./lib/log-decision/timing-skip').logTimingFailure(runDir, 'timing module failed to load', err); } catch { /* a failed trace line never fails the close */ }
+      }
+    }
   } else {
     deps.stdout('claude-tweaks: no pipeline run dir found — run not torn down\n');
   }
@@ -1409,7 +1421,7 @@ async function runTeardownRun(argv, deps) {
 
 async function runArchiveRun(argv, deps) {
   const {
-    archiveRunDir, archiveCommitLine, pinnedGit, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+    archiveRunDir, archiveCommitLine, pinnedGit, readConsoleState, consoleResidue, consoleAckRemedy, rerunRemedies, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
     TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
   } = require('./lib/reconcile/archive-merged');
   const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1463,8 +1475,7 @@ async function runArchiveRun(argv, deps) {
     const remedies = [];
     if (items > 0) {
       what.push(`${items} unresolved item(s) no human has reviewed`);
-      const rerun = filingRerunRemedy(runDir);
-      if (rerun) remedies.push(rerun);
+      remedies.push(...rerunRemedies(runDir));
       remedies.push(consoleAckRemedy(runDir));
     }
     if (unreadable.length > 0) {
@@ -1588,6 +1599,7 @@ async function runResolveConsole(argv, deps) {
   const decline = splitIds(flagVal(argv.slice(1), '--decline'));
   const reverseFailed = splitIds(flagVal(argv.slice(1), '--reverse-failed'));
   const filingFailed = splitIds(flagVal(argv.slice(1), '--filing-failed'));
+  const digested = splitIds(flagVal(argv.slice(1), '--digested'));
 
   const mainRoot = wtDetect.mainCheckoutRoot(deps.cwd()) || deps.cwd();
   const execFileAsync = promisify(execFile);
@@ -1605,7 +1617,7 @@ async function runResolveConsole(argv, deps) {
   };
   const { resolveConsoleExecution, renderExecutedLines } = require('./lib/reconcile/console-execute');
   const result = await resolveConsoleExecution(runDir, {
-    approve, decline, reverseFailed, filingFailed,
+    approve, decline, reverseFailed, filingFailed, digested,
   }, consoleDeps);
   if (result.status === 'executed') {
     deps.stdout(renderExecutedLines(result, path.basename(runDir)));
@@ -1624,11 +1636,12 @@ async function runResolveConsole(argv, deps) {
     return 1;
   }
   if (result.reason === 'not-finding-items') {
-    deps.stdout(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are neither finding rows nor sdd-ruling rows (no findingItem, no isRulingRow flag), console not resolved\n`);
+    const flag = result.flag || '--filing-failed';
+    deps.stdout(`claude-tweaks: ${flag} id(s) ${result.ids.join(', ')} are ${flag === '--digested' ? 'not finding rows (no findingItem)' : 'neither finding rows nor sdd-ruling rows (no findingItem, no isRulingRow flag)'}, console not resolved\n`);
     return 1;
   }
   if (result.reason === 'conflicting-failure-ids') {
-    deps.stdout(`claude-tweaks: id(s) ${result.ids.join(', ')} named in both --reverse-failed and --filing-failed, console not resolved\n`);
+    deps.stdout(`claude-tweaks: id(s) ${result.ids.join(', ')} named in both ${result.flag || '--reverse-failed'} and --filing-failed, console not resolved\n`);
     return 1;
   }
   deps.stdout(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);
@@ -1830,6 +1843,8 @@ async function runReconcile(argv, deps) {
   const opts = {
     dryRun: args.includes('--dry-run'),
     cwd: deps.cwd(),
+    // Reaches only the no-repo/no-remote gate's git children today (see reconcile()'s opts comment; #5606).
+    env: deps.env,
     mcpReachable: args.includes('--mcp-reachable'),
     // Unscoped: run everything except the janitorial checks deferred to the
     // background pass (#4032); FAST_CHECKS stays inside the inline set, so the

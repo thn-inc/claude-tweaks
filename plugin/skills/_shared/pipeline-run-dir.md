@@ -2,25 +2,21 @@
 
 Operational reference for skills that need to locate the active pipeline run directory. Ownership is split three ways. **`_shared/run-dir-resolution.md` owns the Resolution order and its Bash snippet** (#2019, extracted so a call site needing only those can compose a lean bundle without also paying for this file's other two ownership areas) — the canonical, complete ordered algorithm for finding the active run, cited by step number from `/capture`, `/tidy`'s `scan-procedures.md`, `flow/materialize.md`, and `_shared/auto-decision-log.md`. **This file owns `resolve-run-dir`'s CLI reference (#2728: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir` — a `bin/hooks.js` subcommand, never a standalone `bin/resolve-run-dir.js` script), Anchoring (write-pinning, guards), and the Worktree-local `--run` fallback.** `auto-mode-contract.md`'s "Pipeline run directory: location and collision-safety" section owns everything around both — directory structure, collision-safety rationale, cleanup/archival lifecycle, and gitignore treatment — and does not restate the ordering. Consult that section for anything not covered here.
 
-**Not the hook-side algorithm.** Hooks cannot see a skill's spec/topic, so `bin/lib/hooks/context.js`'s `resolveRun` answers a different question with different rules (ownership-scoped, no slug matching — see CLAUDE.md's Hooks section). A change to the order below does not change hook behavior, and vice versa.
-
-## Resolution order — moved
-
-Moved to `_shared/run-dir-resolution.md`'s "Resolution order" section (#2019), alongside the
-Bash snippet that implements it. Read there.
+**Not the hook-side algorithm.** Hooks cannot see a skill's spec/topic, so `bin/lib/hooks/context.js`'s `resolveRun` answers a different question with different rules (ownership-scoped, no slug matching — see CLAUDE.md's Hooks section). A change to that order does not change hook behavior, and vice versa.
 
 ## Resolving it: `resolve-run-dir` (preferred over composing `$RUN_ROOT` by hand)
 
 `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir [--spec-slug <s>] [--mode auto] [--standalone <name>] [--create] [--root-only] [--archived]`
-(`bin/lib/hooks/run-dir-resolve.js`) implements steps 1, 2, and 4 above on top of
-`bin/lib/hooks/worktree-detect.js`'s `mainCheckoutRoot()` — the same anchoring the Bash snippet
-below computes, but as a single command every citing skill step calls instead of restating that
-snippet inline (`[IL-127]`: a restated, hand-typed copy is exactly how the anchoring rule got
-read and then violated in the incident this command exists to prevent). Prints the resolved
-absolute path on stdout and exits `0`; exits non-zero with a message on stderr naming the problem
-when nothing resolves, or when `PIPELINE_RUN_DIR` (or a candidate) resolves inside a linked
-worktree instead of the main checkout — a shadow, the exact `[IL-127]` shape, refused loudly
-rather than silently substituted. Never creates a directory unless `--create` is passed.
+(`bin/lib/hooks/run-dir-resolve.js`) implements steps 1, 2, and 4 of
+`_shared/run-dir-resolution.md`'s Resolution order on top of `bin/lib/hooks/worktree-detect.js`'s
+`mainCheckoutRoot()` — the same anchoring `_shared/run-dir-resolution.md`'s Bash snippet computes,
+but as a single command every citing skill step calls instead of restating that snippet inline
+(`[IL-127]`: a restated, hand-typed copy is exactly how the anchoring rule got read and then
+violated in the incident this command exists to prevent). Prints the resolved absolute path on
+stdout and exits `0`; exits non-zero with a message on stderr naming the problem when nothing
+resolves, or when `PIPELINE_RUN_DIR` (or a candidate) resolves inside a linked worktree instead of
+the main checkout — a shadow, the exact `[IL-127]` shape, refused loudly rather than silently
+substituted. Never creates a directory unless `--create` is passed.
 
 - No flags: steps 1-2 only (env var, then newest matching directory for `--spec-slug`). This is
   the read-only "where is the run I already have" call most steps need. Step 2 never adopts a
@@ -165,12 +161,6 @@ sanctioned-write family, the fourth a single documented exception:
   `/claude-tweaks:dispatch`'s `$RUN_ID`, or a `<dir>` copied from the SessionStart notice's run
   list, passes — and the anchoring check above still runs on that resolved path.
 
-### Initialized-run-dir requirement (#1566) — moved
-
-Moved to `_shared/pipeline-run-dir-initialized-check.md` (#2722) — `bin/*.js`-author detail (which
-of `resolveRunArg`'s 8 shared callers opt out via `resolveOpts.allowUninitialized`, and why) not
-needed by an ordinary skill-following worktree-creation catch-up. Read there.
-
 ### Worktree-local `--run` fallback (#280)
 
 `resolveRunArg` (`bin/hooks.js`, shared by `record-worktree`, `record-pr`, `spec-status`,
@@ -276,12 +266,6 @@ legitimate outside-repo use exists, as it did for the two resolver CLIs (#1065).
 
 `resolve-run-dir` above mirrors the snippet in `_shared/run-dir-resolution.md`'s "Bash snippet
 (resolution)" section; a citing skill step calls the command, not that snippet directly.
-
-## Bash snippet (resolution) — moved
-
-Moved to `_shared/run-dir-resolution.md`'s "Bash snippet (resolution)" section (#2019), alongside
-the Resolution order it implements — including the ISO-timestamp rule and SPEC_SLUG conventions.
-Read there.
 
 ## See also
 
