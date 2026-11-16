@@ -28,7 +28,7 @@ function splitLines(text) {
 
 function range(sign, count) { return count === 0 ? `${sign}0,0` : `${sign}1,${count}`; }
 
-// A single-hunk unified diff replacing the whole file: `git apply -R` on it restores `oldText`.
+// A single-hunk unified diff replacing the whole file: `MEMORY_REVERT_COMMAND` on it restores `oldText`.
 function wholeFileDiff(name, oldText, newText) {
   const old = oldText === null ? { lines: [], noNewline: false } : splitLines(oldText);
   const next = splitLines(newText);

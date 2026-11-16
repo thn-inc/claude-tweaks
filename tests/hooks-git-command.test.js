@@ -288,6 +288,8 @@ test('#4448: resolveGitCommand without quoting reads an appending assignment and
   // A known cwd passes through unresolved (as in the gitTargets '/repo' pins below).
   assert.deepStrictEqual(resolveGitCommand(['x+=1', 'git', 'commit'], '/r'), { index: 2, dir: '/r' });
   assert.deepStrictEqual(resolveGitCommand(['nohup', 'git', 'commit'], '/r'), { index: 2, dir: '/r' });
+  // A relative base is the one input `path.resolve` changes on every host, so this pins "as given" on POSIX CI too.
+  assert.deepStrictEqual(resolveGitCommand(['nohup', 'git', 'commit'], 'rel'), { index: 2, dir: 'rel' });
 });
 
 test('an empty value for a global VALUE_FLAG (-c) does not swallow the subcommand either', () => {
