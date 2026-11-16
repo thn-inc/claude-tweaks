@@ -203,3 +203,105 @@ test('review-console.md step 8 go-red: dropping the command or adding a prompt i
   assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE.replace(INDEX_CLAUSE, 'the new index line')), ['step 8 does not say the MEMORY.md content file holds the whole index']);
   assert.deepStrictEqual(memoryWriteProblems(REVIEW_CONSOLE.replace(FAILURE_CLAUSE, 'Exit 5 stops.')), ['step 8 does not stop on any non-zero exit and carry the exit-3 path']);
 });
+
+// #4620 Task 11: the console's control-mode branch and the carried route.
+const APPENDIX = readText(path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'review-console-appendix.md'));
+const { CARRIED_RESOLUTION, CARRY_FROM } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'console', 'resolve'));
+const CONTROL_MARKER = '**Control mode (#4620).**';
+
+function carryParagraph(text) {
+  const s = section(text, HEADING);
+  const start = s.indexOf(CONTROL_MARKER);
+  if (start === -1) return null;
+  const end = s.indexOf('\n\n', start);
+  return end === -1 ? s.slice(start) : s.slice(start, end);
+}
+
+// The paragraph's first sentence (after its bold lead-in) is the carry sentence.
+function carrySentence(text) {
+  return carryParagraph(text).slice(CONTROL_MARKER.length).split('. ')[0];
+}
+
+function claimProblems(text, claims) {
+  const p = carryParagraph(text);
+  if (p === null) return ['the short-circuit has no control-mode paragraph'];
+  return claims.filter(([needle]) => !p.includes(needle)).map(([, message]) => message);
+}
+
+function withoutNeedle(needle) {
+  const p = carryParagraph(REVIEW_CONSOLE);
+  assert.ok(p, 'control-mode paragraph missing');
+  assert.ok(p.includes(needle), `${needle} is not in the paragraph`);
+  return REVIEW_CONSOLE.replace(p, p.split(needle).join('[removed]'));
+}
+
+const CARRY_CLAIMS = [
+  ['resolves `carried`', 'the control-mode paragraph does not say items resolve `carried`'],
+  ['packet-facts/decisions.json', 'the control-mode paragraph does not name packet-facts/decisions.json'],
+  ['Decisions left for you', "the control-mode paragraph does not name the packet's Decisions left for you"],
+];
+test('AC1.1: the short-circuit names the control-mode carry into the packet', () => {
+  assert.deepStrictEqual(claimProblems(REVIEW_CONSOLE, CARRY_CLAIMS), []);
+  for (const [needle, message] of CARRY_CLAIMS) assert.deepStrictEqual(claimProblems(withoutNeedle(needle), CARRY_CLAIMS), [message]);
+});
+
+const RESIDUE_CLAIMS = [['prints no Needs a human block', 'the control-mode paragraph does not say the CLI prints no Needs a human block']];
+test('AC2.1: under control mode no console item reaches the final stop as residue', () => {
+  assert.deepStrictEqual(claimProblems(REVIEW_CONSOLE, RESIDUE_CLAIMS), []);
+  assert.deepStrictEqual(claimProblems(withoutNeedle(RESIDUE_CLAIMS[0][0]), RESIDUE_CLAIMS), [RESIDUE_CLAIMS[0][1]]);
+});
+
+test('AC7.1: a needs-human-decision ruling is carried, not applied', () => {
+  // sdd-ruling-needs-human-decision resolves `pending`; the carry sentence must name that resolution.
+  const sentence = carrySentence(REVIEW_CONSOLE);
+  assert.ok(sentence.includes('`pending`'), 'the carry sentence does not name `pending`');
+  const mutated = REVIEW_CONSOLE.replace('`pending`, `keep-staged` or `refused` resolves `carried`', '`keep-staged` or `refused` resolves `carried`');
+  assert.notStrictEqual(mutated, REVIEW_CONSOLE);
+  assert.ok(!carrySentence(mutated).includes('`pending`'),'control: without `pending` the check goes red');
+});
+
+const EXIT6 = "exit code 6 (a carry write failed) → stop with `flow/failure-cards.md`'s Generic gate failure card";
+const EXIT6_APPENDIX = "Exit code 6 (a control-mode carry write failed) → stop with `flow/failure-cards.md`'s Generic gate failure card";
+test('AC6.1: exit 6 stops with the generic failure card', () => {
+  assert.ok(REVIEW_CONSOLE.includes(EXIT6), 'review-console.md');
+  assert.ok(APPENDIX.includes(EXIT6_APPENDIX), 'appendix');
+  assert.ok(!REVIEW_CONSOLE.replace(EXIT6, 'exit code 6').includes(EXIT6), 'control: review-console.md');
+  assert.ok(!APPENDIX.replace(EXIT6_APPENDIX, 'Exit code 6').includes(EXIT6_APPENDIX), 'control: appendix');
+});
+
+const ROUTE_CLAIMS = [
+  ['--resolution carried', 'the carried route does not use --resolution carried'],
+  ['--ledger "{ledger path}"', 'the carried route does not pass --ledger "{ledger path}" for a ledger-record item'],
+  ['carried to the acceptance packet as {factId}', 'the carried route does not settle the ledger row with the fact id'],
+];
+test('AC2.1: the one route for a failed or refused item settles a ledger-record row through --set-item --ledger', () => {
+  assert.deepStrictEqual(claimProblems(REVIEW_CONSOLE, ROUTE_CLAIMS), []);
+  assert.ok(!carryParagraph(REVIEW_CONSOLE).includes('--resolution keep-staged'), 'the route is paired with keep-staged');
+  for (const [needle, message] of ROUTE_CLAIMS) assert.deepStrictEqual(claimProblems(withoutNeedle(needle), ROUTE_CLAIMS), [message]);
+  const paired = REVIEW_CONSOLE.replace('--resolution carried', '--resolution keep-staged');
+  assert.ok(carryParagraph(paired).includes('--resolution keep-staged'), 'control: a keep-staged pairing is detectable');
+});
+
+function carriedRoute(text) {
+  const heading = '### Resolution-to-step mapping';
+  const start = text.indexOf(`\n${heading}\n`);
+  assert.notStrictEqual(start, -1, `heading not found: ${heading}`);
+  const end = text.indexOf('\n#', start + heading.length + 1);
+  assert.notStrictEqual(end, -1, `no heading after: ${heading}`);
+  return text.slice(start, end).split('\n').find((l) => l.startsWith('- `carried`')) || null;
+}
+test('the appendix mapping routes carried to execute nothing', () => {
+  const route = carriedRoute(APPENDIX);
+  assert.ok(route, 'no `carried` bullet in the Resolution-to-step mapping');
+  assert.match(route, /execute \*\*nothing\*\*/);
+  const mutated = APPENDIX.replace(/\n- `carried`/, '\n- `gone`');
+  assert.notStrictEqual(mutated, APPENDIX);
+  assert.strictEqual(carriedRoute(mutated), null, 'control: removing the bullet goes red');
+});
+
+test('carried is pinned code-to-prose', () => {
+  assert.ok(carriedRoute(APPENDIX).includes(`\`${CARRIED_RESOLUTION}\``), 'the mapping bullet does not name CARRIED_RESOLUTION');
+  assert.ok(CARRY_FROM.length > 0, 'CARRY_FROM is empty');
+  const sentence = carrySentence(REVIEW_CONSOLE);
+  for (const from of CARRY_FROM) assert.ok(sentence.includes(`\`${from}\``), `the carry sentence does not name \`${from}\``);
+});
