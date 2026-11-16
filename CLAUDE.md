@@ -16,13 +16,13 @@ A Claude Code plugin containing markdown skill files that guide Claude through a
 
 ## Structure
 
-**The plugin payload is the `plugin/` subtree — nothing else in this repo ships** (`docs/decisions/0015-*`): `tests/`, `docs/`, `evals/`, `perf/`, `tools/`, `scripts/`, and `work/` are maintainer-side, so where a new file goes decides whether users install it. Full directory tree, the per-skill sub-file table, and the command reference live in `docs/plugin-structure.md`. Orientation:
+**The plugin payload is the `plugin/` subtree — nothing else in this repo ships** (`docs/decisions/0015-*`): `tests/`, `docs/`, `perf/`, `tools/`, `scripts/`, and `work/` are maintainer-side, so where a new file goes decides whether users install it. Full directory tree, the per-skill sub-file table, and the command reference live in `docs/plugin-structure.md`. Orientation:
 
 - `plugin/skills/{name}/SKILL.md` — skill definition; `plugin/skills/{name}/*.md` — sub-files lazy-loaded by that skill
 - `plugin/skills/_shared/*.md` — cross-skill contracts, criteria, and canonical procedures cited by skills rather than restated
 - `plugin/bin/` — Node executables; `plugin/bin/lib/{name}/` — multi-file modules as flat sibling directories, NOT a nested `_shared/` wrapper (that convention is specific to `plugin/skills/_shared/`)
 - `plugin/hooks/hooks.json` + `plugin/bin/hooks.js` — one dispatcher for every hook event
-- `tests/` — `node --test` suites; `evals/` — a separate Node project (own `package.json`/`node_modules`), not part of the plugin runtime
+- `tests/` — `node --test` suites
 
 ## Conventions
 
@@ -89,7 +89,7 @@ npm run test:perf                   # Timing budgets (perf/) — deliberately ex
 claude --plugin-dir ./plugin        # Local development — load the payload subtree from this checkout
 ```
 
-Per-suite test invocations, the `plugin/bin/*.js` CLIs (the four health sweeps plus the standalone CLIs listed there), and the evals harness commands are in `docs/plugin-structure.md`.
+Per-suite test invocations and the `plugin/bin/*.js` CLIs (the four health sweeps plus the standalone CLIs listed there) are in `docs/plugin-structure.md`.
 
 A `npm test` failure count that varies run-to-run on byte-identical code tracks machine load (sibling agents/sessions running concurrently), not a regression — re-run only the affected file(s) in isolation (`node --test path/to/file.test.js`) before concluding anything is actually broken. That tolerance applies only to counts **you ran yourself**: never accept a subagent's self-reported pass/fail numbers as a run, and never reconcile a mismatch against them as flake — a fabricated report is indistinguishable from load here, so re-run centrally and require dispatched agents to quote raw command output rather than summarize it.
 

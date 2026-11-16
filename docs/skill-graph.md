@@ -33,7 +33,7 @@ subtree (ADR-0015) — the same root the bare `_shared/x.md` and `{skill}/{file}
 citations throughout already assume. So `bin/lib/issues/record.js` below is
 `plugin/bin/lib/issues/record.js` in a checkout, and `skills/_shared/integration-branch.md`
 is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`docs/…`,
-`tests/…`, `evals/…`) are written from the repo root and are unambiguous by their prefix.
+`tests/…`) are written from the repo root and are unambiguous by their prefix.
 
 ## activity
 

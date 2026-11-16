@@ -164,8 +164,7 @@ function walkFiles(dir, out) {
     if (WALK_EXCLUDES.has(e.name)) continue;
     const p = path.join(dir, e.name);
     // "node_modules" is excluded at any depth (the WALK_EXCLUDES check
-    // above), which already covers evals/node_modules — no depth-1 special
-    // case needed.
+    // above) — no depth-1 special case needed.
     if (e.isDirectory()) walkFiles(p, out);
     else out.push(p);
   }
