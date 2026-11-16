@@ -1,5 +1,6 @@
 'use strict';
 const { test } = require('node:test');
+require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -446,6 +447,26 @@ test('an unreadable --deploy or --ac-results is a stated partial', (t) => {
   assert.ok(facts.partial.includes('--deploy input not read — treated as absent'));
   assert.ok(facts.partial.includes('--ac-results input not read — treated as absent'));
   assert.equal(factOf(facts, 'deploy:status').target, 'local');
+});
+
+test('AC2.6: a malformed deploy ref is not read', (t) => {
+  const ws = workspace(t);
+  const note = '--deploy input not read — treated as absent';
+  for (const ref of ['not a sha', '0123ab', 'ABCDEF0', 'g123abc', 'a'.repeat(65), 123, null, '', ['0123abc']]) {
+    const deploy = writeJson(ws.file('deploy.json'), { target: 'dev', ref });
+    const { facts } = gather(ws, ['--deploy', deploy]);
+    assert.ok(facts.partial.includes(note), JSON.stringify(ref));
+    const fact = factOf(facts, 'deploy:status');
+    assert.equal(fact.target, 'local', JSON.stringify(ref));
+    assert.equal(fact.text, 'target: local');
+    assert.ok(!Object.hasOwn(fact, 'ref'), JSON.stringify(ref));
+  }
+  for (const ref of ['0123abc', 'f'.repeat(40), 'a'.repeat(64)]) {
+    const deploy = writeJson(ws.file('deploy.json'), { target: 'dev', live: true, ref });
+    const { facts } = gather(ws, ['--deploy', deploy]);
+    assert.ok(!facts.partial.includes(note), ref);
+    assert.equal(factOf(facts, 'deploy:status').ref, ref);
+  }
 });
 
 test('a story file that will not read is a stated partial', (t) => {

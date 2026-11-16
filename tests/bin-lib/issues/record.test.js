@@ -3,9 +3,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
+  buildAuthorAssociationQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, openBlockerRefs, openNativeBlockerRefs,
@@ -700,6 +701,19 @@ test('buildNativeParentQuery returns null for empty or non-array input', () => {
   assert.strictEqual(buildNativeParentQuery(null), null);
 });
 
+test('buildAuthorAssociationQuery aliases each number and requests authorAssociation', () => {
+  const q = buildAuthorAssociationQuery([42, 731]);
+  assert.match(q, /i42: issue\(number:42\)\{ authorAssociation \}/);
+  assert.match(q, /i731: issue\(number:731\)\{ authorAssociation \}/);
+  assert.match(q, /query\(\$owner:String!,\$repo:String!\)/);
+});
+
+test('buildAuthorAssociationQuery returns null for empty or non-array input', () => {
+  assert.strictEqual(buildAuthorAssociationQuery([]), null);
+  assert.strictEqual(buildAuthorAssociationQuery(null), null);
+  assert.strictEqual(buildAuthorAssociationQuery('42'), null);
+});
+
 // AC — dependency assumptions (cross-spec-promise-tracking)
 
 test('parseDependencyAssumptions captures trailing text after the colon', () => {
@@ -876,10 +890,10 @@ test('parseRecordFacets: shaped:headless alongside an unrelated third label fami
 
 // --- Defer-reason vocabulary (_shared/deferral-gate.md, #620) ---
 
-test('DEFER_REASONS is the frozen six-value closed vocabulary, in contract order', () => {
+test('DEFER_REASONS is the frozen seven-value closed vocabulary, in contract order', () => {
   assert.deepStrictEqual([...DEFER_REASONS], [
     'tangential', 'needs-human-decision', 'pre-existing-outside-diff',
-    'genuinely-larger', 'blocked-external', 'blocked-dependency',
+    'genuinely-larger', 'blocked-external', 'blocked-dependency', 'needs-verification',
   ]);
   assert.ok(Object.isFrozen(DEFER_REASONS));
 });
@@ -1297,6 +1311,60 @@ test('recordPayload (#4368): a Defer-reason: line quoted inside a fenced block i
     () => recordPayload({ title: 't', body: 'Defer-reason: genuinely-larger\n\n## Current State\nx', type: 'task', deferReason: 'tangential' }),
     /already carries/,
   );
+});
+
+// --- ownOriginLine (#4502) ---
+test('ownOriginLine: top line read and trimmed; absent and non-string are null', () => {
+  assert.strictEqual(ownOriginLine('Origin: ledger resolve gate  \n\n## Current State'), 'ledger resolve gate');
+  assert.strictEqual(ownOriginLine('Origin:\n## Current State'), '');
+  assert.strictEqual(ownOriginLine('## Current State\nno line'), null);
+  assert.strictEqual(ownOriginLine(''), null);
+  assert.strictEqual(ownOriginLine(undefined), null);
+  assert.strictEqual(ownOriginLine('prose naming Origin: mid-line'), null);
+});
+
+test('AC1.1/AC8.1: ownOriginLine skips a line under an ## Absorbed: section', () => {
+  const body = ['## Current State', 'x', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.strictEqual(ownOriginLine(body), null);
+});
+
+test('AC2.1/AC8.1: ownOriginLine skips a fenced line (backtick and tilde)', () => {
+  for (const f of ['```', '~~~']) {
+    assert.strictEqual(ownOriginLine(['## Current State', f, 'Origin: quoted', f].join('\n')), null, f);
+  }
+});
+
+test('AC3.1: ownOriginLine reads a line under ## Original request', () => {
+  assert.strictEqual(ownOriginLine(['## Current State', 'x', '## Original request', 'Origin: ledger resolve gate'].join('\n')), 'ledger resolve gate');
+});
+
+test('AC4.1: ownOriginLine prefers the own top line over an absorbed one', () => {
+  const body = ['Origin: wrap-up leftover', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.strictEqual(ownOriginLine(body), 'wrap-up leftover');
+});
+
+test('AC5.1: a line after the absorbed section\'s next ## heading counts again', () => {
+  const body = ['## Absorbed: 2026-10-30 — x', 'Origin: absorbed', '## Original request', 'Origin: own'].join('\n');
+  assert.strictEqual(ownOriginLine(body), 'own');
+});
+
+test('ownOriginLine: ### sub-headings keep an Absorbed section open', () => {
+  assert.strictEqual(ownOriginLine(['## Absorbed: d — x', '### Notes', 'Origin: absorbed'].join('\n')), null);
+});
+
+test('ownOriginLine: a fenced ## line neither ends an Absorbed section nor opens one', () => {
+  assert.strictEqual(ownOriginLine(['## Absorbed: d — x', '```', '## Not a heading', '```', 'Origin: absorbed'].join('\n')), null);
+  assert.strictEqual(ownOriginLine(['```', '## Absorbed: quoted', '```', 'Origin: own'].join('\n')), 'own');
+});
+
+test('ownOriginLine: an unclosed fence hides every later line, ## Original request included (same rule as #4368)', () => {
+  assert.strictEqual(ownOriginLine(['## Current State', '```', 'quoted', '## Original request', 'Origin: own'].join('\n')), null);
+});
+
+test('AC7.1: CRLF and lone-CR bodies resolve the same as LF', () => {
+  const lines = ['## Absorbed: d — x', 'Origin: absorbed', '## Original request', 'Origin: own  '];
+  for (const eol of ['\n', '\r\n', '\r']) assert.strictEqual(ownOriginLine(lines.join(eol)), 'own', JSON.stringify(eol));
+  for (const eol of ['\r\n', '\r']) assert.strictEqual(ownOriginLine(['```', 'Origin: quoted', '```'].join(eol)), null, JSON.stringify(eol));
 });
 
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {

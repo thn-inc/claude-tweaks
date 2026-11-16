@@ -317,7 +317,7 @@ A skipped run (e.g., `next-slice` returns `null` because all slices are fresh) i
 
 ## CI Integration
 
-Read `ci-integration.md` in this skill's directory when wiring `/code-health` state into CI, a pre-push hook, or a periodic validation step — it owns `status --fail-on regressed|risk-high` (Regression and Risk Gating) and `churn-report --fail-on-high-churn <r>` (Fingerprint Churn), with their exit-code contracts. Nothing in the main Workflow depends on it.
+Read `ci-integration.md` in this skill's directory when wiring `/code-health` state into a local pre-push hook, CI, or a periodic validation step — it owns `status --fail-on regressed|risk-high` (Regression and Risk Gating) and `churn-report --fail-on-high-churn <r>` (Fingerprint Churn), with their exit-code contracts. Nothing in the main Workflow depends on it.
 
 ## Next Actions
 

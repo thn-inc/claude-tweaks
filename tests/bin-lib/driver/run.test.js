@@ -304,7 +304,7 @@ test('sink: an appendFile that always throws never aborts, stdout keeps every li
 //   cwd), node ([script, ...args], cwd), and the object-taking deps
 //   with their arguments as `args`: policy (keys), eligibility ([issue, opts]),
 //   native-deps ([opts]), linked-prs ([opts]), admission ([input]), worker ([opts, deps]),
-//   resolveRunDir ([opts]), lstatType ([p]), readdir ([p]); plus the write seams
+//   resolveRunDir ([opts]), adoptRun ([opts]), lstatType ([p]), readdir ([p]); plus the write seams
 //   writeFile, appendFile, mkdirSync ([path, …]) and terminate ([signal]).
 // A call is answered by the first `script` entry whose matcher accepts it. An entry is
 // [matcher, reply]: reply is a value, an Error (thrown) or fn(call) -> value (may throw).
@@ -537,6 +537,8 @@ function harness(over = {}) {
     reviewRequired: (opts) => { reviewerCalls.push(opts); return (over.reviewRequired || realReviewRequired)(opts); },
     launchWorker: (opts, d) => dispatch('worker', [opts, d]),
     resolveRunDir: (opts) => dispatch('resolveRunDir', [opts]),
+    // The --run guard (#5232): recorded, and a refusal unless a test passes over.deps.adoptRun.
+    adoptRun: (opts) => { record('adoptRun', [opts]); return { ok: false, why: 'adoptRun not scripted' }; },
     lstatType: (p) => dispatch('lstatType', [p]),
     readdir: (p) => dispatch('readdir', [p]),
     readFile: (p) => dispatch('readFile', [p]),
@@ -6449,4 +6451,694 @@ test('(#5584) realDeps carries the terminal test, the rule and the transcript ch
   assert.equal(realDeps.resolveBuildAuthority, require(path.join(LIB, 'issues', 'build-authority')).resolveBuildAuthority);
   assert.equal(typeof realDeps.readTypedCommand, 'function');
   assert.deepStrictEqual(realDeps.readTypedCommand({ number: 7, env: {}, now: new Date(NOW) }), { answer: 'none', reason: 'no-session-id' });
+});
+
+// --- drive.js --in-flight-prs / --near-dup-pairs (#5232): the merge step's drain-overlap hold ---
+
+const readFileOf = (file) => (c) => c.kind === 'readFile' && c.args[0] === file;
+
+test('#5232 AC9.2: --in-flight-prs reaches the merge step', async () => {
+  const h = mergeHarness({ reconcile: archiveRunDir, script: [[readFileOf('/f.json'), '[]']] });
+  assert.equal(await run(['#7', '--in-flight-prs', '/f.json'], h.deps), 0, h.err.join(''));
+  assert.equal(finals(h)[0].outcome, 'merged');
+  assert.equal(h.calls.filter(readFileOf('/f.json')).length, 1, 'the in-flight file was read once, by the merge step');
+  assert.ok(h.lines().some((l) => l.step === 'merge-overlap' && l.status === 'ok' && /no in-flight PR besides this one/.test(l.detail)));
+});
+
+test('#5232 AC9.2: a listed PR sharing a path holds the run at the merge step, PR left in draft', async () => {
+  const h = mergeHarness({
+    script: [
+      [readFileOf('/f.json'), '[12]'],
+      [(c) => c.kind === 'ghBatch' && c.args[2] === '9', JSON.stringify({ files: [{ path: 'a.js' }] })],
+      [(c) => c.kind === 'ghBatch' && c.args[2] === '12', JSON.stringify({ state: 'OPEN', files: [{ path: 'a.js' }] })],
+    ],
+  });
+  assert.equal(await run(['#7', '--in-flight-prs', '/f.json'], h.deps), 0, h.err.join(''));
+  const final = finals(h)[0];
+  assert.equal(final.outcome, 'pending-review');
+  assert.equal(final.merge.reason, 'drain-overlap');
+  assert.ok(!h.calls.some((c) => c.kind === 'ghCreate' && c.args[1] === 'merge'), 'nothing merged');
+  assert.ok(!h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'ready'), 'never marked ready');
+});
+
+test('#5232 --in-flight-prs and --near-dup-pairs resolve a relative file against deps.cwd()', async () => {
+  const h = mergeHarness({
+    reconcile: archiveRunDir,
+    script: [[readFileOf(path.join(MAIN, 'f.json')), '[12]'], [readFileOf(path.join(MAIN, 'p.json')), '[]'],
+      [(c) => c.kind === 'ghBatch', (c) => JSON.stringify(c.args[2] === '9' ? { files: [{ path: 'a.js' }] } : { state: 'MERGED', files: [], closingIssuesReferences: [] })]],
+    deps: { cwd: () => MAIN },
+  });
+  assert.equal(await run(['#7', '--in-flight-prs', 'f.json', '--near-dup-pairs', 'p.json'], h.deps), 0, h.err.join(''));
+  assert.equal(finals(h)[0].outcome, 'merged');
+  assert.equal(h.calls.filter(readFileOf(path.join(MAIN, 'f.json'))).length, 1);
+  assert.equal(h.calls.filter(readFileOf(path.join(MAIN, 'p.json'))).length, 1);
+});
+
+test('#5232 an adopted --run merge keeps the worktree and local branch through the real merge step', async () => {
+  const h = mergeHarness({ reconcile: archiveRunDir });
+  const shared = newShared();
+  shared.adopted = { ok: true, runDir: MERGE_RUN, runId: MERGE_RUN_ID, wt: WT, branch: 'drive-record-7', mainRoot: MAIN };
+  const { final } = await driveRecord(7, shared, h.deps);
+  assert.equal(final.outcome, 'merged');
+  assert.deepEqual(final.merge.postMerge.failures, []);
+  assert.deepEqual(h.calls.filter(onGit('worktree', 'remove')), []);
+  assert.deepEqual(h.calls.filter(onGit('worktree', 'unlock')), []);
+  assert.deepEqual(h.calls.filter((c) => onGit('branch', '-D')(c)), []);
+  assert.ok(h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'api' && c.args.includes('repos/acme/widgets/git/refs/heads/drive-record-7')), 'the remote branch is deleted');
+});
+
+test('#5232 parseArgs: --in-flight-prs and --near-dup-pairs, each key present only when given', () => {
+  assert.deepEqual(parseArgs(['#7']), { records: [7], settle: true });
+  assert.deepEqual(parseArgs(['#7', '--in-flight-prs', 'f.json']), { records: [7], settle: true, inFlightPrsFile: 'f.json' });
+  assert.deepEqual(parseArgs(['--in-flight-prs', 'f.json', '--near-dup-pairs', 'p.json', '#7']),
+    { records: [7], settle: true, inFlightPrsFile: 'f.json', nearDupPairsFile: 'p.json' });
+  assert.deepEqual(parseArgs(['#7', '--in-flight-prs', 'f', '--near-dup-pairs', 'p', '#8']),
+    { records: [7, 8], settle: true, inFlightPrsFile: 'f', nearDupPairsFile: 'p' });
+  assert.deepEqual(parseArgs(['#7', '--run', '/r', '--no-settle', '--in-flight-prs', 'f']),
+    { records: [7], settle: false, runDir: '/r', inFlightPrsFile: 'f' });
+  assert.deepEqual(parseArgs(['#7', '--no-settle', '--in-flight-prs', 'f']), { records: [7], settle: false, inFlightPrsFile: 'f' });
+});
+
+test('#5232 parseArgs grammar: the hold flags are refused in every malformed shape (exit 2)', async () => {
+  const bad = [
+    ['--check', '#7', '--in-flight-prs', 'f.json'], ['--check', '#7', '--near-dup-pairs', 'p.json'],
+    ['#7', '--in-flight-prs'], ['#7', '--in-flight-prs', ''], ['#7', '--in-flight-prs', '--no-settle'],
+    ['#7', '--near-dup-pairs'], ['#7', '--near-dup-pairs', ' '], ['#7', '--near-dup-pairs', '--no-settle'],
+    ['#7', '--in-flight-prs', 'a', '--in-flight-prs', 'b'], ['#7', '--near-dup-pairs', 'a', '--near-dup-pairs', 'b'],
+    ['--budget', '2', '--in-flight-prs', 'f.json'], ['--budget', '2', '--near-dup-pairs', 'p.json'],
+    // --near-dup-pairs refines the in-flight list; alone it would be silently ignored.
+    ['#7', '--near-dup-pairs', 'p.json'], ['#7', '--run', '/r', '--no-settle', '--near-dup-pairs', 'p.json'],
+  ];
+  for (const argv of bad) {
+    assert.ok(parseArgs(argv).error, `parseArgs ${JSON.stringify(argv)} is an error`);
+    const h = harness();
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.deepEqual(h.out, [], JSON.stringify(argv));
+  }
+});
+
+test('#5232 --near-dup-pairs without --in-flight-prs is refused, naming both flags', () => {
+  const { error } = parseArgs(['#7', '--near-dup-pairs', 'p.json']);
+  assert.match(error, /--near-dup-pairs/);
+  assert.match(error, /--in-flight-prs/);
+});
+
+test('#5232 the exit-2 text in USAGE lists the hold flags\' malformed shapes', () => {
+  assert.match(USAGE, /--in-flight-prs or --near-dup-pairs, a missing, empty, flag-shaped or repeated value, --budget or --check beside either, or --near-dup-pairs without --in-flight-prs/);
+});
+
+test('#5232 the hold flags are in the usage text', () => {
+  assert.match(USAGE, /--in-flight-prs <file>/);
+  assert.match(USAGE, /--near-dup-pairs <file>/);
+  assert.equal(newShared().inFlightPrsFile, null);
+  assert.equal(newShared().nearDupPairsFile, null);
+});
+
+// --- drive.js --check (#5232) -----------------------------------------------------------
+
+const realEvaluateAdmission = evaluateAdmission;
+const realEligibility = evaluateRecordEligibility;
+const buildGranted = (n) => [on('gh', 'issue', 'view'), () => JSON.stringify({ ...issueFor(n), labels: [...issueFor(n).labels, { name: 'auto:build' }] })];
+
+// Every call a --check run may make: the policy read, the record read, the integration-ref read,
+// and the four verdict seams. Anything else (a claim, a run-dir mint, a worker, a forge write) fails.
+function isCheckRead(c) {
+  if (c.kind === 'gh') return c.args[0] === 'issue' && c.args[1] === 'view';
+  if (c.kind === 'git') return gitSub(c)[0] === 'symbolic-ref';
+  return ['policy', 'eligibility', 'native-deps', 'linked-prs', 'admission'].includes(c.kind);
+}
+const WRITE_KINDS = ['node', 'ghCreate', 'resolveRunDir', 'worker', 'writeFile', 'appendFile', 'mkdirSync', 'writeFileExclusive'];
+function assertWriteFree(calls, writes) {
+  const stray = calls.filter((c) => !isCheckRead(c));
+  assert.deepEqual(stray.map((c) => `${c.kind} ${describeArgs(c.args)}`), [], 'only read calls');
+  assert.deepEqual(calls.filter((c) => WRITE_KINDS.includes(c.kind)), [], 'no write kind');
+  assert.deepEqual(writes, [], 'no recorded write');
+}
+
+const CHECK_CASES = {
+  admitted: { n: 7, over: {} },
+  eligibilityRefused: { n: 7, over: { eligibility: { eligible: false, reasons: ['risk is not low'] }, admission: { admitted: false, reasons: ['record lacks auto:build'] } } },
+  admissionRefused: { n: 7, over: { admission: { admitted: false, reasons: ['record lacks auto:build'] } } },
+  splitOdd: { n: 7, over: { policy: { 'express-driver': 'split' }, deps: { evaluateAdmission: (i) => realEvaluateAdmission(i) } } },
+  localMerge: { n: 7, over: { policy: { 'integration-model': 'local-merge' }, deps: { evaluateRecordEligibility: (i, o) => realEligibility(i, o) } } },
+};
+const checkHarness = ({ over }, n) => harness({ ...over, script: [buildGranted(n), ...(over.script || [])] });
+
+test('#5232 AC1.1: --check prints one JSON line with the verdict and every reason', async () => {
+  const h = harness();
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  const text = h.out.join('');
+  assert.equal(text.split('\n').filter(Boolean).length, 1);
+  assert.ok(text.endsWith('\n'));
+  assert.deepEqual(JSON.parse(text), { record: 7, admitted: true, reasons: [] });
+});
+
+test('#5232 AC1.1: --check on a refused record reports eligibility and admission reasons together', async () => {
+  const h = checkHarness(CHECK_CASES.eligibilityRefused, 7);
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  assert.deepEqual(JSON.parse(h.out.join('')), { record: 7, admitted: false, reasons: ['risk is not low', 'record lacks auto:build'] });
+});
+
+test('#5232 AC4.1: --check under split admits an even record and refuses an odd one', async () => {
+  const even = checkHarness(CHECK_CASES.splitOdd, 8);
+  assert.equal(await run(['--check', '#8'], even.deps), 0);
+  assert.equal(JSON.parse(even.out.join('')).admitted, true);
+  const odd = checkHarness(CHECK_CASES.splitOdd, 7);
+  assert.equal(await run(['--check', '#7'], odd.deps), 0);
+  const verdict = JSON.parse(odd.out.join(''));
+  assert.equal(verdict.admitted, false);
+  assert.ok(verdict.reasons.includes('express-driver split: issue number is odd'), JSON.stringify(verdict));
+});
+
+test('#5232 AC1.1: --check refuses a local-merge project', async () => {
+  const h = checkHarness(CHECK_CASES.localMerge, 7);
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  const verdict = JSON.parse(h.out.join(''));
+  assert.equal(verdict.admitted, false);
+  assert.ok(verdict.reasons.includes('integration-model is not pr-first'), JSON.stringify(verdict));
+});
+
+test('#5232 AC1.2: --check makes no write of any kind, for an admitted record and for each refused class', async () => {
+  for (const [name, c] of Object.entries(CHECK_CASES)) {
+    const h = checkHarness(c, c.n);
+    assert.equal(await run(['--check', `#${c.n}`], h.deps), 0, name);
+    assert.ok(h.calls.length > 0, name);
+    assertWriteFree(h.calls, h.writes());
+  }
+});
+
+test('#5232 AC1.2 go-red: the write-free assertion fails on an injected claim call', async () => {
+  const h = checkHarness(CHECK_CASES.admitted, 7);
+  await run(['--check', '#7'], h.deps);
+  assertWriteFree(h.calls, h.writes());
+  const tainted = [...h.calls, { kind: 'node', args: ['/x/claim-targets.js'] }];
+  assert.throws(() => assertWriteFree(tainted, h.writes()));
+});
+
+test('#5232 AC1.1: --check with no computable verdict exits 1 and prints nothing', async () => {
+  const policyReply = (c) => Object.fromEntries(c.args.map((k) => [k, k === 'integration-model' ? { error: 'boom' } : { value: POLICY[k], source: 'policy' }]));
+  const bad = harness({ script: [[on('policy'), policyReply]] });
+  assert.equal(await run(['--check', '#7'], bad.deps), 1);
+  assert.deepEqual(bad.out, []);
+  assert.match(bad.err.join(''), /policy/);
+  assert.ok(!bad.calls.some((c) => c.kind === 'gh'), 'no step runs after a failed policy step');
+  const down = harness({ script: [[on('gh', 'issue', 'view'), new Error('gh down')]] });
+  assert.equal(await run(['--check', '#7'], down.deps), 1);
+  assert.deepEqual(down.out, []);
+  assert.match(down.err.join(''), /fetch/);
+});
+
+test('#5232 AC1.1: --check reports the stop detail fallback as the one reason when a verdict carries none', async () => {
+  const cases = [
+    ['eligibility returns null', { deps: { evaluateRecordEligibility: () => null } }, ['not eligible']],
+    ['admission returns null', { deps: { evaluateAdmission: () => null } }, ['not admitted']],
+    ['admission refuses with no reasons array', { deps: { evaluateAdmission: () => ({ admitted: false }) } }, ['not admitted']],
+  ];
+  for (const [name, over, expected] of cases) {
+    const h = harness(over);
+    assert.equal(await run(['--check', '#7'], h.deps), 0, name);
+    const verdict = JSON.parse(h.out.join(''));
+    assert.equal(verdict.admitted, false, name);
+    assert.deepEqual(verdict.reasons, expected, name);
+  }
+});
+
+test('#5232 --check grammar', async () => {
+  for (const argv of [['--check'], ['--check', '#7', '#8'], ['--check', '#7', '--no-settle'], ['--check', '--budget', '1'], ['--check', '--check', '#7']]) {
+    const h = harness();
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.deepEqual(h.out, []);
+    assert.equal(h.calls.length, 0);
+  }
+  assert.deepEqual(parseArgs(['#7', '--check']), { check: 7 });
+  assert.deepEqual(parseArgs(['--check', '7']), { check: 7 });
+});
+
+test('#5232 CHECK_STEPS is the head of STEPS', () => {
+  const { CHECK_STEPS } = require(path.join(LIB, 'driver', 'steps'));
+  assert.deepEqual(CHECK_STEPS.map((s) => s.name), STEPS.slice(0, 4).map((s) => s.name));
+  CHECK_STEPS.forEach((s, i) => assert.equal(s, STEPS[i]));
+});
+
+test('#5232 AC1.1: checkRecord prints no verdict for a stop before the reasons are read, or a failed step after them', async () => {
+  const { checkRecord } = require(path.join(LIB, 'driver', 'run'));
+  const reasonsSet = (ctx) => { ctx.eligibilityReasons = []; ctx.admissionReasons = []; };
+  let ranAfter = false;
+  const cases = {
+    'a stop that recorded no reasons': [
+      defineStep('early', STOP_CLASSES.REFUSED, async () => ({ status: 'stop', detail: 'nope' })),
+      defineStep('after', STOP_CLASSES.REFUSED, async () => { ranAfter = true; return { status: 'ok' }; }),
+    ],
+    'a fail after both reasons were set': [defineStep('late', STOP_CLASSES.REFUSED, async (ctx) => { reasonsSet(ctx); return { status: 'fail', detail: 'boom' }; })],
+  };
+  for (const [name, steps] of Object.entries(cases)) {
+    const h = harness();
+    assert.equal(await checkRecord(7, newShared(), h.deps, steps), 1, name);
+    assert.deepEqual(h.out, [], name);
+    assert.match(h.err.join(''), /drive\.js --check: (early|late) /, name);
+  }
+  assert.equal(ranAfter, false, 'no step runs after a stop that read nothing');
+});
+
+// --- drive.js #N --run <dir> (#5232): adopt dispatch's run directory and worktree --------------
+
+// A real main checkout (a `.git` directory; the space in its name is deliberate), a linked
+// worktree of it (a `.git` file naming {main}/.git/worktrees/w) and a run directory under its
+// pipelines directory. The guard reads the file system itself, so these are real directories.
+const ADOPT_MAIN = tmpDir('drive adopt main-');
+fs.mkdirSync(path.join(ADOPT_MAIN, '.git', 'worktrees', 'w'), { recursive: true });
+const ADOPT_WT = path.join(ADOPT_MAIN, '.claude', 'worktrees', 'w');
+fs.mkdirSync(ADOPT_WT, { recursive: true });
+fs.writeFileSync(path.join(ADOPT_WT, '.git'), `gitdir: ${path.join(ADOPT_MAIN, '.git', 'worktrees', 'w')}\n`);
+const ADOPT_RUN_ID = '2026-11-15T000000-spec-7';
+const ADOPT_PIPELINES = path.join(ADOPT_MAIN, '.claude-tweaks', 'pipelines');
+const ADOPT_RUN = path.join(ADOPT_PIPELINES, ADOPT_RUN_ID);
+fs.mkdirSync(ADOPT_RUN, { recursive: true });
+// Dispatch's bind (hooks.js record-worktree) names the worktree in the run's state.
+const ADOPT_STATE = `${JSON.stringify({ worktree: ADOPT_WT, status: 'active' })}\n`;
+fs.writeFileSync(path.join(ADOPT_RUN, 'run-state.json'), ADOPT_STATE);
+// So `x/..` resolves the same lexically and in the kernel.
+fs.mkdirSync(path.join(ADOPT_PIPELINES, 'x'));
+const ADOPT_BRANCH = 'worktree-dispatch-record-7';
+// A directory outside the checkout, beside it in the temp directory.
+const ADOPT_OUTSIDE = tmpDir('drive adopt outside-');
+
+const adoptModule = () => require(path.join(LIB, 'driver', 'adopt'));
+const realAdoptRun = (opts, d) => adoptModule().adoptRun(opts, d);
+const isAdoptBranchRead = onGit('branch', '--show-current');
+const adoptArgv = (dir) => ['#7', '--run', dir, '--no-settle'];
+// A harness run from `cwd` with the real guard; `script` entries come first.
+const adoptHarness = (cwd, script = [], deps = {}) => harness({ script, deps: { cwd: () => cwd, adoptRun: realAdoptRun, ...deps } });
+// The adopted worktree's branch read answered, and record-worktree left unscripted: dispatch's
+// bind is the only bind, so a call to it throws (the default script would answer it).
+const ADOPTED_OK = [
+  [isAdoptBranchRead, `${ADOPT_BRANCH}\n`],
+  [on('node', /hooks\.js$/, 'record-worktree'), () => { throw new Error('unexpected record-worktree for an adopted run'); }],
+];
+
+// Exit 3, nothing on stdout, no write, and no call at all but (with `branchRead`) the guard's one
+// branch read; stderr names the refusal and `why`.
+function assertRefusedNothingWritten(h, code, why, { branchRead = false } = {}) {
+  assert.equal(code, 3);
+  assert.deepEqual(h.out, []);
+  assert.deepEqual(h.writes(), []);
+  const stray = h.calls.filter((c) => !(branchRead && isAdoptBranchRead(c)) && c.kind !== 'adoptRun');
+  assert.deepEqual(stray.map((c) => `${c.kind} ${describeArgs(c.args)}`), [], 'no node, ghCreate, worker, git or other call');
+  if (branchRead) {
+    const reads = h.calls.filter(isAdoptBranchRead);
+    assert.equal(reads.length, 1);
+    assert.deepEqual(reads[0].args, ['-C', ADOPT_WT, 'branch', '--show-current']);
+    assert.equal(reads[0].cwd, ADOPT_WT);
+  }
+  const err = h.err.join('');
+  assert.ok(err.startsWith('drive.js: --run refused: '), err);
+  assert.ok(err.includes(why), `${JSON.stringify(err)} names ${JSON.stringify(why)}`);
+}
+
+const WHY_MISSING = 'run directory missing';
+const WHY_NOT_ANCHORED = 'run directory not-anchored';
+const WHY_NOT_RUN_DIR = 'not a run directory under the main checkout';
+const WHY_NOT_WORKTREE = 'working directory is not a linked worktree of the main checkout';
+const WHY_NO_BRANCH = 'adopted worktree has no branch (detached HEAD or unreadable)';
+
+test('#5232 AC2.2, AC2.10: a missing run directory is refused', async () => {
+  const h = adoptHarness(ADOPT_WT);
+  assertRefusedNothingWritten(h, await run(adoptArgv(`${ADOPT_RUN}-absent`), h.deps), WHY_MISSING);
+});
+
+test('#5232 realDeps.adoptRun is the adopt.js guard', async () => {
+  const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+  assert.equal(typeof realDeps.adoptRun, 'function');
+  const h = adoptHarness(ADOPT_WT, [], { adoptRun: realDeps.adoptRun });
+  assertRefusedNothingWritten(h, await run(adoptArgv(`${ADOPT_RUN}-absent`), h.deps), WHY_MISSING);
+});
+
+// Inside the checkout but not a run directory; and four `..` segments, ending outside the checkout.
+// Joined by hand: path.join would normalize the dot segments away before the guard saw them.
+fs.mkdirSync(path.join(ADOPT_MAIN, 'elsewhere'));
+const dotted = (...segments) => [ADOPT_PIPELINES, ...segments].join(path.sep);
+const DOT_CASES = [
+  [dotted('x', '..', '..', '..', 'elsewhere'), path.join(ADOPT_MAIN, 'elsewhere'), WHY_NOT_RUN_DIR],
+  [dotted('x', '..', '..', '..', '..', path.basename(ADOPT_OUTSIDE)), ADOPT_OUTSIDE, WHY_NOT_ANCHORED],
+];
+
+test('#5232 AC2.4, AC2.10: a dot-segment path is refused once normalized', async () => {
+  for (const [dir, normalized, why] of DOT_CASES) {
+    assert.ok(dir.includes(`${path.sep}..${path.sep}`), dir);
+    assert.equal(path.normalize(dir), normalized);
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), why);
+  }
+});
+
+test('#5232 AC2.5, AC2.10: the same path with a trailing slash is refused', async () => {
+  for (const [dir, , why] of DOT_CASES) {
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(`${dir}/`), h.deps), why);
+  }
+});
+
+test('#5232 AC2.6, AC2.10: a symlink under the pipelines directory that resolves outside the checkout is refused', async () => {
+  const link = path.join(ADOPT_PIPELINES, 'link');
+  fs.symlinkSync(ADOPT_OUTSIDE, link, 'junction');
+  const h = adoptHarness(ADOPT_WT);
+  assertRefusedNothingWritten(h, await run(adoptArgv(link), h.deps), WHY_NOT_ANCHORED);
+});
+
+test('#5232 AC2.7, AC2.10: a worktree-local shadow pipelines directory is refused', async () => {
+  const shadow = path.join(ADOPT_WT, '.claude-tweaks', 'pipelines', ADOPT_RUN_ID);
+  fs.mkdirSync(shadow, { recursive: true });
+  const bytes = '- AUTO 10:00:00 — shadow: known bytes. Reversibility: n/a.\n';
+  fs.writeFileSync(path.join(shadow, 'decisions.md'), bytes);
+  const h = adoptHarness(ADOPT_WT);
+  assertRefusedNothingWritten(h, await run(adoptArgv(shadow), h.deps), WHY_NOT_ANCHORED);
+  assert.equal(fs.readFileSync(path.join(shadow, 'decisions.md'), 'utf8'), bytes);
+  assert.deepEqual(fs.readdirSync(shadow), ['decisions.md']);
+  assert.deepEqual(fs.readdirSync(ADOPT_RUN), ['run-state.json'], 'the real run directory is untouched too');
+  assert.equal(fs.readFileSync(path.join(ADOPT_RUN, 'run-state.json'), 'utf8'), ADOPT_STATE);
+});
+
+test('#5232 AC2.8, AC2.10: a path holding the main checkout\'s path as a substring of another component is refused', async () => {
+  const evil = `${ADOPT_MAIN}-evil`;
+  FIXTURE_ROOTS.push(evil);
+  fs.mkdirSync(path.join(evil, '.git'), { recursive: true });
+  const dir = path.join(evil, '.claude-tweaks', 'pipelines', ADOPT_RUN_ID);
+  fs.mkdirSync(dir, { recursive: true });
+  const h = adoptHarness(ADOPT_WT);
+  assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), WHY_NOT_ANCHORED);
+});
+
+test('#5232 AC2.2, AC2.9, AC2.10: a working directory that is the main checkout itself is refused', async () => {
+  const h = adoptHarness(ADOPT_MAIN);
+  assertRefusedNothingWritten(h, await run(adoptArgv(ADOPT_RUN), h.deps), WHY_NOT_WORKTREE);
+});
+
+// A run directory under the main checkout's pipelines directory whose run-state.json holds `state`
+// (no file when undefined); returns the directory and a check that it is byte-unchanged.
+let stateRuns = 0;
+function stateRun(state) {
+  stateRuns += 1;
+  const dir = path.join(ADOPT_PIPELINES, `2026-11-15T00000${stateRuns}-spec-${stateRuns + 100}`);
+  fs.mkdirSync(dir);
+  if (state !== undefined) fs.writeFileSync(path.join(dir, 'run-state.json'), state);
+  const unchanged = () => {
+    assert.deepEqual(fs.readdirSync(dir), state === undefined ? [] : ['run-state.json']);
+    if (state !== undefined) assert.equal(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'), state);
+  };
+  return { dir, unchanged };
+}
+const WHY_STATE = (mismatch) => `run-state.json of the run directory ${mismatch}: not bound to this worktree`;
+
+test('#5232 (review fix): a run directory whose run-state.json is missing or unparseable is refused', async () => {
+  for (const state of [undefined, '{not json', '']) {
+    const { dir, unchanged } = stateRun(state);
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), WHY_STATE('is unreadable'));
+    unchanged();
+  }
+});
+
+test('#5232 (review fix): a run directory whose run-state.json names no worktree is refused', async () => {
+  for (const state of ['{}\n', 'null\n', '[]\n', '{"worktree":5}\n', '{"worktree":""}\n']) {
+    const { dir, unchanged } = stateRun(state);
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), WHY_STATE('names no worktree'));
+    unchanged();
+  }
+});
+
+test('#5232 (review fix): a run directory whose run-state.json names a different worktree is refused', async () => {
+  const other = path.join(ADOPT_MAIN, '.claude', 'worktrees', 'other');
+  fs.mkdirSync(other, { recursive: true });
+  for (const wt of [ADOPT_MAIN, other, path.join(ADOPT_WT, 'src-absent')]) {
+    const { dir, unchanged } = stateRun(`${JSON.stringify({ worktree: wt })}\n`);
+    const h = adoptHarness(ADOPT_WT);
+    assertRefusedNothingWritten(h, await run(adoptArgv(dir), h.deps), WHY_STATE('names a different worktree'));
+    unchanged();
+  }
+});
+
+test('#5232 (review fix): run-state.json\'s worktree is compared after realpath', () => {
+  const link = path.join(ADOPT_MAIN, 'wt-link');
+  fs.symlinkSync(ADOPT_WT, link, 'junction');
+  const { dir } = stateRun(`${JSON.stringify({ worktree: link })}\n`);
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  const result = adoptModule().adoptRun({ runDir: dir, cwd: ADOPT_WT }, h.deps);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.wt, ADOPT_WT);
+});
+
+// A run-state.json worktree path differing from the adopted worktree only in case (the last
+// component, plus the drive letter a Windows path would carry); a lowercase `w` on disk.
+const adoptCaseDiffering = () => {
+  const folded = path.join(path.dirname(ADOPT_WT), path.basename(ADOPT_WT).toUpperCase());
+  return stateRun(`${JSON.stringify({ worktree: folded })}\n`).dir;
+};
+
+test('#5232 (review fix): on win32 run-state.json\'s worktree is compared case-insensitively', () => {
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  const result = adoptModule().adoptRun({ runDir: adoptCaseDiffering(), cwd: ADOPT_WT }, { ...h.deps, platform: 'win32' });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.wt, ADOPT_WT);
+});
+
+test('#5232 (review fix): off win32 run-state.json\'s worktree comparison stays case-sensitive', () => {
+  for (const platform of ['linux', 'darwin']) {
+    const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+    const result = adoptModule().adoptRun({ runDir: adoptCaseDiffering(), cwd: ADOPT_WT }, { ...h.deps, platform });
+    assert.equal(result.ok, false, platform);
+    assert.match(result.why, /names a different worktree/, platform);
+  }
+});
+
+test('#5232 Review Focus 5: an adopted worktree on a detached HEAD is refused', async () => {
+  for (const reply of ['', '\n', new Error('fatal: not a git repository')]) {
+    const h = adoptHarness(ADOPT_WT, [[isAdoptBranchRead, reply]]);
+    assertRefusedNothingWritten(h, await run(adoptArgv(ADOPT_RUN), h.deps), WHY_NO_BRANCH, { branchRead: true });
+  }
+});
+
+test('#5232 an adopted worktree on the integration branch is refused before the claim, nothing written or pushed', async () => {
+  const h = adoptHarness(ADOPT_WT, [[isAdoptBranchRead, 'main\n']]);
+  assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 1, h.err.join(''));
+  const final = lastLine(h);
+  assert.equal(final.outcome, 'refused');
+  assert.equal(final.stop.step, 'policy');
+  assert.equal(final.stop.class, 'refused');
+  assert.match(final.stop.detail, /adopted worktree is on the integration branch main/);
+  assert.deepEqual(h.writes(), []);
+  assert.equal(h.calls.filter((c) => c.kind === 'node').length, 0, 'no claim, claim log or record-worktree call');
+  assert.equal(h.calls.filter(onGit('push')).length, 0, 'no push');
+  assert.equal(h.calls.filter(onGit('fetch')).length, 0);
+  assert.equal(h.calls.filter((c) => c.kind === 'ghCreate').length, 0);
+});
+
+const claimCall = (h) => h.calls.find((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0]));
+const claimLogCall = (h) => h.calls.find((c) => c.kind === 'node' && /log-decision\.js$/.test(c.args[0]) && c.args.includes('--section'));
+const argAfter = (c, flag) => c.args[c.args.indexOf(flag) + 1];
+
+test('#5232 AC2.1: --run adopts the run directory and the worktree, minting and creating neither', async () => {
+  const h = adoptHarness(ADOPT_WT, ADOPTED_OK);
+  assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 0, h.err.join(''));
+  assert.equal(h.calls.filter((c) => c.kind === 'resolveRunDir').length, 0, 'no run directory minted');
+  assert.equal(h.calls.filter(onGit('worktree', 'add')).length, 0, 'no worktree created');
+  assert.equal(h.calls.filter(on('node', /hooks\.js$/, 'record-worktree')).length, 0, 'no record-worktree bind');
+  assert.equal(h.calls.filter((c) => c.kind === 'lstatType' && c.args[0] === path.join(ADOPT_MAIN, '.claude', 'worktrees', 'drive-record-7')).length, 0, 'no leftover check');
+  const fetch = h.calls.find(onGit('fetch'));
+  const merge = h.calls.find(onGit('merge'));
+  assert.equal(fetch.cwd, ADOPT_WT);
+  assert.deepEqual(fetch.args, ['-C', ADOPT_WT, 'fetch', '--end-of-options', 'origin', 'main']);
+  assert.equal(merge.cwd, ADOPT_WT);
+  assert.deepEqual(merge.args, ['-C', ADOPT_WT, 'merge', '--end-of-options', 'origin/main']);
+  const push = h.calls.find(onGit('push'));
+  assert.equal(push.cwd, ADOPT_WT);
+  assert.deepEqual(gitSub(push), ['push', '--end-of-options', 'origin', ADOPT_BRANCH]);
+  assert.equal(argAfter(h.calls.find(on('ghCreate', 'pr', 'create')), '--head'), ADOPT_BRANCH);
+  const final = lastLine(h);
+  assert.equal(final.step, FINAL_STEP);
+  assert.equal(final.run, path.basename(ADOPT_RUN));
+  assert.equal(final.outcome, 'pending-review');
+  assert.deepEqual(final.stop.created, { worktree: false, branch: false });
+  assert.ok(h.lines().every((l) => l.run === null || l.run === ADOPT_RUN_ID));
+  // The event file is the adopted directory's.
+  assert.ok(h.calls.some((c) => c.kind === 'appendFile' && c.args[0] === path.join(ADOPT_RUN, 'driver-events.jsonl')));
+});
+
+test('#5232 AC2.3: the adopted run\'s claim runId is the given directory\'s basename', async () => {
+  const h = adoptHarness(ADOPT_WT, ADOPTED_OK);
+  assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 0, h.err.join(''));
+  assert.equal(argAfter(claimCall(h), '--run-id'), '2026-11-15T000000-spec-7');
+  assert.equal(argAfter(claimLogCall(h), '--run'), fs.realpathSync(ADOPT_RUN));
+});
+
+const isEscalateCall = on('node', /express-lane\.js$/, 'escalate');
+
+test('#5232 (Deliverable 2): a --run --no-settle stop leaves the claim, worktree, branch and run directory', async () => {
+  // A pre-push stop still writes its escalation line (one escalate call), and nothing else.
+  const cases = [
+    ['a failed push (pre-push)', [onGit('push'), () => { throw new Error('rejected'); }], 'express-escalated', 1],
+    ['a failed gh pr create (blocked)', [on('ghCreate', 'pr', 'create'), () => { throw new Error('rejected'); }], 'blocked', 0],
+  ];
+  for (const [name, entry, outcome, escalates] of cases) {
+    const h = adoptHarness(ADOPT_WT, [...ADOPTED_OK, entry]);
+    assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 0, name);
+    const final = lastLine(h);
+    assert.equal(final.settle, 'left-to-caller', name);
+    assert.equal(final.outcome, outcome, name);
+    assert.deepEqual(final.stop.created, { worktree: false, branch: false }, name);
+    // Adoption, not --no-settle, is what keeps these out: nothing was minted or created to leave.
+    assert.equal(h.calls.filter(onGit('worktree', 'add')).length, 0, name);
+    assert.equal(h.calls.filter((c) => c.kind === 'resolveRunDir').length, 0, name);
+    assert.equal(final.run, ADOPT_RUN_ID, name);
+    assert.equal(h.calls.filter(isEscalateCall).length, escalates, name);
+    assert.deepEqual(settleCalls(h).filter((c) => !isEscalateCall(c)).map((c) => `${c.kind} ${describeArgs(c.args)}`), [], name);
+    assert.deepEqual(settleLines(h).map((l) => l.step), escalates ? ['settle-escalate'] : [], name);
+  }
+});
+
+// --- #5232 final review, Important 1: under --run a pre-push stop still writes the escalation line ---
+// dispatch's ordinary first call after `express-escalated` runs /build, whose already-shipped check
+// reads that line (`hasEscalation`) to judge against origin only. The line is written by the real
+// express-lane.js escalate, run in-process against a real run directory, and read back by the real
+// `hasEscalation`.
+const expressCli = require(path.join(LIB, 'express', 'cli.js'));
+const readOrNull = (p) => {
+  try { return readText(p); } catch (err) { if (err && err.code === 'ENOENT') return null; throw err; }
+};
+// An escalate reply that runs the real CLI; `box.h` is the harness, whose writeFile holds the detail file.
+const realEscalate = (box) => (c) => {
+  const out = [];
+  const err = [];
+  const code = expressCli.run(c.args.slice(1), {
+    ...expressCli.realDeps,
+    readFile: (p) => (Object.prototype.hasOwnProperty.call(box.h.files, p) ? box.h.files[p] : readOrNull(p)),
+    cwd: () => ADOPT_WT, mainRoot: ADOPT_MAIN, now: () => NOW,
+    stdout: (s) => out.push(s), stderr: (s) => err.push(s),
+  });
+  return { code, stdout: out.join(''), stderr: err.join('') };
+};
+const FAILED_PUSH = [onGit('push'), () => { throw new Error('rejected'); }];
+const decisionsOf = (dir) => readOrNull(path.join(dir, 'decisions.md'));
+// The decisions.md lines the real hasEscalation counts as #7's escalation.
+const escalationLines = (text) => String(text || '').split('\n').filter((l) => expressCli.hasEscalation(l, 7));
+
+test('#5232 a --run --no-settle pre-push stop writes one escalation line the real hasEscalation matches', async () => {
+  const { dir } = stateRun(ADOPT_STATE);
+  const box = {};
+  box.h = adoptHarness(ADOPT_WT, [...ADOPTED_OK, FAILED_PUSH, [isEscalateCall, realEscalate(box)]]);
+  const { h } = box;
+  assert.equal(await run(adoptArgv(dir), h.deps), 0, h.err.join(''));
+  assert.equal(h.calls.filter(isEscalateCall).length, 1, 'escalate runs exactly once');
+  const text = decisionsOf(dir);
+  assert.equal(expressCli.hasEscalation(text, 7), true, `decisions.md: ${text}`);
+  assert.equal(escalationLines(text).length, 1, 'one escalation line');
+  const final = lastLine(h);
+  assert.deepEqual([final.outcome, final.settle, final.settleRow, final.settleFailed], ['express-escalated', 'left-to-caller', 'pre-push', []]);
+  // Every other settle call stays the caller's: no comment, label, release, removal or close-run.
+  assert.deepEqual(settleCalls(h).filter((c) => !isEscalateCall(c)).map((c) => `${c.kind} ${describeArgs(c.args)}`), []);
+  assert.deepEqual(settleLines(h).map((l) => [l.step, l.status]), [['settle-escalate', 'ok']]);
+});
+
+test('#5232 a --no-settle pre-push stop without --run still makes no settle call at all', async () => {
+  for (const script of [[FAILED_PUSH], REDTESTS.script]) {
+    const h = harness({ script });
+    assert.equal(await run(['--no-settle', '#7'], h.deps), 0);
+    const final = lastLine(h);
+    assert.deepEqual([final.outcome, final.settle, final.settleRow], ['express-escalated', 'left-to-caller', 'pre-push']);
+    assert.equal(h.calls.filter(isEscalateCall).length, 0, 'no escalate call');
+    assert.deepEqual(settleCalls(h), []);
+    assert.deepEqual(settleLines(h), []);
+  }
+});
+
+test('#5232 under --run a check that logged its own escalation gets no second line', async () => {
+  const { dir } = stateRun(ADOPT_STATE);
+  const box = {};
+  // check's own escalate verdict, writing its line the way express-lane.js check does (append, then logged).
+  const checkEscalates = [on('node', /express-lane\.js$/, 'check'), (c) => {
+    const runDir = c.args[c.args.indexOf('--run') + 1];
+    box.h.files[path.join(runDir, 'check-detail.txt')] = 'outside Key Files: x.js\n';
+    const r = realEscalate(box)({ args: [c.args[0], 'escalate', '--run', runDir, '--issue', '7', '--reason', 'out-of-bounds', '--detail-file', path.join(runDir, 'check-detail.txt')] });
+    assert.equal(r.code, 0, r.stderr);
+    return { code: 0, stderr: '', stdout: JSON.stringify({ action: 'escalate', reason: 'out-of-bounds', detail: 'outside Key Files: x.js' }) };
+  }];
+  box.h = adoptHarness(ADOPT_WT, [...ADOPTED_OK, checkEscalates, [isEscalateCall, realEscalate(box)]]);
+  const { h } = box;
+  assert.equal(await run(adoptArgv(dir), h.deps), 0, h.err.join(''));
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.stop.checkLogged, final.outcome], ['check', true, 'express-escalated']);
+  assert.equal(h.calls.filter(isEscalateCall).length, 0, 'the driver makes no escalate call');
+  assert.equal(escalationLines(decisionsOf(dir)).length, 1, 'only check\'s own line');
+  assert.deepEqual(settleLines(h), []);
+});
+
+test('#5232 under --run a failed escalate reads blocked, the rest of the blocked row left to the caller', async () => {
+  const { dir } = stateRun(ADOPT_STATE);
+  const h = adoptHarness(ADOPT_WT, [...ADOPTED_OK, FAILED_PUSH, [isEscalateCall, { code: 3, stdout: '', stderr: 'could not write decisions.md\n' }]]);
+  assert.equal(await run(adoptArgv(dir), h.deps), 0, h.err.join(''));
+  const final = lastLine(h);
+  assert.deepEqual([final.outcome, final.settle, final.settleRow, final.settleFailed], ['blocked', 'left-to-caller', 'blocked', ['settle-escalate']]);
+  assert.equal(h.calls.filter(isEscalateCall).length, 1);
+  assert.deepEqual(settleCalls(h).filter((c) => !isEscalateCall(c)), [], 'no blocked-row call is made');
+});
+
+test('#5232 --run grammar', async () => {
+  const d = ADOPT_RUN;
+  const bad = [
+    [['#7', '--run', d], /--run requires --no-settle/],
+    [['#7', '#8', '--run', d, '--no-settle'], /--run takes exactly one record reference/],
+    [['--run', d, '--no-settle', '--budget', '1'], /--run and --budget are exclusive/],
+    [['--check', '#7', '--run', d], /drive\.js: --check and --run are exclusive\n/],
+    [['#7', '--run', d, '--no-settle', '--check'], /drive\.js: --check and --run are exclusive\n/],
+    [['#7', '--no-settle', '--run'], /--run needs a value/],
+    [['#7', '--run', '', '--no-settle'], /--run needs a value/],
+    [['#7', '--run', '   ', '--no-settle'], /--run needs a value/],
+    [['#7', '--run', '--no-settle'], /--run needs a value/],
+    [['#7', '--run', d, '--run', d, '--no-settle'], /--run given more than once/],
+  ];
+  for (const [argv, re] of bad) {
+    const h = adoptHarness(ADOPT_WT);
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.match(h.err.join(''), re, JSON.stringify(argv));
+    assert.match(h.err.join(''), /Usage: drive\.js #N/);
+    assert.deepEqual(h.out, []);
+    assert.equal(h.calls.length, 0, JSON.stringify(argv));
+    assert.equal(h.probes, 0, JSON.stringify(argv));
+  }
+  assert.deepEqual(parseArgs(['#7', '--run', d, '--no-settle']), { records: [7], settle: false, runDir: d });
+  assert.deepEqual(parseArgs(['--no-settle', '--run', d, '7']), { records: [7], settle: false, runDir: d });
+  // The value is returned raw: run() resolves it.
+  assert.deepEqual(parseArgs(['#7', '--run', 'rel/dir', '--no-settle']), { records: [7], settle: false, runDir: 'rel/dir' });
+});
+
+test('#5232 --run resolves a relative directory against deps.cwd()', async () => {
+  const rel = path.join('..', '..', '..', '.claude-tweaks', 'pipelines', ADOPT_RUN_ID);
+  const h = adoptHarness(ADOPT_WT, ADOPTED_OK);
+  assert.equal(await run(adoptArgv(rel), h.deps), 0, h.err.join(''));
+  assert.equal(argAfter(claimCall(h), '--run-id'), ADOPT_RUN_ID);
+  assert.equal(argAfter(claimLogCall(h), '--run'), ADOPT_RUN);
+  // An unnormalized join of deps.cwd() and the value reaches the guard (resolveAgainst); its realpath normalizes.
+  const recorded = harness({ deps: { cwd: () => ADOPT_WT } });
+  assert.equal(await run(adoptArgv(rel), recorded.deps), 3);
+  assert.deepEqual(recorded.calls.map((c) => [c.kind, ...c.args]), [['adoptRun', { runDir: `${ADOPT_WT}${path.sep}${rel}`, cwd: ADOPT_WT }]]);
+  assert.match(recorded.err.join(''), /^drive\.js: --run refused: adoptRun not scripted\n$/);
+});
+
+test('#5232 adoptRun returns the adopted run for a linked worktree of the main checkout', () => {
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  assert.deepEqual(adoptModule().adoptRun({ runDir: ADOPT_RUN, cwd: ADOPT_WT }, h.deps), {
+    ok: true, runDir: ADOPT_RUN, runId: ADOPT_RUN_ID, wt: ADOPT_WT, branch: ADOPT_BRANCH, mainRoot: ADOPT_MAIN,
+  });
+  // A run from a subdirectory of the worktree adopts the worktree's top.
+  const sub = path.join(ADOPT_WT, 'src');
+  fs.mkdirSync(sub, { recursive: true });
+  assert.equal(adoptModule().adoptRun({ runDir: ADOPT_RUN, cwd: sub }, h.deps).wt, ADOPT_WT);
+});
+
+test('#5232 a thrown guard is a refusal naming the error, exit 3', async () => {
+  const h = harness({ deps: { cwd: () => ADOPT_WT, adoptRun: () => { throw new Error('guard exploded'); } } });
+  assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 3);
+  assert.equal(h.err.join(''), 'drive.js: --run refused: guard exploded\n');
+  assert.deepEqual(h.out, []);
+  assert.deepEqual(h.calls, []);
 });

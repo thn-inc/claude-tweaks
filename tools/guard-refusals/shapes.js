@@ -190,7 +190,45 @@ function wholeWord(word) {
 
 const GH_JQ_PIPE = new RegExp(`${CMD}gh\\s[^\\n]*--jq[\\s=]+(?:'[^']*\\|[^']*'|"[^"]*\\|[^"]*")`);
 const GH_REPO_URL = new RegExp(`${CMD}gh\\s[^\\n]*--repo[\\s=]+["']?(?:https?://)?github\\.com/`);
-const GH_CHAINED_STATUS = new RegExp(`${CMD}gh\\s[^\\n]*?(?:;|&&)[^\\n]*\\$\\?`);
+// Start of the latest `seps` separator that ends at or before the last `status` in text[start, end)
+// (one line), or -1.
+function latestSeparator(text, start, end, seps, status) {
+  if (end - start < status.length) return -1;
+  const found = text.slice(start, end).lastIndexOf(status);
+  if (found < 0) return -1;
+  const at = start + found;
+  for (let p = at - 1; p >= start; p -= 1) {
+    if (seps.some((s) => p + s.length <= at && text.startsWith(s, p))) return p;
+  }
+  return -1;
+}
+
+// True when a command-position `<word>\s` is chained by one of `seps` onto `status` on the line the
+// text after it continues: what `<word>\s[^\n]*?(?:seps)[^\n]*status` matches, without its
+// backtracking (seconds on 7,000 characters of `git x; `). The `\s` may be the `\n` itself, so the
+// chain is read from just past it. Each line's latest separator is computed once, when the first
+// match reaches that line (linear).
+function chainedStatus(word, seps, status) {
+  const command = new RegExp(`${CMD}${word}\\s`, 'g');
+  return (text) => {
+    command.lastIndex = 0;
+    let lineEnd = -1;
+    let sepAt = -1;
+    while (command.exec(text) !== null) {
+      const from = command.lastIndex;
+      if (from > lineEnd) {
+        const lineStart = text.lastIndexOf('\n', from - 1) + 1;
+        lineEnd = text.indexOf('\n', from);
+        if (lineEnd < 0) lineEnd = text.length;
+        sepAt = latestSeparator(text, lineStart, lineEnd, seps, status);
+      }
+      if (from <= sepAt) return true;
+    }
+    return false;
+  };
+}
+
+const GH_CHAINED_STATUS = chainedStatus('gh', [';', '&&'], '$?');
 const GIT_COMMAND = new RegExp(String.raw`(?:(?:^|[\s;&|(])|${CMD_POSITION}${PATH_PREFIX})git\s+[a-z]`, 'm');
 const GIT_IN_SUBSTITUTION = new RegExp(String.raw`\$\(\s*(?:${PATH_PREFIX})?git\s`);
 const NODE_EVAL_SCRIPT_VAR = new RegExp(`${CMD}node\\s+(?:-e|-p|--eval|--print)\\s+"[^"]*${VAR}`);
@@ -382,6 +420,39 @@ function graphqlMultivarMutation(text) {
   return /\(\s*\w+\s*:\s*\{/.test(text.slice(m.index + m[0].length));
 }
 
+// `git -C .`: the operand is the bare or quoted dot.
+const GIT_C_DOT = new RegExp(`${CMD}git\\s+-C\\s+(?:\\.|"\\."|'\\.')(?=\\s|$)`, 'm');
+// `git -C <operand>` with an unquoted glob char after the operand's first character, in the same
+// simple command; the caller blanks quoted text. What `git\s+-C\s+\S+[^;&|\n]*[*?[]` matches,
+// without its backtracking (the overlapping `\S+` and `[^;&|\n]*` rescanned the segment per
+// split: seconds on 40,000 characters, pinned in perf/guard-refusals-chained-status-linearity).
+// Each segment's last glob char is found once, when the first match reaches it (linear).
+const GIT_C_OPERAND = new RegExp(`${CMD}git\\s+-C\\s+(?=\\S)`, 'gm');
+function gitCGlob(text) {
+  GIT_C_OPERAND.lastIndex = 0;
+  let segEnd = -1;
+  let lastGlob = -1;
+  while (GIT_C_OPERAND.exec(text) !== null) {
+    const from = GIT_C_OPERAND.lastIndex;
+    if (from > segEnd) {
+      segEnd = text.length;
+      for (let p = from; p < text.length; p += 1) {
+        if (';&|\n'.includes(text[p])) { segEnd = p; break; }
+      }
+      lastGlob = -1;
+      for (let p = from + 1; p < segEnd; p += 1) {
+        if ('*?['.includes(text[p])) lastGlob = p;
+      }
+    }
+    if (lastGlob > from) return true;
+  }
+  return false;
+}
+// A git command chained by ; && or || onto `$?` on one line: unquoted, or a
+// double-quoted word that is exactly "$?" ("exit=$?" runs).
+const GIT_CHAINED_STATUS = chainedStatus('git', [';', '&&', '||'], '$?');
+const GIT_CHAINED_QUOTED_STATUS = chainedStatus('git', [';', '&&', '||'], '"$?"');
+
 const DETECTORS = [
   {
     id: 'complete-token',
@@ -403,7 +474,7 @@ const DETECTORS = [
   {
     id: 'gh-jq-pipe-chained',
     row: "`gh pr view 1 --repo o/r --json comments --jq '.comments[] \\| .id'; echo exit=$?`; `gh pr view 1 --repo github.com/o/r --json comments && echo exit=$?`",
-    test: (t) => (GH_JQ_PIPE.test(t) || GH_REPO_URL.test(t)) && GH_CHAINED_STATUS.test(stripQuoted(t)),
+    test: (t) => (GH_JQ_PIPE.test(t) || GH_REPO_URL.test(t)) && GH_CHAINED_STATUS(stripQuoted(t)),
   },
   {
     id: 'git-text-redirect-var',
@@ -419,6 +490,21 @@ const DETECTORS = [
     id: 'git-var-operand',
     row: "`git -C \"$PWD\" status --short`; `W=\"$(node -e 'console.log(process.cwd())')\"` then `git -C \"$W\" status --short`; `git -C \"$(pwd)\" status --short` (2026-10-25)",
     test: (t) => hasVarOperand(t, 'git', { substitution: true }),
+  },
+  {
+    id: 'git-C-dot',
+    row: '`git -C . rev-parse --short HEAD`',
+    test: (t) => GIT_C_DOT.test(t),
+  },
+  {
+    id: 'git-C-glob',
+    row: '`git -C "<worktree>" grep -c X -- tools/guard-refusals/*.js`',
+    test: (t) => gitCGlob(stripQuoted(t)),
+  },
+  {
+    id: 'git-chained-status',
+    row: '`git merge-base --is-ancestor HEAD HEAD; echo exit=$?`',
+    test: (t) => GIT_CHAINED_STATUS(stripQuoted(t)) || GIT_CHAINED_QUOTED_STATUS(stripSingle(t)),
   },
   {
     id: 'node-eval-script-var-with-git',
@@ -510,4 +596,4 @@ function detectShapes(text, { placeholders = true } = {}) {
   return ids;
 }
 
-module.exports = { DETECTORS, UNDETECTED_ROWS, normalizePlaceholders, detectShapes };
+module.exports = { DETECTORS, UNDETECTED_ROWS, normalizePlaceholders, detectShapes, lexShell };

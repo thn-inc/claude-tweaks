@@ -1,9 +1,9 @@
 'use strict';
 // Shared literal-aware comment stripper for the source-scan conformance tests
 // (#3536, #3585). The tests that call it per file, by test-file stem: `accept-label-reader`, `backfill-cli`,
-// `below-floor-parent-close`, `cli`, `cli-entry`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`, `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `merge`, `owner-pid-probe`,
-// `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`, `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `risk-flags-writer`, `run`, `run-liveness-callers`, `settle`, `staged-id-producers`,
-// `statusline-no-shell`, `subprocess-timing`, `trust-policy-keys`, `wall-clock-budget`, `windows-hide-spawn` and `wrap-up-learned-skills-pr`. tests/strip-comments-callers-twin.test.js
+// `below-floor-parent-close`, `cli`, `cli-entry`, `exit-code`, `gate-fragments`, `gh-host-seam`, `git-status-optional-locks`, `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `merge`, `owner-pid-probe`,
+// `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`, `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `risk-flags-writer`, `run`, `run-header`, `run-liveness-callers`, `settle`, `staged-id-producers`,
+// `statusline-no-shell`, `subprocess-timing`, `timeout-source`, `trust-policy-keys`, `wall-clock-budget`, `windows-hide-spawn` and `wrap-up-learned-skills-pr`. tests/strip-comments-callers-twin.test.js
 // pins this list to the tree. `raw-markdown-read` and `wall-clock-budget` (#3491),
 // `gh-host-seam` (#4505), `hooks-pre-tool-use` (#4578) and
 // `run-liveness-callers` also call it in `literals: 'blank'` mode. The implementation

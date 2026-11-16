@@ -3,7 +3,7 @@ files:
   - plugin/bin/lib/issues/comment-trust.js
   - plugin/bin/find-run-comment.js
   - plugin/skills/_shared/pr-run-comments.md
-  - plugin/skills/demo/entry-paths.md
+  - plugin/skills/accept/entry-paths.md
   - plugin/bin/lib/wrap-up/engine-verify.js
   - plugin/skills/_shared/acceptance-packet.md
   - plugin/bin/lib/reconcile/console-execute.js
@@ -23,13 +23,13 @@ files:
 
 **Persona:** A maintainer of a public repository where anyone with a GitHub account can comment on issues and PRs. A stranger has posted a comment that copies one of the plugin's markers, such as a `<!-- run-comment: try-it -->` walkthrough or a backdated `grant-mode-audit … auto-merge=pending` line.
 **Goal:** Have every plugin reader treat that comment as if it were absent, and see in one line that it was skipped, so a planted comment can never steer a demo, pass a check, or mature a merge grant.
-**Entry point:** Any plugin step that reads marker comments back from GitHub: `/claude-tweaks:demo #N`, wrap-up's acceptance-labeling check, `hooks.js resolve-console`, the auto-merge grant gate, the backlog's `needs-decision` lane, or the materiality digest (routing dedup and `/claude-tweaks:tidy`'s digest sweep).
+**Entry point:** Any plugin step that reads marker comments back from GitHub: `/claude-tweaks:accept #N`, wrap-up's acceptance-labeling check, `hooks.js resolve-console`, the auto-merge grant gate, the backlog's `needs-decision` lane, or the materiality digest (routing dedup and `/claude-tweaks:tidy`'s digest sweep).
 **Success state:** Every reader took the "no such comment" path for the planted comment and printed `skipped marker comment {url} by {login} ({association}) — not an owner, member, or collaborator`. Comments from the maintainer and their collaborators still worked exactly as before.
 
 ## Steps
 
-### 1. Demo a record whose issue or PR carries a stranger's walkthrough — `/claude-tweaks:demo #N`
-- **URL:** `/claude-tweaks:demo #N`, for a record whose issue has a `<!-- acceptance-packet: v1 -->` comment, or whose PR has a `<!-- run-comment: try-it -->` comment, posted by an account with author association `NONE`
+### 1. Demo a record whose issue or PR carries a stranger's walkthrough — `/claude-tweaks:accept #N`
+- **URL:** `/claude-tweaks:accept #N`, for a record whose issue has a `<!-- acceptance-packet: v1 -->` comment, or whose PR has a `<!-- run-comment: try-it -->` comment, posted by an account with author association `NONE`
 - **Action:** Run demo. It reads the record's comments for the packet first, then the PR's run comments through `_shared/pr-run-comments.md`'s Find step. Both keep only comments whose author association (`authorAssociation` from `gh`, `author_association` from REST and MCP) is `OWNER`, `MEMBER` or `COLLABORATOR`.
 - **Should feel:** Uneventful. The walkthrough on screen is the run's own, or a fresh one composed from the record's acceptance criteria. The stranger's steps never appear.
 - **Should understand:** The skip line, printed one line above the verdict, names the planted comment's URL, its author and their association. Trust comes from GitHub's author association, not from which account is reading. Anyone with write access could already push to the branch, so a collaborator's comment is trusted, and another maintainer reading the same PR sees the same result.

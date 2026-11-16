@@ -3,14 +3,14 @@
 // background test run / fix-round / simplify subagent" with no status line. A Task agent that
 // yields expecting a completion notification is never re-woken inside the Task — the dispatching
 // session had to detect the missing status line and resume each one via SendMessage manually.
-// Neither dispatch/task-prompt.md's two fenced Task-prompt templates nor build/dispatch.md's
+// Neither dispatch/task-prompt.md's Context pack nor build/dispatch.md's
 // implementer/reviewer instruction paragraph said anything about foreground execution, so a
 // dispatched agent (or the SDD implementer/reviewer sub-dispatches it composes) had no textual
 // reason not to background a long-running command and wait on it. This suite pins the
-// foreground-execution instruction in all three locations, and proves the check can actually go
-// red (parse-signal-discipline). It also pins #3078/#3266's nested-dispatch keep-alive rule across
-// the core section, task-prompt.md's item 7 and both fenced templates, plus its output-contract and
-// review/step3 restatements, each with its own go-red proof.
+// foreground-execution instruction in item 7, the handoff template and build/dispatch.md, and
+// proves the check can actually go red (parse-signal-discipline). It also pins #3078/#3266's
+// nested-dispatch keep-alive rule across the core section, task-prompt.md's item 7 and the handoff
+// template, plus its output-contract and review/step3 restatements, each with its own go-red proof.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -28,11 +28,11 @@ const HANDOFF = path.join(PLUGIN, 'skills', 'flow', 'context-handoff.md');
 
 // The load-bearing facts a reader (human or dispatched agent) must come away with — the exact
 // failure mode #1965 documents. Each `\s+` absorbs the templates' hard line wrapping; the
-// this/the alternation covers the direct address in task-prompt.md's templates versus
+// this/the alternation covers the direct address in item 7 and the handoff template versus
 // build/dispatch.md's instruction about the dispatches SDD composes.
 const REQUIRED = [
-  [/never with\s+`run_in_background`/i, 'never background a long-running command'],
-  [/never end\s+(?:this|the) turn waiting on a background/i, "never end the turn waiting on a background run or a child agent's notification"],
+  [/never\s+with\s+`run_in_background`/i, 'never background a long-running command'],
+  [/never\s+end\s+(?:this|the)\s+turn\s+waiting\s+on\s+a\s+background/i, "never end the turn waiting on a background run or a child agent's notification"],
 ];
 
 function fencedBlocks(text) {
@@ -61,17 +61,6 @@ function templateBlocks(text) {
   return blocks;
 }
 
-test('task-prompt.md: both fenced Task-prompt templates carry the foreground-execution instruction', () => {
-  const blocks = templateBlocks(readText(TASK_PROMPT));
-
-  for (const [index, block] of blocks.entries()) {
-    const label = TEMPLATE_LABELS[index];
-    for (const [pattern, fact] of REQUIRED) {
-      assert.match(block, pattern, `${label} template must instruct the dispatched agent to ${fact} (#1965)`);
-    }
-  }
-});
-
 test('build/dispatch.md: the SDD invocation instruction directs implementer and reviewer dispatches to run in the foreground', () => {
   const text = readText(BUILD_DISPATCH);
   for (const [pattern, fact] of REQUIRED) {
@@ -82,22 +71,6 @@ test('build/dispatch.md: the SDD invocation instruction directs implementer and 
     /implementer dispatch and every reviewer dispatch/i,
     'build/dispatch.md must scope the foreground instruction to every per-task implementer AND reviewer dispatch — the grandchildren that actually launched the background runs in #1965',
   );
-});
-
-test('the foreground-instruction predicate can actually go red (discrimination proof)', () => {
-  const paragraphs = readText(TASK_PROMPT).split(/\r?\n\r?\n/);
-  const kept = paragraphs.filter((p) => !p.startsWith('Foreground execution (required):'));
-  assert.equal(
-    paragraphs.length - kept.length,
-    2,
-    'expected to doctor out exactly the two foreground-execution paragraphs — anchor text not found',
-  );
-
-  for (const block of templateBlocks(kept.join('\n\n'))) {
-    for (const [pattern] of REQUIRED) {
-      assert.doesNotMatch(block, pattern, 'doctored block unexpectedly still matches — test cannot discriminate');
-    }
-  }
 });
 
 // #3078: a nested Agent child launches async, and its <task-notification> reaches the dispatcher
@@ -111,8 +84,8 @@ function coreForegroundSection(text) {
 }
 
 // The facts the final-review fix wave added (abandoned child, the whole-final-reply re-wake, the
-// sleep 20 x 60 per-wave bound and its log line). Written to match every copy of the rule -- core, item 7, both
-// templates -- so each copy's list spreads this one array, and each pattern matches exactly once
+// sleep 20 x 60 per-wave bound and its log line). Written to match every copy of the rule -- core, item 7, the
+// handoff template -- so each copy's list spreads this one array, and each pattern matches exactly once
 // per copy so its go-red proof removes the only occurrence.
 const SHARED_RULE = [
   [/`sleep\s+20`\s+Bash\s+calls,\s+at\s+most\s+60\s+\(20\s+minutes\)\s+per\s+wave\s+of\s+children/, 'the sleep 20 x 60 (20 minute) per-wave bound'],
@@ -271,28 +244,15 @@ const ITEM7 = [
   [/`unconfirmed`/, 'the self-judged fallback marks findings unconfirmed'],
   [/never\s+end\s+your\s+turn\s+with\s+one\s+outstanding/, 'item 7 never ends the turn with a child outstanding'],
   [/Ignore\s+a\s+late\s+result/, 'item 7 ignores a late result'],
+  ...REQUIRED,
+  [/run\s+the\s+project's\s+test\s+command\s+and\s+every\s+other\s+long-running\s+command/, "item 7 names the project's test command"],
+  [/log\s+the\s+downgrade/i, "item 7's fallback logs the downgrade"],
+  [/output\s+redirected\s+to\s+a\s+file/i, 'item 7 says long output is redirected to a file'],
   ...SHARED_RULE,
 ];
 const item7Missing = missingFactsOf(ITEM7);
 const dropsNothingWakes = (block) => !/nothing wakes you/.test(block);
 
-const TEMPLATE_KEEP_ALIVE = [
-  [/\blaunches\s+async/i, 'a nested Agent call launches async'],
-  [/never\s+end\s+this\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the turn never ends with a child outstanding'],
-  [/ignore\s+that\s+child's\s+result\s+if\s+it\s+arrives\s+later/i, 'a late child result is ignored'],
-  [/reply\s+that\s+ends\s+without\s+a\s+tool\s+call\s+ends\s+the\s+turn/i, 'a reply that ends without a tool call ends the turn'],
-  [/`unconfirmed`/, "the template's fallback marks findings unconfirmed"],
-  [/log\s+the\s+downgrade/i, "the template's fallback logs the downgrade"],
-  ...SHARED_RULE,
-];
-const foregroundParagraph = (block) => {
-  const found = block.split(/\r?\n\r?\n/).filter((p) => p.startsWith('Foreground execution (required):'));
-  assert.equal(found.length, 1, `expected exactly one "Foreground execution (required):" paragraph per template, found ${found.length}`);
-  return found[0];
-};
-// Takes the template's "Foreground execution (required):" paragraph, not the whole fenced block, so
-// a pattern's one occurrence is the paragraph's (the block mentions `unconfirmed` elsewhere).
-const templateKeepAliveMissing = missingFactsOf(TEMPLATE_KEEP_ALIVE);
 const dropsInTurnCarveOut = (block) => !/It\s+does\s+not\s+cover\s+an\s+in-turn/.test(block);
 
 const dropsPrimaryResumeSignal = (text) => !/primary resume signal/.test(text);
@@ -312,7 +272,6 @@ test('neither fenced template keeps the in-turn carve-out (#3078)', () => {
   for (const [index, block] of blocks.entries()) {
     const label = TEMPLATE_LABELS[index];
     assert.ok(dropsInTurnCarveOut(block), `${label} template still carries the in-turn carve-out (#3078)`);
-    assert.deepEqual(templateKeepAliveMissing(foregroundParagraph(block)), [], `${label} template must carry the nested-Agent rule itself (#3078)`);
   }
 });
 
@@ -322,10 +281,9 @@ test("the #2533 rationale cites the core section, not dispatch-waiting.md's resu
   assert.deepEqual(rationaleMissing(text), [], 'the #2533 rationale must cite subagent-dispatch-core.md\'s Foreground Execution Discipline (#3078)');
 });
 
-test('each task-prompt assertion can actually go red on its own (discrimination proof)', () => {
+test('AC3.1 AC3.2 AC3.3: each task-prompt assertion can actually go red on its own (discrimination proof)', () => {
   const text = readText(TASK_PROMPT);
   assertEachPatternGoesRed(item7Block(text), ITEM7, item7Missing);
-  for (const block of templateBlocks(text)) assertEachPatternGoesRed(foregroundParagraph(block), TEMPLATE_KEEP_ALIVE, templateKeepAliveMissing);
   assertEachPatternGoesRed(text, RATIONALE, rationaleMissing);
 });
 
@@ -374,23 +332,159 @@ function handoffWaitParagraph(text) {
   return found[0];
 }
 
-// The primitive's numbers (sleep interval, call cap, minutes) are restated in seven copies; they must
+test('AC3: REQUIRED holds on the handoff template paragraph (#5601)', () => {
+  const paragraph = handoffWaitParagraph(readText(HANDOFF));
+  assert.deepEqual(missingFactsOf(REQUIRED)(paragraph), [], 'the handoff template must state the foreground rule as item 7 does (#5601)');
+  assertEachPatternGoesRed(paragraph, REQUIRED, missingFactsOf(REQUIRED));
+});
+
+// AC7.1: the multi-spec wave prompt copies items 1, 6 and 7 of the Context pack and no template clause.
+const MULTISPEC = path.join(PLUGIN, 'skills', 'flow', 'multispec-parallel-waves.md');
+const MULTISPEC_PACK = /`\{context-pack\}` is `dispatch\/task-prompt\.md`'s Context pack items 1 \(the literal plugin root\), 6 \(the worktree shell constraint\) and 7 \(async-wait discipline, with its `INTERIM_STATUS` rule\)/;
+const multispecPackGaps = (p) => [
+  ...(MULTISPEC_PACK.test(p) ? [] : ['names items 1, 6 and 7']),
+  ...(/template's Foreground execution clause/i.test(p) ? ['no template clause'] : []),
+];
+function multispecPackParagraph(text) {
+  const found = text.split(/\r?\n\r?\n/).filter((p) => p.startsWith('Inline the block below verbatim'));
+  assert.equal(found.length, 1, `expected exactly one "Inline the block below verbatim" paragraph, found ${found.length}`);
+  return found[0].replace(/\s+/g, ' ');
+}
+
+test('AC7.1: multispec-parallel-waves.md inlines items 1, 6 and 7 and no template clause (#5601)', () => {
+  const paragraph = multispecPackParagraph(readText(MULTISPEC));
+  assert.deepEqual(multispecPackGaps(paragraph), []);
+  const withClause = `${paragraph.replace(/ all copied verbatim/, ", plus that file's `build,test` template's Foreground execution clause, all copied verbatim")}`;
+  assert.notEqual(withClause, paragraph);
+  assert.deepEqual(multispecPackGaps(withClause), ['no template clause']);
+  const dropped = paragraph.replace(' and 7 (async-wait discipline, with its `INTERIM_STATUS` rule)', '');
+  assert.notEqual(dropped, paragraph);
+  assert.deepEqual(multispecPackGaps(dropped), ['names items 1, 6 and 7']);
+});
+
+// #5601: a dispatched agent's prompt states the foreground-wait rule once, through Context pack item 7;
+// the fenced templates no longer carry their own paragraph. Counted on the rendered prompt, because
+// that is the text the agent reads.
+const { renderTaskPrompt } = require('../plugin/bin/lib/dispatch/task-prompt');
+const PRE_5601_PARAGRAPH = path.join(__dirname, 'fixtures', 'dispatch-prompt', 'foreground-paragraph-pre-5601.txt');
+const RENDER_OPTS = {
+  issues: [5601],
+  runDir: '/tmp/x y/.claude-tweaks/pipelines/2026-11-16T000000-record-5601',
+  pluginRoot: '/p/root',
+  policyValues: 'autonomy=unattended, integration-model=pr-first',
+  selectedAt: '2026-11-16T00:00:00.000Z',
+  effortLine: '[Effort: high — apply high-level reasoning depth to this task.]',
+};
+const countOf = (squashed, pattern) => squashed.split(pattern).length - 1;
+function renderedCounts(prompt) {
+  const squashed = prompt.replace(/\s+/g, ' ');
+  return {
+    primitive: [...squashed.matchAll(new RegExp(PRIMITIVE.source, 'g'))].length,
+    probe: countOf(squashed, 'probe the worktree its prompt names, read-only'),
+    runInBackground: countOf(squashed, '`run_in_background`'),
+    projectTestCmd: countOf(squashed, "the project's test command"),
+  };
+}
+const renderCall = (text, call) => renderTaskPrompt(text, { ...RENDER_OPTS, call });
+
+test('AC1.1 AC1.2: a rendered first-call and second-call prompt state the wait rule once (#5601)', () => {
+  const text = readText(TASK_PROMPT);
+  for (const call of ['first', 'second']) {
+    const counts = renderedCounts(renderCall(text, call));
+    assert.equal(counts.primitive, 1, `${call} call: the sleep-20 primitive`);
+    assert.equal(counts.probe, 1, `${call} call: the worktree probe`);
+    assert.ok(counts.runInBackground >= 1, `${call} call: names run_in_background`);
+    assert.ok(counts.projectTestCmd >= 1, `${call} call: names the project's test command`);
+  }
+});
+
+// Insert the paragraph immediately before the first `{context-pack}` line of each fenced template.
+function withParagraphRestored(text, paragraph) {
+  const out = [];
+  let inFence = false;
+  let done = false;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('```')) { inFence = !inFence; done = false; }
+    if (inFence && !done && line === '{context-pack}') { out.push(paragraph, ''); done = true; }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+test('AC1.1: the rendered-count check goes red with a template paragraph restored (#5601)', () => {
+  const text = readText(TASK_PROMPT);
+  const restored = withParagraphRestored(text, readText(PRE_5601_PARAGRAPH).trimEnd());
+  assert.notEqual(restored, text);
+  for (const call of ['first', 'second']) {
+    const counts = renderedCounts(renderCall(restored, call));
+    assert.equal(counts.primitive, 2, `${call} call: the base-commit primitive count`);
+    assert.equal(counts.probe, 2, `${call} call: the base-commit probe count`);
+  }
+});
+
+// A fenced template holds no Foreground paragraph and its `{context-pack}` exactly once (#5601). The
+// paragraph is found by its heading, or by the primitive and the probe phrase it carried, so an
+// indented or re-headed copy is still caught. The raw block never holds item 7's text.
+const templateDefects = (blocks) => blocks.flatMap(([label, block]) => {
+  const squashed = block.replace(/\s+/g, ' ');
+  const foreground = block.split(/\r?\n\r?\n/).some((p) => p.startsWith('Foreground execution (required):'))
+    || new RegExp(PRIMITIVE.source).test(squashed)
+    || squashed.includes('probe the worktree its prompt names, read-only');
+  return foreground || countOf(block, '{context-pack}') !== 1 ? [label] : [];
+});
+function labelledTemplates() {
+  const task = templateBlocks(readText(TASK_PROMPT));
+  const express = fencedBlocks(readText(EXPRESS_PROMPT));
+  assert.equal(express.length, 2, `expected exactly two fenced express-prompt blocks, found ${express.length}`);
+  return [
+    ['task-prompt first call', task[0]], ['task-prompt second call', task[1]],
+    ['express-prompt express call', express[0]], ['express-prompt review call', express[1]],
+  ];
+}
+
+test('AC2.1 AC2.2: no fenced template holds a Foreground paragraph; each holds {context-pack} once (#5601)', () => {
+  assert.deepEqual(templateDefects(labelledTemplates()), []);
+});
+
+test('AC2.1 AC2.2: the template-defect check goes red for a restored paragraph and a duplicated placeholder (#5601)', () => {
+  const blocks = labelledTemplates();
+  const paragraph = readText(PRE_5601_PARAGRAPH).trimEnd();
+  for (const [index, [label, block]] of blocks.entries()) {
+    const restored = blocks.map((b, i) => (i === index ? [label, withParagraphRestored(`\`\`\`\n${block}\n\`\`\``, paragraph)] : b));
+    assert.notEqual(restored[index][1], block);
+    assert.deepEqual(templateDefects(restored), [label], `a restored paragraph in only ${label}`);
+    const duplicated = blocks.map((b, i) => (i === index ? [label, `${block}\n\n{context-pack}`] : b));
+    assert.notEqual(duplicated[index][1], block);
+    assert.deepEqual(templateDefects(duplicated), [label], `a duplicated {context-pack} in only ${label}`);
+  }
+});
+
+// The restored paragraph can dodge a head-only check: indented, or with its heading renamed (#5601 final review).
+test('AC2.1: the template-defect check goes red for an indented or re-headed restored paragraph (#5601)', () => {
+  const blocks = labelledTemplates();
+  const paragraph = readText(PRE_5601_PARAGRAPH).trimEnd();
+  const shapes = [
+    ['indented two spaces', paragraph.split('\n').map((line) => `  ${line}`).join('\n')],
+    ['re-headed', paragraph.replace('Foreground execution (required):', 'Foreground execution:')],
+  ];
+  for (const [shape, doctoredParagraph] of shapes) {
+    assert.notEqual(doctoredParagraph, paragraph, `${shape}: the doctoring changed nothing`);
+    for (const [index, [label, block]] of blocks.entries()) {
+      const restored = blocks.map((b, i) => (i === index ? [label, withParagraphRestored(`\`\`\`\n${block}\n\`\`\``, doctoredParagraph)] : b));
+      assert.notEqual(restored[index][1], block);
+      assert.deepEqual(templateDefects(restored), [label], `a ${shape} restored paragraph in only ${label}`);
+    }
+  }
+});
+
+// The primitive's numbers (sleep interval, call cap, minutes) are restated in three copies; they must
 // agree. Each copy is reduced to the one place the primitive appears in it.
 const PRIMITIVE = /`sleep\s+(\d+)`\s+Bash\s+calls,\s+at\s+most\s+(\d+)\s+\((\d+)\s+minutes\)/g;
 const EXPECTED_PRIMITIVE = '20/60/20';
 function primitiveCopies() {
-  const taskPrompt = readText(TASK_PROMPT);
-  const [firstCall, secondCall] = templateBlocks(taskPrompt);
-  const expressBlocks = fencedBlocks(readText(EXPRESS_PROMPT));
-  assert.equal(expressBlocks.length, 2, `expected exactly two fenced express-prompt blocks, found ${expressBlocks.length}`);
-  const [expressExpress, expressReview] = expressBlocks;
   return {
     'subagent-dispatch-core.md': coreForegroundSection(readText(CORE)),
-    'task-prompt.md item 7': item7Block(taskPrompt),
-    'task-prompt.md first-call template': foregroundParagraph(firstCall),
-    'task-prompt.md second-call template': foregroundParagraph(secondCall),
-    'express-prompt.md express call': foregroundParagraph(expressExpress),
-    'express-prompt.md review call': foregroundParagraph(expressReview),
+    'task-prompt.md item 7': item7Block(readText(TASK_PROMPT)),
     'context-handoff.md template': handoffWaitParagraph(readText(HANDOFF)),
   };
 }
@@ -403,7 +497,7 @@ const mismatchedPrimitiveCopies = (copies) => Object.entries(copies)
   .filter(([, text]) => !statesPrimitiveOnce(text))
   .map(([name]) => name);
 
-test('the keep-alive primitive (sleep 20, at most 60, 20 minutes) agrees across all seven copies (#3078, #4557)', () => {
+test('the keep-alive primitive (sleep 20, at most 60, 20 minutes) agrees across all three copies (#3078, #4557)', () => {
   assert.deepEqual(mismatchedPrimitiveCopies(primitiveCopies()), [], 'every copy of the keep-alive primitive must state sleep 20, at most 60 (20 minutes), exactly once');
 });
 
@@ -520,7 +614,7 @@ test('each core measured-fact assertion can actually go red on its own (discrimi
 
 // #4557: at the sleep 20 x 60 bound, a still-outstanding write-capable child's worktree is probed
 // read-only and the wait continues while it progresses, instead of stopping BLOCKED on elapsed time
-// alone. One passage, the same words in all seven copies; each pattern matches once per copy.
+// alone. One passage, the same words in all three copies; each pattern matches once per copy.
 const PROGRESS_CHECK = [
   [/probe\s+the\s+worktree\s+its\s+prompt\s+names,\s+read-only/, 'the probe reads the worktree the child prompt names, read-only'],
   [/`git\s+-C\s+"\{child-worktree\}"\s+rev-parse\s+HEAD`/, 'the probe reads the child worktree HEAD'],

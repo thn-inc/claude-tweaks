@@ -27,7 +27,7 @@ const {
 
 const {
   DEFER_REASONS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
-  extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp,
+  extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine,
 } = require('./record-payload');
 
 const { fenceFor, fencedBlock, extractSection } = require('../markdown-blocks');
@@ -38,7 +38,7 @@ const {
 
 const {
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
-  hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery,
+  hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery, buildAuthorAssociationQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, buildLinkedPRQuery, partitionByOpenLinkedPR,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,
 } = require('./record-dependencies');
@@ -49,10 +49,10 @@ const {
 
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, normalizeLabelNames, parseRecordFacets,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues, parseParent,
-  buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
+  buildNativeSubIssuesQuery, buildNativeParentQuery, buildAuthorAssociationQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, typeOf, extractSection,
   RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,

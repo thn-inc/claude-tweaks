@@ -390,7 +390,7 @@ describe('renderers', () => {
     assert.strictEqual(text, [
       '## Verification Brief', '', '### The ask', 'Why', '', '### What shipped', 'This', '',
       renderTryIt(brief.tryItEndToEnd, '### Try it — end to end'), '',
-      '### Confirmed', 'F1: x', '', '---', '', '_Posted by `plugin/bin/drive.js`. Resolve with `/claude-tweaks:demo`._',
+      '### Confirmed', 'F1: x', '', '---', '', '_Posted by `plugin/bin/drive.js`. Resolve with `/claude-tweaks:accept`._',
     ].join('\n'));
   });
 
@@ -518,7 +518,7 @@ describe('runAcceptance: parent routes', () => {
     assert.ok(w[1].bodyText.startsWith('## Verification Brief\n'));
     assert.ok(w[1].bodyText.includes('### Try it — end to end'));
     assert.match(w[1].bodyText, /### Confirmed\nF1: .*getStatus/);
-    assert.ok(w[1].bodyText.trimEnd().endsWith('_Posted by `plugin/bin/drive.js`. Resolve with `/claude-tweaks:demo`._'));
+    assert.ok(w[1].bodyText.trimEnd().endsWith('_Posted by `plugin/bin/drive.js`. Resolve with `/claude-tweaks:accept`._'));
     assert.deepStrictEqual(w[2].args, ['issue', 'edit', '42', '--repo', 'o/r', '--add-label', 'accept:pending']);
     assert.ok(w[3].bodyText.startsWith('<!-- run-comment: try-it -->'));
   });

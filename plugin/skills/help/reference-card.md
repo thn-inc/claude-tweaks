@@ -51,7 +51,8 @@ Quick reference for all claude-tweaks skills. For full details, run `/claude-twe
 | `/claude-tweaks:harness-health` | Recurring health check auditing `.claude/skills/*.md`, `.claude/rules/*.md`, and CLAUDE.md for drift, template-conformance, and best-practice gaps, sharing its judgment procedure with `/init`/`/wrap-up`. Scheduled Routine. Never edits anything — always files a GitHub issue. | `[--target <id>] [--kind skill\|rule\|claude-md\|design-artifact\|memory] [--memory-dir <path>] [--budget <n>] [--min-confidence low\|med\|high] [--force-gap-scan] [--dry-run] [--root <dir>]` |
 | `/claude-tweaks:journey-health` | Recurring health check auditing `docs/journeys/*.md` for drift and journey-story coverage gaps (light tier); an interactive-only deep tier actually runs a journey's QA stories or walks it live. Scheduled Routine (light tier only). Never edits anything — always files a GitHub issue. | `[--target <journey-name>] [--budget <n>] [--deep] [--dry-run] [--root <dir>] [--min-confidence <low\|med\|high>]` |
 | `/claude-tweaks:docs-health` | Recurring health check auditing `docs/**` for Diátaxis genre-drift, depth-mismatch, findability, and factual staleness, with dual-persona misleading-risk tagging. Scheduled Routine. Never edits anything — always files a GitHub issue. | `[--target <id>] [--dir <path>] [--budget <n>] [--min-confidence low\|med\|high] [--dry-run] [--root <dir>]` |
-| `/claude-tweaks:demo` | Resolves one built thing per ref — this session's own unrecorded work (bare), a specific `#N` record, or a `#N,#M` list taken one item at a time — briefs you on it and captures a human verdict, approve or request changes; discovery of what's outstanding is `/claude-tweaks:help`'s job | `[#N[,#M...]]` |
+| `/claude-tweaks:accept` | Resolves one built thing per ref — this session's own unrecorded work (bare), a specific `#N` record, or a `#N,#M` list taken one item at a time — briefs you on it and captures a human verdict, approve or request changes; discovery of what's outstanding is `/claude-tweaks:help`'s job | `[#N[,#M...]]` |
+| `/demo` | Deprecated alias of `/claude-tweaks:accept`: prints one deprecation notice, then forwards its arguments unchanged | `[#N[,#M...]]` |
 | `/claude-tweaks:activity` | Period-scoped "what shipped" markdown report — merged PRs, closed issues, commits, issues raised, reviews given, in flight — narrated for a retro/standup/manager; the renderer validates every citation against `gh`'s own facts and drops any it cannot find | `[--period <1d\|7d\|14d\|month\|quarter\|<from>..<to>>] [--register <manager\|standup\|retro>] [--repo <owner/name>[,...]]` |
 | `/claude-tweaks:walkthrough` | Executes a story through Playwright CLI, captures one frame per step, and encodes a shareable animated GIF plus an ordered caption list — a walkthrough that survives outside the disposable QA-screenshot tree | `[<story-path>\|--story <name>\|#N] --base <url> [--budget-mb <n>] [--width <px>] [--delay-ms <n>] [--settle-ms <n>]` |
 | `/claude-tweaks:routine-kickoff` | Machine-invoked by routine kernels (firing-lifecycle wrapper); not for direct human use | `<skill> [args...]` |
@@ -148,7 +149,7 @@ Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_
 | `/claude-tweaks:review` | Review summary | — |
 | `/claude-tweaks:wrap-up` | Learnings (CLAUDE.md), acceptance packet (a parent's gate: Verification Brief) | Spec, plans, ledger |
 | `/claude-tweaks:release` | Tag + Release (or a staged `release-held.md` on a HARD-GATE) | — |
-| `/claude-tweaks:demo` | Follow-up record (on changes-requested) | — |
+| `/claude-tweaks:accept` | Follow-up record (on changes-requested) | — |
 
 Consumed artifacts are deleted — specs and code are the durable outputs.
 

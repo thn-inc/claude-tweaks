@@ -1217,3 +1217,81 @@ test('TRUST_POLICY_KEYS lists the three trust keys in order and every one is a P
   const known = new Set(POLICY_KEYS.map((entry) => entry.key));
   for (const key of TRUST_POLICY_KEYS) assert.ok(known.has(key), `${key} must be a POLICY_KEYS key`);
 });
+
+// --- Author trust on the Origin line (#4577) --------------------------------
+// An `Origin:` body line is plain text any issue author can type, so trustRows
+// honours it (class and follow-up) only from a trusted or unattested author.
+
+function originTarget() {
+  return { number: 7, labels: [], body: 'Origin: ledger resolve gate', state: 'CLOSED', closedAt: RECENT, authorAssociation: 'MEMBER' };
+}
+function originFollowUp(author) {
+  return { number: 8, labels: [], body: 'Origin: demo changes-requested from #7', state: 'OPEN', ...author };
+}
+const targetRow = (rows) => rows.find((r) => r.key === 'side-effect:ledger resolve gate|elevated');
+
+test('AC1.1: an untrusted follow-up adds nothing to the record it names', () => {
+  // The follow-up is an OPEN record, which forms no cell, so only the
+  // follow-up loop decides it: deleting that gate turns this red.
+  for (const association of ['NONE', 'CONTRIBUTOR']) {
+    const row = targetRow(trustRows([originTarget(), originFollowUp({ authorAssociation: association })]));
+    assert.equal(row.followUps, 0, association);
+    assert.equal(row.followUpRecords, 0, association);
+  }
+});
+
+test('AC1.1: an untrusted closed record joins no side-effect class', () => {
+  for (const authorAssociation of ['NONE', 'CONTRIBUTOR']) {
+    const forged = { number: 9, labels: [], body: 'Origin: demo changes-requested from #7', state: 'CLOSED', closedAt: RECENT, authorAssociation };
+    const rows = trustRows([forged]);
+    assert.equal(rows.some((r) => r.key.startsWith('side-effect:demo changes-requested|')), false, authorAssociation);
+    assert.equal(rows.find((r) => r.key === 'human:human|elevated').total, 1, authorAssociation);
+  }
+});
+
+test('AC2.1: a trusted or bot author\'s follow-up still counts', () => {
+  const authors = [
+    { authorAssociation: 'OWNER' },
+    { authorAssociation: 'MEMBER' },
+    { authorAssociation: 'COLLABORATOR' },
+    { authorAssociation: 'CONTRIBUTOR', author: { is_bot: true } },
+  ];
+  for (const author of authors) {
+    const row = targetRow(trustRows([originTarget(), originFollowUp(author)]));
+    assert.equal(row.followUps, 1, JSON.stringify(author));
+  }
+});
+
+test('AC3.1: a follow-up with no author data still counts', () => {
+  const row = targetRow(trustRows([originTarget(), originFollowUp({})]));
+  assert.equal(row.followUps, 1);
+});
+
+test('AC1.2: an absorbed Origin "from #7" adds no follow-up to #7\'s class (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: ['## Current State', 'x', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n'), state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 0);
+});
+test('a fenced Origin "from #7" adds no follow-up (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: ['```', 'Origin: demo changes-requested from #7', '```'].join('\n'), state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 0);
+});
+test('class and follow-up come from the same line: a bare own Origin: hides a later one (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: 'Origin:\n\n## Original request\nOrigin: demo changes-requested from #7', state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 0);
+});
+test('an own Origin "from #7" under ## Original request still counts (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: '## Current State\nx\n\n## Original request\nOrigin: demo changes-requested from #7', state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 1);
+});

@@ -31,6 +31,7 @@ const { conventionalHistory } = require('./lib/release-local/commits.js');
 const { bumpPart } = require('./lib/release-local/bump.js');
 const manifest = require('./lib/release-local/manifest.js');
 const { renderSection, prependSection, parseGitHubRemote } = require('./lib/release-local/changelog.js');
+const { prepareTrim, firstLine } = require('./lib/changelog-release-trim.js');
 const { precheck } = require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
@@ -122,6 +123,52 @@ function planLines({ version, part, history, hook, edits, unconventional, releas
     for (const c of unconventional) lines.push(`  ${c.sha.slice(0, 7)} ${c.subject}`);
   }
   return lines;
+}
+
+// `changelog-max-releases` (#5563): once the release has fully landed (commit, tag, push and
+// hook), the trimmed CHANGELOG.md goes in its own commit — the tag and the pushed release commit
+// keep the full file the footer points at. The release commit is on the local branch by now, so
+// the ancestry proof reads it. With an origin the trim commit is pushed the way the release was;
+// without one it stays local. A trim never changes the release's outcome: any failure drops its
+// own commit if one landed, puts the file and the index back, and prints one line.
+function trimAfterRelease(deps, { policyRaw, branch, hasOrigin }) {
+  let original = null;
+  const progress = { written: false, committed: false };
+  try {
+    original = deps.readFile('CHANGELOG.md');
+    const trimmed = prepareTrim({
+      text: original,
+      readPolicy: () => policyRaw,
+      git: deps.git,
+      ancestorRefs: [`refs/heads/${branch}`],
+      stderr: deps.stderr,
+      trim: deps.trimChangelog,
+    });
+    if (!trimmed) return;
+    progress.written = true;
+    deps.writeFile('CHANGELOG.md', trimmed.text);
+    deps.git(['add', '--', 'CHANGELOG.md']);
+    withIndexLockRetry(deps.git)(['commit', '-m', `chore: trim CHANGELOG.md to the newest ${trimmed.count} releases`]);
+    progress.committed = true;
+    if (hasOrigin) {
+      pushAfterAncestryCheck(deps, { branch, refs: [branch], onDiverged: `origin/${branch} moved since the release push` });
+    }
+  } catch (err) {
+    // A push that reached origin but errored client-side leaves the local branch one commit
+    // behind origin after the drop below; the next release's pre-check surfaces it.
+    let restored = true;
+    try {
+      if (progress.committed) withIndexLockRetry(deps.git)(['reset', '--soft', 'HEAD~1']);
+      if (progress.written) {
+        deps.writeFile('CHANGELOG.md', original);
+        deps.git(['add', '--', 'CHANGELOG.md']);
+      }
+    } catch {
+      restored = false;
+    }
+    const reason = firstLine((err && err.message) || err);
+    deps.stderr(`changelog trim: failed (${reason}); ${restored ? 'file left untrimmed' : 'the restore also failed, CHANGELOG.md and the index may still hold the trimmed file'}\n`);
+  }
 }
 
 function run(argv, deps = {}) {
@@ -246,6 +293,7 @@ function run(argv, deps = {}) {
         return 5;
       }
     }
+    trimAfterRelease(deps, { policyRaw, branch, hasOrigin });
     deps.stdout(`released v${version}\n`);
     return 0;
   } catch (err) {

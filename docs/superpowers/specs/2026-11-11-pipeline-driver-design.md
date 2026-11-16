@@ -142,7 +142,7 @@ One JSON object per line on stdout, and the same lines in `{run-dir}/driver-even
 
 `{ ts, run, record, step, status, ms, model?, usage?, denials?, detail? }`
 
-`usage` is the worker result's usage block, present on worker steps. `status` is `ok`, `stop` or `fail`. The final line carries the outcome word, total milliseconds with and without CI wait, and the PR number. This is the contract the hub design builds on; fields may be added, never renamed.
+`usage` is the worker result's usage block, present on worker steps. As built (#5218), the final line carries the worker's `costUsd` and `turns` instead of `model` and `usage`. `status` is `ok`, `stop` or `fail`. The final line carries the outcome word, total milliseconds with and without CI wait, and the PR number. This is the contract the hub design builds on; fields may be added, never renamed.
 
 ## Ceilings
 
