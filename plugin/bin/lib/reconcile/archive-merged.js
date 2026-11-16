@@ -1608,7 +1608,13 @@ function archiveRunDir(root, runDir, { env } = {}) {
     // pathspec, so `git commit` picks only those changes out of the index
     // rather than sweeping whatever else a human or sibling session happens
     // to have staged in this shared main checkout at the same moment.
-    const commitPaths = workMoves.flatMap(([src, dest]) => [src, dest]);
+    // #3975: a twin-only archival (workMoves empty) must still name the twin
+    // paths it staged — an empty pathspec after `--` commits the whole index.
+    const commitPaths = [
+      ...workMoves.flatMap(([src, dest]) => [src, dest]),
+      ...stagedOps.flatMap((op) => (op.kind === 'twin-rm' ? [op.srcFile]
+        : op.kind === 'twin-mv' ? [op.srcFile, op.destFile] : [])),
+    ];
     const commit = commitGit(['commit', '-m', archiveCommitSubject(runId), '--', ...commitPaths], root, { env });
     if (commit.failure) {
       // A partial revert (some ops' `git reset`/`git checkout` or disk move

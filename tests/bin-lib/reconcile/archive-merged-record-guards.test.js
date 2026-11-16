@@ -2298,3 +2298,46 @@ test('archiveMerged: an empty or absent postMergeDeferred changes nothing (#4599
     assert.deepEqual(archiveMerged({ cwd: root, ...extra }).skipped, [{ runDir: dir, reason: 'no-branch' }]);
   }
 });
+
+// #3975: a twin-only archival (workMoves empty) used to run `git commit -- `
+// with an empty pathspec, which commits the WHOLE index — sweeping an
+// unrelated staged file into the archive commit.
+test('AC6.1: twin-only archival commits only its own paths, never an unrelated staged file', { skip: process.platform === 'win32' }, () => {
+  const root = fs.realpathSync(makeRepo());
+  const runId = '2026-08-29T153740-spec-1-3975';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  const liveRel = `.claude-tweaks/pipelines/${runId}/work/1-spec.md`;
+  commitPath(root, liveRel, '# spec 1\n');
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/work/1-spec.md`, '# spec 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  fs.writeFileSync(path.join(root, 'unrelated.txt'), 'staged by someone else\n');
+  git(root, 'add', 'unrelated.txt');
+
+  const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-shim-'));
+  const log = path.join(shimDir, 'argv.log');
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(shimDir, 'git'), [
+    '#!/bin/sh',
+    `node -e 'require("fs").appendFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)) + "\\n")' "${log}" "$@"`,
+    `exec "${realGit}" "$@"`,
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const env = { ...process.env, PATH: `${shimDir}${path.delimiter}${process.env.PATH}` };
+
+  const result = archiveRunDir(root, runDir, { env });
+  assert.equal(result.ok, true, JSON.stringify(result));
+
+  assert.equal(git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').includes('unrelated.txt'), false,
+    'the archive commit must not contain the unrelated staged file');
+  assert.ok(git(root, 'diff', '--cached', '--name-only').split('\n').includes('unrelated.txt'),
+    'the unrelated file must stay staged');
+
+  const commitArgv = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    .find((a) => a.includes('commit'));
+  assert.ok(commitArgv, 'a git commit call must be recorded');
+  const dd = commitArgv.indexOf('--');
+  assert.ok(dd >= 0, 'commit argv carries a -- pathspec separator');
+  const after = commitArgv.slice(dd + 1);
+  assert.ok(after.length > 0, 'pathspec after -- must be non-empty');
+  assert.deepEqual(after.map((p) => path.resolve(root, p)), [path.join(root, liveRel)]);
+});
