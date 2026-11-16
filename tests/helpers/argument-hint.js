@@ -1,17 +1,12 @@
 'use strict';
 
-// argument-hint frontmatter extraction, shared by the argument-hint <-> ##
-// Input sync guard (tests/argument-hint-input.test.js) and every test file
-// that needs a skill's argument-hint value for its own, unrelated assertions
-// (tests/argument-hint-mirrors.test.js, tests/batch-ref-argument.test.js,
-// tests/specify-batch-input.test.js, tests/specify-next-mode.test.js). Those
-// four files used to `require('./argument-hint-input.test.js')` directly,
-// which re-executes that file's own `test()` calls inside each importer's
-// process and inflates node --test's reported count for every importer
-// (#751). Extracted here so importers pull only the function, not a test
-// file's registrations.
+// Test tooling, not plugin code: argument-hint frontmatter extraction for the
+// conformance suites under tests/. It lives in tests/helpers/ so the installed
+// plugin does not ship it (#5538). Import the functions from here, never from
+// a test file: requiring a test file re-runs its `test()` calls inside the
+// importer's process and inflates node --test's reported count (#751).
 
-const { splitFrontmatterFence } = require('../health-core/frontmatter-list');
+const { splitFrontmatterFence } = require('../../plugin/bin/lib/health-core/frontmatter-list');
 
 // argument-hint is a single-line scalar frontmatter value, quoted with either
 // ' or " (CLAUDE.md: "Always quote the value"). Strip the surrounding quotes
