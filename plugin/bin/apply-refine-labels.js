@@ -179,7 +179,7 @@ function run(argv, deps = realDeps) {
     if (gated.refusal) { deps.stderr(`apply-refine-labels.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('apply-refine-labels.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('apply-refine-labels.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   const repoFlag = repoSlug(repoSpec);
 
   const ok = [];

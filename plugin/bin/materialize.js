@@ -396,7 +396,7 @@ function run(argv, deps = realDeps) {
       if (gated.refusal) { deps.stderr(`materialize.js: ${gated.refusal}\n`); return 2; }
       repoSpec = gated.spec;
     }
-    if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+    if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
     if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { host, owner, repo } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host.

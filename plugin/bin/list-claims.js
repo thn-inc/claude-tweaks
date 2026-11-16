@@ -77,7 +77,7 @@ function run(argv, deps) {
     if (gated.refusal) { deps.stderr(`list-claims.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('list-claims.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('list-claims.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
 
   const slug = deps.repoSlug(repoSpec);

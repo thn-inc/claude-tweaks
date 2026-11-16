@@ -117,7 +117,7 @@ function run(argv, deps = realDeps) {
     if (gated.refusal) { deps.stderr(`file-feedback.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('file-feedback.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('file-feedback.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   // #2240: repoSlug host-qualifies a non-github.com host (`{host}/{owner}/{repo}`) for
   // gh's `-R/--repo` flag, which accepts that form directly — a bare `owner/repo` here
   // silently discarded repoSpec.host and every gh call below resolved against github.com.

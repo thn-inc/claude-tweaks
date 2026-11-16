@@ -275,7 +275,7 @@ function loadFromGh(opts, numbers, deps) {
 
   let dependencies = null;
   if (workLinks === 'native') {
-    if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return { code: 2 }; }
+    if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return { code: 2 }; }
     try {
       dependencies = preflight.fetchNativeDependencies({
         numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: nativeRecoveringRunner(deps.runner, numbers),
@@ -409,7 +409,7 @@ function blockerLandingFromGh(opts, union, repoSpec, deps) {
     return { code: 2 };
   }
   if (!repoSpec) {
-    deps.stderr('preflight-records.js: could not resolve owner/repo for --blocker-landing — pass --repo owner/name\n');
+    deps.stderr('preflight-records.js: could not resolve owner/repo for --blocker-landing — pass --repo [host/]owner/name\n');
     return { code: 2 };
   }
   const { results, error, probeErrors } = fetchBlockerLanding({

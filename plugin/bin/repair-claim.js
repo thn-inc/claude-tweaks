@@ -109,7 +109,7 @@ function run(argv, deps = realDeps) {
     if (gated.refusal) { deps.stderr(`repair-claim.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('repair-claim.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('repair-claim.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   if (o.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). repair -> claim-store.js interpolates `${owner}/${repo}`

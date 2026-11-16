@@ -147,7 +147,7 @@ test('exit 2 when no --repo is given and the origin remote is unreadable', () =>
     remoteUrl: () => { throw new Error('not a git repository'); },
   });
   assert.strictEqual(run(['3214'], deps), 2);
-  assert.match(out.stderr.join(''), /could not resolve owner\/repo/);
+  assert.match(out.stderr.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
   assert.deepStrictEqual(out.runner, []);
 });
 
