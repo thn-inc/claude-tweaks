@@ -136,12 +136,9 @@ function parseArgs(argv) {
     } else if (flag === '--pr') {
       if (!POSITIVE_RE.test(value)) return { error: `--pr must be a positive integer, got: ${value}` };
       opts.pr = Number(value);
-    } else if (flag === '--head') {
-      if (!require('./lib/accept/park').HEAD_SHA_RE.test(value)) return { error: `--head must be 7-64 lowercase hex, got: ${value}` };
-      opts.head = value;
-    } else if (flag === '--expect-head') {
-      if (!require('./lib/accept/park').HEAD_SHA_RE.test(value)) return { error: `--expect-head must be 7-64 lowercase hex, got: ${value}` };
-      opts.expectHead = value;
+    } else if (flag === '--head' || flag === '--expect-head') {
+      if (!require('./lib/accept/park').HEAD_SHA_RE.test(value)) return { error: `${flag} must be 7-64 lowercase hex, got: ${value}` };
+      opts[key] = value;
     } else if (flag === '--worktree-mode') {
       if (!WORKTREE_MODES.includes(value)) return { error: `--worktree-mode must be one of ${WORKTREE_MODES.join('|')}, got: ${value}` };
       opts.worktreeMode = value;

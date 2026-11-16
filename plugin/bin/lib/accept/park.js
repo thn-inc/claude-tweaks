@@ -61,10 +61,9 @@ function writeParkDeployStatus(packetBody, { headSha, baseSha } = {}) {
   // written here. A blank line separates it from whatever follows: text, a `---` rule (which would
   // otherwise make the group a setext heading) or the next heading.
   const kept = lines.filter((line, index) => !(inSection(index) && isParkLine(line)));
-  const keptStart = range.start;
-  const next = kept[keptStart] ?? null;
+  const next = kept[range.start] ?? null;
   if (next !== null && next.text.trim() !== '') fresh.push({ text: '', eol });
-  const out = [...kept.slice(0, keptStart), ...fresh, ...kept.slice(keptStart)];
+  const out = [...kept.slice(0, range.start), ...fresh, ...kept.slice(range.start)];
   const body = joinLines(out);
   return { body, changed: body !== packetBody };
 }
