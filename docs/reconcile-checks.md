@@ -323,8 +323,8 @@ dir would ALSO match some other, higher-precedence kind under the full order: th
 companion re-classify (when the `checkRunIntegrity` gate fails) passes
 `['adhoc-superseded', 'adhoc-session-ended']`, and `isStructurallyStuck`, the one remaining
 wrapper, passes `['structurally-stuck']` for `trackStuckSkip`. The merged-PR decision is
-`decideArchiveCore`, called by `archiveMergedRun` and by the `status: clean` by-number sweep's
-`byNumberRecordSkip`, and is not a classifier kind.
+`decideArchiveCore`, called by `archiveMergedRun` and by the main loop's by-number fallback
+(`byNumberRecordSkip`, for a run with no resolvable branch), and is not a classifier kind.
 `adhoc-session-ended` joined the precedence order later (#4179), between `adhoc-superseded` and
 `structurally-stuck`.
 

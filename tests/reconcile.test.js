@@ -934,7 +934,7 @@ test('classifyRunDir orphaned-mint: none for a genuine adhoc-standalone mint, re
 // now also requires a real run-state.json carrying a non-empty `worktree`,
 // closing the leak a malformed/mkdir-only dir sharing the suffix used to
 // slip through (both the orphaned-mint classification's exemption and
-// decideArchiveCore's no-worktree/no-branch skip).
+// the merged-PR path's no-worktree/no-branch skip).
 test('isAdHocStandaloneMint: requires the suffix AND a corroborating run-state.json worktree field (#1604)', () => {
   const { isAdHocStandaloneMint } = require('../plugin/bin/lib/reconcile/archive-merged');
   const { writeRunState } = require('../plugin/bin/lib/hooks/context');

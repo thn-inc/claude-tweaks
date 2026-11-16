@@ -94,7 +94,7 @@ function isStaleDir(dir, ttlMs, now = Date.now()) {
 //
 // #1604: the suffix match alone is not sufficient corroboration — a
 // malformed or mkdir-only dir sharing the suffix would also fall through
-// the orphaned-mint classification (exempt) and the merged-PR decision
+// the orphaned-mint classification (exempt) and the merged-PR path
 // (no-worktree/no-branch skip), leaking the same way a genuine ad-hoc mint
 // used to before this fix.
 // Require the invariant the comment above actually asserts: a real
