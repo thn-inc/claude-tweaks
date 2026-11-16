@@ -405,18 +405,32 @@ function stepNine(text) {
 }
 
 // Flag-first, like `--ceiling`: console-resolve-conformance.test.js pins exactly one `console-resolve.js" --run`.
-const ROUTE_CALL = 'console-resolve.js" --upstream-route {id} --run "$PIPELINE_RUN_DIR"';
+// `'{id}'` and `'{url}'` are single-quoted, as step 7 quotes every staged-derived name.
+const ROUTE_CALL = 'console-resolve.js" --upstream-route \'{id}\' --run "$PIPELINE_RUN_DIR"';
 const STEP_9_CLAIMS = [
   [ROUTE_CALL, 'step 9 does not route each U# through --upstream-route'],
   ['with no per-item prompt, causal tag or not', 'step 9 does not file an owned item with no per-item prompt, causal tag or not'],
-  ['console-resolve.js" --upstream-route {id} --filed {url} --run "$PIPELINE_RUN_DIR"', 'step 9 does not log an owned filing with --filed'],
-  ['at every tier, `unattended` included', 'step 9 does not log the filing at every tier'],
+  ['console-resolve.js" --upstream-route \'{id}\' --filed \'{url}\' --run "$PIPELINE_RUN_DIR"', 'step 9 does not log an owned filing with --filed'],
+  ['at every tier, `unattended` included', 'step 9 does not route each U# at every tier'],
   ["--hold filing-failed|scrub-hit --reason '{why}'", 'step 9 does not hold a failed filing or a scrub stop with --hold'],
+  ['this repeat is idempotent', 'step 9 does not say the unattended repeat is idempotent'],
+  ["is declined per step 7's decline rule, owned or not", 'step 9 does not let an explicit uncheck or untick decline an owned item'],
+  ['an explicit check never files a held item', 'step 9 does not keep a checked held item unfiled'],
+  ['With nothing on stdout, the id was refused and nothing was logged', 'step 9 does not tell a refused id from a hold verdict by stdout'],
+  ['not owned or does not parse', 'step 9 does not gloss a --filed URL that does not parse'],
+];
+// The retired readings: the unattended skip that left a reconciler-resolved console unrouted, and ownership overriding a human's choice.
+const STEP_9_RETIRED = [
+  ['Below `unattended`, run', 'step 9 still skips the route call at unattended'],
+  ['Approve all and Override alike', 'step 9 still lets ownership override an explicit choice'],
 ];
 
 function stepNineProblems(text) {
   const s = stepNine(text);
-  return STEP_9_CLAIMS.filter(([needle]) => !s.includes(needle)).map(([, message]) => message);
+  return [
+    ...STEP_9_CLAIMS.filter(([needle]) => !s.includes(needle)).map(([, message]) => message),
+    ...STEP_9_RETIRED.filter(([needle]) => s.includes(needle)).map(([, message]) => message),
+  ];
 }
 
 test('#4621: review-console.md step 9 routes each U# by ownership under control mode', () => {
@@ -427,6 +441,13 @@ for (const [needle, message] of STEP_9_CLAIMS) {
   test(`#4621 go-red: ${message}`, () => {
     const s = stepNine(REVIEW_CONSOLE);
     assert.deepStrictEqual(stepNineProblems(REVIEW_CONSOLE.replace(s, s.split(needle).join('[removed]'))), [message]);
+  });
+}
+
+for (const [needle, message] of STEP_9_RETIRED) {
+  test(`#4621 go-red: ${message}`, () => {
+    const s = stepNine(REVIEW_CONSOLE);
+    assert.deepStrictEqual(stepNineProblems(REVIEW_CONSOLE.replace(s, `${s} ${needle}`)), [message]);
   });
 }
 
@@ -464,13 +485,45 @@ test('#4621: every --upstream-route command in step 9 parses through console-res
 
 test('#4621 go-red: a misspelled flag, a dropped --reason or a dropped command in step 9 is caught', () => {
   const s = stepNine(REVIEW_CONSOLE);
-  const misspelled = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.replace('--filed {url}', '--file {url}')));
+  const misspelled = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.replace("--filed '{url}'", "--file '{url}'")));
   assert.ok(misspelled.some((p) => p.includes('unknown flag: --file')), misspelled.join('; '));
   const noReason = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.replace(" --reason '{why}'", '')));
   assert.ok(noReason.some((p) => p.includes('--hold requires --reason')), noReason.join('; '));
-  const noFiled = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.split('--upstream-route {id} --filed').join('--removed {id} --filed')));
+  const noFiled = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.split("--upstream-route '{id}' --filed").join("--removed '{id}' --filed")));
   assert.ok(noFiled.includes('step 9 documents no filed command'), noFiled.join('; '));
 });
+
+// The multi-spec console's On approval step 4 routes each U# through step 9's control-mode calls, per spec dir.
+function multispecStepFour(text) {
+  const start = text.indexOf('\n4. For `U#` upstream feedback rows');
+  assert.notStrictEqual(start, -1, 'multispec On approval step 4 not found');
+  const end = text.indexOf('\n4.5. ', start);
+  assert.notStrictEqual(end, -1, 'no step 4.5 after step 4');
+  return text.slice(start, end);
+}
+
+const MULTISPEC_STEP_4_CLAIMS = [
+  ['--upstream-route', 'multispec step 4 does not name --upstream-route'],
+  ['--filed', 'multispec step 4 does not name --filed'],
+  ['`--run "{item-run-dir}"`', 'multispec step 4 does not run the calls on each item\'s own run dir'],
+  ["`wrap-up/review-console.md` step 9's Control mode clause", 'multispec step 4 does not cite review-console.md step 9'],
+];
+
+function multispecStepFourProblems(text) {
+  const s = multispecStepFour(text);
+  return MULTISPEC_STEP_4_CLAIMS.filter(([needle]) => !s.includes(needle)).map(([, message]) => message);
+}
+
+test('#4621: multispec-review-console.md step 4 routes each U# through --upstream-route and --filed', () => {
+  assert.deepStrictEqual(multispecStepFourProblems(MULTISPEC), []);
+});
+
+for (const [needle, message] of MULTISPEC_STEP_4_CLAIMS) {
+  test(`#4621 go-red: ${message}`, () => {
+    const s = multispecStepFour(MULTISPEC);
+    assert.deepStrictEqual(multispecStepFourProblems(MULTISPEC.replace(s, s.split(needle).join('[removed]'))), [message]);
+  });
+}
 
 function sectionOf(text, heading) {
   const start = text.indexOf(`\n${heading}`);

@@ -10,10 +10,10 @@ Contract). A direct invocation never reads this file. `--dry-run` takes preceden
 
 **`--pre-confirmed`:** the caller passes both the item's staged-file path and the exact body text
 it rendered and got approval for (the approved snapshot) — not just a path reference. Before
-filing, two checks run, always in this order. The staged draft opens with a header — a
-`<!-- upstream-target: … -->` line and a `Title: …` line, ending at the blank line
-(`wrap-up/upstream-feedback.md` Step 2): the title becomes the drafts file's `title`, and neither
-line goes into `body`.
+filing, two checks run, always in this order. Under control mode only, the staged draft opens
+with a header — a `<!-- upstream-target: … -->` line and a `Title: …` line, ending at the blank
+line (`wrap-up/upstream-feedback.md` Step 2): the title becomes the drafts file's `title`, and
+neither line goes into `body`. A draft with no header is filed exactly as before.
 
 1. **Scrub rerun (unconditional)** — Step 6's scrub always reruns first, on the current on-disk
    staged content, as a defense-in-depth safety net before publishing — regardless of whether the
@@ -32,7 +32,9 @@ line goes into `body`.
    the staged file changed after it was rendered and approved — fall back to the normal
    `AskUserQuestion` confirm, showing the post-scrub content (not the pre-scrub approved snapshot)
    so the human approves exactly what would be filed. This fallback is per-item — it never aborts
-   sibling items in the same batch.
+   sibling items in the same batch. Under control mode a mismatch never falls back to
+   `AskUserQuestion`: file nothing for the item and run the `--hold scrub-hit` call of
+   `wrap-up/review-console.md`'s step 9 with `{why}` `scrub changed the approved draft`.
 
 When the drift check finds no mismatch, skip the `AskUserQuestion` call for that item and file the
 post-scrub content directly.

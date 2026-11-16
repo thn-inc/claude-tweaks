@@ -10,9 +10,9 @@ contract — filed when the staged draft carries a `**Causal:** systemic` tag, d
 the same way, also without a call here — see `review-console.md`'s Auto-resolution
 short-circuit) — none of
 which restates these rules inline (CLAUDE.md's cross-reference rule: every relationship stated
-once). Under control mode neither the Override drill nor Approve all files a held item:
-`node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --upstream-route {id} --run "$PIPELINE_RUN_DIR"`
-decides (`review-console.md`'s step 9).
+once). Under control mode ownership replaces only the default: neither the Override drill nor
+Approve all files a held item, checked or not, and an unchecked item is still declined, owned or
+not (`review-console.md`'s step 9 routes each one).
 
 ## Rendering
 

@@ -21,7 +21,9 @@ STAGED {time} — Upstream feedback row: upstream {defect|gap} report proposed f
 
 The stage file holds the fully drafted **and already scrubbed** body. Scrubbing happens at staging
 time, not at filing time — the approver reads what will actually be published, and a body scrubbed
-later is a body nobody approved. Its layout, which `bin/lib/issues/upstream-ownership.js`'s
+later is a body nobody approved. With control mode off the stage file holds that body alone, as
+before. Under control mode (`node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --ceiling --run "$PIPELINE_RUN_DIR"`
+prints `control-mode on`) it opens with a header, in the layout `bin/lib/issues/upstream-ownership.js`'s
 `parseStagedUpstream` reads (`thn-inc/claude-tweaks` is `/claude-tweaks:feedback`'s fixed filing
 target; the two header lines are never part of the filed body):
 
@@ -48,7 +50,7 @@ feedback section* does not file directly. Filing follows `_shared/auto-mode-card
 covered by the Review Console's batch "Approve all" — it defaults to filed when the staged draft
 carries the `**Causal:** systemic` tag above, else it defaults to declined, with zero further
 `AskUserQuestion` calls either way. At `unattended`, it auto-resolves to filed unconditionally
-(causal tag or not) under `consoleAutoResolve`. Under control mode the split is by repo ownership at every tier instead: an owned target files with no per-item prompt, any other is carried as a decision fact (`review-console.md`'s step 9, `_shared/autonomy-ceiling.md`). Per-item chunking (inspect each scrubbed draft via
+(causal tag or not) under `consoleAutoResolve`. Under control mode repo ownership replaces that default at every tier: an owned target files with no per-item prompt, any other is carried as a decision fact, and an explicit decline still declines (`review-console.md`'s step 9, `_shared/autonomy-ceiling.md`). Per-item chunking (inspect each scrubbed draft via
 `_shared/upstream-feedback-batch.md`'s unchecked-by-default `multiSelect` drill before checking it
 to file) survives only inside the Override drill — never as part of "Approve all". Phase 4's
 execution step files nothing either — it only confirms the filing landed; see
