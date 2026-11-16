@@ -1,7 +1,7 @@
 {
+  "released": true,
   "runId": "2026-11-16T004107-record-5602",
-  "sessionId": "b979e2ab-48eb-4f61-a8ee-7134e913a163",
-  "claimedAt": "2026-11-16T00:43:33.371Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "failed: needs-context (probe gate fired; Deliverables 3-6 need a human reshape; Deliverables 1-2 are on draft PR 5615)",
+  "releasedAt": "2026-11-16T01:53:25.654Z",
+  "link": "https://github.com/thn-inc/claude-tweaks/pull/5615"
 }
