@@ -86,15 +86,46 @@ test('AC16 go-red: stripping each fact from the live step 6 turns exactly that f
   assertEachPatternGoesRed(live(), FACTS, missing);
 });
 
-test('AC16: settle-and-merge.md is no larger than on the base commit', (t) => {
-  let baseText;
+// Step 7 as it shipped on the base commit (91f92c620), verbatim.
+const BASE_STEP7 = '7. **If `false`:** leave `auto:build` in place — the next `dispatch next` firing pulls it again naturally (the claim was already released). There is nothing further to downgrade in the common case: step 3 revoked `auto:merge` unless the failure was classified transient, and that conditional revocation *is* the failure-downgrade rule in this model. Unlike the pre-grants design there is no separate two-tier label to step down between — a record either still has `auto:build` (and can retry) or, at the ceiling, has neither.';
+const ANY_GRANT_KEPT = /leave any grant label in place/;
+const AUTO_BUILD_KEPT = /leave `auto:build` in place/;
+
+function step7Of(text) {
+  const line = text.split('\n').find((l) => l.startsWith(STEP7_START));
+  assert.ok(line, 'step 7 line missing');
+  return line;
+}
+
+test('AC16: step 7 keeps whatever grant is present, true for a record with none', () => {
+  const s = step7Of(readText(FILE));
+  assert.match(s, ANY_GRANT_KEPT);
+  assert.doesNotMatch(s, AUTO_BUILD_KEPT);
+});
+
+test('AC16 go-red: the base commit step 7 says to leave auto:build in place', () => {
+  const s = step7Of(BASE_STEP7);
+  assert.doesNotMatch(s, ANY_GRANT_KEPT);
+  assert.match(s, AUTO_BUILD_KEPT);
+});
+
+// The base text by `git show`. CI checks out full history (.github/workflows/test.yml,
+// fetch-depth: 0), so an unreachable base is a broken checkout, never a reason to skip:
+// it fails loudly.
+function baseTextAt(sha) {
   try {
-    baseText = execFileSync('git', ['show', `${BASE_SHA}:${REL}`], { cwd: ROOT, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    t.skip(`base commit ${BASE_SHA} unreachable (shallow or partial clone)`);
-    return;
+    return execFileSync('git', ['show', `${sha}:${REL}`], { cwd: ROOT, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    throw new Error(`base commit ${sha} is unreachable in this checkout — the size check needs full history (git fetch --unshallow): ${String(err.message).split('\n')[0]}`);
   }
-  const baseBytes = Buffer.byteLength(baseText.replace(/\r\n/g, '\n'));
+}
+
+test('AC16: an unreachable base commit fails the size check loudly, never skips it', () => {
+  assert.throws(() => baseTextAt('0'.repeat(40)), /base commit 0{40} is unreachable in this checkout/);
+});
+
+test('AC16: settle-and-merge.md is no larger than on the base commit', () => {
+  const baseBytes = Buffer.byteLength(baseTextAt(BASE_SHA).replace(/\r\n/g, '\n'));
   const liveBytes = Buffer.byteLength(readText(FILE));
   assert.ok(liveBytes <= baseBytes, `settle-and-merge.md grew: ${liveBytes} bytes now, ${baseBytes} on the base commit`);
 });
