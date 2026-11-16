@@ -17,6 +17,8 @@ const {
 const DECISION_FACT_KIND = 'decision';
 const DECISION_ORIGINS = Object.freeze(['console', 'review', 'upstream']);
 const DECISION_FACT_FIELDS = Object.freeze(['id', 'kind', 'origin', 'summary', 'evidenceRef', 'suggestedResolution']);
+// The fields the packet carries beyond a fact's own id and kind: optional strings on a gathered decision fact.
+const DECISION_RENDER_FIELDS = Object.freeze(DECISION_FACT_FIELDS.filter((field) => field !== 'id' && field !== 'kind'));
 
 const DECISION_SUGGESTIONS = Object.freeze({
   pending: 'review it, then apply or decline',
@@ -103,4 +105,4 @@ function settleOpenDecisions(packetFacts) {
   });
 }
 
-module.exports = { DECISION_FACT_KIND, DECISION_ORIGINS, DECISION_FACT_FIELDS, DECISION_SUGGESTIONS, decisionOrigin, decisionFactFor, settleOpenDecisions };
+module.exports = { DECISION_FACT_KIND, DECISION_ORIGINS, DECISION_FACT_FIELDS, DECISION_RENDER_FIELDS, DECISION_SUGGESTIONS, decisionOrigin, decisionFactFor, settleOpenDecisions };

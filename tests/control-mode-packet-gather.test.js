@@ -16,6 +16,8 @@ const packet = require(path.join(ROOT, 'plugin', 'bin', 'acceptance-packet.js'))
 const { validateFactsShape } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'packet-validate'));
 const { renderPacket } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'packet-render'));
 const { SECTIONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'packet-contract'));
+const { decisionFacts: gatherDecisionFacts } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'packet-gather'));
+const { DECISION_RENDER_FIELDS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'decision-facts'));
 
 const HEADING = 'Decisions left for you';
 const SUGGESTION = 'decide whether the finding holds; fix it or decline';
@@ -108,23 +110,33 @@ test('a credential in suggestedResolution is withheld, not rendered', () => {
 
 const PROSE = path.join(ROOT, 'plugin', 'skills', '_shared', 'acceptance-packet.md');
 const FIELDS = ['origin', 'summary', 'evidenceRef', 'suggestedResolution'];
-function assertFieldsListed(prose, source) {
+function assertFieldsListed(prose) {
+  assert.deepStrictEqual([...DECISION_RENDER_FIELDS], FIELDS, 'DECISION_RENDER_FIELDS is the four optional render fields');
   const line = prose.split('\n').find((l) => l.startsWith('A fact is `{ id, kind, status')) ?? '';
   const factsDocument = prose.slice(prose.indexOf('**The facts document**'), prose.indexOf('**Fact kinds:**'));
   for (const field of FIELDS) {
     assert.ok(factsDocument.includes(`\`${field}\``), `acceptance-packet.md does not list the decision field ${field} (${line.slice(0, 30)})`);
-    assert.ok(source.includes(`'${field}'`), `OPTIONAL_TEXT_FIELDS lacks ${field}`);
   }
 }
 
 test('acceptance-packet.md lists each decision field as an optional render field, and OPTIONAL_TEXT_FIELDS carries each', () => {
   const prose = readText(PROSE);
-  const validate = readText(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'packet-validate.js'));
-  const optional = validate.slice(validate.indexOf('const OPTIONAL_TEXT_FIELDS'), validate.indexOf('\n', validate.indexOf('const OPTIONAL_TEXT_FIELDS')));
-  assertFieldsListed(prose, optional);
-  // control: drop suggestedResolution from the prose, and from the field list, and the assertion goes red
-  assert.throws(() => assertFieldsListed(prose.replace(/`suggestedResolution`/g, '`x`'), optional), /does not list the decision field suggestedResolution/);
-  assert.throws(() => assertFieldsListed(prose, optional.replace("'suggestedResolution'", "'x'")), /OPTIONAL_TEXT_FIELDS lacks suggestedResolution/);
+  assertFieldsListed(prose);
+  // control: drop suggestedResolution from the prose and the assertion goes red
+  assert.throws(() => assertFieldsListed(prose.replace(/`suggestedResolution`/g, '`x`')), /does not list the decision field suggestedResolution/);
+  // the validator holds each field to a string, so OPTIONAL_TEXT_FIELDS carries it
+  for (const field of FIELDS) {
+    const facts = { schemaVersion: 1, record: 7, surface: null, allowedHosts: [], partial: [], refused: [], facts: [{ id: 'decision:a', kind: 'decision', status: 'passed', source: 'decision-items', [field]: 5 }] };
+    assert.ok(validateFactsShape(facts).errors.some((e) => e.path.endsWith(`.${field}`)), field);
+  }
+});
+
+test('decisionFacts copies each string field, leaves absent and non-string ones absent, and {id,text} yields today\'s fact', () => {
+  const [full] = gatherDecisionFacts([{ id: 'decision:review:abc', text: 't', origin: 'review', summary: 's', evidenceRef: 'e', suggestedResolution: 'r' }]);
+  assert.deepStrictEqual(full, { id: 'decision:review:abc', kind: 'decision', status: 'passed', source: 'decision-items', text: 't', origin: 'review', summary: 's', evidenceRef: 'e', suggestedResolution: 'r' });
+  const [partial] = gatherDecisionFacts([{ id: 'x', text: 't', origin: 'console', summary: 5, suggestedResolution: null }]);
+  assert.deepStrictEqual(Object.keys(partial).sort(), ['id', 'kind', 'origin', 'source', 'status', 'text']);
+  assert.deepStrictEqual(gatherDecisionFacts([{ id: 'x', text: 't' }]), [{ id: 'decision:x', kind: 'decision', status: 'passed', source: 'decision-items', text: 't' }]);
 });
 
 test('AC4.5: a carried coordination item with spaces and # in its id renders one line', () => {

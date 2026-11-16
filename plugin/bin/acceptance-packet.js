@@ -41,6 +41,7 @@ const os = require('os');
 const path = require('path');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { findingItems } = require('./lib/console/resolve');
+const { DECISION_RENDER_FIELDS } = require('./lib/console/decision-facts');
 const { readRecord, writeRecord } = require('./lib/issues/local-store');
 const {
   parseRepo, ghAvailable, ghOptions, injectedGhDeps, pinExplicitRepoHost,
@@ -613,7 +614,7 @@ const isEntryList = (value) => Array.isArray(value) && value.every((entry) => (
   && ['text', 'url', 'command', 'label'].every((field) => optionalString(entry[field]))
 ));
 const isDecisionEntryList = (value) => isEntryList(value)
-  && value.every((entry) => ['origin', 'summary', 'evidenceRef', 'suggestedResolution'].every((field) => optionalString(entry[field])));
+  && value.every((entry) => DECISION_RENDER_FIELDS.every((field) => optionalString(entry[field])));
 const isFlagEntryList = (value) => isEntryList(value)
   && value.every((entry) => entry.unconfirmed === undefined || typeof entry.unconfirmed === 'boolean');
 const isDeploy = (value) => isObject(value) && typeof value.target === 'string';
