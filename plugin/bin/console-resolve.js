@@ -67,6 +67,24 @@
 // memory write refused, nothing written (target outside or unresolvable in the memory dir — why
 // `outside-memory-dir` or `parent-missing` — or the memory dir unreadable, `memory-dir-unreadable`).
 //
+// Seventh shape (#4621): `--run <dir> --upstream-route <staged-id> [--hold filing-failed|scrub-hit --reason <text> |
+// --filed <url>]` — the per-item ownership route for a wrap-up upstream-feedback item, for every ceiling below
+// `unattended` under control mode (the `unattended` resolve shape routes the same items in-process). The id must match
+// `wrap-up-upstream-*` and name a regular file in `{run}/staged/`, else exit 5; that check runs BEFORE the policy read,
+// so a bad id is exit 5 even with control mode off. Then `bookkeepingPermissions(ceiling, { controlMode })
+// .ownedUpstreamFiling !== true` (a policy that cannot be read counts as off) prints `upstream-route {id} unchanged
+// (control mode off)`, exits 0 and writes nothing. With no modifier it prints `upstream-route {id} {file|hold} target
+// {repo|none} reason {reason|none}`; a `hold` also carries the item (below). `--hold R --reason T` records a failure the
+// agent met while filing (R is the hold reason, T its detail) and reads no ownership. `--filed URL` (one line, no
+// whitespace) logs a successful owned filing at every ceiling, `unattended` included; the route must be `file`, else
+// exit 5 with nothing logged. The hold writes run in this order, so a fact exists before anything claims the item
+// carried: the decision fact (writeDecisionFacts; a failed write exits 6), then the console.json rewrite `filed` →
+// `carried` (only when the auto-resolve shape holds the id as `filed`; any other console is left alone), then one AUTO
+// line. A repeated `--hold` for the same id writes no second fact (merge by id, first copy wins) and logs again. Each
+// failed ownership read logs one SKIP line (step `Upstream ownership`), as the resolve shape does. It takes no other
+// flag. Exit 0 routed, 2 malformed, 3 --run not anchored or a decisions.md entry could not be written, 5 the id
+// refused or `--filed` on a hold route, 6 the decision fact could not be written.
+//
 // Control mode also routes a wrap-up upstream-feedback item by repo ownership (#4621): it files only into an
 // owned repo (the origin remote's owner, or a base-branch `owned-owners` entry — read from git, never `gh`),
 // any other target is carried as a decision fact, and each failed ownership read logs one `SKIP` line.
@@ -94,7 +112,7 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { stackVerdicts } = require('./lib/staged-patch/stack-check');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { resolvePolicyConfig, parseFlatLines } = require('./lib/policy-schema');
-const { ownedOwnersList, ownerContextFromOrigin } = require('./lib/issues/upstream-ownership');
+const { ownedOwnersList, ownerContextFromOrigin, upstreamFilingRoute, parseStagedUpstream, upstreamDecisionFact } = require('./lib/issues/upstream-ownership');
 const { effectiveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
@@ -113,13 +131,17 @@ const { canonicalRealpath, lstatType } = require('./lib/path-guard');
 const { REFERENCE_REPAIR_REASONS, stagedDiffPaths, referenceRepairFloorHits, referenceRepairFloorReason, referenceRepairHoldReason, referenceFindingsByFile } = require('./lib/console/reference-repair');
 
 const EXIT_CARRY_FAILED = 6;
+// #4621: the hold reasons a caller can report to `--upstream-route`; `external` and `owner-unresolved` are only ever the route's own verdict.
+const UPSTREAM_CALLER_HOLDS = Object.freeze(['filing-failed', 'scrub-hit']);
+const UPSTREAM_ROUTE_ID_RE = /^wrap-up-upstream-[^/\\]+$/;
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]  (exit 6: carried decision facts could not be written)\n'
   + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
   + '       console-resolve.js --run <dir> --check-repair <file> [--full]\n'
   + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)\n'
   + '       console-resolve.js --run <dir> --converge <items.json>  (takes no other flag; exit 2 malformed items file, 3 unanchored or decisions.md unwritable, 6 a carried fact could not be written)\n'
-  + '       console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>  (takes no other flag; exit 2 malformed or unreadable content file, 3 unanchored or a write failed, 5 memory write refused: target outside or unresolvable in the memory dir, or memory dir unreadable)';
+  + '       console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>  (takes no other flag; exit 2 malformed or unreadable content file, 3 unanchored or a write failed, 5 memory write refused: target outside or unresolvable in the memory dir, or memory dir unreadable)\n'
+  + '       console-resolve.js --run <dir> --upstream-route <wrap-up-upstream-id> [--hold filing-failed|scrub-hit --reason <text> | --filed <url>]  (takes no other flag; control mode only, else prints unchanged; exit 2 malformed, 3 unanchored or decisions.md unwritable, 5 id refused or --filed on a hold route, 6 decision fact could not be written)';
 
 class UsageError extends Error {}
 
@@ -137,8 +159,8 @@ function needsAHumanBlock(unresolved, runDir, consolePath) {
 }
 
 function parseArgs(argv) {
-  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false, converge: null, memoryWrite: null, memoryDir: null, contentFile: null };
-  const valued = { '--memory-write': 'memoryWrite', '--memory-dir': 'memoryDir', '--content-file': 'contentFile', '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair', '--ledger': 'ledger', '--converge': 'converge' };
+  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false, converge: null, memoryWrite: null, memoryDir: null, contentFile: null, upstreamRoute: null, hold: null, filed: null };
+  const valued = { '--upstream-route': 'upstreamRoute', '--hold': 'hold', '--filed': 'filed', '--memory-write': 'memoryWrite', '--memory-dir': 'memoryDir', '--content-file': 'contentFile', '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair', '--ledger': 'ledger', '--converge': 'converge' };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (Object.prototype.hasOwnProperty.call(valued, flag)) {
@@ -153,6 +175,18 @@ function parseArgs(argv) {
     else throw new UsageError(`unknown flag: ${flag}`);
   }
   if (!out.run) throw new UsageError('--run <dir> is required');
+  if (out.upstreamRoute === null && (out.hold !== null || out.filed !== null)) throw new UsageError('--hold and --filed require --upstream-route');
+  if (out.upstreamRoute !== null) {
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.checkRepair !== null || out.full || out.ledger !== null || out.ceiling || out.converge !== null || out.memoryWrite !== null || out.memoryDir !== null || out.contentFile !== null) throw new UsageError('--upstream-route takes no other flag than --run, --hold, --reason and --filed');
+    if (out.upstreamRoute === '') throw new UsageError('--upstream-route requires a non-empty id');
+    if (out.hold !== null && out.filed !== null) throw new UsageError('--hold and --filed are exclusive');
+    if (out.hold !== null) {
+      if (!UPSTREAM_CALLER_HOLDS.includes(out.hold)) throw new UsageError(`--hold must be one of ${UPSTREAM_CALLER_HOLDS.join(', ')} (got ${out.hold})`);
+      if (out.reason === null || out.reason.trim() === '') throw new UsageError('--hold requires --reason (non-empty)');
+    } else if (out.reason !== null) throw new UsageError('--reason requires --hold under --upstream-route');
+    if (out.filed !== null && !/^\S+$/.test(out.filed)) throw new UsageError('--filed requires a single-line URL with no whitespace');
+    return out;
+  }
   if (out.memoryWrite !== null || out.memoryDir !== null || out.contentFile !== null) {
     if (out.memoryWrite === null || out.memoryDir === null || out.contentFile === null) throw new UsageError('--memory-write, --memory-dir and --content-file go together');
     if (out.memoryWrite === '' || out.memoryDir === '' || out.contentFile === '') throw new UsageError('--memory-write, --memory-dir and --content-file require non-empty values');
@@ -754,6 +788,101 @@ function memoryWrite(o, runDir, { stdout, stderr, now, cwd }) {
   return 0;
 }
 
+// #4621: the `--upstream-route` shape — one wrap-up upstream-feedback item routed by repo ownership, for the
+// ceilings below `unattended` under control mode (and the agent's report of a filing that failed, hit the scrub,
+// or succeeded). Exit 0 routed, 3 a decisions.md entry could not be written, 5 the id refused or `--filed` on a
+// hold route, 6 the decision fact could not be written. See the header's seventh shape for the whole contract.
+function upstreamRoute(o, runDir, { stdout, stderr, now, execFile, cwd }) {
+  const id = o.upstreamRoute;
+  const stagedPath = path.join(runDir, 'staged', id);
+  if (!UPSTREAM_ROUTE_ID_RE.test(id) || /[\r\n]/.test(id) || lstatType(stagedPath).type !== 'file') {
+    stderr(`console-resolve.js: --upstream-route ${JSON.stringify(id)} is not a staged wrap-up-upstream-* file — nothing written\n`);
+    return 5;
+  }
+  let permissions = null;
+  try {
+    const { ceiling, controlMode } = readPolicy({ execFile, cwd: cwd(), runDir });
+    permissions = bookkeepingPermissions(ceiling, { controlMode });
+  } catch { permissions = null; }
+  if (permissions === null || permissions.ownedUpstreamFiling !== true) {
+    stdout(`console-resolve.js: upstream-route ${id} unchanged (control mode off)\n`);
+    return 0;
+  }
+  let text = '';
+  try { text = fs.readFileSync(stagedPath, 'utf8'); } catch { text = ''; }
+  const staged = parseStagedUpstream(text);
+  const target = staged.targetRepo === null ? 'none' : staged.targetRepo;
+  // One append for the whole call: the ownership degrade lines, then the decision line (the resolve shape's order).
+  const appendLines = (lines) => {
+    if (lines.length === 0) return null;
+    try {
+      appendEntry({ runDir, section: '/wrap-up', entry: lines.join('\n') });
+      return null;
+    } catch (err) { return err && err.message ? err.message : String(err); }
+  };
+  const auto = (line) => formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text: line, reversibility: 'n/a' });
+  const skipLines = (notes) => notes.map((note) => formatEntry({ status: 'SKIP', now: now(), step: 'Upstream ownership', text: `condition: ${note}`, reversibility: 'n/a' }));
+  const hold = (reason, detail, notes) => {
+    const fact = upstreamDecisionFact({ id, targetRepo: staged.targetRepo, title: staged.title, body: staged.body, reason, detail, runDir, staged: true });
+    // The fact first, so nothing below ever claims the item carried without it.
+    try { writeDecisionFacts(runDir, [fact]); } catch (err) { return carryFailure(stderr, [id], err); }
+    const consolePath = path.join(runDir, 'console.json');
+    let heldFiled = false;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(consolePath, 'utf8'));
+      if (parsed && typeof parsed === 'object' && parsed.mode === 'auto-resolve' && Array.isArray(parsed.items)) {
+        const matches = parsed.items.filter((i) => i && i.id === id);
+        heldFiled = matches.length === 1 && matches[0].resolution === 'filed';
+      }
+    } catch { heldFiled = false; }
+    if (heldFiled) {
+      let r;
+      try {
+        r = rewriteItemResolution({ consolePath, id, resolution: 'carried', reason: `carried to the acceptance packet as ${fact.id} — held: ${reason}`, at: new Date(now()).toISOString() });
+      } catch (err) {
+        stderr(`console-resolve.js: could not write ${consolePath}: ${err && err.message ? err.message : err} — the decision fact ${fact.id} is in decisions.json; the console item is unchanged\n`);
+        return 3;
+      }
+      if (r.status === 'refused') {
+        stderr(`console-resolve.js: ${r.why} — the decision fact ${fact.id} is in decisions.json; the console item is unchanged\n`);
+        return 5;
+      }
+    }
+    const why = detail ? `${reason}: ${detail.replace(/\s+/g, ' ').trim()}` : reason;
+    const failure = appendLines([...skipLines(notes), auto(`Upstream filing: ${id} held for the acceptance packet as ${fact.id} — ${why}`)]);
+    if (failure !== null) {
+      stderr(`console-resolve.js: ${id} held, decision fact ${fact.id} written${heldFiled ? ' and the console item carried' : ''}, but the decisions.md entry could not be written (${failure})\n`);
+      return 3;
+    }
+    stdout(`console-resolve.js: upstream-route ${id} hold target ${target} reason ${reason} fact ${fact.id}\n`);
+    return 0;
+  };
+
+  // A failure the agent met while filing: the route is not asked, so no ownership is read.
+  if (o.hold !== null) return hold(o.hold, o.reason, []);
+
+  const { ownerContext, ownedOwners, notes } = readUpstreamOwnership({ execFile, cwd: cwd() });
+  const verdict = upstreamFilingRoute({ permissions, targetRepo: staged.targetRepo, ownerContext, ownedOwners });
+  if (verdict.route === 'file') {
+    const lines = skipLines(notes);
+    if (o.filed !== null) lines.push(auto(`Upstream filing: ${id} filed into ${verdict.targetRepo} as ${o.filed} (control mode: owned target, no prompt)`));
+    const failure = appendLines(lines);
+    if (failure !== null) {
+      stderr(`console-resolve.js: ${id} routes to file, but the decisions.md entry could not be written (${failure})\n`);
+      return 3;
+    }
+    stdout(`console-resolve.js: upstream-route ${id} file target ${target} reason none\n`);
+    return 0;
+  }
+  // Only `file` files: any other verdict holds (reason `external` when it names none), so an unexpected one fails closed.
+  const reason = verdict.reason || 'external';
+  if (o.filed !== null) {
+    stderr(`console-resolve.js: ${id} routes to hold (${reason}), not file — --filed refused, nothing logged\n`);
+    return 5;
+  }
+  return hold(reason, undefined, notes);
+}
+
 async function run(argv, deps = {}) {
   const cwd = deps.cwd || (() => process.cwd());
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -777,6 +906,7 @@ async function run(argv, deps = {}) {
     return 3;
   }
   const runDir = target.dir;
+  if (o.upstreamRoute !== null) return upstreamRoute(o, runDir, { stdout, stderr, now, execFile, cwd });
   if (o.memoryWrite !== null || o.converge !== null) {
     const refusal = controlModeGate({ shape: o.memoryWrite !== null ? '--memory-write' : '--converge', runDir, stderr, execFile, cwd });
     if (refusal !== null) return refusal;
