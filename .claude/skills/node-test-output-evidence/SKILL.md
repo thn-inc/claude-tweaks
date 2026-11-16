@@ -96,7 +96,7 @@ The baseline base run adds one whole-suite run per failing check, so `.github/wo
 | In an isolated single-file run (the per-file base run or the isolated HEAD rerun): a non-zero cancelled count or a runner-level `ℹ Error:`. In the base run, also a failure whose diagnostic says it timed out or was cancelled (`INCONCLUSIVE_RE`) | Did not finish, or failed outside any test. That run is no evidence: it cannot make the file baseline or flaky. The file is `attributable` unless only the base run failed this way and the isolated HEAD run is clean (flaky); a base run never rescues an isolated HEAD run that did not finish |
 | Nesting that does not close | No evidence |
 | A parent `✖` with no listing left for it (spec), or `failureType: 'subtestsFailed'` (TAP) | Inherited from a child. Not the parent's own failure |
-| A full-run failure that is absent from an isolated run | Not a pass. Only the test's own `✔` in that run counts |
+| A full-run failure that is absent from an isolated run | Not a pass. Only the test's own `✔` in that run counts — except a wholly file-level full-run failure (a killed or timed-out child; spec shows no signal), which names no test: a clean isolated run is then the evidence (#4424) |
 
 ## Project Conventions
 
