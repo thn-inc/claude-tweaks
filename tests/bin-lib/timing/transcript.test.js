@@ -678,6 +678,14 @@ test('#5584: readPromptRows reads a 600 KB line', () => {
   assert.equal(rows[0].message.content, big);
 });
 
+test('#5584: readPromptRows returns a matching last line that has no trailing newline', () => {
+  const f = promptTranscript([JSON.stringify(promptRow('test-prompt-0002'))]);
+  fs.appendFileSync(f, JSON.stringify(promptRow('test-prompt-0001')));
+  const rows = readPromptRows(f, 'test-prompt-0001', { chunkBytes: 64 });
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0], promptRow('test-prompt-0001'));
+});
+
 test('#5584: readPromptRows throws ENOENT for a missing file', () => {
   assert.throws(() => readPromptRows(path.join(os.tmpdir(), 'ct-no-such-transcript.jsonl'), 'test-prompt-0001'), (err) => err.code === 'ENOENT');
 });
