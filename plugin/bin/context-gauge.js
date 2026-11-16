@@ -239,7 +239,7 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps =
       const worktree = state && typeof state.worktree === 'string' ? state.worktree : null;
       targets = deps.resolveTargetRecords({ runDir, worktree, gitRoot: deps.gitRootOf(runDir) });
       if (!targets || targets.length === 0) {
-        return done(`handoff.json not written: no target records (no spec-{N}/ dir, no work/{n}-spec.md in ${runDir}${worktree ? ' or its worktree copy' : ''})`);
+        return done(`handoff.json not written: no target records (no spec-{N}/ dir and no spec header for ${runDir}${worktree ? ' or its worktree copy' : ''})`);
       }
       // --next-steps names one record's remaining steps, so a resume over several records would
       // skip the later ones' earlier steps. --record-steps names each record's own.

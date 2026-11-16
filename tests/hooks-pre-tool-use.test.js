@@ -1240,6 +1240,155 @@ test('hasMaterializeCommit: #1688 AC2 regression guard — the local default-bra
     'the local default-branch probe must not disarm the gate for a worktree\'s own genuinely-unmerged materialize commit');
 });
 
+// --- failure postures, captured before #3974 changed the pathspec list (AC9) ---
+
+test('AC9.3 hasMaterializeCommit returns false when git cannot run', () => {
+  const runDir = runDirForId(MATERIALIZE_RUN_ID);
+  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nogit-')), 'does-not-exist');
+  assert.strictEqual(pre.hasMaterializeCommit(missing, runDir), false, 'a cwd git cannot spawn in reads as not materialized');
+  const notARepo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-norepo-')));
+  assert.strictEqual(pre.hasMaterializeCommit(notARepo, runDir), false, 'git exiting 128 outside a repo reads as not materialized');
+});
+
+test('AC9.3 getMaterializedRecordNumbers returns [] on an unreadable run dir', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const runDir = runDirForId(MATERIALIZE_RUN_ID);
+  assert.deepStrictEqual(pre.getMaterializedRecordNumbers(path.join(root, 'does-not-exist'), runDir), []);
+  // The run dir path is a regular file: every readdir under it fails with ENOTDIR.
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(pipelines, { recursive: true });
+  fs.writeFileSync(path.join(pipelines, MATERIALIZE_RUN_ID), 'not a dir\n');
+  assert.deepStrictEqual(pre.getMaterializedRecordNumbers(root, runDir), []);
+});
+
+test('getMaterializedRecordNumbers walks only real spec-* directories: a spec-* symlink is skipped', { skip: process.platform === 'win32' && 'directory symlinks need privileges on Windows' }, () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const base = path.join(root, '.claude-tweaks', 'pipelines', MATERIALIZE_RUN_ID);
+  fs.mkdirSync(path.join(base, 'spec-3', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(base, 'spec-3', 'work', '3-spec.md'), 'spec\n');
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-symtarget-'));
+  fs.mkdirSync(path.join(elsewhere, 'work'));
+  fs.writeFileSync(path.join(elsewhere, 'work', '9-spec.md'), 'spec\n');
+  fs.symlinkSync(elsewhere, path.join(base, 'spec-9'), 'dir');
+  assert.deepStrictEqual(pre.getMaterializedRecordNumbers(root, runDirForId(MATERIALIZE_RUN_ID)), [3]);
+});
+
+// --- archived spec headers count as materialized (#3974) ---
+//
+// After wrap-up a run's header moves from `.claude-tweaks/pipelines/{id}/...` to
+// `.claude-tweaks/pipelines/archive/{id}/...` (same layout beneath). The pathspec
+// list grows to cover both; the `{integration}..HEAD` bound (#1674) does not
+// change, so an archived header inherited from the integration branch still
+// cannot arm the gate for another run (AC4(b)).
+
+const OTHER_RUN_ID = '2026-08-29T130000-spec-3974';
+const liveHeaderRel = (id, tail) => `.claude-tweaks/pipelines/${id}/${tail}`;
+const archivedHeaderRel = (id, tail) => `.claude-tweaks/pipelines/archive/${id}/${tail}`;
+
+// Writes and commits one header file at a repo-relative POSIX path.
+function commitHeaderAt(repo, rel, message = 'materialize') {
+  const full = path.join(repo, ...rel.split('/'));
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, 'spec\n');
+  execFileSync('git', ['-C', repo, 'add', '-f', rel]);
+  execFileSync('git', ['-C', repo, 'commit', '-m', message, '-q']);
+}
+
+// `git mv` of a tracked header, then a commit: wrap-up's live -> archived move.
+function commitHeaderMove(repo, fromRel, toRel) {
+  fs.mkdirSync(path.dirname(path.join(repo, ...toRel.split('/'))), { recursive: true });
+  execFileSync('git', ['-C', repo, 'mv', fromRel, toRel]);
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'archive run', '-q']);
+}
+
+test('AC1.1 hasMaterializeCommit: a commit touching only the archived flat header counts', () => {
+  const main = repoOnLocalMain();
+  const wt = linkedWorktreeOf(main);
+  commitHeaderAt(wt, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirForId(MATERIALIZE_RUN_ID)), true,
+    'a header committed only at the archived flat path must read as materialized');
+});
+
+test('AC2.1 hasMaterializeCommit: a commit touching only archive/{id}/spec-{N}/work/{N}-spec.md counts, for the parent and the per-spec run dir', () => {
+  const main = repoOnLocalMain();
+  const wt = linkedWorktreeOf(main);
+  commitHeaderAt(wt, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-4/work/4-spec.md'));
+  const parent = runDirForId(MATERIALIZE_RUN_ID);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, parent), true, 'the parent run dir reads the archived spec-* header');
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parent, 'spec-4')), true, 'the per-spec run dir reads its own archived header');
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parent, 'spec-5')), false, 'a sibling spec\'s archived header does not arm spec-5');
+});
+
+test('AC3.1 hasMaterializeCommit: branch whose last commit git-mv\'d the header live -> archived', () => {
+  // The live materialize commit is inherited from main; the worktree's one own
+  // commit is the move, so it is the only commit in `{integration}..HEAD`.
+  // This fixture alone does not prove the archived pathspecs: a `git mv` commit
+  // deletes the live path, so it already matches through the live pathspec's
+  // delete side. The archived-only variants (AC1.1, AC2.1) carry that proof.
+  const main = repoOnLocalMain();
+  commitHeaderAt(main, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  const wt = linkedWorktreeOf(main);
+  commitHeaderMove(wt, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'), archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirForId(MATERIALIZE_RUN_ID)), true,
+    'a branch whose last commit archives the header must still read as materialized');
+});
+
+test('AC4.1 (a) never-materialized run returns false', () => {
+  const main = repoOnLocalMain();
+  const wt = linkedWorktreeOf(main);
+  commitHeaderAt(wt, 'src/unrelated.txt', 'unrelated work'); // a non-empty range that touches neither header path
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirForId(MATERIALIZE_RUN_ID)), false,
+    'no commit at the live or the archived path: not materialized');
+});
+
+test('AC4.2 (b) run A\'s archived header reachable from the integration branch does not arm run B', () => {
+  const main = repoOnLocalMain();
+  const wtA = linkedWorktreeOf(main);
+  commitHeaderAt(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  commitHeaderMove(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'), archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  execFileSync('git', ['-C', main, 'merge', '--no-ff', currentBranch(wtA), '-m', 'Merge run A', '-q']);
+  const wtB = linkedWorktreeOf(main); // cut from main after run A merged: both of A's commits are inherited
+  commitHeaderAt(wtB, 'src/b-work.txt', 'run B work'); // run B has its own, unrelated commits in range
+  assert.strictEqual(pre.hasMaterializeCommit(wtB, runDirForId(MATERIALIZE_RUN_ID)), false,
+    'run A\'s inherited live and archived header commits are outside run B\'s {integration}..HEAD range');
+  assert.strictEqual(pre.hasMaterializeCommit(wtB, runDirForId(OTHER_RUN_ID)), false,
+    'run B never materialized: run A\'s archived header must not arm it');
+});
+
+test('AC4.3 (c) run A\'s own branch with materialize + move commits returns true', () => {
+  const main = repoOnLocalMain();
+  const wtA = linkedWorktreeOf(main);
+  commitHeaderAt(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  commitHeaderMove(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'), archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  assert.strictEqual(pre.hasMaterializeCommit(wtA, runDirForId(MATERIALIZE_RUN_ID)), true,
+    'run A\'s own unmerged materialize and move commits are inside its range');
+});
+
+// getMaterializedRecordNumbers reads the worktree filesystem, not git.
+function writeHeaderFile(root, rel) {
+  const full = path.join(root, ...rel.split('/'));
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, 'spec\n');
+}
+
+test('AC1.1 getMaterializedRecordNumbers reads archived-only headers (flat and spec-{N})', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md'));
+  writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-7/work/7-spec.md'));
+  const nums = pre.getMaterializedRecordNumbers(root, runDirForId(MATERIALIZE_RUN_ID));
+  assert.deepStrictEqual([...nums].sort((a, b) => a - b), [5, 7]);
+});
+
+test('AC1.1 getMaterializedRecordNumbers merges a run\'s live and archived headers by record, counting a duplicate once', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  writeHeaderFile(root, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md'));
+  writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md')); // stale or mid-move copy
+  writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-6/work/6-spec.md'));
+  writeHeaderFile(root, archivedHeaderRel(OTHER_RUN_ID, 'work/9-spec.md')); // another run's archive is not read
+  const nums = pre.getMaterializedRecordNumbers(root, runDirForId(MATERIALIZE_RUN_ID));
+  assert.deepStrictEqual([...nums].sort((a, b) => a - b), [5, 6]);
+});
+
 test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary precondition check (#2472)', () => {
   const repo = gitRepoWithCommit();
   const runDir = runDirForId('2026-09-17T000000-spec-2472');
