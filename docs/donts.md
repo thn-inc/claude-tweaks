@@ -20,6 +20,7 @@ Rules only — each is a rule plus one clause of why. Where a rule carries an `[
 - Don't write to `~/.claude-tweaks/` from skill content — that path is runtime state owned by the harness layer
 - Don't dispatch parallel Task agents without inlining a literal output template (Template A from `plugin/skills/_shared/subagent-dispatch-core.md`; B/C from `plugin/skills/_shared/subagent-output-contract.md`) — references won't reach the agent
 - Don't dispatch agents running `git` or `node --test` without anchoring the working directory in the prompt — CWD doesn't propagate reliably. Require `cd "$WORKTREE"` plus a `pwd` + `git rev-parse --show-toplevel` check before commit
+- Don't run two or more test files, a loop over test files, or a script that spawns `node --test` outside `tools/run-tests.js` — a direct run skips the runner's git-maintenance-off env, per-run TMPDIR, suite slot and bounded concurrency; `node tools/run-tests.js <flags> <files>` takes the same arguments, and `tools/direct-test-run-guard.js` denies the direct form (#5547)
 - Don't invent new mid-flow stops in `auto` mode — stage decision-worthy things to the auto-decision log for the Wrap-Up Review Console; stops are reserved for HARD-GATEs and `_shared/auto-mode-contract.md`'s "not silenced" list
 - Don't auto-resolve a decision without writing to the auto-decision log — silent automation without an audit trail is forbidden
 - Don't spread parsed external JSON after derived/trusted fields — `{ ...parsed, derived }`, never the reverse; parsed data silently overrides whatever follows `[IL-01]`

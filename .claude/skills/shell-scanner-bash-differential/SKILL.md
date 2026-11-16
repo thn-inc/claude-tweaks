@@ -94,7 +94,7 @@ Bash decides where a word lands; the program decides what the word means. macOS'
 This session's Bash guard refuses heredocs, `cd` chains and any argument containing a `git` token. Write the drivers as scratchpad node scripts and run them with `node <script>`:
 - bash verdict: `runBash(bash, cmd, { cwd, stubDir, root, guardRepo })` from the Bounded bash verdict block below, then read the stub's log and the files it wrote. Repeat with `/opt/homebrew/bin/bash`. After the last case, call `sweepSurvivors()` and report any pids it returns.
 - base comparison: `git worktree add --detach <scratch> <base>`, then `require(<scratch>/plugin/bin/lib/hooks/git-command.js)` beside the branch copy and diff `fileWriteTargets(cmd, cwd)`.
-- mutant: edit a copy in a scratch worktree and run `node --test tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/teardown-gate.test.js` there.
+- mutant: edit a copy in a scratch worktree and run `node tools/run-tests.js tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/teardown-gate.test.js` there. A mutation loop or script calls that same command once per mutant, from inside the mutant's own checkout (add `--test-reporter=tap` to parse the result); it never starts `node --test` itself. Each call takes the machine-wide subset slot, so it can queue behind other sessions' runs; a handful of mutants are quicker checked by hand, one single-file `node --test <file>` per mutant.
 
 ### Bounded bash verdict
 

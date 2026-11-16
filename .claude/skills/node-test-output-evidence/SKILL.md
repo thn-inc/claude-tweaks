@@ -44,7 +44,7 @@ A log can name any path: a quoted child's temp dir, another checkout, `tests/../
 
 ### A `node --test` file argument is a glob on Node 21 and later
 
-From Node 21, `node --test` reads each file argument as a glob, so the file it runs is whatever the pattern matches, not the file the argument names. In a directory holding `a.test.js` and a literal `[ab].test.js`, `node --test '[ab].test.js'` runs `a.test.js`. With a literal `[c].test.js` and no `c.test.js`, it runs nothing and exits 1 with `Could not find '[c].test.js'`. Node 20, the version CI runs, runs the literal file in both cases (probed on v20.12.0, v21.7.1 and v26.13.1). The log is then evidence about another file, or about none. The argument list reaches the runner with no shell, so quoting does not help: the runner expands the pattern itself.
+From Node 21, `node --test` reads each file argument as a glob, so the file it runs is whatever the pattern matches, not the file the argument names. In a directory holding `a.test.js` and a literal `[ab].test.js`, passing `'[ab].test.js'` to `node --test` runs `a.test.js`. With a literal `[c].test.js` and no `c.test.js`, it runs nothing and exits 1 with `Could not find '[c].test.js'`. Node 20, the version CI runs, runs the literal file in both cases (probed on v20.12.0, v21.7.1 and v26.13.1). The log is then evidence about another file, or about none. The argument list reaches the runner with no shell, so quoting does not help: the runner expands the pattern itself.
 
 A caller that runs `node --test` on a path it does not control refuses, before it spawns, every character that makes a path match anything but itself: `[ ] { } ( ) ! + @`, plus `*`, `?` and `\`. `plugin/bin/lib/driver/review.js`'s `PATH_RULES` does this with its `glob-char` rule, after `reserved-char` (`*` `?`) and `backslash`. Its comment records the probe over every printable ASCII character (#5222).
 
@@ -113,7 +113,7 @@ The baseline base run adds one whole-suite run per failing check, so `.github/wo
 ## Common Operations
 
 ```bash
-node --test tests/bin-lib/verify/extract.test.js tests/bin-lib/verify/baseline.test.js
+node tools/run-tests.js tests/bin-lib/verify/extract.test.js tests/bin-lib/verify/baseline.test.js
 node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture the TAP shape of a real run
 ```
 

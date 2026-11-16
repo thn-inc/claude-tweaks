@@ -777,3 +777,97 @@ test('AC11.1: .claude/settings.json registers the guard for Bash and the file ex
   assert.equal(fs.existsSync(GUARD), true);
   for (const key of ['permissions', 'worktree', 'enabledPlugins', 'extraKnownMarketplaces']) assert.ok(settings[key], key);
 });
+
+// The repo's own guidance must not teach the form the guard denies: every documented `node --test` command
+// is one the classifier allows, so a doc edit that brings back a multi-file or glob run goes red here.
+const NODE_COMMAND_START = /^(?:cd \S+ && )?(?:[A-Za-z_][A-Za-z0-9_]*=\S+ )*(?:node|\S*\/node|npx\s+(?:\S+\s+)*?node@\S+)\s/;
+const TEST_WORD = /(?:^|\s)--test(?:\s|$)/;
+
+function normalizePlaceholders(command) {
+  return command.replace(/<([A-Za-z0-9_-]+)>/g, 'placeholder').replace(/(?<!\$)\{([A-Za-z0-9_-]+)\}/g, 'placeholder');
+}
+
+function documentedTestCommands(text) {
+  const found = [];
+  let fenced = false;
+  for (const line of text.split('\n')) {
+    if (/^\s*```/.test(line)) { fenced = !fenced; continue; }
+    if (fenced) {
+      const trimmed = line.trim();
+      if (NODE_COMMAND_START.test(`${trimmed} `) && TEST_WORD.test(trimmed)) found.push(normalizePlaceholders(trimmed));
+      continue;
+    }
+    for (const match of line.matchAll(/`([^`\n]+)`/g)) {
+      const span = match[1].trim();
+      if (!NODE_COMMAND_START.test(`${span} `) || !TEST_WORD.test(span)) continue;
+      // Nothing after --test: a mention of the tool, not a command.
+      if (/(?:^|\s)--test\s*$/.test(span)) continue;
+      found.push(normalizePlaceholders(span));
+    }
+  }
+  return found;
+}
+
+const DOC_OPTS = (() => {
+  const deps = realDeps();
+  return { cwd: ROOT, hasRunner: deps.hasRunner, isDirectory: deps.isDirectory, pathImpl: path };
+})();
+
+function assertCommandAllowed(command, source) {
+  const verdict = classifyCommandOrThrow(command, DOC_OPTS);
+  assert.equal(verdict.decision, 'allow', `${source}: ${command}\n${verdict.reason || ''}`);
+}
+
+function skillFiles(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...skillFiles(p));
+    else if (entry.name === 'SKILL.md') out.push(p);
+  }
+  return out;
+}
+
+test('AC12.1: every documented node --test command is one the guard allows', () => {
+  const journeysDir = path.join(ROOT, 'docs', 'journeys');
+  const files = [
+    ...skillFiles(path.join(ROOT, '.claude', 'skills')),
+    path.join(ROOT, 'docs', 'plugin-structure.md'),
+    ...fs.readdirSync(journeysDir).filter((f) => f.endsWith('.md')).map((f) => path.join(journeysDir, f)),
+    path.join(ROOT, 'docs', 'donts.md'),
+    path.join(ROOT, 'CLAUDE.md'),
+  ];
+  const commands = [];
+  for (const file of files) {
+    for (const command of documentedTestCommands(readText(file))) commands.push({ source: path.relative(ROOT, file), command });
+  }
+  const scope = JSON.parse(readText(path.join(ROOT, '.claude-tweaks', 'verify-scope.json')));
+  const scopeCommands = [...Object.values(scope.checks.tests), ...Object.values(scope.retry), scope.impact.command];
+  for (const command of scopeCommands) commands.push({ source: '.claude-tweaks/verify-scope.json', command: normalizePlaceholders(command) });
+  assert.ok(commands.length >= 10, `only ${commands.length} documented commands found`);
+  const denied = [];
+  for (const { source, command } of commands) {
+    try { assertCommandAllowed(command, source); } catch (e) { denied.push(`${source}: ${command}`); }
+  }
+  assert.deepEqual(denied, [], 'documented commands the guard denies');
+});
+
+test('the extractor skips a bare mention and keeps a real command', () => {
+  assert.deepEqual(documentedTestCommands('a bare `node --test` run'), []);
+  assert.deepEqual(documentedTestCommands('run `node --test <file>`'), ['node --test placeholder']);
+  const bare = documentedTestCommands('```\nnode --test\n```');
+  assert.deepEqual(bare, ['node --test']);
+  assert.throws(() => assertCommandAllowed(bare[0], 'fixture'));
+});
+
+const PRE_CHANGE_MUTANT_LINE = '- mutant: edit a copy in a scratch worktree and run `node --test tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/teardown-gate.test.js` there.';
+
+test('AC12.2: the conformance check fails on the pre-change mutant instruction', () => {
+  const found = documentedTestCommands(PRE_CHANGE_MUTANT_LINE);
+  assert.equal(found.length, 1);
+  assert.throws(() => assertCommandAllowed(found[0], 'fixture'));
+});
+
+test('AC13.1: CLAUDE.md is 150 lines or fewer', () => {
+  assert.ok(readText(path.join(ROOT, 'CLAUDE.md')).split('\n').length - 1 <= 150);
+});

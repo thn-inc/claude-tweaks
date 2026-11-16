@@ -68,7 +68,7 @@ Two sites emit it. `bash-prefilter.js`'s `earlyGate` covers the skip path (a Bas
 ```bash
 node --test tests/bin-lib/hooks/guard-rewrite.test.js
 node --test tests/guard-refusals/probe-doc.test.js
-node --test tests/hooks-bash-prefilter.test.js tests/hooks-pre-tool-use.test.js
+node tools/run-tests.js tests/hooks-bash-prefilter.test.js tests/hooks-pre-tool-use.test.js
 ```
 
 ## Anti-Patterns
