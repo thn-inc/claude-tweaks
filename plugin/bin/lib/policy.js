@@ -199,7 +199,7 @@ function readChangelogMaxReleases(readPolicy) {
   return { count: resolveValue(key, parseFlatLines(raw)[key]), error: null };
 }
 
-const SERVICE_NAME_RE =/^[a-z][a-z0-9-]*$/;
+const SERVICE_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
 // `port-services` (#1792): the list-key convention above, plus per-entry
 // name validation and a block-capacity check session-start.js needs to
