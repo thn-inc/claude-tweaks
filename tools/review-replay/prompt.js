@@ -125,6 +125,7 @@ function chunkPrompt(template, findings, ctx) {
 }
 
 function buildPrompt(template, findings, ctx) {
+  if (!findings || findings.length === 0) throw new Error('buildPrompt: no findings');
   if (findings.length >= 2) return chunkPrompt(template, findings, ctx);
   const rest = fillRest(template.rest, ctx.discipline);
   return [...fillFinding(template.block, findings[0], ctx), '', ...rest].join('\n');

@@ -62,6 +62,34 @@ test('a template without its placeholders throws', () => {
   assert.throws(() => buildPrompt(noShell, [F1], CTX), /SHELL DISCIPLINE/);
 });
 
+test('buildPrompt with no findings throws a named error', () => {
+  assert.throws(() => buildPrompt(loadTemplate(TIEBREAK), [], CTX), /^Error: buildPrompt: no findings$/);
+});
+
+test('loadTemplate names a missing blank-line boundary and an unclosed fence', () => {
+  const noBoundary = TIEBREAK.replace('\n\nReply with exactly', '\nReply with exactly');
+  assert.notEqual(noBoundary, TIEBREAK);
+  assert.throws(() => loadTemplate(noBoundary), /step3-tiebreak\.md: no blank line before "Reply with exactly"/);
+  const start = TIEBREAK.indexOf('## Dispatch');
+  const fence = TIEBREAK.indexOf('```', start);
+  const closing = TIEBREAK.indexOf('```', fence + 3);
+  const unclosed = TIEBREAK.slice(0, closing) + TIEBREAK.slice(closing + 3);
+  assert.throws(() => loadTemplate(unclosed), /step3-tiebreak\.md: the template fence under "## Dispatch" is not closed/);
+});
+
+test('each missing Finding, Severity or Diff scope placeholder throws naming it', () => {
+  for (const name of ['Finding', 'Severity', 'Diff scope']) {
+    const block = loadTemplate(TIEBREAK).block.filter((l) => !l.startsWith(name + ': {'));
+    assert.throws(() => fillFinding(block, F1, CTX), new RegExp('no "' + name + ': \\{" placeholder'));
+  }
+});
+
+test('a chunk prompt with no Reply-with-exactly line throws naming it', () => {
+  const t = loadTemplate(TIEBREAK);
+  const noReply = { block: t.block, rest: t.rest.map((l) => (l.startsWith('Reply with exactly') ? 'Reply with exactly something else' : l)) };
+  assert.throws(() => buildPrompt(noReply, [F1, F2], CTX), /no "Reply with exactly these lines, then your status line:" line/);
+});
+
 test('CRLF template builds the same prompt as LF', () => {
   const crlf = TIEBREAK.replace(/\n/g, '\r\n');
   assert.equal(buildPrompt(loadTemplate(crlf), [F1], CTX), buildPrompt(loadTemplate(TIEBREAK), [F1], CTX));
