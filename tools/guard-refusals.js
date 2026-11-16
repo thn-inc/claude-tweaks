@@ -160,7 +160,7 @@ function summarize({ window, scan, index }) {
   const byReadClass = { 'other-checkout': 0, shape: 0 };
   const byRewrite = {};
   const rowByUse = new Map();
-  const rows = (scan.rows).map((r) => {
+  const rows = scan.rows.map((r) => {
     const { effect, why } = rowEffect(r);
     const readClass = r.guard === 'harness-command' && effect === 'read'
       ? (OTHER_CHECKOUT_REASONS.has(r.reason) ? 'other-checkout' : 'shape')
