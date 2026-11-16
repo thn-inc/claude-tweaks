@@ -42,7 +42,7 @@ Governing project skills, quoted verbatim where they apply:
 ## Review Focus
 
 1. A reply with CRLF line endings (a Windows-written transcript) — must parse exactly like its LF twin. Test in Task 2.
-2. A severity row whose `Path:Line` cell is empty — a finding at no location cannot be paired or logged; the whole reply is `parse: 'unparseable'` (fail closed, decision recorded in the PR body). Test in Task 2.
+2. A severity row whose `Path:Line` cell is empty — not a finding: dropped and counted in `skipped`; the reply stays `parse: 'ok'` when any other row or `No findings.` parses (spec `## Plan Review Clarifications`). Test in Task 2; the verb's `skipped` list in Task 3.
 3. A `--hold` entry naming a lens that was not settled, or matching zero or several unconfirmed findings of its lens — exit 2, nothing written. Test in Task 3.
 4. A malformed input after a valid-looking roster (e.g. duplicate lens in `lenses`) when `--run` is given — no `decisions.md` line and no findings file. Covered by AC5 tests in Task 3.
 5. A multi-hundred-kilobyte reply (a runaway reviewer) — the parser stays linear. `perf/` file in Task 2.
@@ -51,7 +51,7 @@ Governing project skills, quoted verbatim where they apply:
 
 ### Task 1: Move the status-line patterns into `plugin/bin/lib/status-line.js`
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Create: `plugin/bin/lib/status-line.js`
@@ -110,17 +110,17 @@ Expected: PASS, no expectation edited (AC9.1).
 
 **Interfaces:**
 - Consumes: `CANONICAL_RE`, `LENIENT_RE`, `STATUS_WORDS` from Task 1; `parsePathLine` from `lib/coordination.js`.
-- Produces: `parseLensReply(text: string) -> { parse: 'ok'|'unparseable', findings: Array<{severity, path, line?, text, evidence}>, noFindings: boolean, overflow: number, status: 'ok'|'misplaced'|'missing', statusWord: string|null }`; `module.exports = { parseLensReply, SEVERITIES, BRIEF_HEADER }` with `SEVERITIES = Object.freeze(['critical','high','medium','low','info'])` and `BRIEF_HEADER = Object.freeze(['Severity','Path:Line','Finding','Evidence'])`. Never throws: a non-string input is treated as `''`.
+- Produces: `parseLensReply(text: string) -> { parse: 'ok'|'unparseable', findings: Array<{severity, path, line?, text, evidence}>, noFindings: boolean, overflow: number, skipped: number, status: 'ok'|'misplaced'|'missing', statusWord: string|null }`; `module.exports = { parseLensReply, SEVERITIES, BRIEF_HEADER }` with `SEVERITIES = Object.freeze(['critical','high','medium','low','info'])` and `BRIEF_HEADER = Object.freeze(['Severity','Path:Line','Finding','Evidence'])`. Never throws: a non-string input is treated as `''`.
 
 Parsing rules (the decisions the spec pins; the implementer writes the bodies):
 - Split on `\n`, strip one trailing `\r` per line. A table row is a line whose trimmed form starts with `|`; one leading and one trailing boundary `|` are dropped.
 - Cell boundary: a `|` that is not escaped (`\|`) and not inside a backtick span. An unclosed backtick span runs to the end of the row. `\|` becomes `|` in the cell text. Cells are trimmed. One forward scan per row (no regex over the row).
 - Header row: the first row whose first cell, lowercased with `**`/backticks removed, is `severity`; its cell names map columns by name (case-insensitive match against `BRIEF_HEADER`). A column whose name is not in `BRIEF_HEADER` is dropped, never folded into Evidence. With no header row, cells are taken in `BRIEF_HEADER` order. A row with more cells than its header (or more than 4 with no header) has the surplus joined onto the Evidence cell with ` | `. A row with fewer cells is still a finding when its first cell is a severity word and its location cell is non-empty; missing cells are `''`.
 - Separator row: every cell matches `^:?-+:?$` — skipped.
-- Finding row: first mapped cell is a severity word (case, `**`, backticks ignored). `Path:Line` cell (backticks/`**` stripped) goes through `parsePathLine`; a non-numeric or missing line leaves `line` undefined (key absent). A severity row whose location cell is empty after stripping makes the whole reply `parse: 'unparseable'` (Review Focus 2).
+- Finding row: first mapped cell is a severity word (case, `**`, backticks ignored). `Path:Line` cell (backticks/`**` stripped) goes through `parsePathLine`; a non-numeric or missing line leaves `line` undefined (key absent). A severity row whose location cell is empty after stripping is not a finding: it adds 1 to `skipped` (default `0`) and is otherwise ignored (Review Focus 2; spec `## Plan Review Clarifications`).
 - Overflow: a row whose first non-empty cell, or a non-table line, trimmed, matches `^\+\s*(\d+)\s+more$` (case-insensitive) sets `overflow` to that integer; it is not a finding. Default `overflow: 0`.
-- No findings: a non-table line matching `^[\s*_`>#"-]*No findings[ \t*_`.!"]*$` (case-insensitive) sets `noFindings: true` — unless the reply also holds finding rows, in which case `findings` are kept and `noFindings: false`.
-- `parse` is `ok` when at least one finding row or a no-findings line is present (and Review Focus 2 did not fire), else `unparseable` (an empty string included).
+- No findings: a non-table line that, trimmed and with one layer of surrounding `"`, `` ` ``, `**` or `_` removed, equals `No findings.` (case-sensitive; the period required — the spec's literal) sets `noFindings: true` — unless the reply also holds finding rows, in which case `findings` are kept and `noFindings: false`. Any looser variant is accepted only if Task 4's real-reply run shows it, with its own fixture test.
+- `parse` is `ok` when at least one finding row or a no-findings line is present, else `unparseable` (an empty string included).
 - Status: over non-empty trimmed lines, `ok` when the last one matches `CANONICAL_RE`; else, over the non-empty lines that do not start with `|`, `misplaced` when any of the first three or last three matches `CANONICAL_RE` or `LENIENT_RE` (the window `detectStatus` uses); else `missing`. `statusWord` is the captured word, or `null` for `missing`.
 
 - [ ] **Step 1: Write the failing tests** — one test per AC1 fixture, each asserting the whole returned object with `deepStrictEqual`:
@@ -134,13 +134,14 @@ Parsing rules (the decisions the spec pins; the implementer writes the bodies):
   - `AC1.8: a status line that is not last` — `STATUS: DONE` then a trailing remark → `status: 'misplaced'`, `statusWord: 'DONE'`.
   - `AC1.9: no status line` — `status: 'missing'`, `statusWord: null`, findings kept.
   - `AC1.10: a BLOCKED reply with a reason` — `cannot read src/x.ts\n\nSTATUS: BLOCKED` → `parse: 'unparseable'`, `statusWord: 'BLOCKED'`, `status: 'ok'`.
-  - `AC1.11: an empty string` — `{ parse: 'unparseable', findings: [], noFindings: false, overflow: 0, status: 'missing', statusWord: null }`; also `parseLensReply(null)` returns the same object.
+  - `AC1.11: an empty string` — `{ parse: 'unparseable', findings: [], noFindings: false, overflow: 0, skipped: 0, status: 'missing', statusWord: null }`; also `parseLensReply(null)` returns the same object.
+  - `No findings. variants`: `"No findings."`, `` `No findings.` ``, `**No findings.**` → `noFindings: true`; `No findings` (no period) and `no findings.` → `parse: 'unparseable'`.
   - `AC1.12: a Path:Line cell reading general` — `path: 'general'`, `line` key absent.
   - `AC1.13: a five-column table with a Suggested resolution header` — that column dropped; evidence is only the Evidence cell.
   - `AC1.14: a row with three cells` — severity + location + finding → evidence `''`.
   - `AC1.15: rows and No findings. together` — findings kept, `noFindings: false`.
   - `Review Focus 1: CRLF replies parse like LF` — the AC1.1 fixture with `\r\n` deep-equals the LF result.
-  - `Review Focus 2: an empty location cell makes the reply unparseable`.
+  - `Review Focus 2: an empty location cell is skipped, not a finding` — one good row plus `| high |  | x | y |` → 1 finding, `skipped: 1`, `parse: 'ok'`; the empty-location row alone → `findings: []`, `skipped: 1`, `parse: 'unparseable'`.
   - `AC2.1: categoriseReproduction over the parser's output equals it over a hand-written transcription` — two fixture reply strings (A and B tables, ≥3 rows each with one ±2 pair, one same-location different-substance pair, one unpaired) beside two hand-written JSON arrays of the same rows; `deepStrictEqual(c.categoriseReproduction(parse(A).findings, parse(B).findings), c.categoriseReproduction(handA, handB))`.
   - `AC13.1: the live lens output block parses, and its header and scale equal the parser's constants` — extract the one ```` ```markdown ```` fence under `## Per-lens Calibration + Output template` in `step3-lens-dispatch.md`; take its `| Severity | ...` header row cells and `deepStrictEqual` them with `BRIEF_HEADER`; take the words of its `Severity scale:` line and `deepStrictEqual` with `SEVERITIES`; assert the fence holds the `"+N more"` sentence and the `` `STATUS: {WORD}` `` line; build a reply from the fence's header row, separator row and example rows plus `| +3 more | | | |` and `STATUS: DONE`, and assert 2 findings, `overflow: 3`, `status: 'ok'`. Go-red control in the same test: the header check run over the fence text with `| Severity | Path:Line | Finding | Evidence | Fix |` substituted must fail (call the extraction helper and assert the deepStrictEqual throws).
 
@@ -178,14 +179,15 @@ Expected: PASS both.
 
 **Interfaces:**
 - Consumes: `parseLensReply` (Task 2); `categoriseReproduction` (`lib/coordination.js`); `pairEntries`, `holdKey` (`lib/reproduction-log.js`); `resolvePrinted` (`plugin/bin/session-tmp-resolve.js`); this file's `parseValueFlags`, `readJson`, `anchorRunDir`, `appendDecisionEntries`, `FINDING_LENS_CLASS`.
-- Produces: `run(['settle-lens-replies', <result.json>, '--ctx-id', id, ...], deps)`; stdout one JSON line `{ settled: [{ lens, confirmed, unconfirmed, entries?, logged? }], needsSession: [{ lens, reason: 'single-reviewer'|'reviewer-unusable', reviewers: [{ side, state, statusWord, text?, findingsPath? }] }], violations: [{ lens, side, status }], overflow: [{ lens, side, hidden }] }`. `realDeps` gains `get env() { return process.env; }`.
+- Produces: `run(['settle-lens-replies', <result.json>, '--ctx-id', id, ...], deps)`; stdout one JSON line `{ settled: [{ lens, confirmed, unconfirmed, entries?, logged? }], needsSession: [{ lens, reason: 'single-reviewer'|'reviewer-unusable', reviewers: [{ side, state, statusWord, text?, findingsPath? }] }], violations: [{ lens, side, status }], overflow: [{ lens, side, hidden }], skipped: [{ lens, side, rows }] }` (`skipped` per spec `## Plan Review Clarifications`). `realDeps` gains `get env() { return process.env; }`.
 
 Verb rules (decisions; the implementer writes the bodies):
 - Flags via `parseValueFlags(rest, ['--ctx-id','--run','--only','--hold'], deps)`; exactly one positional. `--ctx-id` required. `--only`/`--hold` need `--run`; `--run` needs `--only` (`confirmed`|`unconfirmed`); `--hold` needs `--only unconfirmed`.
-- Shape: top-level `reviewers` array → bare; else a top-level `result` object holding a `reviewers` array → wrapped; else exit 2. `lenses` must be a non-empty array of `{ lens, reviewers: 1|2 }` with no lens twice; `reviewers` a non-empty array of `{ lens, side: 'A'|'B', text: string|null, failed: boolean }`. A roster lens with `reviewers: 1` expects side `A` only; `2` expects `A` and `B`. A roster lens or side with no entry, an entry the roster does not name, a lens+side twice, a non-string non-null `text`, or a non-boolean `failed` exits 2. Each exit-2 prints exactly one stderr line naming the fault.
+- Shape: top-level `reviewers` array → bare; else a top-level `result` object holding a `reviewers` array → wrapped; else exit 2. `lenses` must be a non-empty array of `{ lens, reviewers: 1|2 }` with no lens twice; `reviewers` a non-empty array of `{ lens, side: 'A'|'B', text: string|null, failed: boolean }`. A roster lens with `reviewers: 1` takes exactly one entry, on side `A` or `B`, its findings file named for that side (spec `## Plan Review Clarifications`); `2` expects `A` and `B`. A roster lens or side with no entry, an entry the roster does not name, a lens+side twice, a non-string non-null `text`, or a non-boolean `failed` exits 2. Each exit-2 prints exactly one stderr line naming the fault.
 - Order: every validation (flags, ctx-id, shape, roster, entries, hold) → pairing in memory → anchor the run dir (`anchorRunDir(flags.run, deps, 3)`) when `--run` → write findings files → append → print. Nothing is written or created (no session temp root either) before every exit-2 and exit-3 check has passed.
 - Per lens: parse each reviewer, assign its state by the Global Constraints order. Single-reviewer roster → `needsSession` `single-reviewer`. Any reviewer `failed`/`not-done`/`unparseable`/`status-missing` → `needsSession` `reviewer-unusable`. In both, each usable reviewer's findings array is written whole to its `review-{ctx-id}-lens-{LENS}-agent{SIDE}.json` path and reported as `findingsPath`; a `not-done` reviewer carries its `text`. Else both usable: both `noFindings` with no findings → settled `{ lens, confirmed: [], unconfirmed: [] }` and no line; otherwise `categoriseReproduction(A.findings, B.findings)`.
-- `violations`: every reviewer in state `status-misplaced` or `status-missing`, `status` the parser's value. `overflow`: every reviewer with `parse: 'ok'` and `overflow > 0`, `hidden` the count.
+- `violations`: every reviewer in state `status-misplaced` or `status-missing`, `status` the parser's value. `overflow`: every reviewer with `parse: 'ok'` and `overflow > 0`, `hidden` the count. `skipped`: every reviewer whose parser result has `skipped > 0`, `rows` the count.
+- A findings-file write that throws (the session temp root cannot be created, or the write fails): that reviewer's `findingsPath` is `null`, one stderr line names the file and the error, the remaining files and the `decisions.md` append still run, and the exit stays 0 — the same posture as a failed append (`logged: false`).
 - `--run`: per settled lens `pairEntries(result, { lens, only, hold: holdForLens })`, sectioned `/review`, all lenses' entries appended in one `appendDecisionEntries` call in lens order; each settled lens gets its `entries` and the call's `logged`. `--hold` file: a JSON array of `{ lens, ...finding }`; each entry matches exactly one unconfirmed finding of a settled lens by `holdKey`, else exit 2. No de-duplication across calls (spec Decision).
 
 - [ ] **Step 1: Write the failing tests** (appended to `cli.test.js`, in-process `run(...)` with the file's existing anchored-run-dir and fake-deps helpers; deps gain `env: { CLAUDE_CODE_SESSION_ID: <id>, TMPDIR: <tmp dir under t> }` and expected paths come from `resolvePrinted(name, { env })`):
@@ -202,6 +204,9 @@ Verb rules (decisions; the implementer writes the bodies):
   - `AC12.1: a roster lens or side with no entry, or an unnamed entry, exits 2` (cases shared with AC5); `AC12.2: a reviewers: 1 lens is under needsSession with reason single-reviewer and its findings file is written`.
   - `wrapped result shape reads like the bare one`; `exit 3 for a missing run dir and for an unanchored one, nothing written`; `--help names settle-lens-replies`.
   - `logged: false with one stderr line when the append throws, exit 0` (inject a throwing `appendDecisions`).
+  - `a findings file that cannot be written reports findingsPath: null and one stderr line, exit 0` (point the injected `TMPDIR` at a regular file so the session root cannot be created).
+  - `a reviewers: 1 lens accepts its one entry on side B and names the file agentB`; `a reviewers: 1 lens with entries on both sides exits 2`.
+  - `skipped lists a reviewer whose table had an empty-location row, and its lens still settles`.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -226,7 +231,7 @@ Expected: PASS, no existing expectation edited (AC9.1).
 **Role:** judgment
 
 **Files:**
-- Read only: `tools/review-replay/counterfactual.js` (`indexTranscripts`, `lastAssistantText`), `tools/review-replay/archive.js` (`readRun`, `selectRuns`) — the way AC8 says replies are found
+- Read only: `tools/review-replay/counterfactual.js` (`indexTranscripts`, `lastAssistantText` — defined there but not exported, so the scratch script copies the two functions; `tools/` is not edited), `tools/review-replay/archive.js` (`readRun`, `selectRuns`) — the way AC8 says replies are found
 - Modify (only if the bound is exceeded): `plugin/bin/lib/lens-reply.js`, `tests/bin-lib/lens-reply.test.js`
 
 **Interfaces:**
