@@ -312,7 +312,7 @@ test('pruneRemote: a failed batch push falls back to per-branch deletes, one bad
 // Review finding: the per-branch fallback's own push can fail because the
 // branch was ALREADY gone (deleted by the batch despite its own nonzero
 // exit, or by a concurrent reconcile pass) — that must read as a completed
-// delete, not delete-failed. build/b1 is deleted on origin out-of-band, by a
+// delete, not delete-failed. build/b1 is deleted on origin out-of-band, by an
 // update-ref on the origin itself (the 'b1-deleted' fixture; deleting via
 // `root`'s own git would auto-prune its local tracking ref immediately,
 // defeating the repro), before pruneRemote ever runs; skipFetch: true means

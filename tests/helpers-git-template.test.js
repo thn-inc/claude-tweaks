@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const {
   fromTemplate,
@@ -381,6 +382,15 @@ test('a prune-remote squashed copy holds the squash commit on main over preSquas
   scratch.push(f.dir, f.origin);
   assert.strictEqual(git(f.dir, ['rev-parse', 'main']), f.squash);
   assert.strictEqual(git(f.dir, ['rev-parse', 'main~1']), f.preSquash);
+});
+
+test('a prune-remote b1-deleted copy lacks build/b1 on the origin but keeps its stale tracking ref', () => {
+  const f = pruneFixtures.pruneRemoteFixture('b1-deleted');
+  scratch.push(f.dir, f.origin);
+  const onOrigin = (ref) => spawnSync('git', ['-C', f.origin, 'show-ref', '--verify', '--quiet', ref], { env: gitEnv() }).status;
+  assert.notStrictEqual(onOrigin('refs/heads/build/b1'), 0);
+  assert.strictEqual(onOrigin('refs/heads/build/b2'), 0);
+  assert.strictEqual(git(f.dir, ['rev-parse', '--verify', 'refs/remotes/origin/build/b1']).length, 40);
 });
 
 test('AC4.1: originWithTwoClones with a seed and no key throws', () => {

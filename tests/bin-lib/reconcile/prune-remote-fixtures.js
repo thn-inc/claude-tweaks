@@ -55,6 +55,11 @@ function buildTwoPrunable({ dir }) {
   }
 }
 
+// Per-process cache of the squashed variant's shas: a copy whose build was skipped reads it
+// here. Set as the build's last statement, so a failed build leaves no entry and the next
+// call rebuilds.
+const shas = new Map();
+
 function buildSquashed(dirs, name) {
   const { dir } = dirs;
   git(dir, 'checkout', '-b', 'build/squashed');
@@ -73,11 +78,6 @@ function buildSquashed(dirs, name) {
   git(dir, 'branch', '-D', 'build/squashed'); // local branch disposed; remote lingers
   shas.set(name, { preSquash, squash });
 }
-
-// Per-process cache of the squashed variant's shas: a copy whose build was skipped reads it
-// here. Set as the build's last statement, so a failed build leaves no entry and the next
-// call rebuilds.
-const shas = new Map();
 
 const VARIANTS = {
   base: () => {},
