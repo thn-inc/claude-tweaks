@@ -255,7 +255,7 @@ finding the run held would otherwise be lost at archive. `unfiledCantTellFinding
 `archive-merged.js`) returns `[]` unless `readTopLevelConsoleState` is `none` and
 `consoleReplacedByAutoMerge` is true; otherwise it names, via `console/finding-outcomes.js`'s
 `unfiledCantTell`, each finding of the run dir and of every `spec-*/` dir (prefixed `spec-N/`)
-with no `AUTO … filed as #{n} (work-fingerprint {fp})` line in that dir's `decisions.md`. A read
+with no `AUTO … filed as #{n} (work-fingerprint {fp})` line, and since #4679 no `AUTO … Queue write: {item} digested (work-fingerprint {fp})` line, in that dir's `decisions.md`. A read
 failure fails closed. `runTiebreakCoverage` carries the list as `unfiledCantTell`, and
 `archiveUnlessTiebreakGap`, the single choke point every archive decision that carries a run dir passes (`decideArchive`'s thin wrapper holds none, so it never evaluates the guard), evaluates it
 last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`**, carrying
@@ -263,7 +263,7 @@ last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`*
 sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
 terminal decision` line) turns the guard off. `hooks.js archive-run` refuses the same condition, inside its
 `console-never-rendered-staged-pending` block and after that refusal, printing the hint with the
-real run dir in place of `{run-dir}`. The remedy is to file each finding through
+real run dir in place of `{run-dir}`. The remedy is to settle each finding (filed, or for a `drop` recommendation digested) through
 `wrap-up/review-console.md`'s Can't-tell filings: a `spec-N/`-prefixed id is filed and logged with
 `--run {run-dir}/spec-N` (its own `decisions.md`). Every other run archives exactly as before.
 
