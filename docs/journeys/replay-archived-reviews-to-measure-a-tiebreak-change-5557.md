@@ -62,6 +62,7 @@ files:
 - **Should understand:**
   - Only `verdict:cant-tell` and `evidence-unverified` settle as `cant-tell`. Every other non-verdict reason is notJudged.
   - Tokens from an agent with no identity line are reported in `unidentifiedCost`, never dropped.
+  - `score` settles every arm the way a review settles a Capable judge's reply. It does not run the escalation a review applies to a Standard judge's reply (#5541): in a `profile=standard` arm, a reply that raises a finding to `medium` or higher is scored on the Standard judge's own verdict, where a review would discard it and judge the finding again at Capable.
 - **Red flags:**
   - Agreement that rose because notJudged findings were scored.
   - A missing run tree that settles as `cant-tell` instead of exiting 1.
@@ -77,3 +78,4 @@ files:
 
 ## Origin
 - Created during the build of #5557 (run `2026-11-16T000458-record-5557`, PR #5574). That build turned the 2026-11-15 scratch replay into this tested tool. The first live run against the nine 2026-11-15 runs is tracked in #5630.
+- Updated during the wrap-up of #5541: step 4 notes that `score` does not apply the escalation a review runs on a Standard-tier judge's raised finding.
