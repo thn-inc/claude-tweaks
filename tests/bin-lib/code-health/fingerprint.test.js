@@ -64,3 +64,21 @@ test('v2 fingerprint is byte-identical to fingerprintFromBasis(\'codehealth\', [
   const expected = fingerprintFromBasis('codehealth', ['simplification', 'src/api', normalizeAnchor('src/api/user.js#getUser')]);
   assert.strictEqual(fingerprint(args), expected);
 });
+
+// The id is persisted in filed issue markers and dedup keys on it, so these
+// literals were captured before the v1 branch was deleted (#5536) and must
+// never be recomputed to follow a change — a change here forks dedup.
+test('fingerprint v2 ids are pinned literals — the id is persisted in issue markers and dedup keys on it (#5536)', () => {
+  assert.strictEqual(
+    fingerprint({ criterion: 'simplification', areaId: 'src/api', anchor: 'src/api/user.js#getUser' }),
+    'codehealth-a7f87202',
+  );
+  assert.strictEqual(
+    fingerprint({ criterion: 'dead-code', areaId: 'src', anchor: 'src/util.js:42#trimPath' }),
+    'codehealth-a46a4581',
+  );
+  assert.strictEqual(
+    fingerprint({ criterion: 'bad-practice', areaId: '.', anchor: 'a.js#TODO x' }),
+    'codehealth-678965af',
+  );
+});
