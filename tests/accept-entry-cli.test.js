@@ -283,6 +283,17 @@ test('refresh refuses a case alias of the --packet-file on a case-insensitive fi
   assert.equal(fs.readFileSync(packet, 'utf8'), body);
 });
 
+test('refresh refuses the same spelling even when no file identity is known (an --out not yet written)', (t) => {
+  const dir = tempDir(t);
+  const body = packetBody(['target: local', 'ref: aaa']);
+  const packet = write(path.join(dir, 'packet.md'), body);
+  const result = cli(['refresh', '--packet-file', packet, '--out', path.join(dir, 'x', '..', 'packet.md')], {
+    deps: { fileId: () => null },
+  });
+  assert.equal(result.code, 2);
+  assert.equal(fs.readFileSync(packet, 'utf8'), body);
+});
+
 test('refresh refuses with exit 2 when a file identity cannot be read, and removes nothing', (t) => {
   const dir = tempDir(t);
   const body = packetBody(['target: local', 'ref: aaa']);
