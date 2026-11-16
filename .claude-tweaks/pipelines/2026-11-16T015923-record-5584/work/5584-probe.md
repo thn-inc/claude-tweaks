@@ -35,7 +35,7 @@ Every key of the (c) and (i) prompt rows, ids and times aside, has the same pres
 
 ## Part 2 — through the shipped hook (Task 13)
 
-Captured 2026-11-16 10:01–10:13Z on Claude Code **2.1.325** (`claude --version`; the transcripts' `version` field agrees), at branch commit `418be37f26`. Same pty harness and `env -i` set as Part 1, but the claude argv carries `--plugin-dir <worktree>/plugin` and no `--settings` scratch hook: the pointer `dispatch-prompts.json` was written by the worktree plugin's `user-prompt-submit` hook. After each case: `node tools/typed-command-probe.js --session <id> --record 3 --config-dir <account config dir> --tmpdir "$TMPDIR"`. Marker fields only (the tool prints no message text):
+Captured 2026-11-16 10:01–10:13Z on Claude Code **2.1.325** (`claude --version`; the transcripts' `version` field agrees), at branch commit `418be37f26`. Same pty harness and `env -i` set as Part 1, but the claude argv carries `--plugin-dir <worktree>/plugin` and no `--settings` scratch hook: the pointer `dispatch-prompts.json` was written by the worktree plugin's `user-prompt-submit` hook. After each case: `node tools/typed-command-probe.js --session <id> --record 3 --config-dir <account config dir> --tmpdir "$TMPDIR"`. Every Part 2 session opened on Claude Code's "Quick safety check … Yes, I trust this folder" dialog for the scratch directory (screen capture of the first (a) attempt), which the harness had to answer before the prompt was usable; an unanswered dialog exits the session on Enter. Marker fields only (the tool prints no message text):
 
 | Case | `pointer` | Candidate rows for the pointer's `promptId` (`turnOrigin` / `originKind` / `promptSource` / `isMeta`; notable keys) | `answer` |
 |---|---|---|---|
