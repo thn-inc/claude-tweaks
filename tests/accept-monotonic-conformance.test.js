@@ -12,13 +12,14 @@ const { readText } = require('./helpers/read-skill');
 //   remover-ref   any reference to removeRiskFlag, removeRiskFlags or confirmRiskFlags, the human-
 //                 confirmed narrowing writers, call, import or bracket-string form. Read over
 //                 keep-mode text, so a quoted name in a literal counts; a comment does not.
-//   narrowing-fn  a function, method, property-bound function or const/let/var-bound function
+//   narrowing-fn  a function, method, property-bound function, const/let/var-bound function or a
+//                 function assigned to `exports.NAME` / `module.exports.NAME`,
 //                 whose name matches /^(?:remove|narrow|drop|strip)\w*flags?$/i. Read over
 //                 blank-mode text, so a name inside a literal is not a declaration.
 // A reader of removal history (`removalLogSlugs`, `readRemovedFlags`) is neither: it reads what a
 // human removed and writes nothing.
-// Recall limits, by design: a narrowing function bound through a member assignment
-// (`exports.dropFlags = ...`) or a computed key, a remover reached through a computed property name,
+// Recall limits, by design: a narrowing function bound through any other member assignment
+// (`obj.dropFlags = ...`) or a computed key, a remover reached through a computed property name,
 // and a narrowing function whose name falls outside the pattern are not seen; an identifier
 // containing `$` is not matched as a whole name. `stripperVerdict` runs on the blank-mode text,
 // which subsumes the keep-mode verdict (see tests/risk-flags-writer-conformance.test.js), so a
@@ -33,6 +34,7 @@ const REMOVER_REF = /\b(?:removeRiskFlags?|confirmRiskFlags?)\b/g;
 const FUNCTION_DECL = new RegExp(String.raw`\bfunction\s*\*?\s*(${NAME})\s*\(`, 'gi');
 const BOUND_DECL = new RegExp(String.raw`\b(?:const|let|var)\s+(${NAME})\s*=\s*${FN_VALUE}`, 'gi');
 const PROPERTY_DECL = new RegExp(String.raw`(?<![\w$.])(${NAME})\s*:\s*${FN_VALUE}`, 'gi');
+const MEMBER_DECL = new RegExp(String.raw`(?<![\w$.])(?:module\s*\.\s*)?exports\s*\.\s*(${NAME})\s*=\s*${FN_VALUE}`, 'gi');
 const METHOD_DECL = new RegExp(String.raw`^[ \t]*(?:(?:async|static|get|set)\s+)*\*?\s*(${NAME})\s*\((?:[^()]|\([^()]*\))*\)\s*\{`, 'gim');
 
 function lineAt(text, offset) {
@@ -61,7 +63,7 @@ function scanSource(raw) {
     offenders.push({ line: lineAt(keep, m.index), reason: 'remover-ref', text: m[0] });
   }
   const seen = new Set();
-  for (const re of [FUNCTION_DECL, BOUND_DECL, PROPERTY_DECL, METHOD_DECL]) {
+  for (const re of [FUNCTION_DECL, BOUND_DECL, PROPERTY_DECL, MEMBER_DECL, METHOD_DECL]) {
     for (const m of blank.matchAll(re)) {
       const at = m.index + m[0].indexOf(m[1]);
       if (seen.has(at)) continue;
@@ -127,6 +129,12 @@ test('a planted function, const-bound function, method and property function are
   assert.deepStrictEqual(shape('class A {\n  dropFlags(list) {\n    return 1;\n  }\n}\n'), [[2, 'narrowing-fn']]);
   assert.deepStrictEqual(shape('const o = {\n  removeFlag: (x) => x,\n  stripFlags: function () {},\n};\n'), [[2, 'narrowing-fn'], [3, 'narrowing-fn']]);
   assert.deepStrictEqual(shape('class A {\n  static async *narrowFlags() {}\n}\n'), [[2, 'narrowing-fn']]);
+});
+
+test('a planted function assigned to exports.NAME or module.exports.NAME is flagged', () => {
+  assert.deepStrictEqual(shape('const a = 1;\nexports.dropFlags = function () {};\n'), [[2, 'narrowing-fn']]);
+  assert.deepStrictEqual(shape('const a = 1;\nmodule.exports.narrowFlag = (x) => x;\nmodule.exports.stripFlags = async e => e;\n'), [[2, 'narrowing-fn'], [3, 'narrowing-fn']]);
+  assert.deepStrictEqual(shape('const a = 1;\nexports.readRemovedFlags = () => [];\nexports.dropFlagsNow = () => 1;\n'), [], 'a reader and a longer name are not narrowing');
 });
 
 test('a reader of removal history and unrelated names are not narrowing', () => {
