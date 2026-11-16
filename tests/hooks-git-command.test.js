@@ -285,8 +285,9 @@ test('an empty -C value leaves an UNKNOWN cwd unprovable, and a following relati
 // bash 3.2, 5 and zsh run git for `x+=1 git commit` and `nohup git commit` (the Global Constraints'
 // verdict table); with no quoting passed, one is built from the tokens themselves.
 test('#4448: resolveGitCommand without quoting reads an appending assignment and a stripped prefix', () => {
-  assert.deepStrictEqual(resolveGitCommand(['x+=1', 'git', 'commit'], '/r'), { index: 2, dir: path.resolve('/r') });
-  assert.deepStrictEqual(resolveGitCommand(['nohup', 'git', 'commit'], '/r'), { index: 2, dir: path.resolve('/r') });
+  // A known cwd passes through unresolved (as in the gitTargets '/repo' pins below).
+  assert.deepStrictEqual(resolveGitCommand(['x+=1', 'git', 'commit'], '/r'), { index: 2, dir: '/r' });
+  assert.deepStrictEqual(resolveGitCommand(['nohup', 'git', 'commit'], '/r'), { index: 2, dir: '/r' });
 });
 
 test('an empty value for a global VALUE_FLAG (-c) does not swallow the subcommand either', () => {
