@@ -16,7 +16,7 @@ A Claude Code plugin containing markdown skill files that guide Claude through a
 
 ## Structure
 
-**The plugin payload is the `plugin/` subtree — nothing else in this repo ships** (`docs/decisions/0015-*`): `tests/`, `docs/`, `perf/`, `tools/`, `scripts/`, and `work/` are maintainer-side, so where a new file goes decides whether users install it. Full directory tree, the per-skill sub-file table, and the command reference live in `docs/plugin-structure.md`. Orientation:
+**The plugin payload is the `plugin/` subtree — nothing else in this repo ships** (`docs/decisions/0015-*`): `tests/`, `docs/`, `perf/`, `tools/`, and `scripts/` are maintainer-side, so where a new file goes decides whether users install it. Full directory tree, the per-skill sub-file table, and the command reference live in `docs/plugin-structure.md`. Orientation:
 
 - `plugin/skills/{name}/SKILL.md` — skill definition; `plugin/skills/{name}/*.md` — sub-files lazy-loaded by that skill
 - `plugin/skills/_shared/*.md` — cross-skill contracts, criteria, and canonical procedures cited by skills rather than restated
