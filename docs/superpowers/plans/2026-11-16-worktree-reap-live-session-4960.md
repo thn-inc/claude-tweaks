@@ -40,6 +40,7 @@ The removal path is identified and posted on the record (https://github.com/thn-
 ---
 
 ### Task 1: Hold-file primitives (`plugin/bin/lib/hooks/worktree-hold.js`)
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/hooks/worktree-hold.js`
@@ -86,6 +87,7 @@ git commit -m "Add worktree hold primitives — per-worktree session presence fi
 ```
 
 ### Task 2: `isHeldByLiveSession` — honoured by `reap-merged.js` and `reapWorktrees`
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/hooks/worktree-reap.js` (new export beside `isWorktreeLocked`; `REASON.HELD`; `reapWorktrees` loop after the lock verdict)
@@ -95,18 +97,21 @@ git commit -m "Add worktree hold primitives — per-worktree session presence fi
 **Interfaces:**
 - Consumes: Task 1's `readHolds(wtPath)`, `writeHold`, `holdKey`; `run-liveness/process-probe.js`'s `pidStartTime(pid)`.
 - Produces:
-  - `isHeldByLiveSession(wtPath, { hostname = os.hostname, isAlive = isPidAlive, startTime = pidStartTime } = {}) -> boolean` exported from `worktree-reap.js`. For each `readHolds(wtPath)` entry: `hold === null` → held; `hold.host !== hostname()` → held; `!Number.isInteger(hold.pid) || hold.pid <= 0` → held; `!isAlive(hold.pid)` → not this one; `hold.pidStartedAt` is a non-empty string and `startTime(hold.pid)` is a non-empty string that differs → not this one (recycled pid); otherwise held. No entries → `false`.
-  - `REASON.HELD = 'held by a live session in this worktree'`, added to `QUIET_SKIP_REASONS`.
-  - `reapMerged` skip entry `{ path, reason: 'held' }`, written with **no** `logReapEvent` call (same quiet posture as `'in-use'`).
+  - `holdVerdict(wtPath, { hostname = os.hostname, isAlive = isPidAlive, startTime = pidStartTime } = {}) -> 'free'|'held'|'unverifiable'` exported from `worktree-reap.js`. Per `readHolds(wtPath)` entry: `hold === null`, `hold.host !== hostname()`, or `!Number.isInteger(hold.pid) || hold.pid <= 0` → that entry is **unverifiable**; `!isAlive(hold.pid)` → that entry is dead; `hold.pidStartedAt` is a non-empty string and `startTime(hold.pid)` is a non-empty string that differs → dead (recycled pid); otherwise **live**. Result: any live entry → `'held'`; else any unverifiable entry → `'unverifiable'`; else (no entries, or only dead ones) → `'free'`.
+  - `isHeldByLiveSession(wtPath, opts) -> boolean` = `holdVerdict(wtPath, opts) !== 'free'` (both non-free verdicts keep the worktree — fail closed).
+  - `REASON.HELD = 'held by a live session in this worktree'`, added to `QUIET_SKIP_REASONS`; `REASON.HELD_UNVERIFIABLE = 'held by a session hold that cannot be verified'`, **not** quiet (reported like `REASON.UNKNOWN_LOCK`, so a stuck hold surfaces instead of pinning the worktree silently).
+  - `reapMerged` skip entries: `{ path, reason: 'held' }` with **no** `logReapEvent` call (same quiet posture as `'in-use'`); `{ path, reason: 'held-unverifiable' }` **with** `logReapEvent(owningRunDir, 'worktree-reap-skipped', { reason: 'held-unverifiable' })` (not on a dry run, matching the existing skip-event rule).
 
 - [ ] **Step 1: Write the failing tests.** Predicate and `reapWorktrees` tests in `tests/bin-lib/hooks/worktree-held.test.js` (`gitRepo()` + `harnessWorktreeOf()`):
   - `isHeldByLiveSession: no hold directory → false` (fresh `harnessWorktreeOf`).
   - `isHeldByLiveSession: a hold naming this live process → true` (`writeHold` with `block.pid = process.pid`, `host = os.hostname()`).
   - `isHeldByLiveSession: a hold whose pid is dead → false` (inject `isAlive: () => false`).
-  - `isHeldByLiveSession: an unparseable hold → true (fails closed)`.
-  - `isHeldByLiveSession: a hold from another host → true (fails closed)` (`host: 'elsewhere'`).
+  - `holdVerdict: an unparseable hold → 'unverifiable', and isHeldByLiveSession → true (fails closed)`.
+  - `holdVerdict: a hold from another host → 'unverifiable'` (`host: 'elsewhere'`).
+  - `holdVerdict: a live hold beside an unparseable one → 'held'` (a verified live session wins the quiet reason).
   - `isHeldByLiveSession: a recycled pid (start time differs) → false` (`pidStartedAt: 'A'`, inject `startTime: () => 'B'`); and the same hold with `startTime: () => null` → `true` (unknown start time never frees it).
-  - `reapWorktrees: skips a held worktree with REASON.HELD even when merged and clean` — a harness worktree whose branch is content-identical with the main branch (the shape `tests/hooks-worktree-reap.test.js` reaps; call `reapWorktrees({ cwd: main, integration: <main branch> })`); write a live hold; result `skipped` contains `{ path: wt, reason: REASON.HELD }`; directory still exists; `QUIET_SKIP_REASONS.has(REASON.HELD)`.
+  - `reapWorktrees: skips a held worktree with REASON.HELD even when merged and clean` — a harness worktree whose branch is content-identical with the main branch (the shape `tests/hooks-worktree-reap.test.js` reaps; call `reapWorktrees({ cwd: main, integration: <main branch> })`); write a live hold; result `skipped` contains `{ path: wt, reason: REASON.HELD }`; directory still exists; `QUIET_SKIP_REASONS.has(REASON.HELD)`; with only an unparseable hold instead, the skip reason is `REASON.HELD_UNVERIFIABLE` and `QUIET_SKIP_REASONS.has(REASON.HELD_UNVERIFIABLE) === false`.
+  In `reap-merged-held.test.js` also: `reapMerged: an unverifiable hold keeps the worktree and logs worktree-reap-skipped held-unverifiable` — unparseable hold file, injected merged `prStates`; skipped reason `'held-unverifiable'`, worktree still on disk, the run's `events.jsonl` has `{ type: 'worktree-reap-skipped', reason: 'held-unverifiable' }`.
 
   The AC2 test in `tests/bin-lib/reconcile/reap-merged-held.test.js`, injected PR state, no `STUB_SKIP`:
 
@@ -138,9 +143,9 @@ test('AC2.1: reapMerged skips a worktree held by a live session running in anoth
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/hooks/worktree-held.test.js tests/bin-lib/reconcile/reap-merged-held.test.js`
-Expected: FAIL — `isHeldByLiveSession is not a function`, and AC2.1 reaps the held worktree (`skipped` is `[]`)
+Expected: FAIL — `holdVerdict is not a function`, and AC2.1 reaps the held worktree (`skipped` is `[]`)
 
-- [ ] **Step 3: Implement** `isHeldByLiveSession` + `REASON.HELD` in `worktree-reap.js`; in `reapWorktrees`, after the lock-verdict block and before the orphan-staleness check: `if (isHeldByLiveSession(real)) { skipped.push({ path: real, reason: REASON.HELD }); continue; }`. In `reap-merged.js`, directly after the `isWorktreeLocked` line: `if (isHeldByLiveSession(real)) { skipped.push({ path: real, reason: 'held' }); continue; }`, and add one sentence to the module header naming the third guard (a live session in another process, read from its hold — #4960).
+- [ ] **Step 3: Implement** `holdVerdict`, `isHeldByLiveSession`, `REASON.HELD` and `REASON.HELD_UNVERIFIABLE` in `worktree-reap.js`; in `reapWorktrees`, after the lock-verdict block and before the orphan-staleness check, call `holdVerdict(real)` once and skip with `REASON.HELD` / `REASON.HELD_UNVERIFIABLE` on a non-free verdict. In `reap-merged.js`, directly after the `isWorktreeLocked` line, call `holdVerdict(real)` once: `'held'` → `skipped.push({ path: real, reason: 'held' }); continue;` (no event); `'unverifiable'` → `skipped.push({ path: real, reason: 'held-unverifiable' })`, the `worktree-reap-skipped` event per Interfaces, `continue;`. Add one sentence to the module header naming the third guard (a live session in another process, read from its hold — #4960).
 
 - [ ] **Step 4: Run to verify they pass, plus both reapers' existing suites**
 
@@ -157,6 +162,7 @@ git commit -m "Honour a live session's worktree hold in both reapers — reap-me
 ```
 
 ### Task 3: The reap event reaches a closed or archived run
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/reconcile/reap-merged.js` (`resolveOwningRunDir`, ~lines 44-59)
@@ -191,12 +197,14 @@ git commit -m "Log worktree-reaped into closed and archived runs — the reap tr
 ```
 
 ### Task 4: Hooks write and clear the hold
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/hooks/worktree-hold.js` (add `syncHoldForToolUse`, `stampHoldForCwd`, `releaseSessionHolds`)
 - Modify: `plugin/bin/lib/hooks/post-tool-use.js` (`run()`: one call before `stampAdHocRunDir(ctx)`)
 - Modify: `plugin/bin/lib/hooks/session-start.js` (one guarded call early in `run`)
 - Modify: `plugin/bin/lib/hooks/session-end.js` (one guarded call before the `if (!owned.dir) return {};` early return)
+- Modify: `plugin/bin/lib/hooks/subagent-stop.js` (`run()`, one guarded call before `return out;` — never changes `out`)
 - Test: `tests/hooks-post-tool-use-worktree-hold.test.js` (new), `tests/bin-lib/hooks/worktree-hold.test.js`
 
 **Interfaces:**
@@ -204,7 +212,8 @@ git commit -m "Log worktree-reaped into closed and archived runs — the reap tr
 - Produces (all never throw, return nothing meaningful beyond a status string for tests):
   - `syncHoldForToolUse(input, { cwd, env, ownerBlock, resolveEnteredPath }) -> 'stamped'|'cleared'|'skipped'` — `input.tool_name === 'EnterWorktree'`: `wt = worktreeRootOf(resolveEnteredPath() || cwd)`; `block = ownerBlock({ sessionId: input.session_id, env })`; `key = holdKey({ sessionId: input.session_id, agentId: input.agent_id, pid: block.pid })`; null `wt`/`key` → `'skipped'`; else `writeHold(wt, { key, block, agentId: input.agent_id })` then `clearHolds(mainCheckoutRoot(wt), { key, except: wt })` → `'stamped'`. `'ExitWorktree'`: `clearHolds(mainCheckoutRoot(cwd), { key })` (key from the same parts) → `'cleared'`. Anything else → `'skipped'`.
   - `stampHoldForCwd({ cwd, sessionId, env, ownerBlock }) -> 'stamped'|'skipped'` — SessionStart: `wt = worktreeRootOf(cwd)`; stamps a main-thread hold (`agentId` absent) and clears the same key elsewhere, exactly like the EnterWorktree branch.
-  - `releaseSessionHolds({ cwd, sessionId, env }) -> number` — SessionEnd: `pid = claudePid(env)` from `run-liveness/process-probe.js`; null → 0; else `clearSessionHolds(mainCheckoutRoot(cwd), { sessionId, pid })`.
+  - `releaseSessionHolds({ cwd, sessionId, env, resolvePid }) -> number` — SessionEnd: `pid = (resolvePid || resolveOwnerPid)(env).pid` from `run-liveness/process-probe.js` — the **same** source `ownerBlock` uses for the writers (`CLAUDE_PID`, else the nearest `claude` ancestor), so a hold written with an ancestry pid is released too; null → 0; else `clearSessionHolds(mainCheckoutRoot(cwd), { sessionId, pid })`.
+  - `releaseAgentHolds({ cwd, sessionId, agentId, env, resolvePid }) -> number` — SubagentStop: no `agentId` → 0; else `key = holdKey({ sessionId, agentId, pid })` with `pid` from the same resolver; null key → 0; else `clearHolds(mainCheckoutRoot(cwd), { key })`. A finished subagent never leaves a hold behind under the still-live parent pid.
 
 - [ ] **Step 1: Write the failing tests** in `tests/hooks-post-tool-use-worktree-hold.test.js`, driving `post.run(ctx)` (the real `post-tool-use.js`) with the `enterWorktreeCtx`/`createdAt` shape from `tests/hooks-post-tool-use-worktree-staleness.test.js` (copy the two helpers; set `input.session_id`, optional `input.agent_id`), and `process.env.CLAUDE_PID` set to `String(process.pid)` for the test's duration (restore in `finally`):
   - `EnterWorktree stamps a hold in the entered worktree` — `readHolds(A)` has one entry, `hold.sessionId === 's1'`, `hold.pid === process.pid`.
@@ -216,28 +225,31 @@ git commit -m "Log worktree-reaped into closed and archived runs — the reap tr
   In `tests/bin-lib/hooks/worktree-hold.test.js` add:
   - `stampHoldForCwd: a resumed session in a worktree re-stamps with its current pid` — existing hold `s1__main__1` (dead pid); `stampHoldForCwd({ cwd: path.join(A, 'sub'), sessionId: 's1', env: { CLAUDE_PID: String(process.pid) }, ownerBlock })` → `'stamped'`; `readHolds(A)` includes `s1__main__{process.pid}`.
   - `releaseSessionHolds: clears only this pid's holds (a nested claude -p ending leaves the parent's)` — holds `s1__main__42` and `s1__main__{process.pid}`; `releaseSessionHolds({ cwd: A, sessionId: 's1', env: { CLAUDE_PID: '42' } }) === 1`; the `process.pid` hold remains.
+  - `releaseSessionHolds: with no CLAUDE_PID, releases the hold written under the ancestry pid` — hold `s1__main__77`; `releaseSessionHolds({ cwd: A, sessionId: 's1', env: {}, resolvePid: () => ({ pid: 77, pidSource: 'ancestry' }) }) === 1`.
+  - `releaseAgentHolds: a finished subagent's hold is removed; the main thread's stays` — holds `s1__ag1__{process.pid}` in B and `s1__main__{process.pid}` in A; `releaseAgentHolds({ cwd: B, sessionId: 's1', agentId: 'ag1', env: { CLAUDE_PID: String(process.pid) } }) === 1`; A's hold remains; with `agentId` absent it returns 0 and removes nothing.
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/hooks-post-tool-use-worktree-hold.test.js tests/bin-lib/hooks/worktree-hold.test.js`
-Expected: FAIL — no hold written; `syncHoldForToolUse`/`stampHoldForCwd`/`releaseSessionHolds` not exported
+Expected: FAIL — no hold written; `syncHoldForToolUse`/`stampHoldForCwd`/`releaseSessionHolds`/`releaseAgentHolds` not exported
 
 - [ ] **Step 3: Implement** the three functions in `worktree-hold.js`, then wire each call inside its own `try { … } catch { /* log tier: never break a session */ }`:
   - `post-tool-use.js` `run()`: `holdLib.syncHoldForToolUse(ctx.input, { cwd: ctx.cwd, env: process.env, ownerBlock: ctxLib.ownerBlock, resolveEnteredPath: () => resolveCreatedWorktreePath(ctx) })` directly before `stampAdHocRunDir(ctx);`.
   - `session-start.js` `run`: `holdLib.stampHoldForCwd({ cwd: ctx.cwd, sessionId: ctx.input.session_id, env: process.env, ownerBlock: ctxLib.ownerBlock })` before its reconcile call (so a pass this same SessionStart spawns already sees the hold).
   - `session-end.js` `run`: `holdLib.releaseSessionHolds({ cwd: ctx.cwd, sessionId: ctx.input.session_id, env: process.env })` as the first statement.
+  - `subagent-stop.js` `run()`: `holdLib.releaseAgentHolds({ cwd: ctx.cwd, sessionId: ctx.input.session_id, agentId: ctx.input.agent_id, env: process.env })` after `recordStop(ctx, out, memo);`, before `return out;`.
 
 - [ ] **Step 4: Run to verify they pass, plus the existing suites of the three hook modules** (Dependency-caller enumeration — each now touches the fixture repo's admin dir when its cwd is a linked worktree):
 
-Run: `node --test tests/hooks-post-tool-use-worktree-hold.test.js tests/bin-lib/hooks/worktree-hold.test.js tests/hooks-post-tool-use-worktree-staleness.test.js tests/hooks-session-start.test.js`
+Run: `node --test tests/hooks-post-tool-use-worktree-hold.test.js tests/bin-lib/hooks/worktree-hold.test.js tests/hooks-post-tool-use-worktree-staleness.test.js tests/hooks-session-start.test.js tests/hooks-subagent-stop.test.js tests/hooks-subagent-stop-marker.test.js`
 Then: `git grep -l "session-end" -- tests` and run each listed file.
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/hooks/worktree-hold.js plugin/bin/lib/hooks/post-tool-use.js plugin/bin/lib/hooks/session-start.js plugin/bin/lib/hooks/session-end.js tests/hooks-post-tool-use-worktree-hold.test.js tests/bin-lib/hooks/worktree-hold.test.js
-git commit -m "Stamp and release worktree holds from EnterWorktree, ExitWorktree, SessionStart and SessionEnd (#4960)"
+git add plugin/bin/lib/hooks/worktree-hold.js plugin/bin/lib/hooks/post-tool-use.js plugin/bin/lib/hooks/session-start.js plugin/bin/lib/hooks/session-end.js plugin/bin/lib/hooks/subagent-stop.js tests/hooks-post-tool-use-worktree-hold.test.js tests/bin-lib/hooks/worktree-hold.test.js
+git commit -m "Stamp and release worktree holds from EnterWorktree, ExitWorktree, SessionStart, SessionEnd and SubagentStop (#4960)"
 ```
 
 ### Task 5: Dispatch recovery sequence and contract docs
@@ -265,7 +277,7 @@ Expected: FAIL, 3 tests
 - [ ] **Step 3: Edit the prose:**
   - `sequential-execution.md`, new `## When the group's worktree disappears anyway` after "Creating the group's worktree": the symptom (`Working directory … was deleted; shell cwd recovered`, then `gh`/`git` failing with `not a git repository`); the recovery: `ExitWorktree(action: "keep")` first (the session is still isolated in the deleted path), then `EnterWorktree(path: …)` into the next group's already-created worktree; the warning: a plain `cd` into another worktree or the main checkout leaves the harness refusing every command, because the session stays isolated in the deleted worktree; one sentence that a live session's hold (#4960) now keeps the reapers off a worktree it stands in, so this is the fallback, not the expected path.
   - `SKILL.md:229`: replace `(\`reap-merged.js\` skips own-cwd and locked worktrees)` with `(\`reap-merged.js\` skips own-cwd, locked and session-held worktrees)`. Measure `wc -c plugin/skills/dispatch/SKILL.md` before and after; it must stay under 52,500 B (it grows by 14 B).
-  - `docs/hooks.md`: one bullet — `post-tool-use` (`EnterWorktree`/`ExitWorktree`), `session-start` and `session-end` write and clear a **worktree hold** (log tier, #4960): a `{gitdir}/claude-tweaks-holds/{session}__{agent|main}__{claude-pid}.json` file in the entered worktree's own git admin dir; `worktree-reap.js`'s `isHeldByLiveSession` (used by `reapWorktrees` and `reconcile/reap-merged.js`) treats a hold whose pid is alive as in use, failing closed on an unreadable hold or a foreign host; the file goes with the worktree's admin dir.
+  - `docs/hooks.md`: one bullet — `post-tool-use` (`EnterWorktree`/`ExitWorktree`), `session-start`, `session-end` and `subagent-stop` write and clear a **worktree hold** (log tier, #4960): a `{gitdir}/claude-tweaks-holds/{session}__{agent|main}__{claude-pid}.json` file in the entered worktree's own git admin dir; `worktree-reap.js`'s `holdVerdict` (used by `reapWorktrees` and `reconcile/reap-merged.js`) skips a worktree whose hold names a live pid quietly (`held`), and fails closed on an unreadable hold, a foreign host or a missing pid with a reported `held-unverifiable` skip; the file goes with the worktree's admin dir.
 
 - [ ] **Step 4: Run to verify it passes, plus skill-prose suites that read these files**
 
