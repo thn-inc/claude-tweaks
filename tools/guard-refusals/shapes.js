@@ -596,4 +596,4 @@ function detectShapes(text, { placeholders = true } = {}) {
   return ids;
 }
 
-module.exports = { DETECTORS, UNDETECTED_ROWS, normalizePlaceholders, detectShapes };
+module.exports = { DETECTORS, UNDETECTED_ROWS, normalizePlaceholders, detectShapes, lexShell };
