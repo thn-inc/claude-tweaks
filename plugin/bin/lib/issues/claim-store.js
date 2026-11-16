@@ -258,15 +258,6 @@ function listClaimEntries(ghApi, repoSlug) {
   return { entries: Array.isArray(parsed.entries) ? parsed.entries : [], failure: null };
 }
 
-// Thin wrapper — the only pre-existing consumer (release-merged.js) is
-// migrating to listClaimEntries in the same change (see that module), but
-// kept exported as-is rather than removed, since a bare rename with no
-// remaining caller to prove it is unnecessary churn.
-function listClaimNames(ghApi, repoSlug) {
-  const { entries, failure } = listClaimEntries(ghApi, repoSlug);
-  return { names: entries.map((e) => e.name), failure };
-}
-
 // (deps: {ghApi, gitRunner?}, repoSlug, issueNumber, knownTip?) -> { content, sha, failure, absent, via?, error? }
 // (`error?` is present on a `permission-denied` failure only, see `permissionErrorField`.)
 // Tries git-CAS first (no `gitRunner` dep = skip straight to contents-API,
@@ -813,7 +804,6 @@ function staleClaimInFlightPr(content, gh, owner, repo, onError, target = null) 
 
 module.exports = {
   listClaimEntries,
-  listClaimNames,
   readClaimBlob,
   writeClaimBlob,
   claimsBranchExists,

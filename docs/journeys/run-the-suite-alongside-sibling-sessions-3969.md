@@ -23,6 +23,7 @@ files:
 - **Should feel:** Like before, just slower to saturate the machine. No new prompts and no new output on the happy path.
 - **Should understand:**
   - A plain `npm test` with no arguments prints its one impact-selection line first and runs only the selected files. The slot, the per-run temp directory and the concurrency below are unchanged. Only the lane differs: a subset takes the subset lane (`CT_TEST_SUBSET_SLOTS`), so it does not queue behind a sibling's whole-suite run, and a run with nothing selected takes no slot.
+  - Test files named on the command line (`node tools/run-tests.js tests/a.test.js tests/b.test.js`) run as an explicit subset from the subset lane too, with the same temp directory, git settings and concurrency (`run-several-test-files-through-the-runner-5547.md`).
   - The run holds a lock in `<tmpdir>/ct-test-suite-slots/` for its duration.
   - Its tests see `TMPDIR` pointing at `<tmpdir>/ct-test-runs/ct-testrun-<pid>-XXXXXX/`.
   - `node --test` runs with `--test-concurrency` set to half the cores, or cores minus 1 when `CI` is set.
@@ -66,6 +67,7 @@ files:
 - **Should feel:** Like an override, not a requirement. The defaults are meant for a shared developer machine.
 - **Should understand:**
   - An invalid `CT_TEST_SUITE_SLOTS` falls back to 1 and prints one line naming it.
+  - For one run only, pass `--test-concurrency=<n>` (a positive integer) on the runner's command line, as in `npm test -- --full --test-concurrency=4`. It replaces the computed worker count for that run and wins over `CT_TEST_CONCURRENCY`; a value that is not a positive integer exits 1 with one `run-tests.js:` line.
   - Nested runs (a test that itself spawns `run-tests.js`) skip the slot via `CT_TEST_SUITE_SLOT_HELD=1`, so they never deadlock on the parent's lock. A bare nested run, and a bare `npm test` that `verify.js` spawns, also run the whole set and never consult the impact map, because a child does what its parent asked.
   - Under a pipeline, `verify.js` now takes the slot itself and runs `npm test` with `CT_TEST_SUITE_SLOT_HELD=1`, so that child skips the lock. An exported `CT_TEST_SUITE_SLOTS` then governs only direct `npm test` runs. verify.js's own count comes from `concurrency.suiteSlots` or the `verify-suite-slots` policy key (`queue-verify-runs-behind-a-machine-wide-slot-5119.md`).
   - The suite's own slot tests still pass with a raised knob. Their sandboxed runner children start without `CT_TEST_SUITE_SLOTS` or `CT_TEST_SUBSET_SLOTS`, so they always measure the default of one slot.
@@ -94,4 +96,6 @@ files:
 - Updated during build of #5297: step 1 now covers git auto-maintenance turned off for the suite and template-copied fixture repos. Step 5 covers the spawn-free git check and its macOS shim rule. The trigger was one run spawning 1,300–2,100 processes per second.
 - Updated during build of #5319: a plain top-level `npm test` now runs the impact-selected subset from the subset lane. The entry point and steps 1 and 2 name `npm test -- --full` for the whole-suite run these steps describe, and step 4 says a bare child of `verify.js` or of another run also runs the whole set.
 - Updated during build of #5294: step 1 now covers the hooks' repoInfo store pointed into the run root, so a suite run never writes fixture answers into the user's real store.
+- Updated during build of #5547: step 1 now covers test files named on the runner's command line, which a repo-local guard steers multi-file direct runs to.
+- Updated at wrap-up of #5547: step 4 now covers a per-run `--test-concurrency=<n>` on the runner's command line.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).
