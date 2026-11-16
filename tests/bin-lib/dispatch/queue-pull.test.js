@@ -845,10 +845,11 @@ test('#5227 native: work-links native spawns resolve-blockers.js over the eligib
 // #5309: the native-blockers query failed. Every eligible record is excluded as blocked with the
 // unreadable-state detail, one Warning prints, and nothing is written back.
 const NATIVE_UNREADABLE = { detail: { blockedBy: ['native blockers (state unreadable)'] } };
-const nativeFiles = (own, { queue = [9001, 9003] } = {}) => ({
+const NATIVE_QUEUE = [9001, 9003];
+const nativeFiles = (own) => ({
   inputs: {
-    queueRaw: writeInput(own, 'queue.json', JSON.stringify(queue.map((n) => mcpRecord(n, withBody(n))))),
-    openNumbers: writeInput(own, 'open.json', JSON.stringify(queue.map((n) => ({ number: n })))),
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify(NATIVE_QUEUE.map((n) => mcpRecord(n, withBody(n))))),
+    openNumbers: writeInput(own, 'open.json', JSON.stringify(NATIVE_QUEUE.map((n) => ({ number: n })))),
     depFreshness: writeInput(own, 'dep.json', '[]'),
     verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
   },

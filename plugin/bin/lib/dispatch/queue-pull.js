@@ -572,7 +572,9 @@ function runOversized(ctx) {
     const excludedNative = [];
     for (const c of eligible) {
       const dep = nativeDeps[c.number];
-      const refs = state.nativeUnreadable ? [NATIVE_UNREADABLE] : (dep ? openBlockerRefs(dep) : []);
+      let refs = [];
+      if (state.nativeUnreadable) refs = [NATIVE_UNREADABLE];
+      else if (dep) refs = openBlockerRefs(dep);
       if (refs.length > 0) excludedNative.push({ number: c.number, blockedBy: refs });
       else finalEligible.push(c);
     }
