@@ -381,6 +381,133 @@ test('a token-totals timing.json written mid-call by a concurrent pass is kept b
   }
 });
 
+// A run dir under pipelines/, as the reconciler sees it: -> { runDir, twin }.
+function pipelinesRun(root, name, worktree) {
+  const pipelines = path.join(root, 'pipelines');
+  fs.mkdirSync(pipelines, { recursive: true });
+  const runDir = closedRun(pipelines, name, worktree);
+  return { runDir, twin: path.join(pipelines, 'archive', name) };
+}
+
+test('item 2: the reconciler archives the run during the transcript read → timing.json lands in the archive twin, the run dir is not recreated', async () => {
+  const root = tmpRoot();
+  const realRead = transcript.readUsage;
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const { runDir, twin } = pipelinesRun(root, 'run', wtA);
+    writeTranscript(cfg, wtA, [A, B]);
+    transcript.readUsage = async (p, o) => {
+      fs.mkdirSync(path.dirname(twin), { recursive: true });
+      fs.renameSync(runDir, twin);
+      return realRead(p, o);
+    };
+    const r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.deepStrictEqual(r, { status: 'written', tokens: true, skip: null });
+    assert.equal(fs.existsSync(runDir), false, 'the vanished run dir is never recreated');
+    const timing = readTiming(twin);
+    assertPhaseRows(timing);
+    assert.equal(timing.runDir, twin);
+    assert.deepStrictEqual(pickTokens(timing.totals.tokens), sum(A, B));
+    assert.deepStrictEqual(skipLines(twin), []);
+    assert.deepStrictEqual(fs.readdirSync(twin).filter((n) => n.startsWith('.timing.lock') || n.includes('.tmp-')), []);
+  } finally {
+    transcript.readUsage = realRead;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('item 2: a pending SKIP is logged in the archive twin the timing landed in', async () => {
+  const root = tmpRoot();
+  const realRead = transcript.readUsage;
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const { runDir, twin } = pipelinesRun(root, 'run', wtA);
+    writeTranscript(cfg, wtA, [A, B]);
+    let entered = false;
+    transcript.readUsage = () => {
+      entered = true;
+      fs.mkdirSync(path.dirname(twin), { recursive: true });
+      fs.renameSync(runDir, twin);
+      return new Promise(() => {});
+    };
+    mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    let r;
+    try {
+      const p = writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg }, boundMs: 200 });
+      for (let i = 0; i < 5000 && !entered; i++) await new Promise((res) => setImmediate(res));
+      mock.timers.tick(200);
+      r = await p;
+    } finally {
+      mock.timers.reset();
+    }
+    assert.equal(r.status, 'written');
+    assert.equal(fs.existsSync(runDir), false);
+    assertPhaseRows(readTiming(twin));
+    const skips = skipLines(twin);
+    assert.equal(skips.length, 1, JSON.stringify(skips));
+    assert.match(skips[0], /200 ms time bound/);
+  } finally {
+    transcript.readUsage = realRead;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('item 2: the run dir vanishes with no archive twin → failed, nothing recreated, no throw', async () => {
+  const root = tmpRoot();
+  const realRead = transcript.readUsage;
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const { runDir, twin } = pipelinesRun(root, 'run', wtA);
+    writeTranscript(cfg, wtA, [A, B]);
+    transcript.readUsage = async (p, o) => { fs.rmSync(runDir, { recursive: true, force: true }); return realRead(p, o); };
+    const r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.equal(r.status, 'failed');
+    assert.equal(fs.existsSync(runDir), false);
+    assert.equal(fs.existsSync(twin), false);
+  } finally {
+    transcript.readUsage = realRead;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('item 7: the read-check-write holds the run dir\'s timing lock — a lock held by a live writer past the bound is one SKIP, the file untouched', async () => {
+  const root = tmpRoot();
+  const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const runDir = closedRun(root, 'run', wtA);
+    writeTranscript(cfg, wtA, [A, B]);
+    const file = path.join(runDir, 'timing.json');
+    const before = '{"phases":[],"totals":{"minutes":1}}\n';
+    fs.writeFileSync(file, before);
+    // A concurrent writer (this live process) holds the lock for the whole call.
+    const held = acquireLock(path.join(runDir, '.timing.lock'), { waitMs: 0, env: {} });
+    assert.ok(held);
+    let r;
+    let sync;
+    try {
+      r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg }, boundMs: 100 });
+    } finally {
+      releaseLock(held);
+    }
+    assert.equal(r.status, 'failed');
+    assert.equal(fs.readFileSync(file, 'utf8'), before);
+    const skips = skipLines(runDir);
+    assert.equal(skips.length, 1, JSON.stringify(skips));
+    assert.match(skips[0], /condition: timing\.json lock not acquired within \d+ ms → fallback: no timing\.json written/);
+    // Released, the same call writes.
+    sync = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.equal(sync.status, 'written');
+    assert.equal(fs.existsSync(path.join(runDir, '.timing.lock')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('TIMING_BOUND_MS is at most 60000', () => {
   assert.ok(TIMING_BOUND_MS <= 60000);
   assert.equal(TIMING_BOUND_MS, 60000);

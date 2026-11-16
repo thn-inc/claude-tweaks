@@ -18,6 +18,7 @@ const path = require('path');
 const { lstatType } = require('../path-guard');
 const { derivePhaseTiming, deriveTiming, hasTokenTotals, writeTimingFile } = require('./run-timing');
 const { priorWorktree } = require('../run-state-worktree');
+const { acquireLock, releaseLock } = require('../file-lock');
 const timingSkip = require('../log-decision/timing-skip');
 
 // The one time bound on a close's transcript reads (ms).
@@ -68,9 +69,12 @@ function readExisting(runDir) {
   try { return JSON.parse(fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8')); } catch { return null; }
 }
 
+const isDir = (p) => lstatType(p).type === 'directory';
+
 // The steps both writers share before any transcript is read:
 // -> { done: result } when nothing more is to be done, else { base }.
 function prepare(runDir) {
+  if (!isDir(runDir)) return { done: { status: 'failed', tokens: false, skip: `condition: run dir is missing or not a directory → fallback: ${NOTHING_WRITTEN}` } };
   if (isSpecChildDir(runDir)) return { done: { status: 'not-top-level', tokens: false, skip: null } };
   if (hasTokenTotals(readExisting(runDir))) return { done: { status: 'kept', tokens: true, skip: null } };
   const base = derivePhaseTiming(runDir);
@@ -78,18 +82,53 @@ function prepare(runDir) {
   return { base };
 }
 
-// timing, pending skip -> the result; a write failure replaces the pending skip.
-// A timing with no token totals never replaces a file that gained them while
-// this call derived (a concurrent token pass): the check runs again here.
-function write(runDir, timing, skip) {
+// Where the reconciler's archive moves a run dir: {pipelines}/archive/{run-id}.
+const archiveTwin = (runDir) => path.join(path.dirname(runDir), 'archive', path.basename(runDir));
+const LOCK_NAME = '.timing.lock';
+
+// One read-check-write in dir, under dir's timing lock, so a concurrent writer
+// (a token pass, a second closer) never has its file overwritten between the
+// check and the rename. The lock is waited for only until deadlineAt (never past
+// the time bound); a lock not acquired in time is a SKIP. The lock never creates
+// dir. -> a result, or { vanished, token } when dir is gone (token: the lock this
+// call held when dir went, which a concurrent archive may have carried along).
+function writeIn(dir, timing, skip, deadlineAt) {
+  if (!isDir(dir)) return { vanished: true, token: null };
   const withTokens = hasTokenTotals(timing);
-  if (!withTokens && hasTokenTotals(readExisting(runDir))) return { status: 'kept', tokens: true, skip: null };
-  try {
-    writeTimingFile(runDir, timing);
-  } catch (err) {
-    return { status: 'failed', tokens: false, skip: `condition: timing.json write failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
+  const waitMs = Math.max(0, Math.floor(Math.min(TIMING_BOUND_MS, deadlineAt - Date.now())));
+  const held = acquireLock(path.join(dir, LOCK_NAME), { waitMs, env: {}, createParent: false });
+  if (!held) {
+    if (!isDir(dir)) return { vanished: true, token: null };
+    return { status: 'failed', tokens: false, skip: `condition: timing.json lock not acquired within ${waitMs} ms → fallback: ${NOTHING_WRITTEN}` };
   }
-  return { status: 'written', tokens: withTokens, skip };
+  try {
+    // A timing with no token totals never replaces a file that gained them while
+    // this call derived (a concurrent token pass).
+    if (!withTokens && hasTokenTotals(readExisting(dir))) return { status: 'kept', tokens: true, skip: null };
+    try {
+      writeTimingFile(dir, timing);
+    } catch (err) {
+      if (!isDir(dir)) return { vanished: true, token: held.token };
+      return { status: 'failed', tokens: false, skip: `condition: timing.json write failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
+    }
+    return { status: 'written', tokens: withTokens, skip };
+  } finally {
+    releaseLock(held);
+  }
+}
+
+// timing, pending skip, deadline -> { dir, result }: dir is where the result's SKIP
+// belongs. A write failure replaces the pending skip. When the run dir vanished
+// (a concurrent archive moved it), the write is retried once at its archive twin.
+function write(runDir, timing, skip, deadlineAt) {
+  const r = writeIn(runDir, timing, skip, deadlineAt);
+  if (!r.vanished) return { dir: runDir, result: r };
+  const twin = archiveTwin(runDir);
+  // Our own lock dir, if the archive moved it along, is released at its new path.
+  if (r.token) releaseLock({ lockPath: path.join(twin, LOCK_NAME), token: r.token });
+  const t = writeIn(twin, { ...timing, runDir: twin }, skip, deadlineAt);
+  if (!t.vanished) return { dir: twin, result: t };
+  return { dir: twin, result: { status: 'failed', tokens: false, skip: `condition: run dir and its archive twin are gone → fallback: ${NOTHING_WRITTEN}` } };
 }
 
 function finish(runDir, result) {
@@ -99,14 +138,16 @@ function finish(runDir, result) {
 
 // runDir -> { status, skip }: phase rows only, synchronous, no transcript read.
 function writePhaseTimingSync(runDir) {
+  let dir = runDir;
   let result;
   try {
     const p = prepare(runDir);
-    result = p.done || write(runDir, p.base.timing, null);
+    if (p.done) result = p.done;
+    else ({ dir, result } = write(runDir, p.base.timing, null, Date.now() + module.exports.TIMING_BOUND_MS));
   } catch (err) {
     result = { status: 'failed', tokens: false, skip: `condition: timing at close failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
   }
-  finish(runDir, result);
+  finish(dir, result);
   return { status: result.status, skip: result.skip };
 }
 
@@ -116,6 +157,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
     const r = writePhaseTimingSync(runDir);
     return { status: r.status, tokens: false, skip: r.skip };
   }
+  let dir = runDir;
   let result;
   try {
     const p = prepare(runDir);
@@ -124,8 +166,9 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
     } else {
       const own = ownTranscripts(p.base.runState, { env, homeDir });
       const bound = boundMs ?? module.exports.TIMING_BOUND_MS;
+      const deadlineAt = Date.now() + bound;
       const d = await deriveTiming(runDir, {
-        transcriptPaths: own.paths, wantTokens: own.paths.length > 0, cwd: runDir, deadlineAt: Date.now() + bound, base: p.base,
+        transcriptPaths: own.paths, wantTokens: own.paths.length > 0, cwd: runDir, deadlineAt, base: p.base,
       });
       if (!d.ok) {
         result = { status: 'failed', tokens: false, skip: `condition: timing could not be derived (${d.error}) → fallback: ${NOTHING_WRITTEN}` };
@@ -134,13 +177,13 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
         if (own.reason) skip = `condition: ${own.reason} → fallback: ${PHASE_ONLY}`;
         else if (d.deadlineHit) skip = `condition: transcript read passed the ${bound} ms time bound → fallback: ${PHASE_ONLY}`;
         else if (!hasTokenTotals(d.timing)) skip = `condition: own transcript yielded no token totals (${d.notes.length ? d.notes.join('; ') : 'no usage tokens'}) → fallback: ${PHASE_ONLY}`;
-        result = write(runDir, d.timing, skip);
+        ({ dir, result } = write(runDir, d.timing, skip, deadlineAt));
       }
     }
   } catch (err) {
     result = { status: 'failed', tokens: false, skip: `condition: timing at close failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
   }
-  return finish(runDir, result);
+  return finish(dir, result);
 }
 
 // Same as writeTimingAtClose, and a throw out of it (a stub, a defect) is one SKIP line too: the
