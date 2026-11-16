@@ -63,7 +63,7 @@ touching shared state runs one member at a time.
    read `close-out-update.md` too (it offers `gh pr update-branch`); declining continues, since
    BEHIND was never a stop — except on a resume (the existing `.worktrees/close-out-{number}` or pending marker above), where `close-out-update.md` step 1 offers no skip: declining stops, since that head is unverified. `mergeStateStatus: BLOCKED` with nothing else wrong is the forge
    waiting on required checks/reviews, not a conflict — proceed.
-3. **Convert draft to ready, if needed (AC2).** **Acceptance labeling first** — this check, and
+3. **Convert draft to ready, if needed (AC2).** *Parked check (#4615):* run `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n}` on each of the PR's `Fixes` records, adding `--run "{run-dir}"` when a run dir is already in hand (else omit it; the CLI then reads the repo-root policy). Exit 0 or 6 (`unknown`): stop this candidate with `stopped: parked awaiting local acceptance — run /claude-tweaks:accept #{record}`, before any Mark-ready call or Step 1 run below. **Acceptance labeling first** — the labeling check, and
    any Step 1 run it leads to, precedes the Mark-ready call below, keeping
    `_shared/pr-first-merge.md`'s own Step 1 → Step 2 order. Apply
    `_shared/acceptance-labeling-landed.md` to this PR (the run-dir resolution, the `verify.json`
@@ -127,7 +127,7 @@ One line per candidate: `#{number} — {outcome}` where `{outcome}` is one of `m
 `stopped: CI {status}`, `stopped: CI unreadable`, `stopped: mergeStateStatus {DIRTY | BEHIND} — update declined`,
 `stopped: update failed — {conflict not resolved | verification | push rejected | update-branch rejected | head moved | base not fetched | marker unreadable | marker not written | gh absent | command failed}`,
 `stopped: CI {status} after update`, `stopped: mergeStateStatus {status} after update`,
-`stopped: acceptance labeling unverifiable — no run dir`, or `declined at confirmation gate`.
+`stopped: acceptance labeling unverifiable — no run dir`, `stopped: parked awaiting local acceptance — run /claude-tweaks:accept #{record}`, or `declined at confirmation gate`.
 The bare form's summary line names how many candidates were found, merged/armed, stopped, and declined. This mode is never headless-self-reporting like bare
 `/dispatch`'s own Preflight failures (`_shared/headless-self-report.md`) — its confirmation gate
 (step 4) requires a human present by construction (`close-out-confirmation.md`'s no-carve-out
