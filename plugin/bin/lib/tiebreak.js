@@ -191,6 +191,8 @@ function parseTiebreakReply(text, options) {
 // (MARKER_RE) is can't-tell with reason bad-finding-field, so a finding field
 // can never forge a second decisions.md line or echo another finding's marker;
 // the logLine is also whitespace-collapsed to one line.
+// Chunked replies (one agent, up to CHUNK_MAX findings) are split and resolved
+// by splitChunkReply / resolveTiebreakChunk below; the grammar is documented there.
 
 const LINE_BREAK_RE = /[\r\n\u2028\u2029]/;
 const MARKER_RE = /tiebreak:/i;
@@ -341,6 +343,83 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   });
 }
 
+// ---- chunked replies (#5540) ----
+//
+// One judge agent settles up to CHUNK_MAX findings and answers once. Chunk reply
+// grammar (splitChunkReply): lines are trimmed; a block starts at a line
+// `Id: {12 hex}` (the id optionally in one backtick pair, name and id matched
+// case-insensitively) whose id is one of the chunk's ids, and runs to the next
+// line of that shape or to the end of the reply, excluding the reply's final
+// non-empty line when that line matches STATUS_RE. `status` is that final line
+// (verbatim, trimmed) or null. A block's text is its lines after the header
+// joined with `\n`, then `\n` + status when status is non-null, so it parses
+// exactly as a one-finding reply does. An id with no header is `missing`; an id
+// with two or more headers is `duplicate`; both carry text ''. Lines before the
+// first header, and any block under an id outside the chunk, belong to no finding.
+// resolveTiebreakChunk settles each finding whose block is present exactly once
+// through resolveTiebreak, so its verdict line is the one-finding call's line
+// for the same entry and block; every other finding is reported unsettled with
+// nothing resolved for it, and the caller re-dispatches it alone.
+
+const CHUNK_MAX = 8;
+const CHUNK_HEADER_RE = /^id\s*:\s*`?([0-9a-f]{12})`?$/i;
+const CONFIRMED_VERDICT_RE = /^verdict\s*:\s*confirmed\s*$/i;
+
+function splitChunkReply(replyText, ids) {
+  const wanted = new Set(ids.map((id) => id.toLowerCase()));
+  const lines = typeof replyText === 'string'
+    ? replyText.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '')
+    : [];
+  let status = null;
+  if (lines.length > 0 && STATUS_RE.test(lines[lines.length - 1])) status = lines.pop();
+
+  const found = new Map(); // id -> [lines of each header's block]
+  let current = null;
+  for (const line of lines) {
+    const header = CHUNK_HEADER_RE.exec(line);
+    if (header) {
+      const id = header[1].toLowerCase();
+      if (wanted.has(id)) {
+        if (!found.has(id)) found.set(id, []);
+        current = [];
+        found.get(id).push(current);
+      } else current = null;
+    } else if (current) current.push(line);
+  }
+
+  const blocks = new Map();
+  for (const id of ids) {
+    const key = id.toLowerCase();
+    const occurrences = found.get(key) || [];
+    if (occurrences.length === 0) blocks.set(id, { state: 'missing', text: '' });
+    else if (occurrences.length > 1) blocks.set(id, { state: 'duplicate', text: '' });
+    else blocks.set(id, { state: 'ok', text: [...occurrences[0], ...(status === null ? [] : [status])].join('\n') });
+  }
+  return { status, blocks };
+}
+
+function resolveTiebreakChunk(findings, replyText, opts) {
+  if (!Array.isArray(findings)) throw new TypeError('resolveTiebreakChunk: findings must be an array');
+  const ids = findings.map((f) => findingId(f));
+  if (new Set(ids).size !== ids.length) throw new TypeError('resolveTiebreakChunk: two entries share a finding id');
+  const { blocks } = splitChunkReply(replyText, ids);
+  const results = [];
+  const unsettled = [];
+  findings.forEach((finding, index) => {
+    const id = ids[index];
+    const block = blocks.get(id);
+    if (block.state !== 'ok') {
+      unsettled.push({ id, index, reason: block.state === 'missing' ? 'missing' : 'duplicated' });
+      return;
+    }
+    const text = finding.vacuity === true
+      ? block.text.split('\n').map((l) => (CONFIRMED_VERDICT_RE.test(l) ? 'Verdict: cant-tell' : l)).join('\n')
+      : block.text;
+    results.push({ ...resolveTiebreak(finding, text, opts), id, index });
+  });
+  return { results, unsettled };
+}
+
 // ---- findings artifact and verdict coverage (#3945 Task 3) ----
 //
 // review-findings.json (a run-dir artifact, in run-artifact/write.js's
@@ -458,5 +537,5 @@ function checkRunTiebreakCoverage(runDir, specDirs) {
 module.exports = {
   findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES,
   FINDINGS_ARTIFACT, buildFindingsArtifact, readFindingsArtifact, checkTiebreakCoverage, checkRunTiebreakCoverage,
-  VERDICT_LINE_END,
+  VERDICT_LINE_END, CHUNK_MAX, splitChunkReply, resolveTiebreakChunk,
 };

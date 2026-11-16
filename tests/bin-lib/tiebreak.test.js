@@ -976,3 +976,130 @@ test('an ENOENT read whose lstat cannot prove absence is present and invalid; on
   t.mock.restoreAll();
   assert.deepEqual(readFindingsArtifact(dir), { present: false, valid: true, findings: null });
 });
+
+// ---- chunked replies (#5540) ----
+
+const { CHUNK_MAX, splitChunkReply, resolveTiebreakChunk } = require('../../plugin/bin/lib/tiebreak');
+
+const CHUNK_F1 = { ...FINDING, claim: 'first claim' };
+const CHUNK_F2 = { ...FINDING, claim: 'second claim' };
+const CHUNK_F3 = { ...FINDING, claim: 'third claim' };
+const [ID1, ID2] = [CHUNK_F1, CHUNK_F2].map(findingId);
+const CONFIRMED_BODY = ['Verdict: confirmed', 'Evidence: plugin/bin/foo.js:20 `const x = readSync(fd);`', 'Severity: medium'].join('\n');
+const REFUTED_BODY = ['Verdict: refuted', 'Evidence: plugin/bin/foo.js:20 `const x = readSync(fd);`', 'Severity: low'].join('\n');
+const CANT_TELL_BODY = 'Verdict: cant-tell';
+const block = (id, body) => `Id: ${id}\n${body}`;
+const chunkResolve = (findings, text) => resolveTiebreakChunk(findings, text, { readFile: reader, now: NOW });
+const stripKeys = ({ id, index, ...rest }) => rest; // eslint-disable-line no-unused-vars
+
+test('CHUNK_MAX is 8', () => {
+  assert.equal(CHUNK_MAX, 8);
+});
+
+test('AC1.1: each chunk verdict line equals the one-finding call on the same entry and block', () => {
+  const entries = [CHUNK_F1, CHUNK_F2, CHUNK_F3];
+  const bodies = [CONFIRMED_BODY, REFUTED_BODY, CANT_TELL_BODY];
+  const text = `${entries.map((f, i) => block(findingId(f), bodies[i])).join('\n')}\nSTATUS: DONE`;
+  const chunk = chunkResolve(entries, text);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results.length, 3);
+  entries.forEach((entry, i) => {
+    const single = resolve(entry, `${bodies[i]}\nSTATUS: DONE`);
+    assert.equal(chunk.results[i].logLine, single.logLine);
+    assert.equal(chunk.results[i].id, findingId(entry));
+    assert.equal(chunk.results[i].index, i);
+    assert.deepEqual(stripKeys(chunk.results[i]), stripKeys(single));
+  });
+  assert.deepEqual(chunk.results.map((r) => r.outcome), ['confirmed', 'drop', 'console']);
+});
+
+test('AC1.2: a one-finding chunk settles like the one-finding call', () => {
+  const chunk = chunkResolve([CHUNK_F1], `${block(ID1, CONFIRMED_BODY)}\nSTATUS: DONE`);
+  const single = resolve(CHUNK_F1, `${CONFIRMED_BODY}\nSTATUS: DONE`);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].logLine, single.logLine);
+  assert.deepEqual(stripKeys(chunk.results[0]), stripKeys(single));
+});
+
+test('AC3.1: a reply missing one id leaves that finding unsettled and settles the others', () => {
+  const chunk = chunkResolve([CHUNK_F1, CHUNK_F2], `${block(ID1, CONFIRMED_BODY)}\nSTATUS: DONE`);
+  assert.deepEqual(chunk.unsettled, [{ id: ID2, index: 1, reason: 'missing' }]);
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].index, 0);
+  assert.equal(chunk.results[0].outcome, 'confirmed');
+  assert.ok(chunk.results.every((r) => r.id !== ID2));
+  assert.ok(chunk.results.every((r) => !r.logLine.includes(ID2)));
+});
+
+test('AC3.1: a reply repeating one id leaves that finding unsettled and settles the others', () => {
+  const text = [block(ID1, CONFIRMED_BODY), block(ID2, REFUTED_BODY), block(ID2, REFUTED_BODY), 'STATUS: DONE'].join('\n');
+  const chunk = chunkResolve([CHUNK_F1, CHUNK_F2], text);
+  assert.deepEqual(chunk.unsettled, [{ id: ID2, index: 1, reason: 'duplicated' }]);
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].outcome, 'confirmed');
+  assert.ok(chunk.results.every((r) => r.id !== ID2));
+});
+
+test('Review Focus 1: an id quoted inside Evidence is not a block boundary', () => {
+  const quoted = `const note = "Id: ${ID2}";`;
+  const lines = FILE_LINES.slice();
+  lines[19] = quoted;
+  const first = ['Verdict: confirmed', `Evidence: plugin/bin/foo.js:20 \`${quoted}\``, 'Severity: medium'].join('\n');
+  const text = [block(ID1, first), `Note about Id: ${ID2}`, block(ID2, REFUTED_BODY.replace('const x = readSync(fd);', quoted)), 'STATUS: DONE'].join('\n');
+  const chunk = resolveTiebreakChunk([CHUNK_F1, CHUNK_F2], text, { readFile: () => lines.join('\n'), now: NOW });
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results[0].outcome, 'confirmed');
+  assert.equal(chunk.results[1].outcome, 'drop');
+});
+
+test('Review Focus 2: no trailing STATUS line leaves every finding can\'t-tell', () => {
+  const text = [block(ID1, CONFIRMED_BODY), block(ID2, CONFIRMED_BODY)].join('\n');
+  assert.equal(splitChunkReply(text, [ID1, ID2]).status, null);
+  const chunk = chunkResolve([CHUNK_F1, CHUNK_F2], text);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results.length, 2);
+  for (const r of chunk.results) {
+    assert.equal(r.reason, 'could-not-parse');
+    assert.notEqual(r.outcome, 'confirmed');
+  }
+});
+
+test('Review Focus 3: preamble and foreign ids attach to no finding', () => {
+  const foreign = 'abcdef012345';
+  const text = [
+    'Verdict: refuted', 'Here are my verdicts.',
+    block(ID1, CONFIRMED_BODY),
+    block(foreign, 'Verdict: refuted'),
+    'Verdict: confirmed',
+    block(ID2, REFUTED_BODY),
+    'STATUS: DONE',
+  ].join('\n');
+  const split = splitChunkReply(text, [ID1, ID2]);
+  assert.deepEqual([...split.blocks.keys()], [ID1, ID2]);
+  assert.equal(split.status, 'STATUS: DONE');
+  const chunk = chunkResolve([CHUNK_F1, CHUNK_F2], text);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.deepEqual(chunk.results.map((r) => r.outcome), ['confirmed', 'drop']);
+  assert.deepEqual(stripKeys(chunk.results[0]), stripKeys(resolve(CHUNK_F1, `${CONFIRMED_BODY}\nSTATUS: DONE`)));
+});
+
+test('Review Focus 5: a chunk with two entries of the same id throws', () => {
+  assert.throws(() => chunkResolve([CHUNK_F1, CHUNK_F1], `${block(ID1, CONFIRMED_BODY)}\nSTATUS: DONE`), TypeError);
+});
+
+test('Review Focus 6: a vacuity entry\'s confirmed block resolves can\'t-tell', () => {
+  const vacuous = { ...CHUNK_F1, vacuity: true };
+  const text = [block(ID1, CONFIRMED_BODY), block(ID2, CONFIRMED_BODY), 'STATUS: DONE'].join('\n');
+  const chunk = chunkResolve([vacuous, CHUNK_F2], text);
+  const rewritten = CONFIRMED_BODY.replace('Verdict: confirmed', 'Verdict: cant-tell');
+  assert.deepEqual(chunk.unsettled, []);
+  assert.deepEqual(stripKeys(chunk.results[0]), stripKeys(resolve(vacuous, `${rewritten}\nSTATUS: DONE`)));
+  assert.equal(chunk.results[0].reason, 'verdict:cant-tell');
+  assert.equal(chunk.results[1].outcome, 'confirmed');
+  const refuted = chunkResolve([vacuous], `${block(ID1, REFUTED_BODY)}\nSTATUS: DONE`);
+  assert.equal(refuted.results[0].outcome, 'drop');
+  // vacuity is not part of the identity, and the one-finding form ignores it.
+  assert.equal(findingId(vacuous), ID1);
+  assert.equal(resolve(vacuous, `${CONFIRMED_BODY}\nSTATUS: DONE`).outcome, 'confirmed');
+});
