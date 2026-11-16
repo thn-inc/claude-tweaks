@@ -10,6 +10,7 @@ files:
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/_shared/local-acceptance-park.md
   - plugin/skills/specify/shaping-mode-stamping.md
+  - plugin/skills/tidy/actions-github-issues.md
 ---
 
 # See Why an Unflagged Risky Change Parked
@@ -49,10 +50,12 @@ files:
   - `tripwire could not run: {step}` when the check failed
 - **Should feel:** Specific. You can see which file, which category and which glob or agent judgment caused it, without opening logs.
 - **Should understand:**
-  - The packet text is neutralized: a path or evidence string can never forge a `target:` line.
+  - The packet text is neutralized: a path or evidence string can never forge a `target:` line. An absolute path inside a failure reason (git's own stderr, a lock file) shows as `<path>`.
+  - When `/claude-tweaks:tidy`'s record-linked arm made the decision, no packet is posted. Tidy's report carries the same lines instead: `Held (not armed): PR #{n} — local acceptance target, never parked; recommend /claude-tweaks:accept #{record}`, followed by the decision's `tripwire…` lines verbatim.
   - A removal made at intent time does not suppress the tripwire. The removal judged the planned work, and the diff is new evidence of what was built.
 - **Red flags:**
   - A parked PR whose packet has no `tripwire` line, although the reason is `tripwire`.
+  - A tidy `Held (not armed)` line for a tripwire decision with no `tripwire` line after it.
   - A local checkout path or a raw error message appears in a packet line.
 
 ### 3. Decide what to do with it
