@@ -281,12 +281,10 @@ const realDeps = {
   // never hit the real filesystem for it either.
   readFile: (file) => fs.readFileSync(file, 'utf8'),
   // #1840: the RUNNING build's own version — CLAUDE_PLUGIN_ROOT/.claude-plugin/
-  // plugin.json, the same read bin/harness-health.js's own resolvePluginVersion
-  // performs (never this repo's own plugin/.claude-plugin/plugin.json, which is
-  // ahead of the installed build during development). Fail-toward-undefined.
-  // #1837 review finding: this was its own third copy of the same
-  // read/parse/extract logic — now shared with bin/harness-health.js and
-  // bin/lib/hooks/session-start.js via bin/lib/plugin-version.js.
+  // plugin.json, read by bin/lib/plugin-version.js's resolvePluginVersion (never
+  // this repo's own plugin/.claude-plugin/plugin.json, which is ahead of the
+  // installed build during development). Fails toward undefined; shared with
+  // bin/harness-health.js and bin/lib/hooks/session-start.js.
   installedPluginVersion: () => resolvePluginVersion(),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
