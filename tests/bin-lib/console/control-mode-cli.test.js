@@ -627,7 +627,11 @@ test('--set-item carried leaves a row with an empty Status cell to settleRow: ne
   const b = baseDeps(fx, []);
   const code = await run(setItemArgs(fx, 'ledger-record-1.md', 'carried', '--ledger', ledger), b.d);
   assert.ok(!/\(terminal\)/.test(b.err()), b.err());
-  assert.notStrictEqual(code, 5, b.err());
+  assert.strictEqual(code, 0, b.err());
+  assert.match(b.out(), /ledger row #1 settled/);
+  assert.match(fs.readFileSync(ledger, 'utf8'), /\| 1 \| build \| a finding \| deferred \| carried to the acceptance packet as decision:console:ledger-record-1\.md \|/);
+  assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), ['decision:console:ledger-record-1.md']);
+  assert.strictEqual(cj(fx).items[0].resolution, 'carried');
 });
 
 test('--set-item carried refuses several ledger rows naming the item: exit 5, no fact, ledger unchanged', async () => {
@@ -647,13 +651,15 @@ test('--set-item carried refuses several ledger rows naming the item: exit 5, no
 test('--set-item carried exits 5 when console.json stops being rewritable after the fact landed', async () => {
   const fx = controlFixture({ consoleJson: consoleOf([ledgerItem()]) });
   const consolePath = path.join(fx.runDir, 'console.json');
-  // `now` is read immediately before the stored rewrite: flip the item there, as a concurrent writer would.
+  // Depends on carryItem reading `now` immediately before rewriteItemResolution (and after writeDecisionFacts):
+  // the flip happens there, as a concurrent writer would. The asserts below pin that this is the refusal path taken.
   const b = baseDeps(fx, [], { now: () => {
     fs.writeFileSync(consolePath, consoleOf([ledgerItem('dropped')]));
     return Date.parse('2026-09-06T12:00:00Z');
   } });
   assert.strictEqual(await run(setItemArgs(fx, 'ledger-record-1.md', 'carried'), b.d), 5, b.err());
-  assert.match(b.err(), /is dropped, not rewritable to carried .* — nothing written/);
+  assert.strictEqual(b.err(), 'console-resolve.js: item ledger-record-1.md is dropped, not rewritable to carried (only apply/approve/filed → carried) — nothing written\n');
+  assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), ['decision:console:ledger-record-1.md'], 'the fact landed before the refusal');
   assert.strictEqual(cj(fx).items[0].resolution, 'dropped');
 });
 
