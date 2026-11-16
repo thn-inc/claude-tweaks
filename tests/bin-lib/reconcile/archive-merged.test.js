@@ -3881,7 +3881,7 @@ test('AC1.1/AC1.3 reconciler: an abandoned-interrupted run archived by archiveMe
   assert.deepEqual(spawnCalls, [fx.archiveDir]);
   assert.equal(archivedState(fx.archiveDir).worktreeAtClose, fx.wt, 'archiveRunDir carried the worktree into worktreeAtClose');
 
-  const r = await runCli(TIMING_CLI, ['--run', spawnCalls[0]], { env: { CLAUDE_CONFIG_DIR: cfg } });
+  const r = await runCli(TIMING_CLI, ['--run', spawnCalls[0]], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: fx.root });
   assert.equal(r.code, 0);
   const timing = T.readTiming(fx.archiveDir);
   T.assertPhaseRows(timing);
