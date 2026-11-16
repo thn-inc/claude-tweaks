@@ -13,11 +13,14 @@
 //       the rewritten text, else the original; `detector` is its first id, counted in refusedShapeById);
 //       long-chain (chainLength >= 4); else unexplained. A throwing rewrite or detect leaves the row unexplained.
 //     `unexplainedByReason` counts the unexplained harness rows by the row's `reason` (null as `none`).
-//   writeTargetsMoved / writeTargetsLost / writeTargetsChecked   over every Bash row (any guard, any effect) with
-//     an absolute cwd, not truncated, that a rule changes: checked counts the rows compared, moved those where
-//     any scanner list (JSON.stringify) differs between the original and rewritten text, lost those where a
-//     target in a before-list is missing from the matching after-list (a gained target alone is moved, not
-//     lost). A throw skips the row, counted in writeTargetsSkipped.
+//   writeTargetsMoved / writeTargetsRespelled / writeTargetsLost / writeTargetsChecked   over every Bash row (any
+//     guard, any effect) with an absolute cwd, not truncated, that a rule changes: checked counts the rows
+//     compared. moved counts those where any scanner list (JSON.stringify) differs between the original and
+//     the rewritten text once both have their literal assignments written out (spellOutAssignments): the
+//     rewrite changed where the command writes. respelled counts those where the lists differ only as the
+//     texts stand: the same write, which the scanner resolves in one spelling and not in the other. lost
+//     counts those where a target in a before-list is missing from the matching after-list, as the texts
+//     stand (a gained target alone is not lost). A throw skips the row, counted in writeTargetsSkipped.
 //   notReplayed   Bash rows (any guard, any effect) no rule could be tried on or whose rewrite threw, by cause:
 //     truncated, noCwd, rewriteFailed. A harness read among them is judged on its original text only.
 //   ruleNotApplied   harness-command Bash rows, any effect, not truncated, whose rewrite applies and whose
@@ -136,6 +139,121 @@ function scanAll(scanner, command, cwd) {
   return [scanner.gitTargets(command, cwd), scanner.fileWriteTargets(command, cwd), scanner.mkdirTargets(command, cwd)];
 }
 
+// The write gate's scanner follows a variable one hop, and only when it is a word's single reference
+// (git-command.js updateAssignment / substituteVars, by design). In `S=/a; F=$S/b; sed -i … $F` it
+// resolves no target; once inline-literal-assignment has written F's value out it resolves /a/b. The
+// command writes the same file either way. spellOutAssignments() writes each such value out, and
+// replay() scans both texts in that spelling, so a difference left over is a write that really moved.
+//
+// It reads a top-level statement that is exactly `NAME=value` (ended by `;`, `&&`, a newline or the
+// end of the text), outside `$(…)`, `(…)` and backticks and before the first compound command (`if`,
+// `for`, `while`, `until`, `case`, `select`, `function`) or `{`. The value must be literal text once
+// earlier names are written out, and the text may assign NAME nowhere else (a second `NAME=` or
+// `NAME+=` anywhere, or `for`/`read`/`export`/`local`/`declare`/`typeset`/`readonly NAME`). A later
+// `$NAME` or `${NAME}` outside single quotes, comments and heredoc bodies becomes the value; an
+// unquoted one only when the value holds no space. A statement after `&&` is read as run. One forward
+// pass: every lookup reads a fixed window, and a blank run is skipped once per statement. A value longer
+// than VALUE_MAX is not learned, and a text whose written-out values pass SPELL_BUDGET characters comes
+// back unchanged (a chain of assignments can double a value at each step), so the output stays bounded.
+const NAME_WINDOW = 256;
+const VALUE_MAX = 1024;
+const SPELL_BUDGET = 1 << 16;
+const REF = /^\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/;
+const ASSIGNMENT = /^([A-Za-z_]\w*)=/;
+const ASSIGNED_ANYWHERE = /(?<![\w$])([A-Za-z_]\w*)\+?=/g;
+const ASSIGNED_BY_WORD = /\b(?:for|read|export|local|declare|typeset|readonly)[ \t]+(?:-\w+[ \t]+)*([A-Za-z_]\w*)/g;
+const COMPOUND = /^(?:if|for|while|until|case|select|function)(?![\w-])/;
+const VALUE_CHAR = /[\w./@:+,=%-]/;
+
+function spellOutAssignments(text) {
+  const kinds = lexShell(text);
+  const assigned = {};
+  for (const m of text.matchAll(ASSIGNED_ANYWHERE)) bump(assigned, m[1]);
+  for (const m of text.matchAll(ASSIGNED_BY_WORD)) assigned[m[1]] = 2;
+  const known = new Map();
+  const refAt = (i) => {
+    const m = REF.exec(text.slice(i, i + NAME_WINDOW));
+    const name = m && m[0].length < NAME_WINDOW ? m[1] || m[2] : null;
+    return name && known.has(name) ? { length: m[0].length, value: known.get(name) } : null;
+  };
+  // The statement `NAME=value` that starts at `i`, as { name, value, end }, or null.
+  const assignmentAt = (i) => {
+    const m = ASSIGNMENT.exec(text.slice(i, i + NAME_WINDOW));
+    if (!m || assigned[m[1]] !== 1) return null;
+    let value = '';
+    let j = i + m[0].length;
+    for (; j < text.length; j++) {
+      const c = text[j];
+      const k = kinds[j];
+      if (k === 'plain' && /[\s;&|()<>]/.test(c)) break;
+      if (k === 'delim' && c !== '$') continue;
+      if (k !== 'plain' && k !== 'double' && k !== 'single') return null;
+      if (c === '$' && k !== 'single') {
+        const ref = refAt(j);
+        if (!ref) return null;
+        value += ref.value;
+        j += ref.length - 1;
+      } else if (VALUE_CHAR.test(c) || (c === ' ' && k !== 'plain')) value += c;
+      else return null;
+    }
+    let e = j;
+    while (text[e] === ' ' || text[e] === '\t') e++;
+    const ended = e >= text.length || text[e] === ';' || text[e] === '\n' || (text[e] === '&' && text[e + 1] === '&');
+    return value && value.length <= VALUE_MAX && ended ? { name: m[1], value, end: j } : null;
+  };
+
+  let out = '';
+  let spent = 0;
+  let start = true; // at the start of a statement
+  let learning = true; // no compound command or `{` seen yet
+  let depth = 0;
+  let tick = false;
+  for (let i = 0; i < text.length;) {
+    const c = text[i];
+    const k = kinds[i];
+    if (c === '\\' && (k === 'plain' || k === 'double')) {
+      out += text.slice(i, i + 2);
+      i += 2;
+      start = false;
+      continue;
+    }
+    if (k === 'plain' && start && learning && depth === 0 && !tick) {
+      const a = assignmentAt(i);
+      if (a) {
+        known.set(a.name, a.value);
+        spent += a.value.length;
+        out += `${a.name}=${a.value.includes(' ') ? `"${a.value}"` : a.value}`;
+        i = a.end;
+        start = false;
+        continue;
+      }
+      if (COMPOUND.test(text.slice(i, i + 10))) learning = false;
+    }
+    if (c === '$' && (k === 'plain' || k === 'double')) {
+      const ref = refAt(i);
+      if (ref && (k === 'double' || !ref.value.includes(' '))) {
+        spent += ref.value.length;
+        if (spent > SPELL_BUDGET) return text;
+        out += ref.value;
+        i += ref.length;
+        start = false;
+        continue;
+      }
+    }
+    if (k === 'plain') {
+      if (c === '`') tick = !tick;
+      else if (c === '(') depth++;
+      else if (c === ')' && depth > 0) depth--;
+      else if (c === '{' && text[i - 1] !== '$') learning = false;
+    }
+    if (k === 'plain' && (c === ';' || c === '\n' || (c === '&' && text[i - 1] === '&'))) start = true;
+    else if (c !== ' ' && c !== '\t') start = false;
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 function sinceOk(rules, ts) {
   const t = Date.parse(ts);
   if (!Number.isFinite(t)) return false;
@@ -165,6 +283,7 @@ function replay(rows, given = {}) {
   let writeTargetsMoved = 0;
   let writeTargetsChecked = 0;
   let writeTargetsLost = 0;
+  let writeTargetsRespelled = 0;
   // Rewritten rows whose scan threw, so they entered neither writeTargetsChecked nor the moved/lost counts.
   let writeTargetsSkipped = 0;
   // Bash rows no rule could be tried on (truncated text, no absolute cwd) or whose rewrite threw:
@@ -242,8 +361,13 @@ function replay(rows, given = {}) {
       try {
         const before = scanAll(scanner, command, r.cwd);
         const after = scanAll(scanner, rw.command, r.cwd);
+        // An unchanged spelling scans the same: the lists are reused.
+        const spelt = [spellOutAssignments(command), spellOutAssignments(rw.command)];
+        const spelledBefore = spelt[0] === command ? before : scanAll(scanner, spelt[0], r.cwd);
+        const spelledAfter = spelt[1] === rw.command ? after : scanAll(scanner, spelt[1], r.cwd);
         writeTargetsChecked++;
-        if (JSON.stringify(before) !== JSON.stringify(after)) writeTargetsMoved++;
+        if (JSON.stringify(spelledBefore) !== JSON.stringify(spelledAfter)) writeTargetsMoved++;
+        else if (JSON.stringify(before) !== JSON.stringify(after)) writeTargetsRespelled++;
         const lost = before.some((list, i) => {
           const kept = new Set(after[i].map((t) => JSON.stringify(t)));
           return list.some((t) => !kept.has(JSON.stringify(t)));
@@ -281,7 +405,7 @@ function replay(rows, given = {}) {
     }
   }
 
-  return { dispositions, writeTargetsMoved, writeTargetsLost, writeTargetsChecked, writeTargetsSkipped, notReplayed, ruleNotApplied, byClass, byPattern };
+  return { dispositions, writeTargetsMoved, writeTargetsRespelled, writeTargetsLost, writeTargetsChecked, writeTargetsSkipped, notReplayed, ruleNotApplied, byClass, byPattern };
 }
 
-module.exports = { replay, RULE_SINCE, REWRITE_DEPS, chainLength, pluginVersion, defaultDeps };
+module.exports = { replay, RULE_SINCE, REWRITE_DEPS, chainLength, pluginVersion, defaultDeps, spellOutAssignments };

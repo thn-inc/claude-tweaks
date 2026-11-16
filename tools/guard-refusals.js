@@ -10,8 +10,8 @@
 //                                [--json] [--help]
 //
 // --replay (#5590) replays each refused read against this checkout's guard (tools/guard-refusals/replay.js)
-// and, with --json, appends a final `replay` key: { dispositions, writeTargetsMoved, writeTargetsLost, writeTargetsChecked,
-// writeTargetsSkipped, notReplayed, ruleNotApplied, byClass, byPattern }; the default keys are unchanged. --shape-patterns <file> (requires
+// and, with --json, appends a final `replay` key: { dispositions, writeTargetsMoved, writeTargetsRespelled, writeTargetsLost,
+// writeTargetsChecked, writeTargetsSkipped, notReplayed, ruleNotApplied, byClass, byPattern }; the default keys are unchanged. --shape-patterns <file> (requires
 // --replay) is a JSON array of { id, pattern } (a JS RegExp source; extra fields are ignored) counted in
 // replay.byPattern; a malformed file or pattern exits 2.
 //
@@ -271,7 +271,7 @@ function renderReplay(r) {
   if (byShape.length) lines.push('  refused-shape by detector', ...byShape.map(([k, v]) => `  ${n(v)}  ${k}`));
   const byReason = Object.entries(d.unexplainedByReason || {});
   if (byReason.length) lines.push('  unexplained by reason', ...byReason.map(([k, v]) => `  ${n(v)}  ${k}`));
-  lines.push(`  writeTargetsMoved ${r.writeTargetsMoved} of ${r.writeTargetsChecked} (lost ${r.writeTargetsLost}, skipped ${r.writeTargetsSkipped})`);
+  lines.push(`  writeTargetsMoved ${r.writeTargetsMoved} of ${r.writeTargetsChecked} (respelled ${r.writeTargetsRespelled}, lost ${r.writeTargetsLost}, skipped ${r.writeTargetsSkipped})`);
   const unreplayed = Object.entries(r.notReplayed || {});
   if (unreplayed.length) lines.push('  not replayed (no rewrite tried)', ...unreplayed.map(([k, v]) => `  ${n(v)}  ${k}`));
   lines.push(`  rule-not-applied ${r.ruleNotApplied.total}`);

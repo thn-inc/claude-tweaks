@@ -319,7 +319,7 @@ test('--replay --json adds a final replay key and leaves the default keys alone'
   const plain = scanJson(REPLAY_ENTRIES);
   assert.deepEqual(keys.slice(0, -1), Object.keys(plain));
   assert.deepEqual(Object.keys(out.rows[0]), Object.keys(plain.rows[0]), 'row keys are unchanged');
-  for (const k of ['dispositions', 'writeTargetsMoved', 'writeTargetsChecked', 'writeTargetsSkipped', 'notReplayed', 'ruleNotApplied', 'byClass', 'byPattern']) assert.ok(k in out.replay, k);
+  for (const k of ['dispositions', 'writeTargetsMoved', 'writeTargetsRespelled', 'writeTargetsLost', 'writeTargetsChecked', 'writeTargetsSkipped', 'notReplayed', 'ruleNotApplied', 'byClass', 'byPattern']) assert.ok(k in out.replay, k);
   assert.equal(out.replay.byPattern, null);
   assert.deepEqual(Object.keys(out.replay.byClass).sort(), ['collision-fence', 'exit-status', 'git-C-own']);
   assert.equal(out.replay.dispositions.harness.rewritten, 1, 'the escaped-space row has a rule that fixes it');
@@ -362,7 +362,7 @@ test('the text output has a replay section', () => {
   const table = c.out.join('\n');
   assert.match(table, /^replay$/m);
   assert.match(table, /rule-not-applied/);
-  assert.match(table, /writeTargetsMoved 0 of 1 \(lost 0, skipped 0\)/);
+  assert.match(table, /writeTargetsMoved 0 of 1 \(respelled 0, lost 0, skipped 0\)/);
   assert.match(table, /by class/);
   for (const id of ['git-C-own', 'exit-status', 'collision-fence']) assert.match(table, new RegExp(`^ {4}${id} {2}total 0 {2}unknown-version 0$`, 'm'));
   assert.match(table, /by pattern/);
@@ -376,7 +376,7 @@ test('the text output prints lost targets, unexplained reasons and a per-rule to
   const { code, c } = replayRun(['--replay'], entries);
   assert.equal(code, 0);
   const table = c.out.join('\n');
-  assert.match(table, /writeTargetsMoved 0 of 1 \(lost 0, skipped 0\)/);
+  assert.match(table, /writeTargetsMoved 0 of 1 \(respelled 0, lost 0, skipped 0\)/);
   assert.match(table, /unexplained by reason/);
   assert.match(table, /^ {4}quote-escaped-space {2}total 1$/m);
   assert.match(table, /^ {4}quote-escaped-space {2}\S+ {2}main 1 {2}subagent 0$/m);

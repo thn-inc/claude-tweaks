@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { replay, RULE_SINCE, chainLength, pluginVersion, defaultDeps } = require('../../tools/guard-refusals/replay');
+const { replay, RULE_SINCE, chainLength, pluginVersion, defaultDeps, spellOutAssignments } = require('../../tools/guard-refusals/replay');
 const { RULE_IDS } = require('../../plugin/bin/lib/hooks/guard-rewrite');
 
 let n = 0;
@@ -218,6 +218,72 @@ test('writeTargetsLost counts rows where a before-target is missing after; a gai
   assert.equal(gain.writeTargetsLost, 0);
   const same = replay([row({ command: 'ls /wt/a\\ b' })]);
   assert.equal(same.writeTargetsLost, 0);
+});
+
+test('spellOutAssignments writes a chained literal assignment out at each later reference', () => {
+  const CASES = [
+    ['S=/a; F=$S/b.js; sed -i "" s/x/y/ $F', 'S=/a; F=/a/b.js; sed -i "" s/x/y/ /a/b.js'],
+    ['S=/a && F=${S}/b && cp x $F.orig', 'S=/a && F=/a/b && cp x /a/b.orig'],
+    // A value with a space is written out inside double quotes only.
+    ['S="/a b"; F="$S/c"; cp x "$F"; cat $F', 'S="/a b"; F="/a b/c"; cp x "/a b/c"; cat $F'],
+    // A reference shell does not expand stays as written.
+    ["S=/a; echo '$S' \\$S \"\\$S\" \"$S\"", "S=/a; echo '$S' \\$S \"\\$S\" \"/a\""],
+    ['S=/a; cat <<EOF\n$S\nEOF\ncp x $S/y', 'S=/a; cat <<EOF\n$S\nEOF\ncp x /a/y'],
+    ['S=/a; cp x ${S:-z}/y $Sx', null],
+    // Not a literal assignment the whole call can rely on: the text comes back unchanged.
+    ['S=/a; S=/b; cp x $S/y', null],
+    ['S=/a; S+=/b; cp x $S/y', null],
+    ['export S=/a; cp x $S/y', null],
+    ['S=/a; read -r S; cp x $S/y', null],
+    ['S=/a cp x "$S/y"', null],
+    ['S=/a # c\ncp x $S', null],
+    ['for S in /a /b; do cp x $S/y; done', null],
+    ['if true; then\nS=/a\nfi\ncp x $S/y', null],
+    ['X=$(\nS=/a\necho hi); cp x $S/y', null],
+    ['(\nS=/a\n); cp x $S/y', null],
+    ['S=$(pwd); T=~/x; U=/a/*; V=$HOME/x; W=a\\ b; cp x $S $T $U $V $W', null],
+    // A function body may never run: nothing after a `{` is learned.
+    ['S=/a; f() {\nT=/b\n}; cp x $S $T', 'S=/a; f() {\nT=/b\n}; cp x /a $T'],
+  ];
+  const wrong = [];
+  for (const [text, want] of CASES) {
+    const got = spellOutAssignments(text);
+    if (got !== (want === null ? text : want)) wrong.push({ text, got });
+  }
+  assert.deepEqual(wrong, []);
+});
+
+test('spellOutAssignments bounds what it writes out', () => {
+  // A value of 1024 characters is the longest one learned.
+  const longest = `S=/${'a'.repeat(1023)}`;
+  assert.ok(spellOutAssignments(`${longest}; cp x $S`).endsWith(`cp x /${'a'.repeat(1023)}`));
+  const tooLong = `${longest}a; cp x $S`;
+  assert.ok(spellOutAssignments(tooLong) === tooLong);
+  // Past 65536 written-out characters (the value itself, then 63 references) the text comes back unchanged.
+  const under = `${longest}; echo ${'$S '.repeat(63)}`;
+  assert.ok(spellOutAssignments(under) !== under);
+  const over = `${longest}; echo ${'$S '.repeat(64)}`;
+  assert.ok(spellOutAssignments(over) === over);
+});
+
+test('AC5: a rewrite that only writes a chained assignment out is respelled, not moved', () => {
+  // The scanner follows `$F` one hop only: it resolves /a/b.js once the rule has written F's value out.
+  const chained = row({ command: "S=/a; F=$S/b.js; sed -i '' s/x/y/ $F", effect: 'write', reason: 'sed-runtime', readClass: null });
+  const res = replay([chained]);
+  assert.equal(res.writeTargetsChecked, 1);
+  assert.equal(res.writeTargetsMoved, 0);
+  assert.equal(res.writeTargetsRespelled, 1);
+  assert.equal(res.writeTargetsLost, 0);
+  // A rule that changed the directory itself is still moved, though neither text resolves as it stands.
+  const moved = replay([chained], {
+    rewrite: () => ({ command: "S=/z; F=$S/b.js; sed -i '' s/x/y/ $F", applied: ['inline-literal-assignment'] }),
+  });
+  assert.equal(moved.writeTargetsMoved, 1);
+  assert.equal(moved.writeTargetsRespelled, 0);
+  // A quote-only rewrite is neither.
+  const same = replay([row({ command: 'ls /wt/a\\ b' })]);
+  assert.equal(same.writeTargetsMoved, 0);
+  assert.equal(same.writeTargetsRespelled, 0);
 });
 
 test('unexplainedByReason counts unexplained harness reads by reason, null as none', () => {
