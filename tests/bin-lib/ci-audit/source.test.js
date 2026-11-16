@@ -124,7 +124,7 @@ const listCalls = (fake) => fake.calls.filter((c) => listedFile(c.args) !== null
 const jobsCalls = (fake) => fake.calls.map((c) => jobsRunId(c.args)).filter((id) => id !== null);
 
 const read = (fake, over = {}) => readRunData({ runner: fake.runner, repo: 'thn-inc/claude-tweaks', listing: LISTING, days: 7, now: NOW, ...over });
-const ZERO = { skipped: 0 };
+const ZERO = { skipped: 0, neverRun: 0 };
 
 test('two workflows\' runs with jobs and steps map to the exact NormRun / NormJob shape', () => {
   const fake = fakeRunner({ runs: [runRow(), TRACK_RUN], jobs: { 43904630871: TEST_JOBS, 43904882452: TRACK_JOBS } });
@@ -217,6 +217,35 @@ test('one workflow\'s list failing keeps the other\'s runs: ok:true with the fai
   assert.deepEqual(r.truncated, [], 'a failed read is a failure, never also truncation');
 });
 
+// The forge's real answer for a workflow file it has never run (probed 2026-11-16).
+const notFound = () => Object.assign(new Error('Command failed'), { stderr: 'gh: Not Found (HTTP 404)' });
+
+test('a listed workflow file the forge has never run (HTTP 404) is an empty read, counted in neverRun, never a failure', () => {
+  const fake = fakeRunner({
+    runs: [TRACK_RUN], jobs: { 43904882452: TRACK_JOBS },
+    listError: (file) => (file === 'test.yml' ? notFound() : null),
+  });
+  const r = read(fake);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.failures, []);
+  assert.deepEqual(r.truncated, []);
+  assert.deepEqual(r.unsampled, { skipped: 0, neverRun: 1 });
+  assert.deepEqual(r.runs.map((x) => x.workflow), [TRACK]);
+  // a 404 on a later page is a failed read, not a never-run file
+  const rows = many(TEST, 120, () => ({ conclusion: 'skipped' }));
+  const later = fakeRunner({ runs: rows, jobs: {}, listError: (file, page) => (page === 2 ? notFound() : null) });
+  const l = read(later, { listing: listingOf(TEST) });
+  assert.deepEqual(l.failures, [`runs of ${TEST} page 2: gh: Not Found (HTTP 404)`]);
+  assert.deepEqual(l.unsampled, { skipped: 100, neverRun: 0 });
+});
+
+test('every listed workflow answering 404 stays a failure: the repository itself may be wrong', () => {
+  const r = read(fakeRunner({ listError: notFound() }));
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.failures, [`runs of ${TEST} page 1: not found (HTTP 404)`, `runs of ${TRACK} page 1: not found (HTTP 404)`]);
+  assert.deepEqual(r.unsampled, { skipped: 0, neverRun: 0 });
+});
+
 test('a runs list body that is not JSON is a fixed failure text that quotes no byte of the body', () => {
   const body = 'Zq<!--9f3aXk-->';
   const r = read(fakeRunner({ listBody: body }), { listing: listingOf(TEST) });
@@ -253,7 +282,7 @@ test('every per-run jobs read failing is ok:false with every failure recorded', 
 test('a list with zero completed runs that did work is ok:true, runs:[]; skipped and in-progress runs are not sampled', () => {
   const fake = fakeRunner({ runs: [runRow({ status: 'in_progress', conclusion: null }), runRow({ id: 7, conclusion: 'skipped' })] });
   assert.deepEqual(read(fake), {
-    ok: true, cliAbsent: false, runs: [], truncated: [], failures: [], unsampled: { skipped: 1 }, workflow: null, empty: null,
+    ok: true, cliAbsent: false, runs: [], truncated: [], failures: [], unsampled: { skipped: 1, neverRun: 0 }, workflow: null, empty: null,
   });
   assert.deepEqual(jobsCalls(fake), []);
 });

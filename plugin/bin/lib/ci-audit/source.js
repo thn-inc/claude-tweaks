@@ -62,7 +62,13 @@
 //    out by MAX_TOTAL_RUNS, sampled runs whose jobs the deadline left unread (one line per
 //    workflow), a run cut at the jobs page cap, and a run whose full jobs page came without a
 //    total_count. A workflow that holds maxRuns runs, or whose window ran out, is complete.
-//  - unsampled: { skipped } — the NO_WORK runs seen while paging, so an empty sample can say why.
+//  - unsampled: { skipped, neverRun } — the NO_WORK runs seen while paging, and the listed
+//    workflow files the forge answered 404 for (it has never run them: an empty read, not a
+//    failure), so an empty sample can say why. When every list call answers 404 the
+//    repository itself may be wrong, so each is a failure line and the read is ok:false.
+// Scope: only workflow files in the checkout's `.github/workflows/` are read. Runs of any other
+// workflow — a file deleted, renamed or absent from this branch, or one the forge generates
+// itself (its `dynamic/…` workflows) — are never listed, and the report counts none of them.
 //
 // Bounds: every call passes { timeout: CI_HEALTH_GH_TIMEOUT_MS } (ci-health's 15 s github.com read
 // bound) and `--method GET` on a literal `repos/` path, so no value reads as a flag; owner/name is
@@ -85,7 +91,7 @@
 const { execFileSync } = require('child_process');
 const { ghOptions, originUrl, gateOriginRepo, pinExplicitRepoHost } = require('../repo-resolve');
 const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
-const { errorText, isGhAbsent, parseBody } = require('../ci-health/fetch');
+const { errorText, httpStatusOf, isGhAbsent, parseBody } = require('../ci-health/fetch');
 const { oneLine } = require('../ci-health/render');
 const {
   CI_HEALTH_GH_TIMEOUT_MS, CI_HEALTH_DEADLINE_MS, DEFAULT_DAYS, MAX_DAYS, NO_WORK_CONCLUSIONS,
@@ -190,7 +196,7 @@ const newestFirst = (a, b) => createdMs(b) - createdMs(a) || (b.id > a.id ? 1 : 
 function readRunData({
   runner, repo, listing, days = DEFAULT_DAYS, maxRuns = DEFAULT_MAX_RUNS, workflow = null, now = null, clock = null,
 } = {}) {
-  const unsampled = { skipped: 0 };
+  const unsampled = { skipped: 0, neverRun: 0 };
   const result = { ok: false, cliAbsent: false, runs: [], truncated: [], failures: [], unsampled, workflow: null, empty: null };
   const refuse = (message) => { result.failures.push(message); return result; };
   if (!validRepo(repo)) return refuse(`repo ${JSON.stringify(repo)} is not owner/name`);
@@ -223,6 +229,7 @@ function readRunData({
   const outOfTime = (limit) => clock !== null && clock() + CI_HEALTH_GH_TIMEOUT_MS > limit;
   let calls = 0;
   let listed = false;
+  const notFound = []; // listed files the forge answers 404 for
 
   const picked = [];
   for (const file of files) {
@@ -251,8 +258,10 @@ function readRunData({
           result.failures.push(GH_ABSENT);
           return result;
         }
-        result.failures.push(`runs of ${file} page ${n}: ${whyOf(err)}`);
-        complete = true; // reported as a failure, not as truncation
+        // A 404 on page 1 for a file the checkout holds: the forge has never run that workflow.
+        if (n === 1 && httpStatusOf(err) === 404) notFound.push(file);
+        else result.failures.push(`runs of ${file} page ${n}: ${whyOf(err)}`);
+        complete = true; // reported as a failure or never-run, not as truncation
         break;
       }
       listed = true;
@@ -274,7 +283,12 @@ function readRunData({
     }
     picked.push({ file, runs: usable.sort(newestFirst).slice(0, maxRuns) });
   }
-  if (!listed) return result;
+  // Every list call 404: the repository itself may be wrong, so it stays a failure, never empty.
+  if (!listed) {
+    for (const f of notFound) result.failures.push(`runs of ${f} page 1: not found (HTTP 404)`);
+    return result;
+  }
+  unsampled.neverRun = notFound.length;
 
   const order = [];
   for (let i = 0; picked.some((p) => i < p.runs.length); i++) {

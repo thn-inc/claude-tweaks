@@ -144,7 +144,7 @@ test('AC1.1: two runs of a two-job workflow give the hand-computed per-job phase
   assert.equal(r.report.noData, null);
   assert.deepEqual(r.report.failures, []);
   assert.deepEqual(r.report.truncated, []);
-  assert.deepEqual(r.report.unsampled, { skipped: 0 });
+  assert.deepEqual(r.report.unsampled, { skipped: 0, neverRun: 0 });
   assert.deepEqual(Object.keys(r.report), [
     'definitions', 'window', 'workflows', 'jobs', 'criticalPaths', 'shardSkews', 'repeatedSteps', 'overlaps',
     'breaches', 'underSampled', 'unmatchedJobs', 'droppedBreaches', 'excluded', 'notTimed', 'truncated', 'failures',
@@ -196,9 +196,24 @@ test('AC2.2: a succeeded read with zero completed runs exits 0 with noData.reaso
   const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake });
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(r.report.jobs, []);
-  assert.deepEqual(r.report.unsampled, { skipped: 1 });
+  assert.deepEqual(r.report.unsampled, { skipped: 1, neverRun: 0 });
   assert.equal(r.report.noData.reason, 'no completed run was sampled in the 7-day window: 1 run did no work (skipped)');
   assert.deepEqual(r.report.failures, []);
+});
+
+test('a workflow file the forge has never run is no failure and no partiality; the noData reason names it', () => {
+  const fake = fakeRunner({ runs: [runRow(201, BUILD, '2026-11-15T10:00:00Z', { conclusion: 'skipped' })] });
+  const runner = (args) => {
+    if (isRunsList(args) && LIST_RE.exec(args[3])[1] === 'shard.yml') throw Object.assign(new Error('x'), { stderr: 'gh: Not Found (HTTP 404)' });
+    return fake.runner(args);
+  };
+  const two = files([{ file: BUILD, text: BUILD_YML }, { file: SHARD, text: SHARD_YML }]);
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake: { runner, calls: [] }, workflows: two });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.report.failures, r.report.truncated], [[], []]);
+  assert.deepEqual(r.report.unsampled, { skipped: 1, neverRun: 1 });
+  assert.equal(r.report.noData.reason,
+    'no completed run was sampled in the 7-day window: 1 run did no work (skipped); 1 workflow file has never run');
 });
 
 test('a checkout with no workflow files exits 0 with noData naming the adapter\'s location, and reads no run', () => {

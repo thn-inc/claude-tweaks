@@ -49,7 +49,8 @@
 // dropped and counted in `droppedBreaches`. `truncated`, `failures` and `unsampled` render whatever
 // the read's outcome; `truncated` holds only what could have changed the sample. `noData` is
 // {reason} when the read succeeded but no run was sampled (no workflow files, a filter matching
-// none, no completed run that did work), the sampled runs had no jobs, or no job was timed, else
+// none, no completed run that did work, workflow files never run: unsampled.neverRun), the sampled
+// runs had no jobs, or no job was timed, else
 // null: an empty sample is never a clean report.
 // Exit codes:
 //   0 report printed — partial allowed (failures, truncated lines, noData)
@@ -199,10 +200,13 @@ function noDataReason(o, read, agg) {
     if (agg.notTimed.cancelled > 0) why.push(`${plural(agg.notTimed.cancelled, 'job was', 'jobs were')} cancelled`);
     return `the ${runs} gave no job with phases: ${why.join('; ')}`;
   }
-  const skipped = read.unsampled.skipped;
+  const { skipped, neverRun } = read.unsampled;
   const filter = o.workflow === null ? '' : ` for workflow ${JSON.stringify(o.workflow)}`;
+  const why = [];
+  if (skipped > 0) why.push(`${plural(skipped, 'run did', 'runs did')} no work (skipped)`);
+  if (neverRun > 0) why.push(`${plural(neverRun, 'workflow file has', 'workflow files have')} never run`);
   return `no completed run was sampled in the ${o.days}-day window${filter}`
-    + (skipped > 0 ? `: ${plural(skipped, 'run did', 'runs did')} no work (skipped)` : '')
+    + (why.length > 0 ? `: ${why.join('; ')}` : '')
     + (read.truncated.length > 0 ? ' — the window was truncated (see truncated)' : '');
 }
 

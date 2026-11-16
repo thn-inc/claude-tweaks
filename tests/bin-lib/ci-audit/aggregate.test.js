@@ -281,6 +281,11 @@ test('matchJob maps a run job by exact name, else a matrix base name, else a tem
   assert.equal(matchJob('Build ubuntu', tpl), null);
   const two = [fj('a', { name: 'x ${{ m.a }}' }), fj('b', { name: 'x ${{ m.b }}' })];
   assert.equal(matchJob('x 1', two), null);
+  // a job named only by a template absorbs nothing: its run jobs stay unmatched (and are listed)
+  const wild = [fj('task', { name: '${{ matrix.task }}', matrix: true }), fj('lint')];
+  assert.equal(matchJob('docs', wild), null);
+  const agg = aggregate([run(90, W, [job('docs', 0, 1, 10), job('lint', 0, 1, 10)])], { [W]: facts(wild) });
+  assert.deepEqual(agg.unmatchedJobs, [{ workflow: W, job: 'docs' }]);
   assert.deepEqual(usableJobs({ [W]: facts([fj('a')]) }, W).map((j) => j.id), ['a']);
   assert.equal(usableJobs({ [W]: facts([fj('a')], ['tab indentation in jobs:']) }, W), null);
   assert.equal(usableJobs({}, W), null);

@@ -26,7 +26,11 @@
 // expression, a match of the template — the literal text around the expressions in order, each
 // expression standing for at least one character — anchored at both ends. A run-data name the
 // forge expanded (`shard 1/4` for `shard ${{ matrix.shard }}/${{ strategy.job-total }}`) matches.
-// The match is a left-to-right scan of literal segments (linear in the name; no regex).
+// A template that is only expressions (`${{ matrix.task }}`, every literal part blank) has nothing
+// to anchor on and would match every name — the run's first step or any run job — so it matches
+// nothing: a boundary step named that way leaves setup null, a job named that way matches no run
+// job (they land in the aggregate's unmatchedJobs). The match is a left-to-right scan of literal
+// segments (linear in the name; no regex).
 //
 // percentile is nearest-rank over the finite values only; null for a non-array, for no finite
 // values, and for a p that is not a finite number in 0..100.
@@ -70,6 +74,9 @@ function nameMatches(declared, actual) {
   if (d === a) return true;
   const parts = templateOf(d);
   if (parts === null) return false;
+  // Only expressions, no literal text: it would match any name — the run data's first step or
+  // any run job — so it is unknown, never a match (setup stays null; its run jobs stay unmatched).
+  if (parts.every((p) => p.trim() === '')) return false;
   const first = parts[0];
   const last = parts[parts.length - 1];
   if (!a.startsWith(first)) return false;

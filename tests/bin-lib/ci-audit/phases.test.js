@@ -140,6 +140,20 @@ test('splitJobPhases matches by runName when the step carries one, and in declar
   assert.deepEqual(splitJobPhases(j, [{ name: 'npm ci', kind: 'command' }]).setupMs, null);
 });
 
+test('a boundary step named only by a template is unknown: setup null, never the forge\'s first step', () => {
+  // 240 s of real setup (Set up job 1 s, then preparation) before the step named `${{ matrix.task }}`.
+  const j = {
+    name: 'run', createdAt: T('00:00'), startedAt: T('00:00'), completedAt: T('05:00'), conclusion: 'success',
+    steps: [
+      { name: 'Set up job', number: 1, startedAt: T('00:01'), completedAt: T('00:02') },
+      { name: 'Run make deps', number: 2, startedAt: T('00:02'), completedAt: T('04:00') },
+      { name: 'lint', number: 3, startedAt: T('04:00'), completedAt: T('05:00') },
+    ],
+  };
+  const declared = [{ name: '${{ matrix.task }}', kind: 'command', runName: '${{ matrix.task }}' }];
+  assert.deepEqual(splitJobPhases(j, declared), { waitingMs: 0, setupMs: null, runningMs: 300000 });
+});
+
 test('splitJobPhases orders run steps by number before finding the boundary', () => {
   const j = job();
   j.steps = [j.steps[2], j.steps[0], j.steps[1]];
@@ -170,7 +184,9 @@ test('nameMatches: trimmed equality, or a ${{ }} template with each expression o
   assert.equal(nameMatches(tpl, 'xshard 1/4'), false, 'anchored at the start');
   assert.equal(nameMatches('Build (${{ matrix.os }})', 'Build (ubuntu)'), true);
   assert.equal(nameMatches('Build (${{ matrix.os }})', 'Build (ubuntu) extra'), false, 'anchored at the end');
-  assert.equal(nameMatches('${{ matrix.name }}', 'anything'), true);
+  // A template that is only expressions has no literal text to anchor on: unknown, matches nothing.
+  assert.equal(nameMatches('${{ matrix.name }}', 'anything'), false);
+  assert.equal(nameMatches(' ${{ a }} ${{ b }} ', 'x y'), false);
   assert.equal(nameMatches('${{ matrix.name }}', ''), false);
   assert.equal(nameMatches('a ${{ x', 'a ${{ x'), true, 'an unclosed expression is literal text');
   assert.equal(nameMatches('a ${{ x', 'a b'), false);

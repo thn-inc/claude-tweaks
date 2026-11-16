@@ -53,7 +53,7 @@ function gather(over = {}) {
     notTimed: { skipped: 0, cancelled: 0 },
     truncated: [],
     failures: [],
-    unsampled: { skipped: 0 },
+    unsampled: { skipped: 0, neverRun: 0 },
     noData: null,
     ...over,
   };
