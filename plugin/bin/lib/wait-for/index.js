@@ -285,7 +285,8 @@ async function run(argv, deps) {
 
     for (;;) {
       // The nearer of the two bounds, plus the grace a slow ci read is allowed past it.
-      ctx.timeoutMs = Math.max(MIN_POLL_TIMEOUT_MS, Math.min(callEnd - deps.monotonicNow(), deadlineMs - deps.now()) + POLL_GRACE_MS);
+      // Whole ms: performance.now() is fractional and a child-process timeout must be an integer.
+      ctx.timeoutMs = Math.max(MIN_POLL_TIMEOUT_MS, Math.floor(Math.min(callEnd - deps.monotonicNow(), deadlineMs - deps.now()) + POLL_GRACE_MS));
       const res = await target.poll(ctx);
       if (res.changed) {
         print(res);

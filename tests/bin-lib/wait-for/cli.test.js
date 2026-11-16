@@ -664,3 +664,51 @@ test('a --run read without a conclusion prints conclusion null', async (t) => {
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.out.conclusion, null);
 });
+
+// A fractional monotonic clock (performance.now() returns fractional ms) must not reach a
+// child-process timeout as a fraction: execFileSync rejects any non-integer timeout.
+function fractionalClock() {
+  const c = clock(T);
+  // Each read drifts a little, as real elapsed time does between two performance.now() calls.
+  let drift = 1234.5678;
+  return { ...c, monotonicNow: () => { drift += 0.3217; return c.monotonicNow() + drift; } };
+}
+
+test('fractional monotonic time: every ci poll timeoutMs is an integer', async (t) => {
+  const dir = tmp(t);
+  const c = fractionalClock();
+  const { runner, optsSeen } = scripted(new Array(10).fill({ state: 'pending' }));
+  const r = await callWith(['ci', '--pr', '7', '--max-seconds', '100'], { c, dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 3, r.stderr);
+  assert.ok(optsSeen.length > 1);
+  for (const o of optsSeen) assert.ok(Number.isInteger(o.timeoutMs), `timeoutMs ${o.timeoutMs}`);
+  assert.ok(optsSeen.every((o) => o.timeoutMs >= 1000), 'the 1000 ms floor holds after rounding');
+});
+
+test('fractional monotonic time through the real runner: execFileSync only ever sees integer timeouts', async (t) => {
+  const dir = tmp(t);
+  const cp = require('child_process');
+  const real = cp.execFileSync;
+  const key = require.resolve('../../../plugin/bin/wait-for.js');
+  const saved = require.cache[key];
+  const timeouts = [];
+  let runner;
+  try {
+    cp.execFileSync = (_f, _a, o) => {
+      timeouts.push(o.timeout);
+      if (!Number.isInteger(o.timeout)) throw new RangeError(`The value of "timeout" is out of range. It must be an integer. Received ${o.timeout}`);
+      return '{"state":"pending"}';
+    };
+    delete require.cache[key];
+    runner = require(key).realDeps.runner;
+  } finally {
+    cp.execFileSync = real;
+    if (saved) require.cache[key] = saved; else delete require.cache[key];
+  }
+  // `runner` destructured the patched execFileSync when wait-for.js loaded, so it keeps it.
+  const c = fractionalClock();
+  const r = await callWith(['ci', '--pr', '7', '--max-seconds', '100'], { c, dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 3, r.stderr);
+  assert.ok(timeouts.length > 1);
+  assert.ok(timeouts.every(Number.isInteger), timeouts.join(','));
+});
