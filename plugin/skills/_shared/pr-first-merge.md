@@ -286,9 +286,9 @@ required checks the forge is enforcing) — is the forge enforcing a stricter po
 (Step 3's own call — the merge lands when the forge is satisfied), and stop: never retry-loop,
 never suggest bypassing protection.
 
-**Signatures (Task 0 captures (a)-(f)):** `pr-first-merge-appendix.md`'s Signatures section holds the literal captured outputs.
+**Signatures:** `pr-first-merge-appendix.md`'s Signatures section holds the literal captured outputs.
 
-**Resume-to-merge is one-shot.** `dispatch/resume-confirmation.md` applies this gate once, as a read-then-decide with no bounded watch — the rule lives in `pr-first-merge-appendix.md`'s "Resume-to-merge".
+**Resume-to-merge is one-shot.** `dispatch/resume-confirmation.md` applies this gate once, with no bounded watch — the rule lives in `pr-first-merge-appendix.md`'s "Resume-to-merge".
 
 ## Step 2.9: Local acceptance park (control mode)
 
