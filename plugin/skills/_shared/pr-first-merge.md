@@ -298,7 +298,7 @@ never suggest bypassing protection.
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
 
-**Creation-time caller:** tidy's Step 7.5 `pr-first` arm runs Step 2.5 first, then this step's fences only where Step 2.5 routes here, its Red path and ready+comment degrades replaced by leave-unarmed + report — see `tidy/step-7-5-worktree-always.md` for the full routing.
+**Creation-time caller:** tidy's Step 7.5 `pr-first` arm runs Step 2.5 first, then these fences where it routes here; Red path and degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`).
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"
