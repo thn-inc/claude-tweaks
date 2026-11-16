@@ -45,7 +45,7 @@ fallback (which writes no `engine-state.json`). Otherwise:
 node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" render --run-dir "$PIPELINE_RUN_DIR" --section trace --strict >/dev/null
 ```
 
-Exit `0` → continue to Step 2: every worklist row Phase 2 opened has a recorded result (why that suffices: `pr-first-merge-appendix.md`'s "Rationale notes").
+Exit `0` → continue to Step 2: every worklist row Phase 2 opened has a recorded result.
 
 **Exit `2`** (a worklist row has no recorded result) — fail loud: STOP
 this procedure before Step 2, log `AUTO {time} — Curation-apply completeness guard: worklist row(s)
@@ -103,9 +103,7 @@ overlay applied to another's merge.
 
 <!-- when: transport=mcp -->
 `gh` absent → the lever is unenforceable; proceed as `off` and disclose at **warn** tier per
-`_shared/pr-checklist-refresh.md`'s "Merge-time gh-absent degrade" section. Under
-pr-first this is near-unreachable: no `gh` means no PR, so this procedure's own precondition
-already fails.
+`_shared/pr-checklist-refresh.md`'s "Merge-time gh-absent degrade" section.
 <!-- /when -->
 
 `$MERGE_VERIFICATION` empty or not one of the three values (an invalid `policy.yml` value prints an
@@ -288,17 +286,17 @@ required checks the forge is enforcing) — is the forge enforcing a stricter po
 (Step 3's own call — the merge lands when the forge is satisfied), and stop: never retry-loop,
 never suggest bypassing protection.
 
-**Signatures (Task 0 captures (a)-(f)):** the literal captured outputs behind the classification above live in `pr-first-merge-appendix.md`'s Signatures section — read them when a merge outcome needs its evidence.
+**Signatures (Task 0 captures (a)-(f)):** `pr-first-merge-appendix.md`'s Signatures section holds the literal captured outputs.
 
 **Resume-to-merge is one-shot.** `dispatch/resume-confirmation.md` applies this gate once, as a read-then-decide with no bounded watch — the rule lives in `pr-first-merge-appendix.md`'s "Resume-to-merge".
 
 ## Step 2.9: Local acceptance park (control mode)
 
-Before Step 3: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n}`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]`. Read `_shared/local-acceptance-park.md` unless `parked` exits 5 and `decide` exits 0 with `park:false`.
+Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]`. Never run Step 3 and report `pending-review`, reading `_shared/local-acceptance-park.md`, unless `parked` exits 5 and `decide` exits 0 with `park:false`.
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
 
-No fence below runs until Step 2.9 has run, whichever Step 2.5 route led here (a caller citing Step 3 alone carries its own `parked` guard).
+No fence below runs until Step 2.9 lets the merge through (`parked` exit 5, `decide` exit 0 with `park:false`), whichever Step 2.5 route led here; exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
 
 **Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`).
 
@@ -455,7 +453,7 @@ git -C "{worktree-path}" merge origin/{integration-branch}
   resolves instead of stopping — procedure in `wrap-up/merge-mode.md`'s `## Conflict`. Every other
   caller keeps the stop-at-markers bullet above.
 
-**Sequential multi-branch merges** are serialized one at a time (`flow/worktree-merge.md`'s reconciliation) — why each later branch's update-from-base sees real current state: `pr-first-merge-appendix.md`'s "Rationale notes".
+**Sequential multi-branch merges** are serialized one at a time (`flow/worktree-merge.md`'s reconciliation; why: `pr-first-merge-appendix.md`'s "Rationale notes").
 
 ## Outcome vocabulary
 
@@ -466,7 +464,7 @@ exists from run start).
 |---|---|---|
 | `merged` | Confirmed synchronously via `gh pr view` | Step 4's reconcile call |
 | `armed` | `--auto` armed, checks still pending | None — reconciler completes it later |
-| `pending-review` | Checks red, `awaiting-local-acceptance` (Step 2.9), conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:parked, reason check-failed:{names}, checks-pending-timeout or draft-skip-without-ready-trigger:{files}), pr-not-open, moving-target | None — PR stays ready, human decides |
+| `pending-review` | Checks red, `awaiting-local-acceptance`, `already-parked`, `park-state-unknown` or `park-failed` (Step 2.9), conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:parked, reason check-failed:{names}, checks-pending-timeout or draft-skip-without-ready-trigger:{files}), pr-not-open, moving-target | None — PR stays ready, human decides |
 | `failed` | This run never reached the merge attempt at all (upstream HARD-GATE) | Handled entirely by Settle, before this procedure is ever invoked |
 
 ## Comment ordering
