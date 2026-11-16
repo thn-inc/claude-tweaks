@@ -21,8 +21,9 @@
 //   - noop: nothing is tracked under the live header paths (never materialized, or the
 //     move already happened on this branch).
 //   - refused, with `reason`: `missing-worktree`, `dirty-index` (any staged change, or an
-//     unstaged edit to a file about to move — the commit takes working-tree content and
-//     must contain only the move), `archived-copy-differs` (a destination already
+//     unstaged edit — including a deletion — to a file about to move or to a tracked
+//     identical-twin destination the commit will carry: the commit takes working-tree
+//     content and must contain only the move), `archived-copy-differs` (a destination already
 //     holds different bytes, tracked or not), `git-mv-failed`, `commit-failed`,
 //     `git-failed` (a probe git could not answer). Every refusal leaves the worktree and
 //     index as it found them: planning refusals return before any mutation, and a
