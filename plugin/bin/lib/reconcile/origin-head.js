@@ -20,10 +20,8 @@ const { readCache, writeCache, isFresh, DEFAULT_TTL_MS } = require('./cache');
 // -> { outcome: 'failed', reason: string }           set-head failed; reason is git's first stderr line, else git-exec's FAILURE class
 // -> { outcome: 'skipped', reason: 'recent-failure' } a prior set-head failed within DEFAULT_TTL_MS; not retried this pass
 // -> { outcome: 'skipped', reason: 'dry-run' }        `opts.dryRun`: set-head (a ref write) and the failure stamp (a cache write) are never attempted (#4180)
-// `opts.env` (optional, #5376) is the environment of both git children; absent, the inherited one.
 function repairOriginHead(root, opts = {}) {
   const runGit = opts.runGit || defaultRunGit;
-  const envOpts = opts.env ? { env: opts.env } : {};
   const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : FETCH_TIMEOUT_MS;
   const now = opts.now != null ? opts.now : Date.now();
   // `opts.env` (optional) is the environment both git children run in; absent, the inherited one (#5377).
