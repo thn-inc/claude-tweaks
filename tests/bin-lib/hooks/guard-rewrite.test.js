@@ -597,6 +597,118 @@ test('drop-git-C-cwd under path.win32 shares drop-redundant-cd residuals', () =>
   assert.deepStrictEqual(run('git -C "D:\\w\\cwd" log', folding), { command: 'git log', applied: ['drop-git-C-cwd'] }, 'the exact spelling still drops under the folding realpath');
 });
 
+// quote-exit-status. Each decline pin names git and holds a `$?` word, and every check but the one
+// its title names accepts it.
+const quoted = (command, expected) => assert.deepStrictEqual(rw(command), { command: expected, applied: ['quote-exit-status'] });
+
+test('AC3.1: quote-exit-status double-quotes exit=$? after a git command', () => {
+  quoted('git merge-base --is-ancestor A B; echo exit=$?', 'git merge-base --is-ancestor A B; echo "exit=$?"');
+  quoted('gh pr view 1 --json n > f; echo rc:$?', 'gh pr view 1 --json n > f; echo "rc:$?"');
+});
+
+test('quote-exit-status quotes every qualifying word, in any simple command', () => {
+  quoted('git status 2>&1; echo a/b:c=$? && echo x.y-$? | cat', 'git status 2>&1; echo "a/b:c=$?" && echo "x.y-$?" | cat');
+  quoted('git log; (echo r=$?)', 'git log; (echo "r=$?")');
+  quoted("git log; echo 'a; b' r=$?", "git log; echo 'a; b' \"r=$?\"");
+  quoted('git log; echo $(true) r=$?', 'git log; echo $(true) "r=$?"'); // the ( of $( starts no command
+  quoted('git log; echo a=$?; X=$?', 'git log; echo "a=$?"; X=$?');
+  assert.deepStrictEqual(rw('git -C . log; echo r=$?'), { command: 'git log; echo "r=$?"', applied: ['drop-git-C-cwd', 'quote-exit-status'] });
+});
+
+test('AC3.2: quote-exit-status leaves a bare $? alone', () => {
+  assert.strictEqual(rw('git log -1; echo $?'), null);
+});
+
+test('AC3.2: quote-exit-status leaves an assignment X=$? alone', () => {
+  assert.strictEqual(rw('git log -1; X=$?'), null);
+});
+
+for (const word of ['export', 'declare', 'local', 'readonly', 'typeset', 'env']) {
+  test(`AC3.2: quote-exit-status leaves rc=$? after ${word} alone`, () => {
+    assert.strictEqual(rw(`git log -1; ${word} rc=$?`), null);
+  });
+}
+
+test('quote-exit-status leaves rc=$? after coproc alone: its command takes assignment prefixes', () => {
+  assert.strictEqual(rw('git log -1; coproc rc=$? cat'), null);
+});
+
+test('AC3.2: quote-exit-status leaves a double-quoted "exit=$?" alone', () => {
+  assert.strictEqual(rw('git log -1; echo "exit=$?"'), null);
+});
+
+test("AC3.2: quote-exit-status leaves a single-quoted 'exit=$?' alone", () => {
+  assert.strictEqual(rw("git log -1; echo 'exit=$?'"), null);
+});
+
+test('AC3.2: quote-exit-status leaves a command that names no git or gh alone', () => {
+  assert.strictEqual(rw('ls f; echo exit=$?'), null);
+});
+
+test('quote-exit-status leaves digit and .github text alone (whole-word git/gh only)', () => {
+  assert.strictEqual(rw('echo digit; echo exit=$?'), null);
+  assert.strictEqual(rw('ls .github; echo exit=$?'), null);
+  assert.strictEqual(rw('ls gh-pages; echo exit=$?'), null);
+});
+
+test('AC3.2: quote-exit-status declines a command holding IFS', () => {
+  assert.strictEqual(rw('IFS=: ; git log -1; echo exit=$?'), null);
+});
+
+test('quote-exit-status leaves a word starting with = alone (zsh =cmd)', () => {
+  assert.strictEqual(rw('git log -1; echo =$?'), null);
+});
+
+test('quote-exit-status leaves a word inside $( … ) alone', () => {
+  assert.strictEqual(rw('x=$(git log -1; echo r=$?)'), null);
+  assert.strictEqual(rw('echo $(git log -1; echo r=$?)'), null);
+});
+
+test('quote-exit-status declines on doubt (a backtick)', () => {
+  assert.strictEqual(rw('git log -1; echo exit=$? `id`'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a keyword prefix alone: then "rc=$?" would be a command', () => {
+  assert.strictEqual(rw('if git log; then rc=$?; fi'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a reserved word alone', () => {
+  assert.strictEqual(rw('git log; while false; do rc=$?; done'), null);
+  assert.strictEqual(rw('git log; time rc=$?'), null);
+});
+
+test('quote-exit-status leaves rc=$? after { alone (not a plain command word)', () => {
+  assert.strictEqual(rw('git log; { rc=$?; }'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a { anywhere in its command alone: function g { rc=$?; }', () => {
+  assert.strictEqual(rw('git log; function g { rc=$?; }'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a redirection alone', () => {
+  assert.strictEqual(rw('git log; 2>/dev/null rc=$?'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a 2>&1 alone: the & of >& does not start a command', () => {
+  assert.strictEqual(rw('git log; 2>&1 rc=$?'), null);
+});
+
+test('quote-exit-status leaves rc=$? after an array assignment alone: a ) ends the scan', () => {
+  assert.strictEqual(rw('git log; arr=(x) rc=$?'), null);
+});
+
+test('quote-exit-status leaves rc=$? after X=$( … ) alone: an assignment prefix, not a command word', () => {
+  assert.strictEqual(rw('X=$(git log) rc=$?'), null);
+});
+
+test('quote-exit-status leaves a word that does not start at a word break alone', () => {
+  assert.strictEqual(rw('git log; echo $HOME/r=$?'), null);
+});
+
+test('quote-exit-status leaves a word that continues past $? alone', () => {
+  assert.strictEqual(rw('git log; echo r=$?x'), null);
+});
+
 test('returns null outside a linked worktree', () => {
   // The default detector, no injected deps: a plain dir, a main checkout, a linked worktree.
   const command = 'P=/x/y; node $P/z.js';
