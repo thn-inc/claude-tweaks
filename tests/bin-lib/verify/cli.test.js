@@ -557,6 +557,34 @@ test('--stamp-status never matches a stamp that was recorded on a dirty tree, ev
   assert.strictEqual(s.verifiedHead, false, 'the stamp itself was never recorded on a clean tree');
 });
 
+// A stored dirty must be exactly `false` to verify a clean HEAD: `null` is a real
+// production shape (written when the end-of-run status read fails, #3757) and a
+// hand-written stamp may omit the field. One test per shape so each fails alone.
+for (const [label, dirtyField] of [['omitted', {}], ['null', { dirty: null }]]) {
+  test(`--stamp-status: a stored dirty that is ${label} never verifies a clean HEAD, and a stamp with no reportPath prints null`, async () => {
+    const { repo, git, gitDir } = tmpGitRepo();
+    const head = git('rev-parse', 'HEAD').trim();
+    const stampFile = path.join(gitDir, 'claude-tweaks-verify-pass.json');
+    const base = { sha: head, scope: 'full', fullSha: head };
+    const statusFor = async (stamp) => {
+      fs.writeFileSync(stampFile, JSON.stringify(stamp));
+      const { code, stdout } = await runCli(['--stamp-status'], { cwd: repo });
+      assert.strictEqual(code, 0);
+      return JSON.parse(stdout);
+    };
+    const control = await statusFor({ ...base, dirty: false });
+    assert.strictEqual(control.present, true);
+    assert.strictEqual(control.match, true, 'control: the same stamp with dirty:false verifies a clean HEAD');
+    assert.strictEqual(control.verifiedHead, true, 'control: the same stamp with dirty:false verifies a clean HEAD');
+    const s = await statusFor({ ...base, ...dirtyField });
+    assert.strictEqual(s.present, true);
+    assert.strictEqual(s.dirty, false, 'the live tree is clean');
+    assert.strictEqual(s.match, false, 'a stored dirty that is not exactly false never matches');
+    assert.strictEqual(s.verifiedHead, false, 'a stored dirty that is not exactly false never verifies');
+    assert.strictEqual(s.reportPath, null, 'a stamp with no reportPath prints null');
+  });
+}
+
 test('--stamp-status: a hand-written stamp with no scope is present but never verified (re-review N1)', async () => {
   const { repo, git, gitDir } = tmpGitRepo();
   const head = git('rev-parse', 'HEAD').trim();
