@@ -359,6 +359,7 @@ async function scanWorkflows(subagentsDir, { fsImpl, window, scans, dirNotes }) 
     const runFile = path.join(path.dirname(subagentsDir), 'workflows', `${runId}.json`);
     if (lstatType(runFile, { fsImpl }).type !== 'file') continue;
     let run = null;
+    // Silent on purpose: the run file only feeds this cross-check, and an absent or unusable one adds no note (spec).
     try { run = JSON.parse(fsImpl.readFileSync(runFile, 'utf8')); } catch { run = null; }
     const n = run && typeof run === 'object' && !Array.isArray(run) ? numOrNull(run.agentCount) : null;
     if (n !== null && n !== scan.ids) dirNotes.push(`workflow run ${runId}: run file agentCount ${n}, ${scan.ids} agent(s) found in ${runPath}`);

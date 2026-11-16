@@ -857,3 +857,64 @@ test('#5597 review focus 5: guard-refused Agent call adds no agentCalls', async 
   assert.deepEqual(user.turnClasses, { 'guard-refusal': 1 });
   assert.equal(user.agentCalls, 0);
 });
+
+// A session with one direct agent and workflows/r1/ holding one agent; each
+// fault test below breaks exactly one fs call on one path.
+function faultSession() {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  const runPath = path.join(dir, 'workflows', 'r1');
+  writeAgent(runPath, 'w1', '2026-11-16T10:01:00.000Z', { description: 'lens 1' });
+  return { dir, wfDir: path.join(dir, 'workflows'), runPath };
+}
+const failOn = (method, target, code) => ({ ...fs, [method]: (p, ...a) => { if (String(p) === target) throw Object.assign(new Error(code), { code }); return fs[method](p, ...a); } });
+
+test('#5597: a workflows/ directory lstat cannot read is named and the direct items are still returned', async () => {
+  const { dir, wfDir } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', wfDir, 'EIO') });
+  assert.deepEqual(r.dirNotes, [`workflows/ directory not readable (EIO) at ${wfDir}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a workflows/ directory that cannot be listed is named and the direct items are still returned', async () => {
+  const { dir, wfDir } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('readdirSync', wfDir, 'EACCES') });
+  assert.deepEqual(r.dirNotes, [`workflows/ directory not readable (EACCES) at ${wfDir}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run directory lstat cannot read is named and the direct items are still returned', async () => {
+  const { dir, runPath } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', runPath, 'EIO') });
+  assert.deepEqual(r.dirNotes, [`workflow run directory not readable (EIO) at ${runPath}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run directory that cannot be listed is named and the direct items are still returned', async () => {
+  const { dir, runPath } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('readdirSync', runPath, 'EACCES') });
+  assert.deepEqual(r.dirNotes, [`workflow run directory not readable (EACCES) at ${runPath}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run file whose agentCount equals the agents found adds no note', async () => {
+  const { dir } = faultSession();
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.writeFileSync(path.join(runFileDir, 'r1.json'), JSON.stringify({ agentCount: 1 }));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, []);
+  assert.equal(r.items.length, 2);
+});
+
+test('#5597: a symlinked run file is not read, so its mismatching agentCount adds no note', async () => {
+  const { dir } = faultSession();
+  const outside = tmpSubagents();
+  fs.writeFileSync(path.join(outside, 'r1.json'), JSON.stringify({ agentCount: 3 }));
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.symlinkSync(path.join(outside, 'r1.json'), path.join(runFileDir, 'r1.json'));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, []);
+  assert.equal(r.items.length, 2);
+});
