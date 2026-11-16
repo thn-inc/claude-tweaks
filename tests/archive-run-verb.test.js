@@ -306,11 +306,11 @@ function plannedFilingConsole(runDir, { filed = false } = {}) {
     : ''));
 }
 
-test('AC3.1: archive-run refuses a console whose can\'t-tell filings never ran, naming the console-filings.js --only re-run', async () => {
+test('AC3.1: archive-run refuses a console whose can\'t-tell filings never ran, naming the default-selection console-filings.js re-run', async () => {
   const { root, runDir } = runDirFixture('clean');
   plannedFilingConsole(runDir);
   const result = await runHook(['archive-run', '--run', runDir], { cwd: root });
-  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; re-run the planned filing\(s\): console-filings\.js --run ".*" --existing <issues\.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa', then file each printed `file` entry and log it as '\{item\} filed as #\{n\} \(work-fingerprint \{fp\}\)', hand-log any `logFailures` item as '\{item\} already filed as #\{n\} \(work-fingerprint \{fp\}\)' \(the CLI logs each `deduped` entry itself\), via log-decision\.js `--run` that console's dir, per wrap-up\/review-console\.md's Can't-tell filings; review them, then run console-residue\.js --ack --run .*\) — unresolved: tiebreak:aaaaaaaaaaaa \(filing-pending\)\n$/);
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; re-run the planned filing\(s\): console-filings\.js --run ".*" --existing <issues\.json> --out-dir <dir> --digest-comments <comments\.json>, then file each printed `file` entry and log it as '\{item\} filed as #\{n\} \(work-fingerprint \{fp\}\)', hand-log any `logFailures` item as '\{item\} already filed as #\{n\} \(work-fingerprint \{fp\}\)' \(the CLI logs each `deduped` entry itself\), via log-decision\.js `--run` that console's dir, per wrap-up\/review-console\.md's Can't-tell filings; review them, then run console-residue\.js --ack --run .*\) — unresolved: tiebreak:aaaaaaaaaaaa \(filing-pending\)\n$/);
   assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
 });
 

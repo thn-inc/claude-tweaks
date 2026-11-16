@@ -96,16 +96,17 @@ function digestedFindings(decisions) {
   return out;
 }
 
-// One item per planned digest entry (`console.json#digests`) whose fingerprint has no digested line in
-// `decisions`: the console item it was planned for (a bare `{ id }` when none), re-worded `digest-pending`.
+// One item per planned digest entry (`console.json#digests`) whose fingerprint has no digested line, and no
+// filed line either (an existing record wins over a digest), in `decisions`: the console item it was planned for (a bare `{ id }` when none), re-worded `digest-pending`.
 // The mirror of pendingFilings; malformed entries are skipped, and no `digests` array is none pending.
 function pendingDigests(consoleJson, decisions) {
   if (!consoleJson || typeof consoleJson !== 'object' || !Array.isArray(consoleJson.digests)) return [];
   const digested = digestedFindings(decisions);
+  const filed = filedRecords(decisions);
   const items = Array.isArray(consoleJson.items) ? consoleJson.items : [];
   return consoleJson.digests.flatMap((entry) => {
     if (!entry || typeof entry.item !== 'string' || typeof entry.fingerprint !== 'string') return [];
-    if (digested.has(entry.fingerprint)) return [];
+    if (digested.has(entry.fingerprint) || filed.has(entry.fingerprint)) return [];
     const item = items.find((i) => i && i.id === entry.item);
     return [{
       ...(item || { id: entry.item }),
@@ -190,13 +191,13 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
 
 const shown = (v) => (v === undefined || v === null || v === '' ? '—' : v);
 
-// The paste-ready `console-filings.js --only` re-run for the named planned filings. `ids` are
-// single-quoted into one comma-joined `--only` value (a `'` inside is written `'\''`); without a
-// `pluginRoot` the CLI is named bare.
-function filingRerunCommand({ consoleDir, ids, pluginRoot }) {
+// The paste-ready `console-filings.js` re-run for a console's planned filings (#4679): the default (unattended)
+// selection, never `--only` — `filing-pending` exists only for unattended runs, and `--only` composes the
+// human-present `needs:definition` shape. Already-filed items dedup against `--existing`, held digests against
+// `--digest-comments`, so the command depends on no item id. Without a `pluginRoot` the CLI is named bare.
+function filingRerunCommand({ consoleDir, pluginRoot }) {
   const bin = pluginRoot ? `node "${pluginRoot}/bin/console-filings.js"` : 'console-filings.js';
-  const only = ids.join(',').replace(/'/g, `'\\''`);
-  return `${bin} --run "${consoleDir}" --existing <issues.json> --out-dir <dir> --only '${only}'`;
+  return `${bin} --run "${consoleDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
 }
 
 // #4679: the paste-ready re-run for a `digest-pending` item — the default (no `--only`) selection, which
@@ -213,7 +214,14 @@ const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} 
 
 // #4679: a `digest-pending` item clears only on a logged digested line (DIGESTED_LINE_RE).
 // DIGESTED_LINE_RE accepts only the `AUTO … Queue write: …` shape, so the remedy names the full command (no `--spec`).
-const DIGEST_LOG_REMEDY = "post each printed digest line to the materiality digest and log it with `node \"{plugin-root}/bin/log-decision.js\" --run \"{console dir}\" --status AUTO --section \"/wrap-up\" --step \"Queue write\" --text '{item} digested (work-fingerprint {fp})' --reversibility n/a` (no `--spec`), hand-logging a held entry with the text '{item} already digested (work-fingerprint {fp})'";
+// `{item}` and `{fp}` stay placeholders (they vary per entry); the console dir and plugin root are filled in, and
+// the CLI is named bare without a `pluginRoot`, as digestRerunCommand does.
+function digestLogRemedy({ consoleDir, pluginRoot }) {
+  const bin = pluginRoot ? `node "${pluginRoot}/bin/log-decision.js"` : 'log-decision.js';
+  return 'post each printed digest line to the materiality digest and log it with '
+    + `\`${bin} --run "${consoleDir}" --status AUTO --section "/wrap-up" --step "Queue write" --text '{item} digested (work-fingerprint {fp})' --reversibility n/a\``
+    + " (no `--spec`), hand-logging a held entry with the text '{item} already digested (work-fingerprint {fp})'";
+}
 
 // One item line plus its pointer: a `cat` of the staged file, or for a
 // `decision:` item (no staged file — it lives in decisions.md) a `see` line.
@@ -231,12 +239,12 @@ function itemLines(item, consoleDir, pluginRoot) {
   const staged = path.join(consoleDir, 'staged', item.id);
   if (fs.existsSync(staged)) lines.push(`    cat "${staged}"`);
   if (item.resolution === FILING_PENDING_RESOLUTION) {
-    lines.push(`    re-run filing: ${filingRerunCommand({ consoleDir, ids: [item.id], pluginRoot })}`);
-    lines.push(`      (<issues.json>: gh issue list --state all --json number,body --limit <N>; ${FILING_LOG_REMEDY})`);
+    lines.push(`    re-run filing: ${filingRerunCommand({ consoleDir, pluginRoot })}`);
+    lines.push(`      (<issues.json>: gh issue list --state all --json number,body --limit <N>; <comments.json>: the materiality digest's comments; ${FILING_LOG_REMEDY})`);
   }
   if (item.resolution === DIGEST_PENDING_RESOLUTION) {
     lines.push(`    re-run digest: ${digestRerunCommand({ consoleDir, pluginRoot })}`);
-    lines.push(`      (<comments.json>: the materiality digest's comments; ${DIGEST_LOG_REMEDY})`);
+    lines.push(`      (<comments.json>: the materiality digest's comments; ${digestLogRemedy({ consoleDir, pluginRoot })})`);
   }
   return lines;
 }
@@ -273,7 +281,7 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
 
 module.exports = {
   UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
-  FILING_LOG_REMEDY, DIGEST_LOG_REMEDY,
+  FILING_LOG_REMEDY, digestLogRemedy,
   filedRecords, digestedFindings, unresolvedItems, pendingFilings, pendingDigests, consoleResidueItems, splitMissing, filingRerunCommand, digestRerunCommand,
   readRunResidue, formatResidueLines,
 };

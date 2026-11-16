@@ -84,7 +84,7 @@ test('AC5: N can\'t-tell items with an empty record map write a proposal per fil
   assert.deepEqual(fs.readdirSync(f.outDir).sort(), ['console-digest.md', 'console-filing-1.md', 'console-filing-2.md']);
 });
 
-test('AC5: a re-run with the created records in --existing writes zero', () => {
+test('AC5: a re-run with the created records in --existing files nothing and plans only the digest line', () => {
   const f = fixture();
   seed(f, { n: 3 });
   noRecords(f);
@@ -121,6 +121,8 @@ test('AC5: the same finding at a different line in a later run is deduplicated',
   const result = JSON.parse(second.out.join(''));
   assert.deepEqual(result.file, []);
   assert.equal(result.deduped.length, 1);
+  assert.equal(result.digest.length, 1, 'the drop item is planned as a digest line, not a filing');
+  assert.equal(result.digest[0].fingerprint, JSON.parse(first.out.join('')).digest[0].fingerprint, 'the same finding keeps its fingerprint at a shifted line');
 });
 
 test('AC5: a closed record still deduplicates', () => {
@@ -601,4 +603,41 @@ test('a failed already-digested append is listed in logFailures and never reads 
   assert.equal(run(argvOf(f, ['--digest-comments', comments]), deps), 0);
   assert.deepEqual(JSON.parse(out.join('')).logFailures, [{ item: `tiebreak:${ids[1]}`, error: 'disk full' }]);
   assert.doesNotMatch(err.join(''), /digested \(work-fingerprint/);
+});
+
+test('a drop item whose fingerprint already has a record dedups to it: no digest line (#4679)', () => {
+  const f = fixture();
+  const { ids } = seed(f, { n: 2 });
+  noRecords(f);
+  const first = fakeDeps(f.main);
+  assert.equal(run(argvOf(f, ['--only', `tiebreak:${ids[1]}`]), first.deps), 0);
+  const [made] = JSON.parse(first.out.join('')).file;
+  fs.writeFileSync(f.existing, JSON.stringify([{ number: 52, body: fs.readFileSync(made.proposal, 'utf8') }]));
+  fs.rmSync(f.outDir, { recursive: true, force: true });
+  const decisions = path.join(f.runDir, 'decisions.md');
+  const before = fs.readFileSync(decisions, 'utf8');
+  const { deps, out } = fakeDeps(f.main, { now: () => NOW });
+  assert.equal(run(argvOf(f), deps), 0);
+  const result = JSON.parse(out.join(''));
+  assert.deepEqual(result.deduped, [{ item: `tiebreak:${ids[1]}`, fingerprint: made.fingerprint, number: 52 }]);
+  assert.deepEqual(result.digest, []);
+  assert.equal(result.digestFile, null);
+  const added = fs.readFileSync(decisions, 'utf8').slice(before.length).split('\n').filter(Boolean);
+  assert.deepEqual(added, ['## /wrap-up', `- AUTO 09:08:07 — Queue write: tiebreak:${ids[1]} already filed as #52 (work-fingerprint ${made.fingerprint}). Reversibility: n/a.`]);
+});
+
+test('--digest-comments with --only is a usage error (exit 2), nothing written (#4679)', () => {
+  const f = fixture();
+  const { ids } = seed(f, { n: 2 });
+  noRecords(f);
+  const comments = path.join(f.root, 'comments.json');
+  fs.writeFileSync(comments, '[]');
+  const { deps, err } = fakeDeps(f.main);
+  assert.equal(run(argvOf(f, ['--only', `tiebreak:${ids[0]}`, '--digest-comments', comments]), deps), 2);
+  assert.match(err.join(''), /--digest-comments cannot be combined with --only/);
+  assert.equal(fs.existsSync(f.outDir), false);
+});
+
+test('USAGE names --digest-comments among the unparseable inputs (#4679)', () => {
+  assert.match(USAGE, /unparseable --existing or --digest-comments/);
 });

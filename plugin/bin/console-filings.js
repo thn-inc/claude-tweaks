@@ -72,10 +72,9 @@ const { cantTellOutcomes, renderFindingFyi } = require('./lib/console/finding-ou
 const USAGE = 'usage: console-filings.js --run <run-dir> --existing <issues.json> --out-dir <dir> [--only <item,...>] [--digest-comments <file>] [--help]\n'
   + '       console-filings.js --run <run-dir> --list\n'
   + '       console-filings.js --run <run-dir> --fyi\n'
-  + '  exit 0 ok; 2 malformed invocation or unparseable --existing; 3 run dir missing/not anchored, or --out-dir unwritable\n';
+  + '  exit 0 ok; 2 malformed invocation or unparseable --existing or --digest-comments; 3 run dir missing/not anchored, or --out-dir unwritable\n';
 
-const VALUE_FLAGS = { '--run': 'run', '--existing': 'existing', '--out-dir': 'outDir', '--only': 'only', '--digest-comments': 'digestComments',
-};
+const VALUE_FLAGS = { '--run': 'run', '--existing': 'existing', '--out-dir': 'outDir', '--only': 'only', '--digest-comments': 'digestComments' };
 
 function parseArgs(argv) {
   const o = {
@@ -160,6 +159,7 @@ function run(argv, overrides = {}) {
   }
   if (!Array.isArray(rows)) return usageError(`--existing ${o.existing} must be a JSON array of { number, body }`);
 
+  if (o.digestComments && only) return usageError('--digest-comments cannot be combined with --only (the interactive selection plans no digest)');
   let digestComments = [];
   if (o.digestComments) {
     try { digestComments = JSON.parse(deps.readFile(path.resolve(deps.cwd(), o.digestComments))); } catch (err) {
@@ -206,7 +206,9 @@ function run(argv, overrides = {}) {
   const digestLines = [];
   for (const d of digestPlanned) {
     if (d.claimMissing) deps.stderr(`console-filings.js: ${d.item}: the finding's claim text is unavailable (review-findings.json has no entry for its tiebreak id) — its digest line names the location only\n`);
-    if (held.has(d.fingerprint)) result.digestDeduped.push({ item: d.item, fingerprint: d.fingerprint });
+    const number = checkFingerprint(known, d.fingerprint);
+    if (number !== null) result.deduped.push({ item: d.item, fingerprint: d.fingerprint, number });
+    else if (held.has(d.fingerprint)) result.digestDeduped.push({ item: d.item, fingerprint: d.fingerprint });
     else { result.digest.push({ item: d.item, fingerprint: d.fingerprint }); digestLines.push(d.line); }
   }
 

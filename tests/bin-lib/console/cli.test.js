@@ -679,7 +679,7 @@ test('AC4.1: a successful Queue write keeps apply and leaves no residue (#4170)'
   assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
 });
 
-test('AC3.1: a console whose can\'t-tell filings never ran reports the planned filing, and the re-render names the --only re-run (#4170)', async () => {
+test('AC3.1: a console whose can\'t-tell filings never ran reports the planned filing, and the re-render names the default-selection re-run (#4170)', async () => {
   const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
   const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
   const tbNow = new Date(2026, 9, 24, 10, 0, 0);
@@ -698,7 +698,7 @@ test('AC3.1: a console whose can\'t-tell filings never ran reports the planned f
   const second = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], second.d), 0);
   assert.match(second.out(), /Needs a human — 1 item\(s\)/);
-  assert.ok(second.out().includes(`--only 'tiebreak:${r.id}'`), second.out());
+  assert.ok(second.out().includes('--out-dir <dir> --digest-comments <comments.json>') && !second.out().includes('--only'), second.out());
   appendEntry({ runDir: fx.runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: tbNow, step: 'Review Console', text: `tiebreak:${r.id} filed as #501 (work-fingerprint ${cj.filings[0].fingerprint})`, reversibility: 'high' }) });
   assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
 });

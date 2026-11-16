@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'residue');
-const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, filingRerunCommand, DIGESTED_LINE_RE, DIGEST_LOG_REMEDY, digestedFindings, pendingDigests, DIGEST_PENDING_RESOLUTION, digestRerunCommand } = require(MOD);
+const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, filingRerunCommand, DIGESTED_LINE_RE, digestLogRemedy, digestedFindings, pendingDigests, DIGEST_PENDING_RESOLUTION, digestRerunCommand } = require(MOD);
 
 // The items of the real archived #2821 console.json (#3370): 9 items, four of
 // them unresolved — copied verbatim, including the `skills:undefined` ids.
@@ -458,16 +458,21 @@ test('AC3.1: formatResidueLines names the console-filings.js --only re-run for a
   const dir = tmpRun();
   plannedFilingConsole(dir, '');
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
-  assert.ok(lines.includes(`    re-run filing: node "/p/bin/console-filings.js" --run "${dir}" --existing <issues.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa'`), lines.join('\n'));
+  assert.ok(lines.includes(`    re-run filing: node "/p/bin/console-filings.js" --run "${dir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.includes('--only')), 'the filing re-run keeps the unattended shape: no --only');
   assert.ok(lines.some((l) => l.startsWith('      (<issues.json>: gh issue list --state all --json number,body')), lines.join('\n'));
   // The remedy names the log line that clears a filing-pending item (FILED_LINE_RE), `deduped` re-run included.
   assert.ok(lines.some((l) => l.endsWith(`; file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings)`)), lines.join('\n'));
 });
 
-test('filingRerunCommand escapes a single quote and omits node without a plugin root (#4170)', () => {
+test('filingRerunCommand is the default (unattended) selection, names no --only and omits node without a plugin root (#4679)', () => {
   assert.strictEqual(
-    filingRerunCommand({ consoleDir: '/r', ids: ["a'b", 'c'] }),
-    `console-filings.js --run "/r" --existing <issues.json> --out-dir <dir> --only 'a'\\''b,c'`,
+    filingRerunCommand({ consoleDir: '/r' }),
+    'console-filings.js --run "/r" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>',
+  );
+  assert.strictEqual(
+    filingRerunCommand({ consoleDir: '/r', pluginRoot: '/p' }),
+    'node "/p/bin/console-filings.js" --run "/r" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>',
   );
 });
 
@@ -548,7 +553,11 @@ test('DIGESTED_LINE_RE anchors on - AUTO (#4679)', () => {
   assert.deepStrictEqual([...digestedFindings(`${DIGESTED_LINE}\n${forged}\n`)], ['consolefinding-4567ef01']);
 });
 
-test('DIGEST_LOG_REMEDY names a command whose logged line DIGESTED_LINE_RE accepts (#4679)', () => {
+test('digestLogRemedy names a paste-ready command whose logged line DIGESTED_LINE_RE accepts (#4679)', () => {
+  const DIGEST_LOG_REMEDY = digestLogRemedy({ consoleDir: '/c dir', pluginRoot: '/p' });
+  assert.ok(!/\{plugin-root\}|\{console dir\}/.test(DIGEST_LOG_REMEDY), 'no unfilled placeholder besides {item} and {fp}');
+  assert.ok(DIGEST_LOG_REMEDY.includes('node "/p/bin/log-decision.js" --run "/c dir"'), DIGEST_LOG_REMEDY);
+  assert.ok(digestLogRemedy({ consoleDir: '/c' }).includes('`log-decision.js --run "/c"'), 'bare CLI without a plugin root');
   const { formatEntry } = require(path.join(MOD, '..', '..', 'log-decision', 'append'));
   const flag = (name) => new RegExp(`${name} (?:"([^"]+)"|'([^']+)'|(\\S+))`).exec(DIGEST_LOG_REMEDY);
   const val = (name) => { const m = flag(name); assert.ok(m, `the remedy names ${name}`); return m[1] ?? m[2] ?? m[3]; };
@@ -591,6 +600,13 @@ test('a digested or already-digested AUTO line clears it (#4679)', () => {
     plannedDigestConsole(dir, `${DIGESTED_LINE.replace('- AUTO ', `- ${word} `)}\n`);
     assert.deepStrictEqual(readRunResidue(dir).consoles.map((c) => c.items.map((i) => i.resolution)), [[DIGEST_PENDING_RESOLUTION]], word);
   }
+});
+
+test('a filed line clears a digest-pending entry too: an existing record wins over a digest (#4679)', () => {
+  const dir = tmpRun();
+  plannedDigestConsole(dir, `## /wrap-up\n- AUTO 10:00:00 — Queue write: tiebreak:bbbbbbbbbbbb filed as #77 (work-fingerprint consolefinding-4567ef01). Reversibility: n/a.\n`);
+  assert.deepStrictEqual(readRunResidue(dir).consoles, []);
+  assert.strictEqual(pendingDigests({ digests: [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }] }, '').length, 1, 'with no filed line the entry is still pending');
 });
 
 test('splitMissing never classifies a digest-pending item missing (#4679)', () => {

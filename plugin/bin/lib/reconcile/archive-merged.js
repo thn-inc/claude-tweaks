@@ -34,7 +34,7 @@ const { checkRunIntegrity, fallbackBranch, worktreeListStdout, mergedEvidence } 
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
 const {
-  readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand, DIGEST_PENDING_RESOLUTION, DIGEST_LOG_REMEDY, digestRerunCommand,
+  readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand, DIGEST_PENDING_RESOLUTION, digestLogRemedy, digestRerunCommand,
 } = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
@@ -650,13 +650,12 @@ function consoleAckRemedy(runDir) {
 }
 
 // #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
-// `console-filings.js --only` re-run, one per unacknowledged console holding a `filing-pending`
-// item. '' when no such item is open.
+// `console-filings.js` re-run (default selection, no `--only`), one per unacknowledged console holding a
+// `filing-pending` item. '' when no such item is open.
 function filingRerunRemedy(runDir) {
   const { consoles } = readRunResidue(runDir);
   const commands = consoles.filter((c) => !c.acknowledged).flatMap((c) => {
-    const ids = c.items.filter((i) => i.resolution === FILING_PENDING_RESOLUTION && typeof i.id === 'string').map((i) => i.id);
-    return ids.length > 0 ? [filingRerunCommand({ consoleDir: path.dirname(c.path), ids })] : [];
+    return c.items.some((i) => i.resolution === FILING_PENDING_RESOLUTION && typeof i.id === 'string') ? [filingRerunCommand({ consoleDir: path.dirname(c.path) })] : [];
   });
   if (commands.length === 0) return '';
   return `re-run the planned filing(s): ${commands.join('; ')}, then ${FILING_LOG_REMEDY}`;
@@ -667,10 +666,10 @@ function filingRerunRemedy(runDir) {
 function digestRerunRemedy(runDir) {
   const { consoles } = readRunResidue(runDir);
   const commands = consoles.filter((c) => !c.acknowledged).flatMap((c) => (
-    c.items.some((i) => i.resolution === DIGEST_PENDING_RESOLUTION) ? [digestRerunCommand({ consoleDir: path.dirname(c.path) })] : []
+    c.items.some((i) => i.resolution === DIGEST_PENDING_RESOLUTION) ? [{ consoleDir: path.dirname(c.path) }] : []
   ));
   if (commands.length === 0) return '';
-  return `re-run the planned digest entries: ${commands.join('; ')}, then ${DIGEST_LOG_REMEDY}`;
+  return `re-run the planned digest entries: ${commands.map((c) => digestRerunCommand(c)).join('; ')}, then ${commands.map((c) => digestLogRemedy(c)).join('; ')}`;
 }
 
 // The recovery line for a console-residue skip: name the open items, the
