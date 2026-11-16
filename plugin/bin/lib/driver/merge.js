@@ -5,7 +5,7 @@
 // `deps.judgments` supplier (production builds it from `deps.createJudgments`, #5228); a deps
 // object with no supplier changes nothing.
 //
-// Ported procedure, by section: `_shared/pr-first-merge.md` Steps 2 to 3,
+// Ported procedure, by section: `_shared/pr-first-merge.md` Steps 2 to 3 (Step 2.9 included),
 // `_shared/pr-first-merge-post-merge.md` Steps 4 and 5, and `_shared/express-lane.md` step 9.
 // No test reads that prose, and drift between it and this module is accepted by design (the
 // spec's Gotchas); each step function's comment names the section it ports, by symbol.
@@ -981,6 +981,95 @@ function timeoutSignature(err) {
   return null;
 }
 
+// One accept-park.js call. A throw reads as a reply with no exit code, so every caller fails closed.
+function acceptParkCli(s, args, timeout = CLI_TIMEOUT_MS) {
+  const { ctx, deps } = s;
+  try {
+    return deps.node(bin('accept-park.js'), args, { cwd: ctx.mainCheckout, timeout, env: deps.env });
+  } catch (err) {
+    return { code: null, stdout: '', stderr: errorText(err) };
+  }
+}
+
+const exitWords = (r) => `exit ${r.code === null || r.code === undefined ? 'none (timed out or failed to start)' : r.code}`;
+
+// A run directory an archive may have moved: follow it into the archive, or fall back to stdout-only
+// events when neither exists. -> null when it stayed in place, else the note naming where it went.
+// The caller rebinds the event sink.
+function followRunDir(s) {
+  const { ctx, deps } = s;
+  if (isDirectory(deps, s.runDir)) return null;
+  const archive = path.join(ctx.mainCheckout, '.claude-tweaks', 'pipelines', 'archive', path.basename(s.runDir));
+  if (isDirectory(deps, archive)) {
+    s.runDir = archive;
+    return 'run directory followed into the archive';
+  }
+  s.eventsStdoutOnly = true;
+  return 'run directory and its archive are missing or unreadable; events go to stdout only';
+}
+
+// The park's archive (its step 3) may have moved the run directory: follow it as reconcile does,
+// so the stop event lands in the archive and nothing recreates the old path.
+function followParkedRunDir(s) {
+  if (followRunDir(s) !== null && typeof s.deps.rebindEvents === 'function') s.deps.rebindEvents(s.eventsStdoutOnly ? null : s.runDir);
+}
+
+// Ports `_shared/pr-first-merge.md` Step 2.9, the local acceptance park (control mode, #4615), as
+// `_shared/local-acceptance-park.md` lays it out: past the gate (Step 2.5), before Step 3's merge
+// call. `parked` exit 0 (already parked: `already-parked`) or 6 (unknown: `park-state-unknown`)
+// refuses the merge with no park call, so nothing is archived or released this run; any other exit (2, 3)
+// fails closed. Then `decide`: no park merges as before (control mode off prints `consulted: false`
+// and reads nothing), a park runs `park` for this run's one record, which owns the archive, the
+// claim release and the worktree removal, so no teardown runs here and no decision line follows it.
+// `awaiting-local-acceptance` is reported only when this run's `park` succeeded.
+function acceptPark(s) {
+  const { ctx } = s;
+  s.stage = 'merge-accept-park';
+  const record = String(ctx.record);
+  const repo = ['--repo', ctx.repo];
+  const parked = acceptParkCli(s, ['parked', '--record', record, '--run', s.runDir, ...repo]);
+  if (parked.code === 0) {
+    return stop(s, 'merge-accept-park', 'already-parked',
+      `record #${record} was already parked for local acceptance; no park this run; not merged`);
+  }
+  if (parked.code === 6) {
+    return stop(s, 'merge-accept-park', 'park-state-unknown',
+      `record #${record} park state unreadable (accept-park.js parked exit 6); no park this run; not merged`);
+  }
+  if (parked.code !== 5) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js parked ${exitWords(parked)}; not merged`);
+  const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, ...repo]);
+  if (decided.code !== 0) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js decide ${exitWords(decided)}; not merged`);
+  // decide prints exactly one decision per --record: anything else is unusable, never a no-park.
+  const d = parseJson(String(decided.stdout).trim());
+  const only = isObject(d) && Array.isArray(d.decisions) && d.decisions.length === 1 ? d.decisions[0] : null;
+  if (!isObject(only) || only.record !== ctx.record || typeof only.park !== 'boolean' || d.park !== only.park) {
+    return stop(s, 'merge-accept-park', 'supplier-failed', 'accept-park.js decide printed an unusable decision; not merged');
+  }
+  // The record's own decision routes; the top-level `park` only has to agree with it (checked above).
+  if (only.park === false) {
+    emit(s, 'merge-accept-park', 'ok', `not parked; no local park (${only.consulted === true ? 'target resolved' : 'control mode off'})`);
+    return { ok: true };
+  }
+  const r = acceptParkCli(s, ['park', '--run', s.runDir, '--record', record, '--claimed', record, '--pr', String(ctx.pr),
+    '--head', ctx.head, '--worktree', ctx.worktree, '--worktree-mode', ctx.adopted ? 'caller' : 'remove', ...repo], parkTimeoutMs(s.deps));
+  followParkedRunDir(s);
+  const out = parseJson(String(r.stdout).trim());
+  const failed = (isObject(out) && Array.isArray(out.steps) ? out.steps : [])
+    .filter((x) => isObject(x) && x.ok === false)
+    .map((x) => `${reduceDetail(String(x.name))}: ${reduceDetail(String(x.detail || ''))}`);
+  const failedNote = failed.length ? `; failed steps: ${failed.join('; ')}` : '';
+  if (r.code !== 0) {
+    const said = firstLine(r.stderr);
+    // A killed or unstarted call reports no step results: its later steps may have run.
+    const maybe = r.code === null || r.code === undefined
+      ? `; steps 3-5 may have run (the record may be parked): re-check with accept-park.js parked --record ${record}` : '';
+    return stop(s, 'merge-accept-park', 'park-failed',
+      `accept-park.js park ${exitWords(r)}${said ? ` (${reduceDetail(said)})` : ''}${failedNote}${maybe}; not merged`);
+  }
+  return stop(s, 'merge-accept-park', 'awaiting-local-acceptance',
+    `record #${record} parked for local acceptance at ${ctx.head}; PR #${ctx.pr} left open${failedNote}`);
+}
+
 // Ports Step 3's `gh pr merge` call. `mode` is 'auto' (merge-when-green: arm, or merge when GitHub
 // can now) or 'immediate' (the `wait` row). The labels are read again right before every call, so
 // an `auto:merge` removed since entry (during the supplier call or the watch) is honored. The
@@ -988,6 +1077,13 @@ function timeoutSignature(err) {
 // `--match-head-commit` is always ctx.head; never --admin, never --delete-branch.
 async function mergeCall(s, mode) {
   const { ctx, deps } = s;
+  // Step 2.9 runs once per run, before the first merge call of any mode: a degrade that calls
+  // again (an --auto refusal) has already passed it.
+  if (!s.acceptParkPassed) {
+    const p = acceptPark(s);
+    if (p.stop) return p;
+    s.acceptParkPassed = true;
+  }
   s.stage = 'merge-call';
   const labels = readLabels(s);
   if (labels.unreadable) return stop(s, 'merge-call', 'labels-unreadable', `pre-merge ${labels.unreadable}`);
@@ -1100,6 +1196,26 @@ async function confirm(s, unreadDetail = 'merge call exited 0; state unconfirmed
 
 // The reconcile call mirrors, checks the release and archives the run: it gets a long bound.
 const RECONCILE_TIMEOUT_MS = 150000;
+// The local acceptance park's budget (#4615), a budget and not a true sum: `accept-park.js park`
+// runs its five steps in one process, its node children carry no inner timeout, and its claim
+// release makes several CAS git calls. Each step gets what its calls would get as separate calls
+// from here: the packet's gather, render and post (3 x CLI_TIMEOUT_MS), the deploy-status edit and
+// its decision line (1 x CLI_TIMEOUT_MS), close-run + archive-run (RECONCILE_TIMEOUT_MS, the bound
+// the reconcile that archives a merged run gets), the claim release (1 x CLI_TIMEOUT_MS), and the
+// forced worktree removal (`worktree list` + `worktree remove`, 2 x the live GIT_TIMEOUT_MS the
+// park's own git calls run under, through `deps.gitTimeoutMs`; 30 s, git's default, when the deps
+// carry none or it is unusable). At the defaults: 5 x 120 s + 150 s + 2 x 30 s = 810 s.
+const PARK_GIT_DEFAULT_MS = 30000;
+function parkTimeoutMs(deps) {
+  let git = PARK_GIT_DEFAULT_MS;
+  try {
+    const v = typeof deps.gitTimeoutMs === 'function' ? deps.gitTimeoutMs() : undefined;
+    if (Number.isSafeInteger(v) && v > 0) git = v;
+  } catch {
+    // an unreadable bound keeps the default: the budget is never shorter than git's own default
+  }
+  return 5 * CLI_TIMEOUT_MS + RECONCILE_TIMEOUT_MS + 2 * git;
+}
 const NOT_LOCKED = /not locked/i;
 
 // The ONLY git call site in this module: every git argv is a literal array passed here (the
@@ -1246,17 +1362,7 @@ function reconcile(s) {
     return postFail(s, 'merge-reconcile', 'reconcile',
       r.code === null || r.code === undefined ? 'reconcile did not finish (timed out or killed)' : `reconcile exited ${r.code}`);
   }
-  let where = 'run directory kept in place';
-  if (!isDirectory(deps, s.runDir)) {
-    const archive = path.join(ctx.mainCheckout, '.claude-tweaks', 'pipelines', 'archive', path.basename(s.runDir));
-    if (isDirectory(deps, archive)) {
-      s.runDir = archive;
-      where = 'run directory followed into the archive';
-    } else {
-      s.eventsStdoutOnly = true;
-      where = 'run directory and its archive are missing or unreadable; events go to stdout only';
-    }
-  }
+  const where = followRunDir(s) ?? 'run directory kept in place';
   // Before the reconcile event, so it lands where the rest of the run writes (or on stdout alone).
   deps.rebindEvents(s.eventsStdoutOnly ? null : s.runDir);
   emit(s, 'merge-reconcile', 'ok', where);
@@ -1436,7 +1542,7 @@ async function merge(ctx, deps) {
   const s = {
     ctx, deps, runDir: ctx.runDir, value: 'wait', source: 'unresolved', valueRaw: '', keepOpen: [],
     subject: null, reentries: 0, recomposeOnReentry: false, ciWaitMs: 0, lastRead: null, lastVerdict: null, autoRefused: false,
-    watchBoundFrom: null, logFailures: [], logSeq: 0, eventsStdoutOnly: false, mergeCommit: null, pmFailures: [], stage: 'merge-entry',
+    watchBoundFrom: null, acceptParkPassed: false, logFailures: [], logSeq: 0, eventsStdoutOnly: false, mergeCommit: null, pmFailures: [], stage: 'merge-entry',
     startedAt: clock(deps),
   };
   try {
@@ -1469,7 +1575,8 @@ const REASONS = Object.freeze([
   'supplier-failed', 'verdict-not-confirmed', 'acceptance-not-completed', 'compose-refused', 'ready-failed',
   'state-read-failed', 'pr-not-open', 'moving-target', 'checks-read-failed', 'check-failed', 'checks-pending-timeout',
   'draft-skip-without-ready-trigger', 'conflict', 'merge-refused', 'drain-overlap', 'near-duplicate',
-  'in-flight-unreadable', 'in-flight-read-failed', 'unclassified',
+  'in-flight-unreadable', 'in-flight-read-failed', 'awaiting-local-acceptance', 'park-failed', 'already-parked', 'park-state-unknown',
+  'unclassified',
 ]);
 const PREFIXED_REASONS = Object.freeze(['check-failed', 'draft-skip-without-ready-trigger']);
 
@@ -1482,5 +1589,5 @@ function isReason(reason) {
 
 module.exports = {
   merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
-  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs,
 };

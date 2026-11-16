@@ -770,12 +770,65 @@ test('returns null and does not throw on a malformed command', { timeout: 60000 
 // node-eval-separator must preserve.
 const STUB = path.join(SANDBOX, 'stub');
 fs.mkdirSync(STUB);
-const printArgv = `exec "${process.execPath}" -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- "$@"\n`;
-fs.writeFileSync(path.join(STUB, 'ls'), `#!/bin/sh\n${printArgv}`, { mode: 0o755 });
-fs.writeFileSync(path.join(STUB, 'node'), `#!/bin/sh\ncase "$1" in -e|-p|--eval|--print) exec "${process.execPath}" "$@";; esac\n${printArgv}`, { mode: 0o755 });
+// The stubs print their arguments as JSON with shell builtins only: no node or other child per call.
+// ct_print writes JSON.stringify of its arguments, one byte at a time (C-locale bytes; non-ASCII
+// bytes pass through unchanged, as JSON.stringify leaves them). Every character is handled by a
+// builtin: printf, case, parameter expansion, for and while.
+const CT_CTRL = [...Array(32).keys()].filter((i) => i > 0 && ![8, 9, 10, 12, 13].includes(i)).map((i) => `'${String.fromCharCode(i)}'`).join('|');
+const CT_PRINT = `ct_print() {
+  printf '['
+  ct_sep=
+  for ct_a; do
+    printf '%s"' "$ct_sep"
+    ct_rest=$ct_a
+    while [ -n "$ct_rest" ]; do
+      ct_c=\${ct_rest%"\${ct_rest#?}"}
+      ct_rest=\${ct_rest#?}
+      case $ct_c in
+        '\\') printf '%s' '\\\\' ;;
+        '"') printf '%s' '\\"' ;;
+        '
+') printf '%s' '\\n' ;;
+        '	') printf '%s' '\\t' ;;
+        '\r') printf '%s' '\\r' ;;
+        '\b') printf '%s' '\\b' ;;
+        '\f') printf '%s' '\\f' ;;
+        ${CT_CTRL}) printf '\\\\u%04x' "'$ct_c" ;;
+        *) printf '%s' "$ct_c" ;;
+      esac
+    done
+    printf '"'
+    ct_sep=,
+  done
+  printf ']\\n'
+}
+`;
+fs.writeFileSync(path.join(STUB, 'ls'), `#!/bin/sh\n${CT_PRINT}ct_print "$@"\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(STUB, 'node'), `#!/bin/sh\ncase "$1" in -e|-p|--eval|--print) exec "${process.execPath}" "$@";; esac\n${CT_PRINT}ct_print "$@"\n`, { mode: 0o755 });
 // git stub: honours leading -C <dir> by cd-ing there, then prints [$PWD, ...argv] as JSON, so a
 // dropped -C that changes the directory shows up in stdout.
-fs.writeFileSync(path.join(STUB, 'git'), `#!/bin/sh\nwhile [ "$1" = "-C" ]; do cd "$2" || exit 1; shift 2; done\nexec "${process.execPath}" -e 'console.log(JSON.stringify([process.env.PWD, ...process.argv.slice(1)]))' -- "$@"\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(STUB, 'git'), `#!/bin/sh\n${CT_PRINT}while [ "$1" = "-C" ]; do cd "$2" || exit 1; shift 2; done\nct_print "$PWD" "$@"\n`, { mode: 0o755 });
+// AC2: each stub prints exactly JSON.stringify of its argument list (git: of [$PWD, ...args]),
+// byte for byte, under the shebang's /bin/sh and under bash and dash by name when present.
+const PRINT_ARGS = ['a b', 'q"q', 'back\\slash', 'line\nbreak', 'é ☃ 🙂', 'tab\there', 'ctl\x01x', '50%s%d', '', '\r\b\f', '\x01\x1f'];
+test('each stub prints JSON.stringify of its argument list, byte for byte, under each interpreter', { skip: process.platform === 'win32' }, (t) => {
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME || os.homedir() };
+  for (const name of ['ls', 'node', 'git']) {
+    const expected = `${JSON.stringify(name === 'git' ? [CWD, ...PRINT_ARGS] : PRINT_ARGS)}\n`;
+    for (const interp of [null, 'bash', 'dash']) {
+      if (interp && spawnSync(interp, ['-c', 'exit 0'], { windowsHide: true }).status !== 0) {
+        t.diagnostic(`${interp} not present — skipped for ${name}`);
+        continue;
+      }
+      const script = path.join(STUB, name);
+      const r = interp ? spawnSync(interp, [script, ...PRINT_ARGS], { cwd: CWD, env, encoding: 'utf8', windowsHide: true })
+        : spawnSync(script, PRINT_ARGS, { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
+      assert.strictEqual(r.status, 0, `${name} under ${interp || 'shebang'}: ${r.stderr}`);
+      assert.strictEqual(r.stdout, expected, `${name} under ${interp || 'shebang'}`);
+    }
+  }
+});
+
 const EVAL = "'console.log(JSON.stringify(process.argv.slice(1)))'";
 const POSITIVE = [
   { rule: 'inline-literal-assignment', command: 'P=/x/y; node $P/z.js' },

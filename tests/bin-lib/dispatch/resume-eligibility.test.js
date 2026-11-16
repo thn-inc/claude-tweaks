@@ -413,6 +413,60 @@ test('carries bot:blocked wins over lacks auto:build', () => {
   assert.ok(v.line.startsWith('#4589 carries bot:blocked'), v.line);
 });
 
+// #5584 AC10: the build-authority fact the gatherer derives. Omitted, the label decides (the
+// 'no auto:build' table row above pins that line unchanged).
+test('#5584 AC10: an ungranted record resumes when buildAuthority is typed', () => {
+  const v = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'typed', authorityReasons: [] });
+  assert.equal(v.eligible, true, v.line);
+});
+
+test('#5584 AC10: an ungranted record is refused not-granted when buildAuthority is none, naming the reasons', () => {
+  const v = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'none', authorityReasons: ['expired', 'not-typed'] });
+  assert.equal(v.reason, 'not-granted');
+  // The remedy is the first word's (build-authority.js's REMEDIES), as the queue pull's line names it.
+  assert.equal(v.line, '#4589 lacks auto:build (typed command not accepted: expired, not-typed) — grant it with /claude-tweaks:backlog refine #4589, or type the command again, then run /claude-tweaks:dispatch resume #4589');
+  const bare = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'none' });
+  assert.equal(bare.reason, 'not-granted');
+  assert.equal(bare.line, '#4589 lacks auto:build — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589');
+  assert.equal(verdict({ labels: ['ready'], buildAuthority: 'none', authorityReasons: [] }).line, bare.line);
+});
+
+test('#5584: a refused typed command names the first reason word\'s remedy, with the record number in place of #N', () => {
+  const { REMEDIES } = require('../../../plugin/bin/lib/issues/build-authority');
+  const rows = [
+    ['not-ready', 'run /claude-tweaks:specify #4589'],
+    ['held', 'clear bot:blocked, bot:parked or parked on #4589 once its trigger has fired, then type the command again'],
+    ['launcher', 'the launcher must export CC_LAUNCHED_BY=user (thn-inc/claude-user-config#50)'],
+    ['not-named', 'grant it with /claude-tweaks:backlog refine #4589'],
+  ];
+  for (const [word, remedy] of rows) {
+    assert.equal(REMEDIES[word].split('#N').join('#4589'), remedy, word);
+    const v = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'none', authorityReasons: [word, 'ci'] });
+    assert.equal(v.reason, 'not-granted', word);
+    assert.equal(v.line, `#4589 lacks auto:build (typed command not accepted: ${word}, ci) — ${remedy}, then run /claude-tweaks:dispatch resume #4589`, word);
+  }
+  // bot:blocked keeps its own line, whatever the words.
+  const blocked = verdict({ labels: ['bot:blocked'], buildAuthority: 'none', authorityReasons: ['held'] });
+  assert.equal(blocked.line, '#4589 carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589');
+});
+
+test('#5584 AC10: buildAuthority none refuses even a record carrying auto:build', () => {
+  assert.equal(verdict({ buildAuthority: 'none', authorityReasons: ['labels-unreadable'] }).reason, 'not-granted');
+});
+
+test('#5584 AC10: bot:blocked is refused not-granted with buildAuthority typed and with none', () => {
+  for (const buildAuthority of ['typed', 'none', 'label']) {
+    const v = verdict({ labels: ['ready', 'bot:blocked'], buildAuthority, authorityReasons: ['held'] });
+    assert.equal(v.reason, 'not-granted', buildAuthority);
+    assert.ok(v.line.startsWith('#4589 carries bot:blocked — '), v.line);
+  }
+});
+
+test('#5584 AC10: a typed record still meets the gates after the grant check', () => {
+  assert.equal(verdict({ labels: ['ready', 'bot:in-progress'], buildAuthority: 'typed' }).reason, 'label-drift');
+  assert.equal(verdict({ labels: ['ready', 'bot:zeta'], buildAuthority: 'typed' }).reason, 'unlisted-label');
+});
+
 test('branch-diverged does not fire when the worktree exists, nor when the tips match', () => {
   assert.equal(verdict({ worktreeBranch: HEAD, localBranchSha: 'b'.repeat(40) }).eligible, true);
   assert.equal(verdict({ worktreeBranch: null, localBranchSha: OID }).eligible, true);

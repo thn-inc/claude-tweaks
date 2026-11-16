@@ -47,15 +47,15 @@ function newestOwnMs(lines) {
 }
 
 // #1737: one read of events.jsonl (via context.js's shared readEventLines)
-// answering both questions archive-merged.js's `isAbandonedInterrupted` used to
+// answering both questions the `abandoned-interrupted` classification used to
 // ask via two separate reads. `readable` is distinct from `lastOwnMs`'s own
 // `null`, which conflates two different things: "the log is readable but has no
 // qualifying (non-fallback, parseable-ts) event" and "the log couldn't be read
 // in the first place." Only callers that must tell those apart read `readable`
-// (archive-merged.js's isAbandonedInterrupted path; `ownEventAt` below tells absent
-// from empty through `readEventLines`'s own `null` vs `[]`; #1673 F9 review
-// finding): a genuinely unreadable/absent log is UNKNOWN evidence, not proof of
-// staleness.
+// (the `abandoned-interrupted` classification's path; `ownEventAt` below tells
+// absent from empty through `readEventLines`'s own `null` vs `[]`; #1673 F9
+// review finding): a genuinely unreadable/absent log is UNKNOWN evidence, not
+// proof of staleness.
 //
 // `lastOwnMs` is the newest event this run can actually claim as its own, in
 // ms — or null when there are none. Deliberately NOT run-state's `updatedAt`,

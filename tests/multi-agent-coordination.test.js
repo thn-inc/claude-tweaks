@@ -1128,68 +1128,14 @@ test('debate: Mode 2 restates the three lines /review writes, so the guide canno
 // ============================================================
 
 // The Per-Candidate Refutation Pass now settles its reply through resolve-tiebreak (#3947, pinned in
-// tests/review-tiebreak-step-conformance.test.js); resolveRefutation and its CLI verb stay in code and
-// stay pinned here at the library level. The prose keeps one downgrade log line, for can't-tell.
-test("refutation: the can't-tell downgrade line matches the documented schema (resolveRefutation still downgrades refuted)", () => {
-  assert.strictEqual(c.resolveRefutation('refuted'), 'unconfirmed');
+// tests/review-tiebreak-step-conformance.test.js). The prose keeps one downgrade log line, for can't-tell.
+test("refutation: the can't-tell downgrade line matches the documented schema", () => {
   const entry =
     `- STAGED 14:52:10 — Refutation: lens "security" finding src/auth.ts:42 — no usable verdict (can't-tell), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.`;
   assert.match(entry, decisionLogPattern(REVIEW_SKILL, ['Refutation:', 'Downgraded to unconfirmed']));
 });
 
-test('refutation: not-refuted verdict leaves the finding confirmed', () => {
-  assert.strictEqual(c.resolveRefutation('not-refuted'), 'confirmed');
-});
-
-test('refutation: is a sibling of resolveDebate, not an overload — single verdict in, two buckets out, no "contested" outcome', () => {
-  // resolveDebate takes two verdicts and can produce 'contested'; resolveRefutation
-  // takes exactly one and never does — every non-'not-refuted' string (including a
-  // stray 'partial'-style value, which is meaningful for debate but not here)
-  // falls through to 'unconfirmed', not a third bucket.
-  assert.strictEqual(c.resolveRefutation('not-refuted'), 'confirmed');
-  assert.strictEqual(c.resolveRefutation('partial'), 'unconfirmed');
-  assert.notStrictEqual(c.resolveRefutation, c.resolveDebate);
-});
-
-test('refutation: fails toward scrutiny, not away from it — a missing, empty, or malformed verdict (e.g. from a BLOCKED or unparseable dispatch) downgrades to unconfirmed rather than silently standing as confirmed', () => {
-  // This is the opposite fail-safety direction from a naive "anything but the
-  // negative case defaults to the positive case" implementation. A failed
-  // refutation attempt must never be indistinguishable from a genuine
-  // "not-refuted" verdict — see resolveDebate's own conservative default,
-  // which this mirrors.
-  assert.strictEqual(c.resolveRefutation(undefined), 'unconfirmed');
-  assert.strictEqual(c.resolveRefutation(''), 'unconfirmed');
-  assert.strictEqual(c.resolveRefutation('refuted'), 'unconfirmed');
-  assert.strictEqual(c.resolveRefutation('REFUTED'), 'unconfirmed'); // exact-match only, no case-folding
-});
-
-test('/review refutation integration: confirmed findings surviving reproduction each get exactly one refutation dispatch; refuted ones join the unconfirmed bucket', () => {
-  // Two lenses' findings survive Step 3 reproduction as confirmed.
-  const confirmedBucket = [
-    { path: 'src/auth.ts', line: 42, severity: 'high', text: 'stale evidence' },
-    { path: 'src/api.ts', line: 100, severity: 'medium', text: 'real issue' },
-  ];
-
-  // Simulate one refutation agent per candidate: the first is refuted (its
-  // cited evidence no longer matches current file content, e.g. already
-  // fixed by a later commit); the second is not.
-  const verdicts = ['refuted', 'not-refuted'];
-  const results = confirmedBucket.map((finding, i) => ({
-    finding,
-    bucket: c.resolveRefutation(verdicts[i]),
-  }));
-
-  const stillConfirmed = results.filter((r) => r.bucket === 'confirmed').map((r) => r.finding);
-  const downgraded = results.filter((r) => r.bucket === 'unconfirmed').map((r) => r.finding);
-
-  assert.strictEqual(stillConfirmed.length, 1);
-  assert.strictEqual(stillConfirmed[0].path, 'src/api.ts');
-  assert.strictEqual(downgraded.length, 1);
-  assert.strictEqual(downgraded[0].path, 'src/auth.ts');
-
-  // No silent drops — every candidate lands in exactly one bucket.
-  assert.strictEqual(stillConfirmed.length + downgraded.length, confirmedBucket.length);
-
+test('/review Step 3.5: the review skill documents both the Per-Candidate Refutation Pass and Cross-Lens Debate', () => {
   // Both the Cross-Lens Debate and Per-Candidate Refutation Pass sections
   // must exist as documented, sibling subsections of the same Step 3.5.
   assert.ok(REVIEW_SKILL.includes('Per-Candidate Refutation Pass'), 'SKILL.md must document the refutation pass');

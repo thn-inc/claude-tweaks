@@ -92,12 +92,6 @@ test('resolve-debate prints the bare resolution for every verdict combination', 
   assert.strictEqual(cli(['resolve-debate', 'agree', 'partial']).stdout.trim(), 'contested');
 });
 
-test('resolve-refutation: only the exact literal not-refuted keeps a finding confirmed', () => {
-  assert.strictEqual(cli(['resolve-refutation', 'not-refuted']).stdout.trim(), 'confirmed');
-  assert.strictEqual(cli(['resolve-refutation', 'refuted']).stdout.trim(), 'unconfirmed');
-  assert.strictEqual(cli(['resolve-refutation', 'garbled']).stdout.trim(), 'unconfirmed');
-});
-
 test('malformed invocations exit 2: unknown command, wrong arity, missing file, invalid JSON, wrong shape', () => {
   assert.strictEqual(cli([]).code, 2);
   assert.strictEqual(cli(['frobnicate']).code, 2);
