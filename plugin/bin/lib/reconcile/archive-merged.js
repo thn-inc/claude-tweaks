@@ -63,8 +63,9 @@ const ORPHAN_MINT_TTL_MS = 24 * 60 * 60 * 1000;
 
 // #1734: the one stat-and-compare shared by every staleness predicate in this
 // file (the adhoc-superseded and orphaned-mint classifications and
-// isStructurallyStuck all carried byte-identical copies). Fail-closed toward "not stale" on any stat
-// failure (ENOENT, EACCES, …) — every caller relies on an unreadable directory
+// isStructurallyStuck all carried byte-identical copies). Fail-closed toward
+// "not stale" on any stat failure (ENOENT, EACCES, …) — every caller relies on
+// an unreadable directory
 // being left alone rather than swept. Strict `>` (not `>=`): exactly-at-TTL is
 // not yet stale.
 function isStaleDir(dir, ttlMs, now = Date.now()) {
@@ -402,7 +403,9 @@ function unclosedRecords(prState, records, repoSlug) {
 // `settleMergedPartial` below (issue-state probe, empty-linkage fallback).
 // #1732: the merged-PR decision, called by archiveMergedRun's two paths (with
 // real staged evidence, #3249). It is never routed through classifyRunDir: it
-// has no TTL of its own to own — only the mtime/recency kinds do.
+// has no TTL of its own to own — only the mtime/recency kinds do. The `Core`
+// suffix is a leftover from the removed wrapper, kept so existing callers
+// need no change.
 //
 // #3945: `coverage` (checkRunTiebreakCoverage's `{ artifactPresent,
 // artifactValid, missing }`) is evaluated only at the two points that would
@@ -1046,9 +1049,9 @@ function revertStagedOps(root, ops, env) {
 // survives at the live path once the gitignored half moved, so there is
 // nothing to resolve a branch/PR from. Detected whenever the archive twin
 // exists AND every entry still live under `dir` is a git-tracked `work/` (or
-// `spec-{n}/work/`) path — nothing gitignored remains. Sits beside
-// the orphaned-mint classification — same "answer a narrow structural question, no I/O
-// beyond what answering it requires" shape.
+// `spec-{n}/work/`) path — nothing gitignored remains. Sits beside the
+// orphaned-mint classification — same "answer a narrow structural question,
+// no I/O beyond what answering it requires" shape.
 function isArchivedPendingTrackedMove(root, dir) {
   const runId = path.basename(dir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
@@ -1779,8 +1782,8 @@ function archiveRunDir(root, runDir, { env } = {}) {
 // has sat completely untouched for a full week is a much safer signal of
 // abandonment than a build-duration estimate would be. A week also gives
 // #1290's own archive-twin shape (still unbuilt as of this record — see
-// this file's orphaned-mint classification, which has no twin check yet) ample margin
-// once that lands, without needing its own separate constant.
+// this file's orphaned-mint classification, which has no twin check yet)
+// ample margin once that lands, without needing its own separate constant.
 const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Skip reasons that might indicate a run dir stuck without external help,
@@ -2380,7 +2383,7 @@ function archiveMerged({
 
     // #1892 Deliverable 2: the split state — archive twin already exists,
     // live path holds only tracked `work/` headers — sits ahead of every
-    // other branch below, regardless of age: the orphaned-mint classification's own
+    // other branch below, regardless of age: the orphaned-mint action's own
     // hasTrackedContent routing would eventually reach archiveRunDir's now-
     // idempotent twin-comparison fix (Deliverable 1) too, but only once the
     // dir is old enough AND config.yml is absent, and only by accident of
