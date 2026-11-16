@@ -1784,6 +1784,11 @@ const SETTLE_REFUSALS = {
   'a missing failed': [(r) => ({ ...r, reviewers: r.reviewers.map(({ failed, ...x }) => x) })],
   'a lens ../x': [(r) => ({ lenses: [{ lens: '../x', reviewers: 2 }, r.lenses[1]], reviewers: [...okPair('../x'), r.reviewers[2]] })],
   'a lens with a slash in an entry only': [(r) => ({ ...r, reviewers: [...r.reviewers, reviewer('a/b', 'A', REPLY_A)] })],
+  'lenses beside result, reviewers inside it': [(r) => ({ lenses: r.lenses, result: { reviewers: r.reviewers } })],
+  'a trailing bare --ctx-id': [null, ['--ctx-id']],
+  'a duplicated --ctx-id': [null, ['--ctx-id', 'c1', '--ctx-id', 'c2']],
+  'a duplicated --only': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'confirmed', '--only', 'confirmed']],
+  'a blank --run': [null, ['--ctx-id', 'c1', '--run', '', '--only', 'confirmed']],
   '--ctx-id a/b': [null, ['--ctx-id', 'a/b']],
   '--ctx-id a\\b': [null, ['--ctx-id', 'a\\b']],
   '--ctx-id ..': [null, ['--ctx-id', '..']],
@@ -1798,19 +1803,19 @@ const SETTLE_REFUSALS = {
   'a hold entry with no lens': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'unconfirmed', '--hold', 'HOLD'], [{ source: 'A', path: 'src/c.js', line: 30, text: 'stale cache entry never evicted' }]],
   'a hold file that is not an array': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'unconfirmed', '--hold', 'HOLD'], { a: 1 }],
 };
-for (const [name, [mutate, args, holdContent]] of Object.entries(SETTLE_REFUSALS)) {
-  test(`AC5: ${name} exits 2 with one stderr line and writes nothing`, (t) => {
-    const inp = settleInputs(t);
-    const result = mutate ? mutate(settleBase()) : settleBase();
-    const holdPath = writeText(inp.d, 'hold.json', JSON.stringify(holdContent === undefined ? [] : holdContent));
-    const extra = (args || settleRunArgs(inp)).map((a) => (a === 'RUN' ? inp.runDir : a === 'HOLD' ? holdPath : a));
-    const res = settleRun(inp, result, extra);
-    assert.strictEqual(res.code, 2, res.err);
-    assert.strictEqual(res.out, '');
-    assert.ok(oneLine(res.err), JSON.stringify(res.err));
-    untouched(inp, name);
-  });
+function assertRefused(t, name) {
+  const [mutate, args, holdContent] = SETTLE_REFUSALS[name];
+  const inp = settleInputs(t);
+  const result = mutate ? mutate(settleBase()) : settleBase();
+  const holdPath = writeText(inp.d, 'hold.json', JSON.stringify(holdContent === undefined ? [] : holdContent));
+  const extra = (args || settleRunArgs(inp)).map((a) => (a === 'RUN' ? inp.runDir : a === 'HOLD' ? holdPath : a));
+  const res = settleRun(inp, result, extra);
+  assert.strictEqual(res.code, 2, `${name}: ${res.err}`);
+  assert.strictEqual(res.out, '', name);
+  assert.ok(oneLine(res.err), `${name}: ${JSON.stringify(res.err)}`);
+  untouched(inp, name);
 }
+for (const name of Object.keys(SETTLE_REFUSALS)) test(`AC5: ${name} exits 2 with one stderr line and writes nothing`, (t) => assertRefused(t, name));
 
 test('AC5: an unreadable result file, invalid JSON and two result files exit 2 with one stderr line', (t) => {
   const inp = settleInputs(t);
@@ -2001,8 +2006,8 @@ test('AC11.4: a parsed table with no status line is status-missing', (t) => {
   assert.strictEqual(needsOf(printed, 'sec').reviewers[0].statusWord, null);
 });
 
-test('AC12.1: a roster lens or side with no entry, or an unnamed entry, exits 2 (the AC5 cases above)', () => {
-  for (const name of ['a roster lens with no entry', 'a roster side with no entry', 'an entry the roster does not name']) assert.ok(SETTLE_REFUSALS[name], name);
+test('AC12.1: a roster lens or side with no entry, or an unnamed entry, exits 2 with one stderr line and nothing written', (t) => {
+  for (const name of ['a roster lens with no entry', 'a roster side with no entry', 'an entry the roster does not name']) assertRefused(t, name);
 });
 
 test('AC12.2: a reviewers: 1 lens is under needsSession with reason single-reviewer and its findings file is written', (t) => {
@@ -2049,8 +2054,6 @@ test('wrapped result shape reads like the bare one', (t) => {
   assert.strictEqual(bare.code, 0, bare.err);
   assert.strictEqual(wrapped.out, bare.out);
   assert.ok(JSON.parse(bare.out).settled.length === 1);
-  const split = settleRun(inp, { lenses: settleBase().lenses, result: { reviewers: settleBase().reviewers } }, ['--ctx-id', 'c1']);
-  assert.strictEqual(split.out, bare.out, 'lenses beside result read the same');
 });
 
 test('exit 3 for a missing run dir and for an unanchored one, nothing written', (t) => {
@@ -2119,14 +2122,18 @@ test('a findings file that cannot be written reports findingsPath: null and one 
   assert.strictEqual(decisionsOf(inp.runDir), `## /review\n${settleLines(REPLY_A, REPLY_B, 'confirmed')}`);
 });
 
-test('a finding path that would split a decisions.md line is refused with exit 2 before anything is written', (t) => {
+test('a row with an empty path or a control character in its path is skipped; its reviewer is listed under skipped, the lens settles and --run exits 0 logging the good findings', (t) => {
   const inp = settleInputs(t);
-  const odd = settleReply([{ severity: 'high', path: 'src/x\ry.js', line: 3, text: 'odd path here' }]);
-  const result = { lenses: [{ lens: 'sec', reviewers: 2 }, { lens: 'solo', reviewers: 1 }], reviewers: [reviewer('sec', 'A', odd), reviewer('sec', 'B', odd), reviewer('solo', 'A', REPLY_A)] };
+  const odd = settleReply(REPRO_A, '| high | :12 | no path | x |\n| high | src/x\ry.js:3 | stray carriage return | x |\n\nSTATUS: DONE\n');
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', odd), reviewer('sec', 'B', REPLY_B)] };
   const res = settleRun(inp, result, settleRunArgs(inp));
-  assert.strictEqual(res.code, 2);
-  assert.ok(oneLine(res.err), res.err);
-  untouched(inp, 'odd path');
+  assert.strictEqual(res.code, 0, res.err);
+  assert.strictEqual(res.err, '');
+  const printed = JSON.parse(res.out);
+  assert.deepStrictEqual(printed.skipped, [{ lens: 'sec', side: 'A', rows: 2 }]);
+  assert.deepStrictEqual(printed.settled.map((s) => [s.lens, s.logged]), [['sec', true]]);
+  assert.ok(settleLines(REPLY_A, REPLY_B, 'confirmed').length > 0);
+  assert.strictEqual(decisionsOf(inp.runDir), `## /review\n${settleLines(REPLY_A, REPLY_B, 'confirmed')}`);
 });
 
 test('the session id and temp dir come from deps.env, never process.env', (t) => {

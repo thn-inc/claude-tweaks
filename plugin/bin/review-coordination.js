@@ -202,7 +202,9 @@ const REPRODUCTION_FLAGS = ['--lens', '--run', '--only', '--hold'];
 
 // Splits rest into { flags, positional } for a verb whose value flags are `names`; a trailing bare flag, a blank
 // value (an unset $PIPELINE_RUN_DIR expands to "") or a flag given twice is a usage error: { exitCode: 2 }.
-function parseValueFlags(rest, names, deps) {
+// `brief` drops the USAGE tail from those refusals (one stderr line), for the verbs that promise one.
+function parseValueFlags(rest, names, deps, { brief = false } = {}) {
+  const usage = brief ? '' : USAGE;
   const flags = {};
   const positional = [];
   for (let i = 0; i < rest.length; i++) {
@@ -211,12 +213,12 @@ function parseValueFlags(rest, names, deps) {
       continue;
     }
     if (i + 1 >= rest.length || rest[i + 1].trim() === '') {
-      deps.stderr(`review-coordination.js: ${rest[i]} needs a value\n` + USAGE);
+      deps.stderr(`review-coordination.js: ${rest[i]} needs a value\n` + usage);
       return { exitCode: 2 };
     }
     const name = rest[i].slice(2);
     if (flags[name] !== undefined) {
-      deps.stderr(`review-coordination.js: ${rest[i]} given more than once\n` + USAGE);
+      deps.stderr(`review-coordination.js: ${rest[i]} given more than once\n` + usage);
       return { exitCode: 2 };
     }
     flags[name] = rest[++i];
@@ -440,7 +442,7 @@ function ctxIdProblem(id) {
 }
 
 // The result file's refusal text, or { lenses, reviewers }. Bare: a top-level `reviewers` array; wrapped: the same
-// object under a top-level `result` (its `lenses` read from it, else from the top level).
+// object under a top-level `result` (both `lenses` and `reviewers` read from inside it).
 function settleInputProblem(value, file) {
   let src = null;
   if (isPlainObject(value)) {
@@ -448,7 +450,7 @@ function settleInputProblem(value, file) {
     else if (isPlainObject(value.result) && Array.isArray(value.result.reviewers)) src = value.result;
   }
   if (src === null) return { problem: `${file} must hold an object with a reviewers array, at the top level or under result` };
-  const lenses = src.lenses !== undefined ? src.lenses : value.lenses;
+  const lenses = src.lenses;
   if (!Array.isArray(lenses) || lenses.length === 0) return { problem: `${file} must name its lenses: a non-empty array of {lens, reviewers}` };
   const seen = new Set();
   for (const [i, l] of lenses.entries()) {
@@ -506,7 +508,7 @@ function writeLensFindings(ctxId, lens, r, deps) {
 // settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]] (#5598).
 // Every refusal (exit 2) precedes the run dir anchoring (exit 3), which precedes every write.
 function settleLensReplies(rest, deps) {
-  const parsedFlags = parseValueFlags(rest, ['--ctx-id', '--run', '--only', '--hold'], deps);
+  const parsedFlags = parseValueFlags(rest, ['--ctx-id', '--run', '--only', '--hold'], deps, { brief: true });
   if (parsedFlags.exitCode !== undefined) return parsedFlags.exitCode;
   const { flags, positional } = parsedFlags;
   const refuse = (message) => { deps.stderr(`review-coordination.js: ${message}\n`); return 2; };
@@ -553,8 +555,6 @@ function settleLensReplies(rest, deps) {
   if (flags.run !== undefined) {
     for (const s of settled) {
       const lensHold = hold[s.lens] || [];
-      const bad = writtenFindings(s.result, flags.only, lensHold).find((f) => typeof f.path !== 'string' || f.path === '' || /[\r\n]/.test(f.path));
-      if (bad) return refuse(`a finding path in lens ${s.lens} must be a non-empty single line, got ${JSON.stringify(bad.path)}`);
       paired.push({ lens: s.lens, entries: pairEntries(s.result, { lens: s.lens, only: flags.only, hold: lensHold }).entries.map((e) => ({ ...e, section: '/review' })) });
     }
   }

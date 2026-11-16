@@ -220,6 +220,17 @@ test('Review Focus 2: an empty location cell is skipped, not a finding', () => {
   }));
 });
 
+test('a row whose path is empty or holds a control character is skipped, not a finding', () => {
+  const good = `${HEADER}| high | src/a.ts:10 | Null deref | \`x.y\` unguarded |\n`;
+  assert.deepStrictEqual(parseLensReply(`${good}| high | :12 | x | y |\n\nSTATUS: DONE`), result({ findings: [PLAIN_FINDINGS[0]], skipped: 1 }));
+  assert.deepStrictEqual(parseLensReply(`${good}| high |  :12 | x | y |\n\nSTATUS: DONE`), result({ findings: [PLAIN_FINDINGS[0]], skipped: 1 }));
+  assert.deepStrictEqual(parseLensReply(`${good}| high | src/x\ry.js:3 | x | y |\n\nSTATUS: DONE`), result({ findings: [PLAIN_FINDINGS[0]], skipped: 1 }));
+  for (const bad of ['\x7f', '\t', '\x01', '\x00']) {
+    assert.deepStrictEqual(parseLensReply(`${good}| high | src/x${bad}y.js:3 | x | y |\n\nSTATUS: DONE`), result({ findings: [PLAIN_FINDINGS[0]], skipped: 1 }), JSON.stringify(bad));
+  }
+  assert.deepStrictEqual(parseLensReply(`${HEADER}| high | :12 | x | y |\n\nSTATUS: DONE`), result({ parse: 'unparseable', skipped: 1 }));
+});
+
 test('a row whose severity is off the scale is counted in skipped; header and separator rows are not', () => {
   assert.deepStrictEqual(parseLensReply('| high | a.js:1 | x | y |\n| Major | b.js:2 | y | z |\n\nSTATUS: DONE'), result({
     findings: [{ severity: 'high', path: 'a.js', line: 1, text: 'x', evidence: 'y' }], skipped: 1,

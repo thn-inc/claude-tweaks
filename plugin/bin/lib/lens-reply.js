@@ -16,9 +16,10 @@
 // `parse: 'unparseable'` is its own signal: it never comes back as
 // `findings: []` with `noFindings: true`. `skipped` counts every table row
 // that is not a header, a separator, an overflow row or a finding — a
-// severity row with an empty location cell, or a row whose severity cell is
-// outside the five-word scale (`Major`, `P1`) — so a dropped row is never
-// silent.
+// severity row with an empty location cell, a location whose path is empty
+// (`:12`) or holds a control character (a stray \r would split a log line),
+// or a row whose severity cell is outside the five-word scale (`Major`,
+// `P1`) — so a dropped row is never silent.
 //
 // Linearity: each table row is cut into cells by one hand-written forward
 // scan (splitRow) — no regex ever runs over a whole row. The regexes left run
@@ -40,6 +41,7 @@ const EVIDENCE_COL = 3;
 // No header row: cells are taken in BRIEF_HEADER order.
 const DEFAULT_COLUMNS = [SEVERITY_COL, LOCATION_COL, FINDING_COL, EVIDENCE_COL];
 
+const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/;
 const SEPARATOR_CELL_RE = /^:?-+:?$/;
 const OVERFLOW_RE = /^\+\s*(\d+)\s+more$/i;
 const NO_FINDINGS = 'No findings.';
@@ -187,6 +189,10 @@ function parseLensReply(text) {
       continue;
     }
     const loc = parsePathLine(location);
+    if (loc.path.trim() === '' || CONTROL_CHAR_RE.test(loc.path)) {
+      skipped += 1;
+      continue;
+    }
     const finding = { severity, path: loc.path };
     if (loc.line !== undefined) finding.line = loc.line;
     finding.text = row[FINDING_COL];
