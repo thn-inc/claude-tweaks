@@ -1424,6 +1424,7 @@ test('AC4.1 #4549 end to end: a Fixes record Step 4.0 could not close (closeFail
 // 2 s after the merge and has no parent. Any other gh call throws.
 function refsWorld({ refs, sidebar = true }) {
   const mergedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
+  const closedAt = new Date(Date.parse(mergedAt) + 2000).toISOString();
   const repository = { name: 'w', owner: { login: 'acme' } };
   const calls = [];
   const reopened = new Set();
@@ -1443,11 +1444,9 @@ function refsWorld({ refs, sidebar = true }) {
     let m = /^issue view (\d+) --json state,closedAt$/.exec(key);
     if (m) {
       const n = Number(m[1]);
-      if (n === 101) return JSON.stringify({ state: 'CLOSED', closedAt: new Date(Date.parse(mergedAt) + 2000).toISOString() });
+      if (n === 101) return JSON.stringify({ state: 'CLOSED', closedAt });
       if (refs.includes(n)) {
-        return JSON.stringify(reopened.has(n)
-          ? { state: 'OPEN', closedAt: null }
-          : { state: 'CLOSED', closedAt: new Date(Date.parse(mergedAt) + 2000).toISOString() });
+        return JSON.stringify(reopened.has(n) ? { state: 'OPEN', closedAt: null } : { state: 'CLOSED', closedAt });
       }
     }
     m = /^issue reopen (\d+) --comment /.exec(key);
