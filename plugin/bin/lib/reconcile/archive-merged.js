@@ -62,8 +62,8 @@ function pinnedGit(env = process.env) {
 const ORPHAN_MINT_TTL_MS = 24 * 60 * 60 * 1000;
 
 // #1734: the one stat-and-compare shared by every staleness predicate in this
-// file (isAdHocStandaloneSuperseded, isOrphanedMint, isStructurallyStuck all
-// carried byte-identical copies). Fail-closed toward "not stale" on any stat
+// file (the adhoc-superseded and orphaned-mint classifications and
+// isStructurallyStuck all carried byte-identical copies). Fail-closed toward "not stale" on any stat
 // failure (ENOENT, EACCES, …) — every caller relies on an unreadable directory
 // being left alone rather than swept. Strict `>` (not `>=`): exactly-at-TTL is
 // not yet stale.
@@ -87,18 +87,20 @@ function isStaleDir(dir, ttlMs, now = Date.now()) {
 // (#1117). Unlike a genuine orphaned mint (mkdir-only, no worktree, no
 // branch, no PR — see this file's top comment), an ad-hoc dir's
 // run-state.json always carries a real `worktree`, so its correct lifecycle
-// answer is the eventual-supersession path below (isAdHocStandaloneSuperseded),
-// not this blind mtime heuristic: exempt it here, permanently, rather than
-// giving it a longer TTL that just moves the same race further out.
+// answer is the eventual-supersession path below (the adhoc-superseded
+// classification), not this blind mtime heuristic: exempt it here,
+// permanently, rather than giving it a longer TTL that just moves the same
+// race further out.
 //
 // #1604: the suffix match alone is not sufficient corroboration — a
 // malformed or mkdir-only dir sharing the suffix would also fall through
-// isOrphanedMint (exempt) and decideArchive (no-worktree/no-branch skip),
-// leaking the same way a genuine ad-hoc mint used to before this fix.
+// the orphaned-mint classification (exempt) and the merged-PR decision
+// (no-worktree/no-branch skip), leaking the same way a genuine ad-hoc mint
+// used to before this fix.
 // Require the invariant the comment above actually asserts: a real
 // run-state.json with a non-empty `worktree` field. A dir that merely
 // carries the suffix without that is NOT treated as ad-hoc here — it falls
-// through to the ordinary isOrphanedMint mtime sweep instead, same as any
+// through to the ordinary orphaned-mint mtime sweep instead, same as any
 // other malformed mint.
 function isAdHocStandaloneMint(dir) {
   return !!readAdHocState(dir);
@@ -198,12 +200,6 @@ function defaultRunVerdict(dir, now) {
 // before this backstop claims it, not to guard against a false positive.
 const ADHOC_SUPERSEDED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-// #1732: thin wrapper — see isOrphanedMint's comment on the `kinds` scoping
-// pattern every one of these wrappers shares.
-function isAdHocStandaloneSuperseded(dir, state, worktrees, now = Date.now()) {
-  return classifyRunDir({ dir, state, worktrees, kinds: ['adhoc-superseded'] }, now).kind === 'adhoc-superseded';
-}
-
 // #2227: a state-less run dir can still hold git-tracked content — a
 // materialized work/{n}-spec.md whose run-state.json only ever existed in
 // the worktree copy (record #1594's shape; materialize.md commits work/ on
@@ -226,20 +222,6 @@ function hasTrackedContent(root, dir) {
   return (listed.stdout || '').length > 0;
 }
 
-// A minted run dir that never got adopted: no config.yml (flow's Manifesto
-// is what writes it), not an ad-hoc-standalone mint (see above — that check
-// now reads run-state.json for corroboration, #1604), and older than the
-// grace window. No I/O beyond what answering the question requires.
-// #1732: thin wrapper over classifyRunDir (defined below, once every TTL
-// constant it needs is in scope) — `kinds: ['orphaned-mint']` scopes the
-// classifier to exactly this one question, so a standalone call here behaves
-// identically to before the consolidation (unaffected by whether `dir` would
-// ALSO match a lower-precedence kind — that only matters to the main loop's
-// own full-precedence classify call).
-function isOrphanedMint(dir, now = Date.now()) {
-  return classifyRunDir({ dir, kinds: ['orphaned-mint'] }, now).kind === 'orphaned-mint';
-}
-
 // #1982: one constructor for every `{ ok: false, reason }` refusal this file
 // returns, so each carries a `hint` key (string or `null`) beside its
 // reason — co-locating the recovery story with the detector rather than
@@ -254,7 +236,7 @@ function isOrphanedMint(dir, now = Date.now()) {
 // `move-failed`/`git-mv-failed`/`git-mv-failed-partial-revert`/
 // `work-twin-resolve-failed`/`work-twin-resolve-failed-partial-revert`
 // refusals (hint set from `lastError` when present) carry one today.
-// Not used by `decideArchive`'s pure `{ action: 'skip', reason }` skip path
+// Not used by `decideArchiveCore`'s pure `{ action: 'skip', reason }` skip path
 // (`gh-absent`/`network-failure`/`console-unresolved`/`console-residue`/`console-never-rendered*`,
 // further down this file) — a different shape, consumed inside the
 // reconcile loop rather than by `hooks.js`'s `archive-run` verb; left alone
@@ -385,7 +367,7 @@ function archiveOrphanedMint(root, dir) {
     /* best-effort — non-empty for an unexpected reason (a late write racing
        this pass, the same class context.js's own late-write guard exists
        for), or already gone; a genuinely non-empty leftover is picked up
-       again by the next pass's isOrphanedMint check. */
+       again by the next pass's orphaned-mint classification. */
   }
   return { ok: true };
 }
@@ -398,50 +380,6 @@ function archiveOrphanedMint(root, dir) {
 // run-liveness verdict is even asked, and the window a `dead` verdict must have
 // outlasted; an `unknown` verdict with no live positive waits LEGACY_DEAD_MS (72h).
 const STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;
-
-// Thin wrapper kept exported for existing callers (this file's own tests
-// import it directly) — `ownEventRecency` (run-liveness/probes.js) is the one real reader now.
-function lastOwnEventMs(runDir) {
-  return ownEventRecency(runDir).lastOwnMs;
-}
-
-// The ownership half of the criterion, inverted from close-run-state.js's
-// `foreignOwner`: that check asks "does a DIFFERENT session own this?" to
-// refuse a close; here the same comparison answers "is this session's own
-// run?" — if it is, we are that session and the run is by definition alive, so
-// never auto-close it. A run owned by nobody, or by some other session, is a
-// candidate only if it ALSO clears the run-liveness verdict (#4421): silence past
-// the 24 h floor with a `dead` verdict, or past 72 h with an `unknown` verdict and
-// no live probe positive. Both halves must hold; neither alone is evidence.
-//
-// Honest scope of this ownership half: it only ever engages when BOTH
-// `state.sessionId` and `sessionId` are non-null. `sessionId` is reliably
-// present when this runs off the Bash-invoked `reconcile` subcommand (the
-// calling shell's own `CLAUDE_CODE_SESSION_ID` — see the module default
-// below), but is `null` in the path that actually matters most: the
-// SessionStart-triggered background pass (`reconcile-background`, a detached
-// child process spawned with no stdin), where no session id is ever threaded
-// in. There, this half of the criterion never fires — it is not "the"
-// protection, it is an ADDITIONAL guard that only engages when a session id
-// happens to be known. The substantive protection for every caller, known
-// session id or not, is the run-liveness verdict (`ctx.runVerdict`, #4421) plus
-// its silence floors — 24h (`STALE_INTERRUPTED_TTL_MS`) for `dead`, 72h
-// (`LEGACY_DEAD_MS`) for `unknown` with no live positive — and, at the call
-// site, the `shipped-unclosed` evidence gate from `checkRunIntegrity`.
-// #1732: thin wrapper — the ownership+recency comparison itself now lives
-// solely in classifyRunDir's 'abandoned-interrupted' branch (below); this
-// function only asks the scoped question. The `checkRunIntegrity`
-// shipped-unclosed companion gate deliberately stays OUT of both this
-// function and classifyRunDir — it is call-site-only (archiveMerged's main
-// loop applies it after reading this kind back) — see classifyRunDir's own
-// comment for why folding it in would misattribute the `explicit: true`
-// archival path's justification. `ctx` carries classifyRunDir's injectable
-// hooks (`runVerdict`); the wrapper's own keys win over it.
-function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now(), ctx = {}) {
-  return classifyRunDir({
-    ...ctx, dir: runDir, state, sessionId, kinds: ['abandoned-interrupted'],
-  }, now).kind === 'abandoned-interrupted';
-}
 
 // The run's records that its merged PR does NOT close -> ascending record
 // numbers. Pure — no I/O. `undefined` when the verdict cannot be decided
@@ -462,11 +400,9 @@ function unclosedRecords(prState, records, repoSlug) {
 // `unclosed` (ascending record numbers) rides on a `merged-partial` skip only.
 // That skip is the gate's first word, not the last: the callers settle it with
 // `settleMergedPartial` below (issue-state probe, empty-linkage fallback).
-// #1732: the actual decision logic — classifyRunDir's 'merged' branch calls
-// this directly (a `Core` suffix, not a class of its own, since it has no
-// TTL of its own to own — only the mtime/recency kinds do), and so does
-// archiveMergedRun (with real staged evidence, #3249); `decideArchive`
-// below is the thin 2-arg wrapper kept for its direct unit tests.
+// #1732: the merged-PR decision, called by archiveMergedRun's two paths (with
+// real staged evidence, #3249). It is never routed through classifyRunDir: it
+// has no TTL of its own to own — only the mtime/recency kinds do.
 //
 // #3945: `coverage` (checkRunTiebreakCoverage's `{ artifactPresent,
 // artifactValid, missing }`) is evaluated only at the two points that would
@@ -587,12 +523,6 @@ function unfiledCantTellFindings(runDir) {
 // The run's coverage for a caller that holds a run dir; undefined without one.
 function runTiebreakCoverage(dir) {
   return dir ? { ...checkRunTiebreakCoverage(dir, listSpecDirs(dir)), unfiledCantTell: unfiledCantTellFindings(dir) } : undefined;
-}
-
-function decideArchive(prState, consoleState) {
-  const result = classifyRunDir({ prState, consoleState, kinds: ['merged'] });
-  if (result.kind === 'merged') return { action: 'archive' };
-  return { action: 'skip', reason: result.evidence.skipReason };
 }
 
 // 'unresolved' | 'resolved' | 'none' (no console.json rendered — #1130:
@@ -1112,12 +1042,12 @@ function revertStagedOps(root, ops, env) {
 // #1892 Deliverable 2: the split state itself — a run dir whose gitignored
 // half already archived (a prior pass, or a merged worktree PR that
 // completed that half) while its git-tracked `work/` headers are still live.
-// The ordinary decideArchive path never reaches this case: no run-state.json
+// The ordinary merged-PR decision never reaches this case: no run-state.json
 // survives at the live path once the gitignored half moved, so there is
 // nothing to resolve a branch/PR from. Detected whenever the archive twin
 // exists AND every entry still live under `dir` is a git-tracked `work/` (or
 // `spec-{n}/work/`) path — nothing gitignored remains. Sits beside
-// `isOrphanedMint` — same "answer a narrow structural question, no I/O
+// the orphaned-mint classification — same "answer a narrow structural question, no I/O
 // beyond what answering it requires" shape.
 function isArchivedPendingTrackedMove(root, dir) {
   const runId = path.basename(dir);
@@ -1849,7 +1779,7 @@ function archiveRunDir(root, runDir, { env } = {}) {
 // has sat completely untouched for a full week is a much safer signal of
 // abandonment than a build-duration estimate would be. A week also gives
 // #1290's own archive-twin shape (still unbuilt as of this record — see
-// this file's `isOrphanedMint`, which has no twin check yet) ample margin
+// this file's orphaned-mint classification, which has no twin check yet) ample margin
 // once that lands, without needing its own separate constant.
 const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -1903,29 +1833,23 @@ const STRUCTURALLY_STUCK_REASONS = new Set([
   'cant-tell-unfiled', 'unknown-host',
 ]);
 
-// #1732: thin wrapper — see isOrphanedMint's comment on the `kinds` scoping
-// pattern. Pure except for the one mtime stat classifyRunDir performs.
+// #1732: scopes classifyRunDir to its one kind with `kinds: ['structurally-stuck']`.
+// Pure except for the one mtime stat classifyRunDir performs.
 function isStructurallyStuck(dir, reason, now = Date.now()) {
   return classifyRunDir({ dir, skipReason: reason, kinds: ['structurally-stuck'] }, now).kind === 'structurally-stuck';
 }
 
-// #1732: the single classifier every lifecycle-detection predicate above
-// delegates to. Consolidates the five bolted-on mechanisms this file used to
-// carry as independent early-return branches (isOrphanedMint,
-// isAbandonedInterrupted, isAdHocStandaloneSuperseded, decideArchive's
-// merged-PR path, isStructurallyStuck) into one first-match list, evaluated
-// in the exact precedence order the pre-consolidation main loop checked them
-// in: orphaned-mint -> abandoned-interrupted -> adhoc-superseded ->
-// adhoc-session-ended -> merged -> structurally-stuck -> none.
+// #1732: the single classifier for every mtime/recency lifecycle kind: the
+// four TTL kinds plus structurally-stuck, one first-match list evaluated in
+// CLASSIFY_ORDER: orphaned-mint -> abandoned-interrupted -> adhoc-superseded
+// -> adhoc-session-ended -> structurally-stuck -> none.
 //
-// `ctx.kinds` scopes evaluation to a subset (in the order given) — every
-// wrapper predicate above passes its own single kind, so a standalone call
-// (e.g. a unit test constructing a bare fixture dir with no config.yml)
-// answers exactly the question it always asked, unaffected by whether the
-// same dir would ALSO match some OTHER kind earlier in the full precedence
-// list. Only archiveMerged's own main loop passes the full, ordered kind set
-// (the module default below) to get precedence-respecting classification
-// across every kind at once.
+// `ctx.kinds` scopes evaluation to a subset (in the order given), and every
+// caller passes one: the main loop its four kinds, its companion re-classify
+// two, isStructurallyStuck one. A scoped call answers exactly the question it
+// asks, unaffected by whether the same dir would ALSO match some OTHER kind
+// earlier in CLASSIFY_ORDER. The merged-PR decision is decideArchiveCore's,
+// called by archiveMergedRun, and is never routed through the classifier.
 //
 // I/O-free apart from the one mtime stat (via isStaleDir) and the one
 // events.jsonl read (via ownEventRecency) that the mtime-based kinds and
@@ -1938,32 +1862,60 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 // stamp, and the own-session guard when `state` is not passed), does a
 // realpath, and calls the injectable `liveness` function (which spawns `ps`
 // and reads events), evaluated LAST after every cheap gate. Every other
-// input (state, worktrees, sessionId, prState, consoleState, skipReason) is
-// pre-computed by the caller, per this file's own Gotchas: the merged-PR
-// path's prState/consoleState inputs, and — deliberately excluded from this
-// function entirely — the abandoned-interrupted kind's `checkRunIntegrity`
-// shipped-unclosed companion gate, which stays a call-site-only decision so
+// input (state, worktrees, sessionId, skipReason) is pre-computed by the
+// caller, per this file's own Gotchas — and, deliberately excluded from this
+// function entirely, the abandoned-interrupted kind's `checkRunIntegrity`
+// shipped-unclosed companion gate stays a call-site-only decision so
 // the `explicit: true` archival path's justification is never silently
 // folded into a kind this function alone decided.
 //
 // -> { kind: 'orphaned-mint'|'abandoned-interrupted'|'adhoc-superseded'|
-//            'adhoc-session-ended'|'merged'|'structurally-stuck'|'none',
+//            'adhoc-session-ended'|'structurally-stuck'|'none',
 //      ttlMs: number|null, evidence: object }
-const CLASSIFY_ORDER = ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended', 'merged', 'structurally-stuck'];
+const CLASSIFY_ORDER = ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended', 'structurally-stuck'];
 
 function classifyRunDir(ctx, now = Date.now()) {
   const {
-    dir, state, worktrees, sessionId, prState, consoleState, skipReason, kinds, liveness = adHocSessionLiveness, runVerdict = defaultRunVerdict,
+    dir, state, worktrees, sessionId, skipReason, kinds, liveness = adHocSessionLiveness, runVerdict = defaultRunVerdict,
   } = ctx;
   const order = kinds || CLASSIFY_ORDER;
 
   for (const kind of order) {
     if (kind === 'orphaned-mint') {
+      // A minted run dir that never got adopted: no config.yml (flow's
+      // Manifesto is what writes it), not an ad-hoc-standalone mint (that
+      // check reads run-state.json for corroboration, #1604), and older than
+      // the grace window. No I/O beyond what answering the question requires.
       if (dir && !fs.existsSync(path.join(dir, 'config.yml')) && !isAdHocStandaloneMint(dir)
         && isStaleDir(dir, ORPHAN_MINT_TTL_MS, now)) {
         return { kind: 'orphaned-mint', ttlMs: ORPHAN_MINT_TTL_MS, evidence: {} };
       }
     } else if (kind === 'abandoned-interrupted') {
+      // The ownership half of the criterion, inverted from close-run-state.js's
+      // `foreignOwner`: that check asks "does a DIFFERENT session own this?" to
+      // refuse a close; here the same comparison answers "is this session's own
+      // run?" — if it is, we are that session and the run is by definition alive, so
+      // never auto-close it. A run owned by nobody, or by some other session, is a
+      // candidate only if it ALSO clears the run-liveness verdict (#4421): silence past
+      // the 24 h floor with a `dead` verdict, or past 72 h with an `unknown` verdict and
+      // no live probe positive. Both halves must hold; neither alone is evidence.
+      //
+      // Honest scope of this ownership half: it only ever engages when BOTH
+      // `state.sessionId` and `sessionId` are non-null. `sessionId` is reliably
+      // present when this runs off the Bash-invoked `reconcile` subcommand (the
+      // calling shell's own `CLAUDE_CODE_SESSION_ID` — see the module default
+      // below), but is `null` in the path that actually matters most: the
+      // SessionStart-triggered background pass (`reconcile-background`, a detached
+      // child process spawned with no stdin), where no session id is ever threaded
+      // in. There, this half of the criterion never fires — it is not "the"
+      // protection, it is an ADDITIONAL guard that only engages when a session id
+      // happens to be known. The substantive protection for every caller, known
+      // session id or not, is the run-liveness verdict (`ctx.runVerdict`, #4421) plus
+      // its silence floors — 24h (`STALE_INTERRUPTED_TTL_MS`) for `dead`, 72h
+      // (`LEGACY_DEAD_MS`) for `unknown` with no live positive — and, at the call
+      // site, the `shipped-unclosed` evidence gate from `checkRunIntegrity`, which
+      // stays call-site-only (see the header above). `ownEventRecency`
+      // (run-liveness/probes.js) is the one reader of the events log.
       if (state && state.status === 'interrupted') {
         const owner = typeof state.sessionId === 'string' && state.sessionId ? state.sessionId : null;
         const ownLive = !!(owner && sessionId && owner === sessionId); // our own live run
@@ -2021,20 +1973,6 @@ function classifyRunDir(ctx, now = Date.now()) {
         if (verdict === 'dead') {
           return { kind: 'adhoc-session-ended', ttlMs: ADHOC_SESSION_ENDED_GRACE_MS, evidence: { verdict: 'dead' } };
         }
-      }
-    } else if (kind === 'merged') {
-      if (prState !== undefined) {
-        // #3249: staged evidence is only computable when the caller passed
-        // `dir`. decideArchive (the thin wrapper above) and the direct
-        // prState-only classifyRunDir unit tests pass none, so
-        // hasStagedPending stays undefined and the unconditional
-        // console-never-rendered skip holds for them. The production merged
-        // path (archiveMergedRun) does not route through here — it calls
-        // decideArchiveCore with hasStagedItems(dir) directly.
-        const hasStagedPending = dir ? hasStagedItems(dir) : undefined;
-        const decision = decideArchiveCore(prState, consoleState, hasStagedPending, undefined, runTiebreakCoverage(dir));
-        if (decision.action === 'archive') return { kind: 'merged', ttlMs: null, evidence: {} };
-        return { kind: 'none', ttlMs: null, evidence: { skipReason: decision.reason } };
       }
     } else if (kind === 'structurally-stuck') {
       if (skipReason && STRUCTURALLY_STUCK_REASONS.has(skipReason) && !isAdHocIntrinsicSkip(dir, skipReason)
@@ -2267,10 +2205,9 @@ function archiveMergedRun({
 }) {
   const prState = resolveRunPrState(root, state, branch, prStates);
   const consoleState = readConsoleState(dir);
-  // #3249: decideArchiveCore directly, not decideArchive — that thin wrapper
-  // routes through classifyRunDir without a `dir`, so the staged-items
-  // exception (hasStagedPending) could never fire on this, the ordinary
-  // production path pr-first-merge-post-merge.md Step 4.2's reconcile hits.
+  // #3249: the staged-items exception (hasStagedPending) fires on this, the
+  // ordinary production path pr-first-merge-post-merge.md Step 4.2's reconcile
+  // hits, because hasStagedItems(dir) is passed to decideArchiveCore directly.
   // #3503: `recordCheck`'s `records` (the run's required records) is omitted by the clean
   // sweep on purpose — see iterCleanRunDirs; it passes only `repoRefusal` (#4794).
   const coverage = runTiebreakCoverage(dir);
@@ -2443,7 +2380,7 @@ function archiveMerged({
 
     // #1892 Deliverable 2: the split state — archive twin already exists,
     // live path holds only tracked `work/` headers — sits ahead of every
-    // other branch below, regardless of age: `isOrphanedMint`'s own
+    // other branch below, regardless of age: the orphaned-mint classification's own
     // hasTrackedContent routing would eventually reach archiveRunDir's now-
     // idempotent twin-comparison fix (Deliverable 1) too, but only once the
     // dir is old enough AND config.yml is absent, and only by accident of
@@ -2603,7 +2540,7 @@ function archiveMerged({
 
     // #1604: a genuine ad-hoc-standalone dir whose worktree is definitively
     // gone (session over) is otherwise permanently stuck below — it never
-    // gets a console.json (decideArchive's console-never-rendered skip) and
+    // gets a console.json (decideArchiveCore's console-never-rendered skip) and
     // its worktree lookup fails the moment the ordinary reap sweep tears it
     // down (no-worktree/no-branch skip). Intercept it here, ahead of both,
     // once ADHOC_SUPERSEDED_TTL_MS has passed — #1117's own invariant (never
@@ -2813,11 +2750,11 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
   isStaleDir, classifyRunDir,
-  isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
-  localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
-  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness, defaultRunVerdict,
+  isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
+  localHasMerge, ownEventRecency, STALE_INTERRUPTED_TTL_MS,
+  ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness, defaultRunVerdict,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,

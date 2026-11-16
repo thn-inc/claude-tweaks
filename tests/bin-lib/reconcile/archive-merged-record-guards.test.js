@@ -1309,6 +1309,13 @@ test('decideArchiveCore: archives a merged PR with a resolved console, and carri
   assert.deepStrictEqual(decideArchiveCore('gh-absent', 'none'), { action: 'skip', reason: 'gh-absent' });
 });
 
+test("AC3: classifyRunDir has no merged kind — a prState reads none, with or without kinds: ['merged']", () => {
+  const none = { kind: 'none', ttlMs: null, evidence: {} };
+  const merged = { state: 'MERGED' };
+  assert.deepStrictEqual(classifyRunDir({ prState: merged, consoleState: 'resolved' }), none);
+  assert.deepStrictEqual(classifyRunDir({ prState: merged, consoleState: 'resolved', kinds: ['merged'] }), none);
+});
+
 test('classifyRunDir: structurally-stuck for a qualifying skip reason past the TTL', () => {
   // config.yml present (an adopted run, per STRUCTURALLY_STUCK_TTL_MS's own
   // comment: "the dir IS adopted") — without it, orphaned-mint's own
