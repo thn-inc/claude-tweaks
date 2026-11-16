@@ -48,5 +48,5 @@ The twelve flat keys (moved from `_shared/policy-schema.md`'s Control mode table
 | `dev-test-account` | `policy.yml` | none yet (#4608) | unset | Vault entry name, never a credential |
 | `deploy-wait-seconds` | `policy.yml` | none yet (#4608) | `900` | Integer >= 0 |
 | `deploy-poll-seconds` | `policy.yml` | none yet (#4608) | `30` | Integer >= 1 |
-| `owned-owners` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
+| `owned-owners` | `policy.yml`, base branch only | `/claude-tweaks:wrap-up` (the Review Console's upstream filing, #4621) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]`; the consumer honors only `[A-Za-z0-9-]` (alphanumeric first, at most 39 characters) and ignores any other entry |
 | `trusted-authors` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, as `owned-owners` |

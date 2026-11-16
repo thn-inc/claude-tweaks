@@ -3947,6 +3947,53 @@ test('AC4.2 reconciler: writePhaseTimingSync stubbed to throw → archiveMerged 
   assert.match(thrown.skips[0], /boom 4\.2/);
 });
 
+const stepYield = require('../../../plugin/bin/lib/timing/step-yield');
+const readYieldAt = (dir) => JSON.parse(fs.readFileSync(path.join(dir, stepYield.STEP_YIELD_FILE), 'utf8'));
+
+test('AC6.1: archive leaves step-yield.json in the archive twin, and the background token pass rewrites it', async () => {
+  spawnCalls.length = 0;
+  const fx = timingFixture('2026-08-01T090000-spec-5556-archive');
+  const cfg = path.join(fx.root, 'cfg');
+  T.writeTranscript(cfg, fx.wt, [T.A, T.B], T.SID, ['2020-01-01T09:06:00.000Z', '2020-01-01T09:14:00.000Z']);
+
+  const result = archiveAbandoned(fx);
+
+  assert.ok(result.archived.includes(fx.runDir), JSON.stringify(result));
+  const first = readYieldAt(fx.archiveDir);
+  assert.equal(first.schemaVersion, stepYield.SCHEMA_VERSION);
+  assert.ok(first.steps.length > 0);
+  assert.equal(first.steps.every((s) => s.tokens === null), true, 'phase rows only at the archive close: no token cost yet');
+  assert.equal(fs.existsSync(fx.runDir), false, 'the run dir is not recreated');
+
+  // AC6.1 (token pass): the detached pass derives tokens, and the yield it leaves carries them.
+  fs.writeFileSync(path.join(fx.archiveDir, stepYield.STEP_YIELD_FILE), '{"stale":true}');
+  const r = await runCli(TIMING_CLI, ['--run', spawnCalls[0]], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: fx.root });
+  assert.equal(r.code, 0);
+  const after = readYieldAt(fx.archiveDir);
+  assert.equal(Object.hasOwn(after, 'stale'), false);
+  assert.equal(after.steps.some((s) => s.tokens !== null), true, 'the token pass rewrote the yield with token cost');
+});
+
+test('AC6.2 reconciler: the yield function stubbed to throw → the same archived/skipped lists, one SKIP line in the archived decisions.md', async () => {
+  const run = async (stub) => {
+    spawnCalls.length = 0;
+    const fx = timingFixture('2026-08-01T090000-spec-5556-ac62');
+    const result = await T.withStub(stepYield, 'deriveStepYield', stub, () => archiveAbandoned(fx));
+    const rel = (list) => list.map((e) => (typeof e === 'string' ? path.relative(fx.root, e) : JSON.parse(JSON.stringify(e).split(fx.root).join('<root>'))));
+    return { archived: rel(result.archived), skipped: rel(result.skipped), skips: T.skipLines(fx.archiveDir) };
+  };
+  const real = stepYield.deriveStepYield;
+  const ok = await run(real);
+  const thrown = await run(() => { throw new Error('boom yield'); });
+
+  assert.ok(thrown.archived.length > 0);
+  assert.deepEqual(thrown.archived, ok.archived);
+  assert.deepEqual(thrown.skipped, ok.skipped);
+  assert.deepEqual(ok.skips, []);
+  assert.equal(thrown.skips.length, 1, JSON.stringify(thrown.skips));
+  assert.match(thrown.skips[0], /step yield could not be written \(boom yield\)/);
+});
+
 test('AC11.1: the token pass cannot start (spawn throws) → phase rows kept, no token totals, one SKIP line', async () => {
   const fx = timingFixture('2026-08-01T090000-spec-5555-ac11');
   // The real spawnTokenPass, over a child_process.spawn that throws.
@@ -4039,4 +4086,108 @@ test('archiveRunDir hands its env option to the token pass', async () => {
   assert.equal(seen.length, 1);
   assert.equal(seen[0].runDir, fx.archiveDir);
   assert.equal(seen[0].opts.env, env);
+});
+
+// #3976: wrap-up moves a run's tracked header to archive/ on the run branch before the merge, so
+// the merge lands no live run dir and the post-merge archive commit has nothing tracked to move.
+const { archiveRunHeader } = require('../../../plugin/bin/lib/run-header-archive');
+const { createPrStateResolver: createPrStatesFor3976 } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
+
+const RUN_3976 = '2026-11-16T000000-record-7';
+const LIVE_3976 = `.claude-tweaks/pipelines/${RUN_3976}`;
+const ARCH_3976 = `.claude-tweaks/pipelines/archive/${RUN_3976}`;
+const lines3976 = (s) => s.split('\n').filter(Boolean);
+
+// main with one commit; branch feat-3976 carries the live header and, when `moved`, the move.
+// The branch is merged back with `--squash` or `--no-ff`; the main checkout keeps only the
+// gitignored half of the run dir (run-state, console, decisions) the way a real one does.
+function headerMergedRepo3976({ moved, merge }) {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git'); // archiveMerged needs a repo slug
+  git(root, 'checkout', '-q', '-b', 'feat-3976');
+  commitPath(root, `${LIVE_3976}/work/7-spec.md`, 'spec header\n');
+  if (moved) {
+    const res = archiveRunHeader({ worktree: root, runId: RUN_3976 });
+    assert.equal(res.outcome, 'moved', JSON.stringify(res));
+  }
+  git(root, 'checkout', '-q', 'main');
+  if (merge === 'squash') {
+    git(root, 'merge', '--squash', 'feat-3976');
+    git(root, 'commit', '-q', '-m', 'Squashed feature (#7001)');
+  } else {
+    git(root, 'merge', '-q', '--no-ff', '--no-edit', 'feat-3976');
+  }
+  return { root, mergeSha: git(root, 'rev-parse', 'HEAD').trim() };
+}
+
+function seedGitignoredRunHalf3976(root) {
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_3976);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-3976'),
+    pr: { number: 7001, branch: 'feat-3976' },
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '# decisions\n');
+  return runDir;
+}
+
+test('AC1.1/AC1.2 a squash-merged branch carrying the move lands no live dir on main', () => {
+  const { root } = headerMergedRepo3976({ moved: true, merge: 'squash' });
+  const pipelines = lines3976(git(root, 'ls-tree', '--name-only', 'main', '.claude-tweaks/pipelines/'));
+  assert.deepEqual(pipelines, ['.claude-tweaks/pipelines/archive']);
+  assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', '--name-only', 'main', `${ARCH_3976}/`)), [`${ARCH_3976}/work/7-spec.md`]);
+});
+
+test('AC1.3/AC1.4 archiveMerged archives that merged run with no [reconcile] archive run commit and without a live header', { skip: STUB_SKIP }, () => {
+  const { root, mergeSha } = headerMergedRepo3976({ moved: true, merge: 'squash' });
+  const runDir = seedGitignoredRunHalf3976(root);
+  const pr = {
+    number: 7001, state: 'MERGED', mergedAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T00:00:00Z',
+    mergeCommit: { oid: mergeSha }, closingIssuesReferences: [ref(7)], // the run's record #7
+  };
+  const live = () => lines3976(git(root, 'ls-tree', '-r', 'main', '--', `${LIVE_3976}/`));
+  assert.deepEqual(live(), [], 'before: no live header at main');
+  assert.equal(fs.existsSync(path.join(runDir, 'work')), false, 'before: no work/ dir under the live run dir');
+
+  const wrapper = installGhWrapper([pr]);
+  let result;
+  try {
+    const prStates = createPrStatesFor3976({ root, deps: { byNumber: () => pr, byBranch: () => pr } });
+    result = archiveMerged({ cwd: root, prStates });
+  } finally { wrapper.restore(); }
+
+  assert.deepEqual(result.archived, [runDir], JSON.stringify(result));
+  assert.equal(result.archiveCommits[runDir], undefined);
+  assert.equal(lines3976(git(root, 'log', '--format=%s', 'main')).some((s) => s.startsWith('[reconcile] archive run')), false);
+  assert.deepEqual(live(), [], 'after: still no live header at main');
+  assert.equal(fs.existsSync(path.join(runDir, 'work')), false, 'after: no work/ dir under the live run dir');
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', RUN_3976, 'run-state.json')), true, 'the gitignored half was archived');
+});
+
+test('AC4.1 a local-merge run that went through the move gets no post-merge archive commit', () => {
+  const { root } = headerMergedRepo3976({ moved: true, merge: 'no-ff' });
+  const runDir = seedGitignoredRunHalf3976(root);
+  const before = git(root, 'rev-parse', 'HEAD').trim();
+
+  const result = archiveRunDir(root, runDir);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.commit, undefined);
+  assert.equal(git(root, 'rev-parse', 'HEAD').trim(), before, 'no commit was added');
+});
+
+test('AC4.2 fallback: a local-merge run merged without the move is still archived by archiveRunDir', () => {
+  const { root } = headerMergedRepo3976({ moved: false, merge: 'no-ff' });
+  const runDir = seedGitignoredRunHalf3976(root);
+
+  const result = archiveRunDir(root, runDir);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(typeof (result.commit && result.commit.sha), 'string', 'a post-merge archive commit was made');
+  assert.equal(git(root, 'log', '-1', '--format=%s').trim().startsWith('[reconcile] archive run'), true);
+  assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', '--name-only', 'main', `${ARCH_3976}/work/`)), [`${ARCH_3976}/work/7-spec.md`]);
+  assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', 'main', '--', `${LIVE_3976}/`)), []);
 });

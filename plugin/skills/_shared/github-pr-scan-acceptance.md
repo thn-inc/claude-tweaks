@@ -18,9 +18,9 @@ Every `gh issue list`/`gh pr list` call below carries an explicit `--limit`, siz
 
 One cheap list for the dashboard's Acceptance Queue section — deliberately `--state all`, unlike
 every other count in this file, since a pending acceptance persists independent of open/closed state
-(an `auto:merge`'d record's issue can already be closed while still awaiting sign-off). `/demo`
-no longer sweeps this backlog itself (it resolves only the items you name — a bare ref or an
-explicit `#N,#M` list, never a scan), so this is the sole place the outstanding set is enumerated.
+(an `auto:merge`'d record's issue can already be closed while still awaiting sign-off). `/accept`
+resolves only the items you name (a bare ref or an explicit `#N,#M` list, never a scan), so this is
+the sole place the outstanding set is enumerated.
 
 ```bash
 gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200
@@ -33,8 +33,8 @@ so a record labelled seconds before the run can be missing while the search inde
 and picked up by the next run.
 
 Render as one line listing every matching record: `Awaiting sign-off: **{N} records** — #{n1}
-({title1}), #{n2} ({title2}), ... — run /demo #{n1},#{n2},... to review them all` (a single ref
-when `{N}` is 1: `run /demo #{n1}`) — omit entirely when the count is 0.
+({title1}), #{n2} ({title2}), ... — run /claude-tweaks:accept #{n1},#{n2},... to review them all` (a single ref
+when `{N}` is 1: `run /claude-tweaks:accept #{n1}`) — omit entirely when the count is 0.
 
 ## Scope: `acceptance-gap` (consumed by /tidy Step 4.8)
 
@@ -53,7 +53,7 @@ whole file whenever `gh` is unreachable — it checks remote/install/auth, never
 `local-files` twin of this sweep is `tidy/step-1-records.md`'s Shape 8, reading the record store
 through `queryRecords` and translating `facets.closed`/`facets.acceptance`/`facets.parent`/`facets.isParentIssue`/`facets.notPlanned` into
 the same `needsBackstop` call. It emits the identical `[acceptance-gap]` row at the identical
-severity and recommends the identical `/claude-tweaks:demo` invocation, so no consumer
+severity and recommends the identical `/claude-tweaks:accept` invocation, so no consumer
 distinguishes the two.
 
 Record set: closed records from the last 30 days. The fetch splits that window into two date slices — `closed:$SINCE..$MID` and `closed:>$MID` — and applies the disposition, not-planned and duplicate exclusions server-side through `--search` on each slice; the client-side `closedAt` cutoff, `needsBackstop` and the oversight floor still run on the merged set, unchanged. Negated
@@ -111,13 +111,13 @@ exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
 not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it, and its
 `isParent` field excludes every parent here (only `parent-gate`'s closed branch passes `parentExceedsFloor`) — its acceptance is the parent gate's: the below-floor close
-(#4466) or `/claude-tweaks:demo` above it (a hand-closed one: `parent-gate` below). Resolving
+(#4466) or `/claude-tweaks:accept` above it (a hand-closed one: `parent-gate` below). Resolving
 which closed records are sub-issues reuses the same parent-side enumeration the `parent-gate` scope
 below already documents in full — never the sub-issue side, which works under one `work-links` mode
 and silently returns nothing under the other. This step only needs sub-issue *existence*, not
 per-sub-issue state, so it skips that scope's state-map plumbing; and it fetches `--state all` rather
 than `parent-gate`'s `--state open`, because a sub-issue whose parent was already gated and approved —
-which closes the parent (`demo/SKILL.md`'s Approve step) — must still be suppressed here, and an
+which closes the parent (`accept/SKILL.md`'s Approve step) — must still be suppressed here, and an
 open-only fetch would miss it.
 
 ### `work-links` resolution
@@ -350,7 +350,7 @@ node -e "
       isParent: parseRecordFacets(r.labels).isParentIssue,
       stateReason: r.stateReason,
     }));
-  gaps.forEach(r => console.log('[acceptance-gap] #' + r.number + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + r.number));
+  gaps.forEach(r => console.log('[acceptance-gap] #' + r.number + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:accept #' + r.number));
 " -- "$RISK_FLOOR" "$SIZE_FLOOR"
 ```
 
@@ -714,13 +714,13 @@ node -e "
   gates.forEach((f) => {
     if (f.state === 'CLOSED') {
       const v = closedParentGap({ ...f, subIssues: f.subIssues.map((s) => ({ risk: parseRecordFacets(s.labels).risk, unread: s.unread })), riskFloor });
-      if (v === 'gap') console.log('[acceptance-gap] #' + f.number + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + f.number);
+      if (v === 'gap') console.log('[acceptance-gap] #' + f.number + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:accept #' + f.number);
       else if (v !== 'none') bad[v] = (bad[v] || 0) + 1;
       return;
     }
     if (parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) !== 'due') return;
     console.log('[parent-gate] #' + f.number + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
-      ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #' + f.number
+      ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:accept #' + f.number
       : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)'));
   });
   for (const v in bad) console.error('WARNING: ' + bad[v] + ' closed parent(s) print no [acceptance-gap] row (' + v + ') — risk unreadable; check work-links and backlog-fetch-limit, then re-run.');
@@ -728,7 +728,7 @@ node -e "
 ```
 
 A `CLOSED` gate's row is `closedParentGap`'s verdict: a `gap` prints `acceptance-gap`'s row, severity and
-routing (`/claude-tweaks:demo #{n}`), mutating nothing. Report its two `WARNING:` lines verbatim beside the rows; never suppress them.
+routing (`/claude-tweaks:accept #{n}`), mutating nothing. Report its two `WARNING:` lines verbatim beside the rows; never suppress them.
 
 Un-gated parents recommend the `Open parent gate` action (`tidy/SKILL.md`'s Action Vocabulary,
 executed for this scope's rows via `tidy/actions-github-issues.md`'s `## Open parent gate`) — never applied without
@@ -745,10 +745,10 @@ step of a pipeline a human already launched against one named record and sits in
 all, unlike this action. Separately, and independent of the write-level reasoning above, this
 scope and the `Open parent gate` action it feeds never write an approved or changes-requested
 Acceptance label (`_shared/work-record.md`) under any circumstance — that disposition stays exclusively
-`/claude-tweaks:demo`'s job, staged and human-only, which is why an above-floor recommendation still
-ends with "then `/claude-tweaks:demo #{n}`" even once the gate is open. Approving a below-floor row
+`/claude-tweaks:accept`'s job, staged and human-only, which is why an above-floor recommendation still
+ends with "then `/claude-tweaks:accept #{n}`" even once the gate is open. Approving a below-floor row
 closes the parent through `wrap-up/verification-brief-parent-gate.md`'s **Close the parent below the
-floor**, with no `/claude-tweaks:demo` step.
+floor**, with no `/claude-tweaks:accept` step.
 
 Emit `[parent-gate]` rows per the Output Contract, at severity `info` — the same severity
 `acceptance-gap` uses and for the same reason: `/claude-tweaks:tidy` runs this scope in the same

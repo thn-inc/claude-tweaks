@@ -126,7 +126,14 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    **`integration-model: local-merge`:** verify the feature branch reached an outcome (merged, PR
    created, discarded, or explicitly kept as-is) via `/superpowers:finishing-a-development-branch`:
    - **Already completed (merged, PR created, or discarded)** → proceed to step 4.
-   - **Not yet decided** → check `_shared/local-merge-auto-finish.md`'s Precondition
+   - **Not yet decided** → **Archive the spec header (#3976).** Before either finish path below, from
+     inside the worktree, as its own Bash call:
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-run-header.js" --run "{run-dir}"`. It `git mv`s the run's
+     tracked `work/` and `spec-{N}/work/` files to `archive/{run-id}/` in one commit on the run branch,
+     so the merge lands the header already archived. It never stops wrap-up: it logs its own line
+     (`_shared/auto-decision-log.md`'s **CLIs that log their own entries**); on any exit other than 0,
+     log one `SKIP` and continue — reconcile's `archiveRunDir` archives the header after the merge. Then check
+     `_shared/local-merge-auto-finish.md`'s Precondition
      (`integration-model` resolves `local-merge` AND `{run-dir}/config.yml` exists — see
      `_shared/integration-model.md` for the resolution and `flow/manifesto.md` for why
      `config.yml`'s presence is the "not interactive" proxy). When it holds, read and follow that
@@ -329,6 +336,8 @@ If no `ephemeral-server.txt` exists, skip this section silently (the run used an
 **Skip it too when the invocation names `blocker-landing: skip the claim release` (#4792)** — `/claude-tweaks:dispatch`'s teardown after `/flow`'s pre-claim blocker-landing stop (`dispatch/two-call-gate.md` §5 or §6): Settle already released any claim this run took (`dispatch/settle-and-merge.md`'s Blocker-landing special case), and `release-claim.js` would post a release comment anyway — a false one for a record this run never claimed, a duplicate for one Settle already released. Log the skip: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/wrap-up" --step "Section E" --text "condition: blocker-landing named by the cleanup-only call → fallback: claim release skipped" --reversibility n/a` (`flags.md`'s `cleanup-only` entry declares the phrase).
 
 **Skip it too when the invocation names `prompt-not-dispatched: skip the claim release` (#4589)** — `/claude-tweaks:dispatch`'s teardown after a first call that never dispatched (`dispatch/two-call-gate.md` §2 and §5): its `/flow` Step 2.8 never ran, and `release-claim.js` would post a false release comment on a record this run never claimed. Log the skip: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/wrap-up" --step "Section E" --text "condition: prompt-not-dispatched named by the cleanup-only call → fallback: claim release skipped" --reversibility n/a` (`flags.md`'s `cleanup-only` entry declares the phrase).
+
+**Skip it too when the invocation names `driver-no-claim: skip the claim release` (#5232)** — `/claude-tweaks:dispatch`'s teardown after a driver-route `drive.js --run` call that took no claim (`dispatch/two-call-gate.md` §5's Driver run with no claim paragraph owns which calls those are): the driver took no claim, and `release-claim.js` would post a false release comment on a record this run never claimed, or on another run's in-flight tombstone, or strip a `bot:in-progress` label this run never set. Log the skip: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/wrap-up" --step "Section E" --text "condition: driver-no-claim named by the cleanup-only call → fallback: claim release skipped" --reversibility n/a` (`flags.md`'s `cleanup-only` entry declares the phrase).
 
 This spec's record is identified whenever this section runs (`SKILL.md` Phase 1 — an argument, a
 branch/commit reference, or, when `skills/flow/materialize.md` wrote one, a materialized header's

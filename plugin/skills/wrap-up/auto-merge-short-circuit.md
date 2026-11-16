@@ -121,8 +121,8 @@ execution would. This short-circuit closes exactly one record, so pass that reco
 reads. That file owns the routing: a record with a resolvable parent goes to its
 Parent-Gate Procedure (the parent gets the one gate; this sub-issue gets none), and
 everything else goes through its Steps 1-4 — bootstrap, observation-plan authoring, the Step 2.5
-safety-net gate, gathering, posting the acceptance packet, then `demo:pending`; below the oversight
-floor it skips the bootstrap and the safety-net gate and posts the packet with no label. Do not apply `demo:pending` to this record
+safety-net gate, gathering, then handing the packet to `/accept`'s automatic entry, which posts it and applies `accept:pending`; below the oversight
+floor it skips the bootstrap and the safety-net gate and posts the packet with no label. Do not apply a pending label to this record
 independently of that routing: an `auto:merge`'d sub-issue is exactly the population
 whose below-floor parent the reconciler's `post-merge` check closes first, with
 `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope as the last resort.
@@ -176,7 +176,15 @@ git -C "$WORKTREE_PATH" commit -m "Wrap-up: delete resolved open items ledger fo
 
 Every other report except `not found` leaves the ledger on disk: commit nothing; the verb logs its `SKIP`, hand-log one where Item 2 says.
 
-**`integration-model: pr-first` only — push this commit now**, its own Bash call: `gh pr merge`
+**Archive the spec header (#3976).** After the ledger commit above and before the push below, under
+either `integration-model`, as its own Bash call:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/archive-run-header.js" --run "{run-dir}"`. It `git mv`s the run's
+tracked `work/` and `spec-{N}/work/` files to `archive/{run-id}/` in one commit on the run branch, so
+the merge lands the header already archived. It never stops wrap-up: it logs its own line
+(`_shared/auto-decision-log.md`'s **CLIs that log their own entries**); on any exit other than 0, log
+one `SKIP` and continue — reconcile's `archiveRunDir` archives the header after the merge.
+
+**`integration-model: pr-first` only — push these commits now**, its own Bash call: `gh pr merge`
 below merges the PR's remote head, not this worktree's local state, so a commit left unpushed
 here would simply be absent from the merge.
 
@@ -185,8 +193,8 @@ git -C "$WORKTREE_PATH" push origin {branch}
 ```
 
 **`integration-model: local-merge`:** skip the push above —
-`_shared/local-merge-sequence.md` Step 3's merge reads `{branch}` straight out of the worktree's local refs (`git merge --no-ff {branch}`), so this
-commit reaches it without ever touching `origin`.
+`_shared/local-merge-sequence.md` Step 3's merge reads `{branch}` straight out of the worktree's local refs (`git merge --no-ff {branch}`), so these
+commits reach it without ever touching `origin`.
 
 A `not found` report (a record whose build/test/review never appended an item) is not an
 error — skip silently, there is nothing to delete. A ledger file that still carries a non-`open`

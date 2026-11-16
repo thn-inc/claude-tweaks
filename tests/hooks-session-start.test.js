@@ -271,6 +271,21 @@ test('#1738: a clean *-tidy-standalone* run with a fully-archived (clean) archiv
   }
 });
 
+test('AC10.2: unfinished-run report does not list a clean-twin work-only shell', async () => {
+  const project = tmpProject();
+  const runId = '2026-07-05T090000-spec-77';
+  const live = mkRun(project, runId);
+  fs.mkdirSync(path.join(live, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(live, 'work', '77-spec.md'), 'x');
+  mkRun(project, path.join('archive', runId), { status: 'clean' });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  if (out.json) {
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, new RegExp(runId));
+  } else {
+    assert.deepStrictEqual(out, {});
+  }
+});
+
 test('#1493: a cleanly-clean standalone run with EMPTY staged/ renders no tidy --approve line', async () => {
   const project = tmpProject();
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });

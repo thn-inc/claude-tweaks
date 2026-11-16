@@ -252,6 +252,7 @@ test('bookkeepingPermissions at supervised unlocks nothing', () => {
     consoleAutoResolve: false,
     refineAutoApply: false,
     ledgerRouteRemainder: false,
+    ownedUpstreamFiling: false,
   });
 });
 
@@ -263,6 +264,7 @@ test('bookkeepingPermissions at trusted unlocks ledger narrowing and queue-write
     consoleAutoResolve: false,
     refineAutoApply: false,
     ledgerRouteRemainder: false,
+    ownedUpstreamFiling: false,
   });
 });
 
@@ -274,6 +276,7 @@ test('bookkeepingPermissions at unattended unlocks all four', () => {
     consoleAutoResolve: true,
     refineAutoApply: true,
     ledgerRouteRemainder: true,
+    ownedUpstreamFiling: false,
   });
 });
 

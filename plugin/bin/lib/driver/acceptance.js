@@ -93,7 +93,7 @@ function renderTryIt(groups, heading = '### Try it') {
 }
 
 // _shared/observation-plan.md's Schema lines. The values go in raw: the packet's `render` escapes plan
-// text and keeps a whole backtick span as a code span, because /claude-tweaks:demo reads this text and runs
+// text and keeps a whole backtick span as a code span, because /claude-tweaks:accept reads this text and runs
 // the Prepare commands. Only line breaks are collapsed here, per value, so a value cannot add list lines.
 function renderObservationPlan(plan) {
   const one = (v) => String(v).replace(/\s+/g, (run) => (/[\r\n]/.test(run) ? ' ' : run)).trim();
@@ -117,7 +117,7 @@ function renderParentBrief(brief, { confirmed, poster }) {
     renderTryIt(brief.tryItEndToEnd, '### Try it — end to end'), '',
     '### Confirmed', ...confirmed.map(inline), '',
     '---', '',
-    `_Posted by ${codeSpan(poster)}. Resolve with \`/claude-tweaks:demo\`._`,
+    `_Posted by ${codeSpan(poster)}. Resolve with \`/claude-tweaks:accept\`._`,
   ].join('\n');
 }
 

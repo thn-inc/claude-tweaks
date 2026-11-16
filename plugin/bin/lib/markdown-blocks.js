@@ -44,7 +44,8 @@ function fencedBlock(text) {
 //   - fencedLineRanges: stripCodeSpans (materialize-format.js) and unfencedText;
 //   - fencedLineMask: findSection, mergeStateDemands (merge-gate.js) and
 //     extractCurrentStateAnchors (near-duplicate.js) (#4369), and applyReleaseNote
-//     (release-note-repair/apply.js) through its fenceInfo (#4350);
+//     (release-note-repair/apply.js) through its fenceInfo (#4350), and ownOriginLine
+//     (record-payload.js, #4502);
 //   - unfencedText: recordPayload's Defer-reason: contradiction check and the three
 //     body-metadata extractors extractVerifiedAsOf / extractPremiseCheck /
 //     extractTemplateStamp (all record-payload.js, #4368);
