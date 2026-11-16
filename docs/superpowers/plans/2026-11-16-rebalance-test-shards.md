@@ -18,7 +18,7 @@ Scope keywords: tools/test-durations.json, queue-pull.test, run-tests-shard
 - Do not change `assignShards`, `PER_FILE_OVERHEAD_MS` or the `--shard` partition rules.
 - Guard constants: size floor 100 KB (102,400 bytes), duration ceiling 40,000 ms.
 - Commits name files explicitly with `git add <paths>` and end with `Claude-Session: https://claude.ai/code/session_016yg3zo6eTU9wd41H4Npjd5`.
-- The refresh (`node tools/run-tests.js --record-durations tools/test-durations.json`) runs the whole suite once, on a machine with no sibling test runs, in the background; wait for the completion notice, never poll.
+- The refresh (`node tools/run-tests.js --record-durations <out>`) runs the whole suite once and is recorded on the CI runner (a temporary `.github/workflows/record-durations.yml` on this PR branch, removed in the same change that commits the map), not on this machine: it runs under a load average above 90 on 12 cores from sibling sessions, which inflated one queue-pull run from about 125 s in CI to 905 s here. The map exists to balance CI's shards, so CI hardware is the right place to measure it. Ruling taken during execution; the controller runs it, and waits for the completion notice, never polls.
 - No scratch file under the repo root is committed; scratch output goes under the session scratchpad.
 
 ## Review Focus
@@ -154,10 +154,11 @@ Claude-Session: https://claude.ai/code/session_016yg3zo6eTU9wd41H4Npjd5"
 **Interfaces:**
 - Consumes: Task 2's `durationsCoverageGaps`, `durationsOverCeiling`, the constants.
 
-- [ ] **Step 1: Record durations** once, after Tasks 2-4 are committed, with nothing else running:
-
-Run (background): `node tools/run-tests.js --record-durations tools/test-durations.json > <scratchpad>/record.txt 2>&1; echo exit $?`
-Expected: exit 0 and `recorded test durations to tools/test-durations.json` in the output. A non-zero exit means a test failed: fix that first, never commit a map from a red run.
+- [ ] **Step 1: Record durations on CI** once, after Tasks 2-4 are committed (the controller does this step, not an implementer):
+  1. Add `.github/workflows/record-durations.yml`: `on: pull_request` with `paths: ['.github/workflows/record-durations.yml']`; one `ubuntu-latest` job (`timeout-minutes: 60`) with `test.yml`'s shard-job `env` block, checkout (`fetch-depth: 0`), `setup-node` 20, the zsh install step, then `node tools/run-tests.js --record-durations "$RUNNER_TEMP/test-durations.json"`, then an `upload-artifact` step (`if: always()`, `if-no-files-found: error`) uploading that file as `test-durations`. Commit it by explicit path, push, and wait for the run.
+  2. Download the artifact with `gh run download <id> -n test-durations -D <scratchpad>/durations` and copy `test-durations.json` to `tools/test-durations.json`. The run must be green for the recorded file to be used: a red run's file is discarded, the failure is fixed first.
+  3. Delete `.github/workflows/record-durations.yml` in the same commit that adds the map.
+  Expected: the map names every committed test file, including the new `queue-pull-parity-*.test.js` files.
 - [ ] **Step 2: Add the two real-map assertions** to `tests/run-tests-shard.test.js`: one `test('every test file of 100 KB or more has a recorded duration (refresh: node tools/run-tests.js --record-durations tools/test-durations.json)')` feeding `durationsCoverageGaps` the `git ls-files` test list, the parsed committed map and an `fs.statSync(...).size` lookup that returns `null` on ENOENT; one `test('no recorded duration exceeds 40,000 ms — split that test file by describe into sibling files')` over `durationsOverCeiling`. Each asserts `[]` and puts the offender list in the message.
 - [ ] **Step 3: Run**
 
