@@ -1180,3 +1180,46 @@ test('#5597: a symlinked run file is not read, so its mismatching agentCount add
   assert.deepEqual(r.dirNotes, []);
   assert.equal(r.items.length, 2);
 });
+
+// #5556: AskUserQuestion ask/answer times. Shape observed 2026-10-24 in a real main-session
+// transcript: assistant tool_use { id, name: 'AskUserQuestion', input: { questions: [{ question, header, multiSelect, options }] } },
+// answered by a later user row's tool_result { tool_use_id, content: '<string>' }.
+function askTranscript(lines) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ask-'));
+  const file = path.join(dir, 's.jsonl');
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return { dir, file };
+}
+const askRow = (id, ts, questions) => ({ timestamp: ts, message: { role: 'assistant', id: 'm-' + id, content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions } }], usage: {} } });
+const resultRow = (id, ts) => ({ timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Your questions have been answered.' }] } });
+
+test('#5556: readUsage carries asks on the AskUserQuestion row and answers on its tool_result row, and no key elsewhere', async () => {
+  const { dir, file } = askTranscript([
+    { timestamp: '2026-11-16T07:59:00.000Z', message: { role: 'assistant', id: 'm0', content: [{ type: 'text', text: 'hi' }], usage: {} } },
+    askRow('toolu_q1', '2026-11-16T08:00:00.000Z', [{ question: 'Pick?', header: 'H', multiSelect: false, options: [] }]),
+    resultRow('toolu_q1', '2026-11-16T08:03:30.000Z'),
+    { timestamp: '2026-11-16T08:04:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_other', content: 'x' }] } },
+  ]);
+  try {
+    const rows = await readUsage(file);
+    assert.deepEqual(rows[1].asks, [{ id: 'toolu_q1', ts: '2026-11-16T08:00:00.000Z', questions: ['Pick?'] }]);
+    assert.deepEqual(rows[2].answers, [{ id: 'toolu_q1', ts: '2026-11-16T08:03:30.000Z' }]);
+    for (const i of [0, 3]) { assert.equal('asks' in rows[i], false); assert.equal('answers' in rows[i], false); }
+    assert.equal('answers' in rows[1], false);
+    assert.equal('asks' in rows[2], false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('#5556: an AskUserQuestion block with no input.questions gives questions [] and never throws', async () => {
+  const { dir, file } = askTranscript([
+    { timestamp: '2026-11-16T08:00:00.000Z', message: { role: 'assistant', id: 'm1', content: [{ type: 'tool_use', id: 'toolu_q2', name: 'AskUserQuestion' }], usage: {} } },
+  ]);
+  try {
+    const rows = await readUsage(file);
+    assert.deepEqual(rows[0].asks, [{ id: 'toolu_q2', ts: '2026-11-16T08:00:00.000Z', questions: [] }]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

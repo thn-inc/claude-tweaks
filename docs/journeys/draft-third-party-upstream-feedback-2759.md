@@ -45,10 +45,10 @@ files:
 - **Red flags:** No draft produced just because the repository is unknown; a headless run blocking on a question nobody is present to answer.
 
 ### 5. Self-target — terminal (the value actually names claude-tweaks)
-- **URL:** `/claude-tweaks:feedback "<learning>" --upstream thomasholknielsen/claude-tweaks` (or an equivalent `https://github.com/...` or `git@github.com:...` form)
+- **URL:** `/claude-tweaks:feedback "<learning>" --upstream thn-inc/claude-tweaks` (or an equivalent `https://github.com/...` or `git@github.com:...` form)
 - **Action:** The self-target guard recognizes the normalized slug, states that the learning names claude-tweaks itself, and returns control to `feedback/SKILL.md`'s own Step 3 — the ordinary filing path (dedup, draft, scrub, confirm, file) runs to completion instead of drafting.
 - **Should feel:** No dead end and no silent misfire — the `--upstream` flag never accidentally suppresses a real claude-tweaks filing.
-- **Should understand:** This is neither an error nor a draft. The learning is filed at `thomasholknielsen/claude-tweaks` exactly as it would have been without `--upstream`.
+- **Should understand:** This is neither an error nor a draft. The learning is filed at `thn-inc/claude-tweaks` exactly as it would have been without `--upstream`.
 - **Red flags:** The self-target case producing a draft-and-hand-off instead of a real filing; a differently-cased or trailing-`.git`/`/`-suffixed form of the same URL failing to normalize to a match.
 
 ## Origin

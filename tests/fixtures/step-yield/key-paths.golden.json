@@ -1,0 +1,380 @@
+{
+ "schemaVersion": 1,
+ "keyPaths": [
+  {
+   "path": "schemaVersion",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "runDir",
+   "type": "string",
+   "nullable": false
+  },
+  {
+   "path": "generatedAt",
+   "type": "string",
+   "nullable": false
+  },
+  {
+   "path": "sources.timing",
+   "type": "boolean",
+   "nullable": false
+  },
+  {
+   "path": "sources.decisions",
+   "type": "boolean",
+   "nullable": false
+  },
+  {
+   "path": "sources.events",
+   "type": "boolean",
+   "nullable": false
+  },
+  {
+   "path": "sources.runState",
+   "type": "boolean",
+   "nullable": false
+  },
+  {
+   "path": "sources.questions",
+   "type": "string",
+   "nullable": true
+  },
+  {
+   "path": "steps[].phase",
+   "type": "string",
+   "nullable": false
+  },
+  {
+   "path": "steps[].start",
+   "type": "string",
+   "nullable": true
+  },
+  {
+   "path": "steps[].end",
+   "type": "string",
+   "nullable": true
+  },
+  {
+   "path": "steps[].minutes",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].ownMinutes",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].tokens",
+   "type": "object",
+   "nullable": true
+  },
+  {
+   "path": "steps[].tokens.input",
+   "type": "number",
+   "nullable": true
+  },
+  {
+   "path": "steps[].tokens.output",
+   "type": "number",
+   "nullable": true
+  },
+  {
+   "path": "steps[].tokens.cacheRead",
+   "type": "number",
+   "nullable": true
+  },
+  {
+   "path": "steps[].tokens.cacheCreate",
+   "type": "number",
+   "nullable": true
+  },
+  {
+   "path": "steps[].agents",
+   "type": "number",
+   "nullable": true
+  },
+  {
+   "path": "steps[].commits.<action>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].verify.runs",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].verify.pass",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].verify.fail",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].verify.unknown",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].decisions.<status>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].events.<type>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].questions[].question",
+   "type": "string",
+   "nullable": false
+  },
+  {
+   "path": "steps[].questions[].askedAt",
+   "type": "string",
+   "nullable": true
+  },
+  {
+   "path": "steps[].questions[].answeredAt",
+   "type": "string",
+   "nullable": true
+  },
+  {
+   "path": "steps[].questions[].waitedMinutes",
+   "type": "number",
+   "nullable": true
+  },
+  {
+   "path": "steps[].questions[].askSource",
+   "type": "string",
+   "nullable": true
+  },
+  {
+   "path": "steps[].findings",
+   "type": "object",
+   "nullable": true
+  },
+  {
+   "path": "steps[].findings.raised",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.both",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.one",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.relabeled",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.tiebreak.byVerdict.<verdict>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.tiebreak.byOutcome.<outcome>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.byLens.<lens>.raised",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.byLens.<lens>.both",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.byLens.<lens>.one",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.byLens.<lens>.relabeled",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.byLens.<lens>.tiebreak.byVerdict.<verdict>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].findings.byLens.<lens>.tiebreak.byOutcome.<outcome>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].unparsed.count",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "steps[].unparsed.samples[]",
+   "type": "string",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.commits.<action>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.verify.runs",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.verify.pass",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.verify.fail",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.verify.unknown",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.decisions.<status>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.events.<type>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.questions[].question",
+   "type": "string",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.questions[].askedAt",
+   "type": "string",
+   "nullable": true
+  },
+  {
+   "path": "unattributed.questions[].answeredAt",
+   "type": "string",
+   "nullable": true
+  },
+  {
+   "path": "unattributed.questions[].waitedMinutes",
+   "type": "number",
+   "nullable": true
+  },
+  {
+   "path": "unattributed.questions[].askSource",
+   "type": "string",
+   "nullable": true
+  },
+  {
+   "path": "unattributed.findings",
+   "type": "object",
+   "nullable": true
+  },
+  {
+   "path": "unattributed.findings.raised",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.both",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.one",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.relabeled",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.tiebreak.byVerdict.<verdict>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.tiebreak.byOutcome.<outcome>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.byLens.<lens>.raised",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.byLens.<lens>.both",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.byLens.<lens>.one",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.byLens.<lens>.relabeled",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.byLens.<lens>.tiebreak.byVerdict.<verdict>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.findings.byLens.<lens>.tiebreak.byOutcome.<outcome>",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.unparsed.count",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unattributed.unparsed.samples[]",
+   "type": "string",
+   "nullable": false
+  },
+  {
+   "path": "unparsed.count",
+   "type": "number",
+   "nullable": false
+  },
+  {
+   "path": "unparsed.samples[]",
+   "type": "string",
+   "nullable": false
+  }
+ ]
+}

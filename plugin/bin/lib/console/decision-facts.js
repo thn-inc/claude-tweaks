@@ -13,6 +13,7 @@ const { capWords, oneLine } = require('./finding-filing');
 const {
   specShapedBody, recordPayload, fencedBlock, defuse, LABELS,
 } = require('../issues/record');
+const { HOLD_REASONS, parseTargetRepo } = require('../issues/upstream-ownership');
 
 const DECISION_FACT_KIND = 'decision';
 const DECISION_ORIGINS = Object.freeze(['console', 'review', 'upstream']);
@@ -50,6 +51,41 @@ function decisionFactFor(item, { runDir, staged }) {
     evidenceRef,
     suggestedResolution: Object.hasOwn(DECISION_SUGGESTIONS, item.resolution) ? DECISION_SUGGESTIONS[item.resolution] : DEFAULT_SUGGESTION,
     text: summary,
+  };
+}
+
+const WHITESPACE_RUN_RE = /\s+/g;
+const collapse = (s) => s.replace(WHITESPACE_RUN_RE, ' ').trim();
+// The hold reasons whose cause the human fixes before filing by hand.
+const FIX_FIRST_REASONS = new Set(['filing-failed', 'scrub-hit']);
+
+// A held wrap-up upstream item (#4621) -> one packet decision fact (`_shared/acceptance-packet.md`'s Decision facts
+// table, plus `text`). id, kind, origin and evidenceRef come from decisionFactFor; summary names the target, the
+// draft title and the hold reason; text adds the draft body. `reason` is one of HOLD_REASONS (anything else throws).
+// A target outside the owner/name grammar is never echoed: it reads `unresolved`. A `scrub-hit` draft failed the
+// scrub, so it is carried by evidenceRef only — neither its title, its body nor the caller's free-text detail
+// (the phrase an agent wrote about the hit, which could quote it) is inline.
+function upstreamDecisionFact({ id, targetRepo, title, body, reason, detail, runDir, staged }) {
+  if (!HOLD_REASONS.includes(reason)) throw new RangeError(`upstreamDecisionFact: reason must be one of ${HOLD_REASONS.join(', ')} (got ${String(reason)})`);
+  const { SECTIONS } = require('./resolve');
+  const base = decisionFactFor({ id, section: SECTIONS.UPSTREAM, resolution: 'filed', reason: '' }, { runDir, staged });
+  const repo = parseTargetRepo(targetRepo) === null ? null : targetRepo;
+  const inline = reason !== 'scrub-hit';
+  const summary = collapse(
+    `Upstream feedback ${id} held, not filed (${reason}): target ${repo ?? 'unresolved'}`
+    + (inline && title ? `; draft "${title}"` : '')
+    + (inline && detail ? ` — ${detail}` : ''),
+  );
+  const text = collapse(summary + (inline && body ? ` — draft: ${body}` : ''));
+  const prefix = FIX_FIRST_REASONS.has(reason) ? 'fix the cause, then ' : '';
+  return {
+    id: base.id,
+    kind: base.kind,
+    origin: base.origin,
+    summary,
+    evidenceRef: base.evidenceRef,
+    suggestedResolution: `${prefix}file the draft at ${base.evidenceRef} into ${repo ?? 'its upstream repo'} yourself, or decline`,
+    text,
   };
 }
 
@@ -105,4 +141,4 @@ function settleOpenDecisions(packetFacts) {
   });
 }
 
-module.exports = { DECISION_FACT_KIND, DECISION_ORIGINS, DECISION_FACT_FIELDS, DECISION_RENDER_FIELDS, DECISION_SUGGESTIONS, decisionOrigin, decisionFactFor, settleOpenDecisions };
+module.exports = { DECISION_FACT_KIND, DECISION_ORIGINS, DECISION_FACT_FIELDS, DECISION_RENDER_FIELDS, DECISION_SUGGESTIONS, decisionOrigin, decisionFactFor, upstreamDecisionFact, settleOpenDecisions };

@@ -153,6 +153,9 @@ function abortError() {
 // bashProcedureFiles entry (#4359). User rows also carry agentCalls
 // (#5597): the tool_result blocks classed dispatch whose call was Agent or
 // Task — so a Workflow call counts in turnClasses.dispatch but not here.
+// An assistant row holding AskUserQuestion tool_use blocks also carries asks
+// ([{ id, ts, questions: string[] }]) and a user row holding a tool_result for
+// such an id carries answers ([{ id, ts }]); rows with neither have no such key (#5556).
 // Rejects when the file cannot be opened, with the real stat failure's
 // code (ENOENT/EACCES/...; EUNKNOWN if the error carries none), with
 // EISDIR when the path resolves but names a directory, or — if `stat`
@@ -168,6 +171,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
   statTranscriptOrThrow(fsImpl, filePath);
   const rows = [];
   const procedureReads = new Set(); // tool_use ids of Reads on procedure files
+  const askIds = new Set(); // AskUserQuestion tool_use ids, to match their tool_result rows
   const toolUses = new Map(); // tool_use id -> { name, input }, to classify the matching tool_result
   // Claude Code writes one JSONL line per content block of an assistant
   // turn under the same message.id — summing every line would inflate tokens
@@ -205,6 +209,12 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
         for (const b of content) {
           if (!b || b.type !== 'tool_use') continue;
           if (typeof b.id === 'string') toolUses.set(b.id, { name: b.name, input: b.input });
+          if (b.name === 'AskUserQuestion' && typeof b.id === 'string') {
+            askIds.add(b.id);
+            const posed = b.input && Array.isArray(b.input.questions) ? b.input.questions : [];
+            const questions = posed.map((q) => (q && typeof q.question === 'string' ? q.question : null)).filter((q) => q !== null);
+            (row.asks || (row.asks = [])).push({ id: b.id, ts: entry.timestamp, questions });
+          }
           if (b.name === 'Read' && b.input && isProcedurePath(b.input.file_path, worktree)) procedureReads.add(b.id);
           let keys = [];
           if (b.name === 'Read' && b.input) keys = [readFileKey(b.input.file_path, worktree)].filter(Boolean);
@@ -234,6 +244,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
         for (const b of content) {
           if (!b || b.type !== 'tool_result') continue;
           row.toolRoundTrip = true;
+          if (typeof b.tool_use_id === 'string' && askIds.has(b.tool_use_id)) (row.answers || (row.answers = [])).push({ id: b.tool_use_id, ts: entry.timestamp });
           if (procedureReads.has(b.tool_use_id)) row.procedureBytes += resultBytes(b.content);
           const call = toolUses.get(b.tool_use_id) || {};
           const cls = classifyToolCall({ name: call.name, input: call.input, isError: b.is_error === true, resultText: resultText(b.content), worktree });

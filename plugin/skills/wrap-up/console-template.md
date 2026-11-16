@@ -200,7 +200,9 @@ resolves each row to filed when its staged draft carries a `**Causal:** systemic
 (`upstream-feedback.md`'s Step 2), same as `Q#`/`M#` resolve to their own `Apply` default —
 otherwise it resolves to declined, same as before (#2551). The `unattended`-only
 `consoleAutoResolve` path files every row unconditionally regardless of the tag; see
-`review-console.md`. Filing an untagged item still requires choosing Override, which runs
+`review-console.md`. Under control mode ownership replaces the tag default at every tier
+(`review-console.md`'s step 9), and the heading reads `Upstream feedback (control mode: Approve all
+files an owned row and holds the rest; Override files a checked owned row)`. Filing an untagged item still requires choosing Override, which runs
 through `_shared/upstream-feedback-batch.md`'s shared batch contract — one or more `multiSelect`
 `AskUserQuestion` calls, chunked per that file's own rule (unchecked by default; checking is the
 explicit approval) — instead of one call per item; see below for where this fires relative to the
