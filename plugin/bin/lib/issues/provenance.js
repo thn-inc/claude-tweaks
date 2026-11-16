@@ -123,4 +123,11 @@ function resolveProvenance({ labels, body, authorTrust } = {}) {
   return { kind: 'human', source: 'human' };
 }
 
-module.exports = { resolveProvenance, issueAuthorTrust, PRODUCERS: ORIGINS };
+// True when the body carries an `Origin:` line by the same ORIGIN_LINE rule
+// resolveProvenance reads, so callers that select records for an author-trust
+// lookup (author-association.js) select exactly the ones the gate will judge.
+function hasOriginLine(body) {
+  return typeof body === 'string' && ORIGIN_LINE.test(body);
+}
+
+module.exports = { resolveProvenance, issueAuthorTrust, hasOriginLine, PRODUCERS: ORIGINS };
