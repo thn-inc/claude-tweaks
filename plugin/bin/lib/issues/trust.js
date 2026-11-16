@@ -330,6 +330,8 @@ function inEvaluationWindow(record, clock, windowDays) {
 
 function trustRows(records, gitLog, now, policy) {
   const all = Array.isArray(records) ? records : [];
+  // One author-trust verdict per record, shared by the cell and follow-up loops.
+  const authorTrust = new Map(all.map((r) => [r, issueAuthorTrust(r)]));
   const clock = Number.isFinite(now) ? now : Date.now();
   const windowDays = resolveRevertWindowDays(policy);
   const evaluationWindowDays = resolveEvaluationWindowDays(policy);
@@ -347,7 +349,7 @@ function trustRows(records, gitLog, now, policy) {
 
   for (const record of closed) {
     const { kind, source } = resolveProvenance({
-      labels: record.labels, body: record.body, authorTrust: issueAuthorTrust(record),
+      labels: record.labels, body: record.body, authorTrust: authorTrust.get(record),
     });
     const band = riskBand(record.labels);
     const key = `${kind}:${source}|${band}`;
@@ -432,7 +434,7 @@ function trustRows(records, gitLog, now, policy) {
   // follow-up Origin references — a follow-up is evidence about the in-window
   // record it names, even when the follow-up itself forms no cell of its own.
   for (const record of all) {
-    if (issueAuthorTrust(record) === 'untrusted') continue;
+    if (authorTrust.get(record) === 'untrusted') continue;
     const target = correctiveFollowUpTarget(record.body);
     if (target === null) continue;
     const cell = cellByNumber.get(target);

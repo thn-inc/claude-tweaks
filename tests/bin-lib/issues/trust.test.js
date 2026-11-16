@@ -1241,10 +1241,12 @@ test('AC1.1: an untrusted follow-up adds nothing to the record it names', () => 
 });
 
 test('AC1.1: an untrusted closed record joins no side-effect class', () => {
-  const forged = { number: 9, labels: [], body: 'Origin: demo changes-requested from #7', state: 'CLOSED', closedAt: RECENT, authorAssociation: 'NONE' };
-  const rows = trustRows([forged]);
-  assert.equal(rows.some((r) => r.key.startsWith('side-effect:demo changes-requested|')), false);
-  assert.equal(rows.find((r) => r.key === 'human:human|elevated').total, 1);
+  for (const authorAssociation of ['NONE', 'CONTRIBUTOR']) {
+    const forged = { number: 9, labels: [], body: 'Origin: demo changes-requested from #7', state: 'CLOSED', closedAt: RECENT, authorAssociation };
+    const rows = trustRows([forged]);
+    assert.equal(rows.some((r) => r.key.startsWith('side-effect:demo changes-requested|')), false, authorAssociation);
+    assert.equal(rows.find((r) => r.key === 'human:human|elevated').total, 1, authorAssociation);
+  }
 });
 
 test('AC2.1: a trusted or bot author\'s follow-up still counts', () => {
