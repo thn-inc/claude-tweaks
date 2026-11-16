@@ -32,13 +32,13 @@ Every `POLICY_KEYS` row carries three human-facing fields alongside its shape: `
 
 ## Control mode — how the keys apply
 
-Inert unless a row names its owner (#4609, #4608). `control-mode: on` implies its levers at skill-default precedence: an explicitly set lever wins, and `autonomy` is unchanged. Every other key in the table below, and the two risk keys in `_shared/policy-schema.md`'s Control mode section, is consulted only when it is `on`. `isControlModeOn` in `bin/lib/policy.js` is the one comparison site (exactly `on`). A list is written on one line as `a,b`: a quoted or bracketed list is rejected and a dash-style block is ignored. `owned-owners` and `trusted-authors` entries are logins, compared case-insensitively by consumers; `risk-categories` entries are slugs. An entry is never empty and holds no `@`, `/`, inner space or bracket other than a trailing `[bot]` (`a, b` is fine). On a flat key a `#` ends the value even inside quotes, so `deploy-command` stops there; `deploy-command`, `deploy-live-workflow` and `dev-test-account` reject a value left inside an unclosed quote (a `"` opens anywhere, a `'` at a word start) or a blank quoted one, and drop outer quotes only when they enclose the whole value. URL keys are written unquoted.
+Inert unless a row names its owner (#4609, #4608). `control-mode: on` implies its levers at skill-default precedence: an explicitly set lever wins, and the resolved `autonomy` value is unchanged — the bookkeeping ceiling composes control mode below an explicit `autonomy` (`_shared/autonomy-ceiling.md`'s Precedence). Every other key in the table below, and the two risk keys in `_shared/policy-schema.md`'s Control mode section, is consulted only when it is `on`. `isControlModeOn` in `bin/lib/policy.js` is the one comparison site (exactly `on`). A list is written on one line as `a,b`: a quoted or bracketed list is rejected and a dash-style block is ignored. `owned-owners` and `trusted-authors` entries are logins, compared case-insensitively by consumers; `risk-categories` entries are slugs. An entry is never empty and holds no `@`, `/`, inner space or bracket other than a trailing `[bot]` (`a, b` is fine). On a flat key a `#` ends the value even inside quotes, so `deploy-command` stops there; `deploy-command`, `deploy-live-workflow` and `dev-test-account` reject a value left inside an unclosed quote (a `"` opens anywhere, a `'` at a word start) or a blank quoted one, and drop outer quotes only when they enclose the whole value. URL keys are written unquoted.
 
 The twelve flat keys (moved from `_shared/policy-schema.md`'s Control mode table, #5291 rail headroom; `risk-categories` and `risk-path-globs` keep their rows there):
 
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
-| `control-mode` | `policy.yml` | none yet (#4608) | `off` | `off`/`on` |
+| `control-mode` | `policy.yml` | `/claude-tweaks:wrap-up` (the Review Console's carry route and residue convergence, #4620); the rest of its implied set, #4624 | `off` | `off`/`on` |
 | `acceptance-target` | `policy.yml` | none yet (#4608) | `local` | `local`/`dev` |
 | `deploy-reach` | `policy.yml` | none yet (#4608) | `none` | `on-merge`/`command`/`none` |
 | `deploy-command` | `policy.yml`, base branch only | none yet (#4608) | unset | Executed command; spaces allowed |
@@ -48,5 +48,5 @@ The twelve flat keys (moved from `_shared/policy-schema.md`'s Control mode table
 | `dev-test-account` | `policy.yml` | none yet (#4608) | unset | Vault entry name, never a credential |
 | `deploy-wait-seconds` | `policy.yml` | none yet (#4608) | `900` | Integer >= 0 |
 | `deploy-poll-seconds` | `policy.yml` | none yet (#4608) | `30` | Integer >= 1 |
-| `owned-owners` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
+| `owned-owners` | `policy.yml`, base branch only | `/claude-tweaks:wrap-up` (the Review Console's upstream filing, #4621) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]`; the consumer honors only `[A-Za-z0-9-]` (alphanumeric first, at most 39 characters) and ignores any other entry |
 | `trusted-authors` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, as `owned-owners` |

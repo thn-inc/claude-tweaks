@@ -71,7 +71,7 @@ function parseParent(body) {
 }
 
 // issue numbers + a per-alias field expression -> the one batched, aliased GraphQL
-// query all four builders below share: `i{n}: {fieldExpr(n)}` per number, inside
+// query all five builders below share: `i{n}: {fieldExpr(n)}` per number, inside
 // repository(owner:$owner,name:$repo){}. Returns null for a non-array or empty
 // input. Module-private; the builders below own the per-alias selection sets.
 function buildAliasedIssueQuery(numbers, fieldExpr) {
@@ -111,11 +111,16 @@ function buildNativeSubIssuesQuery(numbers) {
 // Probed live on this repo 2026-08-24: issue(number:$n){ parent{ number title state } }
 // returns { number, parent: { number, title, state } } for a sub-issue, and
 // parent: null for a parentless record. Same alias/null conventions as
-// buildNativeSubIssuesQuery above. Caller: demo/entry-paths.md's Full verification
+// buildNativeSubIssuesQuery above. Caller: accept/entry-paths.md's Full verification
 // pointer sub-procedure. review/cross-spec-promise-check.md performs the equivalent
 // native parent-resolution query independently — it does not call this function.
 function buildNativeParentQuery(numbers) {
   return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number parent{ number title state } }`);
+}
+
+// candidate issue numbers -> one batched, aliased GraphQL query requesting each issue's authorAssociation; null for an empty or non-array input, like its siblings.
+function buildAuthorAssociationQuery(numbers) {
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ authorAssociation }`);
 }
 
 // one candidate's parsed aliased response value (the { number, blockedBy: { nodes } }
@@ -369,7 +374,7 @@ function parseDependencyAssumptions(body) {
 
 module.exports = {
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
-  hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery,
+  hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery, buildAuthorAssociationQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, buildLinkedPRQuery, partitionByOpenLinkedPR,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,
 };

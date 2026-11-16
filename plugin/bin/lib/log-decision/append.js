@@ -28,6 +28,8 @@ const { withLock } = require('../file-lock');
 const { writeFileAtomic } = require('../atomic-write');
 
 const STATUSES = ['AUTO', 'STAGED', 'KEPT-PROMPT', 'SCANNED', 'REFUSED', 'SKIP'];
+// Read vocabulary: the writer's set plus FAILED, a hand-composed historical status log-decision.js never writes.
+const DECISION_STATUSES = [...STATUSES, 'FAILED'];
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
@@ -147,8 +149,8 @@ function placeEntry(text, section, entry) {
 
 // { runDir, section?, entry } -> { file, created }. Append-only; never rewrites prior lines.
 // A one-item appendEntries call.
-function appendEntry({ runDir, section, entry }) {
-  return appendEntries({ runDir, items: [{ section, entry }] });
+function appendEntry({ runDir, section, entry, createParent }) {
+  return appendEntries({ runDir, items: [{ section, entry }], createParent });
 }
 
 // { runDir, items: [{ section?, entry }] } -> { file, created }. Places every
@@ -169,7 +171,11 @@ function appendEntry({ runDir, section, entry }) {
 // lock is best-effort/fail-open (file-lock.js's own contract) — a write that
 // can't acquire it in time still proceeds unlocked rather than hang the
 // caller.
-function appendEntries({ runDir, items }) {
+//
+// `createParent: false` (#5555) is for a caller whose run dir a concurrent
+// archive may move away: a missing run dir is then never recreated by the lock,
+// and the write throws instead (writeFileAtomic does not create it either).
+function appendEntries({ runDir, items, createParent }) {
   const file = path.join(runDir, 'decisions.md');
   if (!items.length) return { file, created: false };
   const lockPath = path.join(runDir, '.decisions.lock');
@@ -186,9 +192,9 @@ function appendEntries({ runDir, items }) {
     for (const { section, entry } of items) text = placeEntry(text, section, entry);
     writeFileAtomic(file, text);
     return { file, created };
-  });
+  }, { createParent });
 }
 
 module.exports = {
-  STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, appendEntries, hms, normalizeSection,
+  STATUSES, DECISION_STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, appendEntries, hms, normalizeSection,
 };

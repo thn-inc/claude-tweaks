@@ -412,16 +412,13 @@ The guess rides in the existing "Added: '{title}' (Type: {t})" presentation (see
 
 ### Judging Definition
 
-When `--needs-definition` or `--no-needs-definition` is supplied, skip this entirely and use it
-as `$NEEDS_DEFINITION` — no judgment, and the presentation line below renders with no rationale
-clause (the human already decided). Otherwise, judge from the idea's content in this same turn:
-does it name a genuine open choice with no tradeoff made yet — two or more viable directions,
-no stated preference — or does it read as a single clear ask? This is a content call, not a
-structural heuristic: resist scoring it by length or keyword match, the same way `solution:unjustified`'s
-judgment is a content call rather than a mechanical check. `$NEEDS_DEFINITION` is `true` only when
-the idea genuinely names an undecided choice; default `false` (clear) otherwise. When `true`, form
-a one-line rationale naming the open choice — this becomes `$DEFINITION_RATIONALE`, surfaced in
-the presentation line below and, later, bootstrapped/labeled per Backend Selection above.
+When `--needs-definition` or `--no-needs-definition` is supplied, skip this entirely and use it as
+`$NEEDS_DEFINITION` — no judgment, and the presentation line below renders with no rationale clause
+(the human already decided). Otherwise, read `_shared/needs-definition-judgment.md` and judge the
+idea's content by it in this same turn: `needed` sets `$NEEDS_DEFINITION` to `true`, `clear` to
+`false`. When `true`, form a one-line rationale naming the open choice — this becomes
+`$DEFINITION_RATIONALE`, surfaced in the presentation line below and, later, bootstrapped/labeled
+per Backend Selection above.
 
 The judgment rides in the same "Added: '{title}' (Type: {t}, Definition: {needed|clear})"
 presentation the Type guess uses (see Immediate Routing below) — no new question is added.
@@ -447,7 +444,7 @@ When invoked by a parent skill, omit this block — the parent owns the handoff.
 
 ## Component-Skill Contract
 
-This skill is a **component skill** — directly invoked by `/claude-tweaks:build` (Common Step 4, design-mode follow-up capture) and by `/claude-tweaks:reflect` (both `full` and `hindsight` modes' Capture disposition, routing an insight/finding that's too complex or uncertain to act on without brainstorming — a distinct path from reflect's Defer disposition, which files directly and is not a capture parent). `/claude-tweaks:visual-review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:demo` file a new backlog record directly without going through this skill, so they are NOT capture parents — they only recommend `/capture` in Next Actions for the user's next session.
+This skill is a **component skill** — directly invoked by `/claude-tweaks:build` (Common Step 4, design-mode follow-up capture) and by `/claude-tweaks:reflect` (both `full` and `hindsight` modes' Capture disposition, routing an insight/finding that's too complex or uncertain to act on without brainstorming — a distinct path from reflect's Defer disposition, which files directly and is not a capture parent). `/claude-tweaks:visual-review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:accept` file a new backlog record directly without going through this skill, so they are NOT capture parents — they only recommend `/capture` in Next Actions for the user's next session.
 
 Parent invocation of `/capture` is signaled by `$PIPELINE_RUN_DIR` being set in the environment. Direct invocation may pass `--source <parent-skill>` (e.g. `--source build`, `--source intake`) as an explicit fallback when ambiguity exists (rare; `$PIPELINE_RUN_DIR` is the primary signal) — prose-trusted. This fallback matters here specifically: a standalone (non-`/flow`) design-mode `/build` invocation never resolves a run dir of its own (per `_shared/run-dir-resolution.md`'s resolution order, the record-mode materialization exception and the standalone-auto allowlist both exclude design-mode `/build` — confirmed by `build/SKILL.md`'s own "Auto mode (including a standalone `auto` invocation with no pipeline run dir)" language). Standalone `/reflect` likewise has no run dir of its own to forward. When invoked from within a parent's workflow (via either signal), omit the `## Next Actions` block — the parent owns the handoff. When invoked directly by a user (neither signal present), render Next Actions as shown above.
 

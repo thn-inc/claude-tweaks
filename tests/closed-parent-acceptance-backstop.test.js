@@ -59,8 +59,8 @@ function mkTmp(prefix) {
   return dir;
 }
 
-const GAP_TAIL = ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ';
-const ABOVE_ROW_TAIL = ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ';
+const GAP_TAIL = ' — closed with no acceptance disposition — recommend /claude-tweaks:accept ';
+const ABOVE_ROW_TAIL = ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:accept ';
 const PG = section(read('_shared/github-pr-scan-acceptance.md'), '## Scope: `parent-gate`', null);
 
 const sub = (number, risk, state = 'CLOSED', unread = false) => ({

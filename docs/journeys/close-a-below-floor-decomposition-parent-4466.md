@@ -103,7 +103,7 @@ files:
 - **Should understand:**
   - The row is staged at every `tidy-aggressiveness` tier. Approving it runs the same **Close the parent below the floor** section, with the same comment and idempotence checks.
   - Tidy's Step 7.5 checklist verifies the parent as `CLOSED`, carrying the heading comment and no acceptance label in either spelling (`_shared/work-record.md`).
-  - A parent above the floor still gets the brief-and-`/claude-tweaks:demo` row instead.
+  - A parent above the floor still gets the brief-and-`/claude-tweaks:accept` row instead.
 - **Red flags:**
   - A stranded below-floor parent that tidy reports nowhere.
   - An approved row that Step 7.5 reports as FAILED.
@@ -111,7 +111,7 @@ files:
 ### 5. The closed parent stays out of the acceptance-gap scope
 - **URL:** `github-pr-scan-acceptance.md`, `## Scope: \`acceptance-gap\``, the `needsBackstop({…})` call's `isParent` field
 - **Action:** on the next tidy run, the closed parent appears in the closed-record fetch.
-- **Should feel:** settled. The closed parent does not come back as an "undisposed" record asking for `/claude-tweaks:demo`.
+- **Should feel:** settled. The closed parent does not come back as an "undisposed" record asking for `/claude-tweaks:accept`.
 - **Should understand:** `needsBackstop` skips a decomposition parent unless the parent-gate sweep shows it closed above the floor with no #4466 close marker, because a parent's acceptance belongs to the parent gate.
 - **Red flags:** an `[acceptance-gap]` row for a parent this journey closed.
 

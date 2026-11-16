@@ -1,5 +1,6 @@
 'use strict';
 const { test } = require('node:test');
+const spawnCalls = require('../../helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const cp = require('child_process');
 // Destructured at require time, so this binding is a snapshot of the REAL
@@ -3827,4 +3828,366 @@ test('archiveMerged: ordinary branch-resolvable path — a PR console holding a 
 
 test('isAbandonedInterrupted: false for a non-interrupted status', () => {
   assert.equal(isAbandonedInterrupted('/x', { status: 'active' }, 'sess-1', Date.now(), { runVerdict: DEAD }), false);
+});
+
+// --- #5555: timing.json at the archive close — phase rows inline, tokens in the detached pass ---
+
+const T = require('../../helpers/close-timing');
+const ctxLib = require('../../../plugin/bin/lib/hooks/context');
+const atClose = require('../../../plugin/bin/lib/timing/at-close');
+const { realSpawnTokenPass } = require('../../helpers/stub-token-pass');
+const { runCli } = require('../../helpers/run-cli');
+
+const TIMING_CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'timing-at-close.js');
+const TEST_EVENT = '{"skill":"claude-tweaks:test","ts":"2020-01-01T09:15:00.000Z","type":"skill_invoked"}';
+
+const hasTokens = (timing) => !!(timing && timing.totals && timing.totals.tokens && Number.isFinite(timing.totals.tokens.input));
+const archivedState = (archiveDir) => JSON.parse(fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8'));
+
+// An abandoned interrupted run (the fixture of #1673's tests) whose state the real writer wrote.
+function timingFixture(runId) {
+  const fx = fixtureAbandonedShippedRun({ runId, extraEventLines: [TEST_EVENT] });
+  ctxLib.writeRunState(fx.runDir, { status: 'interrupted', worktree: fx.wt, sessionId: T.SID });
+  fx.archiveDir = path.join(fx.root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  return fx;
+}
+
+// A run archived through archiveRunDir directly: -> { root, runDir, archiveDir }.
+function plainRun(runId, state) {
+  const root = makeRepo();
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  T.writeEvents(runDir);
+  ctxLib.writeRunState(runDir, state);
+  return { root, runDir, archiveDir: path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId) };
+}
+
+const archiveAbandoned = (fx) => archiveMerged({ cwd: fx.root, sessionId: 'other-session', runVerdict: DEAD });
+
+test('AC1.1/AC1.3 reconciler: an abandoned-interrupted run archived by archiveMerged has timing.json phase rows when it returns; after the token pass it has token totals', async () => {
+  spawnCalls.length = 0;
+  const fx = timingFixture('2026-08-01T090000-spec-5555-abandoned');
+  const cfg = path.join(fx.root, 'cfg');
+  // Inside the fixture's events (09:05..09:15), so inside its lifetime whatever the close time.
+  T.writeTranscript(cfg, fx.wt, [T.A, T.B], T.SID, ['2020-01-01T09:06:00.000Z', '2020-01-01T09:14:00.000Z']);
+  assert.equal(archivedState(fx.runDir).worktreeAtClose, undefined, 'the fixture starts with no worktreeAtClose');
+
+  const result = archiveAbandoned(fx);
+
+  assert.ok(result.archived.includes(fx.runDir), JSON.stringify(result));
+  const rows = T.readTiming(fx.archiveDir);
+  T.assertPhaseRows(rows);
+  assert.equal(hasTokens(rows), false, 'tokens arrive with the background pass, not inline');
+  assert.deepEqual(spawnCalls, [fx.archiveDir]);
+  assert.equal(archivedState(fx.archiveDir).worktreeAtClose, fx.wt, 'archiveRunDir carried the worktree into worktreeAtClose');
+
+  const r = await runCli(TIMING_CLI, ['--run', spawnCalls[0]], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: fx.root });
+  assert.equal(r.code, 0);
+  const timing = T.readTiming(fx.archiveDir);
+  T.assertPhaseRows(timing);
+  assert.deepEqual(T.pickTokens(timing.totals.tokens), T.sum(T.A, T.B));
+});
+
+test('AC1.1 reconciler, merged-PR path: a non-clean run archived through archiveRunDir gets phase rows and exactly one recorded spawn', () => {
+  spawnCalls.length = 0;
+  const fx = plainRun('2026-11-16T100000-spec-5555-merged', { status: 'active', worktree: '/gone/wt-merged' });
+
+  const result = archiveRunDir(fx.root, fx.runDir);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  T.assertPhaseRows(T.readTiming(fx.archiveDir));
+  assert.deepEqual(spawnCalls, [fx.archiveDir]);
+});
+
+test('one pass over an abandoned-interrupted run spawns the token pass exactly once', () => {
+  spawnCalls.length = 0;
+  const fx = timingFixture('2026-08-01T090000-spec-5555-once');
+
+  const result = archiveAbandoned(fx);
+
+  assert.ok(result.archived.includes(fx.runDir), JSON.stringify(result));
+  assert.equal(spawnCalls.length, 1, `got ${JSON.stringify(spawnCalls)}`);
+});
+
+test('archiveRunDir keeps the prior worktree as worktreeAtClose, and a repeat keeps the first one', () => {
+  const first = plainRun('2026-11-16T100000-spec-5555-wt1', { status: 'active', worktree: '/gone/wt-first' });
+  assert.equal(archiveRunDir(first.root, first.runDir).ok, true);
+  const closed = archivedState(first.archiveDir);
+  assert.equal(closed.status, 'clean');
+  assert.equal(closed.worktree, null);
+  assert.equal(closed.worktreeAtClose, '/gone/wt-first');
+
+  // A run closed once already (worktree null, worktreeAtClose set) keeps the first path.
+  const repeat = plainRun('2026-11-16T100000-spec-5555-wt2', { status: 'interrupted', worktree: null, worktreeAtClose: '/gone/wt-first' });
+  assert.equal(archiveRunDir(repeat.root, repeat.runDir).ok, true);
+  assert.equal(archivedState(repeat.archiveDir).worktreeAtClose, '/gone/wt-first');
+
+  // No worktree at all: today's patch, with no worktreeAtClose key.
+  const none = plainRun('2026-11-16T100000-spec-5555-wt3', { status: 'active' });
+  assert.equal(archiveRunDir(none.root, none.runDir).ok, true);
+  assert.equal('worktreeAtClose' in archivedState(none.archiveDir), false);
+});
+
+test('AC4.2 reconciler: writePhaseTimingSync stubbed to throw → archiveMerged returns the same archived/skipped lists as with timing stubbed to a no-op, and the archived decisions.md gains one SKIP line', async () => {
+  const run = async (stub) => {
+    spawnCalls.length = 0;
+    const fx = timingFixture('2026-08-01T090000-spec-5555-ac42');
+    const result = await T.withStub(atClose, 'writePhaseTimingSync', stub, () => archiveAbandoned(fx));
+    const rel = (list) => list.map((e) => (typeof e === 'string' ? path.relative(fx.root, e) : JSON.parse(JSON.stringify(e).split(fx.root).join('<root>'))));
+    return { archived: rel(result.archived), skipped: rel(result.skipped), skips: T.skipLines(fx.archiveDir) };
+  };
+  const noop = await run(() => ({ status: 'written', skip: null }));
+  const thrown = await run(() => { throw new Error('boom 4.2'); });
+
+  assert.ok(thrown.archived.length > 0);
+  assert.deepEqual(thrown.archived, noop.archived);
+  assert.deepEqual(thrown.skipped, noop.skipped);
+  assert.deepEqual(noop.skips, []);
+  assert.equal(thrown.skips.length, 1, JSON.stringify(thrown.skips));
+  assert.match(thrown.skips[0], /boom 4\.2/);
+});
+
+const stepYield = require('../../../plugin/bin/lib/timing/step-yield');
+const readYieldAt = (dir) => JSON.parse(fs.readFileSync(path.join(dir, stepYield.STEP_YIELD_FILE), 'utf8'));
+
+test('AC6.1: archive leaves step-yield.json in the archive twin, and the background token pass rewrites it', async () => {
+  spawnCalls.length = 0;
+  const fx = timingFixture('2026-08-01T090000-spec-5556-archive');
+  const cfg = path.join(fx.root, 'cfg');
+  T.writeTranscript(cfg, fx.wt, [T.A, T.B], T.SID, ['2020-01-01T09:06:00.000Z', '2020-01-01T09:14:00.000Z']);
+
+  const result = archiveAbandoned(fx);
+
+  assert.ok(result.archived.includes(fx.runDir), JSON.stringify(result));
+  const first = readYieldAt(fx.archiveDir);
+  assert.equal(first.schemaVersion, stepYield.SCHEMA_VERSION);
+  assert.ok(first.steps.length > 0);
+  assert.equal(first.steps.every((s) => s.tokens === null), true, 'phase rows only at the archive close: no token cost yet');
+  assert.equal(fs.existsSync(fx.runDir), false, 'the run dir is not recreated');
+
+  // AC6.1 (token pass): the detached pass derives tokens, and the yield it leaves carries them.
+  fs.writeFileSync(path.join(fx.archiveDir, stepYield.STEP_YIELD_FILE), '{"stale":true}');
+  const r = await runCli(TIMING_CLI, ['--run', spawnCalls[0]], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: fx.root });
+  assert.equal(r.code, 0);
+  const after = readYieldAt(fx.archiveDir);
+  assert.equal(Object.hasOwn(after, 'stale'), false);
+  assert.equal(after.steps.some((s) => s.tokens !== null), true, 'the token pass rewrote the yield with token cost');
+});
+
+test('AC6.2 reconciler: the yield function stubbed to throw → the same archived/skipped lists, one SKIP line in the archived decisions.md', async () => {
+  const run = async (stub) => {
+    spawnCalls.length = 0;
+    const fx = timingFixture('2026-08-01T090000-spec-5556-ac62');
+    const result = await T.withStub(stepYield, 'deriveStepYield', stub, () => archiveAbandoned(fx));
+    const rel = (list) => list.map((e) => (typeof e === 'string' ? path.relative(fx.root, e) : JSON.parse(JSON.stringify(e).split(fx.root).join('<root>'))));
+    return { archived: rel(result.archived), skipped: rel(result.skipped), skips: T.skipLines(fx.archiveDir) };
+  };
+  const real = stepYield.deriveStepYield;
+  const ok = await run(real);
+  const thrown = await run(() => { throw new Error('boom yield'); });
+
+  assert.ok(thrown.archived.length > 0);
+  assert.deepEqual(thrown.archived, ok.archived);
+  assert.deepEqual(thrown.skipped, ok.skipped);
+  assert.deepEqual(ok.skips, []);
+  assert.equal(thrown.skips.length, 1, JSON.stringify(thrown.skips));
+  assert.match(thrown.skips[0], /step yield could not be written \(boom yield\)/);
+});
+
+test('AC11.1: the token pass cannot start (spawn throws) → phase rows kept, no token totals, one SKIP line', async () => {
+  const fx = timingFixture('2026-08-01T090000-spec-5555-ac11');
+  // The real spawnTokenPass, over a child_process.spawn that throws.
+  const result = await T.withStub(atClose, 'spawnTokenPass', realSpawnTokenPass, () => (
+    T.withStub(require('child_process'), 'spawn', () => { throw new Error('spawn EAGAIN'); }, () => archiveAbandoned(fx))));
+
+  assert.ok(result.archived.includes(fx.runDir), JSON.stringify(result));
+  const timing = T.readTiming(fx.archiveDir);
+  T.assertPhaseRows(timing);
+  assert.equal(hasTokens(timing), false);
+  const skips = T.skipLines(fx.archiveDir);
+  assert.equal(skips.length, 1, JSON.stringify(skips));
+  assert.match(skips[0], /background token pass could not start .*spawn EAGAIN/);
+});
+
+test('AC8.1: archiveMerged never reads a transcript — transcript.readUsage stubbed to throw is never reached', async () => {
+  const transcript = require('../../../plugin/bin/lib/timing/transcript');
+  let reached = 0;
+  const fx = timingFixture('2026-08-01T090000-spec-5555-ac81');
+  T.writeTranscript(path.join(fx.root, 'cfg'), fx.wt);
+
+  const result = await T.withStub(transcript, 'readUsage', () => { reached += 1; throw new Error('readUsage must not run'); }, () => archiveAbandoned(fx));
+
+  assert.ok(result.archived.includes(fx.runDir), JSON.stringify(result));
+  assert.equal(reached, 0);
+  assert.deepEqual(T.skipLines(fx.archiveDir), []);
+});
+
+test('archiveRunDir on a run that was already clean writes no timing.json and spawns nothing', () => {
+  spawnCalls.length = 0;
+  const fx = plainRun('2026-11-16T100000-spec-5555-clean', { status: 'clean', worktree: null, worktreeAtClose: '/gone/wt-c' });
+
+  assert.equal(archiveRunDir(fx.root, fx.runDir).ok, true);
+
+  assert.equal(fs.existsSync(path.join(fx.archiveDir, 'timing.json')), false);
+  assert.deepEqual(spawnCalls, []);
+  assert.equal(archivedState(fx.archiveDir).worktreeAtClose, '/gone/wt-c');
+});
+
+test('AC12.3: archiving a multi-record parent writes one timing.json at the archive parent and none into spec-N; one already there stays byte-identical', () => {
+  spawnCalls.length = 0;
+  const fx = plainRun('2026-11-16T100000-spec-5555-10-11', { status: 'active', worktree: '/gone/wt-m' });
+  fs.writeFileSync(path.join(fx.runDir, 'manifest.yml'), 'specs: []\n');
+  for (const n of [10, 11]) {
+    fs.mkdirSync(path.join(fx.runDir, `spec-${n}`));
+    T.writeEvents(path.join(fx.runDir, `spec-${n}`));
+  }
+  const childContent = '{"phases":[],"totals":{"minutes":1}}';
+  fs.writeFileSync(path.join(fx.runDir, 'spec-11', 'timing.json'), childContent);
+
+  assert.equal(archiveRunDir(fx.root, fx.runDir).ok, true);
+
+  T.assertPhaseRows(T.readTiming(fx.archiveDir));
+  assert.equal(fs.existsSync(path.join(fx.archiveDir, 'spec-10', 'timing.json')), false);
+  assert.equal(fs.readFileSync(path.join(fx.archiveDir, 'spec-11', 'timing.json'), 'utf8'), childContent);
+  assert.deepEqual(spawnCalls, [fx.archiveDir]);
+});
+
+test('a late events.jsonl line landing before the straggler sweep is in the inline phase rows', (t) => {
+  spawnCalls.length = 0;
+  const fx = plainRun('2026-11-16T100000-spec-5555-late', { status: 'active', worktree: '/gone/wt-l' });
+  fs.writeFileSync(path.join(fx.runDir, 'events.jsonl'), '{"skill":"claude-tweaks:build","ts":"2026-11-16T10:00:00.000Z","type":"skill_invoked"}\n');
+
+  // The second plain readdirSync(runDir) is the straggler snapshot (the first is the top-level one);
+  // events.jsonl moved already, so a fresh one landing now is a straggler that the sweep appends.
+  const real = fs.readdirSync.bind(fs);
+  let calls = 0;
+  t.mock.method(fs, 'readdirSync', (p, opts) => {
+    if (p === fx.runDir && opts === undefined && ++calls === 2) {
+      fs.writeFileSync(path.join(fx.runDir, 'events.jsonl'), '{"skill":"claude-tweaks:test","ts":"2026-11-16T10:10:00.000Z","type":"skill_invoked"}\n');
+    }
+    return real(p, opts);
+  });
+
+  const result = archiveRunDir(fx.root, fx.runDir);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(calls >= 2, true, 'the straggler injection must have fired');
+  assert.equal(fs.existsSync(fx.runDir), false);
+  T.assertPhaseRows(T.readTiming(fx.archiveDir));
+});
+
+test('archiveRunDir hands its env option to the token pass', async () => {
+  const fx = plainRun('2026-11-16T100000-spec-5555-env', { status: 'active', worktree: '/gone/wt-env' });
+  const env = { ...process.env, CT_5555_ENV_MARK: '1' };
+  const seen = [];
+  const result = await T.withStub(atClose, 'spawnTokenPass', (runDir, opts) => { seen.push({ runDir, opts }); return { spawned: true, reason: 'stubbed' }; },
+    () => archiveRunDir(fx.root, fx.runDir, { env }));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].runDir, fx.archiveDir);
+  assert.equal(seen[0].opts.env, env);
+});
+
+// #3976: wrap-up moves a run's tracked header to archive/ on the run branch before the merge, so
+// the merge lands no live run dir and the post-merge archive commit has nothing tracked to move.
+const { archiveRunHeader } = require('../../../plugin/bin/lib/run-header-archive');
+const { createPrStateResolver: createPrStatesFor3976 } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
+
+const RUN_3976 = '2026-11-16T000000-record-7';
+const LIVE_3976 = `.claude-tweaks/pipelines/${RUN_3976}`;
+const ARCH_3976 = `.claude-tweaks/pipelines/archive/${RUN_3976}`;
+const lines3976 = (s) => s.split('\n').filter(Boolean);
+
+// main with one commit; branch feat-3976 carries the live header and, when `moved`, the move.
+// The branch is merged back with `--squash` or `--no-ff`; the main checkout keeps only the
+// gitignored half of the run dir (run-state, console, decisions) the way a real one does.
+function headerMergedRepo3976({ moved, merge }) {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git'); // archiveMerged needs a repo slug
+  git(root, 'checkout', '-q', '-b', 'feat-3976');
+  commitPath(root, `${LIVE_3976}/work/7-spec.md`, 'spec header\n');
+  if (moved) {
+    const res = archiveRunHeader({ worktree: root, runId: RUN_3976 });
+    assert.equal(res.outcome, 'moved', JSON.stringify(res));
+  }
+  git(root, 'checkout', '-q', 'main');
+  if (merge === 'squash') {
+    git(root, 'merge', '--squash', 'feat-3976');
+    git(root, 'commit', '-q', '-m', 'Squashed feature (#7001)');
+  } else {
+    git(root, 'merge', '-q', '--no-ff', '--no-edit', 'feat-3976');
+  }
+  return { root, mergeSha: git(root, 'rev-parse', 'HEAD').trim() };
+}
+
+function seedGitignoredRunHalf3976(root) {
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_3976);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-3976'),
+    pr: { number: 7001, branch: 'feat-3976' },
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '# decisions\n');
+  return runDir;
+}
+
+test('AC1.1/AC1.2 a squash-merged branch carrying the move lands no live dir on main', () => {
+  const { root } = headerMergedRepo3976({ moved: true, merge: 'squash' });
+  const pipelines = lines3976(git(root, 'ls-tree', '--name-only', 'main', '.claude-tweaks/pipelines/'));
+  assert.deepEqual(pipelines, ['.claude-tweaks/pipelines/archive']);
+  assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', '--name-only', 'main', `${ARCH_3976}/`)), [`${ARCH_3976}/work/7-spec.md`]);
+});
+
+test('AC1.3/AC1.4 archiveMerged archives that merged run with no [reconcile] archive run commit and without a live header', { skip: STUB_SKIP }, () => {
+  const { root, mergeSha } = headerMergedRepo3976({ moved: true, merge: 'squash' });
+  const runDir = seedGitignoredRunHalf3976(root);
+  const pr = {
+    number: 7001, state: 'MERGED', mergedAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T00:00:00Z',
+    mergeCommit: { oid: mergeSha }, closingIssuesReferences: [ref(7)], // the run's record #7
+  };
+  const live = () => lines3976(git(root, 'ls-tree', '-r', 'main', '--', `${LIVE_3976}/`));
+  assert.deepEqual(live(), [], 'before: no live header at main');
+  assert.equal(fs.existsSync(path.join(runDir, 'work')), false, 'before: no work/ dir under the live run dir');
+
+  const wrapper = installGhWrapper([pr]);
+  let result;
+  try {
+    const prStates = createPrStatesFor3976({ root, deps: { byNumber: () => pr, byBranch: () => pr } });
+    result = archiveMerged({ cwd: root, prStates });
+  } finally { wrapper.restore(); }
+
+  assert.deepEqual(result.archived, [runDir], JSON.stringify(result));
+  assert.equal(result.archiveCommits[runDir], undefined);
+  assert.equal(lines3976(git(root, 'log', '--format=%s', 'main')).some((s) => s.startsWith('[reconcile] archive run')), false);
+  assert.deepEqual(live(), [], 'after: still no live header at main');
+  assert.equal(fs.existsSync(path.join(runDir, 'work')), false, 'after: no work/ dir under the live run dir');
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', RUN_3976, 'run-state.json')), true, 'the gitignored half was archived');
+});
+
+test('AC4.1 a local-merge run that went through the move gets no post-merge archive commit', () => {
+  const { root } = headerMergedRepo3976({ moved: true, merge: 'no-ff' });
+  const runDir = seedGitignoredRunHalf3976(root);
+  const before = git(root, 'rev-parse', 'HEAD').trim();
+
+  const result = archiveRunDir(root, runDir);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.commit, undefined);
+  assert.equal(git(root, 'rev-parse', 'HEAD').trim(), before, 'no commit was added');
+});
+
+test('AC4.2 fallback: a local-merge run merged without the move is still archived by archiveRunDir', () => {
+  const { root } = headerMergedRepo3976({ moved: false, merge: 'no-ff' });
+  const runDir = seedGitignoredRunHalf3976(root);
+
+  const result = archiveRunDir(root, runDir);
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(typeof (result.commit && result.commit.sha), 'string', 'a post-merge archive commit was made');
+  assert.equal(git(root, 'log', '-1', '--format=%s').trim().startsWith('[reconcile] archive run'), true);
+  assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', '--name-only', 'main', `${ARCH_3976}/work/`)), [`${ARCH_3976}/work/7-spec.md`]);
+  assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', 'main', '--', `${LIVE_3976}/`)), []);
 });

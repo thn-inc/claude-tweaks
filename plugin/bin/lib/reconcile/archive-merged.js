@@ -20,7 +20,7 @@ const { ownEventRecency } = require('../run-liveness/probes');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir,
+  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir, isTrackedShellDir, priorWorktree,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
@@ -33,7 +33,9 @@ const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch, worktreeListStdout, mergedEvidence } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
-const { readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand } = require('../console/residue');
+const {
+  readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, consoleRerunCommand, DIGEST_PENDING_RESOLUTION, digestLogRemedy,
+} = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
 // GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR would silently override that
@@ -535,7 +537,7 @@ const TIEBREAK_COVERAGE_HINT = "re-run the review step's findings writer for thi
 // #4171: an auto-merge path renders no console, so a can't-tell finding the run held is
 // lost at archive time unless it was filed. `coverage.unfiledCantTell` names the unfiled ones.
 // `{run-dir}` is a placeholder; archive-run substitutes the real run dir before printing.
-const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or write a resolved console.json";
+const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or, for a drop-recommended one, '{item} digested (work-fingerprint {fp})' once its digest entry is posted, or write a resolved console.json";
 
 // `{ action: 'archive' }` unless the run's findings artifact is present and
 // either unreadable/malformed or lists a finding with no verdict line, or (#4171)
@@ -647,27 +649,59 @@ function consoleAckRemedy(runDir) {
   return `review them, then run console-residue.js --ack --run "${runDir}"`;
 }
 
-// #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
-// `console-filings.js --only` re-run, one per unacknowledged console holding a `filing-pending`
-// item. '' when no such item is open.
-function filingRerunRemedy(runDir) {
-  const { consoles } = readRunResidue(runDir);
-  const commands = consoles.filter((c) => !c.acknowledged).flatMap((c) => {
-    const ids = c.items.filter((i) => i.resolution === FILING_PENDING_RESOLUTION && typeof i.id === 'string').map((i) => i.id);
-    return ids.length > 0 ? [filingRerunCommand({ consoleDir: path.dirname(c.path), ids })] : [];
-  });
+// The dirs of the unacknowledged consoles holding an item of `resolution`. The re-run command depends on no item id
+// (residue.js's consoleRerunCommand), so an item with no usable id still gets its remedy.
+function pendingConsoleDirs(consoles, resolution) {
+  return consoles.filter((c) => !c.acknowledged && c.items.some((i) => i.resolution === resolution))
+    .map((c) => path.dirname(c.path));
+}
+
+function filingRemedyOf(consoles) {
+  const commands = pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION).map((consoleDir) => consoleRerunCommand({ consoleDir }));
   if (commands.length === 0) return '';
   return `re-run the planned filing(s): ${commands.join('; ')}, then ${FILING_LOG_REMEDY}`;
 }
 
+function digestRemedyOf(consoles, alsoRerun) {
+  const dirs = pendingConsoleDirs(consoles, DIGEST_PENDING_RESOLUTION);
+  if (dirs.length === 0) return '';
+  const commands = dirs.filter((d) => !alsoRerun.includes(d)).map((consoleDir) => consoleRerunCommand({ consoleDir }));
+  const logRemedy = digestLogRemedy({ consoleDir: dirs.length > 1 ? "{that console's dir}" : dirs[0] });
+  if (commands.length === 0) return `the same re-run also settles the planned digest entries, then ${logRemedy}`;
+  return `re-run the planned digest entries: ${commands.join('; ')}${commands.length < dirs.length ? ' (the re-run above also settles the others)' : ''}, then ${logRemedy}`;
+}
+
+// #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
+// `console-filings.js` re-run (default selection, no `--only`), one per unacknowledged console holding a
+// `filing-pending` item. '' when no such item is open.
+function filingRerunRemedy(runDir) {
+  return filingRemedyOf(readRunResidue(runDir).consoles);
+}
+
+// #4679: the digest twin — the same paste-ready `console-filings.js` re-run (it plans digest entries too), one per
+// unacknowledged console holding a `digest-pending` item, then the digest log remedy. '' when no such item is open.
+// `alsoRerun` is the dirs whose re-run the caller already names (a console holding both kinds): they are
+// pointed at, not repeated.
+function digestRerunRemedy(runDir, alsoRerun = []) {
+  return digestRemedyOf(readRunResidue(runDir).consoles, alsoRerun);
+}
+
+// The re-run remedies for a run's open console items, each console's one command named once: the digest remedy
+// leaves out the re-run of a console the filing remedy already names. One read of the run's consoles.
+function rerunRemedies(runDir) {
+  const { consoles } = readRunResidue(runDir);
+  return [filingRemedyOf(consoles), digestRemedyOf(consoles, pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION))].filter(Boolean);
+}
+
 // The recovery line for a console-residue skip: name the open items, the
-// unreadable console.json files to repair, or both when both block.
+// unreadable console.json files to repair, or both when both block. The re-run remedies are additions to each
+// other (a console can hold both kinds); only the ack is the alternative.
 function consoleResidueHint(runDir) {
   const { names, unreadable } = consoleResidue(runDir);
   const parts = [];
   if (names.length > 0) {
-    const rerun = filingRerunRemedy(runDir);
-    parts.push(`unresolved: ${names.join(', ')} — ${rerun ? `${rerun}; or ` : ''}${consoleAckRemedy(runDir)}`);
+    const reruns = rerunRemedies(runDir);
+    parts.push(`unresolved: ${names.join(', ')} — ${reruns.length ? `${reruns.join('; ')}; or ` : ''}${consoleAckRemedy(runDir)}`);
   }
   if (unreadable.length > 0) parts.push(`repair or remove ${unreadable.join(', ')}`);
   return parts.join('; ');
@@ -1122,26 +1156,7 @@ function revertStagedOps(root, ops, env) {
 function isArchivedPendingTrackedMove(root, dir) {
   const runId = path.basename(dir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
-  if (!fs.existsSync(archiveDir)) return false;
-  let entries;
-  try {
-    entries = fs.readdirSync(dir);
-  } catch {
-    return false;
-  }
-  if (entries.length === 0) return false;
-  const specDirs = listSpecDirs(dir);
-  return entries.every((name) => {
-    if (name === 'work') return true;
-    if (!specDirs.includes(name)) return false;
-    let subEntries;
-    try {
-      subEntries = fs.readdirSync(path.join(dir, name));
-    } catch {
-      return false;
-    }
-    return subEntries.length > 0 && subEntries.every((n) => n === 'work');
-  });
+  return fs.existsSync(archiveDir) && isTrackedShellDir(dir);
 }
 
 // The paste-ready command a human (or a worktree/PR-driven follow-up) runs
@@ -1152,8 +1167,29 @@ function isArchivedPendingTrackedMove(root, dir) {
 // supports running from inside a worktree whose tracked content has since
 // merged to the main checkout) — reused here rather than inventing a second
 // completion path.
-function archivedPendingTrackedMoveCommand(dir) {
+function archiveRunCommand(dir) {
   return `node "\${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "${dir}"`;
+}
+
+// #3975: the completion for a clean-twin shell (a run whose archive twin already
+// holds a clean run-state, leaving only tracked work/ headers live). One command
+// for the whole batch: `archive-tracked-shells.js` enumerates every such shell
+// itself and lands them on one housekeeping branch/PR.
+function archivedPendingTrackedMoveCommand(root) {
+  return `node "\${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "${root}"`;
+}
+
+// #3975: true when the live dir's `work/` (and each `spec-*/work/`) differs from
+// its archive twin's — such a shell can never be archived in place (archiveRunDir
+// would refuse `work-twin-conflict`), so it must not take the pass's in-place slot.
+function shellWorkTwinDiffers(root, dir) {
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir));
+  const pairs = [[path.join(dir, 'work'), path.join(archiveDir, 'work')]];
+  for (const specName of listSpecDirs(dir)) {
+    pairs.push([path.join(dir, specName, 'work'), path.join(archiveDir, specName, 'work')]);
+  }
+  const isDir = (p) => lstatType(p).type === 'directory';
+  return pairs.some(([src, dest]) => isDir(src) && isDir(dest) && !compareWorkTwin(root, src, dest).identical);
 }
 
 // #1811 Deliverable 3: a run dir shaped `{timestamp}-record-{n}[-{m}...]`
@@ -1435,16 +1471,22 @@ function archiveRunDir(root, runDir, { env } = {}) {
     return archiveCommit ? { ...refusal(reason, extra), commit: archiveCommit } : refusal(reason, extra);
   }
 
+  // #5555: the run's state before the move — the status decides whether this
+  // close owes a timing.json (a run close-run already closed has one), and the
+  // worktree it names is kept as worktreeAtClose for the token pass.
+  const preMoveState = readRunState(runDir) || {};
+
   const specDirs = listSpecDirs(runDir);
 
   // Every git-tracked work/ subtree — the top-level one (single-spec
   // layout) and one per spec-{N}/ subdirectory (multi-spec parent layout,
   // #593) — moves via `git mv` in one batch, then one commit covers all of
   // them. `work/` is deliberately git-tracked (materialize.md, "committed
-  // as audit trail, never gitignored") while the archive path itself is
-  // gitignored, so a plain mv + git add would register as a deletion; a
-  // multi-spec parent whose spec-{N}/work/ subtrees were previously left
-  // out of this move is exactly the bug this fixes — they used to survive
+  // during the run and archived on the branch at wrap-up, never gitignored")
+  // while the archive path itself is gitignored, so a plain mv + git add
+  // would register as a deletion; a multi-spec parent whose spec-{N}/work/
+  // subtrees were previously left out of this move is exactly the bug this
+  // fixes — they used to survive
   // untouched at the pre-archive path and resurrect on the next checkout,
   // same mechanism as the top-level case the rest of this function already
   // handled.
@@ -1627,7 +1669,16 @@ function archiveRunDir(root, runDir, { env } = {}) {
     // pathspec, so `git commit` picks only those changes out of the index
     // rather than sweeping whatever else a human or sibling session happens
     // to have staged in this shared main checkout at the same moment.
-    const commitPaths = workMoves.flatMap(([src, dest]) => [src, dest]);
+    // #3975: a twin-only archival (workMoves empty) must still name the twin
+    // paths it staged — an empty pathspec after `--` commits the whole index.
+    const commitPaths = [
+      ...workMoves.flatMap(([src, dest]) => [src, dest]),
+      ...stagedOps.flatMap((op) => {
+        if (op.kind === 'twin-rm') return [op.srcFile];
+        if (op.kind === 'twin-mv') return [op.srcFile, op.destFile];
+        return [];
+      }),
+    ];
     const commit = commitGit(['commit', '-m', archiveCommitSubject(runId), '--', ...commitPaths], root, { env });
     if (commit.failure) {
       // A partial revert (some ops' `git reset`/`git checkout` or disk move
@@ -1776,7 +1827,10 @@ function archiveRunDir(root, runDir, { env } = {}) {
   // run-state.json moved above, so finalize the terminal state at its new
   // (archived) location, not the original runDir — writeRunState reads and
   // preserves whatever state already moved there.
-  const result = writeRunState(archiveDir, { status: 'clean', worktree: null });
+  const wtAtClose = priorWorktree(preMoveState);
+  const result = writeRunState(archiveDir, wtAtClose
+    ? { status: 'clean', worktree: null, worktreeAtClose: wtAtClose }
+    : { status: 'clean', worktree: null });
   if (!result) return refuseAfterMarker('close-failed');
 
   // Late-write guard (#990 — reproduced live during #893's own wrap-up even
@@ -1817,6 +1871,22 @@ function archiveRunDir(root, runDir, { env } = {}) {
            (#3198) — either way, nothing here should destroy existing
            archive content or block the rest of this call. */
       }
+    }
+  }
+
+  // #5555: phase rows inline (no transcript read), token totals in a detached
+  // pass. A run already clean was closed by close-run, which wrote its own.
+  // Runs after the straggler sweep so a late events.jsonl line is in the rows
+  // and a straggler timing.json never collides with this write.
+  if (preMoveState.status !== 'clean') {
+    try {
+      const timing = require('../timing/at-close');
+      timing.writePhaseTimingSync(archiveDir);
+      timing.spawnTokenPass(archiveDir, { env });
+    } catch (err) {
+      // The shared fallback writer needs only log-decision/append.js, so this catch
+      // does not depend on at-close having loaded.
+      try { require('../log-decision/timing-skip').logTimingFailure(archiveDir, 'timing at close failed', err); } catch { /* a failed trace line never fails the archive */ }
     }
   }
 
@@ -2434,7 +2504,9 @@ function archiveMerged({
     if (plan && plan.action !== 'none') residuePlan.push(plan);
   };
 
-  for (const { dir, state } of iterRunDirsWithState(root)) {
+  // #3975: without worktree-always, at most one clean-twin shell is archived in place per pass.
+  let shellSlotUsed = false;
+  for (const { dir, state } of iterRunDirsWithState(root, { includeTrackedShells: true })) {
     // #4599: first, before any per-run work — see the header comment above archiveMerged.
     if (postMergePending.has(path.resolve(dir))) {
       skipped.push({ runDir: dir, reason: 'post-merge-pending' });
@@ -2456,11 +2528,32 @@ function archiveMerged({
     // (Deliverable 2's own AC). Without `worktree-always`, archive it
     // directly via archiveRunDir, same as any other archival.
     if (isArchivedPendingTrackedMove(root, dir)) {
+      const twinArchiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir));
+      const twinState = readRunState(twinArchiveDir);
+      if (twinState && twinState.status === 'clean') {
+        // #3975: a clean-twin shell. The CLI is its completion; in place, only one per pass,
+        // and never one whose work/ differs from the twin's (archiveRunDir would refuse it).
+        const skipShell = () => skipped.push({
+          runDir: dir, reason: 'archived-pending-tracked-move', command: archivedPendingTrackedMoveCommand(root), shell: true,
+        });
+        if (isWorktreeAlwaysOn(root) || shellSlotUsed || shellWorkTwinDiffers(root, dir)) { skipShell(); continue; }
+        shellSlotUsed = true;
+        finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => {
+          const result = archive(root, dir);
+          if (!result.ok) {
+            // archiveRunDir merged `archiving` into the clean twin's run-state; a refusal after that
+            // marker leaves it, which would hide the twin's clean status from the next pass. Best-effort.
+            try { writeRunState(twinArchiveDir, { status: 'clean' }); } catch { /* best-effort */ }
+          }
+          return result;
+        });
+        continue;
+      }
       if (isWorktreeAlwaysOn(root)) {
         skipped.push({
           runDir: dir,
           reason: 'archived-pending-tracked-move',
-          command: archivedPendingTrackedMoveCommand(dir),
+          command: archiveRunCommand(dir),
         });
         continue;
       }
@@ -2813,13 +2906,13 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, digestRerunRemedy, rerunRemedies, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
   isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness, defaultRunVerdict,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
-  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
+  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, archiveRunCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
   isClosedSlugStuck, recordNumbersFromSlug, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,

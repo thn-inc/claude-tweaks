@@ -1217,3 +1217,236 @@ test('TRUST_POLICY_KEYS lists the three trust keys in order and every one is a P
   const known = new Set(POLICY_KEYS.map((entry) => entry.key));
   for (const key of TRUST_POLICY_KEYS) assert.ok(known.has(key), `${key} must be a POLICY_KEYS key`);
 });
+
+// --- Author trust on the Origin line (#4577) --------------------------------
+// An `Origin:` body line is plain text any issue author can type, so trustRows
+// honours it (class and follow-up) only from a trusted or unattested author.
+
+function originTarget() {
+  return { number: 7, labels: [], body: 'Origin: ledger resolve gate', state: 'CLOSED', closedAt: RECENT, authorAssociation: 'MEMBER' };
+}
+function originFollowUp(author) {
+  return { number: 8, labels: [], body: 'Origin: demo changes-requested from #7', state: 'OPEN', ...author };
+}
+const targetRow = (rows) => rows.find((r) => r.key === 'side-effect:ledger resolve gate|elevated');
+
+test('AC1.1: an untrusted follow-up adds nothing to the record it names', () => {
+  // The follow-up is an OPEN record, which forms no cell, so only the
+  // follow-up loop decides it: deleting that gate turns this red.
+  for (const association of ['NONE', 'CONTRIBUTOR']) {
+    const row = targetRow(trustRows([originTarget(), originFollowUp({ authorAssociation: association })]));
+    assert.equal(row.followUps, 0, association);
+    assert.equal(row.followUpRecords, 0, association);
+  }
+});
+
+test('AC1.1: an untrusted closed record joins no side-effect class', () => {
+  for (const authorAssociation of ['NONE', 'CONTRIBUTOR']) {
+    const forged = { number: 9, labels: [], body: 'Origin: demo changes-requested from #7', state: 'CLOSED', closedAt: RECENT, authorAssociation };
+    const rows = trustRows([forged]);
+    assert.equal(rows.some((r) => r.key.startsWith('side-effect:demo changes-requested|')), false, authorAssociation);
+    assert.equal(rows.find((r) => r.key === 'human:human|elevated').total, 1, authorAssociation);
+  }
+});
+
+test('AC2.1: a trusted or bot author\'s follow-up still counts', () => {
+  const authors = [
+    { authorAssociation: 'OWNER' },
+    { authorAssociation: 'MEMBER' },
+    { authorAssociation: 'COLLABORATOR' },
+    { authorAssociation: 'CONTRIBUTOR', author: { is_bot: true } },
+  ];
+  for (const author of authors) {
+    const row = targetRow(trustRows([originTarget(), originFollowUp(author)]));
+    assert.equal(row.followUps, 1, JSON.stringify(author));
+  }
+});
+
+test('AC3.1: a follow-up with no author data still counts', () => {
+  const row = targetRow(trustRows([originTarget(), originFollowUp({})]));
+  assert.equal(row.followUps, 1);
+});
+
+test('AC1.2: an absorbed Origin "from #7" adds no follow-up to #7\'s class (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: ['## Current State', 'x', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n'), state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 0);
+});
+test('a fenced Origin "from #7" adds no follow-up (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: ['```', 'Origin: demo changes-requested from #7', '```'].join('\n'), state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 0);
+});
+test('class and follow-up come from the same line: a bare own Origin: hides a later one (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: 'Origin:\n\n## Original request\nOrigin: demo changes-requested from #7', state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 0);
+});
+test('an own Origin "from #7" under ## Original request still counts (#4502)', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: '## Current State\nx\n\n## Original request\nOrigin: demo changes-requested from #7', state: 'OPEN' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 1);
+});
+
+// --- #4626: revocationOnly grading (expand step) ---
+const APPROVED = ['by:capture', 'risk:low', 'accept:approved'];
+const approvedOperational = (number, extraLabels = []) => ({
+  ...operationalFixture(number, 20), labels: [...APPROVED, ...extraLabels],
+});
+
+test('#4626 AC2: a record with only an accept:approved verdict counts for nothing under revocationOnly', () => {
+  const rows = trustRows([
+    { number: 1, labels: APPROVED, body: '', state: 'CLOSED', closedAt: RECENT },
+  ]);
+  assert.equal(rows[0].approved, 1);
+  assert.equal(rows[0].dispositioned, 1);
+  assert.deepEqual(rows[0].revocationOnly, {
+    operationalGood: 0, negativeEvidence: 0, undispositioned: 1, dispositioned: 0, coverage: 0,
+    verdict: 'insufficient-evidence', mixedReasons: [],
+  });
+});
+
+test('#4626 AC2: MIN_SAMPLES approvals with no operational evidence grade clean today and insufficient-evidence under revocationOnly', () => {
+  for (const label of ['accept:approved', 'demo:approved']) {
+    const records = Array.from({ length: MIN_SAMPLES }, (_, i) => ({
+      number: i + 1, labels: ['by:capture', 'risk:low', label], body: '', state: 'CLOSED', closedAt: RECENT,
+    }));
+    const [row] = trustRows(records);
+    assert.equal(row.verdict, 'clean', label);
+    assert.equal(row.revocationOnly.verdict, 'insufficient-evidence', label);
+  }
+});
+
+test('#4626: under revocationOnly an approved record is graded on its operational outcome', () => {
+  const [row] = trustRows([approvedOperational(1)], [commitFor(1)], NOW, {});
+  assert.equal(row.operationalGood, 0);
+  assert.equal(row.revocationOnly.operationalGood, 1);
+});
+
+test('#4626: under revocationOnly an approved record with a reverted closing commit is negative evidence', () => {
+  const gitLog = [commitFor(1), { sha: sha40(999), message: `This reverts commit ${sha40(1)}.` }];
+  const [row] = trustRows([approvedOperational(1)], gitLog, NOW, {});
+  assert.equal(row.negativeEvidence, 0);
+  assert.equal(row.revocationOnly.negativeEvidence, 1);
+});
+
+test('#4626: under revocationOnly an approved record with a correctness failure marker is negative evidence', () => {
+  const [row] = trustRows([{
+    number: 1, labels: APPROVED, body: '', state: 'CLOSED', closedAt: RECENT,
+    comments: [{ body: attemptFailedCommentBody({ attemptNumber: 1, reason: 'x', classification: 'correctness' }) }],
+  }]);
+  assert.equal(row.negativeEvidence, 0);
+  assert.equal(row.revocationOnly.negativeEvidence, 1);
+});
+
+test('#4626: under revocationOnly a batch-only cell grades on its operational outcomes, not on batch-only', () => {
+  const records = Array.from({ length: MIN_SAMPLES }, (_, i) => approvedOperational(i + 1, ['accept:approved-batch']));
+  const gitLog = records.map((r) => commitFor(r.number));
+  const [row] = trustRows(records, gitLog, NOW, {});
+  assert.equal(row.verdict, 'mixed');
+  assert.deepEqual(row.mixedReasons, ['batch-only']);
+  assert.equal(row.revocationOnly.verdict, 'clean');
+  assert.deepEqual(row.revocationOnly.mixedReasons, []);
+});
+
+test('#4626: a changes-requested verdict pins revocationOnly mixed too', () => {
+  const records = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 20));
+  const gitLog = records.map((r) => commitFor(r.number));
+  records.push({ ...operationalFixture(8, 20), labels: ['by:capture', 'risk:low', 'accept:changes-requested'] });
+  const [row] = trustRows(records, gitLog, NOW, {});
+  assert.equal(row.revocationOnly.verdict, 'mixed');
+  assert.deepEqual(row.revocationOnly.mixedReasons, ['changes-requested']);
+});
+
+test('#4626: under revocationOnly every record lands in exactly one outcome column', () => {
+  const records = [
+    approvedOperational(1),
+    approvedOperational(2, ['accept:approved-batch']),
+    { ...operationalFixture(3, 20), labels: ['by:capture', 'risk:low', 'accept:changes-requested'] },
+    { ...operationalFixture(4, 20), labels: ['by:capture', 'risk:low', 'accept:pending'] },
+    { number: 5, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: closedDaysAgo(1) },
+    operationalFixture(6, 20),
+    operationalFixture(7, 20),
+  ];
+  const gitLog = [
+    commitFor(1), commitFor(2), commitFor(4), commitFor(6), commitFor(7),
+    { sha: sha40(999), message: `This reverts commit ${sha40(7)}.` },
+  ];
+  const [row] = trustRows(records, gitLog, NOW, {});
+  const r = row.revocationOnly;
+  assert.equal(row.total, 7);
+  assert.equal(row.changesRequested + r.operationalGood + r.negativeEvidence + r.undispositioned, row.total);
+  assert.equal(r.dispositioned, row.changesRequested + r.operationalGood + r.negativeEvidence);
+  // Exact columns: approved 1, 2 and operational 6 are good; 7 is reverted;
+  // 3 is changes-requested; pending 4 (despite a closing commit) and young 5 are unknown.
+  assert.equal(row.changesRequested, 1);
+  assert.equal(r.operationalGood, 3);
+  assert.equal(r.negativeEvidence, 1);
+  assert.equal(r.undispositioned, 2);
+  assert.equal(r.dispositioned, 5);
+  // 7 records is below MIN_SAMPLES while 5 dispositions clear MIN_VERDICTS, so only the
+  // cell-size floor keeps this cell ungraded (the revert and changes-requested alone would read mixed).
+  assert.equal(r.verdict, 'insufficient-evidence');
+});
+
+test('#4626: an unstructured cell stays insufficient-evidence under revocationOnly', () => {
+  const overlong = 'Origin: ' + 'x'.repeat(80);
+  // Operational evidence with closing commits clears both floors, so the
+  // UNGRADABLE_KIND pin is the only thing that can yield insufficient-evidence.
+  const many = Array.from({ length: MIN_SAMPLES + 4 }, (_, i) => ({
+    ...operationalFixture(i + 1, 20), labels: ['risk:low', 'accept:approved'], body: overlong,
+  }));
+  const gitLog = many.map((r) => commitFor(r.number));
+  const [row] = trustRows(many, gitLog, NOW, {});
+  assert.equal(row.provenance, 'unstructured:unstructured');
+  assert.equal(row.revocationOnly.operationalGood, MIN_SAMPLES + 4);
+  assert.equal(row.revocationOnly.verdict, 'insufficient-evidence');
+});
+
+test('#4626: a reverted approved record drags revocationOnly to mixed while verdict stays clean', () => {
+  const good = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 20));
+  const records = [...good, approvedOperational(8)];
+  const gitLog = [
+    ...records.map((r) => commitFor(r.number)),
+    { sha: sha40(999), message: `This reverts commit ${sha40(8)}.` },
+  ];
+  const [row] = trustRows(records, gitLog, NOW, {});
+  assert.equal(row.verdict, 'clean', 'the approval itself still grades clean today');
+  assert.deepEqual(row.mixedReasons, []);
+  assert.equal(row.revocationOnly.verdict, 'mixed');
+  assert.deepEqual(row.revocationOnly.mixedReasons, ['negative-evidence']);
+});
+
+test('#4626: a failure-marked approved record drags revocationOnly to mixed while verdict stays clean', () => {
+  const good = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 20));
+  const marked = {
+    ...approvedOperational(8),
+    closedAt: closedDaysAgo(1),
+    comments: [{ body: attemptFailedCommentBody({ attemptNumber: 1, reason: 'x', classification: 'correctness' }) }],
+  };
+  const records = [...good, marked];
+  const gitLog = good.map((r) => commitFor(r.number));
+  const [row] = trustRows(records, gitLog, NOW, {});
+  assert.equal(row.verdict, 'clean');
+  assert.equal(row.revocationOnly.verdict, 'mixed');
+  assert.deepEqual(row.revocationOnly.mixedReasons, ['negative-evidence']);
+});
+
+test('#4626: a graded cell over the follow-up threshold carries follow-up-rate in revocationOnly.mixedReasons', () => {
+  const { records, gitLog } = ac1Fixture();
+  const [clean] = trustRows(records, gitLog, NOW, {});
+  assert.equal(clean.revocationOnly.verdict, 'clean');
+  assert.deepEqual(clean.revocationOnly.mixedReasons, []);
+
+  const [strict] = trustRows(records, gitLog, NOW, { 'trust-follow-up-rate-max-percent': 10 });
+  assert.equal(strict.revocationOnly.verdict, 'mixed');
+  assert.deepEqual(strict.revocationOnly.mixedReasons, ['follow-up-rate']);
+});

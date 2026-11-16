@@ -60,11 +60,11 @@ The CLI also computes the merge half with both carve-outs (`merge.resolution` = 
 `leave-open`, with the reason — it **never** runs the merge itself), appends one decisions block
 (`AUTO {time} — Review Console: Console auto-resolved {n} item(s) at unattended
 (console-resolve.js). Reversibility: per item.` plus one line per item), and writes
-`{run-dir}/console.json` (`{resolved: true, mode: 'auto-resolve', at, ceiling, items, merge, droppedByTiebreak, filings}` —
+`{run-dir}/console.json` (`{resolved: true, mode: 'auto-resolve', at, ceiling, items, merge, droppedByTiebreak, filings, digests}` —
 the write the reconciler's archival needs, #1854; `droppedByTiebreak` holds the read-only Dropped
 by tiebreak block's rows, `filings` one `{item, fingerprint, title}` per planned can't-tell
-filing, with no proposal text, #3949). That file may later gain an optional
-`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); an item's stored resolution may later be rewritten by `console-resolve.js --set-item` (`refused-proposals.md`'s failed-execution rewrite — `apply` → `keep-staged`, adding `rewrittenFrom`/`rewrittenAt`, and dropping a stale `residueAcknowledgedAt`; a reference repair whose diff no longer applies at Phase 4 is rewritten `approve` → `pending — reference-repair-stale` the same way, per `execution-and-verification.md`'s Reference repairs bullet), and a `filings` entry whose fingerprint has no filed line in that dir's `decisions.md` reads as `filing-pending` residue (#4170); and
+filing, with no proposal text, #3949; `digests` one `{item, fingerprint}` per planned digest entry, #4679). That file may later gain an optional
+`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); an item's stored resolution may later be rewritten by `console-resolve.js --set-item` (`refused-proposals.md`'s failed-execution rewrite — `apply` → `keep-staged`, adding `rewrittenFrom`/`rewrittenAt`, and dropping a stale `residueAcknowledgedAt`; a reference repair whose diff no longer applies at Phase 4 is rewritten `approve` → `pending — reference-repair-stale` the same way, per `execution-and-verification.md`'s Reference repairs bullet), and a `filings` entry whose fingerprint has no filed line in that dir's `decisions.md` reads as `filing-pending` residue (#4170), a `digests` entry with no digested line as `digest-pending` (#4679); and
 `console-resolve.js --json` on a fresh resolution carries an `unresolved` array (the
 `pending`/`keep-staged` items, `[]` when none); the idempotent re-render of an already-resolved
 console prints the stored table and the `Needs a human` block as text whatever the flags.
@@ -171,9 +171,12 @@ procedure — no row is left unrouted:
 - `filed` — on a `U#` item, step 9's `/claude-tweaks:feedback --pre-confirmed` filing (the `U#`
   divergence stated in review-console.md); on a Low-confidence or Contested item, step 7, its
   proposal composed by `console-filings.js` (review-console.md's "Can't-tell filings").
+- `digested` — on a Low-confidence or Contested item, not step 7: post the digest line and log it per
+  review-console.md's "Can't-tell filings". Nothing is filed for it.
 - `dropped` — execute **nothing**. A tiebreak refuted the finding, or a human chose Approve all on
   its `drop` recommendation (`console-template.md`); its staged file stays in `staged/`, and the
   row is a final outcome, not residue.
+- `carried` — execute **nothing** at the console: the item's decision fact is already in `{run-dir}/packet-facts/decisions.json` and reaches the human through the acceptance packet (`verification-brief.md`'s gather). It is terminal — not residue, so archival proceeds.
 - `stale` — still step 1, but its re-derivation path only: rebuild the diff from the item's
   `Target:`/`Invariant:` preamble. Never `git apply` a diff the CLI already reported as failing
   `--check`, and never drop it silently.
@@ -224,7 +227,7 @@ A rendered console is somebody's open decision and no flag overwrites it, so a c
 follows `_shared/console-on-pr.md`'s Headless conclusion (report `pending-review` with the PR URL);
 an unparseable one stops and reports the CLI's stderr, like exits 2 and 3. Exit codes 2 and 3 (malformed invocation / `--run` not anchored) → a
 HARD-GATE failure: stop the wrap-up and report the CLI's stderr — an unattended run has nobody to
-answer a real stop. Send one consolidated `PushNotification` summarizing the run, at the same
+answer a real stop. Exit code 6 (a control-mode carry write failed) → stop with `flow/failure-cards.md`'s Generic gate failure card naming each item stderr lists. Send one consolidated `PushNotification` summarizing the run, at the same
 point the auto-merge short-circuit sends its own FYI (`_shared/autonomy-ceiling.md`'s Notification
 section) — one notification for the whole run, never one per item. End with the absolute path to
 `decisions.md`, `console.json`, and any retained `staged/*` files, so the operator has a concrete

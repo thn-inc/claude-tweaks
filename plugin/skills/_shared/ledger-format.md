@@ -179,7 +179,7 @@ entry above, since no run-dir log exists to write it to.
 
 Remove the item from this phase's remaining set — it does not appear in the table below and does
 not get an `AskUserQuestion` drill. Items whose blocker reason returns `false` (ambiguous, or
-outside the four categories) fall through to the unchanged per-item drill below — the floor check
+outside the five categories) fall through to the unchanged per-item drill below — the floor check
 fails closed, exactly as if the capability were locked for that one item.
 
 **`ledgerRouteRemainder` (`unattended` only) — the items the floor check above leaves behind.**
@@ -207,6 +207,13 @@ At `supervised`/`trusted` (this capability locked), and for any item whose block
 returns `false` even under this wider check, nothing changes here — the item falls through to the
 unchanged per-item drill below exactly as today. "Nothing stays unresolved" is true at `unattended`
 only; the fail-closed-to-asking rule stays correct wherever a human can actually answer.
+
+**Control mode — every remaining item converges (#4620).** When `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --ceiling --run "$PIPELINE_RUN_DIR"` prints `control-mode on` and `consoleAutoResolve true` (whatever its `source`), no remaining item reaches the drill below. Write every item still `open` as `{ "id": "ledger-{N}", "source": "ledger", "text", "status": "open", "deferReason", "belowFloor" }` to a session-temp JSON file — `belowFloor` judged per `_shared/materiality-floor.md`, `deferReason` per `wrap-up/residue-sweep.md`'s `remedy: record` mapping (omitted when no mapping applies) — and run `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --converge "{file}" --run "$PIPELINE_RUN_DIR"`. It writes every carried item's decision fact first, so run it BEFORE writing any `carried` row: the ledger writer refuses that text until its fact exists. Then, per printed `state`:
+- `filed`: stage the printed `proposal` as Phase 3's `Keep` branch does, and write the row `deferred` naming the staged path.
+- `digested`: append the digest entry per `_shared/materiality-floor.md`, and write the row `accepted` with Resolution `below the materiality floor — digested at {digest comment URL | specs/digest.md}`.
+- `carried`: write the row `deferred` with Resolution `carried to the acceptance packet as {factId}` — `pack.js`'s `LEDGER_CARRIED_RE`, a complete deferral.
+
+A staged `filed` item is then a `ledger-record-*` console item: refused or failed at create, it takes `--set-item {id} --resolution carried --ledger …` (the console's one carry route), never `--converge` again. `filingFailed: true` is only for an item whose stage-item write failed before any staged file existed. Exit 2, 3 or 6, or any `failed` entry, stops with `flow/failure-cards.md`'s Generic gate failure card naming each item — never a question.
 
 After Phase 1 (and, when the capability is unlocked, after the narrowing above), only items that qualify for
 neither — Phase 1's fix-now criteria nor the narrowing's floor check — remain `open`. Present the

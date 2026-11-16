@@ -249,12 +249,24 @@ So before writing a parser for an event that has a carrier: `grep -l` the event'
 `<task-notification>`) across `{store}/projects/*/*/subagents/*.jsonl`, group the matches by the
 `version` field on each line, and read one line per distinct version and per distinct `type`.
 Build fixtures from those verbatim lines (long values truncated with `…`) and name the source file
-and line beside each. Fail closed on a carrier you did not recognize: `subagent-stop.js` returns an
-indeterminate result when `<task-notification>` or `<fork-boilerplate>` shows up in any other entry
-shape, and its tests pin both the recognized carriers and that fallback. A test that asserts only the
-fail-closed outcome (`block`) passes whether the carrier is recognized or not, so also assert the
-parsed value (a count of `0`, not `null`). Keep the versions you observed beside the rule, as
-`subagent-stop.js`'s header comment does.
+and line beside each. Fail closed on a carrier you did not recognize: `subagent-stop.js`'s gate
+count (`countPendingDispatches`) returns an indeterminate result when `<task-notification>` or
+`<fork-boilerplate>` shows up in any other entry shape, and its tests pin both the recognized
+carriers and that fallback. A test that asserts only the fail-closed outcome (`block`) passes whether
+the carrier is recognized or not, so also assert the parsed value (a count of `0`, not `null`). Keep
+the versions you observed beside the rule, as `subagent-stop.js`'s header comment does.
+
+**Pick each reader's indeterminate rule by what its wrong answer costs.** One scan can feed two
+readers whose failures cost different things. Record #5706 is the instance: `scanPendingDispatches`
+returns `{ gate, marker }` from one pass. The gate count decides whether a reply is blocked, so it
+still returns `null` on any unrecognized carrier. The stop-marker count only decides when
+`wait-for.js agents` returns, and a `null` there is a wait that never sees a finished child. So the
+marker skips a `<task-notification>` found in the agent's first user message (its own prompt), a
+`toolUseResult` line or an assistant line, and keeps counting; any other shape still nulls both
+counts. Before loosening one reader, show that no shape it skips can ever be a completion, so its
+count never falls below the true pending count, and leave the stricter reader alone unless
+something measured says it is wrong. Measure the skipped shapes on real transcripts first (#5706
+tallied 31,980 final stops across 2.1.283 to 2.1.325) and record that range beside the rule.
 
 A new carrier must reach every reader of the event, not only the one that surfaced it. #3015
 taught `countPendingDispatches` the `queued_command` shape while `isAsyncWaitSignal` (#2041), which
@@ -268,12 +280,40 @@ re-wake behavior: interactive 2.1.302 holds a dispatched agent open and re-wakes
 `Monitor` watch it started reports, headless (`claude -p`) 2.1.302 and later runs a nested `Agent` call
 synchronously, and headless 2.1.299 and older never re-wakes it for a nested child. The contract had stated
 "never re-woken" as universal, and every restatement had to be qualified once the interactive cell
-contradicted it (`tests/foreground-execution-instruction.test.js` now pins six claim sites). A `claude -p`
+contradicted it (`tests/foreground-execution-instruction.test.js` now pins five claim sites). A `claude -p`
 probe, the throwaway-hook recipe above included, measures headless only. When
 contract prose states harness behavior, measure each launch mode and version it will run under, record each
 cell's result beside the claim with its version (`plugin/skills/_shared/subagent-dispatch-core.md`'s
 "Measured on Claude Code (#3722)" sentence), and word the rule itself as only what holds in every cell — there,
 "cannot count on being re-woken".
+
+## Writing a probe up as a `docs/reference` document
+
+Three probe write-ups share one shape: `docs/reference/pretooluse-updatedinput-worktree-guard.md`
+(#4028), `docs/reference/pretooluse-agent-tool-probe.md` (#4589) and
+`docs/reference/workflow-tool-probe.md` (#5596). The last is the fullest; copy its parts.
+
+- **A scope block first.** The CLI version from `claude --version` and from each child's `init`
+  event, the date, the platform, the config root, the permission mode each `init` event reported
+  (#5596's `dontAsk` came from user settings, not a flag), every launch mode measured, and each
+  probe not run with the reason it could not be.
+- **Throwaway tooling in scratch, evidence in the run directory.** The probe plugin and launcher
+  live in the session's scratchpad and are never committed. Copy the raw captures into the run
+  directory's `evidence/` before the worktree or scratch is torn down, and quote the lines each row
+  rests on in an "Observed output" section, which is the permanent copy. Give the full command
+  line, the removed environment variables, the working directory and every prompt, so a probe
+  re-runs from the document alone.
+- **One Results row per probe**, naming its launch mode, the captures and run count it rests on,
+  the CLI version, the date, a Result from a closed vocabulary, the observed value, and what it
+  means for each record that reads it. Descriptive text stays out of the Result cell: #5596's
+  reviews sent seven cells back for it.
+- **An interactive measurement is the building session's own transcript.** A `claude -p` child
+  cannot measure an interactive session. Quote the building session's transcript rows by file and
+  line, and label every row resting on them as one interactive run.
+- **A "Depended on by" list** names each record and the rows it reads, with a re-run rule keyed to
+  the CLI version (#5596 re-runs a read row when the installed minor version differs).
+- **A result that contradicts a dependent record's text** is posted as a comment on that record,
+  quoting the row, and the PR lists the comments posted (#5596's AC7).
 
 ## When to use
 

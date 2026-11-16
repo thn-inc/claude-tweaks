@@ -95,6 +95,12 @@ const RECORDING_NOT_RUN_REASONS = Object.freeze(Object.values(NOT_RUN_REASON));
 // What renders in place of free text the credential screen refuses.
 const WITHHELD_TEXT = '(text withheld: credential-shaped)';
 
+// A deploy ref is the deployed commit's sha: lowercase hex, 7 to 64 characters (#4613). The
+// `--deploy` input check, the gathered fact and accept-entry.js's stored-ref read share it.
+const DEPLOY_REF_SOURCE = '[0-9a-f]{7,64}';
+const DEPLOY_REF_RE = new RegExp(`^${DEPLOY_REF_SOURCE}$`);
+const isDeployRef = (value) => typeof value === 'string' && DEPLOY_REF_RE.test(value);
+
 // A break-it story's id starts with this prefix. Gather and the recording planner both read it from
 // here; they combine it with the story index differently, on purpose (see `record.js`).
 const NEGATIVE_ID_PREFIX = 'neg-';
@@ -128,6 +134,8 @@ module.exports = Object.freeze({
   NOT_RUN_REASON,
   RECORDING_NOT_RUN_REASONS,
   WITHHELD_TEXT,
+  DEPLOY_REF_SOURCE,
+  isDeployRef,
   NEGATIVE_ID_PREFIX,
   notReadNote,
   VERIFICATION_WORDS,

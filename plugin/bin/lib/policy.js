@@ -102,10 +102,9 @@ function readListKey(repoRoot, key) {
 // mode keys goes through, so "is it on" is decided in exactly one place. Takes the
 // resolved value (e.g. from resolve-policy.js --values), strictly the exact string
 // `on` — `ON`, `yes`, an absent value and a boolean are all off, so a typo can
-// never switch the mode on. No production caller yet: #4609 shipped it ahead of
-// the #4608 control-mode leaves (#4615-#4624) so they share one
-// comparison. The first leaf to land becomes its first caller; the helper itself
-// needs no change then.
+// never switch the mode on. #4609 shipped it ahead of the #4608 control-mode
+// leaves (#4615-#4624) so they share one comparison. Callers: readRiskPolicy
+// (#4618) and bin/lib/issues/autonomy.js's effectiveCeiling (#4620).
 function isControlModeOn(value) {
   return value === 'on';
 }
@@ -183,6 +182,22 @@ function readEfficiencyCeilings(repoRoot, profile) {
   return { roundTrips: read('round-trip'), procedureKb: read('procedure-kb'), verifyMinutes: read('verify-minutes') };
 }
 
+// `changelog-max-releases` (#5563) — takes the raw policy.yml reader as a dep so
+// the release consumers keep their own file access. null (absent file) or an
+// absent/invalid key is 0 (never trim); a throwing reader is reported in `error`
+// rather than read as 0 silently.
+function readChangelogMaxReleases(readPolicy) {
+  let raw;
+  try {
+    raw = readPolicy();
+  } catch (err) {
+    return { count: 0, error: String((err && err.message) || err) || 'unknown error' };
+  }
+  if (raw == null) return { count: 0, error: null };
+  const key = 'changelog-max-releases';
+  return { count: resolveValue(key, parseFlatLines(raw)[key]), error: null };
+}
+
 const SERVICE_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
 // `port-services` (#1792): the list-key convention above, plus per-entry
@@ -220,5 +235,5 @@ function resolvePortServices(repoRoot) {
 
 module.exports = {
   isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, resolvePortServices, readGhTimeoutMs,
-  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn, readRiskPolicy,
+  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn, readRiskPolicy, readChangelogMaxReleases,
 };

@@ -31,6 +31,7 @@ function seed(findings, extraLines = []) {
 }
 
 const two = () => [mkFinding('000000000001', 'src/a.js', 10, 'The guard in a runs after the read'), mkFinding('000000000002', 'src/b.js', 11, 'The guard in b runs after the read')];
+const digestedLine = (id, fp, again = false) => `- AUTO 10:01:00 — Queue write: tiebreak:${id} ${again ? 'already ' : ''}digested (work-fingerprint ${fp}). Reversibility: n/a.`;
 const filedLine = (id, fp, n, again = false) => `- AUTO 10:01:00 — Queue write: tiebreak:${id} ${again ? 'already ' : ''}filed as #${n} (work-fingerprint ${fp}). Reversibility: n/a.`;
 
 test('AC1.1: unfiledCantTell lists every can\'t-tell finding with no filed line', () => {
@@ -118,6 +119,38 @@ test('renderFindingFyi with only a dropped block starts at its heading', () => {
 test('renderFindingFyi is empty for a run with no findings', () => {
   const runDir = seed([]);
   assert.equal(renderFindingFyi(cantTellOutcomes({ runDir, deps })), '');
+});
+
+// #4679: a drop-recommended item is digested, not filed; a digested line is its evidence.
+const dropVerdictLine = ({ id, file, line }) => verdictLine({ id, file, line }).replace('Recommendation: file.', 'Recommendation: drop.');
+
+test('unfiledCantTell: a digested drop item is not unfiled (#4679)', () => {
+  const f = mkFinding('000000000003', 'src/c.js', 12, 'The guard in c runs after the read');
+  const mk = (extra) => {
+    const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fo-'));
+    roots.push(runDir);
+    fs.writeFileSync(path.join(runDir, 'decisions.md'), `${[dropVerdictLine({ id: f.id, file: f.path, line: f.line }), ...extra].join('\n')}\n`);
+    fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify([f]));
+    return runDir;
+  };
+  const bare = unfiledCantTell({ runDir: mk([]), deps });
+  assert.deepEqual(bare.map((u) => u.item), [`tiebreak:${f.id}`], 'without the line the item is still listed');
+  assert.equal(cantTellOutcomes({ runDir: mk([]), deps }).rows[0].digested, false);
+  for (const again of [false, true]) {
+    const runDir = mk([digestedLine(f.id, bare[0].fingerprint, again)]);
+    assert.deepEqual(unfiledCantTell({ runDir, deps }), [], `again=${again}`);
+    const outcomes = cantTellOutcomes({ runDir, deps });
+    assert.equal(outcomes.rows[0].digested, true);
+    assert.equal(outcomes.rows[0].filedAs, null);
+    assert.ok(renderFindingFyi(outcomes).includes('| tiebreak:000000000003 | src/c.js:12 | medium | 3a | drop | digest |'));
+  }
+});
+
+test('a digested line carrying another finding\'s fingerprint does not clear this one (#4679)', () => {
+  const fs2 = two();
+  const [, fp1] = unfiledCantTell({ runDir: seed(fs2), deps }).map((u) => u.fingerprint);
+  const runDir = seed(fs2, [digestedLine(fs2[0].id, fp1)]);
+  assert.deepEqual(unfiledCantTell({ runDir, deps }).map((u) => u.item), [`tiebreak:${fs2[0].id}`]);
 });
 
 test('renderRows is unchanged by the dropped-block extraction', () => {

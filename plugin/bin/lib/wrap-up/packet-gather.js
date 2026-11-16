@@ -12,6 +12,7 @@ const {
   COMMANDS_ONLY_SURFACES,
   encodeFactKey,
   NEGATIVE_ID_PREFIX,
+  isDeployRef,
 } = require('./packet-contract');
 const {
   BEARER_SEGMENT_REASON, checkLink, findCredentialInText, hasBearerUrl,
@@ -19,6 +20,7 @@ const {
 const { redactOrWithhold } = require('../walkthrough/redact');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { SECTIONS: CONSOLE_SECTIONS, decisionLineHash } = require('../console/resolve');
+const { DECISION_RENDER_FIELDS } = require('../console/decision-facts');
 
 // The text is read up to a line terminator (`.` stops at one) and trimmed after, and
 // what follows it must be whitespace. A trailing `\s*$` in the pattern is quadratic on a
@@ -448,7 +450,10 @@ function deployFact(deploy) {
   const { target, live } = deploy ?? { target: 'local', live: null };
   let text = `target: ${target}`;
   if (target === 'dev') text += live === true ? ', confirmed live' : ', not confirmed live';
-  return { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
+  const fact = { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
+  // The deployed commit, which a later /accept refresh compares against (#4613).
+  if (isDeployRef(deploy?.ref)) fact.ref = deploy.ref;
+  return fact;
 }
 
 // A pass-through record may already spell its id with the kind. The status and reason come
@@ -464,6 +469,18 @@ function passThroughFacts(kind, source, entries, { status = 'passed', reason } =
     ...(text === undefined ? {} : { text }),
     ...(kind === 'flag' && unconfirmed === true ? { unconfirmed: true } : {}),
   }));
+}
+
+// A decision entry keeps the fields a control-mode console writes (#4620); an entry with only { id, text } yields
+// exactly the pass-through fact. An absent or non-string field stays absent.
+function decisionFacts(entries) {
+  const base = passThroughFacts('decision', 'decision-items', entries);
+  return base.map((fact, i) => {
+    const entry = entries[i];
+    const extra = {};
+    for (const field of DECISION_RENDER_FIELDS) if (typeof entry[field] === 'string') extra[field] = entry[field];
+    return { ...fact, ...extra };
+  });
 }
 
 const PROOF_NOT_RUN_REASON = 'planned in the plan, not yet run';
@@ -543,7 +560,7 @@ function gatherPacketFacts(inputs) {
     ...(inputs.recording ? [recordingFact(inputs.recording, inputs.recordingPath)] : []),
     ...passThroughFacts('flag', 'flags', inputs.flags),
     ...passThroughFacts('proof', 'proofs', inputs.proofs, { status: 'not-run', reason: PROOF_NOT_RUN_REASON }),
-    ...passThroughFacts('decision', 'decision-items', inputs.decisions),
+    ...decisionFacts(inputs.decisions),
   ];
 
   const byId = new Map();
@@ -610,5 +627,6 @@ module.exports = {
   storiesFromQaStamp,
   redactedRecordingStrings,
   gatherPacketFacts,
+  decisionFacts,
   readPacket,
 };

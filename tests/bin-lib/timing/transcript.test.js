@@ -212,7 +212,7 @@ test('#1929 AC2: readUsage streams rows, sums procedure bytes for skills Reads o
   assert.equal(rows.reduce((s, r) => s + r.procedureBytes, 0), 18);
   const assistants = rows.filter((r) => r.role === 'assistant');
   assert.deepEqual(assistants.map((r) => r.toolRoundTrip), [false, false, false, false, false]);
-  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: true, contextTokens: 350 });
+  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: true, contextTokens: 350, procedureFiles: { 'skills/review/SKILL.md': 1 } });
   assert.equal(assistants[3].inputTokens, 100);
   assert.equal(users[0].inputTokens, 0);
   // #1929 whole-branch review fix 1: a duplicate message.id (same turn,
@@ -286,6 +286,66 @@ test('#4029: tool_result text parts are joined for the guard-refusal check, and 
   const users = rows.filter((r) => r.role === 'user');
   assert.deepEqual(users[0].turnClasses, { 'guard-refusal': 1 });
   assert.deepEqual(users[1].turnClasses, { bookkeeping: 1 });
+});
+
+test('readUsage counts per-file procedure reads on the tool_use row', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const file = 'plugin/skills/review/code-mode-steps.md';
+  fs.writeFileSync(f, [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
+      { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: file } },
+      { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: `sed -n '1,9p' ${file}` } },
+    ], usage: {} } }),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:01.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r1', content: 'x' }] } }),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:02.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b1', content: 'y' }] } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f, { worktree: '/repo' });
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows[0].procedureFiles, { 'skills/review/code-mode-steps.md': 2 });
+  assert.deepEqual(rows[1].procedureFiles, {});
+  assert.deepEqual(rows[2].procedureFiles, {});
+});
+
+test('#4359 I1: readUsage counts a Read and a sed of a context bundle under context/, adding no procedure bytes', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const bundle = '/main/.claude-tweaks/pipelines/2026-11-16T000452-record-4359/context/review-code-mode.md';
+  fs.writeFileSync(f, [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
+      { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: bundle } },
+      { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: `sed -n "1,80p" ${bundle}` } },
+    ], usage: {} } }),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:01.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r1', content: 'x'.repeat(50) }] } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f, { worktree: '/main/.claude/worktrees/wt' });
+  assert.deepEqual(rows[0].procedureFiles, { 'context/review-code-mode.md': 2 });
+  assert.equal(rows[1].procedureBytes, 0, 'a bundle Read is not a skill-file read');
+  assert.deepEqual(rows[1].turnClasses, { read: 1 });
+});
+
+test('#4359: a bundle Read and sed under a main checkout inside a skills/ directory key under context/', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const bundle = '/home/u/skills/repo/.claude-tweaks/pipelines/run-a/context/lens-child.md';
+  fs.writeFileSync(f, JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
+    { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: bundle } },
+    { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: `sed -n "1,80p" ${bundle}` } },
+  ], usage: {} } }) + '\n');
+  const rows = await readUsage(f, { worktree: '/home/u/skills/repo/.claude/worktrees/wt' });
+  assert.deepEqual(rows[0].procedureFiles, { 'context/lens-child.md': 2 });
+});
+
+test('#4359 T2-1: a timestamp-less api-request-blob row carrying a skill Read adds no procedure read', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const read = (id) => ({ type: 'tool_use', id, name: 'Read', input: { file_path: 'plugin/skills/review/code-mode-steps.md' } });
+  fs.writeFileSync(f, [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [read('r1')], usage: {} } }),
+    // the replayed request blob repeats r1's tool_use id, with no timestamp
+    JSON.stringify({ type: 'api-request-blob', message: { id: 'm1', role: 'assistant', content: [read('r1')], usage: {} } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f, {});
+  assert.equal(rows.length, 1);
+  const total = {};
+  for (const r of rows) for (const [k, n] of Object.entries(r.procedureFiles)) total[k] = (total[k] || 0) + n;
+  assert.deepEqual(total, { 'skills/review/code-mode-steps.md': 1 });
 });
 
 test('#1929: readUsage on a missing file rejects with a code the CLI can name', async () => {
@@ -404,6 +464,63 @@ test('AC4.1: a meta file whose transcript is unreadable yields notFound and null
   assert.equal(it.metaModel, 'haiku');
   assert.equal(it.parentAgentId, 'p1');
   assert.equal(it.spawnDepth, 2);
+  assert.equal(it.procedureFiles, null);
+  assert.equal(it.procedureFileRows, null);
+  assert.equal(it.transcriptPath, path.join(dir, 'agent-x.jsonl'));
+});
+
+function readLine(ts, id, filePath) {
+  return JSON.stringify({ type: 'assistant', timestamp: ts, message: { id, role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'tool_use', id: `tu-${id}`, name: 'Read', input: { file_path: filePath } }], usage: { input_tokens: 1, output_tokens: 1 } } });
+}
+
+test('readDispatches sums a subagent\'s per-file reads', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-p1.jsonl'), [
+    readLine('2026-11-16T10:00:00.000Z', 'mp1', 'plugin/skills/_shared/a.md'),
+    aLine('assistant', '2026-11-16T10:00:05.000Z', 'mp2', 'claude-sonnet-5', [1, 1, 0, 0]),
+    readLine('2026-11-16T10:00:09.000Z', 'mp3', 'plugin/skills/_shared/a.md'),
+  ].join('\n') + '\n');
+  const r = await readDispatches(dir);
+  const it = r.items[0];
+  assert.deepEqual(it.procedureFiles, { 'skills/_shared/a.md': 2 });
+  assert.deepEqual(it.procedureFileRows, [
+    { ts: '2026-11-16T10:00:00.000Z', procedureFiles: { 'skills/_shared/a.md': 1 } },
+    { ts: '2026-11-16T10:00:09.000Z', procedureFiles: { 'skills/_shared/a.md': 1 } },
+  ]);
+  assert.ok(it.transcriptPath.endsWith('agent-p1.jsonl'));
+  assert.equal(it.transcriptPath, path.join(dir, 'agent-p1.jsonl'));
+});
+
+test('readDispatches: a dispatch with no procedure reads carries {} and [], an untimed kept row takes startTs, and window-dropped rows are not counted', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-q1.jsonl'), aLine('assistant', '2026-11-16T10:00:00.000Z', 'mq1', 'claude-sonnet-5', [1, 1, 0, 0]) + '\n');
+  fs.writeFileSync(path.join(dir, 'agent-q2.jsonl'), [
+    readLine('2026-11-16T08:00:00.000Z', 'mr0', 'plugin/skills/_shared/early.md'),
+    readLine('2026-11-16T10:00:03.000Z', 'mr1', 'plugin/skills/_shared/b.md'),
+    readLine('not-a-time', 'mr2', 'plugin/skills/_shared/c.md'),
+    readLine('2026-11-16T10:00:07.000Z', 'mr3', 'plugin/skills/_shared/d.md'),
+    readLine('2026-11-16T10:00:08.000Z', 'mr4', '/repo/src/not-a-skill.md'),
+  ].join('\n') + '\n');
+  const r = await readDispatches(dir, { window: { start: Date.parse('2026-11-16T09:00:00.000Z'), end: Date.parse('2026-11-16T11:00:00.000Z') } });
+  const by = Object.fromEntries(r.items.map((i) => [i.agentId, i]));
+  assert.deepEqual(by.q1.procedureFiles, {});
+  assert.deepEqual(by.q1.procedureFileRows, []);
+  assert.deepEqual(by.q2.procedureFiles, { 'skills/_shared/b.md': 1, 'skills/_shared/c.md': 1, 'skills/_shared/d.md': 1 });
+  // transcript order: the untimed c row sits between b and d, booked at startTs
+  assert.deepEqual(by.q2.procedureFileRows, [
+    { ts: '2026-11-16T10:00:03.000Z', procedureFiles: { 'skills/_shared/b.md': 1 } },
+    { ts: '2026-11-16T10:00:03.000Z', procedureFiles: { 'skills/_shared/c.md': 1 } },
+    { ts: '2026-11-16T10:00:07.000Z', procedureFiles: { 'skills/_shared/d.md': 1 } },
+  ]);
+});
+
+test('#4359 T2-2: readDispatches keys a subagent\'s reads against the worktree it is given', async () => {
+  const dir = tmpSubagents();
+  // a worktree under a skills/ directory: only the worktree-relative key is right
+  const wt = '/home/u/skills/wt';
+  fs.writeFileSync(path.join(dir, 'agent-w1.jsonl'), readLine('2026-11-16T10:00:00.000Z', 'mw1', `${wt}/plugin/skills/review/x.md`) + '\n');
+  assert.deepEqual((await readDispatches(dir, { worktree: wt })).items[0].procedureFiles, { 'skills/review/x.md': 1 });
+  assert.deepEqual((await readDispatches(dir)).items[0].procedureFiles, { 'skills/wt/plugin/skills/review/x.md': 1 });
 });
 
 test('AC4.1: no subagents/ directory reports notFound, no items', async () => {
@@ -627,4 +744,387 @@ test('#3375 C1: a lower later line never reduces the id\'s usage (max, not last)
   ].join('\n') + '\n');
   const rows = await readUsage(f);
   assert.deepEqual(rows.map((r) => r.outputTokens), [407, 0]);
+});
+
+// ---- #5597: agents a workflow script starts live in subagents/workflows/{runId}/ ----
+
+// {tmp}/sess-1/subagents — a real session shape, so the run file beside it
+// ({tmp}/sess-1/workflows/{runId}.json) never lands in a shared tmp dir.
+function tmpSessionSubagents() {
+  const sub = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wf-')), 'sess-1', 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  return sub;
+}
+function writeAgent(dir, id, ts, meta) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `agent-${id}.jsonl`), aLine('assistant', ts, `m-${id}`, 'claude-sonnet-5-5', [1, 1, 1, 1]) + '\n');
+  if (meta) fs.writeFileSync(path.join(dir, `agent-${id}.meta.json`), JSON.stringify(meta));
+}
+function fiveAgentSession() {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1', model: 'sonnet' });
+  writeAgent(dir, 'd2', '2026-11-16T10:01:00.000Z', { description: 'Review Task 1', model: 'opus' });
+  const run = path.join(dir, 'workflows', 'wf-run-1');
+  writeAgent(run, 'w1', '2026-11-16T10:02:00.000Z', { description: 'lens 3b A', model: 'haiku', workflowPhase: 'review' });
+  writeAgent(run, 'w2', '2026-11-16T10:03:00.000Z', { description: 'lens 3b B', model: 'sonnet', workflowPhase: 'review' });
+  writeAgent(run, 'w3', '2026-11-16T10:04:00.000Z', { description: 'lens 3b C', model: 'opus', workflowPhase: 'review' });
+  return { dir, run };
+}
+
+test('AC1.1: two direct agents and one workflows/{runId}/ holding three agents give five items', async () => {
+  const { dir } = fiveAgentSession();
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 5);
+  assert.equal(r.notFound, null);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('AC1.2: the three workflow items carry the run id and their workflowPhase; the two direct items carry null for both', async () => {
+  const { dir } = fiveAgentSession();
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items.map((i) => [i.agentId, i.workflowRunId, i.workflowPhase]), [
+    ['d1', null, null], ['d2', null, null],
+    ['w1', 'wf-run-1', 'review'], ['w2', 'wf-run-1', 'review'], ['w3', 'wf-run-1', 'review'],
+  ]);
+  // the two keys follow notFound
+  const keys = Object.keys(r.items[0]);
+  assert.deepEqual(keys.slice(keys.indexOf('notFound')), ['notFound', 'workflowRunId', 'workflowPhase']);
+});
+
+test('AC2.1: workflow items take their tier from the meta model alias', async () => {
+  const { dir } = fiveAgentSession();
+  const agg = aggregateDispatches((await readDispatches(dir)).items);
+  assert.deepEqual(agg.items.filter((i) => i.workflowRunId).map((i) => [i.agentId, i.tier]), [['w1', 'fast'], ['w2', 'standard'], ['w3', 'capable']]);
+});
+
+test('AC2.2: a workflow description "lens 3b A" yields the role lens reviewer', async () => {
+  const { dir } = fiveAgentSession();
+  const agg = aggregateDispatches((await readDispatches(dir)).items);
+  assert.equal(agg.items.find((i) => i.agentId === 'w1').role, 'lens reviewer');
+});
+
+test('AC3.1: a symlinked workflows/ directory is not read and is named', async () => {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  const outside = tmpSubagents();
+  writeAgent(path.join(outside, 'r1'), 'x1', '2026-11-16T10:01:00.000Z', { description: 'leaked' });
+  fs.symlinkSync(outside, path.join(dir, 'workflows'));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, [`workflows/ directory is a symlink (not followed) at ${path.join(dir, 'workflows')}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('AC3.2: a symlinked run directory is not read and is named', async () => {
+  const dir = tmpSessionSubagents();
+  const outside = tmpSubagents();
+  writeAgent(outside, 'x1', '2026-11-16T10:01:00.000Z', { description: 'leaked' });
+  fs.mkdirSync(path.join(dir, 'workflows'));
+  const runPath = path.join(dir, 'workflows', 'r1');
+  fs.symlinkSync(outside, runPath);
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, [`workflow run directory is a symlink (not followed) at ${runPath}`]);
+  assert.deepEqual(r.items, []);
+});
+
+test('AC3.3: a symlinked agent file inside a run directory is not read and is named', async () => {
+  const dir = tmpSessionSubagents();
+  const outside = tmpSubagents();
+  fs.writeFileSync(path.join(outside, 'secret.jsonl'), aLine('assistant', '2026-11-16T10:00:00.000Z', 'ms', 'claude-opus-5-5', [9, 9, 9, 9]) + '\n');
+  const run = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'agent-l1.meta.json'), JSON.stringify({ description: 'lens 1', workflowPhase: 'review' }));
+  fs.symlinkSync(path.join(outside, 'secret.jsonl'), path.join(run, 'agent-l1.jsonl'));
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].notFound, 'transcript not readable (symlink)');
+  assert.equal(r.items[0].tokens, null);
+  assert.equal(r.items[0].workflowRunId, 'r1');
+});
+
+test('AC6.1: a run directory with no agent file gives one dirNotes string', async () => {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  const runPath = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(runPath, { recursive: true });
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, [`no agent-* transcripts in ${runPath}`]);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.notFound, null);
+});
+
+test('AC6.2: an unreadable meta.json in a run directory gives an item with a meta not readable note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'p1', '2026-11-16T10:00:00.000Z', { description: 'lens 1', workflowPhase: 'review' });
+  const metaPath = path.join(run, 'agent-p1.meta.json');
+  const fsImpl = { ...fs, readFileSync: (p, ...a) => { if (String(p) === metaPath) throw Object.assign(new Error('denied'), { code: 'EACCES' }); return fs.readFileSync(p, ...a); } };
+  const r = await readDispatches(dir, { fsImpl });
+  assert.equal(r.items.length, 1);
+  assert.match(r.items[0].notFound, /^meta not readable \(EACCES\)/);
+  assert.equal(r.items[0].workflowPhase, null);
+  assert.equal(r.items[0].workflowRunId, 'r1');
+});
+
+test('Deliverable 2: a workflow agent with no meta file is still an item — run id from the directory, workflowPhase null, "meta not found" note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'm1', '2026-11-16T10:00:00.000Z');
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].workflowRunId, 'r1');
+  assert.equal(r.items[0].workflowPhase, null);
+  assert.equal(r.items[0].notFound, 'meta not found');
+  assert.ok(r.items[0].tokens);
+});
+
+test('AC9: a workflow agent whose transcript has rows but no timestamped row is an item with its note and no start', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'agent-u1.meta.json'), JSON.stringify({ description: 'lens 1', workflowPhase: 'review' }));
+  fs.writeFileSync(path.join(run, 'agent-u1.jsonl'), aLine('assistant', undefined, 'm-u1', 'claude-sonnet-5-5', [1, 1, 1, 1]) + '\n');
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].notFound, 'transcript has no usage rows');
+  assert.equal(r.items[0].startTs, null);
+  assert.equal(r.items[0].tokens, null);
+});
+
+test('AC6.3: a file in a run directory that is not an agent file gives no item and no exception', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'a1', '2026-11-16T10:00:00.000Z', { description: 'lens 1' });
+  fs.writeFileSync(path.join(run, 'journal.jsonl'), '{}\n');
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['a1']);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('AC10.1: a subagents/ directory holding only workflows/{runId}/ with two agents returns two items and notFound null', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'a1', '2026-11-16T10:00:00.000Z', { description: 'lens 1' });
+  writeAgent(run, 'a2', '2026-11-16T10:01:00.000Z', { description: 'lens 2' });
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 2);
+  assert.equal(r.notFound, null);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('AC11.1: a run file whose agentCount is 3 beside a run directory with two agents gives one dirNotes string naming 3 and 2', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'a1', '2026-11-16T10:00:00.000Z', { description: 'lens 1' });
+  writeAgent(run, 'a2', '2026-11-16T10:01:00.000Z', { description: 'lens 2' });
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.writeFileSync(path.join(runFileDir, 'r1.json'), JSON.stringify({ agentCount: 3 }));
+  const r = await readDispatches(dir);
+  assert.equal(r.dirNotes.length, 1);
+  assert.match(r.dirNotes[0], /\b3\b/);
+  assert.match(r.dirNotes[0], /\b2\b/);
+  assert.equal(r.items.length, 2);
+});
+
+test('AC11.2: with no run file there is no such note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'a1', '2026-11-16T10:00:00.000Z', { description: 'lens 1' });
+  writeAgent(run, 'a2', '2026-11-16T10:01:00.000Z', { description: 'lens 2' });
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('AC12.1: subagentsDirFor maps a workflow agent transcript to the session subagents/ dir', () => {
+  assert.equal(subagentsDirFor(path.join('/h', 'p', 'sess-1', 'subagents', 'workflows', 'r1', 'agent-a.jsonl')), path.join('/h', 'p', 'sess-1', 'subagents'));
+});
+
+test('AC12.2: its result for a main transcript is unchanged', () => {
+  assert.equal(subagentsDirFor(path.join('/h', 'p', 'sess-1.jsonl')), path.join('/h', 'p', 'sess-1', 'subagents'));
+});
+
+test('#5597 review focus 1: workflows/ that is a plain file is ignored', async () => {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  fs.writeFileSync(path.join(dir, 'workflows'), 'x');
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('#5597 review focus 2: a plain file directly inside workflows/ is ignored', async () => {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  fs.mkdirSync(path.join(dir, 'workflows'));
+  fs.writeFileSync(path.join(dir, 'workflows', 'agent-z.jsonl'), aLine('assistant', '2026-11-16T10:00:00.000Z', 'mz', 'claude-opus-5-5', [9, 9, 9, 9]) + '\n');
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+  assert.deepEqual(r.dirNotes, []);
+});
+
+test('#5597: window clipping applies to workflow run directories', async () => {
+  const { dir } = fiveAgentSession();
+  const window = { start: Date.parse('2026-11-16T09:00:00.000Z'), end: Date.parse('2026-11-16T10:03:30.000Z') };
+  const r = await readDispatches(dir, { window });
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1', 'd2', 'w1', 'w2']);
+  assert.equal(r.excludedOutsideWindow, 1);
+});
+
+function useLine(id, name) {
+  return JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: `m-${id}`, role: 'assistant', content: [{ type: 'tool_use', id, name, input: { prompt: 'x' } }], usage: {} } });
+}
+
+test('agentCalls counts Agent and Task results and not Workflow', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-agentcalls-')), 's.jsonl');
+  const results = ['a', 't', 'w'].map((id) => ({ type: 'tool_result', tool_use_id: id, content: 'ok' }));
+  fs.writeFileSync(f, [
+    useLine('a', 'Agent'), useLine('t', 'Task'), useLine('w', 'Workflow'),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:05.000Z', message: { role: 'user', content: results } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  const user = rows.find((r) => r.role === 'user');
+  assert.equal(user.agentCalls, 2);
+  assert.equal(user.turnClasses.dispatch, 3);
+  assert.ok(rows.filter((r) => r.role === 'assistant').every((r) => !('agentCalls' in r)));
+});
+
+test('#5597 review focus 5: guard-refused Agent call adds no agentCalls', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-agentcalls-')), 's.jsonl');
+  fs.writeFileSync(f, [
+    useLine('a', 'Agent'),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:05.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'This session is isolated in the worktree /repo', is_error: true }] } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  const user = rows.find((r) => r.role === 'user');
+  assert.deepEqual(user.turnClasses, { 'guard-refusal': 1 });
+  assert.equal(user.agentCalls, 0);
+});
+
+// A session with one direct agent and workflows/r1/ holding one agent; each
+// fault test below breaks exactly one fs call on one path.
+function faultSession() {
+  const dir = tmpSessionSubagents();
+  writeAgent(dir, 'd1', '2026-11-16T10:00:00.000Z', { description: 'Implement Task 1' });
+  const runPath = path.join(dir, 'workflows', 'r1');
+  writeAgent(runPath, 'w1', '2026-11-16T10:01:00.000Z', { description: 'lens 1' });
+  return { dir, wfDir: path.join(dir, 'workflows'), runPath };
+}
+const failOn = (method, target, code) => ({ ...fs, [method]: (p, ...a) => { if (String(p) === target) throw Object.assign(new Error(code), { code }); return fs[method](p, ...a); } });
+
+test('#5597: a workflows/ directory lstat cannot read is named and the direct items are still returned', async () => {
+  const { dir, wfDir } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', wfDir, 'EIO') });
+  assert.deepEqual(r.dirNotes, [`workflows/ directory not readable (EIO) at ${wfDir}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a workflows/ directory that cannot be listed is named and the direct items are still returned', async () => {
+  const { dir, wfDir } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('readdirSync', wfDir, 'EACCES') });
+  assert.deepEqual(r.dirNotes, [`workflows/ directory not readable (EACCES) at ${wfDir}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run directory lstat cannot read is named and the direct items are still returned', async () => {
+  const { dir, runPath } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', runPath, 'EIO') });
+  assert.deepEqual(r.dirNotes, [`workflow run directory not readable (EIO) at ${runPath}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run directory that cannot be listed is named and the direct items are still returned', async () => {
+  const { dir, runPath } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('readdirSync', runPath, 'EACCES') });
+  assert.deepEqual(r.dirNotes, [`workflow run directory not readable (EACCES) at ${runPath}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a workflows/ directory lstat reports missing is named with ENOENT and the direct items are still returned', async () => {
+  const { dir, wfDir } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', wfDir, 'ENOENT') });
+  assert.deepEqual(r.dirNotes, [`workflows/ directory not readable (ENOENT) at ${wfDir}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: a run directory lstat reports missing is named with ENOENT and the direct items are still returned', async () => {
+  const { dir, runPath } = faultSession();
+  const r = await readDispatches(dir, { fsImpl: failOn('lstatSync', runPath, 'ENOENT') });
+  assert.deepEqual(r.dirNotes, [`workflow run directory not readable (ENOENT) at ${runPath}`]);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['d1']);
+});
+
+test('#5597: an empty run directory beside a run file with agentCount 2 gives only the empty-directory note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(run, { recursive: true });
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.writeFileSync(path.join(runFileDir, 'r1.json'), JSON.stringify({ agentCount: 2 }));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, [`no agent-* transcripts in ${run}`]);
+});
+
+test('#5597: a run file whose agentCount equals the agents found adds no note', async () => {
+  const { dir } = faultSession();
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.writeFileSync(path.join(runFileDir, 'r1.json'), JSON.stringify({ agentCount: 1 }));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, []);
+  assert.equal(r.items.length, 2);
+});
+
+test('#5597: a symlinked run file is not read, so its mismatching agentCount adds no note', async () => {
+  const { dir } = faultSession();
+  const outside = tmpSubagents();
+  fs.writeFileSync(path.join(outside, 'r1.json'), JSON.stringify({ agentCount: 3 }));
+  const runFileDir = path.join(path.dirname(dir), 'workflows');
+  fs.mkdirSync(runFileDir, { recursive: true });
+  fs.symlinkSync(path.join(outside, 'r1.json'), path.join(runFileDir, 'r1.json'));
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.dirNotes, []);
+  assert.equal(r.items.length, 2);
+});
+
+// #5556: AskUserQuestion ask/answer times. Shape observed 2026-10-24 in a real main-session
+// transcript: assistant tool_use { id, name: 'AskUserQuestion', input: { questions: [{ question, header, multiSelect, options }] } },
+// answered by a later user row's tool_result { tool_use_id, content: '<string>' }.
+function askTranscript(lines) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ask-'));
+  const file = path.join(dir, 's.jsonl');
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return { dir, file };
+}
+const askRow = (id, ts, questions) => ({ timestamp: ts, message: { role: 'assistant', id: 'm-' + id, content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions } }], usage: {} } });
+const resultRow = (id, ts) => ({ timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Your questions have been answered.' }] } });
+
+test('#5556: readUsage carries asks on the AskUserQuestion row and answers on its tool_result row, and no key elsewhere', async () => {
+  const { dir, file } = askTranscript([
+    { timestamp: '2026-11-16T07:59:00.000Z', message: { role: 'assistant', id: 'm0', content: [{ type: 'text', text: 'hi' }], usage: {} } },
+    askRow('toolu_q1', '2026-11-16T08:00:00.000Z', [{ question: 'Pick?', header: 'H', multiSelect: false, options: [] }]),
+    resultRow('toolu_q1', '2026-11-16T08:03:30.000Z'),
+    { timestamp: '2026-11-16T08:04:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_other', content: 'x' }] } },
+  ]);
+  try {
+    const rows = await readUsage(file);
+    assert.deepEqual(rows[1].asks, [{ id: 'toolu_q1', ts: '2026-11-16T08:00:00.000Z', questions: ['Pick?'] }]);
+    assert.deepEqual(rows[2].answers, [{ id: 'toolu_q1', ts: '2026-11-16T08:03:30.000Z' }]);
+    for (const i of [0, 3]) { assert.equal('asks' in rows[i], false); assert.equal('answers' in rows[i], false); }
+    assert.equal('answers' in rows[1], false);
+    assert.equal('asks' in rows[2], false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('#5556: an AskUserQuestion block with no input.questions gives questions [] and never throws', async () => {
+  const { dir, file } = askTranscript([
+    { timestamp: '2026-11-16T08:00:00.000Z', message: { role: 'assistant', id: 'm1', content: [{ type: 'tool_use', id: 'toolu_q2', name: 'AskUserQuestion' }], usage: {} } },
+  ]);
+  try {
+    const rows = await readUsage(file);
+    assert.deepEqual(rows[0].asks, [{ id: 'toolu_q2', ts: '2026-11-16T08:00:00.000Z', questions: [] }]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -113,6 +113,22 @@ test('archive-run: never prints a moved: line for a name absent from the fixture
   assert.doesNotMatch(result.stdout, /moved: staged/);
 });
 
+// #5555: the typed verb reaches archiveRunDir, so a run it archives that was not yet `clean`
+// (a state with no status passes the verb's active/interrupted refusal) gets phase rows and one token-pass spawn.
+test('archive-run: a not-yet-clean run gets timing.json phase rows and exactly one recorded token-pass spawn', async () => {
+  const atClose = require('../plugin/bin/lib/timing/at-close');
+  const T = require('./helpers/close-timing');
+  const { root, runDir, runId } = runDirFixture(undefined);
+  T.writeEvents(runDir);
+  const spawned = [];
+  const result = await T.withStub(atClose, 'spawnTokenPass', (dir) => { spawned.push(dir); return { spawned: true, reason: 'stubbed' }; },
+    () => runHook(['archive-run', '--run', runDir], { cwd: root }));
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  assert.match(result.stdout, /moved: events\.jsonl/);
+  T.assertPhaseRows(T.readTiming(archiveDir));
+  assert.deepEqual(spawned, [archiveDir]);
+});
+
 // Regression: a *-sweep-standalone*/*-tidy-standalone* run's decisions.md/
 // staged only become git-tracked once their worktree copy has merged AND
 // this checkout has pulled that merge (SKILL.md's pr-first Step 7.5) — a
@@ -293,7 +309,7 @@ test('AC2.1: archive-run archives an executed PR console with only executed/drop
 });
 
 // #4170: a planned can't-tell filing with no filed line in decisions.md is `filing-pending` residue;
-// the refusal names the `console-filings.js --only` re-run, and logging the filed line clears it.
+// the refusal names the default-selection `console-filings.js` re-run, and logging the filed line clears it.
 function plannedFilingConsole(runDir, { filed = false } = {}) {
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     resolved: true,
@@ -306,12 +322,39 @@ function plannedFilingConsole(runDir, { filed = false } = {}) {
     : ''));
 }
 
-test('AC3.1: archive-run refuses a console whose can\'t-tell filings never ran, naming the console-filings.js --only re-run', async () => {
+test('AC3.1: archive-run refuses a console whose can\'t-tell filings never ran, naming the default-selection console-filings.js re-run', async () => {
   const { root, runDir } = runDirFixture('clean');
   plannedFilingConsole(runDir);
   const result = await runHook(['archive-run', '--run', runDir], { cwd: root });
-  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; re-run the planned filing\(s\): console-filings\.js --run ".*" --existing <issues\.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa', then file each printed `file` entry and log it as '\{item\} filed as #\{n\} \(work-fingerprint \{fp\}\)', hand-log any `logFailures` item as '\{item\} already filed as #\{n\} \(work-fingerprint \{fp\}\)' \(the CLI logs each `deduped` entry itself\), via log-decision\.js `--run` that console's dir, per wrap-up\/review-console\.md's Can't-tell filings; review them, then run console-residue\.js --ack --run .*\) — unresolved: tiebreak:aaaaaaaaaaaa \(filing-pending\)\n$/);
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; re-run the planned filing\(s\): console-filings\.js --run ".*" --existing <issues\.json> --out-dir <dir> --digest-comments <comments\.json>, then file each printed `file` entry and log it as '\{item\} filed as #\{n\} \(work-fingerprint \{fp\}\)', hand-log any `logFailures` item as '\{item\} already filed as #\{n\} \(work-fingerprint \{fp\}\)' \(the CLI logs each `deduped` entry itself; a `drop` item's re-run logs its digested line instead\), via log-decision\.js `--run` that console's dir, per wrap-up\/review-console\.md's Can't-tell filings; review them, then run console-residue\.js --ack --run .*\) — unresolved: tiebreak:aaaaaaaaaaaa \(filing-pending\)\n$/);
   assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('archive-run refuses a console whose can\'t-tell digest entries never ran, naming the digest re-run (#4679)', async () => {
+  const { root, runDir } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' }],
+    digests: [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }],
+  }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
+  const result = await runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; re-run the planned digest entries: console-filings\.js --run ".*" --existing <issues\.json> --out-dir <dir> --digest-comments <comments\.json>, then post each printed digest line .*; review them, then run console-residue\.js --ack --run .*\) — unresolved: tiebreak:bbbbbbbbbbbb \(digest-pending\)\n$/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('archive-run names the one re-run once for a console holding both a pending filing and a pending digest entry (#4679)', async () => {
+  const { root, runDir } = runDirFixture('clean');
+  plannedFilingConsole(runDir);
+  const cj = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
+  cj.items.push({ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' });
+  cj.digests = [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }];
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify(cj));
+  const result = await runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(2 unresolved item\(s\)/);
+  assert.strictEqual(result.stdout.split('console-filings.js --run').length, 2, `the command prints once: ${result.stdout}`);
+  assert.match(result.stdout, /the same re-run also settles the planned digest entries/);
 });
 
 test('AC4.1: archive-run archives once the planned filing\'s filed line is logged', async () => {

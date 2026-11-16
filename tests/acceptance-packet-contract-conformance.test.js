@@ -101,6 +101,7 @@ test('the contract carries its headings in the specified order', () => {
     '## Sections',
     '## Canonical copy and lookup',
     '## Facts and claims',
+    '## Decision facts',
     '## Validation policy',
     '## The expected check set',
     '## Pipeline',
@@ -917,7 +918,7 @@ test('the old brief section map has its rows', () => {
   assert.match(target.get('The ask'), /What changed/);
   assert.match(target.get('What shipped'), /What changed/);
   assert.match(target.get('Confirmed'), /Test guide and Tried to break/);
-  assert.match(target.get('Observation plan'), /Test guide \(rendered as the `### Observation plan` appendix `\/claude-tweaks:demo` walks\)/);
+  assert.match(target.get('Observation plan'), /Test guide \(rendered as the `### Observation plan` appendix `\/claude-tweaks:accept` walks\)/);
   assert.match(target.get('The Try it block'), /Test guide/);
 });
 

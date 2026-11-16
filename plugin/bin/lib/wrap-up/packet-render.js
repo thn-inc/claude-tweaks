@@ -148,6 +148,11 @@ const NO_KEPT_FLAGS = 'not applicable: no kept risk flags';
 const FLAGS_NOT_READ = 'risk flags not read: the --flags input did not read, so kept flags are unknown';
 // A pass carries a reason only when it needs one: a verify run adjudicated to a pass.
 const rowLine = (fact) => `- ${idSpan(fact.id)} — ${fact.status === 'passed' && !fact.reason?.trim() ? 'passed' : statusWithReason(fact)}`;
+// A control-mode decision fact carries what the person can do about it (#4620); one without the field renders as before.
+const decideSuffix = (fact) => {
+  const text = typeof fact.suggestedResolution === 'string' ? screenedInline(fact.suggestedResolution, WITHHELD_TEXT) : '';
+  return text === '' ? '' : ` — decide: ${text}`;
+};
 const factText = (fact) => screenedInline(fact.text ?? '', WITHHELD_TEXT) || idSpan(fact.id);
 
 // Decision Q3's row placement: every check/story fact lands in exactly one place.
@@ -367,10 +372,14 @@ const SECTION_BODIES = Object.freeze({
   ),
   'risk-proofs': riskProofsBody,
   // No decisions omits the section, heading included.
-  decisions: ({ ofKind }) => ofKind('decision').map((fact) => item(`- ${factText(fact)}`)),
-  deploy: ({ deploy }) => [note(
-    screenedInline(deploy?.text ?? '', WITHHELD_TEXT) || `target: ${screenedInline(deploy?.target ?? 'local', WITHHELD_TEXT)}`,
-  )],
+  decisions: ({ ofKind }) => ofKind('decision').map((fact) => item(`- ${factText(fact)}${decideSuffix(fact)}`)),
+  // The bare `ref: {sha}` line is what accept-entry.js's refreshPacket reads as the stored
+  // ref (REF_LINE_RE), so it carries no list marker or code span. The blank line above it
+  // makes it its own paragraph; refreshPacket writes the same layout.
+  deploy: ({ deploy }) => [
+    note(screenedInline(deploy?.text ?? '', WITHHELD_TEXT) || `target: ${screenedInline(deploy?.target ?? 'local', WITHHELD_TEXT)}`),
+    ...(typeof deploy?.ref === 'string' && deploy.ref !== '' ? [note(''), note(`ref: ${screenedInline(deploy.ref, WITHHELD_TEXT)}`)] : []),
+  ],
 });
 
 const droppedLine = (n) => (n === 1
@@ -388,7 +397,7 @@ function screenedLines(screened) {
   return [`${screened.length} ${noun} omitted for credential-shaped content: ${entries}`];
 }
 
-// `_shared/observation-plan.md`'s grammar has to survive the trip to `/claude-tweaks:demo`,
+// `_shared/observation-plan.md`'s grammar has to survive the trip to `/claude-tweaks:accept`,
 // which reads the comment's raw text: a list marker stays a marker, a whole backtick
 // span stays a span, and a sub-bullet stays under its parent. Whatever follows the
 // marker gets inline()'s escapes, so `- ## Couldn't test` forges nothing.
@@ -564,7 +573,7 @@ function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
 
   const bottom = [];
   if (typeof poster === 'string' && poster.trim() !== '') {
-    bottom.push('', '---', `_Posted by ${inline(poster)}. Resolve with \`/claude-tweaks:demo\`._`);
+    bottom.push('', '---', `_Posted by ${inline(poster)}. Resolve with \`/claude-tweaks:accept\`._`);
   }
 
   const { doc, omitted: truncated } = truncate({ top, sections, bottom });

@@ -90,6 +90,9 @@ function isTopLevel(ev) {
   return n !== null && (ev.source === 'user' ? (n === 'flow' || PHASES.includes(n)) : !(n in NESTED_PARENT));
 }
 
+// The span rule here decides which step each decision line, event and question
+// belongs to in step-yield.json; the dispatch scoreboard's per-step numbers
+// depend on it.
 // { events, manifest?, runState?, now? } -> { phases, totals }, plus `ciGate` (and
 // totals.ciWallMinutes) when a ci-gate event exists (#5160)
 function derivePhases({ events, manifest = null, runState = null, now = new Date() } = {}) {
@@ -203,7 +206,7 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
     const list = spans.get(name) || [];
     if (!list.length) {
       const unattributedStart = name === 'polish' && wrapUpStart !== null ? wrapUpStart : null;
-      return { phase: name, start: iso(unattributedStart), end: iso(unattributedStart), minutes: 0, ownMinutes: 0, source: 'unattributed', verify: [] };
+      return { phase: name, start: iso(unattributedStart), end: iso(unattributedStart), minutes: 0, ownMinutes: 0, source: 'unattributed', verify: [], spans: [] };
     }
     const start = Math.min(...list.map((s) => s.start));
     const end = Math.max(...list.map((s) => s.end));
@@ -279,7 +282,12 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
     }
   }
 
-  const phases = rows.map(({ _list, ...r }) => r);
+  // `spans`: each occurrence of the phase ({ start, end } ISO, start order). start/end
+  // above are first-start..last-end, which swallows a step that ran between two
+  // occurrences; phaseAt places by these.
+  const phases = rows.map(({ _list, ...r }) => (_list
+    ? { ...r, spans: _list.slice().sort((a, b) => a.start - b.start).map((s) => ({ start: iso(s.start), end: iso(s.end) })) }
+    : r));
   const totals = {
     // Wall-clock minutes covered by any phase — a union across every row's
     // spans (calls included), never a sum of ownMinutes, so it can never
@@ -321,33 +329,73 @@ function latestCiGatePerPr(ciGate) {
 
 const ZERO_TOKENS = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 });
 
+// (phases, t) -> the name of the phase whose single occurrence span ([start, end)) holds
+// the epoch-ms instant t, innermost first (ties to the later start), skipping
+// `source: 'unattributed'` rows and unparseable bounds; null when no span holds t. A row
+// carries its occurrences in `spans`; a row without the key (a timing.json written before
+// it existed) falls back to its start/end. The one rule joinTokens buckets usage rows by
+// and step-yield.js places decision lines, events and questions by.
+function phaseAt(phases, t) {
+  let best = null;
+  for (const p of Array.isArray(phases) ? phases : []) {
+    if (p.source === 'unattributed') continue;
+    const spans = Array.isArray(p.spans) ? p.spans : [p];
+    for (const s of spans) {
+      const start = ms(s.start);
+      const end = ms(s.end);
+      if (start === null || end === null || !(t >= start && t < end)) continue;
+      if (!best || (end - start) < (best.end - best.start) || ((end - start) === (best.end - best.start) && start > best.start)) best = { phase: p.phase, start, end };
+    }
+  }
+  return best ? best.phase : null;
+}
+
 // (phases, usageRows) -> { phases, unattributed, totals } (#1929). Each row
 // joins the innermost phase whose [start, end) contains its ts — the same
 // rule verify events use — so a container's tokens are its exclusive-gap
 // tokens. Rows outside every phase land in `unattributed`. Token fields
 // come from assistant rows, round-trips/procedure bytes from user rows;
 // the reader keeps the groups exclusive per row, so sums never double.
-function joinTokens(phases, usageRows) {
+// Every bucket also carries procedureFiles ({ [skills/… or context/… key]:
+// count }, keys ascending, #4359): the rows' own counts plus each
+// dispatchFileReads entry ({ ts, procedureFiles }, one per subagent row that
+// read a skill file or a composed bundle), which joins the phase containing its
+// ts by the same rule and adds to procedureFiles only — never to rows, tokens
+// or round trips. An entry whose ts does not parse is dropped; in production
+// none arrives, since readDispatches books an untimed row to the dispatch's
+// startTs, which is always parseable.
+//
+// `subagents` is agents, not calls (#5597): the user rows' `agentCalls` (Agent
+// and Task results; a row without the field falls back to its `dispatch`
+// class count) plus one per `workflowAgentStarts` timestamp (ISO strings, one
+// per workflow agent with a timestamped row) in the bucket whose span holds it.
+// The `dispatch` turn class still counts calls, Workflow included.
+function joinTokens(phases, usageRows, workflowAgentStarts = [], { dispatchFileReads = [] } = {}) {
   const rows = Array.isArray(usageRows) ? usageRows : [];
+  const fileReads = Array.isArray(dispatchFileReads) ? dispatchFileReads : [];
   const phaseList = Array.isArray(phases) ? phases : [];
-  const spans = phaseList.map((p) => ({
-    phase: p.phase, start: ms(p.start), end: ms(p.end), source: p.source,
-  }));
+  const spans = phaseList.map((p) => ({ phase: p.phase }));
   const acc = new Map();
   // `samples` (one contextTokens per turn start) is internal: finalize()
   // folds it into `context` and removes it before a bucket leaves joinTokens.
   const bucket = () => ({
-    tokens: ZERO_TOKENS(), procedureBytes: 0, toolRoundTrips: 0, rows: 0,
+    tokens: ZERO_TOKENS(), procedureBytes: 0, procedureFiles: {}, toolRoundTrips: 0, rows: 0,
     turnClasses: Object.fromEntries(TURN_CLASSES.map((c) => [c, 0])), modelMix: {}, samples: [],
+    agentCalls: 0, workflowAgents: 0,
   });
+  const addFiles = (b, files) => {
+    for (const [k, n] of Object.entries(files || {})) b.procedureFiles[k] = (b.procedureFiles[k] || 0) + (Number(n) || 0);
+  };
   const add = (b, r) => {
     b.tokens.input += Number(r.inputTokens) || 0;
     b.tokens.output += Number(r.outputTokens) || 0;
     b.tokens.cacheRead += Number(r.cacheRead) || 0;
     b.tokens.cacheCreate += Number(r.cacheCreate) || 0;
     b.procedureBytes += Number(r.procedureBytes) || 0;
+    addFiles(b, r.procedureFiles);
     if (r.toolRoundTrip) b.toolRoundTrips += 1;
     b.rows += 1;
+    b.agentCalls += Number.isFinite(r.agentCalls) ? r.agentCalls : (Number(r.turnClasses && r.turnClasses.dispatch) || 0);
     for (const [cls, n] of Object.entries(r.turnClasses || {})) b.turnClasses[Object.hasOwn(b.turnClasses, cls) ? cls : 'other'] += Number(n) || 0;
     if (r.turnStart) {
       b.samples.push(Number(r.contextTokens) || 0);
@@ -361,33 +409,42 @@ function joinTokens(phases, usageRows) {
     const sorted = b.samples.slice().sort((x, y) => x - y);
     const calls = TURN_CLASSES.reduce((sum, c) => sum + b.turnClasses[c], 0);
     const ceremony = CEREMONY_CLASSES.reduce((sum, c) => sum + b.turnClasses[c], 0);
-    const { samples, ...rest } = b;
+    const { samples, agentCalls, workflowAgents, ...rest } = b;
     return {
       ...rest,
+      procedureFiles: Object.fromEntries(Object.keys(b.procedureFiles).sort().map((k) => [k, b.procedureFiles[k]])),
       context: { turns: sorted.length, p50: percentile(sorted, 0.5), p90: percentile(sorted, 0.9) },
-      subagents: b.turnClasses.dispatch,
+      subagents: agentCalls + workflowAgents,
       ceremonyShare: calls ? Math.round((ceremony / calls) * 1000) / 1000 : null,
     };
   };
   for (const s of spans) acc.set(s.phase, bucket());
   const unattributed = bucket();
+  // The innermost [start, end) span holding t, as the bucket it feeds (else unattributed).
+  const bucketAt = (t) => {
+    const name = phaseAt(phaseList, t);
+    return name === null ? unattributed : acc.get(name);
+  };
   for (const r of rows) {
     const t = ms(r && r.ts);
     if (t === null) continue;
-    let best = null;
-    for (const s of spans) {
-      if (s.start === null || s.end === null || s.source === 'unattributed') continue;
-      if (!(t >= s.start && t < s.end)) continue;
-      if (!best || (s.end - s.start) < (best.end - best.start) || ((s.end - s.start) === (best.end - best.start) && s.start > best.start)) best = s;
-    }
-    add(best ? acc.get(best.phase) : unattributed, r);
+    add(bucketAt(t), r);
   }
+  const totalsAcc = bucket();
+  for (const ts of Array.isArray(workflowAgentStarts) ? workflowAgentStarts : []) {
+    const t = ms(ts);
+    if (t === null) continue;
+    bucketAt(t).workflowAgents += 1;
+    totalsAcc.workflowAgents += 1;
+  }
+  const timedReads = fileReads.filter((e) => ms(e && e.ts) !== null);
+  for (const e of timedReads) addFiles(bucketAt(ms(e.ts)), e.procedureFiles);
   const outPhases = phaseList.map((p) => {
     const { rows: _rows, ...b } = finalize(acc.get(p.phase));
     return { ...p, ...b };
   });
-  const totalsAcc = bucket();
   for (const r of rows) if (ms(r && r.ts) !== null) add(totalsAcc, r);
+  for (const e of timedReads) addFiles(totalsAcc, e.procedureFiles);
   const { rows: _totalRows, ...totals } = finalize(totalsAcc);
   return { phases: outPhases, unattributed: finalize(unattributed), totals };
 }
@@ -400,7 +457,8 @@ const GUARD_TYPES = { 'gate-denial': 'gateDenial', 'wd-ambiguous': 'wdAmbiguous'
 function countGuardEvents(events) {
   const out = { gateDenial: 0, wdAmbiguous: 0, wdDeny: 0 };
   for (const e of Array.isArray(events) ? events : []) {
-    const key = e && GUARD_TYPES[e.type];
+    // An own lookup: an event type of `constructor` or `toString` must not read an inherited value.
+    const key = e && Object.hasOwn(GUARD_TYPES, e.type) ? GUARD_TYPES[e.type] : null;
     if (key) out[key] += 1;
   }
   return out;
@@ -491,7 +549,7 @@ function aggregateDispatches(items) {
 }
 
 module.exports = {
-  derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents,
+  derivePhases, PHASES, NESTED_PARENT, joinTokens, phaseAt, countGuardEvents,
   unionMinutes, resolveTier, TIERS, ROLE_PATTERNS, roleOf, aggregateDispatches,
   latestCiGatePerPr,
 };

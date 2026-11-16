@@ -15,7 +15,11 @@ const {
   SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
 } = require('./sdd-ruling');
 const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
-const { planFilings } = require('./finding-filing');
+const { planFilings, planDigestsBesideFilings, isDropRecommended } = require('./finding-filing');
+const { UNRESOLVED_RESOLUTIONS } = require('./residue');
+const { decisionFactFor, upstreamDecisionFact } = require('./decision-facts');
+const { bookkeepingPermissions } = require('../issues/autonomy');
+const { UPSTREAM_FILING_TARGET, upstreamFilingRoute, parseStagedUpstream } = require('../issues/upstream-ownership');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
@@ -511,7 +515,8 @@ function parseTiebreakLine(line) {
   return null;
 }
 
-// An agent that could not tell is not licensed to drop: only an explicit `drop` recommendation drops.
+// The human-present Approve-all default: only an explicit `drop` recommendation drops, every other
+// recommendation files (the unattended resolveAll routes by recommendation too, but digests rather than drops).
 function approveAllDefault(recommendation) {
   return recommendation === 'drop' ? 'dropped' : 'filed';
 }
@@ -884,7 +889,8 @@ function coordinationItems(snapshot, stagedIds) {
 // grants or patch checks; engine-state.json is read but no engine item is built): staged
 // review-* files, STAGED coordination lines, and can't-tell verdicts, each at its Approve-all
 // default, plus the review-findings.json findings they were read with. resolveAll builds the same
-// items but overrides every can't-tell item to `filed` (the unattended rule).
+// items but routes every can't-tell item by its recommendation (the unattended rule: `drop` digests,
+// anything else files a verification task).
 function findingItems({ runDir, deps }) {
   const snapshot = { ...readRunFiles({ runDir, deps }), patchChecks: {} };
   const stagedIds = new Set(snapshot.staged.map((s) => s.name));
@@ -954,10 +960,15 @@ function renderStoredTable(consoleJson) {
   });
 }
 
-// resolveAll is always unattended (console-auto): an agent that could not tell is not licensed to
-// drop, so every can't-tell item files — whatever the tiebreak recommended (#3949). Approve-all
-// (findingItems) keeps the recommendation-driven default for a present human.
-const UNATTENDED_FILED_REASON = 'unattended: can\'t-tell finding filed as a backlog record — an agent that could not tell is not licensed to drop';
+// resolveAll is always unattended (console-auto): a can't-tell item routes by the tiebreak's
+// recommendation (#4679). `drop` digests (a line in the materiality digest, nothing filed); every other
+// recommendation (`file`, or none) files a verification task — an item with no recommendation
+// is never digested. Approve-all (findingItems) keeps its own
+// recommendation-driven default (approveAllDefault) for a present human, and files `needs:definition` records.
+const UNATTENDED_FILED_REASON = 'unattended: can\'t-tell finding filed as a verification task (needs-verification)';
+// A `drop` item whose fingerprint another item's filing already covers: it rides on that filing, nothing digested.
+const UNATTENDED_SHADOWED_DROP_REASON = 'unattended: can\'t-tell finding the tiebreak recommended dropping — its fingerprint is covered by another item\'s verification-task filing in this batch, so nothing is digested';
+const UNATTENDED_DIGESTED_REASON = 'unattended: can\'t-tell finding the tiebreak recommended dropping — logged to the materiality digest (tiebreak-cant-tell), nothing filed';
 
 // A multi-spec per-spec run dir is {pipelines}/{parent-run-id}/spec-{N}: name the parent run too.
 function runIdOf(runDir) {
@@ -965,18 +976,85 @@ function runIdOf(runDir) {
   return /^spec-\d+$/.test(base) ? `${path.basename(path.dirname(runDir))}/${base}` : base;
 }
 
-function resolveAll({ runDir, policy, deps }) {
+// Control mode (#4620): an item a human must decide is carried into the acceptance packet as a
+// decision fact instead of being left unresolved. refused (no Defer-reason) is a gate rejection the
+// packet carries too; stale patches and filed can't-tell items are not (re-derived / already filed).
+const CARRIED_RESOLUTION = 'carried';
+const CARRY_FROM = Object.freeze([...UNRESOLVED_RESOLUTIONS, 'refused']);
+
+// Control mode (#4621): a wrap-up upstream-feedback item the stance files is filed only into a repo this
+// project owns; any other target is held and carried to the packet as a decision fact. Hand-off drafts
+// (`upstream-draft-*`) are `pending` and keep the carry above. deps.upstreamOwnership() is read lazily, once,
+// and only when such an item exists; absent, throwing or empty it leaves every target owner-unresolved.
+const UPSTREAM_OWNERSHIP_NONE = Object.freeze({ ownerContext: null, ownedOwners: Object.freeze([]) });
+
+function routeUpstreamItems(items, { snapshot, deps, runDir, facts }) {
+  // `unattended` is the ceiling resolveAll runs at; ownedUpstreamFiling comes from controlMode alone, so any
+  // ceiling would give the same permission here.
+  const permissions = bookkeepingPermissions('unattended', { controlMode: true });
+  const textByName = new Map(snapshot.staged.map((s) => [s.name, s.text]));
+  let ownership = null;
+  const readOwnership = () => {
+    if (ownership !== null) return ownership;
+    try {
+      ownership = (typeof deps.upstreamOwnership === 'function' && deps.upstreamOwnership()) || UPSTREAM_OWNERSHIP_NONE;
+    } catch {
+      ownership = UPSTREAM_OWNERSHIP_NONE;
+    }
+    return ownership;
+  };
+  return items.map((it) => {
+    if (it.section !== SECTIONS.UPSTREAM || it.resolution !== 'filed' || !it.id.startsWith('wrap-up-upstream-')) return it;
+    const { ownerContext, ownedOwners } = readOwnership();
+    // An unreadable file has no text, which parseStagedUpstream reads as '' — no target line, so it holds as external.
+    const staged = parseStagedUpstream(textByName.get(it.id));
+    const verdict = upstreamFilingRoute({ permissions, targetRepo: staged.targetRepo, ownerContext, ownedOwners, filingTarget: UPSTREAM_FILING_TARGET });
+    if (verdict.route === 'file') return { ...it, reason: `control mode: owned target ${verdict.targetRepo} — filed with no prompt` };
+    // Only `file` files: any other verdict holds (reason `external` when it names none), so an unexpected one fails closed.
+    const reason = verdict.reason || 'external';
+    const fact = upstreamDecisionFact({ id: it.id, targetRepo: staged.targetRepo, title: staged.title, body: staged.body, reason, runDir, staged: true });
+    facts.push(fact);
+    return { ...it, resolution: CARRIED_RESOLUTION, carriedFrom: 'filed', reason: `carried to the acceptance packet as ${fact.id} — held: ${reason}` };
+  });
+}
+
+function resolveAll({ runDir, policy, deps, controlMode }) {
   if (policy !== 'console-auto') throw new RangeError(`unsupported policy: ${policy} (expected console-auto)`);
   const snapshot = readSnapshot({ runDir, deps });
   const stagedIds = new Set(snapshot.staged.map((s) => s.name));
-  const items = [...stagedItems(snapshot), ...engineItems(snapshot, stagedIds), ...coordinationItems(snapshot, stagedIds)]
-    .map((it) => (it.tiebreak ? { ...it, resolution: 'filed', reason: UNATTENDED_FILED_REASON } : it));
+  let items = [...stagedItems(snapshot), ...engineItems(snapshot, stagedIds), ...coordinationItems(snapshot, stagedIds)]
+    .map((it) => {
+      if (!it.tiebreak) return it;
+      return isDropRecommended(it.tiebreak)
+        ? { ...it, resolution: 'digested', reason: UNATTENDED_DIGESTED_REASON }
+        : { ...it, resolution: 'filed', reason: UNATTENDED_FILED_REASON };
+    });
+  // Control mode (#4620) carries only CARRY_FROM items; a can't-tell item is already `filed` or `digested`
+  // above (#4679), so the carry and the digest routing below never touch the same item.
+  const decisionFacts = [];
+  if (controlMode === true) {
+    // Before the carry below, so a held upstream item (now `carried`) is not carried twice.
+    items = routeUpstreamItems(items, { snapshot, deps, runDir, facts: decisionFacts });
+    items = items.map((it) => {
+      if (!CARRY_FROM.includes(it.resolution)) return it;
+      const fact = decisionFactFor(it, { runDir, staged: stagedIds.has(it.id) });
+      decisionFacts.push(fact);
+      return { ...it, resolution: CARRIED_RESOLUTION, carriedFrom: it.resolution, reason: `carried to the acceptance packet as ${fact.id} — ${it.reason}` };
+    });
+  }
   const sections = { cleanup: { ...SECTION_STANCES[SECTIONS.CLEANUP] } };
   const merge = mergeResolution(snapshot, deps);
-  const filings = planFilings({ items, findings: snapshot.findings, runId: runIdOf(runDir) });
-  const result = { ceiling: 'unattended', items, sections, merge, droppedByTiebreak: droppedByTiebreak(snapshot.decisions), filings, snapshot };
+  const runId = runIdOf(runDir);
+  const filings = planFilings({ items, findings: snapshot.findings, runId, unattended: true });
+  // A finding filed and digested in one batch (two items sharing a fingerprint, `file` and `drop`): the record
+  // wins, as an existing record wins over a digest line — the digested twin resolves `filed` and plans no digest.
+  const { digests, shadowed } = planDigestsBesideFilings({ items, findings: snapshot.findings, runId, filings });
+  if (shadowed.size > 0) {
+    items = items.map((it) => (shadowed.has(it.id) ? { ...it, resolution: 'filed', reason: UNATTENDED_SHADOWED_DROP_REASON } : it));
+  }
+  const result = { ceiling: 'unattended', items, sections, merge, droppedByTiebreak: droppedByTiebreak(snapshot.decisions), filings, digests, snapshot, decisionFacts };
   result.table = renderTable(result);
   return result;
 }
 
-module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { CARRIED_RESOLUTION, CARRY_FROM, UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
