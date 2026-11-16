@@ -154,7 +154,7 @@ function stripQuoted(text) {
 }
 
 function keyword(word) {
-  const re = new RegExp(`(?<![\\w./-])${word}(?![\\w./-])`);
+  const re = new RegExp(`(?<![\\w./-])${word}(?![\\w./-])`, 'i');
   return (text) => re.test(stripSingle(text));
 }
 
@@ -184,8 +184,45 @@ function shellWords(text) {
 
 // The guard refuses a shell word whose whole value, quoted or bare, is `word`;
 // a word that merely contains it (`"task complete"`, a `node -e` script) passes.
+// Any letter case: `echo COMPLETE`, `echo Eval` and `grep -c "Source" f` were
+// refused live (2026-11-16, #5590).
 function wholeWord(word) {
-  return (text) => shellWords(text).includes(word);
+  return (text) => shellWords(text).some((w) => w.toLowerCase() === word);
+}
+
+// A `git` command with an argument word whose basename (text after the last
+// `/`) is `git` or `git-…`, any case, after quote removal: `-- git`, `-- x/git-y`,
+// `--grep "git"` were refused live (2026-11-16, #5590); `gitx`, `x-git`,
+// `git.md`, `--grep=git` and `"git x"` ran.
+const GIT_BASENAME = /^git(?:-[\w-]*)?$/i;
+function gitWordArgument(text) {
+  const { bare } = views(text);
+  // A `$(` or `(` ends the argument list read here: a nested `git` is its own
+  // command word, not an argument of this one.
+  return commandSegments(bare, 'git').some(([s, e]) => {
+    const open = bare.slice(s, e).indexOf('(');
+    return shellWords(text.slice(s, open === -1 ? e : s + open)).slice(1).some((w) => GIT_BASENAME.test(w.slice(w.lastIndexOf('/') + 1)));
+  });
+}
+
+// A `'` or `"` inside an open `{` in a heredoc body (either delimiter quoting)
+// was refused live (2026-11-16, #5590). The brace depth counts over heredoc
+// chars only and resets at any other non-newline char, so it never spans a
+// non-heredoc gap.
+function heredocBraceQuote(text) {
+  const kinds = lexShell(text);
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (kinds[i] !== 'heredoc') {
+      if (text[i] !== '\n') depth = 0;
+      continue;
+    }
+    const c = text[i];
+    if (c === '{') depth++;
+    else if (c === '}') depth = Math.max(0, depth - 1);
+    else if ((c === "'" || c === '"') && depth > 0) return true;
+  }
+  return false;
 }
 
 const GH_JQ_PIPE = new RegExp(`${CMD}gh\\s[^\\n]*--jq[\\s=]+(?:'[^']*\\|[^']*'|"[^"]*\\|[^"]*")`);
@@ -569,15 +606,28 @@ const DETECTORS = [
     test: (t) => /(?:^|[\s;&|(])test\s+[^\s"'$-]\S*\s+!?==?\s/m.test(t),
   },
   {
+    id: 'git-word-argument',
+    row: '`git grep -c "git-discipline" -- f.md`; `git log --oneline -1 -- git`',
+    test: gitWordArgument,
+  },
+  {
+    id: 'heredoc-brace-quote',
+    row: "`node \"/lit/bin/node-eval-file.js\" a <<'EOF'`; `const r = { a: 'x' };`; `EOF`",
+    test: heredocBraceQuote,
+  },
+  {
     id: 'backslash-space',
     row: '`ls /Users/me/Code\\ Workspaces/repo/README.md`',
     test: (t) => /[^\s\\]\\ (?=\S)/.test(stripQuoted(t)),
   },
 ];
 
-// Refused-row Example cell -> why no static detector can decide it. Empty: every
-// refused row today has a detector.
-const UNDETECTED_ROWS = {};
+// Refused-row Example cell -> why no static detector can decide it. Every other
+// refused row has a detector.
+const UNDETECTED_ROWS = {
+  '`git -C "<main checkout>" rev-parse --short HEAD`; `cd "<main checkout>" && git log --oneline -1`':
+    'whether a -C operand or cd target is another checkout is known only at run time: the path text alone cannot tell the shared checkout from any other directory',
+};
 
 // The agent substitutes a literal plugin root for these placeholders before it
 // runs a command (_shared/worktree-setup.md, "Resolve plugin-supplied values to

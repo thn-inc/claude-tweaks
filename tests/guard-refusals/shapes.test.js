@@ -61,7 +61,7 @@ function unflaggedRows(detectors, undetected) {
 
 test('section 7 yields the refused and passes rows this suite sweeps', () => {
   const rows = section7Rows();
-  assert.ok(rows.filter((r) => r.verdict === 'refused').length >= 17, 'refused rows went missing from the parse');
+  assert.ok(rows.filter((r) => r.verdict === 'refused').length >= 20, 'refused rows went missing from the parse');
   assert.ok(rows.filter((r) => r.verdict === 'passes').length >= 18, 'passes rows went missing from the parse');
   for (const r of rows) assert.ok(candidates(r.example).length > 0, `no backtick span in Example: ${r.example}`);
 });
@@ -457,4 +457,36 @@ test('chained status on a long line: no $? is not flagged, a trailing chained $?
   assert.ok(!detectShapes('gh x --repo github.com/o/r; '.repeat(1000)).includes('gh-jq-pipe-chained'));
   assert.ok(detectShapes('git x; '.repeat(2000) + 'echo $?').includes('git-chained-status'));
   assert.ok(detectShapes('gh x --repo github.com/o/r; '.repeat(1000) + 'echo $?').includes('gh-jq-pipe-chained'));
+});
+
+test('#5590: complete, eval and source tokens are refused in any letter case', () => {
+  assert.deepStrictEqual(detectShapes('echo COMPLETE'), ['complete-token']);
+  assert.deepStrictEqual(detectShapes('echo Eval'), ['eval-token']);
+  assert.deepStrictEqual(detectShapes('grep -c "Source" README.md'), ['source-token']);
+  assert.deepStrictEqual(detectShapes('grep -c "[S]ource" README.md'), []);
+  assert.deepStrictEqual(detectShapes('echo Evaluate Completed Sourced'), []);
+});
+
+test('#5590: git-word-argument flags a git argument whose basename is git or git-*', () => {
+  for (const c of ['git grep -c "git-discipline" -- f.md', 'git log --oneline -1 -- git', 'git log -1 -- GIT', 'git log -1 -- x/git-y', 'git log -1 --grep "git"', '/usr/bin/git log -1 -- git']) {
+    assert.deepStrictEqual(detectShapes(c), ['git-word-argument'], c);
+  }
+});
+
+test('#5590: git-word-argument passes the live-run forms', () => {
+  for (const c of ['git grep -c "[g]it-discipline" -- f.md', 'git log -1 -- gitx', 'git log -1 -- x-git', 'git log -1 -- git.md', 'git log -1 -- plugin/skills/_shared/git-discipline.md', 'git log -1 --grep=git', 'git log -1 --grep "a git-b c"', 'git log -1 -- "git x"', 'ls -d git-nonexistent', 'grep -c "git-discipline" README.md', 'git rev-parse --short HEAD && git log --oneline -1', 'git status; ls git']) {
+    assert.deepStrictEqual(detectShapes(c), [], c);
+  }
+});
+
+test('#5590: heredoc-brace-quote flags a quote inside an open brace in a heredoc body', () => {
+  for (const c of ["node /lit/x.js a <<'EOF'\nconst r = { a: 'x' };\nEOF", 'cat <<EOF\n{a:"x"}\nEOF', "cat <<'EOF'\n{\n'x'\n}\nEOF", "cat <<'EOF'\n{ 'x'\nEOF"]) {
+    assert.deepStrictEqual(detectShapes(c), ['heredoc-brace-quote'], c);
+  }
+});
+
+test('#5590: heredoc-brace-quote passes braces without a quote, a quote outside braces, and non-heredoc text', () => {
+  for (const c of ["cat <<'EOF'\n{ a: 1 }\nEOF", "cat <<'EOF'\n{a:x} 'y'\nEOF", "cat <<'EOF'\n'y' {a:x}\nEOF", "cat <<'EOF'\n['x', 'y']\nEOF", 'node -e "const r = { a: \'x\' }"', 'echo "{a:\'x\'}"', "node /lit/x.js <<'EOF'\nconsole.log(JSON.stringify(process.argv.slice(1)));\nEOF"]) {
+    assert.deepStrictEqual(detectShapes(c), [], c);
+  }
 });

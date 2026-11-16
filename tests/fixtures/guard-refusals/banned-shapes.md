@@ -162,3 +162,17 @@ git -C /abs/wt grep -c X -- tools/*.js
 ```bash
 git merge-base --is-ancestor HEAD HEAD; echo exit=$?
 ```
+
+## git-word-argument
+
+```bash
+git log --oneline -3 -- git
+```
+
+## heredoc-brace-quote
+
+```bash
+node /abs/bin/run.js a <<'EOF'
+const cfg = { name: 'x' };
+EOF
+```
