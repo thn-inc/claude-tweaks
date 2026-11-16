@@ -351,3 +351,15 @@ test('tmpGitRepo: a second call starts no git process and carries the verify ide
   assert.deepStrictEqual(fs.readdirSync(trace), []);
   assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
 });
+
+test('AC3.1: learned-skills capture fixture(): a warm copy starts no git process', (t) => {
+  const { fixture } = require('./helpers/learned-skills-capture');
+  fixture(t);                       // warm-up
+  fixture(t, {}, { autocrlf: 'true' });
+  const trace = mk('ct-gt-trace-');
+  const [a, b] = withEnv('GIT_TRACE2_EVENT', trace, () => [fixture(t), fixture(t, {}, { autocrlf: 'true' })]);
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+  assert.notStrictEqual(a.repo, b.repo);
+  assert.ok(fs.statSync(a.runDir).isDirectory());
+  assert.strictEqual(a.mergeBase.length, 40);
+});
