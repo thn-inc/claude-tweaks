@@ -14,6 +14,7 @@ const {
 } = require('../../../plugin/bin/lib/issues/author-association');
 const { hasOriginLine } = require('../../../plugin/bin/lib/issues/provenance');
 const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 // Fake runners are lazy functions inspecting `args` only when called, and throw
 // on anything they do not handle so a wrong call fails loudly.
@@ -246,8 +247,7 @@ test('enrichRecordsFile names repo-unresolved on one warning line and leaves the
   assert.equal(fs.readFileSync(file, 'utf8'), before);
 });
 
-const cannotDenyWrite = process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0);
-test('enrichRecordsFile reports write-failed when the snapshot cannot be written back', { skip: cannotDenyWrite && 'file modes do not deny writes here' }, () => {
+test('enrichRecordsFile reports write-failed when the snapshot cannot be written back', chmodDenialSkip('root ignores a read-only file mode'), () => {
   const file = tempFile(JSON.stringify([originRecord(5)], null, 2));
   const before = fs.readFileSync(file, 'utf8');
   fs.chmodSync(file, 0o444);
