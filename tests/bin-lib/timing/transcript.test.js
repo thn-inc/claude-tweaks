@@ -748,6 +748,31 @@ test('AC6.2: an unreadable meta.json in a run directory gives an item with a met
   assert.equal(r.items[0].workflowRunId, 'r1');
 });
 
+test('Deliverable 2: a workflow agent with no meta file is still an item — run id from the directory, workflowPhase null, "meta not found" note', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  writeAgent(run, 'm1', '2026-11-16T10:00:00.000Z');
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].workflowRunId, 'r1');
+  assert.equal(r.items[0].workflowPhase, null);
+  assert.equal(r.items[0].notFound, 'meta not found');
+  assert.ok(r.items[0].tokens);
+});
+
+test('AC9: a workflow agent whose transcript has rows but no timestamped row is an item with its note and no start', async () => {
+  const dir = tmpSessionSubagents();
+  const run = path.join(dir, 'workflows', 'r1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'agent-u1.meta.json'), JSON.stringify({ description: 'lens 1', workflowPhase: 'review' }));
+  fs.writeFileSync(path.join(run, 'agent-u1.jsonl'), aLine('assistant', undefined, 'm-u1', 'claude-sonnet-5-5', [1, 1, 1, 1]) + '\n');
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].notFound, 'transcript has no usage rows');
+  assert.equal(r.items[0].startTs, null);
+  assert.equal(r.items[0].tokens, null);
+});
+
 test('AC6.3: a file in a run directory that is not an agent file gives no item and no exception', async () => {
   const dir = tmpSessionSubagents();
   const run = path.join(dir, 'workflows', 'r1');
