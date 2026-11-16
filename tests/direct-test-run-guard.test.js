@@ -20,17 +20,20 @@ const {
 const { parseRunnerOperands } = require('../tools/run-tests');
 
 const isDirectory = (p) => p === '/repo/tests' || p === '/repo/evals/tests';
+// Every `.js`/`.mjs` path that is no directory exists, so the runner's parser decides on shape alone.
+const isFile = (p) => /\.(?:c|m)?js$/.test(p) && !isDirectory(p);
 const opts = {
   cwd: '/repo',
   hasRunner: (d) => (d === '/repo' || d.startsWith('/repo/') ? '/repo' : null),
   isDirectory,
+  isFile,
   pathImpl: path.posix,
 };
 
 // Each deny row with the replacement line its reason names. `null` marks the rows whose replacement is
 // the fixed placeholder text (the files a `while read` loop, `xargs` or `find` runs cannot be known).
 const PLACEHOLDER = 'node tools/run-tests.js <the test files this loop runs>';
-const DIR_STACK_PLACEHOLDER = 'node <path to tools/run-tests.js> <the same flags and test files>';
+const REFUSED_PLACEHOLDER = 'node <path to tools/run-tests.js> <the test files, as *.test.js paths inside that checkout>';
 const DENY_ROWS = [
   ['node --test "$TEST_FILE"', 'node tools/run-tests.js "$TEST_FILE"'],
   ['for i in 1 2 3; do node --test tests/a.test.js; done', 'node tools/run-tests.js tests/a.test.js'],
@@ -38,7 +41,7 @@ const DENY_ROWS = [
   ["seq 3 | xargs -n1 sh -c 'node --test tests/a.test.js'", 'node tools/run-tests.js tests/a.test.js'],
   ['node --test tests/a.test.js tests/b.test.js', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
   ['node --test --test-reporter=tap tests/bin-lib/verify/*.test.js', 'node tools/run-tests.js --test-reporter=tap tests/bin-lib/verify/*.test.js'],
-  ['node --test', 'node tools/run-tests.js'],
+  ['node --test', 'node tools/run-tests.js --full'],
   ['node --test tests/', 'node tools/run-tests.js tests/'],
   ['node --test tests', 'node tools/run-tests.js tests'],
   ['node --test $(git diff --name-only main)', 'node tools/run-tests.js $(git diff --name-only main)'],
@@ -71,8 +74,9 @@ const DENY_ROWS = [
   ['for f in tests/a.test.js tests/b.test.js; do sh -c "node --test $f"; done', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
   ['for f in $(ls tests); do sh -c "node --test $f"; done', null],
   ['while read f; do sh -c "node --test $f"; done < list.txt', null],
-  ['for f in a b; do node --test tests/a.test.js --test-name-pattern "$f"; done', null],
-  ['while read f; do node --test tests/a.test.js --test-name-pattern "$f"; done < list.txt', null],
+  // A test flag naming the loop variable is left out: the files are still known.
+  ['for f in a b; do node --test tests/a.test.js --test-name-pattern "$f"; done', 'node tools/run-tests.js tests/a.test.js'],
+  ['while read f; do node --test tests/a.test.js --test-name-pattern "$f"; done < list.txt', 'node tools/run-tests.js tests/a.test.js'],
   // Node options the runner does not take are left out of the replacement (and named in the reason).
   ['node --env-file .env --test tests/a.test.js tests/b.test.js', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
   ['node --test --trace-warnings tests/a.test.js tests/b.test.js', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
@@ -86,9 +90,6 @@ const DENY_ROWS = [
   ['eval node --test tests/a.test.js tests/b.test.js', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
   // An unquoted substituted value holding blanks is word-split into that many files.
   ['F="tests/a.test.js tests/b.test.js"; node --test $F', 'node tools/run-tests.js tests/a.test.js tests/b.test.js'],
-  // The scanner does not follow pushd/popd, so the runner path cannot be named from the call's directory.
-  ['pushd tests && node --test a.test.js b.test.js', DIR_STACK_PLACEHOLDER],
-  ['popd; node --test tests/a.test.js tests/b.test.js', DIR_STACK_PLACEHOLDER],
   // xargs and parallel run their first non-option word, past the options that take a value.
   ['ls tests | xargs -n 1 node --test', null],
   ['ls tests | parallel -j 2 node --test {}', null],
@@ -122,19 +123,28 @@ const ALLOW_ROWS = [
   'for i in 1 2; do node -e "x" tests/a.test.js; done',
   'for i in 1 2; do node -p "x" tests/a.test.js; done',
   'F="tests/a.test.js tests/b.test.js"; node --test "$F"',
+  // After pushd or popd the working directory is unknown, so the run is allowed (a known miss for the second).
+  'pushd evals && node --test tests/',
+  'pushd tests && node --test a.test.js b.test.js',
+  'popd; node --test tests/a.test.js tests/b.test.js',
 ];
 
 const EXPANSION_LINE = 'The runner takes *.test.js files only and refuses anything else the expansion names, so make it name test files only.';
 
-function reasonFor(replacement, { expansion = false, options = null } = {}) {
+const RELATIVE_VALUE_LINE = 'The runner starts node from the checkout root, so a relative path inside a flag value is read from there.';
+
+// `note` is the line printed directly below a placeholder replacement (why no command can be pasted).
+function reasonFor(replacement, { expansion = false, options = null, note = null, relative = false } = {}) {
   return [
     `This repository's guard blocked a direct test run. ${SAFEGUARDS_TEXT}`,
     'Run the same files through the runner, which takes the same files and node test flags:',
     '',
     replacement,
+    ...(note ? [note] : []),
     '',
     ...(expansion ? [EXPANSION_LINE] : []),
     ...(options ? [`The runner does not take ${options}; if the tests need them, set NODE_OPTIONS.`] : []),
+    ...(relative ? [RELATIVE_VALUE_LINE] : []),
     'In a checkout older than this guard, write the files to a list and use: node tools/run-tests.js --files-from <list>',
     'A single test file outside a loop can still be run directly.',
   ].join('\n');
@@ -326,7 +336,7 @@ test('every general node option that takes a value word is read with its value',
 });
 
 test('AC9.1 AC9.2: every replacement line is allowed by the classifier and accepted by the runner\'s parser', () => {
-  const rows = DENY_ROWS.filter(([, replacement]) => replacement !== null && replacement !== DIR_STACK_PLACEHOLDER).map(([command]) => command);
+  const rows = DENY_ROWS.filter(([, replacement]) => replacement !== null).map(([command]) => command);
   rows.push('cd tests && node --test a.test.js b.test.js');
   for (const command of rows) {
     const { replacement } = classifyCommandOrThrow(command, opts);
@@ -340,7 +350,8 @@ test('AC9.1 AC9.2: every replacement line is allowed by the classifier and accep
     }
     const at = line.indexOf('tools/run-tests.js');
     assert.notEqual(at, -1, replacement);
-    const tokens = shellWords(expandAsShell(line.slice(at + 'tools/run-tests.js'.length)));
+    // `--full` is the runner's own flag (taken out before the operand parser runs).
+    const tokens = shellWords(expandAsShell(line.slice(at + 'tools/run-tests.js'.length))).filter((w) => w !== '--full');
     assert.doesNotThrow(
       () => parseRunnerOperands(tokens, { cwd, repoRoot: '/repo', isFile: (p) => !isDirectory(p), pathImpl: path.posix }),
       `${command} -> ${replacement}`,
@@ -351,12 +362,160 @@ test('AC9.1 AC9.2: every replacement line is allowed by the classifier and accep
 test('win32 paths', () => {
   const win = {
     cwd: 'C:/repo',
-    hasRunner: (d) => (d === 'C:/repo' ? 'C:\\repo' : null),
+    hasRunner: (d) => (/^C:[\\/]repo(?:[\\/]|$)/.test(d) ? 'C:\\repo' : null),
     isDirectory: () => false,
     pathImpl: path.win32,
   };
   assert.equal(classifyCommandOrThrow('node --test tests/a.test.js tests/b.test.js', win).decision, 'deny');
   assert.equal(classifyCommandOrThrow('"C:/nodejs/node.exe" --test tests/a.test.js', win).decision, 'allow');
+});
+
+// ---- fix wave (#5547 whole-branch review and the 14-day probe) ----
+
+// Checkouts holding the runner: /repo, /other and `/my repo`; /scratch holds none.
+const MULTI = {
+  ...opts,
+  hasRunner: (d) => ['/repo', '/other', '/my repo'].find((r) => d === r || d.startsWith(`${r}/`)) || null,
+};
+
+test('B1: a backtick or $( that is quoted, escaped or a flag value opens no substitution', () => {
+  for (const command of [
+    "node --test --test-name-pattern='uses `x' tests/a.test.js",
+    "node --test --test-name-pattern='$(foo' tests/a.test.js",
+    'node --test --test-name-pattern="\\$(foo" tests/a.test.js',
+    'node --test --test-name-pattern $(echo x y) tests/a.test.js',
+  ]) {
+    assert.deepEqual(classifyCommandOrThrow(command, opts), { decision: 'allow' }, command);
+  }
+  // A bare substitution still spans its words: here two files remain outside it.
+  assert.equal(classifyCommandOrThrow('node --test $(echo x y) tests/a.test.js', opts).decision, 'deny');
+});
+
+test('B2: every o or O in a shell option cluster takes one following word', () => {
+  assert.equal(classifyCommandOrThrow('bash -oc pipefail "node --test tests/a.test.js tests/b.test.js"', opts).replacement, 'node tools/run-tests.js tests/a.test.js tests/b.test.js');
+  assert.equal(classifyCommandOrThrow('bash -O extglob -c "node --test tests/a.test.js tests/b.test.js"', opts).replacement, 'node tools/run-tests.js tests/a.test.js tests/b.test.js');
+  const deps = fakeDeps({ '/tmp/loop.sh': 'node --test a.test.js\n' });
+  assert.equal(judgeOrThrow(bash('bash -O extglob /tmp/loop.sh', '/repo'), deps).decision, 'deny');
+});
+
+test('B3: a replacement the runner would refuse is printed as a placeholder with the runner\'s message', () => {
+  const refused = (message) => `The runner refuses the command as typed: ${message}.`;
+  const rows = [
+    ['node --test tests/x.test.js tests/', refused('tests/x.test.js cannot be combined with the directory root tests/')],
+    ['node --test tests/x.test.js tests/helpers/read-skill.js', refused('tests/helpers/read-skill.js is not a *.test.js file')],
+    ['node --test tests/a.test.mjs tests/b.test.mjs', refused('tests/a.test.mjs is not a *.test.js file')],
+    ['node --test "tests/*.test.js"', refused('tests/*.test.js holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand')],
+    ['node --test -- tests/a.test.js -x.test.js', refused('unknown option -x.test.js')],
+  ];
+  for (const [command, note] of rows) {
+    const verdict = classifyCommandOrThrow(command, opts);
+    assert.equal(verdict.replacement, REFUSED_PLACEHOLDER, command);
+    assert.equal(verdict.reason, reasonFor(REFUSED_PLACEHOLDER, { note }), command);
+  }
+  // An unquoted glob or an expansion is the shell's to expand, so it is left out of the check.
+  assert.equal(classifyCommandOrThrow('node --test tests/*.test.js', opts).replacement, 'node tools/run-tests.js tests/*.test.js');
+  // Without an isFile answer the check is skipped.
+  const { isFile: _, ...noIsFile } = opts;
+  assert.equal(classifyCommandOrThrow('node --test tests/x.test.js tests/', noIsFile).replacement, 'node tools/run-tests.js tests/x.test.js tests/');
+});
+
+test('B4: the operands decide the checkout', () => {
+  // All files in another checkout: that checkout's runner, quoted when its path holds a space.
+  assert.equal(
+    classifyCommandOrThrow('NODE_PATH="/repo/node_modules" node --test "/other/tests/a.test.js" "/other/tests/b.test.js"', MULTI).reason,
+    reasonFor('NODE_PATH="/repo/node_modules" node /other/tools/run-tests.js "/other/tests/a.test.js" "/other/tests/b.test.js"'),
+  );
+  assert.equal(
+    classifyCommandOrThrow('node --test "/my repo/tests/a.test.js" "/my repo/tests/b.test.js"', MULTI).replacement,
+    'node "/my repo/tools/run-tests.js" "/my repo/tests/a.test.js" "/my repo/tests/b.test.js"',
+  );
+  // No runner above any file: outside the runner's reach, even from inside a checkout.
+  assert.deepEqual(classifyCommandOrThrow('node --test /scratch/tests/a.test.js /scratch/tests/b.test.js', MULTI), { decision: 'allow' });
+  // Files spread over two checkouts, or over a checkout and none.
+  const many = "The files sit in more than one checkout; run each checkout's files through its own tools/run-tests.js.";
+  for (const command of ['node --test tests/a.test.js /other/tests/b.test.js', 'node --test tests/a.test.js /scratch/tests/b.test.js']) {
+    assert.equal(classifyCommandOrThrow(command, MULTI).reason, reasonFor(REFUSED_PLACEHOLDER, { note: many }), command);
+  }
+  // An expansion is placed by the working directory, as before.
+  assert.equal(classifyCommandOrThrow('node --test $(ls /other/tests)', MULTI).replacement, 'node tools/run-tests.js $(ls /other/tests)');
+});
+
+test('B5: the evals/ exemption needs every file under evals/', () => {
+  assert.equal(classifyCommandOrThrow('node --test evals/x.test.js tests/a.test.js tests/b.test.js', opts).decision, 'deny');
+  assert.equal(classifyCommandOrThrow('node --test evals/x.test.js evals/y.test.js', opts).decision, 'allow');
+});
+
+test('B6: a run with no file operand gets --full and keeps its test flags', () => {
+  assert.equal(classifyCommandOrThrow('node --test --test-reporter=tap', opts).replacement, 'node tools/run-tests.js --full --test-reporter=tap');
+  assert.equal(classifyCommandOrThrow('cd scripts && node --test --test-name-pattern x', opts).replacement, 'cd scripts && node ../tools/run-tests.js --full --test-name-pattern x');
+});
+
+test('B7: a relative path in a flag value is named when the replacement runs from elsewhere', () => {
+  assert.equal(
+    classifyCommandOrThrow('cd tests && node --test --test-reporter-destination=out.tap a.test.js b.test.js', opts).reason,
+    reasonFor('cd tests && node ../tools/run-tests.js --test-reporter-destination=out.tap a.test.js b.test.js', { relative: true }),
+  );
+  assert.equal(
+    classifyCommandOrThrow('node --test --test-reporter-destination out.tap /other/tests/a.test.js /other/tests/b.test.js', MULTI).reason,
+    reasonFor('node /other/tools/run-tests.js --test-reporter-destination out.tap /other/tests/a.test.js /other/tests/b.test.js', { relative: true }),
+  );
+  // An absolute value, stdout, or no change of directory needs no line.
+  for (const command of [
+    'cd tests && node --test --test-reporter-destination=/tmp/out.tap a.test.js b.test.js',
+    'cd tests && node --test --test-reporter-destination=stdout a.test.js b.test.js',
+    'node --test --test-reporter-destination=out.tap tests/a.test.js tests/b.test.js',
+  ]) {
+    assert.equal(classifyCommandOrThrow(command, opts).reason.includes(RELATIVE_VALUE_LINE), false, command);
+  }
+});
+
+test('B8: a cd prefix keeps a directory typed as an absolute path', () => {
+  assert.equal(classifyCommandOrThrow('cd /repo/tests && node --test a.test.js b.test.js', opts).replacement, 'cd /repo/tests && node ../tools/run-tests.js a.test.js b.test.js');
+  assert.equal(classifyCommandOrThrow('cd "/repo/tests" && node --test a.test.js b.test.js', opts).replacement, 'cd "/repo/tests" && node ../tools/run-tests.js a.test.js b.test.js');
+  // A relative one is recomputed from the call's directory.
+  assert.equal(classifyCommandOrThrow('cd tests && cd .. && cd tests && node --test a.test.js b.test.js', opts).replacement, 'cd tests && node ../tools/run-tests.js a.test.js b.test.js');
+});
+
+test('G1: a loop keyword inside a heredoc body opens no loop', () => {
+  // Shortened from the three probe commands; the body is kept by the scanner in each (its reader is not
+  // the segment's lead, or the heredoc follows a pipeline).
+  const bodies = [
+    "cp a.js /repo/s/mutb/tests/ && cat >> /repo/s/mutb/tests/q.test.js <<'EOF'\n  test('x', (t) => {\n    for (const f of FAULTS) {\n      t.diagnostic(f);\n    }\n  });\nEOF\ncd /repo/s/mutb && node --test --test-name-pattern=ZZPROBE tests/q.test.js 2>&1 | grep -E \"CARVE\"",
+    "sed -n 1,30p tests/x.test.js | grep -n \"require\" && python3 - <<'EOF'\npairs=[]\nfor old,new in pairs:\n    s=s.replace(old,new)\nEOF\nnode --test tests/x.test.js > out.txt 2>&1",
+    "sed -n 14,24p tests/run.test.js && cat >> tests/run.test.js <<'EOF'\nfor (const c of calls) {\n  check(c);\n}\nEOF\nnode --test --test-name-pattern=\"#5232\" tests/run.test.js > t1.txt 2>&1",
+  ];
+  for (const command of bodies) {
+    assert.deepEqual(classifyCommandOrThrow(command, opts), { decision: 'allow' }, command);
+    const looped = `${command}\ncd /repo && for f in tests/a.test.js tests/b.test.js; do node --test "$f"; done`;
+    assert.equal(classifyCommandOrThrow(looped, opts).replacement, 'node tools/run-tests.js tests/a.test.js tests/b.test.js', looped);
+  }
+  // A while header needs its do too.
+  assert.deepEqual(classifyCommandOrThrow("sed -n 1p x | grep y && python3 - <<'EOF'\nwhile True:\n    break\nEOF\nnode --test tests/a.test.js", opts), { decision: 'allow' });
+});
+
+test('G2: a substitution the scanner cut at a pipe is named, not pasted', () => {
+  const note = 'The command substitution could not be read whole; put the same substitution after the runner path.';
+  for (const command of [
+    'node --test $(ls tests/*.test.js | head -1)',
+    "node --test $(grep -rl 'plugin-structure' tests | grep '\\.test\\.js$') > out.txt",
+  ]) {
+    assert.equal(classifyCommandOrThrow(command, opts).reason, reasonFor(REFUSED_PLACEHOLDER, { note }), command);
+  }
+});
+
+test('G3: a looped run whose files are knowable gets them, each once', () => {
+  const rows = [
+    ['for f in delete-ledger-verb resolve-ledger-verb; do echo "== $f"; node --test tests/$f.test.js 2>&1 | grep -E "^# (tests|pass)"; done', 'node tools/run-tests.js tests/delete-ledger-verb.test.js tests/resolve-ledger-verb.test.js 2>&1'],
+    ['for s in 1 2 3; do node --test --test-randomize --test-random-seed=$s tests/hooks-js-flag-strict.test.js 2>&1 | grep -E "^ℹ (pass|fail)"; done', 'node tools/run-tests.js --test-randomize tests/hooks-js-flag-strict.test.js 2>&1'],
+    ['cd tests && for f in policy-schema declare-opt-out; do echo $f; node --test $f.test.js 2>&1 | grep x; done', 'cd tests && node ../tools/run-tests.js policy-schema.test.js declare-opt-out.test.js 2>&1'],
+    ['for i in 1 2; do node --test tests/a.test.js tests/a.test.js; done', 'node tools/run-tests.js tests/a.test.js'],
+    // A redirection naming the loop variable is left out with its operator.
+    ['for i in 1 2 3; do node --test tests/a.test.js tests/b.test.js > "out/f$i.txt" 2>&1; grep -c x "out/f$i.txt"; done', 'node tools/run-tests.js tests/a.test.js tests/b.test.js 2>&1'],
+  ];
+  for (const [command, replacement] of rows) assert.equal(classifyCommandOrThrow(command, opts).replacement, replacement, command);
+  // Files read from stdin or from an expanded word list stay unknown.
+  assert.equal(classifyCommandOrThrow('xargs node --test < list.txt', opts).replacement, PLACEHOLDER);
+  assert.equal(classifyCommandOrThrow('for f in $(grep -l x tests); do node --test tests/$f; done', opts).replacement, PLACEHOLDER);
 });
 
 test('hasDirectTestRun finds a single-file run and ignores quoted text', () => {
@@ -737,12 +896,13 @@ test('scanScript discriminates each condition', () => {
 
 test('AC10.1 AC10.2 AC10.3: the guard as a real process denies, allows and tolerates garbage', () => {
   const run = (input) => spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' });
-  const denied = run(JSON.stringify(bash('node --test tests/a.test.js tests/b.test.js')));
+  // Two files that exist: the replacement is checked against the real checkout before it is printed.
+  const denied = run(JSON.stringify(bash('node --test tests/direct-test-run-guard.test.js tests/run-tests-isolation.test.js')));
   assert.equal(denied.status, 0);
   const out = JSON.parse(denied.stdout);
   assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
   assert.equal(out.hookSpecificOutput.hookEventName, 'PreToolUse');
-  assert.ok(out.hookSpecificOutput.permissionDecisionReason.includes('node tools/run-tests.js tests/a.test.js tests/b.test.js'));
+  assert.ok(out.hookSpecificOutput.permissionDecisionReason.includes('\nnode tools/run-tests.js tests/direct-test-run-guard.test.js tests/run-tests-isolation.test.js\n'));
 
   const allowed = run(JSON.stringify(bash('node --test tests/a.test.js')));
   assert.equal(allowed.status, 0);

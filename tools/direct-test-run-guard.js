@@ -23,15 +23,21 @@ const { forEachCommandSegment } = require('../plugin/bin/lib/hooks/git-command')
 const SAFEGUARDS_TEXT = 'A direct node --test over several files, or in a loop, skips what tools/run-tests.js gives a run: git auto-maintenance off for fixture repos, a per-run TMPDIR removed on exit, the machine-wide suite slot, and bounded file concurrency.';
 const EXPANSION_LINE = 'The runner takes *.test.js files only and refuses anything else the expansion names, so make it name test files only.';
 const LOOP_FILES_PLACEHOLDER = '<the test files this loop runs>';
-// The scanner does not follow `pushd`/`popd`, so after one the run's directory, and the runner's path from
-// it, cannot be named.
-const DIR_STACK_PLACEHOLDER = 'node <path to tools/run-tests.js> <the same flags and test files>';
+// The line printed when no command can be pasted, with one of the notes below directly under it.
+const REFUSED_PLACEHOLDER = 'node <path to tools/run-tests.js> <the test files, as *.test.js paths inside that checkout>';
+const MANY_CHECKOUTS_LINE = "The files sit in more than one checkout; run each checkout's files through its own tools/run-tests.js.";
+const CUT_SUBSTITUTION_LINE = 'The command substitution could not be read whole; put the same substitution after the runner path.';
+const RELATIVE_VALUE_LINE = 'The runner starts node from the checkout root, so a relative path inside a flag value is read from there.';
+// The test flags whose value is a path.
+const PATH_VALUE_FLAGS = new Set(['--test-reporter-destination', '--test-coverage-include', '--test-coverage-exclude', '--test-global-setup']);
 
-// The runner's test flags that take a value word, read lazily: tools/run-tests.js pulls in child_process and
-// the suite-slot modules, which a Bash call with no node program never needs (the hook runs on every call).
+// tools/run-tests.js, read lazily: it pulls in child_process and the suite-slot modules, which a Bash call
+// with no node program never needs (the hook runs on every call).
+const runner = () => require('./run-tests');
 let testValueCache = null;
+// The runner's test flags that take a value word.
 function nodeTestValueSet() {
-  if (testValueCache === null) testValueCache = new Set(require('./run-tests').NODE_TEST_VALUE_FLAGS);
+  if (testValueCache === null) testValueCache = new Set(runner().NODE_TEST_VALUE_FLAGS);
   return testValueCache;
 }
 // General node options (not test flags) that take their value as the next word: every option `node --help`
@@ -98,12 +104,15 @@ const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const GLOB_RE = /[*?[{]/;
 const EXPANSION_RE = /[$`]/;
 const LOOP_VAR_RE = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$/;
+const VAR_REF_RE = /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g;
 // A redirection word: an operator alone (its target is the next word) or glued to its target (`>out`, `2>&1`).
 const REDIRECT_RE = /^(?:[0-9]*|&)[<>]/;
 const REDIRECT_OP_RE = /^(?:[0-9]*|&)(?:>>?|>\||<<?<?|<>|>&|<&)$/;
 // A shell's short-option cluster (`-c`, `-lc`, `-euo`, `+o`). One starting `-` and holding `c` makes the
-// shell run its first non-option word as a script; one ending in `o` takes the next word as an option name.
+// shell run its first non-option word as a script; each `o` or `O` in it takes one following word (an
+// option name).
 const SHELL_CLUSTER_RE = /^[-+][A-Za-z]+$/;
+const optionValueCount = (cluster) => (cluster.match(/[oO]/g) || []).length;
 
 const ALLOW = () => ({ decision: 'allow' });
 
@@ -155,15 +164,36 @@ function segmentView(t, q, P) {
     return at !== -1 && typeof kinds[i] === 'string' && kinds[i][at] === 'b';
   };
   const wordsOf = (i) => (splits(i) ? t[i].split(/\s+/).filter(Boolean) : [t[i]]);
+  // The word as typed with every quoted or escaped character masked (NUL), so only bare shell syntax shows.
+  const bareText = (i) => {
+    const r = raw[i];
+    if (typeof r !== 'string') return '';
+    const k = kinds[i];
+    if (typeof k !== 'string' || k.length !== r.length) return r;
+    let out = '';
+    for (let c = 0; c < r.length; c += 1) out += k[c] === 'b' ? r[c] : '\0';
+    return out;
+  };
+  const render = (i) => {
+    if (t[i] === raw[i]) return requote(raw[i], kinds[i]);
+    return splits(i) ? wordsOf(i).map((w) => quoteValue(w, null)).join(' ') : quoteValue(t[i], kinds[i]);
+  };
   return {
     t,
     bare,
     wordsOf,
-    name: (i) => (typeof t[i] === 'string' ? P.basename(t[i]) : ''),
-    render: (i) => {
-      if (t[i] === raw[i]) return requote(raw[i], kinds[i]);
-      return splits(i) ? wordsOf(i).map((w) => quoteValue(w, null)).join(' ') : quoteValue(t[i], kinds[i]);
+    bareText,
+    render,
+    // The words the shell makes of word `i`, each `{ text, value, bareGlob }`: its replacement text, its
+    // value, and whether the shell expands a glob character in it before the program sees it.
+    items: (i) => {
+      if (splits(i)) return wordsOf(i).map((w) => ({ text: quoteValue(w, null), value: w, bareGlob: GLOB_RE.test(w) }));
+      let bareGlob;
+      if (t[i] !== raw[i]) bareGlob = GLOB_RE.test(t[i]) && bareText(i).includes('$');
+      else bareGlob = GLOB_RE.test(bareText(i));
+      return [{ text: render(i), value: t[i], bareGlob }];
     },
+    name: (i) => (typeof t[i] === 'string' ? P.basename(t[i]) : ''),
     isRedirect: (i) => bare(i) && REDIRECT_RE.test(t[i]),
     isRedirectOp: (i) => bare(i) && REDIRECT_OP_RE.test(t[i]),
   };
@@ -227,8 +257,90 @@ function mentionsLoopVariable(word, loops) {
   return loops.some((l) => l.variables.some((v) => new RegExp(`\\$\\{?${v}(?![A-Za-z0-9_])`).test(word)));
 }
 
-// The command-substitution nesting after word `tok`: `$(` opens one level, `(` inside one opens another,
-// `)` closes one; a backtick opens or closes a backtick substitution.
+// The items (segmentView's `items` shape) a word naming one `for` loop's variable inside other literal
+// text (`tests/$f.test.js`) stands for, one per word of the loop's literal list, or null.
+function templateItems(word, loops) {
+  const names = new Set([...word.matchAll(VAR_REF_RE)].map((m) => m[1] || m[2]));
+  if (names.size !== 1 || EXPANSION_RE.test(word.replace(VAR_REF_RE, ''))) return null;
+  const [name] = names;
+  const loop = [...loops].reverse().find((l) => l.variables.includes(name));
+  if (!loop || loop.kind !== 'for' || !loop.words || loop.words.some((w) => EXPANSION_RE.test(w))) return null;
+  return loop.items.map((item) => {
+    const value = word.replace(VAR_REF_RE, () => item.value);
+    return { text: quoteValue(value, null), value, bareGlob: item.bareGlob };
+  });
+}
+
+// How a run inside loops reads in a replacement, or null when its files cannot be named (an `xargs`/`find`
+// lead, a loop variable over an expanded or unknown word list, any other word naming a loop variable):
+// `subst` maps an operand index to the items it stands for (a `for` variable over a literal word list,
+// alone or inside a path), and `drop` holds the test flags, with their value word, and the redirections,
+// with their operator, that name a loop variable (the runner runs each file once, so they are left out).
+function loopPlan(seg, run, loops, ledRepeat) {
+  if (ledRepeat) return null;
+  const { t } = seg;
+  const subst = new Map();
+  const drop = new Set();
+  for (const i of run.operands) {
+    const loop = loopFor(t[i], loops);
+    if (loop) {
+      if (!loop.words || loop.words.some((w) => EXPANSION_RE.test(w))) return null;
+      subst.set(i, loop.items);
+    } else if (mentionsLoopVariable(t[i], loops)) {
+      const items = templateItems(t[i], loops);
+      if (items === null) return null;
+      subst.set(i, items);
+    }
+  }
+  if (loops.some((l) => l.kind !== 'for') && run.operands.some((i) => !subst.has(i) && EXPANSION_RE.test(t[i]))) return null;
+  for (let i = 0; i < run.end; i += 1) {
+    if (subst.has(i) || !mentionsLoopVariable(t[i], loops)) continue;
+    const r = run.role.get(i);
+    if (r === 'testflag') {
+      drop.add(i);
+      if (run.role.get(i + 1) === 'testvalue') drop.add(i + 1);
+    } else if (r === 'testvalue' && run.role.get(i - 1) === 'testflag') {
+      drop.add(i - 1);
+      drop.add(i);
+    } else if (r === 'redirect') {
+      drop.add(i);
+      if (run.role.get(i - 1) === 'redirect' && seg.isRedirectOp(i - 1)) drop.add(i - 1);
+    } else {
+      return null;
+    }
+  }
+  return { subst, drop };
+}
+
+// Where a direct test run's files sit: null when the run is outside the runner's reach (no runner above its
+// working directory, every file under a checkout's evals/, or every literal file in no checkout), else
+// `{ root, target, many }`: the working directory's checkout, the checkout whose runner the replacement
+// names (the files' own when they all sit in one), and whether they are spread over more than one (a
+// checkout and no checkout included). A glob or expansion word is placed by the working directory, and a
+// run with no file by its working directory alone.
+function placeRun(words, effCwd, ctx) {
+  const P = ctx.pathImpl;
+  const root = ctx.hasRunner(effCwd);
+  if (!root) return null;
+  const cwdInEvals = isUnder(P.resolve(effCwd), P.join(root, 'evals'), P);
+  const places = words.map((w) => {
+    if (GLOB_RE.test(w) || EXPANSION_RE.test(w)) return { root, evals: cwdInEvals };
+    const abs = P.resolve(effCwd, w);
+    const r = ctx.hasRunner(ctx.isDirectory(abs) ? abs : P.dirname(abs));
+    return { root: r, evals: Boolean(r) && isUnder(abs, P.join(r, 'evals'), P) };
+  });
+  if (words.length === 0 ? cwdInEvals : places.every((p) => p.evals)) return null;
+  const roots = [...new Set(places.map((p) => p.root))];
+  if (roots.length === 1 && roots[0] === null) return null;
+  return { root, target: roots.length === 1 ? roots[0] : root, many: roots.length > 1 };
+}
+
+// Whether a flag value is a path read relative to the working directory.
+const isRelativePath = (v) => v !== '' && v !== 'stdout' && v !== 'stderr' && !/^(?:[\\/~$`]|[A-Za-z]:)/.test(v);
+
+// The command-substitution nesting after word `tok` (its bare characters, segmentView's bareText, so a
+// quoted or escaped one counts for nothing): `$(` opens one level, `(` inside one opens another, `)` closes
+// one; a backtick opens or closes a backtick substitution.
 function advanceSubstitution({ depth, tick }, tok) {
   for (let k = 0; k < tok.length; k += 1) {
     const c = tok[k];
@@ -246,7 +358,9 @@ function advanceSubstitution({ depth, tick }, tok) {
 // a `for` loop) a script that is the loop's variable over a word list naming a `.test.js` word. A node
 // command with inline code (`-e`, `-p`) runs no script, so it is a run only with `--test`. Roles: `test`
 // (the `--test` word), `dd` (`--`), `testflag`/`testvalue` (a test flag and its value word, kept),
-// `foreign`/`foreignvalue` (any other option and its value word, left out of the replacement), `operand`.
+// `foreign`/`foreignvalue` (any other option and its value word, left out of the replacement), `operand`,
+// `redirect` (a redirection and its target), `substitution`. `unbalanced`: a `$(` or backtick the words
+// open and never close (the scanner cut the substitution, at a `|` inside it).
 function readRun(seg, at, end, loops) {
   const { t } = seg;
   let optStart;
@@ -272,14 +386,18 @@ function readRun(seg, at, end, loops) {
     // The words a `$(...)` or backtick substitution spans after its first are its own command's words, never
     // node options or files: kept in the replacement as typed.
     const inside = substitution.depth > 0 || substitution.tick;
-    substitution = advanceSubstitution(substitution, tok);
+    substitution = advanceSubstitution(substitution, seg.bareText(i));
     if (inside) {
       role.set(i, 'substitution');
       continue;
     }
     if (!afterDashDash) {
       if (seg.isRedirect(i)) {
-        if (seg.isRedirectOp(i)) i += 1;
+        role.set(i, 'redirect');
+        if (seg.isRedirectOp(i) && i + 1 < end) {
+          i += 1;
+          role.set(i, 'redirect');
+        }
         continue;
       }
       if (tok === '--') {
@@ -301,6 +419,7 @@ function readRun(seg, at, end, loops) {
         if (takesValue && i + 1 < end) {
           i += 1;
           role.set(i, testFlag ? 'testvalue' : 'foreignvalue');
+          substitution = advanceSubstitution(substitution, seg.bareText(i));
         }
         continue;
       }
@@ -312,6 +431,7 @@ function readRun(seg, at, end, loops) {
     if (!inline) script = i;
     break;
   }
+  const unbalanced = substitution.depth > 0 || substitution.tick;
   if (!sawTest) {
     if (script === -1) return null;
     const loop = loopFor(t[script], loops);
@@ -320,12 +440,13 @@ function readRun(seg, at, end, loops) {
     role.set(script, 'operand');
   }
   const operands = [...role].filter(([, r]) => r === 'operand').map(([i]) => i);
-  return { at, optStart, end, sawTest, operands, role };
+  return { at, optStart, end, sawTest, operands, role, unbalanced };
 }
 
 // The script text a `sh|bash|zsh [options] -c <text>` word list runs, or null: a `-`-cluster holding `c`
-// anywhere before the shell's first non-option word makes that word the script. A cluster ending in `o`
-// (`-o`, `+o`, `-euo`) takes the next word as an option name; long options are skipped.
+// anywhere before the shell's first non-option word makes that word the script. Each `o` or `O` in a
+// cluster (`-o`, `+o`, `-euo`, `-oc`, `-O`) takes one following word as an option name; long options are
+// skipped.
 function wrapperText(seg, at, end) {
   const { t } = seg;
   let sawC = false;
@@ -334,7 +455,7 @@ function wrapperText(seg, at, end) {
     if (w === '--') return sawC && j + 1 < end ? t[j + 1] : null;
     if (SHELL_CLUSTER_RE.test(w)) {
       if (w[0] === '-' && w.includes('c')) sawC = true;
-      if (w.endsWith('o')) j += 1;
+      j += optionValueCount(w);
     } else if (!w.startsWith('--')) {
       return sawC ? w : null;
     }
@@ -376,79 +497,140 @@ function programOf(seg, lead) {
 function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepeat, repeated }) {
   const P = ctx.pathImpl;
   const { t } = seg;
-  const root = ctx.hasRunner(effCwd);
-  if (!root) return null;
-  const evals = P.join(root, 'evals');
-  if (isUnder(P.resolve(effCwd), evals, P)) return null;
+  if (!ctx.hasRunner(effCwd)) return null;
   const words = run.operands.flatMap((i) => seg.wordsOf(i));
-  if (words.some((w) => isUnder(P.resolve(effCwd, w), evals, P))) return null;
   const deny = repeated
     || words.length >= 2
     || (run.sawTest && words.length === 0)
     || words.some((w) => GLOB_RE.test(w) || EXPANSION_RE.test(w) || w.endsWith('/') || ctx.isDirectory(P.resolve(effCwd, w)));
   if (!deny) return null;
+  const place = placeRun(words, effCwd, ctx);
+  if (!place) return null;
 
-  const rel = toSlash(P.relative(effCwd, P.join(root, 'tools', 'run-tests.js')), P);
+  const other = place.target !== place.root;
+  const runnerAbs = P.join(place.target, 'tools', 'run-tests.js');
+  const runnerRef = other ? quoteIfBlank(toSlash(runnerAbs, P)) : toSlash(P.relative(effCwd, runnerAbs), P);
+  const moved = P.resolve(effCwd) !== P.resolve(ctx.callCwd);
+  // `note`, when set, replaces the line with REFUSED_PLACEHOLDER and says why no command can be pasted.
+  let note = null;
+  if (run.unbalanced) note = CUT_SUBSTITUTION_LINE;
+  else if (place.many) note = MANY_CHECKOUTS_LINE;
+  let line = null;
+  let expansion = false;
+  let relative = false;
+  const foreign = [];
   // A loop-variable operand becomes the loop's word list when every word is literal or a glob. The files a
   // `while`/`until` loop, an `xargs`/`find` lead or an expanded word list runs cannot be named, and no
   // replacement line may hold a loop variable, so those get the fixed placeholder text.
-  const subst = new Map();
-  let fixed = ledRepeat;
-  for (const i of run.operands) {
-    if (fixed) break;
-    const loop = loopFor(t[i], state.loops);
-    if (!loop) continue;
-    if (!loop.words || loop.words.some((w) => EXPANSION_RE.test(w))) fixed = true;
-    else subst.set(i, loop.wordText.join(' '));
-  }
-  if (!fixed && state.loops.some((l) => l.kind !== 'for')) {
-    fixed = run.operands.some((i) => !subst.has(i) && EXPANSION_RE.test(t[i]));
-  }
-  for (let i = 0; i < run.end && !fixed; i += 1) {
-    if (!subst.has(i) && mentionsLoopVariable(t[i], state.loops)) fixed = true;
-  }
-  let line;
-  let expansion = false;
-  const foreign = [];
-  if (state.dirMoved) {
-    line = DIR_STACK_PLACEHOLDER;
-  } else if (fixed) {
-    line = `node ${rel} ${LOOP_FILES_PLACEHOLDER}`;
-  } else {
+  const plan = note === null ? loopPlan(seg, run, state.loops, ledRepeat) : null;
+  if (note === null && plan === null) {
+    line = `node ${runnerRef} ${LOOP_FILES_PLACEHOLDER}`;
+  } else if (note === null) {
     // Leading assignments and the prefix commands before the program, as typed.
     const parts = assignments.map(seg.render);
     for (let i = lead; i < run.at; i += 1) parts.push(seg.render(i));
     if (seg.name(run.at) === 'npx') {
       for (let i = run.at; i < run.optStart; i += 1) parts.push(seg.render(i));
-      parts.push(rel);
+      parts.push(runnerRef);
     } else {
-      parts.push('node', rel);
+      parts.push('node', runnerRef);
     }
+    // A bare runner run selects by impact, while `node --test` with no file runs everything it finds.
+    if (words.length === 0) parts.push('--full');
+    // `args`: what the runner's parser receives once the shell has run the line. An unquoted glob and an
+    // unresolved expansion are the shell's to expand, so an operand holding one is left out, and a flag
+    // value holding one stands in as `x`.
+    const args = [];
+    const listed = new Set();
     for (let i = run.optStart; i < run.end; i += 1) {
       const r = run.role.get(i);
-      if (r === 'test' || r === 'dd') continue;
-      if (r === 'foreign' || r === 'foreignvalue') foreign.push(seg.render(i));
-      else parts.push(subst.has(i) ? subst.get(i) : seg.render(i));
+      if (r === 'test' || r === 'dd' || plan.drop.has(i)) continue;
+      if (r === 'foreign' || r === 'foreignvalue') {
+        foreign.push(seg.render(i));
+      } else if (r === 'operand') {
+        for (const item of plan.subst.get(i) || seg.items(i)) {
+          if (listed.has(item.text)) continue;
+          listed.add(item.text);
+          parts.push(item.text);
+          if (!item.bareGlob && !EXPANSION_RE.test(item.value)) args.push(item.value);
+        }
+      } else {
+        parts.push(seg.render(i));
+        const dynamic = EXPANSION_RE.test(t[i]);
+        if (r === 'testflag') args.push(dynamic && t[i].includes('=') ? `${t[i].slice(0, t[i].indexOf('='))}=x` : t[i]);
+        else if (r === 'testvalue') args.push(dynamic ? 'x' : t[i]);
+        else if (r === undefined && !dynamic && !seg.items(i)[0].bareGlob) args.push(t[i]);
+        // A `substitution` or `redirect` word reaches the runner as the shell's output, or not at all.
+      }
     }
-    line = parts.join(' ');
-    expansion = run.operands.some((i) => !subst.has(i) && EXPANSION_RE.test(t[i]));
+    if (typeof ctx.isFile === 'function') note = runnerRefusal(args, effCwd, place.target, ctx);
+    if (note === null) {
+      line = parts.join(' ');
+      expansion = run.operands.some((i) => !plan.subst.has(i) && EXPANSION_RE.test(t[i]));
+      relative = (moved || other) && keptPathValues(seg, run, plan).some(isRelativePath);
+    } else {
+      foreign.length = 0;
+    }
   }
-  if (!state.dirMoved && P.resolve(effCwd) !== P.resolve(ctx.callCwd)) {
-    const dir = toSlash(P.relative(ctx.callCwd, effCwd), P);
-    line = `cd ${/\s/.test(dir) ? `"${dir}"` : dir} && ${line}`;
+  if (note !== null) {
+    line = REFUSED_PLACEHOLDER;
+  } else if (moved) {
+    const typed = state.typedDirs.get(P.resolve(effCwd));
+    line = `cd ${typed !== undefined ? typed : quoteIfBlank(toSlash(P.relative(ctx.callCwd, effCwd), P))} && ${line}`;
   }
   const reason = [
     `This repository's guard blocked a direct test run. ${SAFEGUARDS_TEXT}`,
     'Run the same files through the runner, which takes the same files and node test flags:',
     '',
     line,
+    ...(note !== null ? [note] : []),
     '',
     ...(expansion ? [EXPANSION_LINE] : []),
     ...(foreign.length ? [`The runner does not take ${foreign.join(' ')}; if the tests need them, set NODE_OPTIONS.`] : []),
+    ...(relative ? [RELATIVE_VALUE_LINE] : []),
     'In a checkout older than this guard, write the files to a list and use: node tools/run-tests.js --files-from <list>',
     'A single test file outside a loop can still be run directly.',
   ].join('\n');
   return { decision: 'deny', kind: 'typed', reason, replacement: line };
+}
+
+const quoteIfBlank = (s) => (/\s/.test(s) ? `"${s}"` : s);
+
+// The runner's refusal of `args` run from `cwd` against the checkout `repoRoot`, as the note line, or null
+// when its parser accepts them. A fault in the injected isFile is let through, never read as a refusal.
+function runnerRefusal(args, cwd, repoRoot, ctx) {
+  let fault = null;
+  const isFile = (p) => {
+    try {
+      return ctx.isFile(p);
+    } catch (e) {
+      fault = e;
+      throw e;
+    }
+  };
+  try {
+    runner().parseRunnerOperands(args, { cwd, repoRoot, isFile, pathImpl: ctx.pathImpl });
+    return null;
+  } catch (e) {
+    if (fault !== null) throw fault;
+    return `The runner refuses the command as typed: ${e.message}.`;
+  }
+}
+
+// The values of the kept test flags that take a path (PATH_VALUE_FLAGS), joined or in space form.
+function keptPathValues(seg, run, plan) {
+  const { t } = seg;
+  const values = [];
+  for (let i = run.optStart; i < run.end; i += 1) {
+    if (run.role.get(i) !== 'testflag' || plan.drop.has(i)) continue;
+    const eq = t[i].indexOf('=');
+    if (eq !== -1) {
+      if (PATH_VALUE_FLAGS.has(t[i].slice(0, eq))) values.push(t[i].slice(eq + 1));
+    } else if (PATH_VALUE_FLAGS.has(t[i]) && run.role.get(i + 1) === 'testvalue') {
+      values.push(t[i + 1]);
+    }
+  }
+  return values;
 }
 
 const JS_SCRIPT_RE = /\.(?:js|mjs|cjs)$/;
@@ -474,7 +656,7 @@ function scriptOperand(seg, prog) {
         continue;
       }
     } else if (SHELL_CLUSTER_RE.test(w)) {
-      if (w.endsWith('o')) i += 1;
+      i += optionValueCount(w);
       continue;
     } else if (w.startsWith('--')) {
       continue;
@@ -543,85 +725,121 @@ function kindFromShebang(text) {
   return SHELLS.has(program) ? 'shell' : null;
 }
 
+// Records the directory a `cd` names when it is typed as an absolute path, so a replacement's `cd` prefix
+// keeps it as typed.
+function noteTypedDir(seg, prog, state, P) {
+  const i = seg.t[prog.at + 1] === '--' ? prog.at + 2 : prog.at + 1;
+  const dir = seg.t[i];
+  if (i < prog.end && typeof dir === 'string' && P.isAbsolute(dir) && !EXPANSION_RE.test(dir)) {
+    state.typedDirs.set(P.resolve(dir), seg.render(i));
+  }
+}
+
 // Walks `text` segment by segment. In 'detect' mode it records whether any segment is a direct test run;
 // in 'classify' mode it records the first deny. Loop nesting is tracked across segments: a segment is
 // inside a loop after a `for` segment, or from a `while`/`until` segment (its condition included), up to
-// that loop's own `done`. A wrapper's text is walked with the loops and the `pushd`/`popd` mark in effect
-// where the wrapper runs (`inherited`).
-function walk(text, cwd, ctx, inherited = { loops: [], dirMoved: false }) {
+// that loop's own `done`; a header opens a loop only when a `do` segment follows it (directly for `for`,
+// after the condition for `while`/`until`), so a loop-like line in a heredoc body the scanner hands over as
+// commands (`for x in y:`) opens none. After a `pushd` or `popd` the working directory is unknown. A
+// wrapper's text is walked with the loops, that mark and the typed `cd` directories in effect where the
+// wrapper runs (`inherited`).
+function walk(text, cwd, ctx, inherited = { loops: [], dirUnknown: false, typedDirs: new Map() }) {
   const P = ctx.pathImpl;
-  const state = { loops: [...inherited.loops], dirMoved: inherited.dirMoved, found: false, result: null };
-  forEachCommandSegment(text, cwd, (t, effCwd, q, again) => {
-    if (state.found || state.result) return;
-    const seg = segmentView(t, q, P);
+  const state = {
+    loops: [...inherited.loops], dirUnknown: inherited.dirUnknown, typedDirs: new Map(inherited.typedDirs), found: false, result: null,
+  };
+  const segs = [];
+  forEachCommandSegment(text, cwd, (t, effCwd, q, again) => segs.push({ seg: segmentView(t, q, P), effCwd, again }), { pathImpl: P });
+  const next = (k) => {
+    let j = k + 1;
+    while (j < segs.length && segs[j].again) j += 1;
+    return j;
+  };
+  const startsWith = (k, word) => k < segs.length && segs[k].seg.t[0] === word && segs[k].seg.bare(0);
+  const opensLoop = (k, kind) => {
+    if (kind === 'for') return startsWith(next(k), 'do');
+    for (let j = next(k); j < segs.length; j = next(j)) {
+      if (startsWith(j, 'do')) return true;
+      const h = leadOf(segs[j].seg);
+      const other = segs[j].seg.t[h.lead] === 'for' && segs[j].seg.bare(h.lead);
+      if (startsWith(j, 'done') || h.conditionLoop || other) return false;
+    }
+    return false;
+  };
+  for (let k = 0; k < segs.length && !state.found && !state.result; k += 1) {
+    const { seg, effCwd, again } = segs[k];
+    const { t } = seg;
     const head = leadOf(seg);
     const { lead } = head;
     if (t[0] === 'done' && seg.bare(0)) {
       if (!again) state.loops.pop();
-      return;
+      continue;
     }
     // A `while`/`until` condition runs once per pass: its loop is open for the condition itself. A
     // `while read` condition names the loop's variables.
-    if (head.conditionLoop && !again) {
+    if (head.conditionLoop && !again && opensLoop(k, 'while')) {
       const cmd = skipPrefixes(seg, lead);
       const variables = t[cmd] === 'read' ? t.slice(cmd + 1).filter((w) => IDENTIFIER_RE.test(w)) : [];
-      state.loops.push({ kind: head.conditionLoop, variables, words: null, wordText: [] });
+      state.loops.push({ kind: head.conditionLoop, variables, words: null, items: [] });
     }
-    if (lead >= t.length) return;
+    if (lead >= t.length) continue;
     if (t[lead] === 'for' && seg.bare(lead)) {
-      if (!again) {
+      if (!again && opensLoop(k, 'for')) {
         const hasList = t[lead + 2] === 'in';
-        const wordIdx = hasList ? t.map((_, i) => i).slice(lead + 3) : [];
+        const items = hasList ? t.map((_, i) => i).slice(lead + 3).flatMap((i) => seg.items(i)) : [];
         state.loops.push({
           kind: 'for',
           variables: IDENTIFIER_RE.test(t[lead + 1] || '') ? [t[lead + 1]] : [],
-          words: hasList ? wordIdx.map((i) => t[i]) : null,
-          wordText: wordIdx.map(seg.render),
+          words: hasList ? items.map((item) => item.value) : null,
+          items,
         });
       }
-      return;
+      continue;
     }
     const prog = programOf(seg, lead);
-    if (!prog) return;
+    if (!prog) continue;
     if (DIR_STACK_COMMANDS.has(t[prog.at]) && seg.bare(prog.at)) {
-      state.dirMoved = true;
-      return;
+      state.dirUnknown = true;
+      continue;
     }
+    if (t[prog.at] === 'cd' && seg.bare(prog.at)) noteTypedDir(seg, prog, state, P);
     const repeated = state.loops.length > 0 || prog.ledRepeat || ctx.repeated;
-    const segCwd = typeof effCwd === 'string' ? effCwd : null;
+    const segCwd = typeof effCwd === 'string' && !state.dirUnknown ? effCwd : null;
     const isEval = !prog.ledRepeat && t[prog.at] === 'eval' && seg.bare(prog.at);
     if (ctx.mode === 'scripts') collectScript(seg, prog, segCwd, ctx);
     if (isEval || SHELLS.has(seg.name(prog.at))) {
       // `eval` runs its arguments joined by a space; a shell its `-c` script.
       const inner = isEval ? t.slice(prog.at + 1, prog.end).join(' ') : wrapperText(seg, prog.at, prog.end);
-      if (inner === null || ctx.depth >= MAX_WRAPPER_DEPTH) return;
-      if (ctx.mode === 'classify' && segCwd === null) return;
-      const sub = walk(inner, segCwd || cwd, { ...ctx, depth: ctx.depth + 1, repeated }, { loops: state.loops, dirMoved: state.dirMoved });
+      if (inner === null || ctx.depth >= MAX_WRAPPER_DEPTH) continue;
+      if (ctx.mode === 'classify' && segCwd === null) continue;
+      const sub = walk(inner, segCwd || cwd, { ...ctx, depth: ctx.depth + 1, repeated }, state);
       state.found = sub.found;
       state.result = sub.result;
-      return;
+      continue;
     }
-    if (ctx.mode === 'scripts') return;
+    if (ctx.mode === 'scripts') continue;
     const run = readRun(seg, prog.at, prog.end, state.loops);
-    if (!run) return;
+    if (!run) continue;
     if (ctx.mode === 'detect') {
       state.found = true;
-      ctx.hits.push(t.slice(prog.at, run.end).map((_, k) => seg.render(prog.at + k)).join(' '));
-      return;
+      ctx.hits.push(t.slice(prog.at, run.end).map((_, i) => seg.render(prog.at + i)).join(' '));
+      continue;
     }
-    if (segCwd === null) return;
+    if (segCwd === null) continue;
     state.result = judgeRun(seg, run, segCwd, head, ctx, state, { ledRepeat: prog.ledRepeat, repeated });
-  }, { pathImpl: P });
+  }
   return state;
 }
 
 // `{ decision: 'allow' }`, or `{ decision: 'deny', kind: 'typed', reason, replacement }` for the first
 // denied direct test run in `command`. `hasRunner(dir)` returns the checkout root holding
-// tools/run-tests.js at or above `dir`, or null; `isDirectory(absPath)` a boolean. Lets any internal
-// error (or one from `hasRunner`/`isDirectory`) through, so a test can tell a bug from an allow.
-function classifyCommandOrThrow(command, { cwd, hasRunner, isDirectory, pathImpl = path } = {}) {
+// tools/run-tests.js at or above `dir`, or null; `isDirectory(absPath)` a boolean; `isFile(absPath)`, when
+// given, a boolean the runner's own operand parser reads to check a replacement before it is printed (no
+// check without it). Lets any internal error (or one from the three) through, so a test can tell a bug
+// from an allow.
+function classifyCommandOrThrow(command, { cwd, hasRunner, isDirectory, isFile, pathImpl = path } = {}) {
   if (typeof command !== 'string' || command === '' || typeof cwd !== 'string') return ALLOW();
-  const ctx = { mode: 'classify', depth: 0, repeated: false, callCwd: cwd, hasRunner, isDirectory, pathImpl };
+  const ctx = { mode: 'classify', depth: 0, repeated: false, callCwd: cwd, hasRunner, isDirectory, isFile, pathImpl };
   return walk(command, cwd, ctx).result || ALLOW();
 }
 
@@ -773,7 +991,7 @@ function judge(payload, deps) {
 
 const MAX_SCRIPT_BYTES = 262144;
 
-// The file-system answers the hook reads through. None of the three throws.
+// The file-system answers the hook reads through. None of them throws.
 function realDeps() {
   return {
     pathImpl: path,
@@ -796,6 +1014,13 @@ function realDeps() {
     isDirectory(p) {
       try {
         return fs.statSync(p).isDirectory();
+      } catch (_) {
+        return false;
+      }
+    },
+    isFile(p) {
+      try {
+        return fs.statSync(p).isFile();
       } catch (_) {
         return false;
       }
